@@ -21,6 +21,9 @@ CREATE INDEX IF NOT EXISTS worker_connection_thread
     ON worker_connections(platform_session, thread_id);
 """
 
+# Zero preserves unknown historical order; only accepted new bindings get a sequence.
+WORKER_CONNECTION_COLUMNS = {"attachment_sequence": ("INTEGER NOT NULL DEFAULT 0", 0)}
+
 
 WORKER_PARTICIPANT_SCHEMA = """
 CREATE TABLE IF NOT EXISTS worker_participants (
@@ -57,6 +60,22 @@ class WorkerConnections:
     def __init__(self, runs):
         self.runs = runs
 
+    @staticmethod
+    def _latest(connection, platform_session, thread_id):
+        rows = connection.execute(
+            "SELECT w.*, r.state, r.operation_id, r.operation_digest, r.execution_profile_json "
+            "FROM worker_connections w JOIN runs r USING(run_id) "
+            "WHERE w.platform_session=? AND w.thread_id=? "
+            "ORDER BY (r.state IN ('queued','running')) DESC, "
+            "w.attachment_sequence DESC, w.attached_at DESC LIMIT 2",
+            (platform_session, thread_id)).fetchall()
+        if len(rows) == 2:
+            active = [row['state'] in {'queued', 'running'} for row in rows]
+            if all(active) or (not any(active) and rows[0]['attachment_sequence'] == rows[1]['attachment_sequence']
+                    and rows[0]['attached_at'] == rows[1]['attached_at']):
+                raise RunStateConflict("Worker binding order is ambiguous; attach a fresh native thread.")
+        return rows[0] if rows else None
+
     def attach(self, *, run_id, platform_session, thread_id):
         with self.runs._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -74,11 +93,7 @@ class WorkerConnections:
                 raise RunStateConflict("attach requires the exact queued Run")
             status = self.runs.status(run_id)
             self._require_independent(connection, status, platform_session, thread_id)
-            previous = connection.execute(
-                "SELECT w.*, r.state, r.operation_id, r.operation_digest, r.execution_profile_json "
-                "FROM worker_connections w JOIN runs r USING(run_id) "
-                "WHERE w.platform_session=? AND w.thread_id=? ORDER BY w.attached_at DESC, w.run_id DESC LIMIT 1",
-                (platform_session, thread_id)).fetchone()
+            previous = self._latest(connection, platform_session, thread_id)
             if previous is not None and previous["run_id"] != run_id:
                 if previous["state"] in {"queued", "running"}:
                     raise RunStateConflict("Worker thread already belongs to an active Run")
@@ -92,22 +107,23 @@ class WorkerConnections:
                         != new_profile["profile"]["reasoning_effort"]):
                     raise RunStateConflict("reuse requires the same compiled Operation and execution profile")
             current = connection.execute("SELECT * FROM worker_connections WHERE run_id=?", (run_id,)).fetchone()
+            sequence = connection.execute(
+                "SELECT COALESCE(MAX(attachment_sequence),0)+1 FROM worker_connections "
+                "WHERE platform_session=? AND thread_id=?", (platform_session, thread_id)).fetchone()[0]
             if current is not None:
                 if (current["platform_session"], current["thread_id"]) != (platform_session, thread_id):
                     # Nothing scientific has been opened yet. Correct a mistaken
                     # platform handle without consuming/failing the queued Run.
-                    connection.execute("UPDATE worker_connections SET platform_session=?,thread_id=?,attached_at=? WHERE run_id=?",
-                        (platform_session, thread_id, timestamp(), run_id))
+                    connection.execute("UPDATE worker_connections SET platform_session=?,thread_id=?,attached_at=?,attachment_sequence=? WHERE run_id=?",
+                        (platform_session, thread_id, timestamp(), sequence, run_id))
                 return
             connection.execute(
-                "INSERT INTO worker_connections(run_id,platform_session,thread_id,attached_at) VALUES(?,?,?,?)",
-                (run_id, platform_session, thread_id, timestamp()))
+                "INSERT INTO worker_connections(run_id,platform_session,thread_id,attached_at,attachment_sequence) VALUES(?,?,?,?,?)",
+                (run_id, platform_session, thread_id, timestamp(), sequence))
 
     def resolve(self, *, platform_session, thread_id):
         with self.runs._connect() as connection:
-            row = connection.execute(
-                "SELECT run_id FROM worker_connections WHERE platform_session=? AND thread_id=? "
-                "ORDER BY attached_at DESC, run_id DESC LIMIT 1", (platform_session, thread_id)).fetchone()
+            row = self._latest(connection, platform_session, thread_id)
         if row is None:
             raise WorkerNotAttached("Worker is awaiting scheduler attachment; no assignment is authorized yet")
         return self.runs.status(row["run_id"])
@@ -115,16 +131,19 @@ class WorkerConnections:
     def previous_run(self, *, run_id, platform_session, thread_id):
         """Derive the predecessor from existing bindings, never a new reuse ledger."""
         with self.runs._connect() as connection:
-            row = connection.execute(
-                "SELECT previous.run_id FROM worker_connections current "
+            rows = connection.execute(
+                "SELECT previous.run_id, previous.attachment_sequence, previous.attached_at FROM worker_connections current "
                 "JOIN worker_connections previous ON previous.platform_session=current.platform_session "
                 "AND previous.thread_id=current.thread_id "
                 "WHERE current.run_id=? AND current.platform_session=? AND current.thread_id=? "
-                "AND (previous.attached_at < current.attached_at OR "
-                "(previous.attached_at=current.attached_at AND previous.run_id < current.run_id)) "
-                "ORDER BY previous.attached_at DESC, previous.run_id DESC LIMIT 1",
-                (run_id, platform_session, thread_id)).fetchone()
-        return row["run_id"] if row is not None else None
+                "AND (previous.attachment_sequence < current.attachment_sequence OR "
+                "(current.attachment_sequence=0 AND previous.attachment_sequence=0 "
+                "AND previous.attached_at < current.attached_at)) "
+                "ORDER BY previous.attachment_sequence DESC, previous.attached_at DESC LIMIT 2",
+                (run_id, platform_session, thread_id)).fetchall()
+        if len(rows) == 2 and tuple(rows[0])[1:] == tuple(rows[1])[1:]:
+            return None  # Historical ambiguity means full startup guidance, not guessed reuse.
+        return rows[0]["run_id"] if rows else None
 
     def _require_independent(self, connection, status, session, thread):
         for item in status.inputs:

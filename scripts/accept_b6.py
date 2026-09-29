@@ -7,6 +7,7 @@ import argparse
 import fcntl
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -16,11 +17,11 @@ import time
 
 try:
     from scripts.run_tests import serial_lock
-    from scripts.b6_evidence import read, write, digest, rows, control_rows, run_snapshot, participants, sealed_outputs, usage_report, verdict, compare, assess
+    from scripts.b6_evidence import read, write, digest, rows, control_rows, run_snapshot, participants, sealed_outputs, usage_report, verdict, compare, assess, token_totals
     from scripts.root_host_upgrade import _files
 except ModuleNotFoundError:
     from run_tests import serial_lock
-    from b6_evidence import read, write, digest, rows, control_rows, run_snapshot, participants, sealed_outputs, usage_report, verdict, compare, assess
+    from b6_evidence import read, write, digest, rows, control_rows, run_snapshot, participants, sealed_outputs, usage_report, verdict, compare, assess, token_totals
     from root_host_upgrade import _files
 
 SCRIPTS = Path(__file__).resolve().parent
@@ -45,7 +46,50 @@ def configuration(path):
             raise ValueError('unknown_native_scenario')
         if not case['requires'] or ('objective' in case and case['objective'] not in value['objectives']):
             raise ValueError('case_contract_incomplete')
+    budget = value.get('budget')
+    if budget:
+        for group in ('suite', 'session'):
+            for key in ('total_tokens', 'uncached_tokens', 'execution_seconds'):
+                number = budget[group][key]
+                if type(number) is not int or number <= 0:
+                    raise ValueError('positive_acceptance_budget_required')
+                if budget['session'][key] > budget['suite'][key]:
+                    raise ValueError('session_exceeds_suite_budget')
+        for key in ('sample_seconds', 'human_review_hours'):
+            if type(budget[key]) not in (int, float) or not 0 < budget[key] < float('inf'):
+                raise ValueError('positive_acceptance_budget_required')
     return value
+
+
+def budget_admission(root, manifest):
+    """Reserve one full session; every previous attempt, including failure, counts."""
+    budget = manifest.get('config', {}).get('budget')
+    if not budget:
+        return None
+    spent = dict(total_tokens=0, uncached_tokens=0, execution_seconds=0)
+    for case_id in manifest['config']['cases']:
+        if not (root/(case_id+'.attempt.json')).exists():
+            continue
+        if not (root/(case_id+'.exit.json')).exists():
+            raise ValueError('prior_attempt_outcome_unknown')
+        report = result(root, manifest, case_id)
+        started = (root/case_id/'model-submission-started').exists()
+        if not started:
+            # A failed pre-model start has no model spend. Resource evidence is
+            # still charged when present, rather than silently deleting retries.
+            seconds = report.get('resource', {}).get('elapsed_seconds', 0)
+        else:
+            totals = token_totals(report.get('usage', {}))
+            for key, number in totals.items():
+                spent[key] += number
+            seconds = report.get('resource', {}).get('elapsed_seconds')
+            if type(seconds) not in (float, int) or seconds < 0 or not math.isfinite(seconds):
+                raise ValueError('acceptance_execution_time_missing')
+        spent['execution_seconds'] += seconds
+    remaining = {key: budget['suite'][key] - spent[key] for key in spent}
+    if any(remaining[key] < budget['session'][key] for key in spent):
+        raise ValueError('acceptance_suite_budget_insufficient')
+    return dict(spent=spent, remaining=remaining, reservation=budget['session'])
 
 
 def exclusive_intent(path, value):
@@ -114,6 +158,9 @@ def prepare(root, manifest, case_id):
     write(root/(case_id+'.prepared.json'),dict(case_digest=digest(frozen)))
     resources=read(SCRIPTS/'root_host_resources.json')
     resources['execution_timeout_seconds']=config['resources']['timeout_seconds']
+    if config.get('budget'):
+        resources['execution_timeout_seconds'] = min(resources['execution_timeout_seconds'],
+            config['budget']['session']['execution_seconds'])
     write(target/'host-resources.json',resources)
     if digest(read(target/'agent-settings.json'))!=manifest['source_settings_digest'] and case_id!='rollback':
         raise ValueError('source_settings_changed')
@@ -130,7 +177,8 @@ def run(root,manifest,case_id):
     with serial_lock() as lock:
         # Only an admitted start consumes the one-shot intent. The child inherits
         # this exact lock, so there is no release/reacquire race before launch.
-        exclusive_intent(root/(case_id+'.attempt.json'),dict(started_ns=time.time_ns(),case_digest=digest(case)))
+        allowance = budget_admission(root, manifest)
+        exclusive_intent(root/(case_id+'.attempt.json'),dict(started_ns=time.time_ns(),case_digest=digest(case), budget=allowance))
         completed=subprocess.run([*command,'--lock-fd',str(lock.fileno())],check=False,
             pass_fds=(lock.fileno(),))
     write(root/(case_id+'.exit.json'),dict(returncode=completed.returncode,ended_ns=time.time_ns()))
@@ -216,7 +264,7 @@ def main():
     if args.action=='report':
         cases={k:result(root,manifest,k) for k in manifest['config']['cases']}
         pairs={}
-        for pair in ('known','ambiguous'):
+        for pair in sorted({c['pair'] for c in manifest['config']['cases'].values() if 'pair' in c}):
             pairs[pair]=compare(cases['manual-'+pair],cases['auto-'+pair])
         print(json.dumps(dict(cases=cases,comparisons=pairs,b6_passed=False,
             remaining=['formal deployment rollback','detached native process resource coverage','A6 TCAD deferred']),ensure_ascii=False,indent=2));return 0

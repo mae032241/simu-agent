@@ -18,6 +18,8 @@ C 交付体验完善。每版独立提交、安装验证和回滚；不能把全
 - [B：轻量自主推进](AUTONOMOUS_RESEARCH_RELEASE_PLAN.zh-CN.md)：P2/P3、必要控制/成果界面及 B 发布验收。
 - [C：研究交付体验](RESEARCH_DELIVERY_EXPERIENCE_RELEASE_PLAN.zh-CN.md)：P5 增强视图、版本影响、报告/成本及 C 发布验收。
 
+后续增量（2026-09-29，`dev c00706f`）：[科研进展判断与纠偏](SCIENTIFIC_PROGRESS_AND_CORRECTION_PLAN.zh-CN.md)负责小范围运行修复、任务意图/进展记录、停滞复判、独立验证语义和效果基准。它接续 B4 尚未完成的科研判断部分，不重建推进引擎；原 A/B/C 历史验收不自动覆盖该增量。
+
 原 P6 的验收与发布要求分配给每个版本，不积压到 C；P4 中被 B/C 新能力替代的旧代码由相应实施包删除。
 下文规模合计使用三份子计划的新估计，替代早期 P0–P6 粗估，不与子计划再次相加。
 

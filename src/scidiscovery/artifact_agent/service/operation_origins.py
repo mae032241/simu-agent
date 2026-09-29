@@ -466,6 +466,22 @@ class OperationOrigins:
                 self.artifacts.verify(ref)
                 return self._producer_output_family_from_envelope(name, self.artifacts.catalog(ref))
             refs = [anchors[0].ref]
+            if rule.source_paths and anchors[0].schema_id not in rule.source_schemas:
+                candidates = []
+                for path in rule.source_paths:
+                    selected = [anchors[0].ref]
+                    for edge in path:
+                        following = []
+                        for ref in selected:
+                            family = family_for(ref)
+                            if family is not None and family.producer_instance_id == self._instance_id():
+                                following.extend(item.ref for item in family.producer_inputs if item.port_name == edge)
+                        selected = list(dict.fromkeys(following))
+                    candidates.extend(ref for ref in selected
+                        if self.artifacts.catalog(ref).schema_id in rule.source_schemas)
+                refs = list(dict.fromkeys(candidates))
+                if len(refs) != 1:
+                    reject("input_origin_ambiguous" if refs else "input_origin_missing")
             for edge in rule.producer_input_path:
                 following = []
                 for ref in refs:

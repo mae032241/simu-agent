@@ -106,11 +106,15 @@ class PortSpec(FrozenSpec):
             return "port_cardinality_invalid"
         return "port_size_invalid" if self.max_item_bytes is not None and self.max_item_bytes <= 0 else None
 class InputDerivationSpec(FrozenSpec):
-    """Exact producer traversal; never schema, recency or content matching."""
+    """Exact producer traversal; never search instance history for matching types."""
     anchor_port: str
     producer_input_path: tuple[str, ...] = ()
     select: Literal["subject", "siblings", "sources"] = "subject"
     producer_output_port: str | None = None
+    # Use the selected subject if its schema matches; otherwise follow these
+    # alternative producer paths. Types never search unrelated instance artifacts.
+    source_paths: tuple[tuple[str, ...], ...] = ()
+    source_schemas: tuple[str, ...] = ()
 
 
 class InputPortSpec(PortSpec):

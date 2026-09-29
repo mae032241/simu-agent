@@ -372,7 +372,7 @@ class ExperimentExecution:
                 # Operational progress is mutable; the scientific receipt stays stable.
                 sealed = {key: value for key, value in result.items() if key not in {"progress", "observation"}}
                 record = context.accept_evidence(raw=canonical_json(sealed), media_type="application/json",
-                    derived_from=("research_objective", implementation["alias"]), trusted_parent_refs=(status.result_ref,),
+                    derived_from=("objective_source", implementation["alias"]), trusted_parent_refs=(status.result_ref,),
                     metadata={"kind": "experiment_execution", "name": request.name, "implementation": implementation["alias"]})
                 result["reference"] = record["alias"]
                 result["artifact_name"] = record["artifact_name"]

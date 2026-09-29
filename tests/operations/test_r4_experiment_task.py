@@ -21,7 +21,8 @@ def test_complete_experiment_compiles_with_one_domain_provider(monkeypatch):
         "worker_experiment_stage", "worker_experiment_prepare", "worker_experiment_execute"}
     assert experiment.spec.review is None
     assert {port.name for port in experiment.spec.inputs} == {
-        "research_objective", "scientific_materials", "prior_experiment", "scientific_files", "user_context"}
+        "subject", "objective_source", "scientific_materials", "prior_experiment", "scientific_files", "user_context"}
+    assert next(p for p in experiment.spec.inputs if p.name == "objective_source").derivation is not None
 
 
 def test_completed_experiment_requires_linked_control_observations():
@@ -126,7 +127,7 @@ def _real_experiment(tmp_path, monkeypatch, solver="sprocess", before_submit=Non
     root = RootMCPRouter(RootToolFacade(runtime.artifacts, runtime.intake, runs=runtime.runs,
         approvals=runtime.approvals, executions=runtime.executions, bindings=runtime.scheduler_bindings,
         instance=instance.instance_id, operation_catalog=catalog))
-    inputs = [{"port":"research_objective", "artifact_names":["objective"]}]
+    inputs = [{"port":"subject", "artifact_names":["objective"]}]
     if solver == "sdevice":
         grid = runtime.artifacts.register(b"exact-grid", ArtifactRegistration(kind="grid", schema_id="opaque",
             payload_schema_version=1, media_type="application/octet-stream", creator=runtime.actor), idempotency_key="grid")
@@ -171,6 +172,7 @@ def _real_experiment(tmp_path, monkeypatch, solver="sprocess", before_submit=Non
     opened = worker.call_tool("worker_open_assignment", {})
     workspace = Path(opened["workspace_path"])
     assignment = json.loads(Path(opened["assignment_path"]).read_bytes())
+    assert "objective_source" in {item["source_name"] for item in assignment["inputs"]}
     assert "digest" not in assignment["operation"]
     assert "prior_source_bindings" not in assignment
     design = worker.call_tool("worker_experiment_stage", {"stage":"design", "conclusion":"Observe one fixture."})
@@ -354,7 +356,7 @@ def test_debug_recovery_cancellation_preserves_original_budget(tmp_path):
         "record":record, "submission":{"schema_version":1, "name":"submitted", "local_path":"/private/submission",
         "sha256":"b"*64, "size_bytes":1, "media_type":"application/json"}}}}
     path.write_text(json.dumps(ledger))
-    inputs = (SimpleNamespace(port_name="research_objective", artifact_ref=subject),)
+    inputs = (SimpleNamespace(port_name="objective_source", artifact_ref=subject),)
     assert not service.experiment_activity({"unrelated_run"}, inputs, cancel=True)
     assert calls == []
     assert service.experiment_activity({"original_run", "recovered_run"}, inputs)

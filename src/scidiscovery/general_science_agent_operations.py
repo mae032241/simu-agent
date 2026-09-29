@@ -374,7 +374,11 @@ OPERATIONS = (
         "Extract or revise one complete ScientificIntake using sources and optional prior evidence or feedback.",
         "The objective needs a source-backed problem frame and foundation.",
         "Granting qualification. Use a domain evidence task when quantitative extraction tools are needed.",
-        decision_fields=("/scientific_foundation/summary", "/scientific_foundation/missing_inputs", "/scientific_foundation/open_questions", "/problem_frame/current_contradiction"),
+        decision_fields=("/scientific_foundation/objective", "/scientific_foundation/objective_contract/intent",
+            "/scientific_foundation/objective_contract/mandatory_targets",
+            "/scientific_foundation/objective_contract/closure_requirements",
+            "/scientific_foundation/summary", "/scientific_foundation/missing_inputs",
+            "/scientific_foundation/open_questions", "/problem_frame/current_contradiction"),
         agent="evidence_agent",
         prompt="evidence_prompt",
         inputs=(

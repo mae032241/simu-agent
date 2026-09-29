@@ -131,6 +131,25 @@ def usage_report(journey, workers, helpers, progression=None):
             'Tool bytes are not tokens; received notifications may omit native output.'])
 
 
+def token_totals(usage, *, require_complete=True):
+    """Cached input is included once; partial telemetry is only a lower bound."""
+    if require_complete and (usage.get('coverage') != 'observed' or not usage.get('groups')):
+        raise ValueError('acceptance_usage_incomplete')
+    total = uncached = 0
+    for group in usage.get('groups', {}).values():
+        values = [group.get(key) for key in ('input_tokens', 'cached_input_tokens', 'output_tokens')]
+        if any(type(value) is not int or value < 0 for value in values):
+            if require_complete:
+                raise ValueError('acceptance_usage_invalid')
+            continue
+        inputs, cached, outputs = values
+        if cached > inputs:
+            raise ValueError('acceptance_usage_invalid')
+        total += inputs + outputs
+        uncached += inputs - cached + outputs
+    return dict(total_tokens=total, uncached_tokens=uncached)
+
+
 def verdict(checks, required):
     values = [checks.get(key, 'not_observed') for key in required]
     if 'failed' in values:

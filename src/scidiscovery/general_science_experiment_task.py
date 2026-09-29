@@ -11,7 +11,7 @@ from .plugin_runtime.results import materialize_summary_handoff, finalize_result
 from .general_science_agent_operations import _input
 from .operation_declaration import schema_resource, scientific_agent_operation, semantic_contract
 from .operations.spec import (CallableComponent, CollectionSpec, ComponentRef,
-    ComponentSpec, InputPortSpec, OutputPortSpec, SemanticRuleSpec, WorkspaceContract)
+    ComponentSpec, InputDerivationSpec, InputPortSpec, InputValidationSpec, OutputPortSpec, SemanticRuleSpec, WorkspaceContract)
 from .operations.tooling import WorkerToolDefinition
 from .agent_execution_settings import MaterialInputSettings
 from .operations.workspace import WorkspaceProtocolError
@@ -41,7 +41,7 @@ class StageSubmission(BaseModel):
 
 def submit_stage(request, context):
     record = context.accept_evidence(raw=canonical_json(request.model_dump(mode="json")),
-        media_type="application/json", derived_from=("research_objective", *request.materials),
+        media_type="application/json", derived_from=("objective_source", *request.materials),
         metadata={"kind": "experiment_stage", "stage": request.stage})
     return {"stage": request.stage, "reference": record["alias"], "state": "sealed",
         "artifact_name": record["artifact_name"]}
@@ -67,6 +67,33 @@ def execute(request, context):
 
 def validate_report(raw):
     ExperimentReport.model_validate_json(raw, strict=True)
+
+
+def validate_goal_inputs(sources):
+    """Validate the goal at its exact source; no fabricated standalone artifact."""
+    from pydantic import ValidationError
+    from .artifact_agent.schema.research_objective import ResearchObjectiveContract
+    from .operations.invoke import OperationInvocationError
+    try:
+        source = json.loads(sources["objective_source"])
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        raise OperationInvocationError("input_objective_invalid", port="subject",
+            message="The selected goal source is not a readable scientific record; repair its original content.") from error
+    foundation = source.get("scientific_foundation", source) if isinstance(source, dict) else None
+    objective = (foundation.get("objective_contract", foundation if "objective_key" in foundation else None)
+                 if isinstance(foundation, dict) else None)
+    if objective is None:
+        raise OperationInvocationError("input_objective_missing", port="subject",
+            message="The selected scientific material does not declare the research intent and completion criteria. "
+                    "Ask its scientific author to complete or clarify the goal; do not construct internal bindings or search framework source.")
+    try:
+        goal = ResearchObjectiveContract.model_validate_json(canonical_json(objective), strict=True)
+    except ValidationError as error:
+        raise OperationInvocationError("input_objective_invalid", port="subject",
+            message="The selected material has an incomplete scientific goal; its author must repair its intent, targets or completion criteria.") from error
+    if "objective" in foundation and goal.statement != foundation["objective"]:
+        raise OperationInvocationError("input_objective_conflict", port="subject",
+            message="The selected material's goal statement conflicts with its declared objective; resolve the scientific conflict at its source.")
 
 
 def validate_completion(payload, sources, handoff):
@@ -115,7 +142,11 @@ def finalize(request):
 
 PROMPT = """Own this complete experiment: design, implement, debug when useful,
 execute through the controlled experiment tools, collect, and judge validity.
-Use the research objective and exact supplied scientific materials. Explain
+Read subject for the current scientific question, stage objective and available
+conclusions. Read the global goal and completion criteria in objective_source:
+the original research objective, the foundation's objective_contract, or the intake's
+scientific_foundation.objective_contract. Reuse these declared goals in place.
+Use the exact supplied scientific materials. Explain
 limitations instead of inventing missing evidence or claiming unavailable execution.
 Keep normal corrections in this task. Ask for a scientific decision only when
 the research direction must change. Submit useful stage conclusions with
@@ -151,6 +182,7 @@ WORKSPACE = WorkspaceContract()
 AGENT = CallableComponent("agent", lambda: None)
 VALIDATOR = CallableComponent("validator", validate_report)
 COMPLETION_VALIDATOR = CallableComponent("validator", validate_completion)
+GOAL_VALIDATOR = CallableComponent("validator", validate_goal_inputs)
 from .operations.workspace import WorkspaceFinalizer
 from .plugin_runtime.results import result_draft_schema, RESULT_PROJECTION_VERSION
 FINALIZER = CallableComponent("workspace_finalizer", WorkspaceFinalizer(
@@ -176,6 +208,7 @@ COMPONENTS = (
         resources=(_REF("experiment_task_contract"),)),
     ComponentSpec("experiment_completion_validator", "validator", __name__ + ":COMPLETION_VALIDATOR",
         resources=(_REF("experiment_task_contract"),)),
+    ComponentSpec("experiment_goal_inputs", "validator", __name__ + ":GOAL_VALIDATOR"),
     ComponentSpec("experiment_task_finalizer", "workspace_finalizer", __name__ + ":FINALIZER"),
     ComponentSpec("experiment_task_workspace", "workspace", __name__ + ":WORKSPACE",
         resources=(_REF("experiment_task_finalizer"),)),
@@ -184,14 +217,24 @@ COMPONENTS = (
 )
 OPERATION = scientific_agent_operation(
     "science.experiment.v1", "Complete a bounded experiment from scientific design through execution and validity judgment.",
-    "A research question and exact supporting scientific materials are available.",
-    "Unbounded research or claims without retained observations.",
+    "A selected scientific subject declares a research goal and completion criteria, directly or in its sealed source history. Control binds that goal automatically.",
+    "Unbounded research, claims without retained observations, or pure evidence analysis with no implementation/execution requirement. Use a source-based scientific task to clarify an incomplete goal.",
     decision_fields=("outcome", "summary", "remaining_question", "limitations"),
     agent=_REF("experiment_task_agent"), prompt=_REF("experiment_task_prompt"),
     workspace=_REF("experiment_task_workspace"),
+    input_validation=InputValidationSpec(_REF("experiment_goal_inputs"), "science.experiment.v1.goal",
+        "The selected scientific subject must declare an explicit goal and completion criteria. Control resolves its exact source; Root does not bind internal goal objects."),
     tools=(_REF("experiment_stage_tool"), _REF("experiment_execute_tool")),
     inputs=(
-        _input("research_objective", "Exact scientific objective and constraints.", "scidiscovery.research-objective.v1"),
+        _input("subject", "The exact hypothesis, scientific intake, foundation, existing goal or prior experiment to investigate. Select its instance name; control retrieves the goal from its sealed sources. Do not create an internal goal object.", "*",
+            media_types=("*/*",), exposure="on_demand", usage="evidence_inventory"),
+        _input("objective_source", "Control-bound exact scientific source of the global goal and completion criteria.", "*",
+            media_types=("*/*",), exposure="on_demand", usage="evidence_inventory").model_copy(update={
+            "derivation": InputDerivationSpec(anchor_port="subject",
+                source_paths=((), ("scientific_foundation",), ("hypothesis_portfolio", "scientific_foundation"),
+                              ("objective_source",), ("research_objective",)),
+                source_schemas=("scidiscovery.research-objective.v1", "scidiscovery.scientific-foundation.v1",
+                                "scidiscovery.scientific-intake.v1"))}),
         _input("scientific_materials", "Exact hypothesis, evidence, parameters or feedback needed for this experiment.", "*",
             media_types=("*/*",), min_items=0, max_items=16, exposure="material", usage="evidence_inventory",
             max_item_bytes=MaterialInputSettings().max_item_bytes),

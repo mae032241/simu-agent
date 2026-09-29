@@ -115,7 +115,7 @@ class LocalTCADDebugService:
         self, context: OperationToolContext, *, run_name: str, mode: str, output_names: list[str] | None = None
     ) -> dict[str, object]:
         subject = None
-        for alias in ("research_objective", "scientific_skeleton", "experiment_plan"):
+        for alias in ("objective_source", "research_objective", "scientific_skeleton", "experiment_plan"):
             try:
                 subject = context.input_ref(alias)
                 break
@@ -147,7 +147,7 @@ class LocalTCADDebugService:
         """Observe/cancel persisted jobs without resetting the original allowance."""
         from scidiscovery.artifact_agent.schema.execution import LocalFileDescriptor
         from scidiscovery.plugin_runtime.workspace import atomic_json
-        subject = next((item.artifact_ref for item in inputs if item.port_name == "research_objective"), None)
+        subject = next((item.artifact_ref for item in inputs if item.port_name == "objective_source"), None)
         if subject is None:
             return False
         key = canonical_sha256({"subject": subject})
@@ -196,7 +196,7 @@ class LocalTCADDebugService:
         if _RUN_NAME.fullmatch(run_name) is None:
             raise TCADDebugError("TCAD development debug name is invalid")
         subject = None
-        for alias in ("research_objective", "scientific_skeleton", "experiment_plan"):
+        for alias in ("objective_source", "research_objective", "scientific_skeleton", "experiment_plan"):
             try:
                 subject = context.input_ref(alias)
                 break

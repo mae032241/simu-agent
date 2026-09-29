@@ -17,17 +17,21 @@ def invoke(*args):
         cwd=ROOT,capture_output=True,text=True,timeout=15)
 
 
-def test_report_keeps_unknown_attempt_and_does_not_create_native_work(tmp_path):
-    config=json.loads((ROOT/'scripts/acceptance/b6.json').read_text())
+@pytest.mark.parametrize('config_name', ['b6.json', 'scientific_progress.json'])
+def test_report_keeps_unknown_attempt_and_does_not_create_native_work(tmp_path, config_name):
+    config=json.loads((ROOT/'scripts/acceptance'/config_name).read_text())
+    pair=next(c['pair'] for c in config['cases'].values() if 'pair' in c)
+    case_id='manual-'+pair
     write(tmp_path/'suite.json',{'config':config,'previous':None})
-    write(tmp_path/'manual-known.attempt.json',{'started_ns':1})
+    write(tmp_path/(case_id+'.attempt.json'),{'started_ns':1})
     before=set(tmp_path.iterdir())
     value=invoke('report','--suite',tmp_path)
     assert value.returncode==0,value.stderr
     report=json.loads(value.stdout)
-    assert report['cases']['manual-known']['attempt']=='outcome_unknown'
-    assert report['cases']['rollback']['status']=='blocked'
-    assert report['comparisons']['known']['comparable'] is False
+    assert report['cases'][case_id]['attempt']=='outcome_unknown'
+    if 'rollback' in config['cases']:
+        assert report['cases']['rollback']['status']=='blocked'
+    assert report['comparisons'][pair]['comparable'] is False
     assert report['b6_passed'] is False
     assert set(tmp_path.iterdir())==before
 

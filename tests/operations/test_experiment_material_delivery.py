@@ -1,5 +1,6 @@
 """Real input binding and lazy file delivery, without solver or model processes."""
 import hashlib
+from dataclasses import replace
 import json
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from scidiscovery.agent_execution_settings import AgentSettings, MaterialInputSe
 from scidiscovery.artifact_agent.schema.artifact import ArtifactRegistration
 from scidiscovery.artifact_agent.schema.common import canonical_json
 from scidiscovery.operations.catalog import compile_catalog
+from tests.operations.test_hypothesis_objective_boundary import _foundation
 from scidiscovery.operations.invoke import InvocationArtifact, preflight_operation
 from scidiscovery.operations.input_validation import OperationInvocationError
 from tests.operations.test_agent_contract_alignment import CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN
@@ -64,7 +66,7 @@ def test_material_files_stream_through_real_root_and_worker(tmp_path, monkeypatc
     monkeypatch.setattr(runtime.artifacts, 'read', no_bulk)
     # Explicit file references accept JSON schemas and text/image MIME types too.
     created = root.call_tool('operation_invoke', {'name':'read-materials', 'operation_id':'science.experiment.v1',
-        'inputs':[{'port':'research_objective','artifact_names':['objective']},
+        'inputs':[{'port':'subject','artifact_names':['objective']},
                   {'port':'scientific_materials','artifact_names':['paper','csv','large_csv','archive','grid']},
                   {'port':'scientific_files','artifact_names':['png','report']}],
         'instruction':'Read exact materials without dropping the original paper.'})
@@ -126,7 +128,10 @@ def test_material_budget_rejects_before_any_content_read(catalog):
     def artifact(name,size,schema='opaque',media='application/pdf'):
         return InvocationArtifact(name, ArtifactRef(artifact_id=name,kind='material',sha256='a'*64,schema_id=schema),schema,media,size)
     inputs={p.name:() for p in compiled.spec.inputs}
-    inputs['research_objective']=(artifact('objective',10,'scidiscovery.research-objective.v1','application/json'),)
+    goal = _foundation()
+    source = artifact('objective',len(goal),'scidiscovery.scientific-foundation.v1','application/json')
+    source = replace(source, ref=source.ref.model_copy(update={'sha256': hashlib.sha256(goal).hexdigest()}))
+    inputs['subject']=inputs['objective_source']=(source,)
     inputs['scientific_materials']=(artifact('paper',4_714_974),)
     def forbidden(ref):raise AssertionError('Rejected inputs must not be read')
     with pytest.raises(OperationInvocationError) as error:
@@ -144,13 +149,13 @@ def test_material_budget_rejects_before_any_content_read(catalog):
     # Metadata-only boundary checks exercise GB budgets without allocating GBs.
     inputs['scientific_files']=()
     inputs['scientific_materials']=(artifact('paper',2_000_000_000),)
-    bound=preflight_operation(compiled,name='boundary',artifacts_by_port=inputs,instruction='Read',read_artifact=forbidden)
+    bound=preflight_operation(compiled,name='boundary',artifacts_by_port=inputs,instruction='Read',read_artifact=lambda ref: goal if ref==source.ref else forbidden(ref))
     assert next(v for v in bound.inputs if v.artifact_name=='paper').exposure=='file_reference'
     inputs['scientific_materials']=(artifact('paper',2_000_000_001),)
     with pytest.raises(OperationInvocationError) as error:
         preflight_operation(compiled,name='over',artifacts_by_port=inputs,instruction='Read',read_artifact=forbidden)
     assert error.value.reason_code=='input_item_too_large'
-    bound=preflight_operation(compiled,name='configured',artifacts_by_port=inputs,instruction='Read',read_artifact=forbidden,
+    bound=preflight_operation(compiled,name='configured',artifacts_by_port=inputs,instruction='Read',read_artifact=lambda ref: goal if ref==source.ref else forbidden(ref),
         material_settings=MaterialInputSettings(max_item_bytes=3_000_000_000,max_total_bytes=3_000_000_000))
     assert next(v for v in bound.inputs if v.artifact_name=='paper').exposure=='file_reference'
 
@@ -202,9 +207,15 @@ def test_file_delivery_preserves_declared_limits_and_bounds_aggregate_inline(cat
     inputs={p.name:() for p in compiled.spec.inputs}
     def item(name, size, schema, media):
         return InvocationArtifact(name,ArtifactRef(artifact_id=name,kind='material',schema_id=schema,sha256='a'*64),schema,media,size)
-    inputs['research_objective']=(item('objective',10,'scidiscovery.research-objective.v1','application/json'),)
-    inputs['scientific_materials']=tuple(item(name,100,'opaque','text/csv') for name in ('a','b','c'))
+    goal = _foundation()
+    source = item('objective',len(goal),'scidiscovery.scientific-foundation.v1','application/json')
+    source = replace(source, ref=source.ref.model_copy(update={'sha256': hashlib.sha256(goal).hexdigest()}))
+    inputs['subject']=inputs['objective_source']=(source,)
+    raw = b'x'*100
+    inputs['scientific_materials']=tuple(replace(value, ref=value.ref.model_copy(update={'sha256':hashlib.sha256(raw).hexdigest()}))
+        for value in (item(name,100,'opaque','text/csv') for name in ('a','b','c')))
     bound=preflight_operation(compiled,name='inline',artifacts_by_port=inputs,instruction='Read',
-        material_settings=MaterialInputSettings(inline_max_bytes=100,inline_total_bytes=210))
+        material_settings=MaterialInputSettings(inline_max_bytes=100,inline_total_bytes=2*len(goal)+200),
+        read_artifact=lambda ref: goal if ref==source.ref else raw)
     assert {x.artifact_name:x.exposure for x in bound.inputs if x.port_name=='scientific_materials'}=={
         'a':'on_demand','b':'on_demand','c':'file_reference'}

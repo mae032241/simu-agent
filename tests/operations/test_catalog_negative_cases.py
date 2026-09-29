@@ -781,3 +781,21 @@ def test_reviewer_cycles_are_closed() -> None:
         ),
     )
     _expect("reviewer_cycle", plugin)
+
+
+@pytest.mark.parametrize('changes', [
+    {'source_schemas': ()}, {'source_paths': ()},
+    {'source_paths': (('source',), ('source',))},
+    {'source_paths': (('source',)*9,)},
+    {'source_schemas': ('*',)}, {'select': 'siblings'},
+    {'producer_input_path': ('source',)}, {'producer_output_port': 'output'},
+])
+def test_alternative_origins_require_bounded_unambiguous_declaration(changes):
+    from scidiscovery.operations.spec import InputDerivationSpec
+    op = PLUGIN.operations[0]
+    anchor = op.inputs[0]
+    rule = InputDerivationSpec(anchor_port=anchor.name, source_paths=((), ('source',)),
+                               source_schemas=(anchor.schema_id,)).model_copy(update=changes)
+    derived = replace(anchor, name='derived', agent_visible=False, derivation=rule)
+    _expect('input_derivation_invalid', replace(PLUGIN,
+        operations=(replace(op, inputs=(*op.inputs, derived)), *PLUGIN.operations[1:])))

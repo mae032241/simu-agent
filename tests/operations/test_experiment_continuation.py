@@ -28,7 +28,7 @@ def continuation(tmp_path, monkeypatch, solver="sprocess", *, all_stages=False, 
     if solver == "sdevice" and include_grid:
         names.append("grid")  # A different port produces a different alias from the author's.
     invocation = {"name":"continuation", "operation_id":"science.experiment.v1",
-        "inputs":[{"port":"research_objective", "artifact_names":["objective"]},
+        "inputs":[{"port":"subject", "artifact_names":["objective"]},
                   {"port":"prior_experiment", "artifact_names":["observe.output"]},
                   {"port":"scientific_materials", "artifact_names":names}], "instruction":"Reuse exact sealed materials."}
     if require_execution_review:
@@ -263,7 +263,7 @@ def test_failed_producer_receipt_survives_recovery_and_a_third_task(tmp_path, mo
     name = next(b.name for b in f.runtime.scheduler_bindings.list(instance=f.instance.instance_id, namespace="artifact")
                 if b.object_id == original_record["artifact_ref"]["artifact_id"])
     third = f.root.call_tool("operation_invoke", {"name":"third", "operation_id":"science.experiment.v1",
-        "inputs":[{"port":"research_objective", "artifact_names":["objective"]},
+        "inputs":[{"port":"subject", "artifact_names":["objective"]},
                   {"port":"scientific_materials", "artifact_names":[name]}], "instruction":"Retain the exact recovered diagnostic."})
     assert third["result"]["state"] == "queued", third
     third_id = f.runtime.scheduler_bindings.resolve(instance=f.instance.instance_id, namespace="run", name="third")
@@ -277,3 +277,21 @@ def test_failed_producer_receipt_survives_recovery_and_a_third_task(tmp_path, mo
     f.worker, f.workspace = worker, Path(opened["workspace_path"])
     result = submit(f, [alias], outcome="blocked")
     assert result["state"] == "completed", result
+
+
+def test_continuation_derives_goal_from_report_without_root_rebinding(tmp_path, monkeypatch):
+    runtime, root, catalog, connections, instance = _real_experiment(tmp_path, monkeypatch)
+    request = dict(name='followup', operation_id='science.experiment.v1',
+        inputs=[dict(port='subject', artifact_names=['observe.output'])],
+        instruction='Investigate the remaining question in this sealed result.')
+    before = runtime.scheduler_bindings.list(instance=instance.instance_id, namespace='artifact')
+    assert root.call_tool('operation_preflight', request)['admissible']
+    assert runtime.scheduler_bindings.list(instance=instance.instance_id, namespace='artifact') == before
+    root.call_tool('operation_invoke', request)
+    run_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace='run', name='followup')
+    frozen = {item.port_name: item.artifact_ref for item in runtime.runs.status(run_id).inputs}
+    original_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace='run', name='observe')
+    original = runtime.runs.status(original_id)
+    assert frozen['subject'] == original.output_ref
+    assert frozen['objective_source'] == next(item.artifact_ref for item in original.inputs if item.port_name=='objective_source')
+    assert 'prior_experiment' not in frozen

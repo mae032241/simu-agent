@@ -77,7 +77,7 @@ def prepare(request, context):
     record = service.seal_implementation(context, payload=canonical_json(package.model_dump(mode="json")),
         scientific_material=canonical_json({"implementation": authored.model_dump(mode="json"),
             "scientific_files": request.scientific_files}),
-        sources=("research_objective", *request.scientific_files.values()), private_outputs=("tcad_manifest",))
+        sources=("objective_source", *request.scientific_files.values()), private_outputs=("tcad_manifest",))
     return {"state": "sealed", "implementation": record["alias"], "solver": authored.solver_kind,
         "artifact_name": record["artifact_name"],
         **({"review": record["review"]} if "review" in record else {}),
@@ -132,7 +132,7 @@ def debug(request, context):
         result.update(log=str(relative), log_truncated=len(raw) > 65536)
     if response.get("state") in {"collected", "succeeded", "failed", "cancelled"}:
         record = context.accept_evidence(raw=canonical_json(result), media_type="application/json",
-            derived_from=("research_objective", request.implementation), metadata={"kind": "experiment_debug", "name": request.name})
+            derived_from=("objective_source", request.implementation), metadata={"kind": "experiment_debug", "name": request.name})
         result["reference"] = record["alias"]
         result["artifact_name"] = record["artifact_name"]
     return result

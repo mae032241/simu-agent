@@ -39,7 +39,7 @@ from ..schema.common import canonical_json, canonical_sha256
 from ..schema.refs import ActorRef, ArtifactRef
 from ..schema.run_signal import SchedulerSignal
 from .artifacts import ArtifactService
-from .worker_connections import WORKER_CONNECTION_SCHEMA, WORKER_PARTICIPANT_SCHEMA
+from .worker_connections import WORKER_CONNECTION_SCHEMA, WORKER_CONNECTION_COLUMNS, WORKER_PARTICIPANT_SCHEMA
 from .local_workspace import (
     OpenWorkspace,
     WorkspaceBackend,
@@ -2123,6 +2123,7 @@ class RunService(ToolEvidenceMixin):
                          **{name: value[0] for name, value in EXECUTION_SETTINGS_COLUMNS["runs"].items()},
                          **{name: value[0] for name, value in RUN_READ_COLUMNS.items()}},
                 "run_activity": {"diagnostic_json": "BLOB"},
+                "worker_connections": {name: value[0] for name, value in WORKER_CONNECTION_COLUMNS.items()},
             }.items():
                 existing = {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}
                 for name, kind in columns.items():

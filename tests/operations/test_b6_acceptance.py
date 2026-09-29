@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from scripts import accept_b6 as suite
-from scripts.b6_evidence import assess, compare, digest, usage_report, verdict, write
+from scripts.b6_evidence import assess, compare, digest, usage_report, verdict, write, token_totals
 
 
 def test_config_covers_required_boundaries_without_new_instance_selection():
@@ -17,6 +17,71 @@ def test_config_covers_required_boundaries_without_new_instance_selection():
         'manual-ambiguous','auto-ambiguous','managed','rollback'}
     assert 'automatic_recovery' in config['cases']['recovery']['requires']
     assert config['managed']['per_service_memory_bytes']*2<=2_000_000_000
+
+
+def test_progress_benchmark_freezes_repeats_cost_and_scientific_not_runtime_verdicts():
+    config = suite.configuration(suite.SCRIPTS/'acceptance/scientific_progress.json')
+    assert len(config['cases']) == 12
+    for topic in ('stagnation', 'negative'):
+        for repeat in range(1, 4):
+            left = config['cases'][f'manual-{topic}-{repeat}']
+            right = config['cases'][f'auto-{topic}-{repeat}']
+            assert left['objective'] == right['objective'] == topic
+            assert left['multi_task'] and right['multi_task']
+            assert 'quality' in left['requires'] and 'quality' in right['requires']
+    assert config['budget']['suite']['total_tokens'] == 16_000_000
+    assert config['budget']['suite']['uncached_tokens'] == 1_200_000
+
+
+def test_budget_counts_cache_once_and_refuses_partial_or_invalid_accounting():
+    usage = dict(coverage='observed', groups={'root':dict(input_tokens=100,cached_input_tokens=80,output_tokens=5)})
+    assert token_totals(usage) == dict(total_tokens=105, uncached_tokens=25)
+    with pytest.raises(ValueError, match='incomplete'):
+        token_totals({**usage, 'coverage':'partial'})
+    assert token_totals({**usage, 'coverage':'partial'}, require_complete=False)['total_tokens'] == 105
+    usage['groups']['root']['cached_input_tokens'] = 101
+    with pytest.raises(ValueError, match='invalid'):
+        token_totals(usage)
+
+
+def test_suite_budget_charges_failed_attempt_and_blocks_unknown_or_missing_usage(tmp_path, monkeypatch):
+    config = suite.configuration(suite.SCRIPTS/'acceptance/scientific_progress.json')
+    manifest = dict(config=config)
+    case_id = next(iter(config['cases']))
+    target = tmp_path/case_id
+    target.mkdir()
+    write(tmp_path/(case_id+'.attempt.json'), {})
+    with pytest.raises(ValueError, match='outcome_unknown'):
+        suite.budget_admission(tmp_path, manifest)
+    write(tmp_path/(case_id+'.exit.json'), {'returncode':1})
+    (target/'model-submission-started').touch()
+    report = dict(status='failed',resource=dict(elapsed_seconds=10),usage=dict(coverage='partial',groups={}))
+    monkeypatch.setattr(suite, 'result', lambda *args: report)
+    with pytest.raises(ValueError, match='incomplete'):
+        suite.budget_admission(tmp_path, manifest)
+    report['usage'] = dict(coverage='observed',groups={'root':dict(input_tokens=100,cached_input_tokens=80,output_tokens=5)})
+    assert suite.budget_admission(tmp_path, manifest)['spent'] == dict(total_tokens=105,uncached_tokens=25,execution_seconds=10)
+    config['budget']['suite']['uncached_tokens'] = config['budget']['session']['uncached_tokens'] + 24
+    with pytest.raises(ValueError, match='insufficient'):
+        suite.budget_admission(tmp_path, manifest)
+
+
+def test_native_case_observed_budget_stops_even_with_partial_usage(tmp_path, monkeypatch):
+    from scripts import acceptance_native_cases as native
+    config = suite.configuration(suite.SCRIPTS/'acceptance/scientific_progress.json')
+    host = object.__new__(native.NativeCaseJourney)
+    host.case_config = dict(scenario='manual', budget=deepcopy(config['budget']))
+    host.case_config['budget']['session']['uncached_tokens'] = 25
+    host.logdir = tmp_path/'logs'
+    host.started_threads = {'r','missing'}
+    host.case_started_at = native.time.monotonic()
+    host.save_usage = lambda: write(tmp_path/'usage.json', dict(root_thread='r',threads={
+        'r':dict(inputTokens=100,cachedInputTokens=80,outputTokens=5)}))
+    with pytest.raises(RuntimeError, match='uncached_tokens'):
+        host.check_case_budget([], [])
+    saved = json.loads((tmp_path/'budget-observation.json').read_text())
+    assert saved['coverage'] == 'partial'
+    assert saved['observed']['total_tokens'] == 105
 
 
 def test_uncertain_attempt_cannot_be_resubmitted(tmp_path,monkeypatch):

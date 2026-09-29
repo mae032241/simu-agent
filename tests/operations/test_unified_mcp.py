@@ -151,7 +151,16 @@ def test_optional_source_proxy_daemon_does_not_register_worker_as_scheduler(tmp_
 
 
 @pytest.mark.parametrize("backend", ["local"])
-def test_gateway_scopes_actual_worker_lifecycle_and_sealed_result(tmp_path, backend):
+@pytest.mark.parametrize("binding_clock", ["forward", "equal", "backward"])
+def test_gateway_scopes_actual_worker_lifecycle_and_sealed_result(tmp_path, backend, monkeypatch, binding_clock):
+    from types import SimpleNamespace
+    from scidiscovery.artifact_agent.service import runs as run_module, worker_connections
+    # Binding order must follow accepted attachments, not wall time or random IDs.
+    ids = iter(("f" * 32, "0" * 32))
+    monkeypatch.setattr(run_module, "uuid", SimpleNamespace(uuid4=lambda: SimpleNamespace(hex=next(ids))))
+    second = {"forward": "02", "equal": "01", "backward": "00"}[binding_clock]
+    binding_time = ["2026-09-29T00:00:01.000000Z"]
+    monkeypatch.setattr(worker_connections, "timestamp", lambda: binding_time[0])
     catalog, runtime, root, gateway, profile = queued(tmp_path, backend)
     listed = gateway.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
     assert [t["name"] for t in listed["result"]["tools"]] == list(GATEWAY_TOOLS)
@@ -262,6 +271,7 @@ def test_gateway_scopes_actual_worker_lifecycle_and_sealed_result(tmp_path, back
     assert "error" in call(gateway, "worker_csv_summarize", **child)
     # Reuse is a new exact Run, not reopening or modifying the sealed output.
     _invoke(root, name="second")
+    binding_time[0] = f"2026-09-29T00:00:{second}.000000Z"
     result(call(gateway, "worker_attach", {"name": "second", "thread_id": "child-1"}))
     reopened = result(call(gateway, "worker_open_assignment", **child))
     assert reopened.get("state") == "opened", reopened
@@ -296,17 +306,84 @@ def test_gateway_scopes_actual_worker_lifecycle_and_sealed_result(tmp_path, back
         assert unavailable['reading_guidance']['reuse_if_retained']==[]
         assert len(unavailable['reading_guidance']['read'])==3
         assert all(item['status'] == 'unknown' for item in unavailable['reading_guidance']['inputs'])
+    second_run = gateway.connections.resolve(platform_session="parent", thread_id="child-1")
+    last = result(call(gateway, "run_status", {"name": "second", "output_paths": []}))
+    result(call(gateway, "run_record_failure", {"name": "second", "reason": "End fixture task",
+        "expected_state": "running", "expected_last_activity_at": last["last_activity_at"]}))
+    assert UnifiedMCPRouter(root).connections.resolve(
+        platform_session="parent", thread_id="child-1").run_id == second_run.run_id
 
 
-def test_pre_gateway_archive_restores_without_fabricated_bindings(archive_system):
+@pytest.mark.parametrize("old_schema", ["no_bindings", "no_sequence"])
+def test_pre_gateway_archive_restores_without_fabricated_bindings(archive_system, old_schema):
     runtime, archives, instance_id, _ = archive_system
     with runtime.runs._connect() as connection:
-        connection.execute("DROP TABLE worker_connections")
+        connection.execute("DROP TABLE worker_connections" if old_schema == "no_bindings" else
+                           "ALTER TABLE worker_connections DROP COLUMN attachment_sequence")
     save_archive(archives, instance_id)
     runtime.runs._initialize()
     restore_archive(archives, instance_id)
     with runtime.runs._connect() as connection:
         assert connection.execute("SELECT COUNT(*) FROM worker_connections").fetchone()[0] == 0
+        assert "attachment_sequence" in {row[1] for row in connection.execute("PRAGMA table_info(worker_connections)")}
+
+
+def test_legacy_binding_migration_preserves_identity_and_rejects_ambiguous_order(tmp_path):
+    from scidiscovery.artifact_agent.service.run_records import RunStateConflict
+    _, runtime, root, gateway, profile = queued(tmp_path)
+    child = {"child": "child-1", "profile": profile}
+    ids = []
+    for name in ("observation", "second"):
+        if name == "second":
+            _invoke(root, name=name)
+        result(call(gateway, "worker_attach", {"name": name, "thread_id": "child-1"}))
+        ids.append(gateway.connections.resolve(platform_session="parent", thread_id="child-1").run_id)
+        result(call(gateway, "worker_open_assignment", **child))
+        if name == "observation":
+            last = result(call(gateway, "run_status", {"name": name, "output_paths": []}))
+            result(call(gateway, "run_record_failure", {"name": name, "reason": "End fixture task",
+                "expected_state": "running", "expected_last_activity_at": last["last_activity_at"]}))
+    with runtime.runs._connect() as connection:
+        connection.execute("ALTER TABLE worker_connections DROP COLUMN attachment_sequence")
+        connection.execute("UPDATE worker_connections SET attached_at='2026-09-29T00:00:00Z'")
+    runtime.runs._initialize()
+    connections = UnifiedMCPRouter(root).connections
+    assert connections.resolve(platform_session="parent", thread_id="child-1").run_id == ids[1]
+    with runtime.runs._connect() as connection:
+        assert {row[0] for row in connection.execute("SELECT attachment_sequence FROM worker_connections")} == {0}
+    assert connections.previous_run(run_id=ids[1], platform_session="parent", thread_id="child-1") is None
+    last = result(call(gateway, "run_status", {"name": "second", "output_paths": []}))
+    result(call(gateway, "run_record_failure", {"name": "second", "reason": "End fixture task",
+        "expected_state": "running", "expected_last_activity_at": last["last_activity_at"]}))
+    with pytest.raises(RunStateConflict, match="ambiguous"):
+        connections.resolve(platform_session="parent", thread_id="child-1")
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_archive_restores_nonempty_worker_binding_order(tmp_path, legacy):
+    from test_instance_archive_continuation import _local_archive_system, InstanceArchive
+    _, runtime, instance, root = _local_archive_system(tmp_path)
+    _invoke(root)
+    gateway = UnifiedMCPRouter(root)
+    result(call(gateway, "worker_attach", {"name": "observation", "thread_id": "child-1"}))
+    bound = gateway.connections.resolve(platform_session="parent", thread_id="child-1")
+    result(call(gateway, "worker_open_assignment", child="child-1", profile=bound.execution_profile['profile']))
+    last = result(call(gateway, "run_status", {"name": "observation", "output_paths": []}))
+    result(call(gateway, "run_record_failure", {"name": "observation", "reason": "End fixture task",
+        "expected_state": "running", "expected_last_activity_at": last["last_activity_at"]}))
+    if legacy:
+        with runtime.runs._connect() as connection:
+            connection.execute("ALTER TABLE worker_connections DROP COLUMN attachment_sequence")
+    root.call_tool("progression_command", {"command": "pause"})
+    archive = InstanceArchive(runtime)
+    save_archive(archive, instance.instance_id)
+    runtime.runs._initialize()
+    restore_archive(archive, instance.instance_id)
+    restored = UnifiedMCPRouter(root).connections.resolve(platform_session="parent", thread_id="child-1")
+    assert restored.run_id == bound.run_id and restored.state == 'failed'
+    with runtime.runs._connect() as connection:
+        row = connection.execute("SELECT attachment_sequence FROM worker_connections WHERE run_id=?", (bound.run_id,)).fetchone()
+        assert row[0] == (0 if legacy else 1)
 
 
 def test_durable_binding_reconnects_exact_run_and_rejects_other_thread(tmp_path):

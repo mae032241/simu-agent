@@ -5,10 +5,10 @@ import time
 
 try:
     from scripts.accept_progression_recovery import RecoveryJourney
-    from scripts.b6_evidence import rows, run_snapshot, participants, sealed_outputs, read, write, verify_prior_turns
+    from scripts.b6_evidence import rows, run_snapshot, participants, sealed_outputs, read, write, verify_prior_turns, usage_report, token_totals
 except ModuleNotFoundError:
     from accept_progression_recovery import RecoveryJourney
-    from b6_evidence import rows, run_snapshot, participants, sealed_outputs, read, write, verify_prior_turns
+    from b6_evidence import rows, run_snapshot, participants, sealed_outputs, read, write, verify_prior_turns, usage_report, token_totals
 
 
 def recorded_control_call(root, writer, name, arguments):
@@ -63,6 +63,25 @@ def check_stale_writer(root, writer, output):
 
 
 class NativeCaseJourney(RecoveryJourney):
+    def check_case_budget(self, workers, helpers):
+        budget = self.case_config.get('budget')
+        now = time.monotonic()
+        if not budget or now < getattr(self, '_next_budget_sample', 0):
+            return
+        self._next_budget_sample = now + budget['sample_seconds']
+        self.save_usage()
+        write(self.logdir.parent/'started-threads.json', sorted(self.started_threads))
+        control = self.row() if self.case_config['scenario'] == 'autonomous' else None
+        usage = usage_report(self.logdir.parent, workers, helpers, control)
+        totals = token_totals(usage, require_complete=False)
+        totals['execution_seconds'] = now - self.case_started_at
+        reached = [key for key, limit in budget['session'].items() if totals[key] >= limit]
+        write(self.logdir.parent/'budget-observation.json', dict(
+            observed=totals, coverage=usage['coverage'], reached=reached,
+            limitation='Delayed usage is an observed lower bound, not a hard token limit.'))
+        if reached:
+            raise RuntimeError('acceptance_session_budget_exhausted:'+','.join(reached))
+
     def run_journey(self):
         self.control_attempted = False
         try:
@@ -102,12 +121,15 @@ class NativeCaseJourney(RecoveryJourney):
         self.before_runs=run_snapshot(self.root)
         write(self.logdir.parent/'before-runs.json',self.before_runs)
         self.status('scientific_turn',scenario=case['scenario'])
+        self.case_started_at = time.monotonic()
         (self.root/'model-submission-started').touch(exist_ok=False)
         if case['scenario']=='authority':
             return self.authority()
         objective=case['text']
+        scope = ('根据上一项完整任务的封存结论选择下一项，每次只派发一个负责人。无需为了数量重复无价值的任务。'
+                 if case.get('multi_task') else '只派发一个负责人。')
         common=('这是隔离验收中的科学任务。使用既有完整任务合同，不拆成 Root 子步骤。'
-            '科学内容必须来自 Worker 封存结果。只派发一个负责人，不运行 TCAD、网络或外部作业。'
+            '科学内容必须来自 Worker 封存结果。'+scope+'不运行 TCAD、网络或外部作业。'
             '负责人可以使用本任务明确要求的助手；否则不使用助手。不要人为睡眠。\n'+objective)
         if case['scenario']=='autonomous':
             self.call('artifact_ingest_text',dict(name='acceptance.objective',text=common,on_conflict='reject'))
@@ -123,6 +145,7 @@ class NativeCaseJourney(RecoveryJourney):
             if len(current)>case['max_observed_runs']:
                 raise RuntimeError('acceptance_run_scope_exceeded')
             workers,helpers=participants(self.root,[v['run_id'] for v in current])
+            self.check_case_budget(workers, helpers)
             if case['scenario']=='helper-crash' and injected is None:
                 for helper in helpers:
                     if helper['thread_id'] and helper['admitted_at'] and not helper['released_at']:
@@ -153,7 +176,11 @@ class NativeCaseJourney(RecoveryJourney):
         evidence=sealed_outputs(self.root,current)
         write(self.logdir.parent/'sealed-evidence.json',evidence)
         write(self.logdir.parent/'participants.json',dict(workers=workers,helpers=helpers))
-        checks['sealed_delivery']='passed' if len(current)==1 else 'failed'
+        checks['sealed_delivery']='passed' if (bool(current) if case.get('multi_task') else len(current)==1) else 'failed'
+        if case.get('multi_task'):
+            # A correct early stop is useful science, but is not an observation
+            # of a multi-task stagnation trigger. Human review must distinguish it.
+            checks['scientific_correction']='not_observed'
         if case['scenario'].startswith('helper'):
             observed=[]
             for helper in helpers:

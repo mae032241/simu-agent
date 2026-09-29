@@ -9,7 +9,7 @@ from __future__ import annotations
 from copy import deepcopy
 from ...agent_execution_settings import EXECUTION_SETTINGS_COLUMNS
 from .run_records import RUN_READ_COLUMNS
-from .worker_connections import WORKER_CONNECTION_SCHEMA, WORKER_PARTICIPANT_SCHEMA
+from .worker_connections import WORKER_CONNECTION_SCHEMA, WORKER_CONNECTION_COLUMNS, WORKER_PARTICIPANT_SCHEMA
 
 import base64
 import gzip
@@ -183,7 +183,8 @@ def execution_settings_restore_view(data):
     original table SQL, constraints and every unrelated index/trigger definition.
     """
     result = None
-    columns = {**EXECUTION_SETTINGS_COLUMNS, "runs": {**EXECUTION_SETTINGS_COLUMNS["runs"], **RUN_READ_COLUMNS}}
+    columns = {**EXECUTION_SETTINGS_COLUMNS, "runs": {**EXECUTION_SETTINGS_COLUMNS["runs"], **RUN_READ_COLUMNS},
+               "worker_connections": WORKER_CONNECTION_COLUMNS}
     for table, definitions in columns.items():
         info = data["schema"]["tables"].get(table)
         if info is None:
@@ -254,6 +255,9 @@ def execution_settings_restore_view(data):
             with sqlite3.connect(":memory:") as transient:
                 transient.row_factory = sqlite3.Row
                 transient.executescript(ddl)
+                if table == "worker_connections":
+                    for name, (definition, _) in WORKER_CONNECTION_COLUMNS.items():
+                        transient.execute(f"ALTER TABLE worker_connections ADD COLUMN {name} {definition}")
                 addition = schema(transient)
             projected["schema"]["objects"] = sorted(
                 [*projected["schema"]["objects"], *addition["objects"]], key=lambda item: (item["type"], item["name"]))

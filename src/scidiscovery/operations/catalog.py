@@ -337,6 +337,17 @@ def _validate_operation_contracts(plugin_map: dict[str, PluginDefinition], compo
                 current, seen = port, set()
                 while current.derivation is not None:
                     rule = current.derivation
+                    if rule.source_paths or rule.source_schemas:
+                        if (not rule.source_paths or not rule.source_schemas
+                                or rule.producer_input_path or rule.producer_output_port is not None
+                                or rule.select != "subject"
+                                or len(rule.source_paths) > 8
+                                or len(set(rule.source_paths)) != len(rule.source_paths)
+                                or any(len(path) > 8 or any(not _ID.fullmatch(step) for step in path)
+                                       for path in rule.source_paths)
+                                or len(set(rule.source_schemas)) != len(rule.source_schemas)
+                                or any(not name or name == "*" for name in rule.source_schemas)):
+                            _fail("input_derivation_invalid", plugin.plugin_id, op_id)
                     if (current.name in seen or rule.anchor_port not in input_ports
                             or (rule.producer_output_port is not None and
                                 (not _ID.fullmatch(rule.producer_output_port) or rule.select != "subject"))
