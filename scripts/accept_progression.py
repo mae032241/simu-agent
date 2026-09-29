@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 from contextlib import closing
-import fcntl
 import json
 import os
 from pathlib import Path
@@ -175,6 +174,7 @@ def main():
     parser.add_argument('--retry-startup', action='store_true',
         help='retry after fixing startup only when no model submission was attempted')
     parser.add_argument('--child', action='store_true', help=argparse.SUPPRESS)
+    parser.add_argument('--lock-fd', type=int, help=argparse.SUPPRESS)
     args = parser.parse_args()
     root = args.candidate.resolve()
     if args.scenario not in {'science','recovery'} and args.case_file is None:
@@ -210,8 +210,7 @@ def main():
     for key in ('OMP_NUM_THREADS', 'OPENBLAS_NUM_THREADS', 'MKL_NUM_THREADS', 'NUMEXPR_NUM_THREADS',
                 'TOKIO_WORKER_THREADS', 'RAYON_NUM_THREADS'):
         environment[key] = '1'
-    with (Path('/tmp') / f'scid-tests-{os.getuid()}.lock').open('a') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    with guard.serial_lock(args.lock_fd) as lock:
         output.mkdir()
         (output / 'fixture-logs').mkdir()
         environment['SCID_HOST_PROBE_LOCK_FD'] = str(lock.fileno())
@@ -247,4 +246,8 @@ def main():
 
 
 if __name__ == '__main__':
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except BlockingIOError:
+        print('serial_lock_busy: another serial task is running; no journey was started.',file=sys.stderr)
+        raise SystemExit(75)

@@ -12,13 +12,17 @@
 | `manual-ambiguous` / `auto-ambiguous` | 同一不可辨识问题；必须保留无法区分的结论，不能靠给出错误确定结论降低成本 |
 | `helper` | 一个负责人调用原生助手；核验原生完成状态，以及负责人封存结果中的核验、整合 |
 | `helper-crash` | 观测助手正在运行时终止自己启动的控制 daemon 并重启；要求原 Worker/helper 身份、助手确切回合及封存交付保留 |
-| `authority` | 后台 Root 运行后由交互 Root 接管；以原生返回的原 Root 身份尝试迟到写入，必须由调度所有权守卫拒绝 |
+| `authority` | 后台 Root 运行后由交互 Root 接管；在控制 socket 重放实际记录的旧代理身份，确认旧实例仍可读而迟到写入被所有权守卫拒绝。该故障注入不等同于复用原生旧连接 |
 | `recovery` | 原生暂停/恢复，再重启控制服务，要求原 Root 自动继续且目标、配置、消耗不回退；安全暂停不算通过 |
+| `closeout` | 一轮 Root 只读既有封存结果并自然完成交接；核对确切原生回合 completed，再接管、释放旧 writer、停止。无崩溃注入，不重复科学任务 |
 | `rollback` | 在 `managed` 后的状态副本上启动明确指定的旧安装版本，验证服务及封存内容可读；仅证明隔离环境兼容性 |
 
 `helper` 案例的显式助手要求仅用于验收能力，不是生产工作流的强制阶段。
 若助手太快结束、故障注入窗口未出现，结果为未观测，不自动重试。
-目前已知真实 Root 崩溃后会安全暂停；修好自动继续逻辑前，不必重复运行 `recovery`。
+已实现恢复时确认原 Root 中断后的有预算续推，源码及子进程验证通过，真实模型验收仍待执行。
+恢复消耗已有 max_attempts 预算，不自动增加配置；max_attempts=1 会在第一次中断后停止。
+`recovery` 必须观测重启后实际完成交接，不能只凭连接恢复或旧回合仍为 running 判通过。
+回滚按用户决定后置，不阻塞本轮恢复与服务托管验收。
 
 尚不覆盖：正式安装器及正式 systemd 服务的事务回滚、所有脱离监督树的原生模型进程
 资源、真实 TCAD（A6 后置）。单个案例通过不能宣称整个 B6 通过。
@@ -40,14 +44,18 @@ python scripts/accept_b6.py run manual-known --suite ../../.b6-acceptance
 ```
 
 `init` 已执行过就跳过，不能覆盖已有目录。`prepare` 复用安装而不重新构建，并冻结配置、
-基线和程序身份。`run` 在普通终端执行，打印管理链接；选择已有 `b0a-calibration`，
+基线和程序身份。原生案例的 `run` 在普通终端执行，打印管理链接；选择已有 `b0a-calibration`，
 无需再执行 continue。每次只选一个案例；配对另一组用 `auto-known`，依次 prepare/run。
+
+`managed` 不调用模型、不要求绑定；在能访问用户 systemd 总线的普通终端执行。
 
 建议顺序：`managed` → 已知关系配对 → 歧义配对 → `helper` → `helper-crash` →
 `authority`。恢复修复完成后再测 `recovery`。`rollback` 需在 init 时额外传
 `--previous-installed <旧安装候选>`，不能用同一构建冒充回滚。
 
-每次启动前写入不可覆盖的 attempt 记录。失败、终端中断、超时都保留原记录，禁止
+先取得全局串行锁，再在子进程启动前写入不可覆盖的 attempt 记录；监督器继承同一把锁。
+锁忙时返回 serial_lock_busy，不消耗 attempt、不启动模型，待占用结束可重试原命令。
+失败、终端中断、超时都保留原记录，禁止
 自动重放。先读 summary/resource/状态再制定恢复动作；不能通过删除 attempt 文件重跑。
 新一轮复验须使用新 suite，保留旧轮成本和失败证据。
 
@@ -81,10 +89,8 @@ python scripts/accept_b6.py review manual-known --suite ../../.b6-acceptance \
 - 单次配对是小样本证据，不证明普遍收益；不提供虚构的逐请求账单或货币成本。
 - 原生任务沿用 `scripts/test_resources.json` 的串行、RSS 和系统余量止损；用户绑定等待
   与执行预算分开。无需提高原生进程虚拟地址限制。
-- Dirty 是系统全局脏页，不能归因于某个验收进程。`dirty_stop_bytes` 默认 128 MiB，
-  运行中连续采样超限达到 `dirty_stop_grace_seconds`（默认 5 秒）才终止；中间回落则重新
-  计时。启动前超限会先等写回，持续超限则拒绝启动。RAM 余量、余量骤降、RSS 与超时
-  仍立即按原规则检查，不参与 Dirty 的等待窗口。结果记录 Dirty 峰值、次数与持续时间。
+- 不再采样或监控系统 Dirty，不因脏页等待、拒绝启动或终止任务。保留 RAM 余量、
+  余量骤降、进程树 RSS、超时与日志上限保护；旧验收的 Dirty 止损记录仅作历史证据。
   资源配置纳入验收工具指纹；不能在配对实验之间静默修改阈值。
 - managed 的两个 unit 各有配置化 MemoryMax 和 RuntimeMaxSec；监督器退出或崩溃后也受
   systemd 时限约束。正常退出会停止自己创建的 unit，不碰正式服务。

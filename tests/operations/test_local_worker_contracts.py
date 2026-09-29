@@ -116,6 +116,40 @@ def _write_result(worker: LocalWorkerMCPRouter) -> None:
     (worker._workspace.output_directory / "result.json").write_text(content)
 
 
+def test_fresh_runtime_submits_existing_bound_workspace_without_reopening(tmp_path):
+    from tests.operations.worker_fixtures import attached_worker
+    catalog, runtime, _, root = _system(tmp_path)
+    _invoke(root)
+    worker=attached_worker(runtime, root, 'observation')
+    worker.call_tool('worker_open_assignment', {})
+    _write_result(worker)
+    before=runtime.runs.status(worker._run_id)
+    original=(worker._workspace.output_directory/'result.json').read_bytes()
+    restarted=open_runtime(project_root=tmp_path/'project',state_root=tmp_path/'state',worker_backend='local')
+    restarted.runs.operation_catalog=catalog
+    restored=LocalWorkerMCPRouter(restarted.runs,operation_id=before.operation_id,
+        operation_digest=before.operation_digest,run_id=before.run_id,
+        trusted_caller=worker._trusted_caller)
+    assert restored.call_tool('worker_submit_result', {})['state']=='completed'
+    after=restarted.runs.status(before.run_id)
+    assert (after.deadline_at,after.started_at)==(before.deadline_at,before.started_at)
+    assert (restored._workspace.output_directory/'result.json').read_bytes()==original
+
+
+def test_queued_assignment_still_requires_explicit_open_with_repair_hint(tmp_path):
+    from tests.operations.worker_fixtures import attached_worker
+    from scidiscovery.artifact_agent.interfaces.mcp_worker_protocol import WorkerToolError
+    _, runtime, _, root = _system(tmp_path)
+    _invoke(root)
+    worker=attached_worker(runtime, root, 'observation')
+    with pytest.raises(WorkerToolError) as caught:
+        worker.call_tool('worker_heartbeat', {})
+    diagnostic=caught.value.details[0]
+    assert diagnostic['code']=='assignment_not_open' and diagnostic['repairable']
+    assert 'worker_open_assignment' in diagnostic['message']
+    assert runtime.runs.status(worker._bound_run_id).state=='queued'
+
+
 @pytest.mark.parametrize("backend", ["local"])
 def test_one_tool_model_change_reaches_schema_call_and_identity(tmp_path, monkeypatch, backend):
     from dataclasses import replace

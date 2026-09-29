@@ -96,6 +96,29 @@ def test_restart_retains_participant_access_and_parent_revocation(tmp_path, monk
         connections.participant(platform_session='session', thread_id='helper')
 
 
+def test_recreated_gateway_restores_running_owner_and_helper_without_open(tmp_path, monkeypatch):
+    from scidiscovery.artifact_agent.interfaces.mcp_gateway import UnifiedMCPRouter
+    runtime, gateway, run_id, call, owner = _gateway(tmp_path, monkeypatch)
+    _result(call('worker_helper', {'name':'inspect', 'task':'Inspect data.'}))
+    _result(call('worker_open_assignment', thread='helper', parent='owner'))
+    before=runtime.runs.status(run_id)
+    marker=Path(owner['workspace_path'])/'scratch'/'preserved.txt'
+    marker.parent.mkdir(exist_ok=True)
+    marker.write_text('unfinished work')
+    # A new gateway has no cached routers or tool state, like a restarted daemon.
+    UnifiedMCPRouter.__init__(gateway, gateway.root)
+    assert _result(call('worker_heartbeat'))['state']=='running'
+    assert _result(call('worker_heartbeat', thread='helper'))['state']=='running'
+    assert marker.read_text()=='unfinished work'
+    after=runtime.runs.status(run_id)
+    assert (after.run_id,after.deadline_at,after.started_at)==(before.run_id,before.deadline_at,before.started_at)
+    assert _result(call('worker_helper', {'name':'inspect','action':'release'}))['access']=='released'
+    assert 'error' in call('worker_heartbeat', thread='helper')
+    # Submission reaches output validation rather than requiring another open.
+    reply=_result(call('worker_submit_result'))
+    assert reply['state']=='rejected' and reply['diagnostics']
+
+
 def test_stage_and_submission_authority_are_declared_once():
     from scidiscovery.general_science_experiment_task import STAGE_TOOL
     from scidiscovery.operations.lifecycle import AGENT_LIFECYCLE_PROTOCOL

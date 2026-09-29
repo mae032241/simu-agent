@@ -435,6 +435,22 @@ def test_real_proxy_daemon_preserves_scope_and_worker_does_not_register_client(t
         with sqlite3.connect(runtime.scheduler_bindings.client_database_path) as db:
             before = db.execute("SELECT COUNT(*) FROM scheduler_clients").fetchone()[0]
         assert result(request("scid_call", {"name":"worker_open_assignment"},worker=True))["state"] == "opened"
+        run_id=runtime.scheduler_bindings.resolve(instance=root.facade.instance,namespace='run',name='observation')
+        opened=runtime.runs.status(run_id)
+        process.kill();process.join(5)
+        assert not process.is_alive()
+        socket.unlink(missing_ok=True)
+        process=multiprocessing.get_context('fork').Process(target=serve)
+        process.start()
+        deadline=time.monotonic()+5
+        while not socket.exists() and time.monotonic()<deadline:
+            time.sleep(.02)
+        assert socket.exists()
+        # The same native caller continues through a fresh broker/Worker router;
+        # no model-facing reopen or new Run is needed after the service crash.
+        assert result(request('scid_call', {'name':'worker_heartbeat'},worker=True))['state']=='running'
+        recovered=runtime.runs.status(run_id)
+        assert (recovered.run_id,recovered.deadline_at,recovered.started_at)==(opened.run_id,opened.deadline_at,opened.started_at)
         assert "error" in request("scid_call", {"name":"instance_current"},worker=True)
         with sqlite3.connect(runtime.scheduler_bindings.client_database_path) as db:
             assert db.execute("SELECT COUNT(*) FROM scheduler_clients").fetchone()[0] == before

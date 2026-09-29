@@ -15,6 +15,20 @@ def read(path):
     return json.loads(Path(path).read_text())
 
 
+def verify_prior_turns(rpc, references):
+    """No new model work until the interrupted acceptance's exact turns ended."""
+    evidence=[]
+    for reference in references:
+        thread=rpc('thread/read',dict(threadId=reference['thread_id'],includeTurns=True))['thread']
+        turn=next((v for v in thread.get('turns',[]) if v['id']==reference['turn_id']),None)
+        if thread.get('id')!=reference['thread_id'] or turn is None:
+            raise RuntimeError('prior_native_turn_not_found')
+        evidence.append(dict(**reference,status=turn['status']))
+        if turn['status'] not in {'completed','failed','interrupted'}:
+            raise RuntimeError('prior_native_turn_not_terminal; do_not_start_another_case')
+    return evidence
+
+
 def write(path, value):
     path = Path(path)
     temporary = path.with_suffix(path.suffix + '.tmp')

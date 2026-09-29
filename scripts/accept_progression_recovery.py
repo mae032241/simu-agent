@@ -10,23 +10,37 @@ from contextlib import closing
 
 try:
     from scripts.accept_progression import Journey, write
+    from scripts.b6_evidence import read, verify_prior_turns
 except ModuleNotFoundError:
     from accept_progression import Journey, write
+    from b6_evidence import read, verify_prior_turns
 
 
 OBJECTIVE = """本轮是后台控制恢复验收，复用已有封存成果，不重新进行科学计算。
 先读取一个小页 run_list，选取所选旧实例已有封存结果的决策字段，
-通过 progression_report 交付简短交接，保留原结果的限制。
+通过 progression_report 交付简短交接，保留原结果的限制；完成这项交接后设置 completed=true。
 不得新建 Run、派发 Worker 或助手、执行外部任务、改变原科学产物或增加预算。
 控制验收会主动暂停、恢复、重启服务及交互接管；恢复后先回读现状，不重复已完成动作。
 不要人为睡眠等待测试。本轮是单独的控制验收目标。
 """
 INGEST_ARGUMENTS = dict(name='acceptance.root-recovery.objective', text=OBJECTIVE, on_conflict='reject')
+CLOSEOUT_ARGUMENTS = dict(name='acceptance.root-closeout.objective', on_conflict='reject', text='''
+本轮只验收后台 Root 自然完成与控制收尾。读取已有 a6.tcad.audit 的最终决策字段，
+用 progression_report(completed=true) 简短交接并结束本回合，保留原结果的限制。
+不得新建科学任务、派发 Worker/助手、执行外部任务或改变科学产物、配置及预算。
+不做新的计算，不重复审批，不等待额外指令。''')
 
 
 def running_turn(row):
     checkpoint = json.loads(row['checkpoint_json'])
     return row['state'] == 'active' and row['host_json'] is not None and checkpoint.get('phase') == 'running' and bool(checkpoint.get('turn_id'))
+
+
+def naturally_completed(row):
+    checkpoint=json.loads(row['checkpoint_json'])
+    return (checkpoint.get('phase')=='idle' and checkpoint.get('turn_id') is None
+        and checkpoint.get('native_completion')=='completed'
+        and bool((checkpoint.get('report') or {}).get('completed')))
 
 
 def recovery_matches(before, after):
@@ -35,10 +49,12 @@ def recovery_matches(before, after):
     new = json.loads(after['host_json'] or 'null')
     first, second = map(json.loads, (before['checkpoint_json'], after['checkpoint_json']))
     return (new is not None and new['thread_id'] == old['thread_id']
+        and new.get('platform_session') == old['platform_session']
         and before['objective_ref_json'] == after['objective_ref_json']
         and before['config_json'] == after['config_json']
         and first['started_at'] == second['started_at']
         and second.get('rounds', 0) >= first.get('rounds', 0)
+        and second.get('attempts', 0) >= first.get('attempts', 0)
         and all(key in second.get('usage_records', {}) and all(
             second['usage_records'][key]['counted_tokens'][counter] >= value['counted_tokens'][counter]
             for counter in ('input_tokens', 'output_tokens'))
@@ -66,8 +82,12 @@ class RecoveryJourney(Journey):
             if predicate(row):
                 write(self.logdir.parent / (label + '.json'), row)
                 return row
-            if row.get('reason') in {'host_fault','budget_exhausted','resource_limit','submission_unknown',
-                    'goal_completed','root_turn_failed','attempt_budget_exhausted','task_admission_unknown'}:
+            # progression_report publishes goal_completed before the native
+            # turn ends. Active completion is a delivery event, not a stop.
+            stopped_goal = (row.get('reason')=='goal_completed'
+                and row.get('state') in {'paused','stopped'})
+            if stopped_goal or row.get('reason') in {'host_fault','budget_exhausted','resource_limit','submission_unknown',
+                    'root_turn_failed','attempt_budget_exhausted','task_admission_unknown'}:
                 raise RuntimeError(label + ':unexpected_stop:' + row['reason'])
             time.sleep(.2)
         raise TimeoutError(label)
@@ -81,6 +101,10 @@ class RecoveryJourney(Journey):
                 try:
                     status = self.call('progression_command', dict(command='pause'))
                     write(self.logdir.parent / 'failure-pause.json', status)
+                    # Leave the daemon alive until its native terminal witness
+                    # releases the old writer; closing immediately can strand it.
+                    self.wait_row(lambda row: row['state'] in {'paused','stopped'} and not row['host_json'],
+                        'failure-released', timeout=getattr(self, 'case_config', {}).get('stage_timeout_seconds',90))
                 except Exception as error:
                     write(self.logdir.parent / 'failure-pause.json', dict(
                         status='unconfirmed', error_type=type(error).__name__))
@@ -88,6 +112,9 @@ class RecoveryJourney(Journey):
 
     def run_recovery(self):
         value = self.initialize_host(check_native=False)
+        prior=self.root/'prior-native-turns.json'
+        if prior.exists():
+            write(self.logdir.parent/'prior-native-terminal.json', verify_prior_turns(self.rpc,read(prior)))
         self.status('awaiting_user', management_url=value['management_url'])
         expected_instance = getattr(self, 'case_config', {}).get('instance', 'b0a-calibration')
         print('请选择已有 ' + expected_instance + ' 实例：' + value['management_url'], flush=True)
@@ -108,14 +135,21 @@ class RecoveryJourney(Journey):
             raise RuntimeError('use_pre_progression_snapshot; existing_goal_budget_must_not_be_reset')
         write(self.logdir.parent / 'original-control.json', original)
         original_runs = self.runs_snapshot()
-        self.status('scientific_turn', scenario='root_control_recovery')
+        closeout_only=getattr(self,'case_config',{}).get('closeout_only',False)
+        self.status('scientific_turn', scenario='root_closeout' if closeout_only else 'root_control_recovery')
         # The supervisor submits control commands through the native MCP client;
         # it never fabricates a platform identity or writes control databases.
         (self.root / 'model-submission-started').touch(exist_ok=False)
-        self.call('artifact_ingest_text', INGEST_ARGUMENTS)
+        arguments=CLOSEOUT_ARGUMENTS if closeout_only else INGEST_ARGUMENTS
+        self.call('artifact_ingest_text', arguments)
         self.control_attempted = True
-        self.call('progression_command', dict(command='start', mode='background', objective_name='acceptance.root-recovery.objective'))
-        self.wait_row(running_turn, 'started')
+        self.call('progression_command', dict(command='start', mode='background', objective_name=arguments['name']))
+        started=self.wait_row(running_turn, 'started')
+        if not closeout_only:
+            self.pause_and_restart()
+        self.finish_control(original_runs,started if closeout_only else None)
+
+    def pause_and_restart(self):
         self.call('progression_command', dict(command='pause'))
         self.wait_row(lambda row: row['state']=='paused' and row['host_json'] is None, 'paused')
         print('已确认原生 Root 暂停并释放；继续恢复及控制服务重启。', flush=True)
@@ -134,6 +168,18 @@ class RecoveryJourney(Journey):
         # Only a successful public call proves the restarted broker is usable.
         status = self.call('progression_status', {})
         write(self.logdir.parent / 'recovered-public.json', status)
+
+    def finish_control(self,original_runs,started=None):
+        # Reconnection alone is not successful progression. Observe the original
+        # Root actually finish this read-only goal after the service restart.
+        completed=self.wait_row(naturally_completed,'recovered-completed')
+        if started is not None:
+            identity=json.loads(started['host_json'])
+            evidence=verify_prior_turns(self.rpc,[dict(thread_id=identity['thread_id'],
+                turn_id=json.loads(started['checkpoint_json'])['turn_id'])])
+            write(self.logdir.parent/'native-completed.json',evidence)
+            if evidence[0]['status']!='completed' or json.loads(completed['checkpoint_json'])['rounds']!=1:
+                raise RuntimeError('closeout_requires_one_naturally_completed_turn')
         self.call('progression_command', dict(command='takeover'))
         self.wait_row(lambda row: row['mode']=='interactive' and row['host_json'] is None, 'taken-over')
         status = self.call('progression_status', {})
@@ -142,9 +188,10 @@ class RecoveryJourney(Journey):
         self.call('progression_command', dict(command='stop'))
         final = self.call('progression_status', {})
         write(self.logdir.parent / 'summary.json', dict(status='root_control_passed',
-            b6_passed=False, observed_native_journey=True, scenario='root_control_recovery',
-            checks={'automatic_recovery':'passed'},
-            pause=True, resume=True, daemon_restart=True, exact_root_recovered=True,
+            b6_passed=False, observed_native_journey=True, scenario='root_closeout' if started is not None else 'root_control_recovery',
+            checks=({'automatic_recovery':'passed'} if started is None else dict(
+                natural_completion='passed',takeover='passed',writer_release='passed',state_preserved='passed')),
+            pause=started is None, resume=started is None, daemon_restart=started is None, exact_root_recovered=started is None,
             takeover=True, new_runs=0, progression=final,
             unverified=['late old-root write rejection with live native request',
                 'Worker/helper crash survival', 'manual/autonomous token comparison',

@@ -172,10 +172,11 @@ class LocalWorkerMCPRouter:
             gate = self.runs.instance_maintenance
             with gate.global_guard():
                 # RunService selects and guards the new assignment on open.
-                if (name == "worker_open_assignment" and not existing_assignment) or self._run_id is None:
+                run_id = self._run_id or self._bound_run_id
+                if (name == "worker_open_assignment" and not existing_assignment) or run_id is None:
                     yield
                 else:
-                    instance_id = self.runs.status(self._run_id).instance_id
+                    instance_id = self.runs.status(run_id).instance_id
                     with gate.guard(instance_id):
                         self.runs.scheduler_bindings.require_active_instance(instance_id=instance_id)
                         yield
@@ -210,6 +211,9 @@ class LocalWorkerMCPRouter:
             self._attempt_sources = {}
             self._attempt_finished = False
             try:
+                if name != "worker_open_assignment" and name in self._tools:
+                    self._restore_running_assignment()
+                    timing_run_id = self._run_id
                 tool = self._registered.get(name)
                 if tool is not None and tool.record_attempts and self._run_id is not None:
                     self._active_attempt = self.runs.begin_tool_attempt(self._run_id, tool, arguments,
@@ -387,7 +391,10 @@ class LocalWorkerMCPRouter:
             if name == "worker_open_assignment":
                 return self._open()
             if self._run_id is None or self._workspace is None:
-                raise WorkerToolError("worker_open_assignment must be called first")
+                raise WorkerToolError("worker_open_assignment must be called first", details=(
+                    contract_diagnostic("assignment_not_open", phase="tool_execution",
+                        affected_action="tool_call", repairable=True,
+                        message="Call worker_open_assignment to open your assigned task, then retry this action."),))
             if self._completed:
                 if name == "worker_submit_result":
                     return self._completed_result()
@@ -441,6 +448,26 @@ class LocalWorkerMCPRouter:
             # The common call boundary records concrete engineering failures.
             self.runs.record_activity(self._run_id, f"tool_succeeded:{name}")
             return result
+
+    def _restore_running_assignment(self):
+        """Reattach an exact durable binding after router eviction or daemon restart."""
+        if self._run_id is not None or self._bound_run_id is None or self._trusted_caller is None:
+            return
+        session, thread = self._trusted_caller
+        if self.is_helper:
+            status, _ = self.runs.worker_connections.participant(platform_session=session, thread_id=thread)
+        else:
+            status = self.runs.worker_connections.resolve(platform_session=session, thread_id=thread)
+        if status.run_id != self._bound_run_id:
+            raise WorkerToolError("This caller no longer owns the assigned task.")
+        # First opens remain explicit; failed, completed or expired work is never
+        # replaced by another queued Run. reopen preserves the original deadline
+        # and adopts durable tool evidence without replaying any tool execution.
+        if status.state != "running":
+            return
+        status, workspace = self.runs.reopen(run_id=status.run_id,
+            operation_id=self.operation_id, operation_digest=self.operation_digest)
+        self._run_id, self._workspace = status.run_id, workspace
 
     def _open(self) -> dict[str, Any]:
         if self.compiled.spec.independent_review_ports and not self.is_helper:

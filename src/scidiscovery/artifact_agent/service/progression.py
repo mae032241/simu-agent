@@ -55,6 +55,7 @@ class ProgressionCoordinator:
         self.thread = None
         self.lease = None
         self._pending_fault = None
+        self._restored_turn_id = None
 
     def start(self):
         # Exactly one owner per deployed control database, including two daemons.
@@ -246,6 +247,7 @@ class ProgressionCoordinator:
         return INSTRUCTION + '\n' + json.dumps(brief, ensure_ascii=False)
 
     def _connect(self, row):
+        self._restored_turn_id = None
         self.instance = row['instance_id']
         checkpoint = json.loads(row['checkpoint_json'])
         settings = json.loads(row['config_json'])['effective']
@@ -263,6 +265,14 @@ class ProgressionCoordinator:
         self.events = []
         host = self.host_factory(row, self._event)
         self.host = host
+        # Only the adapter's exact persisted-turn reconciliation permits this
+        # continuation. Ordinary failures, user pauses and unknown submissions
+        # do not gain an automatic retry merely because a connection exists.
+        if (row['host_json'] and row['state'] == 'active' and row['mode'] == 'background'
+                and checkpoint.get('phase') == 'running' and checkpoint.get('turn_id')
+                and host.turn_id == checkpoint['turn_id']):
+            # Terminal interruption may arrive after reconnect's thread/read.
+            self._restored_turn_id = checkpoint['turn_id']
         if row['host_json']:
             row = self.bindings.reconnect_host(instance_id=self.instance, scheduler_session=host.scheduler_session,
                 platform_session=host.identity.session_id, thread_id=host.identity.thread_id,
@@ -392,16 +402,27 @@ class ProgressionCoordinator:
         if checkpoint.get('phase') == 'running':
             if self.host.completion is None:
                 raise ProgressionFault('native_turn_state_unknown')
+            if self.host.completion.get('id') != checkpoint.get('turn_id'):
+                raise ProgressionFault('native_turn_identity_mismatch')
             if not self._reconcile_admissions():
                 return
             processed = checkpoint.get('processed_snapshot', {})
             if self.host.completion['status'] == 'completed':
                 processed = checkpoint.get('decision_snapshot', processed)
+            recovered = (self.host.completion['status'] == 'interrupted'
+                and self._restored_turn_id == checkpoint['turn_id'])
+            recovery = dict(attempts=checkpoint.get('attempts', 0)+1,
+                recovered_interruption=checkpoint['turn_id'],
+                last_report=checkpoint.get('report') or checkpoint.get('last_report'), report=None) if recovered else {}
+            # Charge recovery and consume the old turn in one checkpoint write.
+            # Retain the unprocessed snapshot and accepted tasks for a fresh
+            # decision; never replay the interrupted prompt or its tool calls.
             self._save(dict(phase='idle', processed_snapshot=processed,
                 running_seconds=checkpoint.get('running_seconds', 0)+max(0, self.clock()-checkpoint.get('round_started_at', self.clock())),
-                runtime_status='waiting', turn_id=None))
+                runtime_status='reconciling_interruption' if recovered else 'waiting', turn_id=None, **recovery))
+            self._restored_turn_id = None
             checkpoint = json.loads(self._row()['checkpoint_json'])
-            if self.host.completion['status'] != 'completed':
+            if self.host.completion['status'] != 'completed' and not recovered:
                 self._save(dict(runtime_status='root_turn_failed', attempts=checkpoint.get('attempts', 0)+1), reason='root_turn_failed', stop=True)
                 return
         report = checkpoint.get('report') or {}

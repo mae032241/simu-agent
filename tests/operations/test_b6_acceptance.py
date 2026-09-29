@@ -13,13 +13,15 @@ from scripts.b6_evidence import assess, compare, digest, usage_report, verdict, 
 def test_config_covers_required_boundaries_without_new_instance_selection():
     config=suite.configuration(suite.DEFAULT)
     assert config['instance']=='b0a-calibration'
-    assert set(config['cases'])=={'recovery','authority','helper','helper-crash','manual-known','auto-known',
+    assert set(config['cases'])=={'closeout','recovery','authority','helper','helper-crash','manual-known','auto-known',
         'manual-ambiguous','auto-ambiguous','managed','rollback'}
     assert 'automatic_recovery' in config['cases']['recovery']['requires']
     assert config['managed']['per_service_memory_bytes']*2<=2_000_000_000
 
 
 def test_uncertain_attempt_cannot_be_resubmitted(tmp_path,monkeypatch):
+    from scripts import run_tests as guard
+    monkeypatch.setattr(guard,'SERIAL_LOCK',tmp_path/'serial.lock')
     target=tmp_path/'manual-known';target.mkdir()
     case={'scenario':'manual'}
     write(target/'acceptance-case.json',case)
@@ -27,6 +29,7 @@ def test_uncertain_attempt_cannot_be_resubmitted(tmp_path,monkeypatch):
     manifest={'harness_digest':suite.harness_digest()}
     calls=[]
     def interrupted(command,**kwargs):
+        assert kwargs['pass_fds'] and '--lock-fd' in command
         calls.append(command)
         raise TimeoutError('supervisor_died_after_possible_submit')
     monkeypatch.setattr(suite.subprocess,'run',interrupted)
@@ -35,6 +38,85 @@ def test_uncertain_attempt_cannot_be_resubmitted(tmp_path,monkeypatch):
     assert len(calls)==1
     assert not (tmp_path/'manual-known.exit.json').exists()
     assert suite.result(tmp_path,{'config':{'cases':{'manual-known':{}}}},'manual-known')['attempt']=='outcome_unknown'
+
+
+def test_busy_serial_lock_does_not_consume_attempt_or_launch(tmp_path,monkeypatch):
+    import fcntl
+    from scripts import run_tests as guard
+    monkeypatch.setattr(guard,'SERIAL_LOCK',tmp_path/'serial.lock')
+    target=tmp_path/'authority';target.mkdir()
+    case={'scenario':'authority'}
+    write(target/'acceptance-case.json',case)
+    write(tmp_path/'authority.prepared.json',dict(case_digest=digest(case)))
+    def unexpected(*args,**kwargs):raise AssertionError('must not launch')
+    monkeypatch.setattr(suite.subprocess,'run',unexpected)
+    with guard.SERIAL_LOCK.open('a') as owner:
+        fcntl.flock(owner,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        with pytest.raises(BlockingIOError):
+            suite.run(tmp_path,{'harness_digest':suite.harness_digest()},'authority')
+    assert not (tmp_path/'authority.attempt.json').exists()
+    assert not (tmp_path/'authority.exit.json').exists()
+    assert not list(target.glob('journey-*'))
+
+
+def test_inherited_serial_lock_rejects_wrong_inode(tmp_path,monkeypatch):
+    from scripts import run_tests as guard
+    monkeypatch.setattr(guard,'SERIAL_LOCK',tmp_path/'serial.lock')
+    guard.SERIAL_LOCK.touch()
+    with (tmp_path/'wrong').open('a') as wrong:
+        with pytest.raises(ValueError,match='descriptor_mismatch'):
+            with guard.serial_lock(wrong.fileno()):
+                pytest.fail('unrelated descriptor accepted')
+
+
+def test_authority_replay_uses_recorded_proxy_and_requires_original_binding(tmp_path,monkeypatch):
+    from scripts import acceptance_native_cases as native
+    from scidiscovery.plugin_runtime import transport
+    writer=dict(owner_session='sch_old',instance_id='i',host_json=json.dumps(
+        dict(platform_session='actual-root',thread_id='actual-root')))
+    monkeypatch.setattr(native,'rows',lambda *args:[{'instance_id':'i'}])
+    requests=[]
+    def forward(path,raw,**kwargs):
+        requests.append(json.loads(raw));return {'result':{}}
+    monkeypatch.setattr(transport,'forward_request',forward)
+    native.recorded_control_call(tmp_path,writer,'instance_current',{})
+    assert requests[0]['_scidiscovery_scheduler_proxy']=='sch_old'
+    assert requests[0]['params']['_meta']['x-codex-turn-metadata']==dict(
+        session_id='actual-root',thread_id='actual-root')
+    monkeypatch.setattr(native,'rows',lambda *args:[{'instance_id':'another'}])
+    with pytest.raises(ValueError,match='binding_changed'):
+        native.recorded_control_call(tmp_path,writer,'instance_current',{})
+    assert len(requests)==1
+
+
+@pytest.mark.parametrize('reply,expected',[
+    ({'error':{'code':-32000,'message':'SchedulerInstanceConflict: Scheduling is paused or owned by another session; use an explicit control command.'}},'passed'),
+    ({'error':{'code':-32000,'message':'RootToolError: this MCP session is not bound'}},'not_observed'),
+    ({'result':{}},'failed'),
+])
+def test_authority_only_qualifies_exact_control_denial(tmp_path,monkeypatch,reply,expected):
+    from scripts import acceptance_native_cases as native
+    writer=dict(owner_session='old',instance_id='i')
+    current=dict(state='active',mode='interactive',host_json=None,owner_session='new')
+    monkeypatch.setattr(native,'rows',lambda root,db,query,args:[current] if 'scheduler_progression' in query else [])
+    monkeypatch.setattr(native,'recorded_control_call',lambda root,writer,name,args:
+        {'result':{'structuredContent':{'state':'active'}}} if name=='instance_current' else reply)
+    assert native.check_stale_writer(tmp_path,writer,tmp_path)==expected
+    current['state']='paused'
+    with pytest.raises(RuntimeError,match='takeover_not_established'):
+        native.check_stale_writer(tmp_path,writer,tmp_path)
+
+
+def test_authority_unbound_read_never_attempts_write(tmp_path,monkeypatch):
+    from scripts import acceptance_native_cases as native
+    monkeypatch.setattr(native,'rows',lambda *args:[dict(state='active',mode='interactive',host_json=None,owner_session='new')])
+    calls=[]
+    def unbound(root,writer,name,args):
+        calls.append(name);return {'result':{'structuredContent':{'state':'unbound'}}}
+    monkeypatch.setattr(native,'recorded_control_call',unbound)
+    with pytest.raises(RuntimeError,match='read_binding_unavailable'):
+        native.check_stale_writer(tmp_path,dict(instance_id='i',owner_session='old'),tmp_path)
+    assert calls==['instance_current']
 
 
 def test_mutated_case_is_rejected_before_any_attempt(tmp_path):

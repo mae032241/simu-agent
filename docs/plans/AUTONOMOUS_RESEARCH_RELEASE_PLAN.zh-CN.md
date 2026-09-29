@@ -1359,3 +1359,373 @@ Root 输入 546178、缓存输入 508544、输出 4302；Worker 输入 442184、
 
 同 suite 的 auto-known 已由相同旧实例快照和安装准备，未启动模型。待自主模式完成并
 通过同一 rubric 后才能计算配对收益，当前不作“更省 token”的结论。
+
+### B6 已知关系配对完成（2026-09-29）
+
+上述 auto-known 随后完成，证据 `.b6-acceptance-04/auto-known/journey-1790648929327443858`。
+一个 Worker 封存三点观测及样本内关系，保留误差、重复测量、外推和因果限制；三项
+内容 rubric 均通过，复核绑定确切 CAS 摘要。后台 Root 两轮完成派发及最终回读，
+checkpoint.report.completed=true；验收脚本随后正常 pause 并释放 Host。等待期间采样
+显示 Worker 用量增长而 Root 计数不变，证明本轮控制服务承担等待。没有 helper。
+
+| 累计输入+输出 token | 交互模式 | 自主模式 | 变化 |
+| --- | ---: | ---: | ---: |
+| Root | 550480 | 705271 | +28.12% |
+| Worker | 450329 | 423117 | −6.04% |
+| 合计 | 1000809 | 1128388 | +12.70% |
+
+两组基线、目标、配置摘要一致，质量和角色用量覆盖均通过，比较记录为 suite 下
+`known-comparison.json`。缓存输入已包含在上表中，分别 924416 / 990080；非缓存输入
+加输出分别 76393 / 138308，不代表货币账单。这一小样本证明自主衔接可用，未证明
+token 收益；额外开销来源仍需逐请求归因，不能只凭等待机制推断总量下降。
+
+自主组 elapsed=347.467 s（含用户绑定），树 RSS 峰值 1353506816 B，无资源止损。
+外层 Host 的 tool_result_bytes=0 是后台工具通知未覆盖，不是零工具输出，不能据此
+宣称回包节省。两组没有助手，agent-as-tool 仍待专门案例；歧义配对、故障恢复等剩余
+项继续按 B6 验收清单执行，B6 整体不标完成。旧失败尝试成本继续单独保留。
+
+准备 manual-ambiguous 时，原 suite 路径叠加案例名超过 Unix socket 长度，启动前被
+拒绝，未创建模型任务。保留原 prepare intent，改为短目录 `.b6-05`；核对其 baseline、
+conditions、harness、安装及配置摘要均与 `.b6-acceptance-04` 一致，prior-evidence.json
+保留来源。新案例已准备（0.988 s、103870464 B，无止损），待普通终端运行及用户选择
+已有 b0a-calibration；未增加预算或重跑前一科学任务。
+
+### B6 歧义案例再次被全局 Dirty 止损中断（2026-09-29）
+
+`.b6-05/manual-ambiguous/journey-1790649612322780121` 用户绑定后派发一个负责人；
+187.575 s 时监督器因 dirty_sustained 停止，返回 -15。系统 Dirty 峰值 244170752 B，
+超过 134217728 B 持续观测 5.05 s；验收树 RSS 峰值 807522304 B，结束时 MemAvailable
+14248579072 B。没有 RSS 超限或 OOM 证据，不能将全局脏页归因于该任务。
+
+Run `run_9dabd49c5a0d415dba0c325337c1daca` 当时仍 running、未封存；Root/Worker 最后
+收到的原生回合事件均为 started，缺少终态确认。中断记录及部分用量保存于
+interruption-audit.json，原生精确线程/回合引用保留供后续对账；没有重放或清零预算。
+事后系统 Dirty 已回落至 676 KiB，但不能据此宣称原生线程已停止。此案例未通过，
+尚不能评价其科学输出。绝对全局 Dirty 门槛在内存充足时再次打断验收，说明仅延长
+到 5 秒没有解决该监督策略对本场景的适用性问题；需要先修订策略并核对原生终态，
+再继续模型验收，不能让用户原样重复此命令。
+
+### 取消 Dirty 监控（2026-09-29，用户明确要求）
+
+从共用验收监督器删除系统 Dirty 采样、阈值配置、启动等待、运行止损和压力统计。
+保留原有可用内存下限/骤降、进程树 RSS、地址空间（适用时）、超时、日志及串行锁。
+历史证据不改写，新运行不再因系统脏页中断；本次没有启动新模型或重放原任务。
+
+定向源码 3 passed，真实子进程监督回归 7 passed（分别 0.422 s / 1.005 s，树 RSS
+49352704 B / 60985344 B）。通过注入读数验证高 Dirty 不阻断启动或结束，同时验证
+启动/运行内存不足、余量骤降、RSS 和超时仍生效，未制造真实内存压力。过程测试首轮
+一项期望遗漏同时触发的 available_drop，修正测试后通过，原失败记录保留。
+证据 `/tmp/scid-no-dirty-source-20260929`、`/tmp/scid-no-dirty-process-20260929-02`。
+
+### B6 再次准备（2026-09-29）
+
+用户报告 `.b6-06/manual-ambiguous` 运行异常并随后授权再测。旧轮无 summary/resource
+终态记录；没有新 Run/Worker，只有一个 Root 回合最后观测为 inProgress，不能认定
+OOM 或完成。已发出该候选 stop 请求，后续必须只读确认该确切原生回合终态。
+
+原 `/tmp/scid-b6-interrupt-fixed-install-20260928` 安装已不存在，故在项目持久目录
+`.b6-install-07` 串行重建隔离 core 安装（3.354 s，RSS 127430656 B，无止损）。生产
+src/roles/pyproject.toml/deploy/systemd 相对 b0151e9 无差异，模型仍 gpt-5.6-sol/xhigh；
+重建 wheel 摘要不同，明确作为新安装条件，不能冒充旧配对。
+
+`.b6-07/manual-ambiguous` 已接回原六 Run 静止快照（1.092 s，RSS 106573824 B），
+启动前附带 `.b6-06` Root 的精确线程/回合终态查询。尚未启动模型；当前工具环境
+不能访问原生宿主，由普通终端运行。新轮仍不监控 Dirty，保留原有内存和超时保护。
+
+### B6 manual-ambiguous 完整通过（2026-09-29）
+
+`.b6-07/manual-ambiguous/journey-1790650951016069405` 启动前确认 `.b6-06` 的确切
+Root 回合 interrupted。本轮一个 Worker 完成 `run_ba67ec9e000446d8b1f93034b48232e9`，
+一次实际提交封存成功，Root 回读后完成；两个原生线程最后回合均 completed，23 次
+MCP 调用无错误。描述提交工具的调用不计入实际提交次数。没有 helper 或真实 TCAD。
+
+读取并校验 CAS 后，三项内容 rubric 通过：扰动项在 x=0/1/2 均为零，三个观测不能
+约束 c；候选 x=3 只有模型预测 7 与 7+6c，没有捏造观测；保留 c=0 的退化情况和
+误差模型缺失。reviewed-result.json 的 sealed_delivery / quality / execution 均 passed。
+
+监督器正常退出，elapsed=327.318 s（含绑定），树 RSS 峰值 846438400 B，无资源止损。
+Root 输入/缓存输入/输出为 611413/569216/3303，Worker 为 458126/421248/7925；累计
+输入+输出分别 614716 / 466051，合计 1080767，缓存输入子集 990464，非缓存输入+
+输出 90303。不是货币账单；同题自主组尚未执行，当前不宣称模式间收益。证据详情见
+本轮 content-and-usage-audit.json，前轮中断成本仍保留。进程树峰值不代表所有原生
+脱离树进程已受约束。
+
+同 suite 的 auto-ambiguous 已从相同原快照和持久安装准备，并附带本轮两个原生
+确切回合的终态检查，尚未启动模型。完成配对后继续 helper 与故障场景；B6 仍为部分通过。
+
+### B6 歧义配对完成（2026-09-29）
+
+`.b6-07/auto-ambiguous/journey-1790651413958187421` 一个 Worker 完成
+`run_a24667f3141742639584451dcf648669`。已核对 CAS 内容：三点不可辨识、x=3 只是
+候选观测、c=0 退化情况及误差模型缺失全部保留，三项 rubric 通过。后台 Root 两轮
+完成派发与最终回读，report.completed=true；随后验收脚本 pause，Host 已释放。
+sealed_delivery / quality / execution 均 passed。等待采样期间 Root 计数稳定，
+Worker 继续产生输出；无 helper，不能将其计为助手能力通过。
+
+| 累计输入+输出 token | 交互模式 | 自主模式 | 变化 |
+| --- | ---: | ---: | ---: |
+| Root | 614716 | 389187 | −36.69% |
+| Worker | 466051 | 358836 | −23.00% |
+| 合计 | 1080767 | 748023 | −30.79% |
+
+同 suite 基线/条件/目标及质量匹配，用量覆盖完整，见 ambiguous-comparison.json。
+自主组输入/缓存输入/输出：Root 385468/358400/3719，Worker 349965/324224/8871。
+两组缓存输入子集分别 990464/682624，非缓存输入+输出 90303/65399（−27.58%），
+不是货币账单或上下文窗口大小。本题观察到节省，但此前已知关系题反而增加消耗，
+因此尚不能宣称稳定、普遍收益。后台工具回包未被外层 Host 完整记录，0 字节不能
+解释为无回包或节省；逐请求开销归因仍缺。
+
+自主组 341.109 s（含绑定），树 RSS 峰值 1307447296 B，正常退出，无资源止损。
+两个科学配对均完成；助手调用/整合、助手故障、旧 Root 写入拒绝、自动恢复缺口和
+部署可靠性仍按原清单处理。下一例 `.b6-07/helper` 已准备，未启动模型。
+
+### B6 原生助手闭环通过（2026-09-29）
+
+`.b6-07/helper/journey-1790652379981421560` 只新增一个科学 Run
+`run_bc220f16901241a695ff1861631136b8`，由一个负责人调用一个 coefficient_check 助手。
+原生查询确认助手确切回合 completed；Root/负责人/助手三个线程最后回合均 completed。
+负责人仅一次实际封存提交成功，无 MCP 错误。已读取 CAS 与助手最终答复：系数为
+3/8=0.375 和 6，负责人在 off_anchor_coefficients.rationale 中逐项复核、summary
+整合为表格与条件性判别规则，明确不作含噪统计结论，也未捏造新观测。三项内容
+rubric 通过，sealed_delivery/helper_terminal/owner_integration/execution 均 passed。
+
+耗时 370.815 s（含绑定），树 RSS 峰值 906330112 B，无资源止损。累计输入+输出：
+Root 583341、负责人 628167、助手 232676；合计 1444184，缓存输入子集 1340672，
+非缓存输入+输出 103512。助手独占输入 230235、缓存输入 200320、输出 2441，即
+非缓存输入+输出 32356。该例验证可用性，不证明简单算术值得委派；启动成本偏大，
+应在后续优化任务粒度与入口上下文，不能强制所有任务用助手。证据在 reviewed-result
+和 content-and-usage-audit.json。本例未注入故障，不能替代助手崩溃存续验收。
+
+另核对前一歧义交互组 Root 有 4 次 wait；自主组等待期间 Root 计数稳定。该差异支持
+等待机制减少模型参与，但尚无逐请求归因证明全部 36.69% 降幅来自等待，Worker 的
+路径差异也贡献了总量变化。
+
+`.b6-07/helper-crash` 已准备，附带本轮三个原生回合终态检查，未启动模型；仅对
+该隔离候选自己的控制 daemon 注入重启，不操作正式服务。
+
+### B6 helper-crash 暴露 Worker 重接缺陷并修复（2026-09-29）
+
+`.b6-07/helper-crash/journey-1790653121747959308` 在助手活动期间成功注入 daemon
+崩溃/重启，原助手确切回合随后 completed。但负责人 worker_helper、两次 heartbeat
+和 submit_result 均失败，Run `run_15e67dc64a214badb4845437aab24552` 未封存。
+控制侧诊断确认四次均为 `worker_open_assignment must be called first`：持久线程绑定
+存在，重建的 Worker router 却没有恢复内存中的 assignment；对 Agent 又被投影成
+不可修复的泛化 runtime_failure，导致无法按原因修复。
+
+确认连续失败后由本轮维护 Agent 发出 stop，未等待额外模型重试；summary 中的
+user_stop 是该停止 API 的标签，不代表用户额外发出停止指令。441.690 s，树 RSS
+峰值 765849600 B，无资源止损。中断前观测累计 token：Root 585633、负责人 843369、
+助手 95966，非最终账单；failure-audit.json 保留错误、计量与原生线程/回合引用。
+助手计算存续不等于完整交付通过，该例保持 failed。
+
+修复 LocalWorkerMCPRouter：首次后续调用在实例维护锁内，根据可信调用者的确切
+持久绑定恢复 running Run 的 workspace；复用 reopen 校验原期限并采用持久工具证据，
+不重放工具、不新建 Run、不清除共享工具状态。queued 首次 open 仍显式要求，已释放
+助手仍拒绝访问；真正未打开 assignment 时返回有修复指引的 assignment_not_open。
+
+回归先复现原故障，再通过 42 项定向源码测试（20.124 s，RSS 142151680 B），覆盖
+重建 gateway 后负责人/助手心跳与释放、全新 runtime 直接封存原输出、首次 open
+边界和现有权限/维护检查。真实 proxy+daemon 进程 kill/restart 后原 Worker 直接
+heartbeat 通过（1 项，4.728 s，RSS 285147136 B）；原 Run、started_at、deadline_at
+保留。首次修复回归中提交缺失输出正确返回 rejected，测试原期望 running 已纠正。
+证据 `/tmp/scid-worker-restart-source-20260929-02`、`/tmp/scid-worker-restart-process-20260929`。
+
+修复版持久隔离安装 `.b6-install-08` 已构建（3.214 s，RSS 128585728 B），
+`.b6-08/helper-crash` 已从原静止实例准备，附带前一轮三个确切原生回合终态检查，
+尚未启动模型。真实故障复验待执行；本修复不等于此前后台 Root 自动继续缺口已解决。
+
+### B6 helper-crash 修复版真实通过（2026-09-29）
+
+`.b6-08/helper-crash/journey-1790654013994709311` 启动前确认前轮 Root/负责人
+interrupted、助手 completed。新 Run `run_4e841c30f00f4f2db2bf62207f80e14a` 在唯一
+助手原生回合活动时注入控制 daemon 崩溃并重启；原负责人/助手身份保持不变，原助手
+确切回合 completed。恢复后助手释放、附件登记、一次最终提交和 Root 回读均成功，
+没有 MCP 错误，也没有要求 Agent 重新打开 assignment。
+
+CAS 内容已核对：系数 3/8=0.375 和 6，负责人明确重新代入核对并整合结论，未将
+预测写成新增观测，保留噪声未知及 c=0 限制。186 B 的 distinguishability_table.csv
+经 worker_publish_files 登记保留；附件登记本身不等于独立科学资格认可。三项内容
+rubric 通过，fault_injected/sealed_delivery/helper_terminal/owner_integration/
+same_participants/execution 全部 passed，Root/负责人/助手最终回合均 completed。
+
+正常退出，418.618 s（含绑定），树 RSS 峰值 822689792 B，无资源止损。累计输入+
+输出：Root 579659、负责人 740885、助手 95464；合计 1416008，缓存输入子集 1331200，
+非缓存输入+输出 84808。详见 helper-crash.reviewed-result.json 与本轮
+content-and-usage-audit.json；`.b6-07` 的失败和消耗仍保留。
+
+这证明控制服务崩溃时仍在原生平台运行的负责人/助手可恢复交付，不证明已中断的后台
+Root 回合能够自动再推进。下一例 `.b6-08/authority` 已准备，未启动模型；B6 剩余
+重点为接管后的旧 Root 写入拒绝、后台 Root 自动继续缺口、服务托管及回滚。
+
+### B6 authority 启动锁冲突修复（2026-09-29）
+
+用户运行 `.b6-08/authority` 时在全局串行 flock 处被拒绝，监督器退出 1；没有 journey、
+没有模型启动标记，未进入科学执行。检查时锁已可用，历史占锁者未观测到，不能归因
+于某个进程。旧脚本提前写 attempt，导致报告为 outcome_unknown；原始文件保留，
+authority.startup-audit.json 根据报错位置及现场另记 blocked_before_start。
+
+修复验收入口先取得串行锁再写 attempt，并将同一文件描述符传入监督器；后者核对
+设备/inode并使用同一锁，避免释放再抢占。锁冲突给出简短 serial_lock_busy，返回 75，
+不消费新 attempt。未知的已启动提交仍不允许重放，没有删除锁或绕过串行限制。
+28 项定向源码测试通过（2.464 s，RSS 117465088 B），3 项过程测试通过（0.607 s，
+RSS 83148800 B），包括真实子进程共享锁、排斥其他持有者、父进程保留锁及最后释放。
+证据 `/tmp/scid-b6-lock-source-20260929`、`/tmp/scid-b6-lock-process-20260929`。
+
+`.b6-09/authority` 已复用修复版持久安装 `.b6-install-08` 与原静止快照准备，附带
+上一科学案例的原生终态检查，尚未启动模型；旧启动失败记录及已通过案例不改写。
+
+### B6 authority 接管与迟到写入分层验收（2026-09-29）
+
+`.b6-09/authority/journey-1790656233626860656` 的原生后台 Root 接管、停止与释放
+已经通过；后续旧线程 resume 得到相同平台身份，但重新启动的 MCP proxy 生成新
+scheduler session，导致请求在未绑定实例处失败，未触达所有权守卫。原失败不改写。
+本次 55.417 s、树 RSS 峰值 1248972800 B，无资源止损。项目未受信任的提示不是
+此次已确认根因；实例绑定属于代理会话，不能仅凭相同 native thread 推导恢复成功。
+
+修正 authority 验收为控制 socket 故障注入：从实际 old-writer 记录读取代理身份，
+核对原绑定，确认当前是另一会话的 active interactive 所有权、后台 host 已释放，
+确认旧会话仍可读取实例，再检查精确的 SchedulerInstanceConflict 拒绝以及绑定清单
+不变。原生线程恢复、控制代理绑定是不同层次；没有自动绑定或伪造新的会话身份。
+
+复用本轮隔离安装及记录，在 `authority-control-recheck` 补跑服务层验证。通过已有
+交互会话的公开 takeover/pause 命令完成验证和收尾，未重置科研预算、未调用模型、
+未派发 Worker，原科学 Run 清单不变。迟到写入明确被调度所有权守卫拒绝，2.588 s、
+树 RSS 峰值 195608576 B，2 GB 地址空间限制有效，无资源止损。保留独立 summary、
+原始拒绝回包、资源记录和可复现脚本；不覆盖原生失败，不将其改标为端到端通过。
+
+定向源码测试证据 `/tmp/scid-b6-authority-replay-source-20260929`；新增覆盖实际代理
+身份与绑定核对、精确所有权拒绝、未绑定不能算通过、暂停状态不能代替接管验证。
+原生旧连接复用仍未验证；后台 Root 已中断回合自动继续、服务托管与回滚仍未全部
+验收，B6 总状态继续保留未完成。
+
+### B6 后台 Root 中断恢复实现与托管候选（2026-09-29）
+
+用户决定回滚后置，优先处理 Root 自动恢复及后台服务托管。原缺口已复现：控制服务
+重连确认旧 Root 回合 interrupted 后，仍无条件写 root_turn_failed 并暂停。
+复现证据 `/tmp/scid-root-recovery-repro-20260929`。
+
+修复只针对恢复连接时已对照过的原生旧回合：确认 interrupted 后，在同一次 checkpoint
+写入中结束旧回合并计入现有 attempts 预算；保留原目标、配置、起始时间、用量与已接受
+任务，根据当前封存/活动状态重新决策，不重放旧提示或工具调用。中断可能在重连的
+thread/read 之后才到达，该时序也已覆盖。普通 failed、未重连的 interrupted、提交
+结果不明、人工暂停、预算耗尽继续停止；回合身份不一致不能推进。此修复不把所有
+host_fault 或未知外部提交变为自动重试。
+
+验收脚本加强为重启后必须观测到原 Root 实际完成只读交接，不能仅凭新连接和 running
+状态判通过；核对原 platform session、目标、配置、起始时间、轮数、attempts 和用量。
+40 项源码检查通过（14.621 s，RSS 130142208 B）；38 项子进程协议检查通过
+（15.894 s，RSS 213921792 B），后续针对迟到终态修订的两个关键子进程检查再次通过
+（2.081 s，RSS 127328256 B）。这些使用受控协议进程，不替代真实模型验收。
+证据见 `/tmp/scid-root-recovery-source-20260929-03`、
+`/tmp/scid-root-recovery-process-20260929` 及其 `-02`。
+
+最终修复已受限构建到 `.b6-install-11`（2.678 s，RSS 123547648 B）；较早的
+`.b6-install-10` 不含迟到终态修订，不用于下一轮验收。`.b6-11/managed` 复用原始
+`.a6-upgrade` 静止实例副本及新安装，无需实例绑定，不调用模型，未开始运行。
+当前工具环境不能连接用户 systemd 总线，且 `/tmp/codex-daemon-1000` 为 mode 000，
+因此真实托管/原生验证仍须普通终端执行，未宣称通过。
+
+恢复案例原配置 max_attempts=1，首次恢复收费后将触发预算停止。已向用户单独请求
+仅新恢复案例设为 2，允许验证一次自动续推；答复前不提高预算、不运行该模型案例。
+旧案例和失败记录保留，回滚不作为本轮继续推进的阻塞项。
+
+### B6 managed 真实托管验收通过（2026-09-29）
+
+用户在普通终端执行 `.b6-11/managed`，证据目录
+`journey-1790660209254029499`。terminal_independence、service_restart、
+state_preserved、execution 均通过。启动器退出后两个临时 user systemd 服务仍 active；
+重启控制 daemon 后 PID 由 19078 变为 19099，UI PID 19064 保持不变，旧 Run 状态及
+封存文件校验不变。managed-cleanup.json 的 errors 为空，两个临时服务清理成功。
+
+总耗时 3.138 s，无资源止损。监督树观测 RSS 45907968 B 不包含托管服务，不能用它
+代表整轮总峰值；systemd MemoryCurrent 采样中 UI 约 73 MB→76 MB、daemon 约
+47 MB→44 MB，未返回 MemoryPeak。每服务限额 750000000 B、RuntimeMaxSec=180。
+此案例代码未启动模型，usage partial 是该案例没有原生用量事件，并非科学运行缺失
+用量可按零计费。
+
+本项证明隔离安装的空闲 UI/控制服务托管、重启和数据保全；不扩大到正式部署、运行中
+原生模型的完整资源覆盖或真实 TCAD。回滚继续后置，下一项是后台 Root 自动续推的
+真实模型验证，预算调整确认仍待用户答复，B6 总体仍未宣称完成。
+
+### B6 恢复案例预算调整已获授权（2026-09-29）
+
+用户确认仅新恢复案例将 max_attempts 从 1 调为 2。独立配置
+`.b6-recovery-12.json` 仅覆盖 recovery 的 progression 配置，其余案例默认仍为 1；
+正式配置、旧案例与已消耗预算未变。`.b6-12/recovery` 已复用 `.a6-upgrade` 原始
+静止快照和 `.b6-install-11` 修复安装准备完成，冻结配置与 harness digest 已核对，
+尚未启动模型。本轮允许一次计入预算的自动续推；后续仍不得自动扩大重试预算。
+
+普通终端执行 `python scripts/accept_b6.py run recovery --suite ../../.b6-12`，
+在打印的页面选择已有 b0a-calibration；无需 continue。目标只读既有封存成果，
+验证暂停、恢复、服务重启后的实际完成及接管，不新建科研 Run/Worker/helper。
+
+### B6 recovery 自动续推已观测，收尾被验收竞态中断（2026-09-29）
+
+`.b6-12/recovery/journey-1790660592483977393` 已执行。resumed→recovered 的原生
+Root 坐标、冻结目标、配置和 started_at 完全一致；rounds 从 2 到 3，attempts 从 0
+到 1，recovered_interruption 对应旧回合。控制服务崩溃后原 Root 确实自动开始新决策，
+并提交 completed=true 的只读交接，所引用 a6.tcad.audit 的封存 checks 已核对，保留
+未实际执行 TCAD、不能扩大为物理验证等限制。与原快照相比 Run 清单及封存引用未变。
+
+随后验收脚本报 `recovered-completed:unexpected_stop:goal_completed`。原因是公开
+progression_report 先写入 reason=goal_completed，原生回合此时仍 active/running；
+wait_row 将这个中间状态当成失败，异常清理主动 pause 了 Root。不是生产恢复再次
+失败；也不能据此声称自然回合结束和完整验收收尾通过。原 summary/resource 保留，
+另写 recovery-implementation-audit.json，明确自动续推/报告交付与未验证项的边界。
+
+修复 wait_row：active 的 goal_completed 继续等待原生终态，只有 paused/stopped 的
+完成状态才作为停止；并在异常 pause 后等旧 writer 释放再关闭 daemon，避免过早
+断开留下未释放标记。32 项定向源码检查通过（1.839 s，RSS 116965376 B），证据
+`/tmp/scid-recovery-report-race-20260929-02`。未重新运行模型任务，未提高任何预算。
+
+本轮监督耗时 718.485 s（含人工绑定等待），树 RSS 峰值 870572032 B，无资源止损。
+观测到 Root input=171366、cached_input=132608、output=1078，输入+输出 172444，
+非缓存输入+输出 39836。仅覆盖有原生用量事件的记录，不证明所有中断请求完整计费；
+tool_result_bytes=0 为外层通知采样范围，不能解释为 Root 没有读取工具结果。
+
+此轮自然原生完成、最终交互接管、writer 释放均未在完整旅程中验证，隔离状态仍留有
+旧 writer 标记，不复用该状态启动新目标。恢复功能的真实续推及报告交付已有证据，
+原生收尾完整性仍单独保留未完成；不改写原始失败，不以已有其他案例替代本轮收尾。
+
+### B6 最小自然收尾案例已准备（2026-09-29）
+
+用户要求继续验收。旧 recovery 回合已被失败清理暂停，不能把现存报告补写为自然
+completed；新增独立 closeout 案例只读已存在的 a6.tcad.audit，提交完成报告后自然
+结束，再做交互接管、writer 释放与 stop。仅一轮 Root、max_attempts=1，不重做
+暂停/恢复/daemon 崩溃注入，不创建 Run/Worker/helper。验收检查使用独立的
+natural_completion/takeover/writer_release/state_preserved，不冒充 automatic_recovery。
+
+等待自然完成时同时要求 checkpoint idle、turn_id 已清空、native_completion=completed
+及完成报告，并通过原生 thread/read 对照 started 记录中的确切回合确为 completed。
+已把已有 prior-turn 核验函数集中到 b6_evidence，使 recovery/closeout 同样在启动模型前
+验证上次确切回合终止。35 项定向源码检查通过（2.052 s，RSS 117301248 B），证据
+`/tmp/scid-closeout-source-20260929`。
+
+`.b6-13/closeout` 已复用 `.a6-upgrade` 和 `.b6-install-11` 准备完成，未重新构建。
+附带 `.b6-12` 的 started/resumed/recovered 三个确切回合引用，未改变旧状态或预算。
+配置和 harness digest 已核对，尚未启动模型；当前工具环境原生 daemon 仍不可访问，
+需普通终端执行 `python scripts/accept_b6.py run closeout --suite ../../.b6-13`，
+由用户页面选择已有 b0a-calibration。旧 writer 标记保留，不以直接改数据库清除。
+
+### B6 最小自然收尾真实通过（2026-09-29）
+
+`.b6-13/closeout/journey-1790662006415672338` 通过：natural_completion、takeover、
+writer_release、state_preserved、execution 均 passed。启动前原生 thread/read 确认
+`.b6-12` 的三个确切旧回合全部 interrupted；本次唯一 Root 回合则由确切 thread/turn
+查询确认为 completed。随后交互接管并释放 host，最终 stopped/interactive、phase=idle、
+host_json=NULL、rounds=1、attempts=0，无新 Run/Worker/helper。另核对 6 个既有封存
+输出的 CAS 摘要和 Run 清单，均未改变。报告保留 a6.tcad.audit 的限制，不声称执行了
+TCAD 或验证了器件物理。
+
+监督器正常退出，112.609 s（含绑定等待），树 RSS 峰值 1292775424 B，无资源止损。
+Root 累计 input=317752、cached_input=295680、output=2005，输入+输出 319757，
+非缓存输入+输出 24077。一个原生回合不等于一次模型请求，缓存输入是累计输入的
+子集；该用量不用于估算逐请求账单。外层 tool_result_bytes=0 不代表工具回包没有
+消耗上下文。证据保存在 closeout-audit.json 和 closeout.reviewed-result.json。
+
+本轮当前结论：服务托管/重启/数据保全已有 `.b6-11` 真实通过；服务崩溃后原 Root
+自动续推并交付报告由 `.b6-12` 证实，其脚本竞态失败仍保留；自然完成/最终接管/释放
+由本轮单独通过。没有重跑已通过的科学案例。authority 的迟到写入拒绝仍限定为实际
+记录身份的控制 socket 重放，不能扩大为原生旧连接复用通过。token 改善尚不稳定，
+已有两组配对的方向不一致，不宣称普遍节省。回滚、A6 真实 TCAD 按用户决定后置；
+正式部署与全部脱离监督树的原生进程资源覆盖仍未资格化，不宣称所有部署范围通过。

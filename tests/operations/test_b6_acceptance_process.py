@@ -38,3 +38,29 @@ def test_native_entry_requires_case_before_any_process_launch(tmp_path):
     assert value.returncode==2
     assert 'requires --case-file' in value.stderr
     assert not list(tmp_path.iterdir())
+
+
+def test_serial_lock_handoff_keeps_other_processes_out(tmp_path,monkeypatch):
+    import fcntl
+    from scripts import run_tests as guard
+    monkeypatch.setattr(guard,'SERIAL_LOCK',tmp_path/'serial.lock')
+    program='''
+import fcntl,sys
+from pathlib import Path
+from scripts import run_tests as guard
+guard.SERIAL_LOCK=Path(sys.argv[1])
+with guard.serial_lock(int(sys.argv[2])):
+    with guard.SERIAL_LOCK.open('a') as other:
+        try: fcntl.flock(other,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except BlockingIOError: pass
+        else: raise AssertionError('lock was not held')
+print('shared lock retained')
+'''
+    with guard.serial_lock() as owner:
+        child=subprocess.run([sys.executable,'-c',program,str(guard.SERIAL_LOCK),str(owner.fileno())],
+            cwd=ROOT,pass_fds=(owner.fileno(),),capture_output=True,text=True,timeout=10)
+        assert child.returncode==0,child.stderr
+        assert child.stdout.strip()=='shared lock retained'
+        with guard.SERIAL_LOCK.open('a') as other:
+            with pytest.raises(BlockingIOError):fcntl.flock(other,fcntl.LOCK_EX|fcntl.LOCK_NB)
+    with guard.serial_lock():pass

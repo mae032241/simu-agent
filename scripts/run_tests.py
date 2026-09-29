@@ -6,6 +6,7 @@ sampled emergency stops, not a cgroup aggregate hard limit or an OOM guarantee.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import fcntl
 import json
 import math
@@ -26,50 +27,38 @@ except ModuleNotFoundError:  # Direct execution puts scripts/ on sys.path.
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = ROOT / "scripts/test_resources.json"
+SERIAL_LOCK = Path('/tmp') / f'scid-tests-{os.getuid()}.lock'
 LANES = ("source", "installed", "process", "stress", "live")
+
+
+@contextmanager
+def serial_lock(inherited_fd=None):
+    """Share one acquired lock with a supervisor; never unlink or bypass it."""
+    with (SERIAL_LOCK.open('a') if inherited_fd is None
+          else os.fdopen(os.dup(inherited_fd), 'a')) as lock:
+        expected, actual = SERIAL_LOCK.stat(), os.fstat(lock.fileno())
+        if (expected.st_dev, expected.st_ino) != (actual.st_dev, actual.st_ino):
+            raise ValueError('serial_lock_descriptor_mismatch')
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        yield lock
 
 
 def memory() -> dict[str, int]:
     fields = dict(line.split(":", 1) for line in Path("/proc/meminfo").read_text().splitlines())
-    return {key: int(fields[key].split()[0]) * 1024 for key in ("MemAvailable", "Dirty")}
+    return {"MemAvailable": int(fields["MemAvailable"].split()[0]) * 1024}
 
 
 class MemoryPressure:
-    """Only sustained global dirty-page pressure is fatal; RAM limits stay immediate."""
+    """Available-memory limits; global dirty pages are not a task memory limit."""
 
     def __init__(self, baseline, limits):
-        grace = limits["dirty_stop_grace_seconds"]
-        if isinstance(grace, bool) or not isinstance(grace, (int, float)) or not math.isfinite(grace) or grace <= 0:
-            raise ValueError("dirty_stop_grace_seconds must be finite and positive")
         self.baseline, self.limits = baseline, limits
-        self.dirty_since = None
-        self.dirty_peak = baseline["Dirty"]
-        self.dirty_longest = 0.0
-        self.dirty_episodes = 0
 
-    def sample(self, current, now):
-        self.dirty_peak = max(self.dirty_peak, current["Dirty"])
-        if current["Dirty"] > self.limits["dirty_stop_bytes"]:
-            if self.dirty_since is None:
-                self.dirty_since = now
-                self.dirty_episodes += 1
-            duration = now - self.dirty_since
-            self.dirty_longest = max(self.dirty_longest, duration)
-        else:
-            if self.dirty_since is not None:
-                self.dirty_longest = max(self.dirty_longest, now - self.dirty_since)
-            self.dirty_since = None
-            duration = 0.0
+    def sample(self, current):
         return [name for name, triggered in (
             ("available_below_minimum", current["MemAvailable"] < self.limits["minimum_available_bytes"]),
             ("available_drop", self.baseline["MemAvailable"] - current["MemAvailable"] > self.limits["available_drop_stop_bytes"]),
-            ("dirty_sustained", self.dirty_since is not None and duration >= self.limits["dirty_stop_grace_seconds"]),
         ) if triggered]
-
-    def evidence(self):
-        return dict(scope="system_global_not_attributed_to_child", threshold_bytes=self.limits["dirty_stop_bytes"],
-            grace_seconds=self.limits["dirty_stop_grace_seconds"], high_water_bytes=self.dirty_peak,
-            episodes=self.dirty_episodes, longest_observed_seconds=round(self.dirty_longest, 3))
 
 
 def run_one(command, environment, limits, output, lock_fd, *, limit_address_space=True):
@@ -77,19 +66,11 @@ def run_one(command, environment, limits, output, lock_fd, *, limit_address_spac
     baseline = current = memory()
     admission_started = time.monotonic()
     pressure = MemoryPressure(baseline, limits)
-    # Wait briefly for dirty-page writeback before launching any child. This
-    # does not defer an actual available-memory shortage or sudden RAM loss.
-    while True:
-        triggers = pressure.sample(current, time.monotonic())
-        if triggers:
-            return {"returncode": None, "stop_reason": "system_memory_admission",
-                    "memory": current, "elapsed_seconds": round(time.monotonic() - admission_started, 3),
-                    "observed_tree_rss_high_water_bytes": 0, "memory_stop_triggers": triggers,
-                    "dirty_pressure": pressure.evidence()}
-        if pressure.dirty_since is None:
-            break
-        time.sleep(limits["sample_interval_seconds"])
-        current = memory()
+    triggers = pressure.sample(current)
+    if triggers:
+        return {"returncode": None, "stop_reason": "system_memory_admission",
+                "memory": current, "elapsed_seconds": round(time.monotonic() - admission_started, 3),
+                "observed_tree_rss_high_water_bytes": 0, "memory_stop_triggers": triggers}
 
     def restrict():
         if limit_address_space:
@@ -114,7 +95,7 @@ def run_one(command, environment, limits, output, lock_fd, *, limit_address_spac
             observed.update(descendants)
             peak = max(peak, rss * 1024)
             current = memory()
-            memory_triggers = pressure.sample(current, time.monotonic())
+            memory_triggers = pressure.sample(current)
             if memory_triggers:
                 reason = "system_memory_stop"
                 break
@@ -162,7 +143,7 @@ def run_one(command, environment, limits, output, lock_fd, *, limit_address_spac
             "elapsed_seconds": round(time.monotonic() - started, 3),
             "observed_tree_rss_high_water_bytes": peak,
             "system_memory_baseline": baseline, "system_memory_final": current,
-            "memory_stop_triggers": memory_triggers, "dirty_pressure": pressure.evidence(),
+            "memory_stop_triggers": memory_triggers,
             "address_space_limit_enabled": limit_address_space}
 
 

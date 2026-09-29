@@ -5,24 +5,61 @@ import time
 
 try:
     from scripts.accept_progression_recovery import RecoveryJourney
-    from scripts.b6_evidence import rows, run_snapshot, participants, sealed_outputs, read, write
+    from scripts.b6_evidence import rows, run_snapshot, participants, sealed_outputs, read, write, verify_prior_turns
 except ModuleNotFoundError:
     from accept_progression_recovery import RecoveryJourney
-    from b6_evidence import rows, run_snapshot, participants, sealed_outputs, read, write
+    from b6_evidence import rows, run_snapshot, participants, sealed_outputs, read, write, verify_prior_turns
 
 
-def verify_prior_turns(rpc, references):
-    """No new model work until the interrupted acceptance's exact turns ended."""
-    evidence=[]
-    for reference in references:
-        thread=rpc('thread/read',dict(threadId=reference['thread_id'],includeTurns=True))['thread']
-        turn=next((v for v in thread.get('turns',[]) if v['id']==reference['turn_id']),None)
-        if thread.get('id')!=reference['thread_id'] or turn is None:
-            raise RuntimeError('prior_native_turn_not_found')
-        evidence.append(dict(**reference,status=turn['status']))
-        if turn['status'] not in {'completed','failed','interrupted'}:
-            raise RuntimeError('prior_native_turn_not_terminal; do_not_start_another_case')
-    return evidence
+def recorded_control_call(root, writer, name, arguments):
+    """Replay a recorded transport identity at the control socket, without a model.
+
+    This is control-boundary fault injection, NOT a resumed native MCP session.
+    A resumed native thread may create a new proxy with no instance binding.
+    """
+    from scidiscovery.artifact_agent.interfaces.mcp_proxy import SCHEDULER_PROXY_FIELD
+    from scidiscovery.plugin_runtime.transport import forward_request
+    identity=json.loads(writer['host_json'])
+    if identity['platform_session']!=identity['thread_id']:
+        raise ValueError('recorded_writer_is_not_root')
+    bound=rows(root,'scheduler-bindings',
+        'SELECT instance_id FROM scheduler_sessions WHERE session_key=?',(writer['owner_session'],))
+    if bound!=[{'instance_id':writer['instance_id']}]:
+        raise ValueError('recorded_writer_binding_changed')
+    request=dict(jsonrpc='2.0',id='authority-replay',method='tools/call',
+        params=dict(name='scid_call',arguments=dict(name=name,arguments=arguments),
+            _meta={'x-codex-turn-metadata':dict(session_id=identity['platform_session'],thread_id=identity['thread_id'])}))
+    request[SCHEDULER_PROXY_FIELD]=writer['owner_session']
+    return forward_request(root/'control.sock',json.dumps(request).encode(),timeout=10)
+
+
+def check_stale_writer(root, writer, output):
+    """Require active new ownership, retained read binding and the exact denial."""
+    current=rows(root,'scheduler-bindings','SELECT * FROM scheduler_progression WHERE instance_id=?',
+        (writer['instance_id'],))[0]
+    if (current['state']!='active' or current['mode']!='interactive' or current['host_json']
+            or current['owner_session']==writer['owner_session']):
+        raise RuntimeError('takeover_not_established')
+    read_reply=recorded_control_call(root,writer,'instance_current',{})
+    result=read_reply.get('result',{}) if read_reply else {}
+    value=result.get('structuredContent')
+    if value is None and not result.get('isError') and result.get('content'):
+        value=json.loads(result['content'][0]['text'])
+    if not isinstance(value,dict) or value.get('state')!='active':
+        raise RuntimeError('old_writer_read_binding_unavailable')
+    before=rows(root,'scheduler-bindings','SELECT * FROM scheduler_bindings WHERE instance=? ORDER BY namespace,name',
+        (writer['instance_id'],))
+    reply=recorded_control_call(root,writer,'artifact_ingest_text',
+        dict(name='acceptance.stale-write',text='must be rejected',on_conflict='reject'))
+    write(output/'stale-write-reply.json',reply)
+    error=(reply or {}).get('error',{})
+    denied=(error.get('code')==-32000 and error.get('message')==
+        'SchedulerInstanceConflict: Scheduling is paused or owned by another session; use an explicit control command.')
+    after=rows(root,'scheduler-bindings','SELECT * FROM scheduler_bindings WHERE instance=? ORDER BY namespace,name',
+        (writer['instance_id'],))
+    if after!=before:
+        raise RuntimeError('stale_write_changed_bindings')
+    return 'passed' if denied else 'not_observed' if error else 'failed'
 
 
 class NativeCaseJourney(RecoveryJourney):
@@ -153,23 +190,12 @@ class NativeCaseJourney(RecoveryJourney):
         self.control_attempted=True
         self.call('progression_command',dict(command='start',mode='background',objective_name='acceptance.authority'))
         active=self.wait_row(lambda r:bool(r.get('host_json')) and r['state']=='active','old-writer',timeout=self.case_config['stage_timeout_seconds'])
-        old=json.loads(active['host_json'])
         self.call('progression_command',dict(command='takeover'))
         self.wait_row(lambda r:r['mode']=='interactive' and not r['host_json'],'taken-over',timeout=self.case_config['stage_timeout_seconds'])
         self.case_checks['takeover']='passed'
-        # A real client resumes only the recorded thread to query its original MCP
-        # route. No model turn, fabricated scheduler key or direct broker request.
-        thread=self.rpc('thread/resume',dict(threadId=old['thread_id'],excludeTurns=True))['thread']
-        if (thread['id'],thread.get('sessionId')) != (old['thread_id'],old['platform_session']):
-            raise RuntimeError('old_writer_native_identity_changed')
-        reply=self.rpc('mcpServer/tool/call',dict(threadId=old['thread_id'],server='scidiscovery',tool='scid_call',
-            arguments=dict(name='artifact_ingest_text',arguments=dict(name='acceptance.stale-write',text='must be rejected',on_conflict='reject')),
-            _meta={'x-codex-turn-metadata':dict(session_id=old['platform_session'],thread_id=old['thread_id'])}))
-        write(self.logdir.parent/'stale-write-reply.json',reply)
-        # An unbound/transport/schema error is not proof of ownership enforcement.
-        raw=json.dumps(reply)
-        denied=bool(reply.get('isError')) and 'Scheduling is paused or owned by another session' in raw
-        self.case_checks['stale_write_rejected']='passed' if denied else 'not_observed' if reply.get('isError') else 'failed'
+        self.case_checks['stale_write_rejected']=check_stale_writer(self.root,active,self.logdir.parent)
+        write(self.logdir.parent/'authority-scope.json',dict(takeover='native_host',
+            stale_write='recorded_transport_replay_at_control_socket',native_connection_reuse='not_verified'))
         if run_snapshot(self.root)!=self.before_runs:raise RuntimeError('authority_test_created_science')
         self.call('progression_command',dict(command='stop'))
         self.control_attempted=False

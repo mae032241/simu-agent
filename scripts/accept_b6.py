@@ -15,9 +15,11 @@ import sys
 import time
 
 try:
+    from scripts.run_tests import serial_lock
     from scripts.b6_evidence import read, write, digest, rows, control_rows, run_snapshot, participants, sealed_outputs, usage_report, verdict, compare, assess
     from scripts.root_host_upgrade import _files
 except ModuleNotFoundError:
+    from run_tests import serial_lock
     from b6_evidence import read, write, digest, rows, control_rows, run_snapshot, participants, sealed_outputs, usage_report, verdict, compare, assess
     from root_host_upgrade import _files
 
@@ -123,11 +125,14 @@ def run(root,manifest,case_id):
     if manifest['harness_digest']!=harness_digest():raise ValueError('harness_changed; create_new_suite_with_prior_evidence_retained')
     if digest(case)!=read(root/(case_id+'.prepared.json'))['case_digest']:
         raise ValueError('prepared_case_changed')
-    # Every start is explicit and one-shot, including process/preflight failure.
-    exclusive_intent(root/(case_id+'.attempt.json'),dict(started_ns=time.time_ns(),case_digest=digest(case)))
     command=[sys.executable,str(SCRIPTS/'accept_progression.py'),'--candidate',str(target),
         '--scenario',case.get('scenario','managed'),'--case-file',str(target/'acceptance-case.json')]
-    completed=subprocess.run(command,check=False)
+    with serial_lock() as lock:
+        # Only an admitted start consumes the one-shot intent. The child inherits
+        # this exact lock, so there is no release/reacquire race before launch.
+        exclusive_intent(root/(case_id+'.attempt.json'),dict(started_ns=time.time_ns(),case_digest=digest(case)))
+        completed=subprocess.run([*command,'--lock-fd',str(lock.fileno())],check=False,
+            pass_fds=(lock.fileno(),))
     write(root/(case_id+'.exit.json'),dict(returncode=completed.returncode,ended_ns=time.time_ns()))
     report=result(root,manifest,case_id)
     write(root/(case_id+'.result.json'),report)
@@ -234,5 +239,8 @@ def main():
 if __name__=='__main__':
     try:
         raise SystemExit(main())
+    except BlockingIOError:
+        print('serial_lock_busy: another serial task is running; no new attempt was started. Retry this command after it finishes.',file=sys.stderr)
+        raise SystemExit(75)
     except (ValueError,RuntimeError,FileExistsError) as error:
         print(str(error),file=sys.stderr);raise SystemExit(2)

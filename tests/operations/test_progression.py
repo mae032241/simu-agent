@@ -22,6 +22,7 @@ class Host:
         self.closed = False
         self.restored = []
     def start_turn(self, prompt):
+        self.completion = None
         self.prompts.append(prompt)
         self.turn_id = 'turn-'+str(len(self.prompts))
         self.event(dict(method='turn/started', params=dict(threadId=self.identity.thread_id, turn=dict(id=self.turn_id))))
@@ -162,6 +163,92 @@ def test_restart_restores_same_turn_and_consumption(progression):
     assert not p.coordinator.host.prompts
     assert checkpoint(p)['rounds'] == rounds
     assert row(p)['owner_session'] == old.scheduler_session
+
+
+def restore_terminal_host(p, status):
+    old = p.coordinator.host
+    old.close()
+    p.coordinator.host = None
+    def factory(record, event):
+        host = Host(record, event)
+        host.completion = dict(id=host.turn_id, status=status)
+        return host
+    p.coordinator.host_factory = factory
+    p.now[0] += 6
+
+
+@pytest.mark.parametrize('delayed_terminal', [False, True])
+def test_restart_interrupted_root_reconciles_existing_work_without_reset(progression, delayed_terminal):
+    p = progression
+    p.coordinator.tick()
+    host = p.coordinator.host
+    root = p.root.__class__(p.facade(host.scheduler_session))
+    _invoke(root, 'accepted')
+    before = checkpoint(p)
+    old_turn = host.turn_id
+    restore_terminal_host(p, 'interrupted')
+    if delayed_terminal:
+        p.coordinator.host_factory = Host
+        p.coordinator.tick()
+        assert not p.coordinator.host.prompts
+        p.coordinator.host.completion = dict(id=old_turn, status='interrupted')
+    p.coordinator.tick()
+    after = checkpoint(p)
+    assert row(p)['state'] == 'active'
+    assert after['attempts'] == before['attempts'] + 1
+    assert after['rounds'] == before['rounds'] + 1
+    assert after['started_at'] == before['started_at']
+    assert after['admissions'] == before['admissions']
+    assert after['recovered_interruption'] == old_turn
+    assert len(p.runtime.runs.list(instance_id=p.instance)) == 1
+    prompt = p.coordinator.host.prompts[-1]
+    assert 'accepted' in prompt and 'do not create a replacement' in prompt
+    p.coordinator.tick()
+    assert checkpoint(p)['attempts'] == after['attempts']
+    assert len(p.coordinator.host.prompts) == 1
+
+
+@pytest.mark.parametrize('reconnect,status', [(True, 'failed'), (False, 'interrupted')])
+def test_only_interruption_confirmed_on_reconnect_can_continue(progression, reconnect, status):
+    p = progression
+    p.coordinator.tick()
+    if reconnect:
+        restore_terminal_host(p, status)
+    else:
+        host = p.coordinator.host
+        host.completion = dict(id=host.turn_id, status=status)
+    p.coordinator.tick()
+    assert row(p)['state'] == 'paused'
+    assert row(p)['reason'] == 'root_turn_failed'
+    assert checkpoint(p)['rounds'] == 1
+
+
+def test_interruption_recovery_obeys_attempt_budget(progression):
+    p = progression
+    p.coordinator.tick()
+    maximum = json.loads(row(p)['config_json'])['effective']['progression']['max_attempts']
+    p.coordinator._save(dict(attempts=maximum-1))
+    restore_terminal_host(p, 'interrupted')
+    p.coordinator.tick()
+    assert row(p)['state'] == 'paused'
+    assert row(p)['reason'] == 'budget_exhausted'
+    assert checkpoint(p)['attempts'] == maximum
+    assert checkpoint(p)['rounds'] == 1
+    assert not p.coordinator.host.prompts
+
+
+def test_interruption_reconnect_does_not_override_user_pause(progression):
+    p = progression
+    p.coordinator.tick()
+    p.root.call_tool('progression_command', dict(command='pause'))
+    restore_terminal_host(p, 'interrupted')
+    p.coordinator.tick()
+    assert row(p)['state'] == 'paused'
+    assert checkpoint(p)['rounds'] == 1
+    # Paused native writers are not automatically reconnected. Keep the marker
+    # until an explicit reconciliation establishes native quiescence.
+    assert row(p)['host_json'] is not None
+    assert p.coordinator.host is None
 
 
 def test_pause_terminal_ack_required_and_takeover_blocks_old_writer(progression):

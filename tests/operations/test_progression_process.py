@@ -33,7 +33,7 @@ for line in sys.stdin:
     elif method in ('thread/start','thread/resume'):
         result={'thread':{'id':p.get('threadId','native-root'),'sessionId':'native-root'}}
     elif method=='thread/read':
-        status=('inProgress' if p['threadId']=='owner' else os.environ.get('SCID_TEST_HELPER_STATUS','completed') if p['threadId']=='helper' else 'completed')
+        status=('inProgress' if p['threadId']=='owner' else os.environ.get('SCID_TEST_HELPER_STATUS','completed') if p['threadId']=='helper' else os.environ.get('SCID_TEST_ROOT_STATUS','completed'))
         result={'thread':{'id':p['threadId'],'turns':[] if status=='missing' else [{'id':'exact-turn','status':status}]}}
     elif method=='mcpServerStatus/list':
         result={'data':[{'name':'scidiscovery','tools':{} if mode=='missing-tools' else
@@ -51,12 +51,13 @@ for line in sys.stdin:
         else:result={'structuredContent':{'management_url':'http://127.0.0.1:8765/sessions/sch_'+'b'*32+'?capability=test'}}
     elif method=='turn/start':
         if mode=='lost':sys.exit(0)
-        emit({'method':'turn/started','params':{'threadId':'native-root','turn':{'id':'exact-turn'}}})
+        turn='recovery-turn' if os.environ.get('SCID_TEST_ROOT_STATUS')=='interrupted' else 'exact-turn'
+        emit({'method':'turn/started','params':{'threadId':'native-root','turn':{'id':turn}}})
         if mode=='accepted-lost':sys.exit(0)
-        result={'turn':{'id':'exact-turn'}}
+        result={'turn':{'id':turn}}
         emit({'id':msg['id'],'result':result})
         emit({'method':'thread/tokenUsage/updated','params':{'threadId':'native-root','tokenUsage':{'total':{'inputTokens':100,'cachedInputTokens':50,'outputTokens':20}}}})
-        if mode not in {'running','interrupt-disconnect','interrupt-terminal-no-ack'}:emit({'method':'turn/completed','params':{'threadId':'native-root','turn':{'id':'exact-turn','status':'completed'}}})
+        if mode not in {'running','interrupt-disconnect','interrupt-terminal-no-ack'}:emit({'method':'turn/completed','params':{'threadId':'native-root','turn':{'id':turn,'status':'completed'}}})
         continue
     elif method=='turn/interrupt':
         if mode=='interrupt-disconnect':sys.exit(0)
@@ -114,6 +115,31 @@ def test_real_native_process_reconnect_does_not_replay_turn(progression, tmp_pat
     assert 'thread/resume' in methods(requests) and 'thread/read' in methods(requests)
     assert checkpoint(p)['rounds']==1
     assert checkpoint(p)['usage_records']['native-root']['counted_tokens']['input_tokens']==100
+
+
+def test_native_process_interrupted_recovery_starts_one_new_decision(progression,tmp_path,monkeypatch):
+    p=progression
+    _,requests=native(tmp_path,monkeypatch,p.runtime.project_root,tmp_path/'control.sock','running')
+    p.coordinator.host_factory=CodexProgressionFactory(project_root=p.runtime.project_root,
+        state_root=p.runtime.state_root,socket_path=tmp_path/'control.sock',approval_base_url='http://127.0.0.1:8765')
+    p.coordinator.tick()
+    wait_for(lambda: (p.coordinator.host.poll(.01), bool(checkpoint(p).get('usage_records')))[1])
+    before=checkpoint(p)
+    original=json.loads(row(p)['host_json'])
+    p.coordinator.host.close();p.coordinator.host=None
+    monkeypatch.setenv('SCID_TEST_ROOT_STATUS','interrupted')
+    p.now[0]+=6
+    p.coordinator.tick()
+    assert methods(requests).count('turn/start')==2
+    assert 'thread/read' in methods(requests) and 'thread/resume' in methods(requests)
+    assert json.loads(row(p)['host_json'])==original
+    after=checkpoint(p)
+    assert after['phase']=='running' and after['turn_id']=='recovery-turn'
+    assert after['attempts']==before['attempts']+1
+    assert after['started_at']==before['started_at']
+    assert after['usage_records']==before['usage_records']
+    p.coordinator.tick()
+    assert methods(requests).count('turn/start')==2
 
 
 @pytest.mark.parametrize('mode,expected', [('missing-tools','host_fault'),('lost','host_fault'),('accepted-lost','host_fault')])
