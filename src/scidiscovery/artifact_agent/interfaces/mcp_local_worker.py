@@ -295,46 +295,20 @@ class LocalWorkerMCPRouter:
             from ..service.engineering_diagnostics import exception_facts
             error.scope_lookup_error = exception_facts(scope_error, layer="worker", action="scope")
         engineering = store.capture(error, scope=scope, layer="worker", action=name)
-        scientific = True
-        if not scientific and run_id is not None and run_id == self._run_id and self._workspace is not None and engineering.get("reference"):
-            try:
-                from ..service.local_workspace import write_control_workspace_file
-                engineering["workspace_report"] = "reports/" + engineering["reference"] + ".json"
-                report = {**engineering, "sections": {
-                    section: store.read(engineering["reference"], scopes=(scope,), section=section,
-                        max_bytes=16384) for section in engineering.get("available_sections", ())}}
-                write_control_workspace_file(self._workspace.root,
-                    Path(engineering["workspace_report"]),
-                    json.dumps(report, ensure_ascii=False).encode(),
-                    replace=False, mode=0o400, create_parents=True)
-            except Exception as record_error:
-                from ..service.engineering_diagnostics import exception_facts
-                engineering["workspace_record_error"] = exception_facts(record_error, layer="worker_workspace", action="record")
-        failure = (error if isinstance(error, WorkerToolError) else
-            WorkerToolError(str(error), details=error.details)) if isinstance(error, DiagnosticError) else WorkerToolError(
-            engineering["causes"][0]["message"], details=(contract_diagnostic(
-                engineering["category"], phase="tool_execution", affected_action="tool_call",
-                message=engineering["causes"][0]["message"], error_type=type(error).__name__),))
-        failure.engineering = engineering
-        if scientific:
-            failure.public_engineering = {} if isinstance(error, DiagnosticError) else {"category":engineering["category"]}
+        from ..service.engineering_diagnostics import diagnostic_locator
+        if isinstance(error, DiagnosticError):
+            failure = error if isinstance(error, WorkerToolError) else WorkerToolError(str(error), details=error.details)
+            failure.public_engineering = {}
             if not failure.details:
                 failure.details = (contract_diagnostic("tool_rejected", phase="tool_execution", affected_action="tool_call",
                     message="The experiment action could not complete with its current inputs or configured services."),)
-        if scientific and not isinstance(error, DiagnosticError):
+        else:
             failure = WorkerToolError("The experiment action could not complete. Its control diagnostic has been retained.",
                 details=(contract_diagnostic(engineering["category"], phase="tool_execution",
                     affected_action="tool_call", message="The configured service could not complete this action.",
                     error_type=type(error).__name__),))
-            failure.engineering = engineering
-            failure.public_engineering = {"category":engineering["category"]}
-            return failure
-        if failure is not error and not scientific:
-            failure.public_engineering = {
-                key: engineering[key]
-                for key in ("category", "reference", "available_sections")
-                if key in engineering
-            }
+            failure.public_engineering = {"category": engineering["category"], **diagnostic_locator(engineering)}
+        failure.engineering = engineering
         return failure
 
     def _finish_attempt(self, **values):

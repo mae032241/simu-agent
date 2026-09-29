@@ -350,7 +350,7 @@ def validate_analysis_inputs(sources: Mapping[str, bytes]) -> None:
                 continue
             if original is None or recovered['source_ref'] != original.artifact_ref.model_dump(mode='json') or (declaration is None and generated is None):
                 raise OperationInvocationError('input_recovery_origin_mismatch', port='recovery_manifest')
-            expected_path = declaration.relative_path if declaration is not None else generated.relative_path
+            expected_path = declaration.execution_output().relative_path if declaration is not None else generated.relative_path
             expected_name = declaration.name if declaration is not None else generated.name
             expected_case = (declaration.experiment_key, declaration.case_key) if declaration is not None else (None, None)
             if expected_path != recovered['metadata'].get('declared_path') or (declaration is None and expected_path != recovered['metadata'].get('relative_path')) or expected_name != descriptor.output_name or recovered['size_bytes'] != descriptor.size_bytes or recovered['media_type'] != descriptor.media_type or (declaration is None and (descriptor.sha256 != generated.sha256 or descriptor.size_bytes != generated.size_bytes)) or expected_case != (recovered['metadata'].get('experiment_key'), recovered['metadata'].get('case_key')):
@@ -362,7 +362,7 @@ def validate_analysis_inputs(sources: Mapping[str, bytes]) -> None:
         ):
             raise OperationInvocationError("input_manifest_output_mismatch", port="solver_outputs")
         declaration = expected.get(record.name)
-        if declaration is not None and (declaration.relative_path != record.relative_path
+        if declaration is not None and (declaration.execution_output().relative_path != record.relative_path
                 or declaration.media_type != record.media_type):
             raise OperationInvocationError("input_project_output_mismatch", port="runtime_manifest", field="outputs")
         if declaration is None and not (

@@ -91,6 +91,9 @@ class ArchiveEntry(StrictModel):
     _safe_path = field_validator("relative_path")(_validate_relative_path)
 
 
+PROCESS_LOG_PATH = ".scid-capture/solver_stdout.log"
+
+
 class ExpectedOutput(StrictModel):
     name: str = Field(min_length=1, max_length=256)
     relative_path: str = Field(min_length=1, max_length=1024)
@@ -109,6 +112,10 @@ class ExpectedOutput(StrictModel):
             raise declared_violation("output experiment_key and case_key must be declared together",
                 path="$.experiment_key" if self.experiment_key is None else "$.case_key")
         return self
+
+    def execution_output(self) -> ExpectedOutput:
+        """Map a frozen logical log alias to the control-owned transport path."""
+        return self.model_copy(update={"relative_path": PROCESS_LOG_PATH}) if self.capture == "process_log" else self
 
 
 class TCADJobSpec(StrictModel):
@@ -143,7 +150,7 @@ class TCADJobSpec(StrictModel):
         if any(path.startswith(".scid-capture/") for path in inputs):
             raise ValueError("input archive uses the reserved control capture directory")
         for item in self.expected_outputs:
-            if item.capture == "process_log" and item.relative_path != ".scid-capture/solver_stdout.log":
+            if item.capture == "process_log" and item.relative_path != PROCESS_LOG_PATH:
                 raise ValueError("process log must use the reserved stdout mirror path")
             if item.capture != "process_log" and item.relative_path.startswith(".scid-capture/"):
                 raise ValueError("solver output uses the reserved control capture directory")

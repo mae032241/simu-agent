@@ -15,7 +15,7 @@ from scidiscovery.operations.spec import ComponentRef, ComponentSpec
 from scidiscovery.operations.tooling import WorkerToolDefinition
 from scidiscovery.operation_contract import DiagnosticError, ToolInputError, validation_diagnostics
 
-from .execution_control import SolverCapabilitySnapshot
+from .execution_control import SolverCapabilitySnapshot, PROCESS_LOG_PATH
 from .project_packager import (ScientificDeckImplementation, DeckProjectDraft, ResolvedProjectInput, ExecutionPackage)
 
 
@@ -60,7 +60,11 @@ def prepare(request, context):
         raise ToolInputError("implementation_method_ambiguous", "Choose exactly one advertised method matching the implementation solver.", path="$.method")
     capability = candidates[0]
     values = authored.model_dump(mode="json")
-    values.update(tool_profile=capability.profile_id, capability_sha256=capability.capability_sha256)
+    values.update(tool_profile=capability.profile_id, capability_sha256=capability.capability_sha256,
+        collect_generated_outputs=True, expected_outputs=[{
+            "name": "process_log", "capture": "process_log", "relative_path": PROCESS_LOG_PATH,
+            "media_type": "text/plain", "max_bytes": authored.resource_limits.max_output_bytes,
+        }])
     project = DeckProjectDraft.model_validate_json(canonical_json(values), strict=True)
     slots = {slot.semantic_name: slot for slot in project.input_slots}
     if set(request.scientific_files) != set(slots):
@@ -139,7 +143,7 @@ def debug(request, context):
 
 
 PREPARE_TOOL = WorkerToolDefinition(name="worker_experiment_prepare",
-    description="Read the TCAD implementation schema or seal an implementation for the current experiment. Control resolves the exact active solver capability and supplied scientific files. Returns the exact public artifact_name immediately and, when required, an independent review request for the scheduler. Sealing itself requires no prior review; required review must pass before formal execution.",
+    description="Read the TCAD implementation schema or seal an implementation for the current experiment. Control resolves the exact active solver capability and supplied scientific files, captures stdout and inventories all generated solver files within the declared resource budget; no output path table is needed. Returns the exact public artifact_name immediately and, when required, an independent review request for the scheduler. Sealing itself requires no prior review; required review must pass before formal execution.",
     input_model=PrepareInput, capability="experiment.implementation", contextual_handler=prepare,
     required_services=("experiment.execution",), evidence_ports=("tool_evidence", "recovery_manifest_output"))
 DEBUG_TOOL = WorkerToolDefinition(name="worker_experiment_debug", description="Run or poll an optional bounded diagnostic of the exact sealed implementation. Use action=status with the same name for a read-only check after an uncertain response; it never submits or collects. Repeating action=run polls existing submissions but may create one if absent. Diagnostics are separate from formal execution and require no fixed sequence.",

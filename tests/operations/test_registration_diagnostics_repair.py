@@ -62,7 +62,8 @@ def test_expired_and_terminal_calls_keep_diagnostics_without_changing_state(tmp_
     assert "error" not in wire(root, "diagnostic_read", {"reference": reference})
     assert runs.status(worker._run_id).last_activity_at == before.last_activity_at
     assert len(status["diagnostic_events"]["events"]) == 1
-    assert "engineering" not in status["diagnostic_events"]["events"][0]["diagnostic"]
+    assert status["diagnostic_events"]["events"][0]["diagnostic"]["engineering"] == {
+        "reference": reference, "available_sections": ["summary", "traceback"]}
     assert len(runs.diagnostic_events(before, after=0, limit=20)["events"]) == 1
     failed = runs.record_failure(worker._run_id, reason="scheduler records timeout", timed_out=True,
         expected_state="running", expected_last_activity_at=before.last_activity_at)

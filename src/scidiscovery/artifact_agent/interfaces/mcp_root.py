@@ -197,7 +197,7 @@ class RunStatusInput(NamedInput, StageReadQuery):
     index_offset: int = Field(default=0, ge=0, description="navigation: continue the field index at output_index.next_offset or the sealed evidence list at evidence_outputs_next_offset.")
     index_limit: int = Field(default=16, ge=1, le=32, description="navigation: direct children, bounded to 8 KiB including metadata.")
     diagnostic_after: int | None = Field(default=None, ge=0,
-        description="status: 0 starts a bounded page of saved safe diagnostics, including running Runs; continue at diagnostic_events.next_after. Private engineering records are excluded.")
+        description="status: 0 starts a bounded page of saved safe diagnostics, including running Runs; continue at diagnostic_events.next_after. Engineering bodies are excluded; opaque references support an explicit diagnostic_read.")
     diagnostic_limit: int = Field(default=20, ge=1, le=100)
 
 

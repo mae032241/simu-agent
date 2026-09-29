@@ -332,6 +332,14 @@ assignments are engineering errors, never permission to substitute newer contrac
 TCAD authors put initialization coverage and untested reset paths in source comments
 before their final source-bound diagnostics, so the reviewer receives and independently
 checks those statements with the sealed project. Comments are not execution proof.
+The TCAD implementation form excludes `expected_outputs` and `collect_generated_outputs`.
+Control captures process logs and discovers solver-generated files within the declared
+resource budget, producing their paths, sizes, hashes and references from actual files.
+Authors do not repeat PLX/TDR output paths in a separate table; analysts select collected
+materials and explain their scientific meaning. Log aliases in existing sealed declarations
+are mapped only at the transport boundary, preserving the original, review subject and
+authorization. Collection alone does not establish scientific success; analysis must
+still report missing target observations.
 
 `LayeredDiagnosisReport` concentrates conclusions in `summary` and `overall_verdict`,
 with evidence and optional `limitations`. Its complete legacy `gates` object,
@@ -465,8 +473,10 @@ received separately from files verified. Upgrading uses the existing joint local
 and remote runner install transaction; old runners fail with an upgrade diagnostic.
 
 Engineering failures use one bounded, redacted diagnostic projection. Root reads
-details by an instance/session-scoped `diagnostic_read` reference; Workers retain
-their own readable workspace reports. Existing Run activity also supplies MCP
+details by an instance/session-scoped `diagnostic_read` reference. Worker runtime errors
+and explicit Root diagnostic pages carry only a locator and section names, never inline
+tracebacks or logs; private diagnostics are not copied into scientific workspaces.
+Argument corrections still return their actionable instructions directly. Run activity supplies MCP
 timing. Local trusted workspaces share an optional process-observation launcher:
 analysis retains its existing execution policy, other roles inherit their prior
 environment and limits. Missing or damaged observation is reported explicitly

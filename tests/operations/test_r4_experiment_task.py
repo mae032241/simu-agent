@@ -380,9 +380,9 @@ def test_scientific_implementation_and_package_share_constraints():
     from tcad_artifact.project_packager import DeckProjectDraft
     public = Implementation.model_json_schema()
     private = DeckProjectDraft.model_json_schema()
-    for name in ("entrypoint", "files", "arguments", "input_slots", "expected_outputs", "resource_limits"):
+    for name in ("entrypoint", "files", "arguments", "input_slots", "resource_limits"):
         assert public["properties"][name] == private["properties"][name]
-    assert not {"tool_profile", "capability_sha256", "schema_version"}.intersection(public["properties"])
+    assert not {"tool_profile", "capability_sha256", "schema_version", "expected_outputs", "collect_generated_outputs"}.intersection(public["properties"])
     source = dict(solver_kind="sdevice", files=[{"relative_path":"main.cmd","content":"# standalone"}],
         entrypoint="main.cmd", resource_limits=dict(wall_time_seconds=1,cpu_time_seconds=1,
         max_memory_bytes=1024,max_output_bytes=1024,max_storage_bytes=1024))

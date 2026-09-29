@@ -154,3 +154,83 @@ def test_effect_backend_failure_is_engineering_not_invalid_science():
     detail = caught.value.details[0]
     assert detail["phase"] == "tool_execution" and detail["repairable"] is False
     assert "PRIVATE_BACKEND_ADDRESS" not in json.dumps(detail)
+
+
+def test_engineering_failure_returns_readable_scoped_locator_without_inline_trace(tmp_path, monkeypatch):
+    from scidiscovery.plugin_runtime.transport import rpc_error
+    from scidiscovery.artifact_agent.service.engineering_diagnostics import EngineeringDiagnostics, diagnostic_locator
+    f = experiment(tmp_path, monkeypatch)
+    first = start(f)
+    decide(f, first, 'authorize_execution')
+    def broken(*args, **kwargs):
+        raise RuntimeError('fixture backend failed at /private/host/path token=do-not-expose')
+    monkeypatch.setattr(f.adapter, 'prepare', broken)
+    with pytest.raises(WorkerToolError) as caught:
+        f.worker.call_tool('worker_experiment_execute', {'action': 'advance'})
+    wire = rpc_error(1, caught.value)['error']
+    locator = wire['data']['engineering']
+    assert set(locator) == {'category', 'reference', 'available_sections'}
+    assert locator['available_sections'] == ['summary', 'traceback']
+    assert 'do-not-expose' not in json.dumps(wire)
+    page = f.root.call_tool('run_status', {'name': 'continuation', 'intent': 'status', 'diagnostic_after': 0})
+    saved = page['diagnostic_events']['events'][-1]['diagnostic']['engineering']
+    assert saved == {k: locator[k] for k in ('reference', 'available_sections')}
+    read = f.root.call_tool('diagnostic_read', {'reference': saved['reference'], 'max_bytes': 1024})
+    assert 'fixture backend failed' in read['text']
+    assert 'do-not-expose' not in json.dumps(page) + json.dumps(read)
+    assert '/private/host/path' not in json.dumps(read)
+    store = EngineeringDiagnostics(f.runs.database_path.parent.parent / 'engineering-diagnostics')
+    with pytest.raises(ValueError, match='another instance'):
+        store.read(saved['reference'], scopes=('instance:another',))
+    assert diagnostic_locator({'reference': '../private', 'available_sections': ['traceback']}) == {}
+    assert diagnostic_locator({**locator, 'causes': ['private'], 'available_sections': ['private']}) == {
+        'reference': saved['reference'], 'available_sections': []}
+    assert f.adapter.submits == 0
+
+
+@pytest.mark.process_e2e
+def test_worker_diagnostic_locator_survives_real_proxy_and_daemon(tmp_path, monkeypatch):
+    import multiprocessing
+    import os
+    import subprocess
+    import sys
+    import time
+    from scidiscovery.plugin_runtime.transport import UnixSocketDaemon
+    from scidiscovery.artifact_agent.interfaces.mcp import MCPRouter
+    f = continuation(tmp_path, monkeypatch)
+    def broken(*args, **kwargs):
+        raise RuntimeError('fixture heartbeat service unavailable token=do-not-expose')
+    monkeypatch.setattr(f.runs, 'heartbeat', broken)
+    socket = tmp_path / 'worker.sock'
+    process = multiprocessing.get_context('fork').Process(target=lambda:
+        UnixSocketDaemon(socket, MCPRouter(f.worker, name='diagnostic-test')).serve_forever())
+    process.start()
+    try:
+        deadline = time.monotonic() + 5
+        while not socket.exists() and time.monotonic() < deadline:
+            time.sleep(.02)
+        assert socket.exists()
+        request = {'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call',
+            'params': {'name': 'worker_heartbeat', 'arguments': {}, '_meta': {
+                'x-codex-turn-metadata': {'session_id': 'continuation-fixture',
+                    'thread_id': 'next-owner', 'thread_source': 'subagent'}}}}
+        response = subprocess.run([sys.executable, '-m',
+            'scidiscovery.artifact_agent.interfaces.mcp_proxy', '--socket', str(socket)],
+            input=json.dumps(request)+'\n', text=True, capture_output=True, timeout=10,
+            env=dict(os.environ, PYTHONPATH=os.pathsep.join(sys.path)))
+        assert response.returncode == 0, response.stderr
+        error = json.loads(response.stdout)['error']
+        assert 'do-not-expose' not in json.dumps(error)
+        assert 'reference' in error['data'].get('engineering', {}), error
+        reference = error['data']['engineering']['reference']
+        page = f.root.call_tool('run_status', {'name': 'continuation', 'intent': 'status', 'diagnostic_after': 0})
+        assert page['diagnostic_events']['events'][-1]['diagnostic']['engineering']['reference'] == reference
+        read = f.root.call_tool('diagnostic_read', {'reference': reference})
+        assert 'fixture heartbeat service unavailable' in read['text']
+        assert 'do-not-expose' not in read['text']
+    finally:
+        process.terminate()
+        process.join(3)
+        if process.is_alive():
+            process.kill()
+            process.join(3)

@@ -14,6 +14,19 @@ from ...plugin_runtime.diagnostics import redact, exception_facts
 from ...plugin_runtime.workspace import atomic_json, read_json
 
 
+def diagnostic_locator(engineering: object) -> dict:
+    """Expose only a bounded opaque handle; bodies require a scoped explicit read."""
+    if not isinstance(engineering, dict):
+        return {}
+    reference = engineering.get("reference")
+    if not isinstance(reference, str) or not re.fullmatch(r"diag_[0-9a-f]{32}", reference):
+        return {}
+    sections = engineering.get("available_sections", ())
+    return {"reference": reference, "available_sections": [name for name in
+        ("summary", "traceback", "stdout", "stderr")
+        if isinstance(sections, (list, tuple)) and name in sections]}
+
+
 class EngineeringDiagnostics:
     def __init__(self, root: Path):
         self.root = Path(root)
