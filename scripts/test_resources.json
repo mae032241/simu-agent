@@ -9,6 +9,7 @@
     "timeout_seconds": 300,
     "sample_interval_seconds": 0.1,
     "termination_grace_seconds": 2,
-    "log_bytes": 8388608
+    "log_bytes": 8388608,
+    "dirty_stop_grace_seconds": 5.0
   }
 }

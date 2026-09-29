@@ -55,7 +55,7 @@ def exclusive_intent(path, value):
 
 
 def harness_digest():
-    return digest({p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(SCRIPTS.glob('*.py'))})
+    return digest({p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted([*SCRIPTS.glob('*.py'), SCRIPTS/'test_resources.json', SCRIPTS/'root_host_resources.json'])})
 
 
 def initialize(root, config, source, installed, previous):

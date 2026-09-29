@@ -81,6 +81,11 @@ python scripts/accept_b6.py review manual-known --suite ../../.b6-acceptance \
 - 单次配对是小样本证据，不证明普遍收益；不提供虚构的逐请求账单或货币成本。
 - 原生任务沿用 `scripts/test_resources.json` 的串行、RSS 和系统余量止损；用户绑定等待
   与执行预算分开。无需提高原生进程虚拟地址限制。
+- Dirty 是系统全局脏页，不能归因于某个验收进程。`dirty_stop_bytes` 默认 128 MiB，
+  运行中连续采样超限达到 `dirty_stop_grace_seconds`（默认 5 秒）才终止；中间回落则重新
+  计时。启动前超限会先等写回，持续超限则拒绝启动。RAM 余量、余量骤降、RSS 与超时
+  仍立即按原规则检查，不参与 Dirty 的等待窗口。结果记录 Dirty 峰值、次数与持续时间。
+  资源配置纳入验收工具指纹；不能在配对实验之间静默修改阈值。
 - managed 的两个 unit 各有配置化 MemoryMax 和 RuntimeMaxSec；监督器退出或崩溃后也受
   systemd 时限约束。正常退出会停止自己创建的 unit，不碰正式服务。
 - unit 的 MemoryPeak/MemoryCurrent 与原生监督树 RSS 是不同统计范围，不能相加冒充
