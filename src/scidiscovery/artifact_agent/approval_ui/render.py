@@ -13,7 +13,7 @@ from ..schema.approval import (
     ReviewDocumentItem,
     parse_json_pointer,
 )
-from ..service.approvals import ApprovalReview
+from ..service.approvals import ApprovalReview, UI_CANCEL_OPTION
 from .presentation_render import (
     EvidenceHref,
     ImageHref,
@@ -73,6 +73,7 @@ def render_review(
     presentation: dict | None = None,
     evidence_href: EvidenceHref | None = None,
     image_href: ImageHref | None = None,
+    authorization: dict | None = None,
 ) -> bytes:
     """Render one frozen request without dispatching on domain schemas."""
 
@@ -91,6 +92,10 @@ def render_review(
                 return html.unescape(_subject_href(review, index, access_token))
         return ""
 
+    from .approval_focus import render_approval_focus
+    focus_panel = render_approval_focus(presentation,
+        subject_ids=[ref.artifact_id for ref in request.subject_refs],
+        evidence_href=evidence_href or frozen_evidence_href, authorization=authorization)
     presentation_panel = render_presentation(
         presentation,
         evidence_href=evidence_href or frozen_evidence_href,
@@ -128,6 +133,7 @@ def render_review(
         f"<div class='question'>{question_preview}</div>{request_download}"
         f"{_render_request_metadata(review, status_label)}"
         "</section>"
+        f"{focus_panel}"
         "<div class='review-layout'><div class='review-main'>"
     )
     page_end = (
@@ -377,7 +383,7 @@ def _render_decision(
     action = f"/review/{quote(review.request.approval_id, safe='')}/decision"
     return (
         "<section class='decision-panel'><p class='eyebrow'>人工决定</p>"
-        "<h2>审阅结论</h2>"
+        "<h2>请选择本次决定</h2>"
         f"<a class='source-link' href='{_request_href(review, access_token)}'>完整审批问题与选项（原件）</a>"
         f"<form method='post' action='{html.escape(action, quote=True)}'>"
         f"<input type='hidden' name='token' value='{html.escape(access_token, quote=True)}'>"
@@ -391,7 +397,15 @@ def _render_decision(
         f"<strong>{html.escape(identity.display_name)}</strong>"
         f"<code>{html.escape(identity.identity_id)}</code></p>"
         "<button class='submit-decision' type='submit'>确认并记录决定</button>"
-        "</form></section>"
+        "</form>"
+        + fold_panel("作废此审批请求", "<p>仅关闭尚未决策的请求，不授予任何审批或执行资格。记录仍保留。</p>"
+            + f"<form method='post' action='{html.escape(action, quote=True)}' data-cancel-approval>"
+            + "".join(f"<input type='hidden' name='{key}' value='{html.escape(value, quote=True)}'>"
+                for key, value in {"token": access_token, "csrf": review.csrf_token, "nonce": review.decision_nonce,
+                    "confirm": "confirm", "selected_option": UI_CANCEL_OPTION.option_id}.items())
+            + "<label>作废说明（选填）<textarea name='rationale' maxlength='16384'></textarea></label>"
+            + "<button type='submit'>确认作废此请求</button></form>", class_name="approval-cancel")
+        + "</section>"
     )
 
 

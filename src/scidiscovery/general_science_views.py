@@ -150,6 +150,13 @@ def _foundation(result, artifact, payload, base=""):
             add_gap(result, "parameter_rows_limited", artifact, base)
             return
         path = base + pointer("items", index)
+        if item.get("value") is None:
+            # A narrative calibration or boundary statement is not a parameter
+            # name with a missing numerical value. Preserve it as readable prose.
+            add_fields(result, artifact, "测量条件与证据说明", (
+                ("statement", "说明"), ("conditions", "适用条件"),
+                ("uncertainty", "不确定性")), payload=item, path=path)
+            continue
         citations = []
         unresolved = False
         for key in items(item.get("evidence_keys")):
@@ -160,13 +167,16 @@ def _foundation(result, artifact, payload, base=""):
             else:
                 unresolved = True
                 add_gap(result, "source_key_ambiguous" if matches else "source_key_missing", artifact, path, source_key=key)
-        row = parameter(artifact, path, name=item.get("statement", item.get("item_key", MISSING)),
+        row = parameter(artifact, path, name=item.get("item_key", MISSING),
             selected_value=item.get("value", MISSING), unit=item.get("unit", MISSING),
             conditions=item.get("conditions", MISSING), case_scope=item.get("scope", MISSING),
             epistemic_status=item.get("epistemic_status", NO_SOURCE), uncertainty=item.get("uncertainty") or NO_UNCERTAINTY,
             rationale=item.get("rationale") or MISSING, sources=citations, record_type="科学依据中的参数",
             source_status="展示暂未完整解析引用（缺失、歧义或读取不完整）" if unresolved else None,
-            field_sources={key: source(artifact, path + pointer(field)) for key, field in (("name", "statement"), ("selected_value", "value"), ("unit", "unit"), ("conditions", "conditions"), ("case_scope", "scope"), ("uncertainty", "uncertainty"), ("rationale", "rationale")) if field in item})
+            field_sources={key: source(artifact, path + pointer(field)) for key, field in (("name", "item_key"), ("selected_value", "value"), ("unit", "unit"), ("conditions", "conditions"), ("case_scope", "scope"), ("uncertainty", "uncertainty"), ("rationale", "rationale")) if field in item})
+        row["description"] = item.get("statement", "")
+        if "statement" in item:
+            row["field_sources"]["description"] = source(artifact, path + pointer("statement"))
         result["parameters"].append(row)
 
 

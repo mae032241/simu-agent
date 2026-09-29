@@ -12,6 +12,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from scidiscovery.artifact_agent.operation_tool_context import OperationToolContext
+from scidiscovery.operation_contract import contract_diagnostic
 from scidiscovery.artifact_agent.schema.common import canonical_json, canonical_sha256
 from scidiscovery.artifact_agent.schema.role_result import parse_role_result
 from scidiscovery.plugin_runtime.workspace import (
@@ -53,10 +54,10 @@ def _debug_policy(context):
     return DebugPolicy.model_validate_json(json.dumps(context.state["debug_policy"]), strict=True)
 
 
-def _continuation_error(code, message):
+def _continuation_error(code, message, *, repairable=True, path="$.name"):
     from scidiscovery.operation_contract import DiagnosticError, contract_diagnostic
     return DiagnosticError(message, details=(contract_diagnostic(code, phase="tool_execution",
-        affected_action="tool_call", path="$.name", repairable=True, message=message),))
+        affected_action="tool_call", path=path, repairable=repairable, message=message),))
 
 
 def debug_response(context: OperationToolContext, run_name: str, response: dict) -> dict:
@@ -92,8 +93,8 @@ def debug_summary(context, run_name, response):
         "scientific_claim_admissible", "diagnostic_layer", "summary", "exit_code", "diagnostics",
         "source_diagnostic", "log_relative_path", "delivery_budget", "budget", "reserved_wall_seconds_for_run", "missing_outputs") if key in full}
     if isinstance(full.get("progress"), dict):
-        result["progress"] = {key: full["progress"][key] for key in
-            ("elapsed_seconds", "observed_at", "started_at", "completed_at") if key in full["progress"]}
+        from scidiscovery.plugin_runtime.experiment import progress_summary
+        result["progress"] = progress_summary(full["progress"])
     result.update(details_path=str(path), output_count=len(full.get("outputs", [])))
     return result
 
@@ -137,7 +138,12 @@ class LocalTCADDebugService:
             finally:
                 self._save_budget(context)
 
-    def experiment_activity(self, run_ids, inputs, *, cancel=False, name=None):
+    def experiment_pending_diagnostics(self, run_ids, inputs):
+        pending = []
+        self.experiment_activity(run_ids, inputs, pending=pending)
+        return pending
+
+    def experiment_activity(self, run_ids, inputs, *, cancel=False, name=None, pending=None):
         """Observe/cancel persisted jobs without resetting the original allowance."""
         from scidiscovery.artifact_agent.schema.execution import LocalFileDescriptor
         from scidiscovery.plugin_runtime.workspace import atomic_json
@@ -168,9 +174,17 @@ class LocalTCADDebugService:
                         continue
                     external, state = found
                     record = {**record, "external_run_id": external, "state": _state(state)}
+                if record["state"] not in _TERMINAL:
+                    # The persisted reservation is not a live observation. An owner
+                    # may have exited before recording the diagnostic's terminal state.
+                    record = {**record, "state": _state(self.adapter.status(external))}
                 if cancel and record["state"] not in _TERMINAL:
                     record["state"] = _state(self.adapter.cancel(external))
                 active = active or record["state"] not in _TERMINAL
+                if pending is not None and record["state"] not in _TERMINAL:
+                    pending.append(contract_diagnostic("experiment_diagnostics_pending", phase="protocol",
+                        affected_action="submit", repairable=True,
+                        message=f"Diagnostic {alias!r} is {record['state']}. Read worker_experiment_debug(action='status', name={alias!r}); finish it or call action='cancel' with the same name, then resubmit the unchanged report."))
                 if cancel:
                     records[alias] = record
             if cancel:
@@ -207,6 +221,7 @@ class LocalTCADDebugService:
             record = record or reservation["record"]
             external = record.get("external_run_id")
             state = record["state"]
+            details = {}
             try:
                 if external is None:
                     from scidiscovery.artifact_agent.schema.execution import LocalFileDescriptor
@@ -216,7 +231,9 @@ class LocalTCADDebugService:
                         return {**absent, "allowance_reserved": True}
                     external, state = found
                 if state not in _TERMINAL:
-                    state = self.adapter.status(external)
+                    reader = getattr(self.adapter, "status_details", None)
+                    details = reader(external) if callable(reader) else {"state": self.adapter.status(external)}
+                    state = details["state"]
             except Exception as error:
                 from scidiscovery.operation_contract import DiagnosticError, contract_diagnostic
                 message = ("Diagnostic status could not be confirmed. This read-only query did not submit a job. "
@@ -224,8 +241,11 @@ class LocalTCADDebugService:
                 raise DiagnosticError(message, details=(contract_diagnostic("tcad_debug_status_unknown",
                     phase="tool_execution", affected_action="tool_call", message=message),)) from error
             response = record.get("response", {})
+            from scidiscovery.plugin_runtime.experiment import progress_summary
+            progress = details.get("progress", response.get("progress"))
             return {"name": run_name, "mode": record["mode"], "state": _state(state),
                 "submission": "submitted", "allowance_reserved": True,
+                **({"progress": progress_summary(progress)} if isinstance(progress, dict) else {}),
                 **{key: response[key] for key in ("summary", "exit_code", "missing_outputs") if key in response}}
 
     @staticmethod
@@ -253,12 +273,14 @@ class LocalTCADDebugService:
             found = self.adapter.lookup_submission(LocalFileDescriptor.model_validate_json(
                 json.dumps(pending["submission"]), strict=True))
             if found is None:
-                raise TCADDebugError("reserved debug submission was not accepted; allowance remains consumed")
+                raise _continuation_error("tcad_debug_not_submitted",
+                    "The reserved diagnostic was not accepted by the executor. Its allowance remains reserved; request control-side budget reconciliation before another diagnostic.", repairable=False)
             record = {**pending["record"], "external_run_id": found[0], "state": _state(found[1])}
             runs[run_name] = record
         if record is None:
             if len(reservations) >= _debug_policy(context).max_runs:
-                raise TCADDebugError("TCAD development debug run limit is exhausted")
+                raise _continuation_error("tcad_debug_attempts_exhausted",
+                    "The shared scientific-subject diagnostic attempt allowance is exhausted. Renaming a diagnostic or recovering the task does not reset it; an administrator must change the allowance before a new diagnostic.", repairable=False)
             record = self._start(context, run_name, mode, selected)
             runs[run_name] = record
         if not isinstance(record, dict) or record.get("mode") != mode:
@@ -281,7 +303,8 @@ class LocalTCADDebugService:
                            else {"state": self.adapter.status(str(record["external_run_id"]))})
                 state = _state(str(details["state"]))
             except Exception as error:
-                raise RuntimeError("TCAD debug status is unavailable") from error
+                raise _continuation_error("tcad_debug_status_unknown",
+                    "The executor could not report this diagnostic's state. Query status for the same name after service recovery; do not start a replacement.", repairable=False) from error
             record["state"] = state
             context.record_activity("tcad_debug_polled")
         if state not in _TERMINAL:
@@ -307,7 +330,8 @@ class LocalTCADDebugService:
         except TCADDebugError:
             raise
         except Exception as error:
-            raise RuntimeError("TCAD debug collection is unavailable") from error
+            raise _continuation_error("tcad_debug_collection_failed",
+                "The diagnostic reached a terminal state but its results could not be collected. Recover collection for this same diagnostic; do not repeat the solver.", repairable=False) from error
         record["state"] = "collected"
         record["response"] = response
         context.record_activity("tcad_debug_collected")
@@ -321,7 +345,8 @@ class LocalTCADDebugService:
             raise TCADDebugError("local TCAD debug budget is invalid")
         remaining = min(context.remaining_seconds, _debug_policy(context).total_wall_seconds - used)
         if remaining < 1:
-            raise TCADDebugError("TCAD development debug budget is exhausted")
+            raise _continuation_error("tcad_debug_wall_budget_exhausted",
+                "No wall-time allowance remains in this Run or its shared scientific-subject diagnostic budget. No new diagnostic was submitted. Inspect the existing diagnostic status and budget; do not rename or repeat it to bypass the allowance.", repairable=False)
         project, source_sha, sources = _candidate(context)
         delivery = _delivery_budget(context, project, mode, output_names)
         capability = (context.state["experiment_capability"] if "experiment_capability" in context.state
@@ -335,6 +360,7 @@ class LocalTCADDebugService:
         )
         exchange = self.exchange_root / uuid.uuid4().hex / run_name
         exchange.mkdir(parents=True, mode=0o700)
+        submission_started = False
         try:
             prepared = self.adapter.prepare(
                 project=project,
@@ -375,15 +401,18 @@ class LocalTCADDebugService:
             context.state.setdefault("reservations", {})[run_name] = {
                 "submission": submission.model_dump(mode="json"), "record": pending_record}
             self._save_budget(context)
+            submission_started = True
             external_run_id, state = self.adapter.submit(submission)
-        except TCADDebugError:
-            raise
-        except ValueError as error:
-            raise TCADDebugError(
-                "staged TCAD project is not eligible for development debug: " + str(error)
-            ) from error
         except Exception as error:
-            raise RuntimeError("TCAD development debug startup failed") from error
+            from scidiscovery.operation_contract import DiagnosticError
+            if isinstance(error, DiagnosticError) and not submission_started:
+                raise
+            raise _continuation_error(
+                "tcad_debug_submission_unknown" if submission_started else "tcad_debug_prepare_failed",
+                "Diagnostic submission was attempted but acknowledgement is unavailable. Query status for the same name; do not create a replacement."
+                if submission_started else
+                "Diagnostic preparation failed before submission. No new diagnostic was sent to the executor. The control diagnostic retains the backend or contract cause; repair that cause before retrying the same implementation.",
+                repairable=False) from error
         if not isinstance(external_run_id, str) or not external_run_id:
             raise TCADDebugError("TCAD debug returned an invalid private binding")
         context.state["reserved_wall_seconds"] = used + prepared.wall_time_seconds

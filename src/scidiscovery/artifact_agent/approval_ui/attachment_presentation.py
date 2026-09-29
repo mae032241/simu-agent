@@ -3,6 +3,31 @@ from collections.abc import Mapping
 from ...plugin_runtime.presentation import add_gap, items, pointer, source
 
 
+def presentation_file_manifest(payload):
+    """Keep file identities, captions and original array positions, not calculations.
+
+    Original manifests remain available through their evidence URLs. Retaining all
+    aliases also preserves duplicate detection when nonvisual records are omitted.
+    """
+    if not isinstance(payload, Mapping) or not isinstance(payload.get('records'), list) or not isinstance(payload.get('bindings'), Mapping):
+        return None
+    records, aliases = [], set()
+    for record in payload['records']:
+        if not isinstance(record, Mapping):
+            records.append(None)
+            continue
+        item = {'alias': record.get('alias')}
+        media = str(record.get('media_type', '')).split(';', 1)[0].strip().lower()
+        if record.get('output_port') == 'attachments' or media in {'image/png', 'image/jpeg', 'text/csv'}:
+            # File metadata is owned by its plugin; keep it intact for registered
+            # presentation providers (including figure family and CSV captions).
+            item = dict(record)
+            if isinstance(record.get('alias'), str):
+                aliases.add(record['alias'])
+        records.append(item)
+    return {'records': records, 'bindings': {key: value for key, value in payload['bindings'].items() if key in aliases}}
+
+
 def append_attachments(result, cohort):
     for manifest in cohort:
         if (manifest.get('schema_id') != 'scidiscovery.tool-evidence-manifest.v1'
@@ -37,6 +62,6 @@ def append_attachments(result, cohort):
             name = metadata.get('file_name', alias)
             result['sections'].append({'title': '封存科学附件（不代表已审查）', 'kind': 'attachments', 'items': [{
                 'label': name, 'value': metadata.get('purpose', ''), 'source': source(matches[0])}]})
-            if record.get('media_type') in {'image/png', 'image/jpeg'}:
+            if str(record.get('media_type', '')).split(';', 1)[0].strip().lower() in {'image/png', 'image/jpeg'}:
                 result['figures'].append({'artifact_id': matches[0]['artifact_id'],
                     'label': name, 'source': source(manifest, pointer('records', index))})

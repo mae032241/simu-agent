@@ -137,6 +137,11 @@ def test_old_execution_archive_reads_and_restores_without_inventing_authorizatio
     model = service.archived_model(first)
     status = model.executions.status(execution)
     assert status.state == 'cancelled' and status.authorization == expected
+    if human_decision:
+        summary = model.approvals.navigation_summary("apr_historical")
+        assert summary["question"] == "Authorize exact fixture?"
+        with pytest.raises(AttributeError):
+            model.approvals.expire_pending("apr_historical")
     listing = model.nodes(first)
     node = next(item for item in listing['items'] if item['key'] == 'execution:old.execution')
     assert node['state'] == 'cancelled' and not node.get('gaps')

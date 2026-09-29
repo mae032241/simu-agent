@@ -18,6 +18,8 @@ _STATES = {
     "registered": "已登记", "pending": "待审批", "decided": "已决定", "expired": "已过期",
     "cancelled_by_human": "用户已取消", "created": "已创建", "collected": "已收集",
     "collecting": "收集中", "collection_failed": "收集失败", "unknown": "未记录",
+    "authorized": "已授权", "submitted": "已提交", "succeeded": "执行成功",
+    "cancelling": "取消中", "cancelled": "已取消", "abandoned": "已放弃",
 }
 _PREVIEW = "<p class='bounded-note'>仅显示有界预览；完整字段请通过原件或记录入口读取。</p>"
 
@@ -67,18 +69,22 @@ def _section(title: str, body: str, *, class_name: str = "", section_id: str = "
     return f"<section class='workbench-section {class_name}' id='{section_id}'><h2>{_text(title)}</h2>{body}</section>"
 
 
-def _document(title: object, body: str, *, instance_id: str, csrf_token: str = "", live_updates: bool = True) -> bytes:
+def _document(title: object, body: str, *, instance_id: str, csrf_token: str = "", live_updates: bool = True,
+              can_retry_summary: bool = False, summary_unavailable_reason: str | None = "access_required") -> bytes:
     script = "<script src='/static/workbench.js' defer></script>" if live_updates else ""
     page = (
         "<!doctype html><html lang='zh-CN'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width,initial-scale=1'>"
         f"<meta name='workbench-csrf' content='{html.escape(csrf_token, quote=True)}'>"
+        f"<meta name='summary-retry-enabled' content='{str(can_retry_summary).lower()}'>"
         f"<title>{_text(title)} · 科研工作台</title>"
         "<link rel='stylesheet' href='/static/style.css'>"
         f"{script}</head><body>" + navigation(instance_id) +
         "<a class='skip-link' href='#workbench-content'>跳到主要内容</a>"
         f"<main class='workbench-page' id='workbench-content' data-instance-id='{html.escape(instance_id, quote=True)}'>"
-        f"{body}</main></body></html>"
+        f"{body}</main>" + "<template id='summary-unavailable'>"
+        + (_summary_unavailable(instance_id, csrf_token, summary_unavailable_reason) if not can_retry_summary else "")
+        + "</template></body></html>"
     )
     return page.encode("utf-8")
 
@@ -90,6 +96,8 @@ def _state(value: object) -> str:
 
 
 def _record_title(node: dict) -> str:
+    if node.get("kind") == "approval" and _dict(node.get("approval_summary")).get("kind"):
+        return approval_heading(_dict(node.get("approval_summary")).get("kind"))[0]
     if node.get("kind") == "task":
         return "历史任务 · " + str(node.get("name") or "未命名")
     schema = node.get("schema_id")
@@ -97,6 +105,7 @@ def _record_title(node: dict) -> str:
     if not schema and outputs:
         schema = _dict(_dict(outputs[0]).get("ref")).get("schema_id")
     titles = {
+        "scidiscovery.experiment-report.v1": "实验报告",
         "scidiscovery.scientific-review.v1": "独立科学审查",
         "scidiscovery.experiment-design-intent.v1": "实验设计",
         "scidiscovery.experiment-portfolio.v1": "实验计划",
@@ -109,6 +118,8 @@ def _record_title(node: dict) -> str:
     if schema in titles:
         return titles[schema]
     operation = str(node.get("operation_id", ""))
+    if operation == "science.experiment.v1":
+        return "实验"
     for part, title in (("review", "独立审查"), ("analyze", "结果分析"), ("diagnose", "结果诊断"),
                         ("design", "实验设计"), ("author", "实验实现"), ("revise", "受控修订"), ("extract", "证据整理")):
         if part in operation.split("."):
@@ -123,14 +134,205 @@ def _time(value: object) -> str:
     return f"<time class='local-time' datetime='{html.escape(value, quote=True)}'>{_text(shown, 48)}</time>"
 
 
-def _node_card(node: dict, instance_id: str, *, compact: bool = False) -> str:
+def _node_card(node: dict, instance_id: str, *, compact: bool = False, retry_csrf="", summary_unavailable="") -> str:
     key = node.get("key", "")
     css_kind = node.get("kind") if node.get("kind") in _KINDS else "unknown"
     link = _link(_node_href(instance_id, key), _record_title(node), class_name="node-title",
         extra=(" title='" + html.escape(str(node.get("name", key)), quote=True) + "'") if not compact else "")
     return (f"<li class='trajectory-node node-{css_kind}'><span class='trajectory-dot' aria-hidden='true'></span>"
         "<div class='trajectory-content'><div class='node-card-heading'>" + link + _state(node.get("state"))
-        + "</div>" + _time(node.get("source_time") or node.get("created_at")) + "</div></li>")
+        + "</div><p class='node-readable-name'>" + _text(str(node.get("name", "")).rsplit("/", 1)[-1], 120) + "</p>"
+        + _time(node.get("source_time") or node.get("created_at"))
+        + _approval_action(node, instance_id) + _execution_progress(node)
+        + _experiment_children(node, instance_id, retry_csrf=retry_csrf, summary_unavailable=summary_unavailable) + "</div></li>")
+
+
+def _approval_action(node, instance_id):
+    if node.get("kind") != "approval":
+        return ""
+    summary = _dict(node.get("approval_summary"))
+    pending = node.get("state") == "pending"
+    body = "<div class='approval-next-action'><strong>" + ("待你决定" if pending else "审批记录") + "</strong>"
+    if summary.get("question"):
+        body += "<p>" + render_scientific_text(summary["question"], 240) + "</p>"
+    if summary.get("resource_summary"):
+        body += "<p class='approval-request-values'>" + _text(summary["resource_summary"], 600) + "</p>"
+    if summary.get("selected_label"):
+        body += "<p>决定：" + _text(summary["selected_label"]) + "</p>"
+    return body + _link(_node_href(instance_id, node["key"]),
+        "查看关键参数并审批" if pending else "查看审批结果", class_name="approval-action-link") + "</div>"
+
+
+def _experiment_children(node, instance_id, *, retry_csrf="", summary_unavailable=""):
+    page = node.get("experiment_children")
+    if not isinstance(page, dict):
+        return ""
+    base = _node_href(instance_id, node["key"])
+    rows = []
+    for child in page.get("items", []):
+        stage = child.get("kind") == "stage"
+        href = (_node_href(instance_id, child["parent_key"]) + "?" + urlencode({"stage_reference": child["reference"]})
+                if stage else _node_href(instance_id, child["key"]))
+        title = str(child.get("title", "实验记录")) + (" · v" + str(child["version"]) if stage else "")
+        if child.get("display_title"):
+            title += " · " + child["display_title"] + "（自动导读）"
+        state = "<span class='workbench-state'>已封存</span>" if stage else _state(child.get("state"))
+        inherited = "<p class='source-note'>原实验的执行记录，当前为恢复任务。</p>" if child.get("parent_key") != node["key"] else ""
+        rows.append("<li class='experiment-child'><div>" + _link(href, title) + " " + state + "</div>"
+            + _time(child.get("source_time")) + inherited + _approval_action(child, instance_id)
+            + (_summary_retry(child.get("display_copy") or {"state": "not_generated"}, instance_id,
+                child.get("parent_key", node["key"]), retry_csrf, stage_reference=child.get("reference"), unavailable=summary_unavailable) if stage else "") + "</li>")
+    body = "<ol class='experiment-child-list'>" + "".join(rows) + "</ol>" if rows else "<p>尚无阶段、执行或审批记录。</p>"
+    if page.get("pending_approvals"):
+        body = "<p class='pending-approval-note'>待处理审批：" + str(page["pending_approvals"]) + "</p>" + body
+    if page.get("gaps"):
+        body += "<p class='source-gap'>部分子节点暂不可读或超出本次读取范围；请在全部记录中核对。</p>"
+    if page.get("offset"):
+        body += _link(base + "?child_offset=0#experiment-children", "最新子节点")
+    if page.get("next_offset") is not None:
+        body += _link(base + "?" + urlencode({"child_offset": page["next_offset"]}) + "#experiment-children", "更早的子节点")
+    body = ("<div data-experiment-children='" + html.escape(node["key"], quote=True)
+        + "' data-child-offset='" + str(page.get("offset", 0)) + "'>" + body + "</div>")
+    return fold_panel("阶段、审批与执行", body, count=page.get("total"), class_name="experiment-children",
+        expanded=bool(page.get("pending_approvals") or page.get("offset")))
+
+
+def _summary_unavailable(instance_id, csrf, reason):
+    messages = {
+        "access_required": "当前浏览授权为只读；可在此启用实例管理权限，以生成或重新整理导读。",
+        "service_unavailable": "自动导读服务尚未就绪，请检查服务配置。",
+        "service_disabled": "服务配置已关闭自动导读。",
+        "instance_disabled": "此实例已关闭自动导读，可在 Agent 设置中启用。",
+        "read_only": "实例当前为只读或正在维护，暂不能生成或重新整理导读。",
+    }
+    body = "<p class='source-note'>" + messages.get(reason, "导读操作暂不可用，请刷新页面核对。") + "</p>"
+    if reason == "access_required" and csrf:
+        from .home_render import access_form
+        body += access_form(instance_id, csrf=csrf, scope="maintenance", label="启用实例管理权限")
+    elif reason == "instance_disabled":
+        body += _link(_path(instance_id) + "/settings", "打开 Agent 设置")
+    return body
+
+
+def _summary_retry(copy, instance_id, node_key, csrf, *, stage_reference=None, unavailable=""):
+    if not isinstance(copy, dict):
+        return ""
+    if copy.get("state") in {"queued", "running"}:
+        return "<button type='button' disabled>导读整理中…</button>"
+    retry = copy.get("retry")
+    generate = copy.get("state") == "not_generated"
+    if not generate and not retry:
+        return ""
+    if not csrf:
+        return unavailable or _summary_unavailable(instance_id, "", "access_required")
+    fields = {"csrf": csrf, "node_key": node_key}
+    if not generate:
+        fields.update(cache_key=retry["cache_key"], generation=retry["generation"])
+    if stage_reference:
+        fields["stage_reference"] = stage_reference
+    inputs = "".join("<input type='hidden' name='" + key + "' value='" + html.escape(str(value), quote=True) + "'>"
+        for key, value in fields.items())
+    action = "generate" if generate else "retry"
+    label = "生成导读" if generate else "重新整理"
+    return ("<form method='post' action='" + _path(instance_id) + "/display-summary/" + action + "' data-summary-retry>"
+        + inputs + "<button type='submit'>" + label + "</button><small>仅整理展示文案，不修改科学结果。</small></form>")
+
+
+def _display_copy(node, instance_id="", *, retry_csrf="", summary_unavailable=""):
+    copy = node.get("display_copy")
+    if not isinstance(copy, dict):
+        return ""
+    body = ""
+    for item in copy.get("items", [])[:4]:
+        body += "<h3>" + _text(item["title"], 80) + "</h3><p>" + render_scientific_text(item["summary"], 600) + "</p>"
+    if not body:
+        body = "<p>" + ("展示导读正在整理；可直接阅读下方原始结果。" if copy.get("state") in {"queued", "running"}
+            else "该版本尚未生成导读，可阅读下方原文。" if copy.get("state") == "not_generated"
+            else "展示整理暂不可用，以下保留原始结果。") + "</p>"
+    stage = node.get("stage_reference", "")
+    content = ("<p class='source-note'>轻量模型整理，可能有省略；科学结论、数值和限制以原文为准。</p>"
+        + "<div data-display-copy='" + html.escape(node["key"], quote=True) + "' data-display-stage='"
+        + html.escape(stage, quote=True) + "'>" + body + "</div>")
+    return ("<section class='latest-stage display-copy-section'>"
+        + fold_panel("自动导读", content, class_name="display-copy-panel")
+        + "<div data-display-actions>" + _summary_retry(copy, instance_id, node["key"], retry_csrf, stage_reference=stage, unavailable=summary_unavailable)
+        + "</div></section>")
+
+
+_PHASE_LABELS = {"design": "设计", "implementation": "实现", "debug": "调试", "execution": "执行", "validity": "有效性判断"}
+_TOOL_LABELS = {"worker_experiment_prepare": "准备实验实现", "worker_experiment_debug": "诊断实验实现",
+    "worker_experiment_execute": "查询或操作执行服务", "worker_experiment_stage": "封存阶段结论",
+    "worker_submit_result": "提交最终报告", "worker_reference_read": "读取材料", "worker_open_assignment": "读取实验任务"}
+
+
+def _experiment_progress(node, instance_id):
+    progress = node.get("experiment_progress")
+    if not isinstance(progress, dict):
+        return ""
+    body = "<p>实验负责人：" + _state(node.get("state")) + " · 最近活动：" + (_time(progress.get("last_activity_at")) or "未记录") + "</p>"
+    activity = _dict(progress.get("latest_activity"))
+    if activity:
+        body += "<p>最近操作：" + _text(_TOOL_LABELS.get(activity.get("tool_name"), "处理实验材料"))
+        body += "（调用已返回）</p>" if activity.get("completed_at") else "（尚未记录返回）</p>"
+    stages = _list(progress.get("stages"))
+    body += "<p>已封存交付：" + ("、".join(_link(_node_href(instance_id, node["key"]) + "?" + urlencode({"stage_reference": s["reference"]}),
+        _PHASE_LABELS.get(s.get("stage"), "阶段")) for s in stages) or "尚无阶段交付") + "</p>"
+    executions = _list(progress.get("executions"))
+    if not executions:
+        body += "<p>执行记录：" + ("暂不可读，请刷新核对。" if progress.get("gaps") else "尚无正式执行记录；负责人可能仍在准备或分析。") + "</p>"
+    for execution in executions:
+        body += ("<article class='experiment-execution'><h3>" + _link(_node_href(instance_id, execution["key"]), execution["name"])
+            + " " + _state(execution.get("state")) + "</h3>" + _execution_progress(execution) + "</article>")
+    if progress.get("omitted_executions") or progress.get("gaps"):
+        body += "<p class='source-note'>此处为部分执行记录；完整记录或读取缺口请在研究轨迹中核对。</p>"
+    panel = ("<section class='experiment-progress-panel' data-experiment-key='" + html.escape(node["key"], quote=True)
+        + "'><div data-experiment-live aria-live='polite'>" + body + "</div>"
+        + "<p class='source-note'>自动更新控制状态；阶段可反复修订，未提供求解完成百分比时不作推算。</p></section>")
+    conclusion = _dict(progress.get("latest_conclusion"))
+    if conclusion:
+        href = _node_href(instance_id, node["key"]) + "?" + urlencode({"stage_reference": conclusion["reference"]})
+        panel += ("<section class='latest-stage'><h2>最近阶段结论 · " + _text(_PHASE_LABELS.get(conclusion.get("stage"), "阶段"))
+            + "</h2><p>" + render_scientific_text(conclusion.get("text", ""), 1200) + "</p>"
+            + ("<p>限制：" + render_scientific_text("；".join(conclusion.get("limitations", [])), 2048) + "</p>" if conclusion.get("limitations") else "")
+            + ("<p>未决问题：" + render_scientific_text(conclusion["remaining_question"], 512) + "</p>" if conclusion.get("remaining_question") else "")
+            + _link(href, "查看该版本全文与依据") + "<p class='source-note'>阶段交付不等于最终报告通过。</p></section>")
+    return fold_panel("实验进展", panel, class_name="experiment-progress", expanded=node.get("state") in {"running", "queued"})
+
+
+def _execution_progress(node: dict) -> str:
+    observation = _dict(node.get("execution_progress"))
+    if not observation and not node.get("collection_progress"):
+        return ""
+    progress = _dict(observation.get("progress"))
+    body = "最近观测：" + (_time(observation.get("observed_at")) or "尚未取得")
+    if observation.get("progress_observed_at"):
+        body += "；进度采样：" + _time(observation["progress_observed_at"])
+    if "elapsed_seconds" in progress:
+        body += "；观测时已运行 " + _text(progress["elapsed_seconds"], 32) + " 秒"
+    if observation.get("refresh_failed"):
+        body += "；最近刷新失败，保留上次观测，不能据此判断求解器是否仍在推进"
+    for log in _list(progress.get("log_activity"))[:2]:
+        log = _dict(log)
+        body += "<br>日志更新：" + (_time(log.get("updated_at")) or "未记录")
+        if log.get("last_line"):
+            body += " · " + _text(log["last_line"])
+    indicator = ""
+    if node.get("state") in {"submitted", "running", "cancelling"} and not observation.get("refresh_failed"):
+        indicator = ("<progress aria-label='仿真尚未确认结束，完成比例未知'></progress> "
+            "仿真完成比例未知；运行指示不代表求解仍在推进。<br>")
+    collection = _dict(node.get("collection_progress"))
+    phase = {"inspect_manifest": "读取冻结文件清单", "verify_cache": "校验已有文件",
+             "download_archive": "下载结果归档", "extract_archive": "解包并校验结果"}.get(collection.get("phase"))
+    if phase:
+        body += "<br>收集阶段：" + phase
+    if collection.get("phase") == "download_archive" and type(collection.get("archive_bytes")) is int:
+        body += "；归档已接收 " + str(collection["archive_bytes"]) + " 字节"
+    completed, total = collection.get("completed_bytes"), collection.get("total_bytes")
+    if type(completed) is int and type(total) is int and 0 <= completed <= total and total > 0:
+        body += (f"<br>结果文件已校验：<progress value='{completed}' max='{total}' "
+            f"aria-label='结果文件校验进度'></progress> {completed / total:.1%} "
+            f"（{completed} / {total} 字节）；收集状态：{_text(node.get('collection_status'))}")
+    return "<p class='execution-progress'>" + indicator + body + "</p>"
 
 
 def _goal_panel(view: dict, instance_id: str) -> str:
@@ -232,9 +434,12 @@ def _trajectory_pagination(trajectory: dict, base: str, query: dict) -> str:
         + "</nav>")
 
 
-def render_workbench(overview: dict, *, browse_base: str, csrf_token: str, can_manage: bool = False) -> bytes:
+def render_workbench(overview: dict, *, browse_base: str, csrf_token: str, can_manage: bool = False,
+                     can_retry_summary: bool = False, summary_unavailable_reason: str | None = "access_required") -> bytes:
     instance = _dict(overview.get("instance"))
     instance_id = str(instance.get("instance_id", ""))
+    retry_options = {"retry_csrf": csrf_token if can_retry_summary else "",
+        "summary_unavailable": _summary_unavailable(instance_id, csrf_token, summary_unavailable_reason) if not can_retry_summary else ""}
     base = safe_local_href(browse_base) or _path(instance_id)
     storage_state = _dict(overview.get("storage")).get("storage_state")
     trajectory = _dict(overview.get("trajectory"))
@@ -261,13 +466,17 @@ def render_workbench(overview: dict, *, browse_base: str, csrf_token: str, can_m
     active = [n for n in _list(overview.get("active_tasks")) if isinstance(n, dict)]
     timeline = ("<section class='trajectory-panel' id='trajectory'><div class='panel-heading'><h2>研究轨迹</h2>"
         + "<span class='panel-count'>" + str(len(important)) + " 个节点</span></div>"
-        + "<p class='source-note'>按登记时间从新到旧排列；成果登记见下方全部记录。新增记录后页码可能移动。</p><ol class='trajectory-list'>"
-        + "".join(_node_card(n, instance_id, compact=True) for n in important) + "</ol>"
+        + "<p class='source-note'>按登记记录分页，实验内审批与执行归入父实验，展开可看阶段交付。同一实验可能跨页出现；新增记录后页码可能移动。</p><ol class='trajectory-list'>"
+        + "".join(_node_card(n, instance_id, compact=True, **retry_options) for n in important) + "</ol>"
         + ("<p>暂无任务、审批或执行节点；成果可在下方全部记录查看。</p>" if not important else "") + trajectory_navigation + "</section>")
-    active_panel = ("<h3>当前任务 / 多个活动分支</h3><ul class='active-branches'>" + "".join(_node_card(n, instance_id, compact=True) for n in active) + "</ul>"
+    active_panel = (fold_panel("多个活动分支", "<ul class='active-branches'>" + "".join(_node_card(n, instance_id, compact=True, **retry_options) for n in active) + "</ul>", count=len(active))
         if active else "<p class='source-note active-note'><span class='quiet-dot'></span>当前没有正在运行的任务</p>")
     if any(page.get('has_more') for page in _dict(overview.get('active_task_pages')).values()):
         active_panel += "<p class='source-gap'>活动任务列表达到读取上限；其余任务请通过任务查询继续读取。</p>"
+    pending = [n for n in active if n.get("kind") == "approval" and n.get("state") == "pending"]
+    if pending:
+        active_panel = _section("待处理审批", "<ul class='pending-approvals'>" + "".join(
+            _node_card(n, instance_id, compact=True, **retry_options) for n in pending) + "</ul>") + active_panel
     display = _dict(overview.get("display_node"))
     title = "最近节点" if not overview.get("selected_node") else "选中节点"
     display_link = _link(_node_href(instance_id, display.get("key")), "打开节点详情 →") if display else ""
@@ -277,8 +486,10 @@ def render_workbench(overview: dict, *, browse_base: str, csrf_token: str, can_m
     content = ("<div class='workspace-grid'><aside class='workspace-sidebar'>" + _goal_panel(overview, instance_id) + timeline
         + "</aside><div class='workspace-main'>" + render_progression(overview.get('progression'), instance_id=instance_id)
         + "<div class='panel-heading'><h2>" + title + "</h2>" + display_link + "</div>"
-        + active_panel + presentation + _sealed_stages(display, instance_id) + "</div></div>")
-    all_records = "<ol class='trajectory-list all-records'>" + "".join(_node_card(n, instance_id, compact=True) for n in rows) + "</ol>" + more
+        + active_panel + _experiment_progress(display, instance_id)
+        + _display_copy(display, instance_id, **retry_options)
+        + presentation + _sealed_stages(display, instance_id) + "</div></div>")
+    all_records = "<ol class='trajectory-list all-records'>" + "".join(_node_card(n, instance_id, compact=True, **retry_options) for n in rows) + "</ol>" + more
     footer = fold_panel("全部记录（含成果登记）", all_records, count=len(rows))
     if hidden_count:
         footer += ("<p class='source-note'>显示偏好隐藏了本页 " + str(hidden_count) + " 个成果登记节点。"
@@ -289,7 +500,8 @@ def render_workbench(overview: dict, *, browse_base: str, csrf_token: str, can_m
     if overview.get("gaps"):
         footer += fold_panel("读取缺口", render_json_value(overview["gaps"], max_bytes=4096), count=len(overview["gaps"]))
     page = _document(instance.get("title", "研究实例"), header + content + footer, instance_id=instance_id,
-        csrf_token=csrf_token, live_updates=storage_state not in ("archived", "archiving", "restoring"))
+        csrf_token=csrf_token, can_retry_summary=can_retry_summary, summary_unavailable_reason=summary_unavailable_reason,
+        live_updates=storage_state not in ("archived", "archiving", "restoring"))
     return page
 
 
@@ -366,76 +578,100 @@ def _sealed_stages(node: dict, instance_id: str) -> str:
     else:
         body += "<p>最终采用版本尚未封存。</p>"
     material = page.get("material")
+    selected = ""
     if isinstance(material, dict):
-        body += "<h3>" + _text(material.get("reference")) + " · 科学材料原文</h3>"
-        body += "<pre>" + html.escape(material.get("text", "")) + "</pre>"
-        body += link({"stage_offset": 0}, "返回阶段历史")
+        selected = "<section class='selected-stage'><h2>当前阶段封存原文</h2><p>" + _text(material.get("reference")) + "</p>"
+        selected += "<pre class='json-tree'>" + html.escape(material.get("text", "")) + "</pre>"
+        selected += link({"stage_offset": 0}, "返回所属实验与阶段历史")
         if material.get("next_text_offset") is not None:
-            body += "<p>原文尚有后续内容。</p>" + link({"stage_reference": material["reference"],
+            selected += "<p>原文尚有后续内容。</p>" + link({"stage_reference": material["reference"],
                 "stage_text_offset": material["next_text_offset"]}, "下一段原文")
+        selected += "</section>"
     for item in page.get("items", []):
-        body += "<article class='stage-delivery'><h3>" + _text(phases.get(item.get("stage"), item.get("stage")))
-        body += " · " + _text(kinds.get(item.get("delivery_kind"), item.get("delivery_kind"))) + " · v" + str(item["version"]) + "</h3>"
-        if item.get("origin") == "reused":
-            body += "<p>复用已有封存材料，保留原始来源。</p>"
-        if item.get("unavailable_materials"):
-            body += "<p>部分原始依据未绑定到当前任务；请查看原材料的来源记录。</p>"
+        title = str(phases.get(item.get("stage"), item.get("stage")))
+        title += " · " + str(kinds.get(item.get("delivery_kind"), item.get("delivery_kind"))) + " · v" + str(item["version"])
         if item.get("adopted") is not None:
-            body += "<p>" + ("最终采用" if item["adopted"] else "未被最终报告采用") + "</p>"
+            title += " · " + ("最终采用" if item["adopted"] else "未采用")
+        entry = ""
+        if item.get("origin") == "reused":
+            entry += "<p>复用已有封存材料，保留原始来源。</p>"
+        if item.get("unavailable_materials"):
+            entry += "<p>部分原始依据未绑定到当前任务；请查看原材料的来源记录。</p>"
+        if item.get("adopted") is not None:
+            entry += "<p>" + ("最终采用" if item["adopted"] else "未被最终报告采用") + "</p>"
         for key, label in (("conclusion", "结论"), ("remaining_question", "未决问题"), ("summary", "执行摘要")):
             if item.get(key):
-                body += "<h4>" + label + "</h4><p>" + html.escape(item[key]) + "</p>"
+                entry += "<h4>" + label + "</h4><p>" + html.escape(item[key]) + "</p>"
         facts = {key: item[key] for key in ("limitations", "state", "mode", "exit_code", "terminal_state", "files", "file_count", "outputs", "missing_outputs") if key in item}
         if facts:
-            body += render_json_value(facts, max_bytes=8192)
-        body += "<p>依据/产物引用：</p><ul>"
+            entry += render_json_value(facts, max_bytes=8192)
+        entry += "<p>依据/产物引用：</p><ul>"
         for source in item.get("materials", []):
             label = source.get("artifact_name") or source["reference"]
             target = (link({"stage_reference": source["reference"]}, label)
                 if source["source_kind"] == "sealed_material" else
                 _link(_node_href(instance_id, "artifact:" + label), label) if source.get("artifact_name") else _text(label))
-            body += "<li>" + target + "</li>"
-        body += "</ul>"
-        body += link({"stage_reference": item["reference"]}, item["reference"] + " · 读取科学材料")
+            entry += "<li>" + target + "</li>"
+        entry += "</ul>"
+        entry += link({"stage_reference": item["reference"]}, item["reference"] + " · 读取科学材料")
         if item.get("omitted_fields"):
-            body += "<p>预览有省略，请按引用读取分段原文。</p>"
-        body += "</article>"
+            entry += "<p>预览有省略，请按引用读取分段原文。</p>"
+        body += fold_panel(title, entry, class_name="stage-delivery")
     if not page.get("items") and material is None:
         body += "<p>此页没有已封存阶段材料。</p>"
     if page.get("offset", 0):
         body += link({"stage_offset": 0}, "首批阶段")
     if page.get("next_offset") is not None:
         body += link({"stage_offset": page["next_offset"]}, "后续阶段版本")
-    return _section("已封存阶段与版本历史", body, section_id="sealed-stages")
+    panel = fold_panel("已封存阶段与版本历史", body, count=page.get("total", len(page.get("items", []))),
+        class_name="stage-history", expanded=bool(page.get("offset", 0)))
+    return "<section id='sealed-stages'>" + selected + panel + "</section>"
 
 
-def render_node(node: dict, *, instance_id: str, presentation: dict | None = None) -> bytes:
+def render_node(node: dict, *, instance_id: str, presentation: dict | None = None,
+                csrf_token: str = "", can_retry_summary: bool = False, summary_unavailable_reason: str | None = "access_required") -> bytes:
     key = str(node.get("key", ""))
-    heading = _record_title(node)
+    heading = node.get("stage_title") or _record_title(node)
     storage = _dict(node.get("storage")).get("storage_state")
     header = ("<header class='workbench-header'><nav aria-label='节点导航'>"
-        + _link(_path(instance_id), "← 返回研究实例") + _link(_node_href(instance_id,key), "刷新节点")
+        + _link(_path(instance_id), "← 返回研究实例") + _link(_node_href(instance_id,key)
+            + ("?" + urlencode({"stage_reference": node["stage_reference"]}) if node.get("stage_reference") else ""), "刷新节点")
         + "</nav><div class='workspace-heading'><h1>" + _text(heading) + "</h1>" + _state(node.get("state")) + "</div>"
         + _time(node.get("completed_at") or node.get("source_time") or node.get("created_at"))
         + ("<span class='archive-read-only'>已归档 · 只读</span>" if storage == "archived" else "")
         + "<p class='workbench-update-status' role='status'>显示当前读取的记录。</p></header>")
-    science = render_presentation(presentation, show_summary=node.get("kind") != "approval",
+    science = "" if node.get("stage_reference") else render_presentation(presentation, show_summary=node.get("kind") != "approval",
         evidence_href=lambda artifact, pointer: _evidence_href(instance_id, artifact, pointer),
         image_href=lambda artifact: _path(instance_id) + "/evidence/" + quote(artifact, safe="") + "?format=image")
     approval = ""
     if node.get("kind") == "approval":
         request = _dict(_dict(node.get("request")).get("payload"))
         decision = _dict(_dict(node.get("decision")).get("payload"))
-        kind, _ = approval_heading(request.get("kind"))
+        kind, prompt = approval_heading(request.get("kind"))
         question = request.get("question", "原审批事项需按原件读取。")
-        approval = ("<section class='conclusion-card approval-readonly'><p class='eyebrow'>原审批记录 · 只读</p><h2>" + kind
+        pending = node.get("state") == "pending" and storage not in ("archived", "archiving", "restoring")
+        heading = prompt if pending else kind
+        approval = ("<section class='conclusion-card approval-readonly'><p class='eyebrow'>"
+            + ("原审批记录 · 只读" if storage == "archived" else "本次需要你决定" if pending else "本次审批记录") + "</p><h2>" + heading
             + "</h2><div class='conclusion-value'><span>人工决定</span><strong>"
             + _text(human_value(decision.get("selected_option")) if decision else "尚无决定") + "</strong></div>"
             + "<p class='conclusion-brief'>" + render_scientific_text(question, 320) + "</p>"
             + fold_panel("审批事项与原问题", render_json_value(question, max_bytes=8192, compact_numbers=True)) + "</section>")
         review_url = safe_local_href(node.get("review_url"))
         if review_url:
-            approval += _link(review_url, "打开原审批请求", class_name="download-button")
+            approval += _link(review_url, "核对参数并作出决定 →" if pending else "打开原审批请求", class_name="download-button")
+        from .approval_focus import render_approval_focus
+        approval += render_approval_focus(presentation,
+            subject_ids=[ref["artifact_id"] for ref in request.get("subject_refs", []) if isinstance(ref, dict) and "artifact_id" in ref],
+            evidence_href=lambda artifact, pointer: _evidence_href(instance_id, artifact, pointer),
+            authorization=node.get("approval_authorization"))
+        options = request.get("options", [])
+        if options:
+            approval += "<section class='approval-options-preview'><h3>本请求提供的决定</h3><ul>" + "".join(
+                "<li><strong>" + _text(option.get("label"), 256) + "</strong>："
+                + render_scientific_text(option.get("description", ""), 256) + "</li>"
+                for option in options[:6] if isinstance(option, dict)) + "</ul>"
+            approval += "<p class='source-note'>完整选项及正式提交入口在原审批页；查看此页不会作出决定。</p></section>"
     metadata = {"节点名称":node.get("name",key), "节点引用":key, "运行状态":human_value(node.get("state")),
         "操作":node.get("operation_id"), "原记录科学可用性声明":node.get("recorded_scientific_claim_admissible"),
         "当前资格记录":node.get("qualification"), "当前选择记录":node.get("current_selection"),
@@ -455,6 +691,7 @@ def render_node(node: dict, *, instance_id: str, presentation: dict | None = Non
         logs += render_json_value(native,max_bytes=6144) + fold_panel("工具时间与保存工作", render_json_value({"工具时间":node.get("tool_timing"),"恢复记录":node.get("recovery")},max_bytes=8192))
     if node.get("kind") == "execution":
         metadata["执行收集状态"] = human_value(node.get("collection_status"))
+        logs += _execution_progress(node)
         logs += "<h3>外部执行与收集</h3>" + render_json_value({"收集":node.get("collection"),"观测":node.get("observation")},max_bytes=8192)
     details = fold_panel("依据与日志", logs + _relationships(node,instance_id))
     originals = ("<h3>原始输入</h3>" + _references(node.get("inputs"),instance_id)
@@ -464,8 +701,15 @@ def render_node(node: dict, *, instance_id: str, presentation: dict | None = Non
     if node.get("gaps"):
         details += fold_panel("读取缺口",render_json_value(node["gaps"],max_bytes=4096),count=len(node["gaps"]))
     body = header + "<div class='workspace-grid node-workspace'><aside class='workspace-sidebar'>" + _goal_panel(node,instance_id)
-    body += "<p class='source-note'>运行完成、科学结论与人工批准分别记录。</p></aside><div class='workspace-main'>" + approval + science + _sealed_stages(node, instance_id) + details + "</div></div>"
-    return _document(heading,body,instance_id=instance_id,live_updates=storage not in ("archived","archiving","restoring"))
+    body += "<p class='source-note'>运行完成、科学结论与人工批准分别记录。</p></aside><div class='workspace-main'>" + approval
+    if not node.get("stage_reference"):
+        body += _experiment_progress(node, instance_id)
+    retry_options = {"retry_csrf": csrf_token if can_retry_summary else "",
+        "summary_unavailable": _summary_unavailable(instance_id, csrf_token, summary_unavailable_reason) if not can_retry_summary else ""}
+    body += "<section id='experiment-children'>" + _experiment_children(node, instance_id, **retry_options) + "</section>"
+    body += _display_copy(node, instance_id, **retry_options) + science + _sealed_stages(node, instance_id) + details + "</div></div>"
+    return _document(heading,body,instance_id=instance_id,csrf_token=csrf_token,can_retry_summary=can_retry_summary,summary_unavailable_reason=summary_unavailable_reason,
+        live_updates=storage not in ("archived","archiving","restoring"))
 
 
 def render_diagnostic(data: dict, *, instance_id: str, node_key: str, reference: str) -> bytes:

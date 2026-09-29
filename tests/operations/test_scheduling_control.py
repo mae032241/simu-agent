@@ -191,8 +191,13 @@ def test_paused_router_mutations_block_while_reads_and_accepted_worker_complete(
                           ('operation_invoke', 'research'), ('run_record_failure', 'research'),
                           ('execution_start', 'execution'), ('execution_cancel', 'execution'),
                           ('execution_collect', 'execution'), ('execution_outputs', 'execution')]:
+        # A valid invocation must reach and fail the ownership guard; an empty
+        # invocation is rejected earlier without claiming scheduling authority.
+        arguments = {"name": "unauthorized", "operation_id": "blind.csv.observe.v1",
+            "instruction": "Make one bounded observation from the exact CSV.",
+            "inputs": [{"port": "source_table", "artifact_names": ["source_csv"]}]} if name == "operation_invoke" else {}
         with pytest.raises(SchedulerInstanceConflict):
-            root.call_tool(name, {}, surface=surface)
+            root.call_tool(name, arguments, surface=surface)
     assert result(call(gateway, 'instance_current'))['name']
     assert result(call(gateway, 'run_status', {'name': 'observation', 'intent': 'status'}))['state'] == 'running'
     structure = result(call(gateway, 'worker_csv_summarize', **child))

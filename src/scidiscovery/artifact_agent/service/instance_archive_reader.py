@@ -158,12 +158,17 @@ def archived_model(runtime, package, manifest):
     runs.backend = _ReadOnly(runs.backend, {"root", "backend_id", "backend_version", "capabilities", "open", "verify_recovery", "supports_operation"})
     artifact_reads = _ReadOnly(artifacts, {"catalog", "get_by_id", "read", "verify", "open_original", "list_artifacts", "registry", "cas"})
     binding_reads = _ReadOnly(bindings, {"database_path", "get_instance", "binding_page", "get_binding", "find_name",
-        "find_owner", "instance_bindings", "scientific_selections", "selection_records", "list_instances", "progression_status"})
+        "find_owner", "list", "instance_bindings", "scientific_selections", "selection_records", "list_instances", "progression_status"})
+    runs.artifacts = artifact_reads
     run_reads = _ReadOnly(runs, {"status", "active_ids", "recent_ids", "diagnostic_events", "diagnostic_reference_belongs",
-        "recovery_status", "recovery_available", "diagnostic_summary", "native_identities", "tool_timing", "related_runs", "recovery_links", "backend", "database_path"})
-    approval_reads = _ReadOnly(approvals, {"status", "active_ids", "has_request", "review", "request_summary", "list_requests"}) if approvals else None
-    execution_reads = _ReadOnly(executions, {"status", "active_ids", "record_references", "observation"}) if executions else None
-    return InstanceReadModel(artifacts=artifact_reads, bindings=binding_reads, runs=run_reads, approvals=approval_reads,
+        "recovery_status", "recovery_available", "diagnostic_summary", "native_identities", "tool_timing", "related_runs", "recovery_links", "backend", "database_path",
+        "artifacts", "tool_evidence", "task_lineage", "sealed_material_record",
+        "available_material_records", "material_source_aliases", "material_artifact_name"})
+    approval_reads = _ReadOnly(approvals, {"status", "active_ids", "has_request", "review", "request_summary", "navigation_summary", "list_requests"}) if approvals else None
+    execution_reads = _ReadOnly(executions, {"status", "active_ids", "record_references", "request_artifact_id", "observation"}) if executions else None
+    from .presentation_summaries import SummaryStore
+    summaries = _ReadOnly(SummaryStore(package / "records" / "views.sqlite3"), {"read"})
+    return InstanceReadModel(presentation_summaries=summaries, artifacts=artifact_reads, bindings=binding_reads, runs=run_reads, approvals=approval_reads,
         executions=execution_reads, operation_catalog=runtime.operation_catalog,
         engineering_diagnostics=_ReadOnly(EngineeringDiagnostics(package / "diagnostics"), {"read"}),
         execution_collection=_ArchivedCollection(package / "executions" / "exchange"))

@@ -101,7 +101,7 @@ def _validate_output(result, cohort):
             if set(item) != {"label", "value", "source"} or not _valid_source(item["source"], cohort):
                 raise ValueError("provider fact has no exact authorized source")
     for row in result["parameters"]:
-        if set(row) - {"name", "selected_value", "reported_values", "unit", "conditions", "case_scope", "epistemic_status", "acquisition", "uncertainty", "rationale", "sources", "source", "field_sources", "record_type", "source_status"}:
+        if set(row) - {"name", "description", "selected_value", "reported_values", "unit", "conditions", "case_scope", "epistemic_status", "acquisition", "uncertainty", "rationale", "sources", "source", "field_sources", "record_type", "source_status"}:
             raise ValueError("unsupported provider parameter fields")
         if not _valid_source(row.get("source"), cohort):
             raise ValueError("provider parameter has no authorized source")

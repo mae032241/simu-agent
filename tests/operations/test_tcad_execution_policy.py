@@ -195,3 +195,48 @@ def test_policy_deferral_releases_only_never_prepared_reservation(tmp_path, prep
         assert connection.execute("SELECT COUNT(*) FROM execution_policy_authorizations").fetchone()[0] == 2
     assert service.authorization("one")["outcome"] == "deny"
     assert (service.prepared_submission("one") is not None) == prepared
+
+
+@pytest.mark.parametrize("prepared", [False, True])
+def test_abandoned_unsubmitted_budget_is_released_without_losing_reservation_history(tmp_path, prepared):
+    from scidiscovery.artifact_agent.service.executions import ExecutionStateConflict
+    from scidiscovery.artifact_agent.execution_bridge import ExecutionBridge
+    from types import SimpleNamespace
+    service, identity = _reauthorization_service(tmp_path)
+    admission = policy_snapshot().admission(budget={"max_storage_bytes": 1000, "wall_time_seconds": 3000}, budget_key="a"*64)
+    descriptor = service.authorize_policy(execution_id="one", admission=admission, compiled_identity=identity)
+    if prepared:
+        service.record_prepared_submission("one", descriptor, policy_digest=admission.policy_digest)
+        with pytest.raises(ExecutionStateConflict, match="absence confirmation"):
+            service.abandon("one")
+    bridge = ExecutionBridge(service, adapters={"tcad": SimpleNamespace(lookup_submission=lambda _: None)})
+    bridge.abandon("one")
+    bridge.abandon("one")
+    with service._connect() as connection:
+        row = connection.execute("SELECT * FROM execution_budget_reservations").fetchone()
+        assert json.loads(row["reserved_json"])["wall_time_seconds"] == 3000
+        assert json.loads(row["consumed_json"]) == {"max_storage_bytes": 0, "wall_time_seconds": 0}
+        assert service._budget_remaining(connection, "tcad", admission)["wall_time_seconds"] == 3600
+    assert service.status("one").state == "abandoned"
+
+
+def test_uncertain_or_accepted_submission_is_never_refunded_by_abandon(tmp_path):
+    from scidiscovery.artifact_agent.execution_bridge import ExecutionBridge
+    from scidiscovery.artifact_agent.service.executions import ExecutionServiceError
+    from types import SimpleNamespace
+    service, identity = _reauthorization_service(tmp_path)
+    admission = policy_snapshot().admission(budget={"max_storage_bytes": 1000, "wall_time_seconds": 3000}, budget_key="a"*64)
+    descriptor = service.authorize_policy(execution_id="one", admission=admission, compiled_identity=identity)
+    service.record_prepared_submission("one", descriptor, policy_digest=admission.policy_digest)
+    def unavailable(_):
+        raise TimeoutError("lookup failed")
+    adapter = SimpleNamespace(lookup_submission=unavailable)
+    bridge = ExecutionBridge(service, adapters={"tcad": adapter})
+    with pytest.raises(TimeoutError):
+        bridge.abandon("one")
+    adapter.lookup_submission = lambda _: ("existing", "accepted")
+    with pytest.raises(ExecutionServiceError, match="was submitted"):
+        bridge.abandon("one")
+    assert service.status("one").state == "submitted"
+    with service._connect() as connection:
+        assert service._budget_remaining(connection, "tcad", admission)["wall_time_seconds"] == 600

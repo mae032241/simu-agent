@@ -6,6 +6,8 @@ from ..service.scheduling_control import owned_mutation
 
 from typing import Any
 
+from ..schema.common import canonical_json
+
 from ..service.run_read_projection import RunReadProjection, run_is_terminal, _output_selection, _output_index as _read_output_index
 from .mcp_root_shared import RootToolError
 
@@ -51,15 +53,12 @@ class RootRunRoutes(RunReadProjection):
         result = self._compact_run_status(name=name, value=value, **{
             key: request[key] for key in ("intent", "output_paths", "index_offset", "index_limit")})
         if request["intent"] == "status" and request["diagnostic_after"] is not None:
-            if run_is_terminal(value.state):
-                page = self.runs.diagnostic_events(value, after=request["diagnostic_after"],
-                    limit=request["diagnostic_limit"])
-                result["diagnostic_events"] = {"events": [
-                    {"event_id": event["event_id"], "recorded_at": event["recorded_at"],
-                     "diagnostic": self._scientific_run_diagnostic(value, event["diagnostic"])}
-                    for event in page["events"]], "next_after": page["next_after"]}
-            else:
-                result["diagnostics_unavailable"] = "run_not_terminal"
+            page = self.runs.diagnostic_events(value, after=request["diagnostic_after"],
+                limit=request["diagnostic_limit"])
+            result["diagnostic_events"] = {"events": [
+                {"event_id": event["event_id"], "recorded_at": event["recorded_at"],
+                 "diagnostic": self._scientific_run_diagnostic(value, event["diagnostic"])}
+                for event in page["events"]], "next_after": page["next_after"]}
         if request["intent"] == "navigation" and run_is_terminal(value.state):
             aliases = {b.name: b.object_id for b in self.bindings.list(
                 instance=self._instance_id(), namespace="artifact")}
@@ -70,11 +69,21 @@ class RootRunRoutes(RunReadProjection):
             # Preserve exact frozen aliases and order; hidden/derived ports stay private.
             result["bound_inputs"] = self._scientific_run_view(value, {"bound_inputs": [
                 {"port": port, "artifact_names": names} for port, names in inputs.items()]})["bound_inputs"]
-            if value.state == "completed":
-                evidence = self.runs.evidence_output_refs(value)
-                if evidence:
-                    result["evidence_outputs"] = [{"artifact_name": value.output_binding_name + "." + alias,
-                        "schema": ref.schema_id} for alias, ref in evidence]
+        if request["intent"] == "navigation":
+            evidence = (self.runs.evidence_output_refs(value) if value.state == "completed"
+                else self.runs.sealed_evidence_output_refs(value))
+            if evidence:
+                page = []
+                offset = request["index_offset"]
+                for alias, ref in evidence[offset:offset + request["index_limit"]]:
+                    item = {"artifact_name": value.output_binding_name + "." + alias, "schema": ref.schema_id}
+                    if len(canonical_json([*page, item])) > 8192:
+                        break
+                    page.append(item)
+                end = offset + len(page)
+                result.update(evidence_outputs=page, evidence_outputs_total=len(evidence),
+                    evidence_outputs_next_offset=end if end < len(evidence) else None,
+                    evidence_outputs_status="sealed_materials_not_final_report")
         if request["stage_offset"] is not None or request["stage_reference"] is not None:
             from ..service.stage_deliveries import read_stage_deliveries
             result["sealed_stages"] = read_stage_deliveries(self.runs, value,
@@ -89,9 +98,9 @@ class RootRunRoutes(RunReadProjection):
             repairable=diagnostic.get("repairable_by_output") is True)
         # Revalidate saved details against the declared contract, including old
         # records. Engineering attachments and arbitrary messages stay private.
-        return {**{key: safe[key] for key in ("category", "code", "repairable_by_output")},
+        return {**{key: safe[key] for key in ("category", "code", "repairable_by_output", "tool_name") if key in safe},
             "details": [{key: item[key] for key in
-                ("path", "message", "phase", "affected_action", "repairable", "rule_id") if key in item}
+                ("code", "path", "message", "phase", "affected_action", "repairable", "rule_id") if key in item}
                 for item in safe.get("details", ())]}
 
     @owned_mutation

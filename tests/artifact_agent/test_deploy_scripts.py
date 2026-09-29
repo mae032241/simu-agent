@@ -1386,10 +1386,10 @@ def test_installer_rejects_unsafe_local_workspace_roots(tmp_path: Path) -> None:
     )
     assert overlap.returncode != 0
     assert "must not overlap SCID_STATE_ROOT" in overlap.stderr
-    script_text = (project_root / "deploy/install.sh").read_text(encoding="utf-8")
-    assert "create_local_workspace_root" in script_text
-    assert "os.O_NOFOLLOW" in script_text
-    assert 'os.mkdir(".scidiscovery-runs", mode=0o700, dir_fd=parent)' in script_text
+    from tests.operations.test_instance_archive_install import _install_function
+    created = _install_function(workspace, "create_local_workspace_root")
+    assert created.returncode == 0, created.stderr
+    assert (workspace / ".scidiscovery-runs").stat().st_mode & 0o777 == 0o700
 
 
 def test_atomic_local_workspace_creation_refuses_a_late_symlink(
@@ -1620,6 +1620,9 @@ def test_generic_reinstaller_passes_resolved_configuration(tmp_path: Path, expli
     fake_sudo = fake_bin / "sudo"
     fake_sudo.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\"\n", encoding="utf-8")
     fake_sudo.chmod(0o750)
+    codex = fake_bin / "codex"
+    codex.write_text("#!/bin/sh\nexit 0\n")
+    codex.chmod(0o750)
     completed = subprocess.run(
         [str(wrapper), "reinstall"],
         stdout=subprocess.PIPE,
@@ -1645,6 +1648,7 @@ def test_generic_reinstaller_passes_resolved_configuration(tmp_path: Path, expli
             "SCID_APPROVAL_PORT": "18765",
             "SCID_CODEX_SKILL_ROOT": str(skill_root),
             "SCID_CODEX_LAUNCH_ROOT": str(launch_root),
+            "SCID_CODEX_EXECUTABLE": str(codex) if explicit_tcad_state else "",
         },
         timeout=10,
         check=False,
@@ -1653,6 +1657,7 @@ def test_generic_reinstaller_passes_resolved_configuration(tmp_path: Path, expli
     output = completed.stdout.splitlines()
     assert f"SCID_WORKSPACE={workspace}" in output
     assert f"SCID_PYTHON={sys.executable}" in output
+    assert f"SCID_CODEX_EXECUTABLE={codex}" in output
     assert "SCID_SERVICE_USER=test-user" in output
     assert "SCID_SERVICE_GROUP=test-group" in output
     assert "SCID_PLATFORM=codex" in output

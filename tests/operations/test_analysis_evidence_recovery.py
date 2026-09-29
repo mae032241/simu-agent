@@ -379,7 +379,7 @@ def test_collection_declaration_without_trusted_tool_is_rejected_at_both_gates(t
     assert LocalTrustedBackend.unsupported_requirements(undeclared) == ('agent_collection_outputs',)
     monkeypatch.setattr(runtime.runs.backend, 'supports_operation', lambda _: True)
     with pytest.raises(RunError, match='output collections'):
-        runtime.runs.schedule(SimpleNamespace(compiled=undeclared, execution_profile=None), instance_id='unused',
+        runtime.runs.schedule(SimpleNamespace(compiled=undeclared, execution_profile=None, require_execution_review=False), instance_id='unused',
             output_binding_name='unused',output_logical_name='unused',output_revision=1,
             output_binding_fingerprint='unused')
 

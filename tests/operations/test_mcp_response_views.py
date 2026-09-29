@@ -1,3 +1,4 @@
+from contextlib import nullcontext
 from copy import deepcopy
 import json
 from types import SimpleNamespace
@@ -16,7 +17,7 @@ from scidiscovery.artifact_agent.interfaces.mcp_response_views import (
 
 
 def router(**methods):
-    facade = SimpleNamespace(runs=SimpleNamespace(), session_key=None,
+    facade = SimpleNamespace(runs=SimpleNamespace(), session_key=None, scheduling_guard=nullcontext,
         engineering_diagnostics=SimpleNamespace(capture=Mock()), _instance_id=lambda: "fixture", **methods)
     return RootMCPRouter(facade)
 
@@ -34,7 +35,9 @@ def test_execution_poll_is_short_but_exact_logs_and_failure_remain_readable():
         assert short["collection"]["error"] == full["collection"]["error"]
         assert short["progress"]["exit_code"] == 1
         assert len(json.dumps(short)) < .4*len(json.dumps(full))
-        assert root.call_tool(name, {"name": "execution", "view": "detail"}, surface="execution") == full
+        detail = root.call_tool(name, {"name": "execution", "view": "detail"}, surface="execution")
+        assert "specific solver error" not in json.dumps(detail)
+        assert detail["collection"] == full["collection"]
 
 
 def test_run_router_preserves_omission_and_named_selection():
@@ -475,7 +478,7 @@ def test_observation_and_collection_failures_are_not_hidden_by_summary(tmp_path,
     monkeypatch.setattr(effect, 'status_details', broken, raising=False)
     short = root.call_tool('execution_sync', {'name':'broken_observation'}, surface="execution")
     full = root.call_tool('execution_status', {'name':'broken_observation', 'view':'detail'}, surface="execution")
-    assert short['observation_error'] == full['observation_error']
+    assert short['observation_error']['causes'] == full['observation_error']['causes']
     assert 'timed out' in json.dumps(short['observation_error'])
     from scidiscovery.artifact_agent.interfaces.mcp_response_views import execution_summary
     for key in ('record_error', 'progress_error', 'stop_record_error', 'observation_error', 'stop_observation_error'):
@@ -508,23 +511,21 @@ def test_status_projection_keeps_private_recovery_records_internal():
     assert "recovery" not in result and original == before
 
 
-def test_log_summary_deduplicates_sources_and_keeps_distinct_error_navigation():
-    full={'name':'execution','state':'failed','progress':{'log_tails':[
-        {'source':'stdout','tail':'common setup\nunique error A'},
-        {'source':'solver_log','tail':'common setup\nunique error A'},
-        {'source':'stderr','tail':'unique error B'}]}}
-    root=router(execution_status=lambda **kw:deepcopy(full))
-    result=root.call_tool('execution_status',{'name':'execution'}, surface="execution")
-    index=result['progress']['log_index']
-    assert len(index)==2 and index[0]['sources']==['stdout','solver_log']
-    assert index[0]['pointers']==['/progress/log_tails/0','/progress/log_tails/1']
-    assert 'unique error B' in index[1]['excerpt']
-    navigation = result['detail']
-    assert navigation == {'tool': 'scid_call', 'arguments': {'name': 'execution_status',
-        'surface': 'execution', 'arguments': {'name': 'execution', 'view': 'detail'}}}
-    request = navigation['arguments']
-    assert root.call_tool(request['name'], request['arguments'], surface=request['surface']) == full
-    assert 'surface' not in request['arguments']
+def test_log_summary_indexes_metadata_and_navigates_to_explicit_cache_read():
+    full = {'name':'execution', 'state':'failed', 'progress':{'log_tails':[
+        {'source':'stdout', 'tail':'unique error A'},
+        {'source':'solver_log', 'tail':'unique error A'},
+        {'source':'stderr', 'tail':'unique error B'}]}}
+    root = router(execution_status=lambda **kw:deepcopy(full),
+        execution_logs=lambda **kw:{'text': full['progress']['log_tails'][kw['log_index']]['tail']})
+    result = root.call_tool('execution_status', {'name':'execution'}, surface='execution')
+    assert result['progress']['log_count'] == 3
+    assert [log['log_index'] for log in result['progress']['log_activity']] == [0, 1]
+    assert 'unique error' not in json.dumps(result)
+    request = result['logs']['arguments']
+    assert request == {'name':'execution_logs', 'surface':'execution', 'arguments':{'name':'execution'}}
+    assert root.call_tool(request['name'], request['arguments'], surface=request['surface'])['text'] == 'unique error A'
+    assert root.call_tool('execution_logs', {'name':'execution', 'log_index':2}, surface='execution')['text'] == 'unique error B'
 
 
 @pytest.mark.parametrize('kind', ['agent','transform','effect','approval'])
@@ -554,3 +555,31 @@ def test_execution_outputs_preserve_exact_result_identity_across_pages():
     assert first['result_artifact_name']==second['result_artifact_name']=='e.result'
     absent=router(execution_outputs=lambda **kw:{'execution_name':'e','result_artifact_name':None,'outputs':[]})
     assert absent.call_tool('execution_outputs',{'name':'e'}, surface="execution")['result_artifact_name'] is None
+
+
+def test_execution_status_default_does_not_scale_with_log_content():
+    marker = 'solver-log-must-not-enter-context'
+    sizes = []
+    for length in (100, 100000):
+        full = {'name':'execution', 'state':'running', 'progress':{'elapsed_seconds':30,
+            'log_tails':[{'source':'solver_log', 'updated_at':'2026-09-27T10:00:30Z',
+                'size_bytes':length, 'tail':marker + '日' * length} for _ in range(8)]}}
+        root = router(execution_status=lambda **_:deepcopy(full))
+        value = root.call_tool('execution_status', {'name':'execution'}, surface='execution')
+        raw = json.dumps(value, ensure_ascii=False).encode()
+        assert marker.encode() not in raw and '日'.encode() not in raw
+        assert value['progress']['log_count'] == 8
+        assert value['progress']['log_details_omitted'] is True
+        sizes.append(len(raw))
+        detail = root.call_tool('execution_status', {'name':'execution', 'view':'detail'}, surface='execution')
+        assert marker not in json.dumps(detail) and 'log_tails' not in detail['progress']
+    assert max(sizes) < 1500 and abs(sizes[1] - sizes[0]) < 40
+
+
+def test_execution_inventory_detail_does_not_bypass_log_cache_reader():
+    from scidiscovery.artifact_agent.interfaces.mcp_response_views import root_response
+    value = {'executions':[{'name':'job', 'state':'running', 'progress':{
+        'log_tails':[{'source':'solver_log', 'tail':'body must remain in cache'}]}}], 'next_before':None}
+    result = root_response('execution_list', value, {'view':'detail'})
+    assert 'body must remain' not in json.dumps(result)
+    assert result['executions'][0]['progress']['log_count'] == 1

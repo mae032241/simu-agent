@@ -34,6 +34,19 @@ from ..schema.refs import ActorRef, ArtifactRef
 from .artifacts import ArtifactService
 
 
+UI_CANCEL_OPTION = ApprovalOption(option_id="cancel_approval", label="作废未决策请求",
+    description="仅关闭当前待决请求，不批准、不拒绝科学内容，也不授权执行。",
+    requires_rationale=False, terminal_state="cancelled_by_human")
+
+
+def _decision_option(request, selected):
+    # Administrative closure is available even for previously sealed requests
+    # whose scientific option list did not declare a cancellation choice.
+    if selected == UI_CANCEL_OPTION.option_id:
+        return UI_CANCEL_OPTION
+    return next((item for item in request.options if item.option_id == selected), None)
+
+
 class ApprovalError(RuntimeError):
     pass
 
@@ -381,6 +394,12 @@ class ApprovalService:
                 return True
         return False
 
+    def expire_pending(self, approval_id: str) -> None:
+        """Retire a request whose execution was abandoned; never forge a human decision."""
+        with self._connect() as connection:
+            connection.execute("UPDATE approval_requests SET status='expired' WHERE approval_id=? AND status='pending'",
+                (approval_id,))
+
     def list_requests(
         self,
         *,
@@ -440,6 +459,22 @@ class ApprovalService:
                     break
         return tuple(items)
 
+    def navigation_summary(self, approval_id: str) -> dict:
+        """Small navigation facts from frozen control metadata; no subject reads."""
+        with self._connect() as connection:
+            row = self._request_row(connection, approval_id)
+            selected = connection.execute("SELECT selected_option FROM approval_decisions WHERE approval_id=?",
+                (approval_id,)).fetchone()
+        raw = row["create_request_json"]
+        if hashlib.sha256(raw).hexdigest() != row["create_request_sha256"]:
+            raise ApprovalError("approval creation metadata hash mismatch")
+        value = json.loads(raw)
+        options = value["options"]
+        return {"kind": value["kind"],
+            "question": value["question"][:240] + ("…" if len(value["question"]) > 240 else ""),
+            "selected_label": next((o["label"] for o in options if selected and o["option_id"] == selected[0]),
+                UI_CANCEL_OPTION.label if selected and selected[0] == UI_CANCEL_OPTION.option_id else None)}
+
     def request_summary(
         self, approval_id: str, *, now: datetime | None = None
     ) -> ApprovalListItem:
@@ -457,14 +492,7 @@ class ApprovalService:
             selected_option = decision.selected_option
             rationale = decision.rationale
             decided_at = decision.decided_at
-            option = next(
-                (
-                    item
-                    for item in request.options
-                    if item.option_id == decision.selected_option
-                ),
-                None,
-            )
+            option = _decision_option(request, decision.selected_option)
             selected_label = option.label if option is not None else selected_option
         with self._connect() as connection:
             row = self._request_row(connection, approval_id)
@@ -660,10 +688,7 @@ class ApprovalService:
                 raise ApprovalAlreadyDecided(f"approval request is terminal: {row['status']}")
             if row["expires_at"] is not None and decision_time >= _parse_time(row["expires_at"]):
                 raise ApprovalExpired("approval request has expired")
-            option = next(
-                (option for option in request.options if option.option_id == selected_option),
-                None,
-            )
+            option = _decision_option(request, selected_option)
             if option is None:
                 raise ApprovalAccessDenied("selected option is not registered")
             if option.requires_rationale and not rationale.strip():
@@ -810,10 +835,7 @@ class ApprovalService:
                 return prepared
             request_ref = _parse_ref(row["request_ref_json"], row["request_ref_sha256"])
             request = self._load_request(request_ref)
-            option = next(
-                (item for item in request.options if item.option_id == selected_option),
-                None,
-            )
+            option = _decision_option(request, selected_option)
             if option is None:
                 raise ApprovalAccessDenied("selected option is not registered")
             if option.requires_rationale and not rationale.strip():

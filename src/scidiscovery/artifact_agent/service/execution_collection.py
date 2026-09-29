@@ -173,7 +173,8 @@ class ExecutionCollection:
             if status.state == "collected":
                 return {**self.summary(execution_id), "state": "completed", "accepted": False}
             if status.state not in {"succeeded", "failed", "cancelled"}:
-                raise ValueError("collection requires a terminal execution")
+                from ...operation_contract import ToolInputError
+                raise ToolInputError("execution_not_collectable", "Collection requires a terminal execution. Read status for the same name and wait or cancel before collecting.", path="$.action")
             if self._closed:
                 raise RuntimeError("collection service is stopping")
             if self._active and self._active[0] == execution_id:

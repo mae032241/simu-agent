@@ -189,6 +189,7 @@ def test_archived_workbench_and_nodes_do_not_start_live_updates() -> None:
             "storage": overview["storage"], "review_url": "/review/old?token=original", "gaps": []}
     page = render_node(node, instance_id="instance-a").decode()
     assert "原审批记录 · 只读" in page and "打开原审批请求" in page
+    assert "核对参数并作出决定" not in page and "本次需要你决定" not in page
     assert "/static/workbench.js" not in page
 
 

@@ -1,4 +1,4 @@
-"""Runtime ownership and cancellation keep the same experiment authority."""
+"""Runtime finalization and explicit cancellation use the same authority."""
 import json
 from types import SimpleNamespace
 
@@ -34,8 +34,9 @@ def test_additional_root_and_gateway_preserve_experiment_finalization_owner(tmp_
         (workspace / "output/result.json").write_text(json.dumps({"schema_version": 1,
             "payload": {"summary": "Pending.", "outcome": "blocked", "remaining_question": "Pending diagnostic."}}))
         assert worker.call_tool("worker_submit_result", {})["state"] == "rejected"
-        coordinator.cancel_owned(runtime.runs.status(worker._run_id))
-        assert activity.active is False
+        # External completion, not Worker failure, releases finalization.
+        activity.active = False
+        assert runtime.runs.experiment_executions is coordinator
         return []  # The fixture now completes through this same require_idle owner.
     _real_experiment(tmp_path, monkeypatch, before_submit=check)
 
@@ -53,8 +54,11 @@ def test_cancel_or_abandon_never_submits_and_preserves_uncertainty(lookup):
         events.append("record")
         status.external_run_id = kwargs["external_run_id"]
         status.state = "submitted"
+    def abandon(_, *, submission_confirmed_absent=False):
+        assert submission_confirmed_absent is True
+        events.append("abandon")
     executions = SimpleNamespace(status=lambda _: status, prepared_submission=lambda _: "exact-descriptor",
-        abandon=lambda _: events.append("abandon"), record_submission=record,
+        abandon=abandon, record_submission=record,
         record_status=lambda **kwargs: setattr(status, "state", kwargs["state"]))
     adapter = SimpleNamespace(lookup_submission=found,
         submit=lambda *_: pytest.fail("cancellation must not submit"),

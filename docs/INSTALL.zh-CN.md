@@ -440,6 +440,63 @@ sudo deploy/cleanup_legacy_services.sh clean
 
 ## 实验材料与读取预算
 
+### 封存后的 UI 自动导读
+
+阶段结论及最终 Run 结果封存后，控制层将展示整理请求写入既有 UI 缓存；审批 UI
+服务串行处理。模型使用 `helpers.profiles.lightweight`（包默认 `gpt-6-luna` / `low`），
+不占用 Worker 的原生 helper 次数，也不要求 Worker 或 Root 阅读、确认或审批。
+原始结论、数值、图件、执行状态均保留；导读单独标注，可失败或缺失。
+相同来源版本与配置只入队一次，重启后不自动重试已发起但状态不明的模型调用。
+
+`agent-settings.json` 的 `presentation` 配置在 dev 默认关闭；开启后会额外调用模型生成导读。
+启用前应为其预留独立资源和 token 预算。原始封存内容、阶段进展和审批展示不依赖它。支持：
+
+```json
+{"presentation":{"enabled":true,"command":["/absolute/path/to/codex"],
+  "timeout_seconds":60,"interval_seconds":5,"max_source_bytes":1048576,
+  "max_input_bytes":16384,"max_output_bytes":32768,"memory_limit_bytes":2147483648}}
+```
+
+使用 [Codex 非交互结构化输出](https://developers.openai.com/codex/noninteractive/)，每次为
+独立临时会话，只传有界科学文本，不加载用户工具配置、项目说明或父会话，不提供
+科学执行工具。`deploy/reinstall.sh` 在 sudo 前定位 Codex，以绝对路径
+`SCID_CODEX_EXECUTABLE` 传给服务；可显式设置该变量覆盖自动发现。启动器同时解析
+npm 入口旁的 Node，不要求 systemd 继承 nvm PATH。非默认 `codex` 的
+`presentation.command` 自定义命令优先。
+
+展示助手默认使用 `${SCID_WORKSPACE}/.scidiscovery-ui/display-codex` 作为持久 Codex 目录，
+也可通过 `presentation.codex_home` 指定独立绝对路径。安装器以 `0700` 权限创建隐藏
+父目录，并为审批 UI 服务开放该目录的写入权限；框架 Git 忽略规则已排除该目录。
+首次仅从服务用户的 Codex
+目录复制文件式认证缓存，并以私有权限保存；后续认证刷新保留在专用目录，不覆盖回
+交互用户目录。不复制研究会话或用户配置；原 home 的旧式管理策略文件保持链接，
+系统管理策略仍生效。若只使用系统 keyring，需单独为专用目录登录。
+这采用官方支持的 [Codex 认证缓存复用](https://developers.openai.com/codex/auth/)；
+该目录包含认证信息，须保持私有。
+
+SQLite 索引也保存在专用目录。此前每次新建临时 SQLite 目录、却沿用研究会话目录，
+会触发历史会话索引，造成额外内存消耗和启动超时。`memory_limit_bytes` 是每进程的
+虚拟地址空间上限，不是实际 RSS；仍可配置，例如 `13000000000` 表示 13 GB。
+部署修复后，旧失败条目也可通过显式“重新整理”使用修好的默认运行目录。
+没有可用启动器或认证时回退原文，
+不会影响封存和审批。无需更改 VM runner。
+
+缓存位于 `ui/workbench.sqlite3` 的 `display_summaries` 表，按实例及精确 ArtifactRef
+隔离；保存成功调用的 input/cached-input/output token、输入字节及耗时。
+失败调用的实际 token 可能不可得，不能按零计费；完整错误进入受实例限制的工程诊断。
+历史材料不会因打开页面而触发模型调用。全局禁用后重启服务可停止后台整理。
+具有实例管理权限的页面提供“生成导读”（尚未生成）和“重新整理”（已完成或失败）；
+按钮位于可折叠的“自动导读”区域外，折叠后仍可使用。阶段子节点按自己的确切封存
+材料和版本读取、刷新和整理导读，不复用父实验报告。重新整理沿用该条目的整理配置，
+不修改科学结果，不要求 Worker 核对。排队或运行期间按钮禁用，重复提交旧表单不会
+多启动一次整理。归档、维护期间及全局禁用时不可操作。
+
+“实验进展”也可折叠，自动刷新保留手动展开状态。审批页的“作废此审批请求”只对
+未决策请求开放，仍需页面身份与提交校验；作废记录人工决定和回执，不授权执行，
+不能覆盖已有批准或拒绝。
+
+### 科学材料预算
+
 完整实验的 `scientific_materials` 支持原始 PDF、图片、CSV、JSON、归档和网格文件；
 `scientific_files` 也接受这些类型，显式采用按需文件交付。它们共用材料存储预算，
 不再把 1 MB 当作论文或文件的准入上限。小文本可以直接读取，较大或二进制材料

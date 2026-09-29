@@ -500,6 +500,77 @@ The initial upgrade requires installation, role regeneration and reloading Codex
 
 ## Experiment material and reading budgets
 
+### Automatic UI reading aids after sealing
+
+Sealed stage conclusions and final Run outputs enqueue optional display-copy jobs
+in the existing UI cache. The approval UI service processes them serially, using
+`helpers.profiles.lightweight` (packaged default: `gpt-6-luna`, `low`). These calls
+do not consume the Worker's native helper allowance or require Worker/Root review.
+Original conclusions, values, figures and execution states remain authoritative.
+Identical source versions and configuration are cached; interrupted model calls
+are not retried automatically after restart.
+
+Presentation model calls are disabled by default in dev. Enabling them starts additional
+model work requiring its own resource and token allowance. Sealed originals, stage progress
+and approval displays work without it. Configure the top-level `presentation` section of `agent-settings.json`:
+
+```json
+{"presentation":{"enabled":true,"command":["/absolute/path/to/codex"],
+  "timeout_seconds":60,"interval_seconds":5,"max_source_bytes":1048576,
+  "max_input_bytes":16384,"max_output_bytes":32768,"memory_limit_bytes":2147483648}}
+```
+
+The adapter uses [Codex non-interactive structured output](https://developers.openai.com/codex/noninteractive/)
+in an ephemeral session with bounded scientific excerpts, no parent history,
+project instructions, user tool configuration or scientific execution tools.
+`deploy/reinstall.sh` resolves Codex before sudo and passes its absolute path as
+`SCID_CODEX_EXECUTABLE` to the services. Set that variable to override discovery.
+The launcher also resolves an npm entrypoint's adjacent Node executable; systemd
+does not need to inherit an interactive nvm PATH. Explicit `presentation.command`
+values other than the default `codex` remain authoritative.
+
+The display worker uses `${SCID_WORKSPACE}/.scidiscovery-ui/display-codex` as its persistent
+Codex home (`presentation.codex_home` can select a separate absolute directory).
+The installer creates the hidden parent with mode `0700` and grants the approval
+UI service write access to that directory. The framework Git ignore list excludes it.
+It seeds file-based authentication once from the service user's Codex home, with
+private permissions, and retains subsequent credential refreshes there. It does
+not copy research sessions or user configuration. Legacy home-level managed
+policy files remain linked; system-managed policy still applies. If authentication
+is available only through a keyring, authenticate the dedicated home separately.
+This uses the supported [Codex auth-cache reuse](https://developers.openai.com/codex/auth/)
+mechanism. The dedicated home contains credentials and must stay private.
+
+The SQLite index is persistent in that dedicated home. Creating a new SQLite
+directory on every call while retaining the research home caused historical
+session indexing, excessive memory use and startup timeouts. `memory_limit_bytes`
+is a per-process virtual-address-space ceiling, not an RSS measurement; it remains
+configurable, for example `13000000000` for a 13 GB ceiling. Existing failed copies
+can use the repaired default runtime when explicitly regenerated after deployment.
+Missing authentication or failed generation falls back to originals without
+blocking submissions or approvals. No VM runner update is needed.
+
+`ui/workbench.sqlite3`, table `display_summaries`, stores instance-scoped exact
+ArtifactRef identities and successful-call token usage, input bytes and elapsed
+time. Failed-call usage can be unknown and must not be counted as zero. Failures
+have instance-scoped engineering diagnostics. Viewing historical content never
+starts a model call. Disable globally and restart the services to stop processing.
+Pages with instance management access offer **Generate guide** for missing copies
+and **Regenerate** for completed or failed copies. These buttons remain visible outside
+the collapsible reading guide. Stage child nodes read, refresh and regenerate their
+own exact sealed material and version, never the parent experiment report. Regeneration
+uses the copy's recorded configuration without changing scientific results or requiring
+Worker review. Queued and running copies disable the button; repeated old-form submissions
+cannot start another attempt. Archived instances, maintenance and global disable block
+these actions.
+
+Experiment progress is also collapsible; background refresh preserves its open state.
+The approval page offers **Invalidate this approval request** only for pending requests,
+with the existing identity and submission checks. Cancellation records a human decision
+and receipt without authorizing execution or overwriting an approval or rejection.
+
+### Scientific material budgets
+
 Complete experiments accept exact PDFs, images, CSV, JSON, archives and grids via
 `scientific_materials`; `scientific_files` supports the same types with explicit lazy
 file delivery. Both share the stored-material budget. Small text remains directly

@@ -16,6 +16,20 @@ def view(identity, schema, payload=None, **metadata):
             "source": {"artifact_id": identity, "json_pointer": ""}, **metadata}
 
 
+def test_foundation_calibration_prose_is_not_a_parameter_name(installed):
+    statement = "深度轴为线性 µm，Zn 浓度轴为对数 cm^-3；像素校准保留原始依据。"
+    result = presentation.build_presentation((view("foundation", "scidiscovery.scientific-foundation.v1", {
+        "items": [{"item_type": "parameter", "item_key": "axis_calibration", "statement": statement, "value": None},
+                  {"item_type": "parameter", "item_key": "detection_limit", "statement": "SIMS 检测限", "value": 3e15, "unit": "cm^-3"}]}),))
+    assert len(result["parameters"]) == 1
+    row = result["parameters"][0]
+    assert row["name"] == "detection_limit" and row["description"] == "SIMS 检测限"
+    assert row["selected_value"] == 3e15
+    sections = [section for section in result["sections"] if section["title"] == "测量条件与证据说明"]
+    assert sections[0]["items"][0]["value"] == statement
+    assert sections[0]["items"][0]["source"]["json_pointer"] == "/items/0/statement"
+
+
 @pytest.fixture
 def installed(monkeypatch):
     calls = []

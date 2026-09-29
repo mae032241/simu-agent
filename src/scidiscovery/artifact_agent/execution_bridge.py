@@ -187,6 +187,16 @@ class ExecutionBridge:
             error.failure_stage = "submission_unknown"
             raise
 
+    def abandon(self, execution_id: str) -> None:
+        current = self.executions.status(execution_id)
+        descriptor = self.executions.prepared_submission(execution_id)
+        if descriptor is not None:
+            found = self._adapter(current.executor).lookup_submission(descriptor)
+            if found is not None:
+                self._record_started(execution_id, *found)
+                raise ExecutionServiceError("This execution was submitted; use status or cancel instead of abandon.")
+        self.executions.abandon(execution_id, submission_confirmed_absent=descriptor is not None)
+
     def _record_started(self, execution_id: str, external_run_id: str, external_state: str) -> None:
         self.executions.record_submission(
             execution_id=execution_id,
@@ -270,10 +280,10 @@ class ExecutionBridge:
         current = self.executions.status(execution_id)
         if current.external_run_id is None:
             raise ExecutionServiceError("execution has no submitted external run")
-        adapter = self._adapter(current.executor)
         observation = self.executions.observation(execution_id)
         from datetime import datetime, timezone
         try:
+            adapter = self._adapter(current.executor)
             reader = getattr(adapter, "status_details", None)
             details = (reader(current.external_run_id) if callable(reader)
                        else {"state": adapter.status(current.external_run_id)})
@@ -305,6 +315,9 @@ class ExecutionBridge:
         receipt. A failed lookup preserves that uncertainty and never submits.
         """
         status = self.executions.status(execution_id)
+        if status.state == "abandoned":
+            self.executions.abandon(execution_id)
+            return
         if status.state in {"created", "authorized"}:
             prepared = self.executions.prepared_submission(execution_id)
             try:
@@ -315,7 +328,7 @@ class ExecutionBridge:
                 error.failure_stage = "submission_unknown"
                 raise
             if found is None:
-                self.executions.abandon(execution_id)
+                self.executions.abandon(execution_id, submission_confirmed_absent=prepared is not None)
                 return
         if self.executions.status(execution_id).state != "abandoned":
             self.cancel(execution_id=execution_id)

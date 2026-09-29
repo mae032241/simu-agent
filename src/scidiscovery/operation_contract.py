@@ -40,6 +40,15 @@ class DeclaredDiagnostic(dict):
     """In-process marker for explicitly declared safe details; never a wire field."""
 
 
+class ToolInputError(DiagnosticError, ValueError):
+    """A tool owner declares a safe, actionable caller correction."""
+
+    def __init__(self, code: str, message: str, *, path: str = "$"):
+        super().__init__(message, details=(contract_diagnostic(code,
+            phase="tool_arguments", affected_action="tool_call", path=path,
+            repairable=True, message=message),))
+
+
 def contract_diagnostic(code: str, *, phase: str, affected_action: str,
                         path: str = "$", repairable: bool = False,
                         message: str = "The declared requirement was not satisfied.",
@@ -222,7 +231,8 @@ def sanitize_diagnostic_details(items: Iterable[Any], *, schema: Any,
         if not isinstance(code,str) or not re.fullmatch(r"[a-zA-Z0-9_.-]{1,128}",code): code="runtime_failure"
         error_type = item.get("type")
         if not isinstance(error_type,str) or not re.fullmatch(r"[a-zA-Z0-9_.-]{1,128}",error_type): error_type=None
-        resolved_phase = (rule_phases or {}).get(rule, phase)
+        resolved_phase = (item.get("phase", phase) if isinstance(item, DeclaredDiagnostic)
+                          else (rule_phases or {}).get(rule, phase))
         # Only the explicit in-process constructor marks a message as safe. An
         # arbitrary error dictionary passing the wire schema does not do so.
         description = rules.get(rule) if isinstance(rules, Mapping) else None

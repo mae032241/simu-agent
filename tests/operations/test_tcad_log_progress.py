@@ -29,7 +29,7 @@ def finish_job(directory):
     (directory / "done").touch()
 
 
-def test_local_adapter_and_root_sync_expose_optional_progress_without_changing_status_query(tmp_path, monkeypatch):
+def test_local_adapter_and_root_status_refresh_optional_progress(tmp_path, monkeypatch):
     from tcad_artifact.execution_control import TCADExecutionFacade
     from tests.operations.test_r4_execution_approval_identity import _setup, _create_effect, _decide_execution_approval
     run_id, directory, config = server_job(tmp_path / "server", monkeypatch)
@@ -46,8 +46,8 @@ def test_local_adapter_and_root_sync_expose_optional_progress_without_changing_s
     monkeypatch.setattr(effect, "status_details", lambda _: adapter.status_details(run_id), raising=False)
     observed = root.call_tool("execution_sync", {"name": "progress"}, surface="execution")
     assert observed["state"] == "running" and observed["progress"]["elapsed_seconds"] == 12
-    # A pure status read must not silently poll the server.
-    monkeypatch.setattr(effect, "status_details", lambda _: pytest.fail("status polled the server"))
+    # Explicit status also polls; inventory rendering stays separate.
+    monkeypatch.setattr(effect, "status_details", lambda _: adapter.status_details(run_id))
     assert root.call_tool("execution_status", {"name": "progress"}, surface="execution")["progress"] == observed["progress"]
     # Existing adapters without the optional extension still synchronize.
     monkeypatch.delattr(effect, "status_details")
@@ -71,3 +71,40 @@ def test_progress_is_bounded_nonblocking_and_unavailable_time_is_not_invented(tm
     assert "elapsed_seconds" not in server._execution_timing("2026-09-13T00:00:00Z", terminal=True)
     only_end = server._execution_timing(None, "2026-09-13T00:00:12Z", terminal=True)
     assert only_end["completed_at"] == "2026-09-13T00:00:12Z" and "elapsed_seconds" not in only_end
+
+
+def test_actual_runner_tail_cursor_reads_appends_and_marks_replacement(tmp_path, monkeypatch):
+    from tests.operations.test_r4_execution_approval_identity import _setup, _create_effect, _decide_execution_approval
+    _, directory, _ = server_job(tmp_path / 'remote', monkeypatch)
+    log = directory / 'worker.log'
+    log.write_text('first line\n')
+    runtime, _, adapter, _, root, _ = _setup(tmp_path)
+    _create_effect(root, name='log-cursor')
+    _decide_execution_approval(runtime, root, name='log-cursor')
+    root.call_tool('execution_start', {'name':'log-cursor'}, surface='execution')
+    monkeypatch.setattr(adapter, 'status_details', lambda _: {
+        'state':'running', 'progress':server._job_progress(str(directory))}, raising=False)
+    root.call_tool('execution_status', {'name':'log-cursor'}, surface='execution')
+    first = root.call_tool('execution_logs', {'name':'log-cursor'}, surface='execution')
+    assert first['text'] == 'first line\n'
+    with log.open('a') as stream:
+        stream.write('new 日志\n')
+    root.call_tool('execution_status', {'name':'log-cursor'}, surface='execution')
+    newer = root.call_tool('execution_logs', {'name':'log-cursor', 'direction':'after',
+        'cursor':first['after']}, surface='execution')
+    assert newer['text'] == 'new 日志\n' and newer['gap'] is None
+    # Same source name, new file identity. Never infer append from matching text.
+    log.rename(directory / 'worker-old.log')
+    log.write_text('first line\nnew 日志\nrotated\n')
+    root.call_tool('execution_status', {'name':'log-cursor'}, surface='execution')
+    rotated = root.call_tool('execution_logs', {'name':'log-cursor', 'direction':'after',
+        'cursor':newer['after']}, surface='execution')
+    assert rotated['gap'] == 'snapshot_replaced' and rotated['text'].endswith('rotated\n')
+    # Cache window overflow is explicit, without a remote read from execution_logs.
+    with log.open('a') as stream:
+        stream.write('bulk logs\n' * 500)
+    root.call_tool('execution_status', {'name':'log-cursor'}, surface='execution')
+    monkeypatch.setattr(adapter, 'status_details', lambda _: pytest.fail('log read queried remote'))
+    overflow = root.call_tool('execution_logs', {'name':'log-cursor', 'direction':'after',
+        'cursor':rotated['after']}, surface='execution')
+    assert overflow['gap'] == 'snapshot_replaced' and overflow['source_truncated'] is True

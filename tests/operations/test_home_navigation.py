@@ -75,7 +75,7 @@ def test_home_cookie_and_independent_directory_do_not_bind(home):
     assert request(base,'GET','/',cookie=cookie+'; '+view_cookie)[0]==200
 
 
-def test_takeover_requires_confirmation_and_rejects_stale_owner(home):
+def test_selection_requires_confirmation_and_preserves_other_readers(home):
     s,ui,base=home
     s.bindings.bind_session(session_key=A,instance_id=s.a)
     s.bindings.bind_session(session_key=B,instance_id=s.b)
@@ -94,7 +94,9 @@ def test_takeover_requires_confirmation_and_rejects_stale_owner(home):
     confirm={**form,'confirm_binding':'yes','expected_binding':field(page,'expected_binding')}
     assert request(base,'POST','/instances/select',form=confirm)[0]==303
     assert s.bindings.session_instance(session_key=B)==s.a
-    assert s.bindings.session_instance(session_key=C) is None
+    assert s.bindings.session_instance(session_key=A)==s.a
+    assert s.bindings.session_instance(session_key=C)==s.a
+    assert s.bindings.progression_status(instance_id=s.a)["can_schedule"] is False
     assert task.state=='running'
 
 
@@ -233,7 +235,7 @@ def test_workbench_manages_registered_clients_without_a_conversation_cookie(home
     s.bindings.register_client(session_key=B)
     s.bindings.bind_session(session_key=A,instance_id=s.a)
     status,_,page=request(base,'GET','/sessions')
-    assert status==200 and '申请绑定' in page and '已绑定 · 允许调度' in page
+    assert status==200 and '申请绑定' in page and '已选择 · 按实例调度权执行' in page
     form={'csrf':field(page,'csrf'),'session_key':A,'enabled':'0','expected_enabled':'1'}
     assert request(base,'POST','/instances/client-state',form={**form,'csrf':'bad'})[0]==403
     assert request(base,'POST','/instances/client-state',form=form)[0]==303

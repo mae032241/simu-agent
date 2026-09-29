@@ -61,6 +61,7 @@ def test_historical_archive_reads_workspaces_artifacts_and_drafts_without_execut
     expected_output = runtime.artifacts.read(old.output_ref) if old.output_ref else None
     source = next(item.artifact_ref for item in old.inputs if item.port_name == 'source_table')
     service = SynchronousFixtureArchive(runtime)
+    root.call_tool("progression_command", {"command": "pause"})
     save_archive(service, instance.instance_id)
     package = service.root / instance.instance_id
     # Construct an old-format fixture from the format-compatible Local files.

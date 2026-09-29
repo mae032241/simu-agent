@@ -515,6 +515,17 @@ class ApprovalUI:
                 focus_artifact_ids=context.get("focus_artifact_ids", []),
                 task_artifact_ids=context.get("task_artifact_ids", []))
             result["gaps"].extend(context["gaps"])
+            model = self._model(instance_id)
+            if model.presentation_summaries is not None:
+                copies = {}
+                for artifact in context["artifacts"]:
+                    ref = model.artifacts.get_by_id(artifact["artifact_id"]).ref
+                    copy = model.presentation_summaries.read(instance_id, ref)
+                    if copy and copy["state"] == "ready":
+                        copies[artifact["artifact_id"]] = {item["source"]: item for item in copy["items"]}
+                for row in result.get("parameters", []):
+                    source = row.get("field_sources", {}).get("description", {})
+                    row["display_copy"] = copies.get(source.get("artifact_id"), {}).get(source.get("json_pointer"))
             return result
         except Exception as error:
             LOGGER.warning("node presentation unavailable: %s", type(error).__name__)
@@ -550,6 +561,8 @@ class ApprovalUI:
         instance_id = parts[1]
         access = self._browser_grant(handler, instance_id)
         model = self._model(instance_id)
+        summary_unavailable_reason = self._summary_unavailable_reason(instance_id, access)
+        can_retry_summary = summary_unavailable_reason is None
         if len(parts) == 2:
             try:
                 page = int(_one(query, "page") or "1")
@@ -574,12 +587,15 @@ class ApprovalUI:
             display = (model.node_metadata(instance_id, selected_key) if selected_key
                        else view.get("selected_node") or view.get("recent_node"))
             if display:
+                if not selected_key:
+                    display = model.node_metadata(instance_id, display["key"])
                 view["display_node"] = {**display, "sealed_stages": model.stage_deliveries(instance_id, display["key"])}
                 view["presentation"] = self._workbench_presentation(instance_id, display["key"])
             self._workbench_objectives(model, instance_id, view)
             view["observations"] = self._cache_observations(instance_id, view["nodes"]["items"])
             body = render_workbench(view, browse_base=f"/instance/{quote(instance_id, safe='')}",
-                csrf_token=self.session_id, can_manage="maintenance" in access.scopes)
+                csrf_token=self.session_id, can_manage="maintenance" in access.scopes,
+                can_retry_summary=can_retry_summary, summary_unavailable_reason=summary_unavailable_reason)
         elif parts[2] == "nodes":
             key = unquote(parts[3])
             view = model.node(instance_id, key,
@@ -588,7 +604,8 @@ class ApprovalUI:
                 stage_offset=int(_one(query, "stage_offset") or "0"),
                 stage_limit=int(_one(query, "stage_limit") or "4"),
                 stage_reference=_one(query, "stage_reference"),
-                stage_text_offset=int(_one(query, "stage_text_offset") or "0"))
+                stage_text_offset=int(_one(query, "stage_text_offset") or "0"),
+                child_offset=int(_one(query, "child_offset") or "0"))
             view["storage"] = self._storage_status(instance_id)
             self._workbench_objectives(model, instance_id, view)
             view["observations"] = self._cache_observations(instance_id,
@@ -596,8 +613,12 @@ class ApprovalUI:
             if view.get("kind") == "approval":
                 binding = model.bindings.get_binding(instance=instance_id, namespace="approval", name=key.split(":", 1)[1])
                 view["review_url"] = model.approvals.status(binding.object_id).review_path
+                from .approval_focus import execution_budget
+                view["approval_authorization"] = execution_budget(model, binding.object_id)
             body = render_node(view, instance_id=instance_id,
-                presentation=self._workbench_presentation(instance_id, key))
+                csrf_token=self.session_id, can_retry_summary=can_retry_summary,
+                summary_unavailable_reason=summary_unavailable_reason,
+                presentation=None if view.get("stage_reference") else self._workbench_presentation(instance_id, key))
         else:
             key, reference = _one(query, "node_key"), unquote(parts[3])
             value = model.diagnostics(instance_id, reference, node_key=key,
@@ -611,10 +632,13 @@ class ApprovalUI:
         read_only = (review.request.kind in _RETIRED_INSTANCE_APPROVAL_KINDS
             or self._approval_frozen(review.request.approval_id))
         presentation, evidence_href, image_href = None, None, None
+        authorization = None
         if self.read_model is not None and self.bindings is not None:
             try:
                 owner = self._approval_owner(review.request.approval_id)
                 if owner is not None:
+                    from .approval_focus import execution_budget
+                    authorization = execution_budget(self._model(owner[0].instance_id), review.request.approval_id)
                     from .presentation import build_presentation
                     context = self._model(owner[0].instance_id).approval_context(owner[0].instance_id, review, presentation=True)
                     presentation = build_presentation(tuple(context["artifacts"]),
@@ -630,7 +654,7 @@ class ApprovalUI:
         return render_review(review, access_token=token, identity=self.identity,
             context=self._review_context(review.request.approval_id),
             read_only=read_only,
-            presentation=presentation, evidence_href=evidence_href, image_href=image_href)
+            presentation=presentation, evidence_href=evidence_href, image_href=image_href, authorization=authorization)
 
     def _handle_evidence(self, handler, parts, query):
         if self.read_model is None:
@@ -763,13 +787,17 @@ class ApprovalUI:
                 result = model.nodes(instance_id, cursor=_one(query, "cursor"),
                     limit=int(_one(query, "limit") or "30"))
             elif len(parts) == 5 and parts[3] == "nodes":
-                result = model.node(instance_id, unquote(parts[4]),
-                    diagnostic_after=int(_one(query, "diagnostic_after") or "0"),
-                    diagnostic_limit=int(_one(query, "diagnostic_limit") or "50"),
-                    stage_offset=int(_one(query, "stage_offset") or "0"),
-                    stage_limit=int(_one(query, "stage_limit") or "4"),
-                    stage_reference=_one(query, "stage_reference"),
-                    stage_text_offset=int(_one(query, "stage_text_offset") or "0"))
+                if _one(query, "view") == "metadata":
+                    result = model.node_metadata(instance_id, unquote(parts[4]), stage_reference=_one(query, "stage_reference"))
+                else:
+                    result = model.node(instance_id, unquote(parts[4]),
+                        diagnostic_after=int(_one(query, "diagnostic_after") or "0"),
+                        diagnostic_limit=int(_one(query, "diagnostic_limit") or "50"),
+                        stage_offset=int(_one(query, "stage_offset") or "0"),
+                        stage_limit=int(_one(query, "stage_limit") or "4"),
+                        stage_reference=_one(query, "stage_reference"),
+                        stage_text_offset=int(_one(query, "stage_text_offset") or "0"),
+                        child_offset=int(_one(query, "child_offset") or "0"))
             elif len(parts) == 5 and parts[3] == "evidence":
                 result = model.artifact(instance_id, unquote(parts[4]),
                     pointer=_one(query, "pointer"),
@@ -809,6 +837,8 @@ class ApprovalUI:
             return self._error(handler, HTTPStatus.FORBIDDEN)
         parsed = urlparse(handler.path)
         parts = [part for part in parsed.path.split("/") if part]
+        if len(parts) == 4 and parts[0] == "instance" and parts[2] == "display-summary" and parts[3] in {"retry", "generate"}:
+            return self._handle_summary_retry(handler, parts[1], generate=parts[3] == "generate")
         if len(parts) == 4 and parts[0] == "instance" and parts[2] == "manage":
             return self._handle_management_post(handler, parts[1], parts[3])
         if len(parts) == 2 and parts[0] == "instances" and parts[1] in {
@@ -1105,6 +1135,70 @@ class ApprovalUI:
             path = self.instance_archive.archived_views_path(instance_id)
             return TrajectoryStore(path, read_only=True) if path is not None else None
         return self.trajectory_store
+
+    def _can_retry_summary(self, instance_id, access):
+        return self._summary_unavailable_reason(instance_id, access) is None
+
+    def _summary_unavailable_reason(self, instance_id, access):
+        if self.read_model is None or self.read_model.presentation_summaries is None:
+            return "service_unavailable"
+        if not self.read_model.runs.agent_settings.presentation.enabled:
+            return "service_disabled"
+        if not self.bindings.agent_settings(instance_id)["settings"].get("presentation", {}).get("enabled", True):
+            return "instance_disabled"
+        if not self._cache_writable(instance_id):
+            return "read_only"
+        if "maintenance" not in access.scopes:
+            return "access_required"
+        return None
+
+    def _handle_summary_retry(self, handler, instance_id, *, generate=False):
+        from .read_model import ReadModelNotFound
+        if not self._valid_origin(handler.headers.get("Origin")):
+            return self._error(handler, HTTPStatus.FORBIDDEN)
+        if handler.headers.get("Content-Type", "").split(";", 1)[0] != "application/x-www-form-urlencoded":
+            return self._error(handler, HTTPStatus.UNSUPPORTED_MEDIA_TYPE)
+        try:
+            length = int(handler.headers.get("Content-Length", "-1"))
+            if not 0 <= length <= MAX_POST_BYTES:
+                return self._error(handler, HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
+            handler.connection.settimeout(10)
+            form = parse_qs(handler.rfile.read(length).decode("utf-8"), strict_parsing=True, max_num_fields=5)
+            if not secrets.compare_digest(_required(form, "csrf"), self.session_id):
+                raise BrowserAccessDenied("CSRF mismatch")
+            with self._shared_maintenance():
+                access = self._browser_grant(handler, instance_id, scope="maintenance")
+                if not self._can_retry_summary(instance_id, access):
+                    raise ValueError("展示整理已停用，或实例当前不可写。")
+                guard = self.instance_archive.gate.guard(instance_id) if self.instance_archive else nullcontext()
+                with guard:
+                    key = _required(form, "node_key")
+                    self.read_model.node_metadata(instance_id, key)
+                    stage_reference = _one(form, "stage_reference")
+                    run, ref, _ = self.read_model.display_source(instance_id, key, stage_reference)
+                    existing = self.read_model.presentation_summaries.read(instance_id, ref)
+                    if generate:
+                        from ..service.presentation_summaries import enqueue
+                        if existing is None and enqueue(self.read_model.runs, run, ref) is None:
+                            raise ValueError("展示整理配置不可用。")
+                    else:
+                        if existing is None or (existing.get("retry") or {}).get("cache_key") != _required(form, "cache_key"):
+                            # Queued/running duplicate POSTs remain harmless, but
+                            # cannot be used to select another stage's cache job.
+                            if existing is None or existing.get("state") not in {"queued", "running"}:
+                                raise ValueError("导读版本已变化，请刷新当前阶段。")
+                            return self._respond(handler, HTTPStatus.SEE_OTHER, b"", "text/plain; charset=utf-8",
+                                extra_headers={"Location": f"/instance/{quote(instance_id, safe='')}/nodes/{quote(key, safe='')}"
+                                    + ("?" + urlencode({"stage_reference": stage_reference}) if stage_reference else "")})
+                        self.read_model.presentation_summaries.retry(instance_id,
+                            _required(form, "cache_key"), int(_required(form, "generation")))
+        except PermissionError as error:
+            return self._error(handler, HTTPStatus.FORBIDDEN, str(error))
+        except (ValueError, UnicodeError, ReadModelNotFound, SchedulerInstanceNotFound) as error:
+            return self._error(handler, HTTPStatus.CONFLICT, str(error))
+        return self._respond(handler, HTTPStatus.SEE_OTHER, b"", "text/plain; charset=utf-8",
+            extra_headers={"Location": f"/instance/{quote(instance_id, safe='')}/nodes/{quote(key, safe='')}"
+                + ("?" + urlencode({"stage_reference": stage_reference}) if stage_reference else "")})
 
     def _cache_writable(self, instance_id):
         if self.instance_archive is None:

@@ -138,8 +138,13 @@ def test_downstream_discovers_and_streams_large_attachment_without_bulk_reads(tm
         return read(ref)
     monkeypatch.setattr(runtime.artifacts,'read',reject_bulk)
     listing=auditor.call_tool('worker_reference_read',{'source':source})
-    reference=listing['references'][0]['reference']
-    assert len(listing['references'])==1
+    references=listing['references']
+    published=[item for item in references if item['locator'].startswith('/@attachments/')]
+    assert len(published)==1
+    assert {item['locator'] for item in references} == {
+        published[0]['locator'], '/scientific_foundation/items/0/evidence_keys/0'}
+    assert len({item['reference'] for item in references})==2
+    reference=published[0]['reference']
     request={'source':source,'action':'read','reference':reference,'delivery':'file'}
     result=auditor.call_tool('worker_reference_read',request)
     path=Path(result['file_path'])

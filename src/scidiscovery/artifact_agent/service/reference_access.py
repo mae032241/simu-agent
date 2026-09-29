@@ -219,7 +219,10 @@ class ReferenceAccessMixin:
             'source_ref': source.model_dump(mode='json'), 'request': request.model_dump(mode='json')})
 
     def _reference_current_material(self, value, alias):
-        visible = {port.name for port in self._compiled(value).spec.outputs if port.agent_visible}
+        # Visibility governs authoring fields, not access to scientific files
+        # already published into this exact Run (including verified recovery).
+        visible = {port.name for port in self._compiled(value).spec.outputs
+                   if port.agent_visible or port.kind == 'scientific_attachment'}
         record = next((item for item in self.tool_evidence(value.run_id) if item['alias'] == alias), None)
         if record is None:
             return None
@@ -228,6 +231,32 @@ class ReferenceAccessMixin:
                 or envelope.schema_id == 'scidiscovery.tool-evidence-manifest.v1'):
             return None
         return record
+
+    def _reference_current_edges(self, value, record):
+        edges = [{'reference': 'content', 'alias': record['alias'],
+                  'media_type': record['media_type'], 'size_bytes': record['size_bytes'],
+                  '_current_alias': record['alias'], '_edge': {'target_ref': record['artifact_ref']}}]
+        if record.get('metadata', {}).get('kind') != 'experiment_stage':
+            return edges
+        from .sealed_materials import resolve_material
+        origin = resolve_material(self, value, record['alias'])
+        available = {item.artifact_ref: item.source_name for item in self._reference_roots(value)}
+        for item in self.tool_evidence(value.run_id):
+            if self._reference_current_material(value, item['alias']) is not None:
+                available.setdefault(_ref(item['artifact_ref']), item['alias'])
+        parents = self.artifacts.catalog(_ref(record['artifact_ref'])).parent_refs
+        for original_alias in dict.fromkeys(origin['metadata'].get('derived_from', ())):
+            target = origin['source_refs'].get(original_alias)
+            if target not in available or target not in parents:
+                continue
+            alias = available[target]
+            envelope = self.artifacts.catalog(target)
+            edge = {'source_ref': record['artifact_ref'], 'locator': '/materials/' + _escape(original_alias),
+                    'target_ref': target.model_dump(mode='json')}
+            edges.append({'reference': 'ref_' + _digest(edge), 'alias': alias, 'locator': edge['locator'],
+                'media_type': envelope.media_type, 'size_bytes': envelope.size_bytes,
+                '_current_alias': alias, '_edge': edge})
+        return edges
 
     def _reference_source(self, value, alias, policy):
         source = next((item for item in self._reference_roots(value) if item.source_name == alias), None)
@@ -308,6 +337,8 @@ class ReferenceAccessMixin:
 
     def _reference_edges(self, value, source_ref, policy, call, pointer=None, reference=None, root_ref=None):
         producer, manifest, selected, manifest_ref = self._reference_pair(value, source_ref, policy, call, root_ref)
+        if selected and selected.get('metadata', {}).get('kind') == 'experiment_execution':
+            return self._execution_output_edges(value, source_ref, policy, call, producer, manifest_ref, pointer, reference), []
         rules = [rule for rule in policy.rules if rule.schema_id == source_ref.schema_id]
         aliases = []
         sections = []
@@ -440,6 +471,45 @@ class ReferenceAccessMixin:
                           '_proof_manifest': original_proof[1] if original_proof else None})
         return edges, sections
 
+    def _execution_output_edges(self, value, source_ref, policy, call, producer, proof_ref, pointer, reference):
+        """Join a sealed public receipt to its exact control manifest, not to IDs supplied by a caller."""
+        from ..schema.execution import ExecutionResultManifest
+        parents = [ref for ref in self.artifacts.catalog(source_ref).parent_refs
+                   if ref.schema_id == 'scidiscovery.execution-result']
+        if len(parents) != 1:
+            raise ReferenceAccessError('reference_execution_unpaired', 'Execution receipt has no unique sealed result manifest.')
+        result = ExecutionResultManifest.model_validate_json(self._reference_read_bytes(value, parents[0], policy, call))
+        receipt = json.loads(self._reference_read_bytes(value, source_ref, policy, call))
+        manifest_parents = self.artifacts.catalog(parents[0]).parent_refs
+        outputs = {}
+        for ref in result.output_refs:
+            self._reference_deadline(call)
+            envelope = self.artifacts.catalog(ref)
+            name = envelope.labels.get('logical_name')
+            if (ref not in manifest_parents or not name or name in outputs
+                    or envelope.labels.get('execution_id') != result.execution_id):
+                raise ReferenceAccessError('reference_execution_unpaired', 'Collected output identity differs from its sealed manifest.')
+            outputs[name] = envelope
+        edges = []
+        for item in receipt.get('outputs', ()):
+            name = item['name']
+            target = outputs.get(name)
+            if target is None or (target.media_type, target.size_bytes) != (item['media_type'], item['size_bytes']):
+                raise ReferenceAccessError('reference_execution_unpaired', 'Scientific output name differs from its collected original.')
+            locator = '/outputs/' + _escape(name)
+            if pointer and not (locator == pointer or locator.startswith(pointer + '/')):
+                continue
+            edge = {'source_ref': source_ref.model_dump(mode='json'), 'locator': locator,
+                    'target_ref': target.ref.model_dump(mode='json')}
+            handle = 'ref_' + _digest(edge)
+            if reference is not None and reference != handle:
+                continue
+            edges.append({'reference': handle, 'locator': locator, 'alias': name, 'file_name': name,
+                'media_type': target.media_type, 'size_bytes': target.size_bytes,
+                '_edge': edge, '_producer': None, '_manifest_ref': proof_ref.model_dump(mode='json'),
+                '_manifest_run': producer.run_id, '_proof_run': None, '_proof_manifest': None})
+        return edges
+
     def _reference_settle(self, connection, value, call, response, *, request_key=None):
         encoded = canonical_json(response)
         if len(encoded) > call['response_bytes']:
@@ -522,9 +592,7 @@ class ReferenceAccessMixin:
             if current_material is not None:
                 # The current Run already owns this immutable scientific source;
                 # reading it does not create another provenance receipt or alias.
-                edges = [{'reference': 'content', 'alias': request.source,
-                    'media_type': current_material['media_type'], 'size_bytes': current_material['size_bytes'],
-                    '_edge': {'target_ref': current_material['artifact_ref']}}]
+                edges = self._reference_current_edges(value, current_material)
                 sections = []
             else:
                 edges, sections = self._reference_edges(value, source, policy, call, request.pointer if request.action == 'list' else None,
@@ -564,7 +632,7 @@ class ReferenceAccessMixin:
                 self._reference_reserve_bytes(value, target, policy, call, material=True, file_delivery=True)
             else:
                 raw = self._reference_read_bytes(value, target, policy, call, material=True)
-            alias = request.source if current_material is not None else self._reference_alias(value, target)
+            alias = selected['_current_alias'] if current_material is not None else self._reference_alias(value, target)
             response = {'action': 'read', 'source': alias, 'media_type': selected['media_type'],
                         'provided': {'pointer': request.pointer, 'offset': request.offset, 'characters': 0}, 'next_offset': None, 'omitted': False}
             envelope = self.artifacts.catalog(target)

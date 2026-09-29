@@ -39,7 +39,7 @@ def test_production_approval_kind_is_not_reinterpreted(system, kind, title, prom
         assert "是否批准本次提交的科研依据" not in page
     node = render_node({"kind":"approval", "key":"approval:fixture", "state":"pending",
         "request":{"payload":{"kind":kind,"question":question}}}, instance_id=system.a).decode()
-    assert f"<h2>{title}</h2>" in node and "Exact original action" in node
+    assert f"<h2>{prompt}</h2>" in node and "Exact original action" in node
     assert system.artifacts.read(review.request_ref) == before
     assert system.approvals.status(launch.approval_id).status == "pending"
 

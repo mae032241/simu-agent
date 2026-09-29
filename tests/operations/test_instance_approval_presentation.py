@@ -205,7 +205,7 @@ def test_frozen_approval_shows_direct_and_exact_report_images_only(system, insta
         assert len(images) == 2
         assert all(item.artifact_id not in "".join(images) for item in exploratory)
         assert outside.artifact_id not in text
-        assert "<details class='research-panel figures-panel'>" in text
+        assert "<details class='research-panel figures-panel' open>" in text
         runtime_path = f"/review/{launch.approval_id}/evidence/{runtime.artifact_id}?" + urlencode(
             {"token": launch.access_token, "format": "image"})
         direct_path = f"/review/{launch.approval_id}/evidence/{direct.artifact_id}?" + urlencode(

@@ -20,7 +20,7 @@ _REVIEW_FIELDS = (("verdict", "实现审查结论"), ("summary", "正式摘要")
     ("numerical_protocol_fidelity", "数值协议"), ("undeclared_defaults", "未声明默认值"),
     ("findings", "审查意见"), ("missing_inputs", "缺失输入"), ("execution_ready", "记录中的执行就绪性"))
 _PROJECT_FIELDS = (("solver_kind", "求解器"), ("tool_profile", "工具配置"), ("entrypoint", "执行入口"),
-    ("arguments", "执行参数"), ("resource_limits", "资源与时限"), ("expected_outputs", "预期产物与案例范围"),
+    ("arguments", "执行参数"), ("expected_outputs", "预期产物与案例范围"),
     ("runtime_assertions", "运行时核验"))
 
 
@@ -98,6 +98,13 @@ def _project_rows(result, artifact, project, base="", cohort=()):
     complete = dependency_complete(artifact, cohort)
     cohort = dependency_cohort(artifact, cohort)
     add_fields(result, artifact, "执行范围", _PROJECT_FIELDS, payload=project, path=base, kind="execution_scope")
+    limits = project.get("resource_limits")
+    if isinstance(limits, Mapping):
+        add_fields(result, artifact, "申请资源上限", (
+            ("wall_time_seconds", "最长运行时间（秒）"), ("cpu_time_seconds", "CPU 时间上限（秒）"),
+            ("max_storage_bytes", "存储上限（字节）"), ("max_memory_bytes", "内存上限（字节）"),
+            ("max_output_bytes", "输出上限（字节）")), payload=limits,
+            path=base + "/resource_limits", kind="execution_scope")
     if project.get("result_kind") == "implementation_gap":
         add_fields(result, artifact, "实现缺口", (("summary", "正式说明"), ("missing_inputs", "缺失输入"),
             ("affected_work", "受影响任务"), ("suggested_resolution", "原记录建议")), payload=project, path=base)
@@ -204,7 +211,7 @@ DISPLAY_POINTERS = {
     PARAMETERS: ("/parameter_set_key", "/requirement_set_key", "/title", "/objective", "/claims"),
     REQUIREMENTS: ("/requirement_set_key", "/title", "/objective", "/parameters"),
     CATALOG: ("/catalog_key", "/sources"),
-    PROJECT: tuple(pointer(key) for key, _ in _PROJECT_FIELDS) + ("/parameter_bindings", "/case_parameter_bindings", "/result_kind", "/summary", "/missing_inputs", "/affected_work", "/suggested_resolution"),
+    PROJECT: tuple(pointer(key) for key, _ in _PROJECT_FIELDS) + ("/resource_limits", "/parameter_bindings", "/case_parameter_bindings", "/result_kind", "/summary", "/missing_inputs", "/affected_work", "/suggested_resolution"),
     REVIEW: tuple(pointer(key) for key, _ in _REVIEW_FIELDS),
     "scidiscovery.device-parameter-coverage.v1": ("/status", "/items"),
     "scidiscovery.parameter-uncertainty.v1": ("/status", "/items"),

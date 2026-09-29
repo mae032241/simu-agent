@@ -82,10 +82,12 @@ def exception_facts(error: Exception, *, layer: str, action: str) -> dict:
 class RunOutputError(RuntimeError):
     def __init__(
         self, message: str, *, details: tuple[dict[str, str], ...] = (), recorded: bool = False,
+        category: str = "output_rejected",
     ) -> None:
         super().__init__(message)
         self.details = details
         self.recorded = recorded
+        self.category = category
 
 
 class RunCheckerError(RuntimeError):

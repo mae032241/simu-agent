@@ -111,7 +111,8 @@ class LocalWorkerMCPRouter:
         """A separate projection; never overwrite the task owner's assignment/schema."""
         source = json.loads(read_control_workspace_file(self._workspace.root,
             Path("assignment.json"), max_bytes=self._workspace.assignment_path.stat().st_size))
-        task = json.loads(self.participant['request_json'])
+        saved = json.loads(self.participant['request_json'])
+        task = {key:saved[key] for key in ("task", "materials")}
         instruction = (
             "You are an internal helper for this scientific subtask. Investigate relevant task files, use appropriate "
             "Skills and the parent's permitted native/scientific tools, and make requested local edits or already authorized checks. "
@@ -313,13 +314,14 @@ class LocalWorkerMCPRouter:
             except Exception as record_error:
                 from ..service.engineering_diagnostics import exception_facts
                 engineering["workspace_record_error"] = exception_facts(record_error, layer="worker_workspace", action="record")
-        failure = error if isinstance(error, DiagnosticError) else WorkerToolError(
+        failure = (error if isinstance(error, WorkerToolError) else
+            WorkerToolError(str(error), details=error.details)) if isinstance(error, DiagnosticError) else WorkerToolError(
             engineering["causes"][0]["message"], details=(contract_diagnostic(
                 engineering["category"], phase="tool_execution", affected_action="tool_call",
                 message=engineering["causes"][0]["message"], error_type=type(error).__name__),))
         failure.engineering = engineering
         if scientific:
-            failure.public_engineering = {"category":engineering["category"]}
+            failure.public_engineering = {} if isinstance(error, DiagnosticError) else {"category":engineering["category"]}
             if not failure.details:
                 failure.details = (contract_diagnostic("tool_rejected", phase="tool_execution", affected_action="tool_call",
                     message="The experiment action could not complete with its current inputs or configured services."),)
@@ -466,7 +468,8 @@ class LocalWorkerMCPRouter:
         if status.state != "running":
             return
         status, workspace = self.runs.reopen(run_id=status.run_id,
-            operation_id=self.operation_id, operation_digest=self.operation_digest)
+            operation_id=self.operation_id, operation_digest=self.operation_digest,
+            trusted_caller=self._trusted_caller if not self.is_helper else None)
         self._run_id, self._workspace = status.run_id, workspace
 
     def _open(self) -> dict[str, Any]:
@@ -489,6 +492,7 @@ class LocalWorkerMCPRouter:
                 status, workspace = opener(
                     operation_id=self.operation_id,
                     operation_digest=self.operation_digest,
+                    trusted_caller=self._trusted_caller if not self.is_helper else None,
                     **({"run_id": self._bound_run_id} if self._bound_run_id else {}),
                 )
             except RunStateConflict as error:
@@ -504,6 +508,7 @@ class LocalWorkerMCPRouter:
                 if not resumable_tools or str(error) != "no exact queued Run is available":
                     raise WorkerToolError(str(error)) from error
                 status, workspace = self.runs.reopen(operation_id=self.operation_id, operation_digest=self.operation_digest,
+                    trusted_caller=self._trusted_caller if not self.is_helper else None,
                     **({"run_id": self._bound_run_id} if self._bound_run_id else {}))
             self._run_id = status.run_id
             self._opened_call_run_id = status.run_id

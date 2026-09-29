@@ -42,6 +42,27 @@ def save_archive(service, instance_id):
     return service.archive(instance_id, preview["fingerprint"])
 
 
+def test_display_summary_cache_is_scoped_and_does_not_block_archive(archive_system):
+    from scidiscovery.agent_execution_settings import PresentationSettings
+    from scidiscovery.artifact_agent.service.presentation_summaries import SummaryStore, store_for
+    runtime, service, first, second = archive_system
+    one = artifact(runtime, first, "one")
+    two = artifact(runtime, second, "two")
+    store = store_for(runtime.runs)
+    for instance, ref in ((first, one.ref), (second, two.ref)):
+        store.enqueue(instance, ref, PresentationSettings().model_dump(), {"model": "fixture"})
+    assert save_archive(service, first)["storage_state"] == "archived"
+    archived = SummaryStore(service.archived_views_path(first))
+    assert archived.read(first, one.ref)["state"] == "queued"
+    view = service.archived_model(first).presentation_summaries
+    assert view.read(first, one.ref)["state"] == "queued"
+    with pytest.raises(AttributeError):
+        view.enqueue(first, one.ref, {}, {})
+    assert archived.read(second, two.ref) is None
+    assert store.read(first, one.ref) is None
+    assert store.read(second, two.ref)["state"] == "queued"
+
+
 def test_registered_client_must_be_paused_at_preview_and_archive_commit(archive_system):
     from scidiscovery.artifact_agent.service.instance_maintenance import InstanceMaintenanceBusy
     runtime,service,first,_=archive_system
@@ -942,3 +963,35 @@ else:
     if recovery is not None:
         assert (recovery / "first.txt").read_bytes() == b"first complete recovery file"
         assert not list(recovery.parent.glob(".archive-retired_*"))
+
+
+def test_archived_experiment_keeps_stage_progress_and_exact_material_reads(tmp_path, monkeypatch):
+    from tests.operations.test_r4_experiment_task import _real_experiment
+    from scidiscovery.artifact_agent.service.instance_archive_files import hash_file
+    runtime, root, _, _, instance = _real_experiment(tmp_path, monkeypatch)
+    root.call_tool("progression_command", {"command": "pause"})
+    # The fixture also creates an unused, unsubmitted standalone request.
+    for binding in runtime.scheduler_bindings.list(instance=instance.instance_id, namespace="execution"):
+        if runtime.executions.status(binding.object_id).state in {"created", "authorized"}:
+            runtime.execution_bridge.cancel_or_abandon(execution_id=binding.object_id)
+    runtime.runs._synchronous_archive_fixture = True
+    service = InstanceArchive(runtime)
+    instance_id = instance.instance_id
+    run_id = runtime.scheduler_bindings.resolve(instance=instance_id, namespace="run", name="observe")
+    records = runtime.runs.tool_evidence(run_id)
+    stage = next(r for r in records if r.get("metadata", {}).get("kind") == "experiment_stage")
+    preview = service.preview(instance_id)
+    assert preview["ready"], json.dumps({key: preview.get(key) for key in ("busy", "unsupported", "gaps")})
+    save_archive(service, instance_id)
+    package = service.root / instance_id
+    before = {str(p.relative_to(package)): hash_file(p) for p in (package / "records").glob("*.sqlite3")}
+    model = service.archived_model(instance_id)
+    node = model.node(instance_id, "run:observe", stage_reference=stage["alias"])
+    assert node["sealed_stages"]["availability"] == "available"
+    assert node["sealed_stages"]["material"]["reference"] == stage["alias"]
+    assert not node["experiment_children"]["gaps"]
+    assert not node["experiment_progress"]["gaps"]
+    with pytest.raises(AttributeError):
+        model.runs.publish_sealed_material(model.runs.status(run_id), stage["alias"])
+    after = {str(p.relative_to(package)): hash_file(p) for p in (package / "records").glob("*.sqlite3")}
+    assert after == before

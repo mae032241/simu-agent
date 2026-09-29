@@ -71,7 +71,7 @@ def test_workbench_projects_reports_cost_gaps_and_authorized_original_links(prog
     overview['progression'] = p.root.call_tool('progression_status', {})
     overview['active_task_pages']['run']['has_more'] = True
     page = render_workbench(overview, browse_base='/instance/instance-a', csrf_token='csrf').decode()
-    for value in ('当前任务', 'Need another measurement?', '需用户决定', '系统等待', '普通状态变化',
+    for value in ('多个活动分支', 'Need another measurement?', '需用户决定', '系统等待', '普通状态变化',
             '未提供聊天推送和已读回执', '货币费用未测量', '缓存输入是输入子集', 'partial',
             'Detached helper is unmeasured.', '列表达到读取上限', 'Later targets are still open',
             '/instance/instance-a/evidence/safe-image?format=image', '/nodes/artifact%3Agoal'):

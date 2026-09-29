@@ -38,7 +38,7 @@ MAX_SCOPE_RECORDS = 1000
 
 class InstanceReadModel:
     def __init__(self, *, artifacts, bindings, runs, approvals, executions, operation_catalog,
-                 engineering_diagnostics=None, execution_collection=None) -> None:
+                 engineering_diagnostics=None, execution_collection=None, presentation_summaries=None) -> None:
         self.artifacts = artifacts
         self.bindings = bindings
         self.runs = runs
@@ -47,6 +47,7 @@ class InstanceReadModel:
         self.operation_catalog = operation_catalog
         self.engineering_diagnostics = engineering_diagnostics
         self.execution_collection = execution_collection
+        self.presentation_summaries = presentation_summaries
 
     def progression_status(self, instance_id, *, session_key=None):
         from ..service.progression_read import progression_read_view
@@ -157,10 +158,25 @@ class InstanceReadModel:
         # Cards need metadata only; scientific payloads remain behind the node links.
         fields = ("key", "kind", "name", "title", "state", "created_at", "source_time",
                   "last_activity_at", "completed_at", "collection_status", "operation_id")
+        from .experiment_trajectory import parent_binding, read_children
         items = []
+        grouped = set()
         for record in records:
+            # Keep numbered source-record pagination. A child whose parent lies
+            # on another page still appears under that exact experiment here.
+            try:
+                owner = parent_binding(self, instance_id, record)
+            except _READ_ERRORS:
+                owner = None  # Unresolved ownership stays visible as a root.
+            record = owner or record
+            if (record.namespace, record.object_id) in grouped:
+                continue
+            grouped.add((record.namespace, record.object_id))
             metadata = self._metadata(instance_id, record)
-            items.append({key: metadata[key] for key in fields if key in metadata})
+            node = {key: metadata[key] for key in fields if key in metadata}
+            if metadata.get("operation_id") == "science.experiment.v1":
+                node["experiment_children"] = read_children(self, self._run(instance_id, record.object_id))
+            items.append(node)
         return {"items": items, "page": page, "total": total,
                 "total_pages": max(1, (total + limit - 1) // limit), "page_size": limit}
 
@@ -182,13 +198,15 @@ class InstanceReadModel:
 
     def node(self, instance_id: str, key: str, diagnostic_after: int = 0, diagnostic_limit: int = 50,
              stage_offset: int = 0, stage_limit: int = 4, stage_reference: str | None = None,
-             stage_text_offset: int = 0) -> dict[str, Any]:
+             stage_text_offset: int = 0, child_offset: int = 0) -> dict[str, Any]:
         if (type(diagnostic_after) is not int or diagnostic_after < 0
                 or type(diagnostic_limit) is not int or not 1 <= diagnostic_limit <= 100):
             raise ValueError("invalid diagnostic page bounds")
         binding = self._binding(instance_id, key)
         result = self._metadata(instance_id, binding)
         result["source"] = {"namespace": binding.namespace, "name": binding.name, "object_id": binding.object_id}
+        if stage_reference:
+            self._stage_display_copy(instance_id, key, stage_reference, result)
         result["gaps"] = []
         result["qualification"] = {"state": "not_evaluated", "reason": "historical_read_does_not_establish_current_qualification"}
         try:
@@ -202,6 +220,8 @@ class InstanceReadModel:
                 result["diagnostics"] = self.runs.diagnostic_events(value, after=diagnostic_after, limit=diagnostic_limit)
                 self._run_detail(result, value)
                 if value.operation_id == "science.experiment.v1":
+                    from .experiment_trajectory import read_children
+                    result["experiment_children"] = read_children(self, value, offset=child_offset)
                     from ..service.stage_deliveries import read_stage_deliveries
                     result["sealed_stages"] = read_stage_deliveries(self.runs, value, instance_id=instance_id,
                         stage_offset=stage_offset, stage_limit=stage_limit, stage_reference=stage_reference,
@@ -247,9 +267,44 @@ class InstanceReadModel:
             return None
         return read_stage_deliveries(self.runs, value, instance_id=instance_id, **arguments)
 
-    def node_metadata(self, instance_id: str, key: str) -> dict[str, Any]:
+    def display_source(self, instance_id, key, stage_reference=None):
+        """Resolve the same sealed source for display, refresh and explicit generation."""
+        from ..schema.refs import ArtifactRef
+        binding = self._binding(instance_id, key)
+        if binding.namespace != "run":
+            raise ReadModelNotFound("展示整理需要任务的封存材料。")
+        run = self._run(instance_id, binding.object_id)
+        if stage_reference:
+            record = self.runs.sealed_material_record(run, stage_reference)
+            if record is None or record.get("metadata", {}).get("kind") not in {
+                "experiment_stage", "experiment_implementation", "experiment_debug", "experiment_execution"}:
+                raise ReadModelNotFound("没有找到该任务的确切阶段材料。")
+            return run, ArtifactRef.model_validate(record["artifact_ref"]), record["metadata"]
+        if run.output_ref is None:
+            raise ReadModelNotFound("任务尚无封存结果。")
+        return run, run.output_ref, {}
+
+    def _stage_display_copy(self, instance_id, key, stage_reference, result):
+        _, ref, metadata = self.display_source(instance_id, key, stage_reference)
+        from .experiment_trajectory import PHASES, KINDS
+        phase = metadata.get("stage") or KINDS.get(metadata.get("kind"))
+        result["stage_reference"] = stage_reference
+        result["stage_title"] = PHASES.get(phase, "阶段材料")
+        result["display_copy"] = ((self.presentation_summaries.read(instance_id, ref)
+            if self.presentation_summaries is not None else None) or {"state": "not_generated", "items": []})
+
+    def node_metadata(self, instance_id: str, key: str, *, stage_reference=None) -> dict[str, Any]:
         """Refresh one known node without touching scientific payloads or drafts."""
-        return self._metadata(instance_id, self._binding(instance_id, key))
+        binding = self._binding(instance_id, key)
+        result = self._metadata(instance_id, binding)
+        if stage_reference:
+            self._stage_display_copy(instance_id, key, stage_reference, result)
+        if result.get("operation_id") == "science.experiment.v1":
+            from .experiment_progress import read_progress
+            from .experiment_trajectory import read_children
+            result["experiment_progress"] = read_progress(self, self._run(instance_id, binding.object_id))
+            result["experiment_children"] = read_children(self, self._run(instance_id, binding.object_id))
+        return result
 
     def node_context(self, instance_id: str, key: str) -> dict[str, Any]:
         binding = self._binding(instance_id, key)
@@ -269,7 +324,7 @@ class InstanceReadModel:
                     priority_refs, presentation_controls = self._run_presentation_refs(run)
             elif binding.namespace == "artifact":
                 focus = roots[:1]
-                if focus and focus[0].schema_id == "scidiscovery.layered-diagnosis.v1":
+                if focus:
                     priority_refs, presentation_controls = self._focused_presentation_refs(focus)
             elif binding.namespace == "approval":
                 # The request and decision describe this approval; ancestor
@@ -333,8 +388,6 @@ class InstanceReadModel:
         """Prioritize only the selected Run's exact published evidence family."""
         output = self.artifacts.catalog(run.output_ref)
         operation = (run.operation_id, run.operation_version, run.operation_digest)
-        if output.schema_id != "scidiscovery.layered-diagnosis.v1":
-            return (run.output_ref,), {}
         manifests, scan_complete = [], len(output.parent_refs) <= 100
         for manifest_ref in output.parent_refs[:100]:
             if manifest_ref.schema_id != "scidiscovery.tool-evidence-manifest.v1":
@@ -359,11 +412,11 @@ class InstanceReadModel:
             return (run.output_ref,), controls
         manifest_ref, manifest = manifests[0]
         result = [run.output_ref, manifest_ref]
-        result.extend(self._cited_presentation_image_refs(output, manifest))
+        result.extend(self._presentation_file_refs(output, manifest))
         return tuple(dict.fromkeys(result)), controls
 
-    def _cited_presentation_image_refs(self, report, manifest):
-        """Resolve only uniquely cited runtime images through one exact manifest."""
+    def _presentation_file_refs(self, report, manifest):
+        """Resolve published attachments and cited images through one exact manifest."""
         if (report.content_encoding != "identity" or manifest.content_encoding != "identity"
                 or report.size_bytes > MAX_SOURCE_BYTES or manifest.size_bytes > MAX_SOURCE_BYTES
                 or len(manifest.parent_refs) > 100):
@@ -391,7 +444,12 @@ class InstanceReadModel:
         for record in records:
             if isinstance(record, dict) and isinstance(record.get("alias"), str):
                 by_alias.setdefault(record["alias"], []).append(record)
-        result = []
+        # Attachments are already an explicit Worker publication. They do not
+        # require an additional schema-specific evidence citation to be visible.
+        for alias, matches in by_alias.items():
+            if len(matches) == 1 and matches[0].get("output_port") == "attachments":
+                citations[alias] = [None]
+        result, downloads = [], []
         for alias, references in citations.items():
             matches = by_alias.get(alias, ())
             if len(references) != 1 or len(matches) != 1:
@@ -403,9 +461,10 @@ class InstanceReadModel:
             binding = bindings.get(alias)
             parent_matches = [parent for parent in manifest.parent_refs
                               if parent.model_dump(mode="json") == reference]
-            if (media not in {"image/png", "image/jpeg"} or not isinstance(reference, dict)
+            port = "attachments" if record.get("output_port") == "attachments" else "tool_evidence"
+            if ((port != "attachments" and media not in {"image/png", "image/jpeg"}) or not isinstance(reference, dict)
                     or len(parent_matches) != 1 or not isinstance(binding, dict)
-                    or binding.get("port_name") != "tool_evidence"
+                    or binding.get("port_name") != port
                     or binding.get("artifact_ref") != reference):
                 continue
             try:
@@ -415,8 +474,10 @@ class InstanceReadModel:
             if (image.media_type.split(";", 1)[0].lower() != media
                     or image.size_bytes != record.get("size_bytes")):
                 continue
-            result.append(parent_matches[0])
-        return tuple(result)
+            if port == "attachments" and image.labels.get("operation_output_port") != "attachments":
+                continue
+            (result if media in {"image/png", "image/jpeg"} else downloads).append(parent_matches[0])
+        return tuple((*result, *downloads))
 
     def _focused_presentation_refs(self, subject_refs):
         """Prioritize exact focused reports with uniquely bound evidence."""
@@ -426,8 +487,6 @@ class InstanceReadModel:
             try:
                 report = self.artifacts.catalog(subject_ref)
             except _READ_ERRORS:
-                continue
-            if report.schema_id != "scidiscovery.layered-diagnosis.v1":
                 continue
             operation = tuple(report.labels.get(key) for key in (
                 "operation_id", "operation_version", "operation_digest"))
@@ -460,7 +519,7 @@ class InstanceReadModel:
                 continue
             manifest_ref, manifest = manifests[0]
             result.append(manifest_ref)
-            result.extend(self._cited_presentation_image_refs(report, manifest))
+            result.extend(self._presentation_file_refs(report, manifest))
         return tuple(dict.fromkeys(result)), controls
 
     def _family_views(self, instance_id, artifact_id):
@@ -705,6 +764,9 @@ class InstanceReadModel:
                 roots = [(item.artifact_ref, f"/inputs/{i}/artifact_ref") for i, item in enumerate(value.inputs[:1])]
                 result["input_count"] = len(value.inputs)
                 if value.output_ref:
+                    if self.presentation_summaries is not None:
+                        result["display_copy"] = self.presentation_summaries.read(instance_id, value.output_ref) or {
+                            "state": "not_generated", "items": []}
                     result["outputs"] = [self._ref(instance_id, value.output_ref, "/output_ref")]
                     output = self.artifacts.catalog(value.output_ref)
                     result["recorded_scientific_claim_admissible"] = output.labels.get("scientific_claim_admissible")
@@ -712,6 +774,7 @@ class InstanceReadModel:
             elif binding.namespace == "approval":
                 value = self.approvals.status(binding.object_id)
                 result["state"] = value.status
+                result["approval_summary"] = self.approvals.navigation_summary(binding.object_id)
                 if value.decision_ref:
                     result["source_time"] = self.artifacts.catalog(value.decision_ref).created_at
                 roots = [(value.approval_request_ref, "/approval_request_ref")]
@@ -720,10 +783,23 @@ class InstanceReadModel:
             else:
                 value = self.executions.status(binding.object_id)
                 result.update(state=value.state, executor=value.executor)
+                authorization = getattr(value, "authorization", {})
+                result["execution_authorization"] = {key: authorization[key] for key in
+                    ("budget", "allowance", "reason") if key in authorization}
                 collection = self._collection(binding.object_id)
+                observation = self.executions.observation(binding.object_id)
+                from ...plugin_runtime.experiment import progress_summary
+                result["execution_progress"] = {
+                    "observed_at": observation.get("status_observed_at"),
+                    "progress_observed_at": observation.get("progress_observed_at"),
+                    "refresh_failed": bool(observation.get("observation_error")),
+                    "progress": progress_summary(observation.get("progress", {}), include_log_text=True),
+                }
+                result["collection_progress"] = {key: collection[key] for key in
+                    ("completed_bytes", "total_bytes", "completed_files", "total_files", "phase", "archive_bytes") if key in collection}
                 result["collection_status"] = collection.get("state", "unknown")
                 result["collection_updated_at"] = collection.get("updated_at")
-                result["source_time"] = collection.get("updated_at")
+                result["source_time"] = collection.get("updated_at") or observation.get("status_observed_at")
                 if value.result_ref:
                     result["outputs"] = [self._ref(instance_id, value.result_ref, "/result_ref")]
             result["inputs"] = [self._ref(instance_id, ref, pointer) for ref, pointer in roots]
@@ -748,6 +824,9 @@ class InstanceReadModel:
             return {"state": "unknown", "gaps": [gap("collection_observation_unavailable", error_type=type(error).__name__)]}
 
     def _run_detail(self, result, value):
+        if value.operation_id == "science.experiment.v1":
+            from .experiment_progress import read_progress
+            result["experiment_progress"] = read_progress(self, value, detail=True)
         from ...plugin_runtime.observation import read_summary
         try:
             result["native_execution"] = read_summary(self.runs.backend.open(value.run_id).root)
@@ -1037,6 +1116,13 @@ class InstanceReadModel:
                         else json.loads(self.artifacts.read(envelope.ref), parse_constant=_reject_constant))
         except (ValueError, UnicodeError, RecursionError, *_READ_ERRORS):
             return view
+        if envelope.schema_id == "scidiscovery.tool-evidence-manifest.v1":
+            from .attachment_presentation import presentation_file_manifest
+            compact = presentation_file_manifest(original)
+            if compact is not None and json_size(compact) <= MAX_PAYLOAD_BYTES:
+                view.update(payload_state="available", payload=compact, display_projection=True)
+                view["gaps"] = [item for item in view["gaps"] if item["code"] != "payload_too_large"]
+                return view
         selected = {}
         used = 0
         for pattern in paths:
@@ -1134,7 +1220,8 @@ class InstanceReadModel:
         if json_size(result) <= MAX_RESPONSE_BYTES:
             return result
         reduced = ({key: value for key, value in result.items() if key in {
-            "key", "kind", "name", "created_at", "state", "title", "source", "operation_id", "original", "outputs", "sealed_stages"}}
+            "key", "kind", "name", "created_at", "state", "title", "source", "operation_id", "original", "outputs", "sealed_stages",
+            "experiment_progress", "experiment_children"}}
             | {"payload_state": "too_large", "gaps": [gap("node_byte_limit")]})
         diagnostics = result.get("diagnostics")
         if isinstance(diagnostics, dict):

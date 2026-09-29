@@ -201,7 +201,7 @@ class RunReadProjection:
             "last_activity_at": value.last_activity_at,
             "output_artifact_name": value.output_binding_name if value.output_ref is not None else None,
             "recovery_available": self.runs.recovery_available(value),
-            "diagnostics_available": run_is_terminal(value.state) and value.state != "completed",
+            "diagnostics_available": True,
             "sealed_output_status": output_status,
             "scheduler_signal_status": (
                 "available"

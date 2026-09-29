@@ -318,7 +318,7 @@ def test_native_disconnect_during_control_retains_marker_without_spinning(progre
 
 @pytest.mark.parametrize('helper_state', ['completed', 'inProgress', 'interrupted', 'unknown', 'missing'])
 def test_restart_running_owner_keeps_terminal_helper_metering_identity(progression, tmp_path, monkeypatch, helper_state):
-    from types import SimpleNamespace
+    from scidiscovery.helper_tool import HelperRequest
     from tests.operations.test_local_worker_contracts import _invoke, _worker
     p = progression
     _, requests = native(tmp_path, monkeypatch, p.runtime.project_root, tmp_path/'control.sock')
@@ -333,8 +333,10 @@ def test_restart_running_owner_keeps_terminal_helper_metering_identity(progressi
     connections.attach(run_id=run.run_id, platform_session='native-root', thread_id='owner')
     worker = _worker(p.catalog, p.runtime)
     worker.call_tool('worker_open_assignment', {})
-    connections.helper_request(run.run_id, SimpleNamespace(action='prepare', name='inspection', task='Inspect the same data.', materials=[]))
-    connections.participant(platform_session='native-root', thread_id='helper', parent_thread='owner', admit=True)
+    connections.helper_request(run.run_id, HelperRequest(name='inspection', task='Inspect the same data.'))
+    connections.participant(platform_session='native-root', thread_id='helper', parent_thread='owner', admit=True,
+        model=run.execution_profile['profile']['model'],
+        reasoning_effort=run.execution_profile['profile']['reasoning_effort'])
     # Release revokes tool access, but is intentionally not native terminal proof.
     connections.release_helpers(run.run_id)
     p.coordinator._event(dict(method='thread/tokenUsage/updated', params=dict(threadId='helper',

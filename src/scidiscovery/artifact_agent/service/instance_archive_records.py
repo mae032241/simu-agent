@@ -34,7 +34,7 @@ TABLES = {
                    "execution_budget_pools", "execution_budget_reservations", "execution_prepared_submissions"),
     "artifacts": ("artifact_envelopes", "artifact_links", "idempotency_records", "artifact_events"),
     "dispatch": ("active_transport",),
-    "views": ("metadata", "nodes", "events", "preferences"),
+    "views": ("metadata", "nodes", "events", "preferences", "display_summaries"),
 }
 CONTROL_PAYLOADS = {
     "scidiscovery.approval-request", "scidiscovery.review-manifest", "scidiscovery.human-decision",

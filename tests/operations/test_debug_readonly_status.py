@@ -77,6 +77,46 @@ def test_uncertain_lookup_is_not_reported_as_absent(tmp_path):
     assert path.read_bytes() == before
 
 
+@pytest.mark.parametrize("remote_state,active", [
+    ("succeeded", False), ("failed", False), ("cancelled", False), ("running", True),
+])
+@pytest.mark.parametrize("external", [None, "private-job"])
+def test_final_delivery_activity_refreshes_diagnostic_without_resubmission(tmp_path, monkeypatch, remote_state, active, external):
+    service, context, path = fixture(tmp_path, reservation=True, external=external,
+        lookup=("private-job", "running"))
+    before = path.read_bytes()
+    monkeypatch.setattr(service.adapter, "status", lambda _: remote_state)
+    inputs = (SimpleNamespace(port_name="research_objective", artifact_ref=context.input_ref("")),)
+    assert service.experiment_activity({"private-run", "recovery-run"}, inputs) is active
+    assert path.read_bytes() == before  # Observation must preserve the original budget and receipts.
+
+
+def test_final_delivery_does_not_treat_unknown_diagnostic_as_idle(tmp_path, monkeypatch):
+    service, context, path = fixture(tmp_path, reservation=True, external="private-job")
+    before = path.read_bytes()
+    def unavailable(_):
+        raise TimeoutError("status unavailable")
+    monkeypatch.setattr(service.adapter, "status", unavailable)
+    inputs = (SimpleNamespace(port_name="research_objective", artifact_ref=context.input_ref("")),)
+    with pytest.raises(TimeoutError):
+        service.experiment_activity({"private-run"}, inputs)
+    assert path.read_bytes() == before
+
+
+def test_running_diagnostic_reads_bounded_progress_without_changing_ledger(tmp_path, monkeypatch):
+    service, context, path = fixture(tmp_path, external="private-job")
+    before = path.read_bytes()
+    monkeypatch.setattr(service.adapter, "status", lambda _: pytest.fail("detailed observation discarded"))
+    monkeypatch.setattr(service.adapter, "status_details", lambda _: {"state": "running", "progress": {
+        "elapsed_seconds": 42, "log_tails": [{"source": "solver_log", "size_bytes": 87,
+            "updated_at": "2026-09-27T10:00:42Z", "tail": "initializing mesh\nNewton iteration 3\n"}]}}, raising=False)
+    result = service.status(context, run_name="init")
+    assert result["state"] == "running" and result["progress"]["elapsed_seconds"] == 42
+    assert result["progress"]["log_activity"][0]["size_bytes"] == 87
+    assert "Newton" not in json.dumps(result)
+    assert "private" not in json.dumps(result) and path.read_bytes() == before
+
+
 def test_old_remote_runner_is_classified_at_policy_discovery(tmp_path):
     from tcad_artifact.ssh_transport import SSHTCADTransport, RemoteRunnerUpgradeRequired
     class OldRemote:

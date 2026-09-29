@@ -72,7 +72,7 @@ _DECLARATIONS = (
     ("scid_describe", "Read one capability's exact contract before calling it.", DescribeInput),
     ("scid_call", "Call an authorized capability by its exact contract.", CallInput),
 )
-_ATTACH = {"name": "worker_attach", "description": "Bind the actual spawned child thread to an exact queued Run; Root only.",
+_ATTACH = {"name": "worker_attach", "description": "Bind the actual spawned child thread to an exact queued Run; Root only. Calling again with a corrected native ID replaces an unopened queued binding. Once assignment is opened, ownership cannot change.",
            "inputSchema": AttachInput.model_json_schema()}
 _IDENTITY = {"name": "worker_identity", "description": "Read this Worker's platform-supplied thread ID and model profile for scheduler attachment; does not claim a Run.",
              "inputSchema": _Input.model_json_schema()}
@@ -105,9 +105,11 @@ class UnifiedMCPRouter:
         except WorkerNotAttached:
             status, participant = self.connections.participant(platform_session=context.session,
                 thread_id=context.thread, parent_thread=context.parent_thread,
-                admit=context.subagent_kind in (None, "thread_spawn"))
+                admit=context.subagent_kind in (None, "thread_spawn"),
+                model=context.model, reasoning_effort=context.effort)
         profile = status.execution_profile
-        expected = profile["profile"] if profile is not None else None
+        expected = (self.connections.helper_profile(status, participant) if participant is not None
+                    else profile["profile"] if profile is not None else None)
         if expected is None or (
             canonical_model_id(context.model), context.effort
         ) != (

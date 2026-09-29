@@ -52,7 +52,7 @@ def test_readable_sections_parameter_dimensions_and_exact_sources() -> None:
     assert "loading='lazy'" in page
     assert "rel='noreferrer noopener' referrerpolicy='no-referrer'" in page
     assert page.index("总体与本轮目标") < page.index("关键参数与条件") < page.index("图件与结果对照") < page.index("<span>执行范围</span>")
-    assert "<details class='research-panel figures-panel'>" in page
+    assert "<details class='research-panel figures-panel' open>" in page
     assert "<span class='panel-count'>1</span>" in page
     assert "<details class='parameter-sources'>" in page
     assert "<details class='parameter-sources' open>" not in page

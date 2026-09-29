@@ -75,7 +75,8 @@ from .run_records import (
     status_from_row,
     timestamp,
 )
-from .scheduler_bindings import SchedulerBindingService
+from .scheduler_bindings import SchedulerBindingService, SchedulerInstanceClosed
+from .instance_maintenance import InstanceMaintenanceUnavailable
 
 
 from .tool_evidence import ToolEvidenceMixin
@@ -236,6 +237,7 @@ class RunService(ToolEvidenceMixin):
         self._validate_attempt_limit(max_attempts)
         compiled = bound.compiled
         execution_profile = bound.execution_profile
+        required_review = bound.require_execution_review
         if compiled.spec.executor.kind != "agent":
             raise ValueError("RunService accepts Agent operations only")
         if not self.backend.supports_operation(compiled):
@@ -278,7 +280,7 @@ class RunService(ToolEvidenceMixin):
             execution_profile = {key: settings[key] for key in ("profile", "sources")}
             if max_attempts is None:
                 max_attempts = settings["default_max_attempts"]
-        bound = replace(bound, execution_profile=execution_profile)
+        bound = replace(bound, execution_profile=execution_profile, require_execution_review=required_review)
         raw_inputs = self._input_bindings(bound)
         for item in raw_inputs:
             self.artifacts.verify(item.artifact_ref)
@@ -287,12 +289,19 @@ class RunService(ToolEvidenceMixin):
         deadline_at = future(created_at, compiled.spec.limits.timeout_seconds)
         recovery_digest: str | None = None
         recovery_policy = self._recovery_policy(compiled)
+        if required_review:
+            recovery_policy["require_execution_review"] = True
         if material_policy is not None:
             recovery_policy["input_materials"] = material_policy.model_dump()
         if resume_from is None and draft_from is None:
             instance_settings = parse_settings(self.scheduler_bindings.agent_settings(instance_id)["settings"])
             for key in ("helpers", "execution_io", "attachments"):
-                recovery_policy[key].update(getattr(instance_settings, key).model_dump(exclude_unset=True))
+                override = getattr(instance_settings, key).model_dump(exclude_unset=True)
+                if key == "helpers":
+                    from ...agent_execution_settings import merge_helper_settings
+                    recovery_policy[key] = merge_helper_settings(recovery_policy[key], override)
+                else:
+                    recovery_policy[key].update(override)
         with self._connect() as connection:
             self._attach_scheduler(connection)
             connection.execute("BEGIN IMMEDIATE")
@@ -346,6 +355,8 @@ class RunService(ToolEvidenceMixin):
                     raise RunStateConflict("draft source digest changed")
             scheduler_budget = max_attempts
             if resume_from is not None or draft_from is not None:
+                if (source.recovery_policy or {}).get("require_execution_review") and not required_review:
+                    raise RunStateConflict("Recovery cannot remove the explicit execution review requirement")
                 recovery_policy["helpers"] = (source.recovery_policy or {}).get("helpers", {"max_depth": 0})
                 recovery_policy["execution_io"] = (source.recovery_policy or {}).get("execution_io", ExecutionIOSettings().model_dump())
                 recovery_policy["attachments"] = (source.recovery_policy or {}).get("attachments", recovery_policy["attachments"])
@@ -370,6 +381,7 @@ class RunService(ToolEvidenceMixin):
                     },
                     "execution_profile": execution_profile["profile"],
                     "instruction": bound.instruction or "",
+                    **({"require_execution_review": True} if required_review else {}),
                     "inputs": json.loads(inputs_json(frozen_inputs)),
                     "limits": compiled.spec.limits.model_dump(mode="json"),
                     "resume_from": resume_from,
@@ -547,17 +559,20 @@ class RunService(ToolEvidenceMixin):
             )
 
     def open(
-        self, *, operation_id: str, operation_digest: str, run_id: str | None = None
+        self, *, operation_id: str, operation_digest: str, run_id: str | None = None,
+        trusted_caller: tuple[str, str] | None = None,
     ) -> tuple[RunStatus, OpenWorkspace]:
         return self._open_exact(
             operation_id=operation_id,
             operation_digest=operation_digest,
             allow_running=False,
             run_id=run_id,
+            trusted_caller=trusted_caller,
         )
 
     def reopen(
-        self, *, operation_id: str, operation_digest: str, run_id: str | None = None
+        self, *, operation_id: str, operation_digest: str, run_id: str | None = None,
+        trusted_caller: tuple[str, str] | None = None,
     ) -> tuple[RunStatus, OpenWorkspace]:
         """Open the exact slot or reattach its running Run after transport restart."""
 
@@ -566,6 +581,7 @@ class RunService(ToolEvidenceMixin):
             operation_digest=operation_digest,
             allow_running=True,
             run_id=run_id,
+            trusted_caller=trusted_caller,
         )
 
     def _open_exact(
@@ -575,6 +591,7 @@ class RunService(ToolEvidenceMixin):
         operation_digest: str,
         allow_running: bool,
         run_id: str | None = None,
+        trusted_caller: tuple[str, str] | None = None,
     ) -> tuple[RunStatus, OpenWorkspace]:
         # Select before taking the instance lock, and reselect the same row in
         # the write transaction. Opening a reused Agent must guard its NEW Run.
@@ -595,9 +612,9 @@ class RunService(ToolEvidenceMixin):
                 except SchedulerInstanceClosed as error:
                     raise InstanceMaintenanceUnavailable("assignment instance is closed") from error
                 return self._open_selected(operation_id=operation_id, operation_digest=operation_digest,
-                    allow_running=allow_running, selected_run_id=str(selected["run_id"]))
+                    allow_running=allow_running, selected_run_id=str(selected["run_id"]), trusted_caller=trusted_caller)
 
-    def _open_selected(self, *, operation_id, operation_digest, allow_running, selected_run_id):
+    def _open_selected(self, *, operation_id, operation_digest, allow_running, selected_run_id, trusted_caller=None):
         now = timestamp()
         expired_run: tuple[str, str, str | None] | None = None
         with self._connect() as connection:
@@ -619,6 +636,12 @@ class RunService(ToolEvidenceMixin):
                     or row["backend_version"] != self.backend.backend_version
                     or tuple(json.loads(row["backend_capabilities_json"])) != self.backend.capabilities):
                 raise RunStateConflict("historical Run backend is unavailable; execution cannot migrate automatically")
+
+            if trusted_caller is not None:
+                owner = connection.execute("SELECT platform_session,thread_id FROM worker_connections WHERE run_id=?",
+                    (selected_run_id,)).fetchone()
+                if owner is None or tuple(owner) != trusted_caller:
+                    raise RunStateConflict("Worker binding changed before assignment open; use the currently attached native thread")
             if self.operation_catalog.operation(operation_id).spec.independent_review_ports:
                 attached = connection.execute("SELECT 1 FROM worker_connections WHERE run_id=?", (selected_run_id,)).fetchone()
                 if attached is None:
@@ -706,6 +729,9 @@ class RunService(ToolEvidenceMixin):
         self.worker_connections.release_helpers(run_id)
         value = self.status(run_id)
         if value.state == "completed":
+            if value.output_ref is not None:
+                from .presentation_summaries import enqueue
+                enqueue(self, value, value.output_ref)
             return "completed", ()
         value = self._require_running(run_id)
         try:
@@ -803,13 +829,9 @@ class RunService(ToolEvidenceMixin):
         if value.state != "failed":
             raise RunStateConflict("Run is not failed")
         self.worker_connections.release_helpers(value.run_id)
-        coordinator = getattr(self, "experiment_executions", None)
-        if coordinator is not None:
-            try:
-                coordinator.cancel_owned(value)
-            except Exception:
-                self._pending_recovery(value, "external_cancellation_pending")
-                return self.status(value.run_id)
+        # Worker lifetime and external execution lifetime are independent. Preserve
+        # authorized jobs and their immutable bindings for resume or Root recovery.
+        # Cancellation is an explicit execution command, never failure cleanup.
         if value.recovery_draft and value.recovery_draft.get("draft_digest"):
             # A delivered immutable subset stays frozen. Pending native writers
             # are not cleared merely because another failure request arrived.
@@ -919,13 +941,32 @@ class RunService(ToolEvidenceMixin):
             expected_last_activity_at=value.last_activity_at,
         )
 
-    def reconcile_expired_active(self) -> int:
-        """Fail expired active Runs at an explicit lifecycle coordination point."""
+    def task_recovery_available(self, origin: str, *, instance_id: str) -> bool:
+        """Only an entirely failed recovery lineage can be taken over by Root."""
         with self._connect() as connection:
-            run_ids = [row[0] for row in connection.execute(
+            rows = connection.execute("""
+                WITH RECURSIVE family(run_id, state) AS (
+                    SELECT run_id, state FROM runs WHERE run_id=? AND instance_id=?
+                    UNION
+                    SELECT r.run_id, r.state FROM runs r JOIN family f
+                      ON r.resume_from_run_id=f.run_id OR r.draft_from_run_id=f.run_id
+                    WHERE r.instance_id=?
+                ) SELECT state FROM family
+            """, (origin, instance_id, instance_id)).fetchall()
+        return bool(rows) and all(row[0] == "failed" for row in rows)
+
+    def expired_active_ids(self, *, after: str = "", limit: int = 32) -> tuple[str, ...]:
+        with self._connect() as connection:
+            return tuple(row[0] for row in connection.execute(
                 "SELECT run_id FROM runs WHERE state IN ('queued','running') "
-                "ORDER BY deadline_at, run_id"
-            )]
+                "AND deadline_at <= ? AND run_id > ? ORDER BY run_id LIMIT ?",
+                (timestamp(), after, limit)))
+
+    def reconcile_expired_active(self, *, limit: int | None = None, run_ids=None,
+            reason: str = "Run deadline expired during control startup reconciliation") -> int:
+        """Fail expired active Runs at an explicit lifecycle coordination point."""
+        if run_ids is None:
+            run_ids = self.expired_active_ids(limit=limit if limit is not None else -1)
         failed = 0
         for run_id in run_ids:
             for _ in range(3):
@@ -933,15 +974,18 @@ class RunService(ToolEvidenceMixin):
                 if value.state not in {"queued", "running"} or not expired(value.deadline_at):
                     break
                 try:
-                    self.record_failure(
-                        run_id,
-                        reason="Run deadline expired during control startup reconciliation",
-                        expected_state=value.state,
-                        expected_last_activity_at=value.last_activity_at,
-                        timed_out=True,
-                    )
+                    with self.instance_maintenance.guard(value.instance_id):
+                        self.scheduler_bindings.require_active_instance(instance_id=value.instance_id)
+                        self.record_failure(
+                            run_id, reason=reason,
+                            expected_state=value.state,
+                            expected_last_activity_at=value.last_activity_at,
+                            timed_out=True,
+                        )
                 except RunStateConflict:
                     continue
+                except (InstanceMaintenanceUnavailable, SchedulerInstanceClosed):
+                    break  # Archives and closed instances are not live lifecycle targets.
                 failed += 1
                 break
             else:
@@ -1059,6 +1103,18 @@ class RunService(ToolEvidenceMixin):
             ).fetchone()
         return row is not None
 
+    def latest_subject_review(self, instance_id: str, subject: ArtifactRef) -> RunStatus | None:
+        """Latest completed formal review of this exact subject, in this instance."""
+        with self._connect() as connection:
+            rows = connection.execute("SELECT * FROM runs WHERE instance_id=? AND operation_id=? AND state='completed' "
+                "ORDER BY completed_at DESC, run_id DESC", (instance_id, "science.object.review.v1")).fetchall()
+        for row in rows:
+            review = status_from_row(row)
+            subjects = [item.artifact_ref for item in review.inputs if item.port_name == "subject"]
+            if subjects == [subject]:
+                return review
+        return None
+
     def completed_for_output(self, artifact_ref: ArtifactRef) -> RunStatus | None:
         """Return the unique completed Run that registered this exact output."""
 
@@ -1121,10 +1177,10 @@ class RunService(ToolEvidenceMixin):
     def _safe_diagnostic(category: str, *, repairable: bool) -> dict[str, Any]:
         allowed = {"output_rejected", "integrity_failure", "admission_defect", "checker_failure",
                    "tool_failed", "runtime_failure", "run_timeout", "tool_timeout",
-                   "worker_profile_mismatch"}
+                   "worker_profile_mismatch", "execution_pending"}
         category = category if category in allowed else "runtime_failure"
         return {"category": category, "code": category,
-                "repairable_by_output": repairable}
+                "repairable_by_output": repairable and category != "execution_pending"}
 
     def record_tool_observation(self, run_id: str, activity: str, observation: dict) -> None:
         """Engineering timing only: no heartbeat, candidate or lifecycle mutation."""
@@ -1184,7 +1240,7 @@ class RunService(ToolEvidenceMixin):
 
     def rejection_diagnostic(self, value: RunStatus, error: Exception) -> dict[str, Any]:
         """Build output rejection facts for the controlled diagnostic path."""
-        return {"category": "output_rejected", "details":getattr(error, "details", ()) or
+        return {"category": getattr(error, "category", "output_rejected"), "details":getattr(error, "details", ()) or
                 ({"path":"$", "type":"value_error"},)}
 
     def sanitize_diagnostic(self, value: RunStatus, diagnostic: dict[str, Any],
@@ -1195,6 +1251,9 @@ class RunService(ToolEvidenceMixin):
             compiled = self._compiled(value)
             contract = operation_output_validation_contract(compiled, operation_primary_output(compiled))
             rules = {item["rule_id"]:item.get("description") for item in contract["rules"]}
+            semantic = compiled.output_contracts[operation_primary_output(compiled).name].get(
+                "x-scidiscovery-semantic-constraints", {})
+            rules.update({item["rule_id"]: item["description"] for item in semantic.get("rules", ())})
             rule_phases = {item["rule_id"]:"output_"+item["phase"] for item in contract["checkers"]}
             for item in contract["checkers"]:
                 rules.setdefault(item["rule_id"], None)
@@ -1217,6 +1276,8 @@ class RunService(ToolEvidenceMixin):
             schema=schema, rules=rules, phase=phase, action=action, rule_phases=rule_phases)
         if details:
             result["details"] = list(details)
+            # Set only after sanitization; never treat an incoming flag as trust.
+            result["safe_details_version"] = 1
         if isinstance(diagnostic.get("engineering"), dict):
             # Produced by the shared error recorder, never scientific payload fields.
             result["engineering"] = diagnostic["engineering"]
@@ -1234,7 +1295,13 @@ class RunService(ToolEvidenceMixin):
         if isinstance(raw.get("engineering"), dict):
             result["engineering"] = raw["engineering"]
         if raw.get("details"):
-            result["details"] = raw["details"][:16]
+            details = raw["details"][:16]
+            if raw.get("safe_details_version") == 1:
+                from ...operation_contract import DeclaredDiagnostic
+                from ..schema.common import ContractDiagnostic
+                details = [DeclaredDiagnostic(ContractDiagnostic.model_validate(item).model_dump(
+                    mode="json", exclude_none=True)) for item in details]
+            result["details"] = details
         return result
 
     def diagnostic_events(self, value: RunStatus, *, after: int = 0, limit: int = 50) -> dict[str, Any]:
@@ -1665,10 +1732,7 @@ class RunService(ToolEvidenceMixin):
             evidence = [(r['alias'], ArtifactRef.model_validate(r['artifact_ref'])) for r in self.tool_evidence(run_id)]
             evidence += [('recovery_manifest', ref) for ref in self.artifacts.catalog(output).parent_refs if ref.schema_id == 'scidiscovery.tool-evidence-manifest.v1' and self.artifacts.catalog(ref).labels.get('tool_producer_run') == run_id]
             for alias, ref in evidence:
-                self.scheduler_bindings.bind_in_connection(connection, instance=value.instance_id, namespace='artifact',
-                    name=value.output_binding_name+'.'+alias, logical_name=value.output_logical_name+'.'+alias,
-                    revision=value.output_revision, object_id=ref.artifact_id,
-                    request_fingerprint=hashlib.sha256((candidate_digest+alias).encode()).hexdigest(), attached=True)
+                self._bind_evidence_output(connection, value, alias, ref)
             cursor = connection.execute(
                 """
                 UPDATE runs SET state = 'completed', output_ref_json = ?,
@@ -1691,6 +1755,8 @@ class RunService(ToolEvidenceMixin):
                 connection.execute("ROLLBACK")
                 raise RunStateConflict("Run completion compare-and-set failed")
             connection.execute("COMMIT")
+        from .presentation_summaries import enqueue
+        enqueue(self, value, output)
         return receipt
 
     def _require_running(self, run_id: str) -> RunStatus:

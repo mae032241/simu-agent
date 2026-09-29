@@ -17,6 +17,23 @@ def _metadata(kind: str, name: str, state: str) -> dict:
             "created_at": "2026-09-14T00:00:00Z", "source_time": "2026-09-14T00:00:00Z"}
 
 
+def test_experiment_parent_expands_to_exact_stage_versions_and_approval_nodes():
+    overview = _overview()
+    parent = {**_metadata("run", "experiment", "running"), "operation_id": "science.experiment.v1",
+        "experiment_children": {"items": [
+            {"kind": "stage", "reference": "tool_evidence_001", "parent_key": "run:experiment",
+             "title": "实验方案<script>bad</script>", "version": 2, "state": "sealed"},
+            {"kind": "approval", "key": "approval:exact", "parent_key": "run:experiment", "title": "正式执行审批", "state": "pending"}],
+            "total": 12, "pending_approvals": 1, "offset": 0, "next_offset": 8, "gaps": []}}
+    overview["trajectory"] = {"items": [parent], "page": 1, "total_pages": 1, "total": 1, "page_size": 10}
+    html = render_workbench(overview, browse_base="/instance/instance-a", csrf_token="csrf").decode()
+    assert "class='research-panel experiment-children' open" in html
+    assert "?stage_reference=tool_evidence_001" in html and "?child_offset=8#experiment-children" in html
+    assert "nodes/approval%3Aexact" in html and "正式执行审批" in html
+    assert "实验方案&lt;script&gt;bad&lt;/script&gt; · v2" in html
+    assert "<script>bad" not in html
+
+
 def _source(artifact: str, *, key: str | None = None) -> dict:
     return {"artifact_id": artifact, "key": key, "source_pointer": "/inputs/0/artifact_ref"}
 
@@ -67,7 +84,8 @@ def test_workbench_has_separate_branches_exact_goals_and_native_pagination() -> 
     assert "/instance/instance-a/manage" in page
     assert "name='workbench-csrf' content='csrf'" in page
     assert "<script src='/static/workbench.js' defer>" in page
-    assert "<form" not in page
+    assert "<form" not in page.split("</main>", 1)[0]
+    assert "data-summary-retry" not in page  # No generation rights from browsing.
     assert "?format=image" in page
     assert "工作台导航" in page
 
@@ -131,7 +149,7 @@ def test_execution_collection_and_approval_link_are_read_only_navigation() -> No
     node = {**_metadata("approval", "old-review", "pending"), "review_url": "/review/exact-old?token=old-token", "gaps": []}
     page = render_node(node, instance_id="instance-a").decode()
     assert "href='/review/exact-old?token=old-token'" in page
-    assert "打开原审批请求" in page
+    assert "核对参数并作出决定" in page
     assert "<form" not in page
 
 
@@ -202,3 +220,32 @@ def test_progressive_script_uses_text_content_and_preserves_native_links() -> No
     assert "innerHTML" not in script
     assert "credentials: \"same-origin\"" in script
     assert "original.href = link.href" in script
+
+
+def test_execution_indicator_never_fabricates_solver_percentage():
+    from scidiscovery.artifact_agent.approval_ui.workbench_render import _execution_progress
+    node = {"state": "running", "execution_progress": {
+        "observed_at": "2026-09-27T08:09:23Z", "progress": {"elapsed_seconds": 1780}}}
+    running = _execution_progress(node)
+    assert "<progress aria-label=" in running and "完成比例未知" in running
+    assert "1780" in running and "value=" not in running
+    node["execution_progress"]["refresh_failed"] = True
+    assert "<progress" not in _execution_progress(node)
+    assert "刷新失败" in _execution_progress(node)
+    node.update(state="succeeded", collection_status="running",
+        collection_progress={"completed_bytes": 128, "total_bytes": 512})
+    transfer = _execution_progress(node)
+    assert "value='128' max='512'" in transfer and "25.0%" in transfer
+    assert "结果文件已校验" in transfer and "完成比例未知" not in transfer
+    node["collection_progress"]["total_bytes"] = None
+    assert "<progress" not in _execution_progress(node)
+
+
+def test_archive_download_progress_is_distinct_from_verified_files():
+    from scidiscovery.artifact_agent.approval_ui.workbench_render import _execution_progress
+    node = {"state": "succeeded", "execution_progress": {}, "collection_status": "running",
+            "collection_progress": {"phase": "download_archive", "archive_bytes": 123456,
+                                    "completed_bytes": 0, "total_bytes": 900000}}
+    value = _execution_progress(node)
+    assert "下载结果归档" in value and "123456 字节" in value
+    assert "结果文件已校验" in value and "0.0%" in value

@@ -322,7 +322,7 @@ quiescence for that Worker. Recovery integrity is likewise not liveness proof.
                 if runtime.executions is None:
                     raise ValueError("execution service unavailable")
                 value = runtime.executions.status(execution_id)
-                if value.state not in {"succeeded", "failed", "cancelled", "collected"}:
+                if value.state not in {"succeeded", "failed", "cancelled", "collected", "abandoned"}:
                     details.append({"kind": "execution", "id": execution_id, "reason": "execution_nonterminal"})
                 directory = runtime.executions.exchange_root / execution_id / "collection"
                 lock(directory / "active.lock", kind="collection", identity=execution_id)

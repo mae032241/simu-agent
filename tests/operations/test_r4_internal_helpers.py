@@ -3,13 +3,16 @@ import json
 from pathlib import Path
 
 
-def _gateway(tmp_path, monkeypatch, settings=None):
+def _gateway(tmp_path, monkeypatch, settings=None, instance_settings=None):
     from tests.operations.test_r4_experiment_task import _real_experiment
     from scidiscovery.artifact_agent.interfaces.mcp_gateway import UnifiedMCPRouter
     from scidiscovery.agent_execution_settings import AgentSettings, HelperSettings
     runtime, root, catalog, _, instance = _real_experiment(tmp_path, monkeypatch)
     if settings:
         runtime.runs.agent_settings = AgentSettings(helpers=HelperSettings(**settings))
+    if instance_settings is not None:
+        runtime.scheduler_bindings.save_agent_settings(instance.instance_id, instance_settings,
+            expected_revision=0, maintenance=runtime.instance_maintenance)
     root.call_tool('operation_invoke', dict(name='helper-analysis', operation_id='science.result.diagnose.v1',
         max_attempts=2, instruction='Assess observations.',
         inputs=[dict(port='experiment_results', artifact_names=['observe.output'])]))
@@ -18,11 +21,11 @@ def _gateway(tmp_path, monkeypatch, settings=None):
     gateway = UnifiedMCPRouter(root)
     profile = runtime.runs.status(run_id).execution_profile['profile']
 
-    def call(name, arguments=None, *, thread='owner', parent=None):
+    def call(name, arguments=None, *, thread='owner', parent=None, observed=None):
         return gateway.handle({'jsonrpc':'2.0', 'id':1, 'method':'tools/call', 'params': {
             'name':'scid_call', 'arguments': {'name':name, 'arguments':arguments or {}},
             '_meta': {'x-codex-turn-metadata': {'session_id':'session', 'thread_id':thread,
-                **profile, **({'parent_thread_id':parent, 'subagent_kind':'thread_spawn'} if parent else {})}}}})
+                **(observed or profile), **({'parent_thread_id':parent, 'subagent_kind':'thread_spawn'} if parent else {})}}}})
     owner = _result(call('worker_open_assignment'))
     return runtime, gateway, run_id, call, owner
 

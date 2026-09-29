@@ -19,6 +19,7 @@ CLAUDE.md
 .scidiscovery/
 .scidiscovery-state/
 .scidiscovery-archive/
+.scidiscovery-ui/
 agent/runtime/
 config/local/
 *.sqlite

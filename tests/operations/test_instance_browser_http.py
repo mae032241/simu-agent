@@ -129,7 +129,7 @@ def test_discovery_does_not_register_client_and_pause_blocks_only_new_work(tmp_p
             ('operation_preflight',{'name':'paused.preflight','operation_id':'science.experiment.v1','inputs':[]}),
             ('operation_invoke',{'name':'paused.invoke','operation_id':'science.experiment.v1','inputs':[]}),
             ('execution_start',{'name':'paused.execution'})):
-            error = RootToolError if action == 'operation_preflight' else SchedulerInstanceConflict
+            error = SchedulerInstanceConflict if action == 'execution_start' else RootToolError
             with pytest.raises(error, match='paused (by|in) the workbench'):
                 root.call_tool(action,args, surface="execution" if action == "execution_start" else "research")
         assert runtime.runs.active_ids(instance_id=instance.instance_id,limit=10)==()

@@ -53,3 +53,23 @@ def test_only_approval_service_can_write_fixed_archive_root(tmp_path):
     assert exact not in control
     assert f'--local-workspace-root "{workspace / ".scidiscovery-runs"}"' in ui
     assert "@INSTANCE_ARCHIVE_ROOT@" not in ui
+    display = str(workspace / ".scidiscovery-ui")
+    assert f'"{display}"' in next(line for line in ui.splitlines() if line.startswith("ReadWritePaths="))
+    assert display not in control
+    assert "@PRESENTATION_ROOT@" not in ui
+
+
+@pytest.mark.parametrize("symlink", [False, True])
+def test_display_home_parent_is_private_without_changing_workspace_permissions(tmp_path, symlink):
+    workspace, outside = tmp_path / "workspace", tmp_path / "outside"
+    workspace.mkdir(mode=0o711)
+    outside.mkdir(mode=0o755)
+    original = workspace.stat().st_mode, outside.stat().st_mode
+    target = workspace / ".scidiscovery-ui"
+    if symlink:
+        target.symlink_to(outside, target_is_directory=True)
+    result = _install_function(workspace, "create_presentation_root")
+    assert (result.returncode == 0) is (not symlink), result.stderr
+    assert (workspace.stat().st_mode, outside.stat().st_mode) == original
+    if not symlink:
+        assert target.is_dir() and target.stat().st_mode & 0o777 == 0o700

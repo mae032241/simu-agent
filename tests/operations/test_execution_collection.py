@@ -182,10 +182,13 @@ def test_completed_manifest_checkpoint_registers_in_real_child(tmp_path, monkeyp
     output.write_bytes(b"solver output\n")
     descriptor = LocalFileDescriptor(name="profile", local_path=str(output), media_type="text/plain",
         size_bytes=output.stat().st_size, sha256=hashlib.sha256(output.read_bytes()).hexdigest())
+    runtime.executions.save_observation(execution_id, {"progress":{
+        "log_tails":[{"source":"solver_log", "tail":"cached solver tail"}]}})
     coordinator = ExecutionCollection(runtime.executions, plugin_configs={})
     root.facade.execution_collection = coordinator
     directory = coordinator.directory(execution_id)
-    atomic_json(directory / "outputs.json", {"outputs": [descriptor.model_dump(mode="json")],
+    atomic_json(directory / "outputs.json", {"outputs": [descriptor.model_dump(mode="json"),
+        descriptor.model_copy(update={"name":"tcad_log"}).model_dump(mode="json")],
         "collected_at": "2026-09-13T00:00:00Z"})
     monkeypatch.setenv("PYTHONPATH", os.pathsep.join(sys.path))
     try:
@@ -195,6 +198,10 @@ def test_completed_manifest_checkpoint_registers_in_real_child(tmp_path, monkeyp
         assert coordinator.summary(execution_id)["state"] == "completed", coordinator.summary(execution_id)
         status = root.call_tool("execution_status", {"name": "collected"}, surface="execution")
         assert status["state"] == "collected"
+        assert root.call_tool("execution_logs", {"name":"collected"}, surface="execution")["cache_state"] == "released"
+        assert "tail" not in runtime.executions.observation(execution_id)["progress"]["log_tails"][0]
+        retained = next(item for item in runtime.executions.outputs(execution_id) if item.logical_name == "tcad_log")
+        assert runtime.artifacts.read(runtime.artifacts.get_by_id(retained.artifact_id).ref) == output.read_bytes()
         assert status["result_artifact_name"] is None  # status remains a pure read
         outputs = root.call_tool("execution_outputs", {"name": "collected"}, surface="execution")
         assert outputs["outputs"][0]["output_label"] == "profile"

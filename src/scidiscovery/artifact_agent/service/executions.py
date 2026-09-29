@@ -96,6 +96,10 @@ class ExecutionOutputView:
     size_bytes: int
 
 
+class ExecutionNotFound(ExecutionServiceError):
+    """The exact execution has never been created."""
+
+
 class ExecutionService:
     """Own execution identity without interpreting domain payloads."""
 
@@ -652,12 +656,18 @@ class ExecutionService:
             if row["decision_ref_json"] is not None:
                 return {"source": "human", "decision_ref": json.loads(row["decision_ref_json"])}
             value = self._current_policy_record(connection, execution_id)
+            usage = None
+            if value is not None:
+                admission = ExecutionAdmission.model_validate(value["admission"])
+                remaining = self._budget_remaining(connection, row["executor"], admission)
+                usage = {"scope": "shared_scientific_subject", "remaining": remaining}
         if value is None:
             return {"source": "none"}
         if value["admission"]["outcome"] != "policy":
             return {"source": "none", "outcome": value["admission"]["outcome"],
                 "policy_digest": value["admission"]["policy_digest"], "reason": value["admission"]["reason"],
-                "budget": value["admission"]["budget"], "allowance": value["admission"]["allowance"]}
+                "budget": value["admission"]["budget"], "allowance": value["admission"]["allowance"],
+                "budget_usage": usage}
         return {"source": "policy", "policy_digest": value["admission"]["policy_digest"],
             "budget": value["admission"]["budget"], "budget_key": value["admission"]["budget_key"]}
 
@@ -705,24 +715,31 @@ class ExecutionService:
             )
             connection.execute("COMMIT")
 
-    def abandon(self, execution_id: str) -> None:
+    def abandon(self, execution_id: str, *, submission_confirmed_absent: bool = False) -> None:
         """Permanently prevent an unsubmitted execution from being authorized."""
 
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = self._row(connection, execution_id)
-            if row["state"] == "abandoned":
-                connection.execute("ROLLBACK")
-                return
-            if row["state"] not in {"created", "authorized"}:
+            if row["state"] not in {"created", "authorized", "abandoned"} or row["external_run_id"] is not None:
                 raise ExecutionStateConflict(
                     "only an unsubmitted execution can be abandoned"
                 )
+            prepared = connection.execute("SELECT 1 FROM execution_prepared_submissions WHERE execution_id=?", (execution_id,)).fetchone()
+            if prepared is not None and row["state"] != "abandoned" and not submission_confirmed_absent:
+                raise ExecutionStateConflict("prepared execution needs authoritative absence confirmation before abandonment; query its existing submission")
+            reservation = connection.execute("SELECT reserved_json,consumed_json FROM execution_budget_reservations WHERE execution_id=?", (execution_id,)).fetchone()
+            if reservation is not None and reservation["consumed_json"] is None:
+                connection.execute("UPDATE execution_budget_reservations SET consumed_json=? WHERE execution_id=?",
+                    (canonical_json({key: 0 for key in json.loads(reservation["reserved_json"])}), execution_id))
             connection.execute(
                 "UPDATE executions SET state = 'abandoned' WHERE execution_id = ?",
                 (execution_id,),
             )
             connection.execute("COMMIT")
+        # Idempotent after the execution commit; a retry completes interrupted cleanup.
+        if self.approvals is not None:
+            self.approvals.expire_pending("apr_" + execution_id)
 
     def record_status(
         self, *, execution_id: str, external_run_id: str, state: str
@@ -831,6 +848,15 @@ class ExecutionService:
                 (result_ref.canonical_json(), execution_id),
             )
             connection.execute("COMMIT")
+        # The manifest and all declared outputs are durable before cache cleanup.
+        try:
+            saved = self.observation(execution_id)
+            if saved:
+                self.save_observation(execution_id, saved)
+        except (OSError, ValueError, sqlite3.Error):
+            # Cache cleanup must not turn committed collection into a false failure.
+            import logging
+            logging.getLogger(__name__).warning("Collected execution log cache cleanup deferred")
         return result_ref
 
     def observation(self, execution_id: str) -> dict:
@@ -846,8 +872,43 @@ class ExecutionService:
 
     def save_observation(self, execution_id: str, value: dict) -> None:
         from .engineering_diagnostics import atomic_json
-        self.status(execution_id)
-        atomic_json(self.exchange_root / execution_id / "observation.json", value)
+        # Serialize against collection commit: a concurrent late refresh cannot
+        # restore discarded log bodies after this execution is collected.
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            if self._row(connection, execution_id)["state"] == "collected":
+                progress = value.get("progress")
+                if isinstance(progress, dict):
+                    logs = progress.get("log_tails")
+                    progress = {**progress, "log_cache_state": "released"}
+                    if isinstance(logs, list):
+                        progress["log_tails"] = [{k: item[k] for k in
+                            ("source", "size_bytes", "updated_at", "truncated") if k in item}
+                            for item in logs if isinstance(item, dict)]
+                    value = {**value, "progress": progress}
+            atomic_json(self.exchange_root / execution_id / "observation.json", value)
+
+    def cached_log(self, execution_id: str, *, log_index: int, direction: str = "tail",
+                   cursor: str | None = None, max_bytes: int) -> dict:
+        """Read this execution's latest, earlier or incremental diagnostic cache page."""
+        from .execution_log_reader import invalid, log_page
+        if type(log_index) is not int or log_index < 0:
+            raise invalid("log_index must be a nonnegative integer")
+        if type(max_bytes) is not int or max_bytes < 4:
+            raise invalid("log page budget must fit a UTF-8 character")
+        if self.status(execution_id).state == "collected":
+            return {"cache_state":"released", "source":"collected_outputs", "before":None, "after":None}
+        observation = self.observation(execution_id)
+        logs = (observation.get("progress") or {}).get("log_tails") or []
+        if not logs:
+            return {"cache_state":"unavailable", "before":None, "after":None,
+                "observed_at":observation.get("progress_observed_at"),
+                **({"observation_error":observation["observation_error"]} if observation.get("observation_error") else {})}
+        if log_index >= len(logs):
+            raise invalid("Select 0 <= log_index < log_count from this execution's status")
+        return {"cache_state":"available", "log_index":log_index,
+            "observed_at":observation.get("progress_observed_at"), "updated_at":logs[log_index].get("updated_at"),
+            **log_page(execution_id, log_index, logs[log_index], direction=direction, cursor=cursor, max_bytes=max_bytes)}
 
     def status(self, execution_id: str) -> ExecutionStatusView:
         with self._connect() as connection:
@@ -861,6 +922,14 @@ class ExecutionService:
             created_at=row["created_at"],
             authorization=self.authorization(execution_id),
         )
+
+    def observation_candidates(self, *, after: str = "", limit: int = 32) -> tuple[str, ...]:
+        """Keyset page of already submitted jobs; never resolves uncertain submissions."""
+        with self._connect() as connection:
+            return tuple(row[0] for row in connection.execute(
+                "SELECT execution_id FROM executions WHERE execution_id > ? "
+                "AND state IN ('submitted','running','cancelling') "
+                "AND external_run_id IS NOT NULL ORDER BY execution_id LIMIT ?", (after, limit)))
 
     def list_statuses(
         self, *, state: str | None = None, limit: int = 50
@@ -976,7 +1045,7 @@ class ExecutionService:
             "SELECT * FROM executions WHERE execution_id = ?", (execution_id,)
         ).fetchone()
         if row is None:
-            raise ExecutionServiceError("execution does not exist")
+            raise ExecutionNotFound("execution does not exist")
         return row
 
 

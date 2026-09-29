@@ -33,7 +33,7 @@ class ReadFixture(RootRunRoutes):
         self.artifacts = SimpleNamespace(read=Mock(return_value=json.dumps(PAYLOAD).encode()))
         self.runs = SimpleNamespace(worker_connections=SimpleNamespace(), diagnostic_summary=lambda value: {"failure":{"category":"output_rejected"}}, sanitize_diagnostic=lambda value, diagnostic, **kwargs: diagnostic, status=Mock(return_value=self.value), recovery_available=Mock(return_value=False),
             diagnostic_events=Mock(return_value={"events": [{"event_id": 1, "recorded_at": "saved", "diagnostic": {"category":"output_rejected", "code":"fixture", "repairable_by_output":True, "details":[{"path":"$.summary", "message":"exact saved error"}]}}], "next_after": None}),
-            evidence_output_refs=Mock(return_value=[]))
+            evidence_output_refs=Mock(return_value=[]), sealed_evidence_output_refs=Mock(return_value=[]))
         self._operation_catalog = SimpleNamespace(operation=lambda _: SimpleNamespace(
             spec=SimpleNamespace(version="1", inputs=(), decision_fields=("summary", "limitations")), digest="a" * 64))
         self.engineering_diagnostics = SimpleNamespace(capture=Mock())
@@ -82,7 +82,10 @@ def test_active_status_and_list_gate_before_content_assembly(state, arguments):
     assert "UNSEALED_SCIENCE" not in json.dumps([direct, listing])
     facade.detail_reads.assert_not_called()
     facade.artifacts.read.assert_not_called()
-    facade.runs.diagnostic_events.assert_not_called()
+    if arguments.get("diagnostic_after") is not None:
+        assert facade.runs.diagnostic_events.call_count == 2
+    else:
+        facade.runs.diagnostic_events.assert_not_called()
 
 
 @pytest.mark.parametrize("intent", ["decision", "status", "navigation", "full"])

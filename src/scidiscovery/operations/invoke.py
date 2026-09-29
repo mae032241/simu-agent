@@ -66,6 +66,7 @@ class BoundOperationCall:
     instruction: str | None
     executor_plan: EffectExecutorPlan | None = None
     execution_profile: dict[str, Any] | None = None
+    require_execution_review: bool = False
 @dataclass(frozen=True, slots=True)
 class ApprovalSubjectSnapshot:
     subject_index: int
@@ -405,7 +406,7 @@ def prepare_effect_payload(bound: BoundOperationCall, read_artifact) -> Transfor
     except (OperationInvocationError, DiagnosticError):
         raise
     except Exception as error:
-        raise OperationInvocationError("effect_preparation_invalid", message=str(error)) from error
+        raise OperationEngineeringError("effect_preparation_failed") from error
 
 
 def operation_primary_output(compiled: CompiledOperation) -> OutputPortSpec:
