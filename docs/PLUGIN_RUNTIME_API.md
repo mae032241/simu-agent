@@ -261,6 +261,19 @@ services expose a per-Run adapter, never the coordinator. Shared startup binding
 scoped by the real local/hardened tool host without changing cached Run identity;
 TCAD receives exact implementation values and a derived diagnostic workspace.
 
+Tool handlers declare safe caller corrections with
+`scidiscovery.operation_contract.ToolInputError(code, message, path=...)` or explicit
+`DiagnosticError`/`contract_diagnostic` details. Messages must be authored explanations,
+not raw exception strings or echoed input. Unexpected component/transport failures
+remain engineering failures. Control stores sanitized diagnostic details with an
+internal format version; caller-supplied flags never confer trust. Root can explicitly
+page saved diagnostics while a task is running without reading its draft output.
+
+Experiment services may implement `experiment_pending_diagnostics(run_ids, inputs)`
+to return bounded, owner-declared diagnostics identifying outstanding named jobs and
+their status/cancel calls. The existing `experiment_activity` callback remains the
+fallback and cancellation hook. Neither callback grants execution authority.
+
 ## Root consumer boundary
 
 Normal Root calls use the research surface. Standalone Effect plugins and historical

@@ -140,15 +140,12 @@ class RootRunRoutes:
         result = self._compact_run_status(name=name, value=value, **{
             key: request[key] for key in ("intent", "output_paths", "index_offset", "index_limit")})
         if request["intent"] == "status" and request["diagnostic_after"] is not None:
-            if run_is_terminal(value.state):
-                page = self.runs.diagnostic_events(value, after=request["diagnostic_after"],
-                    limit=request["diagnostic_limit"])
-                result["diagnostic_events"] = {"events": [
-                    {"event_id": event["event_id"], "recorded_at": event["recorded_at"],
-                     "diagnostic": self._scientific_run_diagnostic(value, event["diagnostic"])}
-                    for event in page["events"]], "next_after": page["next_after"]}
-            else:
-                result["diagnostics_unavailable"] = "run_not_terminal"
+            page = self.runs.diagnostic_events(value, after=request["diagnostic_after"],
+                limit=request["diagnostic_limit"])
+            result["diagnostic_events"] = {"events": [
+                {"event_id": event["event_id"], "recorded_at": event["recorded_at"],
+                 "diagnostic": self._scientific_run_diagnostic(value, event["diagnostic"])}
+                for event in page["events"]], "next_after": page["next_after"]}
         if request["intent"] == "navigation" and run_is_terminal(value.state):
             aliases = {b.name: b.object_id for b in self.bindings.list(
                 instance=self._instance_id(), namespace="artifact")}
@@ -217,7 +214,7 @@ class RootRunRoutes:
             "last_activity_at": value.last_activity_at,
             "output_artifact_name": value.output_binding_name if value.output_ref is not None else None,
             "recovery_available": self.runs.recovery_available(value),
-            "diagnostics_available": run_is_terminal(value.state) and value.state != "completed",
+            "diagnostics_available": True,
             "sealed_output_status": output_status,
             "scheduler_signal_status": (
                 "available"
@@ -298,9 +295,9 @@ class RootRunRoutes:
             repairable=diagnostic.get("repairable_by_output") is True)
         # Revalidate saved details against the declared contract, including old
         # records. Engineering attachments and arbitrary messages stay private.
-        return {**{key: safe[key] for key in ("category", "code", "repairable_by_output")},
+        return {**{key: safe[key] for key in ("category", "code", "repairable_by_output", "tool_name") if key in safe},
             "details": [{key: item[key] for key in
-                ("path", "message", "phase", "affected_action", "repairable", "rule_id") if key in item}
+                ("code", "path", "message", "phase", "affected_action", "repairable", "rule_id") if key in item}
                 for item in safe.get("details", ())]}
 
     def _scientific_run_view(self, value, result):

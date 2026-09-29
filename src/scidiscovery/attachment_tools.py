@@ -2,7 +2,7 @@
 from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field
 from .operations.tooling import WorkerToolDefinition
-from .operation_contract import DiagnosticError, contract_diagnostic
+from .operation_contract import DiagnosticError, ToolInputError
 from .plugin_runtime.workspace import WorkspaceError
 
 
@@ -24,10 +24,11 @@ class PublishFiles(BaseModel):
 def publish_files(request, context):
     try:
         return context.publish_files(request)
-    except (ValueError, OSError, TimeoutError, WorkspaceError) as error:
-        raise DiagnosticError("Scientific files could not be published", details=(contract_diagnostic(
-            "attachment_publication_failed", phase="tool_execution", affected_action="tool_call",
-            repairable=True, path="$.files", message=str(error)[:1024]),)) from error
+    except DiagnosticError:
+        raise
+    except WorkspaceError as error:
+        raise ToolInputError("attachment_path_invalid",
+            "Use a regular file below scratch/ without symlinks or traversal.", path="$.files") from error
 
 
 PUBLISH_FILES_TOOL = WorkerToolDefinition(name="worker_publish_files",
@@ -46,7 +47,7 @@ def materialize_input(request, context):
     try:
         context.input_ref(request.source_name)  # Reject paths and undeclared sources.
     except ValueError as error:
-        raise DiagnosticError("Unknown input source_name; choose an exact source_name from the assignment.") from error
+        raise ToolInputError("material_source_unknown", "Choose an exact input source_name from the assignment or a tool-returned material reference.", path="$.source_name") from error
     path = context.input_path(request.source_name)
     return {"source_name": request.source_name, "relative_path": str(path.relative_to(context.workspace)),
             "size_bytes": path.stat().st_size, "state": "available",

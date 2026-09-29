@@ -249,7 +249,10 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
                 output_name=envelope.labels.get("logical_name"), parent_refs=envelope.parent_refs,
                 labels=tuple(envelope.labels.items()), producer_run_id=producer.run_id if producer else None)
         record = next((r for r in (*self.tool_evidence(value.run_id), *self.reference_access_records(value.run_id)) if r["alias"] == alias), None)
-        if record is None: raise ValueError("unknown controlled source alias")
+        if record is None:
+            from ...operation_contract import ToolInputError
+            raise ToolInputError("material_source_unknown",
+                "Choose an exact bound input alias or a tool-returned material reference.")
         ref = ArtifactRef.model_validate(record["artifact_ref"])
         envelope = self.artifacts.catalog(ref)
         return InputBindingDescriptor(source_name=alias, port_name=("reference_access" if record.get("record_type") == "reference_access" else record.get("output_port", "tool_evidence")), artifact_ref=ref,

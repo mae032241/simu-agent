@@ -96,6 +96,10 @@ class ExecutionOutputView:
     size_bytes: int
 
 
+class ExecutionNotFound(ExecutionServiceError):
+    """The exact execution has never been created."""
+
+
 class ExecutionService:
     """Own execution identity without interpreting domain payloads."""
 
@@ -722,7 +726,7 @@ class ExecutionService:
                     "only an unsubmitted execution can be abandoned"
                 )
             prepared = connection.execute("SELECT 1 FROM execution_prepared_submissions WHERE execution_id=?", (execution_id,)).fetchone()
-            if prepared is not None and not submission_confirmed_absent:
+            if prepared is not None and row["state"] != "abandoned" and not submission_confirmed_absent:
                 raise ExecutionStateConflict("prepared execution needs authoritative absence confirmation before abandonment; query its existing submission")
             reservation = connection.execute("SELECT reserved_json,consumed_json FROM execution_budget_reservations WHERE execution_id=?", (execution_id,)).fetchone()
             if reservation is not None and reservation["consumed_json"] is None:
@@ -733,6 +737,9 @@ class ExecutionService:
                 (execution_id,),
             )
             connection.execute("COMMIT")
+        # Idempotent after the execution commit; a retry completes interrupted cleanup.
+        if self.approvals is not None:
+            self.approvals.expire_pending("apr_" + execution_id)
 
     def record_status(
         self, *, execution_id: str, external_run_id: str, state: str
@@ -1038,7 +1045,7 @@ class ExecutionService:
             "SELECT * FROM executions WHERE execution_id = ?", (execution_id,)
         ).fetchone()
         if row is None:
-            raise ExecutionServiceError("execution does not exist")
+            raise ExecutionNotFound("execution does not exist")
         return row
 
 

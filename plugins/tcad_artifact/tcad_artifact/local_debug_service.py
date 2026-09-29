@@ -12,6 +12,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from scidiscovery.artifact_agent.operation_tool_context import OperationToolContext
+from scidiscovery.operation_contract import contract_diagnostic
 from scidiscovery.artifact_agent.schema.common import canonical_json, canonical_sha256
 from scidiscovery.artifact_agent.schema.role_result import parse_role_result
 from scidiscovery.plugin_runtime.workspace import (
@@ -137,7 +138,12 @@ class LocalTCADDebugService:
             finally:
                 self._save_budget(context)
 
-    def experiment_activity(self, run_ids, inputs, *, cancel=False, name=None):
+    def experiment_pending_diagnostics(self, run_ids, inputs):
+        pending = []
+        self.experiment_activity(run_ids, inputs, pending=pending)
+        return pending
+
+    def experiment_activity(self, run_ids, inputs, *, cancel=False, name=None, pending=None):
         """Observe/cancel persisted jobs without resetting the original allowance."""
         from scidiscovery.artifact_agent.schema.execution import LocalFileDescriptor
         from scidiscovery.plugin_runtime.workspace import atomic_json
@@ -175,6 +181,10 @@ class LocalTCADDebugService:
                 if cancel and record["state"] not in _TERMINAL:
                     record["state"] = _state(self.adapter.cancel(external))
                 active = active or record["state"] not in _TERMINAL
+                if pending is not None and record["state"] not in _TERMINAL:
+                    pending.append(contract_diagnostic("experiment_diagnostics_pending", phase="protocol",
+                        affected_action="submit", repairable=True,
+                        message=f"Diagnostic {alias!r} is {record['state']}. Read worker_experiment_debug(action='status', name={alias!r}); finish it or call action='cancel' with the same name, then resubmit the unchanged report."))
                 if cancel:
                     records[alias] = record
             if cancel:

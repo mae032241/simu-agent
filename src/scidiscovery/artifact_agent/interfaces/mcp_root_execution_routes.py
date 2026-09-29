@@ -22,6 +22,7 @@ from ...operations.invoke import (
     BoundOperationCall,
     EffectExecutorPlan,
     OperationInvocationError,
+    OperationEngineeringError,
     effect_operation_plan,
     prepare_effect_payload,
 )
@@ -65,8 +66,13 @@ class RootExecutionRoutes:
                 if contract is None or not contract.allow_policy_authorization:
                     raise ValueError("compiled execution contract does not permit policy authorization")
             return admission
+        except (OperationInvocationError, OperationEngineeringError):
+            raise
         except Exception as error:
-            raise OperationInvocationError("effect_preparation_invalid", message=str(error)) from error
+            from ...operation_contract import DiagnosticError
+            if isinstance(error, DiagnosticError):
+                raise
+            raise OperationEngineeringError("effect_admission_failed") from error
 
     def execution_capabilities(self, *, operation_id: str) -> dict[str, Any]:
         executor = self._effect_executor(operation_id)

@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import hashlib
 
+from ...operation_contract import contract_diagnostic, DiagnosticError, ToolInputError
+
 from ...operations.invoke import (ApprovalProjectorContext, ApprovalSubjectSnapshot,
     effect_operation_plan)
 from ..execution_bridge import ExecutionAuthorizationRequired
@@ -31,29 +33,41 @@ class ExperimentExecution:
         if self.services_for is not None:
             self.worker_services.update(self.services_for(run.operation_id))
         lineage = {item.run_id for item in self.task_lineage(run)}
-        return any([service.experiment_activity(lineage, run.inputs, cancel=False)
-            for service in self.worker_services.values()
-            if callable(getattr(service, "experiment_activity", None))])
+        details = []
+        for service in {id(item): item for item in self.worker_services.values()}.values():
+            if callable(getattr(service, "experiment_pending_diagnostics", None)):
+                details.extend(service.experiment_pending_diagnostics(lineage, run.inputs))
+            elif callable(getattr(service, "experiment_activity", None)) and service.experiment_activity(lineage, run.inputs, cancel=False):
+                details.append(contract_diagnostic("experiment_diagnostics_pending", phase="protocol",
+                    affected_action="submit", repairable=True,
+                    message="An experiment diagnostic is still active. Finish or cancel the existing diagnostic, then resubmit the unchanged report."))
+        return details
 
     def require_idle(self, run):
         from .run_outputs import RunOutputError
         origin = self.task_origin(run)
         active = self._domain_active(run)
+        blockers = []
         for binding in self.runs.scheduler_bindings.list(instance=run.instance_id, namespace="execution",
                 name_prefix="experiment-" + origin + "-"):
             if self._execution_owner(binding.object_id) != origin:
                 continue
+            self._reconcile_authorization(binding.object_id)
             status = self.executions.status(binding.object_id)
             if status.external_run_id is not None and status.state in {"submitted", "running", "cancelling"}:
                 # Final delivery must not depend on the next background observation.
                 self.bridge.sync(execution_id=binding.object_id, diagnostic_scope="instance:" + run.instance_id)
                 status = self.executions.status(binding.object_id)
             if status.state not in {"succeeded", "failed", "cancelled", "collected", "abandoned"}:
-                active = True
-        if active:
-            raise RunOutputError("Finish or cancel this experiment's outstanding execution and diagnostics before final delivery.",
-                details=({"path":"$.payload", "message":"Outstanding work has not reached a real terminal state.",
-                    "type":"value_error", "rule_id":"experiment.sealed_material"},))
+                name = binding.name.removeprefix("experiment-" + origin + "-")
+                blockers.append(contract_diagnostic("experiment_outstanding_work", phase="protocol",
+                    affected_action="submit", repairable=True,
+                    message=f"Execution {name!r} is {status.state}. Read worker_experiment_execute(action='status', name={name!r}); finish it or call action='cancel' with the same name, then resubmit the unchanged report."))
+        blockers.extend(active)
+        if blockers:
+            from ...operation_contract import bounded_diagnostics
+            raise RunOutputError("Outstanding experiment work must finish before final delivery.",
+                category="execution_pending", details=bounded_diagnostics(blockers, phase="protocol", action="submit"))
 
     def _execution_owner(self, execution_id):
         envelope = self.executions.artifacts.get_by_id(self.executions.request_artifact_id(execution_id))
@@ -137,6 +151,9 @@ class ExperimentExecution:
 
     def _cancel(self, execution_id):
         status = self.executions.status(execution_id)
+        if status.state == "abandoned":
+            self.executions.abandon(execution_id)  # Complete any interrupted approval cleanup.
+            return
         if status.state in {"created", "authorized"}:
             prepared = self.executions.prepared_submission(execution_id)
             found = None if prepared is None else self.bridge._adapter(status.executor).lookup_submission(prepared)
@@ -161,7 +178,7 @@ class ExperimentExecution:
         if name in {".", ".."} or any(value in name for value in ("/", "\\", "\0")):
             raise ValueError("The collected output has no safe scientific filename.")
         if envelope.size_bytes > self._io_settings(context).max_export_bytes:
-            raise ValueError("The collected output exceeds this workspace's file limit.")
+            raise ToolInputError("experiment_export_limit", "The collected output exceeds this workspace's file limit.", path="$.output_name")
         flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
         handles, temporary = [], ".export-" + uuid.uuid4().hex
         deadline = time.monotonic() + min(context.remaining_seconds, self._io_settings(context).file_timeout_seconds)
@@ -220,8 +237,37 @@ class ExperimentExecution:
         return review.output_ref
 
     def command(self, context, request):
-        run, effect, identity, _ = self._contract(context)
-        plan = effect_operation_plan(effect)
+        run = self.runs.running_task(context.run_id)
+        execution_id = "exe_" + hashlib.sha256(canonical_json({
+            "task": self.task_origin(run), "name": request.name})).hexdigest()
+        if request.action in {"status", "cancel"}:
+            from .executions import ExecutionNotFound
+            try:
+                self.executions.status(execution_id)
+            except ExecutionNotFound:
+                return {"name": request.name, "state": "not_created", "submission": "not_submitted"}
+            if self._execution_owner(execution_id) != self.task_origin(run):
+                raise ToolInputError("experiment_execution_owner_mismatch", "This execution does not belong to the current task.")
+            if request.action == "cancel":
+                self._cancel(execution_id)
+            else:
+                self._reconcile_authorization(execution_id)
+                approval = self._approval_status(execution_id)
+                status = self.executions.status(execution_id)
+                if approval is not None and status.state in {"created", "abandoned"}:
+                    return self._authorization_response(run, request.name, execution_id, approval)
+                if status.external_run_id is not None and status.state in {"submitted", "running", "cancelling"}:
+                    self.bridge.sync(execution_id=execution_id, diagnostic_scope="instance:" + run.instance_id)
+            implementation = None
+            if request.action == "status" and self.executions.status(execution_id).state == "collected":
+                try:
+                    implementation = self._implementation_record(context, self.executions.request(execution_id).payload_ref)
+                except DiagnosticError:
+                    pass  # State remains readable even when scientific originals need rebinding.
+            return self._execution_status(context, request, execution_id, implementation, seal=False)
+        if request.action in {"capabilities", "review", "start", "advance"}:
+            run, effect, identity, _ = self._contract(context)
+            plan = effect_operation_plan(effect)
         if request.action == "capabilities":
             return {"methods": [{"method": item.key,
                 **{k: v for k, v in item.public_summary.items()
@@ -231,11 +277,9 @@ class ExperimentExecution:
             payload = self.implementation(context, request.implementation)
             return {"implementation": request.implementation,
                 "review": self.review_handoff(run, self._implementation_record(context, payload))}
-        execution_id = "exe_" + hashlib.sha256(canonical_json({
-            "task": self.task_origin(run), "name": request.name})).hexdigest()
         if request.action == "start":
             if request.implementation is None:
-                raise ValueError("Choose a sealed implementation before starting execution.")
+                raise ToolInputError("experiment_implementation_required", "Choose a sealed implementation before starting execution.", path="$.implementation")
             payload = self.implementation(context, request.implementation)
             reviewed = self._required_review(run, self._implementation_record(context, payload))
             self.executions.create(executor=plan.executor, preparation_profile=plan.preparation_profile,
@@ -246,22 +290,29 @@ class ExperimentExecution:
                     **({"implementation_review": reviewed.model_dump_json()} if reviewed is not None else {})})
             self.runs.scheduler_bindings.bind(instance=run.instance_id, namespace="execution",
                 name="experiment-" + self.task_origin(run) + "-" + request.name, object_id=execution_id)
-        current = self.executions.request(execution_id)
-        if current.compiled_identity != identity:
-            raise ValueError("Execution configuration changed; the existing execution cannot be restarted.")
-        implementation = self._implementation_record(context, current.payload_ref)
-        private_outputs = implementation["metadata"].get("private_outputs", ())
+        from .executions import ExecutionNotFound
+        try:
+            current = self.executions.request(execution_id)
+        except ExecutionNotFound as error:
+            raise ToolInputError("experiment_execution_not_created",
+                "No execution exists under this name. Use status with the original name; start only after confirming no earlier submission.", path="$.name") from error
+        if self._execution_owner(execution_id) != self.task_origin(run):
+            raise ToolInputError("experiment_execution_owner_mismatch", "This execution does not belong to the current task.")
+        if request.action in {"start", "advance"} and current.compiled_identity != identity:
+            raise ToolInputError("experiment_execution_contract_changed", "Execution configuration changed; the existing execution cannot be restarted.", path="$.action")
         if request.action == "logs":
             if request.offset:
                 from .execution_log_reader import invalid
                 raise invalid("For logs use direction and its returned cursor; offset is only for collected output read.")
             return self.executions.cached_log(execution_id, log_index=request.log_index,
                 direction=request.direction, cursor=request.cursor, max_bytes=self._io_settings(context).read_page_bytes)
+        implementation = self._implementation_record(context, current.payload_ref)
+        private_outputs = implementation["metadata"].get("private_outputs", ())
         if request.action in {"read", "export"}:
             outputs = [item for item in self.executions.outputs(execution_id) if item.logical_name not in private_outputs]
             item = next((item for item in outputs if item.logical_name == request.output_name), None)
             if item is None:
-                raise ValueError("Select one collected output by its scientific name.")
+                raise ToolInputError("experiment_output_unknown", "Select one collected output by its scientific name.", path="$.output_name")
             envelope = self.executions.artifacts.get_by_id(item.artifact_id)
             if request.action == "export":
                 return self._export(context, request, envelope)
@@ -274,14 +325,13 @@ class ExperimentExecution:
                 raw = stream.read(page_bytes + 1)
             return {"name": item.logical_name, "text": raw[:page_bytes].decode("utf-8", errors="replace"),
                 "next_offset": request.offset + page_bytes if len(raw) > page_bytes else None}
-        if request.action in {"start", "advance", "status"}:
+        if request.action in {"start", "advance"}:
             approval = self._approval_status(execution_id)
             if approval is not None:
-                if request.action != "status":
-                    self._bind_approval(run, request.name, execution_id)
+                self._bind_approval(run, request.name, execution_id)
                 response = self._authorization_response(run, request.name, execution_id, approval)
-                if self.executions.status(execution_id).state == "created" and (
-                        request.action == "status" or response["state"] not in {"created", "awaiting_authorization"}):
+                if self.executions.status(execution_id).state in {"created", "abandoned"} and (
+                        response["state"] not in {"created", "awaiting_authorization"}):
                     return response
         if request.action in {"start", "advance"}:
             if self.executions.status(execution_id).external_run_id is None:
@@ -297,13 +347,6 @@ class ExperimentExecution:
                 self._bind_approval(run, request.name, execution_id)
                 return self._authorization_response(run, request.name, execution_id, self._approval_status(execution_id))
             self.bridge.sync(execution_id=execution_id, diagnostic_scope="instance:" + run.instance_id)
-        elif request.action == "status":
-            current_status = self.executions.status(execution_id)
-            if (current_status.external_run_id is not None
-                    and current_status.state in {"submitted", "running", "cancelling"}):
-                self.bridge.sync(execution_id=execution_id, diagnostic_scope="instance:" + run.instance_id)
-        elif request.action == "cancel":
-            self._cancel(execution_id)
         elif request.action == "collect":
             if self.collection is None:
                 raise ValueError("The controlled collection service is unavailable.")
@@ -311,6 +354,9 @@ class ExperimentExecution:
                 total_seconds=min(context.remaining_seconds, self._io_settings(context).collection_timeout_seconds),
                 file_timeout_seconds=self._io_settings(context).file_timeout_seconds,
                 idle_timeout_seconds=self._io_settings(context).idle_timeout_seconds)
+        return self._execution_status(context, request, execution_id, implementation, seal=True)
+
+    def _execution_status(self, context, request, execution_id, implementation, *, seal):
         status = self.executions.status(execution_id)
         result = {"name": request.name, "state": status.state}
         observation = self.executions.observation(execution_id)
@@ -326,11 +372,15 @@ class ExperimentExecution:
         if status.result_ref is not None:
             manifest = ExecutionResultManifest.model_validate_json(self.executions.artifacts.read(status.result_ref), strict=True)
             result["terminal_state"] = manifest.terminal_state
+            if implementation is None:
+                result["outputs_status"] = "Bind the original implementation to read collected scientific outputs. Execution state is available."
+                return result
+            private_outputs = implementation["metadata"].get("private_outputs", ())
             result["outputs"] = [{"name": item.logical_name, "media_type": item.media_type,
                 "size_bytes": item.size_bytes} for item in self.executions.outputs(execution_id)
                 if item.logical_name not in private_outputs]
             # A control observation is sealed without exposing control identities.
-            if request.action != "status":
+            if seal:
                 # Operational progress is mutable; the scientific receipt stays stable.
                 sealed = {key: value for key, value in result.items() if key not in {"progress", "observation"}}
                 record = context.accept_evidence(raw=canonical_json(sealed), media_type="application/json",
@@ -363,15 +413,11 @@ class ExperimentExecution:
                 object_id=approval_id)
 
     def _authorization_response(self, run, name, execution_id, approval):
-        state = {"pending": "awaiting_authorization", "expired": "authorization_expired",
-            "cancelled_by_human": "authorization_cancelled"}.get(approval.status, "created")
-        if approval.status == "decided":
-            stored = ApprovalRequest.model_validate_json(self.executions.artifacts.read(approval.approval_request_ref), strict=True)
-            decision = HumanDecision.model_validate_json(self.executions.artifacts.read(approval.decision_ref), strict=True)
-            if not execution_decision_authorizes(stored, decision):
-                state = "authorization_rejected"
+        state = self._authorization_state(approval)
+        self._reconcile_authorization(execution_id, approval)
         authorization = self.executions.authorization(execution_id)
-        result = {"name": name, "state": state, "authorization": {"status": approval.status,
+        result = {"name": name, "state": state,
+            "execution_state": self.executions.status(execution_id).state, "authorization": {"status": approval.status,
             **{key: authorization[key] for key in ("reason", "budget", "allowance", "budget_usage") if key in authorization}}}
         bound = self.runs.scheduler_bindings.find_name(instance=run.instance_id, namespace="approval", object_id="apr_" + execution_id)
         if bound is not None:
@@ -379,6 +425,28 @@ class ExperimentExecution:
         if approval.status == "pending" and approval.review_path and self.approval_base_url:
             result["review_url"] = self.approval_base_url.rstrip("/") + approval.review_path
         return result
+
+    def _authorization_state(self, approval):
+        state = {"pending": "awaiting_authorization", "expired": "authorization_expired",
+            "cancelled_by_human": "authorization_cancelled"}.get(approval.status, "created")
+        if approval.status == "decided":
+            stored = ApprovalRequest.model_validate_json(self.executions.artifacts.read(approval.approval_request_ref), strict=True)
+            decision = HumanDecision.model_validate_json(self.executions.artifacts.read(approval.decision_ref), strict=True)
+            if not execution_decision_authorizes(stored, decision):
+                state = "authorization_rejected"
+        return state
+
+    def _reconcile_authorization(self, execution_id, approval=None):
+        approval = approval or self._approval_status(execution_id)
+        if approval is None or self._authorization_state(approval) not in {
+                "authorization_expired", "authorization_cancelled", "authorization_rejected"}:
+            return
+        status = self.executions.status(execution_id)
+        # No prepared submission means there is no uncertain external side effect.
+        # Prepared/started requests require explicit status/cancel reconciliation.
+        if (status.state == "created" and status.external_run_id is None
+                and self.executions.prepared_submission(execution_id) is None):
+            self.executions.abandon(execution_id)
 
     def _approval(self, execution_id, effect, identity):
         if self.executions.approvals is None or self.approval_base_url is None:

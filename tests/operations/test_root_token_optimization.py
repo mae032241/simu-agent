@@ -82,7 +82,10 @@ def test_active_status_and_list_gate_before_content_assembly(state, arguments):
     assert "UNSEALED_SCIENCE" not in json.dumps([direct, listing])
     facade.detail_reads.assert_not_called()
     facade.artifacts.read.assert_not_called()
-    facade.runs.diagnostic_events.assert_not_called()
+    if arguments.get("diagnostic_after") is not None:
+        assert facade.runs.diagnostic_events.call_count == 2
+    else:
+        facade.runs.diagnostic_events.assert_not_called()
 
 
 @pytest.mark.parametrize("intent", ["decision", "status", "navigation", "full"])

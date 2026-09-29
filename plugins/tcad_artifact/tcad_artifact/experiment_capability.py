@@ -13,7 +13,7 @@ from scidiscovery.operations.experiment import ExperimentCapability
 from scidiscovery.plugin_runtime.experiment import ExperimentTools
 from scidiscovery.operations.spec import ComponentRef, ComponentSpec
 from scidiscovery.operations.tooling import WorkerToolDefinition
-from scidiscovery.operation_contract import DiagnosticError, validation_diagnostics
+from scidiscovery.operation_contract import DiagnosticError, ToolInputError, validation_diagnostics
 
 from .execution_control import SolverCapabilitySnapshot
 from .project_packager import (ScientificDeckImplementation, DeckProjectDraft, ResolvedProjectInput, ExecutionPackage)
@@ -42,9 +42,9 @@ def prepare(request, context):
         return {"implementation_schema": Implementation.model_json_schema()}
     path = context.workspace / request.project_path
     if path.is_symlink() or not path.resolve().is_relative_to(context.workspace.resolve()):
-        raise ValueError("The implementation must be a regular file inside this workspace.")
+        raise ToolInputError("implementation_path_invalid", "The implementation must be a regular file inside this workspace.", path="$.project_path")
     if not path.is_file() or path.stat().st_size > 32 * 1024 * 1024:
-        raise ValueError("The implementation document is absent or exceeds its size limit.")
+        raise ToolInputError("implementation_file_unavailable", "The implementation document is absent or exceeds its size limit.", path="$.project_path")
     try:
         authored = Implementation.model_validate_json(path.read_bytes(), strict=True)
     except ValidationError as error:
@@ -57,20 +57,20 @@ def prepare(request, context):
         if capability.solver_kind == authored.solver_kind and (request.method is None or item.key == request.method):
             candidates.append(capability)
     if len(candidates) != 1:
-        raise ValueError("Choose exactly one advertised method matching the implementation solver.")
+        raise ToolInputError("implementation_method_ambiguous", "Choose exactly one advertised method matching the implementation solver.", path="$.method")
     capability = candidates[0]
     values = authored.model_dump(mode="json")
     values.update(tool_profile=capability.profile_id, capability_sha256=capability.capability_sha256)
     project = DeckProjectDraft.model_validate_json(canonical_json(values), strict=True)
     slots = {slot.semantic_name: slot for slot in project.input_slots}
     if set(request.scientific_files) != set(slots):
-        raise ValueError("Provide one exact scientific-file reference for each implementation input slot.")
+        raise ToolInputError("implementation_sources_mismatch", "Provide one exact scientific-file reference for each implementation input slot.", path="$.scientific_files")
     resolved = []
     for name, alias in request.scientific_files.items():
         source = context.source_descriptor(alias)
         slot = slots[name]
         if source.media_type != slot.media_type:
-            raise ValueError("A scientific file has a different media type from its implementation slot.")
+            raise ToolInputError("implementation_source_media_mismatch", "A scientific file has a different media type from its implementation slot.", path="$.scientific_files")
         resolved.append(ResolvedProjectInput(semantic_name=name, target_relative_path=slot.target_relative_path,
             artifact_ref=source.artifact_ref, media_type=source.media_type, size_bytes=source.size_bytes))
     package = ExecutionPackage(project=project, capability=capability, resolved_inputs=tuple(resolved))
@@ -104,7 +104,7 @@ def debug(request, context):
         active = execution.cancel_diagnostics(context, service_name="tcad.development_debug", name=request.name)
         return {"name":request.name, "state":"cancelling" if active else "inactive"}
     if request.implementation is None:
-        raise ValueError("Choose a sealed implementation for this diagnostic.")
+        raise ToolInputError("experiment_implementation_required", "Choose a sealed implementation for this diagnostic.", path="$.implementation")
     sealed = execution.read_implementation(context, request.implementation)
     package_ref = sealed.artifact_ref
     package = ExecutionPackage.model_validate_json(sealed.content, strict=True)

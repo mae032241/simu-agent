@@ -394,6 +394,12 @@ class ApprovalService:
                 return True
         return False
 
+    def expire_pending(self, approval_id: str) -> None:
+        """Retire a request whose execution was abandoned; never forge a human decision."""
+        with self._connect() as connection:
+            connection.execute("UPDATE approval_requests SET status='expired' WHERE approval_id=? AND status='pending'",
+                (approval_id,))
+
     def list_requests(
         self,
         *,

@@ -1376,7 +1376,7 @@ def test_real_process_failure_isolation_windows_replay_after_restart(
         after_late_call = root.call_tool("run_status", {"name": name, "intent": "status", "diagnostic_after": 0})
         assert after_late_call["state"] == "failed"
         event = after_late_call["diagnostic_events"]["events"][-1]
-        assert event["diagnostic"]["details"][0]["message"] == "Value violates the declared type, bounds, or field relationship."
+        assert event["diagnostic"]["details"][0]["message"] == safe_message
         assert "engineering" not in event["diagnostic"]
         current = runtime.runs.status(run_id)
         internal = runtime.runs.diagnostic_events(current)["events"][-1]

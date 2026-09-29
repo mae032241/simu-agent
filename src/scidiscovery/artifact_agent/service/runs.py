@@ -1151,10 +1151,10 @@ class RunService(ToolEvidenceMixin):
     def _safe_diagnostic(category: str, *, repairable: bool) -> dict[str, Any]:
         allowed = {"output_rejected", "integrity_failure", "admission_defect", "checker_failure",
                    "tool_failed", "runtime_failure", "run_timeout", "tool_timeout",
-                   "worker_profile_mismatch"}
+                   "worker_profile_mismatch", "execution_pending"}
         category = category if category in allowed else "runtime_failure"
         return {"category": category, "code": category,
-                "repairable_by_output": repairable}
+                "repairable_by_output": repairable and category != "execution_pending"}
 
     def record_tool_observation(self, run_id: str, activity: str, observation: dict) -> None:
         """Engineering timing only: no heartbeat, candidate or lifecycle mutation."""
@@ -1214,7 +1214,7 @@ class RunService(ToolEvidenceMixin):
 
     def rejection_diagnostic(self, value: RunStatus, error: Exception) -> dict[str, Any]:
         """Build output rejection facts for the controlled diagnostic path."""
-        return {"category": "output_rejected", "details":getattr(error, "details", ()) or
+        return {"category": getattr(error, "category", "output_rejected"), "details":getattr(error, "details", ()) or
                 ({"path":"$", "type":"value_error"},)}
 
     def sanitize_diagnostic(self, value: RunStatus, diagnostic: dict[str, Any],
@@ -1225,6 +1225,9 @@ class RunService(ToolEvidenceMixin):
             compiled = self._compiled(value)
             contract = operation_output_validation_contract(compiled, operation_primary_output(compiled))
             rules = {item["rule_id"]:item.get("description") for item in contract["rules"]}
+            semantic = compiled.output_contracts[operation_primary_output(compiled).name].get(
+                "x-scidiscovery-semantic-constraints", {})
+            rules.update({item["rule_id"]: item["description"] for item in semantic.get("rules", ())})
             rule_phases = {item["rule_id"]:"output_"+item["phase"] for item in contract["checkers"]}
             for item in contract["checkers"]:
                 rules.setdefault(item["rule_id"], None)
@@ -1247,6 +1250,8 @@ class RunService(ToolEvidenceMixin):
             schema=schema, rules=rules, phase=phase, action=action, rule_phases=rule_phases)
         if details:
             result["details"] = list(details)
+            # Set only after sanitization; never treat an incoming flag as trust.
+            result["safe_details_version"] = 1
         if isinstance(diagnostic.get("engineering"), dict):
             # Produced by the shared error recorder, never scientific payload fields.
             result["engineering"] = diagnostic["engineering"]
@@ -1264,7 +1269,13 @@ class RunService(ToolEvidenceMixin):
         if isinstance(raw.get("engineering"), dict):
             result["engineering"] = raw["engineering"]
         if raw.get("details"):
-            result["details"] = raw["details"][:16]
+            details = raw["details"][:16]
+            if raw.get("safe_details_version") == 1:
+                from ...operation_contract import DeclaredDiagnostic
+                from ..schema.common import ContractDiagnostic
+                details = [DeclaredDiagnostic(ContractDiagnostic.model_validate(item).model_dump(
+                    mode="json", exclude_none=True)) for item in details]
+            result["details"] = details
         return result
 
     def diagnostic_events(self, value: RunStatus, *, after: int = 0, limit: int = 50) -> dict[str, Any]:

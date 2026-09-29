@@ -310,13 +310,14 @@ class LocalWorkerMCPRouter:
             except Exception as record_error:
                 from ..service.engineering_diagnostics import exception_facts
                 engineering["workspace_record_error"] = exception_facts(record_error, layer="worker_workspace", action="record")
-        failure = error if isinstance(error, DiagnosticError) else WorkerToolError(
+        failure = (error if isinstance(error, WorkerToolError) else
+            WorkerToolError(str(error), details=error.details)) if isinstance(error, DiagnosticError) else WorkerToolError(
             engineering["causes"][0]["message"], details=(contract_diagnostic(
                 engineering["category"], phase="tool_execution", affected_action="tool_call",
                 message=engineering["causes"][0]["message"], error_type=type(error).__name__),))
         failure.engineering = engineering
         if scientific:
-            failure.public_engineering = {"category":engineering["category"]}
+            failure.public_engineering = {} if isinstance(error, DiagnosticError) else {"category":engineering["category"]}
             if not failure.details:
                 failure.details = (contract_diagnostic("tool_rejected", phase="tool_execution", affected_action="tool_call",
                     message="The experiment action could not complete with its current inputs or configured services."),)
