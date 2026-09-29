@@ -1690,10 +1690,7 @@ class RunService(ToolEvidenceMixin):
             evidence = [(r['alias'], ArtifactRef.model_validate(r['artifact_ref'])) for r in self.tool_evidence(run_id)]
             evidence += [('recovery_manifest', ref) for ref in self.artifacts.catalog(output).parent_refs if ref.schema_id == 'scidiscovery.tool-evidence-manifest.v1' and self.artifacts.catalog(ref).labels.get('tool_producer_run') == run_id]
             for alias, ref in evidence:
-                self.scheduler_bindings.bind_in_connection(connection, instance=value.instance_id, namespace='artifact',
-                    name=value.output_binding_name+'.'+alias, logical_name=value.output_logical_name+'.'+alias,
-                    revision=value.output_revision, object_id=ref.artifact_id,
-                    request_fingerprint=hashlib.sha256((candidate_digest+alias).encode()).hexdigest(), attached=True)
+                self._bind_evidence_output(connection, value, alias, ref)
             cursor = connection.execute(
                 """
                 UPDATE runs SET state = 'completed', output_ref_json = ?,

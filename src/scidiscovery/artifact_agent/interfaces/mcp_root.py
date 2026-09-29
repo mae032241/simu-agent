@@ -188,13 +188,13 @@ class ArtifactCatalogInput(NamedReadInput):
 
 class RunStatusInput(NamedInput, StageReadQuery):
     intent: Literal["decision", "status", "navigation", "full"] = Field(default="decision",
-        description="decision reads bounded sealed conclusions and scheduler signal after completion, using frozen decision fields for historical Runs; older records without those fields return an explicit unavailable default and bounded field index. status reads lifecycle and optional saved diagnostics; navigation lists exact fields and scientific input names; full explicitly reads the complete sealed scientific output. Active or failed Runs never expose draft science.")
+        description="decision reads bounded sealed conclusions and scheduler signal after completion, using frozen decision fields for historical Runs; older records without those fields return an explicit unavailable default and bounded field index. status reads lifecycle and optional saved diagnostics; navigation lists exact fields, scientific input names and a page of already sealed public evidence names even while running or after failure; full explicitly reads the complete sealed scientific output. Sealed materials are not final conclusions. Active or failed Runs never expose draft science.")
     output_fields: list[str] | None = Field(default=None, max_length=8,
         description="decision only: named top-level fields; omit for declared decision fields. Mutually exclusive with output_paths.")
     output_paths: list[Annotated[str, Field(pattern=r"^(?:/(?:[^~]|~[01])*)?$")]] | None = Field(
         default=None, max_length=8,
         description="decision: exact non-root JSON Pointers, up to 32 KiB selected values; oversized values carry explicit omissions. navigation: one pointer, omitted for root. Use full for complete output, including oversized scalars. '/' selects an empty key.")
-    index_offset: int = Field(default=0, ge=0, description="navigation: continue at output_index.next_offset.")
+    index_offset: int = Field(default=0, ge=0, description="navigation: continue the field index at output_index.next_offset or the sealed evidence list at evidence_outputs_next_offset.")
     index_limit: int = Field(default=16, ge=1, le=32, description="navigation: direct children, bounded to 8 KiB including metadata.")
     diagnostic_after: int | None = Field(default=None, ge=0,
         description="status: for a terminal Run, 0 starts a bounded page of saved safe diagnostics; continue at diagnostic_events.next_after. Private engineering records are excluded.")

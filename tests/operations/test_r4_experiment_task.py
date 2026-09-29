@@ -426,7 +426,7 @@ def test_execution_package_sealing_preserves_declared_payload_version(monkeypatc
         registrations.append(registration)
         return SimpleNamespace(ref='private-package')
     effect = SimpleNamespace(spec=SimpleNamespace(inputs=(SimpleNamespace(name='package', schema_id='plugin.package'),)))
-    run = SimpleNamespace(run_id='run_fixture')
+    run = SimpleNamespace(run_id='run_fixture', recovery_policy={})
     service = execution.ExperimentExecution(runs=None, executions=SimpleNamespace(
         artifacts=SimpleNamespace(register=register), service_actor=ActorRef(actor_id='service', actor_type='service')),
         bridge=None, collection=None, approval_base_url=None)

@@ -78,12 +78,13 @@ def read_stage_deliveries(runs, run, *, instance_id, **arguments):
         key = (kind, stage)
         versions[key] = versions.get(key, 0) + 1
         derived = [aliases.get(record["source_refs"].get(alias)) for alias in metadata.get("derived_from", [])]
+        public_name = runs.material_artifact_name(run, record)
         entries.append((record, {"reference": record["alias"], "stage": stage,
             "version": versions[key], "delivery_kind": "author_conclusion" if kind == "experiment_stage" else (
                 "scientific_material" if kind == "experiment_implementation" else "executor_observation"),
             "adopted": record["alias"] in selected if result["final_selection"] == "sealed" else None,
             "origin": "reused" if record["producer_run_id"] != run.run_id else "created_here",
-            **({"source_artifact_name": inputs[record["alias"]]} if record["alias"] in inputs else {}),
+            **({"source_artifact_name": public_name} if public_name else {}),
             "unavailable_materials": derived.count(None),
             "materials": [{"reference": alias, "source_kind": "sealed_material" if alias in sealed else "input",
                 **({"artifact_name": inputs[alias]} if alias in inputs else {})}

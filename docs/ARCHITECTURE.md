@@ -47,6 +47,19 @@ implementation and requires `pass` under a compatible review contract. Diagnosti
 runs remain available. Workers neither enter review IDs nor receive a new global
 review gate. Revised implementations require their own review.
 
+Public tool evidence receives its exact artifact name atomically with its sealing
+receipt, before the owner Run finishes. Final submission reuses that same binding;
+failed owners do not erase sealed material or confer a passing qualification.
+Stage queries expose these names without writing bindings. `run_status(intent="navigation")`
+also returns a bounded evidence page for active and failed Runs; continue with
+`evidence_outputs_next_offset` as `index_offset`. Status polling returns no evidence list.
+Private control packages
+and manifests are not published by this path. Preparation returns a review request
+when required; `worker_experiment_execute(action="review", implementation=...)`
+also supplies the exact subject and a scheduler invocation, including for older
+sealed receipts. It dispatches no reviewer and creates no execution. A formal
+reviewer must still differ from all authors, including authors of running tasks.
+
 Queued Worker attachments may be corrected by calling `worker_attach` again before
 the assignment opens. Opening verifies the current native thread binding within
 the state transition transaction; a running assignment cannot be rebound.

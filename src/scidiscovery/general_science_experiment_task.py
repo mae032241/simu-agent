@@ -43,15 +43,16 @@ def submit_stage(request, context):
     record = context.accept_evidence(raw=canonical_json(request.model_dump(mode="json")),
         media_type="application/json", derived_from=("research_objective", *request.materials),
         metadata={"kind": "experiment_stage", "stage": request.stage})
-    return {"stage": request.stage, "reference": record["alias"], "state": "sealed"}
+    return {"stage": request.stage, "reference": record["alias"], "state": "sealed",
+        "artifact_name": record["artifact_name"]}
 
 
 class ExecuteExperiment(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    action: Literal["capabilities", "start", "advance", "collect", "status", "logs", "read", "export", "cancel"]
+    action: Literal["capabilities", "review", "start", "advance", "collect", "status", "logs", "read", "export", "cancel"]
     name: str = Field(default="experiment", pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$")
     implementation: str | None = Field(default=None, max_length=128,
-        description="Sealed implementation created in or explicitly bound to this task; required for start.")
+        description="Sealed implementation created in or explicitly bound to this task; required for start or review. review returns an exact independent-review invocation for the scheduler, without creating execution or dispatching an Agent.")
     output_name: str | None = Field(default=None, max_length=256)
     offset: int = Field(default=0, ge=0, description="read only: byte offset; continue at the returned next_offset. For logs use direction/cursor.")
     direction: Literal["tail", "before", "after"] = "tail"
@@ -122,6 +123,11 @@ worker_experiment_stage, citing sealed materials and noting unresolved questions
 Include execution interpretation when useful: executor facts do not supply your
 scientific conclusion. Rework seals a new version; retain the exact versions you
 adopt in the final report. Stage sealing is neither review nor final completion.
+Sealed public materials return artifact_name for exact handoff before this Run ends.
+If independent implementation review is required, send prepare's review.request
+to the scheduler, or obtain it with worker_experiment_execute(action="review",
+implementation=<sealed reference>). Wait for an independent sealed pass, then
+continue this same task; never finish merely to make the subject addressable.
 Formal execution is available only through worker_experiment_execute. A started
 or successful solver is not by itself a valid scientific result. Read the collected
 facts and deliver an ExperimentReport with the adopted sealed stage references.
@@ -150,11 +156,11 @@ from .plugin_runtime.results import result_draft_schema, RESULT_PROJECTION_VERSI
 FINALIZER = CallableComponent("workspace_finalizer", WorkspaceFinalizer(
     finalize, result_draft_schema, RESULT_PROJECTION_VERSION))
 STAGE_TOOL = WorkerToolDefinition(name="worker_experiment_stage",
-    description="Seal a stage conclusion and its exact scientific materials in this experiment. Continue working after sealing.",
+    description="Seal a stage conclusion and its exact scientific materials in this experiment. Returns a local reference and an immutable artifact_name for another task or independent review while this Run is active. Continue working after sealing.",
     input_model=StageSubmission, capability="experiment.stage", contextual_handler=submit_stage, owner_only=True,
     evidence_ports=("tool_evidence", "recovery_manifest_output"))
 EXECUTE_TOOL = WorkerToolDefinition(name="worker_experiment_execute",
-    description="Request, advance, collect or cancel this experiment's formal execution. status refreshes remote state and bounded progress of a submitted execution without submitting, cancelling or collecting. advance can continue an authorized execution; collect transfers result files. Confirmed terminal states require no remote query. Status returns timing, log metadata and refresh failure only, never log text. Use logs for the newest cached page, direction=before with its before cursor for older text, or direction=after with its after cursor for new text. No change returns empty text; gap=snapshot_replaced explicitly marks lost continuity and returns a fresh newest page. It performs no remote query. After successful collection read/export the collected log outputs. Read text or export exact collected scientific files into scratch for local analysis. Uses configured authorization and the original scientific budget.",
+    description="Request, advance, collect or cancel this experiment's formal execution. review returns an exact public subject and operation_invoke request for independent review; it starts neither a reviewer nor execution. status refreshes remote state and bounded progress of a submitted execution without submitting, cancelling or collecting. advance can continue an authorized execution; collect transfers result files. Confirmed terminal states require no remote query. Status returns timing, log metadata and refresh failure only, never log text. Use logs for the newest cached page, direction=before with its before cursor for older text, or direction=after with its after cursor for new text. No change returns empty text; gap=snapshot_replaced explicitly marks lost continuity and returns a fresh newest page. It performs no remote query. After successful collection read/export the collected log outputs. Read text or export exact collected scientific files into scratch for local analysis. Uses configured authorization and the original scientific budget.",
     input_model=ExecuteExperiment, capability="experiment.execute", contextual_handler=execute,
     optional_services=("experiment.execution",), evidence_ports=("tool_evidence", "recovery_manifest_output"))
 

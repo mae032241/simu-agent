@@ -105,8 +105,23 @@ class ExperimentExecution:
             confidentiality="approval_only", labels={"experiment_run": run.run_id, "experiment_task": self.task_origin(run)}),
             idempotency_key="experiment-package:" + hashlib.sha256(canonical_json({
                 "run": run.run_id, "payload": hashlib.sha256(payload).hexdigest(), "parents": parents})).hexdigest()).ref
-        return context.accept_evidence(raw=scientific_material, media_type="application/json",
+        record = context.accept_evidence(raw=scientific_material, media_type="application/json",
             derived_from=sources, trusted_parent_refs=(private,), metadata={"kind": "experiment_implementation", "private_outputs":list(private_outputs)})
+        if (run.recovery_policy or {}).get("require_execution_review"):
+            record["review"] = self.review_handoff(run, record)
+        return record
+
+    def review_handoff(self, run, implementation):
+        """Give the scheduler an exact public request, without starting a reviewer."""
+        name = self.runs.publish_sealed_material(run, implementation["alias"])
+        request_name = name + ".review"
+        if len(request_name) > 256:
+            request_name = name[:230] + ".review-" + hashlib.sha256(name.encode()).hexdigest()[:16]
+        return {"required": bool((run.recovery_policy or {}).get("require_execution_review")),
+            "subject_artifact_name": name,
+            "request": {"name": request_name, "operation_id": "science.object.review.v1",
+                "inputs": [{"port": "subject", "artifact_names": [name]}],
+                "instruction": "Independently review this exact sealed implementation against its bound research objective, scientific constraints and required observables. Report missing evidence and limitations explicitly; execution permission does not establish scientific validity."}}
 
     def _implementation_record(self, context, payload_ref):
         records = [item for item in self.runs.available_material_records(self.runs.status(context.run_id))
@@ -190,18 +205,18 @@ class ExperimentExecution:
         review = self.runs.latest_subject_review(run.instance_id, subject)
         if review is None or review.output_ref is None:
             raise material_error("experiment_execution_review_required",
-                "This task explicitly requires independent implementation review. Obtain a completed science.object.review.v1 pass for this exact sealed implementation before formal execution.")
+                "Independent implementation review is required. Call worker_experiment_execute(action='review', implementation=<the same reference>) for the exact public subject and operation_invoke request. Ask the scheduler to dispatch an independent reviewer, then retry start with the same implementation after a sealed pass. No execution was created.")
         compiled = self.runs.operation_catalog.operation("science.object.review.v1")
         if review.operation_version != compiled.spec.version or "subject" not in compiled.spec.independent_review_ports:
             raise material_error("experiment_execution_review_incompatible",
-                "The exact implementation review uses a different installed review contract; obtain a compatible independent review.")
+                "The exact implementation review uses a different installed review contract. Call worker_experiment_execute(action='review', implementation=<the same reference>) for a compatible review request; dispatch a new independent review.")
         envelope = self.runs.artifacts.catalog(review.output_ref)
         if envelope.schema_id != "scidiscovery.experiment-review.v1" or envelope.size_bytes > compiled.spec.limits.max_output_bytes:
-            raise material_error("experiment_execution_review_invalid", "The exact implementation review has no valid sealed review result.")
+            raise material_error("experiment_execution_review_invalid", "The exact implementation review has no valid sealed review result. Use worker_experiment_execute(action='review', implementation=<the same reference>) to obtain the exact review subject for repair.")
         result = ExperimentReview.model_validate_json(self.runs.artifacts.read(review.output_ref), strict=True)
         if result.verdict != "pass":
             raise material_error("experiment_execution_review_not_passed",
-                "The latest independent review of this exact implementation did not pass. Resolve its findings and review any revised implementation before execution; budget approval does not override this task requirement.")
+                "The latest independent review of this exact implementation did not pass. Resolve its findings and review any revised implementation before execution; budget approval does not override this requirement. Call worker_experiment_execute(action='review', implementation=<the chosen reference>) for the exact review request.")
         return review.output_ref
 
     def command(self, context, request):
@@ -212,6 +227,10 @@ class ExperimentExecution:
                 **{k: v for k, v in item.public_summary.items()
                    if k in {"solver_kind", "release", "description", "limitations", "capabilities"}}}
                 for item in self.capabilities(context)]}
+        if request.action == "review":
+            payload = self.implementation(context, request.implementation)
+            return {"implementation": request.implementation,
+                "review": self.review_handoff(run, self._implementation_record(context, payload))}
         execution_id = "exe_" + hashlib.sha256(canonical_json({
             "task": self.task_origin(run), "name": request.name})).hexdigest()
         if request.action == "start":
@@ -318,6 +337,7 @@ class ExperimentExecution:
                     derived_from=("research_objective", implementation["alias"]), trusted_parent_refs=(status.result_ref,),
                     metadata={"kind": "experiment_execution", "name": request.name, "implementation": implementation["alias"]})
                 result["reference"] = record["alias"]
+                result["artifact_name"] = record["artifact_name"]
         return result
 
     def _approval_status(self, execution_id):

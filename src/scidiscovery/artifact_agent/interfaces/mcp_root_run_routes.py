@@ -159,11 +159,21 @@ class RootRunRoutes:
             # Preserve exact frozen aliases and order; hidden/derived ports stay private.
             result["bound_inputs"] = self._scientific_run_view(value, {"bound_inputs": [
                 {"port": port, "artifact_names": names} for port, names in inputs.items()]})["bound_inputs"]
-            if value.state == "completed":
-                evidence = self.runs.evidence_output_refs(value)
-                if evidence:
-                    result["evidence_outputs"] = [{"artifact_name": value.output_binding_name + "." + alias,
-                        "schema": ref.schema_id} for alias, ref in evidence]
+        if request["intent"] == "navigation":
+            evidence = (self.runs.evidence_output_refs(value) if value.state == "completed"
+                else self.runs.sealed_evidence_output_refs(value))
+            if evidence:
+                page = []
+                offset = request["index_offset"]
+                for alias, ref in evidence[offset:offset + request["index_limit"]]:
+                    item = {"artifact_name": value.output_binding_name + "." + alias, "schema": ref.schema_id}
+                    if len(canonical_json([*page, item])) > 8192:
+                        break
+                    page.append(item)
+                end = offset + len(page)
+                result.update(evidence_outputs=page, evidence_outputs_total=len(evidence),
+                    evidence_outputs_next_offset=end if end < len(evidence) else None,
+                    evidence_outputs_status="sealed_materials_not_final_report")
         if request["stage_offset"] is not None or request["stage_reference"] is not None:
             from ..service.stage_deliveries import read_stage_deliveries
             result["sealed_stages"] = read_stage_deliveries(self.runs, value,

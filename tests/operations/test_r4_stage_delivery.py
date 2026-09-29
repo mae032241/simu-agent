@@ -63,6 +63,11 @@ def test_running_and_final_deliveries_share_readonly_scientific_projection(tmp_p
             short = root.call_tool('run_status', {'name': 'observe'})
         assert short['state'] == 'running' and 'sealed_stages' not in short
         rows = _pages(root)
+        for item in rows:
+            assert item.get('source_artifact_name'), item
+            ref = runtime.runs.sealed_material_record(runtime.runs.status(worker._run_id), item['reference'])['artifact_ref']
+            assert runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace='artifact',
+                name=item['source_artifact_name']) == ref['artifact_id']
         assert len({item['reference'] for item in rows}) == len(rows)
         executions = [item for item in rows if item['stage'] == 'execution']
         assert {item['delivery_kind'] for item in executions} == {'executor_observation', 'author_conclusion'}
@@ -97,7 +102,7 @@ def test_running_and_final_deliveries_share_readonly_scientific_projection(tmp_p
         assert responses[-1][0] == 403
         for arguments in ({'stage_limit': ['0']}, {'stage_offset': ['-1']}, {'stage_reference': ['tool_recovery_manifest']}):
             ui._handle_instance_api(handler, ['api', 'instances', instance.instance_id, 'nodes', 'run:observe'], arguments)
-            assert responses[-1][0] == 400
+            assert responses[-1][0] == (404 if 'stage_reference' in arguments else 400)
         value = runtime.runs.status(worker._run_id)
         with pytest.raises(PermissionError):
             read_stage_deliveries(runtime.runs, value, instance_id='another-instance', stage_offset=0)

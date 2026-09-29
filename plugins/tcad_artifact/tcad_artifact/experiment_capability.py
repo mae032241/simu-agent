@@ -79,6 +79,8 @@ def prepare(request, context):
             "scientific_files": request.scientific_files}),
         sources=("research_objective", *request.scientific_files.values()), private_outputs=("tcad_manifest",))
     return {"state": "sealed", "implementation": record["alias"], "solver": authored.solver_kind,
+        "artifact_name": record["artifact_name"],
+        **({"review": record["review"]} if "review" in record else {}),
         "source_files": len(project.files), "scientific_files": len(resolved)}
 
 
@@ -132,11 +134,12 @@ def debug(request, context):
         record = context.accept_evidence(raw=canonical_json(result), media_type="application/json",
             derived_from=("research_objective", request.implementation), metadata={"kind": "experiment_debug", "name": request.name})
         result["reference"] = record["alias"]
+        result["artifact_name"] = record["artifact_name"]
     return result
 
 
 PREPARE_TOOL = WorkerToolDefinition(name="worker_experiment_prepare",
-    description="Read the TCAD implementation schema or seal an implementation for the current experiment. Control resolves the exact active solver capability and supplied scientific files. No prior author or review task is required.",
+    description="Read the TCAD implementation schema or seal an implementation for the current experiment. Control resolves the exact active solver capability and supplied scientific files. Returns the exact public artifact_name immediately and, when required, an independent review request for the scheduler. Sealing itself requires no prior review; required review must pass before formal execution.",
     input_model=PrepareInput, capability="experiment.implementation", contextual_handler=prepare,
     required_services=("experiment.execution",), evidence_ports=("tool_evidence", "recovery_manifest_output"))
 DEBUG_TOOL = WorkerToolDefinition(name="worker_experiment_debug", description="Run or poll an optional bounded diagnostic of the exact sealed implementation. Use action=status with the same name for a read-only check after an uncertain response; it never submits or collects. Repeating action=run polls existing submissions but may create one if absent. Diagnostics are separate from formal execution and require no fixed sequence.",

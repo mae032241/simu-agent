@@ -176,6 +176,52 @@ class ToolAttemptLimit(DiagnosticError):
 
 
 class ToolEvidenceMixin(ReferenceAccessMixin):
+    def _bind_evidence_output(self, connection, value, alias, ref):
+        """One immutable name at sealing and completion, in the receipt transaction."""
+        return self.scheduler_bindings.bind_in_connection(connection,
+            instance=value.instance_id, namespace="artifact",
+            name=value.output_binding_name + "." + alias,
+            logical_name=value.output_logical_name + "." + alias,
+            revision=value.output_revision, object_id=ref.artifact_id,
+            request_fingerprint=hashlib.sha256(canonical_json({"run": value.run_id,
+                "alias": alias, "ref": ref.model_dump(mode="json")})).hexdigest(), attached=True)
+
+    def material_artifact_name(self, value, record):
+        """Read a verified public name; never publish material during a status query."""
+        from .scheduler_bindings import SchedulerNameNotFound
+        ref = ArtifactRef.model_validate(record["artifact_ref"])
+        bound = next((item for item in value.inputs if item.artifact_ref == ref), None)
+        if bound is not None:
+            name = bound.artifact_name
+        else:
+            producer = self.status(record.get("producer_run_id", value.run_id))
+            name = producer.output_binding_name + "." + record.get("origin_alias", record["alias"])
+        try:
+            binding = self.scheduler_bindings.get_binding(instance=value.instance_id, namespace="artifact", name=name)
+        except SchedulerNameNotFound:
+            return None
+        if binding.object_id != ref.artifact_id:
+            raise RunStateConflict("Sealed material name has a different immutable object")
+        return name
+
+    def publish_sealed_material(self, value, alias):
+        """Explicitly publish a receipt retained before live names were supported."""
+        record = self.sealed_material_record(value, alias)
+        if record is None:
+            raise RunStateConflict("No exact sealed material is available under this alias")
+        name = self.material_artifact_name(value, record)
+        if name is not None:
+            return name
+        producer = self.status(record["producer_run_id"])
+        port = tool_evidence_ports(self._compiled(producer)).get(record.get("output_port", "tool_evidence"))
+        if port is None or not port.agent_visible:
+            raise RunStateConflict("The sealed material has no public output contract")
+        with self._connect() as connection:
+            self._attach_scheduler(connection)
+            connection.execute("BEGIN IMMEDIATE")
+            return self._bind_evidence_output(connection, producer, record["origin_alias"],
+                ArtifactRef.model_validate(record["artifact_ref"])).name
+
     def sealed_material_record(self, value, alias):
         from .sealed_materials import resolve_material
         return resolve_material(self, value, alias)
@@ -403,13 +449,18 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
             key_material['control_parents'] = [ref.model_dump(mode='json') for ref in trusted_parent_refs]
         key = hashlib.sha256(canonical_json(key_material)).hexdigest()
         with self._connect() as connection:
+            self._attach_scheduler(connection)
             connection.execute('BEGIN IMMEDIATE')
             row = self._row(connection, run_id)
             if row['state'] != 'running' or row['accepted_candidate_digest'] is not None:
                 raise RunStateConflict('Run no longer accepts tool evidence')
             existing = connection.execute('SELECT record_json FROM run_tool_evidence WHERE run_id=? AND evidence_key=?',(run_id,key)).fetchone()
             if existing:
-                return json.loads(existing[0])
+                record = json.loads(existing[0])
+                if port.agent_visible:
+                    binding = self._bind_evidence_output(connection, value, record["alias"], ArtifactRef.model_validate(record["artifact_ref"]))
+                    return {**record, "artifact_name": binding.name}
+                return record
             all_records = [json.loads(r[0]) for r in connection.execute('SELECT record_json FROM run_tool_evidence WHERE run_id=?',(run_id,))]
             records = [r for r in all_records if r.get('record_type') != 'reference_access' and r.get('output_port', 'tool_evidence') == 'tool_evidence']
             if len([r for r in all_records if r.get('record_type') != 'reference_access']) >= 128 or len(records) >= port.max_items or sum(r['size_bytes'] for r in records)+len(raw) > port.collection.max_total_bytes:
@@ -438,6 +489,9 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
             record={'alias':alias,'artifact_ref':artifact.model_dump(mode='json'),'source_ref':source_ref.model_dump(mode='json') if source_ref is not None else None,
                     'media_type':media_type,'size_bytes':len(raw),'metadata':metadata,'tool_name':tool_name}
             connection.execute('INSERT INTO run_tool_evidence VALUES (?,?,?,?,?)',(run_id,ordinal,key,canonical_json(record),alias))
+            if port.agent_visible:
+                binding = self._bind_evidence_output(connection, value, alias, artifact)
+                record = {**record, "artifact_name": binding.name}
         self._refresh_evidence_schema(run_id)
         if metadata.get("kind") == "experiment_stage":
             from .presentation_summaries import enqueue
@@ -619,6 +673,23 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
                     if port.name == "recovery_manifest_output"), None)
                 if manifest_port is not None and manifest_port.agent_visible:
                     refs.append(('recovery_manifest',ref))
+        return refs
+
+    def sealed_evidence_output_refs(self, value):
+        """Already published tool originals; excludes drafts and private receipts."""
+        from .scheduler_bindings import SchedulerNameNotFound
+        refs = []
+        for record in self.tool_evidence(value.run_id):
+            name = value.output_binding_name + "." + record["alias"]
+            try:
+                binding = self.scheduler_bindings.get_binding(instance=value.instance_id,
+                    namespace="artifact", name=name)
+            except SchedulerNameNotFound:
+                continue
+            ref = ArtifactRef.model_validate(record["artifact_ref"])
+            if binding.object_id != ref.artifact_id:
+                raise RunStateConflict("Sealed evidence name has a different immutable object")
+            refs.append((record["alias"], ref))
         return refs
 
     def tool_io_budget(self, run_id, *, used_bytes=0, used_seconds=0.0, reserve=False):
