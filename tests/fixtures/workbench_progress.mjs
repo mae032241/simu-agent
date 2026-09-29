@@ -34,8 +34,13 @@ page.select = {".workbench-header": header, "[data-experiment-key]": progress, "
   "[data-display-actions]": actions};
 page.selectAll = {"[data-experiment-children]": [children, history]};
 const events = new Map(), timers = new Map(); let sequence = 0;
+let summaryEnabled = true;
+let unavailableMessage = "此实例已关闭自动导读";
 const document = {
-  hidden: false, querySelector: key => key === "meta[name='summary-retry-enabled']" ? {content: "true"}
+  hidden: false, querySelector: key => key === "meta[name='summary-retry-enabled']" ? {content: String(summaryEnabled)}
+    : key === "#summary-unavailable" ? {content: {cloneNode: () => {
+      const notice = new Element(); notice.textContent = unavailableMessage; return notice;
+    }}}
     : key === "meta[name='workbench-csrf']" ? {content: "test-csrf"} : page, querySelectorAll: () => [],
   createElement: () => new Element(), createDocumentFragment: () => new Element(),
   addEventListener: (key, action) => events.set(key, action),
@@ -46,7 +51,8 @@ const value = {key: "run:experiment", state: "running", experiment_progress: {st
   display_copy: {state: "ready", items: [{title: "<img onerror=alert(1)>", summary: "尚不能判断。"}]},
   experiment_children: {total: 10, pending_approvals: 1, next_offset: 8, items: [
     {kind: "stage", parent_key: "run:experiment", reference: "sealed/a", title: "设计", version: 2},
-    {kind: "approval", key: "approval:exact", parent_key: "run:experiment", title: "执行审批", state: "pending"}]}};
+    {kind: "approval", key: "approval:exact", parent_key: "run:experiment", title: "执行审批", state: "pending",
+      approval_summary: {question: "是否授权本次执行？", resource_summary: "时限：申请 90 分钟 / 自动额度 60 分钟"}}]}};
 const window = {
   location: {origin: "http://localhost", href: "http://localhost/instance/one"},
   setTimeout: (action, delay) => { const id = ++sequence; timers.set(id, {action, delay}); return id; },
@@ -68,6 +74,9 @@ assert.equal(requests[0].options.credentials, "same-origin");
 assert.match(live.textContent, /运行中/);
 assert.match(children.textContent, /设计 · v2/);
 assert.match(children.textContent, /待审批/);
+assert.match(children.textContent, /是否授权本次执行/);
+assert.match(children.textContent, /申请 90 分钟/);
+assert.match(children.textContent, /查看关键参数并审批/);
 assert.match(children.textContent, /更早的子节点/);
 assert.equal(history.textContent, "older stages being read");
 assert.equal(children.parent.open, true);
@@ -94,6 +103,16 @@ if (stageMode) {
   value.display_copy = {state: "ready", items: [{title: "wrong parent copy", summary: "must not appear"}]};
   await tick();
   assert.doesNotMatch(copy.textContent, /wrong parent copy/);
+}
+summaryEnabled = false;
+value.stage_reference = stageMode ? "sealed/a" : undefined;
+value.display_copy = {state: "not_generated", items: []};
+for (const reason of ["此实例已关闭自动导读", "实例当前为只读或正在维护", "当前浏览授权为只读"]) {
+  unavailableMessage = reason;
+  await tick();
+  assert.match(actions.textContent, new RegExp(reason));
+  assert.match(children.textContent, new RegExp(reason));
+  assert.doesNotMatch(actions.textContent + children.textContent, /从实例管理进入/);
 }
 document.hidden = true; events.get("visibilitychange")();
 assert.equal(timers.size, 0, "hidden pages must stop polling");

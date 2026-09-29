@@ -113,13 +113,16 @@ document.addEventListener("click", async (event) => {
       button.type = "button"; button.disabled = true; button.textContent = "导读整理中…";
       return button;
     }
-    if (document.querySelector("meta[name='summary-retry-enabled']")?.content !== "true") {
-      const link = document.createElement("a");
-      link.href = "/instances/manage"; link.textContent = "从实例管理进入以生成或重新整理导读";
-      return link;
-    }
     const generate = copy.state === "not_generated";
     if (!generate && !copy.retry) return null;
+    if (document.querySelector("meta[name='summary-retry-enabled']")?.content !== "true") {
+      // Reuse the server's exact reason and same-origin access form.
+      const template = document.querySelector("#summary-unavailable");
+      if (template?.content) return template.content.cloneNode(true);
+      const note = document.createElement("p");
+      note.textContent = "导读操作暂不可用，请刷新页面核对。";
+      return note;
+    }
     const csrf = document.querySelector("meta[name='workbench-csrf']")?.content;
     if (!csrf) return null;
     const form = document.createElement("form");
@@ -266,6 +269,21 @@ document.addEventListener("click", async (event) => {
         const timestamp = document.createElement("p");
         timestamp.textContent = time(child.source_time);
         row.append(timestamp);
+        if (child.kind === "approval") {
+          const action = document.createElement("div");
+          action.className = "approval-next-action";
+          const title = document.createElement("strong");
+          title.textContent = child.state === "pending" ? "待你决定" : "审批记录";
+          action.append(title);
+          for (const text of [child.approval_summary?.question, child.approval_summary?.resource_summary,
+            child.approval_summary?.selected_label ? `决定：${child.approval_summary.selected_label}` : ""]) {
+            if (text) { const p = document.createElement("p"); p.textContent = text; action.append(p); }
+          }
+          const open = document.createElement("a");
+          open.href = link.href; open.className = "approval-action-link";
+          open.textContent = child.state === "pending" ? "查看关键参数并审批" : "查看审批结果";
+          action.append(open); row.append(action);
+        }
         const retry = stage ? retryForm(child.display_copy || {state: "not_generated"}, child.parent_key, child.reference) : null;
         if (retry) row.append(retry);
         if (child.parent_key !== node.key) {

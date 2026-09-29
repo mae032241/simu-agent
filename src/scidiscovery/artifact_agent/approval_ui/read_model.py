@@ -768,6 +768,7 @@ class InstanceReadModel:
             elif binding.namespace == "approval":
                 value = self.approvals.status(binding.object_id)
                 result["state"] = value.status
+                result["approval_summary"] = self.approvals.navigation_summary(binding.object_id)
                 if value.decision_ref:
                     result["source_time"] = self.artifacts.catalog(value.decision_ref).created_at
                 roots = [(value.approval_request_ref, "/approval_request_ref")]
@@ -776,6 +777,9 @@ class InstanceReadModel:
             else:
                 value = self.executions.status(binding.object_id)
                 result.update(state=value.state, executor=value.executor)
+                authorization = getattr(value, "authorization", {})
+                result["execution_authorization"] = {key: authorization[key] for key in
+                    ("budget", "allowance", "reason") if key in authorization}
                 collection = self._collection(binding.object_id)
                 observation = self.executions.observation(binding.object_id)
                 from ...plugin_runtime.experiment import progress_summary

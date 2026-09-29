@@ -459,6 +459,22 @@ class ApprovalService:
                     break
         return tuple(items)
 
+    def navigation_summary(self, approval_id: str) -> dict:
+        """Small navigation facts from frozen control metadata; no subject reads."""
+        with self._connect() as connection:
+            row = self._request_row(connection, approval_id)
+            selected = connection.execute("SELECT selected_option FROM approval_decisions WHERE approval_id=?",
+                (approval_id,)).fetchone()
+        raw = row["create_request_json"]
+        if hashlib.sha256(raw).hexdigest() != row["create_request_sha256"]:
+            raise ApprovalError("approval creation metadata hash mismatch")
+        value = json.loads(raw)
+        options = value["options"]
+        return {"kind": value["kind"],
+            "question": value["question"][:240] + ("…" if len(value["question"]) > 240 else ""),
+            "selected_label": next((o["label"] for o in options if selected and o["option_id"] == selected[0]),
+                UI_CANCEL_OPTION.label if selected and selected[0] == UI_CANCEL_OPTION.option_id else None)}
+
     def request_summary(
         self, approval_id: str, *, now: datetime | None = None
     ) -> ApprovalListItem:

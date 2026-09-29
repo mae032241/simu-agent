@@ -84,7 +84,8 @@ def test_workbench_has_separate_branches_exact_goals_and_native_pagination() -> 
     assert "/instance/instance-a/manage" in page
     assert "name='workbench-csrf' content='csrf'" in page
     assert "<script src='/static/workbench.js' defer>" in page
-    assert "<form" not in page
+    assert "<form" not in page.split("</main>", 1)[0]
+    assert "data-summary-retry" not in page  # No generation rights from browsing.
     assert "?format=image" in page
     assert "工作台导航" in page
 
@@ -148,7 +149,7 @@ def test_execution_collection_and_approval_link_are_read_only_navigation() -> No
     node = {**_metadata("approval", "old-review", "pending"), "review_url": "/review/exact-old?token=old-token", "gaps": []}
     page = render_node(node, instance_id="instance-a").decode()
     assert "href='/review/exact-old?token=old-token'" in page
-    assert "打开原审批请求" in page
+    assert "核对参数并作出决定" in page
     assert "<form" not in page
 
 

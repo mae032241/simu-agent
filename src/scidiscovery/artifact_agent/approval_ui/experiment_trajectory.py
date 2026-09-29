@@ -71,6 +71,7 @@ def read_children(model, run, *, offset=0, limit=8):
             if owner is None or owner.object_id != origin:
                 continue
             node = model._metadata(run.instance_id, binding)
+            authorization = node.get("execution_authorization", {})
             items.append({key: node[key] for key in ("key", "kind", "state", "source_time")}
                 | {"title": binding.name[len(prefix):], "parent_key": "run:" + owner.name,
                    "source_time": binding.created_at})
@@ -82,9 +83,11 @@ def read_children(model, run, *, offset=0, limit=8):
             if parent_binding(model, run.instance_id, approval) != owner:
                 continue
             node = model._metadata(run.instance_id, approval)
+            from .approval_focus import budget_brief
+            summary = {**node.get("approval_summary", {}), "resource_summary": budget_brief(authorization)}
             items.append({key: node[key] for key in ("key", "kind", "state", "source_time")}
                 | {"title": binding.name[len(prefix):] + " · 执行审批", "parent_key": "run:" + owner.name,
-                   "source_time": approval.created_at})
+                   "source_time": approval.created_at, "approval_summary": summary})
     except Exception:
         gaps.append("execution_children_unavailable")
     # Newest first; stage versions are assigned in original receipt order.

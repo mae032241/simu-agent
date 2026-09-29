@@ -558,7 +558,8 @@ class ApprovalUI:
         instance_id = parts[1]
         access = self._browser_grant(handler, instance_id)
         model = self._model(instance_id)
-        can_retry_summary = self._can_retry_summary(instance_id, access)
+        summary_unavailable_reason = self._summary_unavailable_reason(instance_id, access)
+        can_retry_summary = summary_unavailable_reason is None
         if len(parts) == 2:
             try:
                 page = int(_one(query, "page") or "1")
@@ -591,7 +592,7 @@ class ApprovalUI:
             view["observations"] = self._cache_observations(instance_id, view["nodes"]["items"])
             body = render_workbench(view, browse_base=f"/instance/{quote(instance_id, safe='')}",
                 csrf_token=self.session_id, can_manage="maintenance" in access.scopes,
-                can_retry_summary=can_retry_summary)
+                can_retry_summary=can_retry_summary, summary_unavailable_reason=summary_unavailable_reason)
         elif parts[2] == "nodes":
             key = unquote(parts[3])
             view = model.node(instance_id, key,
@@ -609,8 +610,11 @@ class ApprovalUI:
             if view.get("kind") == "approval":
                 binding = model.bindings.get_binding(instance=instance_id, namespace="approval", name=key.split(":", 1)[1])
                 view["review_url"] = model.approvals.status(binding.object_id).review_path
+                from .approval_focus import execution_budget
+                view["approval_authorization"] = execution_budget(model, binding.object_id)
             body = render_node(view, instance_id=instance_id,
                 csrf_token=self.session_id, can_retry_summary=can_retry_summary,
+                summary_unavailable_reason=summary_unavailable_reason,
                 presentation=None if view.get("stage_reference") else self._workbench_presentation(instance_id, key))
         else:
             key, reference = _one(query, "node_key"), unquote(parts[3])
@@ -625,10 +629,13 @@ class ApprovalUI:
         read_only = (review.request.kind in _RETIRED_INSTANCE_APPROVAL_KINDS
             or self._approval_frozen(review.request.approval_id))
         presentation, evidence_href, image_href = None, None, None
+        authorization = None
         if self.read_model is not None and self.bindings is not None:
             try:
                 owner = self._approval_owner(review.request.approval_id)
                 if owner is not None:
+                    from .approval_focus import execution_budget
+                    authorization = execution_budget(self._model(owner[0].instance_id), review.request.approval_id)
                     from .presentation import build_presentation
                     context = self._model(owner[0].instance_id).approval_context(owner[0].instance_id, review, presentation=True)
                     presentation = build_presentation(tuple(context["artifacts"]),
@@ -644,7 +651,7 @@ class ApprovalUI:
         return render_review(review, access_token=token, identity=self.identity,
             context=self._review_context(review.request.approval_id),
             read_only=read_only,
-            presentation=presentation, evidence_href=evidence_href, image_href=image_href)
+            presentation=presentation, evidence_href=evidence_href, image_href=image_href, authorization=authorization)
 
     def _handle_evidence(self, handler, parts, query):
         if self.read_model is None:
@@ -1106,11 +1113,20 @@ class ApprovalUI:
         return self.trajectory_store
 
     def _can_retry_summary(self, instance_id, access):
-        return ("maintenance" in access.scopes and self.read_model is not None
-            and self.read_model.presentation_summaries is not None
-            and self.read_model.runs.agent_settings.presentation.enabled
-            and self.bindings.agent_settings(instance_id)["settings"].get("presentation", {}).get("enabled", True)
-            and self._cache_writable(instance_id))
+        return self._summary_unavailable_reason(instance_id, access) is None
+
+    def _summary_unavailable_reason(self, instance_id, access):
+        if self.read_model is None or self.read_model.presentation_summaries is None:
+            return "service_unavailable"
+        if not self.read_model.runs.agent_settings.presentation.enabled:
+            return "service_disabled"
+        if not self.bindings.agent_settings(instance_id)["settings"].get("presentation", {}).get("enabled", True):
+            return "instance_disabled"
+        if not self._cache_writable(instance_id):
+            return "read_only"
+        if "maintenance" not in access.scopes:
+            return "access_required"
+        return None
 
     def _handle_summary_retry(self, handler, instance_id, *, generate=False):
         from .read_model import ReadModelNotFound

@@ -73,6 +73,7 @@ def render_review(
     presentation: dict | None = None,
     evidence_href: EvidenceHref | None = None,
     image_href: ImageHref | None = None,
+    authorization: dict | None = None,
 ) -> bytes:
     """Render one frozen request without dispatching on domain schemas."""
 
@@ -91,6 +92,10 @@ def render_review(
                 return html.unescape(_subject_href(review, index, access_token))
         return ""
 
+    from .approval_focus import render_approval_focus
+    focus_panel = render_approval_focus(presentation,
+        subject_ids=[ref.artifact_id for ref in request.subject_refs],
+        evidence_href=evidence_href or frozen_evidence_href, authorization=authorization)
     presentation_panel = render_presentation(
         presentation,
         evidence_href=evidence_href or frozen_evidence_href,
@@ -128,6 +133,7 @@ def render_review(
         f"<div class='question'>{question_preview}</div>{request_download}"
         f"{_render_request_metadata(review, status_label)}"
         "</section>"
+        f"{focus_panel}"
         "<div class='review-layout'><div class='review-main'>"
     )
     page_end = (
@@ -377,7 +383,7 @@ def _render_decision(
     action = f"/review/{quote(review.request.approval_id, safe='')}/decision"
     return (
         "<section class='decision-panel'><p class='eyebrow'>人工决定</p>"
-        "<h2>审阅结论</h2>"
+        "<h2>请选择本次决定</h2>"
         f"<a class='source-link' href='{_request_href(review, access_token)}'>完整审批问题与选项（原件）</a>"
         f"<form method='post' action='{html.escape(action, quote=True)}'>"
         f"<input type='hidden' name='token' value='{html.escape(access_token, quote=True)}'>"
