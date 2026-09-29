@@ -1335,3 +1335,27 @@ Worker 绑定及 assignment 打开；尚未提交封存。259.522 s 时全局 Di
 `prior-attempts.json` 保留前轮失败/用量及收尾证据索引，`prior-native-turns.json` 由实际
 原 Root 和 Worker 事件/绑定生成，不由 Agent 填写。原生宿主终态查询仍须普通终端执行；
 本轮不提前宣称科学质量或 B6 通过。
+
+### B6 manual-known 完整通过（2026-09-29）
+
+`.b6-acceptance-04/manual-known/journey-1790648177493158091`：启动前确认前轮 Root/Worker
+的确切回合均为 interrupted。新 Run `run_b1b3d6139e6247caae5c10756a421e2d` 由一个
+Worker 完成，一次 worker_submit_result 成功，Root 正式 run_status 回读；本轮两个原生
+线程的最后回合均 completed，监督器退出 0，24 次 MCP 调用无错误。没有 helper、TCAD
+或网络实验，不能由此宣称这些能力已经验收。
+
+已读取并复核 CAS 封存的 scientific_intake：三点和无量纲单位准确，逐点验证 y=2x+1，
+仅限样本内；误差条、重复测量、因果和区间外证据缺失明确保留。三项 rubric 均通过，
+复核绑定确切封存摘要，见 suite 的 manual-known.review.json 与 reviewed-result.json。
+本案例 sealed_delivery / quality / execution 均 passed，B6 整体仍未通过。
+
+耗时 363.315 s（含用户绑定），树 RSS 峰值 875532288 B，无资源止损；Dirty 峰值
+17145856 B，未达到阈值，因而本轮只证明正常运行，不能替代已做的超限波动过程测试。
+Root 输入 546178、缓存输入 508544、输出 4302；Worker 输入 442184、缓存输入 415872、
+输出 8145。输入+输出合计 1000809，缓存输入是其中的 924416，不重复加总；非缓存输入
+加输出为 76393，这些不是货币费用。根线程等待调用 4 次；Worker 读取输出包括 10192 B
+启动材料及 17288 B 表单。24 个 MCP 结果文本/结构化表示重复，但尚无证据证明模型端
+双份计入上下文。详情在 content-and-usage-audit.json；前轮失败成本记录没有删除。
+
+同 suite 的 auto-known 已由相同旧实例快照和安装准备，未启动模型。待自主模式完成并
+通过同一 rubric 后才能计算配对收益，当前不作“更省 token”的结论。
