@@ -72,16 +72,14 @@ def validate_report(raw):
 def validate_goal_inputs(sources):
     """Validate the goal at its exact source; no fabricated standalone artifact."""
     from pydantic import ValidationError
-    from .artifact_agent.schema.research_objective import ResearchObjectiveContract
+    from .artifact_agent.schema.research_objective import ResearchObjectiveContract, declared_objective
     from .operations.invoke import OperationInvocationError
     try:
         source = json.loads(sources["objective_source"])
     except (json.JSONDecodeError, UnicodeDecodeError) as error:
         raise OperationInvocationError("input_objective_invalid", port="subject",
             message="The selected goal source is not a readable scientific record; repair its original content.") from error
-    foundation = source.get("scientific_foundation", source) if isinstance(source, dict) else None
-    objective = (foundation.get("objective_contract", foundation if "objective_key" in foundation else None)
-                 if isinstance(foundation, dict) else None)
+    foundation, objective = declared_objective(source)
     if objective is None:
         raise OperationInvocationError("input_objective_missing", port="subject",
             message="The selected scientific material does not declare the research intent and completion criteria. "

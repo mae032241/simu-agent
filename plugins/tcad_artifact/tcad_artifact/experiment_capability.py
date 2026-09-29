@@ -99,7 +99,7 @@ def debug(request, context):
     execution: ExperimentTools = context.require_service("experiment.execution")
     service = context.require_service("tcad.development_debug")
     if request.action == "status":
-        return service.status(context, run_name=request.name)
+        return service.status(context, run_name=request.name, budget_subject=execution.budget_subject(context))
     if request.action == "cancel":
         active = execution.cancel_diagnostics(context, service_name="tcad.development_debug", name=request.name)
         return {"name":request.name, "state":"cancelling" if active else "inactive"}
@@ -121,7 +121,8 @@ def debug(request, context):
     # Keep that lossless workspace with the service, outside the Agent workspace.
     scoped = execution.diagnostic_context(context, service_name="tcad.development_debug")
     private = scoped.workspace
-    response = service.run(scoped, run_name=request.name, mode=request.mode, output_names=request.output_names)
+    response = service.run(scoped, run_name=request.name, mode=request.mode,
+        budget_subject=execution.budget_subject(context), output_names=request.output_names)
     result = {key: response[key] for key in ("state", "mode", "summary", "exit_code", "missing_outputs") if key in response}
     log = private / "deck/reports" / ("log-" + request.name + ".txt")
     if log.is_file():

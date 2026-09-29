@@ -31,7 +31,13 @@ for line in sys.stdin:
     if method=='initialize':result={}
     elif method=='config/read':result={'config':config}
     elif method in ('thread/start','thread/resume'):
-        result={'thread':{'id':p.get('threadId','native-root'),'sessionId':'native-root'}}
+        # A conflicting personal config wins unless the request declares its own policy.
+        effective={'approvalPolicy':'on-request','sandbox':{'type':'dangerFullAccess'}}
+        if 'sandbox' in p and not os.environ.get('SCID_TEST_IGNORE_PERMISSIONS'):
+            net=p.get('config',{}).get('sandbox_workspace_write',{}).get('network_access',False)
+            if os.environ.get('SCID_TEST_NETWORK_MISMATCH'):net=not net
+            effective={'approvalPolicy':p['approvalPolicy'],'sandbox':{'type':{'read-only':'readOnly','workspace-write':'workspaceWrite'}[p['sandbox']],'networkAccess':net,'writableRoots':[]}}
+        result={'thread':{'id':p.get('threadId','native-root'),'sessionId':'native-root'},**effective}
     elif method=='thread/read':
         status=('inProgress' if p['threadId']=='owner' else os.environ.get('SCID_TEST_HELPER_STATUS','completed') if p['threadId']=='helper' else os.environ.get('SCID_TEST_ROOT_STATUS','completed'))
         result={'thread':{'id':p['threadId'],'turns':[] if status=='missing' else [{'id':'exact-turn','status':status}]}}
@@ -140,6 +146,60 @@ def test_native_process_interrupted_recovery_starts_one_new_decision(progression
     assert after['usage_records']==before['usage_records']
     p.coordinator.tick()
     assert methods(requests).count('turn/start')==2
+
+
+def params(requests, method):
+    return [json.loads(v)['params'] for v in requests.read_text().splitlines() if json.loads(v).get('method')==method]
+
+
+def test_background_root_pins_declared_permissions_over_personal_config(progression,tmp_path,monkeypatch):
+    p=progression
+    _,requests=native(tmp_path,monkeypatch,p.runtime.project_root,tmp_path/'control.sock')
+    p.coordinator.host_factory=CodexProgressionFactory(project_root=p.runtime.project_root,
+        state_root=p.runtime.state_root,socket_path=tmp_path/'control.sock',approval_base_url='http://127.0.0.1:8765')
+    p.coordinator.tick()
+    wait_for(lambda: p.coordinator.host.poll(.01) is not None)
+    p.coordinator.host.close();p.coordinator.host=None
+    p.now[0]+=6
+    p.coordinator.tick()
+    declared={'approvalPolicy':'never','sandbox':'workspace-write'}
+    for method in ('thread/start','thread/resume'):
+        assert [{k:v[k] for k in declared} for v in params(requests,method)]==[declared]
+        assert params(requests,method)[0]['config']['sandbox_workspace_write']=={'network_access':True,'writable_roots':[]}
+    assert params(requests,'thread/start')[0]['config']['model_reasoning_effort']
+    turns=params(requests,'turn/start')
+    # Inherited native Workers keep workspace write and network access.
+    assert turns and all(v['approvalPolicy']=='never' and v['sandboxPolicy']=={'type':'workspaceWrite','networkAccess':True} for v in turns)
+
+
+@pytest.mark.parametrize('variant',['SCID_TEST_IGNORE_PERMISSIONS','SCID_TEST_NETWORK_MISMATCH'])
+def test_background_root_rejects_effective_permissions_that_differ_from_declaration(progression,tmp_path,monkeypatch,variant):
+    p=progression
+    _,requests=native(tmp_path,monkeypatch,p.runtime.project_root,tmp_path/'control.sock')
+    monkeypatch.setenv(variant,'1')
+    p.coordinator.host_factory=CodexProgressionFactory(project_root=p.runtime.project_root,
+        state_root=p.runtime.state_root,socket_path=tmp_path/'control.sock',approval_base_url='http://127.0.0.1:8765')
+    with pytest.raises(HostError, match='root_permissions_mismatch'):p.coordinator.tick()
+    assert row(p)['state']=='paused'
+    assert 'turn/start' not in methods(requests) and 'mcpServer/tool/call' not in methods(requests)
+
+
+def test_restored_running_turn_without_recorded_policy_stops_before_launch(progression,tmp_path,monkeypatch):
+    p=progression
+    _,requests=native(tmp_path,monkeypatch,p.runtime.project_root,tmp_path/'control.sock','running')
+    p.coordinator.host_factory=CodexProgressionFactory(project_root=p.runtime.project_root,
+        state_root=p.runtime.state_root,socket_path=tmp_path/'control.sock',approval_base_url='http://127.0.0.1:8765')
+    p.coordinator.tick()
+    wait_for(lambda: (p.coordinator.host.poll(.01), bool(checkpoint(p).get('turn_id')))[1])
+    assert checkpoint(p)['root_permissions']=={'approval_policy':'never','sandbox':'workspace-write','network_access':True}
+    p.coordinator.host.close();p.coordinator.host=None
+    # A turn started before the policy was recorded cannot be shown to match.
+    with p.runtime.scheduler_bindings._connect() as db:
+        value=checkpoint(p);value.pop('root_permissions')
+        db.execute('UPDATE scheduler_progression SET checkpoint_json=? WHERE instance_id=?',(json.dumps(value),p.instance))
+    before=methods(requests)
+    with pytest.raises(HostError,match='root_permissions_unproven'):p.coordinator.tick()
+    assert methods(requests)==before and row(p)['state']=='paused'
 
 
 @pytest.mark.parametrize('mode,expected', [('missing-tools','host_fault'),('lost','host_fault'),('accepted-lost','host_fault')])

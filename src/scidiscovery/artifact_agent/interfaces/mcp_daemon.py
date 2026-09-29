@@ -219,7 +219,8 @@ def main(argv: list[str] | None = None) -> int:
     progression = ProgressionCoordinator(runtime=startup_runtime,
         facade_factory=lambda session: router._router(session).facade,
         host_factory=CodexProgressionFactory(project_root=project_root, state_root=state_root,
-            socket_path=args.socket, approval_base_url=args.approval_base_url))
+            socket_path=args.socket, approval_base_url=args.approval_base_url,
+            catalog=startup_runtime.operation_catalog))
     def stop(*_):
         progression.close()
         lifecycle.close()

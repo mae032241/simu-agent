@@ -63,7 +63,23 @@ def test_scientific_projection_preserves_private_control_snapshot():
     assert json.loads(raw)["records"][0]["artifact_ref"] == "private-id"
 
 
-def _real_experiment(tmp_path, monkeypatch, solver="sprocess", before_submit=None):
+def _goal_carrier(carrier, objective_key="objective", statement="Observe a fixture."):
+    """The same goal carried by a standalone objective, a foundation or an intake."""
+    import json
+    from scidiscovery.artifact_agent.schema.common import canonical_json
+    goal = {"objective_key":objective_key, "intent":"engineering", "statement":statement,
+        "closure_requirements":[{"requirement_key":"observation", "description":"Retain one observation.",
+        "requirement_type":"comparison_present", "comparison_purposes":["exploratory_diagnostic"]}]}
+    if carrier == "research-objective":
+        return canonical_json(goal)
+    from tests.operations.test_hypothesis_objective_boundary import _foundation
+    from tests.operations.test_general_transform_operations import _intake
+    foundation = {**json.loads(_foundation()), "objective":statement, "objective_contract":goal}
+    return canonical_json(foundation if carrier == "scientific-foundation" else
+        {**_intake().model_dump(mode="json"), "scientific_foundation":foundation})
+
+
+def _real_experiment(tmp_path, monkeypatch, solver="sprocess", before_submit=None, goal="research-objective"):
     import hashlib
     import json
     from pathlib import Path
@@ -117,11 +133,8 @@ def _real_experiment(tmp_path, monkeypatch, solver="sprocess", before_submit=Non
         approval_receipt_secret=b"a"*32, execution_adapters={"tcad_artifact:tcad":adapter},
         execution_collection=SimpleNamespace(collect=collect))
     instance = runtime.scheduler_bindings.create_instance(name="experiment", title="Bounded experiment", objective="Observe a fixture.")
-    objective = runtime.artifacts.register(canonical_json({"objective_key":"objective", "intent":"engineering",
-        "statement":"Observe a fixture.", "closure_requirements":[{"requirement_key":"observation",
-        "description":"Retain one observation.", "requirement_type":"comparison_present",
-        "comparison_purposes":["exploratory_diagnostic"]}]}), ArtifactRegistration(kind="objective",
-        schema_id="scidiscovery.research-objective.v1", payload_schema_version=1,
+    objective = runtime.artifacts.register(_goal_carrier(goal), ArtifactRegistration(kind="objective",
+        schema_id=f"scidiscovery.{goal}.v1", payload_schema_version=1,
         media_type="application/json", creator=runtime.actor), idempotency_key="objective")
     runtime.scheduler_bindings.bind(instance=instance.instance_id, namespace="artifact", name="objective", object_id=objective.artifact_id)
     root = RootMCPRouter(RootToolFacade(runtime.artifacts, runtime.intake, runs=runtime.runs,
@@ -212,6 +225,8 @@ def _real_experiment(tmp_path, monkeypatch, solver="sprocess", before_submit=Non
     assert worker.call_tool("worker_experiment_debug", {"action":"cancel", "name":"diagnostic"})["state"] == "inactive"
     assert debugger.submits == 1
     ledger = next((tmp_path / "debug/budgets").glob("*.json"))
+    from scidiscovery.artifact_agent.schema.common import canonical_sha256
+    assert ledger.stem == canonical_sha256({"subject": coordinator.budget_subject(runtime.runs.status(author_id))})
     assert json.loads(ledger.read_bytes())["reserved_wall_seconds"] == 1
     started = worker.call_tool("worker_experiment_execute", {"action":"start", "implementation":prepared["implementation"]})
     assert started["state"] == "running"
@@ -258,7 +273,7 @@ def _real_experiment(tmp_path, monkeypatch, solver="sprocess", before_submit=Non
         assert grid.ref in runtime.artifacts.verify(private_package).parent_refs
     formal = next(item.object_id for item in runtime.scheduler_bindings.list(instance=instance.instance_id, namespace="execution")
         if runtime.executions.status(item.object_id).state == "collected")
-    assert runtime.executions.budget_owner(formal) == runtime.executions.scientific_budget_owner(private_package, ("scidiscovery.research-objective.v1",))
+    assert runtime.executions.budget_owner(formal) == coordinator.budget_subject(runtime.runs.status(worker._run_id))
     detail = root.call_tool("run_status", {'name': "observe", "intent": 'full'})
     assert "artifact_ref" not in json.dumps(detail) and "operation_digest" not in json.dumps(detail)
     schema = (workspace / "schema/result.schema.json").read_text()
@@ -270,6 +285,64 @@ def _real_experiment(tmp_path, monkeypatch, solver="sprocess", before_submit=Non
     first, _ = gateway._worker(context)
     assert gateway._worker(context)[0] is first
     return runtime, root, catalog, connections, instance
+
+
+import pytest
+
+
+@pytest.mark.parametrize("goal", ["research-objective", "scientific-foundation", "scientific-intake"])
+def test_each_goal_carrier_reaches_policy_start_and_over_budget_rejection(tmp_path, monkeypatch, goal):
+    _real_experiment(tmp_path, monkeypatch, goal=goal)
+
+
+def test_instance_owns_cumulative_allowance_independent_of_agent_goal_keys(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from scidiscovery.artifact_agent.schema.artifact import ArtifactRegistration
+    from scidiscovery.operation_contract import DiagnosticError
+    from tests.operations.tcad_policy_fixtures import policy_snapshot
+    runtime, root, catalog, _, instance = _real_experiment(tmp_path, monkeypatch)
+    coordinator = runtime.runs.experiment_executions
+    formal = next(item.object_id for item in runtime.scheduler_bindings.list(instance=instance.instance_id, namespace="execution")
+        if runtime.executions.status(item.object_id).state == "collected")
+    def run(*payloads, instance_id=instance.instance_id):
+        inputs = []
+        for index, (carrier, raw) in enumerate(payloads):
+            ref = runtime.artifacts.register(raw, ArtifactRegistration(kind="objective", schema_id=f"scidiscovery.{carrier}.v1",
+                payload_schema_version=1, media_type="application/json", creator=runtime.actor), idempotency_key=f"goal-{carrier}-{index}-{len(raw)}").ref
+            inputs.append(SimpleNamespace(port_name="objective_source", artifact_ref=ref))
+        return SimpleNamespace(run_id="fixture", instance_id=instance_id, inputs=tuple(inputs))
+    owner = runtime.executions.budget_owner(formal)
+    # Carrier change, revision, a renamed objective_key (review counterexample) and an
+    # unrelated goal all stay in the instance pool; Agent-authored keys never open one.
+    for carrier, raw in (("scientific-foundation", _goal_carrier("scientific-foundation")),
+            ("scientific-intake", _goal_carrier("scientific-intake", statement="Observe a revised fixture.")),
+            ("research-objective", _goal_carrier("research-objective", "renamed")),
+            ("scientific-intake", _goal_carrier("scientific-intake", "unrelated", "A separate research question."))):
+        assert coordinator.budget_subject(run((carrier, raw))) == owner
+    other = coordinator.budget_subject(run(("research-objective", _goal_carrier("research-objective")), instance_id="other"))
+    assert other != owner
+    # One execution consumed part of the instance allowance; any goal in it sees the
+    # remainder and falls back to human approval/deny, while another instance does not.
+    executor = runtime.executions.request(formal).executor
+    renamed = coordinator.budget_subject(run(("research-objective", _goal_carrier("research-objective", "renamed-again"))))
+    full = policy_snapshot().admission(budget={"max_storage_bytes": 1024, "wall_time_seconds": 3600}, budget_key=renamed)
+    assert full.outcome == "policy"
+    shared = runtime.executions.budget_admission(executor=executor, admission=full, allow_denial=True)
+    assert (shared.outcome, shared.reason) == ("require_human_approval", "cumulative_budget_exceeded")
+    denied = runtime.executions.budget_admission(executor=executor, allow_denial=True,
+        admission=full.model_copy(update={"outside_allowance": "deny"}))
+    assert (denied.outcome, denied.reason) == ("deny", "cumulative_budget_exceeded")
+    fitting = full.model_copy(update={"budget": {"max_storage_bytes": 1024, "wall_time_seconds": 3599}})
+    assert runtime.executions.budget_admission(executor=executor, admission=fitting).outcome == "policy"
+    separate = full.model_copy(update={"budget_key": other})
+    assert runtime.executions.budget_admission(executor=executor, admission=separate).outcome == "policy"
+    revised = _goal_carrier("scientific-intake", statement="Observe a revised fixture.")
+    for broken, code in ((run(), "experiment_goal_budget_missing"),
+            (run(("research-objective", _goal_carrier("research-objective")), ("scientific-intake", revised)), "experiment_goal_budget_ambiguous"),
+            (run(("scientific-foundation", b'{"objective":"No contract."}')), "experiment_goal_budget_invalid")):
+        with pytest.raises(DiagnosticError) as error:
+            coordinator.budget_subject(broken)
+        assert error.value.details[0]["code"] == code
 
 
 def test_reviewer_and_scientific_surfaces_use_declared_contract(tmp_path, monkeypatch):
@@ -340,9 +413,8 @@ def test_debug_recovery_cancellation_preserves_original_budget(tmp_path):
     import json
     from types import SimpleNamespace
     from tcad_artifact.local_debug_service import LocalTCADDebugService
-    from scidiscovery.artifact_agent.schema.refs import ArtifactRef
     from scidiscovery.artifact_agent.schema.common import canonical_sha256
-    subject = ArtifactRef(artifact_id="objective", sha256="a"*64, kind="objective", schema_id="scidiscovery.research-objective.v1")
+    subject = "control-goal-subject"
     calls = []
     adapter = SimpleNamespace(lookup_submission=lambda descriptor: ("external_debug", "running"),
         status=lambda external: "running",
@@ -356,7 +428,7 @@ def test_debug_recovery_cancellation_preserves_original_budget(tmp_path):
         "record":record, "submission":{"schema_version":1, "name":"submitted", "local_path":"/private/submission",
         "sha256":"b"*64, "size_bytes":1, "media_type":"application/json"}}}}
     path.write_text(json.dumps(ledger))
-    inputs = (SimpleNamespace(port_name="objective_source", artifact_ref=subject),)
+    inputs = subject
     assert not service.experiment_activity({"unrelated_run"}, inputs, cancel=True)
     assert calls == []
     assert service.experiment_activity({"original_run", "recovered_run"}, inputs)
@@ -465,7 +537,7 @@ def test_experiment_tool_binding_scopes_each_run_without_exposing_control_servic
         capabilities=lambda context: ('solver-document',),
         implementation=lambda context, alias: 'exact-package-ref',
         executions=SimpleNamespace(artifacts=SimpleNamespace(read=lambda ref: b'exact-package')),
-        task_origin=lambda run: 'original-task',
+        task_origin=lambda run: 'original-task', budget_subject=lambda run: 'goal-subject',
         task_lineage=lambda run: (run, SimpleNamespace(run_id='original-task')))
     compiled = SimpleNamespace(spec=SimpleNamespace(operation_id='experiment',
         executor=SimpleNamespace(capability='domain')),
@@ -488,4 +560,4 @@ def test_experiment_tool_binding_scopes_each_run_without_exposing_control_servic
     assert scoped.workspace == domain.exchange_root / 'experiment-workspaces/original-task'
     assert a.workspace == tmp_path / 'agent-a'
     assert first.cancel_diagnostics(a, service_name='domain.debug', name='smoke')
-    assert calls == [({'run-a', 'original-task'}, ('frozen-subject',), {'cancel': True, 'name': 'smoke'})]
+    assert calls == [({'run-a', 'original-task'}, 'goal-subject', {'cancel': True, 'name': 'smoke'})]

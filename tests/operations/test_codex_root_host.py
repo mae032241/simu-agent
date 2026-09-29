@@ -8,7 +8,7 @@ import sys
 import pytest
 
 from scidiscovery.platforms.codex_app_server import AppServer, HostError, HostLimits
-from scidiscovery.platforms.codex_root_host import CodexRootHost, RootIdentity
+from scidiscovery.platforms.codex_root_host import CodexRootHost, RootIdentity, RootPermissions
 from scidiscovery.platforms.codex_usage import observe_usage
 
 pytestmark = pytest.mark.process_e2e
@@ -32,6 +32,10 @@ for line in sys.stdin:
     elif m=='config/read':result={'config':{'agents':{'enabled':True}}}
     elif m in ('thread/start','thread/resume'):
         result={'thread':{'id':'wrong' if mode=='identity' else 'root','sessionId':'root'}}
+        if 'sandbox' in p:
+            net=p.get('config',{}).get('sandbox_workspace_write',{}).get('network_access',False)
+            result.update(approvalPolicy=p['approvalPolicy'],sandbox={'type':'readOnly' if p['sandbox']=='read-only' else 'workspaceWrite',
+                'networkAccess':(not net) if mode=='network-mismatch' else net,'writableRoots':['/unexpected'] if mode=='extra-root' else []})
     elif m=='turn/start':
         turn+=1;result={'turn':{'id':'t'+str(turn)}}
         if mode=='timeout':time.sleep(20)
@@ -154,6 +158,30 @@ def test_uncertain_protocol_failure_never_retries(peer,tmp_path,mode,code):
     with pytest.raises(HostError,match='unusable'):host.start_turn('never sent')
     calls=[json.loads(x)['method'] for x in (tmp_path/'requests').read_text().splitlines()]
     assert calls.count('turn/start')==1
+
+
+def test_pinned_root_never_answers_server_permission_request(peer,tmp_path):
+    host,events=peer('server-request')
+    host.permissions=RootPermissions()
+    host.open_root(cwd=str(tmp_path))
+    with pytest.raises(HostError,match='unsupported_server_request'):host.start_turn('one attempt')
+    sent=[json.loads(x) for x in (tmp_path/'requests').read_text().splitlines()]
+    assert not any(item.get('id')==42 for item in sent)  # no reply, approval or denial is fabricated
+    assert next(item for item in sent if item.get('method')=='turn/start')['params']['sandboxPolicy']=={'type':'workspaceWrite','networkAccess':True}
+    assert any(event.get('id')==42 for event in events)
+
+
+@pytest.mark.parametrize('mode',['network-mismatch','extra-root'])
+def test_pinned_root_stops_when_effective_network_or_roots_differ(peer,tmp_path,mode):
+    # Review counterexample: networkAccess=false (or an extra writable root) while
+    # the frozen declaration allows network in the workspace only.
+    host,_=peer(mode)
+    host.permissions=RootPermissions()
+    with pytest.raises(HostError,match='root_permissions_mismatch'):host.open_root(cwd=str(tmp_path))
+    sent=[json.loads(x) for x in (tmp_path/'requests').read_text().splitlines()]
+    start=next(item for item in sent if item.get('method')=='thread/start')['params']
+    assert start['config']['sandbox_workspace_write']=={'network_access':True,'writable_roots':[]}
+    assert 'turn/start' not in {item.get('method') for item in sent}
 
 
 def test_rpc_error_is_sanitized_but_private_evidence_kept(peer,tmp_path):

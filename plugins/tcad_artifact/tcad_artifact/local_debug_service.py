@@ -112,18 +112,13 @@ class LocalTCADDebugService:
             raise ValueError("local TCAD debug exchange must be a real directory")
 
     def run(
-        self, context: OperationToolContext, *, run_name: str, mode: str, output_names: list[str] | None = None
+        self, context: OperationToolContext, *, run_name: str, mode: str, budget_subject: str,
+        output_names: list[str] | None = None
     ) -> dict[str, object]:
-        subject = None
-        for alias in ("objective_source", "research_objective", "scientific_skeleton", "experiment_plan"):
-            try:
-                subject = context.input_ref(alias)
-                break
-            except (KeyError, ValueError):
-                continue
-        if subject is None:
-            raise TCADDebugError("debug budget requires an immutable scientific subject binding")
-        key = canonical_sha256({"subject": subject})
+        # Control derives the subject with the same rule as formal execution.
+        if not budget_subject:
+            raise TCADDebugError("debug budget requires the control-bound research goal")
+        key = canonical_sha256({"subject": budget_subject})
         root = self.exchange_root / "budgets"
         root.mkdir(exist_ok=True, mode=0o700)
         path = root / (key + ".json")
@@ -138,19 +133,18 @@ class LocalTCADDebugService:
             finally:
                 self._save_budget(context)
 
-    def experiment_pending_diagnostics(self, run_ids, inputs):
+    def experiment_pending_diagnostics(self, run_ids, budget_subject):
         pending = []
-        self.experiment_activity(run_ids, inputs, pending=pending)
+        self.experiment_activity(run_ids, budget_subject, pending=pending)
         return pending
 
-    def experiment_activity(self, run_ids, inputs, *, cancel=False, name=None, pending=None):
+    def experiment_activity(self, run_ids, budget_subject, *, cancel=False, name=None, pending=None):
         """Observe/cancel persisted jobs without resetting the original allowance."""
         from scidiscovery.artifact_agent.schema.execution import LocalFileDescriptor
         from scidiscovery.plugin_runtime.workspace import atomic_json
-        subject = next((item.artifact_ref for item in inputs if item.port_name == "objective_source"), None)
-        if subject is None:
+        if not budget_subject:
             return False
-        key = canonical_sha256({"subject": subject})
+        key = canonical_sha256({"subject": budget_subject})
         root = self.exchange_root / "budgets"
         path = root / (key + ".json")
         if not path.exists():
@@ -191,20 +185,13 @@ class LocalTCADDebugService:
                 atomic_json(path, ledger)
         return active
 
-    def status(self, context, *, run_name):
+    def status(self, context, *, run_name, budget_subject):
         """Observe an exact diagnostic name without policy discovery, submission or collection."""
         if _RUN_NAME.fullmatch(run_name) is None:
             raise TCADDebugError("TCAD development debug name is invalid")
-        subject = None
-        for alias in ("objective_source", "research_objective", "scientific_skeleton", "experiment_plan"):
-            try:
-                subject = context.input_ref(alias)
-                break
-            except (KeyError, ValueError):
-                continue
-        if subject is None:
-            raise TCADDebugError("debug status requires an immutable scientific subject binding")
-        key = canonical_sha256({"subject": subject})
+        if not budget_subject:
+            raise TCADDebugError("debug status requires the control-bound research goal")
+        key = canonical_sha256({"subject": budget_subject})
         path = self.exchange_root / "budgets" / (key + ".json")
         absent = {"name": run_name, "state": "not_created", "submission": "not_submitted"}
         if not path.exists():

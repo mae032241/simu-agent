@@ -29,15 +29,45 @@ class ExperimentExecution:
     def task_lineage(self, run):
         return self.runs.task_lineage(run.run_id)
 
+    def budget_subject(self, run):
+        """One control rule for execution and diagnostics. The cumulative allowance pool
+        belongs to the research instance (a control identity); Agent-authored
+        objective_key, carrier and revision never select a pool. A single valid
+        control-bound goal is still required before any execution."""
+        import json
+        from pydantic import ValidationError
+        from ..schema.common import canonical_sha256
+        from ..schema.research_objective import ResearchObjectiveContract, declared_objective
+        from .sealed_materials import material_error
+        refs = {item.artifact_ref for item in run.inputs if item.port_name in {"objective_source", "research_objective"}}
+        if len(refs) != 1:
+            raise material_error("experiment_goal_budget_" + ("ambiguous" if refs else "missing"),
+                "This task has no single control-bound research goal, so no execution budget applies. "
+                "Ask the scheduler to repair the task's scientific subject; no execution was submitted.", path="$.name")
+        try:
+            goal = declared_objective(json.loads(self.executions.artifacts.read(next(iter(refs)))))[1]
+            ResearchObjectiveContract.model_validate_json(canonical_json(goal), strict=True)
+        except (ValueError, ValidationError) as error:
+            raise material_error("experiment_goal_budget_invalid",
+                "The task's bound goal source does not declare a valid research goal; no execution was submitted.",
+                path="$.name") from error
+        return canonical_sha256({"instance": run.instance_id})
+
     def _domain_active(self, run):
         if self.services_for is not None:
             self.worker_services.update(self.services_for(run.operation_id))
         lineage = {item.run_id for item in self.task_lineage(run)}
         details = []
-        for service in {id(item): item for item in self.worker_services.values()}.values():
+        services = [item for item in {id(item): item for item in self.worker_services.values()}.values()
+                    if callable(getattr(item, "experiment_activity", None))]
+        try:
+            subject = self.budget_subject(run) if services else None
+        except DiagnosticError:
+            return details  # Without a bound goal no diagnostic could reserve an allowance.
+        for service in services:
             if callable(getattr(service, "experiment_pending_diagnostics", None)):
-                details.extend(service.experiment_pending_diagnostics(lineage, run.inputs))
-            elif callable(getattr(service, "experiment_activity", None)) and service.experiment_activity(lineage, run.inputs, cancel=False):
+                details.extend(service.experiment_pending_diagnostics(lineage, subject))
+            elif service.experiment_activity(lineage, subject, cancel=False):
                 details.append(contract_diagnostic("experiment_diagnostics_pending", phase="protocol",
                     affected_action="submit", repairable=True,
                     message="An experiment diagnostic is still active. Finish or cancel the existing diagnostic, then resubmit the unchanged report."))
@@ -329,7 +359,7 @@ class ExperimentExecution:
                     approval_id="apr_" + execution_id if approval is not None and approval.status == "decided" else None,
                     compiled_identity=identity,
                     allow_policy_authorization=effect.spec.review.approval.allow_policy_authorization,
-                    budget_subject_schemas=("scidiscovery.research-objective.v1",))
+                    budget_owner=self.budget_subject(run))
             except ExecutionAuthorizationRequired:
                 self._approval(execution_id, effect, identity)
                 self._bind_approval(run, request.name, execution_id)
@@ -527,7 +557,10 @@ class _TaskExperimentTools:
         run = self.__scope(context)
         service = context.require_service(service_name)
         lineage = {item.run_id for item in self.__coordinator.task_lineage(run)}
-        return bool(service.experiment_activity(lineage, run.inputs, cancel=True, name=name))
+        return bool(service.experiment_activity(lineage, self.__coordinator.budget_subject(run), cancel=True, name=name))
+
+    def budget_subject(self, context):
+        return self.__coordinator.budget_subject(self.__scope(context))
 
     def command(self, context, request):
         self.__scope(context)

@@ -440,7 +440,10 @@ class ProgressionCoordinator:
         prompt = self._brief(self._row(), snapshot, limits['context_bytes']-len(INSTRUCTION.encode()))
         # Intent is durable before the non-idempotent native turn/start.
         with self.bindings.scheduling_guard(instance_id=self.instance, session_key=row['owner_session'], expected_generation=row['generation']):
+            # The policy a native turn starts with; restoring it later must match.
+            permissions = getattr(self.host, 'permissions', None)
             self._save(dict(phase='prepared', turn_id=None, decision_snapshot=snapshot, round_started_at=self.clock(),
+                root_permissions=permissions.declaration() if permissions is not None else None,
                 rounds=checkpoint.get('rounds', 0)+1, runtime_status='deciding',
                 last_report=checkpoint.get('report') or checkpoint.get('last_report'), report=None), reason='host_active')
         turn = self.host.start_turn(prompt)

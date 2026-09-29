@@ -175,8 +175,18 @@ class ResearchObjectiveContract(SchemaModel):
         return self
 
 
+def declared_objective(document: object) -> tuple[dict | None, dict | None]:
+    """Return (carrier, goal) from a standalone objective, foundation or intake."""
+    carrier = document.get("scientific_foundation", document) if isinstance(document, dict) else None
+    if not isinstance(carrier, dict):
+        return None, None
+    goal = carrier.get("objective_contract", carrier if "objective_key" in carrier else None)
+    return carrier, goal if isinstance(goal, dict) else None
+
+
 __all__ = [
     "ComparisonPurpose",
+    "declared_objective",
     "ObjectiveClosureRequirement",
     "ObjectiveIntent",
     "ObjectiveTarget",

@@ -270,3 +270,66 @@ def test_progression_disable_inherits_without_instance_reenabling_deployment():
     assert not effective_settings(parse_settings({}),
         {'progression': {'enabled': False}})['progression']['enabled']
     assert effective_settings(parse_settings({}), {})['progression']['enabled']
+
+
+def test_background_root_permissions_are_configurable_but_keep_inherited_worker_needs():
+    from types import SimpleNamespace
+    from scidiscovery.agent_execution_settings import effective_settings, root_permission_conflicts
+    from scidiscovery.builtin_plugin import CORE_PLUGIN
+    from scidiscovery.general_science_plugin import PLUGIN as science
+    from scidiscovery.operations.catalog import compile_catalog
+    default = effective_settings(parse_settings({}), {})['progression']
+    assert (default['root_approval_policy'], default['root_sandbox'], default['root_network_access']) == (
+        'never', 'workspace-write', True)
+    offline = {'root_sandbox': 'read-only', 'root_network_access': False}
+    assert effective_settings(parse_settings({'progression': offline}), {})['progression']['root_sandbox'] == 'read-only'
+    with pytest.raises(Exception, match='requires root_sandbox workspace-write'):
+        parse_settings({'progression': {'root_sandbox': 'read-only'}})  # network cannot be declared read-only
+    for value in ({'root_approval_policy': 'on-request'}, {'root_sandbox': 'danger-full-access'}):
+        with pytest.raises(Exception):
+            parse_settings({'progression': value})
+    # Workers inherit Root permissions: a narrowing choice names every affected Operation.
+    catalog = compile_catalog((CORE_PLUGIN, science))
+    assert root_permission_conflicts(default, catalog) == []
+    issues = root_permission_conflicts(offline, catalog)
+    assert 'inherited native shell' in issues[0] and 'science.experiment.v1' in issues[0]
+    assert 'declared network or web_search' in issues[1] and 'science.evidence.extract.v1' in issues[1]
+    assert 'science.experiment.v1' not in issues[1]
+    offline_catalog = SimpleNamespace(operation_ids=lambda: ('offline',), operation=lambda _: SimpleNamespace(spec=SimpleNamespace(
+        operation_id='offline', executor=SimpleNamespace(kind='agent', native_tools=SimpleNamespace(shell='none', web_search='disabled')),
+        limits=SimpleNamespace(network=SimpleNamespace(mode='none')))))
+    assert root_permission_conflicts(offline, offline_catalog) == []
+
+
+@pytest.mark.parametrize("sandbox", ["read-only", "workspace-write"])
+def test_background_host_rejects_worker_permission_conflicts_before_launch(tmp_path, monkeypatch, sandbox):
+    from scidiscovery.agent_execution_settings import effective_settings
+    from scidiscovery.builtin_plugin import CORE_PLUGIN
+    from scidiscovery.general_science_plugin import PLUGIN as science
+    from scidiscovery.operations.catalog import compile_catalog
+    from scidiscovery.platforms.codex_app_server import AppServer, HostError
+    from scidiscovery.platforms.codex_progression import CodexProgressionFactory
+
+    socket_path = tmp_path / "control.sock"
+    config_dir = tmp_path / ".codex"
+    config_dir.mkdir()
+    (config_dir / "config.toml").write_text(
+        '[mcp_servers.scidiscovery]\ncommand = "unused"\nargs = ["--socket", '
+        + json.dumps(str(socket_path)) + ']\n')
+    settings = effective_settings(parse_settings({"progression": {
+        "root_sandbox": sandbox, "root_network_access": False}}), {})
+    row = {"config_json": json.dumps({"effective": settings}),
+           "host_json": "null", "checkpoint_json": "{}"}
+    factory = CodexProgressionFactory(project_root=tmp_path, state_root=tmp_path / "state",
+        socket_path=socket_path, approval_base_url="http://127.0.0.1:8765",
+        command=["must-not-launch"], catalog=compile_catalog((CORE_PLUGIN, science)))
+
+    def forbidden_launch(*args, **kwargs):
+        pytest.fail("incompatible Worker permissions must be rejected before host launch")
+
+    monkeypatch.setattr(AppServer, "launch", forbidden_launch)
+    with pytest.raises(HostError, match="root_permissions_incompatible") as error:
+        factory(row, lambda event: None)
+    assert "science.evidence.extract.v1" in str(error.value)
+    assert ("inherited native shell" in str(error.value)) == (sandbox == "read-only")
+    assert not (tmp_path / "state" / "progression-logs").exists()

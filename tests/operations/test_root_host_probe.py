@@ -159,3 +159,21 @@ def test_thread_start_matches_installed_cli_schema(tmp_path):
     jsonschema.Draft7Validator(resume_schema).validate({
         "threadId": "fixture-thread", "cwd": str(tmp_path / "workspace"), "excludeTurns": True})
     jsonschema.Draft7Validator(resume_schema).validate({"threadId": "fixture-worker", "excludeTurns": True})
+    # The pinned background Root policy uses only fields this CLI declares.
+    from scidiscovery.platforms.codex_root_host import RootPermissions
+    from scidiscovery.platforms.codex_app_server import HostError
+    assert RootPermissions().turn()["sandboxPolicy"] == {"type": "workspaceWrite", "networkAccess": True}
+    config_schema = json.loads((schema_dir / "codex_app_server_protocol.v2.schemas.json").read_text())["definitions"]
+    assert config_schema["Config"]["properties"]["sandbox_workspace_write"]["anyOf"][0]["$ref"].endswith("/SandboxWorkspaceWrite")
+    workspace = config_schema["SandboxWorkspaceWrite"]["properties"]
+    for pinned in (RootPermissions(), RootPermissions(network_access=False), RootPermissions("never", "read-only", False)):
+        jsonschema.Draft7Validator(schema).validate({"cwd": str(tmp_path), "ephemeral": False, **pinned.thread()})
+        jsonschema.Draft7Validator(resume_schema).validate({"threadId": "fixture-thread", **pinned.thread()})
+        jsonschema.Draft7Validator(turn_schema).validate({**turn_params("fixture-thread", "Bounded task"), **pinned.turn()})
+        assert set(pinned.thread().get("config", {}).get("sandbox_workspace_write", {})) <= set(workspace)
+    for invalid in (dict(sandbox="read-only"), dict(approval_policy="on-request"), dict(network_access=1)):
+        with pytest.raises(HostError, match="root_permissions_unsupported"):
+            RootPermissions(**invalid)
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.Draft7Validator(turn_schema).validate({**turn_params("fixture-thread", "Bounded task"),
+            "sandboxPolicy": {"type": "workspace-write"}})

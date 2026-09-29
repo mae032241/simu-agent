@@ -13,7 +13,7 @@ import tomllib
 from urllib.parse import urlsplit
 
 from .codex_app_server import AppServer, HostError, HostLimits, config_flags
-from .codex_root_host import CodexRootHost, RootIdentity
+from .codex_root_host import CodexRootHost, RootIdentity, RootPermissions
 
 
 class PrivateLog:
@@ -51,8 +51,8 @@ class PrivateLog:
 
 
 class CodexProgressionHost(CodexRootHost):
-    def __init__(self, connection, log):
-        super().__init__(connection)
+    def __init__(self, connection, log, permissions=None):
+        super().__init__(connection, permissions)
         self.log = log
         self.scheduler_session = None
         from .process_observation import OwnedProcessTree
@@ -146,10 +146,28 @@ class CodexProgressionHost(CodexRootHost):
 
 
 class CodexProgressionFactory:
-    def __init__(self, *, project_root, state_root, socket_path, approval_base_url, command=None):
+    def __init__(self, *, project_root, state_root, socket_path, approval_base_url, command=None, catalog=None):
         self.project_root, self.state_root = Path(project_root), Path(state_root)
         self.socket_path, self.approval_base_url = str(socket_path), approval_base_url
-        self.command = command
+        self.command, self.catalog = command, catalog
+
+    def root_permissions(self, limits, checkpoint, prior):
+        """Frozen goal policy, checked against inherited Worker needs before any launch."""
+        from ..agent_execution_settings import ProgressionSettings, root_permission_conflicts
+        default = ProgressionSettings()
+        permissions = RootPermissions(limits.get('root_approval_policy', default.root_approval_policy),
+            limits.get('root_sandbox', default.root_sandbox),
+            limits.get('root_network_access', default.root_network_access))
+        if self.catalog is None:
+            from ..operations.catalog import compile_installed_catalog
+            self.catalog = compile_installed_catalog()
+        conflicts = root_permission_conflicts(limits, self.catalog)
+        if conflicts:
+            raise HostError('root_permissions_incompatible: ' + '; '.join(conflicts))
+        # A restored running turn keeps the policy it started with; unproven means stop.
+        if prior and checkpoint.get('turn_id') and checkpoint.get('root_permissions') != permissions.declaration():
+            raise HostError('root_permissions_unproven')
+        return permissions
 
     def __call__(self, row, on_event):
         settings = json.loads(row['config_json'])['effective']
@@ -166,6 +184,10 @@ class CodexProgressionFactory:
         if self.command is None and executable is None:
             raise HostError('codex_not_installed')
         command = self.command or [executable, 'app-server', '--stdio']
+        previous = json.loads(row['host_json'] or 'null')
+        checkpoint = json.loads(row['checkpoint_json'])
+        prior = RootIdentity(previous['thread_id'], previous['platform_session']) if previous else None
+        permissions = self.root_permissions(limits, checkpoint, prior)
         directory = self.state_root / 'progression-logs'
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         log = PrivateLog(directory / 'host.stderr', limits['log_bytes'])
@@ -175,13 +197,10 @@ class CodexProgressionFactory:
                 cwd=self.project_root, environment=os.environ, stderr=log.writer,
                 limits=HostLimits(rpc_timeout_seconds=limits['rpc_timeout_seconds'], frame_bytes=limits['frame_bytes']),
                 on_event=on_event)
-            host = CodexProgressionHost(connection, log)
+            host = CodexProgressionHost(connection, log, permissions)
             host.resource_limit = limits["max_rss_bytes"]
             connection.checkpoint = host.guard_resources
             host.initialize(cwd=str(self.project_root), expected_config=config)
-            previous = json.loads(row['host_json'] or 'null')
-            checkpoint = json.loads(row['checkpoint_json'])
-            prior = RootIdentity(previous['thread_id'], previous['platform_session']) if previous else None
             profile = settings.get('defaults', {})
             options = {'model': profile['model']} if profile.get('model') else {}
             if profile.get('reasoning_effort'):

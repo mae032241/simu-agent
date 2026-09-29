@@ -40,9 +40,57 @@ def turn_params(thread: str, prompt: str) -> dict:
     return {"threadId": thread, "input": [{"type": "text", "text": prompt}]}
 
 
+_SANDBOX_TYPE = {"read-only": "readOnly", "workspace-write": "workspaceWrite"}
+
+
+@dataclass(frozen=True)
+class RootPermissions:
+    """Background Root policy frozen with the goal, never taken from personal config.
+
+    Native child Agents inherit the Root sandbox and network; settings validation
+    rejects values that would remove a Worker capability declared in the catalog.
+    Sent and verified on start/resume, sent on every turn. never is not isolation."""
+    approval_policy: str = "never"
+    sandbox: str = "workspace-write"
+    network_access: bool = True
+
+    def __post_init__(self):
+        if (self.approval_policy != "never" or self.sandbox not in _SANDBOX_TYPE
+                or type(self.network_access) is not bool
+                or (self.sandbox == "read-only" and self.network_access)):
+            raise HostError("root_permissions_unsupported")
+
+    def declaration(self) -> dict:
+        return {"approval_policy": self.approval_policy, "sandbox": self.sandbox,
+                "network_access": self.network_access}
+
+    def thread(self) -> dict:
+        params = {"approvalPolicy": self.approval_policy, "sandbox": self.sandbox}
+        if self.sandbox == "workspace-write":
+            # Config.sandbox_workspace_write (exported v2 schema); replaces personal values.
+            params["config"] = {"sandbox_workspace_write": {"network_access": self.network_access,
+                                                            "writable_roots": []}}
+        return params
+
+    def turn(self) -> dict:
+        return {"approvalPolicy": self.approval_policy,
+                "sandboxPolicy": {"type": _SANDBOX_TYPE[self.sandbox], "networkAccess": self.network_access}}
+
+    def verify(self, result: dict, *, cwd: str):
+        sandbox = result.get("sandbox") if isinstance(result, dict) else None
+        roots = sandbox.get("writableRoots", []) if isinstance(sandbox, dict) else None
+        # The working directory is writable under workspace-write anyway; any other root widens it.
+        if (result.get("approvalPolicy") != self.approval_policy or not isinstance(sandbox, dict)
+                or sandbox.get("type") != _SANDBOX_TYPE[self.sandbox]
+                or sandbox.get("networkAccess", False) is not self.network_access
+                or not isinstance(roots, list) or any(root != cwd for root in roots)):
+            raise HostError("root_permissions_mismatch")
+
+
 class CodexRootHost:
-    def __init__(self, connection: AppServer):
+    def __init__(self, connection: AppServer, permissions: RootPermissions | None = None):
         self.connection = connection
+        self.permissions = permissions
         self.identity = None
         self.turn_id = None
         self.completion = None
@@ -98,8 +146,14 @@ class CodexRootHost:
         else:
             params = {**(options or {}), "cwd": cwd, "ephemeral": False}
             method = "thread/start"
+        if self.permissions is not None:
+            declared = self.permissions.thread()
+            config = {**params.get("config", {}), **declared.pop("config", {})}
+            params.update(declared, **({"config": config} if config else {}))
         try:
             result = self.connection.rpc(method, params)
+            if self.permissions is not None:
+                self.permissions.verify(result, cwd=cwd)
             thread = result.get("thread", {})
             identity = RootIdentity(thread.get("id"), thread.get("sessionId"))
             if prior is not None and identity != prior:
@@ -123,7 +177,8 @@ class CodexRootHost:
         self.turn_id, self.completion = None, None
         self._starting = True
         try:
-            result = self.connection.rpc("turn/start", turn_params(self.identity.thread_id, prompt))
+            result = self.connection.rpc("turn/start", {**turn_params(self.identity.thread_id, prompt),
+                **(self.permissions.turn() if self.permissions is not None else {})})
             turn = result.get("turn") if isinstance(result, dict) else None
             turn_id = turn.get("id") if isinstance(turn, dict) else None
             if not isinstance(turn_id, str) or not turn_id:

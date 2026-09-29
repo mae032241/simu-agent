@@ -8,6 +8,9 @@ from scidiscovery.operation_contract import DiagnosticError
 from tcad_artifact.local_debug_service import LocalTCADDebugService
 
 
+SUBJECT = "control-goal-subject"
+
+
 def fixture(tmp_path, *, reservation=False, external=None, lookup=None):
     class Adapter:
         @property
@@ -26,8 +29,8 @@ def fixture(tmp_path, *, reservation=False, external=None, lookup=None):
         def status(self, external):
             return "succeeded"
     service = LocalTCADDebugService(adapter=Adapter(), exchange_root=tmp_path)
-    context = SimpleNamespace(input_ref=lambda _: {"fixture":"exact-subject"})
-    path = tmp_path / "budgets" / (canonical_sha256({"subject":context.input_ref("")}) + ".json")
+    context = SimpleNamespace()
+    path = tmp_path / "budgets" / (canonical_sha256({"subject":SUBJECT}) + ".json")
     path.parent.mkdir()
     path.with_suffix(".lock").touch()
     record = {"run_id":"private-run", "external_run_id":external, "state":"accepted", "mode":"initialization"}
@@ -48,7 +51,7 @@ def test_absent_diagnostic_never_contacts_remote(tmp_path, ledger_exists):
     if not ledger_exists:
         path.unlink()
     before = path.read_bytes() if path.exists() else None
-    assert service.status(context, run_name="init") == {
+    assert service.status(context, run_name="init", budget_subject=SUBJECT) == {
         "name":"init", "state":"not_created", "submission":"not_submitted"}
     assert (path.read_bytes() if path.exists() else None) == before
 
@@ -61,7 +64,7 @@ def test_absent_diagnostic_never_contacts_remote(tmp_path, ledger_exists):
 def test_reserved_diagnostic_status_is_observation_only(tmp_path, external, lookup, state):
     service, context, path = fixture(tmp_path, reservation=True, external=external, lookup=lookup)
     before = path.read_bytes()
-    result = service.status(context, run_name="init")
+    result = service.status(context, run_name="init", budget_subject=SUBJECT)
     assert result["state"] == state and result["allowance_reserved"] is True
     assert "private" not in json.dumps(result)
     assert path.read_bytes() == before
@@ -71,7 +74,7 @@ def test_uncertain_lookup_is_not_reported_as_absent(tmp_path):
     service, context, path = fixture(tmp_path, reservation=True, lookup=TimeoutError("/private/endpoint"))
     before = path.read_bytes()
     with pytest.raises(DiagnosticError) as caught:
-        service.status(context, run_name="init")
+        service.status(context, run_name="init", budget_subject=SUBJECT)
     assert caught.value.details[0]["code"] == "tcad_debug_status_unknown"
     assert "do not start" in str(caught.value) and "/private" not in str(caught.value)
     assert path.read_bytes() == before
@@ -86,8 +89,7 @@ def test_final_delivery_activity_refreshes_diagnostic_without_resubmission(tmp_p
         lookup=("private-job", "running"))
     before = path.read_bytes()
     monkeypatch.setattr(service.adapter, "status", lambda _: remote_state)
-    inputs = (SimpleNamespace(port_name="research_objective", artifact_ref=context.input_ref("")),)
-    assert service.experiment_activity({"private-run", "recovery-run"}, inputs) is active
+    assert service.experiment_activity({"private-run", "recovery-run"}, SUBJECT) is active
     assert path.read_bytes() == before  # Observation must preserve the original budget and receipts.
 
 
@@ -97,9 +99,8 @@ def test_final_delivery_does_not_treat_unknown_diagnostic_as_idle(tmp_path, monk
     def unavailable(_):
         raise TimeoutError("status unavailable")
     monkeypatch.setattr(service.adapter, "status", unavailable)
-    inputs = (SimpleNamespace(port_name="research_objective", artifact_ref=context.input_ref("")),)
     with pytest.raises(TimeoutError):
-        service.experiment_activity({"private-run"}, inputs)
+        service.experiment_activity({"private-run"}, SUBJECT)
     assert path.read_bytes() == before
 
 
@@ -110,7 +111,7 @@ def test_running_diagnostic_reads_bounded_progress_without_changing_ledger(tmp_p
     monkeypatch.setattr(service.adapter, "status_details", lambda _: {"state": "running", "progress": {
         "elapsed_seconds": 42, "log_tails": [{"source": "solver_log", "size_bytes": 87,
             "updated_at": "2026-09-27T10:00:42Z", "tail": "initializing mesh\nNewton iteration 3\n"}]}}, raising=False)
-    result = service.status(context, run_name="init")
+    result = service.status(context, run_name="init", budget_subject=SUBJECT)
     assert result["state"] == "running" and result["progress"]["elapsed_seconds"] == 42
     assert result["progress"]["log_activity"][0]["size_bytes"] == 87
     assert "Newton" not in json.dumps(result)

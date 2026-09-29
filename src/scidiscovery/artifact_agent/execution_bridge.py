@@ -117,6 +117,7 @@ class ExecutionBridge:
         compiled_identity: CompiledApprovalIdentity,
         allow_policy_authorization: bool = False,
         budget_subject_schemas: tuple[str, ...] = (),
+        budget_owner: str | None = None,
     ) -> None:
         request = self.executions.request(execution_id)
         adapter = self._adapter(request.executor)
@@ -141,7 +142,7 @@ class ExecutionBridge:
             payload=self.executions.artifacts.read(request.payload_ref), allow_denial=True,
         )
         if admission is not None:
-            owner = (self.executions.budget_owner(execution_id) or
+            owner = (self.executions.budget_owner(execution_id) or budget_owner or
                 self.executions.scientific_budget_owner(request.payload_ref, budget_subject_schemas))
             admission = self.executions.budget_admission(executor=request.executor,
                 admission=admission.model_copy(update={"budget_key": owner}), execution_id=execution_id, allow_denial=True)

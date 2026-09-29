@@ -6,7 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 Language = Literal["zh-CN", "en"]
 ReasoningEffort = Literal["low", "medium", "high", "xhigh", "max", "ultra"]
@@ -123,6 +123,39 @@ class ProgressionSettings(SettingsValue):
     frame_bytes: int = Field(default=1048576, ge=4096, le=8388608)
     log_bytes: int = Field(default=1048576, ge=4096)
     rpc_timeout_seconds: int = Field(default=30, ge=1, le=120)
+    # Background Root policy, frozen with the goal. Native Workers inherit it, so the
+    # installed catalog's Worker needs are checked before a background Root starts.
+    root_approval_policy: Literal["never"] = "never"
+    root_sandbox: Literal["read-only", "workspace-write"] = "workspace-write"
+    root_network_access: bool = True
+
+    @model_validator(mode="after")
+    def _declarable_root_network(self):
+        if self.root_sandbox == "read-only" and self.root_network_access:
+            raise ValueError("root_network_access requires root_sandbox workspace-write: Codex declares "
+                             "thread network only through sandbox_workspace_write.network_access")
+        return self
+
+
+def root_permission_conflicts(progression: dict, catalog) -> list[str]:
+    """Worker capabilities a frozen background Root policy would silently remove.
+
+    Native Workers inherit Root sandbox and network. Hosted web_search is counted
+    as a network need until its independence from sandbox network is verified."""
+    agents = [catalog.operation(item).spec for item in catalog.operation_ids()]
+    agents = [spec for spec in agents if spec.executor.kind == "agent"]
+    default = ProgressionSettings()
+    issues = []
+    writers = sorted(spec.operation_id for spec in agents if spec.executor.native_tools.shell == "inherited_prototype")
+    if progression.get("root_sandbox", default.root_sandbox) != "workspace-write" and writers:
+        issues.append("root_sandbox read-only removes workspace writes from Workers that inherit Root "
+                      "permissions (inherited native shell): " + ", ".join(writers))
+    network = sorted(spec.operation_id for spec in agents if spec.limits.network.mode != "none"
+                     or spec.executor.native_tools.web_search != "disabled")
+    if not progression.get("root_network_access", default.root_network_access) and network:
+        issues.append("root_network_access false removes network from Workers that inherit Root "
+                      "permissions (declared network or web_search): " + ", ".join(network))
+    return issues
 
 class PresentationSettings(SettingsValue):
     """Opt-in, serial post-seal copy editing; never scientific admission."""
