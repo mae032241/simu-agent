@@ -22,6 +22,7 @@ import re
 from pathlib import Path
 import shlex
 import shutil
+import socket
 import sqlite3
 import subprocess
 import sys
@@ -45,6 +46,17 @@ from scidiscovery.platforms.codex_app_server import AppServer, HostLimits
 from scidiscovery.platforms.codex_root_host import CodexRootHost, RootIdentity, turn_params
 
 HOST_RESOURCES = Path(__file__).with_name("root_host_resources.json")
+
+
+def control_socket_ready(path):
+    """A leftover socket inode is not evidence of a listening control service."""
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
+            connection.settimeout(.2)
+            connection.connect(str(path))
+        return True
+    except OSError:
+        return False
 
 
 def host_resources(root):
@@ -281,7 +293,7 @@ class Host:
             "--local-workspace-root", str(Path(self.config["project"]) / ".scidiscovery-runs"),
             "--runtime-summary", str(root / "runtime-summary.json"), *plugin_arguments], "daemon")
         deadline = time.monotonic() + 20
-        while not (root / "control.sock").exists():
+        while not control_socket_ready(root / "control.sock"):
             if time.monotonic() > deadline or any(p.poll() is not None for p in self.children):
                 raise RuntimeError("daemon_startup")
             time.sleep(.1)

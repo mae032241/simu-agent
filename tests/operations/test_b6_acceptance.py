@@ -214,3 +214,18 @@ def test_blob_snapshot_roundtrips_without_changing_frozen_reference(tmp_path):
         db.execute('UPDATE runs SET output_ref_json=?',(b'\xff',))
     with pytest.raises(UnicodeDecodeError):run_snapshot(tmp_path)
     assert rows(tmp_path,'runs','SELECT output_ref_json AS payload FROM runs')[0]['payload']==b'\xff'
+
+
+@pytest.mark.parametrize('status',['completed','failed','interrupted','inProgress'])
+def test_followup_checks_exact_old_turn_before_starting_new_case(status):
+    from scripts.acceptance_native_cases import verify_prior_turns
+    ref={'thread_id':'old-worker','turn_id':'old-turn'}
+    def rpc(method,params):
+        assert method=='thread/read' and params=={'threadId':'old-worker','includeTurns':True}
+        return {'thread':{'id':'old-worker','turns':[{'id':'old-turn','status':status}]}}
+    if status=='inProgress':
+        with pytest.raises(RuntimeError,match='not_terminal'):verify_prior_turns(rpc,[ref])
+    else:
+        assert verify_prior_turns(rpc,[ref])==[{**ref,'status':status}]
+    with pytest.raises(RuntimeError,match='not_found'):
+        verify_prior_turns(rpc,[{**ref,'turn_id':'different-turn'}])

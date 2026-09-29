@@ -5,10 +5,24 @@ import time
 
 try:
     from scripts.accept_progression_recovery import RecoveryJourney
-    from scripts.b6_evidence import rows, run_snapshot, participants, sealed_outputs, write
+    from scripts.b6_evidence import rows, run_snapshot, participants, sealed_outputs, read, write
 except ModuleNotFoundError:
     from accept_progression_recovery import RecoveryJourney
-    from b6_evidence import rows, run_snapshot, participants, sealed_outputs, write
+    from b6_evidence import rows, run_snapshot, participants, sealed_outputs, read, write
+
+
+def verify_prior_turns(rpc, references):
+    """No new model work until the interrupted acceptance's exact turns ended."""
+    evidence=[]
+    for reference in references:
+        thread=rpc('thread/read',dict(threadId=reference['thread_id'],includeTurns=True))['thread']
+        turn=next((v for v in thread.get('turns',[]) if v['id']==reference['turn_id']),None)
+        if thread.get('id')!=reference['thread_id'] or turn is None:
+            raise RuntimeError('prior_native_turn_not_found')
+        evidence.append(dict(**reference,status=turn['status']))
+        if turn['status'] not in {'completed','failed','interrupted'}:
+            raise RuntimeError('prior_native_turn_not_terminal; do_not_start_another_case')
+    return evidence
 
 
 class NativeCaseJourney(RecoveryJourney):
@@ -34,6 +48,10 @@ class NativeCaseJourney(RecoveryJourney):
         checks = {}
         self.case_checks = checks
         value = self.initialize_host(check_native=False)
+        prior=self.root/'prior-native-turns.json'
+        if prior.exists():
+            write(self.logdir.parent/'prior-native-terminal.json',
+                verify_prior_turns(self.rpc,read(prior)))
         self.status('awaiting_user', management_url=value['management_url'])
         print('请选择已有实例 ' + case['instance'] + '：' + value['management_url'], flush=True)
         while value.get('state')=='unbound':
