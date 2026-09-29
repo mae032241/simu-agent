@@ -358,7 +358,7 @@ def root_response(name, value, arguments):
             value = {**value, field: [pick(item, "name", "state", "status", "operation_id",
                         "output_artifact_name", "selected_option", "recovery") for item in value[field]]}
         return value
-    if name == "artifact_catalog" and arguments.get("view") == "parents":
+    if name == "artifact_catalog" and arguments.get("view") in {"parents", "content"}:
         return value
     if name == "artifact_catalog" and arguments.get("view") == "producer_inputs":
         return value

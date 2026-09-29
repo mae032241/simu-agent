@@ -357,7 +357,8 @@ OPERATIONS = (
                 max_item_bytes=None,
                 exposure="material",
                 usage="evidence_inventory",
-            ),
+            ).model_copy(update={"derivation": InputDerivationSpec(
+                anchor_port="scientific_intake", producer_input_path=("source_material",))}),
 
         ),
         decision_fields=("checks",),

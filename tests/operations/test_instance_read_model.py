@@ -307,3 +307,20 @@ def test_large_historical_json_supports_exact_pointer_and_bounded_navigation(sys
     absent = system.model.artifact(system.a, source.artifact_id, pointer="/parameters/01")
     assert absent["payload_state"] == "missing" and "payload" not in absent
     assert json_size(navigation) < MAX_RESPONSE_BYTES
+
+
+@pytest.mark.parametrize('schema,port', [
+    ('scidiscovery.scientific-foundation.v1','objective_source'),
+    ('scidiscovery.scientific-intake.v1','subject'),
+])
+def test_embedded_goal_navigation_and_overview_share_frozen_carrier(system,schema,port):
+    goal = system.artifacts.register(canonical_json({'objective':'Original goal'}),
+        ArtifactRegistration(kind='scientific',schema_id=schema,payload_schema_version=1,
+            media_type='application/json',creator=system.actor),idempotency_key='goal-carrier')
+    bind(system,system.a,'artifact','goal-carrier',goal.artifact_id)
+    run(system,'experiment',state='running',inputs=(SimpleNamespace(port_name=port,artifact_name='goal-carrier',artifact_ref=goal.ref),))
+    assert system.model.overview(system.a)['objective_refs'][0]['artifact_id'] == goal.artifact_id
+    binding = system.model._binding(system.a,'run:experiment')
+    refs, gaps = system.model._objective_navigation(system.a,binding,(goal.ref,))
+    assert len(refs) == 1 and refs[0]['artifact_id'] == goal.artifact_id
+    assert not gaps

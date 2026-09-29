@@ -791,6 +791,8 @@ def build_local_worker_router(
     approval_base_url: str | None = None,
 ) -> MCPRouter:
     state = state_root.expanduser().absolute()
+    from ..state_format import ensure_state_format
+    ensure_state_format(state)
     catalog = operation_catalog or compile_installed_catalog()
     artifacts = ArtifactService.open(
         cas_root=state / "artifacts",
@@ -842,6 +844,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--approval-secret-file", type=Path)
     parser.add_argument("--approval-base-url")
     args = parser.parse_args(argv)
+    from ..state_format import ensure_state_format
+    ensure_state_format(args.state_root)
     catalog = compile_installed_catalog()
     services: dict[str, object] = {}
     if args.plugin_config:

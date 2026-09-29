@@ -17,7 +17,7 @@ _ROOTS = {
     "scidiscovery.experiment-portfolio.v1": ("实验计划", (("objective", "总体目标"), ("priority_rationale", "优先级理由"), ("validation_plans", "验证要求"))),
     "scidiscovery.scientific-review.v1": ("独立科学审查", (("verdict", "审查结论"), ("summary", "正式摘要"), ("global_confounders", "混杂因素"), ("findings", "审查意见"), ("next_actions", "原记录后续建议"))),
     "scidiscovery.layered-diagnosis.v1": ("结果分析", (("summary", "正式结论"), ("overall_verdict", "分析结论"), ("claim_allowed", "声明允许性"), ("objective_assessment", "目标评估"), ("hypothesis_assessments", "逐假设评估"), ("gates", "分层判定"), ("limitations", "限制"), ("remaining_contradiction", "剩余矛盾"), ("next_action", "原报告建议（非调度命令）"), ("analysis_method", "分析方法"))),
-    "scidiscovery.scientific-foundation.v1": ("科学依据", (("objective", "目标"), ("summary", "正式摘要"), ("conflicts", "冲突"), ("missing_inputs", "缺失输入"), ("open_questions", "未解决问题"))),
+    "scidiscovery.scientific-foundation.v1": ("科学依据", (("objective", "目标"), ("objective_contract", "目标与完成标准"), ("summary", "正式摘要"), ("conflicts", "冲突"), ("missing_inputs", "缺失输入"), ("open_questions", "未解决问题"))),
     "scidiscovery.problem-frame.v1": ("研究问题", (("objective", "目标"), ("scientific_question", "科学问题"), ("current_contradiction", "当前矛盾"), ("scope", "适用范围"), ("claim_boundary", "结论边界"))),
     "scidiscovery.critic-review.v2": ("假设审查", (("disposition", "正式处置"), ("reviews", "逐项审查"), ("global_issues", "全局问题"))),
     "scidiscovery.hypothesis-proposal.v2": ("研究假设", (("stage_objective", "本轮目标"), ("contradiction", "当前矛盾"), ("hypotheses", "假设与可证伪条件"))),
@@ -253,7 +253,7 @@ def build_presentation(artifacts, *, parameter_target=None, parameter_after=0, p
             for field, title in (("problem_frame", "研究问题"), ("scientific_foundation", "科学依据")):
                 nested = payload.get(field)
                 if isinstance(nested, Mapping):
-                    add_fields(result, artifact, title, (("objective", "目标"), ("summary", "正式摘要"), ("current_contradiction", "当前矛盾"), ("missing_inputs", "缺失输入"), ("open_questions", "未解决问题")), payload=nested, path=pointer(field))
+                    add_fields(result, artifact, title, (("objective", "目标"), ("objective_contract", "目标与完成标准"), ("summary", "正式摘要"), ("current_contradiction", "当前矛盾"), ("missing_inputs", "缺失输入"), ("open_questions", "未解决问题")), payload=nested, path=pointer(field))
                     if field == "scientific_foundation":
                         _foundation(result, artifact, nested, pointer(field))
         elif schema in _ROOTS:
@@ -278,7 +278,7 @@ DISPLAY_POINTERS["scidiscovery.scientific-foundation.v1"] += ("/items", "/eviden
 DISPLAY_POINTERS["scidiscovery.layered-diagnosis.v1"] += ("/evidence",)
 DISPLAY_POINTERS["scidiscovery.scientific-intake.v1"] = (
     "/problem_frame/objective", "/problem_frame/current_contradiction", "/scientific_foundation/objective",
-    "/scientific_foundation/summary", "/scientific_foundation/items", "/scientific_foundation/evidence",
+    "/scientific_foundation/objective_contract", "/scientific_foundation/summary", "/scientific_foundation/items", "/scientific_foundation/evidence",
     "/scientific_foundation/missing_inputs", "/scientific_foundation/open_questions")
 DISPLAY_POINTERS[_TOOL_MANIFEST] = ("/records", "/bindings")
 build_presentation.display_pointers = DISPLAY_POINTERS

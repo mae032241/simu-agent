@@ -201,11 +201,12 @@ class RunListInput(PageInput):
 
 
 class ArtifactCatalogInput(NamedReadInput):
-    view: Literal["summary", "detail", "parents", "producer_inputs"] = Field(default="summary",
-        description="summary gives metadata; parents gives one page of direct parents and, for a recovery manifest, mechanically joins sealed source aliases/records to those exact parents; producer_inputs gives one page of the exact immediate producer's frozen input ports without recursive traversal; detail is the legacy full metadata view. parents and producer_inputs share parent_offset/parent_limit. Direct-parent limit remains 4096.")
+    view: Literal["summary", "detail", "parents", "producer_inputs", "content"] = Field(default="summary",
+        description="content reads a bounded UTF-8 page of the exact named scientific original; continue using next_cursor as content_cursor. Binary or private control objects are unavailable. summary gives metadata; parents gives one page of direct parents and, for a recovery manifest, mechanically joins sealed source aliases/records to those exact parents; producer_inputs gives one page of the exact immediate producer's frozen input ports without recursive traversal; detail is the legacy full metadata view. parents and producer_inputs share parent_offset/parent_limit. Direct-parent limit remains 4096.")
     parent_offset: int = Field(default=0, ge=0,
         description="parents or producer_inputs view: continue at next_offset for the same artifact.")
     parent_limit: int = Field(default=16, ge=1, le=32)
+    content_cursor: str | None = Field(default=None, max_length=512, description="content only: exact next_cursor from the previous page of the same immutable named original.")
 
 
 class RunStatusInput(NamedInput, StageReadQuery):
@@ -324,7 +325,7 @@ ROOT_TOOLS = (
     RootTool("lifecycle_events", "Return persistent semantic task, approval, and execution state changes for this scheduler process.", LifecycleEventsInput),
     RootTool("artifact_ingest_file", "Freeze and bind one project file under a semantic name.", IngestFileInput),
     RootTool("artifact_ingest_text", "Freeze original user text and bind it under a semantic name in the current instance; does not create a Run.", IngestTextInput),
-    RootTool("artifact_catalog", "Read metadata or paged direct parents for one bound semantic input.", ArtifactCatalogInput),
+    RootTool("artifact_catalog", "Read metadata, paged originals (view=content), or direct parents for one exact named scientific material.", ArtifactCatalogInput),
     RootTool("operation_catalog", "List bounded operation summaries; select operation_id with view=detail for its full compiled contract.", OperationCatalogInput),
     RootTool("operation_preflight", "Optional check without creating. Invoke independently checks admission; this does not reserve resources or authorize execution.", OperationCallInput),
     RootTool("operation_invoke", "Validate and create one Agent, Transform, Effect or Approval from the compiled catalog; no prior preflight required. Success preserves dispatch configuration, exact outputs or approval URLs by executor kind; use the returned detail entry for Run context.", OperationCallInput),

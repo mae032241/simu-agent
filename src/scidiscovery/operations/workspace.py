@@ -128,8 +128,10 @@ class WorkspaceFinalizer:
     Projection versions identify behavior in the compiled operation digest.
     """
     implementation: Callable[[WorkspaceFinalizationRequest], bytes]
-    draft_schema: Callable[[dict, str, Mapping[str, str] | None], dict]
+    draft_schema: Callable[..., dict]
     projection_version: str
+    # Opt-in fourth draft_schema argument: only these frozen inputs, keyed by alias.
+    draft_input_ports: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not callable(self.implementation) or not callable(self.draft_schema) or not self.projection_version:

@@ -1417,6 +1417,8 @@ install_all() {
     printf '[1/6] Validating source and selected base Python...\n'
     validate_source
     validate_base_python
+    env PYTHONPATH="${SOURCE_ROOT}/src" "$PYTHON" \
+        -m scidiscovery.artifact_agent.state_format "$SCID_STATE" --check
     validate_figure_dependencies
     printf '[2/6] Building and validating local application packages...\n'
     install_packages
@@ -1427,6 +1429,8 @@ install_all() {
     printf '[4/6] Installing state, policy, service, and platform configuration...\n'
     activate_packages
     install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0750 "$SCID_STATE"
+    runuser -u "$SERVICE_USER" -- env PYTHONPATH="$SITE_ROOT" "$PYTHON" \
+        -m scidiscovery.artifact_agent.state_format "$SCID_STATE" --shared-group
     create_local_workspace_root
     create_instance_archive_root
     create_presentation_root

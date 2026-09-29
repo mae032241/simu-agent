@@ -131,6 +131,9 @@ def _run(args: argparse.Namespace) -> Any:
             "changed": [str(path) for path in report.changed],
             "unchanged": [str(path) for path in report.unchanged],
         }
+    if args.command != "active-bundle-verify":
+        from ..state_format import ensure_state_format
+        ensure_state_format(state, shared_group=args.shared_group)
     if args.command == "active-bundle-export":
         from ..portable_bundle import (
             export_active_research_bundle,

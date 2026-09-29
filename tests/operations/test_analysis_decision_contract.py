@@ -106,6 +106,10 @@ def test_real_keyed_producer_rejects_then_seals_complete_decision_contract(
                   for item in runtime.scheduler_bindings.list(instance=instance_id, namespace=namespace)),
             tuple(item.artifact_id for item in runtime.artifacts.list_artifacts(limit=100)),
         )
+    default = root.call_tool("run_status", {"name":name})
+    default_values = {item["pointer"]:item.get("value") for item in default["selected_output"]["items"]}
+    assert default_values["/objective_assessment"] == report["objective_assessment"]
+    assert default_values["/hypothesis_assessments"] == report["hypothesis_assessments"]
     before = control_state()
     decision = root.call_tool("run_status", {'name': name, 'output_paths': DECISION_PATHS, "intent": 'decision'})
     assert control_state() == before

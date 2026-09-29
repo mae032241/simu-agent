@@ -175,7 +175,7 @@ OPERATIONS = (
         "Inspect, extract, save, self-check and author one complete figure ScientificIntake in one task.",
         "A frozen raster or PDF contains the target scientific figure; exact prior Intake and review may request revision.",
         "Granting qualification or changing source identity.",
-        decision_fields=("/scientific_foundation/summary", "/scientific_foundation/missing_inputs", "/scientific_foundation/open_questions", "/problem_frame/current_contradiction"),
+        decision_fields=("/scientific_foundation/objective", "/scientific_foundation/objective_contract/intent", "/scientific_foundation/objective_contract/mandatory_targets", "/scientific_foundation/objective_contract/closure_requirements", "/scientific_foundation/summary", "/scientific_foundation/missing_inputs", "/scientific_foundation/open_questions", "/problem_frame/current_contradiction"),
         agent=_general("evidence_agent"), workspace=_general("workspace"), prompt=ComponentRef("figure_author_prompt"),
         tools=(PDF_TOOL, ComponentRef("figure_source_inspection_tool"), ComponentRef("figure_digitization_preview_tool"), ComponentRef("figure_save_tool"), ComponentRef("figure_reuse_tool")),
         inputs=(PAPER_SOURCE_INPUT, _input("research_objective", "Explicit scientific target.", "scidiscovery.research-objective.v1",

@@ -482,7 +482,7 @@ class RunService(ToolEvidenceMixin):
                     attachment_settings=recovery_policy.get("attachments"),
                 ),
                 result_schema=result_schema_json(
-                    compiled,
+                    compiled, read_input=input_bytes.__getitem__,
                     input_source_ports={
                         item.source_name: item.port_name for item in frozen_inputs
                     },
@@ -1070,6 +1070,49 @@ class RunService(ToolEvidenceMixin):
         with self._connect() as connection:
             rows = connection.execute(query, values).fetchall()
         return tuple(status_from_row(row) for row in rows)
+
+    def goal_related_runs(self, *, instance_id, artifact_ref, limit=17, source_limit=128):
+        """Bounded exact parent lineage; unrelated goals and instances stay separate.
+
+        Return omissions explicitly. Superseding a goal is not the same goal.
+        This is navigation metadata, never a grant of scientific qualification.
+        """
+        from collections import deque
+        if not 1 <= limit <= 101 or not 1 <= source_limit <= 4096:
+            raise ValueError("invalid goal navigation limits")
+        queue, seen, ordered = deque([artifact_ref]), set(), []
+        omitted = False
+        while queue and len(seen) < source_limit:
+            ref = queue.popleft()
+            if ref in seen:
+                continue
+            seen.add(ref)
+            ordered.append(ref)
+            remaining = source_limit - len(seen) - len(queue)
+            child_limit = min(101, max(1, remaining + 1))
+            children = self.artifacts.registry.linked_children(ref, limit=child_limit, relation="parent")
+            omitted |= len(children) == child_limit or len(children) > remaining
+            queue.extend(child.ref for child in children[:max(0, remaining)] if child.ref not in seen)
+        omitted |= bool(queue)
+        # Resolve scope first; retain only the requested number of full Run
+        # records even when an instance has a large historical source graph.
+        candidates = {}
+        for ref in ordered:
+            related = self.related_runs(instance_id=instance_id, artifact_ref=ref, limit=limit + 1 if limit < 101 else 101)
+            omitted |= len(related) == min(101, limit + 1)
+            for run in related:
+                explicit = {item.artifact_ref for item in run.inputs
+                    if item.port_name in {"objective", "research_objective", "objective_source"}}
+                if explicit and not explicit & seen:
+                    continue
+                candidates[run.run_id] = run
+                if len(candidates) > limit:
+                    omitted = True
+                    break
+            if len(candidates) > limit:
+                break
+        runs = sorted(candidates.values(), key=lambda run:(run.created_at, run.run_id))
+        return tuple(runs[:limit]), omitted
 
     def recovery_links(self, run_id: str) -> dict[str, str | None]:
         """Read frozen resume/draft identity omitted from the public RunStatus."""

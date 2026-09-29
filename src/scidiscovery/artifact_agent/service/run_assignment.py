@@ -210,6 +210,7 @@ def result_schema_json(
     compiled: Any,
     *,
     input_source_ports: dict[str, str] | None = None,
+    read_input=None,
 ) -> bytes:
     if input_source_ports is not None:
         from ...operations.tooling import reference_source_ports
@@ -225,7 +226,12 @@ def result_schema_json(
     from ...operations.workspace import WorkspaceFinalizer, operation_workspace_hooks
     finalizer = operation_workspace_hooks(compiled).get("workspace_finalizer")
     if isinstance(finalizer, WorkspaceFinalizer):
-        envelope = finalizer.draft_schema(envelope, port.schema_id, input_source_ports)
+        if finalizer.draft_input_ports:
+            contents = {alias: read_input(alias) for alias, name in (input_source_ports or {}).items()
+                if name in finalizer.draft_input_ports} if read_input is not None else {}
+            envelope = finalizer.draft_schema(envelope, port.schema_id, input_source_ports, contents)
+        else:
+            envelope = finalizer.draft_schema(envelope, port.schema_id, input_source_ports)
     # Compilation/admission metadata belongs to control, not the authoring form.
     # Keep the exact scientific rules and limits, with task aliases for sources.
     payload = envelope['properties']['payload']

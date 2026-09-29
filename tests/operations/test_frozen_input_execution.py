@@ -63,7 +63,7 @@ def _system(tmp_path, monkeypatch, *, hidden_transform=False, consumer=None, res
         'status': 'pass', 'basis': 'Exact source.', 'evidence_keys': ['source_material']}],
         'evidence': [{'source_key': 'source_material', 'source_type': 'frozen_input', 'locator': 'line 1'}]}
     audit = _complete(runtime, root, 'auditor', 'science.evidence.audit.intake.v1',
-        {'scientific_intake': intake, 'source_material': 'source'}, audit_payload)
+        {'scientific_intake': intake}, audit_payload)
     request = {'name': 'split', 'operation_id': 'science.intake.split.v1', 'inputs': [
         {'port': 'scientific_intake', 'artifact_names': [intake]},
         {'port': 'evidence_audit', 'artifact_names': [audit]}]}
@@ -129,7 +129,7 @@ def test_identical_transform_requests_keep_distinct_named_families(tmp_path, mon
         'status': 'pass', 'basis': 'Exact source.', 'evidence_keys': ['source_material']}],
         'evidence': [{'source_key': 'source_material', 'source_type': 'frozen_input', 'locator': 'line 1'}]}
     second_audit = _complete(runtime, root, 'auditor_second', 'science.evidence.audit.intake.v1',
-        {'scientific_intake': 'author.output', 'source_material': 'source'}, audit_payload)
+        {'scientific_intake': 'author.output'}, audit_payload)
     changed = {**request, 'inputs': [request['inputs'][0],
         {'port': 'evidence_audit', 'artifact_names': [second_audit]}]}
     assert root.call_tool('operation_preflight', changed)['admissible']

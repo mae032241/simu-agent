@@ -59,19 +59,22 @@ def test_search_capture_publication_and_independent_audit(tmp_path, monkeypatch)
     source = next(x for x in sources if x["artifact_name"].endswith("." + captured["source_alias"]))
     # Exact output field names are provided by the control plane, never Worker-written.
     request = dict(name="audit", instruction="Independently audit the preserved source facts.", operation_id="science.evidence.audit.intake.v1", inputs=[
-        dict(port="scientific_intake", artifact_names=["evidence.output"]),
-        dict(port="source_material", artifact_names=["source_paper", source["artifact_name"]])])
+        dict(port="scientific_intake", artifact_names=["evidence.output"])])
     root.call_tool("operation_invoke", request)
     review = catalog.operation(request["operation_id"])
     auditor = attached_worker(runtime, root, "audit")
     audit_open = auditor.call_tool("worker_open_assignment", {})
     audit_assignment = json.loads(Path(audit_open["assignment_path"]).read_bytes())
-    original = next(i for i in audit_assignment["inputs"] if i.get("source_provenance"))
-    assert original["source_provenance"]["original_source_alias"] == captured["source_alias"]
+    intake_source = next(i.source_name for i in runtime.runs.status(auditor._run_id).inputs if i.port_name == "scientific_intake")
+    references = auditor.call_tool("worker_reference_read", {"source":intake_source,"action":"list"})["references"]
+    reference = next(item for item in references if item["locator"] == "/scientific_foundation/items/0/evidence_keys/0")
+    original = auditor.call_tool("worker_reference_read", {"source":intake_source,"action":"read",
+        "reference":reference["reference"],"delivery":"file"})
+    assert Path(original["file_path"]).read_bytes() == b"Measured target at a bounded depth."
     assert "worker_capture_source" not in audit_assignment["tools"]
     with pytest.raises(WorkerToolError):
         auditor.call_tool("worker_capture_source", {"url": "https://example.org/other"})
-    Path(audit_open["output_directory"], "result.json").write_bytes(_audit_envelope(original["source_name"]))
+    Path(audit_open["output_directory"], "result.json").write_bytes(_audit_envelope(original["source"]))
     assert auditor.call_tool("worker_submit_result", {})["state"] == "completed"
 
 

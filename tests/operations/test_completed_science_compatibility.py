@@ -108,7 +108,7 @@ def _qualified_foundation(tmp_path):
     payload["scientific_foundation"]["objective_contract"] = objective
     intake = _complete(runtime, root, "extracted", "science.evidence.extract.v1", {"source_material": "source"}, payload)
     audit = _complete(runtime, root, "audit", "science.evidence.audit.intake.v1",
-        {"scientific_intake": intake, "source_material": "source"},
+        {"scientific_intake": intake},
         {"checks": [{"check_key": "trace", "subject": "Frozen source", "status": "pass",
             "basis": "Exact fixture.", "evidence_keys": ["source_material"]}],
          "evidence": [{"source_key": "source_material", "source_type": "frozen_input", "locator": "line 1"}]})

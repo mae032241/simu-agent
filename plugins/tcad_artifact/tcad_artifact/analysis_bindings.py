@@ -21,6 +21,62 @@ JSON_PORTS = {"experiment_plan", "execution_package", "prior_analysis",
 VIEW_PATH = "analysis-bindings.json"
 
 
+def bound_plan(contents, ports):
+    """Resolve the same admitted plan for authoring, completion and validation."""
+    by_port = {port: json.loads(contents[alias]) for alias, port in ports.items()
+               if port in {"execution_package", "experiment_plan"} and alias in contents}
+    embedded = by_port.get("execution_package", {}).get("project", {}).get("execution_plan")
+    standalone = by_port.get("experiment_plan")
+    if embedded is not None and standalone is not None and embedded != standalone:
+        from scidiscovery.operations.workspace import WorkspaceProtocolError
+        raise WorkspaceProtocolError("Embedded and standalone execution plans disagree; repair task inputs.")
+    return embedded if embedded is not None else standalone
+
+
+def analysis_draft_schema(envelope, schema_id, ports=None, contents=None):
+    # Preserve scientific identity choices when no frozen inputs are available
+    # (e.g. catalog inspection); actual workspaces always supply their inputs.
+    effective = dict(ports or {})
+    effective["plan"] = "experiment_plan"
+    result = result_draft_schema(envelope, schema_id, effective)
+    plan = bound_plan(contents or {}, ports or {})
+    if plan is None:
+        return result
+    payload = result["properties"]["payload"]
+    choices = plan["validation_plans"]
+    keys = ("plan_key", "experiment_key")
+    if len(choices) == 1:
+        for key in keys:
+            payload["properties"].pop(key, None)
+        payload["required"] = [key for key in payload.get("required", ()) if key not in keys]
+    else:
+        # Selecting a scientific test is author work. Publish the exact allowed
+        # pairs and their scientific content; never silently choose the first.
+        payload.setdefault("required", []).extend(key for key in keys if key not in payload.get("required", ()))
+        payload.setdefault("allOf", []).append({"oneOf": [{"properties": {
+            key: {"const": choice[key]} for key in keys}} for choice in choices]})
+        source = next(alias for alias, port in ports.items() if port == "execution_package")
+        embedded = json.loads(contents[source])["project"].get("execution_plan") is not None
+        if not embedded:
+            source = next(alias for alias, port in ports.items() if port == "experiment_plan")
+        prefix = "/project/execution_plan" if embedded else ""
+        payload["x-scidiscovery-validation-plans"] = [{**{key: choice[key] for key in keys},
+            "source": source, "pointer": f"{prefix}/validation_plans/{index}"}
+            for index, choice in enumerate(choices)]
+        payload["properties"]["plan_key"]["description"] = "Choose a listed scientific validation plan after reading its checks at source/pointer; use its paired experiment_key."
+    return result
+
+
+def complete_plan_identity(payload, plan):
+    from scidiscovery.operations.workspace import WorkspaceProtocolError
+    choices = plan["validation_plans"]
+    if len(choices) == 1:
+        for key in ("plan_key", "experiment_key"):
+            if payload.get(key) not in (None, choices[0][key]):
+                raise WorkspaceProtocolError(f"{key} conflicts with the frozen scientific plan.")
+            payload[key] = choices[0][key]
+
+
 def source_bindings(sources):
     """Project metadata, retaining historical mappings as conditional claims.
 
@@ -30,7 +86,7 @@ def source_bindings(sources):
     descriptors = sources.binding_descriptors
     by_port = {d.port_name: alias for alias, d in descriptors.items() if d.port_name in JSON_PORTS}
     package = json.loads(sources[by_port["execution_package"]])
-    plan = package["project"].get("execution_plan") or json.loads(sources[by_port["experiment_plan"]])
+    plan = bound_plan(sources, {alias: item.port_name for alias, item in descriptors.items()})
     expected = {item["name"]: item for item in package["project"]["expected_outputs"]}
     cases = {(p["experiment_key"], c["case_key"]) for p in plan["proposals"] for c in p["cases"]}
     view = {"sources": {}, "unavailable": []}
@@ -129,7 +185,7 @@ def reading_view(request, sources, limit):
     project = package["project"]
     embedded = project.get("execution_plan") is not None
     plan_alias = package_alias if embedded else by_port["experiment_plan"]
-    plan = project["execution_plan"] if embedded else json.loads(sources[plan_alias])
+    plan = bound_plan(sources, {alias: item.port_name for alias, item in sources.binding_descriptors.items()})
     plan_pointer = "/project/execution_plan" if embedded else ""
     originals = {alias: {"relative_path": request.input_paths[alias].relative_to(request.workspace).as_posix(),
         "pointer": ""} for alias in (plan_alias, package_alias)}
@@ -254,7 +310,9 @@ def materialize_references(payload, view, sources):
 def finalize(request):
     sources = workspace_sources(request)
     view = source_bindings(sources)
+    plan = bound_plan(sources, {alias: item.port_name for alias, item in sources.binding_descriptors.items()})
     def project(value):
+        complete_plan_identity(value["payload"], plan)
         materialize_analysis_handoff(value)
         materialize_references(value["payload"], view, sources.binding_descriptors)
     return finalize_result(request, project)
@@ -264,7 +322,8 @@ MATERIALIZER = CallableComponent("workspace_materializer", materialize)
 from scidiscovery.operations.workspace import WorkspaceFinalizer
 from scidiscovery.plugin_runtime.results import result_draft_schema, RESULT_PROJECTION_VERSION
 FINALIZER = CallableComponent("workspace_finalizer", WorkspaceFinalizer(
-    finalize, result_draft_schema, RESULT_PROJECTION_VERSION))
+    finalize, analysis_draft_schema, RESULT_PROJECTION_VERSION + ".tcad-plan-1",
+    draft_input_ports=("execution_package", "experiment_plan")))
 
 WORKSPACE = analysis_workspace.WORKSPACE
 SNAPSHOTTER = analysis_workspace.SNAPSHOTTER

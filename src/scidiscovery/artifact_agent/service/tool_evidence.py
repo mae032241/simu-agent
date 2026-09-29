@@ -573,7 +573,9 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
         workspace=self.backend.open(run_id)
         # The schema is a generated projection, never a replacement for the input bindings.
         mapping = self.validation_source_ports(value)
-        schema=result_schema_json(compiled,input_source_ports=mapping)
+        refs = {item.source_name: item.artifact_ref for item in value.inputs}
+        schema=result_schema_json(compiled,input_source_ports=mapping,
+            read_input=lambda alias: self.artifacts.read(refs[alias]))
         from .local_workspace import write_control_workspace_file
         write_control_workspace_file(workspace.root, Path('schema/result.schema.json'), schema, replace=True, mode=0o400)
 

@@ -190,7 +190,7 @@ class ProgressionCoordinator:
         facade = self.facade_factory(row['owner_session'])
         ref = ArtifactRef.model_validate_json(row['objective_ref_json'])
         artifact = self.runtime.artifacts.catalog(ref)
-        goal = dict(name=row['objective_name'], status='omitted', read='artifact_catalog')
+        goal = dict(name=row['objective_name'], status='omitted', read='artifact_catalog', view='content')
         # Check stored size before reading the exact immutable goal.
         if artifact.size_bytes <= limit // 3:
             raw = self.runtime.artifacts.read(ref)
@@ -226,12 +226,13 @@ class ProgressionCoordinator:
         for message in snapshot.get('messages', []):
             if message in previous.get('messages', []):
                 continue
-            raw = self.runtime.artifacts.read(ArtifactRef.model_validate(message['artifact_ref']))
-            item = dict(name=message['name'], original=raw.decode('utf-8'))
-            if len(json.dumps(brief, ensure_ascii=False).encode()) + len(raw) < limit - 2048:
-                brief['user_messages'].append(item)
+            ref = ArtifactRef.model_validate(message['artifact_ref'])
+            size = self.runtime.artifacts.catalog(ref).size_bytes
+            if len(json.dumps(brief, ensure_ascii=False).encode()) + size < limit - 2048:
+                raw = self.runtime.artifacts.read(ref)
+                brief['user_messages'].append(dict(name=message['name'], original=raw.decode('utf-8')))
             else:
-                brief['omissions'].append(dict(name=message['name'], read='artifact_catalog'))
+                brief['omissions'].append(dict(name=message['name'], read='artifact_catalog', view='content'))
         brief['approval_changes'] = snapshot['approvals'][-8:]
         if len(snapshot['approvals']) > 8:
             brief['omissions'].append(dict(read='approval_list', omitted=len(snapshot['approvals'])-8))
@@ -286,8 +287,9 @@ class ProgressionCoordinator:
             initial.update(started_at=self.clock(), rounds=0, probes=0, attempts=0,
                 relevant_runs={})
             ref = ArtifactRef.model_validate_json(row['objective_ref_json'])
-            related = self.runtime.runs.related_runs(instance_id=self.instance, artifact_ref=ref, limit=17)
-            initial['relevant_omitted'] = len(related) > 16
+            related, omitted = self.runtime.runs.goal_related_runs(instance_id=self.instance, artifact_ref=ref,
+                limit=17, source_limit=settings['progression']['related_source_limit'])
+            initial['relevant_omitted'] = omitted or len(related) > 16
             for run in related[:16]:
                 name = self.bindings.find_name(instance=self.instance, namespace='run', object_id=run.run_id)
                 if name:

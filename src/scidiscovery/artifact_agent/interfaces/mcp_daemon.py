@@ -148,6 +148,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     project_root = args.project_root.expanduser().resolve()
     state_root = args.state_root.expanduser().absolute()
+    from ..state_format import ensure_state_format
+    ensure_state_format(state_root, shared_group=True)
     if args.worker_backend == "local" and args.local_workspace_root is None:
         parser.error("--local-workspace-root is required for the local backend")
     try:

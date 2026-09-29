@@ -321,17 +321,20 @@ class SQLiteArtifactRegistry:
             ).fetchall()
         return tuple(self._decode_envelope_row(row) for row in rows)
 
-    def linked_children(self, reference: ArtifactRef, *, limit: int = 51) -> tuple[ArtifactEnvelope, ...]:
+    def linked_children(self, reference: ArtifactRef, *, limit: int = 51, relation: str | None = None) -> tuple[ArtifactEnvelope, ...]:
         """Bound reverse provenance metadata; callers must enforce instance scope."""
         if type(limit) is not int or not 1 <= limit <= 101:
             raise ValueError("linked artifact limit must be between 1 and 101")
+        if relation not in {None, "parent", "supersedes", "task"}:
+            raise ValueError("invalid artifact relation")
         with self._connect(read_only=True) as connection:
             rows = connection.execute(
                 "SELECT DISTINCT e.* FROM artifact_envelopes e JOIN artifact_links l "
                 "ON l.source_artifact_id=e.artifact_id WHERE l.target_artifact_id=? "
                 "AND l.target_sha256=? AND l.target_kind=? AND l.target_schema_id=? "
+                "AND (? IS NULL OR l.relation=?) "
                 "ORDER BY e.created_at, e.artifact_id LIMIT ?",
-                (reference.artifact_id, reference.sha256, reference.kind, reference.schema_id, limit),
+                (reference.artifact_id, reference.sha256, reference.kind, reference.schema_id, relation, relation, limit),
             ).fetchall()
         return tuple(self._decode_envelope_row(row) for row in rows)
 

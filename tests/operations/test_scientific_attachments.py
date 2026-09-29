@@ -67,8 +67,7 @@ def test_generated_files_publish_submit_and_reach_downstream_and_ui(tmp_path, mo
     assert all(name in page for name in files)
     root.call_tool('operation_invoke', {'name':'audit-attachments','operation_id':'science.evidence.audit.intake.v1',
         'instruction':'Check the exact attachment data.', 'inputs':[
-            {'port':'scientific_intake','artifact_names':['evidence.output']},
-            {'port':'source_material','artifact_names':['source_paper',*names]}]})
+            {'port':'scientific_intake','artifact_names':['evidence.output']}]})
     assert root.call_tool('run_status',{'name':'audit-attachments'})['state']=='queued'
     start = json.loads((workspace/'worker-start.json').read_text())
     assert 'worker_publish_files' in start['output']['attachments']
@@ -110,8 +109,7 @@ def test_current_scientific_agents_all_declare_publication_without_form_ports(tm
 def audit_worker(root, runtime, name='audit'):
     root.call_tool('operation_invoke', {'name':name, 'operation_id':'science.evidence.audit.intake.v1',
         'instruction':'Read the exact published attachments through their sealed intake.', 'inputs':[
-            {'port':'scientific_intake','artifact_names':['evidence.output']},
-            {'port':'source_material','artifact_names':['source_paper']}]})
+            {'port':'scientific_intake','artifact_names':['evidence.output']}]})
     auditor=attached_worker(runtime,root,name)
     opened=auditor.call_tool('worker_open_assignment',{})
     inputs=json.loads(Path(opened['assignment_path']).read_bytes())['inputs']

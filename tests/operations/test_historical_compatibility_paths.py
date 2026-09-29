@@ -83,7 +83,7 @@ def test_historical_intake_can_request_new_qualification_after_fresh_audit(tmp_p
         "status": "pass", "basis": "Exact fixture source.", "evidence_keys": ["source_material"]}],
         "evidence": [{"source_key": "source_material", "source_type": "frozen_input", "locator": "line 1"}]}
     audit = _complete(runtime, root, "fresh_audit", "science.evidence.audit.intake.v1",
-        {"scientific_intake": intake_name, "source_material": "source"}, audit_payload)
+        {"scientific_intake": intake_name}, audit_payload)
     split_request = {"name": "split", "operation_id": "science.intake.split.v1", "inputs": [
         {"port": "scientific_intake", "artifact_names": [intake_name]},
         {"port": "evidence_audit", "artifact_names": [audit]}]}

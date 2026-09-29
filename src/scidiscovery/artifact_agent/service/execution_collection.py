@@ -370,6 +370,8 @@ class ExecutionCollection:
 
 
 def open_collection_executions(state_root: Path, *, actor=None, context=None):
+    from ..state_format import ensure_state_format
+    ensure_state_format(state_root, shared_group=True)
     from .artifacts import ArtifactService
     from .executions import ExecutionService
     from ..schema.refs import ActorRef
@@ -457,6 +459,8 @@ def _child(request_path: Path) -> int:
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     watch_parent(request["parent_fd"], stop)
     state_root = Path(request["state_root"])
+    from ..state_format import ensure_state_format
+    ensure_state_format(state_root, shared_group=True)
     context = CollectionContext(**request["budget"], stopped=stop.is_set,
         report_progress=lambda value: atomic_json(directory / "progress.json", {**value, "updated_at": _now()}),
         progress_path=str(directory / "progress.json"))

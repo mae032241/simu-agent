@@ -73,7 +73,7 @@ def test_completed_audit_default_exposes_actual_checks(tmp_path, catalog, status
         'basis': 'Exact source checked independently.', 'evidence_keys': ['source_material']}],
         'evidence': [{'source_key':'source_material','source_type':'frozen_input','locator':'line 1'}]}
     _complete(runtime, root, 'audit', 'science.evidence.audit.intake.v1',
-        {'scientific_intake':'author.output','source_material':'source'}, payload, verdict=verdict)
+        {'scientific_intake':'author.output'}, payload, verdict=verdict)
     result = root.call_tool('run_status', {'name':'audit'})
     assert _values(result)['/checks'] == payload['checks']
     assert result['scheduler_signal']['verdict'] == verdict

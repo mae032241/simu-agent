@@ -29,9 +29,9 @@ def test_root_contracts_compile_and_prompt_is_self_contained():
     from scidiscovery.operations.spec import InputDerivationSpec
     target = next(op for op in science.operations if op.operation_id == 'science.experiment.v1')
     for change, expected in (({'agent_visible':False}, 'hidden_input_requires_control_derivation'),
-                             ({'derivation':InputDerivationSpec(anchor_port='research_objective')}, 'input_derivation_invalid')):
+                             ({'derivation':InputDerivationSpec(anchor_port='subject')}, 'input_derivation_invalid')):
         invalid = target.model_copy(update={'inputs':tuple(port.model_copy(update=change)
-            if port.name == 'research_objective' else port for port in target.inputs)})
+            if port.name == 'subject' else port for port in target.inputs)})
         plugin = science.model_copy(update={'operations':tuple(invalid if op.operation_id == target.operation_id else op for op in science.operations)})
         with pytest.raises(CatalogCompileError) as rejected:
             compile_catalog((CORE_PLUGIN, plugin, curve, tcad))
@@ -65,8 +65,8 @@ def test_root_default_decision_and_exact_origin_binding(tmp_path, monkeypatch):
     for operation in science.operations:
         if operation.operation_id == 'science.experiment.v1':
             operation = operation.model_copy(update={'inputs':tuple(
-                port.model_copy(update={'derivation':InputDerivationSpec(anchor_port='prior_experiment', producer_input_path=('research_objective',))})
-                if port.name == 'research_objective' else port for port in operation.inputs)})
+                port.model_copy(update={'derivation':InputDerivationSpec(anchor_port='prior_experiment', producer_input_path=('subject',))})
+                if port.name == 'subject' else port for port in operation.inputs)})
         operations.append(operation)
     catalog = compile_catalog((CORE_PLUGIN, science.model_copy(update={'operations':tuple(operations)}), curve, tcad))
     root.facade._operation_catalog = catalog
@@ -80,13 +80,13 @@ def test_root_default_decision_and_exact_origin_binding(tmp_path, monkeypatch):
     run_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace='run', name='follow')
     bound = runtime.runs.status(run_id)
     original_run = runtime.runs.status(runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace='run', name='observe'))
-    assert next(i.artifact_ref for i in bound.inputs if i.port_name=='research_objective') == next(i.artifact_ref for i in original_run.inputs if i.port_name=='research_objective')
+    assert next(i.artifact_ref for i in bound.inputs if i.port_name=='subject') == next(i.artifact_ref for i in original_run.inputs if i.port_name=='subject')
     assert root.call_tool('operation_invoke', request)['result']['name'] == 'follow'
     with pytest.raises(RootToolError) as missing:
         root.call_tool('operation_invoke', {**request, 'name':'missing', 'inputs':[]})
     assert 'input_origin_missing' in str(missing.value)
     with pytest.raises(RootToolError) as manual:
-        root.call_tool('operation_invoke', {**request, 'name':'manual', 'inputs':request['inputs']+[{'port':'research_objective','artifact_names':['objective']}]})
+        root.call_tool('operation_invoke', {**request, 'name':'manual', 'inputs':request['inputs']+[{'port':'subject','artifact_names':['objective']}]})
     assert 'input_port_unknown' in str(manual.value)
 
 
@@ -167,9 +167,9 @@ def test_qualification_derives_exact_sources_and_rejects_old_audit(tmp_path, mon
     intake_payload['problem_frame']['objective'] = objective['statement']
     intake = complete('qualified_author', 'science.evidence.extract.v1', {'source_material':'paper'}, intake_payload)
     status = root.call_tool('run_status', {'name':'qualified_author'})
-    assert status['selected_output']['items'][0]['value'] == 'One target is frozen.'
+    assert next(item['value'] for item in status['selected_output']['items'] if item['pointer'] == '/scientific_foundation/summary') == 'One target is frozen.'
     audit = complete('qualified_auditor', 'science.evidence.audit.intake.v1',
-        {'scientific_intake':intake, 'source_material':'paper'},
+        {'scientific_intake':intake},
         {'checks':[{'check_key':'source_traceability', 'subject':'Frozen source',
             'status':'pass', 'basis':'Exact fixture source.', 'evidence_keys':['source_material']}],
          'evidence':[{'source_key':'source_material', 'source_type':'frozen_input', 'locator':'line 1'}]})
@@ -195,7 +195,7 @@ def test_qualification_derives_exact_sources_and_rejects_old_audit(tmp_path, mon
     # The extra input is declared on the existing experiment to exercise the
     # common compiler/invoke mechanism without creating another public task.
     prior = complete('foundation_consumer', 'science.experiment.v1',
-        {'research_objective':'objective', 'scientific_materials':'split.scientific_foundation'},
+        {'subject':'objective', 'scientific_materials':'split.scientific_foundation'},
         {'summary':'The fixture requires another observation.', 'outcome':'blocked',
          'limitations':['No new execution was requested.'], 'remaining_question':'Which observation is needed?'})
     from scidiscovery.operations.spec import InputDerivationSpec
@@ -212,7 +212,7 @@ def test_qualification_derives_exact_sources_and_rejects_old_audit(tmp_path, mon
     runtime.runs.operation_catalog = root.facade._operation_catalog = chain_catalog('scientific_intake')
     chained = {'name':'multi_hop', 'operation_id':'science.experiment.v1',
         'instruction':'Use the exact original evidence.', 'inputs':[
-            {'port':'research_objective', 'artifact_names':['objective']},
+            {'port':'subject', 'artifact_names':['objective']},
             {'port':'prior_experiment', 'artifact_names':[prior]}]}
     assert root.call_tool('operation_invoke', chained)['result']['state'] == 'queued'
     bound = runtime.runs.status(runtime.scheduler_bindings.resolve(instance=instance.instance_id,

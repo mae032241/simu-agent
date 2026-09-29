@@ -222,5 +222,5 @@ OPERATIONS = (scientific_agent_operation(EXTRACT_OPERATION,
         validator=_ref("parameter_package_validator"),validator_rule_id="parameter.reference_and_unit_closure",semantic_contract=_ref("parameter_semantic_contract"),
         context_validator=_ref("parameter_extract_context"),context_rule_id="parameter.source_binding",context_sources=tuple(port.name for port in INPUTS),
         evidence_paths=("/scientific_intake/scientific_foundation/evidence",)),),
-    decision_fields=("/scientific_intake/scientific_foundation/summary", "/scientific_intake/scientific_foundation/missing_inputs", "/coverage/status"),
+    decision_fields=("/scientific_intake/scientific_foundation/objective", "/scientific_intake/scientific_foundation/objective_contract/intent", "/scientific_intake/scientific_foundation/objective_contract/mandatory_targets", "/scientific_intake/scientific_foundation/objective_contract/closure_requirements", "/scientific_intake/scientific_foundation/summary", "/scientific_intake/scientific_foundation/missing_inputs", "/coverage/status"),
     timeout=1200,max_input_bytes=1058*1024*1024,max_output_bytes=7*1024*1024,max_files=1,native_view_image=True),)

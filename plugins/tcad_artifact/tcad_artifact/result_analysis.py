@@ -46,7 +46,7 @@ from scidiscovery.operations.tooling import WorkerToolDefinition
 from .curve_normalizer import SProcessLogSourceSpec, SProcessPointLimitError, SProcessSeriesSpec, normalize_sprocess_log
 from .plx_normalizer import SProcessPLXSourceSpec, normalize_sprocess_plx
 from .project_packager import DeckReviewReport, ExecutionPackage, TCADRuntimeManifest
-from .analysis_bindings import source_bindings, JSON_PORTS
+from .analysis_bindings import source_bindings, bound_plan, JSON_PORTS
 
 
 class TCADSourceIdentity(AnalysisSource):
@@ -296,7 +296,14 @@ def _identity_context(sources: Mapping[str, bytes], *, admitting: bool = False):
         raise RunCheckerError("TCAD analysis requires exact input binding descriptors")
     package = parse_bound_json(ExecutionPackage, sources["execution_package"],
         admission_port="execution_package" if admitting else None)
-    plan = package.project.execution_plan or parse_bound_json(ExperimentPortfolio, sources["experiment_plan"],
+    from scidiscovery.operations.workspace import WorkspaceProtocolError
+    try:
+        selected_plan = bound_plan(sources, {alias: item.port_name for alias, item in descriptors.items()})
+    except WorkspaceProtocolError as error:
+        if admitting:
+            raise OperationInvocationError("input_execution_plan_conflict", port="experiment_plan") from error
+        raise declared_violation(str(error), path="$.plan_key") from error
+    plan = parse_bound_json(ExperimentPortfolio, canonical_json(selected_plan),
         admission_port="experiment_plan" if admitting else None)
     manifest = parse_bound_json(TCADRuntimeManifest, sources["runtime_manifest"],
         admission_port="runtime_manifest" if admitting else None)
@@ -568,7 +575,7 @@ OPERATIONS = (scientific_agent_operation(
     "tcad.result.analyze.v1", "Analyze one exact TCAD execution with optional raw-output scoring.",
     "An exact plan, execution package and terminal execution manifest exist, including failed runs.",
     "Solver execution, mandatory pre-experiment curve contracts, or changing raw evidence.",
-    decision_fields=("overall_verdict", "claim_allowed", "summary", "next_action", "remaining_contradiction", "limitations"),
+    decision_fields=("overall_verdict", "claim_allowed", "summary", "objective_assessment", "hypothesis_assessments", "next_action", "remaining_contradiction", "limitations"),
     agent=_ref("result_analysis_agent"), workspace=_ref("tcad_analysis_workspace"),
     prompt=_ref("result_analysis_prompt"), tools=(_ref("result_analysis_score_tool"), _ref("result_analysis_diagnostic_tool"), _ref("analysis_files_tool", "curve_score"), _ref("analysis_inspect_tool"), _ref("analysis_accept_tool")),
     native_view_image=True,

@@ -33,3 +33,7 @@ configuration to both control and worker daemons. This enables bounded
 development debug without exposing the private solver profile to a worker;
 actual `sprocess`/`sdevice` runs still require the administrator-provided
 solver, license, and transport configuration.
+
+## State format for this release
+
+This is a breaking upgrade. Set `SCID_STATE_ROOT` to a **new empty directory**. An existing store must carry this release's `.scidiscovery-state.json` marker. The installer checks before building or stopping services; control, Worker, UI and collection entry points also check. Nonempty unmarked stores, incompatible formats and damaged markers are rejected. Old data is neither migrated nor deleted; do not add a marker manually. First initialization writes it automatically, and current-format stores support normal restarts. Installed-release qualification remains a separate acceptance step.

@@ -144,3 +144,13 @@ def test_runner_upgrade_diagnostic_survives_command_boundary(tmp_path, monkeypat
     assert "did not submit a job" in str(caught.value) and "/private" not in str(caught.value)
     from scidiscovery.plugin_runtime.diagnostics import exception_facts
     assert exception_facts(caught.value, layer="transport", action="policy")["recovery"]["stage"] == "configuration"
+
+
+def test_new_service_reuses_current_budget_and_unfinished_jobs(tmp_path, monkeypatch):
+    service, context, path = fixture(tmp_path, reservation=True, external='private-job')
+    monkeypatch.setattr(service.adapter, 'status', lambda _: 'running')
+    before = path.read_bytes()
+    restarted = LocalTCADDebugService(adapter=service.adapter, exchange_root=tmp_path)
+    assert restarted.experiment_activity({'private-run'}, SUBJECT)
+    assert restarted.status(context, run_name='init', budget_subject=SUBJECT)['allowance_reserved']
+    assert path.read_bytes() == before

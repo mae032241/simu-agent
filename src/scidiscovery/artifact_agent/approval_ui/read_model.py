@@ -79,10 +79,9 @@ class InstanceReadModel:
                 continue
             binding = self._binding(instance_id, item["key"])
             run = self._run(instance_id, binding.object_id)
-            objectives.extend(
-                self._ref(instance_id, source.artifact_ref, f"/inputs/{index}/artifact_ref")
-                for index, source in enumerate(run.inputs) if source.port_name in {"objective", "research_objective"}
-            )
+            refs, lineage_gaps = self._objective_navigation(instance_id, binding, tuple(source.artifact_ref for source in run.inputs))
+            objectives.extend(refs)
+            gaps.extend(lineage_gaps)
         result = {
             "instance": asdict(instance),
             "management_description": instance.objective,
@@ -948,7 +947,7 @@ class InstanceReadModel:
     def _objective_navigation(self, instance_id, binding, roots):
         if binding.namespace == "run":
             inputs = self._run(instance_id, binding.object_id).inputs
-            explicit = [item.artifact_ref for item in inputs if item.port_name in {"objective", "research_objective"}]
+            explicit = [item.artifact_ref for item in inputs if item.port_name in {"objective", "research_objective", "objective_source"}]
             if explicit:
                 return [self._ref(instance_id, ref, "/inputs") for ref in explicit], []
             plans = [item.artifact_ref for item in inputs if item.port_name == "experiment_plan"]
@@ -962,7 +961,7 @@ class InstanceReadModel:
             seen.add(ref)
             try:
                 envelope = self.artifacts.catalog(ref)
-                if envelope.schema_id == "scidiscovery.research-objective.v1":
+                if envelope.schema_id in {"scidiscovery.research-objective.v1", "scidiscovery.scientific-foundation.v1", "scidiscovery.scientific-intake.v1"}:
                     found[ref.artifact_id] = self._ref(instance_id, ref, "")
                     continue
                 # Exact producer ports distinguish a prior plan from same-schema
@@ -972,7 +971,7 @@ class InstanceReadModel:
                     relation="output", limit=2) if producer_reader else ())
                 if len(producers) == 1:
                     inputs = producers[0].inputs
-                    explicit = tuple(item.artifact_ref for item in inputs if item.port_name in {"objective", "research_objective"})
+                    explicit = tuple(item.artifact_ref for item in inputs if item.port_name in {"objective", "research_objective", "objective_source"})
                     prior = tuple(item.artifact_ref for item in inputs if item.port_name == "experiment_plan")
                     if explicit or prior:
                         queue.extend((explicit or prior)[:max(0, 128 - len(seen) - len(queue))])

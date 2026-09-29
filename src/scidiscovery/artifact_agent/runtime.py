@@ -77,6 +77,8 @@ def open_runtime(
     state = Path(state_root).expanduser().absolute()
     _validate_state_root(project, state)
     validate_worker_backend(worker_backend)
+    from .state_format import ensure_state_format
+    ensure_state_format(state, shared_group=shared_group)
     operation_catalog = compile_installed_catalog()
     agent_settings = agent_settings or load_settings(agent_settings_file or os.environ.get("SCID_AGENT_SETTINGS_FILE"))
     scheduler_database_path = state / "database" / "scheduler-bindings.sqlite3"

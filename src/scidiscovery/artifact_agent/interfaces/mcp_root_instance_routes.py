@@ -294,9 +294,16 @@ class RootInstanceRoutes:
         return {**self._binding_value(binding), "state": "bound"}
 
     def artifact_catalog(self, *, name: str, view: str = "detail",
-                         parent_offset: int = 0, parent_limit: int = 16) -> dict[str, Any]:
+                         parent_offset: int = 0, parent_limit: int = 16,
+                         content_cursor: str | None = None) -> dict[str, Any]:
         binding = self._binding("artifact", name)
         envelope = self.artifacts.get_by_id(binding.object_id)
+        if view == "content":
+            from .scientific_originals import read_original_page
+            return read_original_page(self.artifacts, envelope, name=name, instance=self._instance_id(),
+                cursor=content_cursor, page_bytes=self.runs.material_input_settings(self._instance_id()).original_read_page_bytes)
+        if content_cursor is not None:
+            raise RootToolError("content_cursor requires view=content")
         if len(envelope.parent_refs) > 4096:
             raise RootToolError("artifact_catalog direct parent limit exceeded (4096)")
         return self._scientific_artifact_catalog(name, envelope, view, parent_offset, parent_limit)

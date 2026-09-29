@@ -97,6 +97,7 @@ class MaterialInputSettings(SettingsValue):
     inline_max_bytes: int = Field(default=1048576, ge=1)
     inline_total_bytes: int = Field(default=8388608, ge=1)
     transfer_chunk_bytes: int = Field(default=1048576, ge=1, le=8388608)
+    original_read_page_bytes: int = Field(default=16384, ge=512, le=262144)
 
 
 class AttachmentSettings(SettingsValue):
@@ -116,6 +117,7 @@ class ProgressionSettings(SettingsValue):
     max_attempts: int = Field(default=2, ge=1, le=10)
     poll_seconds: int = Field(default=5, ge=1, le=300)
     max_probes: int = Field(default=720, ge=1)
+    related_source_limit: int = Field(default=128, ge=1, le=4096)
     context_bytes: int = Field(default=49152, ge=4096, le=262144)
     max_tokens: int = Field(default=2000000, ge=1)
     token_policy: Literal["strict", "bounded_fallback"] = "bounded_fallback"
