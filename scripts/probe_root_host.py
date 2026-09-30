@@ -76,6 +76,9 @@ def _protocol_probe(output: Path, limits: dict, *, permissions: bool = False) ->
     workspace = None
     exchanges = []
     policy = RootPermissions() if permissions else None
+    if permissions:
+        result.update(start_permissions_verified=False, resume_permissions_verified=False,
+            same_thread_resumed=False, r0a_protocol_passed=False)
     try:
         workspace = tempfile.TemporaryDirectory(prefix="workspace-", dir=output)
         scratch = workspace.name
@@ -107,6 +110,10 @@ def _protocol_probe(output: Path, limits: dict, *, permissions: bool = False) ->
                     error = message["params"]["error"]
                     result["rpc_error_code"] = error.get("code")
                     result["diagnostic"] = rpc_diagnostic(error)
+                    # Preserve the actual rejection in the private probe evidence,
+                    # not in the public summary or scientific Root context.
+                    if permissions and exchanges and exchanges[-1]["method"] == message["params"]["method"]:
+                        exchanges[-1]["error"] = error
 
             connection = AppServer.launch(command, cwd=Path(scratch), environment=environment,
                 stderr=error_log, limits=HostLimits(rpc_timeout_seconds=limits["timeout_seconds"],
@@ -115,11 +122,14 @@ def _protocol_probe(output: Path, limits: dict, *, permissions: bool = False) ->
 
             def rpc(method, params):
                 result["last_method"] = method
+                exchange = {"method": method, "request": params}
+                if permissions:
+                    exchanges.append(exchange)
                 reply = connection.rpc(method, params)
                 result["completed_methods"].append(method)
                 if permissions:
-                    exchanges.append({"method": method, "request": params, "response": {
-                        key: reply[key] for key in ("userAgent", "thread", "approvalPolicy", "sandbox") if key in reply}})
+                    exchange["response"] = {
+                        key: reply[key] for key in ("userAgent", "thread", "approvalPolicy", "sandbox") if key in reply}
                 return reply
 
             initialized = rpc("initialize", {"clientInfo": {"name": "scid_root_host_probe", "version": "0.1.0"},
@@ -129,6 +139,9 @@ def _protocol_probe(output: Path, limits: dict, *, permissions: bool = False) ->
             reply = rpc("thread/start", params)
             if policy:
                 policy.verify(reply, cwd=scratch)
+                result.update(start_permissions_verified=True,
+                    effective_permissions=policy.declaration(),
+                    native_user_agent=initialized.get("userAgent"))
             thread = reply["thread"]
             result.update(status="initialized_without_model_turn",
                 actual_thread_id_present=bool(thread.get("id")),
@@ -141,6 +154,7 @@ def _protocol_probe(output: Path, limits: dict, *, permissions: bool = False) ->
                 resumed = rpc("thread/resume", {"threadId": thread["id"], "cwd": scratch,
                     "excludeTurns": True, **policy.thread()})
                 policy.verify(resumed, cwd=scratch)
+                result["resume_permissions_verified"] = True
                 actual = resumed.get("thread", {})
                 if any(actual.get(key) != thread[key] for key in ("id", "sessionId")):
                     raise RuntimeError("resumed_platform_identity_changed")
@@ -159,6 +173,7 @@ def _protocol_probe(output: Path, limits: dict, *, permissions: bool = False) ->
         if permissions:
             result.setdefault("r0a_protocol_passed", False)
             (output / "permissions-protocol.json").write_text(json.dumps(exchanges, indent=2) + "\n")
+            result["protocol_evidence"] = str(output / "permissions-protocol.json")
         (output / "protocol.json").write_text(json.dumps(result, indent=2) + "\n")
     expected = "permissions_verified_without_model_turn" if permissions else "initialized_without_model_turn"
     return 0 if result["status"] == expected else 1

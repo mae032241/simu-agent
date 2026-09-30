@@ -81,6 +81,7 @@ def test_readiness_alone_never_claims_b0a_or_launches(tmp_path, monkeypatch):
 @pytest.mark.parametrize("outcome,permissions", [
     ("ready",False), ("requirements_error",False), ("identity_missing",False),
     ("ready",True), ("network_mismatch",True), ("resume_identity_changed",True),
+    ("resume_rejected",True),
 ])
 def test_protocol_probe_uses_no_model_and_cleans_workspace(tmp_path, monkeypatch, outcome, permissions):
     """A fake local stdio peer proves protocol handling, never live Codex ability."""
@@ -100,6 +101,9 @@ for line in sys.stdin:
     elif {outcome!r} == 'requirements_error':
         reply = {{'id': msg['id'], 'error': {{'code': -32603,
             'message': 'failed to load workspace requirements: private-details'}}}}
+    elif {outcome!r} == 'resume_rejected' and msg['method'] == 'thread/resume':
+        reply = {{'id': msg['id'], 'error': {{'code': -32600,
+            'message': 'fixture resume rejection: private-details', 'data': {{'fixture': True}}}}}}
     else:
         thread = {{'id': 'fixture-thread', 'sessionId': 'fixture-session'}}
         if {outcome!r} == 'identity_missing': thread.pop('id')
@@ -138,6 +142,17 @@ for line in sys.stdin:
         if outcome == 'ready':
             assert result['native_user_agent'] == 'fixture-codex/1'
             assert result['same_thread_resumed']
+            assert result['start_permissions_verified'] and result['resume_permissions_verified']
+        elif outcome == 'resume_rejected':
+            assert result['diagnostic'] == 'request_rejected'
+            assert result['completed_methods'] == ['initialize', 'thread/start']
+            assert result['start_permissions_verified']
+            assert not result['resume_permissions_verified'] and not result['same_thread_resumed']
+            assert trace[-1]['request'] == requests[-1]['params']
+            assert 'response' not in trace[-1]
+            assert trace[-1]['error'] == {'code': -32600,
+                'message': 'fixture resume rejection: private-details', 'data': {'fixture': True}}
+            assert result['protocol_evidence'] == str(output / 'permissions-protocol.json')
         else:
             assert result['diagnostic'] in {'root_permissions_mismatch','resumed_platform_identity_changed'}
 
