@@ -717,6 +717,12 @@ class RootMCPRouter:
             from ..service.instance_maintenance import InstanceMaintenanceBusy, InstanceMaintenanceUnavailable
             if isinstance(error, (InstanceMaintenanceBusy, InstanceMaintenanceUnavailable)):
                 raise
+            # Expected caller repair is already a complete scientific diagnostic.
+            # Do not misclassify it as a host failure or invite traceback reading.
+            details = getattr(error, "details", ())
+            if details and all(item.get("phase") == "input_admission"
+                               and item.get("repairable") is True for item in details):
+                raise
             scope = "session:" + (self.facade.session_key or "unbound")
             try:
                 scope = "instance:" + self.facade._instance_id()

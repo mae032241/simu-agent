@@ -25,6 +25,15 @@ at least one verified contributor is needed for independent review. Control foll
 families and these declared edges; copied labels, arbitrary parents and raw user
 text do not establish authorship. Agent callers supply scientific names only.
 
+`InputPortSpec.derivation` also owns the public `source_requirements` projection.
+Requirements are attached to the visible anchor input; derived port names and
+producer traversal paths remain internal. A wildcard anchor does not waive these
+requirements. The same declaration produces origin-rejection guidance, so plugin
+authors do not maintain a separate caller rule. Missing origins are repairable
+input admission errors, not engineering failures. Originals can be passed directly
+to a source-based scientific task; copying them does not manufacture a required
+scientific result or its provenance.
+
 `InputPortSpec.exposure="material"` declares a paired wildcard evidence inventory
 (`schema="*"`, `media_types=("*/*",)`). Control applies `AgentSettings.input_materials`
 to stored sizes, delivers small text on demand, and freezes larger or binary inputs

@@ -19,7 +19,14 @@ from ...platforms.codex_usage import observe_usage, usage_summary
 INSTRUCTION = """Continue the explicitly started frozen research goal from this bounded brief.
 Choose the next complete task using public Operations and sealed evidence, or wait,
 ask a specific question, or conclude the whole goal. A completed Run does not mean
-the goal is complete. Keep limitations and negative results. Read exact materials
+the goal is complete. Starting this goal authorizes ordinary task selection within
+its scope and budget, including source-based analysis. Do not ask permission to
+choose such a task or repair an input selection. Ask only for missing user facts,
+an actual scope decision, or an explicitly required authorization; policy gates
+still apply. An original text/file is not yet a Worker-authored scientific object.
+Use a task accepting that original when no suitable scientific result exists;
+do not force an experiment or a preparatory workflow for pure evidence analysis.
+Keep limitations and negative results. Read exact materials
 and contracts as needed; omitted content is not evidence. Reuse the decision
 fields in this brief and contracts already read in this native thread. Request
 specific output_fields/output_paths when more evidence is needed; do not default
@@ -198,7 +205,8 @@ class ProgressionCoordinator:
         facade = self.facade_factory(row['owner_session'])
         ref = ArtifactRef.model_validate_json(row['objective_ref_json'])
         artifact = self.runtime.artifacts.catalog(ref)
-        goal = dict(name=row['objective_name'], status='omitted', read='artifact_catalog', view='content')
+        goal = dict(name=row['objective_name'], kind=artifact.kind, schema=artifact.schema_id,
+            status='omitted', read='artifact_catalog', view='content')
         # Check stored size before reading the exact immutable goal.
         if artifact.size_bytes <= limit // 3:
             raw = self.runtime.artifacts.read(ref)

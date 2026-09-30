@@ -3,11 +3,12 @@ from __future__ import annotations
 
 from typing import Any
 from ..schema.refs import ArtifactRef
-from ..schema.common import canonical_sha256
+from ..schema.common import canonical_sha256, ContractDiagnostic
 from ...operations.invoke import (
     InvocationArtifact, OperationInvocationError, ProducerOutputFamily,
     ProducerFamilyMember, ProducerInputProjection, ProducerEvidenceSource,
 )
+from ...operations.spec import input_source_requirement
 
 
 class OperationOrigins:
@@ -505,8 +506,19 @@ class OperationOrigins:
                 resolved[port.name] = ()
                 return
             def reject(reason):
-                raise OperationInvocationError(reason, port=rule.anchor_port,
-                    message="The selected scientific subject has missing, ambiguous or inaccessible original materials. Select a subject with its sealed producer history; no newer material is substituted.")
+                anchor = ports[rule.anchor_port]
+                while anchor.derivation is not None:
+                    anchor = ports[anchor.derivation.anchor_port]
+                message = {
+                    "input_origin_missing": "The selected material does not supply the required scientific source. ",
+                    "input_origin_ambiguous": "The selected material has ambiguous required sources. ",
+                }.get(reason, "The selected material's exact source is unavailable or incompatible. ")
+                requirement = input_source_requirement(port)
+                message_limit = ContractDiagnostic.model_json_schema()['properties']['message']['maxLength']
+                if len(message + requirement) > message_limit:
+                    requirement = "Read this action's source_requirements for the selected input. If only originals exist, choose a source-based task that accepts them. Copying or renaming originals does not establish provenance. Control resolves bindings."
+                raise OperationInvocationError(reason, port=anchor.name if anchor.agent_visible else None,
+                    message=message + requirement)
             if len(anchors) != 1:
                 reject("input_origin_ambiguous" if anchors else "input_origin_missing")
             def family_for(ref):

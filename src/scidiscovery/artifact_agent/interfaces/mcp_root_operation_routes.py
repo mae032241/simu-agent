@@ -181,12 +181,10 @@ class RootOperationRoutes:
                     message="The selected scientific material requires qualification. Use its declared qualification action and approval UI, then retry with the same exact material; do not add another input.") from error
             port = ports.get(error.port)
             if port is not None and (port.derivation is not None or not port.agent_visible):
-                self.engineering_diagnostics.capture(error, scope="instance:" + self._instance_id(),
-                    layer="input_derivation", action="invoke")
                 while port.derivation is not None:
                     port = ports[port.derivation.anchor_port]
                 raise OperationInvocationError(error.reason_code, port=port.name if port.agent_visible else None,
-                    message="The selected subject's original materials do not satisfy this action. Restore its exact sealed materials or choose a compatible scientific subject; control diagnostics retain the detailed cause.") from error
+                    message="The selected subject's scientific content does not satisfy this action's declared input requirements. Choose a compatible scientific subject or ask a source-based task to resolve the missing science; do not add internal inputs.") from error
             raise
         if required_review is not None and bound.compiled.spec.executor.capability is None:
             raise OperationInvocationError("execution_review_not_applicable",

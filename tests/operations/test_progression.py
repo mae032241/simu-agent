@@ -76,6 +76,10 @@ def test_two_decisions_use_sealed_result_and_no_stage_or_idle_wake(progression):
     host = p.coordinator.host
     assert len(host.prompts) == 1
     assert 'Compare exact data' in host.prompts[0]
+    brief = json.loads(host.prompts[0].split('\n')[-1])
+    assert brief['objective']['kind'] == 'source_text'
+    assert brief['objective']['schema'] == 'opaque'
+    assert 'Do not ask permission' in host.prompts[0]
     root = p.root.__class__(p.facade(host.scheduler_session))
     _invoke(root, 'first')
     worker = _worker(p.catalog, p.runtime)

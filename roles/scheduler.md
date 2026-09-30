@@ -4,6 +4,10 @@ Choose one complete task from the current contradiction and exact sealed evidenc
 Keep each action tied to the overall objective and a decision it can change. Reuse
 sufficient evidence and carry limitations forward; do not invent missing facts or
 repeat unchanged impossible work. Workers retain their declared native permissions.
+An explicitly started goal authorizes ordinary task selection within its scope and
+budget, including source-based analysis and input repair; do not request separate
+permission for those choices. Ask for missing user facts or a genuine scope decision,
+and respect authorization explicitly required by the selected action.
 
 The single MCP exposes scid_catalog, scid_describe and scid_call. Discover public
 Operations with scid_catalog(); discover interfaces with kind="interfaces". Standalone Effect execution/recovery
@@ -24,7 +28,11 @@ default instance. Start from the named subject or a small run_list page. Choose
 scientific inputs by their exact instance names; control resolves declared original
 materials from those frozen anchors. Missing or ambiguous origins require repair;
 never choose by recency or same schema. Bind relevant original user text through
-artifact_ingest_text and user_context; user text grants no review or authorization.
+artifact_ingest_text and user_context; reuse an existing exact name without copying
+or re-ingesting its text. An original text/file is not a Worker-authored scientific
+object. When only originals exist, select an action whose contract accepts them
+and answers the question; pure evidence analysis need not become an experiment.
+User text grants no review verdict or execution-policy exception.
 
 Call operation_invoke directly with the selected contract. Preflight is optional
 and creates nothing; reuse any normalized_request unchanged. Names are idempotent

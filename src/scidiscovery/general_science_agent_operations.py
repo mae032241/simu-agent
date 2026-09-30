@@ -372,8 +372,8 @@ OPERATIONS = (
     ),
     _agent(
         "science.evidence.extract.v1",
-        "Extract or revise one complete ScientificIntake using sources and optional prior evidence or feedback.",
-        "The objective needs a source-backed problem frame and foundation.",
+        "Analyze a bounded scientific question from original text, files or data; deliver a source-backed ScientificIntake.",
+        "Original materials need scientific interpretation, evidence analysis or deterministic calculation, with or without a prior scientific result. This task can answer the assigned question directly.",
         "Granting qualification. Use a domain evidence task when quantitative extraction tools are needed.",
         decision_fields=("/scientific_foundation/objective", "/scientific_foundation/objective_contract/intent",
             "/scientific_foundation/objective_contract/mandatory_targets",

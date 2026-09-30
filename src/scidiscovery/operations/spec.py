@@ -507,6 +507,7 @@ class SchedulerOperationView(FrozenSpec):
     not_for: str
     inputs: tuple[SchedulerInputPortView, ...]
     outputs: tuple[SchedulerPortView, ...]
+    source_requirements: dict[str, tuple[str, ...]] = Field(default_factory=dict)
     review_subject_policy: dict[str, Any] | None = None
     qualification_policy: str | None = None
     input_validation: dict[str, Any] | None = None
@@ -533,6 +534,41 @@ class CompiledDigestEnvelope:
     permission_template: PermissionTemplate | None
     reviewer_digest: str | None
     approval_providers: tuple[ApprovalProviderIdentity, ...] = ()
+def input_source_requirement(port: InputPortSpec) -> str:
+    """Scientific requirement shared by the caller view and origin rejection.
+
+    Producer paths and derived port names are control details, not caller fields.
+    """
+    rule = port.derivation
+    if rule is None:
+        raise ValueError("source requirement needs a derived input")
+    if rule.source_schemas:
+        source = "one unambiguous source of type " + " or ".join(rule.source_schemas)
+        requirement = f"The selected object or its declared exact producer history must supply {source}."
+    elif rule.producer_input_path or rule.source_paths or rule.producer_output_port or rule.select != "subject":
+        requirement = "The selected object must retain the exact original materials or related evidence required by this action in its declared producer history."
+    else:
+        return "Control reuses the exact selected object; its format and cardinality must satisfy this action. No separate caller binding is needed."
+    return requirement + " Reuse compatible sealed science; if only originals exist, choose a source-based task that answers the question. Copying or renaming originals does not establish provenance. Control resolves bindings."
+
+
+def source_requirements_projection(spec: OperationSpec) -> dict[str, tuple[str, ...]]:
+    ports = {port.name: port for port in spec.inputs}
+    requirements: dict[str, list[str]] = {}
+    for port in spec.inputs:
+        if port.derivation is None:
+            continue
+        anchor = ports[port.derivation.anchor_port]
+        while anchor.derivation is not None:
+            anchor = ports[anchor.derivation.anchor_port]
+        if anchor.agent_visible:
+            text = input_source_requirement(port)
+            values = requirements.setdefault(anchor.name, [])
+            if text not in values:
+                values.append(text)
+    return {name: tuple(values) for name, values in requirements.items()}
+
+
 def scheduler_operation_view(spec: OperationSpec) -> SchedulerOperationView:
     if spec.limits is None:
         raise ValueError("an uncompiled operation has no limits")
@@ -559,6 +595,7 @@ def scheduler_operation_view(spec: OperationSpec) -> SchedulerOperationView:
         not_for=spec.description.not_for,
         inputs=tuple(input_port(item) for item in spec.inputs if item.agent_visible and item.derivation is None),
         outputs=tuple(output_port(item) for item in spec.outputs if item.agent_visible),
+        source_requirements=source_requirements_projection(spec),
         review_subject_policy=({"ports": [port.name for port in spec.inputs
             if port.name in spec.independent_review_ports and port.agent_visible and port.derivation is None],
             "requirement": "Review exact sealed scientific results with control-verifiable participating authors. Original user text alone is not an authored scientific result; choose a source-based scientific task to analyze it. Control resolves authors, including declared deterministic projections, before creating the review. The actual reviewer must differ from every participating author."}

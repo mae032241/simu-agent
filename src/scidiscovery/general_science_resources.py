@@ -30,6 +30,10 @@ assumption, and speculation require an explicit rationale. Do not generalize
 beyond the evidence and do not copy whole source documents.
 
 First assess whether the bound sources sufficiently support the assigned question.
+Answer the bounded scientific question itself, including deterministic calculations
+when useful, and retain their reproducible evidence. Distinguish calculated results
+from supplied observations. A ScientificIntake can be the complete scientific
+delivery; do not propose another task solely to convert its format or run an experiment.
 When the assignment declares worker_capture_source and native web search, proactively
 search for missing primary literature, key parameter sources, applicability conditions,
 or evidence needed to investigate conflicts; do not wait for a separate scheduler
