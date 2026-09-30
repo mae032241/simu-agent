@@ -599,7 +599,9 @@ def test_native_cleanup_does_not_hide_original_failure(tmp_path):
     host.call=unavailable
     with pytest.raises(TimeoutError,match='uncertain_submit'):host.run_journey()
     assert calls==[('progression_command',{'command':'pause'})]
-    assert json.loads((tmp_path/'closeout-error.json').read_text())['diagnostic']=='RuntimeError'
+    diagnostic=json.loads((tmp_path/'closeout-error.json').read_text())
+    assert diagnostic['error_type']=='RuntimeError' and diagnostic['stage']=='pause'
+    assert diagnostic['error_code']=='unclassified_error'
 
 
 def test_managed_launcher_is_bounded_and_only_targets_its_owned_unit(tmp_path,monkeypatch):

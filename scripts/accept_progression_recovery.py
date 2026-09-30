@@ -5,6 +5,7 @@ This establishes Root lifecycle only; it does not qualify Worker/helper survival
 """
 import json
 import sqlite3
+import sys
 import time
 from contextlib import closing
 
@@ -29,6 +30,23 @@ CLOSEOUT_ARGUMENTS = dict(name='acceptance.root-closeout.objective', on_conflict
 用 progression_report(completed=true) 简短交接并结束本回合，保留原结果的限制。
 不得新建科学任务、派发 Worker/助手、执行外部任务或改变科学产物、配置及预算。
 不做新的计算，不重复审批，不等待额外指令。''')
+
+STOP_REASONS = {'goal_completed', 'host_fault', 'budget_exhausted', 'resource_limit',
+    'submission_unknown', 'root_turn_failed', 'attempt_budget_exhausted', 'task_admission_unknown'}
+
+
+def closeout_diagnostic(error, stage, reason=None):
+    """Keep bounded codes only; exception text can contain private RPC content."""
+    known = {'app_server_closed', 'host_connection_unusable', 'rpc_timeout',
+        'protocol_message_limit', 'protocol_invalid_json', 'protocol_invalid_message',
+        'owned_process_exited', 'user_stop', 'public_tool_failed',
+        'acceptance_session_budget_exhausted', 'acceptance_final_budget_unconfirmed'}
+    candidate = getattr(error, 'code', None)
+    if candidate is None and error.args and isinstance(error.args[0], str):
+        candidate = error.args[0].split(':', 1)[0]
+    code = candidate if candidate in known else 'timeout' if isinstance(error, TimeoutError) else 'unclassified_error'
+    return dict(error_type=type(error).__name__, stage=stage, error_code=code,
+        stop_reason=reason if reason in STOP_REASONS | {'user_paused', 'user_stopped', 'host_active'} else None)
 
 
 def running_turn(row):
@@ -74,23 +92,41 @@ class RecoveryJourney(Journey):
         with closing(sqlite3.connect(path.as_uri() + '?mode=ro', uri=True)) as db:
             return list(db.execute('SELECT run_id,state,output_ref_json FROM runs ORDER BY run_id'))
 
-    def wait_row(self, predicate, label, *, timeout=90):
-        deadline = min(self.phase_deadline, time.monotonic() + timeout)
-        while time.monotonic() < deadline:
-            self.pump()
-            row = self.row()
-            if predicate(row):
-                write(self.logdir.parent / (label + '.json'), row)
-                return row
-            # progression_report publishes goal_completed before the native
-            # turn ends. Active completion is a delivery event, not a stop.
-            stopped_goal = (row.get('reason')=='goal_completed'
-                and row.get('state') in {'paused','stopped'})
-            if stopped_goal or row.get('reason') in {'host_fault','budget_exhausted','resource_limit','submission_unknown',
-                    'root_turn_failed','attempt_budget_exhausted','task_admission_unknown'}:
-                raise RuntimeError(label + ':unexpected_stop:' + row['reason'])
-            time.sleep(.2)
-        raise TimeoutError(label)
+    def wait_row(self, predicate, label, *, timeout=90, cleanup=False):
+        previous_deadline = self.phase_deadline
+        deadline = time.monotonic() + timeout
+        if cleanup:
+            # Only observe release in this bounded grace window. Restore the
+            # execution deadline afterwards; no scientific/model budget changes.
+            self.phase_deadline = deadline
+        else:
+            deadline = min(previous_deadline, deadline)
+        try:
+            while time.monotonic() < deadline:
+                self.pump()
+                row = self.row()
+                if predicate(row):
+                    write(self.logdir.parent / (label + '.json'), row)
+                    return row
+                # Active goal_completed is a delivery event. Cleanup may also
+                # observe stops, but only its predicate proves writer release.
+                stopped_goal = (row.get('reason')=='goal_completed'
+                    and row.get('state') in {'paused','stopped'})
+                if not cleanup and (stopped_goal or row.get('reason') in STOP_REASONS - {'goal_completed'}):
+                    raise RuntimeError(label + ':unexpected_stop:' + row['reason'])
+                time.sleep(.2)
+            raise TimeoutError(label)
+        finally:
+            if cleanup:
+                self.phase_deadline = previous_deadline
+
+    def record_closeout_error(self, label, error, stage, reason=None):
+        diagnostic = closeout_diagnostic(error, stage, reason)
+        try:
+            write(self.logdir.parent / (label + '.json'), dict(status='unconfirmed', **diagnostic))
+        except Exception:
+            # Evidence-storage failure must not replace the primary exception.
+            print(json.dumps(dict(diagnostic_write='failed', **diagnostic)), file=sys.stderr, flush=True)
 
     def run_journey(self):
         self.control_attempted = False
@@ -98,16 +134,22 @@ class RecoveryJourney(Journey):
             self.run_recovery()
         except BaseException:
             if self.control_attempted:
+                stage, reason = 'control_read', None
                 try:
-                    status = self.call('progression_command', dict(command='pause'))
+                    control = self.row()
+                    reason = control.get('reason')
+                    write(self.logdir.parent / 'failure-control.json', control)
+                    stage = 'pause'
+                    status = (dict(status='already_stopped', reason=reason) if control['state'] in {'paused','stopped'}
+                        else self.call('progression_command', dict(command='pause')))
                     write(self.logdir.parent / 'failure-pause.json', status)
                     # Leave the daemon alive until its native terminal witness
                     # releases the old writer; closing immediately can strand it.
+                    stage = 'writer_release'
                     self.wait_row(lambda row: row['state'] in {'paused','stopped'} and not row['host_json'],
-                        'failure-released', timeout=getattr(self, 'case_config', {}).get('stage_timeout_seconds',90))
+                        'failure-released', timeout=getattr(self, 'case_config', {}).get('stage_timeout_seconds',90), cleanup=True)
                 except Exception as error:
-                    write(self.logdir.parent / 'failure-pause.json', dict(
-                        status='unconfirmed', error_type=type(error).__name__))
+                    self.record_closeout_error('failure-closeout-error', error, stage, reason)
             raise
 
     def run_recovery(self):

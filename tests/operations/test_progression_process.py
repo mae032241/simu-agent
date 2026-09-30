@@ -63,7 +63,7 @@ for line in sys.stdin:
         result={'turn':{'id':turn}}
         emit({'id':msg['id'],'result':result})
         emit({'method':'thread/tokenUsage/updated','params':{'threadId':'native-root','tokenUsage':{'total':{'inputTokens':100,'cachedInputTokens':50,'outputTokens':20}}}})
-        if mode not in {'running','interrupt-disconnect','interrupt-terminal-no-ack'}:emit({'method':'turn/completed','params':{'threadId':'native-root','turn':{'id':turn,'status':'completed'}}})
+        if mode not in {'running','interrupt-disconnect','interrupt-terminal-no-ack'}:emit({'method':'turn/completed','params':{'threadId':'native-root','turn':{'id':turn,'status':os.environ.get('SCID_TEST_TERMINAL_STATUS','completed')}}})
         continue
     elif method=='turn/interrupt':
         if mode=='interrupt-disconnect':sys.exit(0)
@@ -121,6 +121,47 @@ def test_real_native_process_reconnect_does_not_replay_turn(progression, tmp_pat
     assert 'thread/resume' in methods(requests) and 'thread/read' in methods(requests)
     assert checkpoint(p)['rounds']==1
     assert checkpoint(p)['usage_records']['native-root']['counted_tokens']['input_tokens']==100
+
+
+@pytest.mark.parametrize('reason', ['goal_completed', 'budget_exhausted', 'root_turn_failed'])
+def test_acceptance_cleanup_observes_followup_tick_release_and_owned_process_exit(progression, tmp_path, monkeypatch, reason):
+    from scripts.accept_progression_recovery import RecoveryJourney
+    p = progression
+    _, requests = native(tmp_path, monkeypatch, p.runtime.project_root, tmp_path/'control.sock')
+    if reason == 'root_turn_failed':
+        monkeypatch.setenv('SCID_TEST_TERMINAL_STATUS', 'failed')
+    p.coordinator.host_factory = CodexProgressionFactory(project_root=p.runtime.project_root,
+        state_root=p.runtime.state_root, socket_path=tmp_path/'control.sock', approval_base_url='http://127.0.0.1:8765')
+    p.coordinator.tick()
+    host = p.coordinator.host
+    if reason != 'root_turn_failed':
+        root = p.root.__class__(p.facade(host.scheduler_session))
+        root.call_tool('progression_report', dict(summary='Sealed handoff.', completed=True))
+        assert row(p)['state'] == 'active' and row(p)['host_json'] is not None
+    wait_for(lambda: host.poll(.01) is not None)
+    if reason == 'budget_exhausted':
+        p.now[0] += json.loads(row(p)['config_json'])['effective']['progression']['max_elapsed_seconds']+1
+    p.coordinator.tick()
+    stopped = row(p)
+    assert stopped['state'] == 'paused' and stopped['reason'] == reason and stopped['host_json'] is not None
+    assert host.connection.child.poll() is None
+    releases = []
+    release = p.runtime.scheduler_bindings.release_host
+    def witnessed_release(**kwargs):
+        releases.append(kwargs)
+        return release(**kwargs)
+    monkeypatch.setattr(p.runtime.scheduler_bindings, 'release_host', witnessed_release)
+    journey = RecoveryJourney.__new__(RecoveryJourney)
+    journey.logdir = tmp_path/'logs'
+    journey.phase_deadline = old_deadline = time.monotonic()-1
+    journey.row = lambda: row(p)
+    journey.pump = p.coordinator.tick
+    released = journey.wait_row(lambda value: value['state'] in {'paused','stopped'} and not value['host_json'],
+        'closeout-released', timeout=2, cleanup=True)
+    assert released['reason'] == reason and journey.phase_deadline == old_deadline
+    assert releases == [dict(instance_id=p.instance, platform_session='native-root', thread_id='native-root')]
+    assert p.coordinator.host is None and host.connection.closed and host.connection.child.poll() is not None
+    assert methods(requests).count('turn/start') == 1
 
 
 def test_native_process_interrupted_recovery_starts_one_new_decision(progression,tmp_path,monkeypatch):
@@ -350,6 +391,7 @@ def test_terminal_interrupt_without_reply_releases_or_reconnects_without_replay(
 
 @pytest.mark.parametrize('control', ['pause', 'resume'])
 def test_native_disconnect_during_control_retains_marker_without_spinning(progression, tmp_path, monkeypatch, control):
+    from scripts.accept_progression_recovery import RecoveryJourney
     p = progression
     _, requests = native(tmp_path, monkeypatch, p.runtime.project_root, tmp_path/'control.sock', 'interrupt-disconnect')
     p.coordinator.host_factory = CodexProgressionFactory(project_root=p.runtime.project_root,
@@ -366,6 +408,18 @@ def test_native_disconnect_during_control_retains_marker_without_spinning(progre
     count = len(methods(requests))
     p.coordinator.tick()
     assert len(methods(requests)) == count
+    marker = row(p)['host_json']
+    journey = RecoveryJourney.__new__(RecoveryJourney)
+    journey.logdir = tmp_path/'logs'
+    journey.phase_deadline = time.monotonic()-1
+    journey.row = lambda: row(p)
+    journey.pump = p.coordinator.tick
+    with pytest.raises(TimeoutError, match='closeout-released'):
+        journey.wait_row(lambda value: value['state'] in {'paused','stopped'} and not value['host_json'],
+            'closeout-released', timeout=.1, cleanup=True)
+    assert row(p)['host_json'] == marker and row(p)['reason'] == 'host_fault'
+    assert len(methods(requests)) == count and host.connection.child.poll() is not None
+    assert not (tmp_path/'closeout-released.json').exists()
     monkeypatch.setenv('SCID_TEST_MODE', 'complete')
     p.root.call_tool('progression_command', dict(command='resume'))
     p.coordinator.tick()

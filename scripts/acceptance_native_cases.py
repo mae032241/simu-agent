@@ -126,20 +126,25 @@ class NativeCaseJourney(RecoveryJourney):
             self.run_case()
         finally:
             original_failure = sys.exc_info()[0] is not None
+            stage, reason = 'control_read', None
             try:
                 if self.control_attempted:
                     control = self.row()
+                    reason = control.get('reason')
                     write(self.logdir.parent/'terminal-control.json', control)
                     # Already stopped by control: wait for release without replacing
                     # budget_exhausted/host_fault/goal_completed with user_paused.
+                    stage = 'pause'
                     if control['state'] not in {'paused', 'stopped'}:
                         result = self.call('progression_command', dict(command='pause'))
                     else:
                         result = dict(status='already_stopped', reason=control.get('reason'))
                     write(self.logdir.parent/'closeout-pause.json', result)
+                    stage = 'writer_release'
                     self.wait_row(lambda r:r['state'] in {'paused','stopped'} and not r['host_json'],
-                        'closeout-released',timeout=self.case_config['stage_timeout_seconds'])
+                        'closeout-released',timeout=self.case_config['stage_timeout_seconds'],cleanup=True)
                 if hasattr(self, 'case_started_at'):
+                    stage = 'sealed_evidence'
                     before = {v['run_id'] for v in self.before_runs}
                     current = [v for v in run_snapshot(self.root) if v['run_id'] not in before]
                     workers, helpers = participants(self.root, [v['run_id'] for v in current])
@@ -148,7 +153,7 @@ class NativeCaseJourney(RecoveryJourney):
                         write(self.logdir.parent/'participants.json', dict(workers=workers, helpers=helpers))
                         self.case_checks['sealed_delivery'] = 'passed' if self.case_config.get('multi_task') or len(current) == 1 else 'failed'
             except Exception as error:
-                write(self.logdir.parent/'closeout-error.json', dict(diagnostic=type(error).__name__))
+                self.record_closeout_error('closeout-error', error, stage, reason)
                 if not original_failure:
                     raise RuntimeError('background_closeout_unconfirmed') from error
             finally:
@@ -158,7 +163,8 @@ class NativeCaseJourney(RecoveryJourney):
                         current = [v for v in run_snapshot(self.root) if v['run_id'] not in {b['run_id'] for b in self.before_runs}]
                         workers, helpers = participants(self.root, [v['run_id'] for v in current])
                         self.check_case_budget(workers, helpers, final=True)
-                    except Exception:
+                    except Exception as error:
+                        self.record_closeout_error('budget-final-error', error, 'budget_final', reason)
                         if not active_failure:
                             raise
 
