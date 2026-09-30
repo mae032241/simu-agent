@@ -458,6 +458,16 @@ is looked up using its frozen descriptor before any new side effect; a renamed r
 cannot claim the same semantic project's budget again. Status and the instance UI show
 `authorization.source` (`policy`, `human`, or `none`) and the frozen policy digest/budget.
 
+Root and Worker submission calls hand remote admission, preparation and submission to
+one control-owned background writer. The bounded reply reports `submission.state=pending`;
+it does not claim solver success. The writer retains an independent maintenance lease
+and durable per-execution lock/record. Duplicate calls cannot launch another submission.
+After a lost response or daemon restart, status reconciles the exact descriptor by lookup
+only; an absent lookup is still unknown, never permission to resubmit or release budget.
+Background failures expose a bounded diagnostic reference; required approvals remain
+available through status. Operational submission progress is excluded from sealed receipts.
+Control admits only one background submission at a time; there is no unbounded queue.
+
 The control daemon reconciles expired Runs and polls already submitted executions
 serially, independently of Worker calls. Global `lifecycle.interval_seconds` (30)
 and `lifecycle.batch_size` (32) configure bounded, rotating passes. Worker timeout
@@ -988,7 +998,9 @@ the source snapshot. Explicit values equal to package defaults still override gl
 values. These control settings are not scientific input ports or Agent forms.
 `execution_io` defaults are `max_export_bytes=2000000000`, `read_page_bytes=16384`,
 `collection_timeout_seconds=600`, `file_timeout_seconds=120` and
-`idle_timeout_seconds=30`. Capacity is bytes, time is seconds. The experiment's text
+`idle_timeout_seconds=30` and `submission_response_wait_seconds=0.25` (0–2 seconds).
+The last setting bounds the initial wait for background submission, not solver runtime.
+Capacity is bytes, time is seconds. The experiment's text
 read, streamed export and collection consume those frozen values; export/collection
 are additionally bounded by remaining Run time. They are separate from the plugin's
 configured solver storage/wall-time authorization and from RAM limits. Changing them

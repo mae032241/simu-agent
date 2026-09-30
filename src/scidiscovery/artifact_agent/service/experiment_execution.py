@@ -165,6 +165,7 @@ class ExperimentExecution:
         return records[0]
 
     def _cancel(self, execution_id):
+        self.bridge.submissions.require_idle(execution_id)
         status = self.executions.status(execution_id)
         if status.state == "abandoned":
             self.executions.abandon(execution_id)  # Complete any interrupted approval cleanup.
@@ -172,7 +173,7 @@ class ExperimentExecution:
         if status.state in {"created", "authorized"}:
             prepared = self.executions.prepared_submission(execution_id)
             if prepared is None:
-                self.executions.abandon(execution_id)
+                self.bridge.abandon(execution_id)
                 return
             found = self.bridge._adapter(status.executor).lookup_submission(prepared)
             if found is None:
@@ -279,10 +280,12 @@ class ExperimentExecution:
             if request.action == "cancel":
                 self._cancel(execution_id)
             else:
+                self.bridge.submissions.refresh(execution_id, scope="instance:" + run.instance_id)
                 self._reconcile_authorization(execution_id)
                 approval = self._approval_status(execution_id)
                 status = self.executions.status(execution_id)
                 if approval is not None and status.state in {"created", "abandoned"}:
+                    self._bind_approval(run, request.name, execution_id)
                     return self._authorization_response(run, request.name, execution_id, approval)
                 if status.external_run_id is not None and status.state in {"submitted", "running", "cancelling"}:
                     self.bridge.sync(execution_id=execution_id, diagnostic_scope="instance:" + run.instance_id)
@@ -383,10 +386,10 @@ class ExperimentExecution:
             try:
                 self._start_request(execution_id, effect, identity, approval)
             except ExecutionAuthorizationRequired:
-                self._approval(execution_id, effect, identity)
                 self._bind_approval(run, request.name, execution_id)
                 return self._authorization_response(run, request.name, execution_id, self._approval_status(execution_id))
-            self.bridge.sync(execution_id=execution_id, diagnostic_scope="instance:" + run.instance_id)
+            if request.action == "advance" and self.executions.status(execution_id).external_run_id is not None:
+                self.bridge.sync(execution_id=execution_id, diagnostic_scope="instance:" + run.instance_id)
         elif request.action == "collect":
             if self.collection is None:
                 raise ValueError("The controlled collection service is unavailable.")
@@ -398,7 +401,8 @@ class ExperimentExecution:
 
     def _execution_status(self, context, request, execution_id, implementation, *, seal):
         status = self.executions.status(execution_id)
-        result = {"name": request.name, "state": status.state}
+        result = {"name": request.name, "state": status.state,
+            "submission": self.bridge.submissions.summary(execution_id)}
         observation = self.executions.observation(execution_id)
         result["observation"] = {
             "state": "refresh_failed" if observation.get("observation_error") else
@@ -422,7 +426,7 @@ class ExperimentExecution:
             # A control observation is sealed without exposing control identities.
             if seal:
                 # Operational progress is mutable; the scientific receipt stays stable.
-                sealed = {key: value for key, value in result.items() if key not in {"progress", "observation"}}
+                sealed = {key: value for key, value in result.items() if key not in {"progress", "observation", "submission"}}
                 record = context.accept_evidence(raw=canonical_json(sealed), media_type="application/json",
                     derived_from=("research_objective", implementation["alias"]), trusted_parent_refs=(status.result_ref,),
                     metadata={"kind": "experiment_execution", "name": request.name, "implementation": implementation["alias"]})
@@ -453,12 +457,27 @@ class ExperimentExecution:
         approval = self._approval_status(execution_id)
         if approval is not None and (approval.status != "decided" or self._authorization_state(approval) != "created"):
             raise ExecutionServiceError("The original execution approval has not authorized this request")
-        self._start_request(execution_id, effect, identity, approval)
+        try:
+            self._start_request(execution_id, effect, identity, approval)
+        except ExecutionAuthorizationRequired:
+            pass  # Background handoff already published the exact approval.
 
     def _start_request(self, execution_id, effect, identity, approval):
         # Worker continuation and explicit Root recovery have identical authorization
         # and scientific budget ownership; neither uses standalone Effect bindings.
-        self.bridge.start(execution_id=execution_id,
+        run = self.runs.status(self._execution_owner(execution_id))
+        from ...agent_execution_settings import ExecutionIOSettings
+        io = ExecutionIOSettings.model_validate((run.recovery_policy or {}).get("execution_io", {}))
+        def request_approval():
+            self._approval(execution_id, effect, identity)
+            name = self.runs.scheduler_bindings.find_name(instance=run.instance_id,
+                namespace="execution", object_id=execution_id)
+            if name is not None:
+                self._bind_approval(run, name.removeprefix("experiment-" + self.task_origin(run) + "-"), execution_id)
+        self.bridge.submissions.start(execution_id=execution_id,
+            scope="instance:" + run.instance_id,
+            wait_seconds=io.submission_response_wait_seconds,
+            on_authorization_required=request_approval,
             approval_id="apr_" + execution_id if approval is not None and approval.status == "decided" else None,
             compiled_identity=identity,
             allow_policy_authorization=effect.spec.review.approval.allow_policy_authorization,

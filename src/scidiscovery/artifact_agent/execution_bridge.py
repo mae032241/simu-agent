@@ -63,6 +63,8 @@ class ExecutionBridge:
     ) -> None:
         self.executions = executions
         self.adapters = dict(adapters)
+        from .service.execution_submission import ExecutionSubmission
+        self.submissions = ExecutionSubmission(self)
         missing_lookup = next(
             (
                 name
@@ -88,6 +90,7 @@ class ExecutionBridge:
         compiled_identity: CompiledApprovalIdentity,
         allow_policy_authorization: bool = False,
         budget_subject_schemas: tuple[str, ...] = (),
+        before_submit=None,
     ) -> None:
         request = self.executions.request(execution_id)
         adapter = self._adapter(request.executor)
@@ -100,6 +103,8 @@ class ExecutionBridge:
         if submission is not None:
             recovered = adapter.lookup_submission(submission)
             if recovered is not None:
+                if before_submit is not None:
+                    before_submit()
                 self._record_started(execution_id, *recovered)
                 return
         admission = self.validate_request(
@@ -142,15 +147,23 @@ class ExecutionBridge:
                 raise
         recovered = adapter.lookup_submission(submission)
         if recovered is None:
+            if before_submit is not None:
+                before_submit()
             if admission is None:
                 external_run_id, external_state = adapter.submit(submission)
             else:
                 external_run_id, external_state = adapter.submit(submission, authorization=admission)
         else:
+            if before_submit is not None:
+                before_submit()
             external_run_id, external_state = recovered
         self._record_started(execution_id, external_run_id, external_state)
 
     def abandon(self, execution_id: str) -> None:
+        with self.submissions.idle(execution_id):
+            self._abandon(execution_id)
+
+    def _abandon(self, execution_id: str) -> None:
         current = self.executions.status(execution_id)
         descriptor = self.executions.prepared_submission(execution_id)
         if descriptor is not None:
@@ -275,6 +288,10 @@ class ExecutionBridge:
         return observation.get("progress")
 
     def cancel(self, *, execution_id: str) -> None:
+        with self.submissions.idle(execution_id):
+            self._cancel(execution_id=execution_id)
+
+    def _cancel(self, *, execution_id: str) -> None:
         current = self.executions.status(execution_id)
         if current.state in {"succeeded", "failed", "cancelled", "collected"}:
             return

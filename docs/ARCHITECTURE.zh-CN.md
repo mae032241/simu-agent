@@ -348,6 +348,12 @@ Effect Operation 的 `operation_invoke` 创建不可变执行请求；编译合�
 未知提交先查询原冻结描述符，不能重复启动或通过重命名再次取得同一项目额度。状态与实例 UI
 展示 `authorization.source`（policy/human/none）、策略摘要及冻结预算。
 
+Root 和 Worker 的提交调用将远端准入、准备及提交移交给控制面后台，返回有界的
+`submission.state=pending`，不表示求解成功。后台写入者保留独立维护租约、逐执行锁及持久记录，
+同名重复调用不会另启提交。回包丢失或控制进程重启后，status 仅查询精确描述符，不重新提交；
+查询不到仍表示未知，不能据此释放预算。后台失败提供有界诊断引用，所需审批可从状态查询取得。
+这些运行进度不进入封存回执。控制面一次只处理一个后台提交，不建立无界排队。
+
 执行策略区分单次时长阈值 `max_wall_time_seconds`（示例配置 3600 秒）和同一科学主体
 累计阈值 `max_total_wall_time_seconds`（示例配置 21600 秒），均由管理员配置。待提交或
 提交结果不明的请求先预留申请上限；终态按 runner 观测的真实耗时向上取整到秒结算，
@@ -644,7 +650,8 @@ invoke 在创建时解析并冻结配置。可选预检生成完整 `normalized_
 时冻结，恢复沿用原快照；实例显式写入与包默认相同的值仍能覆盖公共配置。这些是控制配置，不是
 科学端口或 Agent 表单。`execution_io` 默认值为 `max_export_bytes=2000000000`、
 `read_page_bytes=16384`、`collection_timeout_seconds=600`、`file_timeout_seconds=120`、
-`idle_timeout_seconds=30`，容量单位为字节，时间为秒。实验文本分页、流式导出和收集使用冻结值；
+`idle_timeout_seconds=30`、`submission_response_wait_seconds=0.25`（范围 0–2 秒）。最后一项仅限制
+后台提交的首次等待，不是求解器运行时限。容量单位为字节，时间为秒。实验文本分页、流式导出和收集使用冻结值；
 导出与收集还受 Run 剩余时限约束。它们与插件配置的求解器存储/墙钟自主授权、RAM 上限分开，
 修改这些值不授予求解器执行资格，也不延长正在运行任务的截止时间。
 

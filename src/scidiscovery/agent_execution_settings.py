@@ -82,6 +82,7 @@ class ExecutionIOSettings(SettingsValue):
     collection_timeout_seconds: int = Field(default=600, ge=1)
     file_timeout_seconds: int = Field(default=120, ge=1)
     idle_timeout_seconds: int = Field(default=30, ge=1)
+    submission_response_wait_seconds: float = Field(default=0.25, ge=0, le=2, allow_inf_nan=False)
 
 
 class LifecycleSettings(SettingsValue):
