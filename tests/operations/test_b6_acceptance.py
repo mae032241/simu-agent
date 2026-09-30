@@ -410,6 +410,7 @@ def test_native_case_observed_budget_stops_even_with_partial_usage(tmp_path, mon
     config = suite.configuration(suite.SCRIPTS/'acceptance/scientific_progress.json')
     host = object.__new__(native.NativeCaseJourney)
     host.case_config = dict(scenario='manual', budget=deepcopy(config['budget']))
+    host.case_checks = {}
     host.case_config['budget']['session']['uncached_tokens'] = 25
     host.logdir = tmp_path/'logs'
     host.started_threads = {'r','missing'}
@@ -591,13 +592,14 @@ def test_native_cleanup_does_not_hide_original_failure(tmp_path):
         host.control_attempted=True
         raise TimeoutError('uncertain_submit')
     host.run_case=uncertain
+    host.row=lambda:dict(state='active',reason='host_active')
     calls=[]
     def unavailable(name,args):
         calls.append((name,args));raise RuntimeError('disconnected')
     host.call=unavailable
     with pytest.raises(TimeoutError,match='uncertain_submit'):host.run_journey()
     assert calls==[('progression_command',{'command':'pause'})]
-    assert json.loads((tmp_path/'closeout-pause.json').read_text())['status']=='unconfirmed'
+    assert json.loads((tmp_path/'closeout-error.json').read_text())['diagnostic']=='RuntimeError'
 
 
 def test_managed_launcher_is_bounded_and_only_targets_its_owned_unit(tmp_path,monkeypatch):
@@ -744,3 +746,117 @@ def test_suite_carries_failed_costs_across_fresh_state_without_promoting_sample(
     write(path, report)
     with pytest.raises(ValueError, match='incomplete'):
         suite.prior_costs([path])
+
+
+@pytest.mark.parametrize('reason', ['budget_exhausted','host_fault','user_paused'])
+def test_native_loop_never_calls_sealed_stop_success(tmp_path, monkeypatch, reason):
+    from scripts import acceptance_native_cases as native
+    host = object.__new__(native.NativeCaseJourney)
+    host.root = tmp_path
+    host.logdir = tmp_path/'logs'
+    host.case_config = dict(scenario='autonomous', instance='chosen',text='question',multi_task=True,
+        max_observed_runs=3, poll_seconds=.1)
+    host.initialize_host = lambda **kw: dict(state='active', name='chosen', management_url='http://fixture')
+    host.status = lambda *a, **kw: None
+    host.call = lambda *a, **kw: {}
+    states = iter([dict(state='idle'),dict(state='paused',reason=reason,checkpoint_json='{}')])
+    host.row = lambda: next(states)
+    host.pump = lambda: None
+    host.observe_background = lambda *a: None
+    host.check_case_budget = lambda *a, **kw: None  # Reproduce the sub-second throttled sample.
+    host.save_usage = lambda: None
+    snapshots = iter([[],[dict(run_id='sealed',state='completed')]])
+    monkeypatch.setattr(native,'run_snapshot',lambda *a: next(snapshots))
+    monkeypatch.setattr(native,'rows',lambda *a: [dict(instance_id='instance')])
+    monkeypatch.setattr(native,'participants',lambda *a: ([],[]))
+    monkeypatch.setattr(native,'sealed_outputs',lambda *a: [])
+    with pytest.raises(RuntimeError, match='background_stopped:'+reason):
+        host.run_case()
+    assert not (tmp_path/'summary.json').exists()
+
+
+def test_final_budget_bypasses_interval_and_preserves_unknown(tmp_path, monkeypatch):
+    from scripts import acceptance_native_cases as native
+    host = object.__new__(native.NativeCaseJourney)
+    config = suite.configuration(suite.SCRIPTS/'acceptance/scientific_progress.json')
+    host.case_config = dict(scenario='manual',budget=config['budget'])
+    host.case_checks = {}
+    host.logdir=tmp_path/'logs'
+    host.started_threads={'r'}
+    host.case_started_at=0
+    now=[867.527]; monkeypatch.setattr(native.time,'monotonic',lambda:now[0])
+    total=[1992946]
+    host.save_usage=lambda:write(tmp_path/'usage.json',dict(root_thread='r',threads={
+        'r':dict(inputTokens=total[0],cachedInputTokens=1900000,outputTokens=0)}))
+    host.check_case_budget([],[])
+    total[0]=2034572;now[0]=868.131
+    host.check_case_budget([],[])
+    assert read_json(tmp_path/'budget-observation.json')['observed']['total_tokens']==1992946
+    with pytest.raises(RuntimeError,match='total_tokens'):
+        host.check_case_budget([],[],final=True)
+    assert read_json(tmp_path/'budget-final.json')['status']=='failed'
+    host.started_threads.add('unmeasured')
+    total[0]=1950000
+    with pytest.raises(RuntimeError,match='unconfirmed'):
+        host.check_case_budget([],[],final=True)
+    assert read_json(tmp_path/'budget-final.json')['status']=='not_observed'
+
+
+def read_json(path):
+    return json.loads(path.read_text())
+
+
+def test_report_checks_final_usage_even_when_old_exit_and_delivery_pass(tmp_path):
+    manifest, case, target, journey = _s0_fixture(tmp_path)
+    frozen=read_json(target/'acceptance-case.json')
+    frozen['budget']=manifest['config']['budget']
+    write(target/'acceptance-case.json',frozen)
+    (target/'model-submission-started').touch()
+    write(journey/'usage.json',dict(root_thread='actual-root',threads={
+        'actual-root':dict(inputTokens=2000000,cachedInputTokens=1900000,outputTokens=34572)}))
+    report=suite.result(tmp_path,manifest,case)
+    assert report['status']=='failed' and report['checks']['execution']=='failed'
+    assert report['checks']['sealed_delivery']=='passed'
+    assert report['budget']['observed']['total_tokens']==2034572
+    assert report['checks']['budget']=='failed'
+    # Original historical files are not overwritten by a corrected read.
+    assert read_json(journey/'summary.json')['status']=='evidence_ready'
+
+
+@pytest.mark.parametrize('native_state,passed', [('completed',True),('interrupted',False),(None,False)])
+def test_goal_report_alone_is_not_native_completion(native_state, passed):
+    from scripts.acceptance_native_cases import NativeCaseJourney
+    host=object.__new__(NativeCaseJourney);host.case_checks={}
+    control=dict(state='stopped',reason='goal_completed',checkpoint_json=json.dumps(
+        dict(native_completion=native_state,turn_id=None,report={'completed':True})))
+    if passed:
+        assert host.background_finished(control,True)
+    else:
+        with pytest.raises(RuntimeError,match='native_completion_unconfirmed'):
+            host.background_finished(control,True)
+
+
+def test_cleanup_preserves_budget_stop_and_finalizes_late_usage(tmp_path, monkeypatch):
+    from scripts import acceptance_native_cases as native
+    host=object.__new__(native.NativeCaseJourney)
+    host.root=tmp_path;host.logdir=tmp_path/'logs';host.before_runs=[]
+    host.case_checks={};host.case_config={'stage_timeout_seconds':1}
+    control=dict(state='paused',reason='budget_exhausted',host_json='host')
+    host.row=lambda:control
+    def stopped():
+        host.control_attempted=True;host.case_started_at=1
+        raise RuntimeError('background_stopped:budget_exhausted')
+    host.run_case=stopped
+    host.call=lambda *a,**k:pytest.fail('cleanup must not overwrite original budget stop')
+    host.wait_row=lambda *a,**k:control.update(host_json=None)
+    monkeypatch.setattr(native,'run_snapshot',lambda *a:[])
+    monkeypatch.setattr(native,'participants',lambda *a:([],[]))
+    finals=[]
+    def final_check(*a,final=False):
+        finals.append((final,control['host_json']))
+        raise RuntimeError('late_budget_exhausted')
+    host.check_case_budget=final_check
+    with pytest.raises(RuntimeError,match='background_stopped:budget_exhausted'):
+        host.run_journey()
+    assert read_json(tmp_path/'terminal-control.json')['reason']=='budget_exhausted'
+    assert finals==[(True,None)]

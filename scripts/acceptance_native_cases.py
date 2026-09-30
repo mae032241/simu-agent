@@ -5,10 +5,10 @@ import time
 
 try:
     from scripts.accept_progression_recovery import RecoveryJourney
-    from scripts.b6_evidence import rows, run_snapshot, participants, sealed_outputs, read, write, verify_prior_turns, usage_report, token_totals
+    from scripts.b6_evidence import rows, run_snapshot, participants, sealed_outputs, read, write, verify_prior_turns, usage_report, budget_assessment
 except ModuleNotFoundError:
     from accept_progression_recovery import RecoveryJourney
-    from b6_evidence import rows, run_snapshot, participants, sealed_outputs, read, write, verify_prior_turns, usage_report, token_totals
+    from b6_evidence import rows, run_snapshot, participants, sealed_outputs, read, write, verify_prior_turns, usage_report, budget_assessment
 
 
 def recorded_control_call(root, writer, name, arguments):
@@ -102,24 +102,23 @@ class NativeCaseJourney(RecoveryJourney):
         self._last_background_snapshot = snapshot
         return True
 
-    def check_case_budget(self, workers, helpers):
+    def check_case_budget(self, workers, helpers, *, final=False):
         budget = self.case_config.get('budget')
         now = time.monotonic()
-        if not budget or now < getattr(self, '_next_budget_sample', 0):
+        if not budget or (not final and now < getattr(self, '_next_budget_sample', 0)):
             return
         self._next_budget_sample = now + budget['sample_seconds']
         self.save_usage()
         write(self.logdir.parent/'started-threads.json', sorted(self.started_threads))
         control = self.row() if self.case_config['scenario'] == 'autonomous' else None
         usage = usage_report(self.logdir.parent, workers, helpers, control)
-        totals = token_totals(usage, require_complete=False)
-        totals['execution_seconds'] = now - self.case_started_at
-        reached = [key for key, limit in budget['session'].items() if totals[key] >= limit]
-        write(self.logdir.parent/'budget-observation.json', dict(
-            observed=totals, coverage=usage['coverage'], reached=reached,
-            limitation='Delayed usage is an observed lower bound, not a hard token limit.'))
-        if reached:
-            raise RuntimeError('acceptance_session_budget_exhausted:'+','.join(reached))
+        observation = budget_assessment(usage, budget['session'], now - self.case_started_at)
+        write(self.logdir.parent/('budget-final.json' if final else 'budget-observation.json'), observation)
+        self.case_checks['budget'] = observation['status']
+        if observation['reached']:
+            raise RuntimeError('acceptance_session_budget_exhausted:'+','.join(observation['reached']))
+        if final and observation['status'] != 'passed':
+            raise RuntimeError('acceptance_final_budget_unconfirmed')
 
     def run_journey(self):
         self.control_attempted = False
@@ -127,16 +126,57 @@ class NativeCaseJourney(RecoveryJourney):
             self.run_case()
         finally:
             original_failure = sys.exc_info()[0] is not None
-            if self.control_attempted:
-                try:
-                    result = self.call('progression_command', dict(command='pause'))
+            try:
+                if self.control_attempted:
+                    control = self.row()
+                    write(self.logdir.parent/'terminal-control.json', control)
+                    # Already stopped by control: wait for release without replacing
+                    # budget_exhausted/host_fault/goal_completed with user_paused.
+                    if control['state'] not in {'paused', 'stopped'}:
+                        result = self.call('progression_command', dict(command='pause'))
+                    else:
+                        result = dict(status='already_stopped', reason=control.get('reason'))
                     write(self.logdir.parent/'closeout-pause.json', result)
                     self.wait_row(lambda r:r['state'] in {'paused','stopped'} and not r['host_json'],
                         'closeout-released',timeout=self.case_config['stage_timeout_seconds'])
-                except Exception as error:
-                    write(self.logdir.parent/'closeout-pause.json', dict(status='unconfirmed', diagnostic=type(error).__name__))
-                    if not original_failure:
-                        raise RuntimeError('background_closeout_unconfirmed') from error
+                if hasattr(self, 'case_started_at'):
+                    before = {v['run_id'] for v in self.before_runs}
+                    current = [v for v in run_snapshot(self.root) if v['run_id'] not in before]
+                    workers, helpers = participants(self.root, [v['run_id'] for v in current])
+                    if current and all(v['state'] == 'completed' for v in current):
+                        write(self.logdir.parent/'sealed-evidence.json', sealed_outputs(self.root, current))
+                        write(self.logdir.parent/'participants.json', dict(workers=workers, helpers=helpers))
+                        self.case_checks['sealed_delivery'] = 'passed' if self.case_config.get('multi_task') or len(current) == 1 else 'failed'
+            except Exception as error:
+                write(self.logdir.parent/'closeout-error.json', dict(diagnostic=type(error).__name__))
+                if not original_failure:
+                    raise RuntimeError('background_closeout_unconfirmed') from error
+            finally:
+                if hasattr(self, 'case_started_at'):
+                    active_failure = sys.exc_info()[0] is not None or original_failure
+                    try:
+                        current = [v for v in run_snapshot(self.root) if v['run_id'] not in {b['run_id'] for b in self.before_runs}]
+                        workers, helpers = participants(self.root, [v['run_id'] for v in current])
+                        self.check_case_budget(workers, helpers, final=True)
+                    except Exception:
+                        if not active_failure:
+                            raise
+
+    def background_finished(self, control, all_sealed):
+        reason = control.get('reason')
+        if reason in {'host_fault','root_turn_failed','budget_exhausted','resource_limit','submission_unknown'}:
+            raise RuntimeError('background_stopped:'+reason)
+        if control['state'] not in {'paused','stopped'}:
+            return False
+        if reason != 'goal_completed':
+            raise RuntimeError('background_stopped:'+str(reason))
+        checkpoint = json.loads(control.get('checkpoint_json') or '{}')
+        if checkpoint.get('native_completion') != 'completed' or checkpoint.get('turn_id'):
+            raise RuntimeError('background_native_completion_unconfirmed')
+        self.case_checks['native_completion'] = 'passed'
+        if not all_sealed:
+            raise RuntimeError('background_completed_without_sealed_delivery')
+        return True
 
     def run_case(self):
         case = self.case_config
@@ -204,14 +244,16 @@ class NativeCaseJourney(RecoveryJourney):
                 raise RuntimeError('accepted_worker_failed')
             all_sealed=bool(current) and all(v['state']=='completed' for v in current)
             if case['scenario']=='autonomous':
-                if control['state'] in {'paused','stopped'} and all_sealed:
+                if self.background_finished(control, all_sealed):
+                    self.check_case_budget(workers, helpers, final=True)
                     break
-                if control.get('reason') in {'host_fault','root_turn_failed','budget_exhausted','resource_limit','submission_unknown'}:
-                    raise RuntimeError('background_stopped:'+control['reason'])
             elif self.root_host.completion:
                 if self.root_host.completion['status']!='completed':
                     raise RuntimeError('reader_root_not_completed')
-                if all_sealed:break
+                if all_sealed:
+                    checks['native_completion']='passed'
+                    self.check_case_budget(workers, helpers, final=True)
+                    break
                 if not current:raise RuntimeError('no_scientific_task_created')
             time.sleep(case['poll_seconds'])
         evidence=sealed_outputs(self.root,current)

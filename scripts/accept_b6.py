@@ -17,12 +17,12 @@ import time
 
 try:
     from scripts.run_tests import serial_lock
-    from scripts.b6_evidence import read, write, digest, rows, control_rows, run_snapshot, participants, sealed_outputs, usage_report, verdict, compare, assess, token_totals
+    from scripts.b6_evidence import read, write, digest, rows, control_rows, run_snapshot, participants, sealed_outputs, usage_report, verdict, compare, assess, token_totals, budget_assessment
     from scripts.root_host_upgrade import _files
     from scripts import s0_scoring
 except ModuleNotFoundError:
     from run_tests import serial_lock
-    from b6_evidence import read, write, digest, rows, control_rows, run_snapshot, participants, sealed_outputs, usage_report, verdict, compare, assess, token_totals
+    from b6_evidence import read, write, digest, rows, control_rows, run_snapshot, participants, sealed_outputs, usage_report, verdict, compare, assess, token_totals, budget_assessment
     from root_host_upgrade import _files
     import s0_scoring
 
@@ -256,6 +256,20 @@ def result(root,manifest,case_id):
     output['usage']=usage_report(journey,workers,helpers,progression)
     if (target/'model-submission-started').exists() and not output['usage']['groups']:
         output['usage']['coverage']='partial'
+    if frozen.get('budget') and (target/'model-submission-started').exists():
+        final_path = journey/'budget-final.json'
+        seconds = read(final_path).get('observed', {}).get('execution_seconds') if final_path.exists() else None
+        output['budget'] = budget_assessment(output['usage'], frozen['budget']['session'], seconds)
+        # A bounded stop is decisive even when final native telemetry is partial.
+        terminal_path = journey/'terminal-control.json'
+        if terminal_path.exists():
+            terminal = read(terminal_path)
+            output['stop_reason'] = terminal.get('reason')
+            if terminal.get('reason') == 'budget_exhausted':
+                output['budget']['status'] = 'failed'
+        checks['budget'] = output['budget']['status']
+        if checks['budget'] == 'failed':
+            checks['execution'] = 'failed'
     evidence_path=journey/'sealed-evidence.json'
     if evidence_path.exists():
         evidence=sealed_outputs(target,new)
@@ -286,7 +300,7 @@ def result(root,manifest,case_id):
             checks['owner_integration' if case_id.startswith('helper') else 'quality']=quality
     if case_id=='rollback' and all(checks.get(k)=='passed' for k in ('terminal_independence','service_restart','state_preserved')):
         checks['rollback']='passed'  # Isolated old build reads state after new build startup.
-    output['status']=verdict(checks,[*contract['requires'],'execution'])
+    output['status']=verdict(checks,[*contract['requires'],'execution', *(['budget'] if 'budget' in checks else [])])
     output['scope']='isolated installed candidates; formal installation, live TCAD and detached native resource coverage remain unqualified'
     return output
 

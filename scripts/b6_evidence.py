@@ -150,6 +150,21 @@ def token_totals(usage, *, require_complete=True):
     return dict(total_tokens=total, uncached_tokens=uncached)
 
 
+def budget_assessment(usage, limits, execution_seconds=None):
+    """Observed resource outcome, independent of sealed science or process exit."""
+    totals = token_totals(usage, require_complete=False)
+    complete = usage.get('coverage') == 'observed' and bool(usage.get('groups'))
+    missing = [] if complete else ['usage']
+    if type(execution_seconds) in (int, float) and 0 <= execution_seconds < float('inf'):
+        totals['execution_seconds'] = execution_seconds
+    else:
+        missing.append('execution_seconds')
+    reached = [key for key, limit in limits.items() if key in totals and totals[key] >= limit]
+    return dict(status='failed' if reached else 'not_observed' if missing else 'passed',
+        observed=totals, coverage=usage.get('coverage', 'missing'), reached=reached, missing=missing,
+        limitation='Delayed usage is an observed lower bound, not a hard token limit.')
+
+
 def verdict(checks, required):
     values = [checks.get(key, 'not_observed') for key in required]
     if 'failed' in values:

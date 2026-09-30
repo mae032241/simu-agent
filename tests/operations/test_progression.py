@@ -538,3 +538,20 @@ def test_control_disconnect_closes_even_when_maintenance_blocks_fault_record(pro
     assert p.coordinator._pending_fault is None
     assert checkpoint(p)['fault_code'] == 'app_server_closed'
     assert p.coordinator.host is None and row(p)['state'] == 'paused'
+
+
+@pytest.mark.parametrize('tokens,expected', [(2034572,'budget_exhausted'),(100,'goal_completed')])
+def test_goal_completion_accounts_last_native_usage_before_success(progression, tokens, expected):
+    p=progression
+    p.coordinator.tick()
+    host=p.coordinator.host
+    root=p.root.__class__(p.facade(host.scheduler_session))
+    root.call_tool('progression_report',dict(summary='Conclusions sealed.',completed=True))
+    host.event(dict(method='thread/tokenUsage/updated',params=dict(threadId=host.identity.thread_id,
+        tokenUsage=dict(total=dict(inputTokens=tokens,cachedInputTokens=0,outputTokens=0)))))
+    host.finish()
+    p.coordinator.tick()
+    assert row(p)['reason']==expected
+    assert checkpoint(p)['budget']['observed_tokens']==tokens
+    assert checkpoint(p)['report']['completed'] is True
+    assert len(host.prompts)==1

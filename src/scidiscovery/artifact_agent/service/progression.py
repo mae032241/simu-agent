@@ -429,6 +429,11 @@ class ProgressionCoordinator:
                 return
         report = checkpoint.get('report') or {}
         if report.get('completed') and checkpoint.get('messages', []) == checkpoint.get('processed_snapshot', {}).get('messages', []):
+            # The last native response can arrive with turn/completed. Charge it
+            # before accepting the goal; reaching the round limit alone is fine
+            # when no further round is requested.
+            if not self._check_budget(row, limits, allow_round=False):
+                return
             self._save(dict(runtime_status='goal_completed'), reason='goal_completed', stop=True)
             return
         if not self._check_budget(row, limits):
