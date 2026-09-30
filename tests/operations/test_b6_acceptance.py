@@ -715,3 +715,32 @@ def test_followup_checks_exact_old_turn_before_starting_new_case(status):
         assert verify_prior_turns(rpc,[ref])==[{**ref,'status':status}]
     with pytest.raises(RuntimeError,match='not_found'):
         verify_prior_turns(rpc,[{**ref,'turn_id':'different-turn'}])
+
+
+def test_suite_carries_failed_costs_across_fresh_state_without_promoting_sample(tmp_path):
+    path = tmp_path/'failed.json'
+    report = dict(status='failed', evidence=str(tmp_path/'previous-journey'),
+        resource=dict(elapsed_seconds=400.508),
+        usage=dict(coverage='observed', groups={
+            'root':dict(input_tokens=1902299,cached_input_tokens=1830528,output_tokens=9845),
+            'worker':dict(input_tokens=95534,cached_input_tokens=87168,output_tokens=462)}))
+    write(path, report)
+    records = suite.prior_costs([path])
+    assert records[0]['costs'] == dict(total_tokens=2008140,uncached_tokens=90444,execution_seconds=400.508)
+    config = suite.configuration(suite.SCRIPTS/'acceptance/scientific_progress.json')
+    manifest = dict(config=config, prior_attempt_costs=records)
+    allowance = suite.budget_admission(tmp_path, manifest)
+    assert allowance['remaining']['total_tokens'] == 13991860
+    assert allowance['spent'] == records[0]['costs']
+    assert records[0]['sha256'] and 'status' not in records[0]
+    copy = tmp_path/'duplicate.json'
+    write(copy, report)
+    with pytest.raises(ValueError, match='duplicate_prior_attempt'):
+        suite.prior_costs([path, copy])
+    config['budget']['suite']['total_tokens'] = 4000000
+    with pytest.raises(ValueError, match='insufficient'):
+        suite.budget_admission(tmp_path, manifest)
+    report['usage']['coverage'] = 'partial'
+    write(path, report)
+    with pytest.raises(ValueError, match='incomplete'):
+        suite.prior_costs([path])

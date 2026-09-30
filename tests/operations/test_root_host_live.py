@@ -27,7 +27,7 @@ def test_cli_loads_generated_override_keys(tmp_path):
 
 @pytest.mark.parametrize("failure,verify_only,resume,worker_completed,custom_task", [(v, False, False, False, None) for v in
     ("config", "tools", "rpc_error", "tool_error", "no_url", "wrong_origin", "not_selected", "turn", None)]
-    + [(None, True, False, False, None), (None, False, True, False, None), ("resume_identity", False, True, False, None),
+    + [(None, "bind", False, False, None), (None, True, False, False, None), (None, False, True, False, None), ("resume_identity", False, True, False, None),
        ("worker_identity", False, True, False, None), (None, False, True, True, None),
        (None, False, False, False, "Frozen candidate acceptance task"),
        (None, False, True, True, "Explicit next acceptance task")])
@@ -111,6 +111,10 @@ for line in sys.stdin:
     try:
         if failure:
             with pytest.raises(RuntimeError): host.run(resume=resume)
+        elif verify_only == "bind":
+            host.bind_only()
+            assert json.loads((logs.parent / "binding.json").read_text())["model_requests"] == 0
+            assert "instance_bound_without_model_turn" in states
         elif verify_only:
             host.initialize_host()
         else:

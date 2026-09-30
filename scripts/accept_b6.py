@@ -63,12 +63,37 @@ def configuration(path):
     return value
 
 
+def prior_costs(paths):
+    """Freeze observed costs of earlier suites without importing their outcomes."""
+    records, seen = [], set()
+    for path in paths:
+        path = path.resolve()
+        report = read(path)
+        identity = report.get('evidence')
+        if not identity or report.get('status') not in {'failed', 'passed', 'not_observed'}:
+            raise ValueError('prior_result_requires_terminal_evidence')
+        identity = str(Path(identity).resolve())
+        if identity in seen:
+            raise ValueError('duplicate_prior_attempt')
+        seen.add(identity)
+        costs = token_totals(report.get('usage', {}))
+        seconds = (report.get('resource') or {}).get('elapsed_seconds')
+        if type(seconds) not in (int, float) or not math.isfinite(seconds) or seconds < 0:
+            raise ValueError('acceptance_execution_time_missing')
+        records.append(dict(source=str(path), sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+            evidence=identity, costs={**costs, 'execution_seconds':seconds}))
+    return records
+
+
 def budget_admission(root, manifest):
     """Reserve one full session; every previous attempt, including failure, counts."""
     budget = manifest.get('config', {}).get('budget')
     if not budget:
         return None
     spent = dict(total_tokens=0, uncached_tokens=0, execution_seconds=0)
+    for prior in manifest.get('prior_attempt_costs', []):
+        for key in spent:
+            spent[key] += prior['costs'][key]
     for case_id in manifest['config']['cases']:
         if not (root/(case_id+'.attempt.json')).exists():
             continue
@@ -106,7 +131,7 @@ def harness_digest():
     return digest({p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted([*SCRIPTS.glob('*.py'), SCRIPTS/'test_resources.json', SCRIPTS/'root_host_resources.json'])})
 
 
-def initialize(root, config, source, installed, previous):
+def initialize(root, config, source, installed, previous, prior_results=()):
     settings=configuration(config)
     if root.exists():raise ValueError('suite_already_exists')
     source,installed=source.resolve(),installed.resolve()
@@ -122,7 +147,8 @@ def initialize(root, config, source, installed, previous):
         raise ValueError('use_quiescent_pre_progression_source; never_reset_spent_budget')
     if any(v['state'] not in {'completed','failed'} for v in run_snapshot(source)):
         raise ValueError('source_has_unfinished_runs')
-    frozen=dict(source=str(source),installed=str(installed),previous=str(previous.resolve()) if previous else None,
+    carried = prior_costs(prior_results)
+    frozen=dict(prior_attempt_costs=carried, source=str(source),installed=str(installed),previous=str(previous.resolve()) if previous else None,
         config=settings,harness_digest=harness_digest(),
         baseline_digest=digest(dict(state=_files(source/'state'),project=_files(Path(original['project']),project=True))),
         conditions_digest=digest(dict(program=program,settings=read(source/'agent-settings.json'),config=settings)),
@@ -274,11 +300,13 @@ def main():
     parser.add_argument('--source',type=Path)
     parser.add_argument('--installed',type=Path)
     parser.add_argument('--previous-installed',type=Path)
+    parser.add_argument('--prior-result',type=Path,action='append',default=[],
+        help='Charge a previous observed attempt against this suite budget; repeatable')
     parser.add_argument('--review-file',type=Path)
     args=parser.parse_args();os.umask(0o077);root=args.suite.resolve()
     if args.action=='init':
         if not args.source or not args.installed:parser.error('init requires --source and --installed')
-        initialize(root,args.config,args.source,args.installed,args.previous_installed);return 0
+        initialize(root,args.config,args.source,args.installed,args.previous_installed,args.prior_result);return 0
     manifest=read(root/'suite.json')
     if args.action=='package':
         if manifest['config'].get('grading', {}).get('format') != 's0-v1':

@@ -383,6 +383,22 @@ class Host:
         if value.get("state") != "active":
             raise RuntimeError("instance_not_selected")
 
+    def bind_only(self):
+        """Wait for user-page selection; never request a model turn."""
+        value = self.initialize_host(check_native=False)
+        if value.get("state") == "unbound":
+            (self.root / "latest-root-message.txt").write_text(value["management_url"])
+            self.status("awaiting_user", management_url=value["management_url"], model_requests=0)
+            while value.get("state") == "unbound":
+                until = time.monotonic() + 1
+                while time.monotonic() < until:
+                    self.pump()
+                value = self.current_instance()
+        if value.get("state") != "active":
+            raise RuntimeError("instance_not_selected")
+        write(self.logdir.parent / "binding.json", dict(instance=value, model_requests=0, worker_dispatches=0))
+        self.status("instance_bound_without_model_turn", model_requests=0, worker_dispatches=0)
+
     def run(self, resume=False, task=None):
         if task is not None and not resume:
             raise ValueError("an explicit continuation requires resume")
@@ -447,7 +463,7 @@ class Host:
 def supervised(root, action, task_file=None):
     limits = json.loads(guard.DEFAULT_CONFIG.read_text())["limits"]
     resources = host_resources(root)
-    if action in ("live", "resume", "lifecycle", "lifecycle-resume"):
+    if action in ("bind", "live", "resume", "lifecycle", "lifecycle-resume"):
         limits["timeout_seconds"] = sum(resources[key] for key in
             ("startup_timeout_seconds", "instance_wait_timeout_seconds", "execution_timeout_seconds"))
     output = root / (action if action not in ("check", "verify", "native", "resume", "lifecycle", "lifecycle-resume") else f"{action}-{time.time_ns()}")
@@ -479,7 +495,7 @@ def supervised(root, action, task_file=None):
             task_arguments = ["--task-file", str(frozen)]
         if action in ("resume", "lifecycle", "lifecycle-resume"):
             (root / "stop").unlink(missing_ok=True)
-        if action in ("live", "resume", "lifecycle", "lifecycle-resume"):
+        if action in ("bind", "live", "resume", "lifecycle", "lifecycle-resume"):
             write(root / "progress.json", {"state": "starting", "evidence": str(output), "b0a_passed": False})
         environment = dict(os.environ)
         environment.update(SCID_HOST_PROBE_LOCK_FD=str(lock.fileno()), SCID_TEST_LOG_DIR=str(output / "fixture-logs"),
@@ -489,7 +505,7 @@ def supervised(root, action, task_file=None):
         result = guard.run_one([sys.executable, str(Path(__file__).resolve()), "_" + action,
                               "--candidate", str(root), *task_arguments], environment, limits, output, lock.fileno(),
                               limit_address_space=resources["limit_address_space"]
-                              if action in ("verify", "live", "native", "resume", "lifecycle", "lifecycle-resume") else True)
+                              if action in ("bind", "verify", "live", "native", "resume", "lifecycle", "lifecycle-resume") else True)
         write(output / "resource.json", result)
         if result["returncode"] != 0 or result["stop_reason"] != "exited":
             previous = json.loads((root / "progress.json").read_text()) if (root / "progress.json").exists() else {}
@@ -502,7 +518,7 @@ def supervised(root, action, task_file=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("prepare", "prepare-upgrade", "check", "verify", "native", "stop", "start", "resume", "lifecycle", "lifecycle-resume", "continue", "supervise", "supervise-resume", "supervise-lifecycle", "supervise-lifecycle-resume", "_prepare", "_prepare-upgrade", "_live", "_resume", "_lifecycle", "_lifecycle-resume", "_check", "_verify", "_native"))
+    parser.add_argument("action", choices=("bind", "supervise-bind", "_bind", "prepare", "prepare-upgrade", "check", "verify", "native", "stop", "start", "resume", "lifecycle", "lifecycle-resume", "continue", "supervise", "supervise-resume", "supervise-lifecycle", "supervise-lifecycle-resume", "_prepare", "_prepare-upgrade", "_live", "_resume", "_lifecycle", "_lifecycle-resume", "_check", "_verify", "_native"))
     parser.add_argument("--candidate", type=Path, required=True)
     parser.add_argument("--from-candidate", type=Path, help="Stopped candidate whose scientific state is copied")
     parser.add_argument("--installed-candidate", type=Path, help="Candidate providing the new installed program")
@@ -549,7 +565,7 @@ def main():
             parser.error("host is not awaiting instance selection")
         (Path(progress["evidence"]) / "continue").touch(exist_ok=False)
         return 0
-    if args.action in ("start", "resume", "lifecycle", "lifecycle-resume"):
+    if args.action in ("bind", "start", "resume", "lifecycle", "lifecycle-resume"):
         if args.task_file is not None:
             continuation_task(root, args.task_file)
         result = preflight()
@@ -560,6 +576,8 @@ def main():
         if resuming and not all((root / p).exists() for p in
                 ("live/thread.json", "live/fixture-logs/events.log", "state/database/runs.sqlite3")):
             parser.error("resume requires the original thread evidence and control state; do not recreate them")
+        if args.action == "bind" and (root / "bind").exists():
+            parser.error("binding attempt already exists; inspect progress and evidence")
         if (root / "live").exists() and not resuming:
             parser.error("this candidate has already run; inspect evidence, do not replay")
         # Explicit resume reconciles existing work, never replays the original prompt.
@@ -567,7 +585,7 @@ def main():
         launched_at = time.time_ns()
         with launch_log.open("xb") as log:
             child = subprocess.Popen([sys.executable, str(Path(__file__).resolve()),
-                "supervise-" + args.action if resuming else "supervise", "--candidate", str(root),
+                "supervise-" + args.action if resuming or args.action == "bind" else "supervise", "--candidate", str(root),
                 *(["--task-file", str(args.task_file)] if args.task_file is not None else [])],
                 stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
         print(f"Host started (pid {child.pid}); waiting for Root's instance URL. "
@@ -579,8 +597,14 @@ def main():
                 progress = json.loads((root / "progress.json").read_text())
                 if progress["state"] == "awaiting_user":
                     print((root / "latest-root-message.txt").read_text(), flush=True)
+                    if args.action == "bind":
+                        print("Create/select a clean instance on the page. Selection is detected automatically; no model will run.", flush=True)
+                        return 0
                     print("After selecting an instance, run: " + shlex.join([sys.executable, str(Path(__file__).resolve()),
                           "continue", "--candidate", str(root)]), flush=True)
+                    return 0
+                if args.action == "bind" and progress["state"] == "instance_bound_without_model_turn":
+                    print("Instance selected; no model requests. Evidence: " + progress["evidence"], flush=True)
                     return 0
                 if resuming and progress["state"] in ("scientific_turn", "root_returned_requires_sealed_audit"):
                     print("Existing instance binding confirmed; resumed scientific turn.", flush=True)
@@ -591,7 +615,7 @@ def main():
             time.sleep(.2)
         print(f"Supervisor exited; inspect {launch_log} and progress.json", flush=True)
         return 1
-    if args.action in ("supervise", "supervise-resume", "supervise-lifecycle", "supervise-lifecycle-resume"):
+    if args.action in ("supervise-bind", "supervise", "supervise-resume", "supervise-lifecycle", "supervise-lifecycle-resume"):
         return supervised(root, args.action.removeprefix("supervise-") if "-" in args.action else "live", args.task_file)
     descriptor = int(os.environ["SCID_HOST_PROBE_LOCK_FD"])
     info, expected = os.fstat(descriptor), (Path("/tmp") / f"scid-tests-{os.getuid()}.lock").stat()
@@ -619,7 +643,9 @@ def main():
         host = host_class(root, json.loads(guard.DEFAULT_CONFIG.read_text())["limits"])
         host.resume_existing = args.action == "_lifecycle-resume"
         try:
-            if args.action == "_check":
+            if args.action == "_bind":
+                host.bind_only()
+            elif args.action == "_check":
                 host.start_services()
                 host.status("services_checked_without_model_turn")
             elif args.action == "_verify":
