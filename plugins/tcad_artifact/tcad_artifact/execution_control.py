@@ -1086,10 +1086,5 @@ __all__ = [
 
 
 def _consumed_budget(manifest):
-    import math
-    usage = manifest.get("resource_usage", {})
-    elapsed = usage.get("elapsed_seconds")
-    storage = usage.get("observed_storage_high_water_bytes")
-    if not isinstance(elapsed, (int, float)) or not math.isfinite(elapsed) or elapsed < 0 or type(storage) is not int or storage < 0:
-        return None
-    return {"wall_time_seconds": int(math.ceil(elapsed)), "max_storage_bytes": storage}
+    from .remote_runner_py36 import _consumed_budget as observed_usage
+    return observed_usage(manifest)

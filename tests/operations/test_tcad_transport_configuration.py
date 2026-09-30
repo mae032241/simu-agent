@@ -104,6 +104,31 @@ def test_generic_command_executor_has_no_assumed_ssh_configuration():
     validate_command_configuration(CommandAdapterConfig(executable="/external/executor"))
 
 
+@pytest.mark.parametrize("existing_total", [None, 12345])
+@pytest.mark.parametrize("existing_scope", [None, "scientific_subject"])
+def test_local_policy_install_migrates_only_missing_cumulative_limit(tmp_path, existing_total, existing_scope):
+    root = Path(__file__).resolve().parents[2] / "plugins/tcad_artifact"
+    spec = importlib.util.spec_from_file_location("configure_tcad_budget_test", root / "deploy/configure_runtime.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    raw = json.loads((root / "config/execution-policy.example.json").read_bytes())
+    default_total = raw["agent_execution_policy"].pop("max_total_wall_time_seconds")
+    default_scope = raw["debug"].pop("budget_scope")
+    if existing_scope is not None:
+        raw["debug"]["budget_scope"] = existing_scope
+    raw["agent_execution_policy"]["max_wall_time_seconds"] = 900
+    if existing_total is not None:
+        raw["agent_execution_policy"]["max_total_wall_time_seconds"] = existing_total
+    policy = tmp_path / "policy.json"
+    policy.write_text(json.dumps(raw))
+    module.configure(policy=policy, plugin_config=tmp_path / "plugin.json", state_root=tmp_path,
+        socket_path=tmp_path / "control.sock", command_config=None)
+    expected = {**raw, "agent_execution_policy": {**raw["agent_execution_policy"],
+        "max_total_wall_time_seconds": default_total if existing_total is None else existing_total},
+        "debug": {**raw["debug"], "budget_scope": existing_scope or default_scope}}
+    assert json.loads(policy.read_bytes()) == expected
+
+
 @pytest.mark.parametrize("arguments", [(), ("--config",), ("--config", "relative.json"),
     ("--config", "/one", "--config", "/two")])
 def test_bundled_command_requires_unambiguous_absolute_config(arguments):

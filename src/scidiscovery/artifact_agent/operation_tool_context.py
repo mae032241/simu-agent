@@ -36,6 +36,7 @@ class OperationToolContext:
     _list_attempts: Callable[[], list[dict]] | None = None
     _execution_scope: Callable[[str], dict] | None = None
     _recovery_authorized: Callable[[str], bool] | None = None
+    _recovery_scope: Callable[[], tuple[str, tuple[str, ...], tuple[tuple[str, ArtifactRef], ...]]] | None = None
     _io_budget: Callable[..., dict] | None = None
     _source_read: Callable[[str], None] | None = None
     _source_descriptor: Callable[[str], object] | None = None
@@ -135,6 +136,10 @@ class OperationToolContext:
 
     def recovery_authorized(self, source_run_id: str) -> bool:
         return source_run_id == self.run_id or bool(self._recovery_authorized and self._recovery_authorized(source_run_id))
+
+    def recovery_scope(self) -> tuple[str, tuple[str, ...], tuple[tuple[str, ArtifactRef], ...]]:
+        """Sealed task origin, family identities and frozen input anchors."""
+        return self._recovery_scope() if self._recovery_scope else (self.run_id, (self.run_id,), ())
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "services", MappingProxyType(dict(self.services)))

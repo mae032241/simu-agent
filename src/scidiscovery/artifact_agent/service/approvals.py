@@ -397,8 +397,8 @@ class ApprovalService:
     def expire_pending(self, approval_id: str) -> None:
         """Retire a request whose execution was abandoned; never forge a human decision."""
         with self._connect() as connection:
-            connection.execute("UPDATE approval_requests SET status='expired' WHERE approval_id=? AND status='pending'",
-                (approval_id,))
+            connection.execute("UPDATE approval_requests SET status='expired', closed_at=? WHERE approval_id=? AND status='pending'",
+                (_timestamp(_now(None)), approval_id))
 
     def list_requests(
         self,
@@ -1134,6 +1134,9 @@ class ApprovalService:
                 END;
                 """
             )
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(approval_requests)")}
+            if "closed_at" not in columns:
+                connection.execute("ALTER TABLE approval_requests ADD COLUMN closed_at TEXT")
             connection.execute("PRAGMA foreign_keys = ON")
 
     def _connect(self) -> sqlite3.Connection:

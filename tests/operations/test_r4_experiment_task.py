@@ -199,7 +199,12 @@ def _real_experiment(tmp_path, monkeypatch, solver="sprocess", before_submit=Non
     assert first_debug["state"] == "succeeded"
     observed_debug = worker.call_tool("worker_experiment_debug", {"action":"status", "name":"diagnostic"})
     assert observed_debug["state"] == "collected" and observed_debug["submission"] == "submitted"
-    assert worker.call_tool("worker_experiment_debug", request) == first_debug
+    repeated_debug = worker.call_tool("worker_experiment_debug", request)
+    # Scientific delivery is immutable; live task time may decrease between polls.
+    assert {k: v for k, v in repeated_debug.items() if k != 'budget'} == {
+        k: v for k, v in first_debug.items() if k != 'budget'}
+    assert repeated_debug['budget']['created_runs'] == first_debug['budget']['created_runs']
+    assert repeated_debug['budget']['run_remaining_seconds'] <= first_debug['budget']['run_remaining_seconds']
     # Reopen with a fresh tool host/service: only the original sealed implementation
     # and persistent receipt are available; there is no legacy author result file.
     debug_service = LocalTCADDebugService(adapter=debugger, exchange_root=tmp_path / "debug")

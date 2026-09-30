@@ -18,6 +18,7 @@ class AgentExecutionPolicy(PolicyModel):
     enabled: bool
     max_storage_bytes: int = Field(ge=1)
     max_wall_time_seconds: int = Field(ge=1)
+    max_total_wall_time_seconds: int = Field(ge=1)
     outside_limits: Literal["require_human_approval", "deny"]
 
 
@@ -41,6 +42,7 @@ class DebugModePolicy(PolicyModel):
 
 
 class DebugPolicy(PolicyModel):
+    budget_scope: Literal["task", "scientific_subject"]
     preflight: DebugModePolicy
     smoke: DebugModePolicy
     initialization: DebugModePolicy
@@ -78,7 +80,9 @@ class ExecutionPolicySnapshot(PolicyModel):
             policy_digest=canonical_sha256(projection), policy=projection,
             budget=budget, budget_key=budget_key,
             allowance={"max_storage_bytes": policy.max_storage_bytes,
-                       "wall_time_seconds": policy.max_wall_time_seconds},
+                       "wall_time_seconds": policy.max_total_wall_time_seconds},
+            per_execution_allowance={"max_storage_bytes": policy.max_storage_bytes,
+                                     "wall_time_seconds": policy.max_wall_time_seconds},
             outside_allowance=policy.outside_limits,
             reason="within_configured_limits" if allowed else "autonomy_disabled_or_budget_exceeded",
         )

@@ -81,6 +81,15 @@ def deploy(request):
                 require_idle(config)
             raw = (base64.b64decode(request["configuration"], validate=True)
                    if request.get("configuration") is not None else config.read_bytes())
+            value = json.loads(raw)
+            policy = value.get("agent_execution_policy", {})
+            if "max_total_wall_time_seconds" not in policy and request.get("policy_defaults"):
+                policy["max_total_wall_time_seconds"] = request["policy_defaults"]["max_total_wall_time_seconds"]
+                raw = json.dumps(value, sort_keys=True).encode()
+            debug = value.get("debug", {})
+            if "budget_scope" not in debug and request.get("debug_defaults"):
+                debug["budget_scope"] = request["debug_defaults"]["budget_scope"]
+                raw = json.dumps(value, sort_keys=True).encode()
             write(stage / "runner.candidate", base64.b64decode(request["source"], validate=True), 0o750)
             write(stage / "config.candidate", raw)
             # Probe both protocols before replacing either existing file.

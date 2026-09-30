@@ -32,7 +32,7 @@ class _Input(BaseModel):
 
 class CatalogInput(_Input):
     surface: Literal["research", "execution"] = Field(default="research",
-        description="Root interfaces: research is normal scheduling; execution explicitly selects standalone Effect diagnostics/recovery. It never grants task-managed or internal access. Workers use research.")
+        description="Root interfaces: research is normal scheduling; execution explicitly selects standalone Effect diagnostics/recovery. Active task ownership and internal Operation restrictions still apply. Workers use research.")
     kind: Literal["operations", "interfaces"] = "operations"
     view: Literal["summary", "index", "facets", "matches"] = Field(default="summary",
         description="Root: summary = IDs + exact purposes; index/facets/matches = structural navigation.")
@@ -46,7 +46,7 @@ class CatalogInput(_Input):
 
 class DescribeInput(_Input):
     surface: Literal["research", "execution"] = Field(default="research",
-        description="Root interfaces: research is normal scheduling; execution explicitly selects standalone Effect diagnostics/recovery. It never grants task-managed or internal access. Workers use research.")
+        description="Root interfaces: research is normal scheduling; execution explicitly selects standalone Effect diagnostics/recovery. Active task ownership and internal Operation restrictions still apply. Workers use research.")
     name: str = Field(min_length=1, max_length=256)
     view: Literal["full", "invoke"] = Field(
         default="invoke",
@@ -56,7 +56,7 @@ class DescribeInput(_Input):
 
 class CallInput(_Input):
     surface: Literal["research", "execution"] = Field(default="research",
-        description="Root interfaces: research is normal scheduling; execution explicitly selects standalone Effect diagnostics/recovery. It never grants task-managed or internal access. Workers use research.")
+        description="Root interfaces: research is normal scheduling; execution explicitly selects standalone Effect diagnostics/recovery. Active task ownership and internal Operation restrictions still apply. Workers use research.")
     name: str = Field(min_length=1, max_length=256)
     arguments: dict[str, Any] = Field(default_factory=dict,
         description="Match the exact scid_describe contract.")

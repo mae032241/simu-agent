@@ -1,5 +1,6 @@
 """Policy records and shared scientific budget accounting survive instance archive."""
 import hashlib
+import json
 import sqlite3
 
 import pytest
@@ -8,7 +9,8 @@ from scidiscovery.artifact_agent.schema.approval import CompiledApprovalIdentity
 from scidiscovery.artifact_agent.schema.common import canonical_json
 from scidiscovery.artifact_agent.service.instance_archive_records import TABLES, readonly
 from tests.operations.test_instance_archive import archive_system, artifact, save_archive, restore_archive
-from tests.operations.tcad_policy_fixtures import policy_snapshot
+from tests.operations.tcad_policy_fixtures import policy_fields
+from tcad_artifact.execution_policy import ExecutionPolicySnapshot
 
 
 def _policy_executions(system):
@@ -18,7 +20,10 @@ def _policy_executions(system):
     identity = CompiledApprovalIdentity(operation_id='fixture.effect', operation_version='1',
         operation_digest='a'*64, approval_contract_digest='b'*64)
     budget_key = runtime.executions.scientific_budget_owner_from_refs((source.ref,), (source.schema_id,))
-    admission = policy_snapshot().admission(budget={'max_storage_bytes':1000,'wall_time_seconds':1000}, budget_key=budget_key)
+    fields = policy_fields()
+    fields["agent_execution_policy"]["max_total_wall_time_seconds"] = 3600
+    policy = ExecutionPolicySnapshot.model_validate_json(json.dumps(fields), strict=True)
+    admission = policy.admission(budget={'max_storage_bytes':1000,'wall_time_seconds':1000}, budget_key=budget_key)
     ids = []
     for index, instance in enumerate((first, second)):
         execution = runtime.executions.create(executor='fixture', preparation_profile='fixture',

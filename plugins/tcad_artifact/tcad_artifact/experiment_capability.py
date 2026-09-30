@@ -139,7 +139,7 @@ def debug(request, context):
             derived_from=("research_objective", request.implementation), metadata={"kind": "experiment_debug", "name": request.name})
         result["reference"] = record["alias"]
         result["artifact_name"] = record["artifact_name"]
-    return result
+    return {**result, "budget": response["budget"]}
 
 
 PREPARE_TOOL = WorkerToolDefinition(name="worker_experiment_prepare",

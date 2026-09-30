@@ -42,7 +42,7 @@ class ExecutionAdapter(Protocol):
     def lookup_submission(
         self, submission: LocalFileDescriptor
     ) -> tuple[str, str] | None:
-        """Authoritatively return an existing exact submission, or None."""
+        """Return an existing exact submission; None does not retire an in-flight submit."""
         ...
 
     def status(self, external_run_id: str) -> str: ...
@@ -120,8 +120,7 @@ class ExecutionBridge:
             if not allow_policy_authorization:
                 raise ExecutionServiceError("compiled execution contract does not permit policy authorization")
             payload = self.executions.authorize_policy(execution_id=execution_id,
-                admission=admission, compiled_identity=compiled_identity,
-                submission_confirmed_absent=submission is not None)
+                admission=admission, compiled_identity=compiled_identity)
         else:
             if approval_id is None:
                 raise ExecutionAuthorizationRequired("current policy requires human execution approval")
@@ -133,10 +132,14 @@ class ExecutionBridge:
             prepare = getattr(adapter, "prepare_with_artifacts", None)
             options = {"preparation_profile": request.preparation_profile,
                        "exchange_directory": Path(payload.local_path).parent}
-            submission = (prepare(payload, artifacts=self.executions.artifacts, **options)
-                if prepare is not None else adapter.prepare(payload, **options))
-            self.executions.record_prepared_submission(execution_id, submission,
-                policy_digest=admission.policy_digest if admission is not None else None)
+            try:
+                submission = (prepare(payload, artifacts=self.executions.artifacts, **options)
+                    if prepare is not None else adapter.prepare(payload, **options))
+                self.executions.record_prepared_submission(execution_id, submission,
+                    policy_digest=admission.policy_digest if admission is not None else None)
+            except Exception:
+                self.executions.release_unsubmitted_budget(execution_id)
+                raise
         recovered = adapter.lookup_submission(submission)
         if recovered is None:
             if admission is None:
@@ -155,7 +158,8 @@ class ExecutionBridge:
             if found is not None:
                 self._record_started(execution_id, *found)
                 raise ExecutionServiceError("This execution was submitted; use status or cancel instead of abandon.")
-        self.executions.abandon(execution_id, submission_confirmed_absent=descriptor is not None)
+            raise ExecutionServiceError("This exact prepared submission is not yet visible; an earlier submit may still be processing. Abandonment was not confirmed and its budget remains reserved. Recover the same execution after service recovery, then cancel the confirmed job; do not create a replacement.")
+        self.executions.abandon(execution_id)
 
     def _record_started(self, execution_id: str, external_run_id: str, external_state: str) -> None:
         self.executions.record_submission(
@@ -168,6 +172,8 @@ class ExecutionBridge:
                 external_run_id=external_run_id,
                 state=external_state,
             )
+        if external_state in {"succeeded", "failed", "cancelled"} and self.executions.budget_needs_settlement(execution_id):
+            self.sync(execution_id=execution_id)
 
     def validate_request(
         self,
@@ -283,6 +289,8 @@ class ExecutionBridge:
             external_run_id=current.external_run_id,
             state=external_state,
         )
+        if external_state in {"succeeded", "failed", "cancelled"} and self.executions.budget_needs_settlement(execution_id):
+            self.sync(execution_id=execution_id)
 
     def _adapter(self, executor: str) -> ExecutionAdapter:
         try:

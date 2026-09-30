@@ -74,6 +74,7 @@ def archived_model(runtime, package, manifest):
     runs.artifacts = artifacts
     runs.scheduler_bindings = bindings
     runs.scheduler_database_path = bindings.database_path
+    runs.approval_database_path = package / "records" / "approvals.sqlite3"
     runs.backend = copy.copy(runtime.runs.backend)
     backend_key = "local" if runs.backend.backend_id == "local_trusted" else "hardened"
     runs.backend.root = package / "workspaces" / backend_key
@@ -106,8 +107,8 @@ def archived_model(runtime, package, manifest):
         "find_owner", "instance_bindings", "scientific_selections", "selection_records", "list_instances"})
     run_reads = _ReadOnly(runs, {"status", "active_ids", "recent_ids", "diagnostic_events", "diagnostic_reference_belongs",
         "recovery_status", "tool_timing", "related_runs", "recovery_links", "backend", "database_path"})
-    approval_reads = _ReadOnly(approvals, {"status", "active_ids", "has_request", "review", "request_summary", "list_requests"}) if approvals else None
-    execution_reads = _ReadOnly(executions, {"status", "active_ids", "record_references", "observation"}) if executions else None
+    approval_reads = _ReadOnly(approvals, {"status", "active_ids", "has_request", "review", "request_summary", "list_requests", "navigation_summary"}) if approvals else None
+    execution_reads = _ReadOnly(executions, {"status", "active_ids", "record_references", "observation", "request_artifact_id", "authorization"}) if executions else None
     return InstanceReadModel(artifacts=artifact_reads, bindings=binding_reads, runs=run_reads, approvals=approval_reads,
         executions=execution_reads, operation_catalog=runtime.operation_catalog,
         engineering_diagnostics=_ReadOnly(EngineeringDiagnostics(package / "diagnostics"), {"read"}),

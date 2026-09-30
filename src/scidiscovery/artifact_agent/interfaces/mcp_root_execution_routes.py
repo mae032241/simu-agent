@@ -515,7 +515,7 @@ class RootExecutionRoutes:
         )
 
     def execution_abandon(self, *, name: str) -> dict[str, Any]:
-        execution_id = self._resolve("execution", name)
+        execution_id = self._resolve("execution", name, allow_task_recovery=True)
         if self.execution_bridge is None:
             self.executions.abandon(execution_id)
         else:
@@ -525,14 +525,15 @@ class RootExecutionRoutes:
     def execution_cancel(self, *, name: str) -> dict[str, Any]:
         if self.execution_bridge is None:
             raise RootToolError("no execution bridge is configured")
-        self.execution_bridge.cancel(execution_id=self._resolve("execution", name))
+        self.execution_bridge.cancel(execution_id=self._resolve("execution", name, allow_task_recovery=True))
         return self._execution_status_snapshot(name=name)
 
     def execution_status(self, *, name: str) -> dict[str, Any]:
         execution_id = self._resolve("execution", name, allow_task_recovery=True)
         status = self.executions.status(execution_id)
         if (status.external_run_id is not None
-                and status.state in {"submitted", "running", "cancelling"}):
+                and (status.state in {"submitted", "running", "cancelling"}
+                    or self.executions.budget_needs_settlement(execution_id))):
             if self.execution_bridge is None:
                 raise RootToolError("Cannot refresh execution status: no execution bridge is configured")
             self.execution_bridge.sync(execution_id=execution_id,
@@ -562,7 +563,7 @@ class RootExecutionRoutes:
             **({"recovery": {
                 "task_name": self.bindings.find_name(instance=self._instance_id(), namespace="run",
                     object_id=self._task_execution_owner(binding.object_id)),
-                "actions": ["execution_status", "execution_sync", "execution_logs", "execution_collect", "execution_outputs"],
+                "actions": self.runs.experiment_executions.recovery_actions(binding.object_id),
                 "resubmission_allowed": False,
             }} if self._task_managed_execution(binding.object_id) else {}),
             "authorization": self.executions.authorization(binding.object_id),
@@ -618,7 +619,13 @@ class RootExecutionRoutes:
         self._require_scheduling_enabled()
         if self.execution_bridge is None:
             raise RootToolError("no execution bridge is configured")
-        execution_id = self._resolve("execution", name)
+        execution_id = self._resolve("execution", name, allow_task_recovery=True)
+        if self._task_managed_execution(execution_id):
+            coordinator = self.runs.experiment_executions
+            if coordinator is None:
+                raise RootToolError("Task execution recovery service is unavailable")
+            coordinator.recover_start(execution_id, instance_id=self._instance_id())
+            return self.execution_status(name=name)
         approval_id = self._optional("approval", _derived_name(name, "approval"))
         request_ref, _ = self.executions.approval_subject_refs(execution_id)
         compiled, compiled_identity = self._current_execution_contract(

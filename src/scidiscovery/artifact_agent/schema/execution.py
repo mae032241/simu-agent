@@ -25,6 +25,7 @@ class ExecutionAdmission(SchemaModel):
     policy: dict[str, Any]
     budget: dict[str, int]
     allowance: dict[str, int]
+    per_execution_allowance: dict[str, int] = Field(default_factory=dict)
     outside_allowance: Literal["require_human_approval", "deny"]
     budget_key: Sha256
     reason: Annotated[str, Field(min_length=1, max_length=1024)]

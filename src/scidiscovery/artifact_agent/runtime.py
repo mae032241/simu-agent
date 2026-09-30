@@ -96,6 +96,7 @@ def open_runtime(
                 scheduler_bindings=scheduler_bindings,
                 instance_maintenance=instance_maintenance,
                 agent_settings=agent_settings,
+                approval_database_path=state / "database" / "approvals.sqlite3",
             )
         else:
             local_backend = LocalTrustedBackend(
@@ -110,6 +111,7 @@ def open_runtime(
                 scheduler_bindings=scheduler_bindings,
                 instance_maintenance=instance_maintenance,
                 agent_settings=agent_settings,
+                approval_database_path=state / "database" / "approvals.sqlite3",
             )
         intake = SecureIntakeService(
             project_root=project,

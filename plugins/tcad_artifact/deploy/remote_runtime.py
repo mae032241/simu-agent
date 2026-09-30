@@ -45,6 +45,9 @@ def main():
     if args.phase == "prepare":
         source = Path(__file__).resolve().parents[1] / "tcad_artifact/remote_runner_py36.py"
         packet["source"] = base64.b64encode(source.read_bytes()).decode()
+        defaults = json.loads((source.parents[1] / "config/remote-runner.example.json").read_bytes())
+        packet["policy_defaults"] = defaults["agent_execution_policy"]
+        packet["debug_defaults"] = defaults["debug"]
         packet["configuration"] = base64.b64encode(args.runner_config.read_bytes()).decode() if args.runner_config else None
     script = Path(__file__).with_name("remote_deployment.py").read_text()
     client = SSHRemoteClient(config)

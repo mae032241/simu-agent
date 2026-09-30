@@ -227,9 +227,12 @@ Effect execution or historical recovery. This is one declaration projection, not
 another Operation registry or authorization. Task-managed execution stays with
 `worker_experiment_execute` while its owner or any recovery descendant is active.
 When the entire lineage has failed, the execution surface and lifecycle events
-expose the original execution for status, sync, collect and outputs. Recovery does
-not permit start, abandon or cancel; internal Operations remain inaccessible. UI reads
-ExecutionService and collection state directly and retains the same authorization.
+expose the original execution for status, sync, logs, collect and outputs, plus
+state-appropriate explicit start, abandon or cancel. Starting reuses the exact request,
+implementation and approval; it checks the frozen task contract, required independent
+review and current execution policy. Uncertain submissions use authoritative lookup.
+This creates no new Run or retry and never marks the failed scientific Run successful.
+Internal Operations remain inaccessible. UI reads execution/collection state directly.
 
 Selected JSON Pointer values appear in `selected_output`, never a partial
 `sealed_output`: at most 8 paths and 32 KiB. Paths start inside the payload, for
@@ -393,6 +396,62 @@ For an Effect, `operation_invoke` creates an immutable execution request. A comp
 contract may explicitly allow administrator policy authorization. TCAD requests
 within both configured storage and wall-time limits are authorized without a human
 approval record; other requests require the configured human decision or are denied.
+Execution policy separates the per-request wall-time threshold (`max_wall_time_seconds`,
+3600 in the example config) from the cumulative scientific-subject threshold
+(`max_total_wall_time_seconds`, 21600). Both are administrator configuration. Queued
+or uncertain work reserves its requested limit; terminal runner observations settle
+actual elapsed time, rounded up to seconds, independently of storage observations.
+Missing observations remain explicitly unsettled reservations, not claimed actual use.
+Terminal jobs awaiting accounting remain in bounded background synchronization, including
+collected jobs. Preparation failure before a saved submission releases its reservation;
+an uncertain submission retains it. Repeated settlement never refunds recorded usage.
+A current policy increase changes the ceiling without resetting historical consumption.
+Approval UI separates the requested increment, per-request threshold, cumulative balance
+and overage; a negative balance is never presented as this request's available time.
+The install transaction fills a missing cumulative threshold from the bundled config
+and preserves explicit administrator settings, including on the remote runner.
+
+Development diagnostics use `debug.budget_scope` (`task` in the example configuration).
+Task accounting includes the exact recovery lineage, not unrelated past experiments on
+the same objective. `scientific_subject` explicitly retains shared-subject accounting.
+Both modes keep immutable submission records and separate actual terminal time from
+outstanding reservations. Before new admission, known submitted jobs are refreshed to
+settle completed usage. Limits still come from `debug.total_wall_seconds` and
+`debug.max_runs`; errors identify their scope and the administrator setting needed for
+recovery. A missing exact lookup does not prove that an earlier submit has stopped:
+socket timeout leaves server processing alive, and the remote job directory may not
+exist yet. Diagnostics report `submission_unknown`; cancel and formal abandon reject
+unconfirmed retirement and retain the exact identity and reservation. Retry the same
+diagnostic status or recover the same formal execution, then cancel the confirmed job.
+Even a genuinely absent request stays reserved until permanent retirement can be proven;
+the current backends offer no atomic retirement operation. Approval expiry releases only
+never-prepared requests. Renaming or recovery never resets
+the current task's usage; changing scope does not delete historical accounting.
+Validated retained receipts reconcile the original diagnostic to `collected` and settle
+their trusted elapsed time idempotently, including after a crash between receipt and
+budget commits. This recovery needs no solver submission, collection or remote lookup;
+damaged receipts leave the reservation outstanding.
+Task identity comes from the sealed recovery origin even when `draft_from` changes the
+objective or resumes an earlier branch. Frozen inputs of the full recovery family locate
+old subject ledgers; owned records and elapsed
+charges are updated in place. Reusing an exact terminal diagnostic from another task
+does not inherit that task's usage. Multiple historical submissions with the same name
+for the requested name require explicit repair; other duplicate names retain all charges
+without blocking an exact request. Reading and cancellation keep their exact recovery
+permissions. Shared-subject accounting remains bound to the current scientific input.
+Each preflight or initialization report has an immutable attempt path; the mode report
+is only the current selection. Receipts and finalization proofs bind the attempt path.
+Old receipts retain their original bytes and hashes and restore their mode-report bytes
+to that attempt path. Conflicting attempt bytes still reject recovery.
+
+An active experiment can call `worker_experiment_execute(action="review")` again to
+obtain the latest completed review of its exact implementation in the same instance.
+Control delivers the unchanged review body through the existing sealed material channel,
+with the original review as an immutable parent and an explicit `worker_reference_read`
+request. Negative findings are readable as well. Repeated delivery is idempotent and old
+delivered versions remain readable; execution admission always checks the original latest
+exact review, never the delivered copy or an old pass.
+
 Exact request identity and any explicitly applicable review policy still apply. Explicit
 `execution_start` rechecks the current policy before submission. An unknown submission
 is looked up using its frozen descriptor before any new side effect; a renamed request
@@ -408,6 +467,14 @@ retain the last confirmed execution state and record a refresh diagnostic. The
 reconciler never submits or collects work. Resuming the failed Run retains the
 original execution identity and removes it from Root recovery while the new owner
 is active. A terminal solver outcome does not complete the scientific Run.
+
+A task's human execution-approval wait is recorded once in its activity ledger.
+Effective deadlines add the union of these intervals, ending at decision, cancellation
+or expiry; simultaneous waits count once. The original deadline stays unchanged, and
+repeated reads or daemon restarts cannot accumulate extra work time. Worker calls,
+Root status and timeout reconciliation use the same projection. An approval created
+after expiry cannot revive a task. Existing failed tasks remain failed and can only
+use explicit recovery of their original execution as described above.
 
 Complete experiments use `worker_experiment_execute(action="status")` to refresh
 remote state and progress of submitted work without starting, cancelling or

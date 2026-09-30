@@ -20,6 +20,8 @@ class ExperimentExecution:
         self.runs, self.executions = runs, executions
         self.bridge, self.collection = bridge, collection
         self.approval_base_url = approval_base_url
+        if runs is not None and executions is not None and executions.approvals is not None:
+            runs.approval_database_path = executions.approvals.database_path
         self.services_for = None
         self.worker_services = {}
 
@@ -32,12 +34,14 @@ class ExperimentExecution:
     def _domain_active(self, run):
         if self.services_for is not None:
             self.worker_services.update(self.services_for(run.operation_id))
-        lineage = {item.run_id for item in self.task_lineage(run)}
+        ancestors = self.task_lineage(run)
+        lineage = {item.run_id for item in ancestors}
+        inputs = tuple(binding for item in ancestors for binding in item.inputs)
         details = []
         for service in {id(item): item for item in self.worker_services.values()}.values():
             if callable(getattr(service, "experiment_pending_diagnostics", None)):
-                details.extend(service.experiment_pending_diagnostics(lineage, run.inputs))
-            elif callable(getattr(service, "experiment_activity", None)) and service.experiment_activity(lineage, run.inputs, cancel=False):
+                details.extend(service.experiment_pending_diagnostics(lineage, inputs))
+            elif callable(getattr(service, "experiment_activity", None)) and service.experiment_activity(lineage, inputs, cancel=False):
                 details.append(contract_diagnostic("experiment_diagnostics_pending", phase="protocol",
                     affected_action="submit", repairable=True,
                     message="An experiment diagnostic is still active. Finish or cancel the existing diagnostic, then resubmit the unchanged report."))
@@ -74,12 +78,16 @@ class ExperimentExecution:
         return envelope.labels.get("experiment_run")
 
     def implementation(self, context, alias):
-        from ..schema.refs import ArtifactRef
         from .sealed_materials import material_error
         record = self.runs.sealed_material_record(self.runs.status(context.run_id), alias)
         if record is None or record.get("metadata", {}).get("kind") != "experiment_implementation":
             raise material_error("experiment_implementation_unavailable",
                 "Choose a sealed implementation created in or explicitly bound to this task.")
+        return self._implementation_payload(record)
+
+    def _implementation_payload(self, record):
+        from ..schema.refs import ArtifactRef
+        from .sealed_materials import material_error
         material = ArtifactRef.model_validate(record["artifact_ref"])
         packages = [ref for ref in self.executions.artifacts.verify(material).parent_refs
             if self.executions.artifacts.verify(ref).kind == "experiment_execution_package"]
@@ -90,6 +98,9 @@ class ExperimentExecution:
 
     def _contract(self, context):
         run = self.runs.running_task(context.run_id)
+        return self._contract_for_run(run)
+
+    def _contract_for_run(self, run):
         compiled = self.runs.compiled_operation(run)
         ref = compiled.spec.executor.capability
         if ref is None:
@@ -132,15 +143,19 @@ class ExperimentExecution:
         if len(request_name) > 256:
             request_name = name[:230] + ".review-" + hashlib.sha256(name.encode()).hexdigest()[:16]
         return {"required": bool((run.recovery_policy or {}).get("require_execution_review")),
+            "read_guidance": "After the review completes, call worker_experiment_execute(action='review', implementation=<the same reference>) again. It returns review_result.verdict and a read_request for worker_reference_read, including revise/blocked findings, without ending this Run.",
             "subject_artifact_name": name,
             "request": {"name": request_name, "operation_id": "science.object.review.v1",
                 "inputs": [{"port": "subject", "artifact_names": [name]}],
                 "instruction": "Independently review this exact sealed implementation against its bound research objective, scientific constraints and required observables. Report missing evidence and limitations explicitly; execution permission does not establish scientific validity."}}
 
     def _implementation_record(self, context, payload_ref):
-        records = [item for item in self.runs.available_material_records(self.runs.status(context.run_id))
+        return self._run_implementation_record(self.runs.status(context.run_id), payload_ref)
+
+    def _run_implementation_record(self, run, payload_ref):
+        records = [item for item in self.runs.available_material_records(run)
             if item.get("metadata", {}).get("kind") == "experiment_implementation"
-            and self.implementation(context, item["alias"]) == payload_ref]
+            and self._implementation_payload(item) == payload_ref]
         if not records:
             from .sealed_materials import material_error
             raise material_error("experiment_implementation_unavailable",
@@ -156,10 +171,14 @@ class ExperimentExecution:
             return
         if status.state in {"created", "authorized"}:
             prepared = self.executions.prepared_submission(execution_id)
-            found = None if prepared is None else self.bridge._adapter(status.executor).lookup_submission(prepared)
-            if found is None:
-                self.executions.abandon(execution_id, submission_confirmed_absent=prepared is not None)
+            if prepared is None:
+                self.executions.abandon(execution_id)
                 return
+            found = self.bridge._adapter(status.executor).lookup_submission(prepared)
+            if found is None:
+                message = "Cancellation could not be confirmed: the exact prepared submission is not yet visible and an earlier submit may still be processing. Its identity and budget remain reserved. Recover the same execution after service recovery, then cancel the confirmed job; do not create a replacement."
+                raise DiagnosticError(message, details=(contract_diagnostic("experiment_execution_submission_unknown",
+                    phase="tool_execution", affected_action="tool_call", repairable=False, message=message),))
             self.bridge._record_started(execution_id, *found)
         if self.executions.status(execution_id).state != "abandoned":
             self.bridge.cancel(execution_id=execution_id)
@@ -212,17 +231,14 @@ class ExperimentExecution:
         return {"name":name, "path":str(Path("scratch/collected") / request.name / name),
             "media_type":envelope.media_type, "size_bytes":envelope.size_bytes}
 
-    def _required_review(self, run, implementation):
-        if not (run.recovery_policy or {}).get("require_execution_review"):
-            return None
+    def _implementation_review(self, run, implementation):
         from ..schema.refs import ArtifactRef
         from .sealed_materials import material_error
         from ...general_science_experiment_review import ExperimentReview
         subject = ArtifactRef.model_validate(implementation["artifact_ref"])
         review = self.runs.latest_subject_review(run.instance_id, subject)
         if review is None or review.output_ref is None:
-            raise material_error("experiment_execution_review_required",
-                "Independent implementation review is required. Call worker_experiment_execute(action='review', implementation=<the same reference>) for the exact public subject and operation_invoke request. Ask the scheduler to dispatch an independent reviewer, then retry start with the same implementation after a sealed pass. No execution was created.")
+            return None
         compiled = self.runs.operation_catalog.operation("science.object.review.v1")
         if review.operation_version != compiled.spec.version or "subject" not in compiled.spec.independent_review_ports:
             raise material_error("experiment_execution_review_incompatible",
@@ -230,11 +246,23 @@ class ExperimentExecution:
         envelope = self.runs.artifacts.catalog(review.output_ref)
         if envelope.schema_id != "scidiscovery.experiment-review.v1" or envelope.size_bytes > compiled.spec.limits.max_output_bytes:
             raise material_error("experiment_execution_review_invalid", "The exact implementation review has no valid sealed review result. Use worker_experiment_execute(action='review', implementation=<the same reference>) to obtain the exact review subject for repair.")
-        result = ExperimentReview.model_validate_json(self.runs.artifacts.read(review.output_ref), strict=True)
+        raw = self.runs.artifacts.read(review.output_ref)
+        result = ExperimentReview.model_validate_json(raw, strict=True)
+        return review.output_ref, raw, result
+
+    def _required_review(self, run, implementation):
+        if not (run.recovery_policy or {}).get("require_execution_review"):
+            return None
+        from .sealed_materials import material_error
+        review = self._implementation_review(run, implementation)
+        if review is None:
+            raise material_error("experiment_execution_review_required",
+                "Independent implementation review is required. Call worker_experiment_execute(action='review', implementation=<the same reference>) for the exact public subject and operation_invoke request. Ask the scheduler to dispatch an independent reviewer, then retry start with the same implementation after a sealed pass. No execution was created.")
+        ref, _, result = review
         if result.verdict != "pass":
             raise material_error("experiment_execution_review_not_passed",
                 "The latest independent review of this exact implementation did not pass. Resolve its findings and review any revised implementation before execution; budget approval does not override this requirement. Call worker_experiment_execute(action='review', implementation=<the chosen reference>) for the exact review request.")
-        return review.output_ref
+        return ref
 
     def command(self, context, request):
         run = self.runs.running_task(context.run_id)
@@ -275,8 +303,24 @@ class ExperimentExecution:
                 for item in self.capabilities(context)]}
         if request.action == "review":
             payload = self.implementation(context, request.implementation)
-            return {"implementation": request.implementation,
-                "review": self.review_handoff(run, self._implementation_record(context, payload))}
+            implementation = self._implementation_record(context, payload)
+            result = {"implementation": request.implementation,
+                "review": self.review_handoff(run, implementation)}
+            review = self._implementation_review(run, implementation)
+            if review is not None:
+                ref, raw, assessment = review
+                # Deliver unchanged reviewer bytes through the existing immutable,
+                # bounded material channel. This copy never grants review authority:
+                # execution admission continues to check the original exact review.
+                record = context.accept_evidence(raw=raw, media_type="application/json",
+                    derived_from=(request.implementation,), trusted_parent_refs=(ref,),
+                    metadata={"kind": "experiment_review", "review_ref": ref.model_dump(mode="json")})
+                result["review_result"] = {"state": "completed", "verdict": assessment.verdict,
+                    "reference": record["alias"], "read_request": {"action": "read",
+                        "source": record["alias"], "reference": "content"}}
+            else:
+                result["review_result"] = {"state": "not_available"}
+            return result
         if request.action == "start":
             if request.implementation is None:
                 raise ToolInputError("experiment_implementation_required", "Choose a sealed implementation before starting execution.", path="$.implementation")
@@ -337,11 +381,7 @@ class ExperimentExecution:
             if self.executions.status(execution_id).external_run_id is None:
                 self._required_review(run, implementation)
             try:
-                self.bridge.start(execution_id=execution_id,
-                    approval_id="apr_" + execution_id if approval is not None and approval.status == "decided" else None,
-                    compiled_identity=identity,
-                    allow_policy_authorization=effect.spec.review.approval.allow_policy_authorization,
-                    budget_subject_schemas=("scidiscovery.research-objective.v1",))
+                self._start_request(execution_id, effect, identity, approval)
             except ExecutionAuthorizationRequired:
                 self._approval(execution_id, effect, identity)
                 self._bind_approval(run, request.name, execution_id)
@@ -390,6 +430,52 @@ class ExperimentExecution:
                 result["artifact_name"] = record["artifact_name"]
         return result
 
+    def recover_start(self, execution_id, *, instance_id):
+        """Advance the original request after its entire scientific task has failed."""
+        from .executions import ExecutionServiceError
+        owner = self._execution_owner(execution_id)
+        if owner is None or not self.runs.task_recovery_available(owner, instance_id=instance_id):
+            raise ExecutionServiceError("Execution recovery requires an entirely failed task lineage")
+        run = self.runs.status(owner)
+        state = self.executions.status(execution_id)
+        if state.external_run_id is not None:
+            return  # Already submitted: recovery must not create another solver.
+        if state.state not in {"created", "authorized"}:
+            raise ExecutionServiceError("This execution cannot be started; inspect its terminal state")
+        _, effect, identity, _ = self._contract_for_run(run)
+        request = self.executions.request(execution_id)
+        plan = effect_operation_plan(effect)
+        if (request.compiled_identity != identity or request.executor != plan.executor
+                or request.preparation_profile != plan.preparation_profile):
+            raise ExecutionServiceError("Execution recovery contract differs from the original request")
+        implementation = self._run_implementation_record(run, request.payload_ref)
+        self._required_review(run, implementation)
+        approval = self._approval_status(execution_id)
+        if approval is not None and (approval.status != "decided" or self._authorization_state(approval) != "created"):
+            raise ExecutionServiceError("The original execution approval has not authorized this request")
+        self._start_request(execution_id, effect, identity, approval)
+
+    def _start_request(self, execution_id, effect, identity, approval):
+        # Worker continuation and explicit Root recovery have identical authorization
+        # and scientific budget ownership; neither uses standalone Effect bindings.
+        self.bridge.start(execution_id=execution_id,
+            approval_id="apr_" + execution_id if approval is not None and approval.status == "decided" else None,
+            compiled_identity=identity,
+            allow_policy_authorization=effect.spec.review.approval.allow_policy_authorization,
+            budget_subject_schemas=("scidiscovery.research-objective.v1",))
+
+    def recovery_actions(self, execution_id):
+        state = self.executions.status(execution_id)
+        actions = ["execution_status", "execution_sync", "execution_logs", "execution_collect", "execution_outputs"]
+        if state.state in {"created", "authorized"} and state.external_run_id is None:
+            actions.append("execution_abandon")
+            approval = self._approval_status(execution_id)
+            if approval is None or (approval.status == "decided" and self._authorization_state(approval) == "created"):
+                actions.append("execution_start")
+        elif state.state in {"submitted", "running", "cancelling"}:
+            actions.append("execution_cancel")
+        return actions
+
     def _approval_status(self, execution_id):
         from .approvals import ApprovalAccessDenied
         if self.executions.approvals is not None:
@@ -413,12 +499,14 @@ class ExperimentExecution:
                 object_id=approval_id)
 
     def _authorization_response(self, run, name, execution_id, approval):
+        if approval.status == "pending":
+            self.runs.record_approval_wait(run.run_id, "apr_" + execution_id)
         state = self._authorization_state(approval)
         self._reconcile_authorization(execution_id, approval)
         authorization = self.executions.authorization(execution_id)
         result = {"name": name, "state": state,
             "execution_state": self.executions.status(execution_id).state, "authorization": {"status": approval.status,
-            **{key: authorization[key] for key in ("reason", "budget", "allowance", "budget_usage") if key in authorization}}}
+            **{key: authorization[key] for key in ("reason", "budget", "allowance", "per_execution_allowance", "budget_usage", "accounting") if key in authorization}}}
         bound = self.runs.scheduler_bindings.find_name(instance=run.instance_id, namespace="approval", object_id="apr_" + execution_id)
         if bound is not None:
             result["approval_name"] = bound
@@ -538,8 +626,10 @@ class _TaskExperimentTools:
     def cancel_diagnostics(self, context, *, service_name, name):
         run = self.__scope(context)
         service = context.require_service(service_name)
-        lineage = {item.run_id for item in self.__coordinator.task_lineage(run)}
-        return bool(service.experiment_activity(lineage, run.inputs, cancel=True, name=name))
+        ancestors = self.__coordinator.task_lineage(run)
+        lineage = {item.run_id for item in ancestors}
+        inputs = tuple(binding for item in ancestors for binding in item.inputs)
+        return bool(service.experiment_activity(lineage, inputs, cancel=True, name=name))
 
     def command(self, context, request):
         self.__scope(context)

@@ -20,7 +20,7 @@ def execution_budget(model, approval_id):
         if registered.ref != refs[0]:
             return {}
         value = model.executions.authorization(execution.execution_id)
-        return {key: value[key] for key in ('reason', 'budget', 'allowance', 'budget_usage') if key in value}
+        return {key: value[key] for key in ('reason', 'budget', 'allowance', 'per_execution_allowance', 'budget_usage', 'accounting') if key in value}
     except Exception as error:
         logging.getLogger(__name__).warning('approval budget display unavailable: %s', type(error).__name__)
         return {}
@@ -41,9 +41,9 @@ def _amount(key, value):
 
 
 def budget_brief(authorization):
-    budget, allowance = authorization.get('budget', {}), authorization.get('allowance', {})
+    budget, allowance = authorization.get('budget', {}), authorization.get('per_execution_allowance') or authorization.get('allowance', {})
     return '；'.join(label + '：申请 ' + _amount(key, budget[key])
-        + ' / 自动额度 ' + _amount(key, allowance.get(key))
+        + ' / 单次免审批阈值 ' + _amount(key, allowance.get(key))
         for key, label in (('wall_time_seconds', '时限'), ('max_storage_bytes', '存储')) if key in budget)
 
 
@@ -51,13 +51,14 @@ def render_approval_focus(presentation, *, subject_ids, evidence_href, authoriza
     """Keep requested values visible, exclude ancestor parameters, preserve sources."""
     body = ''
     authorization = authorization or {}
-    budget, allowance = authorization.get('budget', {}), authorization.get('allowance', {})
+    budget, allowance = authorization.get('budget', {}), authorization.get('per_execution_allowance') or authorization.get('allowance', {})
     if budget:
         reasons = {'autonomy_disabled_or_budget_exceeded': '自动执行未启用，或本次申请超出自动执行额度。',
             'cumulative_budget_exceeded': '同一科学任务的累计自动执行额度不足。'}
         reason = reasons.get(authorization.get('reason'), authorization.get('reason') or '原记录未提供原因。')
         body += '<p class="approval-reason"><strong>为什么需要审批：</strong>' + _text(reason) + '</p>'
         remaining = (authorization.get('budget_usage') or {}).get('remaining', {})
+        overage = (authorization.get('budget_usage') or {}).get('overage', {})
         rows = []
         for key, label in (('wall_time_seconds', '运行时限'), ('max_storage_bytes', '存储上限')):
             if key not in budget:
@@ -65,11 +66,23 @@ def render_approval_focus(presentation, *, subject_ids, evidence_href, authoriza
             exceeds = type(allowance.get(key)) is int and budget[key] > allowance[key]
             rows.append('<tr><th scope="row">' + label + '</th><td><strong>' + _amount(key, budget[key])
                 + '</strong></td><td>' + _amount(key, allowance.get(key)) + '</td><td>'
-                + _amount(key, remaining.get(key)) + '</td><td>' + ('超出自动额度' if exceeds else '请结合累计额度与策略核对') + '</td></tr>')
-        body += ('<p class="source-note">以下为该执行的准入记录；累计剩余额度随其他执行变化。GB 按十进制显示。</p>'
+                + _amount(key, max(0, remaining[key]) if type(remaining.get(key)) is int else None) + '</td><td>' + ('超出自动额度' if exceeds else '请结合累计额度与策略核对') + '</td></tr>')
+        body += ('<p class="source-note">审批对象是本次申请。累计额度扣除已结算实际用量和未结算预留；预留不代表实际消耗。GB 按十进制显示。</p>'
             '<div class="approval-table-scroll"><table class="approval-key-table"><thead><tr>'
-            '<th>审批项</th><th>本次申请</th><th>自动执行额度</th><th>当前累计剩余</th><th>核对重点</th>'
+            '<th>审批项</th><th>本次申请</th><th>单次免审批阈值</th><th>累计可用额度</th><th>核对重点</th>'
             '</tr></thead><tbody>' + ''.join(rows) + '</tbody></table></div>')
+        cumulative = authorization.get('allowance', {})
+        if cumulative:
+            body += '<p class="source-note">累计免审批阈值：' + '；'.join(
+                label + ' ' + _amount(key, cumulative[key]) for key, label in
+                (('wall_time_seconds', '时长'), ('max_storage_bytes', '存储')) if key in cumulative) + '</p>'
+        accounting = authorization.get('accounting') or {}
+        if accounting:
+            actual = accounting.get('actual', {}).get('wall_time_seconds')
+            body += '<p class="source-note">本次已结算实际时长：' + _amount('wall_time_seconds', actual) + (
+                '。仍有未结算预留，不能视为实际消耗。' if accounting.get('unsettled_reservation') else '。') + '</p>'
+        if any(type(value) is int and value > 0 for value in overage.values()):
+            body += '<p class="source-note">累计超额（不是本次申请）：' + '；'.join(_amount(key, value) for key, value in overage.items() if value > 0) + '</p>'
     presentation = presentation or {}
     subjects = set(subject_ids)
     cards, seen = [], set()

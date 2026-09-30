@@ -139,11 +139,11 @@ def _policy_snapshot(config):
 
 def _validate_policy(config):
     policy = config["agent_execution_policy"]
-    if set(policy) != {"enabled", "max_storage_bytes", "max_wall_time_seconds", "outside_limits"}:
+    if set(policy) != {"enabled", "max_storage_bytes", "max_wall_time_seconds", "max_total_wall_time_seconds", "outside_limits"}:
         raise ValueError("administrator execution policy fields are invalid")
     if type(policy["enabled"]) is not bool or policy["outside_limits"] not in {"deny", "require_human_approval"}:
         raise ValueError("administrator execution policy mode is invalid")
-    for key in ("max_storage_bytes", "max_wall_time_seconds"):
+    for key in ("max_storage_bytes", "max_wall_time_seconds", "max_total_wall_time_seconds"):
         if type(policy[key]) is not int or policy[key] < 1:
             raise ValueError("administrator execution policy bounds are invalid")
     runner = config["runner"]
@@ -156,11 +156,14 @@ def _validate_policy(config):
         if key not in {"sample_interval_seconds", "terminate_grace_seconds", "collection_total_seconds", "collection_file_seconds", "collection_idle_seconds"} and type(value) is not int:
             raise ValueError("runner byte/count bounds must be integers")
     debug = config["debug"]
-    required_debug = {"preflight", "smoke", "initialization", "max_runs", "total_wall_seconds", "max_memory_bytes", "max_storage_bytes", "max_output_file_bytes", "max_output_files", "max_log_bytes", "max_manifest_bytes", "max_response_log_chars", "max_response_bytes"}
+    required_debug = {"budget_scope", "preflight", "smoke", "initialization", "max_runs", "total_wall_seconds", "max_memory_bytes", "max_storage_bytes", "max_output_file_bytes", "max_output_files", "max_log_bytes", "max_manifest_bytes", "max_response_log_chars", "max_response_bytes"}
     if set(debug) != required_debug:
         raise ValueError("debug policy fields are invalid")
     for key, value in debug.items():
-        if key in {"preflight", "smoke", "initialization"}:
+        if key == "budget_scope":
+            if value not in {"task", "scientific_subject"}:
+                raise ValueError("debug budget scope is invalid")
+        elif key in {"preflight", "smoke", "initialization"}:
             if set(value) != {"wall_time_seconds", "max_output_bytes"} or any(type(item) is not int or item < 1 for item in value.values()):
                 raise ValueError("debug mode bounds are invalid")
         elif type(value) is not int or value < 1:
@@ -188,7 +191,8 @@ def _validate_authorization(config, job, authorization):
             or authorization.get("outcome") != outcome
             or authorization.get("policy_digest") != _sha(_canonical(snapshot))
             or authorization.get("policy") != snapshot or authorization.get("budget") != budget
-            or authorization.get("allowance") != {"max_storage_bytes": policy["max_storage_bytes"], "wall_time_seconds": policy["max_wall_time_seconds"]}
+            or authorization.get("allowance") != {"max_storage_bytes": policy["max_storage_bytes"], "wall_time_seconds": policy["max_total_wall_time_seconds"]}
+            or authorization.get("per_execution_allowance") != {"max_storage_bytes": policy["max_storage_bytes"], "wall_time_seconds": policy["max_wall_time_seconds"]}
             or authorization.get("outside_allowance") != policy["outside_limits"]
             or not _valid_sha(authorization.get("budget_key"))):
         raise ValueError("execution policy changed or control authorization is missing; reauthorize exact request")
@@ -1386,10 +1390,15 @@ def _consumed_budget(manifest):
     import math
     usage = manifest.get("resource_usage", {})
     elapsed = usage.get("elapsed_seconds")
+    if elapsed is None:
+        elapsed = _execution_timing(manifest.get("started_at"), manifest.get("completed_at"), terminal=True).get("elapsed_seconds")
     storage = usage.get("observed_storage_high_water_bytes")
-    if not isinstance(elapsed, (int, float)) or not math.isfinite(elapsed) or elapsed < 0 or type(storage) is not int or storage < 0:
-        return None
-    return {"wall_time_seconds": int(math.ceil(elapsed)), "max_storage_bytes": storage}
+    consumed = {}
+    if type(elapsed) in (int, float) and math.isfinite(elapsed) and elapsed >= 0:
+        consumed["wall_time_seconds"] = int(math.ceil(elapsed))
+    if type(storage) is int and storage >= 0:
+        consumed["max_storage_bytes"] = storage
+    return consumed or None
 
 
 if __name__ == "__main__":

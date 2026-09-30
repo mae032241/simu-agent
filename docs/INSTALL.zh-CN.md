@@ -303,6 +303,17 @@ sudo SCID_PYTHON="$PYTHON" \
 模式仍要求管理员提供符合当前 schema 的完整策略。安装成功不代表远端策略或
 求解器已经通过真实执行验收。
 
+TCAD 的 `agent_execution_policy` 现在区分两个可配置阈值：
+`max_wall_time_seconds` 为单次阈值（示例 3600 秒），
+`max_total_wall_time_seconds` 为同一科学主体的累计阈值（示例 21600 秒）。
+请求先预留声明上限，结束后按 runner 观测的真实耗时结算。安装事务只从随包示例配置
+补充缺失的累计字段以及 `debug.budget_scope`，保留已有显式配置。诊断默认范围 `task`
+只累计当前任务及恢复链；`scientific_subject` 可显式启用共享历史额度。达到诊断额度时可由
+管理员调整 `debug.total_wall_seconds` / `debug.max_runs`，不会清空历史用量；修改策略后
+需要重建诊断 runtime 或重启其所属服务，以重新读取适配器缓存的策略。
+使用随包 SSH 部署时，会同时升级 VM runner
+代码和远端配置；两端须使用新策略合同。既有审批决定和科学 Run 重试次数不变。
+
 外部适配器会替代本地 `tcad-control.service`。每次 SSH 操作都必须短时返回；后台
 执行和持久 `running`、`status`、`done` 记录由 VM Runner 负责。
 该模式忽略 `TCAD_STATE_ROOT`：安装器不创建本地 TCAD 状态目录、不修改其权限，也不备份其中的数据库。
@@ -331,7 +342,7 @@ Sentaurus 许可证或任何科学模型已经通过。
 叠点审计图，并下载原 CSV。仅按同次调用与原清单精确关联；缺图、缺输出端口或清单不完整时
 显示局部缺口，不重新提取或判定旧资料资格。历史正文翻译暂未实现，无需配置翻译服务。
 
-本版沿用审批 UI 服务及原端口，不新增服务、环境变量或 VM runner 协议；此次更新无需同步 VM。
+资料归档功能本身沿用审批 UI 服务及原端口，不需要 VM 协议变更；TCAD 策略更新仍会同步 VM runner。
 使用原部署配置执行重新安装并重启服务。已绑定会话可通过 `instance_current` 返回的管理 URL
 取得实例浏览/维护入口；URL 过期后重新获取。审批链接仍仅授权原请求，不能代替实例维护凭据。
 
@@ -414,7 +425,7 @@ sudo deploy/cleanup_legacy_services.sh clean
 - **VM IP 变化**：只更新私有 transport 配置或使用 resolver，不要把新地址写进源码。
 - **TCAD 作业似乎卡住**：使用短状态调用，不得用长连接 SSH 等待 Solver。
 
-分析内受控补收集需要控制端、Worker 和 VM helper 匹配更新。本地重装后，执行 `SCID_PYTHON=/absolute/path/to/python deploy/install_ssh_tcad_runner.sh upgrade-code`，沿用现有传输配置只更新 helper 代码。保留原结果目录和远端配置；重启 Codex 会话后再创建新分析 Run。旧 helper 不支持检查时返回不可用，普通离线分析仍可进行。不要为了重新收集而重提原执行。
+分析内受控补收集需要控制端、Worker 和 VM helper 匹配更新。使用随包 SSH 适配器时，主重装事务按选定的 command 配置同步 runner 代码和配置；策略 schema 更新不能只跑代码升级命令。保留原结果目录和显式管理员设置，重新加载 Codex 后再创建新分析 Run。独立维护的外部适配器需自行部署匹配版本。不要为了重新收集而重提原执行。
 
 ## Agent 执行配置
 

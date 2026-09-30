@@ -243,8 +243,9 @@ def test_unknown_parser_failure_remains_a_framework_error(tmp_path, monkeypatch)
     diagnostic = response['error']['data']['diagnostics'][0]
     assert diagnostic['code'] == 'runtime_failure' and diagnostic['phase'] == 'tool_execution'
     assert 'DO_NOT_ECHO_PARSER_INTERNALS' not in json.dumps(response)
-    assert 'reference' not in response['error']['data']['engineering']
     diagnostic = system[1].runs.diagnostic_summary(system[1].runs.status(worker._run_id))['latest_tool_error']
+    # A scoped locator is public repair information; the traceback stays in control storage.
+    assert response['error']['data']['engineering']['reference'] == diagnostic['engineering']['reference']
     from scidiscovery.artifact_agent.service.engineering_diagnostics import EngineeringDiagnostics
     store = EngineeringDiagnostics(system[1].runs.database_path.parent.parent / 'engineering-diagnostics')
     assert 'DO_NOT_ECHO_PARSER_INTERNALS' in store.read(diagnostic['engineering']['reference'],

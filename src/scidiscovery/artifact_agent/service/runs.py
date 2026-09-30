@@ -107,7 +107,9 @@ class RunService(ToolEvidenceMixin):
         scheduler_bindings: SchedulerBindingService,
         instance_maintenance=None,
         agent_settings: AgentSettings | None = None,
+        approval_database_path: Path | None = None,
     ) -> None:
+        self.approval_database_path = approval_database_path
         self.agent_settings = agent_settings or AgentSettings()
         self.artifacts = artifacts
         self.database_path = Path(database_path).expanduser().absolute()
@@ -154,6 +156,22 @@ class RunService(ToolEvidenceMixin):
     def compiled_operation(self, run):
         """Resolve the frozen Run contract, including its identity check."""
         return self._compiled(run)
+
+    def task_family(self, run_id):
+        """All Runs sharing the sealed recovery root, including other branches."""
+        with self._connect() as connection:
+            origin = self._recovery_root_id(connection, run_id)
+            rows = connection.execute("""WITH RECURSIVE family(run_id) AS (
+                SELECT run_id FROM runs WHERE run_id=?
+                UNION SELECT child.run_id FROM runs AS child JOIN family AS parent
+                    ON child.resume_from_run_id=parent.run_id OR child.draft_from_run_id=parent.run_id
+            ) SELECT runs.* FROM runs JOIN family USING(run_id)
+                ORDER BY runs.created_at, runs.run_id""", (origin,)).fetchall()
+        family = tuple(self._status_from_row(row) for row in rows)
+        root = next(run for run in family if run.run_id == origin)
+        if any((run.instance_id, run.operation_id) != (root.instance_id, root.operation_id) for run in family):
+            raise RunStateConflict("Recovery task family crosses the task boundary")
+        return origin, family
 
     def running_task(self, run_id):
         """Require the existing task and its original deadline to remain live."""
@@ -333,7 +351,7 @@ class RunService(ToolEvidenceMixin):
                 connection.execute("ROLLBACK")
                 raise RunSlotBusy("this revision base already has a successor Run")
             if resume_from is not None:
-                source = status_from_row(self._row(connection, resume_from))
+                source = self._status_from_row(self._row(connection, resume_from))
                 recovery_digest = self._validate_resume(
                     connection,
                     source,
@@ -345,7 +363,7 @@ class RunService(ToolEvidenceMixin):
             if resume_from is not None and source.instance_id != instance_id:
                 raise RunStateConflict("recovery source belongs to another instance")
             if draft_from is not None:
-                source = status_from_row(self._row(connection, draft_from))
+                source = self._status_from_row(self._row(connection, draft_from))
                 recovery_digest = self._validate_draft_source(
                     connection, source, compiled=compiled, instance_id=instance_id,
                     scheduler_max_attempts=max_attempts,
@@ -513,8 +531,8 @@ class RunService(ToolEvidenceMixin):
                 base_ref=base_ref,
             )
 
-    @staticmethod
     def _revision_successor(
+        self,
         connection: sqlite3.Connection,
         *,
         instance_id: str,
@@ -532,7 +550,7 @@ class RunService(ToolEvidenceMixin):
         return next(
             (
                 status
-                for status in map(status_from_row, rows)
+                for status in map(self._status_from_row, rows)
                 if any(
                     item.usage == "revision_base" and item.artifact_ref == base_ref
                     for item in status.inputs
@@ -643,7 +661,7 @@ class RunService(ToolEvidenceMixin):
             if row["state"] == "running" and not allow_running:
                 connection.execute("ROLLBACK")
                 raise RunStateConflict("no exact queued Run is available")
-            if expired(str(row["deadline_at"])):
+            if expired(self._status_from_row(row).deadline_at):
                 expired_run = (
                     str(row["run_id"]),
                     str(row["state"]),
@@ -808,6 +826,8 @@ class RunService(ToolEvidenceMixin):
             diagnostic["engineering"] = engineering
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            if timed_out and not expired(self._status_from_row(self._row(connection, run_id)).deadline_at):
+                raise RunStateConflict("Run deadline has not expired")
             cursor = connection.execute(
                 """UPDATE runs SET state='failed', reason=?, completed_at=?,
                     recovery_candidate_digest=COALESCE(?, recovery_candidate_digest)
@@ -986,11 +1006,37 @@ class RunService(ToolEvidenceMixin):
                 raise RunStateConflict("expired Run changed during startup reconciliation", run_id=run_id)
         return failed
 
+    def _status_from_row(self, row):
+        from .approval_waits import effective_deadline
+        value = status_from_row(row)
+        with self._connect() as connection:
+            events = connection.execute("SELECT recorded_at,diagnostic_json FROM run_activity "
+                "WHERE run_id=? AND activity='approval_wait_started' ORDER BY recorded_at",
+                (value.run_id,)).fetchall()
+        return replace(value, deadline_at=effective_deadline(value, events,
+            getattr(self, "approval_database_path", None)))
+
+    def record_approval_wait(self, run_id: str, approval_id: str):
+        """Record a control-owned wait once; its end comes from the approval store."""
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            existing = connection.execute("SELECT 1 FROM run_activity WHERE run_id=? "
+                "AND activity='approval_wait_started' "
+                "AND json_extract(CAST(diagnostic_json AS TEXT),'$.approval_id')=?",
+                (run_id, approval_id)).fetchone()
+            if existing is not None:
+                return
+            value = self._status_from_row(self._row(connection, run_id))
+            if value.state != "running" or expired(value.deadline_at):
+                raise RunStateConflict("Approval wait cannot extend an expired or terminal Run")
+            self._append_activity(connection, run_id, "approval_wait_started", timestamp(),
+                canonical_json({"approval_id": approval_id}))
+
     def status(self, run_id: str) -> RunStatus:
         """Pure read: observing an expired Run never changes control state."""
 
         with self._connect() as connection:
-            return status_from_row(self._row(connection, run_id))
+            return self._status_from_row(self._row(connection, run_id))
 
     def list(self, *, instance_id: str, state: str | None = None) -> tuple[RunStatus, ...]:
         query = "SELECT * FROM runs WHERE instance_id = ?"
@@ -1001,7 +1047,7 @@ class RunService(ToolEvidenceMixin):
         query += " ORDER BY created_at DESC"
         with self._connect() as connection:
             rows = connection.execute(query, values).fetchall()
-        return tuple(status_from_row(row) for row in rows)
+        return tuple(self._status_from_row(row) for row in rows)
 
     def active_ids(self, *, instance_id: str, limit: int = 31) -> tuple[str, ...]:
         """Bound current tasks by state before paging; never read output payloads."""
@@ -1043,7 +1089,7 @@ class RunService(ToolEvidenceMixin):
         values.append(limit)
         with self._connect() as connection:
             rows = connection.execute(query, values).fetchall()
-        return tuple(status_from_row(row) for row in rows)
+        return tuple(self._status_from_row(row) for row in rows)
 
     def recovery_links(self, run_id: str) -> dict[str, str | None]:
         """Read frozen resume/draft identity omitted from the public RunStatus."""
@@ -1083,7 +1129,7 @@ class RunService(ToolEvidenceMixin):
             rows = connection.execute("SELECT * FROM runs WHERE instance_id=? AND operation_id=? AND state='completed' "
                 "ORDER BY completed_at DESC, run_id DESC", (instance_id, "science.object.review.v1")).fetchall()
         for row in rows:
-            review = status_from_row(row)
+            review = self._status_from_row(row)
             subjects = [item.artifact_ref for item in review.inputs if item.port_name == "subject"]
             if subjects == [subject]:
                 return review
@@ -1103,7 +1149,7 @@ class RunService(ToolEvidenceMixin):
         if len(rows) > 1:
             raise RunStateConflict("multiple Runs claim the same exact output")
         if rows:
-            return status_from_row(rows[0])
+            return self._status_from_row(rows[0])
         producer = self.artifacts.catalog(artifact_ref).labels.get('tool_producer_run')
         if producer:
             try:
@@ -1367,7 +1413,7 @@ class RunService(ToolEvidenceMixin):
             ).fetchone()
         if row is None or str(row["operation_id"]) != reviewer_operation:
             return False
-        status = status_from_row(row)
+        status = self._status_from_row(row)
         return bool(
             status.signal is not None
             and (accepted_verdicts is None or status.signal.verdict in accepted_verdicts)
@@ -1659,7 +1705,7 @@ class RunService(ToolEvidenceMixin):
             self._attach_scheduler(connection)
             connection.execute("BEGIN IMMEDIATE")
             row = self._row(connection, run_id)
-            value = status_from_row(row)
+            value = self._status_from_row(row)
             if value.state == "completed":
                 if value.output_ref != output or value.completion_receipt is None:
                     connection.execute("ROLLBACK")
@@ -1760,7 +1806,7 @@ class RunService(ToolEvidenceMixin):
         with self._connect() as connection:
             return self._validate_resume(
                 connection,
-                status_from_row(self._row(connection, source_run_id)),
+                self._status_from_row(self._row(connection, source_run_id)),
                 operation_digest,
                 input_refs,
                 max_attempts,
@@ -1820,7 +1866,7 @@ class RunService(ToolEvidenceMixin):
                               check_attempts: bool = True) -> str:
         with self._connect() as connection:
             return self._validate_draft_source(connection,
-                status_from_row(self._row(connection, source_run_id)),
+                self._status_from_row(self._row(connection, source_run_id)),
                 compiled=compiled, instance_id=instance_id,
                 scheduler_max_attempts=scheduler_max_attempts, check_attempts=check_attempts)
 
@@ -1889,7 +1935,7 @@ class RunService(ToolEvidenceMixin):
             self._validate_attempt_limit(override)
             limit = override
         else:
-            root = status_from_row(self._row(connection, root_run_id))
+            root = self._status_from_row(self._row(connection, root_run_id))
             policy = root.recovery_policy
             if policy is None:
                 try:
@@ -2097,6 +2143,9 @@ class RunService(ToolEvidenceMixin):
                 for name, kind in columns.items():
                     if name not in existing:
                         connection.execute(f"ALTER TABLE {table} ADD COLUMN {name} {kind}")
+            connection.execute("""CREATE UNIQUE INDEX IF NOT EXISTS run_approval_wait
+                ON run_activity(run_id,json_extract(CAST(diagnostic_json AS TEXT),'$.approval_id'))
+                WHERE activity='approval_wait_started'""")
             connection.execute("""CREATE INDEX IF NOT EXISTS run_reference_budget_scope
                 ON run_activity(json_extract(CAST(diagnostic_json AS TEXT),'$.budget_scope'))
                 WHERE activity IN ('reference_read_reserved','reference_read_settled',

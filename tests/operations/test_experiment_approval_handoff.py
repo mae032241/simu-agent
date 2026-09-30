@@ -70,7 +70,8 @@ def test_worker_approval_ui_accepts_and_resumes_exactly_once(tmp_path, monkeypat
     first = start(f)
     assert first['state'] == 'awaiting_authorization'
     assert first['authorization']['budget']['wall_time_seconds'] == 5400
-    assert first['authorization']['allowance']['wall_time_seconds'] == 3600
+    assert first['authorization']['allowance']['wall_time_seconds'] == 21600
+    assert first['authorization']['per_execution_allowance']['wall_time_seconds'] == 3600
     name = first['approval_name']
     assert f.root.call_tool('approval_status', {'name':name})['status'] == 'pending'
     assert f.adapter.submits == 0

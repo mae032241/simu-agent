@@ -173,3 +173,24 @@ install_all
         assert 'local_service_action' not in phases and 'finish' not in phases
     else:
         assert phases.index('prepare')<phases.index('activate')<phases.index('local_service_action')<phases.index('finish')
+
+
+def test_upgrade_adds_configured_cumulative_limit_and_preserves_single_limit(tmp_path):
+    module, request, runner, config = setup(tmp_path)
+    prior = json.loads(config.read_bytes())
+    del prior['agent_execution_policy']['max_total_wall_time_seconds']
+    del prior['debug']['budget_scope']
+    prior['agent_execution_policy']['max_wall_time_seconds'] = 900
+    config.write_text(json.dumps(prior))
+    before = config.read_bytes()
+    request['policy_defaults'] = {'max_total_wall_time_seconds': 12345}
+    request['debug_defaults'] = {'budget_scope': 'task'}
+    module.deploy(request)
+    assert config.read_bytes() == before
+    module.deploy(dict(request, phase='activate'))
+    installed = json.loads(config.read_bytes())['agent_execution_policy']
+    assert installed['max_total_wall_time_seconds'] == 12345
+    assert installed['max_wall_time_seconds'] == 900
+    assert json.loads(config.read_bytes())['debug']['budget_scope'] == 'task'
+    module.deploy(dict(request, phase='rollback'))
+    assert config.read_bytes() == before

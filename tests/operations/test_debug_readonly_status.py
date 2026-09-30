@@ -54,7 +54,7 @@ def test_absent_diagnostic_never_contacts_remote(tmp_path, ledger_exists):
 
 
 @pytest.mark.parametrize("external,lookup,state", [
-    (None, None, "not_created"),
+    (None, None, "submission_unknown"),
     (None, ("private-job", "running"), "succeeded"),
     ("private-job", None, "succeeded"),
 ])

@@ -138,7 +138,7 @@ else:
     print(json.dumps(after))
 '''
     fields = policy_fields()
-    fields["agent_execution_policy"].update(max_storage_bytes=1000, max_wall_time_seconds=4)
+    fields["agent_execution_policy"].update(max_storage_bytes=1000, max_wall_time_seconds=4, max_total_wall_time_seconds=4)
     (tmp_path / "policy.json").write_text(json.dumps(fields))
     environment = {**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)}
     for phase in ("reserve", "settle"):

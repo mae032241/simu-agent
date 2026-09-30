@@ -779,7 +779,7 @@ class InstanceReadModel:
                 result.update(state=value.state, executor=value.executor)
                 authorization = getattr(value, "authorization", {})
                 result["execution_authorization"] = {key: authorization[key] for key in
-                    ("budget", "allowance", "reason") if key in authorization}
+                    ("budget", "allowance", "per_execution_allowance", "budget_usage", "accounting", "reason") if key in authorization}
                 collection = self._collection(binding.object_id)
                 observation = self.executions.observation(binding.object_id)
                 from ...plugin_runtime.experiment import progress_summary

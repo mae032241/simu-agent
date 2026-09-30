@@ -332,6 +332,20 @@ nor rewritten or chmod/chowned in this mode. Local socket mode still requires an
 administrator-supplied complete policy matching the current schema. Successful
 installation does not establish live remote policy or solver acceptance.
 
+TCAD `agent_execution_policy` now has separate configurable thresholds:
+`max_wall_time_seconds` is the per-request limit (example: 3600 seconds), and
+`max_total_wall_time_seconds` is the cumulative limit for the same scientific
+subject (example: 21600 seconds). Execution requests reserve their declared limit;
+terminal runner observations settle actual elapsed time. The installation transaction
+adds missing cumulative and `debug.budget_scope` fields from the bundled example
+configuration and preserves explicit settings. Diagnostic scope defaults to `task`,
+including its recovery lineage; `scientific_subject` explicitly shares historical usage.
+Administrators can adjust `debug.total_wall_seconds` / `debug.max_runs` when exhausted
+without erasing history; rebuild the diagnostic runtime or restart its owning service
+after editing policy so its cached adapter policy is reloaded. For bundled SSH deployment it upgrades runner
+code and remote configuration together; both must use the new policy contract.
+Existing approval decisions and scientific Run retry limits remain unchanged.
+
 The external adapter replaces the local `tcad-control.service`. SSH operations
 are bounded and return immediately; the VM runner owns detached execution and
 durable `running`, `status`, and `done` records.
@@ -366,8 +380,8 @@ Association uses the exact saved invocation and manifest. Missing images, output
 or incomplete manifests produce local display gaps without re-extraction or scientific
 requalification. Historical prose translation is deferred; no translation service is required.
 
-This update uses the existing approval UI service and port. It adds no service,
-environment variable, or VM runner protocol; no VM synchronization is needed.
+The archive feature uses the existing approval UI service and port and requires no
+VM protocol changes of its own. TCAD policy upgrades still synchronize the VM runner.
 Reinstall with the existing deployment configuration and restart the services.
 Use the management URL returned by `instance_current` to obtain instance read or
 maintenance access; request a new URL after expiry. An approval link still
@@ -473,7 +487,7 @@ The cleanup script never removes `/opt/scidiscovery`, `/etc/scidiscovery`,
 - **TCAD job appears stuck**: use short status calls. Never hold SSH open while
   the solver runs.
 
-Controlled analysis evidence recovery requires matching control/Worker packages and the VM helper. After reinstalling locally, use `SCID_PYTHON=/absolute/path/to/python deploy/install_ssh_tcad_runner.sh upgrade-code` to update only helper code using the existing transport configuration. Keep the original result directories and remote configuration. Restart the Codex session before scheduling a new analysis Run. Old helpers return unsupported inspection; ordinary offline analysis remains available. Never resubmit the old execution merely to refresh collection.
+Controlled analysis evidence recovery requires matching control/Worker packages and the VM helper. With the bundled SSH adapter, the main reinstall transaction updates runner code and configuration together using the selected command configuration. Do not use a code-only upgrade for policy schema changes. Keep original result directories and explicit administrator settings; reload Codex before scheduling a new analysis Run. Independently managed external adapters require their own matching deployment. Never resubmit an old execution merely to refresh collection.
 
 ## Agent execution settings
 

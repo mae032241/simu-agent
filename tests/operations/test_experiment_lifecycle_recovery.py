@@ -64,8 +64,8 @@ def test_expired_worker_preserves_execution_and_root_can_collect(tmp_path, monke
     assert listed[0]["recovery"]["task_name"] == "continuation"
     events = f.root.call_tool("lifecycle_events", {})["events"]
     assert any(e["object_type"] == "execution" and e["name"] == f.binding.name for e in events)
-    with pytest.raises(Exception, match="managed within"):
-        f.root.call_tool("execution_start", {"name": f.binding.name}, surface="execution")
+    assert f.root.call_tool("execution_start", {"name": f.binding.name}, surface="execution")["state"] == "running"
+    assert f.adapter.submits == 1  # Explicit takeover never restarts an existing solver.
     f.adapter.state = "succeeded"
     status = f.root.call_tool("execution_sync", {"name": f.binding.name}, surface="execution")
     assert status["state"] == "succeeded"
@@ -89,8 +89,10 @@ def test_recovery_is_not_exposed_while_owner_or_resumed_worker_active(tmp_path, 
         "resume_from": "continuation"})
     assert result["result"]["state"] == "queued", result
     assert f.root.call_tool("execution_list", {}, surface="execution")["executions"] == []
-    with pytest.raises(Exception, match="managed within"):
-        f.root.call_tool("execution_collect", {"name": listed[0]["name"]}, surface="execution")
+    f.root.facade.execution_bridge = f.coordinator.bridge
+    for action in ("execution_collect", "execution_start", "execution_abandon", "execution_cancel"):
+        with pytest.raises(Exception, match="managed within"):
+            f.root.call_tool(action, {"name": listed[0]["name"]}, surface="execution")
 
 
 def test_control_refreshes_after_worker_expiry_without_resubmitting(tmp_path, monkeypatch):
@@ -103,7 +105,10 @@ def test_control_refreshes_after_worker_expiry_without_resubmitting(tmp_path, mo
     def unavailable(_):
         raise TimeoutError("fixture observation unavailable")
     monkeypatch.setattr(f.adapter, "status_details", unavailable, raising=False)
-    observer.tick()
+    # The fixture also has a terminal execution whose accounting is pending.
+    # A one-item page must rotate past that execution to observe this one.
+    for _ in range(3):
+        observer.tick()
     assert f.runs.status(f.run_id).state == "failed"
     assert f.runtime.executions.status(f.binding.object_id).state == "running"
     assert f.runtime.executions.observation(f.binding.object_id)["observation_error"]
