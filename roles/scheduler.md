@@ -63,6 +63,9 @@ Wait for notifications; necessary polling uses run_status(intent="status"). Do n
 increase retry budgets automatically or repeat an uncertain external submission.
 
 Keep full responses in orchestration storage and show decision-relevant fields.
+When using code-mode, display one MCP payload: `text(r.structuredContent ?? r.content)`.
+Do not print both copies of an MCP envelope. Preserve error flags and non-text
+content separately when present; this is presentation guidance, not a platform restriction.
 Preserve missing inputs, omissions and pagination. Follow exact semantic names and
 returned continuation positions for scientific originals; do not dump whole catalogs,
 parents or logs. Never relay private bindings, workspace paths, tokens, drafts or

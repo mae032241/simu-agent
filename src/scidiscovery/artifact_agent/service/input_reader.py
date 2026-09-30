@@ -179,6 +179,18 @@ def _end(text, start, budget):
     return low
 
 
+def _startup_budget(root, source):
+    if source != root / 'worker-start.json':
+        return None
+    config = root / 'tools/input-reader-settings.json'
+    if not config.exists():
+        return None
+    value = json.loads(_within(root, 'tools/input-reader-settings.json').read_text())['startup_page_bytes']
+    if type(value) is not int or not 512 <= value <= 262144:
+        raise ValueError('invalid configured startup page budget')
+    return value
+
+
 def read(workspace, name=None, *, pointers=None, directory=False, file=False,
          action='read', budget=None):
     """Exact model view; navigation is disposable, never a sealed-input attestation.
@@ -186,8 +198,8 @@ def read(workspace, name=None, *, pointers=None, directory=False, file=False,
     Consume a selection sequentially. After an uncertain reply use repeat, not next;
     if a later next already advanced it, restart. No delivery acknowledgement exists.
     """
-    if budget is not None and not 512 <= budget <= 8192:
-        raise ValueError('budget must be 512..8192 bytes')
+    if budget is not None and (type(budget) is not int or not 512 <= budget <= 262144):
+        raise ValueError('budget must be 512..262144 bytes; scientific inputs remain limited to 8192')
     if action not in {'read', 'next', 'repeat', 'restart'}:
         raise ValueError('unknown reading action')
     root = Path(workspace).resolve()
@@ -220,7 +232,7 @@ def read(workspace, name=None, *, pointers=None, directory=False, file=False,
                     or not all(isinstance(x, str) for x in selection['pointers'])
                     or type(selection.get('directory')) is not bool
                     or type(selection.get('budget')) is not int
-                    or not 512 <= selection['budget'] <= 8192):
+                    or not 512 <= selection['budget'] <= 262144):
                 raise ValueError('no current selection; specify the source and fields once')
             source = _within(root, selection['path'])
             pointers, directory = selection['pointers'], selection['directory']
@@ -228,7 +240,10 @@ def read(workspace, name=None, *, pointers=None, directory=False, file=False,
         else:
             source = _source(root, name, file)
             pointers = list(pointers or [])
-            budget = 4096 if budget is None else budget
+        startup_budget = _startup_budget(root, source)
+        budget = (startup_budget or 4096) if budget is None else budget
+        if budget > max(startup_budget or 0, 8192):
+            raise ValueError('budget exceeds configured startup limit or scientific-input limit of 8192 bytes')
         selection = dict(path=source.relative_to(root).as_posix(), pointers=pointers,
                          directory=directory, budget=budget)
         key = hashlib.sha256(encode([selection['path'], pointers, directory]).encode()).hexdigest()
@@ -285,7 +300,7 @@ def main():
     for action in ('next', 'repeat', 'restart'):
         actions.add_argument('--' + action, dest='action', action='store_const', const=action)
     parser.set_defaults(action='read')
-    parser.add_argument('--budget', type=int, help='512..8192 bytes per reply, default 4096; use --next for remaining text; bare navigation retains the selected budget')
+    parser.add_argument('--budget', type=int, help='Scientific inputs: 512..8192 bytes, default 4096. Controlled startup uses its configured page size. Use --next for remaining text; bare navigation retains the budget.')
     args = parser.parse_args()
     try:
         result = read(Path(__file__).resolve().parents[1], **vars(args))

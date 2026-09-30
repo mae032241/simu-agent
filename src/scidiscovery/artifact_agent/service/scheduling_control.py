@@ -97,6 +97,11 @@ def progression_status_view(value, *, session_key=None):
         ('input_tokens', 'output_tokens')) for record in records) if records else None,
         stop_snapshot_tokens=stop_snapshot,
         token_coverage=usage['coverage'])
+    config = json.loads(value.get('config_json') or '{}')
+    limits = config.get('effective', {}).get('progression')
+    if limits and value['mode'] == 'background':
+        from .progression_budget import token_budget
+        budget.update(token_budget(checkpoint, limits))
     return {key: value[key] for key in ('state', 'mode', 'reason', 'objective_name')} | {
         'can_schedule': value['state'] == 'active' and value['owner_session'] == session_key,
         'writer': 'this_session' if value['owner_session'] == session_key and session_key else
@@ -306,6 +311,8 @@ class SchedulingControl:
             limits = json.loads(row['config_json'])['effective']['progression']
             if len(admissions) >= limits['max_tasks']:
                 conflict('Frozen task admission budget exhausted.')
+            from .progression_budget import require_task_budget
+            require_task_budget(checkpoint, limits)
             admissions[name] = dict(logical_name=logical_name, revision=revision,
                 fingerprint=fingerprint, output_fingerprint=output_fingerprint, scientific_signature=scientific_signature, state='prepared')
             value = json.dumps(checkpoint)

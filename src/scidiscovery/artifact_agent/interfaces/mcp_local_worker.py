@@ -528,7 +528,10 @@ class LocalWorkerMCPRouter:
             Path("assignment.json"), max_bytes=self._workspace.assignment_path.stat().st_size))
         contracts = self._tool_contract_location(assignment)
         from ..service.worker_start import write_worker_start
-        contracts['start_here_path'] = str(write_worker_start(self._workspace, assignment))
+        from ...agent_execution_settings import MaterialInputSettings
+        reading = MaterialInputSettings.model_validate((status.recovery_policy or {}).get('input_materials', {}))
+        contracts['start_here_path'] = str(write_worker_start(self._workspace, assignment,
+            startup_page_bytes=reading.startup_read_page_bytes))
         return {
             "state": "opened",
             "narrative_instruction": narrative_instruction(

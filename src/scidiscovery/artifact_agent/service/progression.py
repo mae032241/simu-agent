@@ -14,6 +14,7 @@ import time
 
 from ..schema.refs import ArtifactRef
 from ...platforms.codex_usage import observe_usage, usage_summary
+from .progression_budget import token_budget
 
 
 INSTRUCTION = """Continue the explicitly started frozen research goal from this bounded brief.
@@ -39,7 +40,13 @@ registry for identity. Ordinary task stages belong to that Worker; do not
 turn them into separate Root approvals. At most one complete Agent task may be
 queued/running. Helpers belong to its owner and retain native permissions.
 Use progression_report only when recording a goal conclusion, specific question,
-or waiting condition is useful. A review_requests entry is an exact dependency: let its owner wait, dispatch only
+or waiting condition is useful. Consider remaining tokens, the closeout reserve
+and observed Worker-thread costs before selecting more work; these are not exact
+predictions of a new task. When budget.new_task_allowed is false, consume
+accepted results and report the supported conclusion or unfinished work; do not
+dispatch another task or repeat admission. The reserve is inside the total budget,
+not permission to exceed it, and missing evidence is not a completed goal.
+A review_requests entry is an exact dependency: let its owner wait, dispatch only
 that independent review, then read its result and notify the existing owner to
 continue. It grants no permission for unrelated concurrent work.
 Finish this turn after dispatch or while waiting;
@@ -508,6 +515,7 @@ class ProgressionCoordinator:
             time_coverage='observed_wall_intervals_including_recovery_gaps',
             probes=checkpoint.get('probes', 0), attempts=checkpoint.get('attempts', 0),
             tasks=len(checkpoint.get('admissions', {})), observed_tokens=tokens, limits=limits,
+            **token_budget(checkpoint, limits),
             token_coverage=coverage, token_enforcement='asynchronous_observation; time_and_round_limits_apply')),
             **(dict(reason='resource_limit' if resource_stop else 'budget_exhausted', stop=True) if exhausted else {}))
         if resource_stop:

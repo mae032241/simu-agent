@@ -55,10 +55,12 @@ def startup_document(assignment: dict, domain: dict | None = None) -> dict:
     return result
 
 
-def write_worker_start(workspace, assignment: dict) -> Path:
+def write_worker_start(workspace, assignment: dict, *, startup_page_bytes=16384) -> Path:
     domain = None
     if workspace.domain_workspace_path is not None:
         domain = json.loads(read_control_workspace_file(workspace.root,
             Path('domain-workspace.json'), max_bytes=1024 * 1024))
+    write_control_workspace_file(workspace.root, Path('tools/input-reader-settings.json'),
+        canonical_json(dict(startup_page_bytes=startup_page_bytes)), replace=True, mode=0o400)
     return write_control_workspace_file(workspace.root, Path('worker-start.json'),
         canonical_json(startup_document(assignment, domain)), replace=True, mode=0o400)

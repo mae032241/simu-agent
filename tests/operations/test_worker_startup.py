@@ -50,6 +50,10 @@ def test_analysis_start_is_complete_without_reading_other_owner_instructions(tmp
     assignment = json.loads((root / 'assignment.json').read_bytes())
     domain = json.loads((root / 'domain-workspace.json').read_bytes())
     assert Path(opened['start_here_path']).name == 'worker-start.json'
+    from scidiscovery.agent_execution_settings import MaterialInputSettings
+    reader_settings = root / 'tools/input-reader-settings.json'
+    assert json.loads(reader_settings.read_text())['startup_page_bytes'] == MaterialInputSettings().startup_read_page_bytes
+    assert not reader_settings.stat().st_mode & 0o222
     for key in ('instruction', 'role_instructions', 'inputs', 'tools'):
         assert start[key] == assignment[key]
     assert 'tool_contracts' not in start

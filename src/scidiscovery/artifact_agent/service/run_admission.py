@@ -58,6 +58,9 @@ class RunAdmissionMixin:
         if len(admissions) - len(reserved) >= limits['max_tasks']:
             raise OperationInvocationError("background_task_budget_exhausted",
                 message="The frozen task budget is exhausted, including independent review tasks.")
+        if not reserved:
+            from .progression_budget import require_task_budget
+            require_task_budget(checkpoint, limits)
         for prior in checkpoint.get('admissions', {}).values():
             if (scientific_signature and prior.get('scientific_signature') == scientific_signature
                     and prior.get('run_id') and self.status(prior['run_id']).state == 'failed'):

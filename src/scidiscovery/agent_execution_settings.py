@@ -98,6 +98,7 @@ class MaterialInputSettings(SettingsValue):
     inline_total_bytes: int = Field(default=8388608, ge=1)
     transfer_chunk_bytes: int = Field(default=1048576, ge=1, le=8388608)
     original_read_page_bytes: int = Field(default=16384, ge=512, le=262144)
+    startup_read_page_bytes: int = Field(default=16384, ge=512, le=262144)
 
 
 class AttachmentSettings(SettingsValue):
@@ -120,6 +121,7 @@ class ProgressionSettings(SettingsValue):
     related_source_limit: int = Field(default=128, ge=1, le=4096)
     context_bytes: int = Field(default=49152, ge=4096, le=262144)
     max_tokens: int = Field(default=2000000, ge=1)
+    closeout_reserve_tokens: int = Field(default=100000, ge=0)
     token_policy: Literal["strict", "bounded_fallback"] = "bounded_fallback"
     max_rss_bytes: int = Field(default=1000000000, ge=1048576)
     frame_bytes: int = Field(default=1048576, ge=4096, le=8388608)

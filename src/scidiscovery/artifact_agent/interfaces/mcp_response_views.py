@@ -279,6 +279,34 @@ def execution_summary(value):
     return result
 
 
+def scheduling_summary(value):
+    """Discoverable state for any client; no claim that a model has read results."""
+    result = pick(value, 'state', 'mode', 'reason', 'objective_name', 'can_schedule',
+        'writer', 'fault_code', 'runtime_status', 'historical')
+    result['read'] = {'tool': 'progression_status'}
+    if value.get('objective_name'):
+        result['objective_read'] = {'tool': 'artifact_catalog',
+            'name': value['objective_name'], 'view': 'content'}
+    result['budget'] = pick(value.get('budget') or {}, 'observed_tokens', 'remaining_tokens',
+        'closeout_reserve_tokens', 'observed_worker_thread_tokens', 'new_task_allowed', 'limitation',
+        'token_coverage', 'token_enforcement', 'elapsed_seconds', 'tasks')
+    notices = value.get('notifications') or {}
+    result['notifications'] = pick(notices, 'current_id', 'omitted', 'delivery', 'read_status')
+    result['notifications']['count'] = len(notices.get('items', []))
+    result['report_available'] = bool(value.get('report') or value.get('last_report'))
+    closeout = value.get('closeout') or {}
+    tasks = closeout.get('tasks', [])
+    result['handoff'] = dict(task_count=len(tasks),
+        sealed_result_count=sum(task.get('state') == 'completed' and bool(task.get('output_artifact_name')) for task in tasks),
+        accepted_tasks_terminal=closeout.get('accepted_tasks_terminal'),
+        in_flight=closeout.get('in_flight', []),
+        unresolved_count=len(closeout.get('unresolved', [])),
+        omitted_count=len(closeout.get('omissions', [])),
+        scientific_content='omitted; read progression_status for the exact handoff and result navigation',
+        read={'tool': 'progression_status'})
+    return result
+
+
 def root_response(name, value, arguments):
     """Never replace a scientific object, precise request, or error with a verdict."""
     detail = arguments.get("view") == "detail"
@@ -367,7 +395,10 @@ def root_response(name, value, arguments):
                 "parent_count": value["parent_count"] if "parent_count" in value else len(value["parents"]),
                 "detail": {"tool": name, "name": value["name"], "view": "parents"}}
     if name in {"instance_current", "instance_close"} and not detail:
-        return pick(value, "name", "title", "state", "management_url", "scheduling")
+        result = pick(value, "name", "title", "state", "management_url")
+        if isinstance(value.get('scheduling'), dict):
+            result['scheduling'] = scheduling_summary(value['scheduling'])
+        return result
     if name == "approval_status" and not detail:
         result = pick(value, "name", "status", "selected_option", "review_url", "rationale")
         rationale = result.get("rationale")

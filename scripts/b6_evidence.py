@@ -125,8 +125,15 @@ def usage_report(journey, workers, helpers, progression=None):
         if not group['observed_threads']:
             for key in ('input_tokens','cached_input_tokens','output_tokens','input_plus_output'):
                 group[key] = None
+    # These are received notification envelopes, not necessarily model-visible
+    # tool output. An empty observer must not claim zero output across threads.
+    items = [item for item in raw.get('items', []) if item.get('type') in
+        {'mcpToolCall', 'dynamicToolCall', 'commandExecution', 'custom_tool_call_output', 'function_call_output'}]
+    tool_observation = dict(source='host_notifications', coverage='partial' if items else 'missing',
+        notification_bytes=sum(item.get('bytes', 0) for item in items),
+        observed_items=len(items), model_visible_text_bytes=None)
     return dict(groups=groups, coverage='observed' if groups and 'unattributed' not in groups and all(v['coverage']=='observed' for v in groups.values()) else 'partial',
-        tool_result_bytes=sum(item.get('bytes',0) for item in raw.get('items',[]) if item.get('type') in {'mcpToolCall','dynamicToolCall'}),
+        tool_result_bytes=None, tool_output_observation=tool_observation,
         limitations=['No monetary cost estimate.', 'Cumulative native usage does not establish per-request billing.',
             'Tool bytes are not tokens; received notifications may omit native output.'])
 

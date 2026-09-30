@@ -83,6 +83,36 @@ python scripts/accept_b6.py review manual-known --suite ../../.b6-acceptance \
 
 ## Token 和资源解释
 
+### 回包观测和收尾预算
+
+`usage.tool_output_observation` 区分已收到的通知字节与模型实际看到的文本。
+缺少后者时 `tool_result_bytes` 为 `null`，不能把通知缺测记成零。
+代码模式中的 MCP、shell 和包装文本可能混在同一次输出中，不自动归类为科学正文。
+
+可在验收后对已确认的线程日志作只读审计；显式提供精确身份和路径，不扫描会话目录：
+
+```bash
+python scripts/native_usage_audit.py \
+  --thread 'root:实际线程ID=/绝对路径/rollout.jsonl' \
+  --thread 'worker:实际Worker线程ID=/绝对路径/worker-rollout.jsonl' \
+  --output /tmp/scid-native-usage-audit.json
+```
+
+输出文件必须尚不存在。审计按 `response_id` 去重请求，按调用身份去重返回；
+保存逐请求计数和外层工具类别，不复制提示词、工具正文或管理凭据。
+它是指定日志的离线证据，不代替实时预算，也不自动证明所有参与线程均已覆盖。
+
+`progression.closeout_reserve_tokens` 默认 100000，可配置为 0 关闭预留；
+该值从 `max_tokens` 内保留，达到预留区后停止新任务准入，已接受的任务仍可交付。
+Root 可以报告有证据的完成或未完成情况；耗尽总预算后不再启动额外模型回合。
+历史 Worker 线程消耗仅供判断，不按估算成本强制拦截任务。
+异步用量通知和已接受任务的继续消耗意味着预留不是硬性成本保证。
+
+`input_materials.startup_read_page_bytes` 默认 16384，仅用于控制生成的
+`worker-start.json`；超出该大小继续分页，普通科学原文的默认分页不变。
+`instance_current` 摘要保留目标和恢复导航；历史科学交付通过 `progression_status`
+或指定 `run_status` 回读。MCP 单份解包是调用指导，不承诺平台禁止 `text(r)`。
+
 - 分开报告 Root、Worker、helper、setup Root；未归属线程保留，缺测不是零。
 - 原生通知与控制 checkpoint 按线程去重；输入已包含缓存输入，不再次相加。
 - 对照要求同基线、同模型/配置、同目标、两边科学质量通过且计量完整；否则不计算收益。
