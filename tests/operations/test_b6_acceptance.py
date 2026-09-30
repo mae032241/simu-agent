@@ -10,6 +10,245 @@ from scripts import accept_b6 as suite
 from scripts.b6_evidence import assess, compare, digest, usage_report, verdict, write, token_totals
 
 
+def _s0_fixture(root, topic='negative', count=2, adopted=True):
+    """Real payload/receipt columns, with synthetic native observations only."""
+    import hashlib
+    import sqlite3
+    from scripts import s0_scoring as scorer
+    from scripts.b6_evidence import sealed_outputs
+    case = 'manual-'+topic+'-1'
+    target = root/case
+    journey = target/'journey-1'
+    journey.mkdir(parents=True)
+    database = target/'state/database'
+    database.mkdir(parents=True)
+
+    def store(body, schema=scorer.REPORT):
+        raw = json.dumps(body, ensure_ascii=False).encode()
+        sha = hashlib.sha256(raw).hexdigest()
+        path = target/'state/artifacts/sha256'/sha[:2]/sha[2:]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(raw)
+        return dict(artifact_id='a-'+sha[:12], sha256=sha, kind='report', schema_id=schema)
+
+    stage = store(dict(stage='validity', conclusion='修正后采用合法联合参数 a=2.1,b=0.9,c=0.12；存活不等于证明。',
+        limitations=['误差硬界，参数相关'], remaining_question='追加观测', materials=[]), 'scidiscovery.tool-evidence.v1')
+    receipt = dict(alias='tool_evidence_001', artifact_ref=stage, metadata=dict(kind='experiment_stage', stage='validity'),
+        tool_name='worker_experiment_stage')
+    runs = []
+    with sqlite3.connect(database/'runs.sqlite3') as db:
+        db.executescript('CREATE TABLE runs(run_id,state,output_ref_json,operation_id,request_digest,inputs_json,created_at,completed_at,output_binding_name); '
+            'CREATE TABLE worker_connections(run_id,thread_id); '
+            'CREATE TABLE worker_participants(run_id,name,platform_session,owner_thread,thread_id,admitted_at,released_at); '
+            'CREATE TABLE run_tool_evidence(run_id,ordinal,record_json);')
+        for i in range(count):
+            final = i == count-1
+            body = dict(summary=('c 不可辨识，a=2,b=1；候选 baseline 模型需要新 x 和误差模型。' if topic == 'stagnation' else
+                'L 不可行：最小 SSR=0.3>0.04。Q 可行示例 a=2.1,b=0.9,c=0.12，精确插值 c=1/6 唯一，机制不唯一。')
+                if final else '此前错误：a=9,b=8,c=0，L 唯一正确。', outcome='inconclusive',
+                limitations=['无误差模型或重复测量' if topic == 'stagnation' else 'Q 存活不等于证明；不能任意组合坐标范围'],
+                remaining_question='建议追加 x=4 并声明误差界。', adopted_stages=['tool_evidence_001'] if final else [])
+            ref = store(body)
+            run = dict(run_id=f'r{i+1}', state='completed', output_ref_json=json.dumps(ref))
+            inputs = [dict(producer_run_id=runs[0]['run_id'], artifact_ref=json.loads(runs[0]['output_ref_json']),
+                port_name='subject', source_name='earlier')] if i else []
+            db.execute('INSERT INTO runs VALUES(?,?,?,?,?,?,?,?,?)', (*run.values(), 'science.experiment.v1', f'request-{i}',
+                json.dumps(inputs).encode(), f'2026-09-30T00:0{i}:00Z', f'2026-09-30T00:0{i}:50Z', f'output-{i}'))
+            runs.append(run)
+        db.execute('INSERT INTO run_tool_evidence VALUES(?,?,?)', (runs[-1]['run_id'], 1, json.dumps(receipt).encode()))
+    with sqlite3.connect(database/'scheduler-bindings.sqlite3') as db:
+        db.executescript('CREATE TABLE scheduler_instances(instance_id,name); CREATE TABLE scheduler_progression(instance_id,checkpoint_json);')
+    config = suite.configuration(suite.SCRIPTS/'acceptance/scientific_progress.json')
+    config['cases'] = {case:config['cases'][case]}
+    manifest = dict(config=config)
+    write(root/'suite.json', manifest)
+    write(target/'acceptance-case.json', dict(baseline_digest='b', conditions_digest='c', text=config['objectives'][topic]))
+    write(journey/'before-runs.json', [])
+    sealed = sealed_outputs(target, runs)
+    write(journey/'sealed-evidence.json', sealed)
+    write(journey/'summary.json', dict(status='evidence_ready', checks={'sealed_delivery':'passed'}))
+    write(journey/'resource.json', dict(returncode=0, stop_reason='exited'))
+    write(root/(case+'.exit.json'), dict(returncode=0))
+    write(journey/'usage.json', dict(root_thread='actual-root', threads={'actual-root':dict(inputTokens=10,cachedInputTokens=0,outputTokens=1)}))
+    logs = journey/'fixture-logs'
+    logs.mkdir()
+    message = '最终采用 output-'+str(count-1)+' 的修正结论。候选 baseline 科学词保留。'
+    events = []
+    for state in ('running', 'completed'):
+        events.append(dict(method='item/completed', params=dict(threadId='actual-root', item=dict(type='mcpToolCall',
+            tool='scid_call', status='completed', arguments=dict(name='run_status', arguments={'name':'task-final'}),
+            result={'structuredContent':dict(name='task-final', state=state,
+                output_artifact_name=f'output-{count-1}' if state == 'completed' else None)}))))
+    events.append(dict(method='item/completed', params=dict(threadId='actual-root', item=dict(type='agentMessage', text=message))))
+    (logs/'events.log').write_text(''.join(json.dumps(v,ensure_ascii=False)+'\n' for v in events))
+    if adopted:
+        record = scorer.root_records(journey, None)[-1]
+        write(root/(case+'.adoption.json'), dict(evidence_digest=digest(sealed), run_ids=[runs[-1]['run_id']],
+            root_record_digest=record['record_digest'], root_excerpt=message, reason='人工依据 Root 明确最终采用的原句定位。'))
+    return manifest, case, target, journey
+
+
+def _s0_review(report, scores=(2,2,2,2,2)):
+    review = deepcopy(report['review_template'])
+    review['reviewer'] = 'independent-local-reviewer'
+    for decision, score in zip(review['decisions'], scores):
+        decision.update(score=score, status='not_observed' if score is None else 'passed' if score else 'failed',
+            reason='依据确切最终封存字段和 Root 记录；局部人工评审。')
+    return review
+
+
+def test_s0_parameter_roles_accept_joint_example_and_distinguish_ranges():
+    from scripts.s0_scoring import parameter_predicate as check
+    assert check('feasible_example', dict(a=2.1,b=.9,c=.12))['holds']
+    assert check('exact_interpolation', dict(a=2,b=1,c=1/6))['holds']
+    assert not check('exact_interpolation', dict(a=2.1,b=.9,c=.12))['holds']
+    assert not check('feasible_example', dict(a=2.1,b=1.1,c=.12))['holds']
+    assert not check('complete_coordinate_projections', dict(a=[1.9,2.1],b=[.9,1.1],c=[.16,.17]))['holds']
+    assert check('conservative_envelope', dict(a=[1,3],b=[0,2],c=[0,1]))['holds']
+    with pytest.raises(ValueError, match='finite_numeric'):
+        check('feasible_example', dict(a=2,b=1,c=float('nan')))
+
+
+def test_s0_text_numbers_only_locate_and_final_correction_uses_adopted_stage(tmp_path):
+    from scripts import s0_scoring as scorer
+    manifest, case, _, _ = _s0_fixture(tmp_path)
+    report = suite.result(tmp_path, manifest, case)
+    assert report['auto_checks']['verdict'] == 'not_observed'
+    assert not report['auto_checks']['blocking_failures']
+    assert all(v['status'] not in {'passed','failed'} for v in report['auto_checks']['checks'].values())
+    hits = report['auto_checks']['checks']['N-B3']['evidence']
+    assert any(h['run_id']=='r1' and not h['final_adopted'] for h in hits)
+    assert any(h['stage_alias']=='tool_evidence_001' and h['path']=='/conclusion' for h in hits)
+    review = _s0_review(report)
+    assert assess(report['scoring_evidence'], review['rubric'], review, objective='negative') == 'passed'
+    qualification = scorer.assess_domains(report['scoring_evidence'], review, 'negative')
+    assert qualification['science'] == qualification['overall'] == 'passed'
+
+
+def test_s0_single_ls_residual_and_coincidental_numbers_never_exclude_l(tmp_path):
+    from scripts.s0_scoring import auto_checks
+    manifest, case, _, _ = _s0_fixture(tmp_path)
+    evidence = deepcopy(suite.result(tmp_path, manifest, case)['scoring_evidence'])
+    evidence['outputs'][-1]['fields']['/summary'] = '某次最小二乘残差0.4>0.1；另列数字0.3、0.04；c=0.12只是候选。'
+    checks = auto_checks(evidence, 'negative')
+    assert checks['checks']['N-B2']['status'] == 'hit'
+    assert checks['verdict'] == 'not_observed' and not checks['blocking_failures']
+
+
+def test_s0_missing_explicit_adoption_is_pending_and_rejects_foreign_annotation(tmp_path):
+    manifest, case, _, _ = _s0_fixture(tmp_path, adopted=False)
+    report = suite.result(tmp_path, manifest, case)
+    review = _s0_review(report)
+    assert assess(report['scoring_evidence'], review['rubric'], review, objective='negative') == 'not_observed'
+    annotation = report['adoption_template']
+    annotation.update(run_ids=['foreign-run'],root_record_digest=report['scoring_evidence']['root_records'][-1]['record_digest'],
+        root_excerpt='最终采用',reason='场外对象')
+    write(tmp_path/(case+'.adoption.json'), annotation)
+    with pytest.raises(ValueError, match='exact_sealed_subjects'):
+        suite.result(tmp_path, manifest, case)
+
+
+def test_s0_stagnation_single_task_passes_without_cross_task(tmp_path):
+    from scripts.s0_scoring import assess_domains
+    manifest, case, _, _ = _s0_fixture(tmp_path, topic='stagnation', count=1)
+    report = suite.result(tmp_path, manifest, case)
+    q = assess_domains(report['scoring_evidence'], _s0_review(report), 'stagnation')
+    assert q == dict(science='passed',cross_task='not_observed',root_scheduling='passed',overall='passed')
+
+
+def test_s0_negative_single_task_keeps_science_passed_and_cross_task_unknown(tmp_path):
+    from scripts.s0_scoring import assess_domains
+    manifest, case, _, _ = _s0_fixture(tmp_path, count=1)
+    report = suite.result(tmp_path, manifest, case)
+    q = assess_domains(report['scoring_evidence'], _s0_review(report, (2,2,None,2,2)), 'negative')
+    assert q == dict(science='passed',cross_task='not_observed',root_scheduling='passed',overall='not_observed')
+    q = assess_domains(report['scoring_evidence'], _s0_review(report, (2,2,0,2,2)), 'negative')
+    assert q['science'] == 'passed' and q['cross_task'] == q['overall'] == 'failed'
+
+
+def test_s0_worker_text_and_final_state_do_not_prove_root_stop_or_wait(tmp_path):
+    from scripts.s0_scoring import assess_domains, waiting_observation
+    manifest, case, _, _ = _s0_fixture(tmp_path)
+    report = suite.result(tmp_path, manifest, case)
+    evidence = deepcopy(report['scoring_evidence'])
+    evidence['root_records'] = []
+    evidence['control'] = dict(state='stopped',reason='goal_completed')
+    q = assess_domains(evidence, _s0_review(report), 'negative')
+    assert q['science'] == 'passed' and q['root_scheduling'] == q['overall'] == 'not_observed'
+    assert not waiting_observation([dict(content=dict(type='agentMessage',text='已正确等待并停止。'))])
+    assert not waiting_observation(report['scoring_evidence']['root_records'], {'foreign-output'})
+    # A definite reviewed failure remains visible even when scheduling is missing.
+    q = assess_domains(evidence, _s0_review(report,(0,2,2,2,2)), 'negative')
+    assert q['science'] == q['overall'] == 'failed'
+
+
+@pytest.mark.parametrize('identity', ['host', 'checkpoint', 'missing'])
+def test_s0_autonomous_setup_reads_do_not_qualify_background_root(tmp_path, identity):
+    from scripts import s0_scoring as scorer
+    manifest, case, target, journey = _s0_fixture(tmp_path, adopted=False)
+    original = suite.result(tmp_path, manifest, case)
+    checkpoint = dict(usage_records={'actual-background':dict(role='root')}) if identity == 'checkpoint' else {}
+    control = dict(host_json=json.dumps({'thread_id':'actual-background'}) if identity == 'host' else None,
+        checkpoint_json=json.dumps(checkpoint), state='stopped', reason='goal_completed')
+    records = scorer.root_records(journey, control)
+    assert records and all(v['role'] == 'setup_root' for v in records)
+    assert not scorer.waiting_observation(records, {'output-1'})
+    annotation = dict(evidence_digest=digest(original['scoring_evidence']['sealed_outputs']), run_ids=['r2'],
+        root_record_digest=records[-1]['record_digest'], root_excerpt=records[-1]['content']['text'],
+        reason='setup/audit Root 的科学内容供人工审阅；不是后台调度记录。')
+    evidence = scorer.collect(target, journey, original['scoring_evidence']['sealed_outputs'],
+        original['scoring_evidence']['details'], [], control, annotation)
+    assert evidence['final_selection']['root_record_role'] == 'setup_root'
+    q = scorer.assess_domains(evidence, _s0_review(original), 'negative')
+    assert q['science'] == q['cross_task'] == 'passed'
+    assert q['root_scheduling'] == q['overall'] == 'not_observed'
+    # The same setup MCP calls cannot qualify stagnation stop/continue either.
+    assert scorer.assess_domains(evidence, _s0_review(original), 'stagnation')['root_scheduling'] == 'not_observed'
+
+
+def test_s0_only_final_evidence_gaps_block_science(tmp_path):
+    from scripts.s0_scoring import assess_domains
+    manifest, case, _, _ = _s0_fixture(tmp_path)
+    report = suite.result(tmp_path, manifest, case)
+    evidence = deepcopy(report['scoring_evidence'])
+    evidence['omissions'] = [dict(run_id='r1',reason='unsupported_output_schema')]
+    assert assess_domains(evidence, _s0_review(report), 'negative')['science'] == 'passed'
+    evidence['omissions'].append(dict(run_id='r2',reason='adopted_receipt_missing_or_ambiguous'))
+    assert assess_domains(evidence, _s0_review(report), 'negative')['science'] == 'not_observed'
+
+
+def test_s0_schema_projection_does_not_guess_nested_keys():
+    from scripts.s0_scoring import decision_fields, REPORT
+    assert decision_fields({'unknown':{'summary':'假的'}}, 'unknown.schema') == {}
+    assert decision_fields({'summary':'正式', 'unknown':{'summary':'假的'}}, REPORT) == {'/summary':'正式'}
+
+
+def test_s0_blind_package_preserves_scientific_words_and_review_import(tmp_path, monkeypatch):
+    from scripts import s0_scoring as scorer
+    manifest, case, _, _ = _s0_fixture(tmp_path, topic='stagnation', count=1)
+    report = suite.result(tmp_path, manifest, case)
+    batch = scorer.package(tmp_path, manifest, {case:report})
+    blind_id = batch['packages'][0]['blind_id']
+    folder = tmp_path/'blind'/blind_id
+    delivery = (folder/'delivery.md').read_text()
+    assert '候选 baseline' in delivery
+    assert 'r1' not in delivery and 'output-0' not in delivery
+    assert (tmp_path/'blind-key.json').stat().st_mode & 0o777 == 0o600
+    score = json.loads((folder/'score.json').read_text())
+    score.update(_s0_review(report))
+    write(folder/'score.json', score)
+    monkeypatch.setattr(suite.sys,'argv',['accept_b6.py','review',case,'--suite',str(tmp_path),'--review-file',str(folder/'score.json')])
+    assert suite.main() == 0
+    final = suite.result(tmp_path,manifest,case)
+    assert final['status'] == final['qualification']['overall'] == 'passed'
+    assert compare(final,final)['qualification']['science']['both_passed']
+    with pytest.raises(FileExistsError):
+        suite.main()
+    (folder/'delivery.md').write_text(delivery+'tampered')
+    with pytest.raises(ValueError, match='blind_package_changed'):
+        scorer.validate_blind_review(tmp_path, case, score)
+
+
 def test_config_covers_required_boundaries_without_new_instance_selection():
     config=suite.configuration(suite.DEFAULT)
     assert config['instance']=='b0a-calibration'

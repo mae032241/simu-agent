@@ -19,10 +19,12 @@ try:
     from scripts.run_tests import serial_lock
     from scripts.b6_evidence import read, write, digest, rows, control_rows, run_snapshot, participants, sealed_outputs, usage_report, verdict, compare, assess, token_totals
     from scripts.root_host_upgrade import _files
+    from scripts import s0_scoring
 except ModuleNotFoundError:
     from run_tests import serial_lock
     from b6_evidence import read, write, digest, rows, control_rows, run_snapshot, participants, sealed_outputs, usage_report, verdict, compare, assess, token_totals
     from root_host_upgrade import _files
+    import s0_scoring
 
 SCRIPTS = Path(__file__).resolve().parent
 DEFAULT = SCRIPTS/'acceptance/b6.json'
@@ -233,11 +235,28 @@ def result(root,manifest,case_id):
         evidence=sealed_outputs(target,new)
         if evidence!=read(evidence_path):raise ValueError('sealed_evidence_changed')
         rubric=manifest['config']['quality'][contract['objective']]
-        output['review_template']=dict(evidence_digest=digest(evidence),rubric=rubric,reviewer='',
-            decisions=[dict(status='not_observed',reason='') for _ in rubric])
+        objective = contract['objective'] if manifest['config'].get('grading', {}).get('format') == 's0-v1' else None
+        review_evidence = evidence
+        if objective:
+            adoption_path = root/(case_id+'.adoption.json')
+            details = s0_scoring.run_details(target, [v['run_id'] for v in new])
+            review_evidence = s0_scoring.collect(target, journey, evidence, details, before, progression,
+                read(adoption_path) if adoption_path.exists() else None)
+            output['scoring_evidence'] = review_evidence
+            output['auto_checks'] = s0_scoring.auto_checks(review_evidence, objective)
+            checks['auto_quality'] = 'not_observed'
+            output['qualification'] = dict(science='not_observed', cross_task='not_observed',
+                root_scheduling='not_observed', overall='not_observed')
+            output['adoption_template'] = dict(evidence_digest=digest(evidence), run_ids=[], root_record_digest='',
+                root_excerpt='', reason='', scope='Optional local reviewer interpretation of an existing Root conclusion; never a production adoption.')
+        output['review_template']=dict(evidence_digest=digest(review_evidence),rubric=rubric,reviewer='',
+            decisions=[dict(status='not_observed',reason='', **({'score':None} if objective else {})) for _ in rubric])
         review_path=root/(case_id+'.review.json')
         if review_path.exists():
-            quality=assess(evidence,rubric,read(review_path))
+            review = read(review_path)
+            quality=assess(review_evidence,rubric,review,objective=objective)
+            if objective:
+                output['qualification'] = s0_scoring.assess_domains(review_evidence, review, objective)
             checks['owner_integration' if case_id.startswith('helper') else 'quality']=quality
     if case_id=='rollback' and all(checks.get(k)=='passed' for k in ('terminal_independence','service_restart','state_preserved')):
         checks['rollback']='passed'  # Isolated old build reads state after new build startup.
@@ -248,7 +267,7 @@ def result(root,manifest,case_id):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action',choices=('init','prepare','run','report','review'))
+    parser.add_argument('action',choices=('init','prepare','run','report','review','package'))
     parser.add_argument('case',nargs='?')
     parser.add_argument('--suite',type=Path,required=True)
     parser.add_argument('--config',type=Path,default=DEFAULT)
@@ -261,6 +280,14 @@ def main():
         if not args.source or not args.installed:parser.error('init requires --source and --installed')
         initialize(root,args.config,args.source,args.installed,args.previous_installed);return 0
     manifest=read(root/'suite.json')
+    if args.action=='package':
+        if manifest['config'].get('grading', {}).get('format') != 's0-v1':
+            raise ValueError('package_requires_s0_grading')
+        with (root/'suite.lock').open('a') as lock:
+            fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            reports={k:result(root,manifest,k) for k in manifest['config']['cases']}
+            batch=s0_scoring.package(root,manifest,reports)
+        print(json.dumps(batch,ensure_ascii=False,indent=2));return 0
     if args.action=='report':
         cases={k:result(root,manifest,k) for k in manifest['config']['cases']}
         pairs={}
@@ -279,7 +306,11 @@ def main():
             if not template:raise ValueError('no_sealed_output_to_review')
             review=read(args.review_file)
             # Digest/rubric binding validated before writing the immutable review.
-            assess(read(Path(current['evidence'])/'sealed-evidence.json'),template['rubric'],review)
+            objective = manifest['config']['cases'][args.case]['objective'] if current.get('scoring_evidence') else None
+            bound_evidence = current.get('scoring_evidence', read(Path(current['evidence'])/'sealed-evidence.json'))
+            assess(bound_evidence,template['rubric'],review,objective=objective)
+            if review.get('blind'):
+                s0_scoring.validate_blind_review(root,args.case,review)
             exclusive_intent(root/(args.case+'.review.json'),review)
     return 0
 

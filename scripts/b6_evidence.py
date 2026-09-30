@@ -166,6 +166,11 @@ def compare(left, right):
     measured_all = all(v.get('usage',{}).get('coverage')=='observed' for v in (left,right))
     result = dict(comparable=same and quality and measured_all, quality_passed=quality,
         conditions_match=same, usage_complete=measured_all, roles={})
+    if any('qualification' in v for v in (left, right)):
+        result['qualification'] = {key: dict(manual=left.get('qualification', {}).get(key, 'not_observed'),
+            autonomous=right.get('qualification', {}).get(key, 'not_observed'),
+            both_passed=all(v.get('qualification', {}).get(key) == 'passed' for v in (left, right)))
+            for key in ('science', 'cross_task', 'root_scheduling', 'overall')}
     for role in ('root','worker','helper','setup_root'):
         a, b = (v.get('usage',{}).get('groups',{}).get(role) for v in (left,right))
         measured = a is not None and b is not None and a['coverage']==b['coverage']=='observed' and all(v.get('usage',{}).get('coverage')=='observed' for v in (left,right))
@@ -174,7 +179,7 @@ def compare(left, right):
     return result
 
 
-def assess(evidence, rubric, review):
+def assess(evidence, rubric, review, *, objective=None):
     """Review is local acceptance evidence, never an approval or a run mutation."""
     expected = digest(evidence)
     if review.get('evidence_digest') != expected or review.get('rubric') != rubric:
@@ -184,4 +189,10 @@ def assess(evidence, rubric, review):
         raise ValueError('review_incomplete')
     if any(v.get('status') not in {'passed','failed','not_observed'} or not v.get('reason', '').strip() for v in decisions):
         raise ValueError('each_criterion_requires_status_and_evidence_reason')
+    if objective is not None:
+        try:
+            from scripts.s0_scoring import assess_domains
+        except ModuleNotFoundError:
+            from s0_scoring import assess_domains
+        return assess_domains(evidence, review, objective)['overall']
     return verdict({str(i):v['status'] for i,v in enumerate(decisions)}, [str(i) for i in range(len(rubric))])
