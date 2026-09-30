@@ -63,6 +63,45 @@ def check_stale_writer(root, writer, output):
 
 
 class NativeCaseJourney(RecoveryJourney):
+    def observe_background(self, control, current):
+        """Bounded external observations on the existing acceptance poll loop."""
+        if control.get('instance_id') != self.instance or control.get('mode') != 'background':
+            raise RuntimeError('background_observation_scope_mismatch')
+        checkpoint = json.loads(control.get('checkpoint_json') or '{}')
+        host = json.loads(control.get('host_json') or 'null')
+        owner = {key:host.get(key) for key in ('platform_session', 'thread_id')} if isinstance(host, dict) else None
+        admitted = {v['run_id'] for v in checkpoint.get('admissions', {}).values() if v.get('run_id')}
+        snapshot = dict(version=1, source='external_acceptance_observation', instance_id=self.instance,
+            objective_ref=json.loads(control.get('objective_ref_json') or 'null'), owner=owner,
+            mode=control['mode'], state=control.get('state'), reason=control.get('reason'),
+            phase=checkpoint.get('phase'), runtime_status=checkpoint.get('runtime_status'),
+            turn_id=checkpoint.get('turn_id'), rounds=checkpoint.get('rounds'),
+            native_completion=checkpoint.get('native_completion'),
+            report_completed=(checkpoint.get('report') or {}).get('completed') is True,
+            runs=[dict(run_id=v['run_id'], state=v['state'], admitted=v['run_id'] in admitted,
+                output_ref=json.loads(v['output_ref_json']) if v.get('output_ref_json') else None)
+                for v in sorted(current, key=lambda v:v['run_id'])])
+        if snapshot == getattr(self, '_last_background_snapshot', None) or getattr(self, '_background_truncated', False):
+            return False
+        path = self.logdir.parent/'background-observations.jsonl'
+        max_records = self.case_config['max_observed_runs']*(self.case_config['progression']['max_rounds']+2)*4
+        max_bytes = min(self.limits['log_bytes'], self.resources['protocol_frame_bytes'])
+        count = getattr(self, '_background_records', 0)
+        encoded = (json.dumps(dict(snapshot, elapsed_seconds=time.monotonic()-self.case_started_at),
+            ensure_ascii=False, sort_keys=True, allow_nan=False)+'\n').encode()
+        size = path.stat().st_size if path.exists() else 0
+        if count >= max_records or size+len(encoded) > max_bytes:
+            self._background_truncated = True
+            write(self.logdir.parent/'background-observation-coverage.json', dict(status='partial',
+                reason='record_limit' if count >= max_records else 'byte_limit', records=count, bytes=size,
+                max_records=max_records, max_bytes=max_bytes, scope='external acceptance polling; no native tool trace'))
+            return False
+        with path.open('ab') as stream:
+            stream.write(encoded)
+        self._background_records = count+1
+        self._last_background_snapshot = snapshot
+        return True
+
     def check_case_budget(self, workers, helpers):
         budget = self.case_config.get('budget')
         now = time.monotonic()
@@ -144,6 +183,9 @@ class NativeCaseJourney(RecoveryJourney):
             current=[v for v in run_snapshot(self.root) if v['run_id'] not in baseline]
             if len(current)>case['max_observed_runs']:
                 raise RuntimeError('acceptance_run_scope_exceeded')
+            control = self.row() if case['scenario']=='autonomous' else None
+            if control is not None:
+                self.observe_background(control, current)
             workers,helpers=participants(self.root,[v['run_id'] for v in current])
             self.check_case_budget(workers, helpers)
             if case['scenario']=='helper-crash' and injected is None:
@@ -162,7 +204,6 @@ class NativeCaseJourney(RecoveryJourney):
                 raise RuntimeError('accepted_worker_failed')
             all_sealed=bool(current) and all(v['state']=='completed' for v in current)
             if case['scenario']=='autonomous':
-                control=self.row()
                 if control['state'] in {'paused','stopped'} and all_sealed:
                     break
                 if control.get('reason') in {'host_fault','root_turn_failed','budget_exhausted','resource_limit','submission_unknown'}:

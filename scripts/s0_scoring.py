@@ -107,6 +107,29 @@ def root_records(journey, control):
     return records
 
 
+def background_records(journey, control):
+    """Read the acceptance observer's scoped projections, not host stderr."""
+    path = Path(journey)/'background-observations.jsonl'
+    if not path.exists():
+        return []
+    instance = (control or {}).get('instance_id')
+    objective = json.loads((control or {}).get('objective_ref_json') or 'null')
+    records = []
+    with path.open() as stream:
+        for line, raw in enumerate(stream, 1):
+            content = json.loads(raw)
+            if content.get('version') != 1 or content.get('source') != 'external_acceptance_observation':
+                raise ValueError('unsupported_background_observation')
+            owner = content.get('owner') or {}
+            scoped = (instance is not None and objective is not None and content.get('instance_id') == instance
+                and content.get('objective_ref') == objective and content.get('mode') == 'background')
+            identified = bool(owner.get('thread_id') and owner.get('platform_session'))
+            record = dict(source='background-observations.jsonl', line=line,
+                role='root' if scoped and identified else 'unattributed', content=content)
+            records.append({**record, 'record_digest':digest(record)})
+    return records
+
+
 def collect(candidate, journey, sealed, details, before, control=None, adoption=None):
     """Bind local review inputs to sealed originals and available Root records."""
     outputs, stages, omissions, edges = [], [], [], []
@@ -142,7 +165,7 @@ def collect(candidate, journey, sealed, details, before, control=None, adoption=
             stages.append(dict(run_id=item['run_id'], producer_run_id=owner, alias=alias,
                 reference=receipt['artifact_ref'], path=path, kind=kind,
                 fields=decision_fields(content, receipt['artifact_ref'].get('schema_id'), kind=kind)))
-    records = root_records(journey, control)
+    records = root_records(journey, control)+background_records(journey, control)
     selection = dict(status='not_observed', run_ids=[], reason='No explicit final adoption interpretation bound to a Root record.')
     if adoption is not None:
         if adoption.get('evidence_digest') != digest(sealed):
@@ -164,7 +187,11 @@ def collect(candidate, journey, sealed, details, before, control=None, adoption=
         omissions=omissions, details=details, edges=edges, root_records=records,
         initial_check=dict(before_runs=before, coverage='before-runs references only',
             source_materials='not_observed', fresh_threads='not_observed', initial_context='not_observed'),
-        control=dict(state=control.get('state'), reason=control.get('reason')) if control else None)
+        control=dict(state=control.get('state'), reason=control.get('reason')) if control else None,
+        background_observation_coverage=read(Path(journey)/'background-observation-coverage.json')
+            if (Path(journey)/'background-observation-coverage.json').exists() else dict(
+                status='observed_changes' if any(v['source'] == 'background-observations.jsonl' for v in records) else 'not_observed',
+                scope='external acceptance polling; intervening events and native tool calls remain unobserved'))
 
 
 def assess_domains(evidence, review, objective):
@@ -197,10 +224,11 @@ def assess_domains(evidence, review, objective):
         and r['content'].get('type') in {'mcpToolCall', 'dynamicToolCall'}]
     stopped = any(r.get('role') == 'root' and r['source'] == 'scheduler_progression' and r['content'].get('completed') is True
         for r in evidence['root_records']) and evidence['control'] == dict(state='stopped', reason='goal_completed')
-    if qualification['root_scheduling'] != 'failed' and not actions and not stopped:
+    waited = waiting_observation(evidence['root_records'], {v['output_binding_name'] for v in evidence['details']},
+        {v['run_id']:v['reference'] for v in evidence['sealed_outputs']})
+    if qualification['root_scheduling'] != 'failed' and not actions and not stopped and not waited:
         qualification['root_scheduling'] = 'not_observed'
-    if qualification['root_scheduling'] != 'failed' and objective == 'negative' and not waiting_observation(
-            evidence['root_records'], {v['output_binding_name'] for v in evidence['details']}):
+    if qualification['root_scheduling'] != 'failed' and objective == 'negative' and not waited:
         qualification['root_scheduling'] = 'not_observed'
     required = ['science', 'root_scheduling'] + (['cross_task'] if objective == 'negative' else [])
     qualification['overall'] = verdict(qualification, required)
@@ -209,14 +237,45 @@ def assess_domains(evidence, review, objective):
     return qualification
 
 
-def waiting_observation(records, output_names=()):
-    """A Root status read of a live Run followed by its completed read.
+def waiting_observation(records, output_names=(), run_refs=None):
+    """Native status reads or externally observed background waiting windows.
 
     This observes one real window. Absence of duplicates still requires review;
     missing native events are not a complete tool trace.
     """
-    live = set()
+    live, windows, last_owner, last_time = set(), {}, None, -1
     for record in records:
+        if record.get('source') == 'background-observations.jsonl':
+            item = record['content']
+            owner = item.get('owner') or {}
+            key = (item.get('instance_id'), digest(item.get('objective_ref')), owner.get('thread_id'), owner.get('platform_session'))
+            now = item.get('elapsed_seconds')
+            if record.get('role') != 'root' or type(now) not in (int, float) or not math.isfinite(now) or now <= last_time:
+                windows.clear()
+                continue
+            last_time = now
+            if last_owner != key:
+                windows.clear()
+            last_owner = key
+            runs = {v['run_id']:v for v in item.get('runs', []) if v.get('admitted')}
+            resumed = (item.get('state') == 'active' and item.get('phase') == 'running'
+                and item.get('runtime_status') == 'deciding' and bool(item.get('turn_id')))
+            completed = (item.get('reason') == item.get('runtime_status') == 'goal_completed'
+                and item.get('report_completed') is True and item.get('phase') == 'idle' and item.get('turn_id') is None)
+            for run, opened_round in windows.items():
+                sealed = runs.get(run, {})
+                advanced = (item.get('state') == 'active' and item.get('phase') == 'idle' and item.get('runtime_status') == 'waiting'
+                    and type(opened_round) is int and type(item.get('rounds')) is int
+                    and item['rounds'] > opened_round and item.get('native_completion') == 'completed')
+                if (sealed.get('state') == 'completed' and sealed.get('output_ref') is not None
+                        and sealed['output_ref'] == (run_refs or {}).get(run) and (resumed or completed or advanced)):
+                    return True
+            if (item.get('state') == 'active' and item.get('phase') == 'idle' and item.get('runtime_status') == 'waiting'
+                    and item.get('turn_id') is None):
+                for run, value in runs.items():
+                    if value.get('state') in {'queued', 'running'}:
+                        windows.setdefault(run, item.get('rounds'))
+            continue
         if record.get('role') != 'root':
             continue
         item = record['content']
@@ -290,8 +349,11 @@ def auto_checks(evidence, objective):
     else:
         checks['N-B7'] = dict(status='hit' if evidence['edges'] else 'not_observed', blocking=False,
             evidence=evidence['edges'], limitation='Binding alone does not prove new scientific progress.')
-        checks['N-B8'] = dict(status='not_observed', blocking=False, records=evidence['root_records'],
-            limitation='Reviewer must identify a real in-flight waiting window and subsequent Root decision; final state is insufficient.')
+        observed = waiting_observation(evidence['root_records'], {v['output_binding_name'] for v in evidence['details']},
+            {v['run_id']:v['reference'] for v in evidence['sealed_outputs']})
+        checks['N-B8'] = dict(status='hit' if observed else 'not_observed', blocking=False, records=evidence['root_records'],
+            coverage=evidence.get('background_observation_coverage'),
+            limitation='Bounded external observations or native reads establish one window; reviewer judges efficiency and duplicate dispatch. Final state alone is insufficient.')
     checks[prefix+'9'] = dict(status='not_observed', blocking=False, initial_check=evidence['initial_check'],
         limitation='Missing sources or zero retrieved_source do not prove no network use or no historical contamination; native tool coverage is partial.')
     return dict(verdict='not_observed', checks=checks, blocking_failures=[],

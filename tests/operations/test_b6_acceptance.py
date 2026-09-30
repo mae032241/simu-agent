@@ -206,6 +206,106 @@ def test_s0_autonomous_setup_reads_do_not_qualify_background_root(tmp_path, iden
     assert scorer.assess_domains(evidence, _s0_review(original), 'stagnation')['root_scheduling'] == 'not_observed'
 
 
+def _background_observer(journey):
+    from scripts.acceptance_native_cases import NativeCaseJourney
+    observer = object.__new__(NativeCaseJourney)
+    observer.instance = 'instance-1'
+    observer.logdir = journey/'fixture-logs'
+    observer.case_config = dict(max_observed_runs=32, progression=dict(max_rounds=12))
+    observer.limits = dict(log_bytes=8192)
+    observer.resources = dict(protocol_frame_bytes=8192)
+    observer.case_started_at = 0
+    return observer
+
+
+def _background_control(*, phase='idle', runtime='waiting', owner='background-owner', goal='goal-1', rounds=1):
+    return dict(instance_id='instance-1', mode='background', state='active', reason='host_active',
+        objective_ref_json=json.dumps(dict(artifact_id=goal,sha256='0'*64,kind='source',schema_id='source.v1')),
+        host_json=json.dumps(dict(platform_session=owner,thread_id=owner)) if owner else None,
+        checkpoint_json=json.dumps(dict(phase=phase,runtime_status=runtime,turn_id='turn-2' if phase=='running' else None,
+            rounds=rounds,native_completion='completed',admissions={'experiment':dict(run_id='r2')})))
+
+
+@pytest.mark.parametrize('finish', ['continued', 'goal_completed', 'completed_turn'])
+def test_background_wait_observer_binds_real_window_and_scoring_digest(tmp_path, monkeypatch, finish):
+    from scripts import s0_scoring as scorer
+    from scripts import acceptance_native_cases as native
+    manifest, case, target, journey = _s0_fixture(tmp_path)
+    report = suite.result(tmp_path,manifest,case)
+    observer = _background_observer(journey)
+    clock = iter([1.,2.])
+    monkeypatch.setattr(native.time,'monotonic',lambda:next(clock))
+    live = [dict(run_id='r2',state='running',output_ref_json=None)]
+    assert observer.observe_background(_background_control(),live)
+    before = scorer.collect(target,journey,report['scoring_evidence']['sealed_outputs'],report['scoring_evidence']['details'],[],
+        _background_control())
+    completed = [dict(run_id='r2',state='completed',output_ref_json=json.dumps(report['scoring_evidence']['sealed_outputs'][-1]['reference']))]
+    terminal = _background_control(phase='running',runtime='deciding',rounds=2)
+    if finish != 'continued':
+        terminal = _background_control(rounds=2)
+        if finish == 'goal_completed':
+            terminal.update(state='paused',reason='goal_completed')
+            checkpoint=json.loads(terminal['checkpoint_json'])
+            checkpoint.update(runtime_status='goal_completed',report={'completed':True,'summary':'当前目标完成。'})
+            terminal['checkpoint_json']=json.dumps(checkpoint)
+    assert observer.observe_background(terminal,completed)
+    evidence = scorer.collect(target,journey,report['scoring_evidence']['sealed_outputs'],report['scoring_evidence']['details'],[],terminal)
+    assert digest(evidence) != digest(before)
+    records = scorer.background_records(journey,terminal)
+    refs = {v['run_id']:v['reference'] for v in evidence['sealed_outputs']}
+    assert scorer.waiting_observation(records,run_refs=refs)
+    evidence['final_selection'] = report['scoring_evidence']['final_selection']
+    evidence['root_records'] = records  # setup reads cannot supply this success.
+    assert scorer.assess_domains(evidence,_s0_review(report),'negative')['root_scheduling'] == 'passed'
+    assert scorer.auto_checks(evidence,'negative')['checks']['N-B8']['status'] == 'hit'
+
+
+@pytest.mark.parametrize('problem', ['final_only', 'changed_owner', 'unknown_owner', 'changed_goal', 'foreign_instance', 'not_sealed', 'wrong_ref'])
+def test_background_wait_observer_rejects_missing_or_foreign_window(tmp_path, monkeypatch, problem):
+    from scripts import s0_scoring as scorer
+    from scripts import acceptance_native_cases as native
+    manifest,case,_,journey = _s0_fixture(tmp_path)
+    report=suite.result(tmp_path,manifest,case)
+    observer=_background_observer(journey)
+    clock=iter([1.,2.])
+    monkeypatch.setattr(native.time,'monotonic',lambda:next(clock))
+    if problem != 'final_only':
+        observer.observe_background(_background_control(),[dict(run_id='r2',state='running',output_ref_json=None)])
+    terminal=_background_control(phase='running',runtime='deciding',rounds=2,
+        owner='different-owner' if problem=='changed_owner' else None if problem=='unknown_owner' else 'background-owner',
+        goal='foreign-goal' if problem=='changed_goal' else 'goal-1')
+    ref=report['scoring_evidence']['sealed_outputs'][-1]['reference']
+    terminal_runs=[dict(run_id='r2',state='running' if problem=='not_sealed' else 'completed',
+        output_ref_json=json.dumps({**ref,'sha256':'f'*64} if problem=='wrong_ref' else ref))]
+    observer.observe_background(terminal,terminal_runs)
+    scoring_control=deepcopy(terminal)
+    if problem=='foreign_instance':
+        scoring_control['instance_id']='another-instance'
+    records=scorer.background_records(journey,scoring_control)
+    assert not scorer.waiting_observation(records,run_refs={'r2':ref})
+
+
+def test_background_observer_deduplicates_and_stops_at_existing_byte_limit(tmp_path, monkeypatch):
+    from scripts import acceptance_native_cases as native
+    observer=_background_observer(tmp_path)
+    observer.logdir.mkdir()
+    calls=[]
+    monkeypatch.setattr(native.time,'monotonic',lambda:calls.append(1) or len(calls))
+    control=_background_control()
+    runs=[dict(run_id='r2',state='running',output_ref_json=None)]
+    assert observer.observe_background(control,runs)
+    for _ in range(1000):
+        assert not observer.observe_background(control,runs)
+    path=tmp_path/'background-observations.jsonl'
+    assert len(path.read_text().splitlines()) == 1 and len(calls) == 1
+    observer.limits['log_bytes']=path.stat().st_size+1
+    changed=_background_control(phase='running',runtime='deciding',rounds=2)
+    assert not observer.observe_background(changed,runs)
+    coverage=json.loads((tmp_path/'background-observation-coverage.json').read_text())
+    assert coverage['status']=='partial' and coverage['reason']=='byte_limit'
+    assert len(path.read_text().splitlines()) == 1
+
+
 def test_s0_only_final_evidence_gaps_block_science(tmp_path):
     from scripts.s0_scoring import assess_domains
     manifest, case, _, _ = _s0_fixture(tmp_path)
