@@ -570,7 +570,8 @@ class ApprovalUI:
                     raise ValueError("page must be positive")
             except ValueError:
                 return self._error(handler, HTTPStatus.BAD_REQUEST, "轨迹页码必须是正整数。")
-            view = model.overview(instance_id)
+            view = model.overview(instance_id, **(dict(delivery_cursor=_one(query, "delivery_cursor"),
+                delivery_limit=int(_one(query, "delivery_limit") or "8")) if "delivery_cursor" in query else {}))
             view["trajectory"] = model.trajectory(instance_id, page=page)
             view["storage"] = self._storage_status(instance_id)
             store = self._view_store(instance_id)
@@ -781,7 +782,8 @@ class ApprovalUI:
             self._browser_grant(handler, instance_id)
             model = self._model(instance_id)
             if len(parts) == 4 and parts[3] == "overview":
-                result = model.overview(instance_id)
+                result = model.overview(instance_id, **(dict(delivery_cursor=_one(query, "delivery_cursor"),
+                    delivery_limit=int(_one(query, "delivery_limit") or "8")) if "delivery_cursor" in query else {}))
                 result["storage"] = self._storage_status(instance_id)
             elif len(parts) == 4 and parts[3] == "nodes":
                 result = model.nodes(instance_id, cursor=_one(query, "cursor"),

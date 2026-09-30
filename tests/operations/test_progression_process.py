@@ -56,14 +56,29 @@ for line in sys.stdin:
             result=response['result']
         else:result={'structuredContent':{'management_url':'http://127.0.0.1:8765/sessions/sch_'+'b'*32+'?capability=test'}}
     elif method=='turn/start':
+        if mode=='blocked-turn':
+            import time
+            time.sleep(5)
+            continue
         if mode=='lost':sys.exit(0)
         turn='recovery-turn' if os.environ.get('SCID_TEST_ROOT_STATUS')=='interrupted' else 'exact-turn'
         emit({'method':'turn/started','params':{'threadId':'native-root','turn':{'id':turn}}})
+        if mode in {'denial', 'user-input', 'unknown-request'}:
+            method=os.environ.get('SCID_TEST_SERVER_METHOD','item/commandExecution/requestApproval')
+            body={'threadId':'native-root','turnId':turn,'itemId':'tool-1','startedAtMs':0,'cwd':'/private',
+                'permissions':{'network':{'enabled':True}},'isBlocking':True,
+                'questions':[{'id':'data','header':'Missing data','question':'Which measurement applies?'}]}
+            if os.environ.get('SCID_TEST_SERVER_PAYLOAD'):
+                body={'threadId':'native-root','turnId':turn,'itemId':'tool-1',**json.loads(os.environ['SCID_TEST_SERVER_PAYLOAD'])}
+            emit({'id':73,'method':method,'params':body})
+            if mode=='denial':
+                reply=json.loads(sys.stdin.readline())
+                with requests.open('a') as f:f.write(json.dumps(reply)+'\n')
         if mode=='accepted-lost':sys.exit(0)
         result={'turn':{'id':turn}}
         emit({'id':msg['id'],'result':result})
         emit({'method':'thread/tokenUsage/updated','params':{'threadId':'native-root','tokenUsage':{'total':{'inputTokens':100,'cachedInputTokens':50,'outputTokens':20}}}})
-        if mode not in {'running','interrupt-disconnect','interrupt-terminal-no-ack'}:emit({'method':'turn/completed','params':{'threadId':'native-root','turn':{'id':turn,'status':os.environ.get('SCID_TEST_TERMINAL_STATUS','completed')}}})
+        if mode not in {'running','interrupt-disconnect','interrupt-terminal-no-ack','user-input'}:emit({'method':'turn/completed','params':{'threadId':'native-root','turn':{'id':turn,'status':os.environ.get('SCID_TEST_TERMINAL_STATUS','completed')}}})
         continue
     elif method=='turn/interrupt':
         if mode=='interrupt-disconnect':sys.exit(0)
@@ -96,7 +111,7 @@ def native(tmp_path, monkeypatch, project, socket_path, mode='complete'):
 
 
 def methods(requests):
-    return [json.loads(v)['method'] for v in requests.read_text().splitlines()] if requests.exists() else []
+    return [json.loads(v)['method'] for v in requests.read_text().splitlines() if 'method' in json.loads(v)] if requests.exists() else []
 
 
 def wait_for(predicate, timeout=8):
@@ -342,11 +357,38 @@ def test_protocol_resource_guard_operates_while_rpc_is_running(progression,tmp_p
     factory=CodexProgressionFactory(project_root=p.runtime.project_root,
         state_root=p.runtime.state_root,socket_path=tmp_path/'control.sock',approval_base_url='http://127.0.0.1:8765')
     settings=json.loads(row(p)['config_json'])
-    settings['effective']['progression']['max_rss_bytes']=1
+    settings['effective']['progression']['max_rss_bytes']=1_048_576
     value=dict(row(p),config_json=json.dumps(settings))
     with pytest.raises(HostError,match='resource_limit'):
         factory(value,lambda event:None)
     assert 'turn/start' not in methods(requests)
+
+
+@pytest.mark.parametrize('stop', ['time', 'resource'])
+def test_blocked_native_submit_observes_deadline_and_sampling_before_rpc_timeout(progression, tmp_path, monkeypatch, stop):
+    p = progression
+    _, requests = native(tmp_path, monkeypatch, p.runtime.project_root, tmp_path/'control.sock', 'blocked-turn')
+    factory = CodexProgressionFactory(project_root=p.runtime.project_root, state_root=p.runtime.state_root,
+        socket_path=tmp_path/'control.sock', approval_base_url='http://127.0.0.1:8765')
+    host = factory(row(p), lambda event: None)
+    started = time.monotonic()
+    try:
+        if stop == 'time':
+            host.set_execution_deadline(.2)
+        else:
+            host.resource_limit = 100
+            host.resource_sample_seconds = .05
+            host._resource_sample = None
+            monkeypatch.setattr(host.resources, 'sample', lambda: dict(control_daemon_rss_bytes=0,
+                owned_tree_rss_bytes=101 if time.monotonic()-started >= .2 else 50))
+        with pytest.raises(HostError, match='budget_deadline' if stop == 'time' else 'resource_limit'):
+            host.start_turn('protocol fixture, no model')
+        assert time.monotonic()-started < 2
+        assert methods(requests).count('turn/start') == 1
+        assert host.connection.failed
+    finally:
+        host.close()
+    assert host.connection.child.poll() is not None
 
 
 def test_worker_restore_requires_native_running_turn_not_only_identity(progression,tmp_path,monkeypatch):
@@ -491,3 +533,97 @@ def test_root_model_is_independent_of_worker_defaults(progression, tmp_path, mon
         assert config['effective']['defaults']['model'] == 'worker-explicit'
     finally:
         host.close()
+
+
+@pytest.mark.parametrize('method,reply', [
+    ('item/commandExecution/requestApproval', {'decision':'decline'}),
+    ('item/fileChange/requestApproval', {'decision':'decline'}),
+    ('item/permissions/requestApproval', {'permissions':{}, 'scope':'turn'})])
+def test_server_approval_denial_uses_exact_protocol_and_is_durable(progression, tmp_path, monkeypatch, method, reply):
+    p = progression
+    _, requests = native(tmp_path, monkeypatch, p.runtime.project_root, tmp_path/'control.sock', 'denial')
+    monkeypatch.setenv('SCID_TEST_SERVER_METHOD', method)
+    p.coordinator.host_factory = CodexProgressionFactory(project_root=p.runtime.project_root,
+        state_root=p.runtime.state_root, socket_path=tmp_path/'control.sock', approval_base_url='http://127.0.0.1:8765')
+    p.coordinator.tick()
+    wait_for(lambda: p.coordinator.host.poll(.01) is not None)
+    records = [json.loads(line) for line in requests.read_text().splitlines()]
+    assert next(value for value in records if value.get('id') == 73) == dict(id=73, result=reply)
+    assert checkpoint(p)['platform_requests'][0]['state'] == 'denied'
+    assert methods(requests).count('turn/start') == 1
+    status = p.root.call_tool('progression_status', {})
+    assert status['platform_requests'][0]['state'] == 'denied'
+    assert '/private' not in json.dumps(status) and 'native-root' not in json.dumps(status)
+
+
+@pytest.mark.parametrize('mode,method,state', [
+    ('user-input', 'item/tool/requestUserInput', 'pending_user_input'),
+    ('unknown-request', 'unknown/private/request', 'unsupported')])
+def test_server_information_or_unknown_request_survives_without_turn_replay(progression, tmp_path, monkeypatch, mode, method, state):
+    p = progression
+    _, requests = native(tmp_path, monkeypatch, p.runtime.project_root, tmp_path/'control.sock', mode)
+    monkeypatch.setenv('SCID_TEST_SERVER_METHOD', method)
+    p.coordinator.host_factory = CodexProgressionFactory(project_root=p.runtime.project_root,
+        state_root=p.runtime.state_root, socket_path=tmp_path/'control.sock', approval_base_url='http://127.0.0.1:8765')
+    if mode == 'unknown-request':
+        with pytest.raises(HostError, match='unsupported_server_request'):
+            p.coordinator.tick()
+    else:
+        p.coordinator.tick()
+    assert row(p)['state'] == 'paused'
+    assert checkpoint(p)['platform_requests'][0]['state'] == state
+    reopened = SchedulerBindingService(p.runtime.scheduler_bindings.database_path)
+    status = reopened.progression_status(instance_id=p.instance)
+    assert status['platform_requests'][0]['state'] == state
+    if mode == 'user-input':
+        assert status['platform_requests'][0]['questions'][0]['question'] == 'Which measurement applies?'
+    for _ in range(3):
+        p.coordinator.tick()
+    records = [json.loads(line) for line in requests.read_text().splitlines()]
+    assert not any(value.get('id') == 73 for value in records)
+    assert methods(requests).count('turn/start') == 1
+
+
+@pytest.mark.parametrize('kind', ['options', 'truncated', 'form', 'url'])
+def test_pending_native_information_preserves_choices_forms_and_marks_omissions(progression, tmp_path, monkeypatch, kind):
+    p = progression
+    _, requests = native(tmp_path, monkeypatch, p.runtime.project_root, tmp_path/'control.sock', 'user-input')
+    options = [dict(label='Boundary A', description='Use the earlier exact measurement.'),
+               dict(label='Boundary B', description='Use the later exact measurement.')]
+    schema = dict(type='object', properties=dict(measurement=dict(type='string', enum=['A', 'B'])), required=['measurement'])
+    payload = dict(isBlocking=True, questions=[dict(id='measurement', header='Boundary',
+        question='Which measurement applies?', options=options)])
+    method = 'item/tool/requestUserInput'
+    if kind == 'truncated':
+        payload['questions'][0].update(id='i'*200, header='界'*200, options=options*10)
+    if kind in {'form', 'url'}:
+        method = 'mcpServer/elicitation/request'
+        payload = dict(serverName='fixture', mode=kind, message='Choose the measurement.')
+        if kind == 'form':
+            payload['requestedSchema'] = schema
+        else:
+            payload.update(elicitationId='interaction', url='https://person:SECRET@example.org/SECRET?token=SECRET#SECRET')
+    monkeypatch.setenv('SCID_TEST_SERVER_METHOD', method)
+    monkeypatch.setenv('SCID_TEST_SERVER_PAYLOAD', json.dumps(payload))
+    p.coordinator.host_factory = CodexProgressionFactory(project_root=p.runtime.project_root,
+        state_root=p.runtime.state_root, socket_path=tmp_path/'control.sock', approval_base_url='http://127.0.0.1:8765')
+    p.coordinator.tick()
+    assert row(p)['state'] == 'paused'
+    reopened = SchedulerBindingService(p.runtime.scheduler_bindings.database_path)
+    entry = reopened.progression_status(instance_id=p.instance)['platform_requests'][0]
+    assert entry['state'] == 'pending_user_input'
+    assert len(json.dumps(entry, ensure_ascii=False).encode()) < 8192
+    if kind == 'options':
+        assert entry['questions'][0]['id'] == 'measurement'
+        assert entry['questions'][0]['options'] == options and not entry['omitted']
+    elif kind == 'truncated':
+        assert entry['omitted'] and len(entry['questions'][0]['header']) == 128
+        assert len(entry['questions'][0]['options']) <= 8
+    elif kind == 'form':
+        assert entry['elicitation']['requestedSchema'] == schema and not entry['omitted']
+    else:
+        assert entry['omitted'] and 'SECRET' not in json.dumps(entry)
+        assert entry['elicitation']['url_origin'] == 'https://example.org'
+        assert entry['elicitation']['interaction'] == 'unsupported_url_interaction'
+        assert 'original requesting app' in entry['elicitation']['instruction']
+    assert methods(requests).count('turn/start') == 1

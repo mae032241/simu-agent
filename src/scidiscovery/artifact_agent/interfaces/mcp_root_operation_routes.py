@@ -163,9 +163,15 @@ class RootOperationRoutes:
         self._require_scheduling_enabled()
         values = dict(values)
         profile = values.pop("execution_profile", None)
+        intent = values.pop("scientific_intent", None)
+        if intent is not None:
+            from ..schema.scientific_progress import ScientificIntent
+            intent = ScientificIntent.model_validate(intent).model_dump()
+            values["scientific_intent"] = intent
         required_review = values.pop("require_execution_review", None)
+        prepare_values = {k: v for k, v in values.items() if k != "scientific_intent"}
         try:
-            bound = self._prepare_operation_call(**values)
+            bound = self._prepare_operation_call(**prepare_values)
         except OperationInvocationError as error:
             compiled = self._operation_catalog.operation(values["operation_id"]) if error.reason_code != "operation_unknown" else None
             ports = {port.name: port for port in compiled.spec.inputs} if compiled else {}
@@ -186,6 +192,9 @@ class RootOperationRoutes:
                 raise OperationInvocationError(error.reason_code, port=port.name if port.agent_visible else None,
                     message="The selected subject's scientific content does not satisfy this action's declared input requirements. Choose a compatible scientific subject or ask a source-based task to resolve the missing science; do not add internal inputs.") from error
             raise
+        if intent is not None and bound.compiled.spec.executor.kind != "agent":
+            raise OperationInvocationError("scientific_intent_not_applicable", message="scientific_intent applies to complete Agent tasks")
+        bound = replace(bound, scientific_intent=intent)
         if required_review is not None and bound.compiled.spec.executor.capability is None:
             raise OperationInvocationError("execution_review_not_applicable",
                 message="require_execution_review applies only to complete experiment tasks")
@@ -396,6 +405,7 @@ class RootOperationRoutes:
                 "operation_digest": bound.compiled.digest,
                 "execution_profile": bound.execution_profile["profile"],
                 "instruction": bound.instruction,
+                **({"scientific_intent": bound.scientific_intent} if bound.scientific_intent else {}),
                 **({"require_execution_review": True} if bound.require_execution_review else {}),
                 "inputs": [
                     {

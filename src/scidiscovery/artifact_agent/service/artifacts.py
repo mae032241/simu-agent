@@ -21,6 +21,13 @@ from ..storage.cas import ContentAddressedStore
 from ..storage.sqlite import SQLiteArtifactRegistry
 
 
+def is_scientific_original(envelope):
+    """Named scientific bytes may be run_private; control records never are science."""
+    return (envelope.confidentiality != 'approval_only'
+        and envelope.schema_id not in {'scidiscovery.tool-evidence-manifest.v1',
+            'scidiscovery.scientific-intent.v1', 'scidiscovery.progress-assessment.v1'})
+
+
 class ArtifactService:
     """Coordinates bytes-first CAS durability with append-only registration."""
 

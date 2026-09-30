@@ -34,6 +34,7 @@ from ...operations.workspace import (
     WorkspaceProtocolError,
     operation_workspace_hooks,
 )
+from ..storage.control_io import control_io_nonblocking
 from ..schema.artifact import ArtifactRegistration
 from ..schema.common import canonical_json, canonical_sha256
 from ..schema.refs import ActorRef, ArtifactRef
@@ -240,6 +241,7 @@ class RunService(ToolEvidenceMixin, RunAdmissionMixin):
         compiled = bound.compiled
         execution_profile = bound.execution_profile
         required_review = bound.require_execution_review
+        scientific_intent = bound.scientific_intent
         if compiled.spec.executor.kind != "agent":
             raise ValueError("RunService accepts Agent operations only")
         if not self.backend.supports_operation(compiled):
@@ -282,7 +284,8 @@ class RunService(ToolEvidenceMixin, RunAdmissionMixin):
             execution_profile = {key: settings[key] for key in ("profile", "sources")}
             if max_attempts is None:
                 max_attempts = settings["default_max_attempts"]
-        bound = replace(bound, execution_profile=execution_profile, require_execution_review=required_review)
+        bound = replace(bound, execution_profile=execution_profile, require_execution_review=required_review,
+            scientific_intent=scientific_intent)
         raw_inputs = self._input_bindings(bound)
         for item in raw_inputs:
             self.artifacts.verify(item.artifact_ref)
@@ -291,6 +294,10 @@ class RunService(ToolEvidenceMixin, RunAdmissionMixin):
         deadline_at = future(created_at, compiled.spec.limits.timeout_seconds)
         recovery_digest: str | None = None
         recovery_policy = self._recovery_policy(compiled)
+        if bound.scientific_intent is not None:
+            from .scientific_progress import freeze_intent
+            recovery_policy["scientific_intent_ref"] = freeze_intent(
+                self.artifacts, bound, instance_id, run_id).model_dump(mode="json")
         if required_review:
             recovery_policy["require_execution_review"] = True
         if material_policy is not None:
@@ -386,6 +393,7 @@ class RunService(ToolEvidenceMixin, RunAdmissionMixin):
                     },
                     "execution_profile": execution_profile["profile"],
                     "instruction": bound.instruction or "",
+                    **({"scientific_intent": bound.scientific_intent} if bound.scientific_intent else {}),
                     **({"require_execution_review": True} if required_review else {}),
                     "inputs": json.loads(inputs_json(frozen_inputs)),
                     "limits": compiled.spec.limits.model_dump(mode="json"),
@@ -2189,7 +2197,7 @@ class RunService(ToolEvidenceMixin, RunAdmissionMixin):
             )
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path, timeout=30.0)
+        connection = sqlite3.connect(self.database_path, timeout=0 if control_io_nonblocking() else 30.0)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         return connection

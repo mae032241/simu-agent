@@ -12,7 +12,7 @@ def startup_document(assignment: dict, domain: dict | None = None) -> dict:
     # No independent contract registry or scientific summarization. Copy complete
     # instructions from the frozen assignment and plugin manifest, once per view.
     result = {key: assignment[key] for key in (
-        'operation', 'instruction', 'role_instructions', 'narrative_instruction',
+        'operation', 'instruction', 'scientific_intent', 'role_instructions', 'narrative_instruction',
         'budget', 'inputs', 'reference_access', 'revision', 'recovery_draft', 'tools', 'execution_requirements',
     ) if assignment.get(key) is not None}
     result['output'] = {

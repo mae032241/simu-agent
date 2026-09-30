@@ -113,3 +113,41 @@ def test_worker_status_does_not_deliver_log_text_as_remote_logs_grow(tmp_path, m
         sizes.append(len(raw))
     assert max(sizes) < 1200 and abs(sizes[1] - sizes[0]) < 40
     assert f.adapter.submits == 1
+
+
+def test_progression_external_handoff_survives_task_failure_and_pause_without_remote_io(tmp_path, monkeypatch):
+    from scidiscovery.artifact_agent.service.progression_read import progression_read_view
+    from scidiscovery.artifact_agent.approval_ui.progression_render import render_progression
+    f = experiment(tmp_path, monkeypatch, seconds=60)
+    assert start(f)['state'] == 'running'
+    bindings = f.runtime.scheduler_bindings
+    session = 'sch_' + 'c'*32
+    bindings.bind_session(session_key=session, instance_id=f.instance.instance_id)
+    f.root.facade.session_key = session
+    f.root.call_tool('progression_command', dict(command='pause'))
+    f.root.call_tool('progression_command', dict(command='start', mode='interactive', objective_name='objective'))
+    def read():
+        return progression_read_view(bindings=bindings, runs=f.runs, artifacts=f.runtime.artifacts,
+            executions=f.runtime.executions, operation_catalog=f.catalog, instance_id=f.instance.instance_id)
+    for method in ('submit', 'status', 'status_details', 'cancel'):
+        monkeypatch.setattr(f.adapter, method, lambda *args, **kwargs: pytest.fail('Read must not touch remote execution'), raising=False)
+    before = bindings.progression_status(instance_id=f.instance.instance_id, internal=True)
+    active = read()['external_work']
+    assert active['items'][0]['task_name'] == 'continuation'
+    assert active['items'][0]['observer'] == 'task_worker'
+    assert bindings.progression_status(instance_id=f.instance.instance_id, internal=True) == before
+    current = f.runs.status(f.run_id)
+    f.runs.record_failure(f.run_id, reason='Fixture worker disappeared', expected_state=current.state,
+        expected_last_activity_at=current.last_activity_at)
+    f.root.call_tool('progression_command', dict(command='pause'))
+    before = bindings.progression_status(instance_id=f.instance.instance_id, internal=True)
+    status = read()
+    item = status['external_work']['items'][0]
+    assert item['state'] == 'running'
+    assert item['observer'] == 'not_verified_after_task_terminal'
+    assert item['next_consumer'] == 'scheduler_on_resume_or_takeover'
+    assert status['external_work']['policy'] == 'remind_only'
+    assert f.run_id not in json.dumps(status['external_work'])
+    assert '未结束外部作业' in render_progression(status, instance_id=f.instance.instance_id)
+    assert bindings.progression_status(instance_id=f.instance.instance_id, internal=True) == before
+    assert f.adapter.submits == 1

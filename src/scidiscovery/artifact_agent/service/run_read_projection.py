@@ -29,6 +29,7 @@ def run_intent_projection(value, *, intent):
         "sealed_stages",
         "dispatch",
         "reason",
+        "scientific_intent",
     )
     if isinstance(result.get("execution_profile"), dict):
         result["execution_profile"] = pick(result["execution_profile"], "profile")
@@ -209,6 +210,11 @@ class RunReadProjection:
                 else "unavailable"
             ),
         }
+        if intent in {"decision", "full"}:
+            from .scientific_progress import read_intent
+            task_intent = read_intent(self.artifacts, value)
+            if task_intent is not None:
+                result["scientific_intent"] = task_intent
         if value.state == "failed":
             result["diagnostic_summary"] = self.runs.diagnostic_summary(value)
         if intent != "status" and value.state != "completed":
@@ -286,7 +292,7 @@ class RunReadProjection:
                 "integrity_failure": "The sealed materials failed integrity checks. Restore the exact originals before retrying.",
                 "admission_defect": "The selected materials did not satisfy the declared input requirements. Inspect the saved diagnostics.",
             }.get(failure.get("category"), "The Run failed. Read the saved diagnostic page to identify a repair or choose another scientific action.")
-        allowed = {"name", "operation_id", "operation_contract_status", "state", "agent_type", "execution_profile",
+        allowed = {"scientific_intent", "name", "operation_id", "operation_contract_status", "state", "agent_type", "execution_profile",
             "created_at", "started_at", "completed_at", "deadline_at", "last_activity_at", "output_artifact_name",
             "recovery_available", "draft_from", "diagnostics_available", "reason", "diagnostic_events", "sealed_output_status", "sealed_output",
             "scheduler_signal_status", "scheduler_signal", "scheduler_signal_omissions", "output_delivery", "output_metadata", "selected_output",

@@ -16,6 +16,7 @@ from pathlib import Path
 
 from ..schema.refs import ArtifactRef
 from .scheduling_control import SchedulingControl, CONTROL_SCHEMA, CONTROL_VERSION
+from ..storage.control_io import control_io_nonblocking
 from ...agent_execution_settings import EXECUTION_SETTINGS_COLUMNS, parse_settings
 
 
@@ -276,7 +277,7 @@ class SchedulerBindingService(SchedulingControl):
     @contextmanager
     def _client_connect(self, *, bindings=False):
         # Transport requests belong to the server, not to an instance's archive.
-        connection = sqlite3.connect(self.client_database_path, timeout=30)
+        connection = sqlite3.connect(self.client_database_path, timeout=0 if control_io_nonblocking() else 30)
         connection.row_factory = sqlite3.Row
         try:
             with connection:
@@ -1083,7 +1084,7 @@ class SchedulerBindingService(SchedulingControl):
             raise ValueError("request fingerprint is invalid")
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path, timeout=30)
+        connection = sqlite3.connect(self.database_path, timeout=0 if control_io_nonblocking() else 30)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         return connection

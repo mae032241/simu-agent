@@ -16,6 +16,88 @@ import subprocess
 import time
 from dataclasses import dataclass
 from typing import Callable
+from urllib.parse import urlsplit, urlunsplit
+
+
+def pending_user_information(params):
+    """Bounded question/form projection. Never persist credentials from a URL."""
+    import ipaddress
+    view = dict(questions=[], omitted=False)
+    def text(value, limit):
+        if not isinstance(value, str):
+            view['omitted'] = True
+            return ''
+        if len(value) > limit:
+            view['omitted'] = True
+        return value[:limit]
+    def fits(candidate):
+        return len(json.dumps(candidate, ensure_ascii=False).encode()) <= 7168
+    questions = params.get('questions', [dict(id='elicitation', question=params.get('message', ''), header='MCP input')])
+    view['omitted'] = len(questions) > 3
+    for value in questions[:3]:
+        if not isinstance(value, dict):
+            view['omitted'] = True
+            continue
+        question = {key: text(value.get(key, ''), limit) for key, limit in
+            (('id', 128), ('header', 128), ('question', 2048))}
+        if not fits({**view, 'questions': [*view['questions'], question]}):
+            view['omitted'] = True
+            break
+        view['questions'].append(question)
+        if isinstance(value.get('options'), list):
+            question['options'] = []
+            view['omitted'] |= len(value['options']) > 8
+            for option in value['options'][:8]:
+                if not isinstance(option, dict):
+                    view['omitted'] = True
+                    continue
+                question['options'].append(dict(label=text(option.get('label', ''), 128),
+                    description=text(option.get('description', ''), 512)))
+                if not fits(view):
+                    question['options'].pop()
+                    view['omitted'] = True
+                    break
+        for flag in ('isOther', 'isSecret'):
+            if isinstance(value.get(flag), bool):
+                question[flag] = value[flag]
+    if 'mode' in params:
+        form = dict(mode=text(params['mode'], 32), serverName=text(params.get('serverName', ''), 128))
+        if 'requestedSchema' in params:
+            schema = params['requestedSchema']
+            if fits({**view, 'elicitation': {**form, 'requestedSchema': schema}}):
+                form['requestedSchema'] = schema
+            else:
+                form['requestedSchema_omitted'] = view['omitted'] = True
+        if 'url' in params:
+            form.update(interaction='unsupported_url_interaction',
+                instruction='Return to the original requesting app to complete its URL interaction; this public origin is not the full request URL.')
+            # Path, query, fragment and userinfo may contain bearer credentials.
+            # Publish only a public origin, never a truncated or guessed login URL.
+            try:
+                parsed = urlsplit(params['url'])
+                host = parsed.hostname or ''
+                try:
+                    public = ipaddress.ip_address(host).is_global
+                except ValueError:
+                    public = '.' in host and not host.endswith(('.local', '.localhost', '.internal'))
+                if parsed.scheme not in {'http', 'https'} or not public:
+                    raise ValueError('non-public URL')
+                authority = '[' + host + ']' if ':' in host else host
+                if parsed.port:
+                    authority += ':' + str(parsed.port)
+                origin = urlunsplit((parsed.scheme, authority, '', '', ''))
+                if len(origin) > 512:
+                    raise ValueError('URL origin too large')
+                form['url_origin'] = origin
+                if params['url'] != origin:
+                    form['url_components_omitted'] = view['omitted'] = True
+            except (TypeError, ValueError):
+                form['url_omitted'] = view['omitted'] = True
+        if fits({**view, 'elicitation': form}):
+            view['elicitation'] = form
+        else:
+            view['omitted'] = True
+    return view
 
 
 @dataclass(frozen=True)
@@ -155,9 +237,8 @@ class AppServer:
                 raise HostError("protocol_invalid_message")
             if "id" in message:
                 if "method" in message:
-                    # Never silently approve a platform permission request.
-                    self.on_event(message)
-                    raise HostError("unsupported_server_request")
+                    self._server_request(message)
+                    continue
                 if (type(message["id"]) is not int or message["id"] != self.pending
                         or self.reply is not None or ("result" in message) == ("error" in message)):
                     raise HostError("protocol_unexpected_response")
@@ -166,6 +247,41 @@ class AppServer:
                 self.on_event(message)
             else:
                 raise HostError("protocol_invalid_message")
+
+    def _server_request(self, message):
+        """Codex 0.159.2 generated ServerRequest/Response schemas (v2).
+
+        Denial payloads differ by request type. Unknown protocols never receive
+        a fabricated result. User questions remain unanswered for human input.
+        https://learn.chatgpt.com/docs/app-server#approvals
+        """
+        method, params = message.get('method'), message.get('params')
+        valid = isinstance(params, dict) and all(isinstance(params.get(key), str) and params[key]
+            for key in ('threadId', 'turnId', 'itemId'))
+        result, state = None, 'unsupported'
+        if valid and method in {'item/commandExecution/requestApproval', 'item/fileChange/requestApproval'}:
+            result, state = {'decision': 'decline'}, 'denial_prepared'
+        elif valid and method == 'item/permissions/requestApproval' and isinstance(params.get('permissions'), dict):
+            result, state = {'permissions': {}, 'scope': 'turn'}, 'denial_prepared'
+        elif valid and method == 'item/tool/requestUserInput' and isinstance(params.get('questions'), list):
+            state = 'pending_user_input'
+        elif (isinstance(params, dict) and method in {'execCommandApproval', 'applyPatchApproval'}
+                and isinstance(params.get('conversationId'), str) and isinstance(params.get('callId'), str)):
+            result, state = {'decision': {'denied': {'rejection': 'Background control cannot grant approval.'}}}, 'denial_prepared'
+        elif (isinstance(params, dict) and method == 'mcpServer/elicitation/request'
+                and isinstance(params.get('threadId'), str) and isinstance(params.get('message'), str)):
+            state = 'pending_user_input'
+        safe = dict(request_id=message['id'], method=method if isinstance(method, str) and len(method) <= 128 else 'unknown',
+            state=state, threadId=params.get('threadId') if isinstance(params, dict) else None,
+            turnId=params.get('turnId') if isinstance(params, dict) else None)
+        if state == 'pending_user_input':
+            safe.update(pending_user_information(params))
+        self.on_event(dict(method='scid/serverRequest', params=safe))
+        if state == 'unsupported':
+            raise HostError('unsupported_server_request')
+        if result is not None:
+            self._send(dict(id=message['id'], result=result), time.monotonic() + self.limits.rpc_timeout_seconds)
+            self.on_event(dict(method='scid/serverRequest', params={**safe, 'state': 'denied'}))
 
     def poll(self, timeout: float = .1):
         """Drain notifications while idle; never starts a model turn."""

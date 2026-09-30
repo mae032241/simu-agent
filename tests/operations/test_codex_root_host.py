@@ -168,7 +168,7 @@ def test_pinned_root_never_answers_server_permission_request(peer,tmp_path):
     sent=[json.loads(x) for x in (tmp_path/'requests').read_text().splitlines()]
     assert not any(item.get('id')==42 for item in sent)  # no reply, approval or denial is fabricated
     assert next(item for item in sent if item.get('method')=='turn/start')['params']['sandboxPolicy']=={'type':'workspaceWrite','networkAccess':True}
-    assert any(event.get('id')==42 for event in events)
+    assert any(event.get('method') == 'scid/serverRequest' and event['params']['state'] == 'unsupported' for event in events)
 
 
 @pytest.mark.parametrize('mode',['network-mismatch','extra-root'])

@@ -58,14 +58,32 @@ class CodexProgressionHost(CodexRootHost):
         from .process_observation import OwnedProcessTree
         self.resources = OwnedProcessTree(connection.child.pid)
         self.resource_limit = None
+        self.resource_sample_seconds = 1.
         self._sample_at = 0
+        self._resource_sample = None
+        self.execution_deadline = None
+
+    def set_execution_deadline(self, remaining_seconds):
+        self.execution_deadline = time.monotonic() + max(0, remaining_seconds)
+
+    def sample_resources(self):
+        now = time.monotonic()
+        if self._resource_sample is None or now >= self._sample_at:
+            self._resource_sample = self.resources.sample()
+            self._sample_at = now + self.resource_sample_seconds
+        return self._resource_sample
+
+    def wait_for_event(self, timeout):
+        # Reuse the transport selector; only poll/RPC consumes its byte stream.
+        # Control/shutdown are checked again within this bounded interval.
+        self.connection.selector.select(timeout)
 
     def guard_resources(self):
-        now = time.monotonic()
-        if self.resource_limit is None or now < self._sample_at:
+        if getattr(self, 'execution_deadline', None) is not None and time.monotonic() >= self.execution_deadline:
+            raise HostError('budget_deadline')
+        if self.resource_limit is None:
             return
-        self._sample_at = now + .1
-        sample = self.resources.sample()
+        sample = self.sample_resources()
         if sample['owned_tree_rss_bytes'] + (sample['control_daemon_rss_bytes'] or 0) >= self.resource_limit:
             self.resources.terminate()
             raise HostError('resource_limit')
@@ -199,10 +217,13 @@ class CodexProgressionFactory:
                 on_event=on_event)
             host = CodexProgressionHost(connection, log, permissions)
             host.resource_limit = limits["max_rss_bytes"]
-            connection.checkpoint = host.guard_resources
-            host.initialize(cwd=str(self.project_root), expected_config=config)
             from ..agent_execution_settings import ProgressionSettings
             root_settings = ProgressionSettings.model_validate(limits)
+            host.resource_sample_seconds = root_settings.resource_sample_seconds
+            if row.get('_execution_remaining_seconds') is not None:
+                host.set_execution_deadline(row['_execution_remaining_seconds'])
+            connection.checkpoint = host.guard_resources
+            host.initialize(cwd=str(self.project_root), expected_config=config)
             options = {'model': root_settings.root_model,
                 'config': {'model_reasoning_effort': root_settings.root_reasoning_effort}}
             host.open_root(cwd=str(self.project_root), prior=prior, options=options,

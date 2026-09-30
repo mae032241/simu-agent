@@ -67,6 +67,7 @@ class BoundOperationCall:
     executor_plan: EffectExecutorPlan | None = None
     execution_profile: dict[str, Any] | None = None
     require_execution_review: bool = False
+    scientific_intent: dict[str, str] | None = None
 @dataclass(frozen=True, slots=True)
 class ApprovalSubjectSnapshot:
     subject_index: int

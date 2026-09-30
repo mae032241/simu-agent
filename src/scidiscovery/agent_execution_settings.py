@@ -117,8 +117,21 @@ class ProgressionSettings(SettingsValue):
     max_elapsed_seconds: int = Field(default=3600, ge=1)
     max_attempts: int = Field(default=2, ge=1, le=10)
     poll_seconds: int = Field(default=5, ge=1, le=300)
+    event_wait_seconds: float = Field(default=.2, gt=0, le=1)
+    resource_sample_seconds: float = Field(default=1., gt=0, le=5)
+    budget_snapshot_seconds: float = Field(default=30., gt=0, le=300)
+    observation_retries: int = Field(default=3, ge=0, le=10)
+    observation_backoff_seconds: float = Field(default=.1, gt=0, le=1)
+    observation_retry_seconds: float = Field(default=2., gt=0, le=5)
     max_probes: int = Field(default=720, ge=1)
     related_source_limit: int = Field(default=128, ge=1, le=4096)
+    progress_mode: Literal["off", "shadow", "assist"] = "shadow"
+    no_progress_threshold: int = Field(default=3, ge=1, le=100)
+    refinement_threshold: int = Field(default=4, ge=1, le=100)
+    observation_gap_threshold: int = Field(default=3, ge=1, le=100)
+    progress_reassessment_limit: int = Field(default=1, ge=1, le=1)
+    progress_pause_on_persistent_gap: bool = True
+    progress_read_bytes: int = Field(default=16384, ge=16384, le=65536)
     context_bytes: int = Field(default=49152, ge=4096, le=262144)
     max_tokens: int = Field(default=2000000, ge=1)
     closeout_reserve_tokens: int = Field(default=100000, ge=0)
@@ -287,4 +300,6 @@ def effective_settings(global_settings: AgentSettings, instance_settings: dict) 
         value["defaults"].setdefault(key, default)
     # Instance preferences cannot enable a deployment-wide background runtime.
     value["progression"]["enabled"] = global_settings.progression.enabled and value["progression"]["enabled"]
+    if global_settings.progression.progress_mode == "off":
+        value["progression"]["progress_mode"] = "off"
     return parse_settings(value).model_dump(exclude_none=True)

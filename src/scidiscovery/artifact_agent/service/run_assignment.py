@@ -56,6 +56,7 @@ def assignment_json(
                 "digest": bound.compiled.digest,
             },
             "instruction": bound.instruction or "",
+            **({"scientific_intent": bound.scientific_intent} if bound.scientific_intent else {}),
             **({"execution_requirements": {
                 "independent_implementation_review": "required",
                 "instruction": "Before formal execution, obtain an independent science.object.review.v1 pass for the exact sealed implementation. Control resolves the review automatically. Revised implementations require their own review. A review request suspends controlled work until the reviewer finishes; reads, status and cancellation remain available. Continue this same task after the sealed review."}}

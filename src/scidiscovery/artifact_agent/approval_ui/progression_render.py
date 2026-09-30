@@ -1,6 +1,6 @@
 """Shared read-only projection of persisted progression facts; no report writing."""
 from html import escape
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 from .presentation_render import render_json_value
 
@@ -17,7 +17,8 @@ def render_progression(status, *, instance_id):
     reasons = dict(not_started='尚未启动', interactive='交互调度', runtime_unavailable='等待可用宿主',
         host_active='宿主已连接', user_paused='用户暂停', user_stopped='用户停止',
         user_question='等待用户回答', waiting='等待条件变化', goal_completed='已记录目标结论',
-        budget_exhausted='预算耗尽', resource_limit='资源止损', archive_restored='归档恢复后保持暂停')
+        budget_exhausted='预算耗尽', resource_limit='资源止损', archive_restored='归档恢复后保持暂停',
+        scientific_progress_persistent_gap='复判后仍缺少有依据的推进，暂停新派发')
     body = "<section class='workbench-section progression-panel'><h2>目标推进</h2><dl class='metadata'>"
     for label, value in (("状态", states.get(status.get('state'), status.get('state'))),
             ("推进方式", status.get('mode')), ("等待 / 停止原因", reasons.get(status.get('reason'), status.get('reason'))),
@@ -54,7 +55,7 @@ def render_progression(status, *, instance_id):
             output = item.get('output_artifact_name')
             if output:
                 body += "<p><a href='" + base + '/nodes/' + quote('artifact:' + output, safe='') + "'>封存输出 · " + _text(output) + '</a></p>'
-            body += render_json_value({key: item[key] for key in ('selected_output', 'scheduler_signal',
+            body += render_json_value({key: item[key] for key in ('scientific_intent', 'selected_output', 'scheduler_signal',
                 'scheduler_signal_omissions', 'content_unavailable', 'reason') if key in item}, max_bytes=16384)
         if closeout['in_flight'] or closeout['unresolved']:
             body += '<p>仍有在途或未核清任务，不得视为交付完成。</p>' + render_json_value(
@@ -63,7 +64,24 @@ def render_progression(status, *, instance_id):
             body += '<p>部分结果超过交接显示上限，请从准确任务入口继续读取。</p>'
         if not closeout['tasks']:
             body += '<p>尚无可读取的已接受任务成果。</p>'
+    for key, title in (('progress_shadow', '科研进展观测与提示'), ('external_work', '未结束外部作业与消费责任'), ('terminal_deliveries', '终态信息投递与结算')):
+        if status.get(key):
+            body += '<h3>' + title + '</h3>' + render_json_value(status[key], max_bytes=16384)
+    continuation = (status.get('terminal_deliveries') or {}).get('continuation')
+    if continuation:
+        query = urlencode({key: continuation[key] for key in ('delivery_cursor', 'delivery_limit')})
+        body += "<p><a href='" + base + '?' + escape(query, quote=True) + "'>继续读取终态投递历史</a></p>"
+    progress = status.get('progress') or {}
+    if progress.get('items'):
+        body += '<h3>目标进展判断（Root，非科学审查）</h3>'
+        for item in progress['items']:
+            body += '<h4>' + _text(item['task_name']) + ' · 修订 ' + _text(item['revision']) + '</h4>'
+            body += render_json_value(item, max_bytes=16384)
+        if progress.get('next_cursor') is not None:
+            body += '<p>另有判断历史，可通过 progression_status 的进展续页读取。</p>'
     notices = status.get('notifications') or {}
+    if status.get('platform_requests'):
+        body += '<h3>平台请求与待答信息</h3>' + render_json_value(status['platform_requests'], max_bytes=16384)
     body += '<h3>持久事项</h3><p>刷新页面或查询推进状态可重读；相同阻塞合并。提供读取不等于用户已读或科研完成；未提供聊天推送和已读回执。</p>'
     categories = dict(user_decision='需用户决定', system_wait='系统等待', status='普通状态变化')
     for category, title in categories.items():

@@ -250,6 +250,11 @@ def operation_invoke_contract(value, *, revision_policy):
         "inputs": "One entry per chosen visible port: {port, artifact_names: [exact semantic names]}. Omit optional ports when irrelevant.",
         "idempotency": "Reuse a name only for an identical request. An intentional changed request uses on_conflict=create_revision.",
         "dispatch": "For a queued Agent, use its returned dispatch instructions and frozen execution_profile. Transform and Approval actions complete through their returned result or review_url."}
+    if value.get("executor_kind") == "agent":
+        from ..schema.scientific_progress import ScientificIntent
+        result["invocation"]["scientific_intent"] = {
+            "required": False, "schema": ScientificIntent.model_json_schema(),
+            "meaning": "Optional task purpose, recommended for background research; control freezes it and supplies it to the Worker. No mechanical identifiers."}
     result["full"] = {"tool": "scid_describe", "name": value["operation_id"], "view": "full"}
     return result
 

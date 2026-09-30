@@ -20,6 +20,7 @@ from ..schema.artifact import (
     artifact_register_mismatches,
 )
 from ..schema.refs import ArtifactRef
+from .control_io import control_io_nonblocking
 
 
 REGISTRY_SCHEMA_VERSION = 1
@@ -459,6 +460,8 @@ class SQLiteArtifactRegistry:
         timeout = 30.0 if self.deadline_monotonic is None else min(30.0, self.deadline_monotonic - time.monotonic())
         if timeout <= 0:
             raise TimeoutError("artifact registration connection budget exhausted")
+        if control_io_nonblocking():
+            timeout = 0
         target: Path | str = self.database_path
         parameters: dict[str, object] = {}
         if read_only:
@@ -472,7 +475,7 @@ class SQLiteArtifactRegistry:
         )
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute(f"PRAGMA busy_timeout = {max(1, int(timeout * 1000))}")
+        connection.execute(f"PRAGMA busy_timeout = {max(0 if control_io_nonblocking() else 1, int(timeout * 1000))}")
         if read_only:
             connection.execute("PRAGMA query_only = ON")
         else:

@@ -27,7 +27,7 @@ DATABASES = {
 }
 TABLES = {
     "scheduler": ("scheduler_instances", "scheduler_bindings", "scheduler_observations",
-                  "scheduler_scientific_selections", "scheduler_sessions", "scheduler_progression", "scheduler_dispatch_intents"),
+                  "scheduler_scientific_selections", "scheduler_sessions", "scheduler_progression", "scheduler_dispatch_intents", "scheduler_progress_assessments", "scheduler_terminal_deliveries", "scheduler_progress_facts", "scheduler_progress_shadow"),
     "runs": ("runs", "run_activity", "run_tool_evidence", "run_activity_sequence", "worker_connections", "worker_participants"),
     "approvals": ("approval_requests", "approval_decisions", "used_nonces", "decision_attempts"),
     "executions": ("executions", "execution_policy_authorizations", "execution_current_policy",
@@ -234,6 +234,10 @@ def execution_settings_restore_view(data):
         projected["schema"]["user_version"] = CONTROL_VERSION
         projected["tables"].setdefault("scheduler_progression", [])
         projected["tables"].setdefault("scheduler_dispatch_intents", [])
+        projected["tables"].setdefault("scheduler_progress_assessments", [])
+        projected["tables"].setdefault("scheduler_terminal_deliveries", [])
+        projected["tables"].setdefault("scheduler_progress_facts", [])
+        projected["tables"].setdefault("scheduler_progress_shadow", [])
         for row in projected["tables"]["scheduler_progression"]:
             # Validation and transfer both project the same immutable snapshot.
             # Projection is idempotent so interrupted restore can verify its commit.
@@ -336,7 +340,7 @@ class Records:
     # These columns belong to control records. Instruction, reason, arbitrary
     # scientific payloads and cache presentation text never grant reachability.
     CONTROL_COLUMNS = (
-        "objective_ref_json", "checkpoint_json", "artifact_ref_json", "inputs_json", "output_ref_json", "completion_receipt_json",
+        "objective_ref_json", "checkpoint_json", "recovery_policy_json", "artifact_ref_json", "inputs_json", "output_ref_json", "completion_receipt_json",
         "recovery_draft_json", "record_json", "diagnostic_json", "request_ref_json",
         "decision_ref_json", "create_request_json", "binding_json", "payload_ref_json", "result_ref_json",
     )
@@ -446,7 +450,7 @@ class Records:
         result = {key: {"schema": data["schema"], "tables": {table: [] for table in data["tables"]}}
                   for key, data in self.databases.items()}
         for table in result["scheduler"]["tables"]:
-            column = "instance_id" if table in {"scheduler_instances", "scheduler_sessions", "scheduler_progression", "scheduler_dispatch_intents"} else "instance"
+            column = "instance_id" if table in {"scheduler_instances", "scheduler_sessions", "scheduler_progression", "scheduler_dispatch_intents", "scheduler_progress_assessments", "scheduler_terminal_deliveries", "scheduler_progress_facts", "scheduler_progress_shadow"} else "instance"
             result["scheduler"]["tables"][table] = self._materialize("scheduler", table,
                 where=quote(column) + "=?", parameters=(instance_id,))
         bindings = result["scheduler"]["tables"]["scheduler_bindings"]
@@ -656,7 +660,7 @@ class Records:
                     continue
                 where, parameters, owner_column, owners = "", (), None, ()
                 if database == "scheduler":
-                    owner = "instance_id" if table in {"scheduler_instances", "scheduler_sessions", "scheduler_progression", "scheduler_dispatch_intents"} else "instance"
+                    owner = "instance_id" if table in {"scheduler_instances", "scheduler_sessions", "scheduler_progression", "scheduler_dispatch_intents", "scheduler_progress_assessments", "scheduler_terminal_deliveries", "scheduler_progress_facts", "scheduler_progress_shadow"} else "instance"
                     where, parameters = owner + " IS NOT ?", (instance_id,)
                 elif database == "runs":
                     where = "instance_id IS NOT ?" if table == "runs" else "run_id NOT IN (SELECT run_id FROM runs WHERE instance_id=?)"

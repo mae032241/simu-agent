@@ -10,6 +10,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
+from ..storage.control_io import control_io_nonblocking
+
 
 class MaintenanceBusy(RuntimeError):
     pass
@@ -27,7 +29,7 @@ class StateMaintenanceLock:
 
     @contextmanager
     def shared(self) -> Iterator[None]:
-        with self._acquire(fcntl.LOCK_SH):
+        with self._acquire(fcntl.LOCK_SH | (fcntl.LOCK_NB if control_io_nonblocking() else 0)):
             yield
 
     @contextmanager

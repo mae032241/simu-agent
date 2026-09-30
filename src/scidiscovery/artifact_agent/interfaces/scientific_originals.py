@@ -6,11 +6,11 @@ import json
 
 from ..schema.common import canonical_sha256
 from .mcp_root_shared import RootToolError
+from ..service.artifacts import is_scientific_original
 
 
 def read_original_page(artifacts, envelope, *, name, instance, cursor, page_bytes):
-    if (envelope.confidentiality == "approval_only"
-            or envelope.schema_id == "scidiscovery.tool-evidence-manifest.v1"):
+    if not is_scientific_original(envelope):
         raise RootToolError("This object is not a public scientific original.")
     media = envelope.media_type.split(";", 1)[0].strip().lower()
     if not (media.startswith("text/") or media == "application/json" or media.endswith("+json")):

@@ -310,6 +310,7 @@ class RootInstanceRoutes:
 
     def _scientific_artifact_catalog(self, name, envelope, view, offset, limit):
         """Scientific originals remain navigable by names; provenance stays private."""
+        from ..service.artifacts import is_scientific_original
         metadata = {"name":name, "kind":envelope.kind, "schema":envelope.schema_id,
             "media_type":envelope.media_type, "size_bytes":envelope.size_bytes,
             "payload_schema_version":envelope.payload_schema_version}
@@ -319,8 +320,7 @@ class RootInstanceRoutes:
                 "artifact_name":self.bindings.find_name(instance=self._instance_id(), namespace="artifact", object_id=item.ref.artifact_id),
                 "kind":item.ref.kind, "schema":item.ref.schema_id}
                 for item in family.producer_inputs
-                if item.ref.schema_id != "scidiscovery.tool-evidence-manifest.v1"
-                and self.artifacts.catalog(item.ref).confidentiality != "approval_only"]
+                if is_scientific_original(self.artifacts.catalog(item.ref))]
             if offset > len(materials):
                 raise RootToolError("The requested offset exceeds the available scientific materials.")
             return {"subject":metadata, "materials":materials[offset:offset+limit],
@@ -329,8 +329,7 @@ class RootInstanceRoutes:
         originals = []
         for ref in envelope.parent_refs:
             original = self.artifacts.catalog(ref)
-            if (original.schema_id == "scidiscovery.tool-evidence-manifest.v1"
-                    or original.confidentiality == "approval_only"):
+            if not is_scientific_original(original):
                 continue
             originals.append({"artifact_name":self.bindings.find_name(instance=self._instance_id(), namespace="artifact", object_id=ref.artifact_id),
                 "kind":original.kind, "schema":original.schema_id})

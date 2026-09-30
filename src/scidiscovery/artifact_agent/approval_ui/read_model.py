@@ -49,12 +49,13 @@ class InstanceReadModel:
         self.execution_collection = execution_collection
         self.presentation_summaries = presentation_summaries
 
-    def progression_status(self, instance_id, *, session_key=None):
+    def progression_status(self, instance_id, *, session_key=None, delivery_cursor=None, delivery_limit=8):
         from ..service.progression_read import progression_read_view
-        return progression_read_view(bindings=self.bindings, runs=self.runs, artifacts=self.artifacts,
-            operation_catalog=self.operation_catalog, instance_id=instance_id, session_key=session_key)
+        return progression_read_view(bindings=self.bindings, runs=self.runs, artifacts=self.artifacts, executions=self.executions,
+            operation_catalog=self.operation_catalog, instance_id=instance_id, session_key=session_key,
+            delivery_cursor=delivery_cursor, delivery_limit=delivery_limit)
 
-    def overview(self, instance_id: str) -> dict[str, Any]:
+    def overview(self, instance_id: str, *, delivery_cursor=None, delivery_limit=8) -> dict[str, Any]:
         instance = self.bindings.get_instance(instance_id=instance_id)
         recent = self.nodes(instance_id, limit=30)
         active, pages, gaps = [], {}, []
@@ -87,7 +88,7 @@ class InstanceReadModel:
             "management_description": instance.objective,
             "objective_refs": objectives[:100],
             "active_tasks": active,
-            "progression": self.progression_status(instance_id),
+            "progression": self.progression_status(instance_id, delivery_cursor=delivery_cursor, delivery_limit=delivery_limit),
             "active_task_pages": pages,
             "nodes": recent,
             "gaps": gaps + ([] if objectives else [gap("no_objective_in_observed_active_run_bindings")]),

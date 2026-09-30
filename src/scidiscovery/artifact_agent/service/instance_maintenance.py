@@ -20,6 +20,7 @@ import threading
 import uuid
 
 from .maintenance import MaintenanceBusy, StateMaintenanceLock
+from ..storage.control_io import control_io_nonblocking
 
 _LOCAL = threading.local()
 _LOG = logging.getLogger(__name__)
@@ -55,7 +56,12 @@ def _open_lock(path, mode, operation, *, create=True):
     try:
         if not stat.S_ISREG(os.fstat(descriptor).st_mode):
             raise InstanceMaintenanceUnavailable("maintenance lock is not a regular file")
-        fcntl.flock(descriptor, operation)
+        try:
+            fcntl.flock(descriptor, operation | (fcntl.LOCK_NB if control_io_nonblocking() else 0))
+        except BlockingIOError as error:
+            if control_io_nonblocking():
+                raise InstanceMaintenanceBusy("control state is busy") from error
+            raise
         return descriptor
     except BaseException:
         os.close(descriptor)
