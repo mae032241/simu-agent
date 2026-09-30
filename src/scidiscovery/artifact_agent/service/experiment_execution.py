@@ -698,7 +698,7 @@ def open_experiment_services(runs, catalog, *, state_root, plugin_configs,
     adapters = load_runtime_plugin_contributions(catalog, plugin_configs,
         mode="control", state_root=state_root).execution_adapters
     coordinator = ExperimentExecution(runs=runs, executions=executions,
-        bridge=ExecutionBridge(executions, adapters=adapters),
+        bridge=ExecutionBridge(executions, adapters=adapters, lifecycle_settings=runs.agent_settings.lifecycle),
         collection=ExecutionCollection(executions, plugin_configs={key: str(path) for key, path in plugin_configs.items()}),
         approval_base_url=approval_base_url)
     from ..worker_services import load_operation_services

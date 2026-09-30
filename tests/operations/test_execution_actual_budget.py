@@ -64,6 +64,8 @@ def test_partial_actual_usage_releases_time_without_inventing_storage(tmp_path, 
 
 
 def test_lost_terminal_workspace_finalizes_estimate_but_retains_error(tmp_path, monkeypatch):
+    from scidiscovery.agent_execution_settings import LifecycleSettings
+    from scidiscovery.artifact_agent.execution_bridge import ExecutionBridge
     f = experiment(tmp_path, monkeypatch, seconds=60)
     start(f)
     eid = execution(f).object_id
@@ -72,12 +74,39 @@ def test_lost_terminal_workspace_finalizes_estimate_but_retains_error(tmp_path, 
     def gone(_):
         raise FileNotFoundError('remote terminal workspace removed')
     monkeypatch.setattr(f.adapter, 'status_details', gone, raising=False)
-    f.coordinator.bridge.sync(execution_id=eid)
+    settings = LifecycleSettings(terminal_observation_failure_limit=2)
+    def fresh_bridge():
+        return ExecutionBridge(f.runtime.executions, adapters=f.coordinator.bridge.adapters, lifecycle_settings=settings)
+    for _ in range(settings.terminal_observation_failure_limit - 1):
+        fresh_bridge().sync(execution_id=eid)
+        assert eid in f.runtime.executions.observation_candidates()
+        assert 'estimated' not in f.runtime.executions.budget_accounting(eid)
+    fresh_bridge().sync(execution_id=eid)
     account = f.runtime.executions.budget_accounting(eid)
     assert account['actual'] == {}
     assert account['estimated'] == account['requested']
     assert eid not in f.runtime.executions.observation_candidates()
     assert f.runtime.executions.observation(eid)['observation_error']
+
+
+def test_transient_terminal_error_recovers_actual_usage_without_estimate(tmp_path, monkeypatch):
+    f = experiment(tmp_path, monkeypatch, seconds=60)
+    start(f)
+    eid = execution(f).object_id
+    state = f.runtime.executions.status(eid)
+    f.runtime.executions.record_status(execution_id=eid, external_run_id=state.external_run_id, state='cancelled')
+    def unavailable(_):
+        raise TimeoutError('transient SSH timeout')
+    monkeypatch.setattr(f.adapter, 'status_details', unavailable, raising=False)
+    f.coordinator.bridge.sync(execution_id=eid)
+    assert f.runtime.executions.observation(eid)['terminal_query_failures'] == 1
+    monkeypatch.setattr(f.adapter, 'status_details', lambda _: {'state': 'cancelled',
+        'consumed_budget': {'wall_time_seconds': 2, 'max_storage_bytes': 100}})
+    f.coordinator.bridge.sync(execution_id=eid)
+    value = f.runtime.executions.budget_accounting(eid)
+    assert value['actual'] == {'wall_time_seconds': 2, 'max_storage_bytes': 100}
+    assert 'estimated' not in value
+    assert 'terminal_query_failures' not in f.runtime.executions.observation(eid)
 
 
 def test_preparation_failure_releases_only_unsubmitted_reservation(tmp_path, monkeypatch):

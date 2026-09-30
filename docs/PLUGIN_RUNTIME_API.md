@@ -119,6 +119,10 @@ cannot gain this guarantee retroactively from a newly installed adapter method.
 TCAD adapters submit through `submit_retirable` / `tcad_submit_retirable`; old
 transports/runners reject these entry points before accepting work. They must not
 fall back to the old submit endpoint, whose in-flight processes may ignore fencing.
+TCAD also implements `validate_submission_protocol()`, a side-effect-free check the
+bridge calls before admission/reservation. Local method presence is not proof of
+remote protocol support. The transport's `submission_protocol` maps to
+`tcad_submission_protocol`; version 1 advertises the exact submit and retire names.
 
 `AdapterCapability` contains `key`, `kind`, `schema_id`,
 `payload_schema_version`, `media_type`, exact `content: bytes`, and

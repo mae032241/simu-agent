@@ -530,3 +530,30 @@ SQLite 索引也保存在专用目录。此前每次新建临时 SQLite 目录�
 `scid_describe` 返回实际生效的预算，新 Run 冻结预算和交付方式。超限诊断指出具体材料；
 不得通过丢弃必要原始证据规避失败。该预算不替代 TCAD 执行授权与运行资源策略。
 升级需要重新生成角色并重载 Codex；不要在旧合同任务运行期间切换服务版本。
+
+## 历史未知提交的管理员恢复
+
+升级时先更新并验证远端 runner，再启用新控制面；标准安装事务按此顺序执行。
+部署探测必须通过能力、策略及 `tcad_submission_protocol` 三项只读检查。
+仅替换 runner 文件不能停止已加载旧代码的 RPC/提交进程。
+
+历史请求没有撤销支持标记时，普通取消不会自动释放预算。管理员应先停止本地旧提交者，
+确认远端旧 RPC/提交进程及待处理提交已退出，并升级 runner。不要把“查询不到任务”作为此确认。
+以控制服务账户，在已安装的 Python 环境中执行（替换精确执行 ID；安装路径按实际配置）：
+
+```bash
+PYTHONPATH="${SCID_INSTALL_ROOT:-/opt/scidiscovery}/site" "${SCID_PYTHON:-python3}" \
+  -m scidiscovery.artifact_agent.interfaces.submission_recovery \
+  --state-root "${SCID_STATE_ROOT:-/var/lib/scidiscovery}" \
+  --execution-id EXACT_EXECUTION_ID \
+  --confirm-old-submitters-stopped \
+  --reason '管理员已确认旧提交进程全部退出，远端已升级；记录对应运维凭据'
+```
+
+命令拒绝仍持有本地提交锁的请求，并持久记录管理员 UID、理由、时间与精确提交摘要。
+它不修改执行终态、不删除证据、不释放预算。恢复服务后，对原执行调用普通取消/放弃：
+远端查到任务时接续该任务；只有原子撤销成功后才能释放预留。远端不可达时仍保留原状态和额度。
+此命令不注册为 MCP 或 Worker 工具；同 UID 的技术隔离仍受已披露的 SEC-002 限制。
+
+终态查询短暂失败不会立即按上限扣账。管理员可在 `agent-settings.json` 的 `lifecycle` 中设置
+`terminal_observation_failure_limit`（默认 3，正整数）；连续失败达到阈值才估算，成功查询重置计数。

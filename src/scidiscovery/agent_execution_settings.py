@@ -90,6 +90,7 @@ class LifecycleSettings(SettingsValue):
     """Control daemon reconciliation; global settings, no model calls or submissions."""
     interval_seconds: int = Field(default=30, ge=1, le=3600)
     batch_size: int = Field(default=32, ge=1, le=256)
+    terminal_observation_failure_limit: int = Field(default=3, ge=1, le=1000)
 
 
 class MaterialInputSettings(SettingsValue):

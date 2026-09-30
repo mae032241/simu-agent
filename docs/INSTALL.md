@@ -607,3 +607,35 @@ new Runs freeze budgets and delivery modes. Admission errors identify the materi
 do not drop necessary evidence to bypass a rejection. These budgets do not replace
 TCAD execution authorization or solver resource policy. Regenerate roles and reload
 Codex on upgrade; finish tasks bound to old contracts before switching services.
+
+## Legacy uncertain submissions
+
+Upgrade and validate the remote runner before enabling the new control plane. The
+standard installation transaction follows this order and probes capabilities,
+policy, and `tcad_submission_protocol`. Replacing a runner file does not stop old
+RPC/submit processes that already loaded its code.
+
+Before enabling retirement for a legacy uncertain request, the administrator must
+stop old local submitters, establish that old remote RPC/submit processes and queued
+submissions have stopped, and upgrade the runner. A negative lookup is not that proof.
+As the service account, using the installed Python environment and exact execution ID:
+
+```bash
+PYTHONPATH="${SCID_INSTALL_ROOT:-/opt/scidiscovery}/site" "${SCID_PYTHON:-python3}" \
+  -m scidiscovery.artifact_agent.interfaces.submission_recovery \
+  --state-root "${SCID_STATE_ROOT:-/var/lib/scidiscovery}" \
+  --execution-id EXACT_EXECUTION_ID \
+  --confirm-old-submitters-stopped \
+  --reason 'All old submitters stopped; runner upgraded; reference operator evidence'
+```
+
+The command rejects a live local submit lock and records operator UID, reason, time,
+and exact submission digest. It changes no execution terminal state, evidence or
+budget. After service recovery, cancel/abandon the same execution normally. An
+existing remote job is recovered; only atomic retirement releases an absent job's
+reservation. An unavailable remote remains unresolved. This command is not a Worker
+or MCP tool; the documented SEC-002 same-UID isolation limitation still applies.
+
+Transient terminal-query failures retain reservations until
+`lifecycle.terminal_observation_failure_limit` consecutive failures (default 3,
+positive integer) in `agent-settings.json`; a successful query resets the counter.

@@ -379,6 +379,8 @@ class SSHTCADTransport:
         if context and payload.get("progress_path"):
             path = Path(payload["progress_path"])
             context.report_progress = lambda value: atomic_json(path, value)
+        if operation == "submission_protocol":
+            return self._rpc("tcad_submission_protocol", {})
         if operation == "execution_policy":
             return self._rpc("tcad_execution_policy", {})
         if operation == "capabilities":
@@ -611,6 +613,8 @@ class SSHTCADTransport:
         if response.get("id") != request_id:
             raise RuntimeError("remote TCAD response identity differs")
         if "error" in response:
+            if tool == "tcad_submission_protocol":
+                raise RemoteRunnerUpgradeRequired("Remote runner cannot confirm submission/retirement protocol support; upgrade the runner before submitting.")
             if tool == "tcad_execution_policy" and response["error"].get("message") == "unknown runner tool":
                 raise RemoteRunnerUpgradeRequired("Remote runner does not support execution policy discovery")
             raise RuntimeError(str(response["error"].get("message", "remote TCAD call failed")))

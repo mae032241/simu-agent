@@ -108,6 +108,11 @@ class CommandTCADExecutorAdapter:
     def execution_policy(self) -> ExecutionPolicySnapshot:
         return ExecutionPolicySnapshot.model_validate_json(json.dumps(self._call("execution_policy", {})), strict=True)
 
+    def validate_submission_protocol(self):
+        value = self._call("submission_protocol", {})
+        if value != {"version": 1, "submit": "tcad_submit_retirable", "retire": "tcad_retire_submission"}:
+            raise RuntimeError("TCAD submission protocol is incompatible; upgrade the runner before submitting.")
+
     def execution_admission(self, raw: bytes, *, preparation_profile: str):
         self.validate_preparation_payload(raw, preparation_profile=preparation_profile)
         return execution_admission(self.execution_policy(), validate_execution_package_json(raw))
@@ -184,6 +189,7 @@ class CommandTCADExecutorAdapter:
         archive: LocalFileDescriptor,
         exchange_directory: Path,
     ) -> LocalFileDescriptor:
+        self.validate_submission_protocol()
         job_raw = _read_bound_descriptor(
             job_spec_file, exchange_directory=exchange_directory
         )
@@ -366,9 +372,9 @@ class CommandTCADExecutorAdapter:
                     "Ask the administrator to repair the service configuration, then retry the same action. "
                     "Do not change scientific inputs or repeat this request before repair."),
                 "tcad_runner_upgrade_required": (
-                    "The remote TCAD runner does not support execution policy discovery. "
-                    "Ask the administrator to upgrade the remote runner and validate its policy configuration. "
-                    "This policy query did not submit a job. Do not retry execution before repair."),
+                    "The remote TCAD runner cannot confirm required policy/submission protocol support. "
+                    "Ask the administrator to upgrade the remote runner and validate its configuration. "
+                    "This read-only discovery did not submit a job. Do not retry execution before repair."),
             }
             code = response.get("error_code")
             if isinstance(code, str) and code in safe_messages:

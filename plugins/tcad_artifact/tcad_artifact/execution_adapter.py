@@ -54,6 +54,11 @@ class TCADExecutorAdapter:
     def execution_policy(self) -> ExecutionPolicySnapshot:
         return ExecutionPolicySnapshot.model_validate_json(json.dumps(self._call("tcad_execution_policy", {})), strict=True)
 
+    def validate_submission_protocol(self):
+        value = self._call("tcad_submission_protocol", {})
+        if value != {"version": 1, "submit": "tcad_submit_retirable", "retire": "tcad_retire_submission"}:
+            raise RuntimeError("TCAD submission protocol is incompatible; upgrade the service before submitting.")
+
     def execution_admission(self, raw: bytes, *, preparation_profile: str):
         self.validate_preparation_payload(raw, preparation_profile=preparation_profile)
         return execution_admission(self.execution_policy(), validate_execution_package_json(raw))
@@ -110,6 +115,7 @@ class TCADExecutorAdapter:
         archive: LocalFileDescriptor,
         exchange_directory: Path,
     ) -> LocalFileDescriptor:
+        self.validate_submission_protocol()
         raw = _read_bound_descriptor(
             job_spec_file, exchange_directory=exchange_directory
         )

@@ -329,7 +329,11 @@ def _rpc(config, payload):
     name = params.get("name")
     arguments = params.get("arguments") or {}
     try:
-        if name == "tcad_execution_policy":
+        if name == "tcad_submission_protocol":
+            if arguments:
+                raise ValueError("protocol discovery accepts no arguments")
+            result = {"version": 1, "submit": "tcad_submit_retirable", "retire": "tcad_retire_submission"}
+        elif name == "tcad_execution_policy":
             if arguments:
                 raise ValueError("policy discovery accepts no arguments")
             result = _policy_snapshot(config)
@@ -498,7 +502,10 @@ def _retire_submission(config, submission_sha256):
     with open(os.path.join(config["state_root"], "submission.lock"), "a+") as lock:
         # Do not wait behind a slow archive extraction/launch. A busy submit
         # has not granted an absence proof; callers retain their reservation.
-        fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise RuntimeError("Submission is still in progress; retry abandon/cancel later. No retirement was confirmed; budget remains reserved.")
         value = _lookup_submission(config, submission_sha256)
         if value["found"]:
             return value

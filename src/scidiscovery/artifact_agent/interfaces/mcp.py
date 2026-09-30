@@ -70,7 +70,7 @@ def build_root_router(
         session_key=scheduler_session_key,
         creation_lock=scheduler_creation_lock,
         execution_bridge=ExecutionBridge(
-            runtime.executions, adapters=execution_adapters or {}
+            runtime.executions, adapters=execution_adapters or {}, lifecycle_settings=runtime.runs.agent_settings.lifecycle
         ),
         approval_base_url=approval_base_url,
         instance_management_secret=approval_secret,

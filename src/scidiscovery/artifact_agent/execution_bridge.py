@@ -60,9 +60,12 @@ class ExecutionBridge:
         executions: ExecutionService,
         *,
         adapters: Mapping[str, ExecutionAdapter],
+        lifecycle_settings=None,
     ) -> None:
         self.executions = executions
         self.adapters = dict(adapters)
+        from ..agent_execution_settings import LifecycleSettings
+        self.lifecycle_settings = lifecycle_settings or LifecycleSettings()
         from .service.execution_submission import ExecutionSubmission
         self.submissions = ExecutionSubmission(self)
         missing_lookup = next(
@@ -107,6 +110,9 @@ class ExecutionBridge:
                     before_submit()
                 self._record_started(execution_id, *recovered)
                 return
+        protocol_check = getattr(adapter, "validate_submission_protocol", None)
+        if callable(protocol_check):
+            protocol_check()  # Before authorization, budget reservation or prepare.
         admission = self.validate_request(
             executor=request.executor,
             preparation_profile=request.preparation_profile,
@@ -295,12 +301,16 @@ class ExecutionBridge:
             observation["solver_state"] = external_state
             observation["status_observed_at"] = datetime.now(timezone.utc).isoformat()
             observation.pop("observation_error", None)
+            observation.pop("terminal_query_failures", None)
         except Exception as error:
             if current.state in {"succeeded", "failed", "cancelled", "collected"}:
                 # A known terminal job must not poll forever for measurements
                 # that may have disappeared with its workspace. Never refund
                 # missing dimensions or mislabel estimates as observations.
-                self.executions.settle_budget(execution_id, {}, finalize_missing=True)
+                failures = observation.get("terminal_query_failures", 0) + 1
+                observation["terminal_query_failures"] = failures
+                if failures >= self.lifecycle_settings.terminal_observation_failure_limit:
+                    self.executions.settle_budget(execution_id, {}, finalize_missing=True)
             from .service.engineering_diagnostics import EngineeringDiagnostics, exception_facts
             observation["observation_error"] = (EngineeringDiagnostics(
                 self.executions.database_path.parent.parent / "engineering-diagnostics").capture(

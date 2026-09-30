@@ -29,7 +29,7 @@ def write(path, raw, mode=0o600):
 
 def probe(runner, config):
     result = {}
-    for name in ("tcad_capabilities", "tcad_execution_policy"):
+    for name in ("tcad_capabilities", "tcad_execution_policy", "tcad_submission_protocol"):
         request = {"schema_version": 1, "operation": "rpc", "payload": {"request": {
             "jsonrpc": "2.0", "id": "deployment", "method": "tools/call",
             "params": {"name": name, "arguments": {}}}}}
@@ -40,12 +40,14 @@ def probe(runner, config):
         value = json.loads(completed.stdout)
         response = value.get("payload", {}).get("response", {})
         if value.get("ok") is not True or "error" in response:
-            raise RuntimeError("Remote capability/policy discovery failed during deployment")
+            raise RuntimeError("Remote capability/policy/submission protocol discovery failed during deployment")
         result[name] = response["result"]["structuredContent"]
     if not result["tcad_capabilities"].get("capabilities"):
         raise RuntimeError("Remote runner has no capabilities")
     if not {"agent_execution_policy", "runner", "debug"}.issubset(result["tcad_execution_policy"]):
         raise RuntimeError("Remote policy discovery is incomplete")
+    if result["tcad_submission_protocol"] != {"version": 1, "submit": "tcad_submit_retirable", "retire": "tcad_retire_submission"}:
+        raise RuntimeError("Remote submission/retirement protocol is incompatible")
     return {"capabilities": len(result["tcad_capabilities"]["capabilities"]), "policy_available": True}
 
 

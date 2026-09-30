@@ -363,6 +363,7 @@ EXECUTION_TOOLS = (
         SubmissionDigestInput,
     ),
     ExecutionTool("tcad_submit", "Submit one prepared TCAD job and return immediately.", SubmitInput),
+    ExecutionTool("tcad_submission_protocol", "Discover submission and retirement protocol support.", EmptyInput),
     ExecutionTool("tcad_submit_retirable", "Submit with permanent exact-submission retirement support.", SubmitInput),
     ExecutionTool("tcad_retire_submission", "Permanently fence an absent exact submission or return its existing job.", SubmissionDigestInput),
     ExecutionTool("tcad_status", "Read one durable TCAD job status and optional bounded, redacted log tails with observed job timing.", RunIdInput),
@@ -395,6 +396,9 @@ class TCADExecutionFacade:
                 for tool in sorted(self.policy.tools, key=lambda item: item.profile_id)
             ]
         }
+
+    def tcad_submission_protocol(self) -> dict[str, Any]:
+        return {"version": 1, "submit": "tcad_submit_retirable", "retire": "tcad_retire_submission"}
 
     def tcad_execution_policy(self) -> dict[str, Any]:
         return self.policy.snapshot().model_dump(mode="json")

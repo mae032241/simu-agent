@@ -185,7 +185,7 @@ def main(argv: list[str] | None = None) -> int:
     with maintenance.shared():
         startup_runtime.runs.reconcile_expired_active()
     lifecycle = LifecycleReconciler(runs=startup_runtime.runs,
-        bridge=ExecutionBridge(collection.executions, adapters=contributions.execution_adapters),
+        bridge=ExecutionBridge(collection.executions, adapters=contributions.execution_adapters, lifecycle_settings=agent_settings.lifecycle),
         settings=agent_settings.lifecycle)
     router = RootBrokerRouter(
         lambda proxy_id: build_root_router(

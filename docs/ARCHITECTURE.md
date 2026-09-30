@@ -478,12 +478,21 @@ lock; a negative lookup alone is never enough. Old in-flight submissions without
 retirement support, unavailable backends and failed retirement retain their reservations.
 Retirement requires the matching control adapter and runner; it cannot certify that an
 old runner process loaded before upgrade will honor a newly installed tombstone.
+TCAD protocol discovery is required before new admission/reservation and diagnostic
+preparation. Deployment probes verify the submission/retirement protocol as well as
+capabilities and policy. For legacy requests, the administrator recovery command in
+[INSTALL.md](INSTALL.md#legacy-uncertain-submissions) records quiescence attestation;
+budget remains reserved until the normal bridge obtains remote retirement proof.
 
 Known terminal executions finalize missing resource measurements at their reserved
 limits in a separate estimate ledger. Responses/UI distinguish `actual` from `estimated`;
 estimates do not refund capacity and stop endless automatic polling. Later exact
 observations replace estimates without overwriting earlier measured dimensions. Both
 the actual and estimate ledgers survive instance archive/restore.
+If the terminal query itself fails, control retains the reservation and retries until
+`lifecycle.terminal_observation_failure_limit` consecutive failures (default 3).
+The counter persists across restarts and resets after a successful query. A successful
+terminal response lacking measurements still finalizes those missing dimensions.
 
 The control daemon reconciles expired Runs and polls already submitted executions
 serially, independently of Worker calls. Global `lifecycle.interval_seconds` (30)
