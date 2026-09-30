@@ -276,8 +276,12 @@ def test_closeout_uses_exact_native_terminal_without_claiming_recovery(tmp_path,
     journey.logdir=tmp_path/'logs'
     checkpoint=dict(phase='idle',turn_id=None,native_completion='completed',report={'completed':True},rounds=1)
     completed=dict(checkpoint_json=json.dumps(checkpoint))
-    def wait(predicate,label):
-        value=completed if label=='recovered-completed' else dict(mode='interactive',host_json=None)
+    waits=[]
+    def wait(predicate,label,**kwargs):
+        waits.append(label)
+        if label=='closeout-released':
+            assert not calls and kwargs['cleanup'] is True
+        value=completed if label=='recovered-completed' else dict(state='paused',mode='interactive',host_json=None)
         assert predicate(value)
         return value
     journey.wait_row=wait
@@ -301,4 +305,5 @@ def test_closeout_uses_exact_native_terminal_without_claiming_recovery(tmp_path,
         assert set(summary['checks'])=={'natural_completion','takeover','writer_release','state_preserved'}
         assert summary['daemon_restart'] is False
         assert [args['command'] for name,args in calls if name=='progression_command']==['takeover','stop']
+        assert waits==['recovered-completed','closeout-released','taken-over']
     assert reads==[('thread/read',{'threadId':'actual-root','includeTurns':True})]

@@ -183,6 +183,8 @@ class RecoveryJourney(Journey):
         # it never fabricates a platform identity or writes control databases.
         (self.root / 'model-submission-started').touch(exist_ok=False)
         arguments=CLOSEOUT_ARGUMENTS if closeout_only else INGEST_ARGUMENTS
+        if closeout_only and self.case_config.get('text'):
+            arguments = {**arguments, 'text': self.case_config['text']}
         self.call('artifact_ingest_text', arguments)
         self.control_attempted = True
         self.call('progression_command', dict(command='start', mode='background', objective_name=arguments['name']))
@@ -222,6 +224,10 @@ class RecoveryJourney(Journey):
             write(self.logdir.parent/'native-completed.json',evidence)
             if evidence[0]['status']!='completed' or json.loads(completed['checkpoint_json'])['rounds']!=1:
                 raise RuntimeError('closeout_requires_one_naturally_completed_turn')
+            # Observe natural release before takeover can cause it itself.
+            self.wait_row(lambda row: row['state'] in {'paused','stopped'} and not row['host_json'],
+                'closeout-released', timeout=getattr(self,'case_config',{}).get('stage_timeout_seconds',90),
+                cleanup=True)
         self.call('progression_command', dict(command='takeover'))
         self.wait_row(lambda row: row['mode']=='interactive' and row['host_json'] is None, 'taken-over')
         status = self.call('progression_status', {})
