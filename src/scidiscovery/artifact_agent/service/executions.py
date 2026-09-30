@@ -65,6 +65,9 @@ EXECUTION_POLICY_SCHEMA = """
                 CREATE TABLE IF NOT EXISTS execution_budget_estimates (
                     execution_id TEXT PRIMARY KEY, estimated_json BLOB NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS execution_observation_retries (
+                    execution_id TEXT PRIMARY KEY, failures INTEGER NOT NULL CHECK(failures >= 0)
+                );
 """
 
 
@@ -898,6 +901,21 @@ class ExecutionService:
             import logging
             logging.getLogger(__name__).warning("Collected execution log cache cleanup deferred")
         return result_ref
+
+    def record_observation_result(self, execution_id: str, *, succeeded: bool, previous_failures=0) -> int:
+        """Persist retry accounting independently of replaceable observation caches."""
+        if type(previous_failures) is not int or previous_failures < 0:
+            previous_failures = 0
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            self._row(connection, execution_id)
+            row = connection.execute("SELECT failures FROM execution_observation_retries WHERE execution_id=?",
+                (execution_id,)).fetchone()
+            # Seed pre-upgrade counts once if their cache is still readable.
+            failures = 0 if succeeded else (row[0] if row is not None else previous_failures) + 1
+            connection.execute("INSERT INTO execution_observation_retries VALUES (?,?) "
+                "ON CONFLICT(execution_id) DO UPDATE SET failures=excluded.failures", (execution_id, failures))
+            return failures
 
     def observation(self, execution_id: str) -> dict:
         from .engineering_diagnostics import read_json

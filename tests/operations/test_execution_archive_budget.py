@@ -36,6 +36,7 @@ def _policy_executions(system, *, estimated=False):
         runtime.executions.settle_budget(execution,
             {'wall_time_seconds':800} if estimated else {'max_storage_bytes':100,'wall_time_seconds':800},
             finalize_missing=estimated)
+        runtime.executions.record_observation_result(execution, succeeded=False)
         ids.append(execution)
     return ids, admission
 

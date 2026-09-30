@@ -133,8 +133,9 @@ class ExecutionSubmission:
                 self.executions.prepared_submission(execution_id) is not None)
             retirement_supported = previous.get("retirement_supported", not may_have_submitted and callable(
                 getattr(self.bridge._adapter(self.executions.status(execution_id).executor), "retire_submission", None)))
+            audit = {key: previous[key] for key in ("administrator_recovery",) if key in previous}
             def save(record):
-                atomic_json(directory / "submission.json", {**record, "retirement_supported": retirement_supported,
+                atomic_json(directory / "submission.json", {**record, **audit, "retirement_supported": retirement_supported,
                     "may_have_submitted": may_have_submitted})
             save({"state": "pending"})
             done = threading.Event()

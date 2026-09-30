@@ -63,7 +63,8 @@ def test_partial_actual_usage_releases_time_without_inventing_storage(tmp_path, 
     assert 'estimated' not in f.runtime.executions.budget_accounting(eid)
 
 
-def test_lost_terminal_workspace_finalizes_estimate_but_retains_error(tmp_path, monkeypatch):
+@pytest.mark.parametrize('cache_fault', ['corrupt', 'missing', 'legacy'])
+def test_lost_terminal_workspace_finalizes_estimate_but_retains_error(tmp_path, monkeypatch, cache_fault):
     from scidiscovery.agent_execution_settings import LifecycleSettings
     from scidiscovery.artifact_agent.execution_bridge import ExecutionBridge
     f = experiment(tmp_path, monkeypatch, seconds=60)
@@ -81,6 +82,16 @@ def test_lost_terminal_workspace_finalizes_estimate_but_retains_error(tmp_path, 
         fresh_bridge().sync(execution_id=eid)
         assert eid in f.runtime.executions.observation_candidates()
         assert 'estimated' not in f.runtime.executions.budget_accounting(eid)
+    # The next query must not reset the durable retry budget if its cache broke.
+    cache = f.runtime.executions.exchange_root / eid / 'observation.json'
+    if cache_fault == 'corrupt':
+        cache.write_bytes(b'{broken')
+    elif cache_fault == 'missing':
+        cache.unlink()
+    else:
+        # Pre-upgrade data has a cache count but no database counter yet.
+        with f.runtime.executions._connect() as db:
+            db.execute('DELETE FROM execution_observation_retries WHERE execution_id=?', (eid,))
     fresh_bridge().sync(execution_id=eid)
     account = f.runtime.executions.budget_accounting(eid)
     assert account['actual'] == {}
@@ -107,6 +118,9 @@ def test_transient_terminal_error_recovers_actual_usage_without_estimate(tmp_pat
     assert value['actual'] == {'wall_time_seconds': 2, 'max_storage_bytes': 100}
     assert 'estimated' not in value
     assert 'terminal_query_failures' not in f.runtime.executions.observation(eid)
+    with f.runtime.executions._connect() as db:
+        assert db.execute('SELECT failures FROM execution_observation_retries WHERE execution_id=?',
+            (eid,)).fetchone()[0] == 0
 
 
 def test_preparation_failure_releases_only_unsubmitted_reservation(tmp_path, monkeypatch):

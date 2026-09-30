@@ -63,6 +63,13 @@ def test_admin_confirmation_keeps_budget_until_remote_retirement(tmp_path, monke
     assert authorize()['budget_released'] is False
     assert f.runtime.executions.budget_accounting(eid) == before
     assert authorize()['state'] == 'retirement_already_enabled'
+    from tests.operations.test_execution_submission import _wait
+    audit = json.loads(path.read_bytes())['administrator_recovery']
+    # A normal Worker status query launches asynchronous exact-submission lookup.
+    f.worker.call_tool('worker_experiment_execute', {'action': 'status'})
+    _wait(lambda: f.coordinator.bridge.submissions.summary(eid)['state'] != 'pending')
+    assert json.loads(path.read_bytes())['administrator_recovery'] == audit
+    assert 'administrator_recovery' not in f.coordinator.bridge.submissions.summary(eid)
     monkeypatch.setattr(f.adapter, 'retire_submission', unavailable, raising=False)
     with pytest.raises(TimeoutError):
         f.coordinator.bridge.abandon(eid)

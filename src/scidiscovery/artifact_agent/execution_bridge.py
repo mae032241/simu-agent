@@ -301,13 +301,15 @@ class ExecutionBridge:
             observation["solver_state"] = external_state
             observation["status_observed_at"] = datetime.now(timezone.utc).isoformat()
             observation.pop("observation_error", None)
+            self.executions.record_observation_result(execution_id, succeeded=True)
             observation.pop("terminal_query_failures", None)
         except Exception as error:
             if current.state in {"succeeded", "failed", "cancelled", "collected"}:
                 # A known terminal job must not poll forever for measurements
                 # that may have disappeared with its workspace. Never refund
                 # missing dimensions or mislabel estimates as observations.
-                failures = observation.get("terminal_query_failures", 0) + 1
+                failures = self.executions.record_observation_result(execution_id, succeeded=False,
+                    previous_failures=observation.get("terminal_query_failures", 0))
                 observation["terminal_query_failures"] = failures
                 if failures >= self.lifecycle_settings.terminal_observation_failure_limit:
                     self.executions.settle_budget(execution_id, {}, finalize_missing=True)

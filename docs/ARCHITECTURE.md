@@ -483,6 +483,8 @@ preparation. Deployment probes verify the submission/retirement protocol as well
 capabilities and policy. For legacy requests, the administrator recovery command in
 [INSTALL.md](INSTALL.md#legacy-uncertain-submissions) records quiescence attestation;
 budget remains reserved until the normal bridge obtains remote retirement proof.
+Submission progress rewrites preserve the private `administrator_recovery` audit
+record verbatim; it is never included in the model-facing submission summary.
 
 Known terminal executions finalize missing resource measurements at their reserved
 limits in a separate estimate ledger. Responses/UI distinguish `actual` from `estimated`;
@@ -491,7 +493,9 @@ observations replace estimates without overwriting earlier measured dimensions. 
 the actual and estimate ledgers survive instance archive/restore.
 If the terminal query itself fails, control retains the reservation and retries until
 `lifecycle.terminal_observation_failure_limit` consecutive failures (default 3).
-The counter persists across restarts and resets after a successful query. A successful
+The counter is transactionally stored in the execution database, survives archive/restore
+and observation-cache corruption, and resets after a successful query. Readable legacy
+cache counts seed the database once. A successful
 terminal response lacking measurements still finalizes those missing dimensions.
 
 The control daemon reconciles expired Runs and polls already submitted executions
