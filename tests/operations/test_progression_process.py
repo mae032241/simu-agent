@@ -414,3 +414,26 @@ def test_restart_running_owner_keeps_terminal_helper_metering_identity(progressi
     assert checkpoint(p)['usage_records']['helper']['counted_tokens']['input_tokens'] == 42
     assert checkpoint(p)['usage_records']['helper']['role'] == 'helper'
     assert methods(requests).count('turn/start') == 1
+
+
+@pytest.mark.parametrize('override,expected', [({}, ('gpt-5.6-sol', 'high')),
+    ({'root_model':'root-explicit', 'root_reasoning_effort':'xhigh'}, ('root-explicit', 'xhigh'))])
+def test_root_model_is_independent_of_worker_defaults(progression, tmp_path, monkeypatch, override, expected):
+    p = progression
+    _, requests = native(tmp_path, monkeypatch, p.runtime.project_root, tmp_path/'control.sock')
+    frozen = dict(row(p))
+    config = json.loads(frozen['config_json'])
+    config['effective']['defaults'].update(model='worker-explicit', reasoning_effort='low')
+    config['effective']['progression'].update(override)
+    frozen['config_json'] = json.dumps(config)
+    factory = CodexProgressionFactory(project_root=p.runtime.project_root,
+        state_root=p.runtime.state_root, socket_path=tmp_path/'control.sock', approval_base_url='http://127.0.0.1:8765')
+    host = factory(frozen, lambda event: None)
+    try:
+        calls = [json.loads(line) for line in requests.read_text().splitlines()]
+        start = next(v['params'] for v in calls if v['method']=='thread/start')
+        assert (start['model'], start['config']['model_reasoning_effort']) == expected
+        assert 'turn/start' not in [v['method'] for v in calls]
+        assert config['effective']['defaults']['model'] == 'worker-explicit'
+    finally:
+        host.close()

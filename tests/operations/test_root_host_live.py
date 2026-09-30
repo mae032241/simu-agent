@@ -197,3 +197,25 @@ def test_selection_wait_does_not_consume_execution_budget(tmp_path, monkeypatch)
     finally:
         host.close()
     assert not host.children and not host.usage
+
+
+def test_new_candidate_root_does_not_inherit_personal_worker_model(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    personal = tmp_path/'personal'
+    personal.mkdir()
+    (personal/'config.toml').write_text('model = "gpt-6-astra"\nmodel_reasoning_effort = "xhigh"\n')
+    monkeypatch.setenv('CODEX_HOME', str(personal))
+    candidate = tmp_path/'candidate'
+    candidate.mkdir()
+    project = tmp_path/'project'
+    project.mkdir()
+    monkeypatch.setattr(live, 'create_environments', lambda *args: {'core':SimpleNamespace(python=Path(sys.executable), workdir=project)})
+    monkeypatch.setattr(live, '_run_logged', lambda *args, **kwargs: None)
+    monkeypatch.setattr(live.subprocess, 'check_output', lambda *args, **kwargs: 'test-head')
+    live.prepare(candidate)
+    manifest = json.loads((candidate/'candidate.json').read_text())
+    settings = json.loads((candidate/'agent-settings.json').read_text())
+    assert manifest['profile'] == {'model':'gpt-5.6-sol', 'model_reasoning_effort':'high'}
+    assert manifest['worker_profile'] == {'model':'gpt-6-astra', 'model_reasoning_effort':'xhigh'}
+    assert settings['defaults']['model'] == 'gpt-6-astra'
+    assert settings['defaults']['reasoning_effort'] == 'xhigh'

@@ -152,7 +152,8 @@ def prepare(root: Path, *, distribution="core", plugin_configs=None, task=None):
         "--project-root", str(project), "--state-root", str(root / "state"), "init", "codex",
         "--python", str(installed.python), "--control-socket", str(root / "control.sock"), *plugin_arguments],
         cwd=project, env=environment, timeout=120)
-    # Freeze the normal host's chosen model settings; never read/copy auth files.
+    # Worker preferences may follow the local client; Root has its own default.
+    # Freeze both explicitly; never read/copy auth files.
     config = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "config.toml"
     personal = tomllib.loads(config.read_text()) if config.exists() else {}
     profile = {key: personal[key] for key in ("model", "model_reasoning_effort") if key in personal}
@@ -166,9 +167,12 @@ def prepare(root: Path, *, distribution="core", plugin_configs=None, task=None):
     (root / "approval-secret").chmod(0o600)
     manifest = {str(p.relative_to(build)): hashlib.sha256(p.read_bytes()).hexdigest()
                 for p in (build / "wheelhouse").glob("*.whl")}
+    from scidiscovery.agent_execution_settings import ProgressionSettings
+    root_settings = ProgressionSettings()
+    root_profile = {"model": root_settings.root_model, "model_reasoning_effort": root_settings.root_reasoning_effort}
     write(root / "candidate.json", {"python": str(installed.python), "project": str(project),
         "head": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=guard.ROOT, text=True).strip(),
-        "wheels": manifest, "profile": profile, "distribution": distribution,
+        "wheels": manifest, "profile": root_profile, "worker_profile": profile, "distribution": distribution,
         "plugin_configs": plugin_configs, "task": TASK if task is None else task,
         "scope": "core only; no TCAD" if distribution == "core" else "core and three domain plugins; task defines live acceptance scope",
         "b0a_passed": False})

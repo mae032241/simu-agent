@@ -201,10 +201,10 @@ class CodexProgressionFactory:
             host.resource_limit = limits["max_rss_bytes"]
             connection.checkpoint = host.guard_resources
             host.initialize(cwd=str(self.project_root), expected_config=config)
-            profile = settings.get('defaults', {})
-            options = {'model': profile['model']} if profile.get('model') else {}
-            if profile.get('reasoning_effort'):
-                options['config'] = {'model_reasoning_effort': profile['reasoning_effort']}
+            from ..agent_execution_settings import ProgressionSettings
+            root_settings = ProgressionSettings.model_validate(limits)
+            options = {'model': root_settings.root_model,
+                'config': {'model_reasoning_effort': root_settings.root_reasoning_effort}}
             host.open_root(cwd=str(self.project_root), prior=prior, options=options,
                 active_turn_id=checkpoint.get('turn_id') if prior else None)
             host.verify_tools_and_session(approval_base_url=self.approval_base_url)

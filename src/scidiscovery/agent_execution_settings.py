@@ -125,8 +125,10 @@ class ProgressionSettings(SettingsValue):
     frame_bytes: int = Field(default=1048576, ge=4096, le=8388608)
     log_bytes: int = Field(default=1048576, ge=4096)
     rpc_timeout_seconds: int = Field(default=30, ge=1, le=120)
-    # Background Root policy, frozen with the goal. Native Workers inherit it, so the
-    # installed catalog's Worker needs are checked before a background Root starts.
+    # Root model selection is independent of Worker defaults and frozen with the goal.
+    root_model: str = Field(default="gpt-5.6-sol", min_length=1, max_length=256)
+    root_reasoning_effort: ReasoningEffort = "high"
+    # Native Workers inherit Root permissions; validate their catalog requirements.
     root_approval_policy: Literal["never"] = "never"
     root_sandbox: Literal["read-only", "workspace-write"] = "workspace-write"
     root_network_access: bool = True
