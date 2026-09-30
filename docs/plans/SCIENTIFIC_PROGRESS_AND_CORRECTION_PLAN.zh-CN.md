@@ -192,7 +192,14 @@ Root 沉默、重复 unknown 或仅写“有进展”不会消除触发原因；
 
 发布防护（R0-B 源码与负例已完成，S5b 验收安装态）：使用独立于 Git 提交/包版本的**状态格式版本**标记。可信初始化入口对新建空状态目录加锁并写入标记；守护进程及其他状态写入入口在打开数据库、自动建表或接管任务前共用检查。非空且无标记、格式不兼容或标记损坏时拒绝加载，提示使用新的 state root；不补写标记把旧数据伪装成新数据。本版本重启应正常读取已有状态。定向负例覆盖首次初始化、同格式重启、无标记旧目录、不兼容/损坏标记及并发初始化；拒绝后旧数据保持不变。此为控制层部署检查，不增加 Agent 字段或科学审批。
 
-R0-A 下一步：复用现有探针和资源监督，串行执行真实 Codex 的 initialize、thread/start、thread/resume，使用生产 RootPermissions 生成请求并核对实际返回的权限字段及同一线程身份；不发送 turn/start、不派发 Worker。记录原生版本、请求/响应及资源用量。此项只确认配置协议生效；完成后可记录 R0-A 此范围闭环，S0 的科学效果、实际 Worker 继承及旧现场失败归因仍分别报告。
+R0-A 唯一剩余项：真实零模型权限协议确认。现有 `scripts/probe_root_host.py --permissions` 已接入生产 RootPermissions，检查 initialize、thread/start 和同连接 thread/resume 的实际权限及线程/session 身份，保存最小请求/响应、原生 userAgent 和资源记录；仅 `r0a_protocol_passed=true` 表示本项通过。源码与协议夹具 18 项通过（含实际 CLI 离线 schema 校验）；当前会话预检所见 daemon 目录权限为 000，真实探针未启动，不能记为通过。无需实例绑定，在普通终端执行：
+
+```bash
+cd /home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2
+python scripts/probe_root_host.py --permissions --output /tmp/scid-r0a-host-permissions-20260930-01
+```
+
+沿用串行锁和资源监督，遵循 root_host_resources 的虚拟地址限制开关（当前关闭），保留 1.5 GB 进程树 RSS 止损及超时。无 turn/start、Worker 或科学任务；同线程恢复不代替宿主进程重启验收。环境阻断不反复重试，不更改原生 daemon 权限。通过后关闭 R0-A 此协议项，S0 的科学效果、实际 Worker 继承及旧现场失败归因仍分别报告。
 
 退出分开记录：R0-A 通过后可冻结可运行基线并恢复 S0；R0-B 通过后才具备完整 R0 的链路资格。R0 不据此宣称科学纠偏、完整 OS 隔离或正式部署已验收。
 

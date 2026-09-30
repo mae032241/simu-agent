@@ -78,8 +78,11 @@ def test_readiness_alone_never_claims_b0a_or_launches(tmp_path, monkeypatch):
 
 
 @pytest.mark.process_e2e
-@pytest.mark.parametrize("outcome", ["ready", "requirements_error", "identity_missing"])
-def test_protocol_probe_uses_no_model_and_cleans_workspace(tmp_path, monkeypatch, outcome):
+@pytest.mark.parametrize("outcome,permissions", [
+    ("ready",False), ("requirements_error",False), ("identity_missing",False),
+    ("ready",True), ("network_mismatch",True), ("resume_identity_changed",True),
+])
+def test_protocol_probe_uses_no_model_and_cleans_workspace(tmp_path, monkeypatch, outcome, permissions):
     """A fake local stdio peer proves protocol handling, never live Codex ability."""
     command = tmp_path / "fake-codex"
     received = tmp_path / "requests.jsonl"
@@ -93,14 +96,19 @@ for line in sys.stdin:
     if 'id' not in msg:
         continue
     if msg['method'] == 'initialize':
-        reply = {{'id': msg['id'], 'result': {{}}}}
+        reply = {{'id': msg['id'], 'result': {{'userAgent':'fixture-codex/1'}}}}
     elif {outcome!r} == 'requirements_error':
         reply = {{'id': msg['id'], 'error': {{'code': -32603,
             'message': 'failed to load workspace requirements: private-details'}}}}
     else:
         thread = {{'id': 'fixture-thread', 'sessionId': 'fixture-session'}}
         if {outcome!r} == 'identity_missing': thread.pop('id')
-        reply = {{'id': msg['id'], 'result': {{'thread': thread}}}}
+        if {outcome!r} == 'resume_identity_changed' and msg['method'] == 'thread/resume': thread['id'] = 'wrong'
+        params = msg['params']
+        network = params.get('config',{{}}).get('sandbox_workspace_write',{{}}).get('network_access',False)
+        if {outcome!r} == 'network_mismatch' and msg['method'] == 'thread/resume': network = not network
+        reply = {{'id': msg['id'], 'result': {{'thread': thread, 'approvalPolicy':params['approvalPolicy'],
+            'sandbox':{{'type':'workspaceWrite', 'networkAccess':network, 'writableRoots':[]}}}}}}
     print(json.dumps(reply), flush=True)
 ''')
     command.chmod(0o700)
@@ -110,11 +118,11 @@ for line in sys.stdin:
     output = tmp_path / "evidence"
     output.mkdir()
     limits = json.loads(probe.guard.DEFAULT_CONFIG.read_text())["limits"]
-    rc = probe._protocol_probe(output, limits)
+    rc = probe._protocol_probe(output, limits, permissions=permissions)
     result = json.loads((output / "protocol.json").read_text())
     assert rc == (0 if outcome == "ready" else 1)
     requests = [json.loads(line) for line in received.read_text().splitlines()]
-    assert [item["method"] for item in requests] == ["initialize", "initialized", "thread/start"]
+    assert [item["method"] for item in requests] == ["initialize", "initialized", "thread/start"] + (["thread/resume"] if permissions else [])
     assert requests[-1]["params"]["sandbox"] == "workspace-write"
     assert requests[-1]["params"]["approvalPolicy"] == "never"
     assert not list(output.glob("workspace-*"))
@@ -122,6 +130,16 @@ for line in sys.stdin:
     assert "private-details" not in (output / "protocol.json").read_text()
     if outcome == "requirements_error":
         assert result["diagnostic"] == "workspace_requirements_unavailable"
+    if permissions:
+        assert result["r0a_protocol_passed"] is (outcome == "ready")
+        assert requests[-1]["params"]["config"] == probe.RootPermissions().thread()["config"]
+        trace = json.loads((output / "permissions-protocol.json").read_text())
+        assert [item["method"] for item in trace] == ['initialize','thread/start','thread/resume']
+        if outcome == 'ready':
+            assert result['native_user_agent'] == 'fixture-codex/1'
+            assert result['same_thread_resumed']
+        else:
+            assert result['diagnostic'] in {'root_permissions_mismatch','resumed_platform_identity_changed'}
 
 
 @pytest.mark.parametrize("code,message,expected", [

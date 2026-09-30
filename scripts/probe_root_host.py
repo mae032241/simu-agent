@@ -22,6 +22,7 @@ import tomllib
 # candidate subprocesses still use their explicitly installed interpreter.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from scidiscovery.platforms.codex_app_server import AppServer, HostLimits, config_flags, rpc_diagnostic
+from scidiscovery.platforms.codex_root_host import RootPermissions
 
 try:
     from scripts import run_tests as guard
@@ -62,7 +63,7 @@ def thread_start_params(workspace: str) -> dict:
             "approvalPolicy": "never", "sandbox": "workspace-write"}
 
 
-def _protocol_probe(output: Path, limits: dict) -> int:
+def _protocol_probe(output: Path, limits: dict, *, permissions: bool = False) -> int:
     """Child of the existing resource supervisor; no model turn is permitted."""
     # Check again after waiting for the serial lock, before starting Codex.
     result = preflight()
@@ -73,6 +74,8 @@ def _protocol_probe(output: Path, limits: dict) -> int:
     result.update(phase="protocol", status="failed", completed_methods=[])
     connection = None
     workspace = None
+    exchanges = []
+    policy = RootPermissions() if permissions else None
     try:
         workspace = tempfile.TemporaryDirectory(prefix="workspace-", dir=output)
         scratch = workspace.name
@@ -114,47 +117,78 @@ def _protocol_probe(output: Path, limits: dict) -> int:
                 result["last_method"] = method
                 reply = connection.rpc(method, params)
                 result["completed_methods"].append(method)
+                if permissions:
+                    exchanges.append({"method": method, "request": params, "response": {
+                        key: reply[key] for key in ("userAgent", "thread", "approvalPolicy", "sandbox") if key in reply}})
                 return reply
 
-            rpc("initialize", {"clientInfo": {"name": "scid_root_host_probe", "version": "0.1.0"}})
+            initialized = rpc("initialize", {"clientInfo": {"name": "scid_root_host_probe", "version": "0.1.0"},
+                **({"capabilities": {"experimentalApi": True}} if permissions else {})})
             connection.notify("initialized", {})
-            reply = rpc("thread/start", thread_start_params(scratch))
+            params = ({"cwd": scratch, "ephemeral": False, **policy.thread()} if policy else thread_start_params(scratch))
+            reply = rpc("thread/start", params)
+            if policy:
+                policy.verify(reply, cwd=scratch)
             thread = reply["thread"]
             result.update(status="initialized_without_model_turn",
                 actual_thread_id_present=bool(thread.get("id")),
                 actual_session_id_present=bool(thread.get("sessionId")))
             if not thread.get("id"):
                 raise RuntimeError("thread_identity_missing")
+            if policy:
+                if not thread.get("sessionId"):
+                    raise RuntimeError("thread_session_identity_missing")
+                resumed = rpc("thread/resume", {"threadId": thread["id"], "cwd": scratch,
+                    "excludeTurns": True, **policy.thread()})
+                policy.verify(resumed, cwd=scratch)
+                actual = resumed.get("thread", {})
+                if any(actual.get(key) != thread[key] for key in ("id", "sessionId")):
+                    raise RuntimeError("resumed_platform_identity_changed")
+                result.update(status="permissions_verified_without_model_turn", r0a_protocol_passed=True,
+                    effective_permissions=policy.declaration(), same_thread_resumed=True,
+                    native_user_agent=initialized.get("userAgent"))
     except Exception as error:
         result.update(status="failed", failure_type=type(error).__name__)
+        if str(error) in {"root_permissions_mismatch", "resumed_platform_identity_changed", "thread_session_identity_missing"}:
+            result["diagnostic"] = str(error)
     finally:
         if connection is not None:
             connection.close()
         if workspace is not None:
             workspace.cleanup()
+        if permissions:
+            result.setdefault("r0a_protocol_passed", False)
+            (output / "permissions-protocol.json").write_text(json.dumps(exchanges, indent=2) + "\n")
         (output / "protocol.json").write_text(json.dumps(result, indent=2) + "\n")
-    return 0 if result["status"] == "initialized_without_model_turn" else 1
+    expected = "permissions_verified_without_model_turn" if permissions else "initialized_without_model_turn"
+    return 0 if result["status"] == expected else 1
 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True, help="new private result directory")
     parser.add_argument("--initialize", action="store_true", help="also start a thread, without any model request")
+    parser.add_argument("--permissions", action="store_true", help="R0-A: verify production permissions on start and same-thread resume; never start a model turn")
     parser.add_argument("--protocol-child", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     output = args.output.resolve()
     limits = json.loads(guard.DEFAULT_CONFIG.read_text())["limits"]
+    host_resources = json.loads((Path(__file__).with_name("root_host_resources.json")).read_text())
+    if args.permissions:
+        limits["timeout_seconds"] = host_resources["startup_timeout_seconds"]
     if args.protocol_child:
         # Only the supervisor may launch this child, with its still-held serial lock.
         descriptor = int(os.environ["SCID_HOST_PROBE_LOCK_FD"])
         if not stat.S_ISREG(os.fstat(descriptor).st_mode):
             raise RuntimeError("supervision_required")
-        return _protocol_probe(output, limits)
+        return _protocol_probe(output, limits, permissions=args.permissions)
     os.umask(0o077)
     output.mkdir(parents=True, exist_ok=False)
     result = preflight()
+    if args.permissions:
+        result["r0a_protocol_passed"] = False
     (output / "preflight.json").write_text(json.dumps(result, indent=2) + "\n")
-    if result["blockers"] or not args.initialize:
+    if result["blockers"] or not (args.initialize or args.permissions):
         print(json.dumps(result))
         return 2 if result["blockers"] else 0
     with (Path("/tmp") / f"scid-tests-{os.getuid()}.lock").open("a") as lock:
@@ -170,7 +204,10 @@ def main(argv=None) -> int:
             environment[key] = "1"
         (output / "fixture-logs").mkdir()
         command = [sys.executable, str(Path(__file__).resolve()), "--protocol-child", "--output", str(output)]
-        measured = guard.run_one(command, environment, limits, output, lock.fileno())
+        if args.permissions:
+            command.append("--permissions")
+        measured = guard.run_one(command, environment, limits, output, lock.fileno(),
+            limit_address_space=host_resources["limit_address_space"] if args.permissions else True)
         (output / "resource.json").write_text(json.dumps(measured, indent=2) + "\n")
         protocol_path = output / "protocol.json"
         protocol = json.loads(protocol_path.read_text()) if protocol_path.exists() else None
