@@ -373,6 +373,11 @@ def _validate_operation_contracts(plugin_map: dict[str, PluginDefinition], compo
             ):
                 _fail("operation_ports_empty", plugin.plugin_id, op_id)
             names = [port.name for port in (*operation.inputs, *operation.outputs)]
+            if operation.authorship_source_ports and (
+                    operation.executor.kind != "transform"
+                    or len(set(operation.authorship_source_ports)) != len(operation.authorship_source_ports)
+                    or not set(operation.authorship_source_ports) <= {port.name for port in operation.inputs}):
+                _fail("authorship_source_invalid", plugin.plugin_id, op_id)
             if not set(operation.independent_review_ports) <= {port.name for port in operation.inputs}:
                 _fail("independent_review_subject_invalid", plugin.plugin_id, op_id)
             if len(names) != len(set(names)): _fail("operation_port_duplicate", plugin.plugin_id, op_id)

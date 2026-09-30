@@ -107,6 +107,7 @@ def _transform(
     outputs: tuple[OutputPortSpec, ...],
     input_admission: InputAdmissionSpec | None = None,
     review: ReviewSpec | None = None,
+    authorship_source_ports: tuple[str, ...] = (),
     guards: tuple[str, ...] = (),
     max_input_bytes: int = 32 * 1024 * 1024,
     max_output_bytes: int = 16 * 1024 * 1024,
@@ -121,6 +122,7 @@ def _transform(
         outputs=outputs,
         consequence="scientific",
         input_admission=input_admission,
+        authorship_source_ports=authorship_source_ports,
         review=review,
         guards=tuple(ComponentRef(item) for item in guards),
         limits=LimitsSpec(
@@ -139,6 +141,7 @@ BASE_OPERATIONS = (
         "A scientific intake exists and its provisional status must be preserved.",
         "Extracting new evidence or changing scientific content.",
         component="intake_split",
+        authorship_source_ports=("scientific_intake",),
         inputs=(
             _input(
                 "scientific_intake",

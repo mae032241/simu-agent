@@ -145,24 +145,42 @@ class WorkerConnections:
             return None  # Historical ambiguity means full startup guidance, not guessed reuse.
         return rows[0]["run_id"] if rows else None
 
-    def _require_independent(self, connection, status, session, thread):
-        for item in status.inputs:
-            if item.port_name not in self.runs.compiled_operation(status).spec.independent_review_ports:
+    def review_authors(self, connection, compiled, inputs, instance_id):
+        """One source of pre-creation author eligibility and attach independence."""
+        from ...operations.invoke import OperationInvocationError
+        owners = set()
+        origins = self.runs.input_origins(instance_id)
+        ports = {port.name: port for port in compiled.spec.inputs}
+        for item in inputs:
+            if item.port_name not in compiled.spec.independent_review_ports:
                 continue
-            author = item.producer_run_id or self.runs.artifacts.catalog(item.artifact_ref).labels.get("tool_producer_run")
-            if author is None:
-                raise RunStateConflict("Independent review requires a sealed subject with a known author.")
-            owners = []
-            for prior in self.runs.task_lineage(author):
-                row = connection.execute("SELECT platform_session,thread_id FROM worker_connections WHERE run_id=?", (prior.run_id,)).fetchone()
-                if row is not None:
-                    owners.append(tuple(row))
-                owners.extend(tuple(row) for row in connection.execute(
-                    "SELECT platform_session,thread_id FROM worker_participants WHERE run_id=? AND thread_id IS NOT NULL", (prior.run_id,)))
-            if not owners:
-                raise RunStateConflict("The subject's author identity is unavailable for independent review.")
-            if (session, thread) in owners:
-                raise RunStateConflict("Independent review requires a different Agent from every participating author.")
+            public = ports[item.port_name]
+            while public.derivation is not None:
+                public = ports[public.derivation.anchor_port]
+            public_port = public.name if public.agent_visible else None
+            try:
+                authors = origins.review_author_runs(item.artifact_name, item.artifact_ref)
+            except OperationInvocationError as error:
+                raise OperationInvocationError(error.reason_code, port=public_port,
+                    message=error.details[0]['message']) from error
+            for author in authors:
+                author_owners = set()
+                for prior in self.runs.task_lineage(author):
+                    row = connection.execute("SELECT platform_session,thread_id FROM worker_connections WHERE run_id=?", (prior.run_id,)).fetchone()
+                    if row is not None:
+                        author_owners.add(tuple(row))
+                    author_owners.update(tuple(row) for row in connection.execute(
+                        "SELECT platform_session,thread_id FROM worker_participants WHERE run_id=? AND thread_id IS NOT NULL", (prior.run_id,)))
+                if not author_owners:
+                    raise OperationInvocationError("review_author_identity_unavailable", port=public_port,
+                        message="The subject's participating author identity is unavailable. Repair the original task's verified authorship before requesting independent review.")
+                owners.update(author_owners)
+        return owners
+
+    def _require_independent(self, connection, status, session, thread):
+        owners = self.review_authors(connection, self.runs.compiled_operation(status), status.inputs, status.instance_id)
+        if (session, thread) in owners:
+            raise RunStateConflict("Independent review requires a different Agent from every participating author.")
 
     def helper_request(self, run_id, request):
         """Reserve or revoke Run tool access; native spawn/wait/close stays on the platform."""

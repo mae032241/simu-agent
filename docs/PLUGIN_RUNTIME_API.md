@@ -10,9 +10,20 @@ visibility and versioned schema IDs remain necessary platform contracts.
 Support is attached to the values and callbacks below, at their existing import
 paths. It does not cover every symbol in their containing packages. Source type
 annotations and compiled schemas are authoritative; this reference does not define
-parallel types. Current plugin protocol is `1`, Operation ABI is `24`, and component
+parallel types. Current plugin protocol is `1`, Operation ABI is `25`, and component
 protocol versions are declared independently. Changing an implementation or resource
 still changes compiled identity.
+
+`OperationSpec.independent_review_ports` declares exact subjects whose authors
+must be verified by control before preflight/invoke can admit independent review.
+The public Operation view projects this requirement. Reviewer attachment checks
+that the native reviewer differs from all participating authors, including helpers
+and recovery ancestors. Deterministic projections explicitly retain contributors
+with `authorship_source_ports`; ABI 25 validates these as unique transform input
+ports and includes them in compiled identity. Optional absent inputs add no contributors;
+at least one verified contributor is needed for independent review. Control follows verified producer
+families and these declared edges; copied labels, arbitrary parents and raw user
+text do not establish authorship. Agent callers supply scientific names only.
 
 `InputPortSpec.exposure="material"` declares a paired wildcard evidence inventory
 (`schema="*"`, `media_types=("*/*",)`). Control applies `AgentSettings.input_materials`
@@ -95,6 +106,13 @@ operation-service loader supplied at construction. Root facades and gateways do
 not replace it. Runtime/daemon and standalone Worker assembly use this same owner
 for cancellation and finalization; the plugin continues to receive only the
 existing scoped `ExperimentTools` protocol.
+
+A requested implementation review records an exact dependency on the existing
+owner Run. Background scheduling admits that review while the owner waits, charges
+it to the frozen task budget, and wakes Root for its sealed outcome rather than
+queue/heartbeat changes. The existing Worker `review` action reads the bounded
+sealed scientific review form; Root need not transcribe it. Waiting never grants
+execution permission: a required review must pass for the exact implementation.
 
 `progress_summary(progress)` projects executor timing and up to two log metadata
 records, without log text. Only UI callers opt into redacted, bounded last-line

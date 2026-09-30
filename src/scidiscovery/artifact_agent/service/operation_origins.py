@@ -21,6 +21,57 @@ class OperationOrigins:
     def _instance_id(self):
         return self.instance_id
 
+    def review_author_runs(self, artifact_name, ref):
+        """Resolve authors only through verified producers and declared projections.
+
+        Arbitrary parents, copied labels and nearby same-schema objects confer no
+        authorship. The configured source bound also limits this traversal.
+        """
+        limit = self.runs.agent_settings.progression.related_source_limit
+        visited, active, cache = set(), set(), {}
+
+        def resolve(name, current):
+            if current in active or (current not in visited and len(visited) >= limit):
+                raise OperationInvocationError("review_authorship_unavailable",
+                    message="The exact subject's authorship cannot be resolved within the configured source bound.")
+            if current in cache:
+                return cache[current]
+            visited.add(current)
+            active.add(current)
+            envelope = self.artifacts.verify(current)
+            tool_run = envelope.labels.get("tool_producer_run")
+            if tool_run:
+                owner = self.runs.status(tool_run)
+                records = [r for r in self.runs.tool_evidence(tool_run)
+                    if ArtifactRef.model_validate(r['artifact_ref']) == current
+                    and r['tool_name'] == envelope.labels.get('tool_name')]
+                if owner.instance_id != self.instance_id or len(records) != 1:
+                    raise OperationInvocationError("review_authorship_unavailable",
+                        message="The subject has no verified original tool receipt in this instance.")
+                authors = {tool_run}
+            else:
+                family = self._producer_output_family_from_envelope(name, envelope)
+                if family is None or family.producer_instance_id != self.instance_id:
+                    raise OperationInvocationError("review_subject_not_authored",
+                        message="Select an authored scientific result for independent review. Original text alone can be analyzed by a source-based scientific task; control cannot establish review authorship for this input.")
+                if family.producer_run_id:
+                    authors = {family.producer_run_id}
+                else:
+                    if family.contract_availability != 'current':
+                        raise OperationInvocationError("review_authorship_unavailable",
+                            message="The subject's exact transformation contract is unavailable.")
+                    ports = self._operation_catalog.operation(family.operation_id).spec.authorship_source_ports
+                    sources = [item for item in family.producer_inputs if item.port_name in ports]
+                    if not sources:
+                        raise OperationInvocationError("review_authorship_unavailable",
+                            message="This transformation does not declare traceable scientific contributors; review its authored source or repair the plugin contract.")
+                    authors = set().union(*(resolve(item.artifact_name, item.ref) for item in sources))
+            active.remove(current)
+            cache[current] = authors
+            return authors
+
+        return frozenset(resolve(artifact_name, ref))
+
     def validate_inputs(self, compiled, inputs):
         """Re-derive every declared edge, comparing refs rather than navigation names."""
         ports = {port.name: port for port in compiled.spec.inputs}

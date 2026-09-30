@@ -87,11 +87,9 @@ def test_live_prepare_review_and_same_run_execution_close_the_loop(tmp_path, mon
     assert navigation['evidence_outputs'] == [{'artifact_name':subject, 'schema':'opaque'}]
     assert navigation['evidence_outputs_status'] == 'sealed_materials_not_final_report'
     assert navigation['output_artifact_name'] is None
-    assert f.worker.call_tool('worker_experiment_prepare', {}) == prepared
+    assert f.worker.call_tool('worker_experiment_prepare', {})['state'] == 'waiting_for_review'
     command = {'action': 'start', 'implementation': alias}
-    with pytest.raises(DiagnosticError) as caught:
-        f.worker.call_tool('worker_experiment_execute', command)
-    assert "action='review'" in caught.value.details[0]['message']
+    assert f.worker.call_tool('worker_experiment_execute', command)['state'] == 'waiting_for_review'
     handoff = f.worker.call_tool('worker_experiment_execute', {'action':'review', 'implementation':alias})
     assert handoff['review'] == prepared['review']
     assert handoff['review']['subject_artifact_name'] == subject
@@ -127,10 +125,8 @@ def test_live_prepare_review_and_same_run_execution_close_the_loop(tmp_path, mon
     assert second['evidence_outputs'][0]['artifact_name'] == revised['artifact_name']
     assert second['evidence_outputs_next_offset'] is None
     assert 'evidence_outputs' not in f.root.call_tool('run_status', {'name':'continuation', 'intent':'status'})
-    with pytest.raises(DiagnosticError) as caught:
-        f.worker.call_tool('worker_experiment_execute', {'action':'start', 'name':'new-version',
-            'implementation':revised['implementation']})
-    assert caught.value.details[0]['code'] == 'experiment_execution_review_required'
+    assert f.worker.call_tool('worker_experiment_execute', {'action':'start', 'name':'new-version',
+        'implementation':revised['implementation']})['state'] == 'waiting_for_review'
     bindings = f.runtime.scheduler_bindings.list(instance=f.instance.instance_id, namespace='execution',
         name_prefix='experiment-' + f.run_id + '-')
     assert len(bindings) == 1
@@ -184,10 +180,11 @@ def test_generated_review_request_fits_public_name_contract():
     names = ['a' * 256, 'a' * 255 + 'b']
     requests = []
     for name in names:
-        service = ExperimentExecution(runs=SimpleNamespace(publish_sealed_material=lambda *args: name),
+        service = ExperimentExecution(runs=SimpleNamespace(publish_sealed_material=lambda *args: name,
+            request_implementation_review=lambda *args: None, review_wait=lambda _: {'state':'requested'}),
             executions=None, bridge=None, collection=None, approval_base_url=None)
-        request = service.review_handoff(SimpleNamespace(recovery_policy={'require_execution_review':True}),
-            {'alias':'material'})['request']
+        request = service.review_handoff(SimpleNamespace(run_id='fixture-owner', recovery_policy={'require_execution_review':True}),
+            {'alias':'material', 'artifact_ref':{'artifact_id':'art_'+'a'*32, 'sha256':'a'*64, 'kind':'fixture', 'schema_id':'fixture.v1'}})['request']
         OperationCallInput.model_validate_json(json.dumps(request))
         assert request['inputs'][0]['artifact_names'] == [name]
         requests.append(request['name'])

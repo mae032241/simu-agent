@@ -161,11 +161,21 @@ class ExperimentExecution:
         request_name = name + ".review"
         if len(request_name) > 256:
             request_name = name[:230] + ".review-" + hashlib.sha256(name.encode()).hexdigest()[:16]
-        return {"required": bool((run.recovery_policy or {}).get("require_execution_review")),
+        result = {"required": bool((run.recovery_policy or {}).get("require_execution_review")),
             "subject_artifact_name": name,
             "request": {"name": request_name, "operation_id": "science.object.review.v1",
                 "inputs": [{"port": "subject", "artifact_names": [name]}],
                 "instruction": "Independently review this exact sealed implementation against its bound research objective, scientific constraints and required observables. Report missing evidence and limitations explicitly; execution permission does not establish scientific validity."}}
+
+        from ..schema.refs import ArtifactRef
+        self.runs.request_implementation_review(run.run_id,
+            ArtifactRef.model_validate(implementation['artifact_ref']), result['request'])
+        wait = self.runs.review_wait(run.run_id)
+        result['state'] = wait['state']
+        if wait['state'] == 'completed':
+            reviewer = self.runs.status(wait['reviewer_run_id'])
+            result['outcome'] = self._review_payload(reviewer).model_dump(mode='json')
+        return result
 
     def _implementation_record(self, context, payload_ref):
         records = [item for item in self.runs.available_material_records(self.runs.status(context.run_id))
@@ -235,12 +245,21 @@ class ExperimentExecution:
             return None
         from ..schema.refs import ArtifactRef
         from .sealed_materials import material_error
-        from ...general_science_experiment_review import ExperimentReview
         subject = ArtifactRef.model_validate(implementation["artifact_ref"])
         review = self.runs.latest_subject_review(run.instance_id, subject)
         if review is None or review.output_ref is None:
             raise material_error("experiment_execution_review_required",
                 "Independent implementation review is required. Call worker_experiment_execute(action='review', implementation=<the same reference>) for the exact public subject and operation_invoke request. Ask the scheduler to dispatch an independent reviewer, then retry start with the same implementation after a sealed pass. No execution was created.")
+        result = self._review_payload(review)
+        if result.verdict != "pass":
+            raise material_error("experiment_execution_review_not_passed",
+                "The latest independent review of this exact implementation did not pass. Resolve its findings and review any revised implementation before execution; budget approval does not override this requirement. Call worker_experiment_execute(action='review', implementation=<the chosen reference>) for the exact review request.")
+        return review.output_ref
+
+    def _review_payload(self, review):
+        """The same sealed scientific form serves owner reading and execution admission."""
+        from .sealed_materials import material_error
+        from ...general_science_experiment_review import ExperimentReview
         compiled = self.runs.operation_catalog.operation("science.object.review.v1")
         if review.operation_version != compiled.spec.version or "subject" not in compiled.spec.independent_review_ports:
             raise material_error("experiment_execution_review_incompatible",
@@ -248,11 +267,7 @@ class ExperimentExecution:
         envelope = self.runs.artifacts.catalog(review.output_ref)
         if envelope.schema_id != "scidiscovery.experiment-review.v1" or envelope.size_bytes > compiled.spec.limits.max_output_bytes:
             raise material_error("experiment_execution_review_invalid", "The exact implementation review has no valid sealed review result. Use worker_experiment_execute(action='review', implementation=<the same reference>) to obtain the exact review subject for repair.")
-        result = ExperimentReview.model_validate_json(self.runs.artifacts.read(review.output_ref), strict=True)
-        if result.verdict != "pass":
-            raise material_error("experiment_execution_review_not_passed",
-                "The latest independent review of this exact implementation did not pass. Resolve its findings and review any revised implementation before execution; budget approval does not override this requirement. Call worker_experiment_execute(action='review', implementation=<the chosen reference>) for the exact review request.")
-        return review.output_ref
+        return ExperimentReview.model_validate_json(self.runs.artifacts.read(review.output_ref), strict=True)
 
     def command(self, context, request):
         run = self.runs.running_task(context.run_id)

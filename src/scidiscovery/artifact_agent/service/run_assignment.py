@@ -58,7 +58,7 @@ def assignment_json(
             "instruction": bound.instruction or "",
             **({"execution_requirements": {
                 "independent_implementation_review": "required",
-                "instruction": "Before formal execution, obtain an independent science.object.review.v1 pass for the exact sealed implementation. Control resolves the review automatically. Revised implementations require their own review; diagnostic tools remain available."}}
+                "instruction": "Before formal execution, obtain an independent science.object.review.v1 pass for the exact sealed implementation. Control resolves the review automatically. Revised implementations require their own review. A review request suspends controlled work until the reviewer finishes; reads, status and cancellation remain available. Continue this same task after the sealed review."}}
                if bound.require_execution_review else {}),
             "role_instructions": operation_role_instructions(bound.compiled),
             "narrative_instruction": narrative_instruction(

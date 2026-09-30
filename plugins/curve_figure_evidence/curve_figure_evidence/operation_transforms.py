@@ -137,5 +137,5 @@ FIGURE_OPERATIONS = (
         ), guards=(ComponentRef("figure_parentage"),), max_input_bytes=355*1024*1024,
         applies_when="The exact selected figure family and its independent audit are available.",
         not_for="Selecting scientific targets, interpreting mechanisms, or executing a solver.",
-    ).model_copy(update={"input_validation": FAMILY_VALIDATION}),
+    ).model_copy(update={"input_validation": FAMILY_VALIDATION, "authorship_source_ports": ("scientific_intake",)}),
 )

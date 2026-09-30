@@ -89,6 +89,9 @@ class RootRunRoutes(RunReadProjection):
             result["sealed_stages"] = read_stage_deliveries(self.runs, value,
                 instance_id=self._instance_id(), **{key: request[key] for key in (
                     "stage_offset", "stage_limit", "stage_reference", "stage_text_offset")})
+        dependency = self.runs.review_wait_projection(value.run_id)
+        if dependency is not None:
+            result['review_dependency'] = dependency
         return result
 
     def _scientific_run_diagnostic(self, value, diagnostic):

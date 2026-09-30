@@ -103,7 +103,7 @@ def test_serial_admission_does_not_block_worker_result(progression):
     p.coordinator.tick()
     root = p.root.__class__(p.facade(p.coordinator.host.scheduler_session))
     _invoke(root, 'first')
-    with pytest.raises(Exception, match='one queued/running'):
+    with pytest.raises(Exception, match='operation_busy'):
         _invoke(root, 'second')
     worker = _worker(p.catalog, p.runtime)
     worker.call_tool('worker_open_assignment', {})
@@ -373,18 +373,15 @@ def test_task_and_round_limits_are_checked_without_losing_usage(progression):
     worker.call_tool('worker_open_assignment', {})
     _write_result(worker)
     worker.call_tool('worker_submit_result', {})
+    settings = p.runtime.scheduler_bindings.control_settings(p.instance)
+    settings['effective']['progression']['max_tasks'] = 1
     from unittest.mock import patch
-    real_status = p.runtime.scheduler_bindings.progression_status
-    def one_task(**kwargs):
-        value = real_status(**kwargs)
-        if kwargs.get('internal'):
-            settings = json.loads(value['config_json'])
-            settings['effective']['progression']['max_tasks'] = 1
-            value['config_json'] = json.dumps(settings)
-        return value
-    with patch.object(p.runtime.scheduler_bindings, 'progression_status', one_task):
-        with pytest.raises(Exception, match='task budget exhausted'):
-            root.facade._background_agent_admission(max_attempts=1)
+    with p.runtime.scheduler_bindings._connect() as db:
+        db.execute('UPDATE scheduler_progression SET config_json=? WHERE instance_id=?',
+            (json.dumps(settings), p.instance))
+    with patch.object(p.runtime.scheduler_bindings, 'control_settings', return_value=settings):
+        with pytest.raises(Exception, match='background_task_budget_exhausted'):
+            _invoke(root, 'budget-exhausted')
     limits = json.loads(row(p)['config_json'])['effective']['progression']
     assert not p.coordinator._check_budget(row(p), dict(limits, max_rounds=1))
     assert checkpoint(p)['rounds'] == 1
@@ -442,7 +439,7 @@ def test_unchanged_failed_request_cannot_evade_attempt_limit_by_new_name(progres
     _invoke(root, 'failed.task')
     run = p.runtime.runs.list(instance_id=p.instance)[0]
     p.runtime.runs.record_failure(run.run_id, reason='fixture runtime failure', expected_state='queued', expected_last_activity_at=run.last_activity_at)
-    with pytest.raises(Exception, match='same task already failed'):
+    with pytest.raises(Exception, match='background_unchanged_task_failed'):
         _invoke(root, 'renamed.retry')
     assert len(p.runtime.runs.list(instance_id=p.instance)) == 1
 

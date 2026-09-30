@@ -16,7 +16,7 @@ from ..schema.run_signal import SchedulerSignal
 
 
 # Additive read metadata only; NULL preserves records created before this field.
-RUN_READ_COLUMNS = {"decision_fields_json": ("BLOB", None)}
+RUN_READ_COLUMNS = {"decision_fields_json": ("BLOB", None), "review_wait_json": ("BLOB", None)}
 
 
 class RunError(RuntimeError):

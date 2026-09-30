@@ -279,6 +279,10 @@ def test_schedule_rechecks_attempt_budget_after_another_run_consumes_it(tmp_path
     bound, _ = root.facade._configured_operation_call(values)
     assert root.call_tool("operation_preflight", request.model_dump())["admissible"]
     root.call_tool("operation_invoke", _request("winner", draft_from="draft_source"))
+    winner_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace="run", name="winner")
+    winner = runtime.runs.status(winner_id)
+    runtime.runs.record_failure(winner_id, reason="Finish the consuming task; its attempt remains spent.",
+        expected_state=winner.state, expected_last_activity_at=winner.last_activity_at)
     source_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace="run", name="draft_source")
     with pytest.raises(RunAttemptLimit, match="2 Runs used, limit 2"):
         runtime.runs.schedule(bound, instance_id=instance.instance_id,

@@ -32,7 +32,10 @@ registry for identity. Ordinary task stages belong to that Worker; do not
 turn them into separate Root approvals. At most one complete Agent task may be
 queued/running. Helpers belong to its owner and retain native permissions.
 Use progression_report only when recording a goal conclusion, specific question,
-or waiting condition is useful. Finish this turn after dispatch or while waiting;
+or waiting condition is useful. A review_requests entry is an exact dependency: let its owner wait, dispatch only
+that independent review, then read its result and notify the existing owner to
+continue. It grants no permission for unrelated concurrent work.
+Finish this turn after dispatch or while waiting;
 the service wakes you on authoritative changes. Do not poll unchanged status or
 invent retries. User text does not authorize an approval or execution exception.
 """
@@ -168,14 +171,18 @@ class ProgressionCoordinator:
         return True
 
     def _snapshot(self, row):
-        """Only final Runs and sealed approval changes wake scientific decisions."""
+        """Final results and exact review dependencies wake scientific decisions."""
         facade = self.facade_factory(row['owner_session'])
         checkpoint = json.loads(row['checkpoint_json'])
-        runs = []
+        runs, review_requests = [], []
         selected = dict(checkpoint.get('relevant_runs', {}))
         selected.update({name: v['run_id'] for name, v in checkpoint.get('admissions', {}).items() if v.get('run_id')})
         for name, run_id in selected.items():
             value = self.runtime.runs.status(run_id)
+            dependency = self.runtime.runs.review_wait_projection(run_id)
+            if dependency is not None:
+                review_requests.append(dict(owner=name, request=dependency['request'],
+                    state=('waiting' if dependency['state'] in {'requested', 'queued', 'running'} else dependency['state'])))
             if value.state not in {'queued', 'running'}:
                 runs.append(dict(name=name, state=value.state, output=value.output_ref.model_dump(mode='json') if value.output_ref else None,
                     reason=value.reason))
@@ -184,7 +191,8 @@ class ProgressionCoordinator:
             value = facade.approval_status(name=name)
             if value['status'] != 'pending':
                 approvals.append(value)
-        return dict(goal=row['objective_ref_json'], runs=runs, approvals=approvals, messages=checkpoint.get('messages', []))
+        return dict(goal=row['objective_ref_json'], runs=runs, approvals=approvals, messages=checkpoint.get('messages', []),
+            **({'review_requests':review_requests} if review_requests else {}))
 
     def _brief(self, row, snapshot, limit):
         facade = self.facade_factory(row['owner_session'])
@@ -201,6 +209,12 @@ class ProgressionCoordinator:
             related_results_omitted=checkpoint.get('relevant_omitted', False),
             limitations=['Originals and full contracts are available through public tools.',
                 'Stages are previews; only final sealed outputs establish task conclusions.'])
+        brief['review_requests'] = []
+        for entry in snapshot.get('review_requests', []):
+            run_id = self.bindings.resolve(instance=self.instance, namespace='run', name=entry['owner'])
+            dependency = self.runtime.runs.review_wait_projection(run_id)
+            if dependency is not None:
+                brief['review_requests'].append(dict(owner=entry['owner'], **dependency))
         brief['active_tasks'] = []
         for name, intent in checkpoint.get('admissions', {}).items():
             if not intent.get('run_id'):
@@ -240,6 +254,9 @@ class ProgressionCoordinator:
             if brief['approval_changes']:
                 brief['approval_changes'].pop(0)
                 brief['omissions'].append(dict(read='approval_list', reason='context_limit'))
+            elif brief['review_requests']:
+                entry = brief['review_requests'].pop(0)
+                brief['omissions'].append(dict(name=entry['owner'], read='run_status', intent='status'))
             elif brief['changes']:
                 entry = brief['changes'].pop(0)
                 brief['omissions'].append(dict(name=entry['name'], read='run_status'))

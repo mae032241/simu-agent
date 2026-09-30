@@ -8,7 +8,7 @@ from typing import Any, Literal, Mapping
 from types import MappingProxyType
 from pydantic import BaseModel, ConfigDict, Field
 PLUGIN_PROTOCOL_VERSION = "1"
-OPERATION_ABI_VERSION = "24"
+OPERATION_ABI_VERSION = "25"
 _ID = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
 _JSON_POINTER = re.compile(r"^/(?:[^~/]|~[01])*(?:/(?:[^~/]|~[01])*)*$")
 _DOMAIN = re.compile(r"^(?:\*\.)?[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
@@ -399,6 +399,8 @@ class OperationSpec(FrozenSpec):
     consequence: str
     decision_fields: tuple[str, ...] = ("summary", "conclusion", "limitations", "remaining_question", "remaining_contradiction")
     independent_review_ports: tuple[str, ...] = ()
+    # Explicit scientific contributors retained by deterministic projection.
+    authorship_source_ports: tuple[str, ...] = ()
     input_admission: InputAdmissionSpec | None = None
     input_validation: InputValidationSpec | None = None
     complete_transform_family: CompleteTransformFamilySpec | None = None
@@ -505,6 +507,7 @@ class SchedulerOperationView(FrozenSpec):
     not_for: str
     inputs: tuple[SchedulerInputPortView, ...]
     outputs: tuple[SchedulerPortView, ...]
+    review_subject_policy: dict[str, Any] | None = None
     qualification_policy: str | None = None
     input_validation: dict[str, Any] | None = None
     complete_transform_family: CompleteTransformFamilySpec | None = None
@@ -556,6 +559,10 @@ def scheduler_operation_view(spec: OperationSpec) -> SchedulerOperationView:
         not_for=spec.description.not_for,
         inputs=tuple(input_port(item) for item in spec.inputs if item.agent_visible and item.derivation is None),
         outputs=tuple(output_port(item) for item in spec.outputs if item.agent_visible),
+        review_subject_policy=({"ports": [port.name for port in spec.inputs
+            if port.name in spec.independent_review_ports and port.agent_visible and port.derivation is None],
+            "requirement": "Review exact sealed scientific results with control-verifiable participating authors. Original user text alone is not an authored scientific result; choose a source-based scientific task to analyze it. Control resolves authors, including declared deterministic projections, before creating the review. The actual reviewer must differ from every participating author."}
+            if spec.independent_review_ports else None),
         qualification_policy=("This action consumes an approved scientific foundation. Control checks the exact bound subject against its declared approval provider; readable historical material does not inherit qualification."
             if spec.input_admission and spec.input_admission.approval_kind else None),
         input_validation=input_validation_projection(spec),

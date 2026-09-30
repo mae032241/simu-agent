@@ -401,6 +401,9 @@ class LocalWorkerMCPRouter:
                 if name == "worker_submit_result":
                     return self._completed_result()
                 raise WorkerToolError("this Run is already completed")
+            waiting = self.runs.worker_review_wait(self._run_id, name, arguments or {})
+            if waiting is not None:
+                return waiting
             if name == "worker_heartbeat":
                 status = self.runs.heartbeat(self._run_id)
                 return {"state": status.state, "remaining_seconds": _remaining(status.deadline_at)}

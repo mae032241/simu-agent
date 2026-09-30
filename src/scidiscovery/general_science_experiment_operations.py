@@ -27,6 +27,7 @@ TRANSFORM_OPERATIONS = (
         "A qualified foundation declares an explicit objective contract.",
         "Inferring a new objective or changing scientific content.",
         component="objective_project",
+        authorship_source_ports=("scientific_foundation",),
         inputs=(
             _transform_input(
                 "scientific_foundation",

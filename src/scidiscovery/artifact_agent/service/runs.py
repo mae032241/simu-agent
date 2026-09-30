@@ -56,6 +56,7 @@ from .run_outputs import (
     ValidatedRunOutput,
     validate_run_output,
 )
+from .run_admission import RunAdmissionMixin
 from .run_records import (
     RUN_READ_COLUMNS,
     RunCompletionReceipt,
@@ -93,7 +94,7 @@ _COMPACT_RECOVERY_REASON_CODES = frozenset(
 )
 
 
-class RunService(ToolEvidenceMixin):
+class RunService(ToolEvidenceMixin, RunAdmissionMixin):
     """The only service allowed to publish an Agent result as scientific data."""
 
     def __init__(
@@ -229,6 +230,7 @@ class RunService(ToolEvidenceMixin):
         draft_from: str | None = None,
         draft_digest: str | None = None,
         max_attempts: int | None = None,
+        scientific_signature: str | None = None,
     ) -> str:
         if resume_from is not None and draft_from is not None:
             raise RunStateConflict("resume_from and draft_from are mutually exclusive")
@@ -305,6 +307,9 @@ class RunService(ToolEvidenceMixin):
         with self._connect() as connection:
             self._attach_scheduler(connection)
             connection.execute("BEGIN IMMEDIATE")
+            review_owner = self.validate_admission(bound, instance_id=instance_id,
+                max_attempts=max_attempts, scientific_signature=scientific_signature,
+                reserved_output_fingerprint=output_binding_fingerprint, connection=connection)
             frozen_inputs = self.current.freeze(connection, instance_id, raw_inputs,
                 compiled=compiled, origins=self.input_origins(instance_id))
             active_revision = active_direct_revision_ports(
@@ -436,6 +441,7 @@ class RunService(ToolEvidenceMixin):
                 raise RunSlotBusy(
                     "this compiled Operation already has an unopened or running Run"
                 ) from error
+            self.bind_requested_review(connection, review_owner, run_id)
             connection.execute("COMMIT")
         try:
             materialized_inputs = tuple(

@@ -326,11 +326,7 @@ class RootOperationRoutes:
         )
         if target.existing_object_id is not None:
             return self.run_status(name=target.name)
-        scientific_signature = canonical_sha256(dict(operation=bound.compiled.digest,
-            inputs=[dict(port=item.port_name, ref=item.artifact.ref.model_dump(mode='json')) for item in bound.inputs],
-            instruction=bound.instruction, profile=bound.execution_profile,
-            resume_from=resume_run_id, draft_from=draft_run_id))
-        self._background_agent_admission(max_attempts=max_attempts, scientific_signature=scientific_signature)
+        scientific_signature = self._scientific_signature(bound, resume_run_id, draft_run_id)
         output_name = _derived_name(target.name, "output")
         output_logical_name = _derived_name(target.logical_name, "output")
         output_fingerprint = canonical_sha256(
@@ -351,32 +347,23 @@ class RootOperationRoutes:
                 draft_from=draft_run_id,
                 draft_digest=draft_digest,
                 max_attempts=max_attempts,
+                scientific_signature=scientific_signature,
             )
         except RunAttemptLimit as error:
             raise _attempt_limit_error(error) from error
+        except OperationInvocationError:
+            raise
         except Exception as error:
             raise OperationEngineeringError("local_run_creation_failed") from error
         self._bind_target("run", target, run_id, fingerprint)
         return self.run_status(name=target.name)
 
-    def _background_agent_admission(self, *, max_attempts, scientific_signature=None):
-        row = self.bindings.progression_status(instance_id=self._instance_id(), internal=True)
-        if row.get('mode') != 'background':
-            return
-        checkpoint = json.loads(row['checkpoint_json'])
-        limits = json.loads(row['config_json'])['effective']['progression']
-        with self.runs._connect() as db:
-            active = db.execute("SELECT 1 FROM runs WHERE instance_id=? AND state IN ('queued','running') LIMIT 1", (self._instance_id(),)).fetchone()
-        if active:
-            raise RootToolError('Background progression permits one queued/running complete Agent task.')
-        if len(checkpoint.get('admissions', {})) >= limits['max_tasks']:
-            raise RootToolError('Frozen background task budget exhausted; no new task admitted.')
-        for prior in checkpoint.get('admissions', {}).values():
-            if (scientific_signature and prior.get('scientific_signature') == scientific_signature
-                    and prior.get('run_id') and self.runs.status(prior['run_id']).state == 'failed'):
-                raise RootToolError('The same task already failed with unchanged inputs and instruction; use its exact recovery contract or change the scientific request.')
-        if max_attempts is not None and max_attempts > limits['max_attempts']:
-            raise RootToolError('Requested attempts exceed the frozen background limit.')
+    @staticmethod
+    def _scientific_signature(bound, resume_run_id, draft_run_id):
+        return canonical_sha256(dict(operation=bound.compiled.digest,
+            inputs=[dict(port=item.port_name, ref=item.artifact.ref.model_dump(mode='json')) for item in bound.inputs],
+            instruction=bound.instruction, profile=bound.execution_profile,
+            resume_from=resume_run_id, draft_from=draft_run_id))
 
     def _prepare_local_run(
         self,
@@ -438,6 +425,8 @@ class RootOperationRoutes:
         except SchedulerNameConflict as error:
             raise OperationInvocationError("semantic_name_conflict") from error
         if target.existing_object_id is None:
+            self.runs.validate_admission(bound, instance_id=self._instance_id(), max_attempts=max_attempts,
+                scientific_signature=self._scientific_signature(bound, resume_run_id, draft_run_id))
             try:
                 if draft_run_id is not None:
                     self.runs.validate_draft_source(draft_run_id, compiled=bound.compiled,

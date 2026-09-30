@@ -52,7 +52,7 @@ class ExecuteExperiment(BaseModel):
     action: Literal["capabilities", "review", "start", "advance", "collect", "status", "logs", "read", "export", "cancel"]
     name: str = Field(default="experiment", pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$")
     implementation: str | None = Field(default=None, max_length=128,
-        description="Sealed implementation created in or explicitly bound to this task; required for start or review. review returns an exact independent-review invocation for the scheduler, without creating execution or dispatching an Agent.")
+        description="Sealed implementation created in or explicitly bound to this task; required for start or review. review records a wait for the exact independent review and returns its invocation for the scheduler. When the review finishes, the same action returns its complete sealed scientific outcome. Controlled work waits for the review outcome; reads/status/cancel remain available. It creates no execution and dispatches no Agent.")
     output_name: str | None = Field(default=None, max_length=256)
     offset: int = Field(default=0, ge=0, description="read only: byte offset; continue at the returned next_offset. For logs use direction/cursor.")
     direction: Literal["tail", "before", "after"] = "tail"
@@ -155,8 +155,10 @@ adopt in the final report. Stage sealing is neither review nor final completion.
 Sealed public materials return artifact_name for exact handoff before this Run ends.
 If independent implementation review is required, send prepare's review.request
 to the scheduler, or obtain it with worker_experiment_execute(action="review",
-implementation=<sealed reference>). Wait for an independent sealed pass, then
-continue this same task; never finish merely to make the subject addressable.
+implementation=<sealed reference>). The request suspends controlled experimental work while review is pending.
+Wait for the scheduler notification; read the sealed outcome with that same review action, then continue
+this same task; a negative review calls for scientific correction, not execution.
+Obtain a sealed pass before formal execution; never finish merely to make the subject addressable.
 Formal execution is available only through worker_experiment_execute. A started
 or successful solver is not by itself a valid scientific result. Read the collected
 facts and deliver an ExperimentReport with the adopted sealed stage references.

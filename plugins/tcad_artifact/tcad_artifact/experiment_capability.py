@@ -140,7 +140,7 @@ def debug(request, context):
 
 
 PREPARE_TOOL = WorkerToolDefinition(name="worker_experiment_prepare",
-    description="Read the TCAD implementation schema or seal an implementation for the current experiment. Control resolves the exact active solver capability and supplied scientific files. Returns the exact public artifact_name immediately and, when required, an independent review request for the scheduler. Sealing itself requires no prior review; required review must pass before formal execution.",
+    description="Read the TCAD implementation schema or seal an implementation for the current experiment. Control resolves the exact active solver capability and supplied scientific files. Returns the exact public artifact_name immediately and, when required, an independent review request for the scheduler. Sealing itself requires no prior review. A required review suspends controlled work until the exact reviewer finishes; reads/status/cancel remain available. Continue the same task afterward; a pass is required before formal execution.",
     input_model=PrepareInput, capability="experiment.implementation", contextual_handler=prepare,
     required_services=("experiment.execution",), evidence_ports=("tool_evidence", "recovery_manifest_output"))
 DEBUG_TOOL = WorkerToolDefinition(name="worker_experiment_debug", description="Run or poll an optional bounded diagnostic of the exact sealed implementation. Use action=status with the same name for a read-only check after an uncertain response; it never submits or collects. Repeating action=run polls existing submissions but may create one if absent. Diagnostics are separate from formal execution and require no fixed sequence.",
