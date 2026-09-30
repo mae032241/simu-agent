@@ -47,12 +47,37 @@ def test_partial_actual_usage_releases_time_without_inventing_storage(tmp_path, 
         'consumed_budget': {'wall_time_seconds': 12}}, raising=False)
     f.coordinator.bridge.sync(execution_id=eid)
     value = f.runtime.executions.authorization(eid)
-    assert value['accounting']['state'] == 'partial'
-    assert value['accounting']['unsettled_reservation'] == {'max_storage_bytes': 1800000000}
+    assert value['accounting']['state'] == 'settled_estimated'
+    assert value['accounting']['unsettled_reservation'] == {}
+    assert value['accounting']['actual'] == {'wall_time_seconds': 12}
+    assert value['accounting']['estimated'] == {'max_storage_bytes': 1800000000}
+    from scidiscovery.artifact_agent.approval_ui.approval_focus import render_approval_focus
+    display = render_approval_focus({}, subject_ids=(), evidence_href=lambda _: '', authorization=value)
+    assert '按申请上限估算扣账（不是实测）' in display
+    assert '12 秒' in display and '1,800,000,000 字节' in display
+    assert eid not in f.runtime.executions.observation_candidates()
     assert value['budget_usage']['remaining']['wall_time_seconds'] == before + 3600 - 12
     f.runtime.executions.settle_budget(eid, {'wall_time_seconds': 0, 'max_storage_bytes': 100})
     assert f.runtime.executions.budget_accounting(eid)['actual'] == {'wall_time_seconds': 12, 'max_storage_bytes': 100}
     assert not f.runtime.executions.budget_needs_settlement(eid)
+    assert 'estimated' not in f.runtime.executions.budget_accounting(eid)
+
+
+def test_lost_terminal_workspace_finalizes_estimate_but_retains_error(tmp_path, monkeypatch):
+    f = experiment(tmp_path, monkeypatch, seconds=60)
+    start(f)
+    eid = execution(f).object_id
+    state = f.runtime.executions.status(eid)
+    f.runtime.executions.record_status(execution_id=eid, external_run_id=state.external_run_id, state='cancelled')
+    def gone(_):
+        raise FileNotFoundError('remote terminal workspace removed')
+    monkeypatch.setattr(f.adapter, 'status_details', gone, raising=False)
+    f.coordinator.bridge.sync(execution_id=eid)
+    account = f.runtime.executions.budget_accounting(eid)
+    assert account['actual'] == {}
+    assert account['estimated'] == account['requested']
+    assert eid not in f.runtime.executions.observation_candidates()
+    assert f.runtime.executions.observation(eid)['observation_error']
 
 
 def test_preparation_failure_releases_only_unsubmitted_reservation(tmp_path, monkeypatch):

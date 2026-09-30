@@ -110,6 +110,16 @@ Submission returns external identity/state and must be idempotent for the exact
 frozen descriptor. Lookup must authoritatively distinguish absence from an accepted
 submission; an unknown response cannot justify another submission.
 
+Optional `retire_submission(submission) -> tuple[str, str] | None` is a stronger
+contract: return the existing job, or return `None` only after durably fencing all
+future acceptance of that exact descriptor. It must serialize with submit; repeated
+negative lookups, elapsed time or an unavailable endpoint are not retirement proof.
+Control records support when a new request is started. Older uncertain requests
+cannot gain this guarantee retroactively from a newly installed adapter method.
+TCAD adapters submit through `submit_retirable` / `tcad_submit_retirable`; old
+transports/runners reject these entry points before accepting work. They must not
+fall back to the old submit endpoint, whose in-flight processes may ignore fencing.
+
 `AdapterCapability` contains `key`, `kind`, `schema_id`,
 `payload_schema_version`, `media_type`, exact `content: bytes`, and
 `public_summary: Mapping[str, object]`. Keys must be unique in a nonempty capability

@@ -79,7 +79,7 @@ class ResourceLimits(StrictModel):
     wall_time_seconds: int = Field(ge=1, le=604800)
     cpu_time_seconds: int = Field(ge=1, le=604800)
     max_memory_bytes: int = Field(ge=1, le=2**50)
-    max_output_bytes: int = Field(ge=1, le=2**50)
+    max_output_bytes: int = Field(ge=1, le=2**50, description="Total collection budget in bytes for ALL generated outputs, including PLX/TDR and captured logs; also the per-file runtime size limit. Choose for the complete output inventory, not just the process log. Exceeding the limit fails collection; no files are silently omitted.")
     max_storage_bytes: int = Field(ge=1, le=2**50)
 
 
@@ -363,6 +363,8 @@ EXECUTION_TOOLS = (
         SubmissionDigestInput,
     ),
     ExecutionTool("tcad_submit", "Submit one prepared TCAD job and return immediately.", SubmitInput),
+    ExecutionTool("tcad_submit_retirable", "Submit with permanent exact-submission retirement support.", SubmitInput),
+    ExecutionTool("tcad_retire_submission", "Permanently fence an absent exact submission or return its existing job.", SubmissionDigestInput),
     ExecutionTool("tcad_status", "Read one durable TCAD job status and optional bounded, redacted log tails with observed job timing.", RunIdInput),
     ExecutionTool("tcad_cancel", "Request cancellation of one TCAD job.", RunIdInput),
     ExecutionTool("tcad_inspect_outputs", "Read bounded terminal files without execution or mutation.", InspectOutputsInput),
@@ -396,6 +398,9 @@ class TCADExecutionFacade:
 
     def tcad_execution_policy(self) -> dict[str, Any]:
         return self.policy.snapshot().model_dump(mode="json")
+
+    def tcad_submit_retirable(self, *, submission: FileDescriptor, authorization: ExecutionAdmission | None = None) -> dict[str, Any]:
+        return self.tcad_submit(submission=submission, authorization=authorization)
 
     def tcad_submit(self, *, submission: FileDescriptor, authorization: ExecutionAdmission | None = None) -> dict[str, Any]:
         raw = self._read_input(submission)
@@ -445,6 +450,8 @@ class TCADExecutionFacade:
         run_id = f"run_{uuid.uuid4().hex}"
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            if connection.execute("SELECT 1 FROM retired_submissions WHERE job_sha256=?", (digest,)).fetchone():
+                raise ExecutionToolError("this exact submission was permanently retired")
             previous = connection.execute(
                 "SELECT run_id FROM submissions WHERE job_sha256 = ?", (digest,)
             ).fetchone()
@@ -574,6 +581,18 @@ class TCADExecutionFacade:
         value = self._tcad_status_value(run_id=run_id)
         value["progress"] = _job_progress(str(self.runs_root / run_id))
         return value
+
+    def tcad_retire_submission(self, *, submission_sha256: str) -> dict[str, Any]:
+        SubmissionDigestInput(submission_sha256=submission_sha256)
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT run_id FROM submissions WHERE job_sha256=?", (submission_sha256,)).fetchone()
+            if row is None:
+                connection.execute("INSERT OR IGNORE INTO retired_submissions VALUES (?)", (submission_sha256,))
+            connection.commit()
+        if row is not None:
+            return {"found": True, **self.tcad_status(run_id=row["run_id"])}
+        return {"found": False, "retired": True, "submission_sha256": submission_sha256}
 
     def _tcad_status_value(self, *, run_id: str) -> dict[str, Any]:
         row = self._submission_row(run_id)
@@ -813,6 +832,7 @@ class TCADExecutionFacade:
     def _initialize(self) -> None:
         self.state_root.mkdir(parents=True, exist_ok=True, mode=0o770)
         with self._connect() as connection:
+            connection.execute("CREATE TABLE IF NOT EXISTS retired_submissions (job_sha256 TEXT PRIMARY KEY)")
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS submissions (

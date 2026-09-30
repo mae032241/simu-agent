@@ -401,7 +401,8 @@ Execution policy separates the per-request wall-time threshold (`max_wall_time_s
 (`max_total_wall_time_seconds`, 21600). Both are administrator configuration. Queued
 or uncertain work reserves its requested limit; terminal runner observations settle
 actual elapsed time, rounded up to seconds, independently of storage observations.
-Missing observations remain explicitly unsettled reservations, not claimed actual use.
+At terminal state, missing observations are charged at reserved limits as explicit
+estimates, not claimed actual use; later measured values replace those estimates.
 Terminal jobs awaiting accounting remain in bounded background synchronization, including
 collected jobs. Preparation failure before a saved submission releases its reservation;
 an uncertain submission retains it. Repeated settlement never refunds recorded usage.
@@ -424,7 +425,8 @@ exist yet. Diagnostics report `submission_unknown`; cancel and formal abandon re
 unconfirmed retirement and retain the exact identity and reservation. Retry the same
 diagnostic status or recover the same formal execution, then cancel the confirmed job.
 Even a genuinely absent request stays reserved until permanent retirement can be proven;
-the current backends offer no atomic retirement operation. Approval expiry releases only
+formal execution cancel/abandon uses the atomic retirement protocol described below;
+diagnostic recovery still requires a confirmed job. Approval expiry releases only
 never-prepared requests. Renaming or recovery never resets
 the current task's usage; changing scope does not delete historical accounting.
 Validated retained receipts reconcile the original diagnostic to `collected` and settle
@@ -466,7 +468,22 @@ After a lost response or daemon restart, status reconciles the exact descriptor 
 only; an absent lookup is still unknown, never permission to resubmit or release budget.
 Background failures expose a bounded diagnostic reference; required approvals remain
 available through status. Operational submission progress is excluded from sealed receipts.
-Control admits only one background submission at a time; there is no unbounded queue.
+Control admits one background submission per registered execution backend at a time;
+independent backends do not share the slot. A busy backend rejects before accepting
+another submission; there is no unbounded queue.
+
+An explicit abandon/cancel can retire a new-protocol uncertain submission. The backend
+atomically returns an existing job or installs a permanent tombstone under its submit
+lock; a negative lookup alone is never enough. Old in-flight submissions without recorded
+retirement support, unavailable backends and failed retirement retain their reservations.
+Retirement requires the matching control adapter and runner; it cannot certify that an
+old runner process loaded before upgrade will honor a newly installed tombstone.
+
+Known terminal executions finalize missing resource measurements at their reserved
+limits in a separate estimate ledger. Responses/UI distinguish `actual` from `estimated`;
+estimates do not refund capacity and stop endless automatic polling. Later exact
+observations replace estimates without overwriting earlier measured dimensions. Both
+the actual and estimate ledgers survive instance archive/restore.
 
 The control daemon reconciles expired Runs and polls already submitted executions
 serially, independently of Worker calls. Global `lifecycle.interval_seconds` (30)
@@ -478,13 +495,18 @@ reconciler never submits or collects work. Resuming the failed Run retains the
 original execution identity and removes it from Root recovery while the new owner
 is active. A terminal solver outcome does not complete the scientific Run.
 
-A task's human execution-approval wait is recorded once in its activity ledger.
+A task's human execution-approval wait is recorded by the background approval creator
+once in its activity ledger, starting at approval creation rather than a Worker poll.
 Effective deadlines add the union of these intervals, ending at decision, cancellation
-or expiry; simultaneous waits count once. The original deadline stays unchanged, and
+or expiry; simultaneous waits count once. Total credit is capped by the Run's frozen
+`execution_io.approval_wait_budget_seconds` (default 86400, zero disables credit),
+including historical pending approvals without expiry. The original deadline stays unchanged, and
 repeated reads or daemon restarts cannot accumulate extra work time. Worker calls,
 Root status and timeout reconciliation use the same projection. An approval created
 after expiry cannot revive a task. Existing failed tasks remain failed and can only
 use explicit recovery of their original execution as described above.
+Batch status reads load wait events and approval records once per batch. Both Worker
+backends receive the approval database path independently of Operation capability.
 
 Complete experiments use `worker_experiment_execute(action="status")` to refresh
 remote state and progress of submitted work without starting, cancelling or
@@ -1000,6 +1022,7 @@ values. These control settings are not scientific input ports or Agent forms.
 `collection_timeout_seconds=600`, `file_timeout_seconds=120` and
 `idle_timeout_seconds=30` and `submission_response_wait_seconds=0.25` (0–2 seconds).
 The last setting bounds the initial wait for background submission, not solver runtime.
+`approval_wait_budget_seconds=86400` separately bounds cumulative human-wait credit.
 Capacity is bytes, time is seconds. The experiment's text
 read, streamed export and collection consume those frozen values; export/collection
 are additionally bounded by remaining Run time. They are separate from the plugin's

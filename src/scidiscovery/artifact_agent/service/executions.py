@@ -62,6 +62,9 @@ EXECUTION_POLICY_SCHEMA = """
                 CREATE TABLE IF NOT EXISTS execution_prepared_submissions (
                     execution_id TEXT PRIMARY KEY, descriptor_json BLOB NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS execution_budget_estimates (
+                    execution_id TEXT PRIMARY KEY, estimated_json BLOB NOT NULL
+                );
 """
 
 
@@ -633,7 +636,7 @@ class ExecutionService:
             row = connection.execute("SELECT budget_key FROM execution_budget_reservations WHERE execution_id=?", (execution_id,)).fetchone()
         return None if row is None else row["budget_key"]
 
-    def settle_budget(self, execution_id, consumed):
+    def settle_budget(self, execution_id, consumed, *, finalize_missing=False):
         """Only terminal adapter observations settle a reservation; missing data never refunds."""
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -645,21 +648,30 @@ class ExecutionService:
             settled = json.loads(row["consumed_json"] or "{}")
             if execution["state"] not in {"succeeded", "failed", "cancelled", "collected"}:
                 raise ExecutionStateConflict("only terminal execution can settle its budget")
-            if not consumed or not set(consumed).issubset(reserved) or any(type(v) is not int or v < 0 for v in consumed.values()):
+            if (not consumed and not finalize_missing) or not set(consumed).issubset(reserved) or any(type(v) is not int or v < 0 for v in consumed.values()):
                 raise ExecutionApprovalError("terminal resource observation is invalid")
+            actual = {**consumed, **settled}
             connection.execute("UPDATE execution_budget_reservations SET consumed_json=? WHERE execution_id=?",
-                (canonical_json({**consumed, **settled}), execution_id))
+                (canonical_json(actual), execution_id))
+            previous = connection.execute("SELECT estimated_json FROM execution_budget_estimates WHERE execution_id=?", (execution_id,)).fetchone()
+            estimates = ({key: value for key, value in reserved.items() if key not in actual} if finalize_missing else
+                {key: value for key, value in json.loads(previous[0] if previous else "{}").items() if key not in actual})
+            connection.execute("INSERT OR REPLACE INTO execution_budget_estimates VALUES (?, ?)",
+                (execution_id, canonical_json(estimates)))
             connection.execute("COMMIT")
 
     def budget_accounting(self, execution_id):
         with self._connect() as connection:
             row = connection.execute("SELECT reserved_json,consumed_json FROM execution_budget_reservations WHERE execution_id=?", (execution_id,)).fetchone()
+            estimate_row = connection.execute("SELECT estimated_json FROM execution_budget_estimates WHERE execution_id=?", (execution_id,)).fetchone()
         if row is None:
             return {}
         reserved, actual = json.loads(row["reserved_json"]), json.loads(row["consumed_json"] or "{}")
-        return {"state": "settled" if set(actual) == set(reserved) else "partial" if actual else "reserved",
+        estimated = {key: value for key, value in json.loads(estimate_row[0] if estimate_row else "{}").items() if key not in actual}
+        return {"state": "settled" if set(actual) == set(reserved) else "settled_estimated" if set(actual) | set(estimated) == set(reserved) else "partial" if actual else "reserved",
             "requested": reserved, "actual": actual,
-            "unsettled_reservation": {key: amount for key, amount in reserved.items() if key not in actual}}
+            **({"estimated": estimated, "estimate_basis": "reserved_limit_without_terminal_observation"} if estimated else {}),
+            "unsettled_reservation": {key: amount for key, amount in reserved.items() if key not in actual and key not in estimated}}
 
     def budget_needs_settlement(self, execution_id):
         value = self.budget_accounting(execution_id)
@@ -743,7 +755,7 @@ class ExecutionService:
             )
             connection.execute("COMMIT")
 
-    def abandon(self, execution_id: str) -> None:
+    def abandon(self, execution_id: str, *, absence_confirmed=False) -> None:
         """Permanently prevent an unsubmitted execution from being authorized."""
 
         with self._connect() as connection:
@@ -754,7 +766,7 @@ class ExecutionService:
                     "only an unsubmitted execution can be abandoned"
                 )
             prepared = connection.execute("SELECT 1 FROM execution_prepared_submissions WHERE execution_id=?", (execution_id,)).fetchone()
-            if prepared is not None and row["state"] != "abandoned":
+            if prepared is not None and row["state"] != "abandoned" and not absence_confirmed:
                 raise ExecutionStateConflict("prepared execution has no permanent absence confirmation; recover its existing submission before cancellation")
             reservation = connection.execute("SELECT reserved_json,consumed_json FROM execution_budget_reservations WHERE execution_id=?", (execution_id,)).fetchone()
             if reservation is not None and reservation["consumed_json"] is None:
@@ -956,11 +968,13 @@ class ExecutionService:
         with self._connect() as connection:
             return tuple(row[0] for row in connection.execute(
                 "SELECT e.execution_id FROM executions e LEFT JOIN execution_budget_reservations b USING(execution_id) "
+                "LEFT JOIN execution_budget_estimates a USING(execution_id) "
                 "WHERE e.execution_id > ? AND e.external_run_id IS NOT NULL AND "
                 "(e.state IN ('submitted','running','cancelling') OR "
                 "(e.state IN ('succeeded','failed','cancelled','collected') AND EXISTS "
                 "(SELECT 1 FROM json_each(CAST(b.reserved_json AS TEXT)) r "
-                "WHERE NOT EXISTS (SELECT 1 FROM json_each(CAST(b.consumed_json AS TEXT)) c WHERE c.key=r.key)))) "
+                "WHERE NOT EXISTS (SELECT 1 FROM json_each(CAST(b.consumed_json AS TEXT)) c WHERE c.key=r.key) "
+                "AND NOT EXISTS (SELECT 1 FROM json_each(CAST(a.estimated_json AS TEXT)) c WHERE c.key=r.key)))) "
                 "ORDER BY e.execution_id LIMIT ?", (after, limit)))
 
     def list_statuses(

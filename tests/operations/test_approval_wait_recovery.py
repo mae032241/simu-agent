@@ -177,10 +177,14 @@ def test_uncertain_recovery_submission_is_looked_up_without_duplicate(tmp_path, 
         f.adapter.submits += 1
         raise ConnectionError('fixture response lost after remote accepted')
     monkeypatch.setattr(f.adapter, 'submit', uncertain)
-    with pytest.raises(ConnectionError):
-        f.root.call_tool('execution_start', {'name': binding.name}, surface='execution')
-    assert f.runtime.executions.prepared_submission(binding.object_id) is not None
+    result = f.root.call_tool('execution_start', {'name': binding.name}, surface='execution')
+    assert result['submission']['state'] == 'unknown'
+    assert result['submission']['error']
+    descriptor = f.runtime.executions.prepared_submission(binding.object_id)
+    assert descriptor is not None
+    assert f.runtime.executions.budget_accounting(binding.object_id)['actual'] == {}
     assert f.root.call_tool('execution_start', {'name': binding.name}, surface='execution')['state'] == 'running'
+    assert f.runtime.executions.prepared_submission(binding.object_id) == descriptor
     assert f.adapter.submits == 1
 
 

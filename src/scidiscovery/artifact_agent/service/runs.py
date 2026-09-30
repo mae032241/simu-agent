@@ -167,7 +167,7 @@ class RunService(ToolEvidenceMixin):
                     ON child.resume_from_run_id=parent.run_id OR child.draft_from_run_id=parent.run_id
             ) SELECT runs.* FROM runs JOIN family USING(run_id)
                 ORDER BY runs.created_at, runs.run_id""", (origin,)).fetchall()
-        family = tuple(self._status_from_row(row) for row in rows)
+        family = self._statuses_from_rows(rows)
         root = next(run for run in family if run.run_id == origin)
         if any((run.instance_id, run.operation_id) != (root.instance_id, root.operation_id) for run in family):
             raise RunStateConflict("Recovery task family crosses the task boundary")
@@ -550,7 +550,7 @@ class RunService(ToolEvidenceMixin):
         return next(
             (
                 status
-                for status in map(self._status_from_row, rows)
+                for status in self._statuses_from_rows(rows)
                 if any(
                     item.usage == "revision_base" and item.artifact_ref == base_ref
                     for item in status.inputs
@@ -1006,15 +1006,26 @@ class RunService(ToolEvidenceMixin):
                 raise RunStateConflict("expired Run changed during startup reconciliation", run_id=run_id)
         return failed
 
-    def _status_from_row(self, row):
-        from .approval_waits import effective_deadline
-        value = status_from_row(row)
+    def _statuses_from_rows(self, rows):
+        from .approval_waits import approval_records, effective_deadline, datetime, timezone
+        values = tuple(status_from_row(row) for row in rows)
+        if not values:
+            return ()
         with self._connect() as connection:
-            events = connection.execute("SELECT recorded_at,diagnostic_json FROM run_activity "
-                "WHERE run_id=? AND activity='approval_wait_started' ORDER BY recorded_at",
-                (value.run_id,)).fetchall()
-        return replace(value, deadline_at=effective_deadline(value, events,
-            getattr(self, "approval_database_path", None)))
+            events = connection.execute("SELECT run_id,recorded_at,diagnostic_json FROM run_activity "
+                "WHERE run_id IN (SELECT value FROM json_each(?)) "
+                "AND activity='approval_wait_started' ORDER BY recorded_at",
+                (json.dumps([value.run_id for value in values]),)).fetchall()
+        records = approval_records(events, self.approval_database_path)
+        grouped = {}
+        for event in events:
+            grouped.setdefault(event['run_id'], []).append(event)
+        now = datetime.now(timezone.utc)
+        return tuple(replace(value, deadline_at=effective_deadline(value,
+            grouped.get(value.run_id, ()), self.approval_database_path, records=records, now=now)) for value in values)
+
+    def _status_from_row(self, row):
+        return self._statuses_from_rows((row,))[0]
 
     def record_approval_wait(self, run_id: str, approval_id: str):
         """Record a control-owned wait once; its end comes from the approval store."""
@@ -1026,10 +1037,17 @@ class RunService(ToolEvidenceMixin):
                 (run_id, approval_id)).fetchone()
             if existing is not None:
                 return
-            value = self._status_from_row(self._row(connection, run_id))
-            if value.state != "running" or expired(value.deadline_at):
+            from .approval_waits import approval_records, effective_deadline
+            value = status_from_row(self._row(connection, run_id))
+            events = list(connection.execute("SELECT recorded_at,diagnostic_json FROM run_activity "
+                "WHERE run_id=? AND activity='approval_wait_started'", (run_id,)).fetchall())
+            event = {"recorded_at": timestamp(), "diagnostic_json": canonical_json({"approval_id": approval_id})}
+            events.append(event)
+            records = approval_records(events, self.approval_database_path)
+            deadline = effective_deadline(value, events, self.approval_database_path, records=records)
+            if value.state != "running" or expired(deadline):
                 raise RunStateConflict("Approval wait cannot extend an expired or terminal Run")
-            self._append_activity(connection, run_id, "approval_wait_started", timestamp(),
+            self._append_activity(connection, run_id, "approval_wait_started", records[approval_id]['created_at'],
                 canonical_json({"approval_id": approval_id}))
 
     def status(self, run_id: str) -> RunStatus:
@@ -1047,7 +1065,7 @@ class RunService(ToolEvidenceMixin):
         query += " ORDER BY created_at DESC"
         with self._connect() as connection:
             rows = connection.execute(query, values).fetchall()
-        return tuple(self._status_from_row(row) for row in rows)
+        return self._statuses_from_rows(rows)
 
     def active_ids(self, *, instance_id: str, limit: int = 31) -> tuple[str, ...]:
         """Bound current tasks by state before paging; never read output payloads."""
@@ -1089,7 +1107,7 @@ class RunService(ToolEvidenceMixin):
         values.append(limit)
         with self._connect() as connection:
             rows = connection.execute(query, values).fetchall()
-        return tuple(self._status_from_row(row) for row in rows)
+        return self._statuses_from_rows(rows)
 
     def recovery_links(self, run_id: str) -> dict[str, str | None]:
         """Read frozen resume/draft identity omitted from the public RunStatus."""

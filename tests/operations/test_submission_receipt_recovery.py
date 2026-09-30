@@ -125,7 +125,8 @@ def test_receipt_survives_exit_before_budget_commit_without_executor_access(tmp_
 
 
 @pytest.mark.process_e2e
-def test_timed_out_daemon_submit_remains_owned_during_invisible_archive_check(tmp_path, monkeypatch):
+@pytest.mark.parametrize("retire", [False, True])
+def test_timed_out_daemon_submit_remains_owned_during_invisible_archive_check(tmp_path, monkeypatch, retire):
     import hashlib
     import io
     import multiprocessing
@@ -175,6 +176,14 @@ def test_timed_out_daemon_submit_remains_owned_during_invisible_archive_check(tm
     monkeypatch.setattr(control, "_file_identity", pause_archive)
     state_root = tmp_path / "backend"
     facade = control.TCADExecutionFacade(policy=policy, state_root=state_root)
+    finished = ctx.Event()
+    original_submit = facade.tcad_submit
+    def tracked_submit(**kwargs):
+        try:
+            return original_submit(**kwargs)
+        finally:
+            finished.set()
+    monkeypatch.setattr(facade, "tcad_submit", tracked_submit)
     socket_path = tmp_path / "backend.sock"
     daemon = ctx.Process(target=lambda: UnixSocketDaemon(socket_path,
         MCPRouter(control.TCADExecutionRouter(facade), name="submission-race")).serve_forever())
@@ -204,8 +213,18 @@ def test_timed_out_daemon_submit_remains_owned_during_invisible_archive_check(tm
         submitted = descriptor.model_dump(mode="json")
         submitted.pop("schema_version")
         with pytest.raises(TimeoutError):
-            rpc("tcad_submit", {"submission": submitted}, timeout=.2)
+            rpc("tcad_submit_retirable" if retire else "tcad_submit", {"submission": submitted}, timeout=.2)
         assert paused.is_set() and lookup(descriptor) is None
+        if retire:
+            proof = rpc("tcad_retire_submission", {"submission_sha256": descriptor.sha256})
+            assert proof == {"found": False, "retired": True, "submission_sha256": descriptor.sha256}
+            resume.set()
+            assert finished.wait(5)
+            assert lookup(descriptor) is None
+            with sqlite3.connect(facade.database_path) as db:
+                assert db.execute("SELECT COUNT(*) FROM submissions").fetchone()[0] == 0
+            assert list(facade.runs_root.iterdir()) == []
+            return
         debug_root = tmp_path / "debug"
         debug_root.mkdir()
         debugger, context, ledger_path = fixture(debug_root, reservation=True)

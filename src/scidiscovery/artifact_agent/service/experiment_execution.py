@@ -165,6 +165,9 @@ class ExperimentExecution:
         return records[0]
 
     def _cancel(self, execution_id):
+        if self.bridge.submissions.summary(execution_id).get("state") == "unknown":
+            self.bridge.cancel(execution_id=execution_id)
+            return
         self.bridge.submissions.require_idle(execution_id)
         status = self.executions.status(execution_id)
         if status.state == "abandoned":
@@ -470,6 +473,9 @@ class ExperimentExecution:
         io = ExecutionIOSettings.model_validate((run.recovery_policy or {}).get("execution_io", {}))
         def request_approval():
             self._approval(execution_id, effect, identity)
+            # Register from the creator, even when the caller already received
+            # pending and never polls the Worker again.
+            self.runs.record_approval_wait(run.run_id, "apr_" + execution_id)
             name = self.runs.scheduler_bindings.find_name(instance=run.instance_id,
                 namespace="execution", object_id=execution_id)
             if name is not None:

@@ -74,7 +74,10 @@ class EngineeringDiagnostics:
         while current is not None and id(current) not in seen and len(seen) < 8:
             seen.add(id(current))
             frames.append(type(current).__name__ + "\n")
-            frames.extend(traceback.format_tb(current.__traceback__))
+            # Source lines may contain literals and quoted paths; neither is
+            # needed to locate the failing function in a public diagnostic.
+            frames.extend('  File [host-path], line ' + str(frame.lineno) + ', in ' + frame.name + '\n'
+                for frame in traceback.extract_tb(current.__traceback__))
             current = current.__cause__ or current.__context__
         return redact("".join(frames)[-49152:] + "\n" + json.dumps(facts, ensure_ascii=False))
 

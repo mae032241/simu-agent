@@ -6,6 +6,7 @@
     "reasoning_effort": "medium"
   },
   "operations": {},
+  "execution_io": {"approval_wait_budget_seconds": 86400},
   "lifecycle": {"interval_seconds": 30, "batch_size": 32},
   "presentation": {
     "enabled": true,

@@ -133,6 +133,9 @@ Submission runs in the control background. submission.state=pending acknowledges
 the original request, not solver success. Poll status with the same name. An
 unknown submission is reconciled by read-only lookup, never by creating another
 request; submission.error provides a bounded diagnostic reference. A started
+submission can be stopped with cancel: control retires an uncertain new-protocol
+request remotely before releasing its reservation, or cancels its existing job.
+An unreachable or older backend cannot prove permanent absence. A started
 or successful solver is not by itself a valid scientific result. Read the collected
 facts and deliver an ExperimentReport with the adopted sealed stage references.
 Use status for fresh remote state and bounded progress of a submitted execution;

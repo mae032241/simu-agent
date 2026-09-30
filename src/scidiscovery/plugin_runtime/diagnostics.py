@@ -12,6 +12,7 @@ def redact(value: str) -> str:
     value = re.sub(r"Command ['\"].*(?:timed out|returned non-zero exit status|died with)", "Command [redacted argv] failed:", value)
     value = _SECRET.sub(b"[redacted]", value.encode("utf-8", errors="replace")).decode("utf-8")
     value = re.sub(r"(?i)\b(password|secret|token|credential|api[_-]?key|authorization)\s*[:=]\s*[^\s,;]+", r"\1=[redacted]", value)
+    value = re.sub(r'''(["'])(?:/|[A-Za-z]:\\)[^\r\n]*?\1''', '"[host-path]"', value)
     value = re.sub(r"(?<![\w])(?:/[\w.~-]+){2,}[^\s\"']*|[A-Za-z]:\\[^\s\"']+", "[host-path]", value)
     return value
 

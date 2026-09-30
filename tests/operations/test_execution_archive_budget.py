@@ -13,7 +13,7 @@ from tests.operations.tcad_policy_fixtures import policy_fields
 from tcad_artifact.execution_policy import ExecutionPolicySnapshot
 
 
-def _policy_executions(system):
+def _policy_executions(system, *, estimated=False):
     runtime, _, first, second = system
     source = artifact(runtime, first, 'shared.subject')
     runtime.scheduler_bindings.bind(instance=second, namespace='artifact', name='same.subject', object_id=source.artifact_id)
@@ -33,9 +33,26 @@ def _policy_executions(system):
         with sqlite3.connect(runtime.executions.database_path) as db:
             db.execute("UPDATE executions SET state='collected' WHERE execution_id=?", (execution,))
             db.execute('INSERT INTO execution_prepared_submissions VALUES (?,?)', (execution, canonical_json({'fixture':index})))
-        runtime.executions.settle_budget(execution, {'max_storage_bytes':100,'wall_time_seconds':800})
+        runtime.executions.settle_budget(execution,
+            {'wall_time_seconds':800} if estimated else {'max_storage_bytes':100,'wall_time_seconds':800},
+            finalize_missing=estimated)
         ids.append(execution)
     return ids, admission
+
+
+def test_estimated_settlement_survives_archive_and_later_actual_observation(archive_system):
+    runtime, service, first, _ = archive_system
+    (owned, _), _ = _policy_executions(archive_system, estimated=True)
+    before = runtime.executions.budget_accounting(owned)
+    assert before['estimated'] == {'max_storage_bytes': 1000}
+    save_archive(service, first)
+    assert service.archived_model(first).executions.authorization(owned)['accounting'] == before
+    restore_archive(service, first)
+    assert runtime.executions.budget_accounting(owned) == before
+    runtime.executions.settle_budget(owned, {'max_storage_bytes': 100})
+    after = runtime.executions.budget_accounting(owned)
+    assert after['actual'] == {'max_storage_bytes': 100, 'wall_time_seconds': 800}
+    assert 'estimated' not in after
 
 
 def _rows(path):
@@ -71,7 +88,7 @@ def test_policy_archive_restores_exact_records_without_refunding_shared_budget(a
             assert stored[table] == active[table] == before[table]
         else:
             assert stored[table] == [row for row in before[table] if row['execution_id'] == owned]
-            expected = before[table] if table == 'execution_budget_reservations' else [row for row in before[table] if row['execution_id'] == foreign]
+            expected = before[table] if table in {'execution_budget_reservations', 'execution_budget_estimates'} else [row for row in before[table] if row['execution_id'] == foreign]
             assert active[table] == expected
     assert runtime.executions.budget_admission(executor='fixture', admission=probe).reason == 'cumulative_budget_exceeded'
     assert service.archived_model(first).executions.status(owned).authorization['source'] == 'policy'

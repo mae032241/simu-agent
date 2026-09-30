@@ -761,6 +761,7 @@ def build_local_worker_router(
         operation_catalog=catalog,
         backend=backend,
         scheduler_bindings=scheduler_bindings,
+        approval_database_path=state / "database" / "approvals.sqlite3",
     )
     services = dict(tool_services or {})
     compiled = catalog.operation(operation_id)

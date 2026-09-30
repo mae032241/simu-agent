@@ -160,19 +160,36 @@ class ExecutionBridge:
         self._record_started(execution_id, external_run_id, external_state)
 
     def abandon(self, execution_id: str) -> None:
-        with self.submissions.idle(execution_id):
+        with self.submissions.idle(execution_id, allow_unknown=True):
             self._abandon(execution_id)
 
     def _abandon(self, execution_id: str) -> None:
+        if not self._retire_unsubmitted(execution_id):
+            raise ExecutionServiceError("This execution was submitted; use status or cancel instead of abandon.")
+
+    def _retire_unsubmitted(self, execution_id: str) -> bool:
         current = self.executions.status(execution_id)
+        if current.state == "abandoned":
+            return True
+        if current.external_run_id is not None:
+            return False
         descriptor = self.executions.prepared_submission(execution_id)
         if descriptor is not None:
+            retire = getattr(self._adapter(current.executor), "retire_submission", None)
+            if callable(retire) and self.submissions.can_retire(execution_id):
+                found = retire(descriptor)
+                if found is None:
+                    self.executions.abandon(execution_id, absence_confirmed=True)
+                    return True
+                self._record_started(execution_id, *found)
+                return False
             found = self._adapter(current.executor).lookup_submission(descriptor)
             if found is not None:
                 self._record_started(execution_id, *found)
-                raise ExecutionServiceError("This execution was submitted; use status or cancel instead of abandon.")
+                return False
             raise ExecutionServiceError("This exact prepared submission is not yet visible; an earlier submit may still be processing. Abandonment was not confirmed and its budget remains reserved. Recover the same execution after service recovery, then cancel the confirmed job; do not create a replacement.")
         self.executions.abandon(execution_id)
+        return True
 
     def _record_started(self, execution_id: str, external_run_id: str, external_state: str) -> None:
         self.executions.record_submission(
@@ -273,12 +290,17 @@ class ExecutionBridge:
             if current.state not in {"succeeded", "failed", "cancelled", "collected"}:
                 self.executions.record_status(execution_id=execution_id,
                     external_run_id=current.external_run_id, state=external_state)
-            if external_state in {"succeeded", "failed", "cancelled"} and isinstance(details.get("consumed_budget"), dict):
-                self.executions.settle_budget(execution_id, details["consumed_budget"])
+            if external_state in {"succeeded", "failed", "cancelled"}:
+                self.executions.settle_budget(execution_id, details.get("consumed_budget") or {}, finalize_missing=True)
             observation["solver_state"] = external_state
             observation["status_observed_at"] = datetime.now(timezone.utc).isoformat()
             observation.pop("observation_error", None)
         except Exception as error:
+            if current.state in {"succeeded", "failed", "cancelled", "collected"}:
+                # A known terminal job must not poll forever for measurements
+                # that may have disappeared with its workspace. Never refund
+                # missing dimensions or mislabel estimates as observations.
+                self.executions.settle_budget(execution_id, {}, finalize_missing=True)
             from .service.engineering_diagnostics import EngineeringDiagnostics, exception_facts
             observation["observation_error"] = (EngineeringDiagnostics(
                 self.executions.database_path.parent.parent / "engineering-diagnostics").capture(
@@ -288,11 +310,15 @@ class ExecutionBridge:
         return observation.get("progress")
 
     def cancel(self, *, execution_id: str) -> None:
-        with self.submissions.idle(execution_id):
+        with self.submissions.idle(execution_id, allow_unknown=True):
             self._cancel(execution_id=execution_id)
 
     def _cancel(self, *, execution_id: str) -> None:
         current = self.executions.status(execution_id)
+        if current.state in {"created", "authorized", "abandoned"}:
+            if self._retire_unsubmitted(execution_id):
+                return
+            current = self.executions.status(execution_id)
         if current.state in {"succeeded", "failed", "cancelled", "collected"}:
             return
         if current.state not in {"submitted", "running", "cancelling"}:

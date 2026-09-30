@@ -341,7 +341,9 @@ def _rpc(config, payload):
             result = _lookup_submission(
                 config, arguments.get("submission_sha256")
             )
-        elif name == "tcad_submit":
+        elif name == "tcad_retire_submission":
+            result = _retire_submission(config, arguments.get("submission_sha256"))
+        elif name in {"tcad_submit", "tcad_submit_retirable"}:
             result = _submit(config, arguments.get("submission"), arguments.get("authorization"))
         elif name == "tcad_status":
             result = _status(config, arguments.get("run_id"))
@@ -437,6 +439,8 @@ def _submit(config, descriptor, authorization=None):
         run_dir = os.path.join(runs_root, run_id)
         if os.path.isdir(run_dir):
             return _status(config, run_id)
+        if os.path.exists(os.path.join(config["state_root"], "retired_submissions", digest)):
+            raise RuntimeError("this exact submission was permanently retired")
         active = 0
         for name in os.listdir(runs_root):
             if os.path.isfile(os.path.join(runs_root, name, "running")):
@@ -486,6 +490,32 @@ def _lookup_submission(config, submission_sha256):
     if not os.path.isdir(run_dir):
         return {"found": False}
     return dict({"found": True}, **_status(config, run_id))
+
+
+def _retire_submission(config, submission_sha256):
+    """Fence future submits under the same lock used to create the job."""
+    _mkdir(config["state_root"])
+    with open(os.path.join(config["state_root"], "submission.lock"), "a+") as lock:
+        # Do not wait behind a slow archive extraction/launch. A busy submit
+        # has not granted an absence proof; callers retain their reservation.
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        value = _lookup_submission(config, submission_sha256)
+        if value["found"]:
+            return value
+        root = os.path.join(config["state_root"], "retired_submissions")
+        _mkdir(root)
+        marker = os.path.join(root, submission_sha256)
+        if not os.path.exists(marker):
+            _write_new(marker, (submission_sha256 + "\n").encode("ascii"), 0o440)
+        # The caller may release budget once this acknowledgment arrives.
+        # Persist both the marker entry and its directory before acknowledging.
+        for directory in (root, config["state_root"]):
+            descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+        return {"found": False, "retired": True, "submission_sha256": submission_sha256}
 
 
 def _status(config, run_id):

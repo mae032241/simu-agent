@@ -31,7 +31,7 @@ TABLES = {
     "runs": ("runs", "run_activity", "run_tool_evidence", "run_activity_sequence", "worker_connections", "worker_participants"),
     "approvals": ("approval_requests", "approval_decisions", "used_nonces", "decision_attempts"),
     "executions": ("executions", "execution_policy_authorizations", "execution_current_policy",
-                   "execution_budget_pools", "execution_budget_reservations", "execution_prepared_submissions"),
+                   "execution_budget_pools", "execution_budget_reservations", "execution_prepared_submissions", "execution_budget_estimates"),
     "artifacts": ("artifact_envelopes", "artifact_links", "idempotency_records", "artifact_events"),
     "dispatch": ("active_transport",),
     "views": ("metadata", "nodes", "events", "preferences", "display_summaries"),
@@ -45,7 +45,7 @@ CONTROL_PAYLOADS = {
 # Budget keys identify scientific subjects across instances. The active ledger
 # remains authoritative even while its execution is archived; snapshots retain
 # exact copies for inspection and conflict-checked restoration.
-RETAINED_EXECUTION_TABLES = frozenset({"execution_budget_pools", "execution_budget_reservations"})
+RETAINED_EXECUTION_TABLES = frozenset({"execution_budget_pools", "execution_budget_reservations", "execution_budget_estimates"})
 
 MAX_RECORD_BYTES = 16 * 1024 * 1024
 MAX_CONTROL_PAYLOAD_BYTES = 16 * 1024 * 1024

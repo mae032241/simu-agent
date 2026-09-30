@@ -222,7 +222,7 @@ class CommandTCADExecutorAdapter:
         return LocalFileDescriptor.model_validate(value["submission"], strict=True)
 
     def submit(self, submission: LocalFileDescriptor, *, authorization=None) -> tuple[str, str]:
-        value = self._call("submit", {"submission": _without_schema(submission),
+        value = self._call("submit_retirable", {"submission": _without_schema(submission),
             "authorization": None if authorization is None else authorization.model_dump(mode="json")})
         return str(value["run_id"]), str(value["state"])
 
@@ -240,6 +240,14 @@ class CommandTCADExecutorAdapter:
 
     def status(self, external_run_id: str) -> str:
         return str(self.status_details(external_run_id)["state"])
+
+    def retire_submission(self, submission: LocalFileDescriptor) -> tuple[str, str] | None:
+        value = self._call("retire_submission", {"submission": _without_schema(submission)})
+        if value.get("found") is True:
+            return str(value["run_id"]), str(value["state"])
+        if value.get("found") is False and value.get("retired") is True and value.get("submission_sha256") == submission.sha256:
+            return None
+        raise RuntimeError("TCAD transport did not confirm exact submission retirement")
 
     def status_details(self, external_run_id: str) -> dict[str, Any]:
         return self._call("status", {"run_id": external_run_id})

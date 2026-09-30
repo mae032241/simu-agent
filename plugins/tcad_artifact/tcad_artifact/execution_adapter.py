@@ -140,7 +140,7 @@ class TCADExecutorAdapter:
 
     def submit(self, submission: LocalFileDescriptor, *, authorization=None) -> tuple[str, str]:
         value = self._call(
-            "tcad_submit",
+            "tcad_submit_retirable",
             {
                 "authorization": None if authorization is None else authorization.model_dump(mode="json"),
                 "submission": submission.model_dump(
@@ -165,6 +165,14 @@ class TCADExecutorAdapter:
 
     def status(self, external_run_id: str) -> str:
         return str(self.status_details(external_run_id)["state"])
+
+    def retire_submission(self, submission: LocalFileDescriptor) -> tuple[str, str] | None:
+        value = self._call("tcad_retire_submission", {"submission_sha256": submission.sha256})
+        if value.get("found") is True:
+            return str(value["run_id"]), str(value["state"])
+        if value.get("found") is False and value.get("retired") is True and value.get("submission_sha256") == submission.sha256:
+            return None
+        raise RuntimeError("TCAD service did not confirm exact submission retirement")
 
     def status_details(self, external_run_id: str) -> dict[str, Any]:
         return self._call("tcad_status", {"run_id": external_run_id})

@@ -113,6 +113,14 @@ def test_worker_slow_policy_hands_approval_to_status(tmp_path, monkeypatch):
         assert start(f)["submission"]["state"] == "pending"
     finally:
         release.set()
+    # Observe durable control state only: no Worker status poll may be needed
+    # to begin the approval wait or publish its instance binding.
+    from tests.operations.test_approval_wait_recovery import execution
+    eid = execution(f).object_id
+    _wait(lambda: f.coordinator.bridge.submissions.summary(eid).get("state") == "awaiting_authorization")
+    with f.runs._connect() as db:
+        assert db.execute("SELECT COUNT(*) FROM run_activity WHERE run_id=? AND activity='approval_wait_started'",
+            (f.run_id,)).fetchone()[0] == 1
     result = {}
     def approved():
         result.update(f.worker.call_tool("worker_experiment_execute", {"action": "status"}))

@@ -273,6 +273,7 @@ def build_hardened_worker_router(
         operation_catalog=catalog,
         backend=backend,
         scheduler_bindings=bindings,
+        approval_database_path=state / "database" / "approvals.sqlite3",
     )
     return MCPRouter(
         HardenedWorkerMCPRouter(

@@ -401,24 +401,28 @@ class SSHTCADTransport:
             }
         if operation == "prepare":
             return self._prepare(payload)
-        if operation == "lookup_submission":
+        if operation in {"lookup_submission", "retire_submission"}:
             marker = self._read_marker(payload["submission"])
             value = self._rpc(
-                "tcad_lookup_submission",
+                "tcad_" + operation,
                 {
                     "submission_sha256": marker["remote_submission"]["sha256"]
                 },
             )
             if value.get("found") is False:
+                if operation == "retire_submission":
+                    if value.get("retired") is not True or value.get("submission_sha256") != marker["remote_submission"]["sha256"]:
+                        raise RuntimeError("runner did not confirm retirement of the exact submission")
+                    return {"found": False, "retired": True, "submission_sha256": payload["submission"]["sha256"]}
                 return {"found": False}
             return {
                 "found": True,
                 "run_id": value["run_id"],
                 "state": value["state"],
             }
-        if operation == "submit":
+        if operation in {"submit", "submit_retirable"}:
             marker = self._read_marker(payload["submission"])
-            value = self._rpc("tcad_submit", {"submission": marker["remote_submission"], "authorization": payload.get("authorization")})
+            value = self._rpc("tcad_" + operation, {"submission": marker["remote_submission"], "authorization": payload.get("authorization")})
             return {"run_id": value["run_id"], "state": value["state"]}
         if operation == "status":
             value = self._rpc("tcad_status", {"run_id": payload["run_id"]})

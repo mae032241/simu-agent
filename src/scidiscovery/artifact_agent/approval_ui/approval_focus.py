@@ -81,6 +81,10 @@ def render_approval_focus(presentation, *, subject_ids, evidence_href, authoriza
             actual = accounting.get('actual', {}).get('wall_time_seconds')
             body += '<p class="source-note">本次已结算实际时长：' + _amount('wall_time_seconds', actual) + (
                 '。仍有未结算预留，不能视为实际消耗。' if accounting.get('unsettled_reservation') else '。') + '</p>'
+            if accounting.get('estimated'):
+                body += '<p class="source-note">终态缺少观测，以下项目按申请上限估算扣账（不是实测）：' + '；'.join(
+                    label + ' ' + _amount(key, accounting['estimated'][key]) for key, label in
+                    (('wall_time_seconds', '时长'), ('max_storage_bytes', '存储')) if key in accounting['estimated']) + '。</p>'
         if any(type(value) is int and value > 0 for value in overage.values()):
             body += '<p class="source-note">累计超额（不是本次申请）：' + '；'.join(_amount(key, value) for key, value in overage.items() if value > 0) + '</p>'
     presentation = presentation or {}

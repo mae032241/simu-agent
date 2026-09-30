@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import os
 import threading
 from contextlib import ExitStack, contextmanager
@@ -41,6 +42,8 @@ class ExecutionSubmission:
         except FileNotFoundError:
             return {}
         current = self.executions.status(execution_id)
+        if current.state == "abandoned":
+            return {"state": "not_submitted", "resubmission_allowed": False}
         if current.external_run_id is not None:
             return {"state": "submitted", "resubmission_allowed": False}
         if value.get("state") == "pending":
@@ -53,20 +56,20 @@ class ExecutionSubmission:
         return {**{key: value[key] for key in ("state", "reason", "error") if key in value},
             "resubmission_allowed": False}
 
-    def require_idle(self, execution_id):
-        if self.summary(execution_id).get("state") in {"pending", "unknown"}:
+    def require_idle(self, execution_id, *, allow_unknown=False):
+        if self.summary(execution_id).get("state") in ({"pending"} if allow_unknown else {"pending", "unknown"}):
             raise ExecutionServiceError("Submission is pending or uncertain. Query the same execution; do not cancel, abandon or create a replacement yet.")
 
     @contextmanager
-    def idle(self, execution_id):
-        self.require_idle(execution_id)
+    def idle(self, execution_id, *, allow_unknown=False):
+        self.require_idle(execution_id, allow_unknown=allow_unknown)
         directory = self._directory(execution_id)
         directory.mkdir(parents=True, exist_ok=True)
         fd = self._lock(directory / "submission.lock")
         if fd is None:
             raise ExecutionServiceError("Submission is in progress; query the same execution before changing its lifecycle.")
         try:
-            self.require_idle(execution_id)
+            self.require_idle(execution_id, allow_unknown=allow_unknown)
             yield
         finally:
             os.close(fd)
@@ -74,6 +77,12 @@ class ExecutionSubmission:
     def start(self, *, execution_id, scope, wait_seconds, on_authorization_required, **options):
         return self._launch(execution_id, scope=scope, wait_seconds=wait_seconds,
             on_authorization_required=on_authorization_required, options=options, recover_only=False)
+
+    def can_retire(self, execution_id):
+        try:
+            return read_json(self._directory(execution_id) / "submission.json").get("retirement_supported") is True
+        except FileNotFoundError:
+            return False
 
     def refresh(self, execution_id, *, scope):
         # Status recovery only looks up an exact prepared descriptor; it never
@@ -100,7 +109,8 @@ class ExecutionSubmission:
             if fd is None:
                 return
             resources.callback(os.close, fd)
-            if self.executions.status(execution_id).external_run_id is not None:
+            if (self.executions.status(execution_id).external_run_id is not None
+                    or self.executions.status(execution_id).state == "abandoned"):
                 return
             previous = {}
             # With our lock held summary sees pending; read the durable record
@@ -111,22 +121,29 @@ class ExecutionSubmission:
                 pass
             if previous.get("state") in {"pending", "unknown"}:
                 recover_only = True
-            slot = self._lock(self.executions.exchange_root / "submission-slot.lock")
+            backend = self.executions.status(execution_id).executor
+            slot_key = hashlib.sha256(backend.encode()).hexdigest()
+            slot = self._lock(self.executions.exchange_root / ("submission-slot-" + slot_key + ".lock"))
             if slot is None:
                 if recover_only:
                     return
-                raise ExecutionServiceError("Another execution submission is in progress. No new submission was accepted; query that execution before starting another.")
+                raise ExecutionServiceError("Another submission to this execution backend is in progress. No new submission was accepted; query that execution before starting another.")
             resources.callback(os.close, slot)
             may_have_submitted = previous.get("may_have_submitted",
                 self.executions.prepared_submission(execution_id) is not None)
-            atomic_json(directory / "submission.json", {"state": "pending", "may_have_submitted": may_have_submitted})
+            retirement_supported = previous.get("retirement_supported", not may_have_submitted and callable(
+                getattr(self.bridge._adapter(self.executions.status(execution_id).executor), "retire_submission", None)))
+            def save(record):
+                atomic_json(directory / "submission.json", {**record, "retirement_supported": retirement_supported,
+                    "may_have_submitted": may_have_submitted})
+            save({"state": "pending"})
             done = threading.Event()
             errors = []
 
             def before_submit():
                 nonlocal may_have_submitted
                 may_have_submitted = True
-                atomic_json(directory / "submission.json", {"state": "pending", "may_have_submitted": True})
+                save({"state": "pending"})
 
             def run():
                 try:
@@ -145,7 +162,7 @@ class ExecutionSubmission:
                     else:
                         self.bridge.start(execution_id=execution_id, before_submit=before_submit, **options)
                         result = {"state": "submitted"}
-                    atomic_json(directory / "submission.json", {**result, "may_have_submitted": may_have_submitted})
+                    save(result)
                 except Exception as error:
                     from ..execution_bridge import ExecutionAuthorizationRequired
                     state = "unknown" if may_have_submitted else "failed"
@@ -162,7 +179,7 @@ class ExecutionSubmission:
                         diagnostic = EngineeringDiagnostics(self.executions.database_path.parent.parent / "engineering-diagnostics").capture(
                             error, scope=scope, layer="execution_submission", action="recover" if recover_only else "start")
                         result["error"] = diagnostic_locator(diagnostic)
-                    atomic_json(directory / "submission.json", result)
+                    save(result)
                     errors.append(error)
                 finally:
                     resources.close()
