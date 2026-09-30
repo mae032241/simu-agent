@@ -81,7 +81,7 @@ def test_readiness_alone_never_claims_b0a_or_launches(tmp_path, monkeypatch):
 @pytest.mark.parametrize("outcome,permissions", [
     ("ready",False), ("requirements_error",False), ("identity_missing",False),
     ("ready",True), ("network_mismatch",True), ("resume_identity_changed",True),
-    ("resume_rejected",True),
+    ("resume_rejected",True), ("unmaterialized",True), ("inject_rejected",True),
 ])
 def test_protocol_probe_uses_no_model_and_cleans_workspace(tmp_path, monkeypatch, outcome, permissions):
     """A fake local stdio peer proves protocol handling, never live Codex ability."""
@@ -90,6 +90,7 @@ def test_protocol_probe_uses_no_model_and_cleans_workspace(tmp_path, monkeypatch
     command.write_text(f"#!{sys.executable}\n" + f'''
 import json, sys
 from pathlib import Path
+materialized = False
 for line in sys.stdin:
     msg = json.loads(line)
     with Path({str(received)!r}).open('a') as stream:
@@ -101,6 +102,17 @@ for line in sys.stdin:
     elif {outcome!r} == 'requirements_error':
         reply = {{'id': msg['id'], 'error': {{'code': -32603,
             'message': 'failed to load workspace requirements: private-details'}}}}
+    elif msg['method'] == 'thread/inject_items':
+        if {outcome!r} == 'inject_rejected':
+            reply = {{'id': msg['id'], 'error': {{'code': -32600, 'message': 'fixture injection rejected'}}}}
+        else:
+            assert msg['params']['threadId'] == 'fixture-thread'
+            assert msg['params']['items'][0]['role'] == 'user'
+            materialized = True
+            reply = {{'id': msg['id'], 'result': {{}}}}
+    elif msg['method'] == 'thread/resume' and not materialized:
+        reply = {{'id': msg['id'], 'error': {{'code': -32600,
+            'message': 'no rollout found for thread id fixture-thread'}}}}
     elif {outcome!r} == 'resume_rejected' and msg['method'] == 'thread/resume':
         reply = {{'id': msg['id'], 'error': {{'code': -32600,
             'message': 'fixture resume rejection: private-details', 'data': {{'fixture': True}}}}}}
@@ -119,6 +131,10 @@ for line in sys.stdin:
     monkeypatch.setattr(probe.shutil, "which", lambda _: str(command))
     monkeypatch.setattr(probe, "preflight", lambda: {
         "blockers": [], "model_requests": 0, "worker_dispatches": 0, "b0a_passed": False})
+    if outcome == 'unmaterialized':
+        # Negative control: the former start -> resume sequence reproduces
+        # the real CLI rejection without altering the fake server's behavior.
+        monkeypatch.setattr(probe, 'seed_probe_history', lambda *args: None)
     output = tmp_path / "evidence"
     output.mkdir()
     limits = json.loads(probe.guard.DEFAULT_CONFIG.read_text())["limits"]
@@ -126,9 +142,15 @@ for line in sys.stdin:
     result = json.loads((output / "protocol.json").read_text())
     assert rc == (0 if outcome == "ready" else 1)
     requests = [json.loads(line) for line in received.read_text().splitlines()]
-    assert [item["method"] for item in requests] == ["initialize", "initialized", "thread/start"] + (["thread/resume"] if permissions else [])
-    assert requests[-1]["params"]["sandbox"] == "workspace-write"
-    assert requests[-1]["params"]["approvalPolicy"] == "never"
+    methods = ["initialize", "initialized", "thread/start"]
+    if permissions:
+        if outcome != 'unmaterialized': methods.append('thread/inject_items')
+        if outcome != 'inject_rejected': methods.append('thread/resume')
+    assert [item["method"] for item in requests] == methods
+    for item in requests:
+        if item['method'] in {'thread/start','thread/resume'}:
+            assert item['params']["sandbox"] == "workspace-write"
+            assert item['params']["approvalPolicy"] == "never"
     assert not list(output.glob("workspace-*"))
     assert not result["b0a_passed"] and result["model_requests"] == 0
     assert "private-details" not in (output / "protocol.json").read_text()
@@ -136,16 +158,16 @@ for line in sys.stdin:
         assert result["diagnostic"] == "workspace_requirements_unavailable"
     if permissions:
         assert result["r0a_protocol_passed"] is (outcome == "ready")
-        assert requests[-1]["params"]["config"] == probe.RootPermissions().thread()["config"]
+        assert requests[2]["params"]["config"] == probe.RootPermissions().thread()["config"]
         trace = json.loads((output / "permissions-protocol.json").read_text())
-        assert [item["method"] for item in trace] == ['initialize','thread/start','thread/resume']
+        assert [item["method"] for item in trace] == [m for m in methods if m != 'initialized']
         if outcome == 'ready':
             assert result['native_user_agent'] == 'fixture-codex/1'
             assert result['same_thread_resumed']
             assert result['start_permissions_verified'] and result['resume_permissions_verified']
         elif outcome == 'resume_rejected':
             assert result['diagnostic'] == 'request_rejected'
-            assert result['completed_methods'] == ['initialize', 'thread/start']
+            assert result['completed_methods'] == ['initialize', 'thread/start', 'thread/inject_items']
             assert result['start_permissions_verified']
             assert not result['resume_permissions_verified'] and not result['same_thread_resumed']
             assert trace[-1]['request'] == requests[-1]['params']
@@ -153,6 +175,14 @@ for line in sys.stdin:
             assert trace[-1]['error'] == {'code': -32600,
                 'message': 'fixture resume rejection: private-details', 'data': {'fixture': True}}
             assert result['protocol_evidence'] == str(output / 'permissions-protocol.json')
+        elif outcome in {'unmaterialized','inject_rejected'}:
+            assert result['completed_methods'] == ['initialize', 'thread/start']
+            assert result['start_permissions_verified']
+            assert not result['resume_permissions_verified'] and not result['same_thread_resumed']
+            assert result['diagnostic'] == 'request_rejected'
+            assert trace[-1]['error']['message'] == (
+                'no rollout found for thread id fixture-thread' if outcome == 'unmaterialized'
+                else 'fixture injection rejected')
         else:
             assert result['diagnostic'] in {'root_permissions_mismatch','resumed_platform_identity_changed'}
 
@@ -189,6 +219,8 @@ def test_thread_start_matches_installed_cli_schema(tmp_path):
     turn_schema = json.loads((schema_dir / "v2/TurnStartParams.json").read_text())
     jsonschema.Draft7Validator(turn_schema).validate(turn_params("fixture-thread", "Bounded task"))
     resume_schema = json.loads((schema_dir / "v2/ThreadResumeParams.json").read_text())
+    inject_schema = json.loads((schema_dir / "v2/ThreadInjectItemsParams.json").read_text())
+    jsonschema.Draft7Validator(inject_schema).validate(probe.probe_history_params('fixture-thread'))
     jsonschema.Draft7Validator(resume_schema).validate({
         "threadId": "fixture-thread", "cwd": str(tmp_path / "workspace"), "excludeTurns": True})
     jsonschema.Draft7Validator(resume_schema).validate({"threadId": "fixture-worker", "excludeTurns": True})

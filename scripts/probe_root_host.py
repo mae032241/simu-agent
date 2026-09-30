@@ -63,6 +63,19 @@ def thread_start_params(workspace: str) -> dict:
             "approvalPolicy": "never", "sandbox": "workspace-write"}
 
 
+def probe_history_params(thread_id: str) -> dict:
+    """Materialize only the disposable probe's history without a model turn."""
+    return {"threadId": thread_id, "items": [{"type": "message", "role": "user",
+        "content": [{"type": "input_text", "text":
+            "SciDiscovery protocol test fixture. This is not a research task or a model response."}]}]}
+
+
+def seed_probe_history(rpc, thread_id: str) -> None:
+    # thread/start alone need not persist a rollout. Use the native append API;
+    # never fabricate rollout files or ask a model to create test history.
+    rpc("thread/inject_items", probe_history_params(thread_id))
+
+
 def _protocol_probe(output: Path, limits: dict, *, permissions: bool = False) -> int:
     """Child of the existing resource supervisor; no model turn is permitted."""
     # Check again after waiting for the serial lock, before starting Codex.
@@ -151,6 +164,7 @@ def _protocol_probe(output: Path, limits: dict, *, permissions: bool = False) ->
             if policy:
                 if not thread.get("sessionId"):
                     raise RuntimeError("thread_session_identity_missing")
+                seed_probe_history(rpc, thread["id"])
                 resumed = rpc("thread/resume", {"threadId": thread["id"], "cwd": scratch,
                     "excludeTurns": True, **policy.thread()})
                 policy.verify(resumed, cwd=scratch)

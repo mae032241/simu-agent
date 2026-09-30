@@ -192,11 +192,11 @@ Root 沉默、重复 unknown 或仅写“有进展”不会消除触发原因；
 
 发布防护（R0-B 源码与负例已完成，S5b 验收安装态）：使用独立于 Git 提交/包版本的**状态格式版本**标记。可信初始化入口对新建空状态目录加锁并写入标记；守护进程及其他状态写入入口在打开数据库、自动建表或接管任务前共用检查。非空且无标记、格式不兼容或标记损坏时拒绝加载，提示使用新的 state root；不补写标记把旧数据伪装成新数据。本版本重启应正常读取已有状态。定向负例覆盖首次初始化、同格式重启、无标记旧目录、不兼容/损坏标记及并发初始化；拒绝后旧数据保持不变。此为控制层部署检查，不增加 Agent 字段或科学审批。
 
-R0-A 唯一剩余项：真实零模型权限协议确认。`scripts/probe_root_host.py --permissions` 接入生产 RootPermissions，检查 initialize、thread/start 和同连接 thread/resume 的实际权限及线程/session 身份；仅 `r0a_protocol_passed=true` 表示整项通过。2026-09-30 普通终端实测：初始化和启动通过，启动权限符合冻结值，恢复请求被拒绝（-32600）；0 次模型请求、0 次 Worker 派发、无内存止损。该次旧探针未保存原始 RPC 错误，不能据此认定恢复失败的根因。现已补存失败请求及原始错误到私有 `permissions-protocol.json`，公共摘要只保留错误分类，并分别报告启动和恢复的权限检查；新增拒绝恢复的协议夹具防止再次丢失诊断。当前会话仍受 daemon 目录访问限制，不启动原生探针。无需实例绑定，在普通终端用新的证据目录执行一次以取得原始拒绝信息：
+R0-A 唯一剩余项：真实零模型权限协议确认。`scripts/probe_root_host.py --permissions` 接入生产 RootPermissions，检查启动与同连接恢复的实际权限及线程/session 身份；仅 `r0a_protocol_passed=true` 表示整项通过。普通终端实测已确认启动权限正确，恢复错误原文为 `no rollout found for thread id`（证据：`/tmp/scid-r0a-host-permissions-20260930-02/permissions-protocol.json`）。旧探针直接恢复刚创建、尚无持久历史的空线程，前置条件不成立。探针现改为 start → `thread/inject_items` 写入一条明确标注的测试记录 → resume；使用原生接口、不启动模型、不手写 rollout、不更换线程或修改生产恢复逻辑。失败请求与原始错误留在私有证据，公共摘要分开报告启动和恢复检查。定向测试包含省略注入后复现旧错误、注入失败时不继续恢复，以及实际 CLI 离线 schema 校验；真实修复结果仍待下列命令确认。当前会话受 daemon 目录访问限制，不启动原生探针。无需实例绑定，在普通终端执行：
 
 ```bash
 cd /home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2
-python scripts/probe_root_host.py --permissions --output /tmp/scid-r0a-host-permissions-20260930-02
+python scripts/probe_root_host.py --permissions --output /tmp/scid-r0a-host-permissions-20260930-03
 ```
 
 沿用串行锁和资源监督，遵循 root_host_resources 的虚拟地址限制开关（当前关闭），保留 1.5 GB 进程树 RSS 止损及超时。无 turn/start、Worker 或科学任务；同线程恢复不代替宿主进程重启验收。环境阻断不反复重试，不更改原生 daemon 权限。通过后关闭 R0-A 此协议项，S0 的科学效果、实际 Worker 继承及旧现场失败归因仍分别报告。
