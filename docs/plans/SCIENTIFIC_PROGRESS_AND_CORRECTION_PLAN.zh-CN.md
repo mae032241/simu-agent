@@ -5,6 +5,37 @@
 状态：**R0-A 完成，R0-B 源码与定向夹具完成。T 批首轮修复和独立短收尾验收已收口；Sol 自主预演 r6 的两项结果已封存，用户确认 H1–H4 各 2 分、H5 待评。原次收尾失败保留，稳定成本收益未取得资格。r7 不可辨识场景执行与交付通过，正式质量待评。S1、S2 源码、定向验证及独立评审完成；S3 shadow 与 assist 的源码、确定性验证及独立评审完成；S0 完整同条件基线与 S4–S5 尚未完成。** r7 费用已结转，余量不足再预留完整一场；S3 追加的观察范围、人工接管及调试隔离修复已完成定向验证与独立评审，已纳入本次追加修复节点，尚未部署；等待用户通知 main 可合入后再冻结 S5a 候选；不自动扩额或继续重跑 negative。本文是实施与待办的唯一入口；不进入 Agent 启动材料。
 代码、安装候选、科学质量和成本收益分别验收，不用工程测试通过数量代替科研效果。
 
+**2026-10-01 交回生命周期与控制存储追加修复（基于 `dev 6dc7d67`，纳入本提交节点）：源码与必要定向验证完成，独立只读复审及追加 P2 复核已关闭，未部署。** 上述已收口评审属于此前节点，不覆盖本次增量；本次未修改 main、安装或运行真实模型/TCAD。
+
+- 交回尝试绑定原生 host 与 turn。coordinator 确认精确 turn 失败/中断并清理该尝试后，仍须宿主释放和控制状态已解析，UI 才可授权人工继续；未知提交、活跃 writer、错误 turn 和未决 admission 保持阻断。任务预算与复判次数不退款。恢复后台且原预算足够时仍可新开一次结果消费 turn，因此不将原缺陷描述为所有情形永久死锁。
+- 同一 `scheduler-bindings.sqlite3` 新增 `scheduler_progression_details`，按实例外置人工继续、独立人工范围、admission、背景/人工 usage 五类明细，以及 `decision_snapshot`、`processed_snapshot`、`terminal_delivery`、`human_handoff` 四个白名单快照。活动 checkpoint 保留引用及计数，拆分与 checkpoint 更新同事务提交；读取以同一 SQLite 快照重建既有内部投影。准入幂等、历史范围关联、累计预算和归档 ArtifactRef 可达性继续使用完整记录。内部读取仍物化完整历史，不宣称恒定内存或无限历史规模资格。
+- 人工任务的明确失败终态获得交回消费资格；等待和未知状态不获得该资格，失败无 sealed output，不被推断为科学进展。既有 `terminal_fact`/进展计数语义不变。
+- 破坏性存储版本为 `scidiscovery-state-v3`，scheduler 控制 schema 为 2。旧 v2 state 在打开数据库前拒绝，旧控制归档拒绝恢复；不提供迁移，使用新的空 state root。归档恢复保留历史但不恢复会话授权；恢复后继续工作需用户重新绑定。
+
+本次证据均由 `python scripts/run_tests.py --lane source --output /tmp/<独立目录> <精确目标>` 串行执行，沿用默认 2GB 地址空间、1.5GB RSS、300s 限制。分组存在重叠，不相加为独立覆盖数量：
+
+| 分组 | 结果与证据范围 |
+|---|---|
+| 失败前复现 | `/tmp/handoff-regression-before-20261001` 六个失败/中断→UI→MCP参数均失败于残留 delivered；`/tmp/failed-terminal-before-20261001` 失败于缺少交回记录 |
+| 生命周期与资格修复 | 六个交回正例通过；`/tmp/handoff-boundaries-20261001` 五个未知身份/准入与恢复预算分支通过；失败终态单例修复后通过。后续同库存储接线组 `/tmp/handoff-storage-integrated-20261001` 整文件 60 项通过，覆盖并重叠这些用例 |
+| 容量与版本首组 | `/tmp/progression-detail-capacity-20261001` 23 通过、1 测试错误；错误为恢复后沿用已解除绑定的 MCP 会话，改为明确实例只读入口。72 次真实 UI/MCP 工作范围及任务、物理 checkpoint 小于 64KB 与内部历史大于 64KB 均已通过 |
+| 最新存储投影与容量增量 | `/tmp/progression-detail-capacity-repaired-20261001` 三项通过：大历史/归档往返，快照空值/缺失/替换与容量回滚，缺失明细拒绝；usage 用例因构造仅 56KB 未达到测试目标而失败，增至 192 身份后进入下一组。一次脚本语法错误后误启动的重复组 `/tmp/progression-detail-capacity-fixed-20261001` 已立即中止，不计通过证据 |
+| 存储增量接缝 | `/tmp/progression-detail-seams-20261001` 15 项通过：192 usage 身份累计/高水位去重、真实 runtime 更新失败同事务回滚、跨实例归档隔离及仅由明细引用的 ArtifactRef 保留、全局 state 格式拒绝。该组含旧格式测试分组重叠；不声称重跑最终完整矩阵 |
+| 最终交回容量增量 | `/tmp/large-handoff-before-20261001` 以 800 个长名称持久 admission 夹具通过真实 `prepare_human_handoff` 复现交回任务列表再次撑满 checkpoint；将 `human_handoff` 纳入同一快照白名单后，`/tmp/large-handoff-after-20261001` 7 项通过：大交回 prepare/observe/失败收束及六个人工接管回归（与此前生命周期组重叠）。交回快照超过 64KB 时，物理 checkpoint 仍小于 64KB，全部任务身份保留 |
+
+`progression_read.py` 的 `closeout.omissions` 仅构造读取响应，不落 checkpoint；`scheduling_control.py` 的 `human_handoff.tasks` 属于持久交回快照，已整体外置，不再把持久化增长误记为性能限制。
+
+**追加独立复审：指定范围确认一项 P2，其余未发现新增 P1/P2；该 P2 已修复并经独立追加复核关闭，补丁范围未发现新增 P1/P2。** 之前 800 条记录验证只覆盖 prepare/observe，未覆盖真实 `_tick` 简报路径。`/tmp/handoff-native-brief-before-20261001` 通过真实 coordinator tick、800 条持久 runs/语义名绑定和模拟 Host，复现 `decision_brief_capacity`。
+
+当前 P2 补丁将公开交回投影限制为至多八个名称，并提供总数、遗漏数及既有 `run_list(view=summary, limit=8)` 指引；按返回的 `next_before` 原样传入 `before`，每页新增 `human_handoff_tasks` 明确该页属于当前实例、当前冻结目标交回的语义名，再用 `run_status(intent=decision)` 读取。没有新增 Root 工具或分页输入 API。简报按实际字节进一步裁剪交回名称和遗漏明细，保留计数与读取指引；仅实际展示的终态或后续结构化原生工具回执推进 `terminal_delivery`/`decision_snapshot`，未展示任务保持待消费。
+
+P2 定向修复验证及独立追加复核完成：初次 after 组在真实 MCP 读取时暴露缺失 import，已修；后续默认 49152 与 10000 字节上下文均已启动且 prompt 未超预算，但测试分别误用内部 delivery 页上限、错误要求较小上下文必须携带结果，已纠正测试。10000 字节允许仅携带交回摘要/指引，完成该 turn 不可结算未展示任务；随后沿真实 MCP 列表找到遗漏语义名、读取 run_status 并取得 native receipt 后才结算。
+
+最终精确组 `/tmp/handoff-native-brief-final-20261001-r2` **6 项通过，26.75 秒，峰值 RSS 167.6 MB，无资源限制触发**：`test_large_handoff_real_tick_bounds_prompt_and_settles_only_visible_tasks` 两种上下文参数；`test_handoff_run_list_members_are_bound_to_current_instance_and_goal`；`test_handoff_failure_requires_exact_resolved_native_boundary` 三个未知/错误身份参数。默认预算明确核验已展示与未展示对象完成后不同结算；后续 brief 继续携带未消费对象，真实 native receipt 可补充消费。该组与此前未知保护分组重叠，不累计为独立覆盖数。第一次启动曾因仓库串行锁占用被拒绝，锁释放后才启动本组，未绕锁。本提交节点尚未部署；独立审查者已核对日志、真实入口与消费语义并关闭此 P2，停止扩大测试。
+
+尚未验证：真实 Codex/native 宿主、浏览器自动化、安装包/部署、真实模型/TCAD，以及极大历史的读取性能与所有公共摘要大小。公开 UI 继续显示最近八条人工范围及遗漏计数；不以本次 72 个真实任务和 800 个持久记录夹具声称无限扩展能力。
+
+
 评审修订：保留不依赖 Root 自评的兜底信号、真实基线前置和配置化阈值；R0 区分基线必需与发布必需项。刹车机制通过确定性回放验证，真实场次验证科研质量与误伤；不要求模型反复做无效任务来凑触发次数。S1 已完成本轮运行成本与故障接缝修复，S2 科研进展合同已落地，S2 等待/交接接缝已完成，S3 shadow 与 assist 的源码、确定性验证及独立评审均已收口。
 
 ## 1. 目标、现状与文档归属
@@ -362,7 +393,7 @@ assist 独立评审修正（2026-10-01 复审关闭）：首次在下一任务�
 - [x] 历史观察范围：按首次后台启动的精确任务身份区分背景，保留运行任务的观察资格；定向验证和独立复审通过，已纳入本次追加修复节点，尚未部署。
 - [x] 科学判断边界：公开合同与 S5a 明确 Root 不同输出加 advance 仍可能绕过科学停滞，refinement 仅提示；不宣称独立科学裁判能力。
 - [x] 人工接管追加修复（独立复审已关闭，纳入本节点）：原 exhausted-only 接管和继承旧后台配额的交互路径在新审查中重新打开。当前工作树区分两种明确 UI 决定：同目标继续保留原后台任务、轮次、token 与墙钟预算；独立人工工作绑定精确目标、当前会话与控制代次，单独记录 admission/可观测 usage，不消耗或重置旧后台配额，实例执行累计预算仍生效。两种确认均复用 capability、Origin、CSRF 和新鲜绑定，普通 MCP start/takeover/resume 或目标 revision 不产生人工权限。默认 shadow/off 普通交互语义不扩展；仅 assist 的原预算受控路径适用相应门禁。
-  安全确认允许尚未开始或已安全终止的纠偏阶段；原生宿主、未知 native 提交和未知 admission 必须先核清，prepared 科学候选不冒充已提交。回后台仅对确实存在且未消费的人工封存成果给一次原后台预算内消费机会，该 turn 禁止新科学任务，不补发复判额度。预算不足保留原通知与未消费成果，并提示独立人工作用域选择；Root 的原件引用与 advance 判断仍不是独立科学有效性判定，默认保留 shadow。作用域历史持久保留于既有 checkpoint 容量内，公开读取末 8 条并声明 omitted；未知跨 scope 的原生累计观测区间保留覆盖限制。定向证据：`/tmp/scid-interactive-repair-final-focused` 为 80 项源码通过（106.34 秒）；随后最后的独立人工候选绑定、未知提交保护及相邻回归在 `/tmp/scid-interactive-repair-adjacent` 为 73 项通过、1 项按 lane 取消选择（44.84 秒）；`/tmp/scid-interactive-repair-process` 为 5 项本地模拟原生协议进程测试通过（2.67 秒）。三组有重叠，不累计为独立用例数。`git diff --check` 通过；本轮独立复审及追加 P2 复核已关闭，纳入本节点。未部署，未运行完整套件、安装、真实模型或 TCAD。
+  安全确认允许尚未开始或已安全终止的纠偏阶段；原生宿主、未知 native 提交和未知 admission 必须先核清，prepared 科学候选不冒充已提交。回后台仅对确实存在且未消费的人工封存成果给一次原后台预算内消费机会，该 turn 禁止新科学任务，不补发复判额度。预算不足保留原通知与未消费成果，并提示独立人工作用域选择；Root 的原件引用与 advance 判断仍不是独立科学有效性判定，默认保留 shadow。该已提交节点将作用域历史保留在 checkpoint，本文开头的后续修复已改为同库明细持久化；公开读取末 8 条并声明 omitted；未知跨 scope 的原生累计观测区间保留覆盖限制。定向证据：`/tmp/scid-interactive-repair-final-focused` 为 80 项源码通过（106.34 秒）；随后最后的独立人工候选绑定、未知提交保护及相邻回归在 `/tmp/scid-interactive-repair-adjacent` 为 73 项通过、1 项按 lane 取消选择（44.84 秒）；`/tmp/scid-interactive-repair-process` 为 5 项本地模拟原生协议进程测试通过（2.67 秒）。三组有重叠，不累计为独立用例数。`git diff --check` 通过；本轮独立复审及追加 P2 复核已关闭，纳入本节点。未部署，未运行完整套件、安装、真实模型或 TCAD。
   独立复审追加发现下游 `RunService.validate_admission` 仍把独立人工 admission 计入后台总额（P2）；已复用同一 `background_task_count`，只扣除同后台作用域的当前 reservation，未知提交和独立 review 权限约束保留。修复前 `/tmp/scid-interactive-repair-admission-repro` 的实际 MCP 普通任务与 owner 精确 review 两项反例均失败；修复后 `/tmp/scid-interactive-repair-admission-final` 为 7 项通过（14.65 秒），覆盖真实 preflight/创建、reviewer 附加运行、后台实际额度耗尽及创建中断不重放。独立审查者已只读复核该 P2 关闭，限定范围未发现新增回归；不把前述 80 项视为最后树重复全验。
 - [x] 调试任务隔离：同一实例预算池中的不同任务可使用相同诊断别名，各自只读/轮询/交付自己的记录；恢复只读取控制层明确授权的任务谱系，换名或恢复不重置累计预算。源码、定向验证及独立复审已完成，已纳入本次追加修复节点，尚未部署：账本按 Run 身份与诊断别名组合绑定，当前任务优先、多个授权来源歧义拒绝，同实现不赋予恢复权限；只读查询不落盘，取消精确绑定当前任务，旧版账本拒绝且保留额度。原缺陷复现保留于 `/tmp/scid-debug-identity-before`；新增隔离及相邻回归 `/tmp/scid-debug-identity-final` 为 52 项通过（28.18 秒），覆盖恢复不重复提交/退还预算、未知提交、活动诊断隔离与实施不匹配拒绝。取消调用方精确身份断言 `/tmp/scid-debug-identity-scope` 另 1 项通过（0.29 秒），`git diff --check` 通过。仅受限模拟适配器源码检查，未运行真实 TCAD、安装或完整测试套件，不作部署资格声明。
 - [ ] 诊断预留的可信缺席证明/退款：当前分支尚无该公开受信协议，`tcad_debug_not_submitted` 仅引导安全停止、读取已有诊断 status / task run_status 并保留预留，不声称存在预算 reconciliation 入口。main 合入后须核对缺席证明、未知提交与额度退役协议；此节点不新增 RPC，不修改预算退役逻辑。
@@ -496,7 +527,7 @@ S1 只解决本节明确的运行开销与故障接缝，不扩大为长期基�
 | S0 基线、样本和偶发失败定位 | 样本/预算核账完成；r6 H1–H4 用户确认通过，H5 待评，跨任务及 Root 调度通过；原收尾失败不改判。新冻结版本完整合格样本 0/12；r7 auto-stagnation 执行通过、质量待评，累计预算不足再预留一场。旧失败、预演、两场缺测预留及短收尾成本均结转；Worker 复用旧现场根因资格仍不因本轮通过而关闭 |
 | S1 运行修复 | 源码、定向验证及独立复审已纳入本节点，尚未部署：事件等待、资源采样共享、预算按变化落库、本地观测有界重试；102 项源码和 29 项进程测试通过。全套、安装及真实研究效果未验收 |
 | S2 进展合同与记录 | 核心合同、不可变判断/更正、分页投影及归档恢复，简报消费/遗漏、外部作业交接和平台反向请求接缝已完成源码、定向验证及独立评审；已纳入本节点，尚未部署 |
-| S3 纠偏策略 | shadow 和 assist 源码、定向控制验证及独立评审/修复复审均完成，已纳入本节点，尚未部署。默认保持 shadow，未获 S5 科研效果或默认 assist 资格 |
+| S3 纠偏策略 | 此前 shadow 和 assist 节点已独立复审收口；本次 `6dc7d67` 后交回生命周期、失败终态资格、同库历史存储增量完成源码、定向验证及独立只读复审（含追加简报容量 P2），纳入本提交节点，尚未部署。默认保持 shadow，未获 S5 科研效果或默认 assist 资格 |
 | S4 独立验证语义 | 待实施 |
 | S5a 核心进展/纠偏效果 | 待实施，先于 S4 |
 | S5b 独立验证与最终安装资格 | 待实施，S4 后 |

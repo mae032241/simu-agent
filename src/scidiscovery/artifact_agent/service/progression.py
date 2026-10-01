@@ -161,9 +161,8 @@ class ProgressionCoordinator:
 
     def _save(self, changes, **kwargs):
         expected_host = self._host_binding()
-        if (changes.get('phase') == 'idle' and self.host.completion
-                and self.host.completion['status'] == 'completed'):
-            kwargs['completed_turn'] = self.host.completion['id']
+        if changes.get('phase') == 'idle' and self.host.completion:
+            kwargs['terminal_turn'] = self.host.completion
         return self._observation(lambda: self.bindings.observe_progression(instance_id=self.instance,
             expected_host=expected_host, changes=changes, **kwargs))
 
@@ -199,8 +198,6 @@ class ProgressionCoordinator:
             independent = bool(identities.get(thread, {}).get('interactive_session_id'))
             record_key = 'interactive_usage_records' if independent else 'usage_records'
             records = checkpoint.get(record_key, {})
-            if thread not in records and len(records) >= 64:
-                raise ProgressionFault('usage_identity_capacity')
             previous = records.get(thread)
             # A native Worker thread can be reused across task scopes. Carry its
             # highest observed counter, while each scope retains only its deltas.
@@ -393,6 +390,14 @@ class ProgressionCoordinator:
             if value.state in {'queued', 'running'}:
                 brief['active_tasks'].append(dict(name=name, state=value.state, deadline=value.deadline_at,
                     instruction='Observe this accepted task; do not create a replacement or repeat uncertain native dispatch.'))
+        def omit_result(entry):
+            brief['result_omissions'] = brief.get('result_omissions', 0) + 1
+            brief['omitted_results_read'] = dict(tool='run_list', view='summary', limit=8,
+                continuation='Use returned next_before unchanged as before; read exact names with run_status intent=decision.')
+            if len(brief['omissions']) < 8:
+                brief['omissions'].append(dict(name=entry['name'], state=entry['state'], read='run_status', intent='decision'))
+            else:
+                brief['omission_details_omitted'] = brief.get('omission_details_omitted', 0) + 1
         previous = checkpoint.get('processed_snapshot', {})
         prior = {v['name']: v for v in previous.get('runs', [])}
         for run in snapshot['runs']:
@@ -402,7 +407,8 @@ class ProgressionCoordinator:
             brief['changes'].append(result)
             if len(json.dumps(brief, ensure_ascii=False).encode()) > limit:
                 brief['changes'].pop()
-                brief['omissions'].append(dict(name=run['name'], state=run['state'], read='run_status', intent='decision'))
+                omit_result(run)
+                continue
             output_name = result.get('output_artifact_name')
             if output_name:
                 brief['material_names'].append(output_name)
@@ -421,7 +427,10 @@ class ProgressionCoordinator:
         if len(snapshot['approvals']) > 8:
             brief['omissions'].append(dict(read='approval_list', omitted=len(snapshot['approvals'])-8))
         while len(json.dumps(brief, ensure_ascii=False).encode()) > limit:
-            if brief['approval_changes']:
+            if brief['human_handoff'] and brief['human_handoff']['tasks']:
+                brief['human_handoff']['tasks'].pop()
+                brief['human_handoff']['tasks_omitted'] += 1
+            elif brief['approval_changes']:
                 brief['approval_changes'].pop(0)
                 brief['omissions'].append(dict(read='approval_list', reason='context_limit'))
             elif brief['review_requests']:
@@ -436,7 +445,12 @@ class ProgressionCoordinator:
                     read=dict(tool='progression_status'), reason='context_limit')
             elif brief['changes']:
                 entry = brief['changes'].pop(0)
-                brief['omissions'].append(dict(name=entry['name'], state=entry['state'], read='run_status', intent='decision'))
+                if entry.get('output_artifact_name') in brief['material_names']:
+                    brief['material_names'].remove(entry['output_artifact_name'])
+                omit_result(entry)
+            elif brief['omissions']:
+                brief['omissions'].pop()
+                brief['omission_details_omitted'] = brief.get('omission_details_omitted', 0) + 1
             else:
                 raise ProgressionFault('decision_brief_capacity')
         return INSTRUCTION + '\n' + json.dumps(brief, ensure_ascii=False)
@@ -689,25 +703,29 @@ class ProgressionCoordinator:
         snapshot = self._observation(lambda: self._snapshot(self._row()))
         if snapshot == checkpoint.get('processed_snapshot'):
             return
-        prompt = self._observation(lambda: self._brief(self._row(), snapshot, limits['context_bytes']-len(INSTRUCTION.encode())))
+        prompt = self._observation(lambda: self._brief(self._row(), snapshot, limits['context_bytes']-len(INSTRUCTION.encode())-1))
         from .scientific_progress import delivery_coverage, read_intent, terminal_fact
         delivered = json.loads(prompt.split('\n')[-1])
         shown = {value['name']: value for value in delivered['changes']}
         prior = {value['name']: value for value in checkpoint.get('processed_snapshot', {}).get('runs', [])}
         terminal_delivery = dict(objective_ref=json.loads(row['objective_ref_json']), items=[])
         for value in snapshot['runs']:
-            if value == prior.get(value['name']):
+            if value == prior.get(value['name']) or value['name'] not in shown:
                 continue
-            projection = shown.get(value['name'])
+            projection = shown[value['name']]
             run = self.runtime.runs.status(self.bindings.resolve(instance=self.instance, namespace='run', name=value['name']))
             terminal_delivery['items'].append(dict(name=value['name'], run_id=run.run_id,
                 terminal=terminal_fact(self.runtime.runs, run),
                 scientific_intent=read_intent(self.runtime.artifacts, run), delivery=delivery_coverage(projection)))
+        # An omitted result remains pending. Only displayed terminal projections
+        # (or a later confirmed native tool receipt) can advance consumption.
+        decision_snapshot = dict(snapshot, runs=[value for value in snapshot['runs']
+            if value['name'] in shown or value == prior.get(value['name'])])
         # Intent is durable before the non-idempotent native turn/start.
         with self.bindings.scheduling_guard(instance_id=self.instance, session_key=row['owner_session'], expected_generation=row['generation']):
             # The policy a native turn starts with; restoring it later must match.
             permissions = getattr(self.host, 'permissions', None)
-            prepared = self._save(dict(phase='prepared', turn_id=None, decision_snapshot=snapshot, terminal_delivery=terminal_delivery,
+            prepared = self._save(dict(phase='prepared', turn_id=None, decision_snapshot=decision_snapshot, terminal_delivery=terminal_delivery,
                 progress_notice=delivered.get('progress_shadow', {}).get('assist', {}).get('id'),
                 round_started_at=self.clock(),
                 root_permissions=permissions.declaration() if permissions is not None else None,

@@ -559,7 +559,8 @@ def assist_transition(db, row, checkpoint, *, event, admission=None):
         if event == 'submit':
             handoff['state'] = 'submitted_unknown'
         if event == 'confirm' and checkpoint.get('turn_id'):
-            handoff.update(state='delivered', turn_id=checkpoint['turn_id'])
+            handoff.update(state='delivered', turn_id=checkpoint['turn_id'],
+                host=json.loads(row['host_json'] or 'null'))
         if event == 'turn_completed' and handoff.get('turn_id') == checkpoint.get('turn_id'):
             handoff['state'] = 'completed'
         else:

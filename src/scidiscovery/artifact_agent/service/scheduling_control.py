@@ -15,10 +15,11 @@ from functools import wraps
 
 from ..schema.refs import ArtifactRef
 from .scientific_progress import PROGRESS_SCHEMA
+from .progression_records import DETAIL_SCHEMA, hydrate_control_row, store_checkpoint
 from .maintenance import MaintenanceBusy
 from ..storage.control_io import control_io_nonblocking
 
-CONTROL_VERSION = 1
+CONTROL_VERSION = 2
 CONTROL_SCHEMA = """
 CREATE TABLE IF NOT EXISTS scheduler_progression (
     instance_id TEXT PRIMARY KEY REFERENCES scheduler_instances(instance_id),
@@ -44,7 +45,7 @@ CREATE TABLE IF NOT EXISTS scheduler_dispatch_intents (
     created_at TEXT NOT NULL
 );
 """
-CONTROL_SCHEMA += PROGRESS_SCHEMA
+CONTROL_SCHEMA += PROGRESS_SCHEMA + DETAIL_SCHEMA
 _LOCAL = threading.local()
 
 
@@ -153,7 +154,15 @@ def human_continuation_view(row, checkpoint):
 
 def human_handoff_view(checkpoint):
     value = checkpoint.get('human_handoff')
-    return {key: value[key] for key in ('state', 'objective_name', 'tasks', 'allowance')} if value else None
+    if not value:
+        return None
+    tasks = value['tasks']
+    return {key: value[key] for key in ('state', 'objective_name', 'allowance')} | dict(
+        tasks=tasks[:8], total_tasks=len(tasks), tasks_omitted=max(0, len(tasks)-8),
+        read=dict(tool='run_list', view='summary', limit=8),
+        continuation='Use next_before unchanged as before until null. Each page identifies its '
+            'human_handoff_tasks for the current goal. Read a returned name with run_status intent=decision; '
+            'membership names and omission counts are not delivered task results.')
 
 
 def interactive_session_view(row, checkpoint):
@@ -254,6 +263,7 @@ class SchedulingControl:
     def next_background_progression(self):
         """Select one eligible host without bypassing an unresolved native writer."""
         with self._connect() as connection:
+            connection.execute('BEGIN')
             outstanding = connection.execute(
                 'SELECT instance_id,state FROM scheduler_progression WHERE host_json IS NOT NULL'
             ).fetchall()
@@ -267,13 +277,15 @@ class SchedulingControl:
                 if outstanding and row['instance_id'] != outstanding[0]['instance_id']:
                     continue
                 if json.loads(row['config_json']).get('effective', {}).get('progression', {}).get('enabled'):
-                    return dict(row)
+                    return hydrate_control_row(connection, row)
         return None
 
     def progression_status(self, *, instance_id, session_key=None, internal=False):
         self.get_instance(instance_id=instance_id)
         with self._connect() as connection:
+            connection.execute('BEGIN')
             row = connection.execute('SELECT * FROM scheduler_progression WHERE instance_id=?', (instance_id,)).fetchone()
+            row = hydrate_control_row(connection, row)
         if row is None:
             return {'state': 'idle', 'mode': 'interactive', 'reason': 'not_started',
                     'can_schedule': False, 'objective_name': None}
@@ -289,8 +301,8 @@ class SchedulingControl:
 
     def _write_progression(self, connection, instance_id, values):
         from .scheduler_bindings import _timestamp
-        if len(values.get('checkpoint_json', '').encode()) > 65536:
-            conflict('Control checkpoint capacity reached.')
+        if 'checkpoint_json' in values:
+            values['checkpoint_json'] = store_checkpoint(connection, instance_id, json.loads(values['checkpoint_json']))
         values['updated_at'] = _timestamp()
         columns = tuple(values)
         connection.execute('INSERT INTO scheduler_progression(instance_id,' + ','.join(columns) + ') VALUES ('
@@ -507,6 +519,7 @@ class SchedulingControl:
                           fingerprint, output_fingerprint, scientific_signature):
         with self.scheduling_guard(instance_id=instance_id, session_key=session_key), self._connect() as db:
             row = db.execute('SELECT * FROM scheduler_progression WHERE instance_id=?', (instance_id,)).fetchone()
+            row = hydrate_control_row(db, row)
             checkpoint = json.loads(row['checkpoint_json'])
             from .scientific_progress import shadow_policy, human_continuation_active, independent_interactive_active
             independent = independent_interactive_active(row, checkpoint)
@@ -545,20 +558,19 @@ class SchedulingControl:
                 admissions[name]['interactive_session_id'] = checkpoint['interactive_sessions'][-1]['id']
             if independent or human_continuation_active(row, checkpoint):
                 admissions[name]['human_control_generation'] = row['generation']
-            value = json.dumps(checkpoint)
-            if len(value.encode()) > 65536:
-                conflict('Control checkpoint capacity reached.')
+            value = store_checkpoint(db, instance_id, checkpoint)
             db.execute('UPDATE scheduler_progression SET checkpoint_json=? WHERE instance_id=?', (value, instance_id))
 
     def _pause_progress(self, db, row, checkpoint, reason):
         record_progression_notice(checkpoint, objective=row['objective_ref_json'], state='paused', reason=reason)
         db.execute("UPDATE scheduler_progression SET state='paused',owner_session=NULL,reason=?,"
             "generation=generation+1,checkpoint_json=? WHERE instance_id=?",
-            (reason, json.dumps(checkpoint), row['instance_id']))
+            (reason, store_checkpoint(db, row['instance_id'], checkpoint), row['instance_id']))
 
     def progress_assist_boundary(self, *, instance_id, event='boundary'):
         with self.control_maintenance.guard(instance_id), self.scheduling_lock(), self._connect() as db:
             row = db.execute('SELECT * FROM scheduler_progression WHERE instance_id=?', (instance_id,)).fetchone()
+            row = hydrate_control_row(db, row)
             if row is None or row['mode'] != 'background' or row['state'] != 'active':
                 return None
             from .scientific_progress import assist_transition
@@ -573,6 +585,7 @@ class SchedulingControl:
         from ..schema.common import canonical_sha256
         with self.control_maintenance.guard(instance_id), self.scheduling_lock(), self._connect() as db:
             row = db.execute('SELECT * FROM scheduler_progression WHERE instance_id=?', (instance_id,)).fetchone()
+            row = hydrate_control_row(db, row)
             if row is None or row['mode'] != 'background' or row['state'] != 'active':
                 return
             checkpoint = json.loads(row['checkpoint_json'])
@@ -592,8 +605,9 @@ class SchedulingControl:
             for value in terminal_runs:
                 admission = checkpoint.get('admissions', {}).get(value['name'], {})
                 if (not admission.get('human_control_generation') or admission.get('objective_ref') != goal
-                        or admission.get('state') != 'accepted' or value['state'] != 'completed'
-                        or not value.get('output')):
+                        or admission.get('state') != 'accepted'
+                        or not (value['state'] in {'failed', 'timed_out', 'cancelled', 'canceled'}
+                            or (value['state'] == 'completed' and value.get('output')))):
                     continue
                 consumed = db.execute('SELECT consumed_boundary FROM scheduler_terminal_deliveries '
                     'WHERE instance_id=? AND goal_key=? AND run_id=?',
@@ -611,6 +625,7 @@ class SchedulingControl:
     def record_goal_binding(self, *, instance_id, session_key, namespace, name, object_id):
         with self.scheduling_guard(instance_id=instance_id, session_key=session_key), self._connect() as db:
             row = db.execute('SELECT * FROM scheduler_progression WHERE instance_id=?', (instance_id,)).fetchone()
+            row = hydrate_control_row(db, row)
             checkpoint = json.loads(row['checkpoint_json'])
             from .scientific_progress import shadow_policy, independent_interactive_active
             if (row['mode'] != 'background' and shadow_policy(row)['progress_mode'] != 'assist'
@@ -627,9 +642,7 @@ class SchedulingControl:
                     if len(names) >= 32:
                         conflict('Goal approval observation capacity reached.')
                     names.append(name)
-            value = json.dumps(checkpoint)
-            if len(value.encode()) > 65536:
-                conflict('Control checkpoint capacity reached.')
+            value = store_checkpoint(db, instance_id, checkpoint)
             db.execute('UPDATE scheduler_progression SET checkpoint_json=? WHERE instance_id=?', (value, instance_id))
 
     def record_dispatch_intent(self, *, instance_id, run_id, session_key):
@@ -702,10 +715,10 @@ class SchedulingControl:
                 connection.execute('UPDATE scheduler_progression SET host_json=NULL WHERE instance_id=?', (instance_id,))
 
     def checkpoint_progression(self, *, instance_id, session_key, expected_generation, checkpoint):
-        value = json.dumps(checkpoint, sort_keys=True, allow_nan=False)
-        if not isinstance(checkpoint, dict) or len(value.encode()) > 65536:
-            raise ValueError('checkpoint must be a bounded control record')
+        if not isinstance(checkpoint, dict):
+            raise ValueError('checkpoint must be a control record')
         with self.scheduling_guard(instance_id=instance_id, session_key=session_key, expected_generation=expected_generation), self._connect() as connection:
+            value = store_checkpoint(connection, instance_id, checkpoint)
             connection.execute('UPDATE scheduler_progression SET checkpoint_json=? WHERE instance_id=?', (value, instance_id))
 
     def progression_message(self, *, instance_id, session_key, name, text, intake):
@@ -737,10 +750,8 @@ class SchedulingControl:
                 request_fingerprint=fingerprint)
             messages.append(dict(name=name, fingerprint=fingerprint, artifact_ref=ref.model_dump(mode='json')))
             checkpoint['messages'] = messages
-            value = json.dumps(checkpoint)
-            if len(value.encode()) > 65536:
-                conflict('Control checkpoint capacity reached.')
             with self._connect() as db:
+                value = store_checkpoint(db, instance_id, checkpoint)
                 db.execute('UPDATE scheduler_progression SET checkpoint_json=? WHERE instance_id=?', (value, instance_id))
             return dict(name=name, state='saved', application='next_safe_turn',
                 limitation='User text grants no execution or approval authorization; paused goals remain paused.')
@@ -783,15 +794,14 @@ class SchedulingControl:
             raise ValueError('a completed goal cannot await a question')
         with self.scheduling_guard(instance_id=instance_id, session_key=session_key), self._connect() as db:
             row = db.execute('SELECT * FROM scheduler_progression WHERE instance_id=?', (instance_id,)).fetchone()
+            row = hydrate_control_row(db, row)
             checkpoint = json.loads(row['checkpoint_json'])
             from .scientific_progress import record_assessments
             receipts = record_assessments(db=db, row=row, assessments=assessments, bindings=self, artifacts=artifacts, runs=runs)
             checkpoint['report'] = dict(summary=summary, completed=completed, question=question)
             reason = 'goal_completed' if completed else 'user_question' if question else 'waiting'
             record_progression_notice(checkpoint, objective=row['objective_ref_json'], state=row['state'], reason=reason)
-            value = json.dumps(checkpoint)
-            if len(value.encode()) > 65536:
-                raise ValueError('control checkpoint capacity reached')
+            value = store_checkpoint(db, instance_id, checkpoint)
             db.execute('UPDATE scheduler_progression SET checkpoint_json=?, reason=? WHERE instance_id=?',
                 (value, reason, instance_id))
         status = self.progression_status(instance_id=instance_id, session_key=session_key)
@@ -799,7 +809,7 @@ class SchedulingControl:
             status.update(assessment_receipts=receipts, assessment_read=dict(tool='progression_status'))
         return status
 
-    def observe_progression(self, *, instance_id, expected_host, changes, reason=None, stop=False, completed_turn=None):
+    def observe_progression(self, *, instance_id, expected_host, changes, reason=None, stop=False, completed_turn=None, terminal_turn=None):
         """Trusted runtime observations survive pause; they grant no dispatch authority.
 
         Serialize merges with the public report, and keep the native writer marker
@@ -807,11 +817,23 @@ class SchedulingControl:
         """
         with self.control_maintenance.guard(instance_id), self.scheduling_lock(), self._connect() as db:
             row = db.execute('SELECT * FROM scheduler_progression WHERE instance_id=?', (instance_id,)).fetchone()
+            row = hydrate_control_row(db, row)
             if row is None or json.loads(row['host_json'] or 'null') != expected_host:
                 conflict('Native host binding changed during observation.')
             checkpoint = json.loads(row['checkpoint_json'])
             prior_checkpoint = json.loads(row['checkpoint_json'])
             from .scientific_progress import observe_deliveries, assist_transition
+            if terminal_turn is not None and checkpoint.get('turn_id'):
+                if terminal_turn.get('id') != checkpoint['turn_id']:
+                    conflict('Native terminal turn identity mismatch; retain the unresolved writer.')
+                if terminal_turn.get('status') == 'completed':
+                    completed_turn = terminal_turn['id']
+                elif terminal_turn.get('status') in {'failed', 'interrupted'}:
+                    handoff = checkpoint.get('human_handoff') or {}
+                    if (handoff.get('state') == 'delivered'
+                            and handoff.get('turn_id') == terminal_turn['id']
+                            and handoff.get('host') == expected_host):
+                        handoff['state'] = terminal_turn['status']
             if completed_turn is not None and checkpoint.get('turn_id') == completed_turn:
                 observe_deliveries(db, row, checkpoint, boundary='turn_completed')
                 assist_transition(db, row, checkpoint, event='turn_completed')
@@ -838,9 +860,7 @@ class SchedulingControl:
             if (checkpoint == prior_checkpoint and (reason is None or reason == row['reason'])
                     and (not stop or row['mode'] != 'background' or row['state'] == 'paused')):
                 return checkpoint
-            value = json.dumps(checkpoint, sort_keys=True, allow_nan=False)
-            if len(value.encode()) > 65536:
-                conflict('Control checkpoint capacity reached; stop and retain original records.')
+            value = store_checkpoint(db, instance_id, checkpoint)
             values = dict(checkpoint_json=value)
             if reason is not None:
                 values['reason'] = reason

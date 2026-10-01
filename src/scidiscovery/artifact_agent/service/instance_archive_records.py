@@ -27,7 +27,7 @@ DATABASES = {
 }
 TABLES = {
     "scheduler": ("scheduler_instances", "scheduler_bindings", "scheduler_observations",
-                  "scheduler_scientific_selections", "scheduler_sessions", "scheduler_progression", "scheduler_dispatch_intents", "scheduler_progress_assessments", "scheduler_terminal_deliveries", "scheduler_progress_facts", "scheduler_progress_shadow"),
+                  "scheduler_scientific_selections", "scheduler_sessions", "scheduler_progression", "scheduler_progression_details", "scheduler_dispatch_intents", "scheduler_progress_assessments", "scheduler_terminal_deliveries", "scheduler_progress_facts", "scheduler_progress_shadow"),
     "runs": ("runs", "run_activity", "run_tool_evidence", "run_activity_sequence", "worker_connections", "worker_participants"),
     "approvals": ("approval_requests", "approval_decisions", "used_nonces", "decision_attempts"),
     "executions": ("executions", "execution_policy_authorizations", "execution_current_policy",
@@ -210,7 +210,7 @@ def execution_settings_restore_view(data):
     if "scheduler_instances" in projected["schema"]["tables"]:
         from .scheduling_control import CONTROL_SCHEMA, CONTROL_VERSION
         projected = deepcopy(projected)
-        if projected["schema"]["user_version"] > CONTROL_VERSION:
+        if projected["schema"]["user_version"] != CONTROL_VERSION:
             raise ArchiveError("unsupported scheduler control schema version")
         with sqlite3.connect(":memory:") as transient:
             transient.row_factory = sqlite3.Row
@@ -233,6 +233,7 @@ def execution_settings_restore_view(data):
         projected["schema"]["objects"].sort(key=lambda obj: (obj["type"], obj["name"]))
         projected["schema"]["user_version"] = CONTROL_VERSION
         projected["tables"].setdefault("scheduler_progression", [])
+        projected["tables"].setdefault("scheduler_progression_details", [])
         projected["tables"].setdefault("scheduler_dispatch_intents", [])
         projected["tables"].setdefault("scheduler_progress_assessments", [])
         projected["tables"].setdefault("scheduler_terminal_deliveries", [])
@@ -450,7 +451,7 @@ class Records:
         result = {key: {"schema": data["schema"], "tables": {table: [] for table in data["tables"]}}
                   for key, data in self.databases.items()}
         for table in result["scheduler"]["tables"]:
-            column = "instance_id" if table in {"scheduler_instances", "scheduler_sessions", "scheduler_progression", "scheduler_dispatch_intents", "scheduler_progress_assessments", "scheduler_terminal_deliveries", "scheduler_progress_facts", "scheduler_progress_shadow"} else "instance"
+            column = "instance_id" if table in {"scheduler_instances", "scheduler_sessions", "scheduler_progression", "scheduler_progression_details", "scheduler_dispatch_intents", "scheduler_progress_assessments", "scheduler_terminal_deliveries", "scheduler_progress_facts", "scheduler_progress_shadow"} else "instance"
             result["scheduler"]["tables"][table] = self._materialize("scheduler", table,
                 where=quote(column) + "=?", parameters=(instance_id,))
         bindings = result["scheduler"]["tables"]["scheduler_bindings"]
@@ -660,7 +661,7 @@ class Records:
                     continue
                 where, parameters, owner_column, owners = "", (), None, ()
                 if database == "scheduler":
-                    owner = "instance_id" if table in {"scheduler_instances", "scheduler_sessions", "scheduler_progression", "scheduler_dispatch_intents", "scheduler_progress_assessments", "scheduler_terminal_deliveries", "scheduler_progress_facts", "scheduler_progress_shadow"} else "instance"
+                    owner = "instance_id" if table in {"scheduler_instances", "scheduler_sessions", "scheduler_progression", "scheduler_progression_details", "scheduler_dispatch_intents", "scheduler_progress_assessments", "scheduler_terminal_deliveries", "scheduler_progress_facts", "scheduler_progress_shadow"} else "instance"
                     where, parameters = owner + " IS NOT ?", (instance_id,)
                 elif database == "runs":
                     where = "instance_id IS NOT ?" if table == "runs" else "run_id NOT IN (SELECT run_id FROM runs WHERE instance_id=?)"

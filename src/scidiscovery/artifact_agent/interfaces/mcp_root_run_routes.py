@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from ..service.scheduling_control import owned_mutation
 
+import json
 from typing import Any
 
 from ..schema.common import canonical_json
@@ -28,6 +29,17 @@ class RootRunRoutes(RunReadProjection):
         if before is not None:
             self._resolve("run", before)
         items = []
+        control = self.bindings.progression_status(instance_id=self._instance_id(), internal=True)
+        checkpoint = json.loads(control.get('checkpoint_json', '{}'))
+        handoff = checkpoint.get('human_handoff') or {}
+        current_goal = json.loads(control.get('objective_ref_json') or 'null')
+        from ..schema.common import canonical_sha256
+        members = (set(handoff.get('tasks', []))
+            if current_goal and handoff.get('goal_key') == canonical_sha256(current_goal) else set())
+        def result(cursor):
+            return dict(runs=items, next_before=cursor,
+                **({'human_handoff_tasks': [item['name'] for item in items if item['name'] in members]}
+                    if members else {}))
         past_cursor = before is None
         for binding in self.bindings.list(instance=self._instance_id(), namespace="run"):
             if not past_cursor:
@@ -37,12 +49,12 @@ class RootRunRoutes(RunReadProjection):
             if state is not None and value.state != state:
                 continue
             if len(items) == limit:
-                return {"runs": items, "next_before": items[-1]["name"]}
+                return result(items[-1]["name"])
             items.append(self._scientific_run_view(value, self._run_status_value(binding.name, value))
                 if view == "detail" and run_is_terminal(value.state)
                 else self._compact_run_status(name=binding.name, value=value,
                     intent="status", output_paths=[], index_offset=0, index_limit=16))
-        return {"runs": items, "next_before": None}
+        return result(None)
 
     def run_status(self, *, name: str, **arguments) -> dict[str, Any]:
         from .mcp_root import parse_run_status_arguments

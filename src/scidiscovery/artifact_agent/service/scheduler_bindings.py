@@ -1179,8 +1179,11 @@ class SchedulerBindingService(SchedulingControl):
                 """
             )
             version = connection.execute("PRAGMA user_version").fetchone()[0]
-            if version > CONTROL_VERSION:
-                raise SchedulerBindingError("scheduler control schema is newer than this installation")
+            if version not in {0, CONTROL_VERSION}:
+                raise SchedulerBindingError("incompatible scheduler control schema; initialize a fresh state root")
+            if version == 0 and connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE name='scheduler_progression'").fetchone():
+                raise SchedulerBindingError("unversioned scheduler control state is incompatible")
             connection.execute("DROP INDEX IF EXISTS scheduler_sessions_one_owner")
             for statement in CONTROL_SCHEMA.split(";"):
                 if statement.strip():

@@ -38,7 +38,7 @@ def test_legacy_migration_preserves_read_selection_without_starting(control):
     assert bindings.session_instance(session_key='first') == bindings.session_instance(session_key='second') == instance
     assert bindings.progression_status(instance_id=instance)['state'] == 'idle'
     with bindings._connect() as db:
-        assert db.execute('PRAGMA user_version').fetchone()[0] == 1
+        assert db.execute('PRAGMA user_version').fetchone()[0] == 2
     SchedulerBindingService(bindings.database_path)
     assert bindings.session_instance(session_key='first') == instance
 
@@ -160,20 +160,21 @@ def test_active_disconnected_writer_still_blocks_archive(archive_system):
     assert archive.preview(instance)['ready']
 
 
-def test_old_archive_schema_projects_new_tables_without_restoring_authority(control):
+@pytest.mark.parametrize('version', [0, 1, 3])
+def test_incompatible_control_state_and_archive_are_rejected(control, version):
+    from scidiscovery.artifact_agent.service.scheduler_bindings import SchedulerBindingError
+    from scidiscovery.artifact_agent.service.instance_archive_records import ArchiveError
     bindings, instance = control
+    command(bindings, instance, 'start')
     with bindings._connect() as db:
-        db.execute('DROP TABLE scheduler_dispatch_intents')
-        db.execute('DROP TABLE scheduler_progression')
-        db.execute('DELETE FROM scheduler_sessions WHERE session_key=?', ('second',))
-        db.execute('CREATE UNIQUE INDEX scheduler_sessions_one_owner ON scheduler_sessions(instance_id)')
-        db.execute('PRAGMA user_version=0')
+        db.execute(f'PRAGMA user_version={version}')
         data = {'schema': schema(db), 'tables': {'scheduler_instances': [], 'scheduler_sessions': []}}
-    projected = execution_settings_restore_view(data)
-    assert projected['schema']['user_version'] == 1
-    assert projected['tables']['scheduler_progression'] == []
-    assert 'scheduler_sessions_one_owner' not in {x['name'] for x in projected['schema']['objects']}
-    assert data['schema']['user_version'] == 0
+    with pytest.raises(SchedulerBindingError, match='incompatible'):
+        SchedulerBindingService(bindings.database_path)
+    with pytest.raises(ArchiveError, match='schema version'):
+        execution_settings_restore_view(data)
+    with bindings._connect() as db:
+        assert db.execute('PRAGMA user_version').fetchone()[0] == version
 
 
 def test_paused_router_mutations_block_while_reads_and_accepted_worker_complete(tmp_path):

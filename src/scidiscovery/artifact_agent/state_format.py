@@ -11,7 +11,7 @@ import os
 import stat
 from pathlib import Path
 
-STATE_FORMAT = "scidiscovery-state-v2"
+STATE_FORMAT = "scidiscovery-state-v3"
 MARKER = ".scidiscovery-state.json"
 
 

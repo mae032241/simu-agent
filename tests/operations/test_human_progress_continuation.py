@@ -569,3 +569,117 @@ def test_resolved_handoff_uses_background_scope_at_real_preflight_and_creation(h
     wait = p.runtime.runs.review_wait(owner_id)
     assert wait['state'] == 'running'
     assert wait['reviewer_run_id'] == bindings.resolve(instance=p.instance, namespace='run', name=review['name'])
+
+
+def start_human_handoff(ui):
+    p = ui.p
+    assert submit(ui) == 303
+    finish(p, p.root, 'human-handoff-result')
+    p.root.call_tool('progression_command', dict(command='pause'))
+    p.root.call_tool('progression_command', dict(command='start', mode='background', objective_name='goal'))
+    next_turn(p)
+    assert checkpoint(p)['human_handoff']['state'] == 'delivered'
+    return p.coordinator.host
+
+
+@pytest.mark.parametrize('terminal,path', [('failed', 'active'), ('interrupted', 'active'), ('interrupted', 'paused')])
+@pytest.mark.parametrize('human_path', ['continue', 'independent'])
+def test_failed_handoff_releases_only_confirmed_attempt_for_ui_and_mcp(human_ui, terminal, path, human_path):
+    ui, p = human_ui, human_ui.p
+    host = start_human_handoff(ui)
+    before = checkpoint(p)
+    if path == 'paused':
+        p.root.call_tool('progression_command', dict(command='pause'))
+        p.coordinator.tick()
+        assert submit(ui, confirmation_binding=fresh_binding(ui)) == 409
+    host.completion = dict(id=host.turn_id, status=terminal)
+    p.coordinator.tick()
+    p.coordinator.tick()
+    assert row(p)['host_json'] is None
+    assert checkpoint(p)['human_handoff']['state'] == terminal
+    assert checkpoint(p)['rounds'] == before['rounds']
+    assert notice(p)['reassessments'] == 1
+    assert (independent(ui) if human_path == 'independent' else
+        submit(ui, confirmation_binding=fresh_binding(ui))) == 303
+    assert p.root.call_tool('operation_preflight', request('after-failed-handoff'))['admissible']
+    finish(p, p.root, 'after-failed-handoff')
+
+
+@pytest.mark.parametrize('barrier', ['unknown_turn', 'wrong_turn', 'unknown_admission'])
+def test_handoff_failure_requires_exact_resolved_native_boundary(human_ui, barrier):
+    ui, p = human_ui, human_ui.p
+    host = start_human_handoff(ui)
+    if barrier == 'unknown_turn':
+        save_checkpoint(p, phase='prepared', turn_id=None,
+            human_handoff=dict(checkpoint(p)['human_handoff'], state='submitted_unknown'), fault_class='outcome_unknown')
+    elif barrier == 'unknown_admission':
+        save_checkpoint(p, admissions={**checkpoint(p)['admissions'], 'uncertain': dict(
+            state='prepared', logical_name='uncertain', revision=1, request_fingerprint='unknown')})
+    host.completion = dict(id='wrong-turn' if barrier == 'wrong_turn' else host.turn_id, status='interrupted')
+    p.root.call_tool('progression_command', dict(command='pause'))
+    if barrier == 'wrong_turn':
+        with pytest.raises(Exception, match='identity mismatch'):
+            p.coordinator.tick()
+        assert row(p)['host_json'] is not None
+    else:
+        p.coordinator.tick()
+    assert submit(ui, confirmation_binding=fresh_binding(ui)) == 409
+    assert independent(ui) == 409
+    assert checkpoint(p)['human_handoff']['state'] == {
+        'unknown_turn': 'submitted_unknown', 'wrong_turn': 'delivered', 'unknown_admission': 'interrupted'}[barrier]
+
+
+@pytest.mark.parametrize('exhausted', [False, True])
+def test_handoff_recovery_reconsumes_only_with_original_budget(human_ui, exhausted):
+    from tests.operations.test_progression import restore_terminal_host
+    ui, p = human_ui, human_ui.p
+    start_human_handoff(ui)
+    if exhausted:
+        limits = json.loads(row(p)['config_json'])['effective']['progression']
+        save_checkpoint(p, attempts=limits['max_attempts']-1)
+    before = checkpoint(p)
+    restore_terminal_host(p, 'interrupted')
+    p.coordinator.tick()
+    after = checkpoint(p)
+    assert after['attempts'] == before['attempts'] + 1
+    assert after['admissions'] == before['admissions']
+    assert notice(p)['reassessments'] == 1
+    assert after['started_at'] == before['started_at']
+    if exhausted:
+        assert row(p)['state'] == 'paused'
+        assert not p.coordinator.host.prompts
+        assert after['rounds'] == before['rounds']
+        p.coordinator.tick()
+        assert submit(ui, confirmation_binding=fresh_binding(ui)) == 409
+        assert independent(ui) == 303
+        finish(p, p.root, 'independent-after-exhausted-handoff')
+    else:
+        assert after['rounds'] == before['rounds'] + 1
+        assert after['human_handoff']['state'] == 'delivered'
+        assert len(p.coordinator.host.prompts) == 1
+        p.coordinator.host.finish()
+        next_turn(p)
+        assert checkpoint(p)['human_handoff']['state'] == 'completed'
+
+
+def test_failed_human_terminal_gets_consumption_without_scientific_output(human_ui):
+    ui, p = human_ui, human_ui.p
+    assert submit(ui) == 303
+    p.root.call_tool('operation_invoke', request('failed-human-task'))
+    identity = p.runtime.scheduler_bindings.resolve(instance=p.instance, namespace='run', name='failed-human-task')
+    p.runtime.runs.fail(identity, reason='Confirmed local failure')
+    assert p.root.call_tool('run_status', dict(name='failed-human-task'))['state'] == 'failed'
+    before = status(p)['progress_shadow']['counts']
+    p.root.call_tool('progression_command', dict(command='pause'))
+    p.root.call_tool('progression_command', dict(command='start', mode='background', objective_name='goal'))
+    next_turn(p)
+    assert checkpoint(p)['human_handoff']['state'] == 'delivered'
+    assert checkpoint(p)['human_handoff']['tasks'] == ['failed-human-task']
+    p.coordinator.host.finish()
+    next_turn(p)
+    after = status(p)['progress_shadow']['counts']
+    assert after['consumed'] == before['consumed'] + 1
+    assert after['no_progress'] == before['no_progress']
+    assert p.runtime.runs.status(identity).output_ref is None
+    deliveries = status(p)['terminal_deliveries']['items']
+    assert any(item['task_name'] == 'failed-human-task' and item['state'] == 'failed' for item in deliveries)
