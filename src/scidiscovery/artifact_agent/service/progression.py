@@ -68,6 +68,12 @@ class ProgressionFault(RuntimeError):
         super().__init__(code)
 
 
+class ObservationRetriesExhausted(ProgressionFault):
+    """Only the bounded local BUSY/LOCKED or maintenance observation boundary."""
+    def __init__(self):
+        super().__init__('observation_retry_exhausted')
+
+
 class ProgressionCoordinator:
     def __init__(self, *, runtime, host_factory, facade_factory, clock=time.time):
         self.runtime, self.bindings = runtime, runtime.scheduler_bindings
@@ -88,6 +94,7 @@ class ProgressionCoordinator:
         self._deadline_running = None
         self._deadline_generation = None
         self._last_row = None
+        self._selecting = False
 
     def start(self):
         # Exactly one owner per deployed control database, including two daemons.
@@ -133,17 +140,17 @@ class ProgressionCoordinator:
                 code = getattr(error, 'sqlite_errorcode', 0) & 255
                 if not isinstance(error, MaintenanceBusy) and code not in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}:
                     raise
-                if self._goal_deadline is not None and self.clock() >= self._goal_deadline:
+                if not self._selecting and self._goal_deadline is not None and self.clock() >= self._goal_deadline:
                     raise ProgressionFault('observation_budget_expired') from error
                 remaining = self._limits['observation_retry_seconds'] - (time.monotonic() - started)
                 if attempt >= self._limits['observation_retries'] or remaining <= 0:
-                    raise ProgressionFault('observation_retry_exhausted') from error
+                    raise ObservationRetriesExhausted() from error
                 # This also guards resources during RPC callbacks waiting on DB.
                 if not terminal and self.host is not None and hasattr(self.host, 'guard_resources'):
                     self.host.guard_resources()
                 delay = min(self._limits['observation_backoff_seconds'] * 2**attempt, remaining,
                     self._limits['event_wait_seconds'])
-                if self._goal_deadline is not None:
+                if not self._selecting and self._goal_deadline is not None:
                     delay = min(delay, max(0, self._goal_deadline-self.clock()))
                 if self.closed.wait(delay):
                     raise ProgressionFault('coordinator_closed') from error
@@ -499,6 +506,7 @@ class ProgressionCoordinator:
             row = self.bindings.activate_host(instance_id=self.instance, source_session=row['requested_by'],
                 scheduler_session=host.scheduler_session, platform_session=host.identity.session_id,
                 thread_id=host.identity.thread_id, expected_generation=row['generation'])
+        self._last_row = row
         initial = dict(runtime_status='connected')
         if 'started_at' not in checkpoint:
             initial.update(started_at=self.clock(), **{key: checkpoint.get(key, 0)
@@ -545,8 +553,9 @@ class ProgressionCoordinator:
 
     def _persist_fault(self):
         fault = self._pending_fault
-        self._observation(lambda: self.bindings.observe_progression(**fault), terminal=True)
+        checkpoint = self._observation(lambda: self.bindings.observe_progression(**fault), terminal=True)
         self._pending_fault = None
+        return checkpoint
 
     def tick(self):
         with nonblocking_control_io():
@@ -559,43 +568,59 @@ class ProgressionCoordinator:
             self._persist_fault()
             return
         try:
+            self._selecting = False
+            self._observation_recovery_due = False
             self._tick()
+            if self._observation_recovery_due:
+                self._save({}, recovery_health='observation')
         except Exception as error:
+            recovered = False
             try:
-                if self.instance is not None:
+                if self.instance is not None and not self._selecting:
                     try:
-                        row = self._row()
+                        row = self._last_row if isinstance(error, ObservationRetriesExhausted) else self._row()
                     except Exception:
                         # A busy store must not lose the terminal fault and
                         # cause an automatic reconnect before it is recorded.
                         row = self._last_row
                         if row is None or row['instance_id'] != self.instance:
                             raise
-                    uncertain = self._submitting or getattr(getattr(self.host, 'connection', None), 'failed', False)
+                    uncertain = (self._submitting or getattr(error, 'native_outcome_unknown', False)
+                        or getattr(getattr(self.host, 'connection', None), 'failed', False))
                     code = getattr(error, 'code', type(error).__name__)
                     reason = ('budget_exhausted' if code in {'budget_deadline', 'observation_budget_expired'}
                         else 'resource_limit' if code == 'resource_limit' else 'host_fault')
+                    safe = isinstance(error, ObservationRetriesExhausted) and not uncertain
+                    checkpoint = json.loads(row['checkpoint_json'])
                     self._pending_fault = dict(instance_id=self.instance,
                         expected_host=json.loads(row['host_json'] or 'null'),
                         changes=dict(runtime_status=reason, fault_code=code,
                             fault_class='outcome_unknown' if uncertain else 'observation_exhausted'
                                 if getattr(error, 'code', None) == 'observation_retry_exhausted' else 'configuration_or_runtime',
-                            attempts=json.loads(row['checkpoint_json']).get('attempts', 0)+(reason == 'host_fault')),
+                            attempts=checkpoint.get('attempts', 0)+(reason == 'host_fault' and not safe)),
                         reason=reason, stop=True)
-                    self._persist_fault()
+                    if safe:
+                        import uuid
+                        self._pending_fault['recoverable_fault'] = dict(id=uuid.uuid4().hex, kind='observation',
+                            generation=row['generation'], loop_id=checkpoint.get('current_loop_id'))
+                    saved = self._persist_fault()
+                    recovered = safe and saved.get('recovery', {}).get('pending_kind') == 'observation'
             finally:
                 # Closing a client does not prove native quiescence. Keep the
                 # persisted writer marker, even if maintenance denied fault IO.
-                host, self.host = self.host, None
-                if host is not None:
-                    host.close()
+                if not recovered:
+                    host, self.host = self.host, None
+                    if host is not None:
+                        host.close()
+            if recovered:
+                return
             raise
 
-    def _settle_turn(self, checkpoint, changes=None):
+    def _settle_turn(self, checkpoint, changes=None, **kwargs):
         processed = checkpoint.get('processed_snapshot', {})
         if self.host.completion and self.host.completion['status'] == 'completed':
             processed = checkpoint.get('decision_snapshot', processed)
-        self._save(dict(phase='idle', turn_id=None, processed_snapshot=processed, **(changes or {})))
+        return self._save(dict(phase='idle', turn_id=None, processed_snapshot=processed, **(changes or {})), **kwargs)
 
     def _host_terminal(self, checkpoint):
         """Only this host's exact terminal turn permits its durable release."""
@@ -632,8 +657,9 @@ class ProgressionCoordinator:
                 return
             self._settle_turn(checkpoint)
             self.bindings.release_host(instance_id=self.instance, **self._host_binding())
-            self.host.close()
-            self.host = None
+            host, self.host = self.host, None
+            self.instance = self._last_row = self._goal_deadline = None
+            host.close()
         return
 
     def _finish_expired_host(self, row, limits):
@@ -703,7 +729,12 @@ class ProgressionCoordinator:
         self.bindings.progression_clock = self.clock
         self._submitting = False
         if self.host is None:
+            # Until this read returns an exact subject, a failure belongs to
+            # global selection, including after an unresolved client close.
+            # Retained writer facts are not an authority for attributing it.
+            self._selecting = True
             row = self._observation(self.bindings.next_background_progression)
+            self._selecting = False
             if row is None:
                 return
             self.instance = row['instance_id']
@@ -715,6 +746,21 @@ class ProgressionCoordinator:
         limits = json.loads(row['config_json'])['effective']['progression']
         if self._finish_expired_host(row, limits):
             return
+        recovery = checkpoint.get('recovery', {})
+        waiting_recovery = recovery.get('pending_kind')
+        if waiting_recovery and row['mode'] == 'background' and row['state'] in {'active', 'pending'}:
+            # Read control/time/budgets before backoff; no native entry can run
+            # early, including a resume that arrived while recovery was delayed.
+            if not self._check_budget(row, limits):
+                return
+            if not limits['enabled'] or not self.bindings.client_enabled(session_key=row['owner_session'] or row['requested_by']):
+                self._save({}, reason='client_disabled', stop=True)
+                return
+            if self._observation(lambda: self.bindings.progress_boundary(instance_id=self.instance)):
+                return
+            if self.clock() < (recovery.get('next_at') or 0):
+                return
+            self._observation_recovery_due = waiting_recovery == 'observation'
         if row['mode'] == 'background' and row['state'] == 'pending':
             # Explicit resume/start can arrive before the old Root interruption
             # was acknowledged. Reclaim the existing connection only at a proven
@@ -740,6 +786,7 @@ class ProgressionCoordinator:
                 return
             row = self.bindings.reconnect_host(instance_id=self.instance, scheduler_session=self.host.scheduler_session,
                 expected_generation=row['generation'], **self._host_binding())
+            self._last_row = row
             checkpoint = json.loads(row['checkpoint_json'])
             if not self._reconcile_admissions():
                 return
@@ -774,16 +821,31 @@ class ProgressionCoordinator:
                 self._save(dict(native_completion='completed'))
             recovered = (self.host.completion['status'] == 'interrupted'
                 and self._restored_turn_id == checkpoint['turn_id'])
+            failure = self.host.completion['status'] == 'failed'
             recovery = dict(attempts=checkpoint.get('attempts', 0)+1,
                 recovered_interruption=checkpoint['turn_id'],
                 last_report=checkpoint.get('report') or checkpoint.get('last_report'), report=None) if recovered else {}
             # Charge recovery and consume the old turn in one checkpoint write.
             # Retain the unprocessed snapshot and accepted tasks for a fresh
             # decision; never replay the interrupted prompt or its tool calls.
+            kwargs = {}
+            if failure or recovered:
+                kwargs = dict(recoverable_fault=dict(kind='failed_turn' if failure else 'interrupted_turn',
+                    id=self.host.identity.thread_id+':'+checkpoint['turn_id'],
+                    generation=row['generation'], loop_id=checkpoint.get('current_loop_id')),
+                    reason='root_turn_failed', stop=True)
+                if failure:
+                    recovery.update(attempts=checkpoint.get('attempts', 0)+1,
+                        last_report=checkpoint.get('report') or checkpoint.get('last_report'), report=None)
+            elif self.host.completion['status'] == 'completed':
+                kwargs['recovery_health'] = 'completed_turn'
             self._settle_turn(checkpoint, dict(
                 running_seconds=checkpoint.get('running_seconds', 0)+max(0, self.clock()-checkpoint.get('round_started_at', self.clock())),
-                runtime_status='reconciling_interruption' if recovered else 'waiting', **recovery))
+                runtime_status='reconciling_interruption' if recovered else 'root_turn_failed' if failure else 'waiting',
+                **recovery), **kwargs)
             self._restored_turn_id = None
+            if failure or recovered:
+                return
             row = self._row()
             checkpoint = json.loads(row['checkpoint_json'])
             continuation = self._review_continuation(row)
@@ -807,6 +869,10 @@ class ProgressionCoordinator:
             return
         if not self._check_budget(row, limits):
             return
+        if waiting_recovery in {'failed_turn', 'interrupted_turn'}:
+            self._save(dict(runtime_status='reconciling_interruption' if waiting_recovery == 'interrupted_turn'
+                else 'recovering_failed_turn'))
+            checkpoint = json.loads(self._row()['checkpoint_json'])
         if self.clock() < checkpoint.get('next_probe_at', 0):
             return
         self._save(dict(probes=checkpoint.get('probes', 0)+1, next_probe_at=self.clock()+limits['poll_seconds']))
@@ -822,7 +888,7 @@ class ProgressionCoordinator:
         # An acknowledged notice does not consume its omitted results. Rebuild
         # against the consumed position so a newly fitting batch still wakes Root.
         if (snapshot == checkpoint.get('notified_snapshot') and not shown
-                and checkpoint.get('runtime_status') != 'reconciling_interruption'):
+                and checkpoint.get('runtime_status') not in {'reconciling_interruption', 'recovering_failed_turn'}):
             return
         prior = {value['name']: value for value in checkpoint.get('processed_snapshot', {}).get('runs', [])}
         terminal_delivery = dict(objective_ref=json.loads(row['objective_ref_json']), items=[])
@@ -898,6 +964,8 @@ class ProgressionCoordinator:
             observed_tokens=tokens, limits=limits,
             **token_budget(checkpoint, limits),
             token_coverage=coverage, token_enforcement='asynchronous_observation; time_and_round_limits_apply')
+        from .research_loops import recovery_budget
+        budget['recovery'] = recovery_budget(checkpoint, limits)
         # Counters/coverage/limits are authority; only elapsed/resource display
         # may lag. Each tick still checks deadlines and newly consumed tokens.
         # Probe counts already persist at the probe boundary; their display

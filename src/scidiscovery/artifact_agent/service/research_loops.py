@@ -51,6 +51,18 @@ def loop_usage_summary(checkpoint, identity=None):
     return summary
 
 
+def recovery_budget(checkpoint, limits):
+    recovery = checkpoint.get('recovery', {})
+    return dict(used=recovery.get('used', 0),
+        by_kind=recovery.get('by_kind', {}),
+        remaining=max(0, limits['max_recoveries']-recovery.get('used', 0)),
+        consecutive_failures=recovery.get('consecutive_failures', 0),
+        next_at=recovery.get('next_at'), pending_kind=recovery.get('pending_kind'),
+        last_failure=recovery.get('last_failure'),
+        failed_turns_enabled=limits['recover_failed_turns'],
+        native_attempts_remaining=max(0, limits['max_attempts']-checkpoint.get('attempts', 0)))
+
+
 def sync_loop_balances(checkpoint, now):
     """Late usage settles its original scope, never the current scope's balance."""
     from .progression_budget import time_budget, token_budget
@@ -63,7 +75,7 @@ def sync_loop_balances(checkpoint, now):
         balance = dict(record.get('budget_snapshot') or {})
         if identity == active:
             balance.update(rounds=checkpoint.get('rounds', 0), attempts=checkpoint.get('attempts', 0),
-                **time_budget(checkpoint, limits, now))
+                recovery=recovery_budget(checkpoint, limits), **time_budget(checkpoint, limits, now))
         balance.update(**loop_task_budget(checkpoint, limits, identity),
             **token_budget(dict(checkpoint, current_loop_id=identity), limits),
             usage=loop_usage_summary(checkpoint, identity))

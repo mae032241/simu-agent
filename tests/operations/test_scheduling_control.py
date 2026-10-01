@@ -7,6 +7,7 @@ import threading
 import pytest
 
 from scidiscovery.artifact_agent.service.scheduler_bindings import SchedulerBindingService, SchedulerInstanceConflict
+from scidiscovery.artifact_agent.service.scheduling_control import CONTROL_VERSION
 from scidiscovery.artifact_agent.service.instance_maintenance import InstanceMaintenanceUnavailable
 from scidiscovery.artifact_agent.service.instance_archive_records import execution_settings_restore_view, schema
 from tests.operations.test_instance_archive import archive_system, artifact, save_archive, restore_archive
@@ -38,7 +39,7 @@ def test_legacy_migration_preserves_read_selection_without_starting(control):
     assert bindings.session_instance(session_key='first') == bindings.session_instance(session_key='second') == instance
     assert bindings.progression_status(instance_id=instance)['state'] == 'idle'
     with bindings._connect() as db:
-        assert db.execute('PRAGMA user_version').fetchone()[0] == 5
+        assert db.execute('PRAGMA user_version').fetchone()[0] == CONTROL_VERSION
     SchedulerBindingService(bindings.database_path)
     assert bindings.session_instance(session_key='first') == instance
 

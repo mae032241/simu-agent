@@ -168,6 +168,8 @@ def test_submission_error_is_never_replayed_even_if_it_looks_retryable(progressi
 
 def test_persistent_store_failure_records_fault_before_any_reconnect(progression, monkeypatch):
     p = progression
+    from tests.operations.test_progress_assist import configure
+    configure(p, max_recoveries=0)
     p.coordinator.tick()
     host = p.coordinator.host
     p.coordinator._limits.update(observation_retries=0)

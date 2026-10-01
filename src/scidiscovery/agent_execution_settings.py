@@ -129,6 +129,13 @@ class ProgressionSettings(SettingsValue):
     # Natural lifetime starts at explicit loop authorization, including pauses.
     max_calendar_seconds: int = Field(default=3600, ge=1)
     max_attempts: int = Field(default=2, ge=1, le=10)
+    # Recovery is inside the frozen loop budget; native recovery also retains
+    # max_attempts. Failed turns require explicit UI consent to this policy.
+    max_recoveries: int = Field(default=8, ge=0, le=1000)
+    recovery_failure_threshold: int = Field(default=3, ge=1, le=100)
+    recovery_backoff_seconds: float = Field(default=1., gt=0, le=300)
+    recovery_backoff_max_seconds: float = Field(default=60., gt=0, le=3600)
+    recover_failed_turns: bool = False
     poll_seconds: int = Field(default=5, ge=1, le=300)
     event_wait_seconds: float = Field(default=.2, gt=0, le=1)
     resource_sample_seconds: float = Field(default=1., gt=0, le=5)

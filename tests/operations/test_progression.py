@@ -218,6 +218,11 @@ def test_restart_interrupted_root_reconciles_existing_work_without_reset(progres
         assert not p.coordinator.host.prompts
         p.coordinator.host.completion = dict(id=old_turn, status='interrupted')
     p.coordinator.tick()
+    assert checkpoint(p)['recovery']['used'] == 1
+    assert checkpoint(p)['recovery']['last_failure']['code'] == 'native_turn_interrupted'
+    assert checkpoint(p)['rounds'] == before['rounds']
+    p.now[0] += 1
+    p.coordinator.tick()
     after = checkpoint(p)
     assert row(p)['state'] == 'active'
     assert after['attempts'] == before['attempts'] + 1

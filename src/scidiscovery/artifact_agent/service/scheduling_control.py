@@ -20,7 +20,7 @@ from .maintenance import MaintenanceBusy
 from ..storage.control_io import control_io_nonblocking
 from .research_loops import current_loop, loop_usage, loop_task_count, loop_task_budget, loop_scope_view, sync_loop_balances, loop_usage_summary
 
-CONTROL_VERSION = 8
+CONTROL_VERSION = 9
 CONTROL_SCHEMA = """
 CREATE TABLE IF NOT EXISTS scheduler_progression (
     instance_id TEXT PRIMARY KEY REFERENCES scheduler_instances(instance_id),
@@ -113,6 +113,8 @@ def progression_status_view(value, *, session_key=None, now=None):
         # Read-only archives have no live clock: project their frozen high-water
         # mark rather than omitting the shared remaining-budget fields.
         budget.update(time_budget(checkpoint, limits, now if now is not None else checkpoint.get('time_high_water', 0)))
+        from .research_loops import recovery_budget
+        budget['recovery'] = recovery_budget(checkpoint, limits)
     if limits and (current_loop(checkpoint) or value['mode'] == 'background' or checkpoint.get('human_continuations')):
         from .progression_budget import token_budget
         budget.update(**loop_task_budget(checkpoint, limits), rounds=checkpoint.get('rounds', 0),
@@ -417,7 +419,14 @@ class SchedulingControl:
                 if outstanding and row['instance_id'] != outstanding[0]['instance_id']:
                     continue
                 if json.loads(row['config_json']).get('effective', {}).get('progression', {}).get('enabled'):
-                    return hydrate_control_row(connection, row)
+                    value = hydrate_control_row(connection, row)
+                    checkpoint = json.loads(value['checkpoint_json'])
+                    recovery = checkpoint.get('recovery', {})
+                    from .progression_budget import time_budget
+                    limits = json.loads(row['config_json'])['effective']['progression']
+                    if (self.control_now() >= (recovery.get('next_at') or 0)
+                            or time_budget(checkpoint, limits, self.control_now())['effective_remaining_seconds'] <= 0):
+                        return value
         return None
 
     def progression_status(self, *, instance_id, session_key=None, internal=False):
@@ -647,7 +656,7 @@ class SchedulingControl:
             # Retain originals; only new scope counters start at zero.
             checkpoint.update(current_loop_id=identity, rounds=0, attempts=0, probes=0,
                 enabled_seconds=0, enabled_at=None, time_high_water=now,
-                budget={}, usage_summary=usage_summary([]), running_seconds=0, report=None, relevant_runs={})
+                budget={}, recovery={}, usage_summary=usage_summary([]), running_seconds=0, report=None, relevant_runs={})
             for name in ('started_at', 'phase', 'turn_id', 'round_started_at', 'next_probe_at', 'native_completion', 'relevant_runs_objective_ref',
                          'decision_snapshot', 'processed_snapshot', 'notification_snapshot', 'notified_snapshot',
                          'terminal_delivery', 'fault_code', 'fault_class', 'stop_snapshot_tokens', 'time_closeout_source_session'):
@@ -1115,7 +1124,8 @@ class SchedulingControl:
             status.update(assessment_receipts=receipts, assessment_read=dict(tool='progression_status'))
         return status
 
-    def observe_progression(self, *, instance_id, expected_host, changes, reason=None, stop=False, completed_turn=None, terminal_turn=None, usage_observation=None):
+    def observe_progression(self, *, instance_id, expected_host, changes, reason=None, stop=False, completed_turn=None, terminal_turn=None, usage_observation=None,
+                            recoverable_fault=None, recovery_health=None):
         """Trusted runtime observations survive pause; they grant no dispatch authority.
 
         Serialize merges with the public report, and keep the native writer marker
@@ -1154,6 +1164,62 @@ class SchedulingControl:
                     (checkpoint.get('scientific_pause') or {}).get('source_session', row['owner_session']))
                 if row['state'] == 'active' and not stop:
                     reason, stop = 'scientific_progress_persistent_gap', True
+            if recoverable_fault is not None:
+                limits = json.loads(row['config_json'])['effective']['progression']
+                recovery = checkpoint.setdefault('recovery', {})
+                native = recoverable_fault['kind'] in {'failed_turn', 'interrupted_turn'}
+                exact = (not native or bool(terminal_turn
+                    and prior_checkpoint.get('phase') == 'running'
+                    and prior_checkpoint.get('turn_id') == terminal_turn.get('id')
+                    and terminal_turn.get('status') == ('failed' if recoverable_fault['kind'] == 'failed_turn' else 'interrupted')))
+                fresh = (recoverable_fault['generation'] == row['generation']
+                    and recoverable_fault['loop_id'] == current_loop(checkpoint)
+                    and recoverable_fault['id'] != recovery.get('last_failure_id') and exact)
+                if fresh:
+                    recovery.update(consecutive_failures=recovery.get('consecutive_failures', 0)+1,
+                        last_failure_id=recoverable_fault['id'], last_failure=dict(kind=recoverable_fault['kind'],
+                            code='native_turn_'+terminal_turn['status'] if native else checkpoint.get('fault_code'),
+                            turn_id=terminal_turn.get('id') if native else None))
+                    from .progression_budget import time_budget, token_budget
+                    resources = checkpoint.get('resources') or {}
+                    resource_exhausted = (resources.get('owned_tree_rss_bytes', 0)
+                        +(resources.get('control_daemon_rss_bytes') or 0)) >= limits['max_rss_bytes']
+                    total_exhausted = (checkpoint.get('attempts', 0) >= limits['max_attempts']
+                        or checkpoint.get('rounds', 0) >= limits['max_rounds']
+                        or time_budget(checkpoint, limits, self.control_now())['effective_remaining_seconds'] <= 0
+                        or token_budget(checkpoint, limits)['remaining_tokens'] <= 0)
+                    eligible = bool(current_loop(checkpoint) and limits['enabled']
+                        and row['mode'] == 'background' and row['state'] in {'active', 'pending'}
+                        and self.client_enabled(session_key=row['owner_session'] or row['requested_by'])
+                        and not pause and checkpoint.get('fault_class') != 'outcome_unknown'
+                        and not (checkpoint.get('phase') == 'prepared' and not checkpoint.get('turn_id'))
+                        and not any(item['state'] == 'prepared' for item in checkpoint.get('admissions', {}).values())
+                        and (recoverable_fault['kind'] != 'failed_turn' or limits['recover_failed_turns'])
+                        and recovery.get('used', 0) < limits['max_recoveries']
+                        and recovery['consecutive_failures'] < limits['recovery_failure_threshold']
+                        and not total_exhausted
+                        and (limits['token_policy'] != 'strict' or loop_usage_summary(checkpoint)['coverage'] == 'observed')
+                        and not resource_exhausted)
+                    if eligible:
+                        delay = min(limits['recovery_backoff_max_seconds'], limits['recovery_backoff_seconds']
+                            * 2**min(recovery['consecutive_failures']-1, 20))
+                        recovery.update(used=recovery.get('used', 0)+1, next_at=self.control_now()+delay,
+                            pending_kind=recoverable_fault['kind'])
+                        counts = recovery.setdefault('by_kind', {})
+                        counts[recoverable_fault['kind']] = counts.get(recoverable_fault['kind'], 0)+1
+                        reason, stop = None, False
+                        checkpoint['runtime_status'] = 'recovery_backoff'
+                    else:
+                        recovery.update(next_at=None, pending_kind=None)
+                        reason, stop = ('resource_limit' if resource_exhausted else 'budget_exhausted'
+                            if total_exhausted else reason or 'host_fault'), True
+            if recovery_health is not None and checkpoint.get('fault_class') != 'outcome_unknown':
+                recovery = checkpoint.get('recovery', {})
+                if recovery_health == 'completed_turn' or (recovery_health == 'observation'
+                        and recovery.get('pending_kind') == 'observation'):
+                    recovery.update(consecutive_failures=0, next_at=None, pending_kind=None)
+            if changes.get('phase') == 'running' and checkpoint.get('recovery', {}).get('pending_kind') in {'failed_turn', 'interrupted_turn'}:
+                checkpoint['recovery'].update(next_at=None, pending_kind=None)
             if reason is not None and row['state'] not in {'active', 'pending'} and not (
                     row['reason'] == 'scientific_progress_persistent_gap'
                     or (row['reason'] == 'budget_exhausted' and prior_checkpoint.get('time_closeout_source_session'))):

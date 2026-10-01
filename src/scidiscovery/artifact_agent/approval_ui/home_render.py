@@ -114,6 +114,12 @@ def session_controls(rows, *, token, csrf, current=None, expires_at=None, workbe
                 "<p>自然期限从本次确认起连续计时，暂停和服务停机也流逝；推进启用时长包含正常外部等待，"
                 "排除明确暂停。任一额度耗尽就停止新派发；有效剩余时间取两者较小值。"
                 "单个外部作业仍使用原执行时限，不随 loop 扩大。</p>"
+                "<p>恢复策略随本次确认冻结：本地安全观察耗尽短重试后按退避有限恢复；"
+                "确认失败的 Root 回合仅在 recover_failed_turns 启用时恢复为下一次决策。"
+                "累计恢复受 max_recoveries 限制，连续失败受 recovery_failure_threshold 限制；"
+                "原生恢复还同时受 max_attempts 限制（默认 2），max_recoveries 不扩展该额度。"
+                "恢复继续消耗原回合、token 与时间余额；暂停、停止、科学刹车及未知提交不会自动复活，"
+                "已接受任务与远端提交不重放。恢复次数与退避经重启、换目标或人工继续均不清零。</p>"
                 + '<p>本次自然寿命：' + str(loop_proposal['limits']['max_calendar_seconds'])
                 + ' 秒；推进启用时长：' + str(loop_proposal['limits']['max_elapsed_seconds'])
                 + ' 秒；初始有效时间上限：' + str(min(loop_proposal['limits']['max_calendar_seconds'],
@@ -124,7 +130,7 @@ def session_controls(rows, *, token, csrf, current=None, expires_at=None, workbe
                 + hidden("confirmation_binding", loop_proposal['confirmation_binding'])
                 + "<label>新 loop 的确切原始目标名称<input name='objective_name' required></label>"
                 "<label><input type='checkbox' name='confirm_loop_budget' value='yes' required>"
-                "我明确授权上述完整预算、自然期限与推进启用时长；旧任务不重放，科学暂停另行核对</label>"
+                "我明确授权上述完整预算、自然期限、推进启用时长与恢复策略；旧任务不重放，科学暂停另行核对</label>"
                 "<button type='submit'>确认新 loop 预算</button></form></details>")
         for target in background_continuations:
             body += "<details><summary>恢复后台目标：" + escape(target.get('objective_name') or '目标绑定待核对') + "</summary>"

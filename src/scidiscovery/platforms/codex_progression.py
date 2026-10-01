@@ -211,6 +211,7 @@ class CodexProgressionFactory:
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         log = PrivateLog(directory / 'host.stderr', limits['log_bytes'])
         host = None
+        opening_root = False
         try:
             connection = AppServer.launch(command + config_flags({'mcp_servers': disabled}) + config_flags(config),
                 cwd=self.project_root, environment=os.environ, stderr=log.writer,
@@ -227,13 +228,19 @@ class CodexProgressionFactory:
             host.initialize(cwd=str(self.project_root), expected_config=config)
             options = {'model': root_settings.root_model,
                 'config': {'model_reasoning_effort': root_settings.root_reasoning_effort}}
+            opening_root = True
             host.open_root(cwd=str(self.project_root), prior=prior, options=options,
                 active_turn_id=checkpoint.get('turn_id') if prior else None)
             host.verify_tools_and_session(approval_base_url=self.approval_base_url)
             if prior and checkpoint.get('turn_id'):
                 host.reconcile_turn(checkpoint['turn_id'])
             return host
-        except BaseException:
+        except BaseException as error:
+            if opening_root:
+                # Creating/resuming the native Root can have succeeded before
+                # a reply or later verification fails. Closing is no proof that
+                # it did not; the coordinator must retain unknown outcome.
+                error.native_outcome_unknown = True
             if host:
                 host.close()
             else:
