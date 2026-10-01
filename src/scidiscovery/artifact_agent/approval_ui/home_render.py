@@ -66,7 +66,7 @@ def create_form(*, csrf, token=None):
 
 
 def session_controls(rows, *, token, csrf, current=None, expires_at=None, workbench_available=True, progression=None,
-                     human_confirmation=None):
+                     human_confirmation=None, background_continuations=()):
     current_title = escape(current.title) if current else "尚未绑定实例"
     body = ("<section class='home-session' id='session-binding'><h2>实例绑定</h2><p class='session-title'>"
             + current_title + "</p><p>打开实例查看资料不会改变会话绑定。</p>")
@@ -110,6 +110,21 @@ def session_controls(rows, *, token, csrf, current=None, expires_at=None, workbe
                 "<label><input type='checkbox' name='confirm_independent_interactive' value='yes' required>"
                 "我确认这是独立人工工作，保留旧后台账目与实例执行预算</label>"
                 "<button type='submit'>确认独立人工工作</button></form></details>")
+        for target in background_continuations:
+            body += "<details><summary>恢复后台目标：" + escape(target.get('objective_name') or '目标绑定待核对') + "</summary>"
+            if target.get('error'):
+                body += '<p>' + escape(target['error']) + '</p></details>'
+                continue
+            remaining = target['remaining']
+            body += '<p>后台暂停原因：' + escape(', '.join(item['reason'] for item in target['causes']))
+            body += '。剩余任务：' + str(remaining['tasks']) + '；剩余轮次：' + str(remaining['rounds'])
+            body += '；剩余时间秒：' + str(round(remaining['seconds'])) + '；剩余 token：' + str(remaining['tokens'])
+            body += '。从后台已消费水位 ' + str(target['through_sequence']) + ' 开启下一窗口；人工窗口、旧触发与全部账目保留。</p>'
+            body += "<form data-background-continue method='post' action='/instances/progression'>" + common
+            body += hidden('command', 'human_continue') + hidden('instance_id', current.instance_id)
+            body += hidden('objective_name', target['objective_name']) + hidden('confirmation_binding', target['confirmation_binding'])
+            body += "<label><input type='checkbox' name='confirm_human_continue' value='yes' required>我确认恢复这个确切后台目标，保留全部额度</label>"
+            body += "<button type='submit'>确认恢复后台目标</button></form></details>"
         body += "</section>"
     options = "<option value='' disabled selected>选择要绑定的实例</option>"
     for row in rows:

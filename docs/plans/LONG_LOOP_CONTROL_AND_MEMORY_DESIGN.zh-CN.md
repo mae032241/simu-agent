@@ -153,18 +153,19 @@ P4a 验收同时报告两种口径的新增、删除、净变化，均须净减�
 | UI 独立人工范围、返回原范围、预算耗尽/迟到 usage、旧状态/归档恢复 | 保留旧分账/暂停原因/高水位；普通命令不能伪造独立范围；继续不增额度；兼容读取不恢复旧许可或吞掉未决状态 |
 | off/shadow/assist 的原有信号 | off/shadow 不变成强制准入刹车；assist 自动强制停；不以移除弱信号或声称已科学验证达标 |
 
-### P4a 实现事实（独立复核通过，未部署）
+### P4a 实现事实（功能独立复核通过，净减少条件待收口，未部署）
 
 | 已实现边界 | 实际承接与限制 |
 |---|---|
 | 直接暂停与统一准入 | 删除七态 episode、一次复判/调整任务许可和专用 handoff 生命周期；既有触发/处置记录由 `scientific_pause` 共用读取，SchedulingControl 与 RunService 实际创建均拒绝未解除的科学暂停。普通命令、改目标/模式、报告完成及重启不清原因 |
 | UI 后续观察窗口 | 既有 capability/CSRF、精确实例/目标/generation/控制快照确认在同事务开启对应已消费水位后的窗口；原触发/投递不回写，原额度不退。真实后台 Coordinator 的第二个三结果窗口再次暂停，不新增免检许可 |
+| 独立人工返回后台 | 管理页从未解除的后台触发和不可变交付引用列出精确目标；复用人工确认，绑定目标、后台范围、触发与消费水位。有效确认只开启所选后台窗口，恢复原后台预算，保留人工记录和其他目标的暂停；原件或名称绑定缺失时展示诊断，未知提交、活动工作及预算耗尽继续阻断 |
 | 原件与分页 | P0 通知确认/消费分离保留；`run_list.current_goal_tasks` 从精确目标绑定派生只读成员，沿既有 `next_before` 精确续页；不解释 handoff 许可 |
 | 旧状态/归档 | 现有 `CONTROL_VERSION` 从 2 升至 3。启动的 `SchedulerBindingService._initialize` 检查 SQLite `PRAGMA user_version`；恢复的 `execution_settings_restore_view` 检查归档 `schema.user_version`。旧 2 均明确拒绝，未配置退休字段但存有旧 submitted_unknown episode/handoff 也不能静默采用新规则；不提供迁移或清空未知提交 |
 | 消费与自动恢复 | 保留实际原生 turn/投递/消费归属与当前 reducer 恢复判据。暂停态没有可靠后续消费时保守保持暂停，不另开解锁回合；原因后来真正解除仍不自动解开其他暂停。前台 code-mode/独立交互未接入可靠原生回执时不计消费，不能保证其新科学阈值触发；范围事实夹具只证明存储/投影隔离，后台再次刹车以真实 Coordinator 验证 |
 | 原生与预算 | 原生 outcome_unknown、活动 writer、prepared admission、精确 turn/thread/generation、旧人工任务/usage 分账和所有原额度仍保留。poll 回调及终态结算后复读控制状态，已确认暂停沿既有宿主清理，不误报 host_fault 或遗留 writer；活动/未知宿主仍保留。turn/start 返回前的实际早到 MCP 准入不冒充消费或已知提交失败；明确 outcome_unknown 则拒绝重放。独立审查依赖的完整提示保留 |
 
-冻结 18 文件均保留在计数范围，没有新增或移出承接生产文件。逐文件按本节基线与最终源码对账，新增/删除使用 `difflib.SequenceMatcher(autojunk=False)` 的 insert/delete/replace 数量；第二口径先移除 COMMENT 并过滤空行，docstring/SQL/提示仍计入。
+`67bcd4d` 节点的冻结 18 文件均保留在计数范围，该节点没有新增或移出承接生产文件。下表保留该节点历史计数；追加恢复入口将 `runtime.py` 也纳入责任范围，共 19 文件：相对扩展后的 P0 基线，物理行 12225→12214（−11），非空非注释行 11203→11204（+1）。双口径净减少仍待收口。逐文件按本节基线与最终源码对账，新增/删除使用 `difflib.SequenceMatcher(autojunk=False)` 的 insert/delete/replace 数量；第二口径先移除 COMMENT 并过滤空行，docstring/SQL/提示仍计入。
 
 | 口径 | P0 后基线 | P4a 最终 | 新增 | 删除 | 净变化 |
 |---|---:|---:|---:|---:|---:|

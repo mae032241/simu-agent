@@ -153,6 +153,9 @@ def open_runtime(
             experiment_execution_factory=experiment_factory,
         )
         scheduler_bindings.progress_run_reader = runs.goal_related_runs
+        scheduler_bindings.progress_active_work_reader = lambda *, instance_id: (runs.active_ids(instance_id=instance_id, limit=1)
+            or (executions.active_ids(instance_id=instance_id, scheduler_database_path=scheduler_bindings.database_path,
+                limit=1) if executions is not None else ()))
     return ArtifactAgentRuntime(
         project_root=project,
         state_root=state,
