@@ -36,7 +36,7 @@ def render_progression(status, *, instance_id):
         body += render_json_value(human, max_bytes=16384)
     independent = status.get('interactive_session') or {}
     if independent.get('history'):
-        body += '<h3>独立人工工作作用域</h3><p>下方 budget / usage 属于保留的后台调度会话。人工任务另记，实例执行累计预算始终适用；人工原生 token 用量可能未观测。</p>'
+        body += '<h3>独立人工工作作用域</h3><p>下方 budget / usage 属于保留的后台调度会话。人工任务另记并保留成功和失败历史，实例执行累计预算始终适用；人工原生 token 用量可能未观测。这里是人工授权与分账，不是科研观察窗口；人工任务不计入后台科研观察，返回后台仍须明确确认其旧触发。</p>'
         body += render_json_value(independent, max_bytes=16384)
     if status.get('historical'):
         body += '<p>以下为归档时的历史推进记录；通知仅供回读，不会恢复调度或重发通知。</p>'
@@ -122,7 +122,7 @@ def render_progression(status, *, instance_id):
     budget = status.get('budget') or {}
     body += '<h3>预算、用量与缺测</h3><dl class="metadata">'
     for key, label in (('rounds', '推进轮次'), ('tasks', '任务数'), ('attempts', '尝试数'), ('probes', '探测数'),
-            ('elapsed_seconds', '经过时间（秒）'), ('root_running_seconds', 'Root 运行时间（秒）'),
+            ('elapsed_seconds', '推进启用时间（秒）'), ('remaining_seconds', '剩余启用时间（秒）'), ('root_running_seconds', 'Root 运行时间（秒）'),
             ('waiting_seconds', '等待时间（秒）'), ('observed_tokens', '最新已观测 Token'),
             ('stop_snapshot_tokens', '首次止损时已观测 Token'),
             ('token_coverage', '目标 Token 覆盖'), ('time_coverage', '时间覆盖'), ('token_enforcement', 'Token 约束方式')):

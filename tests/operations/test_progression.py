@@ -153,6 +153,9 @@ def test_lost_native_start_is_not_replayed(progression):
     assert row(p)['host_json'] is not None
     p.coordinator.tick()
     assert p.coordinator.host is None
+    assert checkpoint(p)['enabled_at'] is not None
+    p.now[0] += 10
+    assert p.root.call_tool('progression_status', {})['budget']['elapsed_seconds'] >= 10
 
 
 def test_restart_restores_same_turn_and_consumption(progression):

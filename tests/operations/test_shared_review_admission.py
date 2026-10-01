@@ -176,8 +176,8 @@ def test_background_review_wait_dispatch_complete_and_resume(tmp_path, monkeypat
         assert not {'artifact_ref', 'run_id', 'reviewer_run_id'} & outcome.keys()
         assert f.runs.review_wait(f.run_id)['reviewer_run_id']==wait['reviewer_run_id']
         assert f.runs.status(f.run_id).state=='running'
-        with f.runtime.scheduler_bindings._connect() as db:
-            checkpoint=json.loads(db.execute('SELECT checkpoint_json FROM scheduler_progression WHERE instance_id=?',(f.instance.instance_id,)).fetchone()[0])
+        checkpoint=json.loads(f.runtime.scheduler_bindings.progression_status(
+            instance_id=f.instance.instance_id, internal=True)['checkpoint_json'])
         assert request['name'] in checkpoint['admissions']
     finally:
         coordinator.close()

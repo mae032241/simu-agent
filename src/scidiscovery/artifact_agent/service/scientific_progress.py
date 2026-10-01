@@ -391,22 +391,11 @@ def observation_facts(db, row, goal_key, policy, state):
     scope = state.get('observation_scope', {})
     background = scope.get('background', {})
     limit = scope.get('max_observed_tasks', policy['max_tasks'])
-    # Explicit human scopes add their exact accepted tasks to the observation
-    # capacity, without increasing the frozen background admission allowance.
     checkpoint = json.loads(dict(row).get('checkpoint_json', '{}'))
-    limit += sum(bool(item.get('interactive_session_id')) and item.get('objective_ref') ==
-        json.loads(row['objective_ref_json']) for item in checkpoint.get('admissions', {}).values())
     exclusion = (' AND d.run_id NOT IN (' + ','.join('?' for _ in background) + ')') if background else ''
-    independent = {item['run_id']: item['interactive_session_id'] for item in
-        checkpoint.get('admissions', {}).values() if item.get('run_id') and item.get('interactive_session_id')}
-    current_scope = checkpoint.get('observation_scope_id', 'background')
-    selected = [run for run, scope_id in independent.items() if scope_id == current_scope]
-    if current_scope != 'background':
-        if not selected:
-            return [], False
-        exclusion += ' AND d.run_id IN (' + ','.join('?' for _ in selected) + ')'
-    elif independent:
-        selected = list(independent)
+    selected = [item['run_id'] for item in checkpoint.get('admissions', {}).values()
+        if item.get('run_id') and item.get('interactive_session_id')]
+    if selected:
         exclusion += ' AND d.run_id NOT IN (' + ','.join('?' for _ in selected) + ')'
     records = db.execute('SELECT f.fact_json FROM scheduler_terminal_deliveries d '
         'JOIN scheduler_progress_facts f USING(instance_id,goal_key,run_id) '
@@ -461,10 +450,8 @@ def refresh_shadow(db, row, goal_key):
         (row['instance_id'], goal_key)).fetchone()
     prior = json.loads(previous['state_json']) if previous else {}
     facts, omitted = observation_facts(db, row, goal_key, policy, prior)
-    checkpoint = json.loads(dict(row).get('checkpoint_json', '{}'))
-    scope_id = checkpoint.get('observation_scope_id', 'background')
-    window_start = prior.get('window_starts', {}).get(scope_id, 0)
-    prior_through = prior.get('through_sequences', {}).get(scope_id, 0)
+    window_start = prior.get('window_start_sequence', 0)
+    prior_through = prior.get('through_sequence', 0)
     prior_facts, facts = [f for f in facts if f['sequence'] <= window_start], [f for f in facts if f['sequence'] > window_start]
     advances = []
     counts = reduce_shadow(facts, advances=advances, known_evidence=[item['output']
@@ -479,7 +466,6 @@ def refresh_shadow(db, row, goal_key):
         repeated_failure=policy['observation_gap_threshold'])
     for reason, threshold in thresholds.items():
         active = next((item for item in reversed(notices) if item['reason'] == reason and item['id'] not in resolved
-            and item.get('scope_id', 'background') == scope_id
             and item['policy']['progress_mode'] == policy['progress_mode']), None)
         # Only a newly consumed, supported advance can close a cause episode.
         # Late assessments update current counts, never withdraw old notices.
@@ -490,8 +476,8 @@ def refresh_shadow(db, row, goal_key):
             active = None
         if counts[reason] < threshold or active:
             continue
-        notices.append(dict(id=canonical_sha256(dict(goal=goal_key, scope=scope_id, reason=reason,
-            sequence=facts[-1]['sequence'])), reason=reason, scope_id=scope_id,
+        notices.append(dict(id=canonical_sha256(dict(goal=goal_key, reason=reason,
+            sequence=facts[-1]['sequence'])), reason=reason,
             trigger_counts=counts.copy(), policy=policy, through_sequence=facts[-1]['sequence'],
             task_names=[item['task_name'] for item in facts],
             assessment_refs=[item['assessment']['assessment_ref'] for item in facts if item.get('assessment')],
@@ -499,10 +485,7 @@ def refresh_shadow(db, row, goal_key):
             state='shadow_recorded', dispatch_changed=False))
     state = dict(counts=counts, notices=notices, dispositions=dispositions,
         through_sequence=max([window_start, *(fact['sequence'] for fact in facts)]),
-        window_start_sequence=window_start, window_starts=prior.get('window_starts', {}),
-        scope_id=scope_id, omitted=omitted)
-    state['through_sequences'] = dict(prior.get('through_sequences', {}),
-        **{scope_id: state['through_sequence']})
+        window_start_sequence=window_start, omitted=omitted)
     if 'observation_scope' in prior:
         state['observation_scope'] = prior['observation_scope']
     encoded = json.dumps(state, sort_keys=True)
@@ -530,9 +513,6 @@ def independent_interactive_active(row, checkpoint):
     if not records:
         return False
     consent = records[-1]
-    if (human_continuation_active(row, checkpoint) and
-            checkpoint['human_continuations'][-1].get('scope_id') == consent['id']):
-        return True
     return (row['state'] == 'active' and row['mode'] == 'interactive'
         and consent['generation'] == row['generation']
         and consent['session_key'] == row['owner_session']
@@ -541,7 +521,8 @@ def independent_interactive_active(row, checkpoint):
 
 def scientific_pause(db, row, checkpoint):
     """Unresolved assist triggers are facts, shared by every dispatch entry."""
-    scope_id = checkpoint.get('observation_scope_id', 'background')
+    if independent_interactive_active(row, checkpoint):
+        return None  # Exact UI authorization permits manual work, never clears background triggers.
     causes = []
     for record in db.execute('SELECT goal_key,state_json FROM scheduler_progress_shadow WHERE instance_id=?',
             (row['instance_id'],)):
@@ -550,15 +531,13 @@ def scientific_pause(db, row, checkpoint):
         causes.extend(dict(goal_key=record['goal_key'], id=item['id'], reason=item['reason'],
             through_sequence=state.get('through_sequence', 0)) for item in state.get('notices', [])
             if item['id'] not in resolved and item['reason'] != 'refinement'
-            and item['policy']['progress_mode'] == 'assist'
-            and item.get('scope_id', 'background') == scope_id)
-    return dict(scope_id=scope_id, causes=causes) if causes else None
+            and item['policy']['progress_mode'] == 'assist')
+    return dict(causes=causes) if causes else None
 
 
-def open_observation_window(db, row, checkpoint):
+def open_observation_window(db, row):
     """UI decision moves only the consumed start; old triggers remain immutable."""
     goal_key = canonical_sha256(json.loads(row['objective_ref_json']))
-    scope_id = checkpoint.get('observation_scope_id', 'background')
     record = db.execute('SELECT state_json FROM scheduler_progress_shadow WHERE instance_id=? AND goal_key=?',
         (row['instance_id'], goal_key)).fetchone()
     state = json.loads(record['state_json']) if record else {}
@@ -567,9 +546,8 @@ def open_observation_window(db, row, checkpoint):
     through = max([0, *(fact['sequence'] for fact in facts)])
     resolved = {item['notice_id'] for item in state.get('dispositions', [])}
     state.setdefault('dispositions', []).extend(dict(notice_id=item['id'], state='human_continue',
-        through_sequence=through) for item in state.get('notices', []) if item['id'] not in resolved
-        and item.get('scope_id', 'background') == scope_id)
-    state.setdefault('window_starts', {})[scope_id] = through
+        through_sequence=through) for item in state.get('notices', []) if item['id'] not in resolved)
+    state['window_start_sequence'] = through
     db.execute('INSERT INTO scheduler_progress_shadow VALUES(?,?,?) '
         'ON CONFLICT(instance_id,goal_key) DO UPDATE SET state_json=excluded.state_json',
         (row['instance_id'], goal_key, json.dumps(state)))
@@ -584,7 +562,6 @@ def shadow_projection(*, bindings, row):
     scope = state.get('observation_scope', {})
     # Notice snapshots stay in the DB; the common public projection is bounded.
     return dict(mode=policy['progress_mode'], policy=policy, counts=state.get('counts', reduce_shadow([])),
-        scope_id=state.get('scope_id', 'background'),
         window_start_sequence=state.get('window_start_sequence', 0),
         notices=[{key: item[key] for key in ('id', 'reason', 'trigger_counts', 'through_sequence', 'would_act', 'state',
             'dispatch_changed')} for item in state.get('notices', [])[-5:]],

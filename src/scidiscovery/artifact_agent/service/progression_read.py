@@ -11,7 +11,8 @@ from .scientific_progress import goal_bound_runs
 def progression_read_view(*, bindings, runs, artifacts, operation_catalog, instance_id, session_key=None,
                           progress_cursor=None, progress_limit=4, executions=None, delivery_cursor=None, delivery_limit=8):
     row = bindings.progression_status(instance_id=instance_id, internal=True)
-    status = progression_status_view(row, session_key=session_key)
+    clock = getattr(bindings, 'control_now', None)
+    status = progression_status_view(row, session_key=session_key, now=clock() if clock else None)
     if row.get('historical'):
         status.update(historical=True, can_schedule=False, writer='none')
         if status.get('notifications'):

@@ -269,7 +269,17 @@ class RootOperationRoutes:
             try:
                 # Reject invalid scientific inputs before claiming interactive scheduling.
                 bound, values = self._configured_operation_call(values)
-                with self.scheduling_guard(), self._create_lock:
+                review_owner = (self.runs.requested_review_owner(bound, instance_id=instance_id)
+                    if bound.compiled.spec.executor.kind == 'agent' and self.runs is not None else None)
+                continuation = ('run', review_owner) if review_owner else None
+                control = self.bindings.progression_status(instance_id=instance_id, internal=True)
+                if (continuation is None and bound.compiled.spec.executor.kind == 'agent'
+                        and (control['state'], control['reason']) == ('paused', 'scientific_progress_persistent_gap')):
+                    *_, existing = self._prepare_local_run(bound, values['on_conflict'],
+                        resume_from=values.get('resume_from'), draft_from=values.get('draft_from'), max_attempts=values.get('max_attempts'))
+                    if existing.existing_object_id is not None:
+                        continuation = ('run', existing.existing_object_id)
+                with self.scheduling_guard(continuation=continuation), self._create_lock:
                     kind = bound.compiled.spec.executor.kind
                     if kind == "agent":
                         result = self._invoke_agent_operation(
@@ -434,7 +444,7 @@ class RootOperationRoutes:
             raise OperationInvocationError("semantic_name_conflict") from error
         if target.existing_object_id is None:
             self.runs.validate_admission(bound, instance_id=self._instance_id(), max_attempts=max_attempts,
-                scientific_signature=self._scientific_signature(bound, resume_run_id, draft_run_id))
+                scientific_signature=self._scientific_signature(bound, resume_run_id, draft_run_id), session_key=self.session_key)
             try:
                 if draft_run_id is not None:
                     self.runs.validate_draft_source(draft_run_id, compiled=bound.compiled,

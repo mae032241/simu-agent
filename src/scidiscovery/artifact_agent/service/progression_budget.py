@@ -5,6 +5,29 @@ Cached input is already part of input_tokens. No budget is increased here.
 """
 
 
+def enabled_time(checkpoint, now, *, enabled=None):
+    """Project or settle one durable interval; rollback never refunds time.
+
+    Only control transitions and the original accepted-work coordinator choose
+    enabled. A retained open interval conservatively includes disconnect gaps.
+    """
+    fields = ('enabled_seconds', 'enabled_at', 'time_high_water')
+    if not all(key in checkpoint for key in fields):
+        if 'started_at' in checkpoint:
+            raise ValueError('Incomplete progression time record; initialize a fresh state root.')
+        return 0
+    current = max(now, checkpoint['time_high_water'])
+    elapsed = checkpoint['enabled_seconds'] + (max(0, current - checkpoint['enabled_at'])
+        if checkpoint['enabled_at'] is not None else 0)
+    if enabled is not None:
+        if checkpoint.get('fault_class') == 'outcome_unknown' or (
+                checkpoint.get('phase') == 'prepared' and not checkpoint.get('turn_id')):
+            enabled = checkpoint['enabled_at'] is not None  # Uncertain native activity cannot become a free pause.
+        checkpoint.update(enabled_seconds=elapsed, time_high_water=current,
+            enabled_at=current if enabled else None)
+    return elapsed
+
+
 def token_budget(checkpoint, limits):
     records = checkpoint.get('usage_records', {})
     used = 0

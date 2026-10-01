@@ -116,7 +116,7 @@ class RootRunRoutes(RunReadProjection):
                 ("code", "path", "message", "phase", "affected_action", "repairable", "rule_id") if key in item}
                 for item in safe.get("details", ())]}
 
-    @owned_mutation
+    @owned_mutation(namespace='run')
     def run_record_failure(
         self,
         *,

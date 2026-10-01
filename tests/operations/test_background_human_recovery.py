@@ -32,7 +32,7 @@ def background_form(ui, target='goal'):
     chosen = [form for form in values if form.get('objective_name') == target]
     assert len(chosen) == 1, 'The UI must offer an explicit recovery of the exact paused background goal.'
     assert '恢复后台目标' in page and '剩余任务' in page and 'coverage_gap' in page
-    assert '暂停和独立人工工作期间也计时' in page
+    assert '明确暂停和独立人工工作不计时' in page
     assert '确认后转为交互模式，由你继续调度当前目标' in page
     assert '确认后转为后台自动推进，并将当前目标切换为所选目标：' + target in page
     assert '最后选择的目标成为当前目标' in page
@@ -49,8 +49,9 @@ def test_http_manual_scope_can_recover_exact_original_background_goal(human_ui, 
     ref = ArtifactRef.model_validate(objective)
     trigger = bindings.progress_shadow(instance_id=p.instance, objective_ref=ref)['notices'].copy()
     enter_manual(ui, target)
+    p.now[0] += 2 * json.loads(row(p)['config_json'])['effective']['progression']['max_elapsed_seconds']
     before = checkpoint(p)
-    manual_scope = before['observation_scope_id']
+    manual_scope = before['interactive_sessions'][-1]['id']
     manual_ref = ArtifactRef.model_validate_json(row(p)['objective_ref_json'])
     manual_state = bindings.progress_shadow(instance_id=p.instance, objective_ref=manual_ref)
     for command in ('start', 'resume', 'takeover'):
@@ -69,9 +70,11 @@ def test_http_manual_scope_can_recover_exact_original_background_goal(human_ui, 
         assert current.get(key) == before.get(key)
     recovered = bindings.progress_shadow(instance_id=p.instance, objective_ref=ref)
     assert recovered['notices'] == trigger
-    assert recovered['window_starts']['background'] == 3
-    assert bindings.progress_shadow(instance_id=p.instance, objective_ref=manual_ref)[
-        'window_starts'][manual_scope] == manual_state['window_starts'][manual_scope]
+    assert recovered['window_start_sequence'] == 3
+    assert all(item.get('interactive_session_id') == manual_scope for name, item in
+        current['admissions'].items() if name == 'manual-complete')
+    if target != 'goal':
+        assert bindings.progress_shadow(instance_id=p.instance, objective_ref=manual_ref) == manual_state
     root = active(p)
     finish(p, root, 'background-recovered-task')
     assert checkpoint(p)['admissions']['background-recovered-task'].get('interactive_session_id') is None
@@ -99,7 +102,7 @@ def test_background_confirmation_rejects_wrong_target_forgery_stale_and_cross_in
     assert row(p) == changed
 
 
-@pytest.mark.parametrize('barrier', ['native', 'budget', 'elapsed', 'active_work'])
+@pytest.mark.parametrize('barrier', ['native', 'budget', 'active_work'])
 def test_background_recovery_keeps_unknown_budget_and_actual_work_barriers(human_ui, barrier):
     ui, p = human_ui, human_ui.p
     if barrier == 'active_work':
@@ -113,9 +116,6 @@ def test_background_recovery_keeps_unknown_budget_and_actual_work_barriers(human
             with p.runtime.scheduler_bindings._connect() as db:
                 db.execute('UPDATE scheduler_progression SET host_json=? WHERE instance_id=?',
                     (json.dumps(dict(platform_session='unknown-native', thread_id='unknown-thread')), p.instance))
-        elif barrier == 'elapsed':
-            limits = json.loads(row(p)['config_json'])['effective']['progression']
-            p.now[0] += limits['max_elapsed_seconds']
         else:
             limits = json.loads(row(p)['config_json'])['effective']['progression']
             save_checkpoint(p, rounds=limits['max_rounds'])
@@ -124,9 +124,6 @@ def test_background_recovery_keeps_unknown_budget_and_actual_work_barriers(human
     code, _, response = _request(ui.base, 'POST', '/instances/progression', form=form)
     assert code == 409
     assert row(p) == before
-    if barrier == 'elapsed':
-        assert '后台时间额度已耗尽' in response.decode()
-        assert '暂停和独立人工工作期间也计时' in response.decode()
     if barrier == 'active_work':
         assert p.root.call_tool('run_status', dict(name='still-accepted'))['state'] == 'queued'
         run_id = p.runtime.scheduler_bindings.resolve(instance=p.instance, namespace='run', name='still-accepted')

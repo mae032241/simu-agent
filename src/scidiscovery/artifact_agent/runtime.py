@@ -160,6 +160,8 @@ def open_runtime(
                 or '未绑定名称（标识：' + item + '）') for item in executions.active_ids(instance_id=instance_id,
                 scheduler_database_path=scheduler_bindings.database_path, limit=1))
                 if executions is not None else ()))
+        scheduler_bindings.progress_accepted_execution_reader = (lambda execution_id: (
+            executions.status(execution_id).external_run_id or executions.prepared_submission(execution_id))) if executions is not None else None
     return ArtifactAgentRuntime(
         project_root=project,
         state_root=state,

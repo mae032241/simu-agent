@@ -120,8 +120,8 @@ def session_controls(rows, *, token, csrf, current=None, expires_at=None, workbe
             body += '<p>后台暂停原因：' + escape(', '.join(item['reason'] for item in target['causes']))
             body += '。剩余任务：' + str(remaining['tasks']) + '；剩余轮次：' + str(remaining['rounds'])
             body += '；剩余时间秒：' + str(round(remaining['seconds'])) + '；剩余 token：' + str(remaining['tokens'])
-            body += '。当前时间口径：从首次后台启动计时，暂停和独立人工工作期间也计时；恢复不会重置额度'
-            body += '。从后台已消费水位 ' + str(target['through_sequence']) + ' 开启下一窗口；人工窗口、旧触发与全部账目保留。</p>'
+            body += '。当前时间口径：累计推进启用时间，正常等待与同预算人工继续计时；明确暂停和独立人工工作不计时，恢复不会重置额度'
+            body += '。从后台已消费水位 ' + str(target['through_sequence']) + ' 开启下一窗口；人工授权与分账、旧触发与全部账目保留。</p>'
             body += '<p>确认后转为后台自动推进，并将当前目标切换为所选目标：' + escape(target['objective_name'])
             body += '。其他目标的暂停仍须分别确认；多次确认后，最后选择的目标成为当前目标。</p>'
             body += "<form data-background-continue method='post' action='/instances/progression'>" + common

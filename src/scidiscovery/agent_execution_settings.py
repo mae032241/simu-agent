@@ -123,7 +123,6 @@ class ProgressionSettings(SettingsValue):
     observation_retries: int = Field(default=3, ge=0, le=10)
     observation_backoff_seconds: float = Field(default=.1, gt=0, le=1)
     observation_retry_seconds: float = Field(default=2., gt=0, le=5)
-    max_probes: int = Field(default=720, ge=1)
     related_source_limit: int = Field(default=128, ge=1, le=4096)
     progress_mode: Literal["off", "shadow", "assist"] = "shadow"
     no_progress_threshold: int = Field(default=3, ge=1, le=100)

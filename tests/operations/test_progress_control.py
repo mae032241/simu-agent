@@ -121,14 +121,15 @@ def test_ui_window_reaches_threshold_again_on_actual_native_consumption(human_ui
     assert len(host.prompts) == 1 and len(checkpoint(p)['admissions']) == 6
 
 
-def test_old_control_format_with_unknown_episode_is_explicitly_rejected(paused):
+def test_old_control_format_with_manual_observation_is_explicitly_rejected(paused):
     import json
     from scidiscovery.artifact_agent.service.scheduler_bindings import SchedulerBindingService
     bindings = paused.runtime.scheduler_bindings
     with bindings._connect() as db:
-        db.execute('PRAGMA user_version=2')
+        db.execute('PRAGMA user_version=3')
         state = correction_state(paused)
-        state['assist'] = [dict(state='submitted_unknown')]
+        state.update(window_starts={'background': 0, 'old-manual-id': 3},
+            through_sequences={'background': 3, 'old-manual-id': 3}, scope_id='old-manual-id')
         db.execute('UPDATE scheduler_progress_shadow SET state_json=? WHERE instance_id=?',
             (json.dumps(state), paused.instance))
     with pytest.raises(Exception, match='incompatible scheduler control schema'):
@@ -140,44 +141,64 @@ def test_old_control_format_with_unknown_episode_is_explicitly_rejected(paused):
         execution_settings_restore_view(archived)
 
 
-def test_persisted_independent_scope_fixture_keeps_background_pause_and_own_window(human_ui):
-    """Stored consumed facts verify scope isolation, not foreground receipt coverage."""
-    import json
-    from scidiscovery.artifact_agent.schema.common import canonical_sha256
-    from scidiscovery.artifact_agent.service.scientific_progress import _update_fact, refresh_shadow
+def test_http_independent_tasks_keep_background_observation_and_recovery(human_ui):
+    """Manual results retain history and remain excluded when background later reads them."""
+    from scidiscovery.artifact_agent.interfaces.mcp_gateway import UnifiedMCPRouter
+    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+    from tests.operations.test_local_worker_contracts import _write_result
+    from tests.operations.test_unified_mcp import call, result
+    from tests.operations.test_background_human_recovery import background_form
+    from tests.operations.test_m6a_direct_instance_management import _request
     ui, p = human_ui, human_ui.p
-    old = correction_state(p)['notices'].copy()
+    before = correction_state(p)
     assert independent(ui) == 303
-    scope_id = checkpoint(p)['interactive_sessions'][-1]['id']
-    for index in range(3):
-        finish(p, p.root, f'independent-gap-{index}')
-    bindings = p.runtime.scheduler_bindings
-    control = row(p)
-    goal = json.loads(control['objective_ref_json'])
-    key = canonical_sha256(goal)
-    with bindings._connect() as db:
-        for index in range(3):
-            name = f'independent-gap-{index}'
-            run_id = checkpoint(p)['admissions'][name]['run_id']
+    manual_id = checkpoint(p)['interactive_sessions'][-1]['id']
+    gateway = UnifiedMCPRouter(p.root)
+    compiled = p.catalog.operation('blind.csv.observe.v1')
+    for name, outcome in [('manual-success', 'completed'), ('manual-failure', 'failed')]:
+        result(call(gateway, 'operation_invoke', request(name), session='manual-root'))
+        run_id = checkpoint(p)['admissions'][name]['run_id']
+        profile = p.runtime.runs.status(run_id).execution_profile['profile']
+        result(call(gateway, 'worker_attach', dict(name=name, thread_id=name), session='manual-root'))
+        result(call(gateway, 'worker_open_assignment', child=name, session='manual-root', profile=profile))
+        if outcome == 'completed':
+            worker = LocalWorkerMCPRouter(p.runtime.runs, operation_id=compiled.spec.operation_id,
+                operation_digest=compiled.digest, run_id=run_id, trusted_caller=('manual-root', name))
+            worker.call_tool('worker_open_assignment', {})
+            _write_result(worker)
+            result(call(gateway, 'worker_submit_result', child=name, session='manual-root', profile=profile))
+        else:
             run = p.runtime.runs.status(run_id)
-            terminal = dict(state='completed', output=run.output_ref.model_dump(mode='json'), reason=None)
-            sequence = index + 4
-            db.execute('INSERT INTO scheduler_terminal_deliveries VALUES(?,?,?,?,?,?,?,?,?,?,?)',
-                (sequence, p.instance, key, run_id, name, json.dumps(goal), json.dumps(terminal),
-                 '{}', 'null', 'stored-scope-fixture', 'fixture_consumed_fact'))
-            _update_fact(db, p.instance, key, run_id, dict(sequence=sequence, task_name=name,
-                terminal=terminal, intent=None))
-        refresh_shadow(db, control, key)
-    assert bindings.progress_boundary(instance_id=p.instance) == 'scientific_progress_persistent_gap'
-    state = correction_state(p)
-    assert state['scope_id'] == scope_id and state['counts']['consumed'] == 3
-    assert state['notices'][:len(old)] == old
-    with pytest.raises(Exception, match='scientific_progress_persistent_gap'):
-        p.root.call_tool('progression_command', dict(command='resume'))
-    assert submit(ui, confirmation_binding=fresh_binding(ui)) == 303
-    finish(p, p.root, 'independent-same-scope')
-    assert checkpoint(p)['admissions']['independent-same-scope']['interactive_session_id'] == scope_id
-    assert correction_state(p)['window_start_sequence'] == 6
+            result(call(gateway, 'run_record_failure', dict(name=name, reason='Confirmed manual failure.',
+                expected_state='running', expected_last_activity_at=run.last_activity_at), session='manual-root'))
+        assert result(call(gateway, 'run_status', dict(name=name), session='manual-root'))['state'] == outcome
+        assert checkpoint(p)['admissions'][name]['interactive_session_id'] == manual_id
+    assert correction_state(p)['counts'] == before['counts']
+    assert correction_state(p)['notices'] == before['notices']
+    assert 'observation_scope_id' not in checkpoint(p)
+    for command in ('start', 'resume', 'takeover'):
+        args = dict(command=command, mode='background')
+        if command == 'start':
+            args['objective_name'] = 'goal'
+        with pytest.raises(Exception):
+            p.root.call_tool('progression_command', args)
+    assert p.root.call_tool('progression_status', {})['interactive_session']['active']
     p.root.call_tool('progression_command', dict(command='pause'))
-    with pytest.raises(Exception, match='scientific_progress_persistent_gap'):
-        p.root.call_tool('progression_command', dict(command='takeover', mode='background'))
+    with pytest.raises(Exception):
+        p.root.call_tool('operation_invoke', request('expired-manual-authority'))
+    for command in ('start', 'resume', 'takeover'):
+        args = dict(command=command, mode='background')
+        if command == 'start':
+            args['objective_name'] = 'goal'
+        with pytest.raises(Exception, match='scientific_progress_persistent_gap'):
+            p.root.call_tool('progression_command', args)
+    form = background_form(ui)
+    assert _request(ui.base, 'POST', '/instances/progression', form=form)[0] == 303
+    root = active(p)
+    p.coordinator.host.finish()  # Real backend receipt of both manual terminal results.
+    next_turn(p)
+    assert correction_state(p)['counts']['consumed'] == 0
+    assert correction_state(p)['notices'] == before['notices']
+    root.call_tool('operation_invoke', dict(request('background-after-manual'),
+        instruction='Compare the retained manual outcomes after the explicit background confirmation.'))
+    assert not checkpoint(p)['admissions']['background-after-manual'].get('interactive_session_id')

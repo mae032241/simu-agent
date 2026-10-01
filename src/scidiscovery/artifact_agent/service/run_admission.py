@@ -12,13 +12,45 @@ from .run_records import RunStateConflict, timestamp
 
 
 class RunAdmissionMixin:
+    def requested_review_owner(self, bound, *, instance_id, connection=None):
+        if connection is None:
+            with self._connect() as db:
+                return self.requested_review_owner(bound, instance_id=instance_id, connection=db)
+        active = connection.execute("SELECT run_id,review_wait_json FROM runs WHERE instance_id=? AND state IN ('queued','running')",
+            (instance_id,)).fetchall()
+        ports = bound.compiled.spec.independent_review_ports
+        subjects = [i.artifact.ref.model_dump(mode='json') for i in bound.inputs if i.port_name in ports]
+        owners = []
+        for item in active:
+            wait = json.loads(item['review_wait_json'] or 'null')
+            expected_inputs = sorted((item['port'], name) for item in (wait or {}).get('request', {}).get('inputs', []) for name in item['artifact_names'])
+            visible = {port.name for port in bound.compiled.spec.inputs if port.agent_visible and port.derivation is None}
+            actual_inputs = sorted((item.port_name, item.artifact_name) for item in bound.inputs if item.port_name in visible)
+            if (wait and not wait.get('operation_digest')
+                    and bound.compiled.spec.operation_id == wait['request']['operation_id']
+                    and subjects == [wait['subject_ref']]):
+                raise OperationInvocationError('review_dependency_unfrozen',
+                    message='The saved review dependency has no frozen reviewer contract. Finish or archive it on the previous release; old authorization is not migrated.')
+            if (wait and not wait.get('reviewer_run_id')
+                    and wait.get('operation_digest') == bound.compiled.digest
+                    and expected_inputs == actual_inputs
+                    and bound.instruction == wait['request']['instruction']
+                    and bound.scientific_intent == wait['request'].get('scientific_intent')
+                    and bound.compiled.spec.operation_id == wait['request']['operation_id']
+                    and subjects == [wait['subject_ref']]):
+                owners.append(item['run_id'])
+        if len(owners) > 1:
+            raise OperationInvocationError("review_dependency_ambiguous",
+                message="Several tasks await this exact review; resolve task ownership before dispatch.")
+        return owners[0] if owners else None
+
     def validate_admission(self, bound, *, instance_id, max_attempts=None,
-                           scientific_signature=None, reserved_output_fingerprint=None, connection=None):
+                           scientific_signature=None, reserved_output_fingerprint=None, connection=None, session_key=None):
         if connection is None:
             with self._connect() as db:
                 self._attach_scheduler(db)
                 return self.validate_admission(bound, instance_id=instance_id,
-                    max_attempts=max_attempts, scientific_signature=scientific_signature, reserved_output_fingerprint=reserved_output_fingerprint, connection=db)
+                    max_attempts=max_attempts, scientific_signature=scientific_signature, reserved_output_fingerprint=reserved_output_fingerprint, connection=db, session_key=session_key)
         self.worker_connections.review_authors(connection, bound.compiled,
             self._input_bindings(bound), instance_id)
         if connection.execute("SELECT 1 FROM runs WHERE operation_digest=? AND state IN ('queued','running') LIMIT 1",
@@ -27,31 +59,23 @@ class RunAdmissionMixin:
                 message="This Operation has an active task. Wait for that task to finish; do not spawn a Worker or repeat the request while it is occupied.")
         active = connection.execute("SELECT run_id,review_wait_json FROM runs WHERE instance_id=? AND state IN ('queued','running')",
                                     (instance_id,)).fetchall()
-        ports = bound.compiled.spec.independent_review_ports
-        subjects = [i.artifact.ref.model_dump(mode='json') for i in bound.inputs if i.port_name in ports]
-        owners = []
-        for item in active:
-            wait = json.loads(item['review_wait_json'] or 'null')
-            if (wait and not wait.get('reviewer_run_id')
-                    and bound.compiled.spec.operation_id == wait['request']['operation_id']
-                    and subjects == [wait['subject_ref']]):
-                owners.append(item['run_id'])
-        if len(owners) > 1:
-            raise OperationInvocationError("review_dependency_ambiguous",
-                message="Several tasks await this exact review; resolve task ownership before dispatch.")
-        review_owner = owners[0] if owners else None
+        review_owner = self.requested_review_owner(bound, instance_id=instance_id, connection=connection)
         from .progression_records import hydrate_control_row
         from .scientific_progress import scientific_pause
         row = hydrate_control_row(connection, connection.execute(
             'SELECT * FROM scheduler_control.scheduler_progression WHERE instance_id=?', (instance_id,)).fetchone())
-        if row is not None and scientific_pause(connection, row, json.loads(row['checkpoint_json'])):
-            raise OperationInvocationError('scientific_progress_persistent_gap',
-                message='Scientific observation is paused; confirm a new consumed observation window in the management UI.')
         if row is None:
             return review_owner
-        from .scientific_progress import shadow_policy
         checkpoint = json.loads(row['checkpoint_json'])
-        if shadow_policy(row)['progress_mode'] == 'assist' and row['state'] != 'active':
+        from .scheduling_control import accepted_work_authority
+        completing = bool(review_owner and accepted_work_authority(connection, row, checkpoint,
+            target=('run', review_owner), session_key=session_key, schema='scheduler_control.',
+            reservation=(reserved_output_fingerprint, scientific_signature) if reserved_output_fingerprint else None))
+        if scientific_pause(connection, row, checkpoint) and not completing:
+            raise OperationInvocationError('scientific_progress_persistent_gap',
+                message='Scientific observation is paused; confirm a new consumed observation window in the management UI.')
+        from .scientific_progress import shadow_policy
+        if shadow_policy(row)['progress_mode'] == 'assist' and row['state'] != 'active' and not completing:
             raise OperationInvocationError('progression_paused', message='Scheduling control is not active.')
         if checkpoint.get('fault_class') == 'outcome_unknown':
             raise OperationInvocationError('native_submission_unknown', message='Reconcile the original native submission; do not replay it.')
@@ -68,7 +92,7 @@ class RunAdmissionMixin:
                 if independent:
                     require_resolved_control(row, checkpoint)
                 else:
-                    require_human_continuation_budget(row, checkpoint)
+                    require_human_continuation_budget(row, checkpoint, now=self.scheduler_bindings.control_now())
             return review_owner
         checkpoint = json.loads(row['checkpoint_json'])
         limits = json.loads(row['config_json'])['effective']['progression']
@@ -115,7 +139,8 @@ class RunAdmissionMixin:
                 return
             if old and old.get('reviewer_run_id') and self.status(old['reviewer_run_id']).state in {'queued','running'}:
                 raise RunStateConflict('Finish the outstanding independent review before requesting another implementation review.')
-            wait = dict(subject_ref=ref, request=request, requested_at=timestamp())
+            wait = dict(subject_ref=ref, request=request, requested_at=timestamp(),
+                operation_digest=self.operation_catalog.operation(request['operation_id']).digest)
             db.execute('UPDATE runs SET review_wait_json=? WHERE run_id=?', (canonical_json(wait),run.run_id))
 
     def review_wait(self, run_id):

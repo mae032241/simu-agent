@@ -72,6 +72,7 @@ class ProgressionCoordinator:
     def __init__(self, *, runtime, host_factory, facade_factory, clock=time.time):
         self.runtime, self.bindings = runtime, runtime.scheduler_bindings
         self.host_factory, self.facade_factory, self.clock = host_factory, facade_factory, clock
+        self.bindings.progression_clock = clock
         self.host = None
         self.instance = None
         self.events = []
@@ -87,6 +88,8 @@ class ProgressionCoordinator:
         self._resource_sample = None
         self._submitting = False
         self._goal_deadline = None
+        self._deadline_running = None
+        self._deadline_generation = None
         self._last_row = None
 
     def start(self):
@@ -364,6 +367,8 @@ class ProgressionCoordinator:
             related_results_omitted=checkpoint.get('relevant_omitted', False),
             limitations=['Originals and full contracts are available through public tools.',
                 'Stages are previews; only final sealed outputs establish task conclusions.'])
+        if snapshot.get('accepted_work_only'):
+            brief['scheduling_authority'] = 'Science is paused. Dispatch only the exact review_requests needed by accepted tasks; retain reads and settlement. New research and standalone execution remain forbidden.'
         from .scientific_progress import progress_page, shadow_projection
         brief['progress_shadow'] = shadow_projection(bindings=self.bindings, row=row)
         brief['progress'] = progress_page(bindings=self.bindings, artifacts=self.runtime.artifacts, row=row, limit=1)
@@ -450,8 +455,9 @@ class ProgressionCoordinator:
         settings = json.loads(row['config_json'])['effective']
         self._limits = {**ProgressionSettings().model_dump(), **settings['progression']}
         self._budget_saved_at = None
-        self._goal_deadline = (checkpoint['started_at'] + self._limits['max_elapsed_seconds']
-            if 'started_at' in checkpoint else None)
+        from .progression_budget import enabled_time
+        remaining = max(0, self._limits['max_elapsed_seconds'] - enabled_time(checkpoint, self.clock()))
+        self._goal_deadline = self.clock() + remaining
         if settings['progression']['max_tasks'] * (1 + settings['helpers']['max_calls']) + settings['progression']['max_rounds'] > 64:
             raise ProgressionFault('configured_usage_attribution_capacity')
         if checkpoint.get('attempts', 0) >= settings['progression']['max_attempts']:
@@ -466,8 +472,7 @@ class ProgressionCoordinator:
         self.events = []
         # Transient adapter context, computed with the coordinator's clock;
         # never reinterpret the durable timestamp using a different clock.
-        factory_row = dict(row, _execution_remaining_seconds=(
-            max(0, self._goal_deadline-self.clock()) if self._goal_deadline is not None else None))
+        factory_row = dict(row, _execution_remaining_seconds=remaining)
         host = self.host_factory(factory_row, self._event)
         self.host = host
         # Only the adapter's exact persisted-turn reconciliation permits this
@@ -488,14 +493,16 @@ class ProgressionCoordinator:
                 thread_id=host.identity.thread_id, expected_generation=row['generation'])
         initial = dict(runtime_status='connected')
         if 'started_at' not in checkpoint:
-            initial.update(started_at=self.clock(), rounds=0, probes=0, attempts=0)
+            initial.update(started_at=self.clock(), **{key: checkpoint.get(key, 0)
+                for key in ('rounds', 'probes', 'attempts')})
+            if 'enabled_seconds' not in checkpoint:
+                initial.update(enabled_seconds=0, enabled_at=self.clock(), time_high_water=self.clock())
         if checkpoint.get('relevant_runs_objective_ref') != json.loads(row['objective_ref_json']):
             initial.update(self._related_runs(row))
         self._save(initial)
-        self._goal_deadline = (checkpoint.get('started_at', initial.get('started_at'))
-            + self._limits['max_elapsed_seconds'])
-        if hasattr(host, 'set_execution_deadline'):
-            host.set_execution_deadline(self._goal_deadline-self.clock())
+        self._deadline_running = None
+        self._deadline_generation = None
+        self._sync_execution_deadline(self._row())
         for event in self.events:
             self._event(event)
         self.events = []
@@ -577,6 +584,13 @@ class ProgressionCoordinator:
             raise
 
     def _finish_inactive_host(self):
+        checkpoint = json.loads(self._row()['checkpoint_json'])
+        if (self.host.turn_id is None or self.host.completion is not None) and checkpoint.get('fault_class') != 'outcome_unknown':
+            from .progression_budget import enabled_time
+            if checkpoint.get('enabled_at') is not None:
+                enabled_time(checkpoint, self.clock(), enabled=False)
+                self._save({key: checkpoint[key] for key in ('enabled_seconds', 'enabled_at', 'time_high_water')})
+            self._sync_execution_deadline(self._row())
         self.host.interrupt()
         self.host.poll(0)
         row = self._row()
@@ -598,7 +612,58 @@ class ProgressionCoordinator:
             self.host = None
         return
 
+    def _review_continuation(self, row):
+        """Keep the original host through an accepted review and owner settlement."""
+        from .scheduling_control import accepted_work_authority
+        checkpoint = json.loads(row['checkpoint_json'])
+        source = (checkpoint.get('scientific_pause') or {}).get('source_session')
+        if row['mode'] != 'background' or source != self.host.scheduler_session:
+            return None
+        if not self.bindings.client_enabled(session_key=source):
+            return None
+        with self.bindings._connect() as db:
+            for admission in checkpoint.get('admissions', {}).values():
+                run_id = admission.get('run_id')
+                if not run_id or not accepted_work_authority(db, row, checkpoint, target=('run', run_id), session_key=source):
+                    continue
+                wait = self.runtime.runs.review_wait(run_id)
+                if wait and wait.get('operation_digest'):
+                    return ('run', run_id)
+        return None
+
+    def _decision_row(self):
+        row = self._row()
+        if row['state'] == 'paused':
+            source = (json.loads(row['checkpoint_json']).get('scientific_pause') or {}).get('source_session')
+            return dict(row, owner_session=source)
+        return row
+
+    def _sync_execution_deadline(self, row, continuation=None):
+        from .progression_budget import enabled_time
+        checkpoint = json.loads(row['checkpoint_json'])
+        if continuation and checkpoint.get('enabled_at') is None:
+            enabled_time(checkpoint, self.clock(), enabled=True)
+            self._save({key: checkpoint[key] for key in ('enabled_seconds', 'enabled_at', 'time_high_water')})
+        running = checkpoint.get('enabled_at') is not None
+        changed = self._deadline_running != running or self._deadline_generation != row['generation']
+        if changed:
+            unknown = checkpoint.get('fault_class') == 'outcome_unknown' or (
+                checkpoint.get('phase') == 'prepared' and not checkpoint.get('turn_id'))
+            completion = self.host.completion
+            terminal = not self.host.turn_id or (completion is not None
+                and completion.get('id') == self.host.turn_id
+                and checkpoint.get('turn_id') in {None, self.host.turn_id})
+            if unknown or not terminal:
+                return  # Unknown submissions and unconfirmed writers retain their original cap.
+        remaining = max(0, self._limits['max_elapsed_seconds'] - enabled_time(checkpoint, self.clock()))
+        self._goal_deadline = self.clock() + remaining if running else None
+        if changed and hasattr(self.host, 'set_execution_deadline'):
+            self.host.set_execution_deadline(remaining if running else None)
+        self._deadline_running = running
+        self._deadline_generation = row['generation']
+
     def _tick(self):
+        self.bindings.progression_clock = self.clock
         self._submitting = False
         if self.host is None:
             row = self._observation(self.bindings.next_background_progression)
@@ -615,6 +680,7 @@ class ProgressionCoordinator:
             # Explicit resume/start can arrive before the old Root interruption
             # was acknowledged. Reclaim the existing connection only at a proven
             # terminal boundary, preserving accepted work and consumed budgets.
+            self._sync_execution_deadline(row)
             self.host.interrupt()
             self.host.poll(0)
             row = self._row()
@@ -641,16 +707,20 @@ class ProgressionCoordinator:
             checkpoint = json.loads(row['checkpoint_json'])
             if not self._reconcile_admissions():
                 return
-        if row['mode'] != 'background' or row['state'] not in {'active', 'pending'}:
+        continuation = self._review_continuation(row)
+        if row['mode'] != 'background' or (row['state'] not in {'active', 'pending'} and not continuation):
             self._finish_inactive_host()
             return
+        self._sync_execution_deadline(row, continuation)
         if checkpoint.get('relevant_runs_objective_ref') != json.loads(row['objective_ref_json']):
             self._save(self._observation(lambda: self._related_runs(row)))
         self.host.poll(0)
         row = self._row()
-        if row['mode'] != 'background' or row['state'] != 'active':
+        continuation = self._review_continuation(row)
+        if row['mode'] != 'background' or (row['state'] != 'active' and not continuation):
             self._finish_inactive_host()
             return
+        self._sync_execution_deadline(row, continuation)
         if self.host.turn_id and self.host.completion is None:
             self._check_budget(row, limits, allow_round=False)
             return
@@ -680,16 +750,18 @@ class ProgressionCoordinator:
             self._restored_turn_id = None
             row = self._row()
             checkpoint = json.loads(row['checkpoint_json'])
-            if row['mode'] != 'background' or row['state'] != 'active':
+            continuation = self._review_continuation(row)
+            if row['mode'] != 'background' or (row['state'] != 'active' and not continuation):
                 self._finish_inactive_host()
                 return
+            self._sync_execution_deadline(row, continuation)
             if self.host.completion['status'] != 'completed' and not recovered:
                 self._save(dict(runtime_status='root_turn_failed', attempts=checkpoint.get('attempts', 0)+1), reason='root_turn_failed', stop=True)
                 return
         if self._observation(lambda: self.bindings.progress_boundary(instance_id=self.instance)):
             return
         report = checkpoint.get('report') or {}
-        if report.get('completed') and checkpoint.get('messages', []) == checkpoint.get('processed_snapshot', {}).get('messages', []):
+        if not continuation and report.get('completed') and checkpoint.get('messages', []) == checkpoint.get('processed_snapshot', {}).get('messages', []):
             # The last native response can arrive with turn/completed. Charge it
             # before accepting the goal; reaching the round limit alone is fine
             # when no further round is requested.
@@ -702,10 +774,12 @@ class ProgressionCoordinator:
         if self.clock() < checkpoint.get('next_probe_at', 0):
             return
         self._save(dict(probes=checkpoint.get('probes', 0)+1, next_probe_at=self.clock()+limits['poll_seconds']))
-        snapshot = self._observation(lambda: self._snapshot(self._row()))
+        snapshot = self._observation(lambda: self._snapshot(self._decision_row()))
+        if continuation:
+            snapshot['accepted_work_only'] = True
         if snapshot == checkpoint.get('processed_snapshot'):
             return
-        prompt = self._observation(lambda: self._brief(self._row(), snapshot, limits['context_bytes']-len(INSTRUCTION.encode())-1))
+        prompt = self._observation(lambda: self._brief(self._decision_row(), snapshot, limits['context_bytes']-len(INSTRUCTION.encode())-1))
         from .scientific_progress import delivery_coverage, read_intent, terminal_fact
         delivered = json.loads(prompt.split('\n')[-1])
         shown = {value['name']: value for value in delivered['changes']}
@@ -732,7 +806,9 @@ class ProgressionCoordinator:
         # omitted exact versions, even when individual names do not fit the brief.
         notification_snapshot = snapshot if delivered.get('omitted_results_read') else decision_snapshot
         # Intent is durable before the non-idempotent native turn/start.
-        with self.bindings.scheduling_guard(instance_id=self.instance, session_key=row['owner_session'], expected_generation=row['generation']):
+        decision_row = self._decision_row()
+        with self.bindings.scheduling_guard(instance_id=self.instance, session_key=decision_row['owner_session'],
+                expected_generation=row['generation'], continuation=continuation):
             # The policy a native turn starts with; restoring it later must match.
             permissions = getattr(self.host, 'permissions', None)
             self._save(dict(phase='prepared', turn_id=None, decision_snapshot=decision_snapshot,
@@ -740,7 +816,8 @@ class ProgressionCoordinator:
                 round_started_at=self.clock(),
                 root_permissions=permissions.declaration() if permissions is not None else None,
                 rounds=checkpoint.get('rounds', 0)+1, runtime_status='deciding',
-                last_report=checkpoint.get('report') or checkpoint.get('last_report'), report=None, native_completion=None), reason='host_active')
+                last_report=checkpoint.get('report') or checkpoint.get('last_report'), report=None, native_completion=None),
+                **({} if continuation else dict(reason='host_active')))
         self._submitting = True
         turn = self.host.start_turn(prompt)
         # Only the successful native turn/start reply confirms this prepared
@@ -751,10 +828,10 @@ class ProgressionCoordinator:
     def _check_budget(self, row, limits, allow_round=True, *, force=False):
         from .scheduling_control import background_task_count
         checkpoint = json.loads(self._row()['checkpoint_json'])
-        elapsed = max(0, self.clock()-checkpoint['started_at'])
+        from .progression_budget import enabled_time
+        elapsed = enabled_time(checkpoint, self.clock())
         exhausted = elapsed >= limits['max_elapsed_seconds']
         exhausted |= allow_round and checkpoint.get('rounds', 0) >= limits['max_rounds']
-        exhausted |= checkpoint.get('probes', 0) >= limits['max_probes']
         exhausted |= checkpoint.get('attempts', 0) >= limits['max_attempts']
         tokens = sum(sum(v['counted_tokens'][key] for key in ('input_tokens', 'output_tokens')) for v in checkpoint.get('usage_records', {}).values())
         exhausted |= tokens >= limits['max_tokens']
@@ -783,7 +860,7 @@ class ProgressionCoordinator:
             running += max(0, self.clock()-checkpoint.get('round_started_at', self.clock()))
         budget = dict(rounds=checkpoint.get('rounds', 0), elapsed_seconds=elapsed,
             root_running_seconds=running, waiting_seconds=max(0, elapsed-running),
-            time_coverage='observed_wall_intervals_including_recovery_gaps',
+            time_coverage='enabled_intervals_including_active_recovery_gaps',
             probes=checkpoint.get('probes', 0), attempts=checkpoint.get('attempts', 0),
             tasks=background_task_count(checkpoint),
             observed_tokens=tokens, limits=limits,

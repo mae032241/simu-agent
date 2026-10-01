@@ -64,7 +64,8 @@ class CodexProgressionHost(CodexRootHost):
         self.execution_deadline = None
 
     def set_execution_deadline(self, remaining_seconds):
-        self.execution_deadline = time.monotonic() + max(0, remaining_seconds)
+        self.execution_deadline = (time.monotonic() + max(0, remaining_seconds)
+            if remaining_seconds is not None else None)
 
     def sample_resources(self):
         now = time.monotonic()

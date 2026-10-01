@@ -562,11 +562,11 @@ class RootToolFacade(
         return binding
 
     @contextmanager
-    def scheduling_guard(self):
+    def scheduling_guard(self, *, continuation=None):
         instance_id = self._instance_id()
         observed = self.bindings.progression_status(instance_id=instance_id, internal=True)
         with self.bindings.scheduling_guard(instance_id=instance_id, session_key=self.session_key,
-                expected_generation=observed.get("generation")) as generation:
+                expected_generation=observed.get("generation"), continuation=continuation) as generation:
             yield generation
 
     def progression_message(self, **values):
@@ -682,7 +682,8 @@ class RootMCPRouter:
 
     def _call_tool(self, name: str, arguments: dict[str, Any] | None) -> Any:
         # Invocation validates immutable inputs before its own scheduling guard.
-        if name in SCHEDULING_WRITES and name != "operation_invoke":
+        if (name in SCHEDULING_WRITES and name != "operation_invoke"
+                and not getattr(getattr(self.facade, name), 'scheduling_guarded', False)):
             with self.facade.scheduling_guard():
                 return self._dispatch_tool(name, arguments)
         return self._dispatch_tool(name, arguments)

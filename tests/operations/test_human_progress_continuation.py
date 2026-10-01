@@ -158,13 +158,13 @@ def test_ordinary_mcp_cannot_grant_human_continuation_or_erase_frozen_policy(pau
     assert notice(p)['counts']['consumed'] == 3
 
 
-@pytest.mark.parametrize('barrier', ['attempts', 'rounds', 'probes', 'elapsed', 'tokens', 'admission', 'native'])
+@pytest.mark.parametrize('barrier', ['attempts', 'rounds', 'elapsed', 'tokens', 'admission', 'native'])
 def test_human_confirmation_and_admission_preserve_budget_and_unknown_barriers(human_ui, barrier):
     ui, p = human_ui, human_ui.p
     # Establish real consent, then prove subsequent admission still checks bounds.
     assert submit(ui) == 303
     limits = json.loads(row(p)['config_json'])['effective']['progression']
-    if barrier in {'attempts', 'rounds', 'probes'}:
+    if barrier in {'attempts', 'rounds'}:
         save_checkpoint(p, **{barrier: limits['max_' + barrier]})
     elif barrier == 'elapsed':
         p.now[0] += limits['max_elapsed_seconds']
@@ -270,7 +270,7 @@ def test_explicit_independent_ui_scope_preserves_old_limits_and_instance_budget(
             inputTokens=limits['max_tokens'], cachedInputTokens=0, outputTokens=0))), role='root', owner=p.instance)
         save_checkpoint(p, usage_records={'native-root': cost})
     elif limit == 'elapsed':
-        p.now[0] += limits['max_elapsed_seconds']
+        save_checkpoint(p, enabled_seconds=limits['max_elapsed_seconds'])
     else:
         save_checkpoint(p, rounds=limits['max_rounds'])
     before, config = checkpoint(p), row(p)['config_json']

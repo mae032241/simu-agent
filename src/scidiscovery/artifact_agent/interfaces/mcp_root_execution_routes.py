@@ -517,7 +517,7 @@ class RootExecutionRoutes:
             compiled_identity,
         )
 
-    @owned_mutation
+    @owned_mutation(namespace='execution')
     def execution_abandon(self, *, name: str) -> dict[str, Any]:
         execution_id = self._resolve("execution", name)
         if self.execution_bridge is None:
@@ -526,7 +526,7 @@ class RootExecutionRoutes:
             self.execution_bridge.abandon(execution_id)
         return self._execution_status_snapshot(name=name)
 
-    @owned_mutation
+    @owned_mutation(namespace='execution')
     def execution_cancel(self, *, name: str) -> dict[str, Any]:
         if self.execution_bridge is None:
             raise RootToolError("no execution bridge is configured")
@@ -581,7 +581,7 @@ class RootExecutionRoutes:
         return self.executions.cached_log(execution_id, log_index=log_index, direction=direction, cursor=cursor,
             max_bytes=self.runs.agent_settings.execution_io.read_page_bytes)
 
-    @owned_mutation
+    @owned_mutation(namespace='execution')
     def execution_collect(self, *, name: str, total_seconds: float) -> dict:
         execution_id = self._resolve("execution", name, allow_task_recovery=True)
         if self.execution_collection is None:
@@ -603,7 +603,7 @@ class RootExecutionRoutes:
         items, cursor = page(values(), key="name", limit=limit, before=before)
         return {"executions": items, "next_before": cursor}
 
-    @owned_mutation
+    @owned_mutation(namespace='execution')
     def execution_outputs(self, *, name: str) -> dict[str, Any]:
         execution_id = self._resolve("execution", name, allow_task_recovery=True)
         result_name = self._publish_execution_result(name=name)
@@ -648,7 +648,7 @@ class RootExecutionRoutes:
                 "authorization_required": "human"}
         return self._execution_status_snapshot(name=name)
 
-    @owned_mutation
+    @owned_mutation(namespace='execution')
     def execution_sync(self, *, name: str) -> dict[str, Any]:
         if self.execution_bridge is None:
             raise RootToolError("no execution bridge is configured")
