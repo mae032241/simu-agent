@@ -154,8 +154,10 @@ def open_runtime(
         )
         scheduler_bindings.progress_run_reader = runs.goal_related_runs
         scheduler_bindings.progress_active_work_reader = lambda *, instance_id: (
-            tuple('任务 ' + item for item in runs.active_ids(instance_id=instance_id, limit=1))
-            or (tuple('执行 ' + item for item in executions.active_ids(instance_id=instance_id,
+            tuple('任务 ' + (scheduler_bindings.find_name(instance=instance_id, namespace='run', object_id=item)
+                or '未绑定名称（标识：' + item + '）') for item in runs.active_ids(instance_id=instance_id, limit=1))
+            or (tuple('执行 ' + (scheduler_bindings.find_name(instance=instance_id, namespace='execution', object_id=item)
+                or '未绑定名称（标识：' + item + '）') for item in executions.active_ids(instance_id=instance_id,
                 scheduler_database_path=scheduler_bindings.database_path, limit=1))
                 if executions is not None else ()))
     return ArtifactAgentRuntime(

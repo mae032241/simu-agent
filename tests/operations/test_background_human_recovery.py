@@ -33,6 +33,9 @@ def background_form(ui, target='goal'):
     assert len(chosen) == 1, 'The UI must offer an explicit recovery of the exact paused background goal.'
     assert '恢复后台目标' in page and '剩余任务' in page and 'coverage_gap' in page
     assert '暂停和独立人工工作期间也计时' in page
+    assert '确认后转为交互模式，由你继续调度当前目标' in page
+    assert '确认后转为后台自动推进，并将当前目标切换为所选目标：' + target in page
+    assert '最后选择的目标成为当前目标' in page
     return chosen[0]
 
 
@@ -127,7 +130,8 @@ def test_background_recovery_keeps_unknown_budget_and_actual_work_barriers(human
     if barrier == 'active_work':
         assert p.root.call_tool('run_status', dict(name='still-accepted'))['state'] == 'queued'
         run_id = p.runtime.scheduler_bindings.resolve(instance=p.instance, namespace='run', name='still-accepted')
-        assert '任务 ' + run_id in response.decode()
+        assert '任务 still-accepted' in response.decode()
+        assert run_id not in response.decode()
 
 
 def test_background_confirmation_binds_trigger_and_consumed_position(human_ui):

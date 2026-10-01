@@ -90,7 +90,8 @@ def session_controls(rows, *, token, csrf, current=None, expires_at=None, workbe
         if human_confirmation:
             body += ("<details><summary>人工接管并继续（保留预算）</summary>"
                 "<p>适用于已暂停且原生提交已核清的当前目标：" + escape(progression.get('objective_name') or '')
-                + "。请先读取上方原始缺口。此决定不代表科学问题已解决，不增加预算；确认从已消费水位开启下一观察窗口；"
+                + "。确认后转为交互模式，由你继续调度当前目标。请先读取上方原始缺口。"
+                "此决定不代表科学问题已解决，不增加预算；确认从已消费水位开启下一观察窗口；"
                 "原墙钟预算继续计时，耗尽时请明确选择下方独立人工工作。未知提交须先核清。"
                 "后续窗口仍会按科研阈值暂停；返回后台仍受原预算约束。</p>"
                 + "<form method='post' action='/instances/progression'>" + common
@@ -121,11 +122,13 @@ def session_controls(rows, *, token, csrf, current=None, expires_at=None, workbe
             body += '；剩余时间秒：' + str(round(remaining['seconds'])) + '；剩余 token：' + str(remaining['tokens'])
             body += '。当前时间口径：从首次后台启动计时，暂停和独立人工工作期间也计时；恢复不会重置额度'
             body += '。从后台已消费水位 ' + str(target['through_sequence']) + ' 开启下一窗口；人工窗口、旧触发与全部账目保留。</p>'
+            body += '<p>确认后转为后台自动推进，并将当前目标切换为所选目标：' + escape(target['objective_name'])
+            body += '。其他目标的暂停仍须分别确认；多次确认后，最后选择的目标成为当前目标。</p>'
             body += "<form data-background-continue method='post' action='/instances/progression'>" + common
             body += hidden('command', 'human_continue') + hidden('instance_id', current.instance_id)
             body += hidden('objective_name', target['objective_name']) + hidden('confirmation_binding', target['confirmation_binding'])
-            body += "<label><input type='checkbox' name='confirm_human_continue' value='yes' required>我确认恢复这个确切后台目标，保留全部额度</label>"
-            body += "<button type='submit'>确认恢复后台目标</button></form></details>"
+            body += "<label><input type='checkbox' name='confirm_human_continue' value='yes' required>我确认切换到这个目标并在后台继续，保留全部额度</label>"
+            body += "<button type='submit'>确认切换目标并在后台继续</button></form></details>"
         body += "</section>"
     options = "<option value='' disabled selected>选择要绑定的实例</option>"
     for row in rows:
