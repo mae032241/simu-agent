@@ -1,15 +1,224 @@
 """Durable pull notices and shared UI projections without models or solvers."""
 import json
+import sqlite3
 from copy import copy
+from dataclasses import replace
 from urllib.parse import parse_qs, urlparse
+
+import pytest
 
 from scidiscovery.artifact_agent.approval_ui.read_model import InstanceReadModel
 from scidiscovery.artifact_agent.approval_ui.workbench_render import render_workbench
 from scidiscovery.artifact_agent.service.scheduler_bindings import SchedulerBindingService
-from tests.operations.test_progression import progression, row
+from tests.operations.test_progression import progression, row, checkpoint
+from tests.operations.test_local_worker_contracts import _invoke, _worker, _write_result
 from tests.operations.test_instance_workbench_render import _overview
 from tests.operations.test_instance_browser_http import _request
 from tests.operations.test_m6a_direct_instance_management import _root, _setup
+
+
+def _bounded_context(p, context_bytes=10000):
+    from blind_csv_plugin.plugin import PLUGIN
+    from scidiscovery.builtin_plugin import CORE_PLUGIN
+    from scidiscovery.general_science_plugin import PLUGIN as GENERAL_PLUGIN
+    from scidiscovery.operations.catalog import compile_catalog
+    author = PLUGIN.operations[0].model_copy(update=dict(decision_fields=('interpretation', 'limitations')))
+    plugin = PLUGIN.model_copy(update=dict(operations=(author, *PLUGIN.operations[1:])))
+    p.catalog = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, plugin))
+    p.runtime.runs.operation_catalog = p.catalog
+    p.root.facade._operation_catalog = p.catalog
+    p.root.call_tool('progression_command', dict(command='pause'))
+    bindings = p.runtime.scheduler_bindings
+    settings = bindings.global_settings
+    bindings.global_settings = settings.model_copy(update=dict(progression=settings.progression.model_copy(
+        update=dict(context_bytes=context_bytes))))
+    p.root.call_tool('progression_command', dict(command='start', mode='background', objective_name='goal'))
+
+
+def _sealed_result(p, root, name, *, interpretation_chars=0):
+    _invoke(root, name)
+    worker = _worker(p.catalog, p.runtime)
+    worker.call_tool('worker_open_assignment', {})
+    _write_result(worker)
+    if interpretation_chars:
+        path = worker._workspace.output_directory / 'result.json'
+        result = json.loads(path.read_text())
+        result['payload']['interpretation'] = '界' * interpretation_chars
+        path.write_text(json.dumps(result, ensure_ascii=False))
+    assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
+
+
+def _next_poll(p):
+    p.now[0] += 6
+    p.coordinator.tick()
+
+
+def test_same_oversized_result_notifies_once_without_consumption(progression):
+    p = progression
+    _bounded_context(p)
+    p.coordinator.tick()
+    host = p.coordinator.host
+    root = p.root.__class__(p.facade(host.scheduler_session))
+    _sealed_result(p, root, 'oversized', interpretation_chars=4000)
+    host.finish()
+    _next_poll(p)
+    assert len(host.prompts) == 2
+    brief = json.loads(host.prompts[-1].split('\n')[-1])
+    assert not brief['changes'] and brief['result_omissions'] == 1
+    assert brief['omissions'][0] == dict(name='oversized', state='completed', read='run_status', intent='decision')
+    assert not checkpoint(p)['decision_snapshot']['runs']
+    projection = root.call_tool('run_status', dict(name='oversized', intent='decision'))
+    host.event(dict(method='item/completed', params=dict(threadId=host.identity.thread_id, turnId=host.turn_id,
+        item=dict(type='mcpToolCall', server='scidiscovery', tool='scid_call', status='completed',
+            arguments=dict(name='run_status', arguments=dict(name='oversized')),
+            result=dict(content=[dict(type='text', text=json.dumps(projection))])))))
+    assert checkpoint(p)['terminal_delivery_coverage'] == 'structured_tool_result_unavailable'
+    host.finish()
+    for _ in range(3):
+        _next_poll(p)
+        if host.completion is None:
+            host.finish()
+    assert len(host.prompts) == 2
+    assert not checkpoint(p)['processed_snapshot']['runs']
+    status = root.call_tool('progression_status', {})
+    assert status['progress_shadow']['counts']['consumed'] == 0
+    assert root.call_tool('run_list', dict(view='summary', limit=8))['runs'][0]['name'] == 'oversized'
+    assert root.call_tool('run_status', dict(name='oversized', intent='full'))['state'] == 'completed'
+
+
+def test_new_result_and_user_message_wake_with_old_omission_retained(progression):
+    p = progression
+    _bounded_context(p)
+    p.coordinator.tick()
+    host = p.coordinator.host
+    root = p.root.__class__(p.facade(host.scheduler_session))
+    _sealed_result(p, root, 'oversized', interpretation_chars=4000)
+    host.finish()
+    _next_poll(p)
+    host.finish()
+    _next_poll(p)
+    assert len(host.prompts) == 2
+    _sealed_result(p, root, 'new-result')
+    _next_poll(p)
+    assert len(host.prompts) == 3
+    brief = json.loads(host.prompts[-1].split('\n')[-1])
+    assert [entry['name'] for entry in brief['changes']] == ['new-result']
+    assert brief['result_omissions'] == 1
+    host.finish()
+    _next_poll(p)
+    assert {entry['name'] for entry in checkpoint(p)['processed_snapshot']['runs']} == {'new-result'}
+    p.root.call_tool('progression_message', dict(name='read-direction', text='Read the exact omitted interpretation.'))
+    _next_poll(p)
+    assert len(host.prompts) == 4
+    brief = json.loads(host.prompts[-1].split('\n')[-1])
+    assert brief['result_omissions'] == 1 and brief['user_messages'][0]['name'] == 'read-direction'
+    assert root.call_tool('progression_status', {})['progress_shadow']['counts']['consumed'] == 1
+
+
+def test_notified_cohort_continues_delivering_actual_batches(progression):
+    p = progression
+    _bounded_context(p, context_bytes=16000)
+    p.coordinator.tick()
+    host = p.coordinator.host
+    root = p.root.__class__(p.facade(host.scheduler_session))
+    names = {f'batch-{index}' for index in range(3)}
+    for name in sorted(names):
+        _sealed_result(p, root, name, interpretation_chars=2000)
+    host.finish()
+    _next_poll(p)
+    first = json.loads(host.prompts[-1].split('\n')[-1])
+    seen = {entry['name'] for entry in first['changes']}
+    assert seen and seen < names and first['result_omissions'] == len(names - seen)
+    assert {entry['name'] for entry in checkpoint(p)['notified_snapshot']['runs']} == names
+    batches = 1
+    while seen != names:
+        assert batches < 4
+        host.finish()
+        _next_poll(p)
+        batch = json.loads(host.prompts[-1].split('\n')[-1])
+        shown = {entry['name'] for entry in batch['changes']}
+        assert shown and not seen & shown
+        seen |= shown
+        batches += 1
+    host.finish()
+    _next_poll(p)
+    assert {entry['name'] for entry in checkpoint(p)['processed_snapshot']['runs']} == names
+    assert root.call_tool('progression_status', {})['progress_shadow']['counts']['consumed'] == 3
+    assert len(host.prompts) == batches + 1
+
+
+def test_notification_position_survives_new_coordinator_and_store(progression):
+    from scidiscovery.artifact_agent.service.progression import ProgressionCoordinator
+    from tests.operations.test_progression import Host
+    p = progression
+    _bounded_context(p)
+    p.coordinator.tick()
+    host = p.coordinator.host
+    root = p.root.__class__(p.facade(host.scheduler_session))
+    _sealed_result(p, root, 'oversized', interpretation_chars=4000)
+    host.finish()
+    _next_poll(p)
+    host.finish()
+    _next_poll(p)
+    before = checkpoint(p)
+    p.coordinator.close()
+    reopened = SchedulerBindingService(p.runtime.scheduler_bindings.database_path,
+        global_settings=p.runtime.scheduler_bindings.global_settings)
+    p.runtime = replace(p.runtime, scheduler_bindings=reopened)
+    p.root.facade.bindings = reopened
+    p.coordinator = ProgressionCoordinator(runtime=p.runtime, host_factory=Host,
+        facade_factory=p.facade, clock=lambda: p.now[0])
+    for _ in range(3):
+        _next_poll(p)
+    assert not p.coordinator.host.prompts
+    assert checkpoint(p)['notified_snapshot'] == before['notified_snapshot']
+    assert checkpoint(p)['rounds'] == before['rounds']
+    assert not checkpoint(p)['processed_snapshot']['runs']
+    assert p.root.call_tool('run_status', dict(name='oversized', intent='full'))['state'] == 'completed'
+    # Explicit continuation is a new control event, even with unchanged unread science.
+    p.root.call_tool('progression_command', dict(command='pause'))
+    p.root.call_tool('progression_command', dict(command='resume'))
+    _next_poll(p)
+    host = p.coordinator.host
+    assert len(host.prompts) == 1
+    assert json.loads(host.prompts[-1].split('\n')[-1])['result_omissions'] == 1
+    host.finish()
+    _next_poll(p)
+    assert len(host.prompts) == 1 and not checkpoint(p)['processed_snapshot']['runs']
+
+
+@pytest.mark.parametrize('late_start', [False, True])
+def test_unknown_submission_and_late_start_do_not_confirm_or_replay(progression, late_start):
+    p = progression
+    _bounded_context(p)
+    p.coordinator.tick()
+    host = p.coordinator.host
+    root = p.root.__class__(p.facade(host.scheduler_session))
+    _sealed_result(p, root, 'oversized', interpretation_chars=4000)
+    host.finish()
+    prior = checkpoint(p)['notified_snapshot']
+    submissions = []
+    def unknown(_):
+        submissions.append(1)
+        # A delayed event from the old turn is insufficient to acknowledge the
+        # notice now prepared for a different native submission.
+        if late_start:
+            host.event(dict(method='turn/started', params=dict(threadId=host.identity.thread_id,
+                turn=dict(id=host.turn_id))))
+        raise sqlite3.OperationalError('uncertain native submission')
+    host.start_turn = unknown
+    with pytest.raises(sqlite3.OperationalError, match='uncertain native submission'):
+        _next_poll(p)
+    current = checkpoint(p)
+    assert current['fault_class'] == 'outcome_unknown' and row(p)['state'] == 'paused'
+    assert current['phase'] == ('running' if late_start else 'prepared')
+    assert current['notified_snapshot'] == prior
+    assert [entry['name'] for entry in current['notification_snapshot']['runs']] == ['oversized']
+    assert not current['processed_snapshot']['runs']
+    assert row(p)['host_json'] is not None
+    for _ in range(3):
+        _next_poll(p)
+    assert submissions == [1] and p.coordinator.host is None
 
 
 def test_notices_coalesce_survive_reconnect_and_reads_do_not_acknowledge(progression):

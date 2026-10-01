@@ -14,7 +14,8 @@ COLLECTIONS = {
     'usage_records': dict,
     'interactive_usage_records': dict,
 }
-SNAPSHOTS = frozenset({'decision_snapshot', 'processed_snapshot', 'terminal_delivery', 'human_handoff'})
+SNAPSHOTS = frozenset({'decision_snapshot', 'processed_snapshot', 'notification_snapshot',
+    'notified_snapshot', 'terminal_delivery'})
 
 DETAIL_SCHEMA = """
 CREATE TABLE IF NOT EXISTS scheduler_progression_details (

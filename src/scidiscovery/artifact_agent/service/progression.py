@@ -53,8 +53,6 @@ predictions of a new task. When budget.new_task_allowed is false, consume
 accepted results and report the supported conclusion or unfinished work; do not
 dispatch another task or repeat admission. The reserve is inside the total budget,
 not permission to exceed it, and missing evidence is not a completed goal.
-When human_handoff is present and active, consume only its existing sealed results
-and record supported assessments. It grants no new scientific task or reassessment.
 A review_requests entry is an exact dependency: let its owner wait, dispatch only
 that independent review, then read its result and notify the existing owner to
 continue. It grants no permission for unrelated concurrent work.
@@ -346,11 +344,8 @@ class ProgressionCoordinator:
             value = facade.approval_status(name=name)
             if value['status'] != 'pending':
                 approvals.append(value)
-        from .scientific_progress import shadow_projection
-        progress = shadow_projection(bindings=self.bindings, row=row)
-        correction = progress['assist'].get('id') if progress['mode'] == 'assist' else None
         return dict(goal=row['objective_ref_json'], runs=runs, approvals=approvals, messages=checkpoint.get('messages', []),
-            **({'progress_correction': correction} if correction else {}),
+            continuation=checkpoint.get('last_command', {}).get('generation'),
             **({'review_requests':review_requests} if review_requests else {}))
 
     def _brief(self, row, snapshot, limit):
@@ -364,9 +359,7 @@ class ProgressionCoordinator:
             raw = self.runtime.artifacts.read(ref)
             goal.update(status='available', original=raw.decode('utf-8'))
         checkpoint = json.loads(row['checkpoint_json'])
-        from .scheduling_control import human_handoff_view
         brief = dict(objective=goal, changes=[], omissions=[], budget=checkpoint.get('budget'),
-            human_handoff=human_handoff_view(checkpoint),
             previous_report=checkpoint.get('report') or checkpoint.get('last_report'), material_names=[row['objective_name']],
             related_results_omitted=checkpoint.get('relevant_omitted', False),
             limitations=['Originals and full contracts are available through public tools.',
@@ -427,10 +420,7 @@ class ProgressionCoordinator:
         if len(snapshot['approvals']) > 8:
             brief['omissions'].append(dict(read='approval_list', omitted=len(snapshot['approvals'])-8))
         while len(json.dumps(brief, ensure_ascii=False).encode()) > limit:
-            if brief['human_handoff'] and brief['human_handoff']['tasks']:
-                brief['human_handoff']['tasks'].pop()
-                brief['human_handoff']['tasks_omitted'] += 1
-            elif brief['approval_changes']:
+            if brief['approval_changes']:
                 brief['approval_changes'].pop(0)
                 brief['omissions'].append(dict(read='approval_list', reason='context_limit'))
             elif brief['review_requests']:
@@ -438,10 +428,7 @@ class ProgressionCoordinator:
                 brief['omissions'].append(dict(name=entry['owner'], read='run_status', intent='status'))
             elif brief.get('progress_shadow') and not brief['progress_shadow'].get('brief_omitted'):
                 progress = brief['progress_shadow']
-                correction = progress.get('assist', {})
                 brief['progress_shadow'] = dict(mode=progress['mode'], brief_omitted=True,
-                    **({'assist': {key: correction[key] for key in ('id', 'state', 'causes', 'instruction')}}
-                        if correction.get('state') == 'prepared' else {}),
                     read=dict(tool='progression_status'), reason='context_limit')
             elif brief['changes']:
                 entry = brief['changes'].pop(0)
@@ -589,6 +576,28 @@ class ProgressionCoordinator:
                     host.close()
             raise
 
+    def _finish_inactive_host(self):
+        self.host.interrupt()
+        self.host.poll(0)
+        row = self._row()
+        if row['mode'] == 'background' and row['state'] in {'active', 'pending'}:
+            return
+        checkpoint = json.loads(row['checkpoint_json'])
+        if getattr(self.host, 'terminal_transport_error', None) and checkpoint.get('last_transport_warning') != 'interrupt_reply_timeout_after_terminal':
+            self._save(dict(last_transport_warning='interrupt_reply_timeout_after_terminal'))
+        if self.host.turn_id is None or self.host.completion is not None:
+            if self.runtime.runs.active_ids(instance_id=self.instance, limit=1):
+                self._save(dict(runtime_status='paused_accepted_work_continues'))
+                return
+            processed = checkpoint.get('processed_snapshot', {})
+            if self.host.completion and self.host.completion['status'] == 'completed':
+                processed = checkpoint.get('decision_snapshot', processed)
+            self._save(dict(phase='idle', turn_id=None, processed_snapshot=processed))
+            self.bindings.release_host(instance_id=self.instance, **self._host_binding())
+            self.host.close()
+            self.host = None
+        return
+
     def _tick(self):
         self._submitting = False
         if self.host is None:
@@ -608,6 +617,11 @@ class ProgressionCoordinator:
             # terminal boundary, preserving accepted work and consumed budgets.
             self.host.interrupt()
             self.host.poll(0)
+            row = self._row()
+            checkpoint = json.loads(row['checkpoint_json'])
+            if row['mode'] != 'background' or row['state'] != 'pending':
+                self._finish_inactive_host()
+                return
             if self.host.turn_id and self.host.completion is None:
                 return
             processed = checkpoint.get('processed_snapshot', {})
@@ -628,25 +642,15 @@ class ProgressionCoordinator:
             if not self._reconcile_admissions():
                 return
         if row['mode'] != 'background' or row['state'] not in {'active', 'pending'}:
-            self.host.interrupt()
-            self.host.poll(0)
-            if getattr(self.host, 'terminal_transport_error', None) and checkpoint.get('last_transport_warning') != 'interrupt_reply_timeout_after_terminal':
-                self._save(dict(last_transport_warning='interrupt_reply_timeout_after_terminal'))
-            if self.host.turn_id is None or self.host.completion is not None:
-                if self.runtime.runs.active_ids(instance_id=self.instance, limit=1):
-                    self._save(dict(runtime_status='paused_accepted_work_continues'))
-                    return
-                processed = checkpoint.get('processed_snapshot', {})
-                if self.host.completion and self.host.completion['status'] == 'completed':
-                    processed = checkpoint.get('decision_snapshot', processed)
-                self._save(dict(phase='idle', turn_id=None, processed_snapshot=processed))
-                self.bindings.release_host(instance_id=self.instance, **self._host_binding())
-                self.host.close()
-                self.host = None
+            self._finish_inactive_host()
             return
         if checkpoint.get('relevant_runs_objective_ref') != json.loads(row['objective_ref_json']):
             self._save(self._observation(lambda: self._related_runs(row)))
         self.host.poll(0)
+        row = self._row()
+        if row['mode'] != 'background' or row['state'] != 'active':
+            self._finish_inactive_host()
+            return
         if self.host.turn_id and self.host.completion is None:
             self._check_budget(row, limits, allow_round=False)
             return
@@ -674,16 +678,15 @@ class ProgressionCoordinator:
                 running_seconds=checkpoint.get('running_seconds', 0)+max(0, self.clock()-checkpoint.get('round_started_at', self.clock())),
                 runtime_status='reconciling_interruption' if recovered else 'waiting', turn_id=None, **recovery))
             self._restored_turn_id = None
-            checkpoint = json.loads(self._row()['checkpoint_json'])
+            row = self._row()
+            checkpoint = json.loads(row['checkpoint_json'])
+            if row['mode'] != 'background' or row['state'] != 'active':
+                self._finish_inactive_host()
+                return
             if self.host.completion['status'] != 'completed' and not recovered:
                 self._save(dict(runtime_status='root_turn_failed', attempts=checkpoint.get('attempts', 0)+1), reason='root_turn_failed', stop=True)
                 return
-        if checkpoint.get('human_continuations') or checkpoint.get('interactive_sessions'):
-            handoff_snapshot = self._observation(lambda: self._snapshot(self._row()))
-            self._observation(lambda: self.bindings.prepare_human_handoff(
-                instance_id=self.instance, terminal_runs=handoff_snapshot['runs']))
-            checkpoint = json.loads(self._row()['checkpoint_json'])
-        if self._observation(lambda: self.bindings.progress_assist_boundary(instance_id=self.instance)):
+        if self._observation(lambda: self.bindings.progress_boundary(instance_id=self.instance)):
             return
         report = checkpoint.get('report') or {}
         if report.get('completed') and checkpoint.get('messages', []) == checkpoint.get('processed_snapshot', {}).get('messages', []):
@@ -699,7 +702,6 @@ class ProgressionCoordinator:
         if self.clock() < checkpoint.get('next_probe_at', 0):
             return
         self._save(dict(probes=checkpoint.get('probes', 0)+1, next_probe_at=self.clock()+limits['poll_seconds']))
-        self._observation(lambda: self.bindings.progress_assist_boundary(instance_id=self.instance, event='prepare'))
         snapshot = self._observation(lambda: self._snapshot(self._row()))
         if snapshot == checkpoint.get('processed_snapshot'):
             return
@@ -707,6 +709,11 @@ class ProgressionCoordinator:
         from .scientific_progress import delivery_coverage, read_intent, terminal_fact
         delivered = json.loads(prompt.split('\n')[-1])
         shown = {value['name']: value for value in delivered['changes']}
+        # An acknowledged notice does not consume its omitted results. Rebuild
+        # against the consumed position so a newly fitting batch still wakes Root.
+        if (snapshot == checkpoint.get('notified_snapshot') and not shown
+                and checkpoint.get('runtime_status') != 'reconciling_interruption'):
+            return
         prior = {value['name']: value for value in checkpoint.get('processed_snapshot', {}).get('runs', [])}
         terminal_delivery = dict(objective_ref=json.loads(row['objective_ref_json']), items=[])
         for value in snapshot['runs']:
@@ -721,21 +728,24 @@ class ProgressionCoordinator:
         # (or a later confirmed native tool receipt) can advance consumption.
         decision_snapshot = dict(snapshot, runs=[value for value in snapshot['runs']
             if value['name'] in shown or value == prior.get(value['name'])])
+        # The bounded omission count and run_list/run_status entrance cover the
+        # omitted exact versions, even when individual names do not fit the brief.
+        notification_snapshot = snapshot if delivered.get('omitted_results_read') else decision_snapshot
         # Intent is durable before the non-idempotent native turn/start.
         with self.bindings.scheduling_guard(instance_id=self.instance, session_key=row['owner_session'], expected_generation=row['generation']):
             # The policy a native turn starts with; restoring it later must match.
             permissions = getattr(self.host, 'permissions', None)
-            prepared = self._save(dict(phase='prepared', turn_id=None, decision_snapshot=decision_snapshot, terminal_delivery=terminal_delivery,
-                progress_notice=delivered.get('progress_shadow', {}).get('assist', {}).get('id'),
+            self._save(dict(phase='prepared', turn_id=None, decision_snapshot=decision_snapshot,
+                notification_snapshot=notification_snapshot, terminal_delivery=terminal_delivery,
                 round_started_at=self.clock(),
                 root_permissions=permissions.declaration() if permissions is not None else None,
                 rounds=checkpoint.get('rounds', 0)+1, runtime_status='deciding',
                 last_report=checkpoint.get('report') or checkpoint.get('last_report'), report=None, native_completion=None), reason='host_active')
-        if prepared.get('progress_notice_invalidated'):
-            return
         self._submitting = True
         turn = self.host.start_turn(prompt)
-        self._save(dict(phase='running', turn_id=turn))
+        # Only the successful native turn/start reply confirms this prepared
+        # notice. A late turn/started event cannot acknowledge a newer candidate.
+        self._save(dict(phase='running', turn_id=turn, notified_snapshot=notification_snapshot))
         self._submitting = False
 
     def _check_budget(self, row, limits, allow_round=True, *, force=False):

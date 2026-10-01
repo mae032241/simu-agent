@@ -129,8 +129,6 @@ class ProgressionSettings(SettingsValue):
     no_progress_threshold: int = Field(default=3, ge=1, le=100)
     refinement_threshold: int = Field(default=4, ge=1, le=100)
     observation_gap_threshold: int = Field(default=3, ge=1, le=100)
-    progress_reassessment_limit: int = Field(default=1, ge=1, le=1)
-    progress_pause_on_persistent_gap: bool = True
     progress_read_bytes: int = Field(default=16384, ge=16384, le=65536)
     context_bytes: int = Field(default=49152, ge=4096, le=262144)
     max_tokens: int = Field(default=2000000, ge=1)

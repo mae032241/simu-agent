@@ -19,7 +19,7 @@ from .progression_records import DETAIL_SCHEMA, hydrate_control_row, store_check
 from .maintenance import MaintenanceBusy
 from ..storage.control_io import control_io_nonblocking
 
-CONTROL_VERSION = 2
+CONTROL_VERSION = 3
 CONTROL_SCHEMA = """
 CREATE TABLE IF NOT EXISTS scheduler_progression (
     instance_id TEXT PRIMARY KEY REFERENCES scheduler_instances(instance_id),
@@ -121,7 +121,6 @@ def progression_status_view(value, *, session_key=None):
         'last_command': checkpoint.get('last_command'),
         'human_continuation': human_continuation_view(value, checkpoint),
         'interactive_session': interactive_session_view(value, checkpoint),
-        'human_handoff': human_handoff_view(checkpoint),
         'notifications': {
             'items': checkpoint.get('notices', []),
             'current_id': checkpoint.get('current_notice') if value['reason'] != 'archive_restored' else None,
@@ -139,7 +138,7 @@ def progression_status_view(value, *, session_key=None):
 def human_continuation_binding(row, session_key):
     """UI form freshness binding; authorization remains capability plus CSRF."""
     return hashlib.sha256(json.dumps([row.get(key) for key in
-        ('instance_id', 'generation', 'objective_ref_json', 'owner_session')] + [session_key]).encode()).hexdigest()
+        ('instance_id', 'generation', 'objective_ref_json', 'owner_session', 'checkpoint_json')] + [session_key]).encode()).hexdigest()
 
 
 def human_continuation_view(row, checkpoint):
@@ -147,22 +146,8 @@ def human_continuation_view(row, checkpoint):
     records = checkpoint.get('human_continuations', [])
     return dict(active=human_continuation_active(row, checkpoint),
         authority='human_control_decision_not_scientific_evidence',
-        history=[{key: record[key] for key in ('recorded_at', 'objective_name', 'episode_id',
-            'prior_reason', 'causes', 'reassessments', 'budget_snapshot')} for record in records[-8:]],
+        history=[{key: record[key] for key in ('recorded_at', 'objective_name', 'prior_reason', 'causes', 'through_sequence', 'budget_snapshot')} for record in records[-8:]],
         history_omitted=checkpoint.get('human_continuations_omitted', 0) + max(0, len(records)-8))
-
-
-def human_handoff_view(checkpoint):
-    value = checkpoint.get('human_handoff')
-    if not value:
-        return None
-    tasks = value['tasks']
-    return {key: value[key] for key in ('state', 'objective_name', 'allowance')} | dict(
-        tasks=tasks[:8], total_tasks=len(tasks), tasks_omitted=max(0, len(tasks)-8),
-        read=dict(tool='run_list', view='summary', limit=8),
-        continuation='Use next_before unchanged as before until null. Each page identifies its '
-            'human_handoff_tasks for the current goal. Read a returned name with run_status intent=decision; '
-            'membership names and omission counts are not delivered task results.')
 
 
 def interactive_session_view(row, checkpoint):
@@ -188,7 +173,6 @@ def require_resolved_control(row, checkpoint):
     if (row['host_json'] is not None or checkpoint.get('fault_class') == 'outcome_unknown'
             or (checkpoint.get('phase') == 'prepared' and not checkpoint.get('turn_id'))
             or checkpoint.get('phase') == 'running'
-            or (checkpoint.get('human_handoff') or {}).get('state') == 'submitted_unknown'
             or any(item['state'] == 'prepared' for item in checkpoint.get('admissions', {}).values())):
         conflict('Unresolved native host or task submission; reconcile before human continuation.')
 
@@ -362,6 +346,13 @@ class SchedulingControl:
             if command in {'pause', 'stop'} and exists:
                 mode = old['mode']
             checkpoint = json.loads(old.get('checkpoint_json', '{}'))
+            if command in {'start', 'resume', 'takeover'} and exists:
+                from .scientific_progress import scientific_pause
+                with self._connect() as db:
+                    current_pause = scientific_pause(db, old, checkpoint)
+                    checkpoint.pop('observation_scope_id', None)
+                    if current_pause or scientific_pause(db, old, checkpoint):
+                        conflict('scientific_progress_persistent_gap: confirm a new observation window in the management UI.')
             if command == 'start' and old.get('objective_ref_json') != ref_json:
                 checkpoint['last_report'] = checkpoint.get('report') or checkpoint.get('last_report')
                 checkpoint['report'] = None
@@ -382,6 +373,11 @@ class SchedulingControl:
                     from .scientific_progress import freeze_observation_scope
                     freeze_observation_scope(connection, dict(instance_id=instance_id, **values),
                         self.progress_run_reader, self)
+                if ref_json:
+                    from .scientific_progress import refresh_shadow
+                    from ..schema.common import canonical_sha256
+                    refresh_shadow(connection, dict(instance_id=instance_id, **values),
+                        canonical_sha256(json.loads(ref_json)))
                 self._write_progression(connection, instance_id, values)
             if state == 'active' and self.client_database_path.exists():
                 with self._client_connect() as connection:
@@ -394,7 +390,7 @@ class SchedulingControl:
         The UI validates capability, origin and CSRF before calling this entry.
         This is the existing local UI trust boundary, not same-UID isolation.
         """
-        from .scientific_progress import assist_view, shadow_policy
+        from .scientific_progress import shadow_policy, open_observation_window
         from .scheduler_bindings import _timestamp
         with self.control_maintenance.guard(instance_id), self.scheduling_lock():
             self._selected(instance_id, session_key)
@@ -404,19 +400,20 @@ class SchedulingControl:
                 conflict('Human continuation target changed; reread and confirm this goal in the management UI.')
             progress = self.progress_shadow(instance_id=instance_id,
                 objective_ref=ArtifactRef.model_validate_json(row['objective_ref_json'])) or {}
-            episode = assist_view(progress)
-            if shadow_policy(row)['progress_mode'] != 'assist' or episode['state'] == 'submitted_unknown':
+            if shadow_policy(row)['progress_mode'] != 'assist':
                 conflict('Human continuation requires assist mode and a resolved native submission.')
             checkpoint = json.loads(row['checkpoint_json'])
-            require_human_continuation_budget(row, checkpoint)
-            if (checkpoint.get('human_handoff') or {}).get('state') == 'prepared':
-                checkpoint['human_handoff']['state'] = 'deferred_to_human'
+            if checkpoint.get('observation_scope_id'):
+                require_resolved_control(row, checkpoint)
+            else:
+                require_human_continuation_budget(row, checkpoint)
             generation = row['generation'] + 1
             records = checkpoint.setdefault('human_continuations', [])
             records.append(dict(recorded_at=_timestamp(), objective_name=row['objective_name'],
                 objective_ref_json=row['objective_ref_json'], session_key=session_key, generation=generation,
-                episode_id=episode.get('id'), prior_reason=row['reason'], causes=episode.get('causes', []),
-                reassessments=episode['reassessments'], budget_snapshot=dict(
+                scope_id=checkpoint.get('observation_scope_id', 'background'),
+                prior_reason=row['reason'], causes=(checkpoint.get('scientific_pause') or {}).get('causes', []),
+                through_sequence=progress.get('through_sequence', 0), budget_snapshot=dict(
                     rounds=checkpoint.get('rounds', 0), attempts=checkpoint.get('attempts', 0),
                     probes=checkpoint.get('probes', 0), tasks=background_task_count(checkpoint),
                     started_at=checkpoint.get('started_at'), budget=checkpoint.get('budget'))))
@@ -428,6 +425,10 @@ class SchedulingControl:
             values.update(generation=generation, owner_session=session_key, requested_by=session_key,
                 state='active', mode='interactive', reason='human_continuation', checkpoint_json=json.dumps(checkpoint))
             with self._connect() as db:
+                db.execute('BEGIN IMMEDIATE')
+                records[-1]['through_sequence'] = open_observation_window(db, dict(row, checkpoint_json=json.dumps(checkpoint)), checkpoint)
+                checkpoint.pop('scientific_pause', None)
+                values['checkpoint_json'] = json.dumps(checkpoint)
                 self._write_progression(db, instance_id, values)
             if self.client_database_path.exists():
                 with self._client_connect() as db:
@@ -438,7 +439,6 @@ class SchedulingControl:
                                         objective_name, objective_ref):
         """One explicit human work scope; ordinary Root commands cannot create it."""
         from .scheduler_bindings import _timestamp
-        from .scientific_progress import assist_view
         with self.control_maintenance.guard(instance_id), self.scheduling_lock():
             self._selected(instance_id, session_key)
             row = self.progression_status(instance_id=instance_id, internal=True)
@@ -447,33 +447,22 @@ class SchedulingControl:
                 conflict('Independent interactive target changed; pause and confirm in the management UI.')
             checkpoint = json.loads(row['checkpoint_json'])
             require_resolved_control(row, checkpoint)
-            if (checkpoint.get('human_handoff') or {}).get('state') == 'prepared':
-                checkpoint['human_handoff']['state'] = 'deferred_to_human'
-            if row.get('objective_ref_json'):
-                progress = self.progress_shadow(instance_id=instance_id,
-                    objective_ref=ArtifactRef.model_validate_json(row['objective_ref_json'])) or {}
-                if assist_view(progress)['state'] == 'submitted_unknown':
-                    conflict('Unresolved scientific reassessment submission; reconcile before new work.')
             if not objective_name or objective_ref is None:
                 raise ValueError('Independent interactive work requires its exact frozen objective.')
             ref = ArtifactRef.model_validate(objective_ref)
             if self.resolve(instance=instance_id, namespace='artifact', name=objective_name) != ref.artifact_id:
                 conflict('Objective must match its exact instance binding.')
-            target_progress = self.progress_shadow(instance_id=instance_id, objective_ref=ref) or {}
-            target_episode = assist_view(target_progress)
-            if target_episode['state'] == 'submitted_unknown':
-                conflict('The selected goal has an unresolved scientific reassessment submission.')
             records = checkpoint.setdefault('interactive_sessions', [])
             generation = row['generation'] + 1
             ref_json = ref.canonical_json().decode()
             records.append(dict(id=hashlib.sha256(f'{instance_id}:{generation}'.encode()).hexdigest(),
                 recorded_at=_timestamp(), session_key=session_key, generation=generation,
                 objective_name=objective_name, objective_ref_json=ref_json,
-                episode_id=target_episode.get('id'),
                 prior_objective_name=row['objective_name'], background_budget_snapshot=dict(
                     rounds=checkpoint.get('rounds', 0), attempts=checkpoint.get('attempts', 0),
                     probes=checkpoint.get('probes', 0), tasks=background_task_count(checkpoint),
                     started_at=checkpoint.get('started_at'), budget=checkpoint.get('budget'))))
+            checkpoint['observation_scope_id'] = records[-1]['id']
             if row['objective_ref_json'] != ref_json:
                 checkpoint['last_report'] = checkpoint.get('report') or checkpoint.get('last_report')
                 checkpoint['report'] = None
@@ -489,6 +478,9 @@ class SchedulingControl:
             if not json.loads(row['config_json']).get('effective', {}).get('progression'):
                 values['config_json'] = json.dumps(self.control_settings(instance_id))
             with self._connect() as db:
+                from .scientific_progress import open_observation_window
+                db.execute('BEGIN IMMEDIATE')
+                open_observation_window(db, dict(values, instance_id=instance_id), checkpoint)
                 self._write_progression(db, instance_id, values)
             if self.client_database_path.exists():
                 with self._client_connect() as db:
@@ -507,6 +499,15 @@ class SchedulingControl:
                 # First interactive mutation keeps legacy single-client usage viable.
                 self.progression_command(instance_id=instance_id, session_key=session_key, command='start')
                 row = self.progression_status(instance_id=instance_id, internal=True)
+            from .scientific_progress import scientific_pause
+            with self._connect() as db:
+                checkpoint = json.loads(row['checkpoint_json'])
+                pause = scientific_pause(db, row, checkpoint)
+                if pause:
+                    if row['state'] == 'active':
+                        self._pause_progress(db, row, checkpoint, pause)
+                        db.commit()
+                    conflict('scientific_progress_persistent_gap: confirm a new observation window in the management UI.')
             if row['state'] != 'active' or row['owner_session'] != identity:
                 conflict('Scheduling is paused or owned by another session; use an explicit control command.')
             if row['mode'] == 'background' and self.control_settings(instance_id) != json.loads(row['config_json']):
@@ -540,15 +541,14 @@ class SchedulingControl:
             from .progression_budget import require_task_budget
             if not independent:
                 require_task_budget(checkpoint, limits)
-            from .scientific_progress import observe_deliveries, assist_transition
+            from .scientific_progress import observe_deliveries, scientific_pause
             observe_deliveries(db, row, checkpoint, boundary='next_task_admission')
-            progress_stop = assist_transition(db, row, checkpoint, event='admission', admission=name)
+            progress_stop = scientific_pause(db, row, checkpoint)
             if progress_stop:
-                if progress_stop == 'scientific_progress_persistent_gap':
-                    self._pause_progress(db, row, checkpoint, progress_stop)
+                self._pause_progress(db, row, checkpoint, progress_stop)
                 # Keep consumption and cause state even though admission fails.
                 db.commit()
-                conflict(progress_stop)
+                conflict('scientific_progress_persistent_gap')
             if row['mode'] == 'interactive' and not independent and not human_continuation_active(row, checkpoint):
                 require_human_continuation_budget(row, checkpoint)
             admissions[name] = dict(logical_name=logical_name, revision=revision,
@@ -556,71 +556,30 @@ class SchedulingControl:
                 objective_ref=json.loads(row['objective_ref_json']) if row['objective_ref_json'] else None, state='prepared')
             if independent:
                 admissions[name]['interactive_session_id'] = checkpoint['interactive_sessions'][-1]['id']
-            if independent or human_continuation_active(row, checkpoint):
-                admissions[name]['human_control_generation'] = row['generation']
             value = store_checkpoint(db, instance_id, checkpoint)
             db.execute('UPDATE scheduler_progression SET checkpoint_json=? WHERE instance_id=?', (value, instance_id))
 
-    def _pause_progress(self, db, row, checkpoint, reason):
+    def _pause_progress(self, db, row, checkpoint, pause):
+        checkpoint['scientific_pause'] = dict(pause, source_session=row['owner_session'])
+        reason = 'scientific_progress_persistent_gap'
         record_progression_notice(checkpoint, objective=row['objective_ref_json'], state='paused', reason=reason)
         db.execute("UPDATE scheduler_progression SET state='paused',owner_session=NULL,reason=?,"
             "generation=generation+1,checkpoint_json=? WHERE instance_id=?",
             (reason, store_checkpoint(db, row['instance_id'], checkpoint), row['instance_id']))
 
-    def progress_assist_boundary(self, *, instance_id, event='boundary'):
+    def progress_boundary(self, *, instance_id):
         with self.control_maintenance.guard(instance_id), self.scheduling_lock(), self._connect() as db:
-            row = db.execute('SELECT * FROM scheduler_progression WHERE instance_id=?', (instance_id,)).fetchone()
-            row = hydrate_control_row(db, row)
-            if row is None or row['mode'] != 'background' or row['state'] != 'active':
+            row = hydrate_control_row(db, db.execute('SELECT * FROM scheduler_progression WHERE instance_id=?',
+                (instance_id,)).fetchone())
+            if row is None or row['state'] != 'active':
                 return None
-            from .scientific_progress import assist_transition
+            from .scientific_progress import scientific_pause
             checkpoint = json.loads(row['checkpoint_json'])
-            reason = assist_transition(db, row, checkpoint, event=event)
-            if reason == 'scientific_progress_persistent_gap':
-                self._pause_progress(db, row, checkpoint, reason)
-            return reason
-
-    def prepare_human_handoff(self, *, instance_id, terminal_runs):
-        """Coordinator supplies exact terminal snapshots; a click alone grants no turn."""
-        from ..schema.common import canonical_sha256
-        with self.control_maintenance.guard(instance_id), self.scheduling_lock(), self._connect() as db:
-            row = db.execute('SELECT * FROM scheduler_progression WHERE instance_id=?', (instance_id,)).fetchone()
-            row = hydrate_control_row(db, row)
-            if row is None or row['mode'] != 'background' or row['state'] != 'active':
-                return
-            checkpoint = json.loads(row['checkpoint_json'])
-            goal = json.loads(row['objective_ref_json'])
-            goal_key = canonical_sha256(goal)
-            handoff = checkpoint.get('human_handoff') or {}
-            if handoff.get('goal_key') == goal_key and handoff.get('state') in {'prepared', 'submitted_unknown', 'delivered'}:
-                return
-            progress = db.execute('SELECT state_json FROM scheduler_progress_shadow WHERE instance_id=? AND goal_key=?',
-                (instance_id, goal_key)).fetchone()
-            from .scientific_progress import assist_view, shadow_policy
-            if (shadow_policy(row)['progress_mode'] != 'assist' or not progress
-                    or assist_view(json.loads(progress['state_json']))['state'] not in
-                    {'prepared', 'delivered', 'awaiting_result', 'exhausted'}):
-                return
-            names = []
-            for value in terminal_runs:
-                admission = checkpoint.get('admissions', {}).get(value['name'], {})
-                if (not admission.get('human_control_generation') or admission.get('objective_ref') != goal
-                        or admission.get('state') != 'accepted'
-                        or not (value['state'] in {'failed', 'timed_out', 'cancelled', 'canceled'}
-                            or (value['state'] == 'completed' and value.get('output')))):
-                    continue
-                consumed = db.execute('SELECT consumed_boundary FROM scheduler_terminal_deliveries '
-                    'WHERE instance_id=? AND goal_key=? AND run_id=?',
-                    (instance_id, goal_key, admission['run_id'])).fetchone()
-                if not consumed or not consumed['consumed_boundary']:
-                    names.append(value['name'])
-            if not names:
-                return
-            checkpoint['human_handoff'] = dict(state='prepared', objective_name=row['objective_name'], goal_key=goal_key,
-                tasks=names, allowance='consume_existing_results_only_within_frozen_background_budget')
-            values = {key: value for key, value in dict(row).items() if key not in {'instance_id', 'updated_at'}}
-            values['checkpoint_json'] = json.dumps(checkpoint)
-            self._write_progression(db, instance_id, values)
+            pause = scientific_pause(db, row, checkpoint)
+            if pause:
+                self._pause_progress(db, row, checkpoint, pause)
+                return 'scientific_progress_persistent_gap'
+            return None
 
     def record_goal_binding(self, *, instance_id, session_key, namespace, name, object_id):
         with self.scheduling_guard(instance_id=instance_id, session_key=session_key), self._connect() as db:
@@ -792,14 +751,28 @@ class SchedulingControl:
             raise ValueError('invalid disposition')
         if completed and question:
             raise ValueError('a completed goal cannot await a question')
-        with self.scheduling_guard(instance_id=instance_id, session_key=session_key), self._connect() as db:
+        with self.control_maintenance.guard(instance_id), self.scheduling_lock(), self._connect() as db:
+            self._selected(instance_id, session_key)
+            current = self.progression_status(instance_id=instance_id, internal=True)
+            cp = json.loads(current.get('checkpoint_json', '{}'))
+            if (current['state'] != 'paused' or session_key not in
+                    {current.get('requested_by'), (cp.get('scientific_pause') or {}).get('source_session')}):
+                with self.scheduling_guard(instance_id=instance_id, session_key=session_key):
+                    pass
             row = db.execute('SELECT * FROM scheduler_progression WHERE instance_id=?', (instance_id,)).fetchone()
             row = hydrate_control_row(db, row)
             checkpoint = json.loads(row['checkpoint_json'])
             from .scientific_progress import record_assessments
             receipts = record_assessments(db=db, row=row, assessments=assessments, bindings=self, artifacts=artifacts, runs=runs)
+            if row['state'] == 'paused':
+                from .scientific_progress import scientific_pause
+                pause = scientific_pause(db, row, checkpoint)
+                if pause:
+                    checkpoint['scientific_pause'] = dict(pause, source_session=
+                        (checkpoint.get('scientific_pause') or {}).get('source_session'))
             checkpoint['report'] = dict(summary=summary, completed=completed, question=question)
-            reason = 'goal_completed' if completed else 'user_question' if question else 'waiting'
+            reason = row['reason'] if row['state'] == 'paused' else (
+                'goal_completed' if completed else 'user_question' if question else 'waiting')
             record_progression_notice(checkpoint, objective=row['objective_ref_json'], state=row['state'], reason=reason)
             value = store_checkpoint(db, instance_id, checkpoint)
             db.execute('UPDATE scheduler_progression SET checkpoint_json=?, reason=? WHERE instance_id=?',
@@ -822,49 +795,39 @@ class SchedulingControl:
                 conflict('Native host binding changed during observation.')
             checkpoint = json.loads(row['checkpoint_json'])
             prior_checkpoint = json.loads(row['checkpoint_json'])
-            from .scientific_progress import observe_deliveries, assist_transition
+            from .scientific_progress import observe_deliveries, scientific_pause
             if terminal_turn is not None and checkpoint.get('turn_id'):
                 if terminal_turn.get('id') != checkpoint['turn_id']:
                     conflict('Native terminal turn identity mismatch; retain the unresolved writer.')
                 if terminal_turn.get('status') == 'completed':
                     completed_turn = terminal_turn['id']
-                elif terminal_turn.get('status') in {'failed', 'interrupted'}:
-                    handoff = checkpoint.get('human_handoff') or {}
-                    if (handoff.get('state') == 'delivered'
-                            and handoff.get('turn_id') == terminal_turn['id']
-                            and handoff.get('host') == expected_host):
-                        handoff['state'] = terminal_turn['status']
             if completed_turn is not None and checkpoint.get('turn_id') == completed_turn:
                 observe_deliveries(db, row, checkpoint, boundary='turn_completed')
-                assist_transition(db, row, checkpoint, event='turn_completed')
             checkpoint.update(changes)
-            if changes.get('phase') == 'prepared' and changes.get('progress_notice'):
-                if assist_transition(db, row, checkpoint, event='submit') == 'scientific_progress_candidate_changed':
-                    # The built brief became stale before native submission. Keep
-                    # its withdrawal, but charge no round and send no old version.
-                    return dict(prior_checkpoint, progress_notice_invalidated=True)
-            if changes.get('phase') == 'running':
-                assist_transition(db, row, checkpoint, event='confirm')
             if changes.get('phase') == 'running' or changes.get('native_completion') == 'completed':
                 observe_deliveries(db, row, checkpoint,
                     boundary='turn_completed' if changes.get('native_completion') == 'completed' else None)
-            if changes.get('native_completion') == 'completed':
-                assist_transition(db, row, checkpoint, event='turn_completed')
+            pause = scientific_pause(db, row, checkpoint)
+            if pause and row['state'] in {'active', 'paused'}:
+                checkpoint['scientific_pause'] = dict(pause, source_session=
+                    (checkpoint.get('scientific_pause') or {}).get('source_session', row['owner_session']))
+                if row['state'] == 'active':
+                    reason, stop = 'scientific_progress_persistent_gap', True
             if stop and 'stop_snapshot_tokens' not in checkpoint:
                 records = list(checkpoint.get('usage_records', {}).values())
                 checkpoint['stop_snapshot_tokens'] = sum(sum(record['counted_tokens'][key]
                     for key in ('input_tokens', 'output_tokens')) for record in records) if records else None
             record_progression_notice(checkpoint, objective=row['objective_ref_json'],
-                state='paused' if stop and row['mode'] == 'background' else row['state'],
+                state='paused' if stop and (row['mode'] == 'background' or reason == 'scientific_progress_persistent_gap') else row['state'],
                 reason=reason if reason is not None else row['reason'])
             if (checkpoint == prior_checkpoint and (reason is None or reason == row['reason'])
-                    and (not stop or row['mode'] != 'background' or row['state'] == 'paused')):
+                    and (not stop or row['state'] == 'paused')):
                 return checkpoint
             value = store_checkpoint(db, instance_id, checkpoint)
             values = dict(checkpoint_json=value)
             if reason is not None:
                 values['reason'] = reason
-            if stop and row['mode'] == 'background':
+            if stop and (row['mode'] == 'background' or reason == 'scientific_progress_persistent_gap'):
                 values.update(state='paused', owner_session=None, generation=row['generation']+1)
             from .scheduler_bindings import _timestamp
             values['updated_at'] = _timestamp()

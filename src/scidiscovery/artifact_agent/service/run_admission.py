@@ -16,6 +16,7 @@ class RunAdmissionMixin:
                            scientific_signature=None, reserved_output_fingerprint=None, connection=None):
         if connection is None:
             with self._connect() as db:
+                self._attach_scheduler(db)
                 return self.validate_admission(bound, instance_id=instance_id,
                     max_attempts=max_attempts, scientific_signature=scientific_signature, reserved_output_fingerprint=reserved_output_fingerprint, connection=db)
         self.worker_connections.review_authors(connection, bound.compiled,
@@ -39,8 +40,35 @@ class RunAdmissionMixin:
             raise OperationInvocationError("review_dependency_ambiguous",
                 message="Several tasks await this exact review; resolve task ownership before dispatch.")
         review_owner = owners[0] if owners else None
-        row = self.scheduler_bindings.progression_status(instance_id=instance_id, internal=True)
-        if row.get('mode') != 'background':
+        from .progression_records import hydrate_control_row
+        from .scientific_progress import scientific_pause
+        row = hydrate_control_row(connection, connection.execute(
+            'SELECT * FROM scheduler_control.scheduler_progression WHERE instance_id=?', (instance_id,)).fetchone())
+        if row is not None and scientific_pause(connection, row, json.loads(row['checkpoint_json'])):
+            raise OperationInvocationError('scientific_progress_persistent_gap',
+                message='Scientific observation is paused; confirm a new consumed observation window in the management UI.')
+        if row is None:
+            return review_owner
+        from .scientific_progress import shadow_policy
+        checkpoint = json.loads(row['checkpoint_json'])
+        if shadow_policy(row)['progress_mode'] == 'assist' and row['state'] != 'active':
+            raise OperationInvocationError('progression_paused', message='Scheduling control is not active.')
+        if checkpoint.get('fault_class') == 'outcome_unknown':
+            raise OperationInvocationError('native_submission_unknown', message='Reconcile the original native submission; do not replay it.')
+        if row['mode'] != 'background':
+            from .scientific_progress import shadow_policy, independent_interactive_active
+            from .scheduling_control import require_resolved_control, require_human_continuation_budget
+            checkpoint = json.loads(row['checkpoint_json'])
+            independent = independent_interactive_active(row, checkpoint)
+            if independent or shadow_policy(row)['progress_mode'] == 'assist':
+                checkpoint['admissions'] = {name: item for name, item in checkpoint.get('admissions', {}).items()
+                    if not (item['state'] == 'prepared' and reserved_output_fingerprint is not None
+                        and item['output_fingerprint'] == reserved_output_fingerprint
+                        and item.get('scientific_signature') == scientific_signature)}
+                if independent:
+                    require_resolved_control(row, checkpoint)
+                else:
+                    require_human_continuation_budget(row, checkpoint)
             return review_owner
         checkpoint = json.loads(row['checkpoint_json'])
         limits = json.loads(row['config_json'])['effective']['progression']

@@ -31,14 +31,12 @@ class RootRunRoutes(RunReadProjection):
         items = []
         control = self.bindings.progression_status(instance_id=self._instance_id(), internal=True)
         checkpoint = json.loads(control.get('checkpoint_json', '{}'))
-        handoff = checkpoint.get('human_handoff') or {}
+        from ..service.scientific_progress import goal_bound_runs
         current_goal = json.loads(control.get('objective_ref_json') or 'null')
-        from ..schema.common import canonical_sha256
-        members = (set(handoff.get('tasks', []))
-            if current_goal and handoff.get('goal_key') == canonical_sha256(current_goal) else set())
+        members = set(goal_bound_runs(checkpoint, current_goal)) if current_goal else set()
         def result(cursor):
             return dict(runs=items, next_before=cursor,
-                **({'human_handoff_tasks': [item['name'] for item in items if item['name'] in members]}
+                **({'current_goal_tasks': [item['name'] for item in items if item['name'] in members]}
                     if members else {}))
         past_cursor = before is None
         for binding in self.bindings.list(instance=self._instance_id(), namespace="run"):

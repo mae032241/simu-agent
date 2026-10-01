@@ -76,7 +76,7 @@ class ProgressionStatusInput(RootToolInput):
 
 class ProgressionReportInput(RootToolInput):
     assessments: list[ProgressAssessment] = Field(default_factory=list, max_length=8,
-        description="Optional task-level goal judgments. Control freezes evidence and appends corrections; this is not a scientific result or qualification. Ordinary tasks require no assessment. In configured assist mode, persistent missing or unsupported assessments can trigger observation-gap reassessment and pause further dispatch. Cited new bytes plus a Root advance judgment do not independently establish scientific progress.")
+        description="Optional task-level goal judgments. Control freezes evidence and appends corrections; this is not a scientific result or qualification. Ordinary tasks require no assessment. In configured assist mode, persistent missing or unsupported assessments can trigger observation-gap protection and directly pause further dispatch. Cited new bytes plus a Root advance judgment do not independently establish scientific progress.")
     summary: str = Field(min_length=1, max_length=4096,
         description="Current goal outcome or specific waiting condition; retain scientific limitations.")
     completed: bool = Field(default=False, description="Root judges the whole frozen goal complete, after reading sealed results.")
@@ -183,7 +183,7 @@ class OperationCallInput(NamedInput, RevisionInput):
     inputs: tuple[OperationInputSelection, ...] = Field(max_length=64)
     instruction: str | None = Field(default=None, max_length=65536)
     scientific_intent: ScientificIntent | None = Field(default=None,
-        description="Optional complete Agent task purpose, recommended for background research. Read-only to the Worker; control supplies all bindings. Ordinary tasks remain valid without it. In configured assist mode, persistent missing intent can trigger observation-gap reassessment and pause further dispatch.")
+        description="Optional complete Agent task purpose, recommended for background research. Read-only to the Worker; control supplies all bindings. Ordinary tasks remain valid without it. In configured assist mode, persistent missing intent can trigger observation-gap protection and directly pause further dispatch.")
     parameters: EmptyOperationParameters = Field(default_factory=dict)
     require_execution_review: bool | None = Field(default=None,
         description="Experiment tasks only. Set true when the user/task explicitly requires independent implementation review before formal execution. Control requires a pass on the exact sealed implementation and resolves the review automatically; no Worker binding fields. Omission defaults to false for new tasks and inherits the requirement on recovery. Recovery cannot remove an existing requirement.")
@@ -326,7 +326,7 @@ ROOT_TOOLS = (
     RootTool("progression_message", "Save original user context for the started goal from an authorized reading session, without taking over the background writer. Does not grant approvals or resume a paused goal.", ProgressionMessageInput),
     RootTool("progression_report", "Optionally record a goal outcome, waiting condition, user question or evidence-based task assessment. Corrections append immutable history. Ordinary tasks and stages require no extra report. Configured assist may pause further dispatch after persistent missing or unsupported assessments. No research is triggered by this report.", ProgressionReportInput),
     RootTool("progression_status", "Read scheduling ownership, frozen objective, sealed task handoff and recent Root assessment history; continue assessment history with progress_cursor and terminal delivery history with delivery_cursor. Accepted work has independent Run state.", ProgressionStatusInput),
-    RootTool("progression_command", "Start, pause, resume, stop or explicitly take over scheduling for the selected instance. Background start remains pending until its host is available. Pause/stop do not cancel accepted work. In assist mode ordinary interactive commands retain the frozen background session limits; changing a goal or mode grants no human exemption. Explicit human continuation or independent interactive work requires confirmation in the management UI.", ProgressionCommandInput),
+    RootTool("progression_command", "Start, pause, resume, stop or explicitly take over scheduling for the selected instance. Background start remains pending until its host is available. Pause/stop do not cancel accepted work. In assist mode ordinary interactive commands retain the frozen background session limits; changing a goal or mode cannot clear a scientific pause. The management UI confirms a new consumed observation window without refunding limits. Existing independent interactive scopes still require explicit UI confirmation.", ProgressionCommandInput),
     RootTool("diagnostic_read", "Read bounded engineering error details visible to the current instance or session.", DiagnosticReadInput),
     RootTool("instance_current", "Read the bound research instance or return its direct local management URL.", ReadInput),
     RootTool("instance_list", "List research instances without exposing internal identity.", InstanceListInput),
@@ -341,7 +341,7 @@ ROOT_TOOLS = (
     RootTool("operation_catalog", "List bounded operation summaries; select operation_id with view=detail for its full compiled contract.", OperationCatalogInput),
     RootTool("operation_preflight", "Optional check without creating. Invoke independently checks admission; this does not reserve resources or authorize execution.", OperationCallInput),
     RootTool("operation_invoke", "Validate and create one Agent, Transform, Effect or Approval from the compiled catalog; no prior preflight required. Success preserves dispatch configuration, exact outputs or approval URLs by executor kind; use the returned detail entry for Run context.", OperationCallInput),
-    RootTool("run_list", "List minimal Runs in this research instance. During a current-goal handoff, human_handoff_tasks identifies members on this page; continue with returned next_before as before and read exact names with run_status.", RunListInput),
+    RootTool("run_list", "List minimal Runs in this research instance. current_goal_tasks identifies exact frozen-goal members on this page; continue with returned next_before as before and read exact names with run_status.", RunListInput),
     RootTool("run_status", "Read a Run with one intent: decision (default), status, navigation or full. Explicit stage_offset=0 lists sealed stages even while running; stage_reference reads an exact material. Stages never establish final completion or qualification.", RunStatusInput),
     RootTool("run_record_failure", "Record failure of one running minimal Run.", RunFailureInput),
     RootTool("approval_list", "List named reviews in this scheduler instance.", ApprovalListInput),

@@ -1,0 +1,80 @@
+{
+  "fixture_version": 1,
+  "kind": "hourly_loop_memory_materials_not_runner_config",
+  "objective": "研究分工况响应机制 L: y=a*x+b 与 Q: y=a*x+b+c*x*(x-1)*(x-2)。根据逐批到达的合成观测判断各工况下能否区分机制、哪些进一步计算值得做，并给出可核验预测和局限。x 精确，每条 y 的绝对误差不超过 error_abs；只有同一工况共享参数，不预设跨工况参数相同。观测由外部按批次到达，计算值不是新观测。保存每轮结论、失败方向的适用条件和下一步依据；没有可执行且有信息价值的工作时等待。无需为凑任务数派发任务，不把精修、拟合成功或较简单当作机制已被证明。",
+  "batches": [
+    {
+      "name": "A_initial",
+      "condition": "A",
+      "public_note": "首批观测；后续观测尚未交付。",
+      "observations": [
+        {
+          "x": 0,
+          "y": 1,
+          "error_abs": 0.05
+        },
+        {
+          "x": 1,
+          "y": 3,
+          "error_abs": 0.05
+        },
+        {
+          "x": 2,
+          "y": 5,
+          "error_abs": 0.05
+        }
+      ]
+    },
+    {
+      "name": "A_discrimination",
+      "condition": "A",
+      "public_note": "同工况追加观测。下一批将给出 x=4 的独立预留观测；请在其到达前封存预测与验证判据。",
+      "observations": [
+        {
+          "x": 3,
+          "y": 8,
+          "error_abs": 0.05
+        }
+      ]
+    },
+    {
+      "name": "A_validation",
+      "condition": "A",
+      "public_note": "同工况预留验证观测；先检验此前封存预测。若用于重新调参，应明确其用途变化。",
+      "observations": [
+        {
+          "x": 4,
+          "y": 13,
+          "error_abs": 0.05
+        }
+      ]
+    },
+    {
+      "name": "B_changed_condition",
+      "condition": "B",
+      "public_note": "工况已改变，参数可以变化。请判断此前工况的结论哪些仍适用，是否需要重新检验候选机制。",
+      "observations": [
+        {
+          "x": 0,
+          "y": 1,
+          "error_abs": 0.05
+        },
+        {
+          "x": 1,
+          "y": 3,
+          "error_abs": 0.05
+        },
+        {
+          "x": 2,
+          "y": 5,
+          "error_abs": 0.05
+        },
+        {
+          "x": 3,
+          "y": 7,
+          "error_abs": 0.05
+        }
+      ]
+    }
+  ]
+}

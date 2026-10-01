@@ -187,45 +187,13 @@ def test_archive_scopes_detail_rows_and_preserves_detail_only_artifact_refs(arch
     assert runtime.artifacts.read(unique.ref) == b'unique control original'
 
 
-def test_large_human_handoff_uses_detail_snapshot_through_prepare_and_observe(paused):
-    p = paused
-    bindings = p.runtime.scheduler_bindings
-    control = row(p)
-    current = checkpoint(p)
-    objective = json.loads(control['objective_ref_json'])
-    host = dict(platform_session='large-handoff-native', thread_id='large-handoff-native')
-    names = [f'human-result-{index:04d}-' + 'x' * 100 for index in range(800)]
-    current['admissions'].update({name: dict(state='accepted', run_id=f'historical-run-{index}',
-        objective_ref=objective, human_control_generation=control['generation']) for index, name in enumerate(names)})
-    values = {key: value for key, value in control.items() if key not in {'instance_id', 'updated_at'}}
-    values.update(state='active', owner_session=p.user, host_json=json.dumps(host), checkpoint_json=json.dumps(current))
-    with bindings._connect() as db:
-        bindings._write_progression(db, p.instance, values)
-    # Persisted identities are the fixture. The actual handoff writer must handle
-    # their complete confirmed terminal snapshot without truncating task identity.
-    bindings.prepare_human_handoff(instance_id=p.instance,
-        terminal_runs=[dict(name=name, state='failed', output=None) for name in names])
-    prepared = checkpoint(p)['human_handoff']
-    assert prepared['tasks'] == names and prepared['state'] == 'prepared'
-    assert len(json.dumps(prepared).encode()) > 65536
-    raw = physical(p)[0]
-    assert len(raw.encode()) < 65536 and 'human_handoff' not in json.loads(raw)
-    bindings.observe_progression(instance_id=p.instance, expected_host=host,
-        changes=dict(phase='prepared', turn_id=None, progress_notice='handoff'))
-    bindings.observe_progression(instance_id=p.instance, expected_host=host,
-        changes=dict(phase='running', turn_id='large-handoff-turn'))
-    assert checkpoint(p)['human_handoff']['state'] == 'delivered'
-    bindings.observe_progression(instance_id=p.instance, expected_host=host,
-        terminal_turn=dict(id='large-handoff-turn', status='failed'),
-        changes=dict(phase='idle', turn_id=None), reason='root_turn_failed', stop=True)
-    final = checkpoint(p)['human_handoff']
-    assert final['state'] == 'failed' and final['tasks'] == names
-    assert len(physical(p)[0].encode()) < 65536
 
 
 def large_native_handoff_fixture(ui, context_bytes=49152):
     import hashlib
     p = ui.p
+    assert submit(ui) == 303
+    p.root.call_tool('progression_command', dict(command='pause'))
     assert independent(ui) == 303
     names = [f'large-native-result-{index:04d}-' + 'x' * 100 for index in range(800)]
     p.root.call_tool('operation_invoke', request(names[0]))
@@ -268,12 +236,6 @@ def test_large_handoff_real_tick_bounds_prompt_and_settles_only_visible_tasks(hu
     limit = json.loads(row(p)['config_json'])['effective']['progression']['context_bytes']
     assert len(host.prompts[0].encode()) <= limit
     brief = json.loads(host.prompts[0].split('\n')[-1])
-    assert brief['human_handoff']['total_tasks'] == len(names)
-    if context_bytes == 10000:
-        assert len(brief['human_handoff']['tasks']) < 8
-    public = p.runtime.scheduler_bindings.progression_status(instance_id=p.instance)['human_handoff']
-    assert len(public['tasks']) == 8 and public['tasks_omitted'] == len(names)-8
-    assert brief['human_handoff']['tasks_omitted'] == len(names) - len(brief['human_handoff']['tasks'])
     shown = {entry['name'] for entry in brief['changes']} & set(names)
     omitted = set(names) - shown
     assert omitted
@@ -281,13 +243,13 @@ def test_large_handoff_real_tick_bounds_prompt_and_settles_only_visible_tasks(hu
         assert shown
     assert {entry['name'] for entry in checkpoint(p)['decision_snapshot']['runs']} & set(names) == shown
     root = p.root.__class__(p.facade(host.scheduler_session))
-    query = {key: value for key, value in brief['human_handoff']['read'].items() if key != 'tool'}
+    query = dict(view='summary', limit=8)
     page = root.call_tool('run_list', query)
-    assert set(page['human_handoff_tasks']) <= {entry['name'] for entry in page['runs']}
-    found = set(page['human_handoff_tasks'])
+    assert set(page['current_goal_tasks']) <= {entry['name'] for entry in page['runs']}
+    found = set(page['current_goal_tasks'])
     while not found & omitted and page['next_before']:
         page = root.call_tool('run_list', dict(query, before=page['next_before']))
-        found.update(page['human_handoff_tasks'])
+        found.update(page['current_goal_tasks'])
     assert found & omitted  # Existing semantic-name cursor finds an omitted exact member.
     # A Python-side read is not a native model-delivery receipt.
     host.finish()
@@ -295,10 +257,15 @@ def test_large_handoff_real_tick_bounds_prompt_and_settles_only_visible_tasks(hu
     records = handoff_delivery_records(p, objective)
     settled = {entry['task_name'] for entry in records if entry['consumed_boundary']} & set(names)
     assert settled == shown
+    previous_rounds = len(host.prompts)
     next_turn(p)
+    if context_bytes == 10000 and not shown:
+        assert len(host.prompts) == previous_rounds  # Same wholly omitted cohort is already notified.
+        p.root.call_tool('progression_message', dict(name='handoff.read.omitted',
+            text='Read the exact omitted handoff results through the supplied original-reading entrance.'))
+        next_turn(p)
+        assert len(host.prompts) == previous_rounds + 1
     following = json.loads(host.prompts[-1].split('\n')[-1])
-    assert set(following['human_handoff']['tasks']) <= omitted
-    assert following['human_handoff']['total_tasks'] == len(omitted)
     assert not ({entry['name'] for entry in following['changes']} & shown)
 
     # An actual structured native read can subsequently deliver a task omitted
@@ -306,10 +273,10 @@ def test_large_handoff_real_tick_bounds_prompt_and_settles_only_visible_tasks(hu
     from tests.operations.test_progress_shadow import native_delivery
     shown_next = {entry['name'] for entry in following['changes']} & set(names)
     page = root.call_tool('run_list', query)
-    candidates = set(page['human_handoff_tasks']) & (omitted - shown_next)
+    candidates = set(page['current_goal_tasks']) & (omitted - shown_next)
     while not candidates and page['next_before']:
         page = root.call_tool('run_list', dict(query, before=page['next_before']))
-        candidates = set(page['human_handoff_tasks']) & (omitted - shown_next)
+        candidates = set(page['current_goal_tasks']) & (omitted - shown_next)
     assert candidates
     read_name = next(iter(candidates))
     # This helper calls the actual MCP run_status before emitting its native receipt.
@@ -333,21 +300,22 @@ def handoff_delivery_records(p, objective):
         after = page[-1]['sequence']
 
 
-def test_handoff_run_list_members_are_bound_to_current_instance_and_goal(human_ui):
-    from tests.operations.test_human_progress_continuation import start_human_handoff
+def test_current_goal_run_list_members_are_bound_to_current_instance_and_goal(human_ui):
     ui, p = human_ui, human_ui.p
-    start_human_handoff(ui)
+    assert submit(ui) == 303
+    finish(p, p.root, 'current-goal-result')
     before = row(p)
     page = p.root.call_tool('run_list', dict(view='summary', limit=100))
-    assert page['human_handoff_tasks'] == ['human-handoff-result']
+    assert 'current-goal-result' in page['current_goal_tasks']
     assert row(p) == before
     bindings = p.runtime.scheduler_bindings
     other = bindings.create_instance(name='unrelated-listing', title='Other', objective='Independent scope')
     bindings.bind_session(session_key='other-reader', instance_id=other.instance_id)
     reader = p.root.__class__(p.facade('other-reader'))
     assert reader.call_tool('run_list', dict(limit=8)) == dict(runs=[], next_before=None)
-    bindings.observe_progression(instance_id=p.instance, expected_host=json.loads(before['host_json']),
-        changes=dict(human_handoff=dict(checkpoint(p)['human_handoff'], goal_key='different-goal')))
+    p.root.call_tool('artifact_ingest_text', dict(name='another-goal', text='A different exact goal.'))
+    p.root.call_tool('progression_command', dict(command='pause'))
+    p.root.call_tool('progression_command', dict(command='start', objective_name='another-goal'))
     before = row(p)
-    assert 'human_handoff_tasks' not in p.root.call_tool('run_list', dict(limit=100))
+    assert 'current-goal-result' not in p.root.call_tool('run_list', dict(limit=100)).get('current_goal_tasks', [])
     assert row(p) == before

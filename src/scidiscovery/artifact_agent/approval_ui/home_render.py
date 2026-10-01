@@ -90,19 +90,19 @@ def session_controls(rows, *, token, csrf, current=None, expires_at=None, workbe
         if human_confirmation:
             body += ("<details><summary>人工接管并继续（保留预算）</summary>"
                 "<p>适用于已暂停且原生提交已核清的当前目标：" + escape(progression.get('objective_name') or '')
-                + "。请先读取上方原始缺口。此决定不代表科学问题已解决，不增加预算或自动复判次数；"
+                + "。请先读取上方原始缺口。此决定不代表科学问题已解决，不增加预算；确认从已消费水位开启下一观察窗口；"
                 "原墙钟预算继续计时，耗尽时请明确选择下方独立人工工作。未知提交须先核清。"
-                "返回后台或改变目标、会话控制后须重新确认；后台仅在剩余预算内消费新成果。</p>"
+                "后续窗口仍会按科研阈值暂停；返回后台仍受原预算约束。</p>"
                 + "<form method='post' action='/instances/progression'>" + common
                 + hidden("command", "human_continue") + hidden("instance_id", current.instance_id)
                 + hidden("confirmation_binding", human_confirmation)
                 + "<label><input type='checkbox' name='confirm_human_continue' value='yes' required>"
-                "我已读取原始缺口，确认在当前会话人工继续此目标并保留原预算</label>"
+                "我已读取原始缺口，确认从当前已消费水位继续此目标，保留所有额度及旧触发</label>"
                 "<button type='submit'>人工接管并继续（保留预算）</button></form></details>")
             body += ("<details><summary>建立独立人工工作作用域</summary>"
                 "<p>明确另起交互工作，可选择当前或新的确切目标。原后台任务数、轮次、token 和墙钟预算保留，"
                 "本次人工任务单独记账；实例执行累计预算仍适用。此决定不授权新后台预算，不清除未知提交、"
-                "原科学缺口或复判历史。暂停、切换调度者或目标后须重新确认。</p>"
+                "原范围的科学暂停或触发历史。暂停、切换调度者或目标后须重新确认。</p>"
                 + "<form method='post' action='/instances/progression'>" + common
                 + hidden("command", "independent_interactive") + hidden("instance_id", current.instance_id)
                 + hidden("confirmation_binding", human_confirmation)

@@ -18,8 +18,8 @@ def render_progression(status, *, instance_id):
         host_active='宿主已连接', user_paused='用户暂停', user_stopped='用户停止',
         user_question='等待用户回答', waiting='等待条件变化', goal_completed='已记录目标结论',
         budget_exhausted='预算耗尽', resource_limit='资源止损', archive_restored='归档恢复后保持暂停',
-        scientific_progress_persistent_gap='复判后仍缺少有依据的推进，暂停新派发',
-        human_continuation='用户已确认人工继续，保留原缺口与预算',
+        scientific_progress_persistent_gap='科研观测达到阈值，暂停新派发',
+        human_continuation='用户已确认新的消费观察窗口，保留预算',
         independent_interactive='用户已确认独立人工工作，旧后台预算另行保留')
     body = "<section class='workbench-section progression-panel'><h2>目标推进</h2><dl class='metadata'>"
     for label, value in (("状态", states.get(status.get('state'), status.get('state'))),
@@ -32,15 +32,12 @@ def render_progression(status, *, instance_id):
     human = status.get('human_continuation') or {}
     if human.get('history'):
         body += '<h3>人工继续记录</h3><p>' + ('当前人工继续有效。' if human.get('active') else '历史确认当前不生效。')
-        body += '用户决定属于调度控制，不是新的科学证据；原始缺口与复判次数仍见科研进展观测。</p>'
+        body += '用户决定属于调度控制，不是新的科学证据；旧触发与已消费起点仍见科研进展观测。</p>'
         body += render_json_value(human, max_bytes=16384)
     independent = status.get('interactive_session') or {}
     if independent.get('history'):
         body += '<h3>独立人工工作作用域</h3><p>下方 budget / usage 属于保留的后台调度会话。人工任务另记，实例执行累计预算始终适用；人工原生 token 用量可能未观测。</p>'
         body += render_json_value(independent, max_bytes=16384)
-    if status.get('human_handoff'):
-        body += '<h3>人工成果回后台交接</h3><p>仅消费已存在成果，仍受原后台预算约束；预算不足时保留成果及原通知，请明确选择独立人工工作。科学推进仍须 Root 引用原件判断。</p>'
-        body += render_json_value(status['human_handoff'], max_bytes=4096)
     if status.get('historical'):
         body += '<p>以下为归档时的历史推进记录；通知仅供回读，不会恢复调度或重发通知。</p>'
     body += '<p>关闭终端或重新选择读取实例不会暂停推进，也不会接管调度权。</p>'

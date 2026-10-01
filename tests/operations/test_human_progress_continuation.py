@@ -24,11 +24,9 @@ def paused(progression, monkeypatch):
     root = active(p)
     trigger(p, root)
     next_turn(p)
-    p.coordinator.host.finish()
-    next_turn(p)
     p.coordinator.tick()  # confirmed terminal host release, no additional model turn
     assert row(p)['state'] == 'paused' and row(p)['host_json'] is None
-    assert notice(p)['state'] == 'exhausted'
+    assert notice(p)['counts']['consumed'] == 3
     return p
 
 
@@ -81,12 +79,12 @@ def test_ui_confirmation_continues_same_goal_and_keeps_scientific_gap(human_ui):
     assert view['human_continuation']['active'] and view['reason'] == 'human_continuation'
     assert view['human_continuation']['history'][0]['prior_reason'] == 'scientific_progress_persistent_gap'
     assert 'session_key' not in json.dumps(view['human_continuation'])
-    assert correction_state(p) == episode
+    assert correction_state(p)['notices'] == episode['notices']
     for key in ('rounds', 'attempts', 'probes', 'started_at', 'admissions', 'budget'):
         assert checkpoint(p)[key] == before[key]
     finish(p, p.root, 'human-directed-task')
     assert len(checkpoint(p)['admissions']) == len(before['admissions']) + 1
-    assert status(p)['progress_shadow']['assist']['reassessments'] == 1
+    assert correction_state(p)['counts']['consumed'] == 0
     assert p.root.call_tool('run_status', dict(name='human-directed-task'))['state'] == 'completed'
     assert submit(ui) == 409  # stale confirmation is not a reusable authority
     page = _request(ui.base, 'GET', ui.path)[2].decode()
@@ -114,12 +112,12 @@ def test_ui_start_background_after_human_continuation_requires_pause(human_ui, p
     assert code == 303
     assert row(p)['state'] == 'pending' and row(p)['mode'] == 'background'
     assert not status(p)['human_continuation']['active']
-    assert correction_state(p) == episode
+    assert correction_state(p)['notices'] == episode['notices']
     for key in ('rounds', 'attempts', 'probes', 'started_at', 'admissions', 'budget', 'human_continuations'):
         assert checkpoint(p)[key] == before[key]
     next_turn(p)
-    assert row(p)['state'] == 'paused' and row(p)['reason'] == 'scientific_progress_persistent_gap'
-    assert notice(p)['state'] == 'exhausted' and notice(p)['reassessments'] == 1
+    assert row(p)['state'] == 'active'
+    assert notice(p)['window_start_sequence'] == 3
 
 
 @pytest.mark.parametrize('bad', ['csrf', 'capability', 'confirmation_binding', 'instance_id', 'confirm_human_continue'])
@@ -151,12 +149,13 @@ def test_ordinary_mcp_cannot_grant_human_continuation_or_erase_frozen_policy(pau
         p.root.call_tool('progression_command', dict(args, human_continue=True))
     with pytest.raises(Exception):
         p.root.call_tool('progression_command', dict(command='human_continue'))
-    p.root.call_tool('progression_command', args)
+    with pytest.raises(Exception, match='scientific_progress_persistent_gap'):
+        p.root.call_tool('progression_command', args)
     assert json.loads(row(p)['config_json']) == json.loads(frozen)
     with pytest.raises(Exception, match='scientific_progress_persistent_gap'):
         p.root.call_tool('operation_invoke', request('mcp-cannot-self-approve'))
     assert not status(p)['human_continuation']['active']
-    assert notice(p)['reassessments'] == 1
+    assert notice(p)['counts']['consumed'] == 3
 
 
 @pytest.mark.parametrize('barrier', ['attempts', 'rounds', 'probes', 'elapsed', 'tokens', 'admission', 'native'])
@@ -197,14 +196,13 @@ def test_background_and_owner_changes_invalidate_consent_without_refunding(human
     other = p.root.__class__(p.facade('other'))
     other.call_tool('progression_command', dict(command='takeover'))
     assert not status(p)['human_continuation']['active']
-    with pytest.raises(Exception, match='scientific_progress_persistent_gap'):
-        other.call_tool('operation_invoke', request('new-owner-not-human-approved'))
+    finish(p, other, 'new-owner-retains-window')
     p.root.call_tool('progression_command', dict(command='takeover', mode='background'))
     next_turn(p)
-    assert row(p)['state'] == 'paused'
-    assert notice(p) == original
+    assert row(p)['state'] == 'active'
+    assert notice(p)['notices'] == original['notices']
     assert checkpoint(p)['human_continuations'] == before['human_continuations']
-    for key in ('rounds', 'attempts', 'started_at', 'admissions'):
+    for key in ('attempts', 'started_at'):
         assert checkpoint(p)[key] == before[key]
 
 
@@ -241,34 +239,6 @@ def independent(ui, goal='goal', **changes):
         confirm_independent_interactive='yes', confirmation_binding=fresh_binding(ui), **changes)
 
 
-@pytest.mark.parametrize('phase', ['no_causes', 'causes_without_episode', 'prepared',
-    'submitted_unknown', 'delivered', 'awaiting_result', 'exhausted'])
-def test_ui_safe_phase_confirmation_and_unknown_native_barrier(human_ui, phase):
-    ui, p = human_ui, human_ui.p
-    progress = correction_state(p)
-    if phase in {'no_causes', 'causes_without_episode'}:
-        progress['assist'] = []
-        if phase == 'no_causes':
-            progress['counts'] = {key: 0 for key in progress['counts']}
-    else:
-        progress['assist'][-1]['state'] = phase
-        if phase in {'prepared', 'submitted_unknown'}:
-            progress['assist'][-1].pop('delivered', None)
-            progress['assist'][-1]['reassessments'] = 0
-    with p.runtime.scheduler_bindings._connect() as db:
-        db.execute('UPDATE scheduler_progress_shadow SET state_json=? WHERE instance_id=?',
-            (json.dumps(progress), p.instance))
-    before = row(p)
-    code = submit(ui)
-    if phase == 'submitted_unknown':
-        assert code == 409 and row(p) == before
-        assert independent(ui) == 409 and row(p) == before
-        return
-    assert code == 303
-    finish(p, p.root, 'safe-human-work')
-    assert correction_state(p)['assist'] == progress['assist']
-
-
 @pytest.mark.parametrize('limit', ['tasks', 'tokens', 'elapsed', 'rounds'])
 def test_explicit_independent_ui_scope_preserves_old_limits_and_instance_budget(human_ui, limit):
     from dataclasses import replace
@@ -286,8 +256,7 @@ def test_explicit_independent_ui_scope_preserves_old_limits_and_instance_budget(
     other = bindings.create_instance(name='execution-peer', title='peer', objective='peer')
     _policy_executions((p.runtime, None, p.instance, other.instance_id))
     execution_before = _rows(p.runtime.executions.database_path)
-    p.root.call_tool('progression_command', dict(command='takeover'))
-    p.root.call_tool('artifact_ingest_text', dict(name='new-goal', text='Explicit independent analysis.'))
+    p.root.call_tool('progression_message', dict(name='new-goal', text='Explicit independent analysis.'))
     p.root.call_tool('progression_command', dict(command='pause'))
     limits = json.loads(row(p)['config_json'])['effective']['progression']
     if limit == 'tasks':
@@ -308,8 +277,9 @@ def test_explicit_independent_ui_scope_preserves_old_limits_and_instance_budget(
     # Neither a new goal nor a fabricated argument grants the UI-only scope.
     with pytest.raises(Exception):
         p.root.call_tool('progression_command', dict(command='independent_interactive', objective_name='new-goal'))
-    p.root.call_tool('progression_command', dict(command='start', objective_name='new-goal'))
-    with pytest.raises(Exception, match='budget'):
+    with pytest.raises(Exception, match='scientific_progress_persistent_gap'):
+        p.root.call_tool('progression_command', dict(command='start', objective_name='new-goal'))
+    with pytest.raises(Exception, match='scientific_progress_persistent_gap'):
         p.root.call_tool('operation_invoke', request('ordinary-mcp-cannot-reset'))
     assert not status(p)['interactive_session']['active']
     p.root.call_tool('progression_command', dict(command='pause'))
@@ -330,37 +300,12 @@ def test_explicit_independent_ui_scope_preserves_old_limits_and_instance_budget(
     assert row(p) == snapshot
     assert '独立人工工作作用域' in _request(ui.base, 'GET', ui.path)[2].decode()
     p.root.call_tool('progression_command', dict(command='pause'))
-    p.root.call_tool('progression_command', dict(command='resume'))
+    with pytest.raises(Exception, match='scientific_progress_persistent_gap'):
+        p.root.call_tool('progression_command', dict(command='resume'))
     assert not status(p)['interactive_session']['active']
 
 
-@pytest.mark.parametrize('new_evidence', [False, True])
-def test_human_result_gets_one_budgeted_background_consumption_turn(human_ui, new_evidence):
-    ui, p = human_ui, human_ui.p
-    assert submit(ui) == 303
-    old = notice(p)
-    (finish_changed if new_evidence else finish)(p, p.root, 'human-result')
-    assess(p.root, 'human-result', outcome='advance' if new_evidence else 'unknown')
-    before = checkpoint(p)
-    p.root.call_tool('progression_command', dict(command='pause'))
-    p.root.call_tool('progression_command', dict(command='start', mode='background', objective_name='goal'))
-    next_turn(p)
-    assert row(p)['state'] == 'active'
-    assert checkpoint(p)['rounds'] == before['rounds'] + 1
-    assert notice(p)['id'] == old['id'] and notice(p)['reassessments'] == old['reassessments']
-    assert checkpoint(p)['human_handoff']['state'] == 'delivered'
-    root = p.root.__class__(p.facade(p.coordinator.host.scheduler_session))
-    with pytest.raises(Exception, match='handoff_consumption_only'):
-        root.call_tool('operation_invoke', request('no-extra-task-during-handoff'))
-    p.coordinator.host.finish()
-    next_turn(p)
-    assert checkpoint(p)['human_handoff']['state'] == 'completed'
-    assert notice(p)['state'] == ('resolved' if new_evidence else 'exhausted')
-    assert row(p)['state'] == ('active' if new_evidence else 'paused')
-    assert notice(p)['reassessments'] == old['reassessments']
-
-
-def test_human_handoff_cannot_expand_native_round_budget(human_ui):
+def test_result_delivery_cannot_expand_native_round_budget(human_ui):
     ui, p = human_ui, human_ui.p
     assert submit(ui) == 303
     finish_changed(p, p.root, 'unconsumed-result')
@@ -373,26 +318,8 @@ def test_human_handoff_cannot_expand_native_round_budget(human_ui):
     next_turn(p)
     assert row(p)['reason'] == 'budget_exhausted'
     assert checkpoint(p)['rounds'] == limits['max_rounds']
-    assert checkpoint(p)['human_handoff']['state'] == 'prepared'
     assert not p.coordinator.host.prompts
     assert notice(p) == frozen
-
-
-def test_interactive_pending_admission_has_a_reachable_ui_exit(human_ui):
-    ui, p = human_ui, human_ui.p
-    progress = correction_state(p)
-    progress['assist'] = []  # The existing consumed causes precede any native brief.
-    with p.runtime.scheduler_bindings._connect() as db:
-        db.execute('UPDATE scheduler_progress_shadow SET state_json=? WHERE instance_id=?',
-            (json.dumps(progress), p.instance))
-    p.root.call_tool('progression_command', dict(command='takeover'))
-    with pytest.raises(Exception, match='management UI'):
-        p.root.call_tool('operation_invoke', request('prepared-needs-human-confirmation'))
-    assert notice(p)['state'] == 'prepared'
-    p.root.call_tool('progression_command', dict(command='pause'))
-    assert submit(ui, confirmation_binding=fresh_binding(ui)) == 303
-    finish(p, p.root, 'confirmed-human-task')
-    assert notice(p)['state'] == 'prepared' and notice(p)['reassessments'] == 0
 
 
 @pytest.mark.parametrize('bad', ['csrf', 'capability', 'instance_id', 'confirmation_binding', 'confirm_independent_interactive'])
@@ -426,32 +353,6 @@ def test_independent_scope_survives_archive_without_reactivating(human_ui):
     assert row(p)['state'] == 'paused'
 
 
-def test_independent_result_after_full_background_allowance_remains_observable(human_ui):
-    ui, p = human_ui, human_ui.p
-    assert submit(ui) == 303
-    limit = json.loads(row(p)['config_json'])['effective']['progression']['max_tasks']
-    for index in range(len(checkpoint(p)['admissions']), limit):
-        finish(p, p.root, f'old-allowance-{index}')
-    p.root.call_tool('progression_command', dict(command='pause'))
-    p.root.call_tool('progression_command', dict(command='start', mode='background', objective_name='goal'))
-    next_turn(p)
-    p.coordinator.host.finish()
-    next_turn(p)
-    p.coordinator.tick()
-    assert status(p)['progress_shadow']['counts']['consumed'] == limit
-    assert independent(ui) == 303
-    finish_changed(p, p.root, 'independent-new-evidence')
-    assess(p.root, 'independent-new-evidence')
-    p.root.call_tool('progression_command', dict(command='pause'))
-    p.root.call_tool('progression_command', dict(command='start', mode='background', objective_name='goal'))
-    next_turn(p)
-    assert checkpoint(p)['budget']['tasks'] == limit
-    p.coordinator.host.finish()
-    next_turn(p)
-    assert notice(p)['state'] == 'resolved'
-    assert status(p)['progress_shadow']['counts']['consumed'] == limit + 1
-
-
 def test_native_usage_reused_across_scopes_keeps_each_observed_delta(progression, monkeypatch):
     p = progression
     active(p)
@@ -472,44 +373,25 @@ def test_native_usage_reused_across_scopes_keeps_each_observed_delta(progression
 
 
 @pytest.mark.parametrize('mode', ['shadow', 'off'])
-def test_ordinary_shadow_and_off_interactive_behavior_does_not_gain_assist_budget_gate(paused, mode):
-    p = paused
+def test_ordinary_shadow_and_off_interactive_behavior_does_not_gain_assist_budget_gate(progression, mode):
+    p = progression
     config = json.loads(row(p)['config_json'])
-    config['effective']['progression'].update(progress_mode=mode, max_tasks=len(checkpoint(p)['admissions']))
+    config['effective']['progression'].update(progress_mode=mode, max_tasks=len(checkpoint(p).get('admissions', {})))
     with p.runtime.scheduler_bindings._connect() as db:
         db.execute('UPDATE scheduler_progression SET config_json=? WHERE instance_id=?', (json.dumps(config), p.instance))
     p.root.call_tool('progression_command', dict(command='takeover'))
     finish(p, p.root, 'ordinary-interactive')
-    assert 'ordinary-interactive' not in checkpoint(p)['admissions']
+    assert 'ordinary-interactive' not in checkpoint(p).get('admissions', {})
     assert not status(p)['interactive_session']['active']
 
 
-def test_independent_human_evidence_can_resolve_a_never_submitted_candidate(human_ui):
-    ui, p = human_ui, human_ui.p
-    progress = correction_state(p)
-    episode = progress['assist'][-1]
-    episode.update(state='prepared', reassessments=0)
-    episode.pop('delivered')
-    with p.runtime.scheduler_bindings._connect() as db:
-        db.execute('UPDATE scheduler_progress_shadow SET state_json=? WHERE instance_id=?',
-            (json.dumps(progress), p.instance))
-    assert independent(ui) == 303
-    finish_changed(p, p.root, 'independent-prepared-result')
-    assess(p.root, 'independent-prepared-result')
-    p.root.call_tool('progression_command', dict(command='pause'))
-    p.root.call_tool('progression_command', dict(command='start', mode='background', objective_name='goal'))
-    next_turn(p)
-    assert notice(p)['state'] == 'prepared' and notice(p)['reassessments'] == 0
-    p.coordinator.host.finish()
-    next_turn(p)
-    assert notice(p)['state'] == 'resolved' and notice(p)['reassessments'] == 0
-
-
 @pytest.mark.parametrize('next_work', ['ordinary', 'requested_review'])
-def test_resolved_handoff_uses_background_scope_at_real_preflight_and_creation(human_ui, next_work):
+def test_manual_tasks_keep_background_scope_at_real_preflight_and_creation(human_ui, next_work):
     from tests.operations.test_local_worker_contracts import _worker, _write_result
     from tests.operations.worker_fixtures import attached_worker
     ui, p = human_ui, human_ui.p
+    assert submit(ui) == 303
+    p.root.call_tool('progression_command', dict(command='pause'))
     assert independent(ui) == 303
     manual_count = 5 if next_work == 'ordinary' else 4
     for index in range(manual_count):
@@ -528,7 +410,7 @@ def test_resolved_handoff_uses_background_scope_at_real_preflight_and_creation(h
     next_turn(p)
     p.coordinator.host.finish()
     next_turn(p)
-    assert notice(p)['state'] == 'resolved'
+    assert notice(p)['window_start_sequence'] == 3
     root = p.root.__class__(p.facade(p.coordinator.host.scheduler_session))
     if next_work == 'ordinary':
         # The raw history already contains eight tasks, but only three belong to
@@ -569,117 +451,3 @@ def test_resolved_handoff_uses_background_scope_at_real_preflight_and_creation(h
     wait = p.runtime.runs.review_wait(owner_id)
     assert wait['state'] == 'running'
     assert wait['reviewer_run_id'] == bindings.resolve(instance=p.instance, namespace='run', name=review['name'])
-
-
-def start_human_handoff(ui):
-    p = ui.p
-    assert submit(ui) == 303
-    finish(p, p.root, 'human-handoff-result')
-    p.root.call_tool('progression_command', dict(command='pause'))
-    p.root.call_tool('progression_command', dict(command='start', mode='background', objective_name='goal'))
-    next_turn(p)
-    assert checkpoint(p)['human_handoff']['state'] == 'delivered'
-    return p.coordinator.host
-
-
-@pytest.mark.parametrize('terminal,path', [('failed', 'active'), ('interrupted', 'active'), ('interrupted', 'paused')])
-@pytest.mark.parametrize('human_path', ['continue', 'independent'])
-def test_failed_handoff_releases_only_confirmed_attempt_for_ui_and_mcp(human_ui, terminal, path, human_path):
-    ui, p = human_ui, human_ui.p
-    host = start_human_handoff(ui)
-    before = checkpoint(p)
-    if path == 'paused':
-        p.root.call_tool('progression_command', dict(command='pause'))
-        p.coordinator.tick()
-        assert submit(ui, confirmation_binding=fresh_binding(ui)) == 409
-    host.completion = dict(id=host.turn_id, status=terminal)
-    p.coordinator.tick()
-    p.coordinator.tick()
-    assert row(p)['host_json'] is None
-    assert checkpoint(p)['human_handoff']['state'] == terminal
-    assert checkpoint(p)['rounds'] == before['rounds']
-    assert notice(p)['reassessments'] == 1
-    assert (independent(ui) if human_path == 'independent' else
-        submit(ui, confirmation_binding=fresh_binding(ui))) == 303
-    assert p.root.call_tool('operation_preflight', request('after-failed-handoff'))['admissible']
-    finish(p, p.root, 'after-failed-handoff')
-
-
-@pytest.mark.parametrize('barrier', ['unknown_turn', 'wrong_turn', 'unknown_admission'])
-def test_handoff_failure_requires_exact_resolved_native_boundary(human_ui, barrier):
-    ui, p = human_ui, human_ui.p
-    host = start_human_handoff(ui)
-    if barrier == 'unknown_turn':
-        save_checkpoint(p, phase='prepared', turn_id=None,
-            human_handoff=dict(checkpoint(p)['human_handoff'], state='submitted_unknown'), fault_class='outcome_unknown')
-    elif barrier == 'unknown_admission':
-        save_checkpoint(p, admissions={**checkpoint(p)['admissions'], 'uncertain': dict(
-            state='prepared', logical_name='uncertain', revision=1, request_fingerprint='unknown')})
-    host.completion = dict(id='wrong-turn' if barrier == 'wrong_turn' else host.turn_id, status='interrupted')
-    p.root.call_tool('progression_command', dict(command='pause'))
-    if barrier == 'wrong_turn':
-        with pytest.raises(Exception, match='identity mismatch'):
-            p.coordinator.tick()
-        assert row(p)['host_json'] is not None
-    else:
-        p.coordinator.tick()
-    assert submit(ui, confirmation_binding=fresh_binding(ui)) == 409
-    assert independent(ui) == 409
-    assert checkpoint(p)['human_handoff']['state'] == {
-        'unknown_turn': 'submitted_unknown', 'wrong_turn': 'delivered', 'unknown_admission': 'interrupted'}[barrier]
-
-
-@pytest.mark.parametrize('exhausted', [False, True])
-def test_handoff_recovery_reconsumes_only_with_original_budget(human_ui, exhausted):
-    from tests.operations.test_progression import restore_terminal_host
-    ui, p = human_ui, human_ui.p
-    start_human_handoff(ui)
-    if exhausted:
-        limits = json.loads(row(p)['config_json'])['effective']['progression']
-        save_checkpoint(p, attempts=limits['max_attempts']-1)
-    before = checkpoint(p)
-    restore_terminal_host(p, 'interrupted')
-    p.coordinator.tick()
-    after = checkpoint(p)
-    assert after['attempts'] == before['attempts'] + 1
-    assert after['admissions'] == before['admissions']
-    assert notice(p)['reassessments'] == 1
-    assert after['started_at'] == before['started_at']
-    if exhausted:
-        assert row(p)['state'] == 'paused'
-        assert not p.coordinator.host.prompts
-        assert after['rounds'] == before['rounds']
-        p.coordinator.tick()
-        assert submit(ui, confirmation_binding=fresh_binding(ui)) == 409
-        assert independent(ui) == 303
-        finish(p, p.root, 'independent-after-exhausted-handoff')
-    else:
-        assert after['rounds'] == before['rounds'] + 1
-        assert after['human_handoff']['state'] == 'delivered'
-        assert len(p.coordinator.host.prompts) == 1
-        p.coordinator.host.finish()
-        next_turn(p)
-        assert checkpoint(p)['human_handoff']['state'] == 'completed'
-
-
-def test_failed_human_terminal_gets_consumption_without_scientific_output(human_ui):
-    ui, p = human_ui, human_ui.p
-    assert submit(ui) == 303
-    p.root.call_tool('operation_invoke', request('failed-human-task'))
-    identity = p.runtime.scheduler_bindings.resolve(instance=p.instance, namespace='run', name='failed-human-task')
-    p.runtime.runs.fail(identity, reason='Confirmed local failure')
-    assert p.root.call_tool('run_status', dict(name='failed-human-task'))['state'] == 'failed'
-    before = status(p)['progress_shadow']['counts']
-    p.root.call_tool('progression_command', dict(command='pause'))
-    p.root.call_tool('progression_command', dict(command='start', mode='background', objective_name='goal'))
-    next_turn(p)
-    assert checkpoint(p)['human_handoff']['state'] == 'delivered'
-    assert checkpoint(p)['human_handoff']['tasks'] == ['failed-human-task']
-    p.coordinator.host.finish()
-    next_turn(p)
-    after = status(p)['progress_shadow']['counts']
-    assert after['consumed'] == before['consumed'] + 1
-    assert after['no_progress'] == before['no_progress']
-    assert p.runtime.runs.status(identity).output_ref is None
-    deliveries = status(p)['terminal_deliveries']['items']
-    assert any(item['task_name'] == 'failed-human-task' and item['state'] == 'failed' for item in deliveries)

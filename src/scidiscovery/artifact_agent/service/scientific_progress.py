@@ -333,7 +333,7 @@ def shadow_policy(row):
     frozen = json.loads(row['config_json']).get('effective', {}).get('progression', {})
     defaults = ProgressionSettings().model_dump()
     keys = ('progress_mode', 'no_progress_threshold', 'refinement_threshold', 'observation_gap_threshold',
-        'progress_reassessment_limit', 'progress_pause_on_persistent_gap', 'max_tasks')
+        'max_tasks')
     policy = {key: frozen.get(key, defaults[key]) for key in keys}
     # Old goals must explicitly restart to adopt a newly introduced policy.
     if 'progress_mode' not in frozen:
@@ -397,10 +397,21 @@ def observation_facts(db, row, goal_key, policy, state):
     limit += sum(bool(item.get('interactive_session_id')) and item.get('objective_ref') ==
         json.loads(row['objective_ref_json']) for item in checkpoint.get('admissions', {}).values())
     exclusion = (' AND d.run_id NOT IN (' + ','.join('?' for _ in background) + ')') if background else ''
+    independent = {item['run_id']: item['interactive_session_id'] for item in
+        checkpoint.get('admissions', {}).values() if item.get('run_id') and item.get('interactive_session_id')}
+    current_scope = checkpoint.get('observation_scope_id', 'background')
+    selected = [run for run, scope_id in independent.items() if scope_id == current_scope]
+    if current_scope != 'background':
+        if not selected:
+            return [], False
+        exclusion += ' AND d.run_id IN (' + ','.join('?' for _ in selected) + ')'
+    elif independent:
+        selected = list(independent)
+        exclusion += ' AND d.run_id NOT IN (' + ','.join('?' for _ in selected) + ')'
     records = db.execute('SELECT f.fact_json FROM scheduler_terminal_deliveries d '
         'JOIN scheduler_progress_facts f USING(instance_id,goal_key,run_id) '
         'WHERE d.instance_id=? AND d.goal_key=? AND d.consumed_boundary IS NOT NULL' + exclusion +
-        ' ORDER BY d.sequence LIMIT ?', (row['instance_id'], goal_key, *background, limit + 1)).fetchall()
+        ' ORDER BY d.sequence LIMIT ?', (row['instance_id'], goal_key, *background, *selected, limit + 1)).fetchall()
     return [json.loads(item['fact_json']) for item in records[:limit]], len(records) > limit
 
 
@@ -450,9 +461,16 @@ def refresh_shadow(db, row, goal_key):
         (row['instance_id'], goal_key)).fetchone()
     prior = json.loads(previous['state_json']) if previous else {}
     facts, omitted = observation_facts(db, row, goal_key, policy, prior)
+    checkpoint = json.loads(dict(row).get('checkpoint_json', '{}'))
+    scope_id = checkpoint.get('observation_scope_id', 'background')
+    window_start = prior.get('window_starts', {}).get(scope_id, 0)
+    prior_through = prior.get('through_sequences', {}).get(scope_id, 0)
+    prior_facts, facts = [f for f in facts if f['sequence'] <= window_start], [f for f in facts if f['sequence'] > window_start]
     advances = []
     counts = reduce_shadow(facts, advances=advances, known_evidence=[item['output']
-        for item in prior.get('observation_scope', {}).get('background', {}).values() if item['output']])
+        for item in prior.get('observation_scope', {}).get('background', {}).values() if item['output']] +
+        [item['ref'] for fact in prior_facts if (fact.get('assessment') or {}).get('supported')
+            for item in fact['assessment'].get('evidence', [])])
     notices = prior.get('notices', [])
     dispositions = prior.get('dispositions', [])
     resolved = {item['notice_id'] for item in dispositions}
@@ -460,38 +478,31 @@ def refresh_shadow(db, row, goal_key):
         coverage_gap=policy['observation_gap_threshold'], unchanged_evidence=policy['observation_gap_threshold'],
         repeated_failure=policy['observation_gap_threshold'])
     for reason, threshold in thresholds.items():
-        active = next((item for item in reversed(notices) if item['reason'] == reason and item['id'] not in resolved), None)
+        active = next((item for item in reversed(notices) if item['reason'] == reason and item['id'] not in resolved
+            and item.get('scope_id', 'background') == scope_id
+            and item['policy']['progress_mode'] == policy['progress_mode']), None)
         # Only a newly consumed, supported advance can close a cause episode.
         # Late assessments update current counts, never withdraw old notices.
         if active and counts[reason] < threshold and any(
-                sequence > prior.get('through_sequence', 0) for sequence in advances):
+                sequence > max(window_start, active['through_sequence'], prior_through) for sequence in advances):
             dispositions.append(dict(notice_id=active['id'], state='new_evidence_after_trigger',
                 through_sequence=facts[-1]['sequence']))
             active = None
         if counts[reason] < threshold or active:
             continue
-        notices.append(dict(id=canonical_sha256(dict(goal=goal_key, reason=reason,
-            sequence=facts[-1]['sequence'])), reason=reason,
+        notices.append(dict(id=canonical_sha256(dict(goal=goal_key, scope=scope_id, reason=reason,
+            sequence=facts[-1]['sequence'])), reason=reason, scope_id=scope_id,
             trigger_counts=counts.copy(), policy=policy, through_sequence=facts[-1]['sequence'],
             task_names=[item['task_name'] for item in facts],
             assessment_refs=[item['assessment']['assessment_ref'] for item in facts if item.get('assessment')],
-            would_act='refinement_hint' if reason == 'refinement' else 'reassess_at_safe_boundary',
+            would_act='refinement_hint' if reason == 'refinement' else 'pause_dispatch',
             state='shadow_recorded', dispatch_changed=False))
-    assist = prior.get('assist', [])
-    if assist and assist[-1]['state'] not in {'resolved', 'withdrawn'}:
-        episode = assist[-1]
-        # Only a subsequent consumed scientific result ends a delivered episode.
-        # Corrections to the original trigger never refund its allowance.
-        checkpoint = json.loads(dict(row).get('checkpoint_json', '{}'))
-        human_episodes = {item.get('episode_id') for item in
-            checkpoint.get('human_continuations', []) + checkpoint.get('interactive_sessions', [])}
-        if ((episode.get('delivered') or episode['id'] in human_episodes)
-                and any(sequence > max(episode['snapshot']['through_sequence'],
-                prior.get('through_sequence', 0)) for sequence in advances)
-                and not _active_causes(counts, policy)):
-            episode.update(state='resolved', resolved_through=facts[-1]['sequence'])
-    state = dict(assist=assist, counts=counts, notices=notices, dispositions=dispositions, through_sequence=facts[-1]['sequence'] if facts else 0,
-        omitted=omitted)
+    state = dict(counts=counts, notices=notices, dispositions=dispositions,
+        through_sequence=max([window_start, *(fact['sequence'] for fact in facts)]),
+        window_start_sequence=window_start, window_starts=prior.get('window_starts', {}),
+        scope_id=scope_id, omitted=omitted)
+    state['through_sequences'] = dict(prior.get('through_sequences', {}),
+        **{scope_id: state['through_sequence']})
     if 'observation_scope' in prior:
         state['observation_scope'] = prior['observation_scope']
     encoded = json.dumps(state, sort_keys=True)
@@ -500,12 +511,6 @@ def refresh_shadow(db, row, goal_key):
             'ON CONFLICT(instance_id,goal_key) DO UPDATE SET state_json=excluded.state_json',
             (row['instance_id'], goal_key, encoded))
 
-
-
-def _active_causes(counts, policy):
-    return [reason for reason, threshold in dict(no_progress=policy['no_progress_threshold'],
-        coverage_gap=policy['observation_gap_threshold'], unchanged_evidence=policy['observation_gap_threshold'],
-        repeated_failure=policy['observation_gap_threshold']).items() if counts.get(reason, 0) >= threshold]
 
 
 def human_continuation_active(row, checkpoint):
@@ -525,148 +530,51 @@ def independent_interactive_active(row, checkpoint):
     if not records:
         return False
     consent = records[-1]
+    if (human_continuation_active(row, checkpoint) and
+            checkpoint['human_continuations'][-1].get('scope_id') == consent['id']):
+        return True
     return (row['state'] == 'active' and row['mode'] == 'interactive'
         and consent['generation'] == row['generation']
         and consent['session_key'] == row['owner_session']
         and consent['objective_ref_json'] == row['objective_ref_json'])
 
 
-def assist_transition(db, row, checkpoint, *, event, admission=None):
-    """Shared transaction for native receipts, admission and safe decision boundaries.
+def scientific_pause(db, row, checkpoint):
+    """Unresolved assist triggers are facts, shared by every dispatch entry."""
+    scope_id = checkpoint.get('observation_scope_id', 'background')
+    causes = []
+    for record in db.execute('SELECT goal_key,state_json FROM scheduler_progress_shadow WHERE instance_id=?',
+            (row['instance_id'],)):
+        state = json.loads(record['state_json'])
+        resolved = {item['notice_id'] for item in state.get('dispositions', [])}
+        causes.extend(dict(goal_key=record['goal_key'], id=item['id'], reason=item['reason'],
+            through_sequence=state.get('through_sequence', 0)) for item in state.get('notices', [])
+            if item['id'] not in resolved and item['reason'] != 'refinement'
+            and item['policy']['progress_mode'] == 'assist'
+            and item.get('scope_id', 'background') == scope_id)
+    return dict(scope_id=scope_id, causes=causes) if causes else None
 
-    One episode buys one decision turn and optionally one accepted complete task.
-    The task's terminal delivery gets a result-consumption turn, never another task
-    allowance. Submitted-unknown versions stay frozen and use native recovery.
-    """
-    policy = shadow_policy(row)
-    if policy['progress_mode'] != 'assist' or not row['objective_ref_json']:
-        return None
+
+def open_observation_window(db, row, checkpoint):
+    """UI decision moves only the consumed start; old triggers remain immutable."""
     goal_key = canonical_sha256(json.loads(row['objective_ref_json']))
+    scope_id = checkpoint.get('observation_scope_id', 'background')
     record = db.execute('SELECT state_json FROM scheduler_progress_shadow WHERE instance_id=? AND goal_key=?',
         (row['instance_id'], goal_key)).fetchone()
-    if not record:
-        return None
-    state = json.loads(record['state_json'])
-    if 'counts' not in state:
-        return None
-    original = canonical_json(state)
-    episodes = state.setdefault('assist', [])
-    episode = episodes[-1] if episodes and episodes[-1]['state'] not in {'resolved', 'withdrawn'} else None
-    handoff = checkpoint.get('human_handoff') or {}
-    if handoff.get('goal_key') == goal_key and handoff.get('state') in {'prepared', 'submitted_unknown', 'delivered'}:
-        if event == 'admission':
-            return 'scientific_progress_handoff_consumption_only'
-        if event == 'submit':
-            handoff['state'] = 'submitted_unknown'
-        if event == 'confirm' and checkpoint.get('turn_id'):
-            handoff.update(state='delivered', turn_id=checkpoint['turn_id'],
-                host=json.loads(row['host_json'] or 'null'))
-        if event == 'turn_completed' and handoff.get('turn_id') == checkpoint.get('turn_id'):
-            handoff['state'] = 'completed'
-        else:
-            return None
-    if (event == 'admission' and (independent_interactive_active(row, checkpoint)
-            or human_continuation_active(row, checkpoint))
-            and (not episode or episode['state'] != 'submitted_unknown')):
-        # A human control decision is not new evidence or another reassessment.
-        return None
-    causes = _active_causes(state['counts'], policy)
-    candidate = None
-    if event in {'prepare', 'admission', 'submit', 'confirm'}:
-        # Current consumed facts, not the immutable historical shadow triggers.
-        evidence, omitted = observation_facts(db, row, goal_key, policy, state)
-        candidate = dict(causes=causes, counts=state['counts'].copy(), policy=policy,
-            through_sequence=state['through_sequence'], task_names=[item['task_name'] for item in evidence],
-            terminal_evidence=[dict(task_name=item['task_name'], output=item['terminal'].get('output'))
-                for item in evidence],
-            assessment_refs=[item['assessment']['assessment_ref'] for item in evidence if item.get('assessment')],
-            omitted=omitted)
-    if (episode and episode['state'] == 'prepared' and candidate is not None
-            and canonical_sha256(candidate) != episode['candidate_version']):
-        episode.update(state='withdrawn', disposition='candidate_changed_before_submission')
-        episode = None
-    if event in {'prepare', 'admission'} and episode is None and causes:
-        episode = dict(id=canonical_sha256(dict(goal=goal_key, episode=len(episodes),
-            through=state['through_sequence'])), state='prepared', reassessments=0,
-            snapshot=candidate, candidate_version=canonical_sha256(candidate),
-            prepared_round=checkpoint.get('rounds', 0)+1)
-        episodes.append(episode)
-    if event == 'submit':
-        if episode is None or (episode['state'] == 'prepared' and checkpoint.get('progress_notice') != episode['id']):
-            db.execute('UPDATE scheduler_progress_shadow SET state_json=? WHERE instance_id=? AND goal_key=?',
-                (json.dumps(state), row['instance_id'], goal_key))
-            return 'scientific_progress_candidate_changed'
-        if episode['state'] == 'prepared':
-            # Durable before native turn/start. This version is now the exact
-            # attempted brief; receipt is still unknown and submission is never replayed.
-            episode.update(state='submitted_unknown', submitted_version=episode['candidate_version'])
-    if episode and event == 'confirm' and episode['state'] == 'submitted_unknown':
-        if (checkpoint.get('phase') == 'running' and checkpoint.get('turn_id')
-                and checkpoint.get('progress_notice') == episode['id']):
-            current = canonical_sha256(candidate) == episode['submitted_version']
-            episode.update(state='delivered' if current else 'withdrawn', reassessments=1 if current else 0,
-                delivered=dict(turn_id=checkpoint['turn_id'], round=checkpoint['rounds'],
-                    host=json.loads(row['host_json'] or 'null'), boundary='decision_brief',
-                    candidate_version=episode['submitted_version'],
-                    control_eligible=current, disposition='current' if current else 'changed_before_confirmation'))
-    if (episode and event == 'admission' and episode['state'] == 'submitted_unknown'
-            and checkpoint.get('progress_notice') == episode['id'] and not episode.get('task_name')):
-        episode['task_name'] = admission
-    if episode is None:
-        if canonical_json(state) != original:
-            db.execute('UPDATE scheduler_progress_shadow SET state_json=? WHERE instance_id=? AND goal_key=?',
-                (json.dumps(state), row['instance_id'], goal_key))
-        return None
-    if episode.get('delivered') and episode['state'] not in {'resolved', 'withdrawn'}:
-        task = episode.get('task_name')
-        accepted = checkpoint.get('admissions', {}).get(task, {}) if task else {}
-        consumed = (db.execute('SELECT consumed_boundary FROM scheduler_terminal_deliveries '
-            'WHERE instance_id=? AND goal_key=? AND run_id=?',
-            (row['instance_id'], goal_key, accepted.get('run_id'))).fetchone() if task else None)
-        if task and consumed and consumed['consumed_boundary']:
-            episode.update(state='exhausted', ended_at='adjusted_task_consumed')
-        elif event == 'turn_completed' and checkpoint.get('turn_id') == episode['delivered']['turn_id']:
-            episode.update(state='awaiting_result' if task else 'exhausted', ended_at='reassessment_turn_completed')
-        elif event == 'admission' and episode['state'] == 'delivered' and not task:
-            episode['task_name'] = admission
-    if canonical_json(state) != original:
-        db.execute('UPDATE scheduler_progress_shadow SET state_json=? WHERE instance_id=? AND goal_key=?',
-            (json.dumps(state), row['instance_id'], goal_key))
-    if episode['state'] == 'exhausted' and policy['progress_pause_on_persistent_gap']:
-        return 'scientific_progress_persistent_gap'
-    if event == 'admission' and episode['state'] == 'prepared':
-        return ('scientific_progress_reassessment_pending: ' + ', '.join(episode['snapshot']['causes'])
-            + ('. Pause and confirm human continuation in the management UI; '
-               if row['mode'] == 'interactive' else
-               '. End the current turn to receive the evidence and reassess at the next brief; ')
-            + 'do not create another ordinary task. Accepted work remains available.')
-    if event == 'admission' and episode.get('task_name') != admission and episode['state'] in {
-            'submitted_unknown', 'delivered', 'awaiting_result'}:
-        return 'scientific_progress_waiting_for_adjusted_task'
-    return None
-
-
-def assist_view(state):
-    episodes = state.get('assist', [])
-    if not episodes:
-        return dict(state='observing', reassessments=0)
-    episode = episodes[-1]
-    snapshot = episode['snapshot']
-    return dict(id=episode['id'], state=episode['state'], reassessments=episode['reassessments'],
-        causes=snapshot['causes'], trigger_counts=snapshot['counts'],
-        through_sequence=snapshot['through_sequence'], policy=snapshot['policy'],
-        task_names=snapshot['task_names'][-5:], task_names_omitted=max(0, len(snapshot['task_names'])-5),
-        assessment_count=len(snapshot['assessment_refs']), history_omitted=len(episodes)-1,
-        history_read=dict(tool='progression_status', delivery_limit=8, progress_limit=4),
-        original_reads=[dict(tool='run_status', name=name, intent='decision') for name in snapshot['task_names'][-5:]],
-        adjusted_task=episode.get('task_name'), delivery='confirmed' if episode.get('delivered') else 'unconfirmed',
-        delivery_disposition=(episode.get('delivered') or {}).get('disposition'),
-        control_eligible=(episode.get('delivered') or {}).get('control_eligible', False),
-        instruction='Reconsider the cited evidence and limitations. You may choose one complete adjusted task; '
-            'its result must support progress before further dispatch. A changed plan alone does not resolve the causes. '
-            'Scientific intent and assessments remain optional. In assist mode, missing them can count as '
-            'an observation gap and pause further dispatch. Novel cited bytes with a Root advance judgment '
-            'are not an independent determination of scientific progress.')
+    state = json.loads(record['state_json']) if record else {}
+    policy = shadow_policy(row)
+    facts, _ = observation_facts(db, row, goal_key, policy, state)
+    through = max([0, *(fact['sequence'] for fact in facts)])
+    resolved = {item['notice_id'] for item in state.get('dispositions', [])}
+    state.setdefault('dispositions', []).extend(dict(notice_id=item['id'], state='human_continue',
+        through_sequence=through) for item in state.get('notices', []) if item['id'] not in resolved
+        and item.get('scope_id', 'background') == scope_id)
+    state.setdefault('window_starts', {})[scope_id] = through
+    db.execute('INSERT INTO scheduler_progress_shadow VALUES(?,?,?) '
+        'ON CONFLICT(instance_id,goal_key) DO UPDATE SET state_json=excluded.state_json',
+        (row['instance_id'], goal_key, json.dumps(state)))
+    refresh_shadow(db, row, goal_key)
+    return through
 
 
 def shadow_projection(*, bindings, row):
@@ -676,7 +584,8 @@ def shadow_projection(*, bindings, row):
     scope = state.get('observation_scope', {})
     # Notice snapshots stay in the DB; the common public projection is bounded.
     return dict(mode=policy['progress_mode'], policy=policy, counts=state.get('counts', reduce_shadow([])),
-        assist=assist_view(state),
+        scope_id=state.get('scope_id', 'background'),
+        window_start_sequence=state.get('window_start_sequence', 0),
         notices=[{key: item[key] for key in ('id', 'reason', 'trigger_counts', 'through_sequence', 'would_act', 'state',
             'dispatch_changed')} for item in state.get('notices', [])[-5:]],
         notices_omitted=max(0, len(state.get('notices', []))-5),
