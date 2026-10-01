@@ -45,6 +45,12 @@ def accepted_before_pause(p, monkeypatch, *, review=False, before_pause=None, **
     if review:
         result(call(gateway, 'worker_attach', dict(name='accepted', thread_id='accepted-child'), session='native-root'))
         result(call(gateway, 'worker_open_assignment', child='accepted-child', session='native-root', profile=profile))
+        accepted_operation = p.catalog.operation('blind.csv.observe.v1')
+        accepted_worker = LocalWorkerMCPRouter(p.runtime.runs, operation_id=accepted_operation.spec.operation_id,
+            operation_digest=accepted_operation.digest, run_id=run_id, trusted_caller=('native-root', 'accepted-child'))
+        accepted_worker.call_tool('worker_open_assignment', {})
+        from tests.operations.research_loop_fixtures import measured_fixture_usage
+        measured_fixture_usage(accepted_worker)
         subject_id = p.runtime.scheduler_bindings.resolve(instance=p.instance, namespace='artifact', name='prior-2.output')
         review_request = dict(name='exact-review', operation_id='blind.csv.review.v1',
             inputs=[dict(port='csv_observation', artifact_names=['prior-2.output']),
@@ -74,7 +80,7 @@ def test_science_pause_allows_original_first_attach_and_failure_settlement(progr
 @pytest.mark.parametrize('frontend', [False, True])
 def test_science_pause_exact_review_public_creation_and_independent_attach(progression, monkeypatch, frontend):
     p = progression
-    root, gateway, run_id, profile = accepted_before_pause(p, monkeypatch, review=True)
+    root, gateway, run_id, profile = accepted_before_pause(p, monkeypatch, review=True, max_tasks=4)
     platform = 'native-root'
     if frontend:
         root = type(root)(p.facade(p.user))
@@ -195,7 +201,7 @@ def test_science_pause_rejects_mismatched_dependency_session_and_instance(progre
     from scidiscovery.artifact_agent.interfaces.mcp_root import OperationCallInput
     parsed = OperationCallInput.model_validate(req)
     bound, _ = root.facade._configured_operation_call({field: getattr(parsed, field) for field in type(parsed).model_fields})
-    with pytest.raises(Exception, match='scientific_progress_persistent_gap'):
+    with pytest.raises(Exception, match='operation_contract_unavailable'):
         p.runtime.runs.validate_admission(replace(bound, compiled=replace(bound.compiled, digest='another-version')),
             instance_id=p.instance)
     stranger = 'sch_' + 'd' * 32
@@ -242,12 +248,12 @@ def test_science_pause_continuation_cannot_override_explicit_controls_or_unknown
     assert row(p)['generation'] == before['generation']
 
 
-def test_exact_review_still_spends_original_task_and_model_round_budgets(progression, monkeypatch):
+def test_exact_review_still_faces_review_and_model_round_budgets(progression, monkeypatch):
     p = progression
-    root, gateway, run_id, profile = accepted_before_pause(p, monkeypatch, review=True, max_tasks=4, max_rounds=1)
+    root, gateway, run_id, profile = accepted_before_pause(p, monkeypatch, review=True, max_tasks=4, max_reviews=0, max_rounds=1)
     req = p.runtime.runs.review_wait(run_id)['request']
     check = root.call_tool('operation_preflight', req)
-    assert not check['admissible'] and check['reason_code'] == 'background_task_budget_exhausted'
+    assert not check['admissible'] and check['reason_code'] == 'independent_review_budget_exhausted'
     with pytest.raises(Exception):
         root.call_tool('operation_invoke', req)
     before = checkpoint(p)

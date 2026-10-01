@@ -175,7 +175,8 @@ def test_human_confirmation_and_admission_preserve_budget_and_unknown_barriers(h
         cost['loop_id'] = checkpoint(p)['current_loop_id']
         save_checkpoint(p, usage_records={'native-root': cost})
     elif barrier == 'admission':
-        save_checkpoint(p, admissions={**checkpoint(p)['admissions'], 'uncertain': dict(state='prepared', loop_id=checkpoint(p)['current_loop_id'])})
+        save_checkpoint(p, admissions={**checkpoint(p)['admissions'], 'uncertain': dict(state='prepared',
+            loop_id=checkpoint(p)['current_loop_id'], task_classification=dict(kind='research'))})
     else:
         save_checkpoint(p, phase='prepared', turn_id=None, fault_class='outcome_unknown')
     with pytest.raises(Exception, match='budget|submission|admission'):

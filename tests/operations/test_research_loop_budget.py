@@ -327,7 +327,7 @@ def test_two_loops_on_one_goal_preserve_and_observe_the_last_new_result(loop_ui)
         [(item['task_name'], item['sequence'], item['consumed_boundary']) for item in facts],
         view['progress_shadow']['window_start_sequence'],
         [item['config']['effective']['progression']['max_tasks'] for item in checkpoint(p)['loop_authorizations'].values()])
-    assert view['progress_shadow']['observation_scope']['max_observed_tasks'] == 1
+    assert view['progress_shadow']['observation_scope']['max_observed_tasks'] == 3
     assert p.root.call_tool('run_status', dict(name='later'))['state'] == 'completed'
     assert len(checkpoint(p)['loop_authorizations']) == 2
 

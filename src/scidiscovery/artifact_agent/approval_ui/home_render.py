@@ -105,6 +105,7 @@ def session_controls(rows, *, token, csrf, current=None, expires_at=None, workbe
             body += ("<details data-loop-authorization><summary>明确授权新的研究 loop 预算</summary>"
                 "<p>本次授权冻结以下额度与配置；容量上限不是自动授权。授权后仍保持暂停，请再启动所选目标。"
                 "交互、后台、换目标和人工继续共享此 loop；恢复不续额。实例执行池继续累计。"
+                "研究名额与精确独立审查名额分别冻结；审查名额不挪用研究名额，审查及 helper 用量仍计总预算。"
                 "旧任务与迟到用量归原 loop；活动／未知工作及原生宿主真实用量缺口会阻止创建。"
                 "前台 Root、Worker 和 helper 尚未接入原生遥测；strict 拒绝缺测时新增工作，"
                 "bounded_fallback 按任务、时间和已知 tokens 限额继续，保留 missing／partial，不能保证全角色 token 硬封顶。"

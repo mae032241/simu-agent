@@ -478,7 +478,8 @@ class ProgressionCoordinator:
         from .progression_budget import enabled_time
         remaining = max(0, self._limits['max_elapsed_seconds'] - enabled_time(checkpoint, self.clock()))
         self._goal_deadline = self.clock() + remaining
-        if settings['progression']['max_tasks'] * (1 + settings['helpers']['max_calls']) + settings['progression']['max_rounds'] > 64:
+        from ...agent_execution_settings import progression_usage_capacity
+        if progression_usage_capacity(settings) > 64:
             raise ProgressionFault('configured_usage_attribution_capacity')
         if checkpoint.get('attempts', 0) >= settings['progression']['max_attempts']:
             self.bindings.observe_progression(instance_id=self.instance, expected_host=json.loads(row['host_json'] or 'null'),
@@ -851,7 +852,7 @@ class ProgressionCoordinator:
         exhausted = elapsed >= limits['max_elapsed_seconds']
         exhausted |= allow_round and checkpoint.get('rounds', 0) >= limits['max_rounds']
         exhausted |= checkpoint.get('attempts', 0) >= limits['max_attempts']
-        from .research_loops import current_loop, loop_usage
+        from .research_loops import current_loop, loop_usage, loop_task_budget
         records = loop_usage(checkpoint)
         tokens = sum(sum(v['counted_tokens'][key] for key in ('input_tokens', 'output_tokens')) for v in records.values())
         exhausted |= tokens >= limits['max_tokens']
@@ -876,7 +877,7 @@ class ProgressionCoordinator:
             root_running_seconds=running, waiting_seconds=max(0, elapsed-running),
             time_coverage='enabled_intervals_including_active_recovery_gaps',
             probes=checkpoint.get('probes', 0), attempts=checkpoint.get('attempts', 0),
-            tasks=background_task_count(checkpoint),
+            **loop_task_budget(checkpoint, limits),
             observed_tokens=tokens, limits=limits,
             **token_budget(checkpoint, limits),
             token_coverage=coverage, token_enforcement='asynchronous_observation; time_and_round_limits_apply')

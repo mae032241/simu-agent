@@ -117,6 +117,7 @@ class ProgressionSettings(SettingsValue):
     enabled: bool = True
     max_rounds: int = Field(default=12, ge=1, le=100)
     max_tasks: int = Field(default=8, ge=1, le=100)
+    max_reviews: int = Field(default=2, ge=0, le=100)
     # Bounds the still-hydrated scope history; every scope needs separate UI consent.
     max_loop_scopes: int = Field(default=8, ge=1, le=64)
     max_elapsed_seconds: int = Field(default=3600, ge=1)
@@ -177,6 +178,13 @@ def root_permission_conflicts(progression: dict, catalog) -> list[str]:
         issues.append("root_network_access false removes network from Workers that inherit Root "
                       "permissions (declared network or web_search): " + ", ".join(network))
     return issues
+
+
+def progression_usage_capacity(settings: dict) -> int:
+    """Every task, including review, may use its frozen helper allowance."""
+    limits = settings['progression']
+    return ((limits['max_tasks'] + limits['max_reviews']) *
+        (1 + settings['helpers']['max_calls']) + limits['max_rounds'])
 
 class PresentationSettings(SettingsValue):
     """Opt-in, serial post-seal copy editing; never scientific admission."""

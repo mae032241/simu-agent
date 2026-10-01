@@ -92,6 +92,7 @@ def observe_deliveries(db, row, checkpoint, *, boundary=None):
                 (row['instance_id'], goal_key, item['run_id'])).fetchone()
             _update_fact(db, row['instance_id'], goal_key, item['run_id'], dict(
                 sequence=delivery['sequence'], task_name=item['name'], terminal=item['terminal'],
+                task_classification=item['terminal'].get('task_classification'),
                 intent=item.get('scientific_intent'), delivery=item['delivery']))
             changed = True
     if changed:
@@ -109,7 +110,7 @@ def terminal_delivery_view(records):
 def terminal_fact(runs, value):
     """Freeze trusted machine diagnostics; failure prose is explanation only."""
     terminal = dict(state=value.state, output=value.output_ref.model_dump(mode='json') if value.output_ref else None,
-        reason=value.reason)
+        reason=value.reason, task_classification=(value.recovery_policy or {}).get('task_classification'))
     if value.state in {'failed', 'timed_out'}:
         failure = runs.diagnostic_summary(value).get('failure') or {}
         terminal['failure_key'] = (dict(operation_id=value.operation_id, operation_digest=value.operation_digest,
@@ -333,7 +334,7 @@ def shadow_policy(row):
     frozen = json.loads(row['config_json']).get('effective', {}).get('progression', {})
     defaults = ProgressionSettings().model_dump()
     keys = ('progress_mode', 'no_progress_threshold', 'refinement_threshold', 'observation_gap_threshold',
-        'max_tasks')
+        'max_tasks', 'max_reviews')
     policy = {key: frozen.get(key, defaults[key]) for key in keys}
     # Old goals must explicitly restart to adopt a newly introduced policy.
     if 'progress_mode' not in frozen:
@@ -379,7 +380,7 @@ def freeze_observation_scope(db, row, reader, bindings):
     # task admission allowance. No moving window can make old bytes novel again.
     state['observation_scope'] = dict(background=background, relevant_runs=relevant,
         initial_observed=sorted(observed | ongoing),
-        max_observed_tasks=limits['max_tasks'] + len(observed | ongoing),
+        max_observed_tasks=limits['max_tasks'] + limits['max_reviews'] + len(observed | ongoing),
         related_omitted=bool(omitted or len(related) > 16))
     db.execute('INSERT INTO scheduler_progress_shadow VALUES(?,?,?) '
         'ON CONFLICT(instance_id,goal_key) DO UPDATE SET state_json=excluded.state_json',
@@ -396,7 +397,7 @@ def observation_facts(db, row, goal_key, policy, state):
         # Authorization extends the finite read capacity, never the scientific
         # window or a prior trigger. Include later loops on this same goal.
         limit = max(limit, len(scope.get('initial_observed', [])) + sum(
-            record['config']['effective']['progression']['max_tasks']
+            sum(record['config']['effective']['progression'][key] for key in ('max_tasks', 'max_reviews'))
             for record in checkpoint.get('loop_authorizations', {}).values()))
     exclusion = (' AND d.run_id NOT IN (' + ','.join('?' for _ in background) + ')') if background else ''
     selected = [item['run_id'] for item in checkpoint.get('admissions', {}).values()
@@ -418,6 +419,8 @@ def reduce_shadow(facts, *, advances=None, known_evidence=()):
     digests = {ref['sha256'] for ref in known_evidence}
     failure = None
     for fact in facts:
+        if (fact.get('task_classification') or {}).get('kind') == 'independent_review':
+            continue  # Delivery and assessment history remain; review is not a new exploration.
         counts['consumed'] += 1
         assessment = fact.get('assessment') or {}
         classification = assessment.get('classification', 'unknown')

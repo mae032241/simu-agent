@@ -334,9 +334,6 @@ class RootOperationRoutes:
         output_fingerprint = canonical_sha256(
             {"run_request": fingerprint, "output": "primary"}
         )
-        self.bindings.prepare_admission(instance_id=self._instance_id(), session_key=self.session_key,
-            name=target.name, logical_name=target.logical_name, revision=target.revision,
-            fingerprint=fingerprint, output_fingerprint=output_fingerprint, scientific_signature=scientific_signature)
         try:
             run_id = self.runs.schedule(
                 bound,
@@ -350,6 +347,8 @@ class RootOperationRoutes:
                 draft_digest=draft_digest,
                 max_attempts=max_attempts,
                 scientific_signature=scientific_signature,
+                admission_binding=dict(name=target.name, logical_name=target.logical_name,
+                    revision=target.revision, fingerprint=fingerprint, session_key=self.session_key),
             )
         except RunAttemptLimit as error:
             raise _attempt_limit_error(error) from error

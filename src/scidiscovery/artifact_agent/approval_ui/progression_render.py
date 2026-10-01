@@ -126,7 +126,10 @@ def render_progression(status, *, instance_id):
         body += '</ul><p>补充原文不恢复已暂停目标，也不授予审批或执行权限。</p>'
     budget = status.get('budget') or {}
     body += '<h3>预算、用量与缺测</h3><dl class="metadata">'
-    for key, label in (('rounds', '推进轮次'), ('tasks', '任务数'), ('attempts', '尝试数'), ('probes', '探测数'),
+    for key, label in (('rounds', '推进轮次'), ('tasks', '全部任务数'),
+            ('research_tasks', '研究任务数'), ('remaining_research_tasks', '剩余研究名额'),
+            ('independent_reviews', '精确独立审查数'), ('remaining_independent_reviews', '剩余独立审查名额'),
+            ('attempts', '尝试数'), ('probes', '探测数'),
             ('elapsed_seconds', '推进启用时间（秒）'), ('remaining_seconds', '剩余启用时间（秒）'), ('root_running_seconds', 'Root 运行时间（秒）'),
             ('waiting_seconds', '等待时间（秒）'), ('observed_tokens', '最新已观测 Token'),
             ('stop_snapshot_tokens', '首次止损时已观测 Token'),

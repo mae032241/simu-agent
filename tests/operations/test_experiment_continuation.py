@@ -36,6 +36,9 @@ def continuation(tmp_path, monkeypatch, solver="sprocess", *, all_stages=False, 
         invocation["require_execution_review"] = True
     if managed_loop:
         from tests.operations.research_loop_fixtures import authorize_loop
+        settings = runtime.scheduler_bindings.global_settings
+        runtime.scheduler_bindings.global_settings = settings.model_copy(update=dict(
+            progression=settings.progression.model_copy(update=dict(max_tasks=1))))
         user = 'sch_' + 'a' * 32
         runtime.scheduler_bindings.bind_session(session_key=user, instance_id=instance.instance_id)
         root.facade.session_key = user

@@ -18,11 +18,23 @@ def loop_usage(checkpoint, identity=None):
         if identity is None or record.get('loop_id') == identity}
 
 
-def loop_task_count(checkpoint, identity=None):
+def loop_task_count(checkpoint, identity=None, *, kind=None):
     identity = current_loop(checkpoint) if identity is None else identity
-    return sum(item.get('loop_id') == identity if identity is not None
-        else not item.get('interactive_session_id')
-        for item in checkpoint.get('admissions', {}).values())
+    selected = [item for item in checkpoint.get('admissions', {}).values()
+        if (item.get('loop_id') == identity if identity is not None else not item.get('interactive_session_id'))]
+    if identity is not None and any(item.get('task_classification', {}).get('kind') not in
+            {'research', 'independent_review'} for item in selected):
+        raise ValueError('Research loop task classification is missing; do not infer or reset its budget.')
+    return sum(kind is None or item.get('task_classification', {}).get('kind', 'research') == kind
+        for item in selected)
+
+
+def loop_task_budget(checkpoint, limits, identity=None):
+    research = loop_task_count(checkpoint, identity, kind='research')
+    reviews = loop_task_count(checkpoint, identity, kind='independent_review')
+    return dict(tasks=research + reviews, research_tasks=research, independent_reviews=reviews,
+        remaining_research_tasks=max(0, limits['max_tasks'] - research),
+        remaining_independent_reviews=max(0, limits['max_reviews'] - reviews))
 
 
 def loop_usage_summary(checkpoint, identity=None):
@@ -49,7 +61,7 @@ def sync_loop_balances(checkpoint, now):
         if identity == active:
             balance.update(rounds=checkpoint.get('rounds', 0), attempts=checkpoint.get('attempts', 0),
                 elapsed_seconds=enabled_time(checkpoint, now))
-        balance.update(tasks=loop_task_count(checkpoint, identity),
+        balance.update(**loop_task_budget(checkpoint, limits, identity),
             **token_budget(dict(checkpoint, current_loop_id=identity), limits),
             usage=loop_usage_summary(checkpoint, identity))
         record['budget_snapshot'] = balance

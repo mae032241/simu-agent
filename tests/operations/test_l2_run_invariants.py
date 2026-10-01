@@ -1629,12 +1629,27 @@ def test_unavailable_contract_preserves_latest_domain_files_and_reconciles(
     assert runtime.runs.status(run_id).recovery_draft["recovery_pending"]
 
 
-def test_draft_source_crosses_contract_but_verifies_files_and_original_budget(tmp_path: Path) -> None:
+@pytest.mark.parametrize('managed', [False, True])
+def test_draft_source_crosses_contract_but_verifies_files_and_original_budget(tmp_path: Path, managed) -> None:
     from scidiscovery.artifact_agent.service.run_records import RunStateConflict
 
     catalog, runtime, instance, _, root = _system(tmp_path)
+    if managed:
+        from tests.operations.research_loop_fixtures import authorize_loop
+        user = 'sch_' + 'a' * 32
+        runtime.scheduler_bindings.bind_session(session_key=user, instance_id=instance.instance_id)
+        root.facade.session_key = user
+        root.call_tool('artifact_ingest_text', dict(name='goal', text='Revalidate exact drafts under repaired contracts.'))
+        root.call_tool('progression_command', dict(command='pause'))
+        authorize_loop(runtime, instance.instance_id, user, 'goal')
+        root.call_tool('progression_command', dict(command='start', objective_name='goal'))
     _invoke(root, "draft_source")
-    opened = _worker(catalog, runtime).call_tool("worker_open_assignment", {})
+    if managed:
+        from tests.operations.worker_fixtures import attached_worker
+        worker = attached_worker(runtime, root, 'draft_source')
+    else:
+        worker = _worker(catalog, runtime)
+    opened = worker.call_tool("worker_open_assignment", {})
     Path(opened["output_directory"], "result.json").write_bytes(_envelope())
     run_id = runtime.scheduler_bindings.resolve(
         instance=instance.instance_id, namespace="run", name="draft_source")
@@ -1647,11 +1662,11 @@ def test_draft_source_crosses_contract_but_verifies_files_and_original_budget(tm
     compiled = new_catalog.operation(author.operation_id)
     assert compiled.digest != source.operation_digest
     runtime.runs.operation_catalog = new_catalog
+    digest = runtime.runs.validate_draft_source(run_id, compiled=compiled,
+                                               instance_id=instance.instance_id)
     with pytest.raises(RunStateConflict, match="digest differs"):
         runtime.runs.validate_resume(run_id, operation_digest=compiled.digest,
             input_refs=tuple(item.artifact_ref for item in source.inputs), max_attempts=9)
-    digest = runtime.runs.validate_draft_source(run_id, compiled=compiled,
-                                               instance_id=instance.instance_id)
     with pytest.raises(RunStateConflict, match="another instance"):
         runtime.runs.validate_draft_source(run_id, compiled=compiled, instance_id="other")
     recovery = runtime.runs.backend.root / "recovery" / digest / "result.json"
@@ -1666,12 +1681,14 @@ def test_draft_source_crosses_contract_but_verifies_files_and_original_budget(tm
         runtime.artifacts, runtime.intake, runs=runtime.runs, approvals=runtime.approvals,
         executions=runtime.executions, bindings=runtime.scheduler_bindings,
         instance=instance.instance_id, operation_catalog=new_catalog))
+    new_root.facade.session_key = root.facade.session_key
     request = {"name": "draft_successor", "operation_id": author.operation_id,
         "inputs": [{"port": "source_table", "artifact_names": ["source_csv"]}],
         "instruction": "Revalidate the draft under the new contract.", "draft_from": "draft_source"}
     assert new_root.call_tool("operation_preflight", request)["admissible"]
     new_root.call_tool("operation_invoke", request)
-    opened = _worker(new_catalog, runtime).call_tool("worker_open_assignment", {})
+    worker = attached_worker(runtime, new_root, 'draft_successor') if managed else _worker(new_catalog, runtime)
+    opened = worker.call_tool("worker_open_assignment", {})
     copied = Path(opened["workspace_path"], "recovery-draft", "result.json")
     assert copied.read_bytes() == _envelope()
     successor_id = runtime.scheduler_bindings.resolve(

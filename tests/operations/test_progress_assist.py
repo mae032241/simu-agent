@@ -134,7 +134,7 @@ def test_prestart_running_completion_before_host_is_observed_and_background_byte
     p = unmanaged_progression
     worker = historical_goal(p, pending=True)
     scope = correction_state(p)['observation_scope']
-    assert len(scope['initial_observed']) == 1 and scope['max_observed_tasks'] == 9
+    assert len(scope['initial_observed']) == 1 and scope['max_observed_tasks'] == 11
     _write_result(worker)
     worker.call_tool('worker_submit_result', {})  # after start, before host attaches
     root = active(p)

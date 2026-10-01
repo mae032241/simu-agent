@@ -18,9 +18,9 @@ from .scientific_progress import PROGRESS_SCHEMA
 from .progression_records import DETAIL_SCHEMA, hydrate_control_row, read_control_row, store_checkpoint
 from .maintenance import MaintenanceBusy
 from ..storage.control_io import control_io_nonblocking
-from .research_loops import current_loop, loop_usage, loop_task_count, loop_scope_view, sync_loop_balances, loop_usage_summary
+from .research_loops import current_loop, loop_usage, loop_task_count, loop_task_budget, loop_scope_view, sync_loop_balances, loop_usage_summary
 
-CONTROL_VERSION = 5
+CONTROL_VERSION = 6
 CONTROL_SCHEMA = """
 CREATE TABLE IF NOT EXISTS scheduler_progression (
     instance_id TEXT PRIMARY KEY REFERENCES scheduler_instances(instance_id),
@@ -117,7 +117,7 @@ def progression_status_view(value, *, session_key=None, now=None):
             time_coverage='enabled_intervals_including_active_recovery_gaps')
     if limits and (current_loop(checkpoint) or value['mode'] == 'background' or checkpoint.get('human_continuations')):
         from .progression_budget import token_budget
-        budget.update(tasks=background_task_count(checkpoint), rounds=checkpoint.get('rounds', 0),
+        budget.update(**loop_task_budget(checkpoint, limits), rounds=checkpoint.get('rounds', 0),
             attempts=checkpoint.get('attempts', 0))
         budget.update(token_budget(checkpoint, limits))
     return {key: value[key] for key in ('state', 'mode', 'reason', 'objective_name')} | {
@@ -228,7 +228,8 @@ def require_human_continuation_budget(row, checkpoint, *, now=None):
             '明确暂停和独立人工工作不计时；恢复不会重置额度。')
     exhausted = any(checkpoint.get(key, 0) >= limits['max_' + key]
         for key in ('rounds', 'attempts'))
-    exhausted |= background_task_count(checkpoint) >= limits['max_tasks']
+    exhausted |= (loop_task_count(checkpoint, kind='research') >= limits['max_tasks']
+        and loop_task_count(checkpoint, kind='independent_review') >= limits['max_reviews'])
     exhausted |= (resources.get('owned_tree_rss_bytes', 0) +
         (resources.get('control_daemon_rss_bytes') or 0)) >= limits['max_rss_bytes']
     exhausted |= limits['token_policy'] == 'strict' and loop_usage_summary(checkpoint)['coverage'] != 'observed'
@@ -245,7 +246,7 @@ def require_human_continuation_budget(row, checkpoint, *, now=None):
 
 
 def require_control_admission(db, row, checkpoint, *, session_key=None, continuation=None, reservation=None,
-                              now=None, schema='', background_busy=False, task=True):
+                              now=None, schema='', background_busy=False, task=True, task_kind='research'):
     """One frozen control decision for preflight, reservation and Run creation."""
     from .scientific_progress import scientific_pause, shadow_policy, independent_interactive_active
     from ...operations.invoke import OperationInvocationError
@@ -292,9 +293,13 @@ def require_control_admission(db, row, checkpoint, *, session_key=None, continua
     if any(item['state'] == 'prepared' for item in remaining.get('admissions', {}).values()):
         raise OperationInvocationError('background_admission_pending',
             message='A prior task admission is unresolved; reconcile it before creating more work.')
-    if task and background_task_count(remaining) >= limits['max_tasks']:
-        raise OperationInvocationError('background_task_budget_exhausted',
-            message='The frozen task budget is exhausted, including independent review tasks.')
+    if task:
+        limit = limits['max_reviews'] if task_kind == 'independent_review' else limits['max_tasks']
+        if loop_task_count(remaining, kind=task_kind) >= limit:
+            review = task_kind == 'independent_review'
+            raise OperationInvocationError('independent_review_budget_exhausted' if review else 'background_task_budget_exhausted',
+                message='The frozen independent review budget is exhausted; research slots cannot replenish it.' if review else
+                    'The frozen research task budget is exhausted; eligible independent review retains its separate allowance.')
     if not reserved:
         from .progression_budget import require_task_budget
         require_task_budget(checkpoint, limits)
@@ -566,7 +571,8 @@ class SchedulingControl:
             limits = config['effective']['progression']
             if len(records) >= limits['max_loop_scopes']:
                 conflict('Research loop history capacity reached; retain the original ledger until bounded history support is available.')
-            if limits['max_tasks'] * (1 + config['effective']['helpers']['max_calls']) + limits['max_rounds'] > 64:
+            from ...agent_execution_settings import progression_usage_capacity
+            if progression_usage_capacity(config['effective']) > 64:
                 conflict('Configured usage attribution capacity exceeds the current 64 identity protection.')
             now = self.control_now()
             sync_loop_balances(checkpoint, now)
@@ -607,7 +613,7 @@ class SchedulingControl:
         limits = json.loads(row['config_json']).get('effective', {}).get('progression')
         if not limits:
             return []  # Ordinary interactive work has no frozen background budget.
-        remaining = dict(tasks=max(0, limits['max_tasks'] - background_task_count(checkpoint)),
+        remaining = dict(**loop_task_budget(checkpoint, limits),
             rounds=max(0, limits['max_rounds'] - checkpoint.get('rounds', 0)),
             seconds=max(0, limits['max_elapsed_seconds'] - enabled_time(checkpoint, self.control_now())),
             tokens=token_budget(checkpoint, limits)['remaining_tokens'])
@@ -771,44 +777,47 @@ class SchedulingControl:
                 _LOCAL.continuation = inherited
 
     def prepare_admission(self, *, instance_id, session_key, name, logical_name, revision,
-                          fingerprint, output_fingerprint, scientific_signature):
-        with self.scheduling_guard(instance_id=instance_id, session_key=session_key), self._connect() as db:
-            row = read_control_row(db, instance_id)
-            checkpoint = json.loads(row['checkpoint_json'])
-            from .scientific_progress import shadow_policy, independent_interactive_active
-            independent = independent_interactive_active(row, checkpoint)
-            if row['mode'] != 'background' and shadow_policy(row)['progress_mode'] != 'assist' and not independent and not current_loop(checkpoint):
-                return
-            admissions = checkpoint.setdefault('admissions', {})
-            if name in admissions:
-                conflict('Prior task admission must be reconciled by exact identity; do not replay creation.')
-            from .scientific_progress import observe_deliveries, scientific_pause
-            from ...operations.invoke import OperationInvocationError
-            continuation = getattr(_LOCAL, 'continuation', None)
-            target = continuation[1] if continuation and continuation[0] == instance_id else None
-            require_control_admission(db, row, checkpoint, session_key=session_key or 'administrative',
-                continuation=target, now=self.control_now())
-            observe_deliveries(db, row, checkpoint, boundary='next_task_admission')
-            try:
-                completing = require_control_admission(db, row, checkpoint, session_key=session_key or 'administrative',
-                    continuation=target, now=self.control_now())
-            except OperationInvocationError as error:
-                if error.reason_code == 'scientific_progress_persistent_gap':
-                    self._pause_progress(db, row, checkpoint, scientific_pause(db, row, checkpoint))
-                    db.commit()  # Retain consumption and its cause despite rejected admission.
-                raise
-            admissions[name] = dict(logical_name=logical_name, revision=revision,
-                fingerprint=fingerprint, output_fingerprint=output_fingerprint, scientific_signature=scientific_signature,
-                objective_ref=json.loads(row['objective_ref_json']) if row['objective_ref_json'] else None, state='prepared')
-            if current_loop(checkpoint):
-                admissions[name]['loop_id'] = current_loop(checkpoint)
-                admissions[name]['usage_source'] = 'frontend_unconnected' if row['mode'] == 'interactive' else 'native_host'
-            if independent:
-                admissions[name]['interactive_session_id'] = checkpoint['interactive_sessions'][-1]['id']
-            value = store_checkpoint(db, instance_id, checkpoint)
-            db.execute('UPDATE scheduler_progression SET checkpoint_json=? WHERE instance_id=?', (value, instance_id))
-            if completing:
-                continuation[2] = (output_fingerprint, scientific_signature)
+                          fingerprint, output_fingerprint, scientific_signature, task_classification, connection,
+                          continuation=None):
+        """Prepare inside RunService's attached transaction; rejected creation rolls back."""
+        db = connection
+        row = read_control_row(db, instance_id)
+        checkpoint = json.loads(row['checkpoint_json'])
+        from .scientific_progress import shadow_policy, independent_interactive_active
+        independent = independent_interactive_active(row, checkpoint)
+        if row['mode'] != 'background' and shadow_policy(row)['progress_mode'] != 'assist' and not independent and not current_loop(checkpoint):
+            return
+        admissions = checkpoint.setdefault('admissions', {})
+        if name in admissions:
+            conflict('Prior task admission must be reconciled by exact identity; do not replay creation.')
+        from .scientific_progress import observe_deliveries, scientific_pause
+        from ...operations.invoke import OperationInvocationError
+        inherited = getattr(_LOCAL, 'continuation', None)
+        target = continuation or (inherited[1] if inherited and inherited[0] == instance_id else None)
+        require_control_admission(db, row, checkpoint, session_key=session_key,
+            continuation=target, now=self.control_now(), task_kind=task_classification['kind'])
+        observe_deliveries(db, row, checkpoint, boundary='next_task_admission')
+        try:
+            completing = require_control_admission(db, row, checkpoint, session_key=session_key,
+                continuation=target, now=self.control_now(), task_kind=task_classification['kind'])
+        except OperationInvocationError as error:
+            if error.reason_code == 'scientific_progress_persistent_gap':
+                self._pause_progress(db, row, checkpoint, scientific_pause(db, row, checkpoint))
+                db.commit()  # Retain consumption and its cause despite rejected admission.
+            raise
+        admissions[name] = dict(logical_name=logical_name, revision=revision,
+            fingerprint=fingerprint, output_fingerprint=output_fingerprint, scientific_signature=scientific_signature,
+            objective_ref=json.loads(row['objective_ref_json']) if row['objective_ref_json'] else None,
+            task_classification=task_classification, state='prepared')
+        if current_loop(checkpoint):
+            admissions[name]['loop_id'] = current_loop(checkpoint)
+            admissions[name]['usage_source'] = 'frontend_unconnected' if row['mode'] == 'interactive' else 'native_host'
+        if independent:
+            admissions[name]['interactive_session_id'] = checkpoint['interactive_sessions'][-1]['id']
+        value = store_checkpoint(db, instance_id, checkpoint)
+        db.execute('UPDATE scheduler_progression SET checkpoint_json=? WHERE instance_id=?', (value, instance_id))
+        if completing and inherited:
+            inherited[2] = (output_fingerprint, scientific_signature)
 
     def _pause_progress(self, db, row, checkpoint, pause):
         from .progression_budget import enabled_time

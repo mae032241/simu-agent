@@ -250,6 +250,7 @@ class RunService(ToolEvidenceMixin, RunAdmissionMixin):
         draft_digest: str | None = None,
         max_attempts: int | None = None,
         scientific_signature: str | None = None,
+        admission_binding: dict | None = None,
     ) -> str:
         if resume_from is not None and draft_from is not None:
             raise RunStateConflict("resume_from and draft_from are mutually exclusive")
@@ -347,6 +348,8 @@ class RunService(ToolEvidenceMixin, RunAdmissionMixin):
             for source_id in (resume_from, draft_from):
                 if source_id:
                     self._require_recovery_loop(connection, self._status_from_row(self._row(connection, source_id)))
+            classification = self.task_classification(compiled, raw_inputs, instance_id=instance_id, connection=connection)
+            recovery_policy['task_classification'] = classification
             frozen_inputs = self.current.freeze(connection, instance_id, raw_inputs,
                 compiled=compiled, origins=self.input_origins(instance_id))
             active_revision = active_direct_revision_ports(
@@ -434,6 +437,17 @@ class RunService(ToolEvidenceMixin, RunAdmissionMixin):
                     **({"scheduler_max_attempts": max_attempts} if max_attempts is not None else {}),
                 }
             )
+            binding = dict(admission_binding) if admission_binding else dict(name=bound.name,
+                logical_name=output_logical_name.removesuffix('.output'), revision=output_revision,
+                fingerprint=request_digest)
+            if control:
+                binding_session = binding.pop('session_key', control['owner_session'])
+                self.scheduler_bindings.prepare_admission(instance_id=instance_id, session_key=binding_session,
+                    **binding, output_fingerprint=output_binding_fingerprint,
+                    scientific_signature=scientific_signature, task_classification=classification, connection=connection,
+                    continuation=('run', review_owner) if review_owner else None)
+                control = read_control_row(connection, instance_id, schema='scheduler_control.')
+                checkpoint = json.loads(control['checkpoint_json'])
             try:
                 connection.execute(
                     """
@@ -479,19 +493,21 @@ class RunService(ToolEvidenceMixin, RunAdmissionMixin):
                 raise RunSlotBusy(
                     "this compiled Operation already has an unopened or running Run"
                 ) from error
-            if loop_id:
-                admissions = checkpoint.setdefault('admissions', {})
-                matches = [item for item in admissions.values() if item['output_fingerprint'] == output_binding_fingerprint
+            matches = [item for item in checkpoint.get('admissions', {}).values()
+                if item['output_fingerprint'] == output_binding_fingerprint
                     and item['state'] == 'prepared' and item.get('loop_id') == loop_id]
+            if loop_id or matches:
+                admissions = checkpoint.setdefault('admissions', {})
                 if len(matches) > 1 or (matches and matches[0].get('loop_id') != loop_id):
                     raise RunStateConflict('Task admission belongs to a different research loop; reconcile its exact original identity.')
-                admission = matches[0] if matches else admissions.setdefault(bound.name, dict(
+                admission = matches[0] if matches else admissions.setdefault(binding['name'], dict(
                     output_fingerprint=output_binding_fingerprint, scientific_signature=scientific_signature,
-                    logical_name=bound.name, revision=output_revision, loop_id=loop_id,
+                    logical_name=binding['logical_name'], revision=binding['revision'], loop_id=loop_id,
                     objective_ref=json.loads(control['objective_ref_json']) if control['objective_ref_json'] else None))
                 if admission.get('run_id') not in {None, run_id}:
                     raise RunStateConflict('Task admission is already accepted; do not replay it under another identity.')
                 admission.update(state='accepted', run_id=run_id)
+                admission['task_classification'] = classification
                 admission.setdefault('usage_source', 'frontend_unconnected' if control['mode'] == 'interactive' else 'native_host')
                 if matches:
                     admission['semantic_binding_pending'] = True
@@ -2060,9 +2076,34 @@ class RunService(ToolEvidenceMixin, RunAdmissionMixin):
         from .progression_records import read_control_row
         from .research_loops import current_loop
         control = read_control_row(connection, source.instance_id, schema='scheduler_control.')
-        identity = current_loop(json.loads(control['checkpoint_json'])) if control else None
+        checkpoint = json.loads(control['checkpoint_json']) if control else {}
+        identity = current_loop(checkpoint)
         if (source.recovery_policy or {}).get('loop_id') != identity:
             raise RunStateConflict('Recovery belongs to its original research loop; a new loop cannot replay the old task.')
+        if identity:
+            # Admission froze the original classification under its then-current
+            # contract. Draft reuse may cross a contract digest; do not reclassify
+            # the original work through today's catalog or change its allowance.
+            classification = (source.recovery_policy or {}).get('task_classification')
+            accepted = [item for item in checkpoint.get('admissions', {}).values()
+                if item.get('run_id') == source.run_id and item.get('loop_id') == identity
+                    and item.get('state') == 'accepted']
+            valid = isinstance(classification, dict)
+            kind = classification.get('kind') if valid else None
+            if kind == 'research':
+                valid = set(classification) == {'kind'}
+            elif kind == 'independent_review':
+                originals = [dict(port=item.port_name, ref=item.artifact_ref.model_dump(mode='json')) for item in source.inputs]
+                subjects = classification.get('subjects')
+                valid = (set(classification) == {'kind', 'operation_digest', 'subjects'}
+                    and classification.get('operation_digest') == source.operation_digest
+                    and isinstance(subjects, list) and bool(subjects)
+                    and all(item in originals for item in subjects))
+            else:
+                valid = False
+            if (not valid or len(accepted) != 1
+                    or accepted[0].get('task_classification') != classification):
+                raise RunStateConflict('Recovery must retain its control-frozen task classification; do not infer old review allowances.')
 
     def _verify_draft(self, source: RunStatus, digest: str) -> Any:
         manifest = source.recovery_draft

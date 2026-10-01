@@ -183,6 +183,9 @@ def test_background_review_wait_dispatch_complete_and_resume(tmp_path, monkeypat
         checkpoint=json.loads(f.runtime.scheduler_bindings.progression_status(
             instance_id=f.instance.instance_id, internal=True)['checkpoint_json'])
         assert request['name'] in checkpoint['admissions']
+        budget = f.runtime.scheduler_bindings.progression_status(instance_id=f.instance.instance_id)['budget']
+        assert budget['research_tasks'] == budget['independent_reviews'] == 1
+        assert budget['remaining_research_tasks'] == 0
     finally:
         coordinator.close()
 

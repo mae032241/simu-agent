@@ -12,6 +12,26 @@ from .run_records import RunStateConflict, timestamp
 
 
 class RunAdmissionMixin:
+    def task_classification(self, compiled, inputs, *, instance_id, connection=None):
+        """Compiled subject ports and verified authorship confer review status.
+
+        The actual reviewer is independently checked at native attachment. Names,
+        scientific intent and Root declarations do not affect this decision.
+        """
+        if connection is None:
+            with self._connect() as db:
+                return self.task_classification(compiled, inputs, instance_id=instance_id, connection=db)
+        contract = self.operation_catalog.operation(compiled.spec.operation_id)
+        if contract.digest != compiled.digest or contract.spec != compiled.spec:
+            raise OperationInvocationError('operation_contract_unavailable',
+                message='Task classification requires the current compiled contract; caller declarations cannot grant review allowances.')
+        authors = self.worker_connections.review_authors(connection, compiled, inputs, instance_id)
+        subjects = [dict(port=item.port_name, ref=item.artifact_ref.model_dump(mode='json'))
+            for item in inputs if item.port_name in compiled.spec.independent_review_ports]
+        if not subjects or not authors:
+            return dict(kind='research')
+        return dict(kind='independent_review', operation_digest=compiled.digest, subjects=subjects)
+
     def requested_review_owner(self, bound, *, instance_id, connection=None):
         if connection is None:
             with self._connect() as db:
@@ -51,8 +71,8 @@ class RunAdmissionMixin:
                 self._attach_scheduler(db)
                 return self.validate_admission(bound, instance_id=instance_id,
                     max_attempts=max_attempts, scientific_signature=scientific_signature, reserved_output_fingerprint=reserved_output_fingerprint, connection=db, session_key=session_key)
-        self.worker_connections.review_authors(connection, bound.compiled,
-            self._input_bindings(bound), instance_id)
+        classification = self.task_classification(bound.compiled, self._input_bindings(bound),
+            instance_id=instance_id, connection=connection)
         if connection.execute("SELECT 1 FROM runs WHERE operation_digest=? AND state IN ('queued','running') LIMIT 1",
                               (bound.compiled.digest,)).fetchone():
             raise OperationInvocationError("operation_busy",
@@ -74,7 +94,8 @@ class RunAdmissionMixin:
             continuation=('run', review_owner) if review_owner else None,
             reservation=(reserved_output_fingerprint, scientific_signature) if reserved_output_fingerprint else None,
             now=self.scheduler_bindings.control_now(), schema='scheduler_control.',
-            background_busy=bool(active and (len(active) != 1 or review_owner is None)))
+            background_busy=bool(active and (len(active) != 1 or review_owner is None)),
+            task_kind=classification['kind'])
         from .research_loops import current_loop
         if row['mode'] != 'background' and not current_loop(checkpoint):
             return review_owner
