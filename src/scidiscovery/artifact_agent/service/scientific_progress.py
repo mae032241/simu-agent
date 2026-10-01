@@ -221,6 +221,12 @@ def record_assessments(*, db, row, assessments, bindings, artifacts, runs):
         seen.add(run_id)
         value = runs.status(run_id)
         if run_id not in related:
+            from .progression_records import goal_admission_run
+            exact = goal_admission_run(db, row['instance_id'], assessment.task_name,
+                objective.model_dump(mode='json'), bindings=bindings)
+            if exact:
+                related.add(exact)
+        if run_id not in related:
             limits = json.loads(row['config_json']).get('effective', {}).get('progression', {})
             candidates, _ = runs.goal_related_runs(instance_id=row['instance_id'], artifact_ref=objective,
                 limit=101, source_limit=limits.get('related_source_limit', 128))

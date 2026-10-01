@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS worker_connections (
 );
 CREATE INDEX IF NOT EXISTS worker_connection_thread
     ON worker_connections(platform_session, thread_id);
+CREATE INDEX IF NOT EXISTS worker_usage_thread ON worker_connections(thread_id);
 """
 
 # Zero preserves unknown historical order; only accepted new bindings get a sequence.
@@ -41,6 +42,7 @@ CREATE TABLE IF NOT EXISTS worker_participants (
     UNIQUE(platform_session, thread_id)
 );
 CREATE INDEX IF NOT EXISTS worker_participant_run ON worker_participants(run_id);
+CREATE INDEX IF NOT EXISTS helper_usage_thread ON worker_participants(thread_id);
 """
 
 

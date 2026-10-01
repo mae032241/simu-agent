@@ -20,7 +20,7 @@ from .maintenance import MaintenanceBusy
 from ..storage.control_io import control_io_nonblocking
 from .research_loops import current_loop, loop_usage, loop_task_count, loop_task_budget, loop_scope_view, sync_loop_balances, loop_usage_summary
 
-CONTROL_VERSION = 6
+CONTROL_VERSION = 7
 CONTROL_SCHEMA = """
 CREATE TABLE IF NOT EXISTS scheduler_progression (
     instance_id TEXT PRIMARY KEY REFERENCES scheduler_instances(instance_id),
@@ -134,6 +134,12 @@ def progression_status_view(value, *, session_key=None, now=None):
         'human_continuation': human_continuation_view(value, checkpoint),
         'interactive_session': interactive_session_view(value, checkpoint),
         'loop': loop_scope_view(checkpoint),
+        'accounting_details': dict(scope='current_loop' if current_loop(checkpoint) else 'ordinary_interactive',
+            current_records_complete=True, historical_records_omitted={collection:
+                count - len(checkpoint.get(collection, {})) for collection, count in
+                checkpoint.get('_detail_projection', {}).get('counts', {}).items()
+                if collection in {'admissions', 'usage_records', 'interactive_usage_records'}},
+            historical_tasks_read=dict(tool='run_status', selector='exact_instance_name')),
         'notifications': {
             'items': checkpoint.get('notices', []),
             'current_id': checkpoint.get('current_notice') if value['reason'] != 'archive_restored' else None,
@@ -160,7 +166,9 @@ def human_continuation_view(row, checkpoint):
     return dict(active=human_continuation_active(row, checkpoint),
         authority='human_control_decision_not_scientific_evidence',
         history=[{key: record[key] for key in ('recorded_at', 'objective_name', 'prior_reason', 'causes', 'through_sequence', 'budget_snapshot')} for record in records[-8:]],
-        history_omitted=checkpoint.get('human_continuations_omitted', 0) + max(0, len(records)-8))
+        history_omitted=checkpoint.get('human_continuations_omitted', 0)
+            + checkpoint.get('_detail_projection', {}).get('offsets', {}).get('human_continuations', 0)
+            + max(0, len(records)-8))
 
 
 def interactive_session_view(row, checkpoint):
@@ -174,9 +182,11 @@ def interactive_session_view(row, checkpoint):
             'This is manual authorization and accounting, not a scientific observation window.',
         history=[{key: item[key] for key in ('id', 'recorded_at', 'objective_name',
             'prior_objective_name', 'background_budget_snapshot')} for item in records[-8:]],
-        history_omitted=max(0, len(records)-8),
-        observed_usage=usage_summary(list(checkpoint.get('interactive_usage_records', {}).values())),
-        tasks=sum(bool(item.get('interactive_session_id')) for item in checkpoint.get('admissions', {}).values()))
+        history_omitted=checkpoint.get('_detail_projection', {}).get('offsets', {}).get('interactive_sessions', 0)
+            + max(0, len(records)-8),
+        observed_usage=checkpoint.get('_interactive_usage_summary') or usage_summary(list(checkpoint.get('interactive_usage_records', {}).values())),
+        tasks=checkpoint.get('_interactive_tasks', sum(bool(item.get('interactive_session_id'))
+            for item in checkpoint.get('admissions', {}).values())))
 
 
 def background_task_count(checkpoint):
@@ -312,6 +322,7 @@ class SchedulingControl:
     progress_active_work_reader = None
     progress_accepted_execution_reader = None
     progress_native_identity_reader = None
+    progress_native_loop_identity_reader = None
     progression_clock = None
 
     def control_now(self):
@@ -562,8 +573,16 @@ class SchedulingControl:
                 known = loop_usage(checkpoint)
                 measured_tasks = [item for item in prior_tasks if item.get('usage_source') != 'frontend_unconnected'
                     or json.loads(row['config_json'])['effective']['progression']['token_policy'] == 'strict']
-                expected = {identity['thread_id'] for item in measured_tasks if item.get('run_id')
-                    for identity in self.progress_native_identity_reader(item['run_id'])}
+                from ...agent_execution_settings import progression_usage_capacity
+                if self.progress_native_loop_identity_reader:
+                    identities = self.progress_native_loop_identity_reader(instance_id=instance_id, loop_id=prior,
+                        capacity=progression_usage_capacity(records[prior]['config']['effective']))
+                    measured = {item['run_id'] for item in measured_tasks if item.get('run_id')}
+                    expected = {thread for thread, identity in identities.items()
+                        if measured.intersection(identity['run_ids'])}
+                else:
+                    expected = {identity['thread_id'] for item in measured_tasks if item.get('run_id')
+                        for identity in self.progress_native_identity_reader(item['run_id'])}
                 if (any(not item.get('run_id') for item in prior_tasks) or expected - known.keys()
                         or any(record['coverage'] != 'observed' or record['has_gaps'] or record['role'] == 'unattributed' for record in known.values())):
                     conflict('Research loop usage is not settled; reconcile original task and native usage records before another loop.')
@@ -571,9 +590,11 @@ class SchedulingControl:
             limits = config['effective']['progression']
             if len(records) >= limits['max_loop_scopes']:
                 conflict('Research loop history capacity reached; retain the original ledger until bounded history support is available.')
-            from ...agent_execution_settings import progression_usage_capacity
-            if progression_usage_capacity(config['effective']) > 64:
-                conflict('Configured usage attribution capacity exceeds the current 64 identity protection.')
+            from ...agent_execution_settings import require_progression_capacity
+            try:
+                require_progression_capacity(config['effective'])
+            except ValueError as error:
+                conflict(str(error))
             now = self.control_now()
             sync_loop_balances(checkpoint, now)
             identity = 'loop_' + uuid.uuid4().hex
@@ -905,7 +926,8 @@ class SchedulingControl:
                 checkpoint = json.loads(row['checkpoint_json'])
                 identity = current_loop(checkpoint)
                 records = checkpoint.setdefault('usage_records', {})
-                prior = records.get(thread_id)
+                from .progression_records import detail_record
+                prior = detail_record(connection, instance_id, 'usage_records', thread_id)
                 if prior is not None and prior.get('loop_id') != identity:
                     conflict('A Root native thread cannot be reused across research loops; attach a fresh native thread.')
                 if prior is None:
@@ -1050,18 +1072,23 @@ class SchedulingControl:
             status.update(assessment_receipts=receipts, assessment_read=dict(tool='progression_status'))
         return status
 
-    def observe_progression(self, *, instance_id, expected_host, changes, reason=None, stop=False, completed_turn=None, terminal_turn=None):
+    def observe_progression(self, *, instance_id, expected_host, changes, reason=None, stop=False, completed_turn=None, terminal_turn=None, usage_observation=None):
         """Trusted runtime observations survive pause; they grant no dispatch authority.
 
         Serialize merges with the public report, and keep the native writer marker
         until the adapter has confirmed its terminal turn.
         """
         with self.control_maintenance.guard(instance_id), self.scheduling_lock(), self._connect() as db:
-            row = read_control_row(db, instance_id)
+            row = read_control_row(db, instance_id,
+                usage_thread=usage_observation['params'].get('threadId') if usage_observation else None,
+                extra_loop=usage_observation['identity'].get('loop_id') if usage_observation else None)
             if row is None or json.loads(row['host_json'] or 'null') != expected_host:
                 conflict('Native host binding changed during observation.')
             checkpoint = json.loads(row['checkpoint_json'])
             prior_checkpoint = json.loads(row['checkpoint_json'])
+            if usage_observation:
+                from .progression_budget import apply_usage_observation
+                apply_usage_observation(db, row, checkpoint, usage_observation)
             from .scientific_progress import observe_deliveries, scientific_pause
             if terminal_turn is not None and checkpoint.get('turn_id'):
                 if terminal_turn.get('id') != checkpoint['turn_id']:

@@ -115,9 +115,14 @@ class AttachmentSettings(SettingsValue):
 class ProgressionSettings(SettingsValue):
     """Administrator opt-in and bounded background Root execution."""
     enabled: bool = True
-    max_rounds: int = Field(default=12, ge=1, le=100)
-    max_tasks: int = Field(default=8, ge=1, le=100)
-    max_reviews: int = Field(default=2, ge=0, le=100)
+    max_rounds: int = Field(default=12, ge=1)
+    max_tasks: int = Field(default=8, ge=1)
+    max_reviews: int = Field(default=2, ge=0)
+    # Per-read/write memory capacity is independent of granted task budgets.
+    # 300 research + 300 reviews, four helpers and 600 Root rounds fits.
+    detail_capacity: int = Field(default=4096, ge=1, le=65536)
+    detail_record_bytes: int = Field(default=65536, ge=1024, le=1048576)
+    detail_read_bytes: int = Field(default=67108864, ge=4096, le=67108864)
     # Bounds the still-hydrated scope history; every scope needs separate UI consent.
     max_loop_scopes: int = Field(default=8, ge=1, le=64)
     max_elapsed_seconds: int = Field(default=3600, ge=1)
@@ -185,6 +190,19 @@ def progression_usage_capacity(settings: dict) -> int:
     limits = settings['progression']
     return ((limits['max_tasks'] + limits['max_reviews']) *
         (1 + settings['helpers']['max_calls']) + limits['max_rounds'])
+
+
+def require_progression_capacity(settings: dict):
+    limits = settings['progression']
+    identities = progression_usage_capacity(settings)
+    if identities > limits['detail_capacity']:
+        raise ValueError('Configured task, review, helper and Root identity capacity exceeds '
+            'progression.detail_capacity; retain the original loop and explicitly configure capacity before authorization.')
+    # Actual serialized totals are checked transactionally, independently of
+    # task quotas. Current + one original loop must fit the read byte bound.
+    if 2 * limits['detail_record_bytes'] > limits['detail_read_bytes']:
+        raise ValueError('progression.detail_read_bytes must hold current and late original '
+            'records at detail_record_bytes; retain the original loop and explicitly configure bounded capacity.')
 
 class PresentationSettings(SettingsValue):
     """Opt-in, serial post-seal copy editing; never scientific admission."""

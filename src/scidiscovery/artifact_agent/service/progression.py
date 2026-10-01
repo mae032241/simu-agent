@@ -14,7 +14,7 @@ import threading
 import time
 
 from ..schema.refs import ArtifactRef
-from ...platforms.codex_usage import observe_usage, usage_summary
+from ...platforms.codex_usage import usage_summary
 from .progression_budget import token_budget
 from .maintenance import MaintenanceBusy
 from ..storage.control_io import nonblocking_control_io
@@ -197,51 +197,8 @@ class ProgressionCoordinator:
                 original = self.runtime.runs.native_usage_identity(instance_id=self.instance, thread_id=thread)
                 if original is not None:
                     identities[thread] = original
-            role = 'root' if thread == self.host.identity.thread_id else identities.get(thread, {}).get('role', 'unattributed')
-            loop_id = identities.get(thread, {}).get('loop_id')
-            previous_record = checkpoint.get('usage_records', {}).get(thread)
-            if thread == self.host.identity.thread_id:
-                loop_id = current_loop(checkpoint)
-            elif previous_record is not None:
-                loop_id = previous_record.get('loop_id')
-                if previous_record['role'] != 'unattributed':
-                    role = previous_record['role']  # Retained trusted old Root/Worker identity.
-            elif role == 'unattributed':
-                loop_id = current_loop(checkpoint)  # Unknown native work cannot be free.
-            independent = bool(identities.get(thread, {}).get('interactive_session_id')) and not loop_id
-            record_key = 'interactive_usage_records' if independent else 'usage_records'
-            records = checkpoint.get(record_key, {})
-            previous = records.get(thread)
-            if previous is not None and previous.get('loop_id') != loop_id:
-                raise ProgressionFault('cross_loop_native_thread_usage')
-            if previous and previous.get('pending_observation'):
-                previous = None  # Binding placeholder, not a sampled missing counter.
-            # A native Worker thread can be reused across task scopes. Carry its
-            # highest observed counter, while each scope retains only its deltas.
-            other = checkpoint.get('usage_records' if independent else 'interactive_usage_records', {}).get(thread)
-            if other:
-                previous = dict(previous or {**other, 'counted_tokens':
-                    dict.fromkeys(other['counted_tokens'], 0)})
-                previous['high_water'] = {key: max(value for value in
-                    (previous['high_water'][key], other['high_water'][key]) if value is not None)
-                    if any(value is not None for value in
-                        (previous['high_water'][key], other['high_water'][key])) else None
-                    for key in previous['high_water']}
-                previous['has_gaps'] = True  # Attribution between observations is not measured.
-            if previous and previous['role'] == 'unattributed' and role != 'unattributed':
-                # Native notifications can precede the exact Worker attach. Only
-                # the now-authoritative connection may repair that attribution.
-                previous = {**previous, 'role': role, 'owner': self.instance}
-            record = observe_usage(params, previous=previous, role=role,
-                owner=self.instance if role != 'unattributed' else None,
-                outcome='running')
-            # Keep reducer state, not repeated diagnostic prose or per-event deltas.
-            records[thread] = {key: record[key] for key in ('platform', 'thread_id', 'role', 'owner',
-                'outcome', 'high_water', 'counted_tokens', 'has_gaps', 'coverage')}
-            if loop_id:
-                records[thread]['loop_id'] = loop_id
-            self._save({record_key: records, **({} if independent else
-                dict(usage_summary=usage_summary(list(loop_usage(dict(checkpoint, usage_records=records)).values()))))})
+            self._save({}, usage_observation=dict(params=params,
+                identity=identities.get(thread, {}), root_thread=self.host.identity.thread_id))
         elif thread == self.host.identity.thread_id:
             turn = params.get('turn', {})
             if event['method'] == 'turn/started':
@@ -292,6 +249,11 @@ class ProgressionCoordinator:
             if not isinstance(entry, dict) or entry.get('state') not in {'completed', 'failed', 'timed_out', 'cancelled', 'canceled'}:
                 continue
             run_id = related.get(entry.get('name'))
+            if run_id is None and isinstance(entry.get('name'), str):
+                from .progression_records import goal_admission_run
+                with self.bindings._connect() as db:
+                    run_id = goal_admission_run(db, self.instance, entry['name'],
+                        json.loads(row['objective_ref_json']), bindings=self.bindings)
             if not run_id or run_id in known:
                 continue
             value = self.runtime.runs.status(run_id)
@@ -311,7 +273,15 @@ class ProgressionCoordinator:
 
     def _identities(self):
         """Attribution uses accepted dispatch and exact native bindings."""
-        admissions = json.loads(self._row()['checkpoint_json']).get('admissions', {})
+        checkpoint = json.loads(self._row()['checkpoint_json'])
+        from .research_loops import current_loop
+        identity = current_loop(checkpoint)
+        if identity:
+            from ...agent_execution_settings import progression_usage_capacity
+            settings = checkpoint['loop_authorizations'][identity]['config']['effective']
+            return self.runtime.runs.native_loop_identities(instance_id=self.instance, loop_id=identity,
+                capacity=progression_usage_capacity(settings))
+        admissions = checkpoint.get('admissions', {})
         result = {}
         for admission in admissions.values():
             if not admission.get('run_id'):
@@ -351,6 +321,12 @@ class ProgressionCoordinator:
         checkpoint = json.loads(row['checkpoint_json'])
         runs, review_requests = [], []
         related = goal_bound_runs(checkpoint, json.loads(row['objective_ref_json']))
+        from .progression_records import goal_admissions
+        with self.bindings._connect() as db:
+            historical, historical_omitted = goal_admissions(db, self.instance,
+                json.loads(row['objective_ref_json']),
+                json.loads(row['config_json'])['effective']['progression']['related_source_limit'])
+        related.update(historical)
         selected = dict(related)
         selected.update({name: v['run_id'] for name, v in checkpoint.get('admissions', {}).items() if v.get('run_id')})
         for name, run_id in selected.items():
@@ -369,6 +345,7 @@ class ProgressionCoordinator:
                 approvals.append(value)
         return dict(goal=row['objective_ref_json'], runs=runs, approvals=approvals, messages=checkpoint.get('messages', []),
             continuation=checkpoint.get('last_command', {}).get('generation'),
+            **({'historical_goal_omitted': True} if historical_omitted else {}),
             **({'review_requests':review_requests} if review_requests else {}))
 
     def _brief(self, row, snapshot, limit):
@@ -394,6 +371,10 @@ class ProgressionCoordinator:
         brief['progress'] = progress_page(bindings=self.bindings, artifacts=self.runtime.artifacts, row=row, limit=1)
         if checkpoint.get('relevant_omitted'):
             brief['omissions'].append(dict(reason='related_result_limit', read='run_list', view='summary', limit=10))
+        if snapshot.get('historical_goal_omitted'):
+            brief['related_results_omitted'] = True
+            brief['omissions'].append(dict(reason='historical_goal_identity_limit', read='run_list', view='summary', limit=8,
+                continuation='Use returned next_before unchanged; current_goal_tasks identifies this page.'))
         brief['review_requests'] = []
         for entry in snapshot.get('review_requests', []):
             run_id = self.bindings.resolve(instance=self.instance, namespace='run', name=entry['owner'])
@@ -478,9 +459,8 @@ class ProgressionCoordinator:
         from .progression_budget import enabled_time
         remaining = max(0, self._limits['max_elapsed_seconds'] - enabled_time(checkpoint, self.clock()))
         self._goal_deadline = self.clock() + remaining
-        from ...agent_execution_settings import progression_usage_capacity
-        if progression_usage_capacity(settings) > 64:
-            raise ProgressionFault('configured_usage_attribution_capacity')
+        from ...agent_execution_settings import require_progression_capacity
+        require_progression_capacity(settings)
         if checkpoint.get('attempts', 0) >= settings['progression']['max_attempts']:
             self.bindings.observe_progression(instance_id=self.instance, expected_host=json.loads(row['host_json'] or 'null'),
                 changes=dict(runtime_status='attempt_budget_exhausted'), reason='attempt_budget_exhausted', stop=True)

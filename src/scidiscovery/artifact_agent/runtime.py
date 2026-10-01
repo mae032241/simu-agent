@@ -156,6 +156,7 @@ def open_runtime(
         )
         scheduler_bindings.progress_run_reader = runs.goal_related_runs
         scheduler_bindings.progress_native_identity_reader = runs.native_identities
+        scheduler_bindings.progress_native_loop_identity_reader = runs.native_loop_identities
         scheduler_bindings.progress_active_work_reader = lambda *, instance_id: (
             tuple('任务 ' + (scheduler_bindings.find_name(instance=instance_id, namespace='run', object_id=item)
                 or '未绑定名称（标识：' + item + '）') for item in runs.active_ids(instance_id=instance_id, limit=1))

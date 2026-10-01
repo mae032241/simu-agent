@@ -33,6 +33,7 @@ def render_progression(status, *, instance_id):
     if loop:
         body += '<h3>实际预算作用域</h3>' + render_json_value(loop, max_bytes=16384)
         body += '<p>未加入研究 loop 的普通交互沿原权限及实例执行预算。已授权 loop 的人工与后台任务统一计额；人工继续、改目标、恢复或线程切换不会增加额度。</p>'
+        body += '<p>本页额度完整计入当前 loop；历史任务明细按确切实例名称回读，历史预算余额保留原归属。配置承载容量不增加已授权任务额度。</p>'
     body += '<p>诊断已预留但未获接收确认时须保留预留并安全停止，读取已有诊断状态或任务 run_status。当前版本尚无可信缺席证明 / 退款入口，需待受信控制协议合入后验证。</p>'
     human = status.get('human_continuation') or {}
     if human.get('history'):

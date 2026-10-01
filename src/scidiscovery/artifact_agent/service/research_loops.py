@@ -55,7 +55,10 @@ def sync_loop_balances(checkpoint, now):
     """Late usage settles its original scope, never the current scope's balance."""
     from .progression_budget import enabled_time, token_budget
     active = current_loop(checkpoint)
+    scopes = checkpoint.get('_detail_projection', {}).get('scopes')
     for identity, record in checkpoint.get('loop_authorizations', {}).items():
+        if scopes is not None and identity not in scopes and identity != active:
+            continue  # Unread historical facts retain their last settled balance.
         limits = record['config']['effective']['progression']
         balance = dict(record.get('budget_snapshot') or {})
         if identity == active:

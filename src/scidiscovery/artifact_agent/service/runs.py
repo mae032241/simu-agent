@@ -1191,6 +1191,29 @@ class RunService(ToolEvidenceMixin, RunAdmissionMixin):
             raise RunStateConflict('Native usage thread ownership is ambiguous; retain its original bindings.')
         return dict(rows[0]) if rows else None
 
+    def native_loop_identities(self, *, instance_id: str, loop_id: str, capacity: int) -> dict:
+        """Indexed loop join replaces an RPC/read for every historical admission."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT w.thread_id,w.platform_session,'worker' AS role,r.run_id FROM runs r "
+                "JOIN worker_connections w USING(run_id) WHERE r.instance_id=? "
+                "AND json_extract(CAST(r.recovery_policy_json AS TEXT),'$.loop_id')=? UNION ALL "
+                "SELECT w.thread_id,w.platform_session,'helper' AS role,r.run_id FROM runs r "
+                "JOIN worker_participants w USING(run_id) WHERE r.instance_id=? "
+                "AND json_extract(CAST(r.recovery_policy_json AS TEXT),'$.loop_id')=? "
+                "AND w.thread_id IS NOT NULL LIMIT ?", (instance_id, loop_id, instance_id, loop_id, capacity + 1)).fetchall()
+        if len(rows) > capacity:
+            raise RunStateConflict('Native loop identity capacity reached; retain original bindings.')
+        result = {}
+        for row in rows:
+            identity = dict(row, loop_id=loop_id)
+            previous = result.get(row['thread_id'])
+            if previous and (previous['role'], previous['platform_session']) != (row['role'], row['platform_session']):
+                raise RunStateConflict('Native usage thread ownership is ambiguous; retain original bindings.')
+            identity['run_ids'] = [*(previous['run_ids'] if previous else []), row['run_id']]
+            result[row['thread_id']] = identity
+        return result
+
     def related_runs(self, *, instance_id: str, artifact_ref: ArtifactRef,
                      relation: str = "input", limit: int = 51) -> tuple[RunStatus, ...]:
         """Read exact input/output edges without loading or validating outputs."""
@@ -2364,6 +2387,8 @@ class RunService(ToolEvidenceMixin, RunAdmissionMixin):
                 ON run_activity(json_extract(CAST(diagnostic_json AS TEXT),'$.budget_scope'))
                 WHERE activity IN ('reference_read_reserved','reference_read_settled',
                                    'reference_material_reserved','reference_io_reserved')""")
+            connection.execute("CREATE INDEX IF NOT EXISTS run_loop_scope ON runs(instance_id,"
+                "json_extract(CAST(recovery_policy_json AS TEXT),'$.loop_id'))")
             connection.execute(
                 "INSERT INTO run_activity_sequence(slot,high_water) "
                 "VALUES (1, (SELECT COALESCE(MAX(rowid), 0) FROM run_activity)) "

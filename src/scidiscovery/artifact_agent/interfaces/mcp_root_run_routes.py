@@ -35,6 +35,13 @@ class RootRunRoutes(RunReadProjection):
         current_goal = json.loads(control.get('objective_ref_json') or 'null')
         members = set(goal_bound_runs(checkpoint, current_goal)) if current_goal else set()
         def result(cursor):
+            # The page owns exact bindings; historical goal membership reads
+            # just those immutable admission keys, including prior loops.
+            if current_goal and items:
+                from ..service.progression_records import goal_admission_run
+                with self.bindings._connect() as db:
+                    members.update(item['name'] for item in items if goal_admission_run(
+                        db, self._instance_id(), item['name'], current_goal, bindings=self.bindings))
             return dict(runs=items, next_before=cursor,
                 **({'current_goal_tasks': [item['name'] for item in items if item['name'] in members]}
                     if members else {}))

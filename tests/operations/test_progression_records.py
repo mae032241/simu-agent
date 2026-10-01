@@ -5,7 +5,8 @@ import pytest
 
 from scidiscovery.artifact_agent.service.progression_records import COLLECTIONS, SNAPSHOTS, store_checkpoint
 from scidiscovery.artifact_agent.service.scheduler_bindings import SchedulerBindingService
-from tests.operations.test_progression import progression, checkpoint, row
+from tests.operations.test_progression import progression, row
+from tests.operations.test_research_loop_budget import historical_checkpoint as checkpoint
 from tests.operations.test_human_progress_continuation import (
     paused, human_ui, submit, status,
 )
@@ -28,8 +29,8 @@ def test_detail_writer_replaces_owned_records_and_retains_unknown_history(progre
     with p.runtime.scheduler_bindings._connect() as db:
         db.execute('INSERT INTO scheduler_progression_details VALUES(?,?,?,?)',
             (p.instance, 'snapshot', 'historical-unknown', '{"turn":"uncertain"}'))
-        store_checkpoint(db, p.instance, {'processed_snapshot': None, 'usage_records': {'root': {'tokens': 7}}})
-        store_checkpoint(db, p.instance, {'decision_snapshot': {}, 'usage_records': {}})
+        store_checkpoint(db, p.instance, {'processed_snapshot': None, 'usage_records': {'root': {'tokens': 7}}}, replace=True)
+        store_checkpoint(db, p.instance, {'decision_snapshot': {}, 'usage_records': {}}, replace=True)
         records = [tuple(item) for item in db.execute('SELECT collection,record_key,record_json '
             'FROM scheduler_progression_details WHERE instance_id=? ORDER BY collection,record_key', (p.instance,))]
     assert records == [('snapshot', 'decision_snapshot', '{}'),
@@ -83,7 +84,9 @@ def test_large_history_keeps_ui_admission_budgets_and_archive(human_ui):
     finish(p, p.root, 'after-large-history')
     assert p.root.call_tool('run_status', dict(name='historical-human-0'))['state'] == 'completed'
     reopened = SchedulerBindingService(p.runtime.scheduler_bindings.database_path)
-    assert json.loads(reopened.progression_status(instance_id=p.instance, internal=True)['checkpoint_json']) == checkpoint(p)
+    with reopened._connect() as db:
+        from scidiscovery.artifact_agent.service.progression_records import read_control_row
+        assert json.loads(read_control_row(db, p.instance, full=True)['checkpoint_json']) == checkpoint(p)
     p.root.call_tool('progression_command', dict(command='pause'))
     expected = status(p)['loop']
     p.runtime.runs._synchronous_archive_fixture = True
@@ -122,10 +125,14 @@ def test_detail_snapshot_replacement_and_failure_roll_back_together(paused):
     replacement = checkpoint(p)
     replacement.pop('terminal_delivery')
     replacement.pop('usage_records')
+    with pytest.raises(ValueError, match='Incomplete control detail projection'):
+        with bindings._connect() as db:
+            store_checkpoint(db, p.instance, replacement)
+    replacement['usage_records'] = {}
     with bindings._connect() as db:
         raw = store_checkpoint(db, p.instance, replacement)
         db.execute('UPDATE scheduler_progression SET checkpoint_json=? WHERE instance_id=?', (raw, p.instance))
-    assert 'terminal_delivery' not in checkpoint(p) and 'usage_records' not in checkpoint(p)
+    assert 'terminal_delivery' not in checkpoint(p) and checkpoint(p)['usage_records'] == {}
     assert not any(item[0] == 'usage_records' or item[:2] == ('snapshot', 'terminal_delivery')
         for item in physical(p)[1])
 
@@ -144,6 +151,13 @@ def test_usage_history_persists_over_64_identities_without_reset(progression, mo
     from tests.operations.test_scientific_progress import active
     from scidiscovery.artifact_agent.service.progression_budget import token_budget
     p = progression
+    from tests.operations.research_loop_fixtures import authorize_loop
+    p.root.call_tool('progression_command', dict(command='pause'))
+    settings = p.runtime.scheduler_bindings.global_settings
+    p.runtime.scheduler_bindings.global_settings = settings.model_copy(update=dict(
+        progression=settings.progression.model_copy(update=dict(max_tasks=30))))
+    authorize_loop(p.runtime, p.instance, p.user, 'goal')
+    p.root.call_tool('progression_command', dict(command='start', mode='background', objective_name='goal'))
     active(p)
     identities = {f'worker-{i}': {'role': 'worker', 'loop_id': checkpoint(p)['current_loop_id']} for i in range(96)}
     identities.update({f'human-{i}': {'role': 'worker', 'interactive_session_id': 'human-scope'} for i in range(96)})
@@ -165,7 +179,9 @@ def test_usage_history_persists_over_64_identities_without_reset(progression, mo
     assert current['interactive_usage_records']['human-0']['counted_tokens']['input_tokens'] == 17
     assert len(json.dumps(current)) > 65536 and len(physical(p)[0]) < 65536
     reopened = SchedulerBindingService(p.runtime.scheduler_bindings.database_path)
-    assert json.loads(reopened.progression_status(instance_id=p.instance, internal=True)['checkpoint_json']) == current
+    with reopened._connect() as db:
+        from scidiscovery.artifact_agent.service.progression_records import read_control_row
+        assert json.loads(read_control_row(db, p.instance, full=True)['checkpoint_json']) == current
 
 
 def test_checkpoint_update_failure_rolls_back_details_at_runtime_entry(paused):

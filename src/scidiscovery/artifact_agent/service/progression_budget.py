@@ -56,3 +56,53 @@ def require_task_budget(checkpoint, limits):
             message='Remaining token budget is reserved for goal closeout; consume accepted results and '
                 'report completion or remaining work. Do not retry admission or increase the budget. '
                 f"Remaining={budget['remaining_tokens']}, reserve={budget['closeout_reserve_tokens']}.")
+
+
+def apply_usage_observation(db, row, checkpoint, observation):
+    """Reduce exact cumulative counters inside the same ledger write transaction."""
+    from ...platforms.codex_usage import observe_usage
+    from .progression_records import detail_record
+    from .research_loops import current_loop, loop_usage_summary
+    params, identity = observation['params'], observation['identity']
+    thread = params.get('threadId')
+    root = thread == observation['root_thread']
+    previous_record = detail_record(db, row['instance_id'], 'usage_records', thread)
+    role = 'root' if root else identity.get('role', 'unattributed')
+    loop_id = current_loop(checkpoint) if root else identity.get('loop_id')
+    if previous_record is not None:
+        if loop_id is not None and previous_record.get('loop_id') != loop_id:
+            raise ValueError('Native usage thread cannot be reassigned across research loops.')
+        loop_id = previous_record.get('loop_id')
+        if previous_record['role'] != 'unattributed':
+            if role != 'unattributed' and role != previous_record['role']:
+                raise ValueError('Native usage role differs from its original binding.')
+            role = previous_record['role']
+    elif role == 'unattributed':
+        loop_id = current_loop(checkpoint)
+    independent = bool(identity.get('interactive_session_id')) and not loop_id
+    collection = 'interactive_usage_records' if independent else 'usage_records'
+    records = checkpoint.setdefault(collection, {})
+    previous = detail_record(db, row['instance_id'], collection, thread)
+    if previous is not None and previous.get('loop_id') != loop_id:
+        raise ValueError('Native usage thread cannot be reassigned across research loops.')
+    if previous and previous.get('pending_observation'):
+        previous = None
+    other = detail_record(db, row['instance_id'],
+        'usage_records' if independent else 'interactive_usage_records', thread)
+    if other:
+        previous = dict(previous or {**other, 'counted_tokens': dict.fromkeys(other['counted_tokens'], 0)})
+        previous['high_water'] = {key: max(value for value in
+            (previous['high_water'][key], other['high_water'][key]) if value is not None)
+            if any(value is not None for value in (previous['high_water'][key], other['high_water'][key])) else None
+            for key in previous['high_water']}
+        previous['has_gaps'] = True
+    if previous and previous['role'] == 'unattributed' and role != 'unattributed':
+        previous = {**previous, 'role': role, 'owner': row['instance_id']}
+    record = observe_usage(params, previous=previous, role=role,
+        owner=row['instance_id'] if role != 'unattributed' else None, outcome='running')
+    records[thread] = {key: record[key] for key in ('platform', 'thread_id', 'role', 'owner',
+        'outcome', 'high_water', 'counted_tokens', 'has_gaps', 'coverage')}
+    if loop_id:
+        records[thread]['loop_id'] = loop_id
+    if not independent:
+        checkpoint['usage_summary'] = loop_usage_summary(checkpoint)

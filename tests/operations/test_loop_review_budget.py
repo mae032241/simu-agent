@@ -188,11 +188,11 @@ def test_config_capacity_counts_review_helpers_and_refuses_old_state(loop_ui):
     limits = ProgressionSettings()
     assert (limits.max_tasks, limits.max_rounds, limits.max_reviews) == (8, 12, 2)
     assert progression_usage_capacity(p.runtime.scheduler_bindings.control_settings(p.instance)['effective']) == 62
-    configure(p, max_reviews=3)
+    configure(p, max_reviews=3, detail_capacity=64)
     assert authorize(p) == 409
     assert not checkpoint(p).get('current_loop_id')
     with p.runtime.scheduler_bindings._connect() as db:
-        db.execute('PRAGMA user_version=5')
+        db.execute('PRAGMA user_version=6')
     with pytest.raises(Exception, match='format|version|fresh|旧'):
         SchedulerBindingService(p.runtime.scheduler_bindings.database_path)
 

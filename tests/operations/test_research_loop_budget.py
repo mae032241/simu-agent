@@ -90,6 +90,13 @@ def usage(p, thread, amount=10):
         tokenUsage=dict(total=dict(inputTokens=amount, cachedInputTokens=0, outputTokens=1)))))
 
 
+def historical_checkpoint(p):
+    """Maintenance assertion only; production status reads the current loop."""
+    from scidiscovery.artifact_agent.service.progression_records import read_control_row
+    with p.runtime.scheduler_bindings._connect() as db:
+        return json.loads(read_control_row(db, p.instance, full=True)['checkpoint_json'])
+
+
 def finish_task(p, root, name):
     _invoke(root, name)
     worker = attached_worker(p.runtime, root, name)
@@ -187,7 +194,7 @@ def test_new_loop_requires_resolved_work_and_complete_usage(loop_ui):
     before = row(p)
     assert authorize(p) == 409  # Missing Root/Worker observations are not zero cost.
     assert row(p) == before
-    assert checkpoint(p)['admissions']['original'] == original
+    assert historical_checkpoint(p)['admissions']['original'] == original
     root = start(p)
     usage(p, p.coordinator.host.identity.thread_id)
     usage(p, thread)
@@ -195,7 +202,7 @@ def test_new_loop_requires_resolved_work_and_complete_usage(loop_ui):
     release(p)
     assert authorize(p) == 303
     assert checkpoint(p)['current_loop_id'] != original['loop_id']
-    assert checkpoint(p)['admissions']['original'] == original
+    assert historical_checkpoint(p)['admissions']['original'] == original
 
 
 def test_late_usage_settles_retired_loop_and_native_threads_cannot_change_owner(loop_ui):
@@ -215,12 +222,12 @@ def test_late_usage_settles_retired_loop_and_native_threads_cannot_change_owner(
     before = checkpoint(p)['loop_authorizations'][old]['budget_snapshot']['remaining_tokens']
     current = root.call_tool('progression_status', {})['budget']['remaining_tokens']
     usage(p, thread, 35)
-    assert checkpoint(p)['usage_records'][thread]['loop_id'] == old
+    assert historical_checkpoint(p)['usage_records'][thread]['loop_id'] == old
     assert checkpoint(p)['loop_authorizations'][old]['budget_snapshot']['remaining_tokens'] == before - 15
     assert root.call_tool('progression_status', {})['budget']['remaining_tokens'] == current
     usage(p, old_root, 30)
-    assert checkpoint(p)['usage_records'][old_root]['loop_id'] == old
-    assert checkpoint(p)['usage_records'][old_root]['role'] == 'root'
+    assert historical_checkpoint(p)['usage_records'][old_root]['loop_id'] == old
+    assert historical_checkpoint(p)['usage_records'][old_root]['role'] == 'root'
     assert checkpoint(p)['loop_authorizations'][old]['budget_snapshot']['remaining_tokens'] == before - 35
     assert root.call_tool('progression_status', {})['budget']['remaining_tokens'] == current
     assert p.runtime.runs.status(run_id).recovery_policy['loop_id'] == old
@@ -259,8 +266,8 @@ def test_completed_unmanaged_work_and_late_usage_keep_original_scope_after_first
     usage(p, p.coordinator.host.identity.thread_id)
     before = root.call_tool('progression_status', {})['budget']['remaining_tokens']
     usage(p, thread, 42)
-    assert checkpoint(p)['usage_records'][thread]['role'] == 'worker'
-    assert not checkpoint(p)['usage_records'][thread].get('loop_id')
+    assert historical_checkpoint(p)['usage_records'][thread]['role'] == 'worker'
+    assert not historical_checkpoint(p)['usage_records'][thread].get('loop_id')
     assert root.call_tool('progression_status', {})['budget']['remaining_tokens'] == before
     assert 'before-managed-loop' not in checkpoint(p).get('admissions', {})
 
@@ -330,6 +337,59 @@ def test_two_loops_on_one_goal_preserve_and_observe_the_last_new_result(loop_ui)
     assert view['progress_shadow']['observation_scope']['max_observed_tasks'] == 3
     assert p.root.call_tool('run_status', dict(name='later'))['state'] == 'completed'
     assert len(checkpoint(p)['loop_authorizations']) == 2
+
+
+def test_two_ui_loops_allow_exact_old_task_assessment_and_correction(loop_ui):
+    from copy import deepcopy
+    from tests.operations.test_loop_review_budget import configure
+    from tests.operations.test_progress_shadow import native_delivery
+    from tests.operations.test_scientific_progress import assess
+    p = loop_ui
+    configure(p, max_tasks=1)
+    assert authorize(p) == 303
+    root = start(p)
+    usage(p, p.coordinator.host.identity.thread_id)
+    run_id, thread = finish_task(p, root, 'old-loop-result')
+    usage(p, thread)
+    old_loop = checkpoint(p)['current_loop_id']
+    release(p)
+    original = historical_checkpoint(p)['admissions']['old-loop-result']
+    # Its scientific source is independent source_csv; goal membership comes
+    # solely from the control-owned frozen objective, not the Artifact graph.
+    value = p.runtime.runs.status(run_id)
+    assert value.inputs[0].artifact_name == 'source_csv'
+    assert authorize(p) == 303
+    root = start(p)
+    new_loop = checkpoint(p)['current_loop_id']
+    assert new_loop != old_loop and 'old-loop-result' not in checkpoint(p)['admissions']
+    usage(p, p.coordinator.host.identity.thread_id, amount=2)
+    assert 'old-loop-result' in root.call_tool('run_list', dict(view='summary', limit=8))['current_goal_tasks']
+    native_delivery(p, root, 'old-loop-result')
+    before = root.call_tool('progression_status', {})['budget']
+    balances = deepcopy(checkpoint(p)['loop_authorizations'])
+    first = assess(root, 'old-loop-result')
+    assert first['assessment_receipts'] == [dict(task_name='old-loop-result', revision=1, state='recorded')]
+    correction = assess(root, 'old-loop-result', outcome='unknown', evidence=False,
+        reason='Correction: preserve the remaining causal uncertainty.')
+    assert correction['assessment_receipts'] == [dict(task_name='old-loop-result', revision=2, state='recorded')]
+    status = root.call_tool('progression_status', {})
+    assert status['budget'] == before and status['budget']['research_tasks'] == 0
+    assert [(item['task_name'], item['revision']) for item in status['progress']['items']] == [
+        ('old-loop-result', 2), ('old-loop-result', 1)]
+    retained = historical_checkpoint(p)
+    assert retained['admissions']['old-loop-result'] == original
+    assert p.runtime.runs.status(run_id).recovery_policy['loop_id'] == old_loop
+    assert retained['loop_authorizations'] == balances
+    root.call_tool('artifact_ingest_text', dict(name='wrong-goal', text='An unrelated frozen objective.'))
+    release(p)
+    p.root.call_tool('progression_command', dict(command='start', mode='background', objective_name='wrong-goal'))
+    p.coordinator.tick()
+    reader = type(p.root)(p.facade(p.coordinator.host.scheduler_session))
+    before = historical_checkpoint(p)
+    with pytest.raises(Exception, match='not associated with this exact frozen goal'):
+        assess(reader, 'old-loop-result')
+    assert historical_checkpoint(p) == before
+    assert reader.call_tool('progression_status', {})['progress']['items'] == []
 
 
 def test_loop_scope_archive_restore_keeps_authorization_and_partial_frontend_usage(loop_ui):
@@ -534,4 +594,4 @@ def test_frontend_fallback_preserves_prior_real_known_tokens_in_retired_loop(loo
     assert retired['remaining_tokens'] == before
     assert retired['usage']['coverage'] == 'partial'
     assert retired['usage']['unmeasured_roles'] == ['frontend_root', 'frontend_worker', 'frontend_helper']
-    assert len(checkpoint(p)['usage_records']) == 2
+    assert len(historical_checkpoint(p)['usage_records']) == 2

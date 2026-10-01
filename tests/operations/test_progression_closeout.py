@@ -46,7 +46,11 @@ def test_budget_closeout_reads_late_seal_and_usage_without_root_report(progressi
     monkeypatch.setattr(p.runtime.runs, 'list', lambda **kw: pytest.fail('must not scan instance'))
     status = p.root.call_tool('progression_status', {})
     assert row(p) == before and len(host.prompts) == 1
-    assert status['budget']['observed_tokens'] == 150
+    # Submission's measured fixture reports another Root 11 and Worker 11;
+    # all original-loop late counters remain part of the sealed handoff.
+    assert status['usage']['groups']['root']['tokens']['input_tokens'] == 150
+    assert status['usage']['groups']['worker']['tokens']['input_tokens'] == 10
+    assert status['budget']['observed_tokens'] == 172
     assert status['budget']['stop_snapshot_tokens'] == 110
     assert status['closeout']['goal_assessment'] == 'not_inferred'
     assert status['closeout']['accepted_tasks_terminal']
@@ -95,7 +99,7 @@ def test_failed_and_unresolved_handoff_never_claims_goal_complete(progression):
     p.runtime.runs.record_failure(value.run_id, reason='fixture failure', expected_state=value.state,
         expected_last_activity_at=value.last_activity_at, timed_out=False)
     admissions = checkpoint(p)['admissions']
-    admissions['uncertain'] = dict(state='prepared')
+    admissions['uncertain'] = dict(intent, state='prepared', run_id=None)
     p.coordinator._save(dict(admissions=admissions))
     p.root.call_tool('progression_command', dict(command='pause'))
     status = p.root.call_tool('progression_status', {})
@@ -103,7 +107,9 @@ def test_failed_and_unresolved_handoff_never_claims_goal_complete(progression):
     assert status['closeout']['unresolved'][0]['name'] == 'uncertain'
     assert not status['closeout']['accepted_tasks_terminal']
     assert status['report'] is None and status['closeout']['goal_assessment'] == 'not_inferred'
-    assert status['budget']['observed_tokens'] is None and status['usage']['coverage'] == 'missing'
+    assert status['budget']['observed_tokens'] == 0 and status['usage']['coverage'] == 'partial'
+    assert status['usage']['groups']['root']['unmeasured_threads'] == 1
+    assert checkpoint(p)['usage_records']['native-root']['pending_observation']
 
 
 def test_acceptance_waits_for_accepted_tasks_without_new_model(tmp_path, monkeypatch):

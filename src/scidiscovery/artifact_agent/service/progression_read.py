@@ -25,6 +25,10 @@ def progression_read_view(*, bindings, runs, artifacts, operation_catalog, insta
     projection = RunReadProjection(runs=runs, artifacts=artifacts, operation_catalog=operation_catalog)
     closeout = dict(kind='sealed_task_handoff', goal_assessment='not_inferred',
         stop_reason=status.get('reason'), tasks=[], in_flight=[], unresolved=[], omissions=[])
+    if current_omitted := status.get('accounting_details', {}).get('historical_records_omitted', {}).get('admissions'):
+        closeout['omissions'].append(dict(reason='historical_loop_tasks', count=current_omitted,
+            read=dict(tool='run_list', view='summary', limit=8)))
+    closeout['budget_scope'] = 'current_loop' if checkpoint.get('current_loop_id') else 'ordinary_interactive'
     from .research_loops import current_loop, loop_usage
     records = loop_usage(checkpoint)
     missing = {}
