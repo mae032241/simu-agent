@@ -21,6 +21,8 @@ class Host:
         self.interrupted = False
         self.closed = False
         self.restored = []
+        self._sample_at, self._resource_sample = 0, None
+        self.resource_sample_seconds = json.loads(row['config_json'])['effective']['progression']['resource_sample_seconds']
     def start_turn(self, prompt):
         self.completion = None
         self.prompts.append(prompt)
@@ -38,6 +40,9 @@ class Host:
         self.closed = True
     def restore_worker(self, *args, **kwargs):
         self.restored.append(args)
+    def sample_resources(self):
+        from scidiscovery.platforms.codex_progression import CodexProgressionHost
+        return CodexProgressionHost.sample_resources(self) if hasattr(self, 'resources') else None
 
 
 @pytest.fixture

@@ -83,9 +83,6 @@ class ProgressionCoordinator:
         self._restored_turn_id = None
         self._limits = ProgressionSettings().model_dump()
         self._budget_saved_at = None
-        self._sample_host = None
-        self._sample_at = 0
-        self._resource_sample = None
         self._submitting = False
         self._goal_deadline = None
         self._deadline_running = None
@@ -583,6 +580,12 @@ class ProgressionCoordinator:
                     host.close()
             raise
 
+    def _settle_turn(self, checkpoint, changes=None):
+        processed = checkpoint.get('processed_snapshot', {})
+        if self.host.completion and self.host.completion['status'] == 'completed':
+            processed = checkpoint.get('decision_snapshot', processed)
+        self._save(dict(phase='idle', turn_id=None, processed_snapshot=processed, **(changes or {})))
+
     def _finish_inactive_host(self):
         checkpoint = json.loads(self._row()['checkpoint_json'])
         if (self.host.turn_id is None or self.host.completion is not None) and checkpoint.get('fault_class') != 'outcome_unknown':
@@ -603,10 +606,7 @@ class ProgressionCoordinator:
             if self.runtime.runs.active_ids(instance_id=self.instance, limit=1):
                 self._save(dict(runtime_status='paused_accepted_work_continues'))
                 return
-            processed = checkpoint.get('processed_snapshot', {})
-            if self.host.completion and self.host.completion['status'] == 'completed':
-                processed = checkpoint.get('decision_snapshot', processed)
-            self._save(dict(phase='idle', turn_id=None, processed_snapshot=processed))
+            self._settle_turn(checkpoint)
             self.bindings.release_host(instance_id=self.instance, **self._host_binding())
             self.host.close()
             self.host = None
@@ -690,10 +690,7 @@ class ProgressionCoordinator:
                 return
             if self.host.turn_id and self.host.completion is None:
                 return
-            processed = checkpoint.get('processed_snapshot', {})
-            if self.host.completion and self.host.completion['status'] == 'completed':
-                processed = checkpoint.get('decision_snapshot', processed)
-            self._save(dict(phase='idle', turn_id=None, processed_snapshot=processed))
+            self._settle_turn(checkpoint)
             if getattr(self.host, 'terminal_transport_error', None):
                 self._save(dict(last_transport_warning='interrupt_reply_timeout_after_terminal'))
                 # Explicit resume retains the exact recorded host. Next tick
@@ -732,10 +729,8 @@ class ProgressionCoordinator:
                 raise ProgressionFault('native_turn_identity_mismatch')
             if not self._reconcile_admissions():
                 return
-            processed = checkpoint.get('processed_snapshot', {})
             if self.host.completion['status'] == 'completed':
                 self._save(dict(native_completion='completed'))
-                processed = checkpoint.get('decision_snapshot', processed)
             recovered = (self.host.completion['status'] == 'interrupted'
                 and self._restored_turn_id == checkpoint['turn_id'])
             recovery = dict(attempts=checkpoint.get('attempts', 0)+1,
@@ -744,9 +739,9 @@ class ProgressionCoordinator:
             # Charge recovery and consume the old turn in one checkpoint write.
             # Retain the unprocessed snapshot and accepted tasks for a fresh
             # decision; never replay the interrupted prompt or its tool calls.
-            self._save(dict(phase='idle', processed_snapshot=processed,
+            self._settle_turn(checkpoint, dict(
                 running_seconds=checkpoint.get('running_seconds', 0)+max(0, self.clock()-checkpoint.get('round_started_at', self.clock())),
-                runtime_status='reconciling_interruption' if recovered else 'waiting', turn_id=None, **recovery))
+                runtime_status='reconciling_interruption' if recovered else 'waiting', **recovery))
             self._restored_turn_id = None
             row = self._row()
             checkpoint = json.loads(row['checkpoint_json'])
@@ -843,12 +838,6 @@ class ProgressionCoordinator:
             coverage = 'partial' if checkpoint.get('usage_records') else 'missing'
         if hasattr(self.host, 'sample_resources'):
             resources = self.host.sample_resources()
-        elif hasattr(self.host, 'resources'):
-            if self._sample_host is not self.host or self.clock() >= self._sample_at:
-                self._resource_sample = self.host.resources.sample()
-                self._sample_host = self.host
-                self._sample_at = self.clock() + self._limits['resource_sample_seconds']
-            resources = self._resource_sample
         else:
             resources = None
         resource_stop = bool(resources and (resources['owned_tree_rss_bytes'] +

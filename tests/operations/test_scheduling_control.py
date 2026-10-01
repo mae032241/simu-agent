@@ -38,7 +38,7 @@ def test_legacy_migration_preserves_read_selection_without_starting(control):
     assert bindings.session_instance(session_key='first') == bindings.session_instance(session_key='second') == instance
     assert bindings.progression_status(instance_id=instance)['state'] == 'idle'
     with bindings._connect() as db:
-        assert db.execute('PRAGMA user_version').fetchone()[0] == 2
+        assert db.execute('PRAGMA user_version').fetchone()[0] == 4
     SchedulerBindingService(bindings.database_path)
     assert bindings.session_instance(session_key='first') == instance
 
@@ -127,7 +127,9 @@ def test_pending_background_exact_objective_snapshot_and_trusted_activation(arch
     assert bindings.session_instance(session_key=user) == bindings.session_instance(session_key='actual-root') == instance
     assert active['generation'] > pending['generation']
     assert json.loads(active['objective_ref_json']) == goal.ref.model_dump(mode='json')
-    bindings.checkpoint_progression(instance_id=instance, session_key='actual-root', expected_generation=active['generation'], checkpoint={'consumed': 27})
+    with bindings._connect() as db:
+        db.execute('UPDATE scheduler_progression SET checkpoint_json=? WHERE instance_id=?',
+            (json.dumps({'consumed': 27}), instance))
     command(bindings, instance, 'pause', user)
     paused_checkpoint = json.loads(bindings.progression_status(instance_id=instance, internal=True)['checkpoint_json'])
     assert not archive.preview(instance)['ready']
@@ -160,7 +162,7 @@ def test_active_disconnected_writer_still_blocks_archive(archive_system):
     assert archive.preview(instance)['ready']
 
 
-@pytest.mark.parametrize('version', [0, 1, 3])
+@pytest.mark.parametrize('version', [0, 1, 2, 3])
 def test_incompatible_control_state_and_archive_are_rejected(control, version):
     from scidiscovery.artifact_agent.service.scheduler_bindings import SchedulerBindingError
     from scidiscovery.artifact_agent.service.instance_archive_records import ArchiveError
@@ -188,15 +190,29 @@ def test_paused_router_mutations_block_while_reads_and_accepted_worker_complete(
     result(call(gateway, 'progression_command', {'command': 'pause'}))
     # An acknowledged existing attachment may reconnect with identical coordinates.
     result(call(gateway, 'worker_attach', {'name': 'observation', 'thread_id': 'accepted-child'}))
-    for name, surface in [('artifact_ingest_text', 'research'), ('scientific_current_select', 'research'),
-                          ('operation_invoke', 'research'), ('run_record_failure', 'research'),
-                          ('execution_start', 'execution'), ('execution_cancel', 'execution'),
-                          ('execution_collect', 'execution'), ('execution_outputs', 'execution')]:
-        # A valid invocation must reach and fail the ownership guard; an empty
-        # invocation is rejected earlier without claiming scheduling authority.
-        arguments = {"name": "unauthorized", "operation_id": "blind.csv.observe.v1",
-            "instruction": "Make one bounded observation from the exact CSV.",
-            "inputs": [{"port": "source_table", "artifact_names": ["source_csv"]}]} if name == "operation_invoke" else {}
+    instance = root.facade._instance_id()
+    from scidiscovery.artifact_agent.service.executions import ExecutionService
+    executions = ExecutionService(artifacts=runtime.artifacts, approvals=runtime.approvals,
+        database_path=tmp_path / 'executions.sqlite3', exchange_root=tmp_path / 'exchange', service_actor=runtime.actor)
+    payload = runtime.artifacts.get_by_id(runtime.scheduler_bindings.resolve(
+        instance=instance, namespace='artifact', name='source_csv')).ref
+    execution_id = executions.create(executor='fixture', preparation_profile='fixture', payload_ref=payload)
+    root.facade.executions = executions
+    runtime.scheduler_bindings.bind(instance=instance, namespace='execution',
+        name='execution-fixture', object_id=execution_id)
+    mutations = {
+        'artifact_ingest_text': dict(name='unauthorized', text='Original context.'),
+        'scientific_current_select': dict(name='source_csv', kind='source_table', expected_artifact_name=None),
+        'operation_invoke': dict(name='unauthorized', operation_id='blind.csv.observe.v1',
+            instruction='Make one bounded observation from the exact CSV.',
+            inputs=[dict(port='source_table', artifact_names=['source_csv'])]),
+        'run_record_failure': dict(name='observation', reason='Confirmed failure.',
+            expected_state='running', expected_last_activity_at=None),
+        **{name: dict(name='execution-fixture') for name in
+            ('execution_start', 'execution_cancel', 'execution_collect', 'execution_outputs')},
+    }
+    for name, arguments in mutations.items():
+        surface = 'execution' if name.startswith('execution_') else 'research'
         with pytest.raises(SchedulerInstanceConflict):
             root.call_tool(name, arguments, surface=surface)
     assert result(call(gateway, 'instance_current'))['name']
@@ -283,11 +299,12 @@ def test_cli_uses_existing_ui_selection_and_shared_controls(archive_system, monk
     monkeypatch.setattr(cli, 'read_secret_file', lambda *args, **kwargs: b'a'*32)
     monkeypatch.setattr(cli, 'open_runtime', lambda **kwargs: runtime)
     key = 'sch_'+'a'*32
-    assert cli.main(['--session', key, 'progression', 'start']) == 0
+    options = ['--project-root', str(runtime.project_root), '--state-root', str(runtime.state_root)]
+    assert cli.main([*options, '--session', key, 'progression', 'start']) == 0
     assert json.loads(capsys.readouterr().out)['state'] == 'active'
-    assert cli.main(['--session', key, 'progression', 'pause']) == 0
+    assert cli.main([*options, '--session', key, 'progression', 'pause']) == 0
     assert json.loads(capsys.readouterr().out)['state'] == 'paused'
-    assert cli.main(['--session', 'unselected', 'progression', 'takeover']) == 2
+    assert cli.main([*options, '--session', 'unselected', 'progression', 'takeover']) == 2
     assert 'management UI' in capsys.readouterr().err
     assert runtime.scheduler_bindings.progression_status(instance_id=instance)['state'] == 'paused'
 

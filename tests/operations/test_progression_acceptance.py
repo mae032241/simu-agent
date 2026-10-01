@@ -74,9 +74,10 @@ with tempfile.TemporaryDirectory() as folder:
             bindings.progression_command(instance_id=identity,session_key='reader',command='start')
             row=bindings.progression_status(instance_id=identity,internal=True)
             # Synthetic accounting fixtures are not measured model usage.
-            bindings.checkpoint_progression(instance_id=identity,session_key='reader',
-                expected_generation=row['generation'],checkpoint={'budget':{'tasks':2},
-                    'usage_summary':{'coverage':'fixture'},'report':{'summary':'insufficient evidence'}})
+            with bindings._connect() as db:
+                db.execute('UPDATE scheduler_progression SET checkpoint_json=? WHERE instance_id=?',
+                    (json.dumps({'budget':{'tasks':2}, 'usage_summary':{'coverage':'fixture'},
+                        'report':{'summary':'insufficient evidence'}}),identity))
             bindings.progression_command(instance_id=identity,session_key='reader',command='pause')
             before=json.loads(bindings.progression_status(instance_id=identity,internal=True)['checkpoint_json'])
         preview=archive.preview(identity)

@@ -282,7 +282,7 @@ class RootOperationRoutes:
                 with self.scheduling_guard(continuation=continuation), self._create_lock:
                     kind = bound.compiled.spec.executor.kind
                     if kind == "agent":
-                        result = self._invoke_agent_operation(
+                        result = self._invoke_local_run(
                             bound,
                             values["on_conflict"],
                             resume_from=values.get("resume_from"),
@@ -313,21 +313,6 @@ class RootOperationRoutes:
                 "executor_kind": bound.compiled.spec.executor.kind,
                 "result": result,
             }
-
-    def _invoke_agent_operation(
-        self,
-        bound: BoundOperationCall,
-        on_conflict: str,
-        *,
-        resume_from: str | None = None,
-        draft_from: str | None = None,
-        max_attempts: int | None = None,
-    ) -> dict[str, Any]:
-        if self.runs is None:
-            raise OperationInvocationError("runtime_backend_unavailable")
-        return self._invoke_local_run(
-            bound, on_conflict, resume_from=resume_from, draft_from=draft_from, max_attempts=max_attempts
-        )
 
     def _invoke_local_run(
         self,

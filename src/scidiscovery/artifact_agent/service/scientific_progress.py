@@ -496,9 +496,9 @@ def refresh_shadow(db, row, goal_key):
 
 
 
-def human_continuation_active(row, checkpoint):
+def interactive_consent_active(row, checkpoint, collection):
     """UI consent applies to exactly one goal, owner and control generation."""
-    records = checkpoint.get('human_continuations', [])
+    records = checkpoint.get(collection, [])
     if not records:
         return False
     consent = records[-1]
@@ -506,17 +506,14 @@ def human_continuation_active(row, checkpoint):
         and consent['generation'] == row['generation']
         and consent['session_key'] == row['owner_session']
         and consent['objective_ref_json'] == row['objective_ref_json'])
+
+
+def human_continuation_active(row, checkpoint):
+    return interactive_consent_active(row, checkpoint, 'human_continuations')
 
 
 def independent_interactive_active(row, checkpoint):
-    records = checkpoint.get('interactive_sessions', [])
-    if not records:
-        return False
-    consent = records[-1]
-    return (row['state'] == 'active' and row['mode'] == 'interactive'
-        and consent['generation'] == row['generation']
-        and consent['session_key'] == row['owner_session']
-        and consent['objective_ref_json'] == row['objective_ref_json'])
+    return interactive_consent_active(row, checkpoint, 'interactive_sessions')
 
 
 def scientific_pause(db, row, checkpoint):

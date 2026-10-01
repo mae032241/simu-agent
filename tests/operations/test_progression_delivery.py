@@ -236,6 +236,7 @@ def test_notices_coalesce_survive_reconnect_and_reads_do_not_acknowledge(progres
     assert len([item for item in notices['items'] if item['category'] == 'user_decision']) == 1
     assert notices['delivery'] == 'pull_only' and notices['read_status'] == 'not_recorded'
     reopened = SchedulerBindingService(bindings.database_path)
+    reopened.progression_clock = p.coordinator.clock
     reader = copy(p.root.facade)
     reader.bindings = reopened
     assert reader.progression_status() == status

@@ -23,6 +23,19 @@ def physical(p):
     return raw, details
 
 
+def test_detail_writer_replaces_owned_records_and_retains_unknown_history(progression):
+    p = progression
+    with p.runtime.scheduler_bindings._connect() as db:
+        db.execute('INSERT INTO scheduler_progression_details VALUES(?,?,?,?)',
+            (p.instance, 'snapshot', 'historical-unknown', '{"turn":"uncertain"}'))
+        store_checkpoint(db, p.instance, {'processed_snapshot': None, 'usage_records': {'root': {'tokens': 7}}})
+        store_checkpoint(db, p.instance, {'decision_snapshot': {}, 'usage_records': {}})
+        records = [tuple(item) for item in db.execute('SELECT collection,record_key,record_json '
+            'FROM scheduler_progression_details WHERE instance_id=? ORDER BY collection,record_key', (p.instance,))]
+    assert records == [('snapshot', 'decision_snapshot', '{}'),
+        ('snapshot', 'historical-unknown', '{"turn":"uncertain"}')]
+
+
 def test_large_history_keeps_ui_admission_budgets_and_archive(human_ui):
     from tests.operations.synchronous_archive_fixture import SynchronousFixtureArchive
     from tests.operations.test_instance_archive import save_archive, restore_archive

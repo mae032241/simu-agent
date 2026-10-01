@@ -60,61 +60,20 @@ class RunAdmissionMixin:
         active = connection.execute("SELECT run_id,review_wait_json FROM runs WHERE instance_id=? AND state IN ('queued','running')",
                                     (instance_id,)).fetchall()
         review_owner = self.requested_review_owner(bound, instance_id=instance_id, connection=connection)
-        from .progression_records import hydrate_control_row
-        from .scientific_progress import scientific_pause
-        row = hydrate_control_row(connection, connection.execute(
-            'SELECT * FROM scheduler_control.scheduler_progression WHERE instance_id=?', (instance_id,)).fetchone())
+        from .progression_records import read_control_row
+        row = read_control_row(connection, instance_id, schema='scheduler_control.')
         if row is None:
             return review_owner
         checkpoint = json.loads(row['checkpoint_json'])
-        from .scheduling_control import accepted_work_authority
-        completing = bool(review_owner and accepted_work_authority(connection, row, checkpoint,
-            target=('run', review_owner), session_key=session_key, schema='scheduler_control.',
-            reservation=(reserved_output_fingerprint, scientific_signature) if reserved_output_fingerprint else None))
-        if scientific_pause(connection, row, checkpoint) and not completing:
-            raise OperationInvocationError('scientific_progress_persistent_gap',
-                message='Scientific observation is paused; confirm a new consumed observation window in the management UI.')
-        from .scientific_progress import shadow_policy
-        if shadow_policy(row)['progress_mode'] == 'assist' and row['state'] != 'active' and not completing:
-            raise OperationInvocationError('progression_paused', message='Scheduling control is not active.')
-        if checkpoint.get('fault_class') == 'outcome_unknown':
-            raise OperationInvocationError('native_submission_unknown', message='Reconcile the original native submission; do not replay it.')
+        from .scheduling_control import require_control_admission
+        require_control_admission(connection, row, checkpoint, session_key=session_key,
+            continuation=('run', review_owner) if review_owner else None,
+            reservation=(reserved_output_fingerprint, scientific_signature) if reserved_output_fingerprint else None,
+            now=self.scheduler_bindings.control_now(), schema='scheduler_control.',
+            background_busy=bool(active and (len(active) != 1 or review_owner is None)))
         if row['mode'] != 'background':
-            from .scientific_progress import shadow_policy, independent_interactive_active
-            from .scheduling_control import require_resolved_control, require_human_continuation_budget
-            checkpoint = json.loads(row['checkpoint_json'])
-            independent = independent_interactive_active(row, checkpoint)
-            if independent or shadow_policy(row)['progress_mode'] == 'assist':
-                checkpoint['admissions'] = {name: item for name, item in checkpoint.get('admissions', {}).items()
-                    if not (item['state'] == 'prepared' and reserved_output_fingerprint is not None
-                        and item['output_fingerprint'] == reserved_output_fingerprint
-                        and item.get('scientific_signature') == scientific_signature)}
-                if independent:
-                    require_resolved_control(row, checkpoint)
-                else:
-                    require_human_continuation_budget(row, checkpoint, now=self.scheduler_bindings.control_now())
             return review_owner
-        checkpoint = json.loads(row['checkpoint_json'])
         limits = json.loads(row['config_json'])['effective']['progression']
-        if active and (len(active) != 1 or review_owner is None):
-            raise OperationInvocationError("background_task_busy",
-                message="Background progression permits one complete task at a time. Only the exact independent review requested by its waiting owner may run before that task finishes.")
-        admissions = checkpoint.get('admissions', {})
-        reserved = [item for item in admissions.values() if item['state'] == 'prepared'
-            and not item.get('interactive_session_id')
-            and reserved_output_fingerprint is not None
-            and item['output_fingerprint'] == reserved_output_fingerprint
-            and item.get('scientific_signature') == scientific_signature]
-        if any(item['state'] == 'prepared' and item not in reserved for item in admissions.values()):
-            raise OperationInvocationError('background_admission_pending',
-                message='A prior task admission is unresolved; reconcile it before creating more work.')
-        from .scheduling_control import background_task_count
-        if background_task_count(checkpoint) - len(reserved) >= limits['max_tasks']:
-            raise OperationInvocationError("background_task_budget_exhausted",
-                message="The frozen task budget is exhausted, including independent review tasks.")
-        if not reserved:
-            from .progression_budget import require_task_budget
-            require_task_budget(checkpoint, limits)
         for prior in checkpoint.get('admissions', {}).values():
             if (scientific_signature and prior.get('scientific_signature') == scientific_signature
                     and prior.get('run_id') and self.status(prior['run_id']).state == 'failed'):

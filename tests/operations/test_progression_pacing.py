@@ -18,6 +18,7 @@ def test_one_minute_ticks_bound_writes_and_samples_without_model_wake(progressio
     p = progression
     p.coordinator.tick()
     host = p.coordinator.host
+    monkeypatch.setattr('scidiscovery.platforms.codex_progression.time.monotonic', lambda: p.now[0])
     samples = []
     host.resources = SimpleNamespace(sample=lambda: samples.append(p.now[0]) or
         dict(owned_tree_rss_bytes=100, control_daemon_rss_bytes=0))

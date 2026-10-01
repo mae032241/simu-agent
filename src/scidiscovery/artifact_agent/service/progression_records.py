@@ -28,6 +28,11 @@ CREATE TABLE IF NOT EXISTS scheduler_progression_details (
 """
 
 
+def read_control_row(db, instance_id, *, schema=''):
+    return hydrate_control_row(db, db.execute('SELECT * FROM ' + schema + 'scheduler_progression '
+        'WHERE instance_id=?', (instance_id,)).fetchone())
+
+
 def hydrate_control_row(db, row):
     if row is None:
         return None
@@ -62,7 +67,7 @@ def hydrate_control_row(db, row):
 def store_checkpoint(db, instance_id, checkpoint):
     """Must run inside the caller's transaction; capacity failure rolls back details."""
     compact = dict(checkpoint)
-    references = {}
+    references, details = {}, {}
     for collection, factory in COLLECTIONS.items():
         if collection not in compact:
             db.execute('DELETE FROM scheduler_progression_details WHERE instance_id=? AND collection=?',
@@ -72,8 +77,14 @@ def store_checkpoint(db, instance_id, checkpoint):
         if not isinstance(value, factory):
             raise ValueError('Invalid control detail collection.')
         records = {str(index): item for index, item in enumerate(value)} if factory is list else value
+        details[collection] = records
+        references[collection] = len(records)
+    snapshots = {name: compact.pop(name) for name in SNAPSHOTS if name in compact}
+    details['snapshot'] = snapshots
+    for collection, records in details.items():
         previous = {item[0] for item in db.execute('SELECT record_key FROM scheduler_progression_details '
-            'WHERE instance_id=? AND collection=?', (instance_id, collection))}
+            'WHERE instance_id=? AND collection=? AND (collection!=? OR record_key IN ('
+            + ','.join('?' for _ in SNAPSHOTS) + '))', (instance_id, collection, 'snapshot', *SNAPSHOTS))}
         db.executemany('DELETE FROM scheduler_progression_details '
             'WHERE instance_id=? AND collection=? AND record_key=?',
             ((instance_id, collection, key) for key in previous - records.keys()))
@@ -82,20 +93,8 @@ def store_checkpoint(db, instance_id, checkpoint):
             'WHERE record_json != excluded.record_json',
             ((instance_id, collection, key, json.dumps(item, sort_keys=True, allow_nan=False))
                 for key, item in records.items()))
-        references[collection] = len(records)
     if references:
         compact['detail_collections'] = references
-    snapshots = set()
-    for name in SNAPSHOTS:
-        if name not in compact:
-            db.execute('DELETE FROM scheduler_progression_details '
-                'WHERE instance_id=? AND collection=? AND record_key=?', (instance_id, 'snapshot', name))
-            continue
-        record = json.dumps(compact.pop(name), sort_keys=True, allow_nan=False)
-        db.execute('INSERT INTO scheduler_progression_details VALUES(?,?,?,?) '
-            'ON CONFLICT(instance_id,collection,record_key) DO UPDATE SET record_json=excluded.record_json '
-            'WHERE record_json != excluded.record_json', (instance_id, 'snapshot', name, record))
-        snapshots.add(name)
     if snapshots:
         compact['detail_snapshots'] = sorted(snapshots)
     value = json.dumps(compact, sort_keys=True, allow_nan=False)
