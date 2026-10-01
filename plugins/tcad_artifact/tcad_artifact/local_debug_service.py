@@ -259,7 +259,7 @@ class LocalTCADDebugService:
             if self._subject_path(subject).exists()})
         with ExitStack() as stack:
             for path in paths:
-                lock = stack.enter_context(path.with_suffix(".lock").open("rb"))
+                lock = stack.enter_context(path.with_suffix(".lock").open("a+"))
                 fcntl.flock(lock.fileno(), fcntl.LOCK_EX if cancel else fcntl.LOCK_SH)
             active = False
             if name is not None:
@@ -340,7 +340,7 @@ class LocalTCADDebugService:
         with ExitStack() as stack:
             for path in sorted(set(paths)):
                 if path.exists():
-                    lock = stack.enter_context(path.with_suffix(".lock").open("rb"))
+                    lock = stack.enter_context(path.with_suffix(".lock").open("a+"))
                     fcntl.flock(lock.fileno(), fcntl.LOCK_SH)
             ledgers = {str(path): json.loads(path.read_bytes()) for path in paths if path.exists()}
             runs, reservations, _ = self._owned_budget(context, ledgers, run_name=run_name)

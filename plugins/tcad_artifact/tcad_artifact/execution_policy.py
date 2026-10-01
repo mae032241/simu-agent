@@ -70,7 +70,12 @@ class ExecutionPolicySnapshot(PolicyModel):
         if set(budget) != {"max_storage_bytes", "wall_time_seconds"}:
             raise ValueError("execution budget is incomplete")
         if self.runner.max_transfer_bytes < budget["max_storage_bytes"]:
-            raise ValueError("runner transfer capability is smaller than the requested storage budget")
+            from scidiscovery.operation_contract import ToolInputError
+            raise ToolInputError("execution_storage_capability_exceeded",
+                f"Runner transfer capability is {self.runner.max_transfer_bytes} bytes, smaller than the requested "
+                f"storage budget {budget['max_storage_bytes']} bytes. Reduce resource_limits.max_storage_bytes "
+                "and its dependent output budget, or ask the administrator to increase runner capacity before sealing the implementation.",
+                path="$.resource_limits.max_storage_bytes")
         allowed = (policy.enabled
             and budget["max_storage_bytes"] <= policy.max_storage_bytes
             and budget["wall_time_seconds"] <= policy.max_wall_time_seconds)

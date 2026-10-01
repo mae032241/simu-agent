@@ -90,6 +90,24 @@ def _runtime_figures(result, report, payload, cohort):
     if not isinstance(bindings, Mapping):
         add_gap(result, "runtime_figure_manifest_incomplete", manifest)
         return
+    # A diagnosis may consume an existing plot without generating another copy.
+    # Display that exact frozen input as input evidence, not as a new result.
+    manifest_parents = [entry.get("ref") for entry in manifest.get("provenance", ())]
+    for alias, binding in bindings.items():
+        if not isinstance(binding, Mapping) or binding.get("port_name") in {
+                "tool_evidence", "attachments", "reference_access"}:
+            continue
+        ref = binding.get("artifact_ref")
+        if not isinstance(ref, Mapping) or direct.count(ref) != 1 or manifest_parents.count(ref) != 1:
+            continue
+        candidates = [item for item in cohort if item.get("ref") == ref
+            and item.get("media_type", "").split(";", 1)[0].strip().lower() in _IMAGE_MEDIA]
+        if len(candidates) == 1:
+            identity = candidates[0]["artifact_id"]
+            if not any(item["artifact_id"] == identity for item in result["figures"]):
+                result["figures"].append({"artifact_id": identity,
+                    "label": f"诊断输入图件：{alias}",
+                    "source": source(manifest, pointer("bindings", alias))})
     by_alias = {}
     for index, record in enumerate(records):
         if not isinstance(record, Mapping) or not isinstance(record.get("alias"), str):

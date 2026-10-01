@@ -151,11 +151,13 @@ DEBUG_TOOL = WorkerToolDefinition(name="worker_experiment_debug", description="R
     required_services=("experiment.execution", "tcad.development_debug"), evidence_ports=("tool_evidence", "recovery_manifest_output"))
 CAPABILITY = ExperimentCapability(tools=(ComponentRef("experiment_prepare_tool"), ComponentRef("experiment_debug_tool")),
     instructions="Use the sentaurus-tcad-code Skill for SProcess or SDevice source. Author the scientific plan and standalone implementation in this workspace. Read worker_experiment_prepare(action=schema), write scratch/experiment.json, prepare it and execute its sealed reference. Scientific-file slots resolve exact supplied originals. No fixed development-mode checklist or prior design Run is required.",
-    execution_operation="tcad.experiment.execute.internal", execution_package_schema_version=2)
+    execution_operation="tcad.experiment.execute.internal", execution_package_schema_version=2,
+    output_inventory_name="tcad_manifest")
 COMPONENTS = (
     ComponentSpec("experiment_prepare_tool", "worker_tool", __name__ + ":PREPARE_TOOL"),
     ComponentSpec("experiment_debug_tool", "worker_tool", __name__ + ":DEBUG_TOOL"),
     ComponentSpec("experiment_capability", "experiment_capability", __name__ + ":CAPABILITY",
+        configuration_identity="tcad.experiment:scientific-output-inventory.v1",
         resources=(ComponentRef("experiment_prepare_tool"), ComponentRef("experiment_debug_tool"), ComponentRef("runtime_factory")),
         extends=ComponentRef("experiment_task_protocol", "general_science")),
 )

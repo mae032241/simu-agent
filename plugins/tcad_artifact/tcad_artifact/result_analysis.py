@@ -537,7 +537,9 @@ INPUTS = (
     _input("prior_analysis", "scidiscovery.layered-diagnosis.v1", _ref("diagnosis_schema", "curve_score"), optional=True, max_bytes=128*1024).model_copy(update={"usage":"evidence_inventory", "description":"Optional exact prior analysis for original calculation reuse."}),
     _input("prior_analysis_manifest", "scidiscovery.tool-evidence-manifest.v1", _ref("tool_evidence_schema", "general_science"), optional=True, max_bytes=1024*1024).model_copy(update={"agent_visible":False,"derivation":InputDerivationSpec(anchor_port="prior_analysis", producer_output_port="recovery_manifest_output")}),
     _input("experiment_plan", "scidiscovery.experiment-portfolio.v1", _ref("experiment_portfolio_schema", "general_science"), optional=True, max_bytes=2*1024*1024).model_copy(update={"usage": "evidence_inventory", "description": "Detailed-plan branch only: exact original plan parent of execution_package. Skeleton branch reads execution_package.project.execution_plan directly; omit this port. New analysis plans belong in current_progress."}),
-    _input("execution_package", "tcad.execution-package.v2", _ref("execution_package_schema"), max_bytes=64*1024*1024),
+    _input("execution_package", "tcad.execution-package.v2", _ref("execution_package_schema"), max_bytes=64*1024*1024).model_copy(update={
+        "agent_visible": False, "derivation": InputDerivationSpec(anchor_port="runtime_manifest", select="parents"),
+        "description": "Control resolves the exact typed execution package from the selected runtime manifest's immutable direct parent. Never select another package or ask the caller to fill this port."}),
     _input("runtime_manifest", "opaque", _ref("opaque_schema", "general_science"), max_bytes=4*1024*1024),
     _input("runtime_attestation", "tcad.runtime-attestation.v1", _ref("runtime_attestation_schema"), optional=True, max_bytes=4*1024*1024),
     _input("solver_outputs", "*", _ref("opaque_schema", "general_science"), optional=True, count=32, max_bytes=32*1024*1024, inventory=True, exposure="on_demand"),

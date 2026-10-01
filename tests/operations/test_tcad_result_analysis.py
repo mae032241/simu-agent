@@ -101,7 +101,7 @@ def analysis_system(tmp_path, *, state='succeeded', mapped=True, bind_names=('A'
     register('reference',csv,'opaque',media='text/csv')
     request = dict(name='analysis',operation_id='tcad.result.analyze.v1',instruction='Analyze the bound fixture outputs.',inputs=[
         dict(port='experiment_plan',artifact_names=['plan']),
-        dict(port='execution_package',artifact_names=['package']),dict(port='runtime_manifest',artifact_names=['manifest']),
+        dict(port='runtime_manifest',artifact_names=['manifest']),
         dict(port='reference_material',artifact_names=['reference']),
         *([dict(port='solver_outputs',artifact_names=['output_'+name for name in bind_names])] if bind_names else []),
     ])
@@ -112,7 +112,8 @@ def open_analysis(system):
     catalog,runtime,root,request,_,_ = system
     result = root.call_tool('operation_preflight',request)
     assert result['admissible'] is True,result
-    root.call_tool('operation_invoke',request)
+    invoked = root.call_tool('operation_invoke',request)
+    assert invoked['result']['state'] == 'queued', json.dumps(invoked, ensure_ascii=False)
     compiled = catalog.operation('tcad.result.analyze.v1')
     worker = LocalWorkerMCPRouter(runtime.runs,operation_id=compiled.spec.operation_id,operation_digest=compiled.digest)
     opened = worker.call_tool('worker_open_assignment',{})
@@ -240,7 +241,7 @@ def test_no_score_preflight_rejects_other_round(tmp_path,wrong):
         register('wrong_output',runtime.artifacts.read(artifacts['output_A'].ref),'opaque',parents=(artifacts['plan'].ref,),media='application/x-synopsys-plx',output_name='A')
         next(item for item in request['inputs'] if item['port']=='solver_outputs')['artifact_names']=['wrong_output']
     result=root.call_tool('operation_preflight',request)
-    assert result['admissible'] is False and result['reason_code']=='guard_rejected',result
+    assert result['admissible'] is False and result['reason_code']==('input_origin_missing' if wrong == 'manifest' else 'guard_rejected'),result
 
 
 def test_same_bytes_correct_names_allow_reversed_bindings(tmp_path):

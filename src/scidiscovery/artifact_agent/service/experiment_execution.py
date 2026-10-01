@@ -122,6 +122,11 @@ class ExperimentExecution:
         run, effect, _, capability = self._contract(context)
         plan = effect_operation_plan(effect)
         port = next(item for item in effect.spec.inputs if item.name == plan.payload_port)
+        # Check current adapter capability before sealing/reviewing an unusable
+        # implementation. This neither authorizes execution nor reserves budget;
+        # start repeats the check against the then-current policy.
+        self.bridge.validate_request(executor=plan.executor, preparation_profile=plan.preparation_profile,
+            payload=payload, allow_denial=True)
         parents = tuple(context.source_descriptor(alias).artifact_ref for alias in sources)
         private = self.executions.artifacts.register(payload, ArtifactRegistration(
             kind="experiment_execution_package", schema_id=port.schema_id,
@@ -131,7 +136,10 @@ class ExperimentExecution:
             idempotency_key="experiment-package:" + hashlib.sha256(canonical_json({
                 "run": run.run_id, "payload": hashlib.sha256(payload).hexdigest(), "parents": parents})).hexdigest()).ref
         record = context.accept_evidence(raw=scientific_material, media_type="application/json",
-            derived_from=sources, trusted_parent_refs=(private,), metadata={"kind": "experiment_implementation", "private_outputs":list(private_outputs)})
+            derived_from=sources, trusted_parent_refs=(private,), metadata={"kind": "experiment_implementation",
+                "private_outputs":list(private_outputs),
+                **({"output_inventory_name": capability.output_inventory_name}
+                   if getattr(capability, "output_inventory_name", None) else {})})
         if (run.recovery_policy or {}).get("require_execution_review"):
             record["review"] = self.review_handoff(run, record)
         return record
@@ -423,7 +431,12 @@ class ExperimentExecution:
                 result["outputs_status"] = "Bind the original implementation to read collected scientific outputs. Execution state is available."
                 return result
             private_outputs = implementation["metadata"].get("private_outputs", ())
+            names, inventory_note = self._output_file_names(context, execution_id,
+                implementation["metadata"].get("output_inventory_name"))
+            if inventory_note:
+                result["output_inventory_note"] = inventory_note
             result["outputs"] = [{"name": item.logical_name, "media_type": item.media_type,
+                **({"file_name": names[item.logical_name]} if item.logical_name in names else {}),
                 "size_bytes": item.size_bytes} for item in self.executions.outputs(execution_id)
                 if item.logical_name not in private_outputs]
             # A control observation is sealed without exposing control identities.
@@ -436,6 +449,45 @@ class ExperimentExecution:
                 result["reference"] = record["alias"]
                 result["artifact_name"] = record["artifact_name"]
         return result
+
+    def _output_file_names(self, context, execution_id, inventory_name):
+        """Project exact solver-relative filenames, never transport paths or guesses."""
+        import json
+        from pathlib import PurePosixPath
+        from ...agent_execution_settings import MaterialInputSettings
+        if inventory_name is None:
+            return {}, None
+        # A status query must remain readable after deployment changes. This
+        # field was frozen with the implementation; do not recompile its owner.
+        run = self.runs.status(context.run_id)
+        outputs = {item.logical_name: self.executions.artifacts.get_by_id(item.artifact_id)
+            for item in self.executions.outputs(execution_id)}
+        inventory = outputs.get(inventory_name)
+        if inventory is None:
+            return {}, "Original output filenames are unavailable: the collection has no declared inventory. Retain this limitation; do not infer case or time from opaque labels."
+        limits = MaterialInputSettings.model_validate((run.recovery_policy or {}).get("input_materials", {}))
+        if inventory.size_bytes > limits.inline_max_bytes:
+            return {}, "The output inventory exceeds the configured inline read limit. Output labels remain usable, but original filenames require bounded analysis of the collected inventory."
+        try:
+            document = json.loads(self.executions.artifacts.read(inventory.ref))
+            names = {}
+            for item in document['outputs']:
+                path = item['relative_path']
+                name = item['name']
+                original = outputs[name]
+                if (not isinstance(path, str) or not path or '\\' in path
+                        or PurePosixPath(path).is_absolute() or '..' in path.split('/')
+                        or path == '.' or PurePosixPath(path).as_posix() != path
+                        or any(ord(char) < 32 for char in path) or name in names
+                        or (original.ref.sha256, original.size_bytes, original.media_type) !=
+                            (item['sha256'], item['size_bytes'], item['media_type'])):
+                    raise ValueError('inventory differs from exact collected files')
+                names[name] = path
+            return names, None
+        except (KeyError, TypeError, ValueError):
+            # A broken display mapping cannot make a terminal lifecycle unreadable.
+            # Keep the exact output identities and withhold every unverified name.
+            return {}, "The collected output inventory does not match its exact files; original filenames are withheld. Preserve the collected execution and ask for collection repair; do not resubmit the solver."
 
     def recover_start(self, execution_id, *, instance_id):
         """Advance the original request after its entire scientific task has failed."""

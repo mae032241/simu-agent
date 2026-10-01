@@ -121,6 +121,8 @@ def _load_implementation(spec: ComponentSpec, plugin_id: str) -> Any:
         from .experiment import ExperimentCapability
         if (not isinstance(value, ExperimentCapability) or spec.extends is None
                 or type(value.execution_package_schema_version) is not int
+                or (value.output_inventory_name is not None and
+                    (not isinstance(value.output_inventory_name, str) or not _ID.fullmatch(value.output_inventory_name)))
                 or value.execution_package_schema_version < 1):
             _fail("component_protocol_invalid", plugin_id, field=spec.component_id)
         return value
@@ -338,6 +340,8 @@ def _validate_operation_contracts(plugin_map: dict[str, PluginDefinition], compo
                 while current.derivation is not None:
                     rule = current.derivation
                     if (current.name in seen or rule.anchor_port not in input_ports
+                            or (rule.select == "parents" and
+                                (current.agent_visible or current.schema_id in {"*", "opaque"}))
                             or (rule.producer_output_port is not None and
                                 (not _ID.fullmatch(rule.producer_output_port) or rule.select != "subject"))
                             or len(rule.producer_input_path) > 8

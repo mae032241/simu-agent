@@ -274,9 +274,10 @@ class ReferenceAccessMixin:
             raise ReferenceAccessError('reference_root_missing', 'The exact frozen root is no longer bound.')
         return _ref(record['artifact_ref']), root, record['chain']
 
-    def _reference_pair(self, value, source_ref, policy, call, root_ref=None):
-        producer = self.completed_for_output(source_ref)
-        authorized_manifest = None
+    def _reference_pair(self, value, source_ref, policy, call, root_ref=None, *, original_proof=None):
+        producer = self.status(original_proof[0]) if original_proof else self.completed_for_output(source_ref)
+        authorized_manifest = _ref(original_proof[1]) if original_proof else None
+        legacy_authorization = False
         if producer is None:
             receipts = [r for r in self.reference_access_records(value.run_id)
                         if _ref(r['artifact_ref']) == source_ref and (root_ref is None or _ref(r['root_ref']) == root_ref)]
@@ -286,12 +287,29 @@ class ReferenceAccessMixin:
                 producer_id, manifest_raw = next(iter(pairings))
                 producer = self.status(producer_id)
                 authorized_manifest = _ref(json.loads(manifest_raw))
-        if producer is None or producer.state != 'completed' or producer.output_ref is None:
+                legacy_authorization = all(r.get('proof_run_id') is None and r.get('proof_manifest_ref') is None
+                                           for r in receipts)
+        if producer is None:
+            # A frozen tool material is readable before its owner completes.
+            # Only an exact visible input grants this entry, never a guessed
+            # producer ID or arbitrary object in the owner's live workspace.
+            bound = next((item for item in self._reference_roots(value)
+                          if item.artifact_ref == source_ref), None)
+            if bound is not None:
+                from .sealed_materials import resolve_material
+                material = resolve_material(self, value, bound.source_name)
+                if material is not None:
+                    producer = self.status(material['producer_run_id'])
+                    authorized_manifest = self.reference_manifest(producer)
+        if producer is None or (authorized_manifest is None and
+                (producer.state != 'completed' or producer.output_ref is None)):
             raise ReferenceAccessError('reference_producer_missing', 'Source has no exact completed producer; bind required originals explicitly.')
         if producer.instance_id != value.instance_id:
             raise ReferenceAccessError('reference_instance_mismatch', 'Source producer belongs to another instance.')
         candidates = []
-        for ref in self.artifacts.catalog(producer.output_ref).parent_refs:
+        parents = ((authorized_manifest,) if authorized_manifest is not None
+                   else self.artifacts.catalog(producer.output_ref).parent_refs)
+        for ref in parents:
             if ref.schema_id == 'scidiscovery.tool-evidence-manifest.v1':
                 envelope = self.artifacts.catalog(ref)
                 if envelope.labels.get('tool_producer_run') == producer.run_id:
@@ -312,9 +330,28 @@ class ReferenceAccessMixin:
         selected = None
         if source_ref != producer.output_ref:
             matches = [record for record in records if _ref(record['artifact_ref']) == source_ref]
+            if not matches and legacy_authorization:
+                # Older access receipts kept only the intermediate author's
+                # manifest. Recover the original proof solely through an exact
+                # frozen input in that manifest, never through a guessed owner.
+                from .sealed_materials import resolve_material
+                for item in producer.inputs:
+                    binding = bindings.get(item.source_name)
+                    if (item.artifact_ref != source_ref or binding is None
+                            or _ref(binding['artifact_ref']) != source_ref):
+                        continue
+                    material = resolve_material(self, producer, item.source_name)
+                    if material is not None and material['producer_run_id'] != producer.run_id:
+                        owner = self.status(material['producer_run_id'])
+                        return self._reference_pair(value, source_ref, policy, call, root_ref,
+                            original_proof=(owner.run_id, self.reference_manifest(owner)))
             if len(matches) != 1:
                 raise ReferenceAccessError('reference_record_unpaired', 'Tool original is not uniquely recorded in its producer manifest.')
             selected = matches[0]
+            original = [r for r in self.tool_evidence(producer.run_id)
+                        if _ref(r['artifact_ref']) == source_ref]
+            if len(original) != 1 or original[0] != selected:
+                raise ReferenceAccessError('reference_record_unpaired', 'Material differs from its immutable producer receipt.')
         return producer, manifest, selected, manifest_ref
 
     def _reference_calculation_origin(self, value, manifest, calculation, policy, call):
@@ -411,6 +448,14 @@ class ReferenceAccessMixin:
             aliases.extend(('/@metadata/derived_from/' + str(index), alias, None)
                            for index, alias in enumerate(selected.get('metadata', {}).get('derived_from', ())))
         edges = []
+        if selected:
+            edge = {'source_ref': source_ref.model_dump(mode='json'), 'locator': '/@content',
+                    'target_ref': source_ref.model_dump(mode='json')}
+            edges.append({'reference': 'content', 'locator': '/@content', 'alias': selected['alias'],
+                'media_type': selected['media_type'], 'size_bytes': selected['size_bytes'],
+                '_edge': edge, '_producer': producer.run_id, '_manifest_run': producer.run_id,
+                '_manifest_ref': manifest_ref.model_dump(mode='json'), '_proof_run': producer.run_id,
+                '_proof_manifest': manifest_ref.model_dump(mode='json')})
         for locator, alias, expected_digest in aliases:
             self._reference_deadline(call)
             bindings, records = alias_scopes.get(locator, (scoped_bindings, scoped_records))
@@ -457,8 +502,14 @@ class ReferenceAccessMixin:
                     origin_run, origin_ref = next(iter(inherited))
                     original_proof = (origin_run, json.loads(origin_ref))
             if (original_proof is None and target_producer is not None
-                    and target_producer.state == 'completed' and target_producer.output_ref != target):
-                original_run, _, original_record, original_manifest = self._reference_pair(value, target, policy, call)
+                    and target_producer.output_ref != target):
+                # The exact target has already been resolved from this source's
+                # sealed bindings/receipts and checked against its owner. Task
+                # completion is not a prerequisite for an immutable tool proof.
+                proof = ((target_producer.run_id, self.reference_manifest(target_producer))
+                         if target_producer.state != 'completed' else None)
+                original_run, _, original_record, original_manifest = self._reference_pair(
+                    value, target, policy, call, original_proof=proof)
                 if original_record is not None:
                     original_proof = (original_run.run_id, original_manifest.model_dump(mode='json'))
             attachment = next((r for r in records if r.get('alias') == alias and r.get('output_port') == 'attachments'), None)
@@ -504,7 +555,7 @@ class ReferenceAccessMixin:
             handle = 'ref_' + _digest(edge)
             if reference is not None and reference != handle:
                 continue
-            edges.append({'reference': handle, 'locator': locator, 'alias': name, 'file_name': name,
+            edges.append({'reference': handle, 'locator': locator, 'alias': name, 'file_name': item.get('file_name', name),
                 'media_type': target.media_type, 'size_bytes': target.size_bytes,
                 '_edge': edge, '_producer': None, '_manifest_ref': proof_ref.model_dump(mode='json'),
                 '_manifest_run': producer.run_id, '_proof_run': None, '_proof_manifest': None})

@@ -133,9 +133,17 @@ def _real_experiment(tmp_path, monkeypatch, solver="sprocess", before_submit=Non
         output.write_bytes(b"observed fixture\n")
         descriptor = LocalFileDescriptor(name="observation", local_path=str(output), media_type="text/plain",
             size_bytes=output.stat().st_size, sha256=hashlib.sha256(output.read_bytes()).hexdigest())
+        inventory = tmp_path / 'output-manifest.json'
+        inventory.write_text(json.dumps({'outputs': [dict(name=name, relative_path=path,
+            sha256=descriptor.sha256, size_bytes=descriptor.size_bytes, media_type=media)
+            for name, path, media in (('observation', 'case-A/profile_480s.txt', 'text/plain'),
+                ('binary', 'case-A/final.tdr', 'application/octet-stream'))]}))
+        inventory_descriptor = LocalFileDescriptor(name='tcad_manifest', local_path=str(inventory),
+            media_type='application/json', size_bytes=inventory.stat().st_size,
+            sha256=hashlib.sha256(inventory.read_bytes()).hexdigest())
         runtime.executions.ingest_result(execution_id=execution_id, external_run_id=runtime.executions.status(execution_id).external_run_id,
             outputs=(descriptor, descriptor.model_copy(update={"name":"binary", "media_type":"application/octet-stream"}),
-                descriptor.model_copy(update={"name":"tcad_manifest"})))
+                inventory_descriptor))
     coordinator = runtime.runs.experiment_executions = ExperimentExecution(runs=runtime.runs, executions=runtime.executions, bridge=bridge,
         collection=SimpleNamespace(collect=collect), approval_base_url=None)
     compiled = catalog.operation("science.experiment.v1")
@@ -434,8 +442,9 @@ def test_execution_package_sealing_preserves_declared_payload_version(monkeypatc
     run = SimpleNamespace(run_id='run_fixture', recovery_policy={})
     service = execution.ExperimentExecution(runs=None, executions=SimpleNamespace(
         artifacts=SimpleNamespace(register=register), service_actor=ActorRef(actor_id='service', actor_type='service')),
-        bridge=None, collection=None, approval_base_url=None)
-    monkeypatch.setattr(execution, 'effect_operation_plan', lambda _: SimpleNamespace(payload_port='package'))
+        bridge=SimpleNamespace(validate_request=lambda **kwargs: None), collection=None, approval_base_url=None)
+    monkeypatch.setattr(execution, 'effect_operation_plan', lambda _: SimpleNamespace(
+        payload_port='package', executor='fixture', preparation_profile='fixture'))
     monkeypatch.setattr(service, 'task_origin', lambda _: 'run_fixture')
     context = SimpleNamespace(accept_evidence=lambda **kwargs: kwargs)
     for version in (1, 2, 3):
@@ -470,7 +479,7 @@ def test_experiment_tool_binding_scopes_each_run_without_exposing_control_servic
         implementation=lambda context, alias: 'exact-package-ref',
         executions=SimpleNamespace(artifacts=SimpleNamespace(read=lambda ref: b'exact-package')),
         task_origin=lambda run: 'original-task',
-        task_lineage=lambda run: (run, SimpleNamespace(run_id='original-task')))
+        task_lineage=lambda run: (run, SimpleNamespace(run_id='original-task', inputs=())))
     compiled = SimpleNamespace(spec=SimpleNamespace(operation_id='experiment',
         executor=SimpleNamespace(capability='domain')),
         worker_tools=(SimpleNamespace(required_services=('domain:experiment.execution',), optional_services=()),))

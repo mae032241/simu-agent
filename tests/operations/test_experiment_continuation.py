@@ -62,9 +62,9 @@ def test_bound_report_exposes_named_collected_originals_without_execution_takeov
     stage = f.worker.call_tool("worker_reference_read", {"source": prior, "action": "read", "reference": entry["reference"]})
     files = f.worker.call_tool("worker_reference_read", {"source": stage["source"]})
     names = {item["file_name"] for item in files["references"]}
-    assert names == {"observation", "binary"}
+    assert names == {"case-A/profile_480s.txt", "case-A/final.tdr"}
     assert "tcad_manifest" not in json.dumps(files) and "artifact_id" not in json.dumps(files)
-    entry = next(item for item in files["references"] if item["file_name"] == "binary")
+    entry = next(item for item in files["references"] if item["alias"] == "binary")
     delivered = f.worker.call_tool("worker_reference_read", {"source": stage["source"], "action": "read",
         "reference": entry["reference"], "delivery": "file"})
     assert Path(delivered["file_path"]).read_bytes() == b"observed fixture\n"

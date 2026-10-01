@@ -14,6 +14,13 @@ parallel types. Current plugin protocol is `1`, Operation ABI is `23`, and compo
 protocol versions are declared independently. Changing an implementation or resource
 still changes compiled identity.
 
+`InputDerivationSpec(anchor_port=..., select="parents")` resolves only the selected
+anchor's immutable direct parents matching the hidden port's concrete schema.
+Missing or multiple matching parents fail admission. It does not search by name,
+recency, bytes or unrelated artifacts. TCAD analysis uses this edge to obtain its
+control-owned package from the selected runtime manifest; Workers receive a
+read-only scientific projection, without execution credentials or transport fields.
+
 `InputPortSpec.exposure="material"` declares a paired wildcard evidence inventory
 (`schema="*"`, `media_types=("*/*",)`). Control applies `AgentSettings.input_materials`
 to stored sizes, delivers small text on demand, and freezes larger or binary inputs
@@ -41,6 +48,12 @@ attachments through `worker_reference_read` on the exact bound main output, then
 read selected fragments or request streamed file delivery under `input_materials`.
 The UI renders verified attachments as downloads, with PNG/JPEG previews. Reference
 file delivery and finalization do not bulk-load attachment bytes.
+An explicitly bound sealed stage or tool original is also readable while its
+producer is running or failed, including after its contract becomes historical.
+Control freezes a private receipt snapshot for the read; only declared source
+edges are traversable, never the producer's workspace or unrelated later files.
+Diagnosis views display exact frozen input PNG/JPEG images without requiring a
+Worker to copy them into a new output or fill a separate visualization form.
 
 | Owner | Supported extension contract |
 | --- | --- |
@@ -49,7 +62,7 @@ file delivery and finalization do not bulk-load attachment bytes.
 | `operations.input_validation` | `OperationInvocationError`, `BoundSourceError`, `parse_bound_json`, `InputBindingDescriptor`, supplied `ValidationSources` and `prior_analysis_sources`. Validators receive bound bytes plus read-only source descriptors and verified calculation values; they do not assemble control proofs. |
 | `operations.invoke` | Effect executors return `EffectExecutorPlan(executor, preparation_profile, payload_port, budget_subject_schemas)`. Approval projectors receive `ApprovalProjectorContext` with immutable `ApprovalSubjectSnapshot` and supplied producer-family/source/input projections, and return `schema.approval.ReviewDocument`. These are trusted callback data, not Agent output. Preflight, bound-call construction, invocation and execution orchestration remain control-owned. |
 | `operations.runtime_plugins` | `RuntimePluginFactory.build(RuntimePluginContext) -> RuntimePluginContribution`. The frozen startup context supplies `plugin_id`, `mode` (`control` or `local_worker`), exact `config_path`/`config_bytes`, and `state_root`. Contributions bind named `execution_adapters`, named `tool_services`, and control-managed `reconcilers`. This is installed trusted startup code, not a Worker capability or a second registry. |
-| `operations.experiment` | `ExperimentCapability(tools, instructions, execution_operation, execution_package_schema_version)` implements `scidiscovery.complete-experiment.v1`. The package version is required and participates in identity; configuration selects the contribution. |
+| `operations.experiment` | `ExperimentCapability(tools, instructions, execution_operation, execution_package_schema_version, output_inventory_name=None)` implements `scidiscovery.complete-experiment.v1`. The package version is required and participates in identity; configuration selects the contribution. An optional collected JSON inventory contains `outputs[{name, relative_path, sha256, size_bytes, media_type}]`. Control verifies it against collected originals and exposes solver-relative filenames, without revealing transport paths or asking Workers to build a mapping table. |
 | `operations.workspace` | `WorkspaceMaterializer(request) -> WorkspaceMaterializationResult`, `WorkspaceFilePolicy(WorkspaceFileRequest) -> WorkspaceFileRule | None`, finalizer callables `(WorkspaceFinalizationRequest) -> bytes`, `WorkspaceSnapshotter(Path) -> tuple[WorkspaceSnapshotFile, ...]`, and `WorkspaceProtocolError`. A finalizer that removes control-owned fields from the authoring schema uses `WorkspaceFinalizer(implementation, draft_schema, projection_version)` to pair that projection with its deterministic completion; the version participates in compiled identity. Plain callables retain the complete output schema. Requests carry only supplied paths, limits, binding descriptors and frozen input bytes; private `input_contents`, trusted tool records and Run identity must not be materialized for Agents. Control resolves hooks and seals results. |
 
 The actual tool callback object is
