@@ -38,7 +38,7 @@ def test_legacy_migration_preserves_read_selection_without_starting(control):
     assert bindings.session_instance(session_key='first') == bindings.session_instance(session_key='second') == instance
     assert bindings.progression_status(instance_id=instance)['state'] == 'idle'
     with bindings._connect() as db:
-        assert db.execute('PRAGMA user_version').fetchone()[0] == 4
+        assert db.execute('PRAGMA user_version').fetchone()[0] == 5
     SchedulerBindingService(bindings.database_path)
     assert bindings.session_instance(session_key='first') == instance
 
@@ -115,6 +115,8 @@ def test_pending_background_exact_objective_snapshot_and_trusted_activation(arch
     bindings = runtime.scheduler_bindings
     user = 'sch_' + 'a'*32
     goal = artifact(runtime, instance, 'exact.goal')
+    from tests.operations.research_loop_fixtures import authorize_loop
+    authorize_loop(runtime, instance, user, 'exact.goal')
     assert command(bindings, instance, 'start', user, mode='background', objective_name='exact.goal', objective_ref=goal.ref)['reason'] == 'runtime_unavailable'
     pending = bindings.progression_status(instance_id=instance, internal=True)
     assert pending['owner_session'] is None
@@ -162,7 +164,7 @@ def test_active_disconnected_writer_still_blocks_archive(archive_system):
     assert archive.preview(instance)['ready']
 
 
-@pytest.mark.parametrize('version', [0, 1, 2, 3])
+@pytest.mark.parametrize('version', [0, 1, 2, 3, 4])
 def test_incompatible_control_state_and_archive_are_rejected(control, version):
     from scidiscovery.artifact_agent.service.scheduler_bindings import SchedulerBindingError
     from scidiscovery.artifact_agent.service.instance_archive_records import ArchiveError
@@ -335,6 +337,8 @@ def anchored_goal(tmp_path, request):
             payload_schema_version=1, media_type='application/json', creator=runtime.actor), idempotency_key='goal')
         assert (goal.kind, goal.schema_id) == ('research_objective', 'scidiscovery.research-objective.v1')
         bindings.bind(instance=instance.instance_id, namespace='artifact', name='goal', object_id=goal.artifact_id)
+    from tests.operations.research_loop_fixtures import authorize_loop
+    authorize_loop(runtime, instance.instance_id, 'goal-user', 'goal')
     return runtime, instance.instance_id, root
 
 

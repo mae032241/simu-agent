@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from ..service.scheduling_control import owned_mutation
 
 import hashlib
@@ -36,6 +38,8 @@ from .mcp_root_shared import (
 
 class RootExecutionRoutes:
     def _effect_admission(self, bound, plan):
+        if self._optional('execution', bound.name) is None:
+            self.bindings.require_loop_execution_budget(instance_id=self._instance_id(), session_key=self.session_key)
         prepared = (prepare_effect_payload(bound, self.artifacts.read)
                     if bound.compiled.spec.executor.preparation is not None else None)
         payloads = tuple(item for item in bound.inputs if item.port_name == plan.payload_port)
@@ -236,6 +240,9 @@ class RootExecutionRoutes:
                 "execution", name, fingerprint, on_conflict
             )
             if target.existing_object_id is None:
+                from ..service.research_loops import current_loop
+                control = self.bindings.progression_status(instance_id=self._instance_id(), internal=True)
+                loop_id = current_loop(json.loads(control.get('checkpoint_json', '{}')))
                 execution_id = "exe_" + canonical_sha256(
                     {
                         "instance": self._instance_id(),
@@ -248,7 +255,7 @@ class RootExecutionRoutes:
                     preparation_profile=preparation_profile,
                     payload_ref=payload_ref,
                     compiled_identity=compiled_identity,
-                    labels=_operation_artifact_labels(bound),
+                    labels={**_operation_artifact_labels(bound), **({'budget_loop': loop_id} if loop_id else {})},
                     execution_id=execution_id,
                 )
                 self._bind_target("execution", target, execution_id, fingerprint)
@@ -643,6 +650,16 @@ class RootExecutionRoutes:
                 raise RootToolError("Task execution recovery service is unavailable")
             coordinator.recover_start(execution_id, instance_id=self._instance_id())
             return self._execution_status_snapshot(name=name)
+        if (not self.executions.status(execution_id).external_run_id
+                and not self.executions.prepared_submission(execution_id)):
+            from ..service.research_loops import current_loop
+            control = self.bindings.progression_status(instance_id=self._instance_id(), internal=True)
+            loop_id = current_loop(json.loads(control.get('checkpoint_json', '{}')))
+            request_ref, _ = self.executions.approval_subject_refs(execution_id)
+            original_loop = self.artifacts.catalog(request_ref).labels.get('budget_loop')
+            if original_loop != loop_id:
+                raise RootToolError('Execution submission belongs to its original budget scope; do not replay it in another loop.')
+            self.bindings.require_loop_execution_budget(instance_id=self._instance_id(), session_key=self.session_key)
         approval_id = self._optional("approval", _derived_name(name, "approval"))
         request_ref, _ = self.executions.approval_subject_refs(execution_id)
         compiled, compiled_identity = self._current_execution_contract(

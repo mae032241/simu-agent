@@ -14,7 +14,7 @@ from scidiscovery.operation_contract import DiagnosticError
 from tcad_artifact.local_debug_service import _record_key
 
 
-def continuation(tmp_path, monkeypatch, solver="sprocess", *, all_stages=False, include_grid=True, require_execution_review=False, presentation=False, goal="research-objective"):
+def continuation(tmp_path, monkeypatch, solver="sprocess", *, all_stages=False, include_grid=True, require_execution_review=False, presentation=False, goal="research-objective", managed_loop=False):
     runtime, root, catalog, connections, instance = _real_experiment(tmp_path, monkeypatch, solver, goal=goal)
     runs = runtime.runs
     if presentation:
@@ -34,6 +34,14 @@ def continuation(tmp_path, monkeypatch, solver="sprocess", *, all_stages=False, 
                   {"port":"scientific_materials", "artifact_names":names}], "instruction":"Reuse exact sealed materials."}
     if require_execution_review:
         invocation["require_execution_review"] = True
+    if managed_loop:
+        from tests.operations.research_loop_fixtures import authorize_loop
+        user = 'sch_' + 'a' * 32
+        runtime.scheduler_bindings.bind_session(session_key=user, instance_id=instance.instance_id)
+        root.facade.session_key = user
+        root.call_tool('progression_command', {'command':'pause'})
+        authorize_loop(runtime, instance.instance_id, user, 'objective')
+        root.call_tool('progression_command', {'command':'start', 'objective_name':'objective'})
     result = root.call_tool("operation_invoke", invocation)
     assert result["result"]["state"] == "queued", result
     run_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace="run", name="continuation")
@@ -43,6 +51,9 @@ def continuation(tmp_path, monkeypatch, solver="sprocess", *, all_stages=False, 
     services = bind_experiment_services(runs, compiled, dict(coordinator.worker_services), coordinator=coordinator)
     worker = LocalWorkerMCPRouter(runs, operation_id=compiled.spec.operation_id, operation_digest=compiled.digest, tool_services=services)
     opened = worker.call_tool("worker_open_assignment", {})
+    if managed_loop:
+        from tests.operations.research_loop_fixtures import measured_fixture_usage
+        measured_fixture_usage(worker)
     alias = next(i.source_name for i in runs.status(run_id).inputs
                  if i.artifact_ref == ArtifactRef.model_validate(implementation["artifact_ref"]))
     return SimpleNamespace(runtime=runtime, runs=runs, root=root, instance=instance, worker=worker,

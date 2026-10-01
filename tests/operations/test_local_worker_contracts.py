@@ -92,6 +92,14 @@ def _invoke(root: RootMCPRouter, name: str = "observation") -> None:
 
 def _worker(catalog, runtime) -> LocalWorkerMCPRouter:
     compiled = catalog.operation("blind.csv.observe.v1")
+    with runtime.runs._connect() as db:
+        queued = db.execute("SELECT run_id,recovery_policy_json FROM runs WHERE operation_digest=? AND state='queued'", (compiled.digest,)).fetchall()
+    if len(queued) == 1 and json.loads(queued[0]['recovery_policy_json'] or '{}').get('loop_id'):
+        run_id = queued[0]['run_id']
+        caller = ('source-test-session', 'worker-' + run_id)
+        runtime.runs.worker_connections.attach(run_id=run_id, platform_session=caller[0], thread_id=caller[1])
+        return LocalWorkerMCPRouter(runtime.runs, operation_id=compiled.spec.operation_id,
+            operation_digest=compiled.digest, run_id=run_id, trusted_caller=caller)
     return LocalWorkerMCPRouter(
         runtime.runs,
         operation_id=compiled.spec.operation_id,
@@ -99,7 +107,7 @@ def _worker(catalog, runtime) -> LocalWorkerMCPRouter:
     )
 
 
-def _write_result(worker: LocalWorkerMCPRouter) -> None:
+def _write_result(worker: LocalWorkerMCPRouter, *, observe_tokens=True) -> None:
     structure = worker.call_tool("worker_csv_summarize", {})
     content = canonical_json(
         {
@@ -114,6 +122,9 @@ def _write_result(worker: LocalWorkerMCPRouter) -> None:
         }
     ).decode("utf-8")
     (worker._workspace.output_directory / "result.json").write_text(content)
+    if observe_tokens:
+        from tests.operations.research_loop_fixtures import measured_fixture_usage
+        measured_fixture_usage(worker)
 
 
 def test_fresh_runtime_submits_existing_bound_workspace_without_reopening(tmp_path):

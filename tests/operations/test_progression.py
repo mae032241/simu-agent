@@ -45,26 +45,39 @@ class Host:
         return CodexProgressionHost.sample_resources(self) if hasattr(self, 'resources') else None
 
 
-@pytest.fixture
-def progression(tmp_path):
+def _progression_fixture(tmp_path, *, managed=True):
     catalog, runtime, instance, root = _system(tmp_path)
     bindings = runtime.scheduler_bindings
     user = 'sch_'+'a'*32
     bindings.bind_session(session_key=user, instance_id=instance.instance_id)
     root.facade.session_key = user
+    now = [1000.0]
+    bindings.progression_clock = lambda: now[0]
     root.call_tool('artifact_ingest_text', dict(name='goal', text='Compare exact data and retain limitations.', on_conflict='reject'))
     root.call_tool('progression_command', dict(command='pause'))
-    root.call_tool('progression_command', dict(command='start', mode='background', objective_name='goal'))
+    if managed:
+        from tests.operations.research_loop_fixtures import authorize_loop
+        authorize_loop(runtime, instance.instance_id, user, 'goal')
+        root.call_tool('progression_command', dict(command='start', mode='background', objective_name='goal'))
     def facade(session):
         from copy import copy
         value = copy(root.facade)
         value.session_key = session
         return value
-    now = [1000.0]
     coordinator = ProgressionCoordinator(runtime=runtime, host_factory=Host, facade_factory=facade, clock=lambda: now[0])
     yield SimpleNamespace(catalog=catalog, runtime=runtime, instance=instance.instance_id,
         root=root, coordinator=coordinator, now=now, user=user, facade=facade)
     coordinator.close()
+
+
+@pytest.fixture
+def progression(tmp_path):
+    yield from _progression_fixture(tmp_path)
+
+
+@pytest.fixture
+def unmanaged_progression(tmp_path):
+    yield from _progression_fixture(tmp_path, managed=False)
 
 
 def row(p):
@@ -309,7 +322,7 @@ def test_time_budget_and_strict_missing_usage_stop_without_reset(progression):
     assert checkpoint(p)['rounds'] == 1
 
 
-def test_effective_global_drift_stops_background_but_interactive_edit_is_next_run(progression):
+def test_effective_global_drift_cannot_replace_frozen_loop_by_interactive_takeover(progression):
     p = progression
     p.coordinator.tick()
     bindings = p.runtime.scheduler_bindings
@@ -320,8 +333,9 @@ def test_effective_global_drift_stops_background_but_interactive_edit_is_next_ru
     p.root.call_tool('progression_command', dict(command='takeover'))
     bindings.save_agent_settings(p.instance, {'defaults': {'narrative_language': 'zh-CN'}},
         expected_revision=0, maintenance=bindings.control_maintenance)
-    with bindings.scheduling_guard(instance_id=p.instance, session_key=p.user):
-        pass
+    with pytest.raises(SchedulerInstanceConflict, match='current research loop retains'):
+        with bindings.scheduling_guard(instance_id=p.instance, session_key=p.user):
+            pass
 
 
 def test_maintenance_blocks_observation_even_after_pause(progression):
@@ -346,7 +360,8 @@ def test_run_creation_crash_reconciles_exact_admission_without_recreation(progre
     monkeypatch.setattr(root.facade, '_bind_target', lost_binding)
     with pytest.raises(RuntimeError, match='simulated crash'):
         _invoke(root, 'accepted')
-    assert checkpoint(p)['admissions']['accepted']['state'] == 'prepared'
+    assert checkpoint(p)['admissions']['accepted']['state'] == 'accepted'
+    assert checkpoint(p)['admissions']['accepted']['semantic_binding_pending']
     assert len(p.runtime.runs.list(instance_id=p.instance)) == 1
     host.finish()
     p.coordinator.tick()

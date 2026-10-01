@@ -97,7 +97,7 @@ def test_more_than_720_unchanged_polls_do_not_spend_a_poll_allowance(progression
     assert 'max_probes' not in json.loads(row(p)['config_json'])['effective']['progression']
 
 
-def test_long_pause_manual_work_and_human_continue_share_the_original_time(human_ui, monkeypatch):
+def test_long_pause_retired_manual_exemption_and_human_continue_share_the_original_time(human_ui, monkeypatch):
     ui, p = human_ui, human_ui.p
     before = p.root.call_tool('progression_status', {})['budget']['elapsed_seconds']
     started = checkpoint(p)['started_at']
@@ -107,7 +107,8 @@ def test_long_pause_manual_work_and_human_continue_share_the_original_time(human
     p.now[0] += 10  # Same-budget human continuation is enabled work.
     assert p.root.call_tool('progression_status', {})['budget']['elapsed_seconds'] == before + 10
     p.root.call_tool('progression_command', dict(command='pause'))
-    assert independent(ui) == 303
+    assert independent(ui) == 403
+    assert not checkpoint(p).get('interactive_sessions')
     p.now[0] += limit * 2
     assert p.root.call_tool('progression_status', {})['budget']['elapsed_seconds'] == before + 10
     p.root.call_tool('progression_command', dict(command='pause'))

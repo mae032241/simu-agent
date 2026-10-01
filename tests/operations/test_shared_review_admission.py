@@ -109,7 +109,7 @@ def test_background_review_wait_dispatch_complete_and_resume(tmp_path, monkeypat
     from tests.operations.test_progression import Host
     from scidiscovery.artifact_agent.service.progression import ProgressionCoordinator
     from tests.operations.worker_fixtures import attached_worker
-    f = continuation(tmp_path, monkeypatch, require_execution_review=True)
+    f = continuation(tmp_path, monkeypatch, require_execution_review=True, managed_loop=True)
     request = f.worker.call_tool('worker_experiment_execute',
         {'action':'review','implementation':f.alias})['review']['request']
     assert f.worker.call_tool('worker_experiment_prepare', {})['state'] == 'waiting_for_review'
@@ -128,6 +128,8 @@ def test_background_review_wait_dispatch_complete_and_resume(tmp_path, monkeypat
     try:
         coordinator.tick()
         host = coordinator.host
+        from tests.operations.research_loop_fixtures import measured_fixture_usage
+        measured_fixture_usage(f.worker)
         assert 'review_requests' in host.prompts[-1]
         root = type(f.root)(facade(host.scheduler_session))
         wrong = dict(request, name='unrelated-review', inputs=[{'port':'subject', 'artifact_names':['observe.output']}])

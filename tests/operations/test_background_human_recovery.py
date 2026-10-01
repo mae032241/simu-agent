@@ -6,20 +6,11 @@ from html import unescape
 import pytest
 
 from tests.operations.test_human_progress_continuation import (
-    human_ui, paused, independent, submit, save_checkpoint,
+    human_ui, paused, submit, save_checkpoint,
 )
 from tests.operations.test_progression import progression, row, checkpoint
 from tests.operations.test_scientific_progress import active, finish, request
 from tests.operations.test_m6a_direct_instance_management import _request
-
-
-def enter_manual(ui, target):
-    p = ui.p
-    if target != 'goal':
-        p.root.call_tool('progression_message', dict(name=target, text='A separate exact manual goal.'))
-    assert independent(ui, target) == 303
-    finish(p, p.root, 'manual-complete')
-    assert submit(ui, command='pause') == 303
 
 
 def background_form(ui, target='goal'):
@@ -32,15 +23,14 @@ def background_form(ui, target='goal'):
     chosen = [form for form in values if form.get('objective_name') == target]
     assert len(chosen) == 1, 'The UI must offer an explicit recovery of the exact paused background goal.'
     assert '恢复后台目标' in page and '剩余任务' in page and 'coverage_gap' in page
-    assert '明确暂停和独立人工工作不计时' in page
+    assert '明确暂停不计时，同 loop 的人工工作计时' in page
     assert '确认后转为交互模式，由你继续调度当前目标' in page
     assert '确认后转为后台自动推进，并将当前目标切换为所选目标：' + target in page
     assert '最后选择的目标成为当前目标' in page
     return chosen[0]
 
 
-@pytest.mark.parametrize('target', ['goal', 'manual-goal'])
-def test_http_manual_scope_can_recover_exact_original_background_goal(human_ui, target):
+def test_http_can_confirm_exact_paused_background_goal(human_ui):
     ui, p = human_ui, human_ui.p
     bindings = p.runtime.scheduler_bindings
     original = row(p)
@@ -48,17 +38,15 @@ def test_http_manual_scope_can_recover_exact_original_background_goal(human_ui, 
     from scidiscovery.artifact_agent.schema.refs import ArtifactRef
     ref = ArtifactRef.model_validate(objective)
     trigger = bindings.progress_shadow(instance_id=p.instance, objective_ref=ref)['notices'].copy()
-    enter_manual(ui, target)
     p.now[0] += 2 * json.loads(row(p)['config_json'])['effective']['progression']['max_elapsed_seconds']
     before = checkpoint(p)
-    manual_scope = before['interactive_sessions'][-1]['id']
-    manual_ref = ArtifactRef.model_validate_json(row(p)['objective_ref_json'])
-    manual_state = bindings.progress_shadow(instance_id=p.instance, objective_ref=manual_ref)
     for command in ('start', 'resume', 'takeover'):
         args = dict(command=command, mode='background')
         if command == 'start':
             args['objective_name'] = 'goal'
-        assert submit(ui, **args) == 409
+        before_retry = row(p)
+        assert submit(ui, **args) == (303 if command == 'start' else 409)
+        assert row(p) == before_retry  # An identical start retries the paused result; it grants no continuation.
     form = background_form(ui)
     assert _request(ui.base, 'POST', '/instances/progression', form=form)[0] == 303
     assert row(p)['mode'] == 'background' and row(p)['state'] == 'pending'
@@ -71,10 +59,7 @@ def test_http_manual_scope_can_recover_exact_original_background_goal(human_ui, 
     recovered = bindings.progress_shadow(instance_id=p.instance, objective_ref=ref)
     assert recovered['notices'] == trigger
     assert recovered['window_start_sequence'] == 3
-    assert all(item.get('interactive_session_id') == manual_scope for name, item in
-        current['admissions'].items() if name == 'manual-complete')
-    if target != 'goal':
-        assert bindings.progress_shadow(instance_id=p.instance, objective_ref=manual_ref) == manual_state
+    assert current['current_loop_id'] == before['current_loop_id']
     root = active(p)
     finish(p, root, 'background-recovered-task')
     assert checkpoint(p)['admissions']['background-recovered-task'].get('interactive_session_id') is None
@@ -83,7 +68,7 @@ def test_http_manual_scope_can_recover_exact_original_background_goal(human_ui, 
 
 def test_background_confirmation_rejects_wrong_target_forgery_stale_and_cross_instance(human_ui):
     ui, p = human_ui, human_ui.p
-    enter_manual(ui, 'manual-goal')
+    p.root.call_tool('progression_message', dict(name='manual-goal', text='A separate exact goal.'))
     form = background_form(ui)
     before = row(p)
     for changes in (dict(objective_name='manual-goal'), dict(confirmation_binding='forged'),
@@ -102,40 +87,28 @@ def test_background_confirmation_rejects_wrong_target_forgery_stale_and_cross_in
     assert row(p) == changed
 
 
-@pytest.mark.parametrize('barrier', ['native', 'budget', 'active_work'])
+@pytest.mark.parametrize('barrier', ['native', 'budget'])
 def test_background_recovery_keeps_unknown_budget_and_actual_work_barriers(human_ui, barrier):
     ui, p = human_ui, human_ui.p
-    if barrier == 'active_work':
-        assert independent(ui) == 303
-        p.root.call_tool('operation_invoke', request('still-accepted'))
-        assert submit(ui, command='pause') == 303
+    if barrier == 'native':
+        save_checkpoint(p, phase='prepared', turn_id=None, fault_class='outcome_unknown')
+        with p.runtime.scheduler_bindings._connect() as db:
+            db.execute('UPDATE scheduler_progression SET host_json=? WHERE instance_id=?',
+                (json.dumps(dict(platform_session='unknown-native', thread_id='unknown-thread')), p.instance))
     else:
-        enter_manual(ui, 'goal')
-        if barrier == 'native':
-            save_checkpoint(p, phase='prepared', turn_id=None, fault_class='outcome_unknown')
-            with p.runtime.scheduler_bindings._connect() as db:
-                db.execute('UPDATE scheduler_progression SET host_json=? WHERE instance_id=?',
-                    (json.dumps(dict(platform_session='unknown-native', thread_id='unknown-thread')), p.instance))
-        else:
-            limits = json.loads(row(p)['config_json'])['effective']['progression']
-            save_checkpoint(p, rounds=limits['max_rounds'])
+        limits = json.loads(row(p)['config_json'])['effective']['progression']
+        save_checkpoint(p, rounds=limits['max_rounds'])
     form = background_form(ui)
     before = row(p)
     code, _, response = _request(ui.base, 'POST', '/instances/progression', form=form)
     assert code == 409
     assert row(p) == before
-    if barrier == 'active_work':
-        assert p.root.call_tool('run_status', dict(name='still-accepted'))['state'] == 'queued'
-        run_id = p.runtime.scheduler_bindings.resolve(instance=p.instance, namespace='run', name='still-accepted')
-        assert '任务 still-accepted' in response.decode()
-        assert run_id not in response.decode()
 
 
 def test_background_confirmation_binds_trigger_and_consumed_position(human_ui):
     """Stored late facts test form freshness without claiming foreground receipt coverage."""
     from scidiscovery.artifact_agent.service.scientific_progress import _update_fact
     ui, p = human_ui, human_ui.p
-    enter_manual(ui, 'goal')
     bindings = p.runtime.scheduler_bindings
     form = background_form(ui)
     with bindings._connect() as db:
@@ -164,7 +137,7 @@ def test_background_confirmation_binds_trigger_and_consumed_position(human_ui):
 
 def test_background_target_prefers_verified_original_name_and_diagnoses_missing_binding(human_ui):
     ui, p = human_ui, human_ui.p
-    enter_manual(ui, 'manual-goal')
+    p.root.call_tool('progression_message', dict(name='manual-goal', text='A separate exact goal.'))
     bindings = p.runtime.scheduler_bindings
     identity = bindings.resolve(instance=p.instance, namespace='artifact', name='goal')
     bindings.bind(instance=p.instance, namespace='artifact', name='aaa.alternate', object_id=identity)
@@ -189,16 +162,15 @@ def test_persisted_two_background_pauses_can_be_confirmed_separately(human_ui):
     ui, p = human_ui, human_ui.p
     bindings = p.runtime.scheduler_bindings
     original = ArtifactRef.model_validate_json(row(p)['objective_ref_json'])
-    enter_manual(ui, 'manual-goal')
-    other = ArtifactRef.model_validate_json(row(p)['objective_ref_json'])
+    p.root.call_tool('progression_message', dict(name='manual-goal', text='A separate exact goal.'))
+    other = p.runtime.artifacts.get_by_id(bindings.resolve(instance=p.instance, namespace='artifact', name='manual-goal')).ref
     goal_key, other_key = canonical_sha256(original), canonical_sha256(other)
     with bindings._connect() as db:
         state = json.loads(db.execute('SELECT state_json FROM scheduler_progress_shadow '
             'WHERE instance_id=? AND goal_key=?', (p.instance, goal_key)).fetchone()['state_json'])
         for notice in state['notices']:
             notice['id'] += '-other-goal'
-        db.execute('UPDATE scheduler_progress_shadow SET state_json=? WHERE instance_id=? AND goal_key=?',
-            (json.dumps(state), p.instance, other_key))
+        db.execute('INSERT INTO scheduler_progress_shadow VALUES(?,?,?)', (p.instance, other_key, json.dumps(state)))
         deliveries = db.execute('SELECT * FROM scheduler_terminal_deliveries WHERE instance_id=? AND goal_key=?',
             (p.instance, goal_key)).fetchall()
         offset = db.execute('SELECT MAX(sequence) FROM scheduler_terminal_deliveries WHERE instance_id=?',

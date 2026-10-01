@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from tests.operations.test_progression import progression, row, checkpoint
+from tests.operations.test_progression import progression, unmanaged_progression, row, checkpoint
 from tests.operations.test_scientific_progress import active, finish, assess, request, INTENT
 from tests.operations.test_progress_shadow import native_delivery
 
@@ -14,6 +14,8 @@ def configure(p, **limits):
     bindings.global_settings = settings.model_copy(update=dict(progression=settings.progression.model_copy(
         update=dict(progress_mode='assist', **limits))))
     p.root.call_tool('progression_command', dict(command='pause'))
+    from tests.operations.research_loop_fixtures import authorize_loop
+    authorize_loop(p.runtime, p.instance, p.user, 'goal')
     p.root.call_tool('progression_command', dict(command='start', mode='background', objective_name='goal'))
 
 
@@ -70,6 +72,8 @@ def test_non_assist_modes_never_intercept_ordinary_admission(progression, mode):
         bindings.global_settings = settings.model_copy(update=dict(progression=settings.progression.model_copy(
             update=dict(progress_mode=mode))))
         p.root.call_tool('progression_command', dict(command='pause'))
+        from tests.operations.research_loop_fixtures import authorize_loop
+        authorize_loop(p.runtime, p.instance, p.user, 'goal')
         p.root.call_tool('progression_command', dict(command='start', mode='background', objective_name='goal'))
     root = active(p)
     trigger(p, root)
@@ -108,22 +112,26 @@ def historical_goal(p, *, pending=False):
         worker.call_tool('worker_open_assignment', {})
         _write_result(worker)
         worker.call_tool('worker_submit_result', {})
-    if pending:
-        invoke('already-running', INTENT)
-        worker = _worker(p.catalog, p.runtime)
-        worker.call_tool('worker_open_assignment', {})
     bindings = p.runtime.scheduler_bindings
     settings = bindings.global_settings
     bindings.global_settings = settings.model_copy(update=dict(progression=settings.progression.model_copy(
         update=dict(progress_mode='assist'))))
     p.root.call_tool('progression_command', dict(command='pause'))
+    from tests.operations.research_loop_fixtures import authorize_loop
+    authorize_loop(p.runtime, p.instance, p.user, 'history-goal')
+    if pending:
+        p.root.call_tool('progression_command', dict(command='start', mode='interactive', objective_name='history-goal'))
+        invoke('already-running', INTENT)
+        worker = _worker(p.catalog, p.runtime)
+        worker.call_tool('worker_open_assignment', {})
+        p.root.call_tool('progression_command', dict(command='pause'))
     p.root.call_tool('progression_command', dict(command='start', mode='background', objective_name='history-goal'))
     return worker if pending else None
 
 
-def test_prestart_running_completion_before_host_is_observed_and_background_bytes_stay_known(progression):
+def test_prestart_running_completion_before_host_is_observed_and_background_bytes_stay_known(unmanaged_progression):
     from tests.operations.test_local_worker_contracts import _write_result
-    p = progression
+    p = unmanaged_progression
     worker = historical_goal(p, pending=True)
     scope = correction_state(p)['observation_scope']
     assert len(scope['initial_observed']) == 1 and scope['max_observed_tasks'] == 9
@@ -139,11 +147,11 @@ def test_prestart_running_completion_before_host_is_observed_and_background_byte
     assert correction_state(p)['observation_scope'] == scope
 
 
-def test_background_scope_and_seen_evidence_survive_actual_archive(progression):
+def test_background_scope_and_seen_evidence_survive_actual_archive(unmanaged_progression):
     from tests.operations.synchronous_archive_fixture import SynchronousFixtureArchive
     from tests.operations.test_instance_archive import save_archive, restore_archive
     from scidiscovery.artifact_agent.service.progression_read import progression_read_view
-    p = progression
+    p = unmanaged_progression
     historical_goal(p)
     active(p)
     p.coordinator.host.finish()

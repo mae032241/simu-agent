@@ -13,6 +13,7 @@ COLLECTIONS = {
     'admissions': dict,
     'usage_records': dict,
     'interactive_usage_records': dict,
+    'loop_authorizations': dict,
 }
 SNAPSHOTS = frozenset({'decision_snapshot', 'processed_snapshot', 'notification_snapshot',
     'notified_snapshot', 'terminal_delivery'})

@@ -177,6 +177,7 @@ class ProgressionCoordinator:
         params = event.get('params', {})
         row = self._row()
         checkpoint = json.loads(row['checkpoint_json'])
+        from .research_loops import current_loop, loop_usage
         thread = params.get('threadId')
         if event['method'] == 'item/completed':
             self._terminal_tool_delivery(row, checkpoint, params)
@@ -192,11 +193,29 @@ class ProgressionCoordinator:
             self._save(dict(platform_requests=requests), reason='platform_user_input_pending' if pending else None, stop=pending)
         elif event['method'] == 'thread/tokenUsage/updated':
             identities = self._identities()
+            if thread != self.host.identity.thread_id and thread not in identities:
+                original = self.runtime.runs.native_usage_identity(instance_id=self.instance, thread_id=thread)
+                if original is not None:
+                    identities[thread] = original
             role = 'root' if thread == self.host.identity.thread_id else identities.get(thread, {}).get('role', 'unattributed')
-            independent = bool(identities.get(thread, {}).get('interactive_session_id'))
+            loop_id = identities.get(thread, {}).get('loop_id')
+            previous_record = checkpoint.get('usage_records', {}).get(thread)
+            if thread == self.host.identity.thread_id:
+                loop_id = current_loop(checkpoint)
+            elif previous_record is not None:
+                loop_id = previous_record.get('loop_id')
+                if previous_record['role'] != 'unattributed':
+                    role = previous_record['role']  # Retained trusted old Root/Worker identity.
+            elif role == 'unattributed':
+                loop_id = current_loop(checkpoint)  # Unknown native work cannot be free.
+            independent = bool(identities.get(thread, {}).get('interactive_session_id')) and not loop_id
             record_key = 'interactive_usage_records' if independent else 'usage_records'
             records = checkpoint.get(record_key, {})
             previous = records.get(thread)
+            if previous is not None and previous.get('loop_id') != loop_id:
+                raise ProgressionFault('cross_loop_native_thread_usage')
+            if previous and previous.get('pending_observation'):
+                previous = None  # Binding placeholder, not a sampled missing counter.
             # A native Worker thread can be reused across task scopes. Carry its
             # highest observed counter, while each scope retains only its deltas.
             other = checkpoint.get('usage_records' if independent else 'interactive_usage_records', {}).get(thread)
@@ -219,8 +238,10 @@ class ProgressionCoordinator:
             # Keep reducer state, not repeated diagnostic prose or per-event deltas.
             records[thread] = {key: record[key] for key in ('platform', 'thread_id', 'role', 'owner',
                 'outcome', 'high_water', 'counted_tokens', 'has_gaps', 'coverage')}
+            if loop_id:
+                records[thread]['loop_id'] = loop_id
             self._save({record_key: records, **({} if independent else
-                dict(usage_summary=usage_summary(list(records.values()))))})
+                dict(usage_summary=usage_summary(list(loop_usage(dict(checkpoint, usage_records=records)).values()))))})
         elif thread == self.host.identity.thread_id:
             turn = params.get('turn', {})
             if event['method'] == 'turn/started':
@@ -231,7 +252,7 @@ class ProgressionCoordinator:
                 if thread in records:
                     records[thread]['outcome'] = 'completed' if turn.get('status') == 'completed' else 'failed'
                 self._save(dict(native_completion=turn.get('status'), usage_records=records,
-                    usage_summary=usage_summary(list(records.values()))))
+                    usage_summary=usage_summary(list(loop_usage(dict(checkpoint, usage_records=records)).values()))))
 
     def _terminal_tool_delivery(self, row, checkpoint, params):
         """Native v2 ItemCompletedNotification proves a Root tool result was handed back.
@@ -297,7 +318,7 @@ class ProgressionCoordinator:
                 continue
             for identity in self.runtime.runs.native_identities(admission['run_id']):
                 result[identity['thread_id']] = dict(identity,
-                    interactive_session_id=admission.get('interactive_session_id'))
+                    interactive_session_id=admission.get('interactive_session_id'), loop_id=admission.get('loop_id'))
         return result
 
     def _reconcile_admissions(self):
@@ -305,10 +326,12 @@ class ProgressionCoordinator:
         checkpoint = json.loads(row['checkpoint_json'])
         admissions = checkpoint.get('admissions', {})
         for name, intent in admissions.items():
-            if intent['state'] != 'prepared':
+            if intent['state'] != 'prepared' and not intent.get('semantic_binding_pending'):
                 continue
             matches = self.runtime.runs.admission_matches(instance_id=self.instance,
                 output_fingerprint=intent['output_fingerprint'])
+            if intent.get('run_id'):
+                matches = [intent['run_id']] if intent['run_id'] in matches else []
             if len(matches) != 1:
                 self._save(dict(runtime_status='task_admission_unknown'), reason='task_admission_unknown', stop=True)
                 return False
@@ -828,14 +851,16 @@ class ProgressionCoordinator:
         exhausted = elapsed >= limits['max_elapsed_seconds']
         exhausted |= allow_round and checkpoint.get('rounds', 0) >= limits['max_rounds']
         exhausted |= checkpoint.get('attempts', 0) >= limits['max_attempts']
-        tokens = sum(sum(v['counted_tokens'][key] for key in ('input_tokens', 'output_tokens')) for v in checkpoint.get('usage_records', {}).values())
+        from .research_loops import current_loop, loop_usage
+        records = loop_usage(checkpoint)
+        tokens = sum(sum(v['counted_tokens'][key] for key in ('input_tokens', 'output_tokens')) for v in records.values())
         exhausted |= tokens >= limits['max_tokens']
-        coverage = checkpoint.get('usage_summary', {}).get('coverage', 'missing')
+        from .research_loops import loop_usage_summary
+        coverage = loop_usage_summary(checkpoint)['coverage']
         expected_threads = {key for key, value in self._identities().items()
-            if not value.get('interactive_session_id')} | {self.host.identity.thread_id}
-        if (expected_threads - set(checkpoint.get('usage_records', {})) or
-                any(v['role'] == 'unattributed' for v in checkpoint.get('usage_records', {}).values())):
-            coverage = 'partial' if checkpoint.get('usage_records') else 'missing'
+            if value.get('loop_id') == current_loop(checkpoint) and not value.get('interactive_session_id')} | {self.host.identity.thread_id}
+        if (expected_threads - set(records) or any(v['role'] == 'unattributed' for v in records.values())):
+            coverage = 'partial' if records else 'missing'
         if hasattr(self.host, 'sample_resources'):
             resources = self.host.sample_resources()
         else:

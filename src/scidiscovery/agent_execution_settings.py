@@ -117,6 +117,8 @@ class ProgressionSettings(SettingsValue):
     enabled: bool = True
     max_rounds: int = Field(default=12, ge=1, le=100)
     max_tasks: int = Field(default=8, ge=1, le=100)
+    # Bounds the still-hydrated scope history; every scope needs separate UI consent.
+    max_loop_scopes: int = Field(default=8, ge=1, le=64)
     max_elapsed_seconds: int = Field(default=3600, ge=1)
     max_attempts: int = Field(default=2, ge=1, le=10)
     poll_seconds: int = Field(default=5, ge=1, le=300)

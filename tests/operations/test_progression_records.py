@@ -7,7 +7,7 @@ from scidiscovery.artifact_agent.service.progression_records import COLLECTIONS,
 from scidiscovery.artifact_agent.service.scheduler_bindings import SchedulerBindingService
 from tests.operations.test_progression import progression, checkpoint, row
 from tests.operations.test_human_progress_continuation import (
-    paused, human_ui, submit, independent, status,
+    paused, human_ui, submit, status,
 )
 from tests.operations.test_scientific_progress import finish, request
 from tests.operations.test_instance_archive import archive_system
@@ -36,32 +36,48 @@ def test_detail_writer_replaces_owned_records_and_retains_unknown_history(progre
         ('snapshot', 'historical-unknown', '{"turn":"uncertain"}')]
 
 
+def ui_loop_history(ui, names, *, context_bytes=49152):
+    """Every small historical scope is explicitly authorized through real HTTP."""
+    import re
+    p = ui.p
+    bindings = p.runtime.scheduler_bindings
+    settings = bindings.global_settings
+    bindings.global_settings = settings.model_copy(update=dict(progression=settings.progression.model_copy(
+        update=dict(max_tasks=3, max_loop_scopes=40, progress_mode='shadow', context_bytes=context_bytes))))
+    for index, name in enumerate(names):
+        if index % 2 == 0:
+            p.root.call_tool('progression_command', dict(command='pause'))
+            page = _request(ui.base, 'GET', ui.path)[2].decode().split('data-loop-authorization>', 1)[1]
+            binding = re.search(r"name='confirmation_binding' value='([^']+)'", page)[1]
+            form = dict(capability=ui.form['capability'], csrf=ui.form['csrf'], command='authorize_loop',
+                instance_id=p.instance, confirmation_binding=binding, objective_name='goal', confirm_loop_budget='yes')
+            assert _request(ui.base, 'POST', '/instances/progression', form=form)[0] == 303
+            p.root.call_tool('progression_command', dict(command='start', mode='interactive', objective_name='goal'))
+        finish(p, p.root, name)
+
+
 def test_large_history_keeps_ui_admission_budgets_and_archive(human_ui):
     from tests.operations.synchronous_archive_fixture import SynchronousFixtureArchive
     from tests.operations.test_instance_archive import save_archive, restore_archive
     ui, p = human_ui, human_ui.p
-    # Real UI creates all consent records; real MCP creates every admission.
     assert submit(ui) == 303
     finish(p, p.root, 'retained-background-task')
     background = checkpoint(p)['admissions']['retained-background-task']
-    for index in range(72):
-        p.root.call_tool('progression_command', dict(command='pause'))
-        assert independent(ui) == 303
-        finish(p, p.root, f'historical-human-{index}')
+    ui_loop_history(ui, [f'historical-human-{index}' for index in range(72)])
     prior = checkpoint(p)
     from scidiscovery.artifact_agent.service.scheduling_control import background_task_count
-    assert background_task_count(prior) == 4
+    assert background_task_count(prior) == 2
     raw, details = physical(p)
     assert len(json.dumps(prior).encode()) > 65536
     assert len(raw.encode()) < 65536
     assert not (set(COLLECTIONS) & json.loads(raw).keys())
-    assert len(prior['interactive_sessions']) == 72
-    assert prior['admissions']['historical-human-0']['interactive_session_id'] == prior['interactive_sessions'][0]['id']
+    assert len(prior['loop_authorizations']) == 38  # Original, assist fixture, 36 explicit budgets.
+    assert prior['admissions']['historical-human-0']['loop_id'] != prior['current_loop_id']
     assert prior['admissions']['retained-background-task'] == background
     view = status(p)
-    assert view['interactive_session']['tasks'] == 72
-    assert len(view['interactive_session']['history']) == 8
-    assert view['interactive_session']['history_omitted'] == 64
+    assert view['budget']['tasks'] == 2
+    assert len(view['loop']['history']) == 8
+    assert view['loop']['history_omitted'] == 30
     assert _request(ui.base, 'GET', ui.path)[0] == 200
     assert p.root.call_tool('operation_preflight', request('after-large-history'))['admissible']
     finish(p, p.root, 'after-large-history')
@@ -69,14 +85,14 @@ def test_large_history_keeps_ui_admission_budgets_and_archive(human_ui):
     reopened = SchedulerBindingService(p.runtime.scheduler_bindings.database_path)
     assert json.loads(reopened.progression_status(instance_id=p.instance, internal=True)['checkpoint_json']) == checkpoint(p)
     p.root.call_tool('progression_command', dict(command='pause'))
-    expected = status(p)['interactive_session']
+    expected = status(p)['loop']
     p.runtime.runs._synchronous_archive_fixture = True
     archive = SynchronousFixtureArchive(p.runtime)
     save_archive(archive, p.instance)
-    assert archive.archived_model(p.instance).progression_status(p.instance)['interactive_session'] == expected
+    assert archive.archived_model(p.instance).progression_status(p.instance)['loop'] == expected
     restore_archive(archive, p.instance)
     assert checkpoint(p)['admissions']['retained-background-task'] == background
-    assert p.runtime.scheduler_bindings.progression_status(instance_id=p.instance)['interactive_session'] == expected
+    assert p.runtime.scheduler_bindings.progression_status(instance_id=p.instance)['loop'] == expected
 
 
 def test_detail_snapshot_replacement_and_failure_roll_back_together(paused):
@@ -129,7 +145,7 @@ def test_usage_history_persists_over_64_identities_without_reset(progression, mo
     from scidiscovery.artifact_agent.service.progression_budget import token_budget
     p = progression
     active(p)
-    identities = {f'worker-{i}': {'role': 'worker'} for i in range(96)}
+    identities = {f'worker-{i}': {'role': 'worker', 'loop_id': checkpoint(p)['current_loop_id']} for i in range(96)}
     identities.update({f'human-{i}': {'role': 'worker', 'interactive_session_id': 'human-scope'} for i in range(96)})
     monkeypatch.setattr(p.coordinator, '_identities', lambda: identities)
     def usage(thread, total):
@@ -138,7 +154,8 @@ def test_usage_history_persists_over_64_identities_without_reset(progression, mo
     for thread in identities:
         usage(thread, 10)
     before = checkpoint(p)
-    assert len(before['usage_records']) == len(before['interactive_usage_records']) == 96
+    assert len(before['usage_records']) == 97  # 96 measured Workers and the pending Root identity.
+    assert len(before['interactive_usage_records']) == 96
     usage('worker-0', 15)
     usage('worker-0', 15)
     usage('human-0', 17)
@@ -203,36 +220,13 @@ def test_archive_scopes_detail_rows_and_preserves_detail_only_artifact_refs(arch
 
 
 def large_native_handoff_fixture(ui, context_bytes=49152):
-    import hashlib
     p = ui.p
     assert submit(ui) == 303
+    names = [f'large-native-result-{index:04d}-' + 'x' * 100 for index in range(72)]
+    ui_loop_history(ui, names, context_bytes=context_bytes)
+    from tests.operations.test_research_loop_budget import LoopHost
+    p.coordinator.host_factory = LoopHost  # A new loop cannot reuse the old Root native thread.
     p.root.call_tool('progression_command', dict(command='pause'))
-    assert independent(ui) == 303
-    names = [f'large-native-result-{index:04d}-' + 'x' * 100 for index in range(800)]
-    p.root.call_tool('operation_invoke', request(names[0]))
-    bindings = p.runtime.scheduler_bindings
-    first_id = bindings.resolve(instance=p.instance, namespace='run', name=names[0])
-    p.runtime.runs.fail(first_id, reason='Fixture confirmed failure')
-    with p.runtime.runs._connect() as db:
-        original = dict(db.execute('SELECT * FROM runs WHERE run_id=?', (first_id,)).fetchone())
-        for index, name in enumerate(names[1:], 1):
-            values = dict(original, run_id=f'run_{index:032x}', output_binding_name=name+'.output',
-                output_logical_name=name+'.output', request_digest=hashlib.sha256(name.encode()).hexdigest(),
-                output_binding_fingerprint=hashlib.sha256(name.encode()).hexdigest())
-            db.execute('INSERT INTO runs (' + ','.join(values) + ') VALUES (' + ','.join('?' for _ in values) + ')',
-                tuple(values.values()))
-    current = checkpoint(p)
-    for index, name in enumerate(names[1:], 1):
-        identity = f'run_{index:032x}'
-        bindings.bind(instance=p.instance, namespace='run', name=name, object_id=identity)
-        current['admissions'][name] = dict(current['admissions'][names[0]], run_id=identity)
-    with bindings._connect() as db:
-        value = store_checkpoint(db, p.instance, current)
-        db.execute('UPDATE scheduler_progression SET checkpoint_json=? WHERE instance_id=?', (value, p.instance))
-    p.root.call_tool('progression_command', dict(command='pause'))
-    settings = bindings.global_settings
-    bindings.global_settings = settings.model_copy(update=dict(progression=settings.progression.model_copy(
-        update=dict(context_bytes=context_bytes))))
     p.root.call_tool('progression_command', dict(command='start', mode='background', objective_name='goal'))
     return names
 

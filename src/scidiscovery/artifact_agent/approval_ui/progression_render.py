@@ -18,6 +18,7 @@ def render_progression(status, *, instance_id):
         host_active='宿主已连接', user_paused='用户暂停', user_stopped='用户停止',
         user_question='等待用户回答', waiting='等待条件变化', goal_completed='已记录目标结论',
         budget_exhausted='预算耗尽', resource_limit='资源止损', archive_restored='归档恢复后保持暂停',
+        loop_authorized='新 loop 预算已明确授权，等待启动',
         scientific_progress_persistent_gap='科研观测达到阈值，暂停新派发',
         human_continuation='用户已确认新的消费观察窗口，保留预算',
         independent_interactive='用户已确认独立人工工作，旧后台预算另行保留')
@@ -28,6 +29,10 @@ def render_progression(status, *, instance_id):
             ("故障记录", status.get('fault_code'))):
         body += '<dt>' + label + '</dt><dd>' + _text(value) + '</dd>'
     body += '</dl><p>暂停或停止只阻止后续调度；在途 Worker 和外部任务仍可完成。取消外部任务是独立操作，须核对其实际结果。</p>'
+    loop = status.get('loop') or {}
+    if loop:
+        body += '<h3>实际预算作用域</h3>' + render_json_value(loop, max_bytes=16384)
+        body += '<p>未加入研究 loop 的普通交互沿原权限及实例执行预算。已授权 loop 的人工与后台任务统一计额；人工继续、改目标、恢复或线程切换不会增加额度。</p>'
     body += '<p>诊断已预留但未获接收确认时须保留预留并安全停止，读取已有诊断状态或任务 run_status。当前版本尚无可信缺席证明 / 退款入口，需待受信控制协议合入后验证。</p>'
     human = status.get('human_continuation') or {}
     if human.get('history'):
@@ -132,6 +137,8 @@ def render_progression(status, *, instance_id):
         body += '<details><summary>本次冻结预算上限</summary>' + render_json_value(budget['limits'], max_bytes=8192) + '</details>'
     usage = status.get('usage') or {}
     body += '<p>用量覆盖：' + _text(usage.get('coverage')) + '；货币费用未测量。缓存输入是输入子集，不重复相加。</p>'
+    if usage.get('unmeasured_roles'):
+        body += '<p>未接入计量的角色：' + _text(', '.join(usage['unmeasured_roles'])) + '。</p><p>' + _text(usage.get('limitation')) + '</p>'
     if usage.get('unmeasured_participants'):
         body += '<p>已知参与者尚无用量观测：</p>' + render_json_value(usage['unmeasured_participants'], max_bytes=2048)
     body += '<table><thead><tr><th>归属</th><th>输入 Token</th><th>缓存输入</th><th>输出 Token</th><th>失败线程</th><th>缺测线程</th></tr></thead><tbody>'

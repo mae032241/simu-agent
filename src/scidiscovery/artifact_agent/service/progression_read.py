@@ -25,7 +25,8 @@ def progression_read_view(*, bindings, runs, artifacts, operation_catalog, insta
     projection = RunReadProjection(runs=runs, artifacts=artifacts, operation_catalog=operation_catalog)
     closeout = dict(kind='sealed_task_handoff', goal_assessment='not_inferred',
         stop_reason=status.get('reason'), tasks=[], in_flight=[], unresolved=[], omissions=[])
-    records = checkpoint.get('usage_records', {})
+    from .research_loops import current_loop, loop_usage
+    records = loop_usage(checkpoint)
     missing = {}
     host = json.loads(row.get('host_json') or 'null')
     if host and records.get(host['thread_id'], {}).get('role') != 'root':
@@ -49,6 +50,8 @@ def progression_read_view(*, bindings, runs, artifacts, operation_catalog, insta
             closeout['unresolved'].append(dict(name=name, state='identity_unresolved', read=read))
             continue
         for identity in runs.native_identities(value.run_id):
+            if current_loop(checkpoint) and admission.get('loop_id') != current_loop(checkpoint):
+                continue  # Old loop telemetry cannot change this loop's coverage.
             if admission.get('interactive_session_id'):
                 continue  # Independent human usage is not background coverage.
             if identity['thread_id'] not in records:

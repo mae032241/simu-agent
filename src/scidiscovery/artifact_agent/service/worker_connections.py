@@ -92,6 +92,7 @@ class WorkerConnections:
                     return
                 raise RunStateConflict("attach requires the exact queued Run")
             status = self.runs.status(run_id)
+            self._require_same_loop_thread(connection, status, platform_session, thread_id)
             self._require_independent(connection, status, platform_session, thread_id)
             previous = self._latest(connection, platform_session, thread_id)
             if previous is not None and previous["run_id"] != run_id:
@@ -120,6 +121,17 @@ class WorkerConnections:
             connection.execute(
                 "INSERT INTO worker_connections(run_id,platform_session,thread_id,attached_at,attachment_sequence) VALUES(?,?,?,?,?)",
                 (run_id, platform_session, thread_id, timestamp(), sequence))
+
+    def _require_same_loop_thread(self, connection, status, platform_session, thread_id):
+        """A native cumulative counter keeps one loop owner for its lifetime."""
+        loop_id = (status.recovery_policy or {}).get('loop_id')
+        prior = connection.execute('SELECT r.recovery_policy_json FROM runs r JOIN worker_connections w USING(run_id) '
+            'WHERE w.platform_session=? AND w.thread_id=? UNION ALL '
+            'SELECT r.recovery_policy_json FROM runs r JOIN worker_participants p USING(run_id) '
+            'WHERE p.platform_session=? AND p.thread_id=?',
+            (platform_session, thread_id, platform_session, thread_id)).fetchall()
+        if any(json.loads(item[0] or '{}').get('loop_id') != loop_id for item in prior):
+            raise RunStateConflict('A Worker or helper native thread cannot be reused across research loops; attach a fresh thread.')
 
     def resolve(self, *, platform_session, thread_id):
         with self.runs._connect() as connection:
@@ -285,6 +297,7 @@ class WorkerConnections:
                 if row is None:
                     raise WorkerNotAttached("The task owner has not prepared a helper subtask")
                 run = self.runs.running_task(row['run_id'])
+                self._require_same_loop_thread(connection, run, platform_session, thread_id)
                 self._require_independent(connection, run, platform_session, thread_id)
                 expected = self.helper_profile(run, row)
                 if (canonical_model_id(model), reasoning_effort) != (canonical_model_id(expected['model']), expected['reasoning_effort']):

@@ -32,6 +32,8 @@ def _bounded_context(p, context_bytes=10000):
     settings = bindings.global_settings
     bindings.global_settings = settings.model_copy(update=dict(progression=settings.progression.model_copy(
         update=dict(context_bytes=context_bytes))))
+    from tests.operations.research_loop_fixtures import authorize_loop
+    authorize_loop(p.runtime, p.instance, p.user, 'goal')
     p.root.call_tool('progression_command', dict(command='start', mode='background', objective_name='goal'))
 
 

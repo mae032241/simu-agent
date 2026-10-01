@@ -29,7 +29,8 @@ def enabled_time(checkpoint, now, *, enabled=None):
 
 
 def token_budget(checkpoint, limits):
-    records = checkpoint.get('usage_records', {})
+    from .research_loops import loop_usage
+    records = loop_usage(checkpoint)
     used = 0
     worker_costs = []
     for record in records.values():

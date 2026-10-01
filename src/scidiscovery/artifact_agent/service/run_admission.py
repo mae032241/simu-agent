@@ -65,13 +65,18 @@ class RunAdmissionMixin:
         if row is None:
             return review_owner
         checkpoint = json.loads(row['checkpoint_json'])
+        from .research_loops import current_loop
+        if current_loop(checkpoint) and self.scheduler_bindings.control_settings(instance_id) != json.loads(row['config_json']):
+            raise OperationInvocationError('loop_configuration_changed',
+                message='The research loop retains its frozen configuration; direct creation and recovery cannot replace it.')
         from .scheduling_control import require_control_admission
         require_control_admission(connection, row, checkpoint, session_key=session_key,
             continuation=('run', review_owner) if review_owner else None,
             reservation=(reserved_output_fingerprint, scientific_signature) if reserved_output_fingerprint else None,
             now=self.scheduler_bindings.control_now(), schema='scheduler_control.',
             background_busy=bool(active and (len(active) != 1 or review_owner is None)))
-        if row['mode'] != 'background':
+        from .research_loops import current_loop
+        if row['mode'] != 'background' and not current_loop(checkpoint):
             return review_owner
         limits = json.loads(row['config_json'])['effective']['progression']
         for prior in checkpoint.get('admissions', {}).values():
@@ -82,6 +87,20 @@ class RunAdmissionMixin:
         if max_attempts is not None and max_attempts > limits['max_attempts']:
             raise OperationInvocationError("background_attempt_budget_exceeded",
                 message="Requested attempts exceed the frozen background limit.")
+        if current_loop(checkpoint):
+            from .research_loops import loop_usage
+            records = loop_usage(checkpoint)
+            prior = [item for item in checkpoint.get('admissions', {}).values()
+                if item.get('loop_id') == current_loop(checkpoint) and item['state'] == 'accepted'
+                    and (item.get('usage_source') != 'frontend_unconnected' or limits['token_policy'] == 'strict')]
+            identities = [self.native_identities(item['run_id']) for item in prior]
+            expected = {identity['thread_id'] for group in identities for identity in group}
+            if (any(not group for group in identities) or expected - records.keys()
+                    or any(record['role'] == 'unattributed' or (not record.get('pending_observation')
+                        and (record['coverage'] != 'observed' or record['has_gaps'])) for record in records.values())
+                    or (prior and any(record.get('pending_observation') for record in records.values()))):
+                raise OperationInvocationError('loop_usage_unavailable',
+                    message='Accepted loop work has incomplete native usage; reconcile its original observations before creating more work.')
         return review_owner
 
     def request_implementation_review(self, run_id, subject_ref, request):

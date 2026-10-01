@@ -310,6 +310,11 @@ def test_daemon_entry_wires_dormant_runtime_and_survives_frontend_disconnect(tmp
             assert not requests.exists()  # No native process before user start.
             call('artifact_ingest_text',dict(name='goal',text='Inspect supplied evidence.',on_conflict='reject'))
             call('progression_command',dict(command='pause'))
+            # Explicit trusted UI service setup; real MCP never creates a budget.
+            from scidiscovery.artifact_agent.runtime import open_runtime
+            from tests.operations.research_loop_fixtures import authorize_loop
+            setup_runtime = open_runtime(project_root=project, state_root=state, approval_receipt_secret=bytes.fromhex(secret.read_text()))
+            authorize_loop(setup_runtime, instance.instance_id, user, 'goal')
             call('progression_command',dict(command='start',mode='background',objective_name='goal'))
             wait_for(lambda: methods(requests).count('turn/start')==1)
             wait_for(lambda: json.loads(bindings.progression_status(instance_id=instance.instance_id,internal=True)['checkpoint_json']).get('phase')=='idle')

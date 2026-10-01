@@ -141,8 +141,8 @@ def test_old_control_format_with_manual_observation_is_explicitly_rejected(pause
         execution_settings_restore_view(archived)
 
 
-def test_http_independent_tasks_keep_background_observation_and_recovery(human_ui):
-    """Manual results retain history and remain excluded when background later reads them."""
+def test_http_managed_human_tasks_keep_loop_budget_and_background_recovery(human_ui):
+    """Managed human tasks share budget and remain scientific observations."""
     from scidiscovery.artifact_agent.interfaces.mcp_gateway import UnifiedMCPRouter
     from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
     from tests.operations.test_local_worker_contracts import _write_result
@@ -151,8 +151,8 @@ def test_http_independent_tasks_keep_background_observation_and_recovery(human_u
     from tests.operations.test_m6a_direct_instance_management import _request
     ui, p = human_ui, human_ui.p
     before = correction_state(p)
-    assert independent(ui) == 303
-    manual_id = checkpoint(p)['interactive_sessions'][-1]['id']
+    assert submit(ui) == 303
+    manual_id = checkpoint(p)['current_loop_id']
     gateway = UnifiedMCPRouter(p.root)
     compiled = p.catalog.operation('blind.csv.observe.v1')
     for name, outcome in [('manual-success', 'completed'), ('manual-failure', 'failed')]:
@@ -169,35 +169,26 @@ def test_http_independent_tasks_keep_background_observation_and_recovery(human_u
             result(call(gateway, 'worker_submit_result', child=name, session='manual-root', profile=profile))
         else:
             run = p.runtime.runs.status(run_id)
+            from tests.operations.research_loop_fixtures import measured_fixture_usage
+            from types import SimpleNamespace
+            measured_fixture_usage(SimpleNamespace(runs=p.runtime.runs, _run_id=run_id))
             result(call(gateway, 'run_record_failure', dict(name=name, reason='Confirmed manual failure.',
                 expected_state='running', expected_last_activity_at=run.last_activity_at), session='manual-root'))
         assert result(call(gateway, 'run_status', dict(name=name), session='manual-root'))['state'] == outcome
-        assert checkpoint(p)['admissions'][name]['interactive_session_id'] == manual_id
-    assert correction_state(p)['counts'] == before['counts']
+        assert checkpoint(p)['admissions'][name]['loop_id'] == manual_id
+    assert correction_state(p)['counts']['consumed'] == 0
     assert correction_state(p)['notices'] == before['notices']
     assert 'observation_scope_id' not in checkpoint(p)
-    for command in ('start', 'resume', 'takeover'):
-        args = dict(command=command, mode='background')
-        if command == 'start':
-            args['objective_name'] = 'goal'
-        with pytest.raises(Exception):
-            p.root.call_tool('progression_command', args)
-    assert p.root.call_tool('progression_status', {})['interactive_session']['active']
+    assert p.root.call_tool('progression_status', {})['human_continuation']['active']
     p.root.call_tool('progression_command', dict(command='pause'))
     with pytest.raises(Exception):
         p.root.call_tool('operation_invoke', request('expired-manual-authority'))
-    for command in ('start', 'resume', 'takeover'):
-        args = dict(command=command, mode='background')
-        if command == 'start':
-            args['objective_name'] = 'goal'
-        with pytest.raises(Exception, match='scientific_progress_persistent_gap'):
-            p.root.call_tool('progression_command', args)
-    form = background_form(ui)
+    form = dict(capability=ui.form['capability'], csrf=ui.form['csrf'], command='start', mode='background', objective_name='goal')
     assert _request(ui.base, 'POST', '/instances/progression', form=form)[0] == 303
     root = active(p)
     p.coordinator.host.finish()  # Real backend receipt of both manual terminal results.
     next_turn(p)
-    assert correction_state(p)['counts']['consumed'] == 0
+    assert correction_state(p)['counts']['consumed'] == 2
     assert correction_state(p)['notices'] == before['notices']
     root.call_tool('operation_invoke', dict(request('background-after-manual'),
         instruction='Compare the retained manual outcomes after the explicit background confirmation.'))

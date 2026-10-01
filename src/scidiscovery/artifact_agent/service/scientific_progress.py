@@ -392,6 +392,12 @@ def observation_facts(db, row, goal_key, policy, state):
     background = scope.get('background', {})
     limit = scope.get('max_observed_tasks', policy['max_tasks'])
     checkpoint = json.loads(dict(row).get('checkpoint_json', '{}'))
+    if checkpoint.get('current_loop_id'):
+        # Authorization extends the finite read capacity, never the scientific
+        # window or a prior trigger. Include later loops on this same goal.
+        limit = max(limit, len(scope.get('initial_observed', [])) + sum(
+            record['config']['effective']['progression']['max_tasks']
+            for record in checkpoint.get('loop_authorizations', {}).values()))
     exclusion = (' AND d.run_id NOT IN (' + ','.join('?' for _ in background) + ')') if background else ''
     selected = [item['run_id'] for item in checkpoint.get('admissions', {}).values()
         if item.get('run_id') and item.get('interactive_session_id')]

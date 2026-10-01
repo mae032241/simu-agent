@@ -329,12 +329,24 @@ class RunService(ToolEvidenceMixin, RunAdmissionMixin):
                     recovery_policy[key] = merge_helper_settings(recovery_policy[key], override)
                 else:
                     recovery_policy[key].update(override)
-        with self._connect() as connection:
+        # The control lock precedes both databases, matching UI authorization.
+        # Direct callers cannot insert a Run between its activity read and commit.
+        with self.scheduler_bindings.scheduling_lock(), self._connect() as connection:
             self._attach_scheduler(connection)
             connection.execute("BEGIN IMMEDIATE")
             review_owner = self.validate_admission(bound, instance_id=instance_id,
                 max_attempts=max_attempts, scientific_signature=scientific_signature,
                 reserved_output_fingerprint=output_binding_fingerprint, connection=connection)
+            from .progression_records import read_control_row, store_checkpoint
+            from .research_loops import current_loop, sync_loop_balances
+            control = read_control_row(connection, instance_id, schema='scheduler_control.')
+            checkpoint = json.loads(control['checkpoint_json']) if control else {}
+            loop_id = current_loop(checkpoint)
+            if loop_id:
+                recovery_policy['loop_id'] = loop_id
+            for source_id in (resume_from, draft_from):
+                if source_id:
+                    self._require_recovery_loop(connection, self._status_from_row(self._row(connection, source_id)))
             frozen_inputs = self.current.freeze(connection, instance_id, raw_inputs,
                 compiled=compiled, origins=self.input_origins(instance_id))
             active_revision = active_direct_revision_ports(
@@ -467,6 +479,26 @@ class RunService(ToolEvidenceMixin, RunAdmissionMixin):
                 raise RunSlotBusy(
                     "this compiled Operation already has an unopened or running Run"
                 ) from error
+            if loop_id:
+                admissions = checkpoint.setdefault('admissions', {})
+                matches = [item for item in admissions.values() if item['output_fingerprint'] == output_binding_fingerprint
+                    and item['state'] == 'prepared' and item.get('loop_id') == loop_id]
+                if len(matches) > 1 or (matches and matches[0].get('loop_id') != loop_id):
+                    raise RunStateConflict('Task admission belongs to a different research loop; reconcile its exact original identity.')
+                admission = matches[0] if matches else admissions.setdefault(bound.name, dict(
+                    output_fingerprint=output_binding_fingerprint, scientific_signature=scientific_signature,
+                    logical_name=bound.name, revision=output_revision, loop_id=loop_id,
+                    objective_ref=json.loads(control['objective_ref_json']) if control['objective_ref_json'] else None))
+                if admission.get('run_id') not in {None, run_id}:
+                    raise RunStateConflict('Task admission is already accepted; do not replay it under another identity.')
+                admission.update(state='accepted', run_id=run_id)
+                admission.setdefault('usage_source', 'frontend_unconnected' if control['mode'] == 'interactive' else 'native_host')
+                if matches:
+                    admission['semantic_binding_pending'] = True
+                sync_loop_balances(checkpoint, self.scheduler_bindings.control_now())
+                value = store_checkpoint(connection, instance_id, checkpoint)
+                connection.execute('UPDATE scheduler_control.scheduler_progression SET checkpoint_json=? WHERE instance_id=?',
+                    (value, instance_id))
             self.bind_requested_review(connection, review_owner, run_id)
             connection.execute("COMMIT")
         try:
@@ -1129,6 +1161,19 @@ class RunService(ToolEvidenceMixin, RunAdmissionMixin):
                 "WHERE run_id=? AND thread_id IS NOT NULL", (run_id, run_id),
             ).fetchall()
         return tuple(dict(row, run_id=run_id) for row in rows)
+
+    def native_usage_identity(self, *, instance_id: str, thread_id: str) -> dict | None:
+        """Resolve an original thread owner without reassigning pre-loop work."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT DISTINCT role,json_extract(r.recovery_policy_json,'$.loop_id') AS loop_id FROM runs r JOIN ("
+                "SELECT run_id,thread_id,'worker' AS role FROM worker_connections UNION ALL "
+                "SELECT run_id,thread_id,'helper' AS role FROM worker_participants WHERE thread_id IS NOT NULL"
+                ") w USING(run_id) WHERE r.instance_id=? AND w.thread_id=? LIMIT 2",
+                (instance_id, thread_id)).fetchall()
+        if len(rows) > 1:
+            raise RunStateConflict('Native usage thread ownership is ambiguous; retain its original bindings.')
+        return dict(rows[0]) if rows else None
 
     def related_runs(self, *, instance_id: str, artifact_ref: ArtifactRef,
                      relation: str = "input", limit: int = 51) -> tuple[RunStatus, ...]:
@@ -1918,6 +1963,7 @@ class RunService(ToolEvidenceMixin, RunAdmissionMixin):
         """Validate the exact recovery source used by preflight and schedule."""
 
         with self._connect() as connection:
+            self._attach_scheduler(connection)
             return self._validate_resume(
                 connection,
                 self._status_from_row(self._row(connection, source_run_id)),
@@ -1963,6 +2009,7 @@ class RunService(ToolEvidenceMixin, RunAdmissionMixin):
         scheduler_max_attempts: int | None = None,
         check_attempts: bool = True,
     ) -> str:
+        self._require_recovery_loop(connection, source)
         if (
             source.backend_id != self.backend.backend_id
             or source.backend_version != self.backend.backend_version
@@ -1979,6 +2026,7 @@ class RunService(ToolEvidenceMixin, RunAdmissionMixin):
                               instance_id: str, scheduler_max_attempts: int | None = None,
                               check_attempts: bool = True) -> str:
         with self._connect() as connection:
+            self._attach_scheduler(connection)
             return self._validate_draft_source(connection,
                 self._status_from_row(self._row(connection, source_run_id)),
                 compiled=compiled, instance_id=instance_id,
@@ -1987,6 +2035,7 @@ class RunService(ToolEvidenceMixin, RunAdmissionMixin):
     def _validate_draft_source(self, connection: sqlite3.Connection, source: RunStatus,
                                *, compiled: Any, instance_id: str, scheduler_max_attempts: int | None = None,
                               check_attempts: bool = True) -> str:
+        self._require_recovery_loop(connection, source)
         if source.instance_id != instance_id:
             raise RunStateConflict("draft source belongs to another instance")
         if source.operation_id != compiled.spec.operation_id:
@@ -2005,6 +2054,15 @@ class RunService(ToolEvidenceMixin, RunAdmissionMixin):
         if check_attempts:
             self._check_recovery_attempts(connection, source, compiled.spec.limits.max_attempts, scheduler_max_attempts)
         return digest
+
+    def _require_recovery_loop(self, connection, source):
+        """The same original-owner rule in preflight, preparation and commit."""
+        from .progression_records import read_control_row
+        from .research_loops import current_loop
+        control = read_control_row(connection, source.instance_id, schema='scheduler_control.')
+        identity = current_loop(json.loads(control['checkpoint_json'])) if control else None
+        if (source.recovery_policy or {}).get('loop_id') != identity:
+            raise RunStateConflict('Recovery belongs to its original research loop; a new loop cannot replay the old task.')
 
     def _verify_draft(self, source: RunStatus, digest: str) -> Any:
         manifest = source.recovery_draft

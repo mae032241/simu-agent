@@ -415,6 +415,7 @@ class ApprovalUI:
         elif session_key is not None:
             current = None
             human_confirmation = None
+            loop_proposal = None
             background_continuations = []
             if capability and self.bindings:
                 current_id = self.bindings.session_instance(session_key=capability.session_key)
@@ -422,12 +423,15 @@ class ApprovalUI:
                 if current:
                     from ..service.scheduling_control import human_continuation_binding
                     control = self.bindings.progression_status(instance_id=current_id, internal=True)
+                    loop_proposal = self.bindings.loop_authorization_proposal(instance_id=current_id,
+                        session_key=capability.session_key)
                     if control['state'] in {'paused', 'stopped'} and control.get('objective_ref_json'):
                         human_confirmation = human_continuation_binding(control, capability.session_key)
                         background_continuations = self.bindings.background_continuations(
                             instance_id=current_id, session_key=capability.session_key)
             controls = session_controls(rows, token=token, csrf=self.session_id, current=current,
                 human_confirmation=human_confirmation,
+                loop_proposal=loop_proposal,
                 background_continuations=background_continuations,
                 expires_at=capability.expires_at, workbench_available=self.read_model is not None,
                 progression=(self.read_model.progression_status(current.instance_id, session_key=capability.session_key)
@@ -996,12 +1000,12 @@ class ApprovalUI:
                         if not is_goal_anchor(artifact):
                             raise ValueError("start requires frozen original user text or a research objective")
                         ref = artifact.ref
-                    if _required(form, "command") == "independent_interactive":
-                        if _required(form, "confirm_independent_interactive") != "yes":
-                            raise ValueError("explicit independent interactive confirmation required")
+                    if _required(form, "command") == "authorize_loop":
+                        if _required(form, "confirm_loop_budget") != "yes":
+                            raise ValueError("explicit research loop budget confirmation required")
                         if _required(form, "instance_id") != bound:
                             raise SchedulerInstanceConflict("实例绑定已变化，请重新确认。")
-                        self.bindings.independent_interactive_from_ui(instance_id=bound, session_key=key,
+                        self.bindings.authorize_loop_from_ui(instance_id=bound, session_key=key,
                             confirmation_binding=_required(form, "confirmation_binding"),
                             objective_name=name, objective_ref=ref)
                     else:

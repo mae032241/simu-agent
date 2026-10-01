@@ -393,6 +393,8 @@ def test_delivery_history_ninth_task_continues_through_mcp_and_ui_with_goal_scop
     p.root.call_tool('progression_command', dict(command='pause'))
     bindings.save_agent_settings(p.instance, {'progression': {'max_tasks':10}},
         expected_revision=0, maintenance=bindings.control_maintenance)
+    from tests.operations.research_loop_fixtures import authorize_loop
+    authorize_loop(p.runtime, p.instance, p.user, 'goal')
     p.root.call_tool('progression_command', dict(command='start', mode='background', objective_name='goal'))
     root = active(p)
     for index in range(9):

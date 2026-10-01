@@ -11,7 +11,7 @@ from scidiscovery.artifact_agent.service.instance_management import issue_instan
 from scidiscovery.artifact_agent.service.progression_read import progression_read_view
 from scidiscovery.artifact_agent.service.scheduler_bindings import SchedulerBindingService
 from tests.operations.test_m6a_direct_instance_management import _request
-from tests.operations.test_progression import progression, row, checkpoint
+from tests.operations.test_progression import progression, unmanaged_progression, row, checkpoint
 from tests.operations.test_progress_assist import configure, trigger, next_turn, notice, correction_state, finish_changed
 from tests.operations.test_scientific_progress import active, finish, request, assess
 
@@ -172,12 +172,13 @@ def test_human_confirmation_and_admission_preserve_budget_and_unknown_barriers(h
         from scidiscovery.platforms.codex_usage import observe_usage
         cost = observe_usage(dict(threadId='native-root', tokenUsage=dict(total=dict(
             inputTokens=limits['max_tokens'], cachedInputTokens=0, outputTokens=0))), role='root', owner=p.instance)
+        cost['loop_id'] = checkpoint(p)['current_loop_id']
         save_checkpoint(p, usage_records={'native-root': cost})
     elif barrier == 'admission':
-        save_checkpoint(p, admissions={**checkpoint(p)['admissions'], 'uncertain': dict(state='prepared')})
+        save_checkpoint(p, admissions={**checkpoint(p)['admissions'], 'uncertain': dict(state='prepared', loop_id=checkpoint(p)['current_loop_id'])})
     else:
         save_checkpoint(p, phase='prepared', turn_id=None, fault_class='outcome_unknown')
-    with pytest.raises(Exception, match='budget|submission'):
+    with pytest.raises(Exception, match='budget|submission|admission'):
         p.root.call_tool('operation_invoke', request('barrier-cannot-be-overridden'))
     assert p.root.call_tool('run_status', dict(name='renamed-2'))['state'] == 'completed'
     p.root.call_tool('progression_command', dict(command='pause'))
@@ -268,41 +269,22 @@ def test_explicit_independent_ui_scope_preserves_old_limits_and_instance_budget(
         from scidiscovery.platforms.codex_usage import observe_usage
         cost = observe_usage(dict(threadId='native-root', tokenUsage=dict(total=dict(
             inputTokens=limits['max_tokens'], cachedInputTokens=0, outputTokens=0))), role='root', owner=p.instance)
+        cost['loop_id'] = checkpoint(p)['current_loop_id']
         save_checkpoint(p, usage_records={'native-root': cost})
     elif limit == 'elapsed':
         save_checkpoint(p, enabled_seconds=limits['max_elapsed_seconds'])
     else:
         save_checkpoint(p, rounds=limits['max_rounds'])
     before, config = checkpoint(p), row(p)['config_json']
-    # Neither a new goal nor a fabricated argument grants the UI-only scope.
+    # The retired scope cannot exempt managed work, even through valid UI auth.
     with pytest.raises(Exception):
         p.root.call_tool('progression_command', dict(command='independent_interactive', objective_name='new-goal'))
-    with pytest.raises(Exception, match='scientific_progress_persistent_gap'):
-        p.root.call_tool('progression_command', dict(command='start', objective_name='new-goal'))
-    with pytest.raises(Exception, match='scientific_progress_persistent_gap'):
-        p.root.call_tool('operation_invoke', request('ordinary-mcp-cannot-reset'))
-    assert not status(p)['interactive_session']['active']
-    p.root.call_tool('progression_command', dict(command='pause'))
-    assert independent(ui, 'new-goal') == 303
-    finish(p, p.root, 'independent-task')
-    current = checkpoint(p)
-    assert current['admissions']['independent-task']['interactive_session_id']
-    for key in ('rounds', 'attempts', 'probes', 'started_at', 'budget', 'usage_records'):
-        assert current.get(key) == before.get(key)
-    assert json.loads(row(p)['config_json']) == json.loads(config)
+    assert independent(ui, 'new-goal') == 403
+    assert checkpoint(p) == before
+    assert row(p)['config_json'] == config
     assert _rows(p.runtime.executions.database_path) == execution_before
-    view = status(p)
-    assert view['interactive_session']['active'] and view['interactive_session']['tasks'] == 1
-    assert 'session_key' not in json.dumps(view['interactive_session'])
-    snapshot = row(p)
-    status(p)
-    _request(ui.base, 'GET', ui.path)
-    assert row(p) == snapshot
-    assert '独立人工工作作用域' in _request(ui.base, 'GET', ui.path)[2].decode()
-    p.root.call_tool('progression_command', dict(command='pause'))
-    with pytest.raises(Exception, match='scientific_progress_persistent_gap'):
-        p.root.call_tool('progression_command', dict(command='resume'))
     assert not status(p)['interactive_session']['active']
+    assert '建立独立人工工作作用域' not in _request(ui.base, 'GET', ui.path)[2].decode()
 
 
 def test_result_delivery_cannot_expand_native_round_budget(human_ui):
@@ -334,12 +316,12 @@ def test_independent_scope_uses_full_ui_authorization(human_ui, bad):
         origin='https://untrusted.example')[0] == 403
 
 
-def test_independent_scope_survives_archive_without_reactivating(human_ui):
+def test_managed_human_scope_survives_archive_without_reactivating(human_ui):
     from tests.operations.synchronous_archive_fixture import SynchronousFixtureArchive
     from tests.operations.test_instance_archive import save_archive, restore_archive
     ui, p = human_ui, human_ui.p
-    assert independent(ui) == 303
-    finish(p, p.root, 'independent-archived-task')
+    assert submit(ui) == 303
+    finish(p, p.root, 'managed-archived-task')
     p.root.call_tool('progression_command', dict(command='pause'))
     expected = status(p)['interactive_session']
     p.runtime.runs._synchronous_archive_fixture = True
@@ -356,7 +338,7 @@ def test_independent_scope_survives_archive_without_reactivating(human_ui):
 def test_native_usage_reused_across_scopes_keeps_each_observed_delta(progression, monkeypatch):
     p = progression
     active(p)
-    identity = dict(role='worker')
+    identity = dict(role='worker', loop_id=checkpoint(p)['current_loop_id'])
     monkeypatch.setattr(p.coordinator, '_identities', lambda: {'shared-worker': identity})
     def usage(tokens):
         p.coordinator._event(dict(method='thread/tokenUsage/updated', params=dict(threadId='shared-worker',
@@ -364,18 +346,18 @@ def test_native_usage_reused_across_scopes_keeps_each_observed_delta(progression
     usage(10)
     identity['interactive_session_id'] = 'explicit-human-scope'
     usage(15)
-    assert checkpoint(p)['usage_records']['shared-worker']['counted_tokens']['input_tokens'] == 10
+    assert checkpoint(p)['usage_records']['shared-worker']['counted_tokens']['input_tokens'] == 15
     identity.pop('interactive_session_id')
     usage(19)
-    assert checkpoint(p)['usage_records']['shared-worker']['counted_tokens']['input_tokens'] == 14
-    assert checkpoint(p)['interactive_usage_records']['shared-worker']['counted_tokens']['input_tokens'] == 5
-    assert checkpoint(p)['usage_records']['shared-worker']['has_gaps']
+    assert checkpoint(p)['usage_records']['shared-worker']['counted_tokens']['input_tokens'] == 19
+    assert not checkpoint(p).get('interactive_usage_records')
+    assert not checkpoint(p)['usage_records']['shared-worker']['has_gaps']
 
 
 @pytest.mark.parametrize('mode', ['shadow', 'off'])
-def test_ordinary_shadow_and_off_interactive_behavior_does_not_gain_assist_budget_gate(progression, mode):
-    p = progression
-    config = json.loads(row(p)['config_json'])
+def test_ordinary_shadow_and_off_interactive_behavior_does_not_gain_assist_budget_gate(unmanaged_progression, mode):
+    p = unmanaged_progression
+    config = p.runtime.scheduler_bindings.control_settings(p.instance)
     config['effective']['progression'].update(progress_mode=mode, max_tasks=len(checkpoint(p).get('admissions', {})))
     with p.runtime.scheduler_bindings._connect() as db:
         db.execute('UPDATE scheduler_progression SET config_json=? WHERE instance_id=?', (json.dumps(config), p.instance))
@@ -391,9 +373,7 @@ def test_manual_tasks_keep_background_scope_at_real_preflight_and_creation(human
     from tests.operations.worker_fixtures import attached_worker
     ui, p = human_ui, human_ui.p
     assert submit(ui) == 303
-    p.root.call_tool('progression_command', dict(command='pause'))
-    assert independent(ui) == 303
-    manual_count = 5 if next_work == 'ordinary' else 4
+    manual_count = 5 if next_work == 'ordinary' else 3
     for index in range(manual_count):
         name = f'manual-scope-{index}'
         if next_work == 'requested_review' and index < 2:
@@ -413,17 +393,12 @@ def test_manual_tasks_keep_background_scope_at_real_preflight_and_creation(human
     assert notice(p)['window_start_sequence'] == 3
     root = p.root.__class__(p.facade(p.coordinator.host.scheduler_session))
     if next_work == 'ordinary':
-        # The raw history already contains eight tasks, but only three belong to
-        # the background session. Exercise both public and transactional checks.
+        # Human tasks consumed the same eight-task loop before backend handoff.
         assert len(checkpoint(p)['admissions']) == 8
         before = row(p)
-        assert root.call_tool('operation_preflight', request('after-handoff'))['admissible']
-        assert row(p) == before
-        finish(p, root, 'after-handoff')
-        for index in range(4, 8):
-            finish(p, root, f'background-budget-{index}')
         denied = root.call_tool('operation_preflight', request('real-background-budget-exhausted'))
         assert not denied['admissible'] and denied['reason_code'] == 'background_task_budget_exhausted'
+        assert row(p) == before
         with pytest.raises(Exception, match='background_task_budget_exhausted'):
             root.call_tool('operation_invoke', request('real-background-budget-exhausted'))
         return
@@ -438,7 +413,9 @@ def test_manual_tasks_keep_background_scope_at_real_preflight_and_creation(human
         inputs=[dict(port='subject', artifact_names=['manual-scope-0.output'])],
         instruction='Review the exact subject requested by the waiting owner.')
     p.runtime.runs.request_implementation_review(owner_id, subject.ref, review)
-    assert len(checkpoint(p)['admissions']) == 8  # Four background, four manual.
+    from tests.operations.research_loop_fixtures import measured_fixture_usage
+    measured_fixture_usage(owner)
+    assert len(checkpoint(p)['admissions']) == 7  # Three original, three human, one owner.
     wrong = dict(review, name='wrong-review', inputs=[dict(port='subject', artifact_names=['manual-scope-1.output'])])
     denied = root.call_tool('operation_preflight', wrong)
     assert not denied['admissible'] and denied['reason_code'] == 'background_task_busy'
