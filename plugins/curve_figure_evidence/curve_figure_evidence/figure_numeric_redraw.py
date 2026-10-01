@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import math
 
 from PIL import Image, ImageColor, ImageDraw, ImageFont
 
 from .figure_digitization_contract import FigureDigitizationRequest, axis_value
+from .figure_line_tracker import _support_ranges_connected
 
 
 def _space(value: float, scale: str) -> float:
@@ -31,14 +33,37 @@ def _runs(raw: bytes) -> tuple[tuple[dict[str, str], ...], ...]:
     previous: int | None = None
     for row in rows:
         index = int(row["point_index"])
-        if current and previous is not None and index != previous + 1:
+        if current and previous is not None and (index != previous + 1 or row.get("interpolation_eligible", "1") != "1" or
+                not _support_ranges_connected(json.loads(current[-1].get("pixel_y_support_ranges", "[]")),
+                    json.loads(row.get("pixel_y_support_ranges", "[]")))):
             result.append(tuple(current))
             current = []
+        if row.get("interpolation_eligible", "1") != "1":
+            result.append((row,))
+            previous = index
+            continue
         current.append(row)
         previous = index
     if current:
         result.append(tuple(current))
     return tuple(result)
+
+
+def _draw_line(draw, points, *, color, style):
+    if style == "solid":
+        draw.line(points, fill=color, width=3)
+        return
+    on, off = (14, 8) if style == "dashed" else (2, 6)
+    distance = 0.0
+    for (x0, y0), (x1, y1) in zip(points, points[1:]):
+        length = math.hypot(x1 - x0, y1 - y0)
+        steps = max(1, math.ceil(length))
+        for step in range(steps):
+            if (distance + length * step / steps) % (on + off) < on:
+                a, b = step / steps, (step + 1) / steps
+                draw.line((x0 + a * (x1 - x0), y0 + a * (y1 - y0),
+                    x0 + b * (x1 - x0), y0 + b * (y1 - y0)), fill=color, width=3)
+        distance += length
 
 
 def _label(value: float, scale: str) -> str:
@@ -102,13 +127,13 @@ def render_numeric_redraw(
                 for row in run
             ]
             if len(points) > 1:
-                draw.line(points, fill=color, width=3)
+                _draw_line(draw, points, color=color, style=series.line_style)
             for (px, py), row in zip(points, run, strict=True):
                 if row.get("shared_group"):
                     draw.ellipse((px - 3, py - 3, px + 3, py + 3), outline="#d69e00")
                 else:
-                    draw.point((px, py), fill=color)
-        draw.line((legend_x, 48, legend_x + 26, 48), fill=color, width=3)
+                    draw.point((px, py), fill="#ff4000" if row.get("interpolation_eligible", "1") != "1" else color)
+        _draw_line(draw, [(legend_x, 48), (legend_x + 26, 48)], color=color, style=series.line_style)
         draw.text((legend_x + 31, 42), series.label[:48], fill="#202020", font=font)
         legend_x += min(330, max(170, len(series.label) * 6 + 45))
 

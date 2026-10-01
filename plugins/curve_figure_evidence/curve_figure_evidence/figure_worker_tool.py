@@ -7,15 +7,17 @@ import json
 import os
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from scidiscovery.artifact_agent.operation_tool_context import OperationToolContext
 from scidiscovery.artifact_agent.schema.common import canonical_json
 from scidiscovery.operations.tooling import WorkerToolDefinition
+from scidiscovery.operation_contract import DiagnosticError, contract_diagnostic, validation_diagnostics
 
 from .figure_digitization import build_digitized_figure_bundle
 from .figure_digitization_contract import FigureDigitizationRequest, ScientificFigureRequest, materialize_figure_request
 from .figure_source import inspect_figure_source
+from .figure_evidence_validation import FigureEvidenceBundleError
 from .scientific_files import SOURCE_CONTROL, project_figure_file, restore_figure_file
 
 
@@ -102,6 +104,30 @@ FIGURE_SOURCE_INSPECTION_TOOL = WorkerToolDefinition(
 )
 
 
+def _request_bytes(request: FigureDigitizationPreviewInput, source: bytes) -> bytes:
+    raw = canonical_json(materialize_figure_request(request.request.model_dump(mode="json", exclude_none=True), source))
+    try:
+        FigureDigitizationRequest.model_validate_json(raw, strict=True)
+    except ValidationError as error:
+        details = validation_diagnostics(error, schema=ScientificFigureRequest.model_json_schema())
+        raise DiagnosticError("The figure description exceeds its recovered source geometry.",
+            details=tuple(contract_diagnostic(detail["code"], phase=detail["phase"],
+                affected_action=detail["affected_action"], repairable=detail["repairable"],
+                path="$.request" + detail["path"].removeprefix("$"), message=detail["message"],
+                rule_id=detail.get("rule_id"), error_type=detail.get("type")) for detail in details)) from error
+    return raw
+
+
+def _build_family(source: bytes, request_raw: bytes):
+    try:
+        return build_digitized_figure_bundle(source, request_raw)
+    except (FigureEvidenceBundleError, ValidationError) as error:
+        raise DiagnosticError("The digitizer generated an inconsistent figure family; this is a program defect.",
+            details=(contract_diagnostic("figure_generation_inconsistent", phase="tool_execution",
+                affected_action="tool_call", repairable=False,
+                message="The digitizer generated an inconsistent figure family. Report this program defect; scientific inputs do not supply shared groups or mechanical eligibility fields."),)) from error
+
+
 def _preview(
     request: BaseModel, context: OperationToolContext
 ) -> dict[str, object]:
@@ -110,8 +136,8 @@ def _preview(
     if context.source_descriptor(request.name).port_name != "paper_source":
         raise ValueError("figure tool requires the declared original paper source")
     source = context.read_input(request.name)
-    request_raw = canonical_json(materialize_figure_request(request.request.model_dump(mode="json", exclude_none=True), source))
-    files, report = build_digitized_figure_bundle(source, request_raw)
+    request_raw = _request_bytes(request, source)
+    files, report = _build_family(source, request_raw)
     request_sha256 = hashlib.sha256(request_raw).hexdigest()
     directory = (
         context.workspace
@@ -175,7 +201,7 @@ def _save(request: BaseModel, context: OperationToolContext) -> dict[str, object
     if context.source_descriptor(request.name).port_name != "paper_source":
         raise ValueError("figure tool requires the declared original paper source")
     source = context.read_input(request.name)
-    request_raw = canonical_json(materialize_figure_request(request.request.model_dump(mode="json", exclude_none=True), source))
+    request_raw = _request_bytes(request, source)
     request_digest = hashlib.sha256(request_raw).hexdigest()
     existing = context.evidence()
     if any(r.get("metadata", {}).get("request_sha256") != request_digest for r in existing):
@@ -211,7 +237,7 @@ def _save(request: BaseModel, context: OperationToolContext) -> dict[str, object
         if not any(a["state"] == "completed" and a["tool_name"] == "worker_curve_figure_preview"
                 and a.get("result_status") == "figure_preview_" + request_digest for a in context.tool_attempts()):
             raise ValueError("preview this exact ready request before saving it")
-        files, report = build_digitized_figure_bundle(source, request_raw)
+        files, report = _build_family(source, request_raw)
     else:
         files, report = {}, None
     files[REQUEST_ITEM] = (request_raw, "application/json")

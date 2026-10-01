@@ -36,7 +36,11 @@ Describe only what you can judge from the original figure: selected image identi
 figure and panel, plot box, linear or log10 axes, visible pixel/value calibration
 pairs, units, series labels and identities, colors and line styles, legend or
 annotation boxes, a small number of guide points on each curve, and explicit
-non-data exclusion boxes. For each axis, put exactly two visible
+non-data exclusion boxes. Supply series use_limits when the paper or visible
+geometry limits a region's quantitative measurement or interpolation use: give
+pixel_bbox, the scientific reason, and applies_to. These limits retain observed
+pixels; exclusion_regions remove non-data pixels. Do not infer physical multivalued
+behavior from a thick or steep raster stroke alone. For each axis, put exactly two visible
 [pixel_coordinate, tick_value] pairs in ticks; their order has no meaning and
 the program normalizes them. They do not describe the extracted curve's range.
 Omit color tolerances, pixel ranges, eligibility ranges, declared gaps,
@@ -52,6 +56,12 @@ gap, uses the wrong calibration or has the wrong series identity, correct the vi
 description or guide points and preview again. Call worker_curve_figure_save with only the exact request whose
 preview you inspected. This explicitly selects and seals the complete family. The deterministic program creates curve points, statistics,
 CSV and shared-pixel markings; never hand-write them.
+Observed pixel support, resolved curve identity, and interpolation permission are
+different fields. A shared group preserves each owner's observations and their
+dependency; it supplies no additional independent evidence. Quantitative weights
+belong to the downstream scoring contract. Missing columns and locally unresolved
+support cannot be silently bridged by interpolation. Mechanical integrity does
+not grant a scientific verdict.
 
 If the page, image, calibration or series identity cannot be established visibly,
 save request_status unresolved with bounded unresolved_reasons. Preserve the
