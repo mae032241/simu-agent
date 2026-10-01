@@ -53,7 +53,7 @@ def loop_usage_summary(checkpoint, identity=None):
 
 def sync_loop_balances(checkpoint, now):
     """Late usage settles its original scope, never the current scope's balance."""
-    from .progression_budget import enabled_time, token_budget
+    from .progression_budget import time_budget, token_budget
     active = current_loop(checkpoint)
     scopes = checkpoint.get('_detail_projection', {}).get('scopes')
     for identity, record in checkpoint.get('loop_authorizations', {}).items():
@@ -63,7 +63,7 @@ def sync_loop_balances(checkpoint, now):
         balance = dict(record.get('budget_snapshot') or {})
         if identity == active:
             balance.update(rounds=checkpoint.get('rounds', 0), attempts=checkpoint.get('attempts', 0),
-                elapsed_seconds=enabled_time(checkpoint, now))
+                **time_budget(checkpoint, limits, now))
         balance.update(**loop_task_budget(checkpoint, limits, identity),
             **token_budget(dict(checkpoint, current_loop_id=identity), limits),
             usage=loop_usage_summary(checkpoint, identity))
@@ -77,8 +77,8 @@ def loop_scope_view(checkpoint):
     records = checkpoint['loop_authorizations']
     record = records[identity]
     return dict(managed=True, id=identity, authority='explicit_management_ui_budget_confirmation',
-        authorized_at=record['authorized_at'], limits=record['config']['effective']['progression'],
-        history=[dict(id=key, authorized_at=value['authorized_at'], budget=value.get('budget_snapshot'))
+        authorized_at=record['authorized_at'], deadline_at=record['deadline_at'], limits=record['config']['effective']['progression'],
+        history=[dict(id=key, authorized_at=value['authorized_at'], deadline_at=value['deadline_at'], budget=value.get('budget_snapshot'))
             for key, value in sorted(records.items(), key=lambda item: (item[1]['authorized_at'], item[0]))[-8:]],
         history_omitted=max(0, len(records)-8),
         scope='All subsequent interactive and background work uses this loop until explicit UI authorization of another loop. '

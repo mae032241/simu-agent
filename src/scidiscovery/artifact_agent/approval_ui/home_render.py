@@ -111,13 +111,20 @@ def session_controls(rows, *, token, csrf, current=None, expires_at=None, workbe
                 "bounded_fallback 按任务、时间和已知 tokens 限额继续，保留 missing／partial，不能保证全角色 token 硬封顶。"
                 "此预算决定不清除科学暂停。"
                 "事先授权有限策略创建入口尚未实现。</p>"
+                "<p>自然期限从本次确认起连续计时，暂停和服务停机也流逝；推进启用时长包含正常外部等待，"
+                "排除明确暂停。任一额度耗尽就停止新派发；有效剩余时间取两者较小值。"
+                "单个外部作业仍使用原执行时限，不随 loop 扩大。</p>"
+                + '<p>本次自然寿命：' + str(loop_proposal['limits']['max_calendar_seconds'])
+                + ' 秒；推进启用时长：' + str(loop_proposal['limits']['max_elapsed_seconds'])
+                + ' 秒；初始有效时间上限：' + str(min(loop_proposal['limits']['max_calendar_seconds'],
+                    loop_proposal['limits']['max_elapsed_seconds'])) + ' 秒。截止时间在确认时冻结。</p>'
                 + render_json_value(loop_proposal['limits'], max_bytes=16384)
                 + "<form method='post' action='/instances/progression'>" + common
                 + hidden("command", "authorize_loop") + hidden("instance_id", current.instance_id)
                 + hidden("confirmation_binding", loop_proposal['confirmation_binding'])
                 + "<label>新 loop 的确切原始目标名称<input name='objective_name' required></label>"
                 "<label><input type='checkbox' name='confirm_loop_budget' value='yes' required>"
-                "我明确授权上述完整预算；旧任务不重放，科学暂停另行核对</label>"
+                "我明确授权上述完整预算、自然期限与推进启用时长；旧任务不重放，科学暂停另行核对</label>"
                 "<button type='submit'>确认新 loop 预算</button></form></details>")
         for target in background_continuations:
             body += "<details><summary>恢复后台目标：" + escape(target.get('objective_name') or '目标绑定待核对') + "</summary>"
@@ -128,7 +135,7 @@ def session_controls(rows, *, token, csrf, current=None, expires_at=None, workbe
             body += '<p>后台暂停原因：' + escape(', '.join(item['reason'] for item in target['causes']))
             body += '。剩余任务：' + str(remaining['tasks']) + '；剩余轮次：' + str(remaining['rounds'])
             body += '；剩余时间秒：' + str(round(remaining['seconds'])) + '；剩余 token：' + str(remaining['tokens'])
-            body += '。当前时间口径：累计推进启用时间，正常等待计时；明确暂停不计时，同 loop 的人工工作计时，恢复不会重置额度'
+            body += '。剩余时间取自然期限与启用时长余额较小值；自然期限经过暂停和停机仍流逝。正常等待及同 loop 人工工作计启用时长，明确暂停不计启用时长；恢复不重置额度'
             body += '。从后台已消费水位 ' + str(target['through_sequence']) + ' 开启下一窗口；人工授权与分账、旧触发与全部账目保留。</p>'
             body += '<p>确认后转为后台自动推进，并将当前目标切换为所选目标：' + escape(target['objective_name'])
             body += '。其他目标的暂停仍须分别确认；多次确认后，最后选择的目标成为当前目标。</p>'

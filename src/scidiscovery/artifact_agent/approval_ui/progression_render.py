@@ -132,11 +132,19 @@ def render_progression(status, *, instance_id):
             ('independent_reviews', '精确独立审查数'), ('remaining_independent_reviews', '剩余独立审查名额'),
             ('attempts', '尝试数'), ('probes', '探测数'),
             ('elapsed_seconds', '推进启用时间（秒）'), ('remaining_seconds', '剩余启用时间（秒）'), ('root_running_seconds', 'Root 运行时间（秒）'),
+            ('deadline_at', '冻结自然截止时间（UTC）'), ('calendar_elapsed_seconds', '自然流逝时间（秒）'),
+            ('calendar_remaining_seconds', '剩余自然时间（秒）'), ('effective_remaining_seconds', '有效剩余时间（秒）'),
+            ('time_exhaustion', '时间额度耗尽原因'),
             ('waiting_seconds', '等待时间（秒）'), ('observed_tokens', '最新已观测 Token'),
             ('stop_snapshot_tokens', '首次止损时已观测 Token'),
             ('token_coverage', '目标 Token 覆盖'), ('time_coverage', '时间覆盖'), ('token_enforcement', 'Token 约束方式')):
-        body += '<dt>' + label + '</dt><dd>' + _text(budget.get(key)) + '</dd>'
+        value = budget.get(key)
+        if key == 'time_exhaustion':
+            value = {'calendar_deadline': '自然期限已到', 'enabled_time': '推进启用时长已耗尽', None: '时间额度尚未耗尽'}.get(value, value)
+        body += '<dt>' + label + '</dt><dd>' + _text(value) + '</dd>'
     body += '</dl>'
+    if loop.get('managed'):
+        body += '<p>自然期限经过暂停和服务停机仍流逝；启用时长排除明确暂停，包含正常外部等待。有效剩余时间为两种余额较小值；零余额阻止新研究与新独立执行，已接受工作仍沿原权限收尾。</p>'
     if budget.get('limits'):
         body += '<details><summary>本次冻结预算上限</summary>' + render_json_value(budget['limits'], max_bytes=8192) + '</details>'
     usage = status.get('usage') or {}

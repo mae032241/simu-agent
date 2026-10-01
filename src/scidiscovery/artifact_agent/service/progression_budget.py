@@ -28,6 +28,33 @@ def enabled_time(checkpoint, now, *, enabled=None):
     return elapsed
 
 
+def time_budget(checkpoint, limits, now):
+    """One projection for admission, native deadlines and UI; never grants time."""
+    from datetime import datetime
+    from .research_loops import current_loop
+    elapsed = enabled_time(checkpoint, now)
+    remaining = max(0, limits['max_elapsed_seconds'] - elapsed)
+    budget = dict(elapsed_seconds=elapsed, remaining_seconds=remaining,
+        effective_remaining_seconds=remaining,
+        time_coverage='enabled_intervals_including_active_recovery_gaps')
+    identity = current_loop(checkpoint)
+    if identity:
+        record = checkpoint['loop_authorizations'][identity]
+        if 'deadline_at' not in record:
+            raise ValueError('Research loop natural deadline is missing; initialize a fresh state root.')
+        start = datetime.fromisoformat(record['authorized_at']).timestamp()
+        deadline = datetime.fromisoformat(record['deadline_at']).timestamp()
+        current = max(now, checkpoint['time_high_water'], start)
+        calendar_remaining = max(0, deadline - current)
+        budget.update(deadline_at=record['deadline_at'], calendar_elapsed_seconds=current-start,
+            calendar_remaining_seconds=calendar_remaining,
+            effective_remaining_seconds=min(remaining, calendar_remaining),
+            time_coverage='frozen_calendar_deadline_and_enabled_intervals_including_active_recovery_gaps')
+    budget['time_exhaustion'] = ('calendar_deadline' if budget.get('calendar_remaining_seconds') == 0
+        else 'enabled_time' if remaining == 0 else None)
+    return budget
+
+
 def token_budget(checkpoint, limits):
     from .research_loops import loop_usage
     records = loop_usage(checkpoint)

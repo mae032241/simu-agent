@@ -36,6 +36,7 @@ def test_same_host_resume_refreshes_deadline_only_after_confirmed_turn(progressi
             self.connection.selector = SimpleNamespace(select=lambda _: [])
 
     monkeypatch.setattr(p.coordinator, 'host_factory', GuardedHost)
+    configure(p, max_calendar_seconds=20000)
     active(p)
     host = p.coordinator.host
     p.now[0] += 10
@@ -46,14 +47,16 @@ def test_same_host_resume_refreshes_deadline_only_after_confirmed_turn(progressi
     p.root.call_tool('progression_command', dict(command='pause'))
     limit = json.loads(row(p)['config_json'])['effective']['progression']['max_elapsed_seconds']
     p.now[0] += limit * 2
-    p.root.call_tool('progression_command', dict(command='resume'))
     if unknown:
+        with pytest.raises(Exception, match='time budget exhausted'):
+            p.root.call_tool('progression_command', dict(command='resume'))
         with pytest.raises(HostError, match='budget_deadline'):
             p.coordinator.tick()
         assert host.execution_deadline == original_deadline and host.connection.failed
         assert row(p)['host_json'] is not None and checkpoint(p)['fault_class'] == 'outcome_unknown'
         assert len(host.prompts) == 1 and checkpoint(p)['enabled_seconds'] >= limit * 2
         return
+    p.root.call_tool('progression_command', dict(command='resume'))
     p.coordinator.tick()  # Uses real AppServer.poll and native budget guard, without a process/model.
     assert p.coordinator.host is host and not host.connection.failed
     assert row(p)['state'] == 'active' and checkpoint(p).get('fault_code') is None
@@ -85,7 +88,7 @@ def test_preconnect_human_continue_initializes_time_and_first_host_preserves_it(
 
 def test_more_than_720_unchanged_polls_do_not_spend_a_poll_allowance(progression):
     p = progression
-    configure(p, max_elapsed_seconds=10000)
+    configure(p, max_elapsed_seconds=10000, max_calendar_seconds=10000)
     active(p)
     host = p.coordinator.host
     host.finish()
@@ -97,8 +100,20 @@ def test_more_than_720_unchanged_polls_do_not_spend_a_poll_allowance(progression
     assert 'max_probes' not in json.loads(row(p)['config_json'])['effective']['progression']
 
 
-def test_long_pause_retired_manual_exemption_and_human_continue_share_the_original_time(human_ui, monkeypatch):
-    ui, p = human_ui, human_ui.p
+@pytest.fixture
+def long_calendar_ui(progression, monkeypatch):
+    p = progression
+    bindings = p.runtime.scheduler_bindings
+    settings = bindings.global_settings
+    bindings.global_settings = settings.model_copy(update=dict(progression=settings.progression.model_copy(
+        update=dict(max_calendar_seconds=20000))))
+    p = paused.__wrapped__(p, monkeypatch)
+    with contextmanager(human_ui.__wrapped__)(p) as ui:
+        yield ui
+
+
+def test_long_pause_retired_manual_exemption_and_human_continue_share_the_original_time(long_calendar_ui, monkeypatch):
+    ui, p = long_calendar_ui, long_calendar_ui.p
     before = p.root.call_tool('progression_status', {})['budget']['elapsed_seconds']
     started = checkpoint(p)['started_at']
     limit = json.loads(row(p)['config_json'])['effective']['progression']['max_elapsed_seconds']

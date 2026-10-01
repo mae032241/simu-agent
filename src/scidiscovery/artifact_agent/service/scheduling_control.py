@@ -20,7 +20,7 @@ from .maintenance import MaintenanceBusy
 from ..storage.control_io import control_io_nonblocking
 from .research_loops import current_loop, loop_usage, loop_task_count, loop_task_budget, loop_scope_view, sync_loop_balances, loop_usage_summary
 
-CONTROL_VERSION = 7
+CONTROL_VERSION = 8
 CONTROL_SCHEMA = """
 CREATE TABLE IF NOT EXISTS scheduler_progression (
     instance_id TEXT PRIMARY KEY REFERENCES scheduler_instances(instance_id),
@@ -109,19 +109,18 @@ def progression_status_view(value, *, session_key=None, now=None):
     config = json.loads(value.get('config_json') or '{}')
     limits = config.get('effective', {}).get('progression')
     if limits:
-        from .progression_budget import enabled_time
+        from .progression_budget import time_budget
         # Read-only archives have no live clock: project their frozen high-water
         # mark rather than omitting the shared remaining-budget fields.
-        elapsed = enabled_time(checkpoint, now if now is not None else checkpoint.get('time_high_water', 0))
-        budget.update(elapsed_seconds=elapsed, remaining_seconds=max(0, limits['max_elapsed_seconds']-elapsed),
-            time_coverage='enabled_intervals_including_active_recovery_gaps')
+        budget.update(time_budget(checkpoint, limits, now if now is not None else checkpoint.get('time_high_water', 0)))
     if limits and (current_loop(checkpoint) or value['mode'] == 'background' or checkpoint.get('human_continuations')):
         from .progression_budget import token_budget
         budget.update(**loop_task_budget(checkpoint, limits), rounds=checkpoint.get('rounds', 0),
             attempts=checkpoint.get('attempts', 0))
         budget.update(token_budget(checkpoint, limits))
     return {key: value[key] for key in ('state', 'mode', 'reason', 'objective_name')} | {
-        'can_schedule': value['state'] == 'active' and value['owner_session'] == session_key,
+        'can_schedule': value['state'] == 'active' and value['owner_session'] == session_key
+            and budget.get('effective_remaining_seconds', 1) > 0,
         'writer': 'this_session' if value['owner_session'] == session_key and session_key else
                   'other_session' if value['owner_session'] else 'none',
         'report': checkpoint.get('report'),
@@ -193,11 +192,42 @@ def background_task_count(checkpoint):
     return loop_task_count(checkpoint)
 
 
+def pure_time_stop(row, checkpoint, *, now):
+    """Frozen facts authorize time closeout; a later clock cannot erase a stop."""
+    from .progression_budget import time_budget, token_budget
+    if not current_loop(checkpoint) or checkpoint.get('fault_class') == 'outcome_unknown':
+        return False
+    if checkpoint.get('phase') == 'prepared' and not checkpoint.get('turn_id'):
+        return False
+    if row['state'] not in {'active', 'pending'} and not (
+            row['reason'] == 'scientific_progress_persistent_gap'
+            or (row['reason'] == 'budget_exhausted' and checkpoint.get('time_closeout_source_session'))):
+        return False
+    limits = json.loads(row['config_json'])['effective']['progression']
+    resources = checkpoint.get('resources') or {}
+    return bool(time_budget(checkpoint, limits, now)['time_exhaustion']
+        and token_budget(checkpoint, limits)['remaining_tokens'] > 0
+        and checkpoint.get('attempts', 0) < limits['max_attempts']
+        and checkpoint.get('rounds', 0) < limits['max_rounds']
+        and (resources.get('owned_tree_rss_bytes', 0)
+            + (resources.get('control_daemon_rss_bytes') or 0)) < limits['max_rss_bytes'])
+
+
 def accepted_work_authority(db, row, checkpoint, *, target, session_key=None, schema='', execution_reader=None, reservation=None):
-    """Exact accepted work survives only the current automatic science pause."""
-    source = (checkpoint.get('scientific_pause') or {}).get('source_session')
+    """Exact accepted work survives automatic science or confirmed time stops."""
+    time_stop = (row['reason'] == 'budget_exhausted' and checkpoint.get('time_closeout_source_session')
+        and pure_time_stop(row, checkpoint, now=checkpoint['time_high_water']))
+    source = (checkpoint.get('time_closeout_source_session') if time_stop else
+        (checkpoint.get('scientific_pause') or {}).get('source_session'))
     owners = {source, row.get('requested_by')} - {None}
-    if (row['state'] != 'paused' or row['reason'] != 'scientific_progress_persistent_gap' or not source
+    namespace, object_id = target
+    intent = (db.execute('SELECT * FROM ' + schema + 'scheduler_dispatch_intents WHERE run_id=?', (object_id,)).fetchone()
+        if namespace == 'run' else None)
+    if (time_stop and intent and intent['instance_id'] == row['instance_id']
+            and any(item.get('run_id') == object_id and item.get('loop_id') == current_loop(checkpoint)
+                and item['state'] == 'accepted' for item in checkpoint.get('admissions', {}).values())):
+        owners.add(intent['owner_session'])  # Pending resume retains this exact Run's original dispatcher.
+    if (row['state'] != 'paused' or (row['reason'] != 'scientific_progress_persistent_gap' and not time_stop) or not source
             or (session_key is not None and (session_key or 'administrative') not in owners)
             or checkpoint.get('fault_class') == 'outcome_unknown'
             or (checkpoint.get('phase') == 'prepared' and not checkpoint.get('turn_id'))
@@ -205,11 +235,10 @@ def accepted_work_authority(db, row, checkpoint, *, target, session_key=None, sc
                 or (item['output_fingerprint'], item.get('scientific_signature')) != reservation)
                 for item in checkpoint.get('admissions', {}).values())):
         return False
-    namespace, object_id = target
     if namespace == 'run':
-        intent = db.execute('SELECT * FROM ' + schema + 'scheduler_dispatch_intents WHERE run_id=?', (object_id,)).fetchone()
         return bool(intent and intent['instance_id'] == row['instance_id'] and intent['owner_session'] in owners
             and intent['generation'] <= row['generation'] and any(item.get('run_id') == object_id
+                and (not time_stop or item.get('loop_id') == current_loop(checkpoint))
                 and item['state'] == 'accepted' for item in checkpoint.get('admissions', {}).values()))
     if namespace == 'execution':
         bound = db.execute('SELECT 1 FROM ' + schema + "scheduler_bindings WHERE instance=? AND namespace='execution' AND object_id=?",
@@ -232,10 +261,12 @@ def require_human_continuation_budget(row, checkpoint, *, now=None):
     limits = json.loads(row['config_json'])['effective']['progression']
     budget = checkpoint.get('budget', {})
     resources = checkpoint.get('resources') or {}
-    from .progression_budget import enabled_time
-    if enabled_time(checkpoint, time() if now is None else now) >= limits['max_elapsed_seconds']:
-        conflict('Frozen progression budget exhausted: 后台启用时间额度已耗尽。正常等待与同预算人工继续计时，'
-            '明确暂停和独立人工工作不计时；恢复不会重置额度。')
+    from .progression_budget import time_budget
+    timing = time_budget(checkpoint, limits, time() if now is None else now)
+    if timing['effective_remaining_seconds'] <= 0:
+        conflict('Frozen progression budget exhausted: ' + ('自然期限已到，暂停和服务停机也计时。'
+            if timing['time_exhaustion'] == 'calendar_deadline' else '后台启用时间额度已耗尽。')
+            + '正常等待与同预算人工继续计启用时间；明确暂停不计启用时间，恢复不会重置任何时间额度。')
     exhausted = any(checkpoint.get(key, 0) >= limits['max_' + key]
         for key in ('rounds', 'attempts'))
     exhausted |= (loop_task_count(checkpoint, kind='research') >= limits['max_tasks']
@@ -290,10 +321,14 @@ def require_control_admission(db, row, checkpoint, *, session_key=None, continua
     if managed:
         # Interactive takeover retains the same total and task budgets. Exact
         # accepted science-pause continuations still face the total budget.
-        from .progression_budget import enabled_time
+        from .progression_budget import time_budget
         resources = checkpoint.get('resources') or {}
-        if (enabled_time(checkpoint, time() if now is None else now) >= limits['max_elapsed_seconds']
-                or checkpoint.get('attempts', 0) >= limits['max_attempts']
+        timing = time_budget(checkpoint, limits, time() if now is None else now)
+        if timing['effective_remaining_seconds'] <= 0:
+            raise OperationInvocationError('loop_budget_exhausted', message='The frozen research loop '
+                + ('natural deadline has expired' if timing['time_exhaustion'] == 'calendar_deadline'
+                    else 'enabled-time budget is exhausted') + '; recovery cannot replenish it.')
+        if (checkpoint.get('attempts', 0) >= limits['max_attempts']
                 or (row['mode'] != 'background' and checkpoint.get('rounds', 0) >= limits['max_rounds'])
                 or (resources.get('owned_tree_rss_bytes', 0) +
                     (resources.get('control_daemon_rss_bytes') or 0)) >= limits['max_rss_bytes']):
@@ -481,6 +516,12 @@ class SchedulingControl:
             if command in {'pause', 'stop'} and exists:
                 mode = old['mode']
             if command in {'start', 'resume', 'takeover'} and exists:
+                if managed:
+                    from .progression_budget import time_budget
+                    timing = time_budget(checkpoint, settings['effective']['progression'], self.control_now())
+                    if timing['effective_remaining_seconds'] <= 0:
+                        conflict('Frozen research loop time budget exhausted: ' + timing['time_exhaustion']
+                            + '; only explicit management UI authorization creates a new deadline.')
                 from .scientific_progress import scientific_pause
                 with self._connect() as db:
                     if scientific_pause(db, dict(old, mode='background'), checkpoint):
@@ -539,7 +580,7 @@ class SchedulingControl:
                                objective_name, objective_ref):
         """Capability/CSRF-checked management route only; no Root creation API."""
         import uuid
-        from .scheduler_bindings import _timestamp
+        from datetime import datetime, timedelta, timezone
         with self.control_maintenance.guard(instance_id), self.scheduling_lock():
             self._selected(instance_id, session_key)
             row = self.progression_status(instance_id=instance_id, internal=True)
@@ -598,7 +639,9 @@ class SchedulingControl:
             now = self.control_now()
             sync_loop_balances(checkpoint, now)
             identity = 'loop_' + uuid.uuid4().hex
-            records[identity] = dict(authorized_at=_timestamp(), authorized_by=session_key,
+            authorized = datetime.fromtimestamp(now, timezone.utc)
+            records[identity] = dict(authorized_at=authorized.isoformat(),
+                deadline_at=(authorized + timedelta(seconds=limits['max_calendar_seconds'])).isoformat(), authorized_by=session_key,
                 request_fingerprint=request, config=config, objective_name=objective_name, objective_ref_json=ref_json)
             from ...platforms.codex_usage import usage_summary
             # Retain originals; only new scope counters start at zero.
@@ -607,7 +650,7 @@ class SchedulingControl:
                 budget={}, usage_summary=usage_summary([]), running_seconds=0, report=None, relevant_runs={})
             for name in ('started_at', 'phase', 'turn_id', 'round_started_at', 'next_probe_at', 'native_completion', 'relevant_runs_objective_ref',
                          'decision_snapshot', 'processed_snapshot', 'notification_snapshot', 'notified_snapshot',
-                         'terminal_delivery', 'fault_code', 'fault_class', 'stop_snapshot_tokens'):
+                         'terminal_delivery', 'fault_code', 'fault_class', 'stop_snapshot_tokens', 'time_closeout_source_session'):
                 checkpoint.pop(name, None)
             generation = row.get('generation', 0) + 1
             checkpoint['last_command'] = dict(command='authorize_loop', generation=generation,
@@ -625,7 +668,7 @@ class SchedulingControl:
         """UI candidates come from immutable paused-goal deliveries, never recency."""
         from .scientific_progress import scientific_pause, observation_facts, shadow_policy
         from ..schema.common import canonical_sha256
-        from .progression_budget import token_budget, enabled_time
+        from .progression_budget import token_budget, time_budget
         self._selected(instance_id, session_key)
         row = self.progression_status(instance_id=instance_id, internal=True)
         checkpoint = json.loads(row.get('checkpoint_json', '{}'))
@@ -636,7 +679,7 @@ class SchedulingControl:
             return []  # Ordinary interactive work has no frozen background budget.
         remaining = dict(**loop_task_budget(checkpoint, limits),
             rounds=max(0, limits['max_rounds'] - checkpoint.get('rounds', 0)),
-            seconds=max(0, limits['max_elapsed_seconds'] - enabled_time(checkpoint, self.control_now())),
+            seconds=time_budget(checkpoint, limits, self.control_now())['effective_remaining_seconds'],
             tokens=token_budget(checkpoint, limits)['remaining_tokens'])
         options = []
         with self._connect() as db:
@@ -1098,6 +1141,10 @@ class SchedulingControl:
             if completed_turn is not None and checkpoint.get('turn_id') == completed_turn:
                 observe_deliveries(db, row, checkpoint, boundary='turn_completed')
             checkpoint.update(changes)
+            if prior_checkpoint.get('fault_class') == 'outcome_unknown':
+                checkpoint['fault_class'] = 'outcome_unknown'
+                if 'fault_code' in prior_checkpoint:
+                    checkpoint['fault_code'] = prior_checkpoint['fault_code']
             if changes.get('phase') == 'running' or changes.get('native_completion') == 'completed':
                 observe_deliveries(db, row, checkpoint,
                     boundary='turn_completed' if changes.get('native_completion') == 'completed' else None)
@@ -1105,14 +1152,34 @@ class SchedulingControl:
             if pause and row['state'] in {'active', 'paused'}:
                 checkpoint['scientific_pause'] = dict(pause, source_session=
                     (checkpoint.get('scientific_pause') or {}).get('source_session', row['owner_session']))
-                if row['state'] == 'active':
+                if row['state'] == 'active' and not stop:
                     reason, stop = 'scientific_progress_persistent_gap', True
+            if reason is not None and row['state'] not in {'active', 'pending'} and not (
+                    row['reason'] == 'scientific_progress_persistent_gap'
+                    or (row['reason'] == 'budget_exhausted' and prior_checkpoint.get('time_closeout_source_session'))):
+                # Runtime observations retain new fault facts above, while an
+                # existing manual/resource/total-budget stop remains authority.
+                reason = row['reason']
             if stop and 'stop_snapshot_tokens' not in checkpoint:
                 records = list(loop_usage(checkpoint).values())
                 checkpoint['stop_snapshot_tokens'] = sum(sum(record['counted_tokens'][key]
                     for key in ('input_tokens', 'output_tokens')) for record in records) if records else None
+            time_stopped = False
+            time_closeout = False
+            if stop and reason == 'budget_exhausted' and current_loop(checkpoint):
+                from .progression_budget import time_budget
+                time_stopped = bool(time_budget(checkpoint,
+                    json.loads(row['config_json'])['effective']['progression'], self.control_now())['time_exhaustion'])
+                source = (row['owner_session'] or (checkpoint.get('scientific_pause') or {}).get('source_session')
+                    or checkpoint.get('time_closeout_source_session') or row['requested_by'])
+                if pure_time_stop(row, checkpoint, now=self.control_now()) and self.client_enabled(session_key=source):
+                    time_closeout = True
+                    checkpoint.setdefault('time_closeout_source_session', source)
+            if stop and not time_closeout:
+                checkpoint.pop('time_closeout_source_session', None)
+            stopped_state = 'stopped' if row['state'] == 'stopped' else 'paused'
             record_progression_notice(checkpoint, objective=row['objective_ref_json'],
-                state='paused' if stop and (row['mode'] == 'background' or reason == 'scientific_progress_persistent_gap') else row['state'],
+                state=stopped_state if stop and (row['mode'] == 'background' or time_stopped or reason == 'scientific_progress_persistent_gap') else row['state'],
                 reason=reason if reason is not None else row['reason'])
             if (checkpoint == prior_checkpoint and (reason is None or reason == row['reason'])
                     and (not stop or row['state'] == 'paused')):
@@ -1126,8 +1193,8 @@ class SchedulingControl:
             values = dict(checkpoint_json=value)
             if reason is not None:
                 values['reason'] = reason
-            if stop and (row['mode'] == 'background' or reason == 'scientific_progress_persistent_gap'):
-                values.update(state='paused', owner_session=None, generation=row['generation']+1)
+            if stop and (row['mode'] == 'background' or time_stopped or reason == 'scientific_progress_persistent_gap'):
+                values.update(state=stopped_state, owner_session=None, generation=row['generation']+1)
             from .scheduler_bindings import _timestamp
             values['updated_at'] = _timestamp()
             db.execute('UPDATE scheduler_progression SET ' + ','.join(key+'=?' for key in values) +

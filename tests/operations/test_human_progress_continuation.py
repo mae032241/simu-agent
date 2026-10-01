@@ -65,10 +65,13 @@ def status(p):
 
 
 def save_checkpoint(p, **changes):
+    from scidiscovery.artifact_agent.service.progression_records import store_checkpoint
     cp = checkpoint(p)
     cp.update(changes)
     with p.runtime.scheduler_bindings._connect() as db:
-        db.execute('UPDATE scheduler_progression SET checkpoint_json=? WHERE instance_id=?', (json.dumps(cp), p.instance))
+        db.execute('BEGIN IMMEDIATE')
+        value = store_checkpoint(db, p.instance, cp)
+        db.execute('UPDATE scheduler_progression SET checkpoint_json=? WHERE instance_id=?', (value, p.instance))
 
 
 def test_ui_confirmation_continues_same_goal_and_keeps_scientific_gap(human_ui):

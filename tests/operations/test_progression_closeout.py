@@ -14,8 +14,15 @@ from tests.operations.test_instance_archive import save_archive, restore_archive
 
 
 def usage(p, tokens):
-    p.coordinator._event(dict(method='thread/tokenUsage/updated', params=dict(threadId='native-root',
-        tokenUsage=dict(total=dict(inputTokens=tokens, cachedInputTokens=40, outputTokens=10)))))
+    event = dict(method='thread/tokenUsage/updated', params=dict(threadId='native-root',
+        tokenUsage=dict(total=dict(inputTokens=tokens, cachedInputTokens=40, outputTokens=10))))
+    if p.coordinator.host is None:
+        # Model an exact late original-host observation after transport closure.
+        p.runtime.scheduler_bindings.observe_progression(instance_id=p.instance,
+            expected_host=json.loads(row(p)['host_json']), changes={}, usage_observation=dict(
+                params=event['params'], identity={}, root_thread='native-root'))
+    else:
+        p.coordinator._event(event)
 
 
 def test_budget_closeout_reads_late_seal_and_usage_without_root_report(progression, monkeypatch):
@@ -24,6 +31,8 @@ def test_budget_closeout_reads_late_seal_and_usage_without_root_report(progressi
     host = p.coordinator.host
     root = p.root.__class__(p.facade(host.scheduler_session))
     _invoke(root, 'accepted')
+    native_marker = row(p)['host_json']
+    native_turn = {key: checkpoint(p)[key] for key in ('phase', 'turn_id')}
     worker = _worker(p.catalog, p.runtime)
     worker.call_tool('worker_open_assignment', {})
     usage(p, 100)
@@ -35,13 +44,24 @@ def test_budget_closeout_reads_late_seal_and_usage_without_root_report(progressi
     assert status['closeout']['in_flight'][0]['name'] == 'accepted'
     assert not status['closeout']['accepted_tasks_terminal']
     assert status['budget']['stop_snapshot_tokens'] == 110
+    assert host.closed and p.coordinator.host is None and row(p)['host_json'] == native_marker
+    assert all(checkpoint(p)[key] == value for key, value in native_turn.items())
+    with pytest.raises(Exception):
+        _invoke(root, 'cannot-replay-after-close')
+    bindings = p.runtime.scheduler_bindings
+    proposal = bindings.loop_authorization_proposal(instance_id=p.instance, session_key=p.user)
+    with pytest.raises(Exception, match='Unresolved native host'):
+        bindings.authorize_loop_from_ui(instance_id=p.instance, session_key=p.user,
+            confirmation_binding=proposal['confirmation_binding'], objective_name='goal',
+            objective_ref=p.runtime.artifacts.get_by_id(bindings.resolve(instance=p.instance,
+                namespace='artifact', name='goal')).ref)
     usage(p, 140)
     usage(p, 140)
     _write_result(worker)
     worker.call_tool('worker_submit_result', {})
     host.finish()
     p.coordinator.tick()
-    assert p.coordinator.host is None and row(p)['host_json'] is None
+    assert p.coordinator.host is None and row(p)['host_json'] == native_marker
     before = row(p)
     monkeypatch.setattr(p.runtime.runs, 'list', lambda **kw: pytest.fail('must not scan instance'))
     status = p.root.call_tool('progression_status', {})
@@ -62,6 +82,7 @@ def test_budget_closeout_reads_late_seal_and_usage_without_root_report(progressi
     assert 'native-root' not in json.dumps(status)
     reopened = copy(p.root.facade)
     reopened.bindings = SchedulerBindingService(p.runtime.scheduler_bindings.database_path)
+    reopened.bindings.progression_clock = lambda: p.now[0]
     assert reopened.progression_status() == status
     page = render_progression(status, instance_id=p.instance)
     assert '本目标任务成果交接' in page and '首次止损时已观测 Token' in page
@@ -69,6 +90,15 @@ def test_budget_closeout_reads_late_seal_and_usage_without_root_report(progressi
     # Synchronous fixture proof only; no claim about native writer quiescence.
     p.runtime.runs._synchronous_archive_fixture = True
     archive = SynchronousFixtureArchive(p.runtime)
+    blocked_archive = archive.preview(p.instance)
+    assert not blocked_archive['ready']
+    assert any(item.get('reason') == 'host_quiescence_unconfirmed' for item in blocked_archive['busy'])
+    # A modeled matching terminal notification, rather than client exit, now
+    # supplies the trusted adapter's exact release proof for the archive fixture.
+    bindings.observe_progression(instance_id=p.instance, expected_host=json.loads(native_marker),
+        terminal_turn=host.completion, changes=dict(phase='idle', turn_id=None, native_completion='completed'))
+    bindings.release_host(instance_id=p.instance, platform_session=host.identity.session_id,
+        thread_id=host.identity.thread_id)
     save_archive(archive, p.instance)
     package = archive.root / p.instance
     def digest():
