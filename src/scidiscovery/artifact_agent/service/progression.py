@@ -53,6 +53,8 @@ predictions of a new task. When budget.new_task_allowed is false, consume
 accepted results and report the supported conclusion or unfinished work; do not
 dispatch another task or repeat admission. The reserve is inside the total budget,
 not permission to exceed it, and missing evidence is not a completed goal.
+When human_handoff is present and active, consume only its existing sealed results
+and record supported assessments. It grants no new scientific task or reassessment.
 A review_requests entry is an exact dependency: let its owner wait, dispatch only
 that independent review, then read its result and notify the existing owner to
 continue. It grants no permission for unrelated concurrent work.
@@ -194,10 +196,24 @@ class ProgressionCoordinator:
         elif event['method'] == 'thread/tokenUsage/updated':
             identities = self._identities()
             role = 'root' if thread == self.host.identity.thread_id else identities.get(thread, {}).get('role', 'unattributed')
-            records = checkpoint.get('usage_records', {})
+            independent = bool(identities.get(thread, {}).get('interactive_session_id'))
+            record_key = 'interactive_usage_records' if independent else 'usage_records'
+            records = checkpoint.get(record_key, {})
             if thread not in records and len(records) >= 64:
                 raise ProgressionFault('usage_identity_capacity')
             previous = records.get(thread)
+            # A native Worker thread can be reused across task scopes. Carry its
+            # highest observed counter, while each scope retains only its deltas.
+            other = checkpoint.get('usage_records' if independent else 'interactive_usage_records', {}).get(thread)
+            if other:
+                previous = dict(previous or {**other, 'counted_tokens':
+                    dict.fromkeys(other['counted_tokens'], 0)})
+                previous['high_water'] = {key: max(value for value in
+                    (previous['high_water'][key], other['high_water'][key]) if value is not None)
+                    if any(value is not None for value in
+                        (previous['high_water'][key], other['high_water'][key])) else None
+                    for key in previous['high_water']}
+                previous['has_gaps'] = True  # Attribution between observations is not measured.
             if previous and previous['role'] == 'unattributed' and role != 'unattributed':
                 # Native notifications can precede the exact Worker attach. Only
                 # the now-authoritative connection may repair that attribution.
@@ -208,7 +224,8 @@ class ProgressionCoordinator:
             # Keep reducer state, not repeated diagnostic prose or per-event deltas.
             records[thread] = {key: record[key] for key in ('platform', 'thread_id', 'role', 'owner',
                 'outcome', 'high_water', 'counted_tokens', 'has_gaps', 'coverage')}
-            self._save(dict(usage_records=records, usage_summary=usage_summary(list(records.values()))))
+            self._save({record_key: records, **({} if independent else
+                dict(usage_summary=usage_summary(list(records.values()))))})
         elif thread == self.host.identity.thread_id:
             turn = params.get('turn', {})
             if event['method'] == 'turn/started':
@@ -278,11 +295,14 @@ class ProgressionCoordinator:
 
     def _identities(self):
         """Attribution uses accepted dispatch and exact native bindings."""
-        ids = [v['run_id'] for v in json.loads(self._row()['checkpoint_json']).get('admissions', {}).values() if v.get('run_id')]
+        admissions = json.loads(self._row()['checkpoint_json']).get('admissions', {})
         result = {}
-        for run_id in ids:
-            for identity in self.runtime.runs.native_identities(run_id):
-                result[identity['thread_id']] = identity
+        for admission in admissions.values():
+            if not admission.get('run_id'):
+                continue
+            for identity in self.runtime.runs.native_identities(admission['run_id']):
+                result[identity['thread_id']] = dict(identity,
+                    interactive_session_id=admission.get('interactive_session_id'))
         return result
 
     def _reconcile_admissions(self):
@@ -347,7 +367,9 @@ class ProgressionCoordinator:
             raw = self.runtime.artifacts.read(ref)
             goal.update(status='available', original=raw.decode('utf-8'))
         checkpoint = json.loads(row['checkpoint_json'])
+        from .scheduling_control import human_handoff_view
         brief = dict(objective=goal, changes=[], omissions=[], budget=checkpoint.get('budget'),
+            human_handoff=human_handoff_view(checkpoint),
             previous_report=checkpoint.get('report') or checkpoint.get('last_report'), material_names=[row['objective_name']],
             related_results_omitted=checkpoint.get('relevant_omitted', False),
             limitations=['Originals and full contracts are available through public tools.',
@@ -642,6 +664,11 @@ class ProgressionCoordinator:
             if self.host.completion['status'] != 'completed' and not recovered:
                 self._save(dict(runtime_status='root_turn_failed', attempts=checkpoint.get('attempts', 0)+1), reason='root_turn_failed', stop=True)
                 return
+        if checkpoint.get('human_continuations') or checkpoint.get('interactive_sessions'):
+            handoff_snapshot = self._observation(lambda: self._snapshot(self._row()))
+            self._observation(lambda: self.bindings.prepare_human_handoff(
+                instance_id=self.instance, terminal_runs=handoff_snapshot['runs']))
+            checkpoint = json.loads(self._row()['checkpoint_json'])
         if self._observation(lambda: self.bindings.progress_assist_boundary(instance_id=self.instance)):
             return
         report = checkpoint.get('report') or {}
@@ -694,6 +721,7 @@ class ProgressionCoordinator:
         self._submitting = False
 
     def _check_budget(self, row, limits, allow_round=True, *, force=False):
+        from .scheduling_control import background_task_count
         checkpoint = json.loads(self._row()['checkpoint_json'])
         elapsed = max(0, self.clock()-checkpoint['started_at'])
         exhausted = elapsed >= limits['max_elapsed_seconds']
@@ -703,7 +731,8 @@ class ProgressionCoordinator:
         tokens = sum(sum(v['counted_tokens'][key] for key in ('input_tokens', 'output_tokens')) for v in checkpoint.get('usage_records', {}).values())
         exhausted |= tokens >= limits['max_tokens']
         coverage = checkpoint.get('usage_summary', {}).get('coverage', 'missing')
-        expected_threads = set(self._identities()) | {self.host.identity.thread_id}
+        expected_threads = {key for key, value in self._identities().items()
+            if not value.get('interactive_session_id')} | {self.host.identity.thread_id}
         if (expected_threads - set(checkpoint.get('usage_records', {})) or
                 any(v['role'] == 'unattributed' for v in checkpoint.get('usage_records', {}).values())):
             coverage = 'partial' if checkpoint.get('usage_records') else 'missing'
@@ -728,7 +757,8 @@ class ProgressionCoordinator:
             root_running_seconds=running, waiting_seconds=max(0, elapsed-running),
             time_coverage='observed_wall_intervals_including_recovery_gaps',
             probes=checkpoint.get('probes', 0), attempts=checkpoint.get('attempts', 0),
-            tasks=len(checkpoint.get('admissions', {})), observed_tokens=tokens, limits=limits,
+            tasks=background_task_count(checkpoint),
+            observed_tokens=tokens, limits=limits,
             **token_budget(checkpoint, limits),
             token_coverage=coverage, token_enforcement='asynchronous_observation; time_and_round_limits_apply')
         # Counters/coverage/limits are authority; only elapsed/resource display

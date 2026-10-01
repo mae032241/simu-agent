@@ -48,6 +48,8 @@ def progression_read_view(*, bindings, runs, artifacts, operation_catalog, insta
             closeout['unresolved'].append(dict(name=name, state='identity_unresolved', read=read))
             continue
         for identity in runs.native_identities(value.run_id):
+            if admission.get('interactive_session_id'):
+                continue  # Independent human usage is not background coverage.
             if identity['thread_id'] not in records:
                 role = identity['role']
                 missing[role] = missing.get(role, 0) + 1

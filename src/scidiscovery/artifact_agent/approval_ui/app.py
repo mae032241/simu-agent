@@ -421,7 +421,7 @@ class ApprovalUI:
                 if current:
                     from ..service.scheduling_control import human_continuation_binding
                     control = self.bindings.progression_status(instance_id=current_id, internal=True)
-                    if control['state'] == 'paused' and control.get('objective_ref_json'):
+                    if control['state'] in {'paused', 'stopped'} and control.get('objective_ref_json'):
                         human_confirmation = human_continuation_binding(control, capability.session_key)
             controls = session_controls(rows, token=token, csrf=self.session_id, current=current,
                 human_confirmation=human_confirmation,
@@ -991,9 +991,18 @@ class ApprovalUI:
                         if not is_goal_anchor(artifact):
                             raise ValueError("start requires frozen original user text or a research objective")
                         ref = artifact.ref
-                    self.bindings.progression_command(instance_id=bound, session_key=key,
-                        command=_required(form, "command"), mode=_one(form, "mode") or "interactive",
-                        objective_name=name, objective_ref=ref)
+                    if _required(form, "command") == "independent_interactive":
+                        if _required(form, "confirm_independent_interactive") != "yes":
+                            raise ValueError("explicit independent interactive confirmation required")
+                        if _required(form, "instance_id") != bound:
+                            raise SchedulerInstanceConflict("实例绑定已变化，请重新确认。")
+                        self.bindings.independent_interactive_from_ui(instance_id=bound, session_key=key,
+                            confirmation_binding=_required(form, "confirmation_binding"),
+                            objective_name=name, objective_ref=ref)
+                    else:
+                        self.bindings.progression_command(instance_id=bound, session_key=key,
+                            command=_required(form, "command"), mode=_one(form, "mode") or "interactive",
+                            objective_name=name, objective_ref=ref)
                     return self._respond(handler, HTTPStatus.SEE_OTHER, b"", "text/plain; charset=utf-8",
                         extra_headers={"Location": "/sessions/" + key + "?" + urlencode({"capability": capability_token})})
                 if action == "clients-clear":

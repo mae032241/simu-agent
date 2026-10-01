@@ -49,13 +49,15 @@ class RunAdmissionMixin:
                 message="Background progression permits one complete task at a time. Only the exact independent review requested by its waiting owner may run before that task finishes.")
         admissions = checkpoint.get('admissions', {})
         reserved = [item for item in admissions.values() if item['state'] == 'prepared'
+            and not item.get('interactive_session_id')
             and reserved_output_fingerprint is not None
             and item['output_fingerprint'] == reserved_output_fingerprint
             and item.get('scientific_signature') == scientific_signature]
         if any(item['state'] == 'prepared' and item not in reserved for item in admissions.values()):
             raise OperationInvocationError('background_admission_pending',
                 message='A prior task admission is unresolved; reconcile it before creating more work.')
-        if len(admissions) - len(reserved) >= limits['max_tasks']:
+        from .scheduling_control import background_task_count
+        if background_task_count(checkpoint) - len(reserved) >= limits['max_tasks']:
             raise OperationInvocationError("background_task_budget_exhausted",
                 message="The frozen task budget is exhausted, including independent review tasks.")
         if not reserved:

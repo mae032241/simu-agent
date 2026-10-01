@@ -12,8 +12,8 @@ from scidiscovery.artifact_agent.service.progression_read import progression_rea
 from scidiscovery.artifact_agent.service.scheduler_bindings import SchedulerBindingService
 from tests.operations.test_m6a_direct_instance_management import _request
 from tests.operations.test_progression import progression, row, checkpoint
-from tests.operations.test_progress_assist import configure, trigger, next_turn, notice, correction_state
-from tests.operations.test_scientific_progress import active, finish, request
+from tests.operations.test_progress_assist import configure, trigger, next_turn, notice, correction_state, finish_changed
+from tests.operations.test_scientific_progress import active, finish, request, assess
 
 
 @pytest.fixture
@@ -229,3 +229,343 @@ def test_goal_revision_and_archive_keep_trace_without_inheriting_permission(huma
         artifacts=p.runtime.artifacts, operation_catalog=p.catalog, instance_id=p.instance)
     assert restored['state'] == 'paused'
     assert restored['human_continuation'] == expected
+
+
+def fresh_binding(ui):
+    from scidiscovery.artifact_agent.service.scheduling_control import human_continuation_binding
+    return human_continuation_binding(row(ui.p), ui.p.user)
+
+
+def independent(ui, goal='goal', **changes):
+    return submit(ui, command='independent_interactive', objective_name=goal,
+        confirm_independent_interactive='yes', confirmation_binding=fresh_binding(ui), **changes)
+
+
+@pytest.mark.parametrize('phase', ['no_causes', 'causes_without_episode', 'prepared',
+    'submitted_unknown', 'delivered', 'awaiting_result', 'exhausted'])
+def test_ui_safe_phase_confirmation_and_unknown_native_barrier(human_ui, phase):
+    ui, p = human_ui, human_ui.p
+    progress = correction_state(p)
+    if phase in {'no_causes', 'causes_without_episode'}:
+        progress['assist'] = []
+        if phase == 'no_causes':
+            progress['counts'] = {key: 0 for key in progress['counts']}
+    else:
+        progress['assist'][-1]['state'] = phase
+        if phase in {'prepared', 'submitted_unknown'}:
+            progress['assist'][-1].pop('delivered', None)
+            progress['assist'][-1]['reassessments'] = 0
+    with p.runtime.scheduler_bindings._connect() as db:
+        db.execute('UPDATE scheduler_progress_shadow SET state_json=? WHERE instance_id=?',
+            (json.dumps(progress), p.instance))
+    before = row(p)
+    code = submit(ui)
+    if phase == 'submitted_unknown':
+        assert code == 409 and row(p) == before
+        assert independent(ui) == 409 and row(p) == before
+        return
+    assert code == 303
+    finish(p, p.root, 'safe-human-work')
+    assert correction_state(p)['assist'] == progress['assist']
+
+
+@pytest.mark.parametrize('limit', ['tasks', 'tokens', 'elapsed', 'rounds'])
+def test_explicit_independent_ui_scope_preserves_old_limits_and_instance_budget(human_ui, limit):
+    from dataclasses import replace
+    from scidiscovery.artifact_agent.service.executions import ExecutionService
+    from tests.operations.test_execution_archive_budget import _policy_executions, _rows
+    ui, p = human_ui, human_ui.p
+    # A real instance execution ledger must survive the control-only scope change.
+    bindings = p.runtime.scheduler_bindings
+    executions = ExecutionService(artifacts=p.runtime.artifacts, approvals=p.runtime.approvals,
+        database_path=bindings.database_path.with_name('executions.sqlite3'),
+        exchange_root=bindings.database_path.parent / 'execution-exchange', service_actor=p.runtime.actor)
+    p.runtime = replace(p.runtime, executions=executions)
+    p.coordinator.runtime = p.runtime
+    p.root.facade.executions = executions
+    other = bindings.create_instance(name='execution-peer', title='peer', objective='peer')
+    _policy_executions((p.runtime, None, p.instance, other.instance_id))
+    execution_before = _rows(p.runtime.executions.database_path)
+    p.root.call_tool('progression_command', dict(command='takeover'))
+    p.root.call_tool('artifact_ingest_text', dict(name='new-goal', text='Explicit independent analysis.'))
+    p.root.call_tool('progression_command', dict(command='pause'))
+    limits = json.loads(row(p)['config_json'])['effective']['progression']
+    if limit == 'tasks':
+        config = json.loads(row(p)['config_json'])
+        config['effective']['progression']['max_tasks'] = len(checkpoint(p)['admissions'])
+        with bindings._connect() as db:
+            db.execute('UPDATE scheduler_progression SET config_json=? WHERE instance_id=?', (json.dumps(config), p.instance))
+    elif limit == 'tokens':
+        from scidiscovery.platforms.codex_usage import observe_usage
+        cost = observe_usage(dict(threadId='native-root', tokenUsage=dict(total=dict(
+            inputTokens=limits['max_tokens'], cachedInputTokens=0, outputTokens=0))), role='root', owner=p.instance)
+        save_checkpoint(p, usage_records={'native-root': cost})
+    elif limit == 'elapsed':
+        p.now[0] += limits['max_elapsed_seconds']
+    else:
+        save_checkpoint(p, rounds=limits['max_rounds'])
+    before, config = checkpoint(p), row(p)['config_json']
+    # Neither a new goal nor a fabricated argument grants the UI-only scope.
+    with pytest.raises(Exception):
+        p.root.call_tool('progression_command', dict(command='independent_interactive', objective_name='new-goal'))
+    p.root.call_tool('progression_command', dict(command='start', objective_name='new-goal'))
+    with pytest.raises(Exception, match='budget'):
+        p.root.call_tool('operation_invoke', request('ordinary-mcp-cannot-reset'))
+    assert not status(p)['interactive_session']['active']
+    p.root.call_tool('progression_command', dict(command='pause'))
+    assert independent(ui, 'new-goal') == 303
+    finish(p, p.root, 'independent-task')
+    current = checkpoint(p)
+    assert current['admissions']['independent-task']['interactive_session_id']
+    for key in ('rounds', 'attempts', 'probes', 'started_at', 'budget', 'usage_records'):
+        assert current.get(key) == before.get(key)
+    assert json.loads(row(p)['config_json']) == json.loads(config)
+    assert _rows(p.runtime.executions.database_path) == execution_before
+    view = status(p)
+    assert view['interactive_session']['active'] and view['interactive_session']['tasks'] == 1
+    assert 'session_key' not in json.dumps(view['interactive_session'])
+    snapshot = row(p)
+    status(p)
+    _request(ui.base, 'GET', ui.path)
+    assert row(p) == snapshot
+    assert '独立人工工作作用域' in _request(ui.base, 'GET', ui.path)[2].decode()
+    p.root.call_tool('progression_command', dict(command='pause'))
+    p.root.call_tool('progression_command', dict(command='resume'))
+    assert not status(p)['interactive_session']['active']
+
+
+@pytest.mark.parametrize('new_evidence', [False, True])
+def test_human_result_gets_one_budgeted_background_consumption_turn(human_ui, new_evidence):
+    ui, p = human_ui, human_ui.p
+    assert submit(ui) == 303
+    old = notice(p)
+    (finish_changed if new_evidence else finish)(p, p.root, 'human-result')
+    assess(p.root, 'human-result', outcome='advance' if new_evidence else 'unknown')
+    before = checkpoint(p)
+    p.root.call_tool('progression_command', dict(command='pause'))
+    p.root.call_tool('progression_command', dict(command='start', mode='background', objective_name='goal'))
+    next_turn(p)
+    assert row(p)['state'] == 'active'
+    assert checkpoint(p)['rounds'] == before['rounds'] + 1
+    assert notice(p)['id'] == old['id'] and notice(p)['reassessments'] == old['reassessments']
+    assert checkpoint(p)['human_handoff']['state'] == 'delivered'
+    root = p.root.__class__(p.facade(p.coordinator.host.scheduler_session))
+    with pytest.raises(Exception, match='handoff_consumption_only'):
+        root.call_tool('operation_invoke', request('no-extra-task-during-handoff'))
+    p.coordinator.host.finish()
+    next_turn(p)
+    assert checkpoint(p)['human_handoff']['state'] == 'completed'
+    assert notice(p)['state'] == ('resolved' if new_evidence else 'exhausted')
+    assert row(p)['state'] == ('active' if new_evidence else 'paused')
+    assert notice(p)['reassessments'] == old['reassessments']
+
+
+def test_human_handoff_cannot_expand_native_round_budget(human_ui):
+    ui, p = human_ui, human_ui.p
+    assert submit(ui) == 303
+    finish_changed(p, p.root, 'unconsumed-result')
+    assess(p.root, 'unconsumed-result')
+    frozen = notice(p)
+    limits = json.loads(row(p)['config_json'])['effective']['progression']
+    save_checkpoint(p, rounds=limits['max_rounds'])
+    p.root.call_tool('progression_command', dict(command='pause'))
+    p.root.call_tool('progression_command', dict(command='start', mode='background', objective_name='goal'))
+    next_turn(p)
+    assert row(p)['reason'] == 'budget_exhausted'
+    assert checkpoint(p)['rounds'] == limits['max_rounds']
+    assert checkpoint(p)['human_handoff']['state'] == 'prepared'
+    assert not p.coordinator.host.prompts
+    assert notice(p) == frozen
+
+
+def test_interactive_pending_admission_has_a_reachable_ui_exit(human_ui):
+    ui, p = human_ui, human_ui.p
+    progress = correction_state(p)
+    progress['assist'] = []  # The existing consumed causes precede any native brief.
+    with p.runtime.scheduler_bindings._connect() as db:
+        db.execute('UPDATE scheduler_progress_shadow SET state_json=? WHERE instance_id=?',
+            (json.dumps(progress), p.instance))
+    p.root.call_tool('progression_command', dict(command='takeover'))
+    with pytest.raises(Exception, match='management UI'):
+        p.root.call_tool('operation_invoke', request('prepared-needs-human-confirmation'))
+    assert notice(p)['state'] == 'prepared'
+    p.root.call_tool('progression_command', dict(command='pause'))
+    assert submit(ui, confirmation_binding=fresh_binding(ui)) == 303
+    finish(p, p.root, 'confirmed-human-task')
+    assert notice(p)['state'] == 'prepared' and notice(p)['reassessments'] == 0
+
+
+@pytest.mark.parametrize('bad', ['csrf', 'capability', 'instance_id', 'confirmation_binding', 'confirm_independent_interactive'])
+def test_independent_scope_uses_full_ui_authorization(human_ui, bad):
+    ui, p = human_ui, human_ui.p
+    before = row(p)
+    args = dict(command='independent_interactive', objective_name='goal', confirm_independent_interactive='yes')
+    args[bad] = 'invalid'
+    assert submit(ui, **args) in {403, 409}
+    assert row(p) == before
+    assert _request(ui.base, 'POST', '/instances/progression', form=dict(ui.form, **args),
+        origin='https://untrusted.example')[0] == 403
+
+
+def test_independent_scope_survives_archive_without_reactivating(human_ui):
+    from tests.operations.synchronous_archive_fixture import SynchronousFixtureArchive
+    from tests.operations.test_instance_archive import save_archive, restore_archive
+    ui, p = human_ui, human_ui.p
+    assert independent(ui) == 303
+    finish(p, p.root, 'independent-archived-task')
+    p.root.call_tool('progression_command', dict(command='pause'))
+    expected = status(p)['interactive_session']
+    p.runtime.runs._synchronous_archive_fixture = True
+    archive = SynchronousFixtureArchive(p.runtime)
+    save_archive(archive, p.instance)
+    assert archive.archived_model(p.instance).progression_status(p.instance)['interactive_session'] == expected
+    restore_archive(archive, p.instance)
+    restored = progression_read_view(bindings=p.runtime.scheduler_bindings, runs=p.runtime.runs,
+        artifacts=p.runtime.artifacts, operation_catalog=p.catalog, instance_id=p.instance)
+    assert restored['interactive_session'] == expected
+    assert row(p)['state'] == 'paused'
+
+
+def test_independent_result_after_full_background_allowance_remains_observable(human_ui):
+    ui, p = human_ui, human_ui.p
+    assert submit(ui) == 303
+    limit = json.loads(row(p)['config_json'])['effective']['progression']['max_tasks']
+    for index in range(len(checkpoint(p)['admissions']), limit):
+        finish(p, p.root, f'old-allowance-{index}')
+    p.root.call_tool('progression_command', dict(command='pause'))
+    p.root.call_tool('progression_command', dict(command='start', mode='background', objective_name='goal'))
+    next_turn(p)
+    p.coordinator.host.finish()
+    next_turn(p)
+    p.coordinator.tick()
+    assert status(p)['progress_shadow']['counts']['consumed'] == limit
+    assert independent(ui) == 303
+    finish_changed(p, p.root, 'independent-new-evidence')
+    assess(p.root, 'independent-new-evidence')
+    p.root.call_tool('progression_command', dict(command='pause'))
+    p.root.call_tool('progression_command', dict(command='start', mode='background', objective_name='goal'))
+    next_turn(p)
+    assert checkpoint(p)['budget']['tasks'] == limit
+    p.coordinator.host.finish()
+    next_turn(p)
+    assert notice(p)['state'] == 'resolved'
+    assert status(p)['progress_shadow']['counts']['consumed'] == limit + 1
+
+
+def test_native_usage_reused_across_scopes_keeps_each_observed_delta(progression, monkeypatch):
+    p = progression
+    active(p)
+    identity = dict(role='worker')
+    monkeypatch.setattr(p.coordinator, '_identities', lambda: {'shared-worker': identity})
+    def usage(tokens):
+        p.coordinator._event(dict(method='thread/tokenUsage/updated', params=dict(threadId='shared-worker',
+            tokenUsage=dict(total=dict(inputTokens=tokens, cachedInputTokens=0, outputTokens=0)))))
+    usage(10)
+    identity['interactive_session_id'] = 'explicit-human-scope'
+    usage(15)
+    assert checkpoint(p)['usage_records']['shared-worker']['counted_tokens']['input_tokens'] == 10
+    identity.pop('interactive_session_id')
+    usage(19)
+    assert checkpoint(p)['usage_records']['shared-worker']['counted_tokens']['input_tokens'] == 14
+    assert checkpoint(p)['interactive_usage_records']['shared-worker']['counted_tokens']['input_tokens'] == 5
+    assert checkpoint(p)['usage_records']['shared-worker']['has_gaps']
+
+
+@pytest.mark.parametrize('mode', ['shadow', 'off'])
+def test_ordinary_shadow_and_off_interactive_behavior_does_not_gain_assist_budget_gate(paused, mode):
+    p = paused
+    config = json.loads(row(p)['config_json'])
+    config['effective']['progression'].update(progress_mode=mode, max_tasks=len(checkpoint(p)['admissions']))
+    with p.runtime.scheduler_bindings._connect() as db:
+        db.execute('UPDATE scheduler_progression SET config_json=? WHERE instance_id=?', (json.dumps(config), p.instance))
+    p.root.call_tool('progression_command', dict(command='takeover'))
+    finish(p, p.root, 'ordinary-interactive')
+    assert 'ordinary-interactive' not in checkpoint(p)['admissions']
+    assert not status(p)['interactive_session']['active']
+
+
+def test_independent_human_evidence_can_resolve_a_never_submitted_candidate(human_ui):
+    ui, p = human_ui, human_ui.p
+    progress = correction_state(p)
+    episode = progress['assist'][-1]
+    episode.update(state='prepared', reassessments=0)
+    episode.pop('delivered')
+    with p.runtime.scheduler_bindings._connect() as db:
+        db.execute('UPDATE scheduler_progress_shadow SET state_json=? WHERE instance_id=?',
+            (json.dumps(progress), p.instance))
+    assert independent(ui) == 303
+    finish_changed(p, p.root, 'independent-prepared-result')
+    assess(p.root, 'independent-prepared-result')
+    p.root.call_tool('progression_command', dict(command='pause'))
+    p.root.call_tool('progression_command', dict(command='start', mode='background', objective_name='goal'))
+    next_turn(p)
+    assert notice(p)['state'] == 'prepared' and notice(p)['reassessments'] == 0
+    p.coordinator.host.finish()
+    next_turn(p)
+    assert notice(p)['state'] == 'resolved' and notice(p)['reassessments'] == 0
+
+
+@pytest.mark.parametrize('next_work', ['ordinary', 'requested_review'])
+def test_resolved_handoff_uses_background_scope_at_real_preflight_and_creation(human_ui, next_work):
+    from tests.operations.test_local_worker_contracts import _worker, _write_result
+    from tests.operations.worker_fixtures import attached_worker
+    ui, p = human_ui, human_ui.p
+    assert independent(ui) == 303
+    manual_count = 5 if next_work == 'ordinary' else 4
+    for index in range(manual_count):
+        name = f'manual-scope-{index}'
+        if next_work == 'requested_review' and index < 2:
+            p.root.call_tool('operation_invoke', request(name))
+            author = attached_worker(p.runtime, p.root, name)
+            author.call_tool('worker_open_assignment', {})
+            _write_result(author)
+            author.call_tool('worker_submit_result', {})
+        else:
+            (finish_changed if index == manual_count-1 else finish)(p, p.root, name)
+    assess(p.root, name)
+    p.root.call_tool('progression_command', dict(command='pause'))
+    p.root.call_tool('progression_command', dict(command='start', mode='background', objective_name='goal'))
+    next_turn(p)
+    p.coordinator.host.finish()
+    next_turn(p)
+    assert notice(p)['state'] == 'resolved'
+    root = p.root.__class__(p.facade(p.coordinator.host.scheduler_session))
+    if next_work == 'ordinary':
+        # The raw history already contains eight tasks, but only three belong to
+        # the background session. Exercise both public and transactional checks.
+        assert len(checkpoint(p)['admissions']) == 8
+        before = row(p)
+        assert root.call_tool('operation_preflight', request('after-handoff'))['admissible']
+        assert row(p) == before
+        finish(p, root, 'after-handoff')
+        for index in range(4, 8):
+            finish(p, root, f'background-budget-{index}')
+        denied = root.call_tool('operation_preflight', request('real-background-budget-exhausted'))
+        assert not denied['admissible'] and denied['reason_code'] == 'background_task_budget_exhausted'
+        with pytest.raises(Exception, match='background_task_budget_exhausted'):
+            root.call_tool('operation_invoke', request('real-background-budget-exhausted'))
+        return
+    root.call_tool('operation_invoke', request('waiting-owner'))
+    owner = _worker(p.catalog, p.runtime)
+    owner.call_tool('worker_open_assignment', {})
+    bindings = p.runtime.scheduler_bindings
+    owner_id = bindings.resolve(instance=p.instance, namespace='run', name='waiting-owner')
+    subject = p.runtime.artifacts.get_by_id(bindings.resolve(instance=p.instance,
+        namespace='artifact', name='manual-scope-0.output'))
+    review = dict(name='owner-exact-review', operation_id='science.object.review.v1',
+        inputs=[dict(port='subject', artifact_names=['manual-scope-0.output'])],
+        instruction='Review the exact subject requested by the waiting owner.')
+    p.runtime.runs.request_implementation_review(owner_id, subject.ref, review)
+    assert len(checkpoint(p)['admissions']) == 8  # Four background, four manual.
+    wrong = dict(review, name='wrong-review', inputs=[dict(port='subject', artifact_names=['manual-scope-1.output'])])
+    denied = root.call_tool('operation_preflight', wrong)
+    assert not denied['admissible'] and denied['reason_code'] == 'background_task_busy'
+    before = row(p)
+    assert root.call_tool('operation_preflight', review)['admissible']
+    assert row(p) == before
+    assert root.call_tool('operation_invoke', review)['result']['state'] == 'queued'
+    reviewer = attached_worker(p.runtime, root, review['name'])
+    reviewer.call_tool('worker_open_assignment', {})
+    wait = p.runtime.runs.review_wait(owner_id)
+    assert wait['state'] == 'running'
+    assert wait['reviewer_run_id'] == bindings.resolve(instance=p.instance, namespace='run', name=review['name'])

@@ -131,6 +131,23 @@ def test_pending_unknown_isolated_and_authorized_recovery_never_resubmits(tmp_pa
     assert ledger["reserved_wall_seconds"] == 1 and len(ledger["reservations"]) == 1
 
 
+def test_absent_submission_retains_reservation_and_names_only_existing_repair_reads(tmp_path, monkeypatch):
+    service, adapter, context, path = fixture(tmp_path, monkeypatch)
+    def uncertain(_):
+        raise TimeoutError('No acknowledgement')
+    monkeypatch.setattr(adapter, 'submit', uncertain)
+    with pytest.raises(DiagnosticError):
+        run(service, context('first'))
+    before = path.read_bytes()
+    with pytest.raises(DiagnosticError) as caught:
+        run(service, context('recovery', ('first',)))
+    wire = json.dumps(caught.value.details)
+    assert 'tcad_debug_not_submitted' in wire
+    assert 'run_status' in wire and 'no trusted absence-certification or refund entry point' in wire
+    assert 'request control-side budget reconciliation' not in wire
+    assert path.read_bytes() == before and adapter.submitted == []
+
+
 @pytest.mark.parametrize("action", ["run", "status", "cancel"])
 def test_ambiguous_authorized_lineage_is_rejected_before_remote_access(tmp_path, monkeypatch, action):
     service, adapter, context, path = fixture(tmp_path, monkeypatch)

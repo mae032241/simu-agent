@@ -325,7 +325,7 @@ class LocalTCADDebugService:
                 json.dumps(pending["submission"]), strict=True))
             if found is None:
                 raise _continuation_error("tcad_debug_not_submitted",
-                    "The reserved diagnostic was not accepted by the executor. Its allowance remains reserved; request control-side budget reconciliation before another diagnostic.", repairable=False)
+                    "No accepted diagnostic was found for the reserved submission. Its allowance remains reserved; stop and read worker_experiment_debug(action=status) for this diagnostic, or ask the scheduler to read run_status. This version has no trusted absence-certification or refund entry point; retain the reservation until the control reconciliation protocol is integrated.", repairable=False)
             record = {**pending["record"], "external_run_id": found[0], "state": _state(found[1])}
             runs[record_key] = record
         if record is None:

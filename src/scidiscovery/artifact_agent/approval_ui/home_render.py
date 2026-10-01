@@ -89,15 +89,27 @@ def session_controls(rows, *, token, csrf, current=None, expires_at=None, workbe
                 + hidden("command", command) + "<button type='submit'>" + label + "</button></form>")
         if human_confirmation:
             body += ("<details><summary>人工接管并继续（保留预算）</summary>"
-                "<p>仅适用于科学复判后暂停的当前目标：" + escape(progression.get('objective_name') or '')
+                "<p>适用于已暂停且原生提交已核清的当前目标：" + escape(progression.get('objective_name') or '')
                 + "。请先读取上方原始缺口。此决定不代表科学问题已解决，不增加预算或自动复判次数；"
-                "未知提交须先核清。返回后台或改变目标、会话控制后须重新确认。</p>"
+                "原墙钟预算继续计时，耗尽时请明确选择下方独立人工工作。未知提交须先核清。"
+                "返回后台或改变目标、会话控制后须重新确认；后台仅在剩余预算内消费新成果。</p>"
                 + "<form method='post' action='/instances/progression'>" + common
                 + hidden("command", "human_continue") + hidden("instance_id", current.instance_id)
                 + hidden("confirmation_binding", human_confirmation)
                 + "<label><input type='checkbox' name='confirm_human_continue' value='yes' required>"
                 "我已读取原始缺口，确认在当前会话人工继续此目标并保留原预算</label>"
                 "<button type='submit'>人工接管并继续（保留预算）</button></form></details>")
+            body += ("<details><summary>建立独立人工工作作用域</summary>"
+                "<p>明确另起交互工作，可选择当前或新的确切目标。原后台任务数、轮次、token 和墙钟预算保留，"
+                "本次人工任务单独记账；实例执行累计预算仍适用。此决定不授权新后台预算，不清除未知提交、"
+                "原科学缺口或复判历史。暂停、切换调度者或目标后须重新确认。</p>"
+                + "<form method='post' action='/instances/progression'>" + common
+                + hidden("command", "independent_interactive") + hidden("instance_id", current.instance_id)
+                + hidden("confirmation_binding", human_confirmation)
+                + "<label>本次人工工作的确切目标名称<input name='objective_name' required></label>"
+                "<label><input type='checkbox' name='confirm_independent_interactive' value='yes' required>"
+                "我确认这是独立人工工作，保留旧后台账目与实例执行预算</label>"
+                "<button type='submit'>确认独立人工工作</button></form></details>")
         body += "</section>"
     options = "<option value='' disabled selected>选择要绑定的实例</option>"
     for row in rows:

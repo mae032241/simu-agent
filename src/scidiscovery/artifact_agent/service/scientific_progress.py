@@ -391,6 +391,11 @@ def observation_facts(db, row, goal_key, policy, state):
     scope = state.get('observation_scope', {})
     background = scope.get('background', {})
     limit = scope.get('max_observed_tasks', policy['max_tasks'])
+    # Explicit human scopes add their exact accepted tasks to the observation
+    # capacity, without increasing the frozen background admission allowance.
+    checkpoint = json.loads(dict(row).get('checkpoint_json', '{}'))
+    limit += sum(bool(item.get('interactive_session_id')) and item.get('objective_ref') ==
+        json.loads(row['objective_ref_json']) for item in checkpoint.get('admissions', {}).values())
     exclusion = (' AND d.run_id NOT IN (' + ','.join('?' for _ in background) + ')') if background else ''
     records = db.execute('SELECT f.fact_json FROM scheduler_terminal_deliveries d '
         'JOIN scheduler_progress_facts f USING(instance_id,goal_key,run_id) '
@@ -477,7 +482,11 @@ def refresh_shadow(db, row, goal_key):
         episode = assist[-1]
         # Only a subsequent consumed scientific result ends a delivered episode.
         # Corrections to the original trigger never refund its allowance.
-        if (episode.get('delivered') and any(sequence > max(episode['snapshot']['through_sequence'],
+        checkpoint = json.loads(dict(row).get('checkpoint_json', '{}'))
+        human_episodes = {item.get('episode_id') for item in
+            checkpoint.get('human_continuations', []) + checkpoint.get('interactive_sessions', [])}
+        if ((episode.get('delivered') or episode['id'] in human_episodes)
+                and any(sequence > max(episode['snapshot']['through_sequence'],
                 prior.get('through_sequence', 0)) for sequence in advances)
                 and not _active_causes(counts, policy)):
             episode.update(state='resolved', resolved_through=facts[-1]['sequence'])
@@ -511,6 +520,17 @@ def human_continuation_active(row, checkpoint):
         and consent['objective_ref_json'] == row['objective_ref_json'])
 
 
+def independent_interactive_active(row, checkpoint):
+    records = checkpoint.get('interactive_sessions', [])
+    if not records:
+        return False
+    consent = records[-1]
+    return (row['state'] == 'active' and row['mode'] == 'interactive'
+        and consent['generation'] == row['generation']
+        and consent['session_key'] == row['owner_session']
+        and consent['objective_ref_json'] == row['objective_ref_json'])
+
+
 def assist_transition(db, row, checkpoint, *, event, admission=None):
     """Shared transaction for native receipts, admission and safe decision boundaries.
 
@@ -532,9 +552,21 @@ def assist_transition(db, row, checkpoint, *, event, admission=None):
     original = canonical_json(state)
     episodes = state.setdefault('assist', [])
     episode = episodes[-1] if episodes and episodes[-1]['state'] not in {'resolved', 'withdrawn'} else None
-    if (event == 'admission' and episode and episode['state'] == 'exhausted'
-            and human_continuation_active(row, checkpoint)
-            and checkpoint['human_continuations'][-1]['episode_id'] == episode['id']):
+    handoff = checkpoint.get('human_handoff') or {}
+    if handoff.get('goal_key') == goal_key and handoff.get('state') in {'prepared', 'submitted_unknown', 'delivered'}:
+        if event == 'admission':
+            return 'scientific_progress_handoff_consumption_only'
+        if event == 'submit':
+            handoff['state'] = 'submitted_unknown'
+        if event == 'confirm' and checkpoint.get('turn_id'):
+            handoff.update(state='delivered', turn_id=checkpoint['turn_id'])
+        if event == 'turn_completed' and handoff.get('turn_id') == checkpoint.get('turn_id'):
+            handoff['state'] = 'completed'
+        else:
+            return None
+    if (event == 'admission' and (independent_interactive_active(row, checkpoint)
+            or human_continuation_active(row, checkpoint))
+            and (not episode or episode['state'] != 'submitted_unknown')):
         # A human control decision is not new evidence or another reassessment.
         return None
     causes = _active_causes(state['counts'], policy)
@@ -603,8 +635,10 @@ def assist_transition(db, row, checkpoint, *, event, admission=None):
         return 'scientific_progress_persistent_gap'
     if event == 'admission' and episode['state'] == 'prepared':
         return ('scientific_progress_reassessment_pending: ' + ', '.join(episode['snapshot']['causes'])
-            + '. End the current turn to receive the evidence and reassess at the next brief; '
-            'do not create another ordinary task. Accepted work remains available.')
+            + ('. Pause and confirm human continuation in the management UI; '
+               if row['mode'] == 'interactive' else
+               '. End the current turn to receive the evidence and reassess at the next brief; ')
+            + 'do not create another ordinary task. Accepted work remains available.')
     if event == 'admission' and episode.get('task_name') != admission and episode['state'] in {
             'submitted_unknown', 'delivered', 'awaiting_result'}:
         return 'scientific_progress_waiting_for_adjusted_task'
