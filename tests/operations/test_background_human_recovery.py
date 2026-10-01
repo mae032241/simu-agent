@@ -32,6 +32,7 @@ def background_form(ui, target='goal'):
     chosen = [form for form in values if form.get('objective_name') == target]
     assert len(chosen) == 1, 'The UI must offer an explicit recovery of the exact paused background goal.'
     assert '恢复后台目标' in page and '剩余任务' in page and 'coverage_gap' in page
+    assert '暂停和独立人工工作期间也计时' in page
     return chosen[0]
 
 
@@ -95,7 +96,7 @@ def test_background_confirmation_rejects_wrong_target_forgery_stale_and_cross_in
     assert row(p) == changed
 
 
-@pytest.mark.parametrize('barrier', ['native', 'budget', 'active_work'])
+@pytest.mark.parametrize('barrier', ['native', 'budget', 'elapsed', 'active_work'])
 def test_background_recovery_keeps_unknown_budget_and_actual_work_barriers(human_ui, barrier):
     ui, p = human_ui, human_ui.p
     if barrier == 'active_work':
@@ -109,15 +110,24 @@ def test_background_recovery_keeps_unknown_budget_and_actual_work_barriers(human
             with p.runtime.scheduler_bindings._connect() as db:
                 db.execute('UPDATE scheduler_progression SET host_json=? WHERE instance_id=?',
                     (json.dumps(dict(platform_session='unknown-native', thread_id='unknown-thread')), p.instance))
+        elif barrier == 'elapsed':
+            limits = json.loads(row(p)['config_json'])['effective']['progression']
+            p.now[0] += limits['max_elapsed_seconds']
         else:
             limits = json.loads(row(p)['config_json'])['effective']['progression']
             save_checkpoint(p, rounds=limits['max_rounds'])
     form = background_form(ui)
     before = row(p)
-    assert _request(ui.base, 'POST', '/instances/progression', form=form)[0] == 409
+    code, _, response = _request(ui.base, 'POST', '/instances/progression', form=form)
+    assert code == 409
     assert row(p) == before
+    if barrier == 'elapsed':
+        assert '后台时间额度已耗尽' in response.decode()
+        assert '暂停和独立人工工作期间也计时' in response.decode()
     if barrier == 'active_work':
         assert p.root.call_tool('run_status', dict(name='still-accepted'))['state'] == 'queued'
+        run_id = p.runtime.scheduler_bindings.resolve(instance=p.instance, namespace='run', name='still-accepted')
+        assert '任务 ' + run_id in response.decode()
 
 
 def test_background_confirmation_binds_trigger_and_consumed_position(human_ui):
@@ -168,3 +178,69 @@ def test_background_target_prefers_verified_original_name_and_diagnoses_missing_
     assert code == 200 and '原后台目标绑定缺失或已改变' in raw.decode()
     assert _request(ui.base, 'POST', '/instances/progression', form=form)[0] == 409
     assert row(p) == before
+
+
+def test_persisted_two_background_pauses_can_be_confirmed_separately(human_ui):
+    """Exercise a persisted multi-goal state, without claiming normal creation of it."""
+    from scidiscovery.artifact_agent.schema.refs import ArtifactRef
+    from scidiscovery.artifact_agent.schema.common import canonical_sha256
+    from scidiscovery.artifact_agent.service.scientific_progress import _update_fact, scientific_pause
+    ui, p = human_ui, human_ui.p
+    bindings = p.runtime.scheduler_bindings
+    original = ArtifactRef.model_validate_json(row(p)['objective_ref_json'])
+    enter_manual(ui, 'manual-goal')
+    other = ArtifactRef.model_validate_json(row(p)['objective_ref_json'])
+    goal_key, other_key = canonical_sha256(original), canonical_sha256(other)
+    with bindings._connect() as db:
+        state = json.loads(db.execute('SELECT state_json FROM scheduler_progress_shadow '
+            'WHERE instance_id=? AND goal_key=?', (p.instance, goal_key)).fetchone()['state_json'])
+        for notice in state['notices']:
+            notice['id'] += '-other-goal'
+        db.execute('UPDATE scheduler_progress_shadow SET state_json=? WHERE instance_id=? AND goal_key=?',
+            (json.dumps(state), p.instance, other_key))
+        deliveries = db.execute('SELECT * FROM scheduler_terminal_deliveries WHERE instance_id=? AND goal_key=?',
+            (p.instance, goal_key)).fetchall()
+        offset = db.execute('SELECT MAX(sequence) FROM scheduler_terminal_deliveries WHERE instance_id=?',
+            (p.instance,)).fetchone()[0]
+        for index, record in enumerate(deliveries, 1):
+            delivery = dict(record)
+            fact = json.loads(db.execute('SELECT fact_json FROM scheduler_progress_facts '
+                'WHERE instance_id=? AND goal_key=? AND run_id=?',
+                (p.instance, goal_key, delivery['run_id'])).fetchone()['fact_json'])
+            delivery.update(goal_key=other_key, objective_ref_json=other.canonical_json().decode(),
+                run_id=delivery['run_id'] + '-other-goal', task_name=delivery['task_name'] + '-other-goal',
+                sequence=offset + index)
+            db.execute('INSERT INTO scheduler_terminal_deliveries VALUES(' + ','.join('?' for _ in delivery) + ')',
+                tuple(delivery.values()))
+            _update_fact(db, p.instance, other_key, delivery['run_id'], dict(fact, sequence=delivery['sequence']))
+    first = background_form(ui)
+    stale_second = background_form(ui, 'manual-goal')
+    assert _request(ui.base, 'POST', '/instances/progression', form=first)[0] == 303
+    with bindings._connect() as db:
+        remaining = scientific_pause(db, row(p), checkpoint(p))
+    assert {cause['goal_key'] for cause in remaining['causes']} == {other_key}
+    assert _request(ui.base, 'POST', '/instances/progression', form=stale_second)[0] == 409
+    p.coordinator.tick()
+    assert row(p)['mode'] == 'background' and row(p)['state'] == 'paused'
+    second = background_form(ui, 'manual-goal')
+    assert _request(ui.base, 'POST', '/instances/progression', form=second)[0] == 303
+    with bindings._connect() as db:
+        assert scientific_pause(db, row(p), checkpoint(p)) is None
+    finish(p, active(p), 'after-both-confirmations')
+    assert p.root.call_tool('run_status', dict(name='after-both-confirmations'))['state'] == 'completed'
+
+
+@pytest.mark.parametrize('command', ['pause', 'stop'])
+def test_plain_interactive_without_background_budget_keeps_management_page(human_ui, command):
+    ui, p = human_ui, human_ui.p
+    bindings = p.runtime.scheduler_bindings
+    other = bindings.create_instance(name='plain-interactive', title='Interactive only', objective='Manual goal')
+    bindings.bind_session(session_key=p.user, instance_id=other.instance_id)
+    p.root.call_tool('artifact_ingest_text', dict(name='interactive-goal', text='A purely interactive objective.'))
+    p.root.call_tool('progression_command', dict(command='start', mode='interactive', objective_name='interactive-goal'))
+    p.root.call_tool('progression_command', dict(command=command))
+    before = bindings.progression_status(instance_id=other.instance_id, internal=True)
+    assert before['objective_ref_json'] and json.loads(before['config_json']) == {}
+    code, _, raw = _request(ui.base, 'GET', ui.path)
+    assert code == 200 and 'data-background-continue' not in raw.decode()
+    assert bindings.progression_status(instance_id=other.instance_id, internal=True) == before

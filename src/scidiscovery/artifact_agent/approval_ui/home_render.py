@@ -119,6 +119,7 @@ def session_controls(rows, *, token, csrf, current=None, expires_at=None, workbe
             body += '<p>后台暂停原因：' + escape(', '.join(item['reason'] for item in target['causes']))
             body += '。剩余任务：' + str(remaining['tasks']) + '；剩余轮次：' + str(remaining['rounds'])
             body += '；剩余时间秒：' + str(round(remaining['seconds'])) + '；剩余 token：' + str(remaining['tokens'])
+            body += '。当前时间口径：从首次后台启动计时，暂停和独立人工工作期间也计时；恢复不会重置额度'
             body += '。从后台已消费水位 ' + str(target['through_sequence']) + ' 开启下一窗口；人工窗口、旧触发与全部账目保留。</p>'
             body += "<form data-background-continue method='post' action='/instances/progression'>" + common
             body += hidden('command', 'human_continue') + hidden('instance_id', current.instance_id)

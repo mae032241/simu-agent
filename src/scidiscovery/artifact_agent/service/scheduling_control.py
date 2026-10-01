@@ -183,11 +183,12 @@ def require_human_continuation_budget(row, checkpoint):
     limits = json.loads(row['config_json'])['effective']['progression']
     budget = checkpoint.get('budget', {})
     resources = checkpoint.get('resources') or {}
+    if max(budget.get('elapsed_seconds', 0), time() - checkpoint.get('started_at', time())) >= limits['max_elapsed_seconds']:
+        conflict('Frozen progression budget exhausted: 后台时间额度已耗尽。当前从首次后台启动计时，'
+            '暂停和独立人工工作期间也计时；恢复不会重置额度。')
     exhausted = any(checkpoint.get(key, 0) >= limits['max_' + key]
         for key in ('rounds', 'attempts', 'probes'))
     exhausted |= background_task_count(checkpoint) >= limits['max_tasks']
-    exhausted |= max(budget.get('elapsed_seconds', 0),
-        time() - checkpoint.get('started_at', time())) >= limits['max_elapsed_seconds']
     exhausted |= (resources.get('owned_tree_rss_bytes', 0) +
         (resources.get('control_daemon_rss_bytes') or 0)) >= limits['max_rss_bytes']
     exhausted |= limits['token_policy'] == 'strict' and budget.get('token_coverage') != 'observed'
@@ -393,10 +394,12 @@ class SchedulingControl:
         self._selected(instance_id, session_key)
         row = self.progression_status(instance_id=instance_id, internal=True)
         checkpoint = json.loads(row.get('checkpoint_json', '{}'))
-        if row['state'] not in {'paused', 'stopped'} or not checkpoint.get('observation_scope_id'):
+        if row['state'] not in {'paused', 'stopped'}:
             return []
-        checkpoint.pop('observation_scope_id')
-        limits = json.loads(row['config_json'])['effective']['progression']
+        checkpoint.pop('observation_scope_id', None)
+        limits = json.loads(row['config_json']).get('effective', {}).get('progression')
+        if not limits:
+            return []  # Ordinary interactive work has no frozen background budget.
         remaining = dict(tasks=max(0, limits['max_tasks'] - background_task_count(checkpoint)),
             rounds=max(0, limits['max_rounds'] - checkpoint.get('rounds', 0)),
             seconds=max(0, limits['max_elapsed_seconds'] - max(
@@ -464,9 +467,13 @@ class SchedulingControl:
             checkpoint = json.loads(row['checkpoint_json'])
             if restore:
                 require_human_continuation_budget(row, checkpoint)
-                if self.progress_active_work_reader is None or self.progress_active_work_reader(instance_id=instance_id):
-                    conflict('Existing work is running, uncollected or unconfirmed; reconcile it before returning to background.')
-                checkpoint.pop('observation_scope_id')
+                if self.progress_active_work_reader is None:
+                    conflict('无法核对实例活动工作；请先恢复控制服务的活动工作查询。')
+                blocking_work = self.progress_active_work_reader(instance_id=instance_id)
+                if blocking_work:
+                    conflict('实例中仍有运行中、未收集或未确认的工作，至少包括：' + blocking_work[0]
+                        + '。请先在实例工作台核对该工作，再恢复后台；这里不会自动取消它。')
+                checkpoint.pop('observation_scope_id', None)
                 if row['objective_ref_json'] != restore['objective_ref_json']:
                     checkpoint['last_report'] = checkpoint.get('report') or checkpoint.get('last_report')
                     checkpoint['report'] = None
