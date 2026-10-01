@@ -493,6 +493,9 @@ class ProgressionCoordinator:
         initial = dict(relevant_runs={}, relevant_runs_objective_ref=json.loads(row['objective_ref_json']))
         settings = json.loads(row['config_json'])['effective']
         ref = ArtifactRef.model_validate_json(row['objective_ref_json'])
+        scope = (self.bindings.progress_shadow(instance_id=self.instance, objective_ref=ref) or {}).get('observation_scope')
+        if scope is not None:
+            return dict(initial, relevant_runs=scope['relevant_runs'], relevant_omitted=scope['related_omitted'])
         related, omitted = self.runtime.runs.goal_related_runs(instance_id=self.instance, artifact_ref=ref,
             limit=17, source_limit=settings['progression']['related_source_limit'])
         initial['relevant_omitted'] = omitted or len(related) > 16

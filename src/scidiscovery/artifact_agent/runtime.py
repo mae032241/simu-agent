@@ -152,6 +152,7 @@ def open_runtime(
             agent_settings=agent_settings,
             experiment_execution_factory=experiment_factory,
         )
+        scheduler_bindings.progress_run_reader = runs.goal_related_runs
     return ArtifactAgentRuntime(
         project_root=project,
         state_root=state,

@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import threading
+from time import time
 from functools import wraps
 
 from ..schema.refs import ArtifactRef
@@ -71,7 +72,7 @@ def record_progression_notice(checkpoint, *, objective, state, reason):
     report = checkpoint.get('report') or {}
     question = report.get('question') if reason == 'user_question' else None
     category = ('user_decision' if question else 'status' if reason in {
-        'interactive', 'host_active', 'user_paused', 'user_stopped', 'goal_completed'
+        'interactive', 'host_active', 'user_paused', 'user_stopped', 'goal_completed', 'human_continuation'
     } else 'system_wait')
     identity = hashlib.sha256(json.dumps([objective, category, reason, question],
         sort_keys=True).encode()).hexdigest()
@@ -103,7 +104,7 @@ def progression_status_view(value, *, session_key=None):
         token_coverage=usage['coverage'])
     config = json.loads(value.get('config_json') or '{}')
     limits = config.get('effective', {}).get('progression')
-    if limits and value['mode'] == 'background':
+    if limits and (value['mode'] == 'background' or checkpoint.get('human_continuations')):
         from .progression_budget import token_budget
         budget.update(token_budget(checkpoint, limits))
     return {key: value[key] for key in ('state', 'mode', 'reason', 'objective_name')} | {
@@ -117,6 +118,7 @@ def progression_status_view(value, *, session_key=None):
         'platform_requests': [{key: item[key] for key in ('method', 'state', 'questions', 'elicitation', 'omitted') if key in item}
             for item in checkpoint.get('platform_requests', [])],
         'last_command': checkpoint.get('last_command'),
+        'human_continuation': human_continuation_view(value, checkpoint),
         'notifications': {
             'items': checkpoint.get('notices', []),
             'current_id': checkpoint.get('current_notice') if value['reason'] != 'archive_restored' else None,
@@ -131,7 +133,54 @@ def progression_status_view(value, *, session_key=None):
         'in_flight': 'Previously accepted Workers and executions retain their authority; their exact Run states remain authoritative.'}
 
 
+def human_continuation_binding(row, session_key):
+    """UI form freshness binding; authorization remains capability plus CSRF."""
+    return hashlib.sha256(json.dumps([row.get(key) for key in
+        ('instance_id', 'generation', 'objective_ref_json', 'owner_session')] + [session_key]).encode()).hexdigest()
+
+
+def human_continuation_view(row, checkpoint):
+    from .scientific_progress import human_continuation_active
+    records = checkpoint.get('human_continuations', [])
+    return dict(active=human_continuation_active(row, checkpoint),
+        authority='human_control_decision_not_scientific_evidence',
+        history=[{key: record[key] for key in ('recorded_at', 'objective_name', 'episode_id',
+            'prior_reason', 'causes', 'reassessments', 'budget_snapshot')} for record in records],
+        history_omitted=checkpoint.get('human_continuations_omitted', 0))
+
+
+def require_human_continuation_budget(row, checkpoint):
+    """Human continuation cannot clear unknown submissions or frozen stop limits."""
+    if (row['host_json'] is not None or checkpoint.get('fault_class') == 'outcome_unknown'
+            or (checkpoint.get('phase') == 'prepared' and not checkpoint.get('turn_id'))
+            or any(item['state'] == 'prepared' for item in checkpoint.get('admissions', {}).values())):
+        conflict('Unresolved native host or task submission; reconcile before human continuation.')
+    limits = json.loads(row['config_json'])['effective']['progression']
+    budget = checkpoint.get('budget', {})
+    resources = checkpoint.get('resources') or {}
+    exhausted = any(checkpoint.get(key, 0) >= limits['max_' + key]
+        for key in ('rounds', 'attempts', 'probes'))
+    exhausted |= len(checkpoint.get('admissions', {})) >= limits['max_tasks']
+    exhausted |= max(budget.get('elapsed_seconds', 0),
+        time() - checkpoint.get('started_at', time())) >= limits['max_elapsed_seconds']
+    exhausted |= (resources.get('owned_tree_rss_bytes', 0) +
+        (resources.get('control_daemon_rss_bytes') or 0)) >= limits['max_rss_bytes']
+    exhausted |= limits['token_policy'] == 'strict' and budget.get('token_coverage') != 'observed'
+    exhausted |= row['reason'] in {'budget_exhausted', 'attempt_budget_exhausted', 'resource_limit'}
+    if exhausted:
+        conflict('Frozen progression budget exhausted; human continuation retains all limits.')
+    from .progression_budget import require_task_budget
+    from ...operations.invoke import OperationInvocationError
+    try:
+        require_task_budget(checkpoint, limits)
+    except OperationInvocationError as error:
+        conflict(str(error))
+
+
 class SchedulingControl:
+    # Runtime supplies the public, bounded exact-goal reader after RunService opens.
+    progress_run_reader = None
+
     @property
     def control_maintenance(self):
         from .instance_maintenance import InstanceMaintenance
@@ -245,10 +294,13 @@ class SchedulingControl:
                 objective_name = old.get('objective_name')
             if mode == 'background' and ref_json is None:
                 conflict('Background progression requires a frozen research objective.')
-            settings = self.control_settings(instance_id) if mode == 'background' else {}
+            # Switching to interactive cannot erase an already frozen policy or
+            # budget. Ordinary Root commands do not authorize human continuation.
+            settings = (self.control_settings(instance_id) if mode == 'background'
+                else json.loads(old.get('config_json') or '{}'))
             config = json.dumps(settings, sort_keys=True, separators=(',', ':'))
             fingerprint = hashlib.sha256(json.dumps([mode, objective_name, ref_json, config]).encode()).hexdigest()
-            if (command == 'start' and exists and old['request_fingerprint'] == fingerprint
+            if (command == 'start' and exists and old['mode'] == mode and old['request_fingerprint'] == fingerprint
                     and (old.get('requested_by') == session_key or old['owner_session'] == session_key
                          or old['state'] in {'paused', 'stopped'})):
                 # The original user can retry after a native host acquired ownership.
@@ -281,10 +333,61 @@ class SchedulingControl:
                 request_fingerprint=fingerprint if command == 'start' or not exists else old['request_fingerprint'],
                 host_json=old.get('host_json'), checkpoint_json=json.dumps(checkpoint))
             with self._connect() as connection:
+                if mode == 'background' and ref_json and self.progress_run_reader:
+                    from .scientific_progress import freeze_observation_scope
+                    freeze_observation_scope(connection, dict(instance_id=instance_id, **values),
+                        self.progress_run_reader, self)
                 self._write_progression(connection, instance_id, values)
             if state == 'active' and self.client_database_path.exists():
                 with self._client_connect() as connection:
                     connection.execute('UPDATE scheduler_clients SET enabled=1 WHERE session_key=?', (session_key,))
+            return self.progression_status(instance_id=instance_id, session_key=session_key)
+
+    def human_continue_from_ui(self, *, instance_id, session_key, confirmation_binding):
+        """Trusted management UI only; deliberately absent from Root/CLI contracts.
+
+        The UI validates capability, origin and CSRF before calling this entry.
+        This is the existing local UI trust boundary, not same-UID isolation.
+        """
+        from .scientific_progress import assist_view, shadow_policy
+        from .scheduler_bindings import _timestamp
+        with self.control_maintenance.guard(instance_id), self.scheduling_lock():
+            self._selected(instance_id, session_key)
+            row = self.progression_status(instance_id=instance_id, internal=True)
+            if (row['state'] != 'paused' or not row.get('objective_ref_json')
+                    or confirmation_binding != human_continuation_binding(row, session_key)):
+                conflict('Human continuation target changed; reread and confirm this goal in the management UI.')
+            progress = self.progress_shadow(instance_id=instance_id,
+                objective_ref=ArtifactRef.model_validate_json(row['objective_ref_json'])) or {}
+            episode = assist_view(progress)
+            if shadow_policy(row)['progress_mode'] != 'assist' or episode['state'] != 'exhausted':
+                conflict('Human continuation requires a paused, exhausted scientific reassessment.')
+            checkpoint = json.loads(row['checkpoint_json'])
+            require_human_continuation_budget(row, checkpoint)
+            generation = row['generation'] + 1
+            records = checkpoint.setdefault('human_continuations', [])
+            records.append(dict(recorded_at=_timestamp(), objective_name=row['objective_name'],
+                objective_ref_json=row['objective_ref_json'], session_key=session_key, generation=generation,
+                episode_id=episode['id'], prior_reason=row['reason'], causes=episode['causes'],
+                reassessments=episode['reassessments'], budget_snapshot=dict(
+                    rounds=checkpoint.get('rounds', 0), attempts=checkpoint.get('attempts', 0),
+                    probes=checkpoint.get('probes', 0), tasks=len(checkpoint.get('admissions', {})),
+                    started_at=checkpoint.get('started_at'), budget=checkpoint.get('budget'))))
+            if len(records) > 8:
+                checkpoint['human_continuations_omitted'] = checkpoint.get('human_continuations_omitted', 0) + 1
+                del records[:-8]
+            checkpoint['last_command'] = dict(command='human_continue', state='active',
+                reason='human_continuation', mode='interactive', generation=generation)
+            record_progression_notice(checkpoint, objective=row['objective_ref_json'],
+                state='active', reason='human_continuation')
+            values = {key: value for key, value in row.items() if key not in {'instance_id', 'updated_at'}}
+            values.update(generation=generation, owner_session=session_key, requested_by=session_key,
+                state='active', mode='interactive', reason='human_continuation', checkpoint_json=json.dumps(checkpoint))
+            with self._connect() as db:
+                self._write_progression(db, instance_id, values)
+            if self.client_database_path.exists():
+                with self._client_connect() as db:
+                    db.execute('UPDATE scheduler_clients SET enabled=1 WHERE session_key=?', (session_key,))
             return self.progression_status(instance_id=instance_id, session_key=session_key)
 
     @contextmanager
@@ -315,6 +418,9 @@ class SchedulingControl:
             if row['mode'] != 'background' and shadow_policy(row)['progress_mode'] != 'assist':
                 return
             checkpoint = json.loads(row['checkpoint_json'])
+            from .scientific_progress import human_continuation_active
+            if human_continuation_active(row, checkpoint):
+                require_human_continuation_budget(row, checkpoint)
             admissions = checkpoint.setdefault('admissions', {})
             if any(v['state'] == 'prepared' for v in admissions.values()):
                 conflict('A prior task admission is unresolved; reconcile it before creating more work.')

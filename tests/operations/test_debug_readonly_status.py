@@ -5,7 +5,7 @@ import pytest
 
 from scidiscovery.artifact_agent.schema.common import canonical_sha256
 from scidiscovery.operation_contract import DiagnosticError
-from tcad_artifact.local_debug_service import LocalTCADDebugService
+from tcad_artifact.local_debug_service import LocalTCADDebugService, _record_key
 
 
 SUBJECT = "control-goal-subject"
@@ -29,18 +29,18 @@ def fixture(tmp_path, *, reservation=False, external=None, lookup=None):
         def status(self, external):
             return "succeeded"
     service = LocalTCADDebugService(adapter=Adapter(), exchange_root=tmp_path)
-    context = SimpleNamespace()
+    context = SimpleNamespace(run_id="private-run", recovery_authorized=lambda owner: owner == "private-run")
     path = tmp_path / "budgets" / (canonical_sha256({"subject":SUBJECT}) + ".json")
     path.parent.mkdir()
     path.with_suffix(".lock").touch()
-    record = {"run_id":"private-run", "external_run_id":external, "state":"accepted", "mode":"initialization"}
-    ledger = {"runs":{}, "reservations":{}}
+    record = {"run_id":"private-run", "run_name":"init", "external_run_id":external, "state":"accepted", "mode":"initialization"}
+    ledger = {"schema_version":2, "runs":{}, "reservations":{}}
     if reservation:
-        ledger["reservations"]["init"] = {"record":record, "submission":{
+        ledger["reservations"][_record_key("private-run", "init")] = {"record":record, "submission":{
             "schema_version":1, "name":"submission", "local_path":"/private/submission.json",
             "media_type":"application/json", "size_bytes":1, "sha256":"a"*64}}
     if external:
-        ledger["runs"]["init"] = record
+        ledger["runs"][_record_key("private-run", "init")] = record
     path.write_text(json.dumps(ledger))
     return service, context, path
 

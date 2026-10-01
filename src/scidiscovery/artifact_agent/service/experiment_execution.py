@@ -572,7 +572,7 @@ class _TaskExperimentTools:
         run = self.__scope(context)
         service = context.require_service(service_name)
         lineage = {item.run_id for item in self.__coordinator.task_lineage(run)}
-        return bool(service.experiment_activity(lineage, self.__coordinator.budget_subject(run), cancel=True, name=name))
+        return bool(service.experiment_activity(lineage, self.__coordinator.budget_subject(run), cancel=True, name=name, current_run_id=run.run_id))
 
     def budget_subject(self, context):
         return self.__coordinator.budget_subject(self.__scope(context))

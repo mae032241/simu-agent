@@ -65,7 +65,8 @@ def create_form(*, csrf, token=None):
         "<button type='submit'>" + label + "</button></form></div></details>")
 
 
-def session_controls(rows, *, token, csrf, current=None, expires_at=None, workbench_available=True, progression=None):
+def session_controls(rows, *, token, csrf, current=None, expires_at=None, workbench_available=True, progression=None,
+                     human_confirmation=None):
     current_title = escape(current.title) if current else "尚未绑定实例"
     body = ("<section class='home-session' id='session-binding'><h2>实例绑定</h2><p class='session-title'>"
             + current_title + "</p><p>打开实例查看资料不会改变会话绑定。</p>")
@@ -86,6 +87,17 @@ def session_controls(rows, *, token, csrf, current=None, expires_at=None, workbe
         for command, label in (("pause", "暂停"), ("resume", "恢复"), ("stop", "停止"), ("takeover", "接管交互调度")):
             body += ("<form method='post' action='/instances/progression'>" + common
                 + hidden("command", command) + "<button type='submit'>" + label + "</button></form>")
+        if human_confirmation:
+            body += ("<details><summary>人工接管并继续（保留预算）</summary>"
+                "<p>仅适用于科学复判后暂停的当前目标：" + escape(progression.get('objective_name') or '')
+                + "。请先读取上方原始缺口。此决定不代表科学问题已解决，不增加预算或自动复判次数；"
+                "未知提交须先核清。返回后台或改变目标、会话控制后须重新确认。</p>"
+                + "<form method='post' action='/instances/progression'>" + common
+                + hidden("command", "human_continue") + hidden("instance_id", current.instance_id)
+                + hidden("confirmation_binding", human_confirmation)
+                + "<label><input type='checkbox' name='confirm_human_continue' value='yes' required>"
+                "我已读取原始缺口，确认在当前会话人工继续此目标并保留原预算</label>"
+                "<button type='submit'>人工接管并继续（保留预算）</button></form></details>")
         body += "</section>"
     options = "<option value='' disabled selected>选择要绑定的实例</option>"
     for row in rows:

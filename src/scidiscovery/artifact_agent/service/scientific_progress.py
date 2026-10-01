@@ -146,11 +146,15 @@ def terminal_delivery_page(*, bindings, row, cursor=None, limit=8):
             raise ValueError('Invalid delivery cursor; restart history for this frozen goal.') from error
     records = bindings.terminal_deliveries(instance_id=row['instance_id'],
         objective_ref=ArtifactRef.model_validate_json(row['objective_ref_json']), after=after, limit=limit+1)
+    observation = (bindings.progress_shadow(instance_id=row['instance_id'],
+        objective_ref=ArtifactRef.model_validate_json(row['objective_ref_json'])) or {}).get('observation_scope', {})
     page = dict(items=[], next_cursor=None, omitted=False, continuation=None)
     for index, record in enumerate(records[:limit]):
         next_cursor = (base64.urlsafe_b64encode(canonical_json(dict(scope=scope, after=record['sequence']))).decode()
             if index+1 < len(records) else None)
-        candidate = dict(items=[*page['items'], *terminal_delivery_view([record])], next_cursor=next_cursor,
+        item = terminal_delivery_view([record])[0]
+        item['observation_role'] = 'background' if record['run_id'] in observation.get('background', {}) else 'observed'
+        candidate = dict(items=[*page['items'], item], next_cursor=next_cursor,
             omitted=next_cursor is not None, continuation=dict(tool='progression_status', delivery_cursor=next_cursor,
                 delivery_limit=limit) if next_cursor else None)
         if len(canonical_json(candidate)) > 16384:
@@ -337,11 +341,71 @@ def shadow_policy(row):
     return policy
 
 
-def reduce_shadow(facts, *, advances=None):
+def freeze_observation_scope(db, row, reader, bindings):
+    """Freeze exact pre-start terminal identities once per goal, under scheduling lock.
+
+    Existing consumption and admissions remain observed. Neither a restart nor a
+    new host may turn those tasks into background or replenish their allowance.
+    The JSON lives in the existing archived progress state, including in off mode.
+    """
+    objective = ArtifactRef.model_validate_json(row['objective_ref_json'])
+    goal_key = canonical_sha256(objective)
+    previous = db.execute('SELECT state_json FROM scheduler_progress_shadow WHERE instance_id=? AND goal_key=?',
+        (row['instance_id'], goal_key)).fetchone()
+    state = json.loads(previous['state_json']) if previous else {}
+    if 'observation_scope' in state:
+        return
+    checkpoint = json.loads(row['checkpoint_json'])
+    observed = {item['run_id'] for item in db.execute('SELECT run_id FROM scheduler_terminal_deliveries '
+        'WHERE instance_id=? AND goal_key=?', (row['instance_id'], goal_key))}
+    observed.update(item['run_id'] for item in checkpoint.get('admissions', {}).values()
+        if item.get('run_id') and item.get('objective_ref') == objective.model_dump(mode='json'))
+    limits = json.loads(row['config_json'])['effective']['progression']
+    related, omitted = reader(instance_id=row['instance_id'], artifact_ref=objective,
+        limit=17, source_limit=limits['related_source_limit'])
+    background, relevant, ongoing = {}, {}, set()
+    for run in related[:16]:
+        name = bindings.find_name(instance=row['instance_id'], namespace='run', object_id=run.run_id)
+        if not name:
+            omitted = True
+            continue
+        relevant[name] = run.run_id
+        if run.state in {'queued', 'running'}:
+            ongoing.add(run.run_id)
+        elif run.run_id not in observed:
+            background[run.run_id] = dict(task_name=name,
+                output=run.output_ref.model_dump(mode='json') if run.output_ref else None)
+    # The pre-existing observed/running set is finite and independent of the new
+    # task admission allowance. No moving window can make old bytes novel again.
+    state['observation_scope'] = dict(background=background, relevant_runs=relevant,
+        initial_observed=sorted(observed | ongoing),
+        max_observed_tasks=limits['max_tasks'] + len(observed | ongoing),
+        related_omitted=bool(omitted or len(related) > 16))
+    db.execute('INSERT INTO scheduler_progress_shadow VALUES(?,?,?) '
+        'ON CONFLICT(instance_id,goal_key) DO UPDATE SET state_json=excluded.state_json',
+        (row['instance_id'], goal_key, json.dumps(state)))
+
+
+def observation_facts(db, row, goal_key, policy, state):
+    """One ordered, cumulative selection for counters and assist snapshots."""
+    scope = state.get('observation_scope', {})
+    background = scope.get('background', {})
+    limit = scope.get('max_observed_tasks', policy['max_tasks'])
+    exclusion = (' AND d.run_id NOT IN (' + ','.join('?' for _ in background) + ')') if background else ''
+    records = db.execute('SELECT f.fact_json FROM scheduler_terminal_deliveries d '
+        'JOIN scheduler_progress_facts f USING(instance_id,goal_key,run_id) '
+        'WHERE d.instance_id=? AND d.goal_key=? AND d.consumed_boundary IS NOT NULL' + exclusion +
+        ' ORDER BY d.sequence LIMIT ?', (row['instance_id'], goal_key, *background, limit + 1)).fetchall()
+    return [json.loads(item['fact_json']) for item in records[:limit]], len(records) > limit
+
+
+def reduce_shadow(facts, *, advances=None, known_evidence=()):
     """Content identity detects reuse, never scientific truth or semantic equivalence."""
     counts = dict(consumed=0, no_progress=0, refinement=0, coverage_gap=0, unchanged_evidence=0,
         repeated_failure=0)
-    refs, digests, failure = set(), set(), None
+    refs = {canonical_sha256(ref) for ref in known_evidence}
+    digests = {ref['sha256'] for ref in known_evidence}
+    failure = None
     for fact in facts:
         counts['consumed'] += 1
         assessment = fact.get('assessment') or {}
@@ -372,22 +436,18 @@ def reduce_shadow(facts, *, advances=None):
 def refresh_shadow(db, row, goal_key):
     """Only consumption/assessment mutations call this bounded replay, never reads/ticks.
 
-    The frozen task budget bounds correction work. Excess historical related tasks
-    stay in the delivery ledger and are explicitly omitted from this projection.
+    The frozen observation scope separates background from the task allowance.
     """
     policy = shadow_policy(row)
     if policy['progress_mode'] == 'off':
         return
-    records = db.execute('SELECT f.fact_json FROM scheduler_terminal_deliveries d '
-        'JOIN scheduler_progress_facts f USING(instance_id,goal_key,run_id) '
-        'WHERE d.instance_id=? AND d.goal_key=? AND d.consumed_boundary IS NOT NULL '
-        'ORDER BY d.sequence LIMIT ?', (row['instance_id'], goal_key, policy['max_tasks'] + 1)).fetchall()
-    facts = [json.loads(item['fact_json']) for item in records[:policy['max_tasks']]]
-    advances = []
-    counts = reduce_shadow(facts, advances=advances)
     previous = db.execute('SELECT state_json FROM scheduler_progress_shadow WHERE instance_id=? AND goal_key=?',
         (row['instance_id'], goal_key)).fetchone()
     prior = json.loads(previous['state_json']) if previous else {}
+    facts, omitted = observation_facts(db, row, goal_key, policy, prior)
+    advances = []
+    counts = reduce_shadow(facts, advances=advances, known_evidence=[item['output']
+        for item in prior.get('observation_scope', {}).get('background', {}).values() if item['output']])
     notices = prior.get('notices', [])
     dispositions = prior.get('dispositions', [])
     resolved = {item['notice_id'] for item in dispositions}
@@ -422,7 +482,9 @@ def refresh_shadow(db, row, goal_key):
                 and not _active_causes(counts, policy)):
             episode.update(state='resolved', resolved_through=facts[-1]['sequence'])
     state = dict(assist=assist, counts=counts, notices=notices, dispositions=dispositions, through_sequence=facts[-1]['sequence'] if facts else 0,
-        omitted=len(records) > policy['max_tasks'])
+        omitted=omitted)
+    if 'observation_scope' in prior:
+        state['observation_scope'] = prior['observation_scope']
     encoded = json.dumps(state, sort_keys=True)
     if not previous or json.loads(previous['state_json']) != state:
         db.execute('INSERT INTO scheduler_progress_shadow VALUES(?,?,?) '
@@ -435,6 +497,18 @@ def _active_causes(counts, policy):
     return [reason for reason, threshold in dict(no_progress=policy['no_progress_threshold'],
         coverage_gap=policy['observation_gap_threshold'], unchanged_evidence=policy['observation_gap_threshold'],
         repeated_failure=policy['observation_gap_threshold']).items() if counts.get(reason, 0) >= threshold]
+
+
+def human_continuation_active(row, checkpoint):
+    """UI consent applies to exactly one goal, owner and control generation."""
+    records = checkpoint.get('human_continuations', [])
+    if not records:
+        return False
+    consent = records[-1]
+    return (row['state'] == 'active' and row['mode'] == 'interactive'
+        and consent['generation'] == row['generation']
+        and consent['session_key'] == row['owner_session']
+        and consent['objective_ref_json'] == row['objective_ref_json'])
 
 
 def assist_transition(db, row, checkpoint, *, event, admission=None):
@@ -453,24 +527,27 @@ def assist_transition(db, row, checkpoint, *, event, admission=None):
     if not record:
         return None
     state = json.loads(record['state_json'])
+    if 'counts' not in state:
+        return None
     original = canonical_json(state)
     episodes = state.setdefault('assist', [])
     episode = episodes[-1] if episodes and episodes[-1]['state'] not in {'resolved', 'withdrawn'} else None
+    if (event == 'admission' and episode and episode['state'] == 'exhausted'
+            and human_continuation_active(row, checkpoint)
+            and checkpoint['human_continuations'][-1]['episode_id'] == episode['id']):
+        # A human control decision is not new evidence or another reassessment.
+        return None
     causes = _active_causes(state['counts'], policy)
     candidate = None
     if event in {'prepare', 'admission', 'submit', 'confirm'}:
         # Current consumed facts, not the immutable historical shadow triggers.
-        evidence = [json.loads(item['fact_json']) for item in db.execute(
-            'SELECT f.fact_json FROM scheduler_terminal_deliveries d '
-            'JOIN scheduler_progress_facts f USING(instance_id,goal_key,run_id) '
-            'WHERE d.instance_id=? AND d.goal_key=? AND d.consumed_boundary IS NOT NULL '
-            'ORDER BY d.sequence LIMIT ?', (row['instance_id'], goal_key, policy['max_tasks']))]
+        evidence, omitted = observation_facts(db, row, goal_key, policy, state)
         candidate = dict(causes=causes, counts=state['counts'].copy(), policy=policy,
             through_sequence=state['through_sequence'], task_names=[item['task_name'] for item in evidence],
             terminal_evidence=[dict(task_name=item['task_name'], output=item['terminal'].get('output'))
                 for item in evidence],
             assessment_refs=[item['assessment']['assessment_ref'] for item in evidence if item.get('assessment')],
-            omitted=state.get('omitted', False))
+            omitted=omitted)
     if (episode and episode['state'] == 'prepared' and candidate is not None
             and canonical_sha256(candidate) != episode['candidate_version']):
         episode.update(state='withdrawn', disposition='candidate_changed_before_submission')
@@ -552,13 +629,16 @@ def assist_view(state):
         control_eligible=(episode.get('delivered') or {}).get('control_eligible', False),
         instruction='Reconsider the cited evidence and limitations. You may choose one complete adjusted task; '
             'its result must support progress before further dispatch. A changed plan alone does not resolve the causes. '
-            'Use optional scientific_intent and assessments; no mechanical response fields are required.')
+            'Scientific intent and assessments remain optional. In assist mode, missing them can count as '
+            'an observation gap and pause further dispatch. Novel cited bytes with a Root advance judgment '
+            'are not an independent determination of scientific progress.')
 
 
 def shadow_projection(*, bindings, row):
     policy = shadow_policy(row)
     state = bindings.progress_shadow(instance_id=row['instance_id'],
         objective_ref=ArtifactRef.model_validate_json(row['objective_ref_json'])) or {}
+    scope = state.get('observation_scope', {})
     # Notice snapshots stay in the DB; the common public projection is bounded.
     return dict(mode=policy['progress_mode'], policy=policy, counts=state.get('counts', reduce_shadow([])),
         assist=assist_view(state),
@@ -570,7 +650,15 @@ def shadow_projection(*, bindings, row):
         delivery_history_read=dict(tool='progression_status', delivery_limit=8),
         notice_history_coverage='recent_only',
         through_sequence=state.get('through_sequence', 0), omitted=state.get('omitted', False),
+        observation_scope=dict(background_tasks=len(scope.get('background', {})),
+            initial_observed_tasks=len(scope.get('initial_observed', [])),
+            max_observed_tasks=scope.get('max_observed_tasks', policy['max_tasks']),
+            related_omitted=scope.get('related_omitted', False),
+            background_role='read_only_history_and_known_evidence_not_progress_counts'),
         authority='control_observation_not_scientific_judgment',
         limitations=['Exact references and payload digests detect identical evidence, not semantic paraphrases.',
+            'Assist observes process, citation coverage and repeated failures; Root judgments are not independently '
+            'verified for scientific stagnation. Different payloads with cited advance judgments can evade that signal.',
+            'Refinement is a hint. Optional intent or assessments may still produce observation-gap protection in assist mode.',
             'Code-mode wrapped results are unobserved; new terminal results may arrive only in the next brief.',
             'Direct completion or stop may omit that next brief; no same-turn hard stop is claimed.'])

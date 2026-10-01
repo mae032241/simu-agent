@@ -11,6 +11,7 @@ from scidiscovery.artifact_agent.schema.refs import ArtifactRef
 from scidiscovery.artifact_agent.schema.common import canonical_json
 from scidiscovery.artifact_agent.service.experiment_execution import bind_experiment_services
 from scidiscovery.operation_contract import DiagnosticError
+from tcad_artifact.local_debug_service import _record_key
 
 
 def continuation(tmp_path, monkeypatch, solver="sprocess", *, all_stages=False, include_grid=True, require_execution_review=False, presentation=False):
@@ -163,9 +164,10 @@ def test_abandoned_requests_do_not_block_collected_experiment_delivery(tmp_path,
             name="experiment-" + f.run_id + "-" + name, object_id=execution_id)
         executions.abandon(execution_id)
     if stale_diagnostic:
+        f.worker.call_tool("worker_experiment_debug", {"implementation":f.alias, "name":"diagnostic", "mode":"preflight"})
         ledger_path = next((tmp_path / "debug/budgets").glob("*.json"))
         ledger = json.loads(ledger_path.read_bytes())
-        ledger["runs"]["diagnostic"].update(run_id=f.run_id, state="running")
+        ledger["runs"][_record_key(f.run_id, "diagnostic")]["state"] = "running"
         ledger_path.write_bytes(canonical_json(ledger))
         debugger = f.coordinator.worker_services["tcad_artifact:tcad.development_debug"].adapter
         monkeypatch.setattr(debugger, "status", lambda _: "running", raising=False)
@@ -194,6 +196,22 @@ def test_abandoned_requests_do_not_block_collected_experiment_delivery(tmp_path,
 
 def test_diagnostic_reuse_never_changes_implementation_or_takes_over_active_job(tmp_path, monkeypatch):
     f = continuation(tmp_path, monkeypatch)
+    ledger = next((tmp_path / "debug/budgets").glob("*.json"))
+    value = json.loads(ledger.read_bytes())
+    old_key = _record_key(f.old_id, "diagnostic")
+    value["runs"][old_key]["state"] = "running"
+    value["runs"][old_key].pop("response")
+    ledger.write_bytes(canonical_json(value))
+    debugger = f.coordinator.worker_services["tcad_artifact:tcad.development_debug"].adapter
+    monkeypatch.setattr(debugger, "status", lambda _: pytest.fail("Unrelated diagnostic was polled"), raising=False)
+    before_submits = debugger.submits
+    assert f.worker.call_tool("worker_experiment_debug", {"action":"status", "name":"diagnostic"})["state"] == "not_created"
+    assert f.worker.call_tool("worker_experiment_debug", {"implementation":f.alias, "name":"diagnostic", "mode":"preflight"})["state"] == "succeeded"
+    after = json.loads(ledger.read_bytes())
+    assert debugger.submits == before_submits + 1
+    assert after["runs"][old_key] == value["runs"][old_key]
+    assert after["runs"][_record_key(f.run_id, "diagnostic")]["run_id"] == f.run_id
+    assert after["reserved_wall_seconds"] == value["reserved_wall_seconds"] + 1
     body = json.loads(f.runtime.artifacts.read(ArtifactRef.model_validate(f.implementation["artifact_ref"])))
     body["implementation"]["files"][0]["content"] += "\n# different implementation"
     (f.workspace / "scratch/experiment.json").write_bytes(canonical_json(body["implementation"]))
@@ -201,16 +219,8 @@ def test_diagnostic_reuse_never_changes_implementation_or_takes_over_active_job(
     with pytest.raises(DiagnosticError) as mismatch:
         f.worker.call_tool("worker_experiment_debug", {"implementation":changed, "name":"diagnostic", "mode":"preflight"})
     assert mismatch.value.details[0]["code"] == "tcad_debug_implementation_mismatch"
-    ledger = next((tmp_path / "debug/budgets").glob("*.json"))
-    value = json.loads(ledger.read_bytes())
-    value["runs"]["active_old"] = {k:v for k,v in value["runs"]["diagnostic"].items() if k != "response"}
-    value["runs"]["active_old"]["state"] = "running"
-    value["reservations"]["active_old"] = value["reservations"]["diagnostic"]
-    ledger.write_bytes(canonical_json(value))
-    with pytest.raises(DiagnosticError) as owner:
-        f.worker.call_tool("worker_experiment_debug", {"implementation":f.alias, "name":"active_old", "mode":"preflight"})
-    assert owner.value.details[0]["code"] == "tcad_debug_owner_mismatch"
-    assert json.loads(ledger.read_bytes())["runs"]["active_old"]["run_id"] == f.old_id
+    assert debugger.submits == before_submits + 1
+    assert json.loads(ledger.read_bytes()) == after
 
 
 def test_material_resolution_rejects_foreign_instance_and_receipt_mutation(tmp_path, monkeypatch):

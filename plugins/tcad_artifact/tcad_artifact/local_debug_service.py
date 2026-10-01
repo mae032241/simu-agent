@@ -39,12 +39,57 @@ _RUN_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 _MODES = frozenset({"preflight", "smoke", "initialization"})
 _TERMINAL = frozenset({"succeeded", "failed", "cancelled", "collected"})
 _STATES = frozenset({"accepted", "running", "cancelling", *_TERMINAL})
+_LEDGER_VERSION = 2
+
+
+def _record_key(run_id, run_name):
+    if not isinstance(run_id, str) or not run_id:
+        raise TCADDebugError("TCAD diagnostic requires a control-bound owning Run")
+    return canonical_sha256({"run_id": run_id, "run_name": run_name})
+
+
+def _read_ledger(path):
+    ledger = json.loads(path.read_bytes())
+    if (not isinstance(ledger, dict) or ledger.get("schema_version") != _LEDGER_VERSION
+            or not isinstance(ledger.get("runs"), dict)
+            or not isinstance(ledger.get("reservations"), dict)):
+        raise TCADDebugError("Incompatible TCAD diagnostic ledger; existing allowance is retained. Deploy with new state; automatic migration or budget reset is unsupported.")
+    for collection in (ledger["runs"], ledger["reservations"]):
+        for key, value in collection.items():
+            record = value.get("record", value)
+            name = record.get("run_name")
+            if (not isinstance(name, str) or _RUN_NAME.fullmatch(name) is None
+                    or key != _record_key(record.get("run_id"), name)):
+                raise TCADDebugError("TCAD diagnostic ledger identity is invalid; allowance is retained")
+    return ledger
+
+
+def _select_record_key(ledger, run_name, *, run_id, authorized):
+    own = _record_key(run_id, run_name)
+    records = {key: value["record"] for key, value in ledger.get("reservations", {}).items()}
+    records.update(ledger.get("runs", {}))
+    if own in records:
+        return own
+    matches = [key for key, record in records.items()
+        if record["run_name"] == run_name and authorized(record["run_id"])]
+    if len(matches) > 1:
+        raise _continuation_error("tcad_debug_recovery_ambiguous",
+            "This diagnostic name has multiple authorized recovery owners. Control must bind one exact source task before reading, collecting or cancelling it.", repairable=False)
+    return matches[0] if matches else own
+
+
+def _context_record_key(context, run_name, ledger=None):
+    return _select_record_key(context.state if ledger is None else ledger, run_name,
+        run_id=context.run_id, authorized=context.recovery_authorized)
+
+
 def debug_tool_description() -> str:
     return (
         "Submit or poll one TCAD development diagnostic under administrator-configured mode, "
         "attempt, wall-time, storage and delivery limits; never scientific evidence. "
-        "Responses expose the frozen Run budget and each job reservation. Renaming a job "
-        "does not reset the budget; repeating a name polls the same submission. "
+        "Responses expose the shared instance budget and each job reservation. Renaming a job "
+        "does not reset the budget; repeating a name within the same task polls its submission. "
+        "Other tasks own independent names; recovery requires a unique control-authorized source task. "
         "For initialization select declared output_names. Read details_path for retained "
         "diagnostics and file identities; file bytes are not returned in this summary."
     )
@@ -74,7 +119,7 @@ def debug_response(context: OperationToolContext, run_name: str, response: dict)
         "run_remaining_seconds": context.remaining_seconds,
         "effective_wall_seconds": max(0, min(remaining, context.remaining_seconds)),
     }}
-    record = runs.get(run_name)
+    record = runs.get(_context_record_key(context, run_name))
     if record is not None:
         result["reserved_wall_seconds_for_run"] = record["reserved_wall_seconds"]
         result["delivery_budget"] = record.get("delivery_budget")
@@ -122,11 +167,13 @@ class LocalTCADDebugService:
         root = self.exchange_root / "budgets"
         root.mkdir(exist_ok=True, mode=0o700)
         path = root / (key + ".json")
-        from scidiscovery.plugin_runtime.workspace import atomic_json
+        _record_key(context.run_id, run_name)
         with (root / (key + ".lock")).open("a+") as lock:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
             if path.exists():
-                context.state.update(json.loads(path.read_bytes()))
+                context.state.update(_read_ledger(path))
+            else:
+                context.state.update(schema_version=_LEDGER_VERSION, runs={}, reservations={}, reserved_wall_seconds=0)
             context.state["budget_ledger_path"] = str(path)
             try:
                 return self._run_locked(context, run_name=run_name, mode=mode, output_names=output_names)
@@ -138,7 +185,7 @@ class LocalTCADDebugService:
         self.experiment_activity(run_ids, budget_subject, pending=pending)
         return pending
 
-    def experiment_activity(self, run_ids, budget_subject, *, cancel=False, name=None, pending=None):
+    def experiment_activity(self, run_ids, budget_subject, *, cancel=False, name=None, pending=None, current_run_id=None):
         """Observe/cancel persisted jobs without resetting the original allowance."""
         from scidiscovery.artifact_agent.schema.execution import LocalFileDescriptor
         from scidiscovery.plugin_runtime.workspace import atomic_json
@@ -152,11 +199,25 @@ class LocalTCADDebugService:
         active = False
         with (root / (key + ".lock")).open("a+") as lock:
             fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-            ledger = json.loads(path.read_bytes())
+            ledger = _read_ledger(path)
             records = ledger.setdefault("runs", {})
-            for alias, reservation in ledger.get("reservations", {}).items():
-                record = records.get(alias, reservation["record"])
-                if record.get("run_id") not in run_ids or (name is not None and alias != name):
+            selected_key = None
+            if name is not None:
+                # A current owner wins over ancestors, exactly as run/status do.
+                if current_run_id is not None:
+                    selected_key = _select_record_key(ledger, name, run_id=current_run_id,
+                        authorized=lambda owner: owner in run_ids)
+                else:
+                    matches = [key for key, item in ledger["reservations"].items()
+                        if item["record"]["run_id"] in run_ids and item["record"]["run_name"] == name]
+                    if len(matches) > 1:
+                        raise _continuation_error("tcad_debug_recovery_ambiguous",
+                            "This diagnostic name has multiple authorized recovery owners; control must select one exact source task.", repairable=False)
+                    selected_key = matches[0] if matches else None
+            for record_key, reservation in ledger.get("reservations", {}).items():
+                record = records.get(record_key, reservation["record"])
+                alias = record["run_name"]
+                if record.get("run_id") not in run_ids or (name is not None and record_key != selected_key):
                     continue
                 if record.get("state") in _TERMINAL:
                     continue
@@ -180,7 +241,7 @@ class LocalTCADDebugService:
                         affected_action="submit", repairable=True,
                         message=f"Diagnostic {alias!r} is {record['state']}. Read worker_experiment_debug(action='status', name={alias!r}); finish it or call action='cancel' with the same name, then resubmit the unchanged report."))
                 if cancel:
-                    records[alias] = record
+                    records[record_key] = record
             if cancel:
                 atomic_json(path, ledger)
         return active
@@ -193,6 +254,7 @@ class LocalTCADDebugService:
             raise TCADDebugError("debug status requires the control-bound research goal")
         key = canonical_sha256({"subject": budget_subject})
         path = self.exchange_root / "budgets" / (key + ".json")
+        _record_key(context.run_id, run_name)
         absent = {"name": run_name, "state": "not_created", "submission": "not_submitted"}
         if not path.exists():
             return absent
@@ -200,9 +262,10 @@ class LocalTCADDebugService:
         # but do not create files or mutate the diagnostic budget on a read.
         with path.with_suffix(".lock").open("rb") as lock:
             fcntl.flock(lock.fileno(), fcntl.LOCK_SH)
-            ledger = json.loads(path.read_bytes())
-            reservation = ledger.get("reservations", {}).get(run_name)
-            record = ledger.get("runs", {}).get(run_name)
+            ledger = _read_ledger(path)
+            record_key = _context_record_key(context, run_name, ledger)
+            reservation = ledger.get("reservations", {}).get(record_key)
+            record = ledger.get("runs", {}).get(record_key)
             if record is None and reservation is None:
                 return absent
             record = record or reservation["record"]
@@ -239,7 +302,7 @@ class LocalTCADDebugService:
     def _save_budget(context):
         from scidiscovery.plugin_runtime.workspace import atomic_json
         atomic_json(Path(context.state["budget_ledger_path"]), {key: context.state[key] for key in
-            ("debug_policy", "reserved_wall_seconds", "runs", "reservations") if key in context.state})
+            ("schema_version", "debug_policy", "reserved_wall_seconds", "runs", "reservations") if key in context.state})
 
     def _run_locked(self, context, *, run_name, mode, output_names):
         context.state.setdefault("debug_policy", self.adapter.policy.model_dump(mode="json"))
@@ -252,24 +315,25 @@ class LocalTCADDebugService:
         runs = context.state.setdefault("runs", {})
         if not isinstance(runs, dict):
             raise TCADDebugError("local TCAD debug state is invalid")
-        record = runs.get(run_name)
+        record_key = _context_record_key(context, run_name)
+        record = runs.get(record_key)
         reservations = context.state.setdefault("reservations", {})
-        if record is None and run_name in reservations:
+        if record is None and record_key in reservations:
             from scidiscovery.artifact_agent.schema.execution import LocalFileDescriptor
-            pending = reservations[run_name]
+            pending = reservations[record_key]
             found = self.adapter.lookup_submission(LocalFileDescriptor.model_validate_json(
                 json.dumps(pending["submission"]), strict=True))
             if found is None:
                 raise _continuation_error("tcad_debug_not_submitted",
                     "The reserved diagnostic was not accepted by the executor. Its allowance remains reserved; request control-side budget reconciliation before another diagnostic.", repairable=False)
             record = {**pending["record"], "external_run_id": found[0], "state": _state(found[1])}
-            runs[run_name] = record
+            runs[record_key] = record
         if record is None:
             if len(reservations) >= _debug_policy(context).max_runs:
                 raise _continuation_error("tcad_debug_attempts_exhausted",
                     "The shared scientific-subject diagnostic attempt allowance is exhausted. Renaming a diagnostic or recovering the task does not reset it; an administrator must change the allowance before a new diagnostic.", repairable=False)
             record = self._start(context, run_name, mode, selected)
-            runs[run_name] = record
+            runs[record_key] = record
         if not isinstance(record, dict) or record.get("mode") != mode:
             raise TCADDebugError("TCAD debug run_name is bound to another mode")
         if output_names is not None and tuple(record.get("output_names", ())) != selected:
@@ -367,6 +431,7 @@ class LocalTCADDebugService:
                     **{key: getattr(_debug_policy(context), key) for key in
                        ("max_output_file_bytes", "max_output_files", "max_log_bytes", "max_manifest_bytes", "max_response_log_chars")}},
                 "run_id": context.run_id,
+                "run_name": run_name,
                 "operation_id": context.operation_id,
                 "backend_release": json.loads(capability).get("public_release_label"),
                 "entrypoint": entrypoint,
@@ -385,7 +450,7 @@ class LocalTCADDebugService:
                 "declarations_sha256": declarations_sha,
             }
             context.state["reserved_wall_seconds"] = used + prepared.wall_time_seconds
-            context.state.setdefault("reservations", {})[run_name] = {
+            context.state.setdefault("reservations", {})[_record_key(context.run_id, run_name)] = {
                 "submission": submission.model_dump(mode="json"), "record": pending_record}
             self._save_budget(context)
             submission_started = True
@@ -549,7 +614,7 @@ class LocalTCADDebugService:
 
     @staticmethod
     def _receipt_directory(context, run_name, source_run_id):
-        key = canonical_sha256({"run_id": source_run_id, "run_name": run_name})
+        key = _record_key(source_run_id, run_name)
         return Path(context.state["budget_ledger_path"]).parent / "receipts" / key
 
     def _save_receipt(self, context, run_name, record, proof, response):
@@ -562,24 +627,20 @@ class LocalTCADDebugService:
                 raise TCADDebugError("diagnostic changed before control receipt retention")
             _write_private(root / item["sha256"], raw)
         _write_private(root / "receipt.json", canonical_json({"proof": proof, "response": response,
-            "submission": context.state["reservations"][run_name]["submission"]}))
+            "submission": context.state["reservations"][_record_key(record["run_id"], run_name)]["submission"]}))
 
     def _restore_receipt(self, context, run_name, record, *, validate=True):
         source_run = record["run_id"]
         experiment = "experiment_project" in context.state
-        exact_implementation = (experiment and record.get("implementation_ref") is not None
-            and record["implementation_ref"] == context.state.get("experiment_implementation_ref"))
-        if not context.recovery_authorized(source_run) and not exact_implementation:
+        if not context.recovery_authorized(source_run):
             raise TCADDebugError("cached diagnostic belongs to another Run without a control recovery relationship")
         root = self._receipt_directory(context, run_name, source_run)
         receipt = json.loads((root / "receipt.json").read_bytes())
-        if receipt["submission"] != context.state["reservations"][run_name]["submission"]:
+        if receipt["submission"] != context.state["reservations"][_record_key(record["run_id"], run_name)]["submission"]:
             raise TCADDebugError("retained diagnostic submission identity changed")
         proof = receipt["proof"]
         if proof["run_id"] != source_run or proof["project_sha256"] != record["project_sha256"]:
             raise TCADDebugError("retained diagnostic proof identity changed")
-        if not context.recovery_authorized(source_run) and receipt["response"].get("state") not in _TERMINAL:
-            raise TCADDebugError("Only a retained terminal diagnostic can be reused by another task.")
         if experiment:
             current = DeckProjectDraft.model_validate_json(context.state["experiment_project"], strict=True)
             if (record.get("implementation_ref") != context.state.get("experiment_implementation_ref")
@@ -609,8 +670,10 @@ class LocalTCADDebugService:
             try:
                 # Restore all completed modes before the finalizer checks the
                 # current candidate. Each control receipt is independently verified.
-                for other_name, other in context.state.get("runs", {}).items():
-                    if (other_name != run_name and (self._receipt_directory(context, other_name, other["run_id"]) / "receipt.json").is_file()
+                for other_key, other in context.state.get("runs", {}).items():
+                    other_name = other["run_name"]
+                    if (other_key != _record_key(source_run, run_name)
+                            and _context_record_key(context, other_name) == other_key and (self._receipt_directory(context, other_name, other["run_id"]) / "receipt.json").is_file()
                             and other.get("project_sha256") == record["project_sha256"]
                             and context.recovery_authorized(other["run_id"])):
                         self._restore_receipt(context, other_name, other, validate=False)

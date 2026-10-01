@@ -11,7 +11,7 @@ from scidiscovery.artifact_agent.service.input_reader import page
 @pytest.mark.parametrize('state,timed_out', [('running',False), ('failed',False), ('cancelled',False), ('failed',True)])
 def test_author_reads_saved_diagnostic_detail(tmp_path, state, timed_out):
     from tests.operations.tcad_policy_fixtures import policy_fields
-    context = SimpleNamespace(workspace=tmp_path, state={"debug_policy": policy_fields()["debug"]}, remaining_seconds=60)
+    context = SimpleNamespace(run_id="fixture", recovery_authorized=lambda owner: owner == "fixture", workspace=tmp_path, state={"debug_policy": policy_fields()["debug"]}, remaining_seconds=60)
     (tmp_path/'deck/reports').mkdir(parents=True)
     log = tmp_path/'deck/reports/solver.log';log.write_text('specific solver diagnostic\n')
     original = dict(run_name='probe', mode='initialization', state=state,

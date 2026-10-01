@@ -412,7 +412,7 @@ def test_reviewer_and_scientific_surfaces_use_declared_contract(tmp_path, monkey
 def test_debug_recovery_cancellation_preserves_original_budget(tmp_path):
     import json
     from types import SimpleNamespace
-    from tcad_artifact.local_debug_service import LocalTCADDebugService
+    from tcad_artifact.local_debug_service import LocalTCADDebugService, _record_key
     from scidiscovery.artifact_agent.schema.common import canonical_sha256
     subject = "control-goal-subject"
     calls = []
@@ -423,8 +423,8 @@ def test_debug_recovery_cancellation_preserves_original_budget(tmp_path):
     directory = tmp_path / "budgets"
     directory.mkdir()
     path = directory / (canonical_sha256({"subject":subject}) + ".json")
-    record = {"run_id":"original_run", "state":"accepted", "external_run_id":None}
-    ledger = {"reserved_wall_seconds":30, "runs":{}, "reservations":{"debug":{
+    record = {"run_id":"original_run", "run_name":"debug", "state":"accepted", "external_run_id":None}
+    ledger = {"schema_version":2, "reserved_wall_seconds":30, "runs":{}, "reservations":{_record_key("original_run", "debug"):{
         "record":record, "submission":{"schema_version":1, "name":"submitted", "local_path":"/private/submission",
         "sha256":"b"*64, "size_bytes":1, "media_type":"application/json"}}}}
     path.write_text(json.dumps(ledger))
@@ -560,4 +560,4 @@ def test_experiment_tool_binding_scopes_each_run_without_exposing_control_servic
     assert scoped.workspace == domain.exchange_root / 'experiment-workspaces/original-task'
     assert a.workspace == tmp_path / 'agent-a'
     assert first.cancel_diagnostics(a, service_name='domain.debug', name='smoke')
-    assert calls == [({'run-a', 'original-task'}, 'goal-subject', {'cancel': True, 'name': 'smoke'})]
+    assert calls == [({'run-a', 'original-task'}, 'goal-subject', {'cancel': True, 'name': 'smoke', 'current_run_id': 'run-a'})]

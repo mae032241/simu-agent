@@ -18,7 +18,8 @@ def render_progression(status, *, instance_id):
         host_active='宿主已连接', user_paused='用户暂停', user_stopped='用户停止',
         user_question='等待用户回答', waiting='等待条件变化', goal_completed='已记录目标结论',
         budget_exhausted='预算耗尽', resource_limit='资源止损', archive_restored='归档恢复后保持暂停',
-        scientific_progress_persistent_gap='复判后仍缺少有依据的推进，暂停新派发')
+        scientific_progress_persistent_gap='复判后仍缺少有依据的推进，暂停新派发',
+        human_continuation='用户已确认人工继续，保留原缺口与预算')
     body = "<section class='workbench-section progression-panel'><h2>目标推进</h2><dl class='metadata'>"
     for label, value in (("状态", states.get(status.get('state'), status.get('state'))),
             ("推进方式", status.get('mode')), ("等待 / 停止原因", reasons.get(status.get('reason'), status.get('reason'))),
@@ -26,6 +27,11 @@ def render_progression(status, *, instance_id):
             ("故障记录", status.get('fault_code'))):
         body += '<dt>' + label + '</dt><dd>' + _text(value) + '</dd>'
     body += '</dl><p>暂停或停止只阻止后续调度；在途 Worker 和外部任务仍可完成。取消外部任务是独立操作，须核对其实际结果。</p>'
+    human = status.get('human_continuation') or {}
+    if human.get('history'):
+        body += '<h3>人工继续记录</h3><p>' + ('当前人工继续有效。' if human.get('active') else '历史确认当前不生效。')
+        body += '用户决定属于调度控制，不是新的科学证据；原始缺口与复判次数仍见科研进展观测。</p>'
+        body += render_json_value(human, max_bytes=16384)
     if status.get('historical'):
         body += '<p>以下为归档时的历史推进记录；通知仅供回读，不会恢复调度或重发通知。</p>'
     body += '<p>关闭终端或重新选择读取实例不会暂停推进，也不会接管调度权。</p>'

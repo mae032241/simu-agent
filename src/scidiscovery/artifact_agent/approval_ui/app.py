@@ -414,10 +414,17 @@ class ApprovalUI:
                 local_access=self.browser_access is not None)
         elif session_key is not None:
             current = None
+            human_confirmation = None
             if capability and self.bindings:
                 current_id = self.bindings.session_instance(session_key=capability.session_key)
                 current = self.bindings.get_instance(instance_id=current_id) if current_id else None
+                if current:
+                    from ..service.scheduling_control import human_continuation_binding
+                    control = self.bindings.progression_status(instance_id=current_id, internal=True)
+                    if control['state'] == 'paused' and control.get('objective_ref_json'):
+                        human_confirmation = human_continuation_binding(control, capability.session_key)
             controls = session_controls(rows, token=token, csrf=self.session_id, current=current,
+                human_confirmation=human_confirmation,
                 expires_at=capability.expires_at, workbench_available=self.read_model is not None,
                 progression=(self.read_model.progression_status(current.instance_id, session_key=capability.session_key)
                     if self.read_model else self.bindings.progression_status(instance_id=current.instance_id,
@@ -965,6 +972,15 @@ class ApprovalUI:
                     bound = self.bindings.session_instance(session_key=key)
                     if bound is None:
                         raise SchedulerInstanceConflict("请先选择读取实例。")
+                    if _required(form, "command") == "human_continue":
+                        if _required(form, "confirm_human_continue") != "yes":
+                            raise ValueError("explicit human confirmation required")
+                        if _required(form, "instance_id") != bound:
+                            raise SchedulerInstanceConflict("实例绑定已变化，请重新确认。")
+                        self.bindings.human_continue_from_ui(instance_id=bound, session_key=key,
+                            confirmation_binding=_required(form, "confirmation_binding"))
+                        return self._respond(handler, HTTPStatus.SEE_OTHER, b"", "text/plain; charset=utf-8",
+                            extra_headers={"Location": "/sessions/" + key + "?" + urlencode({"capability": capability_token})})
                     name = _one(form, "objective_name") or None
                     ref = None
                     if name:

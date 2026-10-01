@@ -76,7 +76,7 @@ class ProgressionStatusInput(RootToolInput):
 
 class ProgressionReportInput(RootToolInput):
     assessments: list[ProgressAssessment] = Field(default_factory=list, max_length=8,
-        description="Optional task-level goal judgments. Control freezes evidence and appends corrections; this is not a scientific result or qualification. Omission never blocks ordinary tasks.")
+        description="Optional task-level goal judgments. Control freezes evidence and appends corrections; this is not a scientific result or qualification. Ordinary tasks require no assessment. In configured assist mode, persistent missing or unsupported assessments can trigger observation-gap reassessment and pause further dispatch. Cited new bytes plus a Root advance judgment do not independently establish scientific progress.")
     summary: str = Field(min_length=1, max_length=4096,
         description="Current goal outcome or specific waiting condition; retain scientific limitations.")
     completed: bool = Field(default=False, description="Root judges the whole frozen goal complete, after reading sealed results.")
@@ -183,7 +183,7 @@ class OperationCallInput(NamedInput, RevisionInput):
     inputs: tuple[OperationInputSelection, ...] = Field(max_length=64)
     instruction: str | None = Field(default=None, max_length=65536)
     scientific_intent: ScientificIntent | None = Field(default=None,
-        description="Optional complete Agent task purpose, recommended for background research. Read-only to the Worker; control supplies all bindings. Ordinary tasks remain valid without it.")
+        description="Optional complete Agent task purpose, recommended for background research. Read-only to the Worker; control supplies all bindings. Ordinary tasks remain valid without it. In configured assist mode, persistent missing intent can trigger observation-gap reassessment and pause further dispatch.")
     parameters: EmptyOperationParameters = Field(default_factory=dict)
     require_execution_review: bool | None = Field(default=None,
         description="Experiment tasks only. Set true when the user/task explicitly requires independent implementation review before formal execution. Control requires a pass on the exact sealed implementation and resolves the review automatically; no Worker binding fields. Omission defaults to false for new tasks and inherits the requirement on recovery. Recovery cannot remove an existing requirement.")
@@ -324,7 +324,7 @@ SCHEDULING_WRITES = frozenset({
 
 ROOT_TOOLS = (
     RootTool("progression_message", "Save original user context for the started goal from an authorized reading session, without taking over the background writer. Does not grant approvals or resume a paused goal.", ProgressionMessageInput),
-    RootTool("progression_report", "Optionally record a goal outcome, waiting condition, user question or evidence-based task assessment. Corrections append immutable history. Ordinary tasks and stages require no extra report. No research is triggered by this report.", ProgressionReportInput),
+    RootTool("progression_report", "Optionally record a goal outcome, waiting condition, user question or evidence-based task assessment. Corrections append immutable history. Ordinary tasks and stages require no extra report. Configured assist may pause further dispatch after persistent missing or unsupported assessments. No research is triggered by this report.", ProgressionReportInput),
     RootTool("progression_status", "Read scheduling ownership, frozen objective, sealed task handoff and recent Root assessment history; continue assessment history with progress_cursor and terminal delivery history with delivery_cursor. Accepted work has independent Run state.", ProgressionStatusInput),
     RootTool("progression_command", "Start, pause, resume, stop or explicitly take over scheduling for the selected instance. Background start remains pending until its host is available. Pause/stop do not cancel accepted work.", ProgressionCommandInput),
     RootTool("diagnostic_read", "Read bounded engineering error details visible to the current instance or session.", DiagnosticReadInput),
