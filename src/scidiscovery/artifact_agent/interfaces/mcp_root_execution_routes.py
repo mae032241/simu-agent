@@ -519,7 +519,7 @@ class RootExecutionRoutes:
 
     @owned_mutation(namespace='execution')
     def execution_abandon(self, *, name: str) -> dict[str, Any]:
-        execution_id = self._resolve("execution", name)
+        execution_id = self._resolve("execution", name, allow_task_recovery=True)
         if self.execution_bridge is None:
             self.executions.abandon(execution_id)
         else:
@@ -530,14 +530,17 @@ class RootExecutionRoutes:
     def execution_cancel(self, *, name: str) -> dict[str, Any]:
         if self.execution_bridge is None:
             raise RootToolError("no execution bridge is configured")
-        self.execution_bridge.cancel(execution_id=self._resolve("execution", name))
+        self.execution_bridge.cancel(execution_id=self._resolve("execution", name, allow_task_recovery=True))
         return self._execution_status_snapshot(name=name)
 
     def execution_status(self, *, name: str) -> dict[str, Any]:
         execution_id = self._resolve("execution", name, allow_task_recovery=True)
+        if self.execution_bridge is not None:
+            self.execution_bridge.submissions.refresh(execution_id, scope="instance:" + self._instance_id())
         status = self.executions.status(execution_id)
         if (status.external_run_id is not None
-                and status.state in {"submitted", "running", "cancelling"}):
+                and (status.state in {"submitted", "running", "cancelling"}
+                    or self.executions.budget_needs_settlement(execution_id))):
             if self.execution_bridge is None:
                 raise RootToolError("Cannot refresh execution status: no execution bridge is configured")
             self.execution_bridge.sync(execution_id=execution_id,
@@ -548,6 +551,11 @@ class RootExecutionRoutes:
         """Saved state for inventories and responses to actions already performed."""
         binding = self._binding("execution", name, allow_task_recovery=True)
         status = self.executions.status(binding.object_id)
+        submission = self.execution_bridge.submissions.summary(binding.object_id) if self.execution_bridge is not None else {}
+        approval_name = self.bindings.find_name(instance=self._instance_id(), namespace="approval",
+            object_id="apr_" + binding.object_id) if self._task_managed_execution(binding.object_id) else _derived_name(name, "approval")
+        approval = (self.approval_status(name=approval_name) if submission.get("state") == "awaiting_authorization"
+            and approval_name and self._optional("approval", approval_name) is not None else None)
         result_artifact_name = None
         if status.result_ref is not None:
             candidate = _derived_name(name, "result")
@@ -567,10 +575,12 @@ class RootExecutionRoutes:
             **({"recovery": {
                 "task_name": self.bindings.find_name(instance=self._instance_id(), namespace="run",
                     object_id=self._task_execution_owner(binding.object_id)),
-                "actions": ["execution_status", "execution_sync", "execution_logs", "execution_collect", "execution_outputs"],
+                "actions": self.runs.experiment_executions.recovery_actions(binding.object_id),
                 "resubmission_allowed": False,
             }} if self._task_managed_execution(binding.object_id) else {}),
             "authorization": self.executions.authorization(binding.object_id),
+            **({"submission": submission} if submission else {}),
+            **({"approval": approval, "authorization_required": "human"} if approval else {}),
             **self.executions.observation(binding.object_id),
             **({"collection": self.execution_collection.summary(binding.object_id)}
                if self.execution_collection is not None else {}),
@@ -626,7 +636,13 @@ class RootExecutionRoutes:
         self._require_scheduling_enabled()
         if self.execution_bridge is None:
             raise RootToolError("no execution bridge is configured")
-        execution_id = self._resolve("execution", name)
+        execution_id = self._resolve("execution", name, allow_task_recovery=True)
+        if self._task_managed_execution(execution_id):
+            coordinator = self.runs.experiment_executions
+            if coordinator is None:
+                raise RootToolError("Task execution recovery service is unavailable")
+            coordinator.recover_start(execution_id, instance_id=self._instance_id())
+            return self._execution_status_snapshot(name=name)
         approval_id = self._optional("approval", _derived_name(name, "approval"))
         request_ref, _ = self.executions.approval_subject_refs(execution_id)
         compiled, compiled_identity = self._current_execution_contract(
@@ -635,8 +651,11 @@ class RootExecutionRoutes:
         )
         from ..execution_bridge import ExecutionAuthorizationRequired
         try:
-            self.execution_bridge.start(
+            self.execution_bridge.submissions.start(
                 execution_id=execution_id,
+                scope="instance:" + self._instance_id(),
+                wait_seconds=self.runs.agent_settings.execution_io.submission_response_wait_seconds,
+                on_authorization_required=lambda: self._ensure_execution_approval(name=name),
                 approval_id=approval_id,
                 compiled_identity=compiled_identity,
                 allow_policy_authorization=compiled.spec.review.approval.allow_policy_authorization,
@@ -653,6 +672,9 @@ class RootExecutionRoutes:
         if self.execution_bridge is None:
             raise RootToolError("no execution bridge is configured")
         execution_id = self._resolve("execution", name, allow_task_recovery=True)
+        if self.executions.status(execution_id).external_run_id is None:
+            self.execution_bridge.submissions.refresh(execution_id, scope="instance:" + self._instance_id())
+            return self._execution_status_snapshot(name=name)
         progress = self.execution_bridge.sync(execution_id=execution_id,
             diagnostic_scope="instance:" + self._instance_id())
         self._publish_execution_result(name=name)

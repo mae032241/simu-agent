@@ -105,9 +105,11 @@ def progression_status_view(value, *, session_key=None, now=None):
         token_coverage=usage['coverage'])
     config = json.loads(value.get('config_json') or '{}')
     limits = config.get('effective', {}).get('progression')
-    if limits and now is not None:
+    if limits:
         from .progression_budget import enabled_time
-        elapsed = enabled_time(checkpoint, now)
+        # Read-only archives have no live clock: project their frozen high-water
+        # mark rather than omitting the shared remaining-budget fields.
+        elapsed = enabled_time(checkpoint, now if now is not None else checkpoint.get('time_high_water', 0))
         budget.update(elapsed_seconds=elapsed, remaining_seconds=max(0, limits['max_elapsed_seconds']-elapsed),
             time_coverage='enabled_intervals_including_active_recovery_gaps')
     if limits and (value['mode'] == 'background' or checkpoint.get('human_continuations')):

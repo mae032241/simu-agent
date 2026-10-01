@@ -19,6 +19,12 @@ from scidiscovery.operations.spec import CallableComponent
 JSON_PORTS = {"experiment_plan", "execution_package", "prior_analysis",
     "prior_analysis_manifest", "recovery_manifest"}
 VIEW_PATH = "analysis-bindings.json"
+IMPLEMENTATION_VIEW = "execution-implementation.json"
+# Scientific source values retain their original JSON pointers. Execution
+# identity, authorization, capability and transport bindings stay in control.
+SCIENTIFIC_PROJECT_FIELDS = ("solver_kind", "entrypoint", "files", "arguments",
+    "execution_plan", "expected_outputs", "parameter_bindings", "case_parameter_bindings",
+    "case_anchors", "runtime_assertions", "realization_manifest")
 
 
 def bound_plan(contents, ports):
@@ -36,7 +42,7 @@ def bound_plan(contents, ports):
 def analysis_draft_schema(envelope, schema_id, ports=None, contents=None):
     # Preserve scientific identity choices when no frozen inputs are available
     # (e.g. catalog inspection); actual workspaces always supply their inputs.
-    effective = dict(ports or {})
+    effective = {alias: port for alias, port in (ports or {}).items() if port != "execution_package"}
     effective["plan"] = "experiment_plan"
     result = result_draft_schema(envelope, schema_id, effective)
     plan = bound_plan(contents or {}, ports or {})
@@ -60,8 +66,9 @@ def analysis_draft_schema(envelope, schema_id, ports=None, contents=None):
         if not embedded:
             source = next(alias for alias, port in ports.items() if port == "experiment_plan")
         prefix = "/project/execution_plan" if embedded else ""
+        location = {"relative_path": IMPLEMENTATION_VIEW} if embedded else {"source": source}
         payload["x-scidiscovery-validation-plans"] = [{**{key: choice[key] for key in keys},
-            "source": source, "pointer": f"{prefix}/validation_plans/{index}"}
+            **location, "pointer": f"{prefix}/validation_plans/{index}"}
             for index, choice in enumerate(choices)]
         payload["properties"]["plan_key"]["description"] = "Choose a listed scientific validation plan after reading its checks at source/pointer; use its paired experiment_key."
     return result
@@ -187,8 +194,10 @@ def reading_view(request, sources, limit):
     plan_alias = package_alias if embedded else by_port["experiment_plan"]
     plan = bound_plan(sources, {alias: item.port_name for alias, item in sources.binding_descriptors.items()})
     plan_pointer = "/project/execution_plan" if embedded else ""
-    originals = {alias: {"relative_path": request.input_paths[alias].relative_to(request.workspace).as_posix(),
-        "pointer": ""} for alias in (plan_alias, package_alias)}
+    originals = {alias: ({"relative_path": request.input_paths[alias].relative_to(request.workspace).as_posix(),
+        "pointer": ""} if alias in request.input_paths else {
+        "relative_path": IMPLEMENTATION_VIEW, "pointer": "", "projection": "scientific_fields_only",
+        "original_field_pointers_preserved": True}) for alias in (plan_alias, package_alias)}
     view = {"sources": {}, "unavailable": [], "project_index": [], "case_matrix": [],
         "originals": originals, "omitted": 0,
         "omission_source": {"relative_path": "assignment.json", "pointer": "/inputs"},
@@ -204,8 +213,8 @@ def reading_view(request, sources, limit):
                 {"source_name": alias, "pointer": entry["pointer"], "details_omitted": True}, limit)
 
     append("project_index", package_alias, {"pointer": "/project",
-        **{key: project[key] for key in ("solver_kind", "tool_profile", "entrypoint") if key in project}})
-    if "review" in package:
+        **{key: project[key] for key in ("solver_kind", "entrypoint") if key in project}})
+    if package_alias in request.input_paths and "review" in package:
         append("project_index", package_alias, {"pointer": "/review"})
     for index, file in enumerate(project.get("files", ())):
         append("project_index", package_alias, {"pointer": f"/project/files/{index}/content",
@@ -232,6 +241,14 @@ def reading_view(request, sources, limit):
 
 
 def materialize(request):
+    sources = workspace_sources(request)
+    package_alias = next(alias for alias, descriptor in sources.binding_descriptors.items()
+        if descriptor.port_name == "execution_package")
+    if package_alias not in request.input_paths:
+        project = json.loads(sources[package_alias])["project"]
+        write_control_workspace_file(request.workspace, Path(IMPLEMENTATION_VIEW),
+            analysis_workspace.view_bytes({"project": {key: project[key]
+                for key in SCIENTIFIC_PROJECT_FIELDS if key in project}}), replace=False, mode=0o400)
     # Reserve room for known product correspondence before optional display detail.
     result = analysis_workspace.materialize(request, start_limit=12 * 1024)
     path = Path(analysis_workspace.START)
@@ -239,7 +256,7 @@ def materialize(request):
     start["source_bindings"] = {"relative_path": VIEW_PATH,
         "meaning": "Compact project, scientific case matrix and declared/prior conditional mappings. Use originals for omitted details; no renewed qualification."}
     start_bytes = analysis_workspace.view_bytes(start)
-    view = reading_view(request, workspace_sources(request), analysis_workspace.READ_VIEW_LIMIT - len(start_bytes))
+    view = reading_view(request, sources, analysis_workspace.READ_VIEW_LIMIT - len(start_bytes))
     write_control_workspace_file(request.workspace, Path(VIEW_PATH),
         analysis_workspace.view_bytes(view), replace=False, mode=0o400)
     write_control_workspace_file(request.workspace, path,
@@ -322,7 +339,7 @@ MATERIALIZER = CallableComponent("workspace_materializer", materialize)
 from scidiscovery.operations.workspace import WorkspaceFinalizer
 from scidiscovery.plugin_runtime.results import result_draft_schema, RESULT_PROJECTION_VERSION
 FINALIZER = CallableComponent("workspace_finalizer", WorkspaceFinalizer(
-    finalize, analysis_draft_schema, RESULT_PROJECTION_VERSION + ".tcad-plan-1",
+    finalize, analysis_draft_schema, RESULT_PROJECTION_VERSION + ".tcad-plan-2",
     draft_input_ports=("execution_package", "experiment_plan")))
 
 WORKSPACE = analysis_workspace.WORKSPACE

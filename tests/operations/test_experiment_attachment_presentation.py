@@ -14,12 +14,12 @@ from tests.operations.test_instance_trajectory_read import trajectory, artifact,
 from tests.operations.test_instance_content_display import picture
 
 
-@pytest.fixture
-def experiment_figures(trajectory, monkeypatch):
+@pytest.fixture(params=(12, 110), ids=("short-history", "over-100-parents"))
+def experiment_figures(trajectory, monkeypatch, request):
     s = trajectory
     s.runs.artifacts = s.artifacts
     labels = dict(operation_id='science.experiment.v1', operation_version='1', operation_digest='a'*64)
-    wide = tuple((f'source_{i}', artifact(s, f'wide_{i}', {'value': 'wide input ' * 2600}).ref) for i in range(12))
+    wide = tuple((f'source_{i}', artifact(s, f'wide_{i}', {'value': 'wide input ' * 2600}).ref) for i in range(request.param))
     records, images = [], []
     # These records used to consume the /records display quota before pictures.
     for i in range(20):

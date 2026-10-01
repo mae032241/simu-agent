@@ -219,7 +219,8 @@ def test_frozen_approval_shows_direct_and_exact_report_images_only(system, insta
         ui.stop()
 
 
-def test_frozen_approval_fails_closed_for_ambiguous_missing_or_incomplete_direct_manifest(system, installed):
+def test_frozen_approval_fails_closed_for_ambiguous_missing_or_incomplete_direct_manifest(system, installed, monkeypatch):
+    from scidiscovery.artifact_agent.storage.cas import CASObjectMissingError
     identity = {"operation_id": "fixture.analysis", "operation_version": "1",
                 "operation_digest": "e" * 64}
     evidence_identity = {"operation_version": identity["operation_version"],
@@ -239,9 +240,9 @@ def test_frozen_approval_fails_closed_for_ambiguous_missing_or_incomplete_direct
                                           "tool_producer_run": run_id})
         return image, manifest
 
-    for scenario in ("ambiguous", "missing", "incomplete"):
-        count = 101 if scenario == "incomplete" else 12
-        payload = {} if scenario == "incomplete" else {"value": "wide input " * 2600}
+    for scenario in ("ambiguous", "missing", "incomplete", "wide_complete"):
+        count = 101 if scenario in {"incomplete", "wide_complete"} else 12
+        payload = {} if count == 101 else {"value": "wide input " * 2600}
         wide = tuple(register(system, f"{scenario}-wide-{index:03d}", "fixture.v1",
             payload).ref for index in range(count))
         parents = wide
@@ -251,8 +252,8 @@ def test_frozen_approval_fails_closed_for_ambiguous_missing_or_incomplete_direct
             # Preserve one complete prior pair ahead of the wide inputs while
             # the second direct manifest remains beyond the response budget.
             parents = (prior_manifest.ref, prior_image.ref, *wide, current_manifest.ref)
-        elif scenario == "incomplete":
-            _, current_manifest = receipt("incomplete", "incomplete-run")
+        elif scenario in {"incomplete", "wide_complete"}:
+            current_image, current_manifest = receipt(scenario, scenario + "-run")
             parents = (*wide, current_manifest.ref)
         report = register(system, scenario + "-report", "scidiscovery.layered-diagnosis.v1", {
             "summary": "Frozen result", "overall_verdict": "inconclusive", "claim_allowed": False,
@@ -261,10 +262,22 @@ def test_frozen_approval_fails_closed_for_ambiguous_missing_or_incomplete_direct
             parents=parents, labels={**identity, "operation_output_port": "layered_diagnosis"})
         launch = approval(system, scenario + "-figure-review", (report.ref,))
         review = system.approvals.review(launch.approval_id, access_token=launch.access_token)
-        context = system.model.approval_context(system.a, review, presentation=True)
+        with monkeypatch.context() as patch:
+            if scenario == "incomplete":
+                catalog = system.model.artifacts.catalog
+                def unavailable_manifest(ref):
+                    if ref == current_manifest.ref:
+                        raise CASObjectMissingError("Exact direct manifest is unavailable")
+                    return catalog(ref)
+                patch.setattr(system.model.artifacts, "catalog", unavailable_manifest)
+            context = system.model.approval_context(system.a, review, presentation=True)
         rendered = build_presentation(tuple(context["artifacts"]),
             focus_artifact_ids=[report.artifact_id])
-        assert rendered["figures"] == []
+        if scenario == "wide_complete":
+            assert [item["artifact_id"] for item in rendered["figures"]] == [current_image.artifact_id]
+        else:
+            assert rendered["figures"] == [], scenario
         report_view = next(item for item in context["artifacts"] if item["artifact_id"] == report.artifact_id)
         assert report_view["family"]["presentation_manifest_scan_complete"] is (scenario != "incomplete")
-        assert report_view["family"]["presentation_manifest_match_count"] == (2 if scenario == "ambiguous" else 0)
+        assert report_view["family"]["presentation_manifest_match_count"] == (
+            2 if scenario == "ambiguous" else 1 if scenario == "wide_complete" else 0)

@@ -159,7 +159,14 @@ implementation=<sealed reference>). The request suspends controlled experimental
 Wait for the scheduler notification; read the sealed outcome with that same review action, then continue
 this same task; a negative review calls for scientific correction, not execution.
 Obtain a sealed pass before formal execution; never finish merely to make the subject addressable.
-Formal execution is available only through worker_experiment_execute. A started
+Formal execution is available only through worker_experiment_execute.
+Submission runs in the control background. submission.state=pending acknowledges
+the original request, not solver success. Poll status with the same name. An
+unknown submission is reconciled by read-only lookup, never by creating another
+request; submission.error provides a bounded diagnostic reference. A started
+submission can be stopped with cancel: control retires an uncertain new-protocol
+request remotely before releasing its reservation, or cancels its existing job.
+An unreachable or older backend cannot prove permanent absence. A started
 or successful solver is not by itself a valid scientific result. Read the collected
 facts and deliver an ExperimentReport with the adopted sealed stage references.
 Use status for fresh remote state and bounded progress of a submitted execution;
@@ -192,7 +199,7 @@ STAGE_TOOL = WorkerToolDefinition(name="worker_experiment_stage",
     input_model=StageSubmission, capability="experiment.stage", contextual_handler=submit_stage, owner_only=True,
     evidence_ports=("tool_evidence", "recovery_manifest_output"))
 EXECUTE_TOOL = WorkerToolDefinition(name="worker_experiment_execute",
-    description="Request, advance, collect or cancel this experiment's formal execution. review returns an exact public subject and operation_invoke request for independent review; it starts neither a reviewer nor execution. status refreshes remote state and bounded progress of a submitted execution without submitting, cancelling or collecting. advance can continue an authorized execution; collect transfers result files. Confirmed terminal states require no remote query. Status returns timing, log metadata and refresh failure only, never log text. Use logs for the newest cached page, direction=before with its before cursor for older text, or direction=after with its after cursor for new text. No change returns empty text; gap=snapshot_replaced explicitly marks lost continuity and returns a fresh newest page. It performs no remote query. After successful collection read/export the collected log outputs. Read text or export exact collected scientific files into scratch for local analysis. Uses configured authorization and the original scientific budget.",
+    description="Request, advance, collect or cancel this experiment's formal execution. start may return submission.state=pending while control submits in the background; query status with the same name. unknown is not proof of non-submission; never create a replacement. Async failures are readable in submission.error. review returns an exact public subject and operation_invoke request for independent review; it starts neither a reviewer nor execution. status refreshes remote state and bounded progress of a submitted execution without submitting, cancelling or collecting. advance can continue an authorized execution; collect transfers result files. Confirmed terminal states require no remote query. Status returns timing, log metadata and refresh failure only, never log text. Use logs for the newest cached page, direction=before with its before cursor for older text, or direction=after with its after cursor for new text. No change returns empty text; gap=snapshot_replaced explicitly marks lost continuity and returns a fresh newest page. It performs no remote query. After successful collection read/export the collected log outputs. Read text or export exact collected scientific files into scratch for local analysis. Uses configured authorization and the original scientific budget.",
     input_model=ExecuteExperiment, capability="experiment.execute", contextual_handler=execute,
     optional_services=("experiment.execution",), evidence_ports=("tool_evidence", "recovery_manifest_output"))
 

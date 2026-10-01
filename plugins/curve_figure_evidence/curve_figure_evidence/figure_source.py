@@ -11,6 +11,7 @@ from pathlib import Path
 
 from PIL import Image, __version__ as PILLOW_VERSION
 from .figure_dependencies import command_path
+from scidiscovery.operation_contract import ToolInputError
 
 
 MAX_IMAGE_PIXELS = 25_000_000
@@ -133,7 +134,7 @@ def _pdf_rows(path: Path, *, page: int, timeout_seconds: int) -> tuple[_PdfImage
         )
         page_index += 1
     if not rows:
-        raise ValueError("PDF page contains no recoverable embedded image")
+        raise ToolInputError("figure_page_has_no_embedded_image", "The selected PDF page has no recoverable embedded image; locate the figure page from the original PDF text and correct the page selection.", path="$.source_page")
     if len(rows) > MAX_PDF_IMAGES_PER_PAGE:
         raise ValueError("PDF page exceeds the embedded-image count limit")
     if any(row.width * row.height > MAX_IMAGE_PIXELS for row in rows):

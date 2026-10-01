@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import statistics
 from dataclasses import dataclass, replace
 from typing import Iterable
 
@@ -23,6 +24,27 @@ class TracePoint:
     support_source_series: str = ""
     shared_eligible: bool = False
     identity_ambiguous: bool = False
+    interpolation_eligible: bool = True
+    measurement_location_resolved: bool = True
+    pixel_y_support_min: float = 0.0
+    pixel_y_support_max: float = 0.0
+    interpolation_reason: str = ""
+    pixel_y_support_ranges: tuple[tuple[float, float], ...] = ()
+    cluster_y_min: float = 0.0
+    cluster_y_max: float = 0.0
+    local_slope: float = 0.0
+    normal_line_width_px: float = 1.0
+    pixel_resolution_px: float = 1.0
+    x_localization_uncertainty_px: float = 0.5
+    y_localization_uncertainty_px: float = 0.5
+
+
+# Pixel geometry tolerances belong to the extractor, never to scientific input.
+DIRECTION_RADIUS_PX = 2
+AMBIGUITY_SCORE_MARGIN_PX = 1.0
+NORMAL_SAMPLE_STEP_PX = 0.25
+CENTER_REFINEMENT_PASSES = 2
+GUIDE_REACQUISITION_DISTANCE_PX = 3.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,9 +138,315 @@ def _column_candidates(
                 "raw_y": float(raw_y),
                 "subpixel_y": subpixel_y,
                 "uncertainty_px": max(0.5, len(group) / 2.0),
+                "support_min": float(group[0]),
+                "support_max": float(group[-1]),
             }
         )
     return result
+
+
+def _connected(a: dict[str, float], b: dict[str, float]) -> bool:
+    # Eight-connected raster support, including a steep stroke's overlapping
+    # projections. Center displacement alone is not a connectivity test.
+    return _support_ranges_connected(((a["support_min"], a["support_max"]),),
+        ((b["support_min"], b["support_max"]),))
+
+
+def _support_ranges_connected(left, right):
+    """Test an adjacent-column edge; legacy tables have no support ranges."""
+    return not left or not right or any(max(a[0] - b[1], b[0] - a[1]) <= 1.0
+        for a in left for b in right)
+
+
+def _guide_distance(candidate, y):
+    return max(0.0, candidate["support_min"] - y, y - candidate["support_max"])
+
+
+def _identity_supported_columns(columns, seeds, fallback):
+    """Admit disconnected strokes by guide identity, never by their length.
+
+    A component anchored anywhere can extend beyond the seed endpoints. Other
+    components can retain dashed/occluded pieces near the guide. Overlapping
+    alternatives supported by fewer anchors cannot displace the anchored stroke
+    with a single isolated nearest-guide pixel.
+    """
+    parents = {}
+
+    def root(node):
+        while parents[node] != node:
+            parents[node] = parents[parents[node]]
+            node = parents[node]
+        return node
+
+    for x, candidates in columns.items():
+        for j, candidate in enumerate(candidates):
+            node = (x, j)
+            parents[node] = node
+            for k, previous in enumerate(columns.get(x - 1, ())):
+                if _connected(previous, candidate):
+                    parents[root((x - 1, k))] = root(node)
+    components = {}
+    for node in parents:
+        components.setdefault(root(node), []).append(node)
+    seed_distances = [min((_guide_distance(candidate, y)
+        for candidate in columns.get(int(math.floor(x + 0.5)), ())), default=math.inf)
+        for x, y in seeds]
+    supported_seed_errors = [distance for distance in seed_distances
+        if distance <= GUIDE_REACQUISITION_DISTANCE_PX]
+    guide_limit = min(GUIDE_REACQUISITION_DISTANCE_PX,
+        max(supported_seed_errors, default=0.0) + AMBIGUITY_SCORE_MARGIN_PX)
+    anchor_counts, admitted = {}, set()
+    for key, nodes in components.items():
+        component_columns = {}
+        for x, j in nodes:
+            component_columns.setdefault(x, []).append(columns[x][j])
+        anchors = sum(any(_guide_distance(candidate, y) <= min(
+            GUIDE_REACQUISITION_DISTANCE_PX, nearest + 0.5)
+            for candidate in component_columns.get(int(math.floor(x + 0.5)), ()))
+            for (x, y), nearest in zip(seeds, seed_distances))
+        anchor_counts[key] = anchors
+        if anchors or any(_guide_distance(candidate, guide_y(seeds, x, fallback))
+                <= guide_limit
+                for x, j in nodes for candidate in (columns[x][j],)):
+            admitted.add(key)
+    result = {}
+    for x, candidates in columns.items():
+        available = [(candidate, root((x, j))) for j, candidate in enumerate(candidates)
+            if root((x, j)) in admitted]
+        best_anchor_count = max((anchor_counts[key] for _, key in available), default=0)
+        result[x] = [candidate for candidate, key in available
+            if anchor_counts[key] == best_anchor_count]
+    retained = {id(candidate) for candidates in result.values() for candidate in candidates}
+    retained_components = []
+    for nodes in components.values():
+        component = {}
+        for x, j in nodes:
+            candidate = columns[x][j]
+            if id(candidate) in retained:
+                component.setdefault(x, []).append(candidate)
+        if component:
+            retained_components.append(component)
+    return result, guide_limit, retained_components
+
+
+def _continuous_paths(columns, seeds, fallback):
+    """Grow from supported identity anchors in both directions, without clipping.
+
+    The same natural-end rule applies to each side of an interior anchor. Equal
+    anchors are integrated as candidate evidence, so scan order cannot decide
+    identity. Disconnected components retain their own observed gaps.
+    """
+    _, guide_limit, components = _identity_supported_columns(columns, seeds, fallback)
+    candidates_by_x = {}
+    for component in components:
+        midpoint = (min(component) + max(component)) / 2
+        sites = []
+        for seed_x, seed_y in seeds:
+            x = int(math.floor(seed_x + 0.5))
+            candidates = component.get(x, ())
+            nearest = min((_guide_distance(candidate, seed_y) for candidate in candidates), default=math.inf)
+            if nearest <= guide_limit:
+                sites.append(((nearest, abs(x - midpoint)), x, seed_y))
+        if not sites:
+            for x, candidates in component.items():
+                y = guide_y(seeds, x, fallback)
+                nearest = min(_guide_distance(candidate, y) for candidate in candidates)
+                if nearest <= guide_limit:
+                    sites.append(((nearest, abs(x - midpoint)), x, y))
+        if not sites:
+            continue
+        best = min(score for score, _, _ in sites)
+        for score, anchor_x, anchor_y in sites:
+            if score != best:
+                continue
+            nearest = min(_guide_distance(candidate, anchor_y) for candidate in component[anchor_x])
+            anchor_candidates = [candidate for candidate in component[anchor_x]
+                if _guide_distance(candidate, anchor_y) <= nearest + 0.5]
+            for direction in (-1, 1):
+                side = {direction * x: list(component[x]) for x in sorted(component, reverse=direction < 0)
+                    if direction * (x - anchor_x) >= 0}
+                side[direction * anchor_x] = anchor_candidates
+                side_seeds = seeds if direction > 0 else tuple((-x, y) for x, y in reversed(seeds))
+                selected, competing, _ = _grow_columns(side, side_seeds, fallback, guide_limit)
+                for x, candidate in selected.items():
+                    actual_x = direction * x
+                    candidates_by_x.setdefault(actual_x, []).extend(competing[x])
+    selected, competing, segment_ids = {}, {}, {}
+    previous = None
+    for x in sorted(candidates_by_x):
+        alternatives = sorted({id(candidate): candidate for candidate in candidates_by_x[x]}.values(),
+            key=lambda candidate: candidate["subpixel_y"])
+        chosen = min(alternatives, key=lambda candidate: (
+            abs(candidate["subpixel_y"] - guide_y(seeds, x, fallback)), candidate["subpixel_y"]))
+        selected[x], competing[x] = chosen, alternatives
+        if previous is None or x != previous + 1 or not _connected(selected[previous], chosen):
+            segment_id = x
+        segment_ids[x] = segment_id
+        previous = x
+    return selected, competing, segment_ids
+
+
+def _grow_columns(columns, seeds, fallback, guide_limit):
+    """Select connected identity-supported paths, including natural endings.
+
+    Forward/backward costs constrain choices within each retained segment.
+    An isolated guide-nearest pixel cannot win via an unrelated neighbor.
+    A guide-selected prefix may end even if a worse branch continues. Empty
+    columns and disconnected strokes start new segments, never bridges.
+    """
+    selected, competing, segment_ids = {}, {}, {}
+    segment = []
+    forward, parents = [], []
+    reacquiring = False
+
+    def finish():
+        if not segment:
+            return
+        last = min(range(len(forward[-1])), key=lambda j: forward[-1][j])
+        best_cost = forward[-1][last]
+        chosen = [last]
+        for i in range(len(segment) - 1, 0, -1):
+            last = parents[i][last]
+            chosen.append(last)
+        chosen.reverse()
+        # Count actual differing columns in minimum-cost alternatives. Common
+        # prefixes/tails cancel in the cost difference and must cancel in its
+        # tolerance too. On equal costs prefer the completion closest to the
+        # selected path, so an unrelated tied branch cannot inflate tolerance.
+        prefix_differences = [[math.inf] * len(columns[x]) for x in segment]
+        for i, x in enumerate(segment):
+            for j, candidate in enumerate(columns[x]):
+                if not math.isfinite(forward[i][j]):
+                    continue
+                differences = 0
+                if i:
+                    unary = abs(candidate["subpixel_y"] - guide_y(seeds, x, fallback))
+                    differences = min((prefix_differences[i - 1][k]
+                        for k, other in enumerate(columns[segment[i - 1]])
+                        if _connected(other, candidate) and math.isclose(
+                            forward[i - 1][k] + unary, forward[i][j], rel_tol=1e-12, abs_tol=1e-9)),
+                        default=math.inf)
+                prefix_differences[i][j] = differences + int(j != chosen[i])
+        backward = [[math.inf] * len(columns[x]) for x in segment]
+        suffix_differences = [[math.inf] * len(columns[x]) for x in segment]
+        backward[-1] = [0.0] * len(columns[segment[-1]])
+        suffix_differences[-1] = [0] * len(columns[segment[-1]])
+        for i in range(len(segment) - 2, -1, -1):
+            x, next_x = segment[i], segment[i + 1]
+            for j, candidate in enumerate(columns[x]):
+                values = [(abs(other["subpixel_y"] - guide_y(seeds, next_x, fallback))
+                    + backward[i + 1][k], suffix_differences[i + 1][k] + int(k != chosen[i + 1]))
+                    for k, other in enumerate(columns[next_x]) if _connected(candidate, other)]
+                backward[i][j], suffix_differences[i][j] = min(values, default=(math.inf, math.inf))
+        segment_id = segment[0]
+        for i, x in enumerate(segment):
+            selected[x] = columns[x][chosen[i]]
+            competing[x] = [candidate for j, candidate in enumerate(columns[x])
+                if math.isfinite(forward[i][j] + backward[i][j]) and
+                forward[i][j] + backward[i][j] - best_cost <= AMBIGUITY_SCORE_MARGIN_PX * max(
+                    1, prefix_differences[i][j] + suffix_differences[i][j])]
+            segment_ids[x] = segment_id
+
+    for x, candidates in columns.items():
+        if segment and x != segment[-1] + 1:
+            finish()
+            segment, forward, parents = [], [], []
+            reacquiring = True
+        if not candidates:
+            finish()
+            segment, forward, parents = [], [], []
+            continue
+        if segment:
+            best_prefix = min(forward[-1])
+            identity_paths = [other for value, other in zip(forward[-1], columns[segment[-1]])
+                if value <= best_prefix + AMBIGUITY_SCORE_MARGIN_PX]
+            # Ambiguity over the whole segment does not authorize a worse
+            # branch to rewrite the best prefix when that prefix naturally ends.
+            if not any(_connected(previous, current)
+                    for previous in identity_paths for current in candidates):
+                finish()
+                segment, forward, parents = [], [], []
+                reacquiring = True
+        if not segment and reacquiring:
+            candidates = [candidate for candidate in candidates
+                if _guide_distance(candidate, guide_y(seeds, x, fallback))
+                <= guide_limit]
+            columns[x] = candidates
+            if not candidates:
+                continue
+            reacquiring = False
+        unary = [abs(c["subpixel_y"] - guide_y(seeds, x, fallback)) for c in candidates]
+        if segment:
+            values, links = [], []
+            for cost, candidate in zip(unary, candidates):
+                reachable = [(value, j) for j, (value, other) in enumerate(
+                    zip(forward[-1], columns[segment[-1]])) if _connected(other, candidate)]
+                previous_cost, previous_index = min(reachable, default=(math.inf, -1))
+                values.append(cost + previous_cost)
+                links.append(previous_index)
+            if not any(math.isfinite(value) for value in values):
+                finish()
+                segment, forward, parents = [], [], []
+        if not segment:
+            values, links = unary, [-1] * len(candidates)
+        segment.append(x)
+        forward.append(values)
+        parents.append(links)
+    finish()
+    return selected, competing, segment_ids
+
+
+def _image_slope(x, centers, segment_ids):
+    """Estimate direction from the selected image trajectory, preserving turns."""
+    left = [centers[x] - centers[x - d] for d in range(1, DIRECTION_RADIUS_PX + 1)
+        if x - d in centers and segment_ids[x - d] == segment_ids[x]]
+    right = [centers[x + d] - centers[x] for d in range(1, DIRECTION_RADIUS_PX + 1)
+        if x + d in centers and segment_ids[x + d] == segment_ids[x]]
+    # Immediate one-sided tangents keep a sharp extremum from acquiring a
+    # fictitious zero slope through cancellation across its two sides.
+    if left and right and left[0] * right[0] <= 0:
+        return max((left[0], right[0]), key=abs)
+    slopes = [(centers[x] - centers[x - d]) / d
+        for d in range(1, DIRECTION_RADIUS_PX + 1)
+        if x - d in centers and segment_ids[x - d] == segment_ids[x]]
+    slopes += [(centers[x + d] - centers[x]) / d
+        for d in range(1, DIRECTION_RADIUS_PX + 1)
+        if x + d in centers and segment_ids[x + d] == segment_ids[x]]
+    return statistics.median(slopes) if slopes else 0.0
+
+
+def _normal_section(image, x, y, slope, rgb, tolerance, bounds, exclusions):
+    """Measure source-colored width and center along the local image normal."""
+    left, top, right, bottom = bounds
+    scale = math.hypot(1.0, slope)
+    nx, ny = -slope / scale, 1.0 / scale
+    pixels = image.load()
+
+    def weight(t):
+        px, py = int(math.floor(x + nx * t + 0.5)), int(math.floor(y + ny * t + 0.5))
+        if not (left <= px < right and top <= py < bottom) or _excluded(px, py, exclusions):
+            return 0.0
+        pixel = pixels[px, py]
+        if not _matches(pixel, rgb, tolerance):
+            return 0.0
+        distance = math.sqrt(sum((int(pixel[i]) - rgb[i]) ** 2 for i in range(3)))
+        return max(1.0, tolerance + 1.0 - distance)
+
+    samples = [(0.0, weight(0.0))]
+    ends = []
+    for sign in (-1, 1):
+        step = 1
+        while step * NORMAL_SAMPLE_STEP_PX <= max(right - left, bottom - top):
+            t = sign * step * NORMAL_SAMPLE_STEP_PX
+            w = weight(t)
+            if not w:
+                break
+            samples.append((t, w))
+            step += 1
+        ends.append(sign * (step - 0.5) * NORMAL_SAMPLE_STEP_PX)
+    total = sum(w for _, w in samples)
+    offset = sum(t * w for t, w in samples) / total if total else 0.0
+    return offset, max(NORMAL_SAMPLE_STEP_PX, ends[1] - ends[0])
 
 
 def _select_path(
@@ -131,51 +459,91 @@ def _select_path(
     exclusions: tuple[tuple[int, int, int, int], ...],
 ) -> tuple[tuple[TracePoint, ...], int]:
     left, top, right, bottom = bounds
-    fallback = (top + bottom - 1) / 2.0
-    selected: dict[int, dict[str, float]] = {}
-    ambiguous_columns: set[int] = set()
-    for x in range(left, right):
-        guide = guide_y(seeds, x, fallback)
-        candidates = _column_candidates(
-            image,
-            x=x,
-            top=top,
-            bottom=bottom,
-            rgb=rgb,
-            tolerance=tolerance,
-            exclusions=exclusions,
-        )
-        if not candidates:
+    columns = {x: _column_candidates(image, x=x, top=top, bottom=bottom,
+        rgb=rgb, tolerance=tolerance, exclusions=exclusions) for x in range(left, right)}
+    selected, competing, segment_ids = _continuous_paths(columns, seeds, (top + bottom - 1) / 2)
+    centers = {x: candidate["subpixel_y"] for x, candidate in selected.items()}
+    # A turning normal can intersect both arms of a sharp tip. Its whole
+    # section is then not one line width. Estimate the cap from its own section
+    # and the narrower flank sections, retaining the image extremum.
+    tip_widths = {}
+    initial_centers = dict(centers)
+    for x, candidate in selected.items():
+        if x - 1 not in selected or x + 1 not in selected:
             continue
-        ranked = sorted(
-            candidates,
-            key=lambda candidate: (
-                abs(candidate["subpixel_y"] - guide),
-                candidate["subpixel_y"],
-            ),
-        )
-        selected[x] = ranked[0]
-        if (
-            len(ranked) > 1
-            and abs(ranked[0]["subpixel_y"] - guide)
-            == abs(ranked[1]["subpixel_y"] - guide)
-        ):
-            ambiguous_columns.add(x)
-    return (
-        tuple(
-            TracePoint(
-                point_index=x - left,
-                pixel_x_raw=x,
-                pixel_y_raw=int(selected[x]["raw_y"]),
-                pixel_x_subpixel=float(x),
-                pixel_y_subpixel=selected[x]["subpixel_y"],
-                uncertainty_px=selected[x]["uncertainty_px"],
-                identity_ambiguous=x in ambiguous_columns,
-            )
-            for x in sorted(selected)
-        ),
-        len(ambiguous_columns),
-    )
+        if not segment_ids[x - 1] == segment_ids[x] == segment_ids[x + 1]:
+            continue
+        before = initial_centers[x] - initial_centers[x - 1]
+        after = initial_centers[x + 1] - initial_centers[x]
+        if before * after >= 0 or abs(before) + abs(after) <= 1:
+            continue
+        widths = []
+        for neighbor in (x - DIRECTION_RADIUS_PX, x, x + DIRECTION_RADIUS_PX):
+            if neighbor in selected and segment_ids[neighbor] == segment_ids[x]:
+                _, width = _normal_section(image, neighbor, initial_centers[neighbor],
+                    _image_slope(neighbor, initial_centers, segment_ids), rgb,
+                    tolerance, bounds, exclusions)
+                widths.append(width)
+        normal_width = min(widths)
+        tip_widths[x] = normal_width
+        cap_offset = max(0.0, (normal_width - 1.0) / 2.0)
+        centers[x] = (min(candidate["support_max"], candidate["support_min"] + cap_offset)
+            if before < 0 else max(candidate["support_min"], candidate["support_max"] - cap_offset))
+    for _ in range(CENTER_REFINEMENT_PASSES):
+        refined = {}
+        for x, candidate in selected.items():
+            if any(abs(x - tip) <= DIRECTION_RADIUS_PX and
+                    segment_ids[x] == segment_ids[tip] for tip in tip_widths):
+                # A normal near a turn may traverse both arms. Keep its image
+                # column centroid and cap rather than average across the turn.
+                refined[x] = centers[x]
+                continue
+            slope = _image_slope(x, centers, segment_ids)
+            offset, _width = _normal_section(image, x, centers[x], slope,
+                rgb, tolerance, bounds, exclusions)
+            # Transfer the normal-section center back to this source column.
+            refined[x] = min(candidate["support_max"], max(candidate["support_min"],
+                centers[x] + math.hypot(1.0, slope) * offset))
+        centers = refined
+    points = []
+    for x, candidate in selected.items():
+        slope = _image_slope(x, centers, segment_ids)
+        _, normal_width = _normal_section(image, x, centers[x], slope,
+            rgb, tolerance, bounds, exclusions)
+        normal_width = tip_widths.get(x, normal_width)
+        # Conservative coordinate bounds, not a statistical error bar. Raster
+        # pixel resolution is separate from normal line width; the extracted
+        # slope projects transverse width and horizontal quantization into y.
+        x_uncertainty = 0.5
+        normal_half_width = max(0.0, (normal_width - 1.0) / 2.0)
+        y_uncertainty = normal_half_width * math.hypot(1.0, slope) + 0.5 * (1.0 + abs(slope))
+        alternatives = competing[x]
+        # A merged band can contain two coherent raster branches even though
+        # the column has only one cluster. Its center cannot establish a unique
+        # owner location. This is a topology check, not a line-width threshold.
+        merged_paths = any(sum(_connected(candidate, other) and
+            any(_connected(other, further) for further in columns.get(x + 2 * direction, ()))
+            for other in columns.get(x + direction, ())) > 1 for direction in (-1, 1))
+        ambiguous = len(alternatives) > 1 or merged_paths
+        # A disconnected edge restricts the edge, not either legal endpoint.
+        # CSV consumers use the same source support ranges to split runs.
+        reason = "ambiguous_path" if ambiguous else ""
+        points.append(TracePoint(
+            point_index=x - left, pixel_x_raw=x,
+            pixel_y_raw=int(math.floor(centers[x] + 0.5)),
+            pixel_x_subpixel=float(x), pixel_y_subpixel=centers[x],
+            uncertainty_px=max(x_uncertainty, y_uncertainty),
+            identity_ambiguous=ambiguous, interpolation_eligible=not reason,
+            pixel_y_support_min=min(c["support_min"] for c in alternatives),
+            pixel_y_support_max=max(c["support_max"] for c in alternatives),
+            interpolation_reason=reason,
+            pixel_y_support_ranges=tuple((c["support_min"], c["support_max"]) for c in alternatives),
+            cluster_y_min=candidate["support_min"], cluster_y_max=candidate["support_max"],
+            local_slope=slope, normal_line_width_px=normal_width,
+            x_localization_uncertainty_px=x_uncertainty,
+            y_localization_uncertainty_px=y_uncertainty,
+        ))
+    return tuple(points), sum(point.identity_ambiguous for point in points)
 
 
 def trace_continuous_line(
@@ -187,7 +555,7 @@ def trace_continuous_line(
     bounds: tuple[int, int, int, int],
     exclusions: tuple[tuple[int, int, int, int], ...],
 ) -> LineTrace:
-    """Select real descriptor-colored pixels nearest the Agent's visible guide."""
+    """Select observed pixels using guide identity and neighboring stroke support."""
 
     left, top, right, bottom = bounds
     findings: list[LineFinding] = []
@@ -220,9 +588,15 @@ def trace_continuous_line(
         findings.append(
             LineFinding(
                 "ambiguous_path",
-                f"{ambiguous_columns} columns have equally near real pixel clusters",
+                f"{ambiguous_columns} columns retain competing guide/continuity-supported pixel clusters; refine series seeds or exclusions",
             )
         )
+    disconnected_edges = sum(right.pixel_x_raw == left.pixel_x_raw + 1 and
+        not _support_ranges_connected(left.pixel_y_support_ranges, right.pixel_y_support_ranges)
+        for left, right in zip(points, points[1:]))
+    if disconnected_edges:
+        findings.append(LineFinding("disconnected_pixel_support",
+            f"{disconnected_edges} transitions lack connected source-colored raster support; interpolation cannot bridge them"))
     max_gap = max((right - left,), default=width)
     if observed_x:
         max_gap = max(

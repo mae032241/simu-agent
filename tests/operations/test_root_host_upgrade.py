@@ -93,12 +93,13 @@ def test_snapshot_preserves_wal_science_and_original_but_drops_session_authority
     ('paused', None, True, 'budget_exhausted'), ('active', None, False, 'host_active'),
     ('paused', '{"thread_id":"unresolved"}', False, 'host_fault')])
 def test_progression_copy_preserves_usage_and_fences_authority(source, tmp_path, state, host, accepted, reason):
-    from scidiscovery.artifact_agent.service.scheduling_control import CONTROL_SCHEMA
+    from scidiscovery.artifact_agent.service.scheduling_control import CONTROL_SCHEMA, CONTROL_VERSION
     path = source / 'state/database/scheduler-bindings.sqlite3'
     checkpoint = json.dumps({'budget': {'consumed_tasks': 2, 'observed_tokens': 110}, 'usage_records': {'root': {'tokens': 123}},
                              'report': {'summary': 'insufficient evidence'}})
     with sqlite3.connect(path) as db:
         db.executescript('CREATE TABLE scheduler_instances(instance_id TEXT PRIMARY KEY);' + CONTROL_SCHEMA)
+        db.execute(f'PRAGMA user_version={CONTROL_VERSION}')
         db.execute('INSERT INTO scheduler_progression VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                    ('existing-instance', 4, 'old-root', 'old-reader', state, 'background', reason,
                     'goal', '{}', '{}', 'fingerprint', host, checkpoint, '2026-09-28'))

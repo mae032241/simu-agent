@@ -379,6 +379,8 @@ class SSHTCADTransport:
         if context and payload.get("progress_path"):
             path = Path(payload["progress_path"])
             context.report_progress = lambda value: atomic_json(path, value)
+        if operation == "submission_protocol":
+            return self._rpc("tcad_submission_protocol", {})
         if operation == "execution_policy":
             return self._rpc("tcad_execution_policy", {})
         if operation == "capabilities":
@@ -401,24 +403,28 @@ class SSHTCADTransport:
             }
         if operation == "prepare":
             return self._prepare(payload)
-        if operation == "lookup_submission":
+        if operation in {"lookup_submission", "retire_submission"}:
             marker = self._read_marker(payload["submission"])
             value = self._rpc(
-                "tcad_lookup_submission",
+                "tcad_" + operation,
                 {
                     "submission_sha256": marker["remote_submission"]["sha256"]
                 },
             )
             if value.get("found") is False:
+                if operation == "retire_submission":
+                    if value.get("retired") is not True or value.get("submission_sha256") != marker["remote_submission"]["sha256"]:
+                        raise RuntimeError("runner did not confirm retirement of the exact submission")
+                    return {"found": False, "retired": True, "submission_sha256": payload["submission"]["sha256"]}
                 return {"found": False}
             return {
                 "found": True,
                 "run_id": value["run_id"],
                 "state": value["state"],
             }
-        if operation == "submit":
+        if operation in {"submit", "submit_retirable"}:
             marker = self._read_marker(payload["submission"])
-            value = self._rpc("tcad_submit", {"submission": marker["remote_submission"], "authorization": payload.get("authorization")})
+            value = self._rpc("tcad_" + operation, {"submission": marker["remote_submission"], "authorization": payload.get("authorization")})
             return {"run_id": value["run_id"], "state": value["state"]}
         if operation == "status":
             value = self._rpc("tcad_status", {"run_id": payload["run_id"]})
@@ -607,6 +613,8 @@ class SSHTCADTransport:
         if response.get("id") != request_id:
             raise RuntimeError("remote TCAD response identity differs")
         if "error" in response:
+            if tool == "tcad_submission_protocol":
+                raise RemoteRunnerUpgradeRequired("Remote runner cannot confirm submission/retirement protocol support; upgrade the runner before submitting.")
             if tool == "tcad_execution_policy" and response["error"].get("message") == "unknown runner tool":
                 raise RemoteRunnerUpgradeRequired("Remote runner does not support execution policy discovery")
             raise RuntimeError(str(response["error"].get("message", "remote TCAD call failed")))

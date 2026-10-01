@@ -262,7 +262,7 @@ def operation_invoke_contract(value, *, revision_policy):
 def execution_summary(value):
     result = pick(value, "name", "state", "solver_state", "result_artifact_name",
                   "status_observed_at", "progress_observed_at", "reason", "observation_error",
-                  "authorization", "authorization_required", "recovery")
+                  "authorization", "authorization_required", "recovery", "submission", "approval")
     progress = value.get("progress") or {}
     if "progress" in value:
         result["progress"] = (None if value["progress"] is None else pick(progress,

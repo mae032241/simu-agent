@@ -332,6 +332,25 @@ nor rewritten or chmod/chowned in this mode. Local socket mode still requires an
 administrator-supplied complete policy matching the current schema. Successful
 installation does not establish live remote policy or solver acceptance.
 
+TCAD `agent_execution_policy` now has separate configurable thresholds:
+`max_wall_time_seconds` is the per-request limit (example: 3600 seconds), and
+`max_total_wall_time_seconds` is the cumulative limit for the same research
+instance (example: 21600 seconds). Exact control-bound goals are required, but
+changing a goal carrier or objective key does not select a new allowance pool.
+Execution requests reserve their declared limit;
+terminal runner observations settle actual elapsed time. The installation transaction
+adds missing cumulative and `debug.budget_scope` fields from the bundled example
+configuration and preserves explicit settings. Diagnostic scope defaults to `task`,
+including its complete control-bound recovery family; `scientific_subject` explicitly
+shares historical usage across that research instance. This diagnostic policy does
+not change the formal execution instance pool. Diagnostic names belong to exact
+Runs; recovering a name requires one control-authorized source Run.
+Administrators can adjust `debug.total_wall_seconds` / `debug.max_runs` when exhausted
+without erasing history; rebuild the diagnostic runtime or restart its owning service
+after editing policy so its cached adapter policy is reloaded. For bundled SSH deployment it upgrades runner
+code and remote configuration together; both must use the new policy contract.
+Existing approval decisions and scientific Run retry limits remain unchanged.
+
 The external adapter replaces the local `tcad-control.service`. SSH operations
 are bounded and return immediately; the VM runner owns detached execution and
 durable `running`, `status`, and `done` records.
@@ -366,8 +385,8 @@ Association uses the exact saved invocation and manifest. Missing images, output
 or incomplete manifests produce local display gaps without re-extraction or scientific
 requalification. Historical prose translation is deferred; no translation service is required.
 
-This update uses the existing approval UI service and port. It adds no service,
-environment variable, or VM runner protocol; no VM synchronization is needed.
+The archive feature uses the existing approval UI service and port and requires no
+VM protocol changes of its own. TCAD policy upgrades still synchronize the VM runner.
 Reinstall with the existing deployment configuration and restart the services.
 Use the management URL returned by `instance_current` to obtain instance read or
 maintenance access; request a new URL after expiry. An approval link still
@@ -479,7 +498,7 @@ The cleanup script never removes `/opt/scidiscovery`, `/etc/scidiscovery`,
 - **TCAD job appears stuck**: use short status calls. Never hold SSH open while
   the solver runs.
 
-Controlled analysis evidence recovery requires matching control/Worker packages and the VM helper. After reinstalling locally, use `SCID_PYTHON=/absolute/path/to/python deploy/install_ssh_tcad_runner.sh upgrade-code` to update only helper code using the existing transport configuration. Keep the original result directories and remote configuration. Restart the Codex session before scheduling a new analysis Run. Old helpers return unsupported inspection; ordinary offline analysis remains available. Never resubmit the old execution merely to refresh collection.
+Controlled analysis evidence recovery requires matching control/Worker packages and the VM helper. With the bundled SSH adapter, the main reinstall transaction updates runner code and configuration together using the selected command configuration. Do not use a code-only upgrade for policy schema changes. Keep original result directories and explicit administrator settings; reload Codex before scheduling a new analysis Run. Independently managed external adapters require their own matching deployment. Never resubmit an old execution merely to refresh collection.
 
 ## Agent execution settings
 
@@ -637,3 +656,34 @@ The system installer defaults SERVICE_USER to SUDO_USER or the current user. Its
 Before upgrading, save the code/wheel manifest, settings, generated configuration, signing key, complete state including committed WAL, sealed objects, workspaces and archives. Pause/stop new scheduling, reconcile accepted Workers/external jobs and stop all writers before backup. Use SQLite backup or existing maintenance/archive mechanisms for live databases, never copy only their main files. Candidate `prepare-upgrade` rejects unfinished tasks and active/unresolved schedulers. Its copied state pauses progression, clears old session/dispatch authority and retains budget, sealed results and historical notices; select the instance again and explicitly resume.
 
 Rollback: stop new dispatch in the UI, reconcile in-flight/unknown submissions, stop control/native hosts, back up current state, then switch compatible code/configuration while keeping progression disabled for initial reads. Never overwrite current databases with an old snapshot or use a code revert to erase accepted submissions. Pre-B code does not understand the new progression tables and may not safely reject them. Current code rejects scheduler user_version newer than its own; archive envelope v1 alone does not imply old-code compatibility because it contains new tables. Without tested format compatibility, retain the current version with progression disabled for reading/manual recovery. Query the original external submission before considering any retry.
+## Legacy uncertain submissions
+
+Upgrade and validate the remote runner before enabling the new control plane. The
+standard installation transaction follows this order and probes capabilities,
+policy, and `tcad_submission_protocol`. Replacing a runner file does not stop old
+RPC/submit processes that already loaded its code.
+
+Before enabling retirement for a legacy uncertain request, the administrator must
+stop old local submitters, establish that old remote RPC/submit processes and queued
+submissions have stopped, and upgrade the runner. A negative lookup is not that proof.
+As the service account, using the installed Python environment and exact execution ID:
+
+```bash
+PYTHONPATH="${SCID_INSTALL_ROOT:-/opt/scidiscovery}/site" "${SCID_PYTHON:-python3}" \
+  -m scidiscovery.artifact_agent.interfaces.submission_recovery \
+  --state-root "${SCID_STATE_ROOT:-/var/lib/scidiscovery}" \
+  --execution-id EXACT_EXECUTION_ID \
+  --confirm-old-submitters-stopped \
+  --reason 'All old submitters stopped; runner upgraded; reference operator evidence'
+```
+
+The command rejects a live local submit lock and records operator UID, reason, time,
+and exact submission digest. It changes no execution terminal state, evidence or
+budget. After service recovery, cancel/abandon the same execution normally. An
+existing remote job is recovered; only atomic retirement releases an absent job's
+reservation. An unavailable remote remains unresolved. This command is not a Worker
+or MCP tool; the documented SEC-002 same-UID isolation limitation still applies.
+
+Transient terminal-query failures retain reservations until
+`lifecycle.terminal_observation_failure_limit` consecutive failures (default 3,
+positive integer) in `agent-settings.json`; a successful query resets the counter.

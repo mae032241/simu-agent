@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import io
+import json
 import math
 from dataclasses import dataclass
 from typing import Mapping
@@ -16,6 +17,7 @@ from curve_score.schema import (
     CurveInterval,
     CurvePoint,
     CurveSeries,
+    CurveSharedSupport,
 )
 from .figure_evidence import (
     FigureAxisCalibration,
@@ -25,6 +27,7 @@ from .figure_evidence import (
     FigureEvidenceValidationReport,
     FigureEvidenceValidationSeries,
 )
+from .figure_line_tracker import _support_ranges_connected
 
 
 FIGURE_EVIDENCE_BUNDLE_PROFILE = "scidiscovery.curve-bundle.figure-evidence.v1"
@@ -116,6 +119,7 @@ def normalize_figure_evidence(
         raise ValueError("validation report identity differs from figure manifest")
 
     manifest_series = _manifest_series(manifest)
+    normalized_keys = {(panel.panel_key, evidence.series_key): key for panel, evidence, key in manifest_series}
     expected_inputs = {
         _table_alias(panel.panel_key, evidence.series_key)
         for panel, evidence, _ in manifest_series
@@ -198,22 +202,25 @@ def normalize_figure_evidence(
         ):
             reason = "no_continuous_quantitative_interval"
 
-        selected_points = tuple(
+        # Runs above retain source pixel adjacency and permissions. Only the
+        # delivered observations are ordered in calibrated scientific space;
+        # stable sorting preserves the existing duplicate-x policy and order.
+        selected_points = tuple(sorted((
             CurvePoint(
                 x=_axis_value(panel.axis_calibration.x, row.pixel_x),
                 y=_axis_value(panel.axis_calibration.y, row.pixel_y),
             )
             for row in rows
             if row.observed and (not has_eligibility or row.eligible)
-        )
-        observed_points = tuple(
+        ), key=lambda point: point.x))
+        observed_points = tuple(sorted((
             CurvePoint(
                 x=_axis_value(panel.axis_calibration.x, row.pixel_x),
                 y=_axis_value(panel.axis_calibration.y, row.pixel_y),
             )
             for row in rows
             if row.observed
-        )
+        ), key=lambda point: point.x))
         if profile == FIGURE_EVIDENCE_BUNDLE_PROFILE_V2:
             points = observed_points
             if points:
@@ -273,6 +280,15 @@ def normalize_figure_evidence(
                     f"figure:{manifest.figure_key}/panel:{panel.panel_key}/"
                     f"series:{series_key}/{evidence.data_item}"
                 ),
+                shared_support=tuple(CurveSharedSupport(group_key=support.group_key,
+                    member_series=tuple(normalized_keys[(panel.panel_key, key)] for key in (
+                        support.member_series if support.mode == "coincident_overlap"
+                        else (support.visible_series, *support.covered_series))),
+                    source_locator=f"figure:{manifest.figure_key}/panel:{panel.panel_key}/source:{manifest.source.image_sha256}",
+                    source_pixel_ranges=support.pixel_ranges)
+                    for support in panel.shared_support or ()
+                    if evidence.series_key in (support.member_series if support.mode == "coincident_overlap"
+                        else (support.visible_series, *support.covered_series))),
             )
         )
         audits.append(
@@ -315,6 +331,8 @@ class _EvidenceRow:
     eligible: int
     shared_group: str = ""
     support_source_series: str = ""
+    interpolation_eligible: int = 1
+    pixel_y_support_ranges: tuple[tuple[float, float], ...] = ()
 
 
 def _manifest_series(
@@ -413,6 +431,11 @@ def _curve_rows(
                     ),
                     shared_group=row.get("shared_group", ""),
                     support_source_series=row.get("support_source_series", ""),
+                    interpolation_eligible=_flag(row.get("interpolation_eligible",
+                        row.get("quantitative_measurement_claim_eligible", "1")), "interpolation_eligible"),
+                    pixel_y_support_ranges=tuple((_finite(low, "pixel_y_support_ranges"),
+                        _finite(high, "pixel_y_support_ranges"))
+                        for low, high in json.loads(row.get("pixel_y_support_ranges", "[]"))),
                 )
             )
     except (csv.Error, KeyError, ValueError) as error:
@@ -455,10 +478,11 @@ def _quantitative_runs(
 ) -> tuple[tuple[float, ...], ...]:
     runs: list[list[float]] = []
     current: list[float] = []
-    previous_index: int | None = None
+    previous: _EvidenceRow | None = None
     for row in rows:
-        selected = row.observed and (not has_eligibility or row.eligible)
-        contiguous = previous_index is not None and row.point_index == previous_index + 1
+        selected = row.observed and (not has_eligibility or row.eligible) and row.interpolation_eligible
+        contiguous = previous is not None and row.point_index == previous.point_index + 1 and \
+            _support_ranges_connected(previous.pixel_y_support_ranges, row.pixel_y_support_ranges)
         if selected:
             if current and not contiguous:
                 runs.append(current)
@@ -467,7 +491,7 @@ def _quantitative_runs(
         elif current:
             runs.append(current)
             current = []
-        previous_index = row.point_index
+        previous = row
     if current:
         runs.append(current)
     return tuple(tuple(run) for run in runs)

@@ -54,7 +54,7 @@ def test_unresolved_figure_retains_source_and_partial_fields_without_recovery():
     request = FigureDigitizationRequest.model_validate_json(canonical_json(value))
     assert request.plot_bbox is not None
     materialize_figure_request(value, raw)
-    with pytest.raises(ValueError, match='cannot be materialized'):
+    with pytest.raises(ValueError, match='cannot be previewed as measured data'):
         request.require_ready()
     with pytest.raises(ValueError, match='complete recovered source metadata'):
         FigureDigitizationRequest.model_validate_json(canonical_json(dict(value, request_status='ready', unresolved_reasons=[]))).require_ready()

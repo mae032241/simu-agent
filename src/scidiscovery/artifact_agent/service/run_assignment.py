@@ -213,6 +213,7 @@ def result_schema_json(
     input_source_ports: dict[str, str] | None = None,
     read_input=None,
 ) -> bytes:
+    frozen_source_ports = dict(input_source_ports or {})
     if input_source_ports is not None:
         from ...operations.tooling import reference_source_ports
         visible = {item.name for item in (*compiled.spec.inputs, *compiled.spec.outputs) if item.agent_visible}
@@ -228,9 +229,14 @@ def result_schema_json(
     finalizer = operation_workspace_hooks(compiled).get("workspace_finalizer")
     if isinstance(finalizer, WorkspaceFinalizer):
         if finalizer.draft_input_ports:
-            contents = {alias: read_input(alias) for alias, name in (input_source_ports or {}).items()
+            # The trusted finalizer may read explicitly declared hidden inputs
+            # to complete mechanical fields. They remain absent from the public
+            # evidence schema; the hook owns any scientific-only projection.
+            hook_ports = {alias: name for alias, name in frozen_source_ports.items()
+                if alias in (input_source_ports or {}) or name in finalizer.draft_input_ports}
+            contents = {alias: read_input(alias) for alias, name in hook_ports.items()
                 if name in finalizer.draft_input_ports} if read_input is not None else {}
-            envelope = finalizer.draft_schema(envelope, port.schema_id, input_source_ports, contents)
+            envelope = finalizer.draft_schema(envelope, port.schema_id, hook_ports, contents)
         else:
             envelope = finalizer.draft_schema(envelope, port.schema_id, input_source_ports)
     # Compilation/admission metadata belongs to control, not the authoring form.

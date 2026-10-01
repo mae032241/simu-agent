@@ -79,7 +79,7 @@ class ResourceLimits(StrictModel):
     wall_time_seconds: int = Field(ge=1, le=604800)
     cpu_time_seconds: int = Field(ge=1, le=604800)
     max_memory_bytes: int = Field(ge=1, le=2**50)
-    max_output_bytes: int = Field(ge=1, le=2**50)
+    max_output_bytes: int = Field(ge=1, le=2**50, description="Total collection budget in bytes for ALL generated outputs, including PLX/TDR and captured logs; also the per-file runtime size limit. Choose for the complete output inventory, not just the process log. Exceeding the limit fails collection; no files are silently omitted.")
     max_storage_bytes: int = Field(ge=1, le=2**50)
 
 
@@ -89,6 +89,9 @@ class ArchiveEntry(StrictModel):
     size_bytes: int = Field(ge=0, le=2**50)
 
     _safe_path = field_validator("relative_path")(_validate_relative_path)
+
+
+PROCESS_LOG_PATH = ".scid-capture/solver_stdout.log"
 
 
 class ExpectedOutput(StrictModel):
@@ -109,6 +112,10 @@ class ExpectedOutput(StrictModel):
             raise declared_violation("output experiment_key and case_key must be declared together",
                 path="$.experiment_key" if self.experiment_key is None else "$.case_key")
         return self
+
+    def execution_output(self) -> ExpectedOutput:
+        """Map a frozen logical log alias to the control-owned transport path."""
+        return self.model_copy(update={"relative_path": PROCESS_LOG_PATH}) if self.capture == "process_log" else self
 
 
 class TCADJobSpec(StrictModel):
@@ -143,7 +150,7 @@ class TCADJobSpec(StrictModel):
         if any(path.startswith(".scid-capture/") for path in inputs):
             raise ValueError("input archive uses the reserved control capture directory")
         for item in self.expected_outputs:
-            if item.capture == "process_log" and item.relative_path != ".scid-capture/solver_stdout.log":
+            if item.capture == "process_log" and item.relative_path != PROCESS_LOG_PATH:
                 raise ValueError("process log must use the reserved stdout mirror path")
             if item.capture != "process_log" and item.relative_path.startswith(".scid-capture/"):
                 raise ValueError("solver output uses the reserved control capture directory")
@@ -356,6 +363,9 @@ EXECUTION_TOOLS = (
         SubmissionDigestInput,
     ),
     ExecutionTool("tcad_submit", "Submit one prepared TCAD job and return immediately.", SubmitInput),
+    ExecutionTool("tcad_submission_protocol", "Discover submission and retirement protocol support.", EmptyInput),
+    ExecutionTool("tcad_submit_retirable", "Submit with permanent exact-submission retirement support.", SubmitInput),
+    ExecutionTool("tcad_retire_submission", "Permanently fence an absent exact submission or return its existing job.", SubmissionDigestInput),
     ExecutionTool("tcad_status", "Read one durable TCAD job status and optional bounded, redacted log tails with observed job timing.", RunIdInput),
     ExecutionTool("tcad_cancel", "Request cancellation of one TCAD job.", RunIdInput),
     ExecutionTool("tcad_inspect_outputs", "Read bounded terminal files without execution or mutation.", InspectOutputsInput),
@@ -387,8 +397,14 @@ class TCADExecutionFacade:
             ]
         }
 
+    def tcad_submission_protocol(self) -> dict[str, Any]:
+        return {"version": 1, "submit": "tcad_submit_retirable", "retire": "tcad_retire_submission"}
+
     def tcad_execution_policy(self) -> dict[str, Any]:
         return self.policy.snapshot().model_dump(mode="json")
+
+    def tcad_submit_retirable(self, *, submission: FileDescriptor, authorization: ExecutionAdmission | None = None) -> dict[str, Any]:
+        return self.tcad_submit(submission=submission, authorization=authorization)
 
     def tcad_submit(self, *, submission: FileDescriptor, authorization: ExecutionAdmission | None = None) -> dict[str, Any]:
         raw = self._read_input(submission)
@@ -438,6 +454,8 @@ class TCADExecutionFacade:
         run_id = f"run_{uuid.uuid4().hex}"
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            if connection.execute("SELECT 1 FROM retired_submissions WHERE job_sha256=?", (digest,)).fetchone():
+                raise ExecutionToolError("this exact submission was permanently retired")
             previous = connection.execute(
                 "SELECT run_id FROM submissions WHERE job_sha256 = ?", (digest,)
             ).fetchone()
@@ -567,6 +585,18 @@ class TCADExecutionFacade:
         value = self._tcad_status_value(run_id=run_id)
         value["progress"] = _job_progress(str(self.runs_root / run_id))
         return value
+
+    def tcad_retire_submission(self, *, submission_sha256: str) -> dict[str, Any]:
+        SubmissionDigestInput(submission_sha256=submission_sha256)
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT run_id FROM submissions WHERE job_sha256=?", (submission_sha256,)).fetchone()
+            if row is None:
+                connection.execute("INSERT OR IGNORE INTO retired_submissions VALUES (?)", (submission_sha256,))
+            connection.commit()
+        if row is not None:
+            return {"found": True, **self.tcad_status(run_id=row["run_id"])}
+        return {"found": False, "retired": True, "submission_sha256": submission_sha256}
 
     def _tcad_status_value(self, *, run_id: str) -> dict[str, Any]:
         row = self._submission_row(run_id)
@@ -806,6 +836,7 @@ class TCADExecutionFacade:
     def _initialize(self) -> None:
         self.state_root.mkdir(parents=True, exist_ok=True, mode=0o770)
         with self._connect() as connection:
+            connection.execute("CREATE TABLE IF NOT EXISTS retired_submissions (job_sha256 TEXT PRIMARY KEY)")
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS submissions (
@@ -1079,10 +1110,5 @@ __all__ = [
 
 
 def _consumed_budget(manifest):
-    import math
-    usage = manifest.get("resource_usage", {})
-    elapsed = usage.get("elapsed_seconds")
-    storage = usage.get("observed_storage_high_water_bytes")
-    if not isinstance(elapsed, (int, float)) or not math.isfinite(elapsed) or elapsed < 0 or type(storage) is not int or storage < 0:
-        return None
-    return {"wall_time_seconds": int(math.ceil(elapsed)), "max_storage_bytes": storage}
+    from .remote_runner_py36 import _consumed_budget as observed_usage
+    return observed_usage(manifest)

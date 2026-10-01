@@ -149,3 +149,45 @@ def test_cross_execution_same_bytes_diagnostic_is_rejected(tmp_path):
     with pytest.raises(Exception):
         root.call_tool("operation_invoke", request)
     assert root.call_tool("run_list", {}) == before
+
+
+def test_analysis_derives_unpublished_control_package_from_collected_manifest(tmp_path):
+    import json
+    from pathlib import Path
+    from scidiscovery.artifact_agent.schema.artifact import ArtifactRegistration
+    system = _analysis_system(tmp_path)
+    runtime, root, request, artifacts = system[1:5]
+    original = artifacts['package']
+    hidden = runtime.artifacts.register(runtime.artifacts.read(original.ref), ArtifactRegistration(
+        kind='experiment_execution_package', schema_id=original.schema_id,
+        payload_schema_version=2, media_type='application/json', creator=runtime.actor,
+        parent_refs=original.parent_refs, confidentiality='approval_only'), idempotency_key='private-package')
+    artifacts['package'] = hidden
+    outputs = _collect_execution(system, tmp_path / 'collector', name='recovered')
+    _bind_collected(system, outputs)
+    assert all(item['port'] != 'execution_package' for item in request['inputs'])
+    worker, opened = open_analysis(system)
+    frozen = runtime.runs.status(worker._run_id)
+    assert next(i.artifact_ref for i in frozen.inputs if i.port_name == 'execution_package') == hidden.ref
+    workspace = Path(opened['workspace_path'])
+    projection = json.loads((workspace / 'execution-implementation.json').read_bytes())
+    assert projection['project']['files'] == json.loads(runtime.artifacts.read(hidden.ref))['project']['files']
+    assert not {'capability', 'review', 'input_bindings'}.intersection(projection)
+    assert not {'capability_sha256', 'tool_profile', 'resource_limits'}.intersection(projection['project'])
+    write_analysis(opened, analysis_report(alias='diagnostics'))
+    assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
+
+
+def test_analysis_rejects_ambiguous_exact_package_parents_without_creating_run(tmp_path):
+    system = _analysis_system(tmp_path)
+    _, runtime, root, request, artifacts, register = system
+    other = register('other_package', runtime.artifacts.read(artifacts['package'].ref),
+        artifacts['package'].schema_id, parents=artifacts['package'].parent_refs)
+    register('ambiguous_manifest', runtime.artifacts.read(artifacts['manifest'].ref), 'opaque',
+        parents=(artifacts['package'].ref, other.ref))
+    next(i for i in request['inputs'] if i['port'] == 'runtime_manifest')['artifact_names'] = ['ambiguous_manifest']
+    before = root.call_tool('run_list', {})
+    reply = root.call_tool('operation_preflight', request)
+    assert not reply['admissible'] and reply['reason_code'] == 'input_origin_ambiguous'
+    assert reply['port'] == 'runtime_manifest'
+    assert root.call_tool('run_list', {}) == before

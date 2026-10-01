@@ -69,7 +69,7 @@ reference tool. A collected execution stage resolves named original files from i
 exact sealed result manifest, including media type and size. Reading these files
 does not take over the execution or grant access to other runs.
 
-Execution budget responses explain when allowance is shared by scientific subject.
+Execution budget responses explain allowance shared by the research instance.
 Abandonment refunds an unused reservation only after confirming no external
 submission exists; uncertain submission lookup preserves the reservation. Reservation
 history remains recorded. Diagnostic failures distinguish exhausted budgets,
@@ -227,9 +227,12 @@ Effect execution or historical recovery. This is one declaration projection, not
 another Operation registry or authorization. Task-managed execution stays with
 `worker_experiment_execute` while its owner or any recovery descendant is active.
 When the entire lineage has failed, the execution surface and lifecycle events
-expose the original execution for status, sync, collect and outputs. Recovery does
-not permit start, abandon or cancel; internal Operations remain inaccessible. UI reads
-ExecutionService and collection state directly and retains the same authorization.
+expose the original execution for status, sync, logs, collect and outputs, plus
+state-appropriate explicit start, abandon or cancel. Starting reuses the exact request,
+implementation and approval; it checks the frozen task contract, required independent
+review and current execution policy. Uncertain submissions use authoritative lookup.
+This creates no new Run or retry and never marks the failed scientific Run successful.
+Internal Operations remain inaccessible. UI reads execution/collection state directly.
 
 Selected JSON Pointer values appear in `selected_output`, never a partial
 `sealed_output`: at most 8 paths and 32 KiB. Paths start inside the payload, for
@@ -337,6 +340,14 @@ assignments are engineering errors, never permission to substitute newer contrac
 TCAD authors put initialization coverage and untested reset paths in source comments
 before their final source-bound diagnostics, so the reviewer receives and independently
 checks those statements with the sealed project. Comments are not execution proof.
+The TCAD implementation form excludes `expected_outputs` and `collect_generated_outputs`.
+Control captures process logs and discovers solver-generated files within the declared
+resource budget, producing their paths, sizes, hashes and references from actual files.
+Authors do not repeat PLX/TDR output paths in a separate table; analysts select collected
+materials and explain their scientific meaning. Log aliases in existing sealed declarations
+are mapped only at the transport boundary, preserving the original, review subject and
+authorization. Collection alone does not establish scientific success; analysis must
+still report missing target observations.
 
 `LayeredDiagnosisReport` concentrates conclusions in `summary` and `overall_verdict`,
 with evidence and optional `limitations`. Its complete legacy `gates` object,
@@ -390,11 +401,109 @@ For an Effect, `operation_invoke` creates an immutable execution request. A comp
 contract may explicitly allow administrator policy authorization. TCAD requests
 within both configured storage and wall-time limits are authorized without a human
 approval record; other requests require the configured human decision or are denied.
+Execution policy separates the per-request wall-time threshold (`max_wall_time_seconds`,
+3600 in the example config) from the cumulative research-instance threshold
+(`max_total_wall_time_seconds`, 21600). Both are administrator configuration. Queued
+or uncertain work reserves its requested limit; terminal runner observations settle
+actual elapsed time, rounded up to seconds, independently of storage observations.
+At terminal state, missing observations are charged at reserved limits as explicit
+estimates, not claimed actual use; later measured values replace those estimates.
+Terminal jobs awaiting accounting remain in bounded background synchronization, including
+collected jobs. Preparation failure before a saved submission releases its reservation;
+an uncertain submission retains it. Repeated settlement never refunds recorded usage.
+A current policy increase changes the ceiling without resetting historical consumption.
+Approval UI separates the requested increment, per-request threshold, cumulative balance
+and overage; a negative balance is never presented as this request's available time.
+The install transaction fills a missing cumulative threshold from the bundled config
+and preserves explicit administrator settings, including on the remote runner.
+
+Development diagnostics use `debug.budget_scope` (`task` in the example configuration).
+Task accounting includes the complete control-bound recovery family.
+`scientific_subject` explicitly shares diagnostic usage across the research instance;
+neither setting changes the formal execution instance pool.
+Both modes keep immutable submission records and separate actual terminal time from
+outstanding reservations. Before new admission, known submitted jobs are refreshed to
+settle completed usage. Limits still come from `debug.total_wall_seconds` and
+`debug.max_runs`; errors identify their scope and the administrator setting needed for
+recovery. A missing exact lookup does not prove that an earlier submit has stopped:
+socket timeout leaves server processing alive, and the remote job directory may not
+exist yet. Diagnostics report `submission_unknown`; cancel and formal abandon reject
+unconfirmed retirement and retain the exact identity and reservation. Retry the same
+diagnostic status or recover the same formal execution, then cancel the confirmed job.
+Even a genuinely absent request stays reserved until permanent retirement can be proven;
+formal execution cancel/abandon uses the atomic retirement protocol described below;
+diagnostic recovery still requires a confirmed job. Approval expiry releases only
+never-prepared requests. Renaming or recovery never resets
+the current task's usage; changing scope does not delete historical accounting.
+Validated retained receipts reconcile the original diagnostic to `collected` and settle
+their trusted elapsed time idempotently, including after a crash between receipt and
+budget commits. This recovery needs no solver submission, collection or remote lookup;
+damaged receipts leave the reservation outstanding.
+Task identity comes from the sealed recovery origin even when `draft_from` changes the
+objective or resumes an earlier branch. A versioned instance ledger stores each job
+under its exact `(run_id, run_name)` identity and updates elapsed charges in place.
+The current owner takes precedence; otherwise a named recovery requires exactly one
+control-authorized ancestor. Other tasks with the same implementation or name grant
+no access. The full recovery family counts toward task limits, including sibling
+branches, without granting access to those siblings' named jobs. Multiple authorized
+ancestors with the requested name require explicit repair. Shared accounting retains
+all instance charges across goal carriers, revisions and objective keys.
+Each preflight or initialization report has an immutable attempt path; the mode report
+is only the current selection. Receipts and finalization proofs bind the attempt path.
+Old receipts retain their original bytes and hashes and restore their mode-report bytes
+to that attempt path. Conflicting attempt bytes still reject recovery.
+
+An active experiment can call `worker_experiment_execute(action="review")` again to
+obtain the latest completed review of its exact implementation in the same instance.
+Control delivers the unchanged review body through the existing sealed material channel,
+with the original review as an immutable parent and an explicit `worker_reference_read`
+request. Negative findings are readable as well. Repeated delivery is idempotent and old
+delivered versions remain readable; execution admission always checks the original latest
+exact review, never the delivered copy or an old pass.
+
 Exact request identity and any explicitly applicable review policy still apply. Explicit
 `execution_start` rechecks the current policy before submission. An unknown submission
 is looked up using its frozen descriptor before any new side effect; a renamed request
 cannot claim the same semantic project's budget again. Status and the instance UI show
 `authorization.source` (`policy`, `human`, or `none`) and the frozen policy digest/budget.
+
+Root and Worker submission calls hand remote admission, preparation and submission to
+one control-owned background writer. The bounded reply reports `submission.state=pending`;
+it does not claim solver success. The writer retains an independent maintenance lease
+and durable per-execution lock/record. Duplicate calls cannot launch another submission.
+After a lost response or daemon restart, status reconciles the exact descriptor by lookup
+only; an absent lookup is still unknown, never permission to resubmit or release budget.
+Background failures expose a bounded diagnostic reference; required approvals remain
+available through status. Operational submission progress is excluded from sealed receipts.
+Control admits one background submission per registered execution backend at a time;
+independent backends do not share the slot. A busy backend rejects before accepting
+another submission; there is no unbounded queue.
+
+An explicit abandon/cancel can retire a new-protocol uncertain submission. The backend
+atomically returns an existing job or installs a permanent tombstone under its submit
+lock; a negative lookup alone is never enough. Old in-flight submissions without recorded
+retirement support, unavailable backends and failed retirement retain their reservations.
+Retirement requires the matching control adapter and runner; it cannot certify that an
+old runner process loaded before upgrade will honor a newly installed tombstone.
+TCAD protocol discovery is required before new admission/reservation and diagnostic
+preparation. Deployment probes verify the submission/retirement protocol as well as
+capabilities and policy. For legacy requests, the administrator recovery command in
+[INSTALL.md](INSTALL.md#legacy-uncertain-submissions) records quiescence attestation;
+budget remains reserved until the normal bridge obtains remote retirement proof.
+Submission progress rewrites preserve the private `administrator_recovery` audit
+record verbatim; it is never included in the model-facing submission summary.
+
+Known terminal executions finalize missing resource measurements at their reserved
+limits in a separate estimate ledger. Responses/UI distinguish `actual` from `estimated`;
+estimates do not refund capacity and stop endless automatic polling. Later exact
+observations replace estimates without overwriting earlier measured dimensions. Both
+the actual and estimate ledgers survive instance archive/restore.
+If the terminal query itself fails, control retains the reservation and retries until
+`lifecycle.terminal_observation_failure_limit` consecutive failures (default 3).
+The counter is transactionally stored in the execution database, survives archive/restore
+and observation-cache corruption, and resets after a successful query. Readable legacy
+cache counts seed the database once. A successful
+terminal response lacking measurements still finalizes those missing dimensions.
 
 The control daemon reconciles expired Runs and polls already submitted executions
 serially, independently of Worker calls. Global `lifecycle.interval_seconds` (30)
@@ -405,6 +514,19 @@ retain the last confirmed execution state and record a refresh diagnostic. The
 reconciler never submits or collects work. Resuming the failed Run retains the
 original execution identity and removes it from Root recovery while the new owner
 is active. A terminal solver outcome does not complete the scientific Run.
+
+A task's human execution-approval wait is recorded by the background approval creator
+once in its activity ledger, starting at approval creation rather than a Worker poll.
+Effective deadlines add the union of these intervals, ending at decision, cancellation
+or expiry; simultaneous waits count once. Total credit is capped by the Run's frozen
+`execution_io.approval_wait_budget_seconds` (default 86400, zero disables credit),
+including historical pending approvals without expiry. The original deadline stays unchanged, and
+repeated reads or daemon restarts cannot accumulate extra work time. Worker calls,
+Root status and timeout reconciliation use the same projection. An approval created
+after expiry cannot revive a task. Existing failed tasks remain failed and can only
+use explicit recovery of their original execution as described above.
+Batch status reads load wait events and approval records once per batch. The local Worker
+receives the approval database path independently of Operation capability.
 
 Complete experiments use `worker_experiment_execute(action="status")` to refresh
 remote state and progress of submitted work without starting, cancelling or
@@ -470,8 +592,10 @@ received separately from files verified. Upgrading uses the existing joint local
 and remote runner install transaction; old runners fail with an upgrade diagnostic.
 
 Engineering failures use one bounded, redacted diagnostic projection. Root reads
-details by an instance/session-scoped `diagnostic_read` reference; Workers retain
-their own readable workspace reports. Existing Run activity also supplies MCP
+details by an instance/session-scoped `diagnostic_read` reference. Worker runtime errors
+and explicit Root diagnostic pages carry only a locator and section names, never inline
+tracebacks or logs; private diagnostics are not copied into scientific workspaces.
+Argument corrections still return their actionable instructions directly. Run activity supplies MCP
 timing. Local trusted workspaces share an optional process-observation launcher:
 analysis retains its existing execution policy, other roles inherit their prior
 environment and limits. Missing or damaged observation is reported explicitly
@@ -948,7 +1072,10 @@ the source snapshot. Explicit values equal to package defaults still override gl
 values. These control settings are not scientific input ports or Agent forms.
 `execution_io` defaults are `max_export_bytes=2000000000`, `read_page_bytes=16384`,
 `collection_timeout_seconds=600`, `file_timeout_seconds=120` and
-`idle_timeout_seconds=30`. Capacity is bytes, time is seconds. The experiment's text
+`idle_timeout_seconds=30` and `submission_response_wait_seconds=0.25` (0–2 seconds).
+The last setting bounds the initial wait for background submission, not solver runtime.
+`approval_wait_budget_seconds=86400` separately bounds cumulative human-wait credit.
+Capacity is bytes, time is seconds. The experiment's text
 read, streamed export and collection consume those frozen values; export/collection
 are additionally bounded by remaining Run time. They are separate from the plugin's
 configured solver storage/wall-time authorization and from RAM limits. Changing them

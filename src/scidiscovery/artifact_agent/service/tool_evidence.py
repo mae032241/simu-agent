@@ -667,6 +667,28 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
                     'operation_output_port':'recovery_manifest_output','tool_producer_run':value.run_id},confidentiality='run_private'),
             idempotency_key=f'run:{value.run_id}:tool-manifest:{hashlib.sha256(self._evidence_snapshot(value.run_id)).hexdigest()}').ref
 
+    def reference_manifest(self, value):
+        """Freeze stored receipt facts for a bound reader, without recompiling its producer.
+
+        One captured set supplies both bytes and parents. A later publication
+        cannot change this proof or make the snapshot's idempotency key drift.
+        This private proof is neither a final report nor a new scientific product.
+        """
+        records = self.tool_evidence(value.run_id)
+        accesses = self.reference_access_records(value.run_id)
+        raw = self._encode_evidence_snapshot(value, records, accesses,
+            self._recovery_tool_proof_from_records(value), self.tool_attempts(value.run_id))
+        ToolEvidenceManifest.model_validate_json(raw)
+        return self.artifacts.register(raw, ArtifactRegistration(kind='tool_evidence_manifest',
+            schema_id='scidiscovery.tool-evidence-manifest.v1', payload_schema_version=1,
+            media_type='application/json', creator=self.service_actor,
+            parent_refs=tuple(dict.fromkeys((*[item.artifact_ref for item in value.inputs],
+                *[ArtifactRef.model_validate(r['artifact_ref']) for r in (*records, *accesses)]))),
+            labels={'operation_id':value.operation_id, 'operation_digest':value.operation_digest,
+                'operation_version':value.operation_version, 'operation_output_port':'recovery_manifest_output',
+                'tool_producer_run':value.run_id}, confidentiality='run_private'),
+            idempotency_key=f'run:{value.run_id}:reference-manifest:{hashlib.sha256(raw).hexdigest()}').ref
+
     def evidence_output_refs(self, value):
         if value.state!='completed' or value.output_ref is None:
             return []

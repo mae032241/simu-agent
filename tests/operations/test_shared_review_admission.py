@@ -164,15 +164,17 @@ def test_background_review_wait_dispatch_complete_and_resume(tmp_path, monkeypat
         assert f.runs.worker_review_wait(f.run_id,'worker_experiment_prepare',{}) is None
         # Waiting is durable, does not create a replacement owner, and an exact
         # repeated request never erases the already completed reviewer.
-        outcome = f.worker.call_tool('worker_experiment_execute',{'action':'review','implementation':f.alias})['review']
-        assert outcome['state'] == 'completed'
-        assert outcome['outcome']['verdict'] == verdict
+        response = f.worker.call_tool('worker_experiment_execute',{'action':'review','implementation':f.alias})
+        outcome = response['review']
+        assert outcome['state'] == 'completed' and 'outcome' not in outcome
+        assert response['review_result']['verdict'] == verdict
         if verdict == 'revise':
             from scidiscovery.operation_contract import DiagnosticError
             with pytest.raises(DiagnosticError) as denied:
                 f.worker.call_tool('worker_experiment_execute', {'action':'start', 'implementation':f.alias})
             assert denied.value.details[0]['code'] == 'experiment_execution_review_not_passed'
-        assert outcome['outcome']['summary'] == 'Exact implementation reviewed.'
+        sealed = f.worker.call_tool('worker_reference_read', response['review_result']['read_request'])
+        assert json.loads(sealed['fragment'])['summary'] == 'Exact implementation reviewed.'
         assert not {'artifact_ref', 'run_id', 'reviewer_run_id'} & outcome.keys()
         assert f.runs.review_wait(f.run_id)['reviewer_run_id']==wait['reviewer_run_id']
         assert f.runs.status(f.run_id).state=='running'

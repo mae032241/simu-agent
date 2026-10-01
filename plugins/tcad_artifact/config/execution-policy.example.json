@@ -39,6 +39,7 @@
     "enabled": true,
     "max_storage_bytes": 2000000000,
     "max_wall_time_seconds": 3600,
+    "max_total_wall_time_seconds": 21600,
     "outside_limits": "require_human_approval"
   },
   "runner": {
@@ -55,6 +56,7 @@
     "collection_idle_seconds": 30.0
   },
   "debug": {
+    "budget_scope": "task",
     "preflight": {
       "wall_time_seconds": 60,
       "max_output_bytes": 2097152

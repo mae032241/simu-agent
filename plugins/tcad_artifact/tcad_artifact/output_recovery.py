@@ -87,7 +87,8 @@ def _inspect(context, source_alias, path, *, run_deadline, consume=None):
             listed={item['relative_path'] for item in response.get('files',())}
             declarations=[]
             for output in package.project.expected_outputs:
-                item={'output_name':output.name,'declared_path':output.relative_path,'listed':output.relative_path in listed}
+                output_path = output.execution_output().relative_path
+                item={'output_name':output.name,'declared_path':output_path,'listed':output_path in listed}
                 if len(declarations)>=256 or len(canonical_json({**response,'declared_outputs':declarations+[item]}))>60*1024:
                     break
                 declarations.append(item)
@@ -162,7 +163,7 @@ def accept_tool(request,context):
                 and item.name=='generated_'+hashlib.sha256(item.relative_path.encode('utf-8')).hexdigest()),None)
         if expected is None and generated is None:
             return {'status':'not_found','reason':'output_not_in_capture_manifest'}
-        declared_path=expected.relative_path if expected is not None else generated.relative_path
+        declared_path=expected.execution_output().relative_path if expected is not None else generated.relative_path
         media_type=expected.media_type if expected is not None else generated.media_type
         byte_limit=expected.max_bytes if expected is not None else package.project.resource_limits.max_output_bytes
         experiment_key=expected.experiment_key if expected is not None else None

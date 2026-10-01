@@ -649,10 +649,11 @@ def render_node(node: dict, *, instance_id: str, presentation: dict | None = Non
         decision = _dict(_dict(node.get("decision")).get("payload"))
         kind, prompt = approval_heading(request.get("kind"))
         question = request.get("question", "原审批事项需按原件读取。")
-        pending = node.get("state") == "pending" and storage not in ("archived", "archiving", "restoring")
+        archived = storage in ("archived", "archiving", "restoring")
+        pending = node.get("state") == "pending" and not archived
         heading = prompt if pending else kind
         approval = ("<section class='conclusion-card approval-readonly'><p class='eyebrow'>"
-            + ("原审批记录 · 只读" if storage == "archived" else "本次需要你决定" if pending else "本次审批记录") + "</p><h2>" + heading
+            + ("原审批记录 · 只读" if archived else "本次需要你决定" if pending else "本次审批记录") + "</p><h2>" + heading
             + "</h2><div class='conclusion-value'><span>人工决定</span><strong>"
             + _text(human_value(decision.get("selected_option")) if decision else "尚无决定") + "</strong></div>"
             + "<p class='conclusion-brief'>" + render_scientific_text(question, 320) + "</p>"

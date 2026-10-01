@@ -98,7 +98,7 @@ def test_experiment_only_inherits_restrictions_from_adopted_stages(tmp_path, ado
         media_type='text/plain', provisional=True)
     root.call_tool('operation_invoke', {'name': 'experiment', 'operation_id': 'science.experiment.v1',
         'instruction': 'Retain an exploratory stage without claiming execution.', 'inputs': [
-            {'port': 'research_objective', 'artifact_names': ['objective']},
+            {'port': 'subject', 'artifact_names': ['objective']},
             {'port': 'scientific_materials', 'artifact_names': ['restricted']}]})
     worker = attached_worker(runtime, root, 'experiment')
     opened = worker.call_tool('worker_open_assignment', {})

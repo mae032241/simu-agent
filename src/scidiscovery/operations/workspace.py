@@ -130,7 +130,9 @@ class WorkspaceFinalizer:
     implementation: Callable[[WorkspaceFinalizationRequest], bytes]
     draft_schema: Callable[..., dict]
     projection_version: str
-    # Opt-in fourth draft_schema argument: only these frozen inputs, keyed by alias.
+    # Opt-in fourth draft_schema argument: these frozen inputs, keyed by alias,
+    # including hidden inputs. This is a trusted control hook: it must project
+    # scientific content without exposing private input aliases or bindings.
     draft_input_ports: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:

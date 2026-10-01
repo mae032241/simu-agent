@@ -15,7 +15,9 @@ def test_terminal_sync_never_calls_collect(tmp_path):
     current = SimpleNamespace(state="succeeded", external_run_id="run", executor="fixture")
     saved = {}
     executions = SimpleNamespace(status=lambda _: current, exchange_root=tmp_path,
-        save_observation=lambda _, value: saved.update(value), observation=lambda _: dict(saved))
+        save_observation=lambda _, value: saved.update(value), observation=lambda _: dict(saved),
+        settle_budget=lambda *args, **kwargs: None,
+        record_observation_result=lambda *args, **kwargs: 0)
     def forbidden(*args, **kwargs):
         raise AssertionError("observation entered artifact collection")
     adapter = SimpleNamespace(lookup_submission=lambda _: None, collect=forbidden,

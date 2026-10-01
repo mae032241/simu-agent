@@ -134,6 +134,7 @@ def archived_model(runtime, package, manifest):
     runs.artifacts = artifacts
     runs.scheduler_bindings = bindings
     runs.scheduler_database_path = bindings.database_path
+    runs.approval_database_path = package / "records" / "approvals.sqlite3"
     runs.backend = _ArchivedWorkspaces(runtime.runs.backend, runs, package)
     approvals = _database_service(runtime.approvals, package / "records" / "approvals.sqlite3")
     if approvals is not None:
@@ -165,7 +166,7 @@ def archived_model(runtime, package, manifest):
         "artifacts", "tool_evidence", "task_lineage", "sealed_material_record",
         "available_material_records", "material_source_aliases", "material_artifact_name"})
     approval_reads = _ReadOnly(approvals, {"status", "active_ids", "has_request", "review", "request_summary", "navigation_summary", "list_requests"}) if approvals else None
-    execution_reads = _ReadOnly(executions, {"status", "active_ids", "record_references", "request_artifact_id", "observation"}) if executions else None
+    execution_reads = _ReadOnly(executions, {"status", "active_ids", "record_references", "request_artifact_id", "observation", "authorization"}) if executions else None
     from .presentation_summaries import SummaryStore
     summaries = _ReadOnly(SummaryStore(package / "records" / "views.sqlite3"), {"read"})
     return InstanceReadModel(presentation_summaries=summaries, artifacts=artifact_reads, bindings=binding_reads, runs=run_reads, approvals=approval_reads,

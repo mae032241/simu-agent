@@ -9,9 +9,11 @@ from scidiscovery.operation_contract import DiagnosticError
 from tests.operations.test_experiment_continuation import continuation
 
 
-def review(f, name, subject, verdict):
-    result = f.root.call_tool("operation_invoke", {"name": name, "operation_id": "science.object.review.v1",
-        "inputs": [{"port": "subject", "artifact_names": [subject]}], "instruction": "Assess this exact implementation."})
+def review(f, name, subject, verdict, *, request=None):
+    invocation = request or {"name": name, "operation_id": "science.object.review.v1",
+        "inputs": [{"port": "subject", "artifact_names": [subject]}], "instruction": "Assess this exact implementation."}
+    name = invocation["name"]
+    result = f.root.call_tool("operation_invoke", invocation)
     assert result["result"]["state"] == "queued", result
     run_id = f.runtime.scheduler_bindings.resolve(instance=f.instance.instance_id, namespace="run", name=name)
     f.runs.worker_connections.attach(run_id=run_id, platform_session="review-session", thread_id=name)

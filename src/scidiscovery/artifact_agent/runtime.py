@@ -135,7 +135,8 @@ def open_runtime(
             from .execution_bridge import ExecutionBridge
             from .service.experiment_execution import ExperimentExecution
             from .worker_services import load_operation_services
-            bridge = ExecutionBridge(executions, adapters=execution_adapters)
+            bridge = ExecutionBridge(executions, adapters=execution_adapters,
+                lifecycle_settings=agent_settings.lifecycle)
             experiment_factory = lambda owner: ExperimentExecution(
                 runs=owner, executions=executions, bridge=bridge,
                 collection=execution_collection, approval_base_url=approval_base_url,
@@ -151,6 +152,7 @@ def open_runtime(
             instance_maintenance=instance_maintenance,
             agent_settings=agent_settings,
             experiment_execution_factory=experiment_factory,
+            approval_database_path=state / "database" / "approvals.sqlite3",
         )
         scheduler_bindings.progress_run_reader = runs.goal_related_runs
         scheduler_bindings.progress_active_work_reader = lambda *, instance_id: (

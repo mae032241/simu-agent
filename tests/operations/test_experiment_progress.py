@@ -13,7 +13,8 @@ def test_worker_status_refreshes_and_reports_failure_without_submitting(tmp_path
             "updated_at": "2026-09-27T10:01:55Z",
             "tail": "credential = hidden\nNewton iteration 3\n"}]}
     monkeypatch.setattr(f.adapter, "status_details", lambda _: {"state": "running", "progress": progress}, raising=False)
-    result = start(f)
+    assert start(f)['state'] == 'running'
+    result = f.worker.call_tool('worker_experiment_execute', {'action':'status'})
     assert result["progress"]["elapsed_seconds"] == 120
     assert result["progress"]["log_activity"][0]["size_bytes"] == 256
     assert "Newton" not in json.dumps(result)

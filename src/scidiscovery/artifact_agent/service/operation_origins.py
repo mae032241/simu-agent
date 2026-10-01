@@ -555,7 +555,17 @@ class OperationOrigins:
                 refs = list(dict.fromkeys(following))
                 if not refs:
                     reject("input_origin_missing")
-            if rule.select != "subject":
+            private_names = {}
+            family = None
+            if rule.select == "parents":
+                # Only the exact anchor's immutable direct parents are candidates.
+                # No public parent alias, completed author, head or global lookup
+                # is needed to bind a control-owned typed execution package.
+                refs = list(dict.fromkeys(parent for ref in refs
+                    for parent in self.artifacts.verify(ref).parent_refs
+                    if self.artifacts.catalog(parent).schema_id == port.schema_id))
+                private_names = {ref: anchors[0].artifact_name for ref in refs}
+            elif rule.select != "subject":
                 if len(refs) != 1:
                     reject("input_origin_ambiguous")
                 family = family_for(refs[0])
@@ -564,7 +574,6 @@ class OperationOrigins:
                 refs = ([item.ref for item in family.members if item.ref != family.primary_ref]
                         if rule.select == "siblings" else [item.ref for item in family.evidence_sources])
                 refs = list(dict.fromkeys(refs))
-            private_names = {}
             if rule.producer_output_port is not None:
                 if len(refs) != 1:
                     reject("input_origin_ambiguous")

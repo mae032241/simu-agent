@@ -72,6 +72,9 @@ def test_worker_cache_utf8_pagination_is_read_only_and_uses_frozen_limit(tmp_pat
         'log_tails':[{'source':'solver_log', 'tail':text, 'size_bytes':len(text.encode())}]}}, raising=False)
     status = start(f)
     assert 'last line' not in json.dumps(status)
+    # Submission completion does not itself populate the remote observation cache.
+    assert status['state'] == 'running'
+    f.worker.call_tool('worker_experiment_execute', {'action':'status'})
     before = f.runs.tool_evidence(f.run_id)
     monkeypatch.setattr(f.adapter, 'status_details', lambda _: pytest.fail('cache read queried remote'))
     page = f.worker.call_tool('worker_experiment_execute', {'action':'logs'})

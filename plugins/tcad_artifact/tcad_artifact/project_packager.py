@@ -462,8 +462,9 @@ class AttemptFile(DeckFile):
 class ScientificDeckImplementation(StrictModel):
     """Standalone scientific implementation shared by author schema and execution package.
 
-    File paths, input-slot names/paths and output names/paths must be unique and
-    disjoint. Entrypoints must identify supplied files; direct solvers require a
+    Source file paths and input-slot names/paths must be unique and disjoint.
+    Control captures process logs and discovers generated output files automatically.
+    Entrypoints must identify supplied files; direct solvers require a
     .cmd entrypoint without shell launchers, nested solvers, scheduler arguments
     or unresolved Workbench tokens. Combined source bytes obey x-max-source-bytes.
     Arguments cannot contain NUL bytes.
@@ -478,8 +479,6 @@ class ScientificDeckImplementation(StrictModel):
         default=None, min_length=1, max_length=1024
     )
     arguments: tuple[Annotated[str, Field(max_length=4096, pattern=r"^[^\x00]*$")], ...] = Field(default=(), max_length=256)
-    expected_outputs: tuple[ProjectExpectedOutput, ...] = Field(default=(), max_length=4096)
-    collect_generated_outputs: bool = False
     resource_limits: ProjectResourceLimits
 
     _safe_entrypoint = field_validator("entrypoint")(_safe_relative_path)
@@ -502,22 +501,17 @@ class ScientificDeckImplementation(StrictModel):
         if sum(len(item.content.encode("utf-8")) for item in self.files) > MAX_PROJECT_BYTES:
             raise ValueError("project source exceeds total byte limit")
 
-        output_names = tuple(item.name for item in self.expected_outputs)
-        output_paths = tuple(item.relative_path for item in self.expected_outputs)
-        if len(output_names) != len(set(output_names)) or len(output_paths) != len(set(output_paths)):
-            raise ValueError("expected output names and paths must be unique")
-        if set(file_paths).intersection(output_paths):
-            raise ValueError("expected output must not overwrite a project input")
+        if any(path == ".scid-capture" or path.startswith(".scid-capture/")
+               for path in (*file_paths, *(item.target_relative_path for item in self.input_slots))):
+            raise ValueError("project inputs must not use the control capture directory")
         slot_names = tuple(item.semantic_name for item in self.input_slots)
         slot_paths = tuple(item.target_relative_path for item in self.input_slots)
         if len(slot_names) != len(set(slot_names)) or len(slot_paths) != len(
             set(slot_paths)
         ):
             raise ValueError("project input slot names and paths must be unique")
-        if set(file_paths).intersection(slot_paths) or set(output_paths).intersection(
-            slot_paths
-        ):
-            raise ValueError("project input slots must not overlap text files or outputs")
+        if set(file_paths).intersection(slot_paths):
+            raise ValueError("project input slots must not overlap text files")
 
         contents = {item.relative_path: item.content for item in self.files}
         solver_kind = self.solver_kind
@@ -565,6 +559,9 @@ class ScientificDeckImplementation(StrictModel):
 
 
 class DeckProjectDraft(ScientificDeckImplementation):
+    # Execution capture declarations are control-owned, absent from author forms.
+    expected_outputs: tuple[ProjectExpectedOutput, ...] = Field(default=(), max_length=4096)
+    collect_generated_outputs: bool = False
     schema_version: Annotated[int, Field(ge=1, le=1)] = 1
     tool_profile: str = Field(
         min_length=1,
@@ -605,6 +602,17 @@ class DeckProjectDraft(ScientificDeckImplementation):
     @model_validator(mode="after")
     def _consistent_project(self) -> DeckProjectDraft:
         output_names = tuple(item.name for item in self.expected_outputs)
+        output_paths = tuple(item.execution_output().relative_path for item in self.expected_outputs)
+        if sum(item.capture == "process_log" for item in self.expected_outputs) > 1:
+            raise ValueError("project can declare at most one process-log output")
+        if len(output_names) != len(set(output_names)) or len(output_paths) != len(set(output_paths)):
+            raise ValueError("expected output names and paths must be unique")
+        inputs = {item.relative_path for item in self.files} | {item.target_relative_path for item in self.input_slots}
+        if inputs.intersection(output_paths):
+            raise ValueError("expected outputs must not overwrite project inputs")
+        if any(item.capture != "process_log" and (item.relative_path == ".scid-capture"
+               or item.relative_path.startswith(".scid-capture/")) for item in self.expected_outputs):
+            raise ValueError("solver output must not use the control capture directory")
         binding_names = tuple(item.name for item in self.parameter_bindings)
         if len(binding_names) != len(set(binding_names)):
             raise ValueError("parameter binding names must be unique")
@@ -1202,7 +1210,7 @@ def package_deck_project(
             input_archive=archive_descriptor,
             archive_entries=entries,
             arguments=(project.entrypoint, *project.arguments),
-            expected_outputs=project.expected_outputs,
+            expected_outputs=tuple(item.execution_output() for item in project.expected_outputs),
             collect_generated_outputs=project.collect_generated_outputs,
             limits=project.resource_limits,
         )
@@ -1736,7 +1744,7 @@ def attest_runtime_contract(
             )
         else:
             passed = (
-                actual.relative_path == expected.relative_path
+                actual.relative_path == expected.execution_output().relative_path
                 and actual.media_type == expected.media_type
                 and actual.size_bytes <= expected.max_bytes
                 and (actual.size_bytes > 0 or not expected.required)

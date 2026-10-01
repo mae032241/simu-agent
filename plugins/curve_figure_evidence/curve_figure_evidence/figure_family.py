@@ -22,7 +22,7 @@ AUDIT_OPERATION = "science.figure.evidence.audit.v2"
 SAVE_TOOL = "worker_curve_figure_save"
 SELECTION_ITEM = "selected_family/selection.json"
 REQUEST_ITEM = "figure_request/request.json"
-ALGORITHM = "curve-figure-digitizer.v1"
+ALGORITHM = "curve-figure-digitizer.v2"
 
 
 class FigureFamilyMember(BaseModel):
@@ -37,7 +37,7 @@ class SelectedFigureFamily(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     schema_version: Literal["scidiscovery.selected-figure-family.v1"] = "scidiscovery.selected-figure-family.v1"
     source_ref: ArtifactRef
-    algorithm: Literal["curve-figure-digitizer.v1"] = ALGORITHM
+    algorithm: Literal["curve-figure-digitizer.v1", "curve-figure-digitizer.v2"] = ALGORITHM
     request_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     members: tuple[FigureFamilyMember, ...] = Field(min_length=1, max_length=38)
 
@@ -76,6 +76,7 @@ def selected_family_files(records, records_by_ref, source_ref):
         record = by_ref[member.artifact_ref]
         if (record["metadata"].get("data_item") != member.data_item
                 or record["media_type"] != member.media_type or record["size_bytes"] != member.size_bytes
+                or record["metadata"].get("algorithm") != selection.algorithm
                 or record["metadata"].get("request_sha256") != selection.request_sha256):
             raise ValueError("selected member metadata differs")
         files[member.data_item] = (records_by_ref[member.artifact_ref], member.media_type)
@@ -97,8 +98,23 @@ def selected_family_files(records, records_by_ref, source_ref):
     manifest = json.loads(files[manifest_name][0])
     if manifest["provenance"]["spec_sha256"] != selection.request_sha256:
         raise ValueError("figure manifest belongs to a different extraction request")
+    saved_version = json.loads(files[report_name][0])["validator_version"]
+    if (selection.algorithm == ALGORITHM and saved_version != "7") or (
+            selection.algorithm == "curve-figure-digitizer.v1" and saved_version != "6"):
+        raise ValueError("selected algorithm and validator version differ")
+    if saved_version == "7":
+        expected_restrictions = {series.series_key: {
+            "exclusion_regions": [list(box) for box in (*request.exclusion_regions, *series.exclusion_regions)],
+            "use_limits": [limit.model_dump(mode="json") for limit in series.use_limits]}
+            for series in request.series}
+        actual_restrictions = {series["series_key"]: {
+            "exclusion_regions": series.get("exclusion_regions"), "use_limits": series.get("use_limits")}
+            for panel in manifest["panels"] if panel["panel_key"] == request.panel_key
+            for series in panel["series"]}
+        if actual_restrictions != expected_restrictions:
+            raise ValueError("selected manifest scientific restrictions differ from the frozen request")
     replay = build_figure_evidence_validation_report(manifest_data_item=manifest_name,
-        manifest_content=files[manifest_name][0], sibling_files=siblings)
+        manifest_content=files[manifest_name][0], sibling_files=siblings, validator_version=saved_version)
     if canonical_json(replay) != files[report_name][0]:
         raise ValueError("figure deterministic report differs from exact saved files")
     return files

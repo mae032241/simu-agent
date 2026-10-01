@@ -241,8 +241,8 @@ def test_validation_sources_owns_its_descriptor_mapping(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize('wrong,port,relation', [
-    ('package', 'runtime_manifest', 'execution_package'),
-    ('manifest', 'runtime_manifest', 'execution_package'),
+    ('package', 'solver_outputs', 'runtime_manifest'),
+    ('manifest', 'runtime_manifest', 'required scientific source'),
     ('diagnostics', 'diagnostics', 'execution_id'),
 ])
 def test_analysis_input_relationship_error_survives_both_entry_points(tmp_path, wrong, port, relation):
@@ -257,8 +257,11 @@ def test_analysis_input_relationship_error_survives_both_entry_points(tmp_path, 
         register('other_plan', runtime.artifacts.read(artifacts['plan'].ref), artifacts['plan'].schema_id)
         next(i for i in request['inputs'] if i['port'] == 'experiment_plan')['artifact_names'] = ['other_plan']
     elif wrong == 'package':
-        register('other_package', runtime.artifacts.read(artifacts['package'].ref), artifacts['package'].schema_id)
-        next(i for i in request['inputs'] if i['port'] == 'execution_package')['artifact_names'] = ['other_package']
+        package = register('other_package', runtime.artifacts.read(artifacts['package'].ref),
+            artifacts['package'].schema_id, parents=(artifacts['plan'].ref,))
+        register('other_manifest', runtime.artifacts.read(artifacts['manifest'].ref),
+            'opaque', parents=(package.ref,))
+        next(i for i in request['inputs'] if i['port'] == 'runtime_manifest')['artifact_names'] = ['other_manifest']
     elif wrong == 'manifest':
         register('other_manifest', runtime.artifacts.read(artifacts['manifest'].ref), 'opaque')
         next(i for i in request['inputs'] if i['port'] == 'runtime_manifest')['artifact_names'] = ['other_manifest']

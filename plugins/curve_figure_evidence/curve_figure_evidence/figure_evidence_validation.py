@@ -16,7 +16,7 @@ from PIL import Image
 from scidiscovery.artifact_agent.schema.common import canonical_json
 
 
-VALIDATOR_VERSION = "6"
+VALIDATOR_VERSION = "7"
 REPORT_SCHEMA_VERSION = "scidiscovery.figure-evidence-validation-report.v1"
 MANIFEST_SCHEMA_VERSION = "scidiscovery.figure-evidence-manifest.v1"
 
@@ -54,9 +54,12 @@ def build_figure_evidence_validation_report(
     manifest_data_item: str,
     manifest_content: bytes,
     sibling_files: Mapping[str, tuple[bytes, str]],
+    validator_version: str = VALIDATOR_VERSION,
 ) -> dict[str, Any]:
     """Validate exact bundle bytes and return their canonical derived metrics."""
 
+    if validator_version not in {"6", "7"}:
+        raise FigureEvidenceBundleError("unsupported saved validator version")
     manifest = _json_object(manifest_content, manifest_data_item)
     if manifest.get("schema_version") != MANIFEST_SCHEMA_VERSION:
         raise FigureEvidenceBundleError("unsupported figure evidence manifest version")
@@ -299,7 +302,13 @@ def build_figure_evidence_validation_report(
             width=width,
             height=height,
             scientific_order=False,
+            use_limits=series.get("use_limits", []),
+            exclusion_regions=series.get("exclusion_regions", []),
         )
+        if validator_version == "7" and table["identity_resolved_row_count"] is not None:
+            for raw_pixel in table["direct_raw_pixels"]:
+                if not _source_pixel_matches_series(source_image, raw_pixel, series):
+                    raise FigureEvidenceBundleError(f"direct observation lacks its descriptor-colored source pixel: {data_item} at {raw_pixel}")
         binding = series.get("binding")
         binding_unresolved = (
             not isinstance(binding, dict) or binding.get("status") != "matched"
@@ -319,6 +328,12 @@ def build_figure_evidence_validation_report(
             raise FigureEvidenceBundleError(
                 f"manifest point_count does not match CSV rows: {data_item}"
             )
+        for manifest_field, table_field in (
+            ("identity_resolved_point_count", "identity_resolved_row_count"),
+            ("interpolation_eligible_point_count", "interpolation_eligible_row_count"),
+        ):
+            if manifest_field in series and series[manifest_field] != table[table_field]:
+                raise FigureEvidenceBundleError(f"manifest {manifest_field} does not match CSV flags: {data_item}")
         report_series.append(
             {
                 "panel_key": panel_key,
@@ -340,6 +355,8 @@ def build_figure_evidence_validation_report(
                 ),
                 "direct_row_count": table["direct_row_count"],
                 "shared_row_count": table["shared_row_count"],
+                **({field: table[field] for field in ("shared_pixel_row_count", "shared_observation_row_count",
+                    "identity_resolved_row_count", "interpolation_eligible_row_count")} if validator_version == "7" else {}),
             }
         )
         observed_rows += table["observed_row_count"]
@@ -417,7 +434,7 @@ def build_figure_evidence_validation_report(
     ]
     return {
         "schema_version": REPORT_SCHEMA_VERSION,
-        "validator_version": VALIDATOR_VERSION,
+        "validator_version": validator_version,
         "integrity_status": "valid",
         "figure_key": figure_key,
         "source_status": source_status,
@@ -440,6 +457,12 @@ def build_figure_evidence_validation_report(
             "below_detection_limit_curve_rows": below_limit_rows,
             "direct_pixel_curve_rows": direct_rows,
             "shared_occlusion_curve_rows": shared_rows,
+            **({metric: sum(item[field] or 0 for item in report_series) for metric, field in (
+                ("shared_pixel_curve_rows", "shared_pixel_row_count"),
+                ("shared_observation_curve_rows", "shared_observation_row_count"),
+                ("identity_resolved_curve_rows", "identity_resolved_row_count"),
+                ("interpolation_eligible_curve_rows", "interpolation_eligible_row_count"))}
+                if validator_version == "7" else {}),
             "global_unique_pixel_count": unique_pixels,
             "global_duplicate_pixel_rows": total_rows - unique_pixels,
             "cross_series_shared_pixel_count": sum(
@@ -495,6 +518,8 @@ def _validate_curve_csv(
     width: int,
     height: int,
     scientific_order: bool = False,
+    use_limits: list | tuple = (),
+    exclusion_regions: list | tuple = (),
 ) -> dict[str, Any]:
     fieldnames, rows = _csv_rows(data_item, content)
     standard = all(name in fieldnames for name in STANDARD_CURVE_COLUMNS)
@@ -542,8 +567,33 @@ def _validate_curve_csv(
         ]
     ] = []
     direct_points: dict[int, tuple[float, float]] = {}
+    direct_raw_pixels = []
     direct_rows = 0
     shared_rows = 0
+    shared_pixel_rows = shared_observation_rows = 0
+    identity_resolved_rows = interpolation_rows = 0
+    has_point_permissions = {"identity_resolved", "interpolation_eligible"}.issubset(fieldnames)
+    if not isinstance(exclusion_regions, (list, tuple)) or len(exclusion_regions) > 256:
+        raise FigureEvidenceBundleError(f"effective exclusion regions must be a bounded array: {data_item}")
+    for box in exclusion_regions:
+        if (not isinstance(box, (list, tuple)) or len(box) != 4
+                or not all(type(value) is int for value in box)
+                or not 0 <= box[0] < box[2] <= width or not 0 <= box[1] < box[3] <= height):
+            raise FigureEvidenceBundleError(f"effective exclusion region is invalid: {data_item}")
+    if not isinstance(use_limits, (list, tuple)):
+        raise FigureEvidenceBundleError(f"scientific use limits must be an array: {data_item}")
+    for limit in use_limits:
+        box = limit.get("pixel_bbox") if isinstance(limit, dict) else None
+        if (not isinstance(box, (list, tuple)) or len(box) != 4
+                or not all(type(value) is int for value in box)
+                or not 0 <= box[0] < box[2] <= width or not 0 <= box[1] < box[3] <= height
+                or limit.get("applies_to") not in {"quantitative_measurement", "interpolation", "all"}
+                or not isinstance(limit.get("reason"), str) or not limit["reason"].strip()):
+            raise FigureEvidenceBundleError(f"scientific use limit is invalid: {data_item}")
+    if use_limits and "use_limit_indices" not in fieldnames:
+        raise FigureEvidenceBundleError(f"scientific use limits require their CSV associations: {data_item}")
+    if {"identity_resolved", "interpolation_eligible"}.intersection(fieldnames) and not has_point_permissions:
+        raise FigureEvidenceBundleError(f"curve row identity/interpolation flags must be supplied together: {data_item}")
     if not has_eligible:
         raise FigureEvidenceBundleError(
             "curve CSV requires explicit quantitative eligibility: "
@@ -594,6 +644,13 @@ def _validate_curve_csv(
         pixels.add(pixel)
         pixel_rows.append(pixel)
         observed_flag = _parse_flag(row["observed"], "observed", data_item)
+        actual_pixels = [(x, y)]
+        if standard:
+            actual_pixels.append((_parse_int(row["pixel_x_raw"], "pixel_x_raw", data_item),
+                _parse_int(row["pixel_y_raw"], "pixel_y_raw", data_item)))
+        if observed_flag and any(left <= px < right and top <= py < bottom
+                for left, top, right, bottom in exclusion_regions for px, py in actual_pixels):
+            raise FigureEvidenceBundleError(f"observed curve row lies in an exclusion region: {data_item} row {index + 2}")
         eligible_flag = _parse_flag(
             row["quantitative_measurement_claim_eligible"],
             "quantitative_measurement_claim_eligible",
@@ -616,6 +673,44 @@ def _validate_curve_csv(
             raise FigureEvidenceBundleError(
                 f"below-limit curve row cannot be eligible: {data_item}"
             )
+        if has_point_permissions:
+            identity = _parse_flag(row["identity_resolved"], "identity_resolved", data_item)
+            interpolation = _parse_flag(row["interpolation_eligible"], "interpolation_eligible", data_item)
+            if (eligible_flag and not identity) or (interpolation and not eligible_flag):
+                raise FigureEvidenceBundleError(f"row eligibility requires resolved identity; interpolation requires eligibility: {data_item} row {index + 2}")
+            identity_resolved_rows += identity
+            interpolation_rows += interpolation
+            if row.get("interpolation_reason", "") and interpolation:
+                raise FigureEvidenceBundleError(f"interpolation-eligible row cannot declare a restriction reason: {data_item} row {index + 2}")
+            if "interpolation_reason" in fieldnames and not interpolation and not row["interpolation_reason"]:
+                raise FigureEvidenceBundleError(f"restricted interpolation requires a reason: {data_item} row {index + 2}")
+        if "use_limit_indices" in fieldnames:
+            indices = [index for index, limit in enumerate(use_limits)
+                if limit["pixel_bbox"][0] <= x < limit["pixel_bbox"][2]
+                and limit["pixel_bbox"][1] <= y < limit["pixel_bbox"][3]]
+            if row["use_limit_indices"] != "|".join(str(index) for index in indices):
+                raise FigureEvidenceBundleError(f"CSV use limits differ from manifest geometry: {data_item} row {index + 2}")
+            restrictions = {use_limits[index]["applies_to"] for index in indices}
+            if (eligible_flag and restrictions & {"all", "quantitative_measurement"}) or (
+                    has_point_permissions and interpolation and restrictions & {"all", "interpolation", "quantitative_measurement"}):
+                raise FigureEvidenceBundleError(f"CSV permissions exceed scientific use limits: {data_item} row {index + 2}")
+        if "pixel_y_support_min" in fieldnames or "pixel_y_support_max" in fieldnames:
+            low = _parse_finite(row.get("pixel_y_support_min", ""), "pixel_y_support_min", data_item)
+            high = _parse_finite(row.get("pixel_y_support_max", ""), "pixel_y_support_max", data_item)
+            if not 0 <= low <= y <= high < height:
+                raise FigureEvidenceBundleError(f"pixel support bounds must contain the observation: {data_item} row {index + 2}")
+            if "pixel_y_support_ranges" in fieldnames:
+                try:
+                    ranges = json.loads(row["pixel_y_support_ranges"])
+                    valid_ranges = (isinstance(ranges, list) and ranges and all(
+                        isinstance(pair, list) and len(pair) == 2 and all(type(value) in {int, float} for value in pair)
+                        and 0 <= pair[0] <= pair[1] < height for pair in ranges))
+                    contains = valid_ranges and any(start <= y <= stop for start, stop in ranges)
+                    envelope_matches = valid_ranges and min(pair[0] for pair in ranges) == low and max(pair[1] for pair in ranges) == high
+                except (ValueError, TypeError) as error:
+                    raise FigureEvidenceBundleError(f"pixel support ranges are invalid: {data_item} row {index + 2}") from error
+                if not contains or not envelope_matches:
+                    raise FigureEvidenceBundleError(f"pixel support ranges must preserve candidate bands and match their bounds: {data_item} row {index + 2}")
         if has_eligibility_reason:
             eligibility_reason = row["eligibility_reason"].strip()
             if eligibility_reason and (
@@ -665,6 +760,7 @@ def _validate_curve_csv(
                     f"shared coordinate ownership requires exactly one shared_group: {data_item}"
                 )
             owned_pixels.append((pixel, ownership, shared_group))
+            shared_observation_rows += ownership == "shared"
         raw_x = (
             _parse_int(row["pixel_x_raw"], "pixel_x_raw", data_item)
             if standard
@@ -678,11 +774,11 @@ def _validate_curve_csv(
         if has_support:
             support_kind = row["support_kind"].strip()
             support_source = row["support_source_series"].strip()
-            if support_kind not in {"direct_pixel", "shared_occlusion"}:
+            if support_kind not in {"direct_pixel", "shared_occlusion", "shared_pixel"}:
                 raise FigureEvidenceBundleError(
                     f"support_kind must be direct_pixel or shared_occlusion: {data_item}"
                 )
-            if support_kind == "shared_occlusion":
+            if support_kind in {"shared_occlusion", "shared_pixel"}:
                 if ownership != "shared" or not shared_group:
                     raise FigureEvidenceBundleError(
                         f"shared occlusion requires shared ownership: {data_item}"
@@ -691,7 +787,8 @@ def _validate_curve_csv(
                     raise FigureEvidenceBundleError(
                         f"shared occlusion requires a different support source series: {data_item}"
                     )
-                shared_rows += 1
+                shared_rows += support_kind == "shared_occlusion"
+                shared_pixel_rows += support_kind == "shared_pixel"
             else:
                 if support_source and support_source != series_key:
                     raise FigureEvidenceBundleError(
@@ -700,6 +797,8 @@ def _validate_curve_csv(
                 direct_rows += 1
             if support_kind == "direct_pixel":
                 direct_points[raw_x] = pixel
+                if observed_flag:
+                    direct_raw_pixels.append((raw_x, raw_y))
             if ownership == "shared":
                 support_rows.append(
                     (
@@ -754,8 +853,13 @@ def _validate_curve_csv(
         "scientific_roles": roles,
         "direct_row_count": direct_rows,
         "shared_row_count": shared_rows,
+        "shared_pixel_row_count": shared_pixel_rows,
+        "shared_observation_row_count": shared_observation_rows,
+        "identity_resolved_row_count": identity_resolved_rows if has_point_permissions else None,
+        "interpolation_eligible_row_count": interpolation_rows if has_point_permissions else None,
         "support_rows": support_rows,
         "direct_points": direct_points,
+        "direct_raw_pixels": direct_raw_pixels,
     }
 
 
@@ -781,13 +885,33 @@ def _validate_standard_row(
             f"CSV raw and subpixel coordinates do not identify one source trace: {data_item}"
         )
     uncertainty = _parse_nonnegative(row["uncertainty_px"], "uncertainty_px", data_item)
+    geometry_fields = ("local_slope", "normal_line_width_px", "pixel_resolution_px",
+        "x_localization_uncertainty_px", "y_localization_uncertainty_px")
+    geometry_present = [field in row for field in geometry_fields]
+    x_uncertainty = y_uncertainty = uncertainty
+    if any(geometry_present):
+        if not all(geometry_present):
+            raise FigureEvidenceBundleError(f"CSV localization geometry fields must occur together: {data_item}")
+        slope = _parse_finite(row["local_slope"], "local_slope", data_item)
+        normal_width = _parse_nonnegative(row["normal_line_width_px"], "normal_line_width_px", data_item)
+        resolution = _parse_nonnegative(row["pixel_resolution_px"], "pixel_resolution_px", data_item)
+        if normal_width <= 0 or resolution != 1.0:
+            raise FigureEvidenceBundleError(f"CSV localization geometry is invalid: {data_item}")
+        x_uncertainty = resolution / 2
+        y_uncertainty = max(0.0, (normal_width - resolution) / 2) * math.hypot(1.0, slope) + resolution / 2 * (1 + abs(slope))
+        for field, value in (("x_localization_uncertainty_px", x_uncertainty),
+                ("y_localization_uncertainty_px", y_uncertainty),
+                ("uncertainty_px", max(x_uncertainty, y_uncertainty))):
+            actual = _parse_nonnegative(row[field], field, data_item)
+            if not math.isclose(actual, value, rel_tol=1e-9, abs_tol=1e-12):
+                raise FigureEvidenceBundleError(f"CSV {field} does not match localization geometry: {data_item}")
     x_axis = _axis(axes, "x", data_item)
     y_axis = _axis(axes, "y", data_item)
     expected = {
         "x_value": _axis_value(x_axis, x),
         "y_value": _axis_value(y_axis, y),
-        "x_uncertainty": _axis_uncertainty(x_axis, x, uncertainty),
-        "y_uncertainty": _axis_uncertainty(y_axis, y, uncertainty),
+        "x_uncertainty": _axis_uncertainty(x_axis, x, x_uncertainty),
+        "y_uncertainty": _axis_uncertainty(y_axis, y, y_uncertainty),
     }
     for field, value in expected.items():
         actual = _parse_nonnegative(row[field], field, data_item) if field.endswith(
@@ -908,43 +1032,29 @@ def _validate_declared_shared_support(
             (member, actual[(panel, member, pixel_x)]) for member in members
         )
         group_values = {record[3] for _, record in records}
-        source_values = {record[4] for _, record in records}
-        pixel_values = {record[0] for _, record in records}
-        raw_pixel_values = {record[1] for _, record in records}
-        direct = tuple(
-            (member, record)
-            for member, record in records
-            if record[2] == "direct_pixel"
-        )
-        copied = tuple(
-            (member, record)
-            for member, record in records
-            if record[2] == "shared_occlusion"
-        )
-        if (
-            group_values != {group}
-            or len(source_values) != 1
-            or not source_values.issubset(set(members))
-            or len(pixel_values) != 1
-            or len(raw_pixel_values) != 1
-            or len(direct) != 1
-            or len(copied) != len(members) - 1
-        ):
-            raise FigureEvidenceBundleError(
-                "coincident-overlap rows require one real source and one shared coordinate"
-            )
-        source = next(iter(source_values))
-        if direct[0][0] != source or direct[0][1][4] != source:
-            raise FigureEvidenceBundleError(
-                "coincident-overlap direct row must identify its own source series"
-            )
-        if any(record[4] != source for _, record in copied):
-            raise FigureEvidenceBundleError(
-                "coincident-overlap copied rows must name the direct source"
-            )
-        coordinates[(panel, group, pixel_x)].update(
-            (record[1], record[0]) for _, record in records
-        )
+        if group_values != {group} or any(record[4] not in members for _, record in records):
+            raise FigureEvidenceBundleError("coincident-overlap rows require their declared group and member support source")
+        direct = [(member, record) for member, record in records if record[2] == "direct_pixel"]
+        if not direct:
+            raise FigureEvidenceBundleError("coincident overlap requires directly observed raster support")
+        for member, record in records:
+            if record[2] == "direct_pixel":
+                if record[4] != member:
+                    raise FigureEvidenceBundleError("direct shared observation must retain its own source series")
+            elif record[2] in {"shared_pixel", "shared_occlusion"}:
+                source_record = actual.get((panel, record[4], pixel_x))
+                if source_record is None or source_record[2] != "direct_pixel" or source_record[:2] != record[:2]:
+                    raise FigureEvidenceBundleError("shared observation lacks its exact direct source row")
+            else:
+                raise FigureEvidenceBundleError("coincident overlap has an invalid support kind")
+        # Historical coincident families used one donor and identical copies.
+        # New families retain all direct owner coordinates and link shared
+        # observations without pretending they are independent source evidence.
+        if any(record[2] == "shared_occlusion" for _, record in records):
+            if (len(direct) != 1 or len({record[0] for _, record in records}) != 1
+                    or len({record[1] for _, record in records}) != 1
+                    or len({record[4] for _, record in records}) != 1):
+                raise FigureEvidenceBundleError("legacy coincident copies require one exact direct source coordinate")
 
     for panel, _group, left, right, members, max_distance in coincident_intervals:
         member_points = {

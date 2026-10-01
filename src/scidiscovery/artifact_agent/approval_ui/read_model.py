@@ -388,8 +388,8 @@ class InstanceReadModel:
         """Prioritize only the selected Run's exact published evidence family."""
         output = self.artifacts.catalog(run.output_ref)
         operation = (run.operation_id, run.operation_version, run.operation_digest)
-        manifests, scan_complete = [], len(output.parent_refs) <= 100
-        for manifest_ref in output.parent_refs[:100]:
+        manifests, scan_complete = [], True
+        for manifest_ref in output.parent_refs:
             if manifest_ref.schema_id != "scidiscovery.tool-evidence-manifest.v1":
                 continue
             try:
@@ -418,8 +418,7 @@ class InstanceReadModel:
     def _presentation_file_refs(self, report, manifest):
         """Resolve published attachments and cited images through one exact manifest."""
         if (report.content_encoding != "identity" or manifest.content_encoding != "identity"
-                or report.size_bytes > MAX_SOURCE_BYTES or manifest.size_bytes > MAX_SOURCE_BYTES
-                or len(manifest.parent_refs) > 100):
+                or report.size_bytes > MAX_SOURCE_BYTES or manifest.size_bytes > MAX_SOURCE_BYTES):
             return ()
         try:
             report_payload = json.loads(self.artifacts.read(report.ref), parse_constant=_reject_constant)
@@ -450,6 +449,24 @@ class InstanceReadModel:
             if len(matches) == 1 and matches[0].get("output_port") == "attachments":
                 citations[alias] = [None]
         result, downloads = [], []
+        if report.schema_id == "scidiscovery.layered-diagnosis.v1":
+            # Inputs are immutable evidence too. Resolve only exact references
+            # present in both the report and its control manifest, never names.
+            for binding in bindings.values():
+                if not isinstance(binding, dict) or binding.get("port_name") in {
+                        "tool_evidence", "attachments", "reference_access"}:
+                    continue
+                matches = [parent for parent in report.parent_refs
+                    if parent.model_dump(mode="json") == binding.get("artifact_ref")
+                    and parent in manifest.parent_refs]
+                if len(matches) != 1:
+                    continue
+                try:
+                    image = self.artifacts.catalog(matches[0])
+                except _READ_ERRORS:
+                    continue
+                if image.media_type.split(";", 1)[0].strip().lower() in {"image/png", "image/jpeg"}:
+                    result.append(matches[0])
         for alias, references in citations.items():
             matches = by_alias.get(alias, ())
             if len(references) != 1 or len(matches) != 1:
@@ -496,8 +513,8 @@ class InstanceReadModel:
                     "presentation_manifest_scan_complete": False,
                 }
                 continue
-            manifests, scan_complete = [], len(report.parent_refs) <= 100
-            for manifest_ref in report.parent_refs[:100]:
+            manifests, scan_complete = [], True
+            for manifest_ref in report.parent_refs:
                 if manifest_ref.schema_id != "scidiscovery.tool-evidence-manifest.v1":
                     continue
                 try:
@@ -785,7 +802,7 @@ class InstanceReadModel:
                 result.update(state=value.state, executor=value.executor)
                 authorization = getattr(value, "authorization", {})
                 result["execution_authorization"] = {key: authorization[key] for key in
-                    ("budget", "allowance", "reason") if key in authorization}
+                    ("budget", "allowance", "per_execution_allowance", "budget_usage", "accounting", "reason") if key in authorization}
                 collection = self._collection(binding.object_id)
                 observation = self.executions.observation(binding.object_id)
                 from ...plugin_runtime.experiment import progress_summary
@@ -1109,6 +1126,15 @@ class InstanceReadModel:
         from .presentation import presentation_pointers
         paths = presentation_pointers(envelope.schema_id)
         view = self._artifact_view(instance_id, envelope)
+        if paths and len(envelope.parent_refs) > 100:
+            # Parent identity verification is independent of graph traversal.
+            # Keep the complete immutable edges when they fit the existing byte
+            # budget; unrelated ancestors still use the bounded lineage queue.
+            parents = [{"artifact_id": parent.artifact_id, "ref": parent.model_dump(mode="json"),
+                "source_pointer": f"/parent_refs/{i}"} for i, parent in enumerate(envelope.parent_refs)]
+            if json_size(parents) <= MAX_PAYLOAD_BYTES:
+                view["provenance"] = parents
+                view["gaps"] = [item for item in view["gaps"] if item["code"] != "provenance_page_limit"]
         if not paths or envelope.size_bytes > MAX_SOURCE_BYTES or envelope.content_encoding != "identity":
             return view
         try:

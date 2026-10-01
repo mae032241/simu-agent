@@ -126,9 +126,17 @@ def _real_experiment(tmp_path, monkeypatch, solver="sprocess", before_submit=Non
         output.write_bytes(b"observed fixture\n")
         descriptor = LocalFileDescriptor(name="observation", local_path=str(output), media_type="text/plain",
             size_bytes=output.stat().st_size, sha256=hashlib.sha256(output.read_bytes()).hexdigest())
+        inventory = tmp_path / 'output-manifest.json'
+        inventory.write_text(json.dumps({'outputs': [dict(name=name, relative_path=path,
+            sha256=descriptor.sha256, size_bytes=descriptor.size_bytes, media_type=media)
+            for name, path, media in (('observation', 'case-A/profile_480s.txt', 'text/plain'),
+                ('binary', 'case-A/final.tdr', 'application/octet-stream'))]}))
+        inventory_descriptor = LocalFileDescriptor(name='tcad_manifest', local_path=str(inventory),
+            media_type='application/json', size_bytes=inventory.stat().st_size,
+            sha256=hashlib.sha256(inventory.read_bytes()).hexdigest())
         runtime.executions.ingest_result(execution_id=execution_id, external_run_id=runtime.executions.status(execution_id).external_run_id,
             outputs=(descriptor, descriptor.model_copy(update={"name":"binary", "media_type":"application/octet-stream"}),
-                descriptor.model_copy(update={"name":"tcad_manifest"})))
+                inventory_descriptor))
     runtime = runtime_module.open_runtime(project_root=project, state_root=tmp_path / "state",
         approval_receipt_secret=b"a"*32, execution_adapters={"tcad_artifact:tcad":adapter},
         execution_collection=SimpleNamespace(collect=collect))
@@ -213,7 +221,12 @@ def _real_experiment(tmp_path, monkeypatch, solver="sprocess", before_submit=Non
     assert first_debug["state"] == "succeeded"
     observed_debug = worker.call_tool("worker_experiment_debug", {"action":"status", "name":"diagnostic"})
     assert observed_debug["state"] == "collected" and observed_debug["submission"] == "submitted"
-    assert worker.call_tool("worker_experiment_debug", request) == first_debug
+    repeated_debug = worker.call_tool("worker_experiment_debug", request)
+    # Scientific delivery is immutable; live task time may decrease between polls.
+    assert {k: v for k, v in repeated_debug.items() if k != 'budget'} == {
+        k: v for k, v in first_debug.items() if k != 'budget'}
+    assert repeated_debug['budget']['created_runs'] == first_debug['budget']['created_runs']
+    assert repeated_debug['budget']['run_remaining_seconds'] <= first_debug['budget']['run_remaining_seconds']
     # Reopen with a fresh tool host/service: only the original sealed implementation
     # and persistent receipt are available; there is no legacy author result file.
     debug_service = LocalTCADDebugService(adapter=debugger, exchange_root=tmp_path / "debug")
@@ -326,6 +339,7 @@ def test_instance_owns_cumulative_allowance_independent_of_agent_goal_keys(tmp_p
     executor = runtime.executions.request(formal).executor
     renamed = coordinator.budget_subject(run(("research-objective", _goal_carrier("research-objective", "renamed-again"))))
     full = policy_snapshot().admission(budget={"max_storage_bytes": 1024, "wall_time_seconds": 3600}, budget_key=renamed)
+    full = full.model_copy(update={"allowance": {**full.allowance, "wall_time_seconds": 3600}})
     assert full.outcome == "policy"
     shared = runtime.executions.budget_admission(executor=executor, admission=full, allow_denial=True)
     assert (shared.outcome, shared.reason) == ("require_human_approval", "cumulative_budget_exceeded")
@@ -453,9 +467,9 @@ def test_scientific_implementation_and_package_share_constraints():
     from tcad_artifact.project_packager import DeckProjectDraft
     public = Implementation.model_json_schema()
     private = DeckProjectDraft.model_json_schema()
-    for name in ("entrypoint", "files", "arguments", "input_slots", "expected_outputs", "resource_limits"):
+    for name in ("entrypoint", "files", "arguments", "input_slots", "resource_limits"):
         assert public["properties"][name] == private["properties"][name]
-    assert not {"tool_profile", "capability_sha256", "schema_version"}.intersection(public["properties"])
+    assert not {"tool_profile", "capability_sha256", "schema_version", "expected_outputs", "collect_generated_outputs"}.intersection(public["properties"])
     source = dict(solver_kind="sdevice", files=[{"relative_path":"main.cmd","content":"# standalone"}],
         entrypoint="main.cmd", resource_limits=dict(wall_time_seconds=1,cpu_time_seconds=1,
         max_memory_bytes=1024,max_output_bytes=1024,max_storage_bytes=1024))
@@ -502,8 +516,9 @@ def test_execution_package_sealing_preserves_declared_payload_version(monkeypatc
     run = SimpleNamespace(run_id='run_fixture', recovery_policy={})
     service = execution.ExperimentExecution(runs=None, executions=SimpleNamespace(
         artifacts=SimpleNamespace(register=register), service_actor=ActorRef(actor_id='service', actor_type='service')),
-        bridge=None, collection=None, approval_base_url=None)
-    monkeypatch.setattr(execution, 'effect_operation_plan', lambda _: SimpleNamespace(payload_port='package'))
+        bridge=SimpleNamespace(validate_request=lambda **kwargs: None), collection=None, approval_base_url=None)
+    monkeypatch.setattr(execution, 'effect_operation_plan', lambda _: SimpleNamespace(
+        payload_port='package', executor='fixture', preparation_profile='fixture'))
     monkeypatch.setattr(service, 'task_origin', lambda _: 'run_fixture')
     context = SimpleNamespace(accept_evidence=lambda **kwargs: kwargs)
     for version in (1, 2, 3):

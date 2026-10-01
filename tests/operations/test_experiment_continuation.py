@@ -14,8 +14,8 @@ from scidiscovery.operation_contract import DiagnosticError
 from tcad_artifact.local_debug_service import _record_key
 
 
-def continuation(tmp_path, monkeypatch, solver="sprocess", *, all_stages=False, include_grid=True, require_execution_review=False, presentation=False):
-    runtime, root, catalog, connections, instance = _real_experiment(tmp_path, monkeypatch, solver)
+def continuation(tmp_path, monkeypatch, solver="sprocess", *, all_stages=False, include_grid=True, require_execution_review=False, presentation=False, goal="research-objective"):
+    runtime, root, catalog, connections, instance = _real_experiment(tmp_path, monkeypatch, solver, goal=goal)
     runs = runtime.runs
     if presentation:
         runs.agent_settings = runs.agent_settings.model_copy(update={
@@ -66,9 +66,9 @@ def test_bound_report_exposes_named_collected_originals_without_execution_takeov
     stage = f.worker.call_tool("worker_reference_read", {"source": prior, "action": "read", "reference": entry["reference"]})
     files = f.worker.call_tool("worker_reference_read", {"source": stage["source"]})
     names = {item["file_name"] for item in files["references"]}
-    assert names == {"observation", "binary"}
+    assert names == {"case-A/profile_480s.txt", "case-A/final.tdr"}
     assert "tcad_manifest" not in json.dumps(files) and "artifact_id" not in json.dumps(files)
-    entry = next(item for item in files["references"] if item["file_name"] == "binary")
+    entry = next(item for item in files["references"] if item["alias"] == "binary")
     delivered = f.worker.call_tool("worker_reference_read", {"source": stage["source"], "action": "read",
         "reference": entry["reference"], "delivery": "file"})
     assert Path(delivered["file_path"]).read_bytes() == b"observed fixture\n"

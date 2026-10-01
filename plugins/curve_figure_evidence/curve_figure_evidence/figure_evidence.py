@@ -110,6 +110,12 @@ class FigureSeriesDescriptor(_FigureEvidenceModel):
     line_style: Literal["solid", "dashed", "dotted", "none"]
 
 
+class FigureEvidenceUseLimit(_FigureEvidenceModel):
+    pixel_bbox: tuple[int, int, int, int]
+    reason: ShortText
+    applies_to: Literal["quantitative_measurement", "interpolation", "all"]
+
+
 class FigureEvidenceSeries(_FigureEvidenceModel):
     series_key: FigureKey
     label: ShortText
@@ -122,6 +128,10 @@ class FigureEvidenceSeries(_FigureEvidenceModel):
     max_gap_px: Annotated[int, Field(ge=0, le=1_000_000)]
     uncertainty_px: Annotated[float, Field(ge=0.0, le=1_000_000.0)]
     tracking_diagnostics: Annotated[tuple[ShortText, ...], Field(max_length=256)] = ()
+    use_limits: Annotated[tuple[FigureEvidenceUseLimit, ...], Field(max_length=128)] = ()
+    exclusion_regions: Annotated[tuple[tuple[int, int, int, int], ...], Field(max_length=256)] = ()
+    identity_resolved_point_count: Annotated[int, Field(ge=0)] | None = None
+    interpolation_eligible_point_count: Annotated[int, Field(ge=0)] | None = None
 
     @model_validator(mode="after")
     def _primitive_has_a_compatible_style(self) -> FigureEvidenceSeries:
@@ -417,6 +427,10 @@ class FigureEvidenceValidationSeries(_FigureEvidenceModel):
     duplicate_pixel_row_count: Annotated[int, Field(ge=0, le=100_000_000)]
     direct_row_count: Annotated[int, Field(ge=0, le=100_000_000)] | None = None
     shared_row_count: Annotated[int, Field(ge=0, le=100_000_000)] | None = None
+    shared_pixel_row_count: Annotated[int, Field(ge=0, le=100_000_000)] = 0
+    shared_observation_row_count: Annotated[int, Field(ge=0, le=100_000_000)] | None = None
+    identity_resolved_row_count: Annotated[int, Field(ge=0, le=100_000_000)] | None = None
+    interpolation_eligible_row_count: Annotated[int, Field(ge=0, le=100_000_000)] | None = None
 
     @model_validator(mode="after")
     def _counts_are_consistent(self) -> FigureEvidenceValidationSeries:
@@ -434,7 +448,7 @@ class FigureEvidenceValidationSeries(_FigureEvidenceModel):
             raise ValueError("direct/shared row counts must be supplied together")
         if (
             self.direct_row_count is not None
-            and self.direct_row_count + int(self.shared_row_count) != self.row_count
+            and self.direct_row_count + int(self.shared_row_count) + self.shared_pixel_row_count != self.row_count
         ):
             raise ValueError("direct/shared row counts do not match total rows")
         if self.row_count == 0:
@@ -495,11 +509,15 @@ class FigureEvidenceValidationMetrics(_FigureEvidenceModel):
     shared_occlusion_curve_rows: Annotated[
         int, Field(ge=0, le=100_000_000)
     ] | None = None
+    shared_pixel_curve_rows: Annotated[int, Field(ge=0, le=100_000_000)] | None = None
+    shared_observation_curve_rows: Annotated[int, Field(ge=0, le=100_000_000)] | None = None
+    identity_resolved_curve_rows: Annotated[int, Field(ge=0, le=100_000_000)] | None = None
+    interpolation_eligible_curve_rows: Annotated[int, Field(ge=0, le=100_000_000)] | None = None
 
 
 class FigureEvidenceValidationReport(_FigureEvidenceModel):
     schema_version: Literal["scidiscovery.figure-evidence-validation-report.v1"]
-    validator_version: Literal["2", "3", "4", "5", "6"]
+    validator_version: Literal["2", "3", "4", "5", "6", "7"]
     integrity_status: Literal["valid"]
     figure_key: FigureKey
     source_status: Literal["qualified", "unresolved"]
@@ -560,7 +578,7 @@ class FigureEvidenceValidationReport(_FigureEvidenceModel):
                 - self.metrics.global_unique_pixel_count
             ),
         }
-        if self.validator_version in {"3", "4", "5", "6"}:
+        if self.validator_version in {"3", "4", "5", "6", "7"}:
             if any(
                 item.direct_row_count is None or item.shared_row_count is None
                 for item in self.series
@@ -578,6 +596,14 @@ class FigureEvidenceValidationReport(_FigureEvidenceModel):
                     ),
                 }
             )
+        if self.validator_version == "7":
+            for metric, row_field in (
+                ("shared_pixel_curve_rows", "shared_pixel_row_count"),
+                ("shared_observation_curve_rows", "shared_observation_row_count"),
+                ("identity_resolved_curve_rows", "identity_resolved_row_count"),
+                ("interpolation_eligible_curve_rows", "interpolation_eligible_row_count"),
+            ):
+                expected[metric] = sum(getattr(item, row_field) or 0 for item in self.series)
         for field_name, value in expected.items():
             if getattr(self.metrics, field_name) != value:
                 raise ValueError(f"metrics.{field_name} is inconsistent")

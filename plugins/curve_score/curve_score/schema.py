@@ -94,6 +94,22 @@ class CurveAvailability(SchemaModel):
         return self
 
 
+class CurveSharedSupport(SchemaModel):
+    """Common source observations; weights are decided by a scoring contract."""
+    group_key: Identifier
+    member_series: Annotated[tuple[Identifier, ...], Field(min_length=2, max_length=10000)]
+    source_locator: Annotated[str, Field(min_length=1, max_length=4096)]
+    source_pixel_ranges: Annotated[tuple[tuple[int, int], ...], Field(min_length=1, max_length=10000)]
+
+    @model_validator(mode="after")
+    def _members_and_ranges_are_coherent(self):
+        if len(self.member_series) != len(set(self.member_series)):
+            raise ValueError("shared support members must be unique")
+        if any(left < 0 or right <= left for left, right in self.source_pixel_ranges):
+            raise ValueError("shared support source pixel ranges must be positive intervals")
+        return self
+
+
 class CurveSeries(SchemaModel):
     series_key: Identifier
     case_key: Identifier
@@ -110,6 +126,7 @@ class CurveSeries(SchemaModel):
     ]
     availability: CurveAvailability
     source_locator: Annotated[str, Field(min_length=1, max_length=4096)]
+    shared_support: Annotated[tuple[CurveSharedSupport, ...], Field(default=(), max_length=10000)]
 
     @model_validator(mode="after")
     def _points_and_intervals_are_coherent(self) -> CurveSeries:
@@ -1248,6 +1265,13 @@ def _raw_value_at(
             raise ValueError("duplicate_x_masked")
         return points[first].y
 
+    if series.availability.status != "available":
+        raise ValueError("interpolation_curve_unavailable")
+    if series.valid_intervals and not any(interval.start <= x <= interval.stop for interval in series.valid_intervals):
+        raise ValueError("interpolation_outside_supported_interval")
+    if any(interval.start < x < interval.stop for interval in series.exclusions):
+        raise ValueError("interpolation_outside_supported_interval")
+
     index = bisect_right(xs, x)
     if index == 0 or index == len(xs):
         raise ValueError("interpolation_outside_domain")
@@ -1324,6 +1348,8 @@ def _crossing_locations(
     domain: CurveDomain,
     interpolation: Literal["linear_y", "log10_y"],
 ) -> tuple[float, ...]:
+    if series.availability.status != "available":
+        raise ValueError("interpolation_curve_unavailable")
     crossings: list[float] = []
     interior = sorted(
         (item for item in series.points if domain.start < item.x < domain.stop),
@@ -1344,6 +1370,14 @@ def _crossing_locations(
         if right.x == left.x:
             # Preserve the interface observations, but never manufacture a
             # crossing from a vertical repeated-x seam.
+            continue
+        if series.valid_intervals and not any(
+            interval.start <= left.x and right.x <= interval.stop
+            for interval in series.valid_intervals
+        ):
+            continue
+        if any(interval.start < right.x and left.x < interval.stop
+                for interval in series.exclusions):
             continue
         delta = right.y - left.y
         if delta == 0:

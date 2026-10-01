@@ -4,8 +4,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from scidiscovery.artifact_agent.execution_bridge import ExecutionBridge
-
 
 def test_additional_root_and_gateway_preserve_experiment_finalization_owner(tmp_path, monkeypatch):
     from scidiscovery.artifact_agent.interfaces.mcp_root import RootToolFacade, RootMCPRouter
@@ -42,36 +40,37 @@ def test_additional_root_and_gateway_preserve_experiment_finalization_owner(tmp_
 
 
 @pytest.mark.parametrize("lookup", [None, ("accepted-job", "running"), TimeoutError("lookup unknown")])
-def test_cancel_or_abandon_never_submits_and_preserves_uncertainty(lookup):
+def test_cancel_or_abandon_never_submits_and_preserves_uncertainty(tmp_path, monkeypatch, lookup):
+    from tests.operations.test_experiment_approval_handoff import experiment, start
+    from tests.operations.test_approval_wait_recovery import execution
+    from scidiscovery.artifact_agent.service.executions import ExecutionServiceError
+    f = experiment(tmp_path, monkeypatch, seconds=60)
+    def unavailable(*args, **kwargs):
+        raise TimeoutError("initial response lost")
+    monkeypatch.setattr(f.adapter, "submit", unavailable)
+    assert start(f)["submission"]["state"] == "unknown"
+    eid = execution(f).object_id
+    before = f.runtime.executions.budget_accounting(eid)
     events = []
-    status = SimpleNamespace(state="authorized", executor="fixture", external_run_id=None)
     def found(_):
         events.append("lookup")
         if isinstance(lookup, Exception):
             raise lookup
         return lookup
-    def record(**kwargs):
-        events.append("record")
-        status.external_run_id = kwargs["external_run_id"]
-        status.state = "submitted"
-    def abandon(_, *, submission_confirmed_absent=False):
-        assert submission_confirmed_absent is True
-        events.append("abandon")
-    executions = SimpleNamespace(status=lambda _: status, prepared_submission=lambda _: "exact-descriptor",
-        abandon=abandon, record_submission=record,
-        record_status=lambda **kwargs: setattr(status, "state", kwargs["state"]))
-    adapter = SimpleNamespace(lookup_submission=found,
-        submit=lambda *_: pytest.fail("cancellation must not submit"),
-        cancel=lambda _: events.append("cancel") or "cancelled")
-    bridge = ExecutionBridge(executions, adapters={"fixture": adapter})
-    if isinstance(lookup, Exception):
-        with pytest.raises(TimeoutError) as caught:
-            bridge.cancel_or_abandon(execution_id="execution")
-        assert caught.value.failure_stage == "submission_unknown"
-        assert status.state == "authorized" and events == ["lookup"]
+    monkeypatch.setattr(f.adapter, "lookup_submission", found)
+    monkeypatch.setattr(f.adapter, "submit", lambda *_args, **_kwargs: pytest.fail("cancellation must not submit"))
+    monkeypatch.setattr(f.adapter, "cancel", lambda _: events.append("cancel") or "cancelled", raising=False)
+    if lookup is None or isinstance(lookup, Exception):
+        with pytest.raises(TimeoutError if isinstance(lookup, Exception) else ExecutionServiceError):
+            f.coordinator.bridge.cancel_or_abandon(execution_id=eid)
+        assert f.runtime.executions.status(eid).state == "authorized"
+        assert f.runtime.executions.budget_accounting(eid) == before
+        assert events == ["lookup"]  # Absence alone cannot fence a delayed submit or refund its reservation.
     else:
-        bridge.cancel_or_abandon(execution_id="execution")
-        assert events == (["lookup", "abandon"] if lookup is None else ["lookup", "record", "cancel"])
+        f.coordinator.bridge.cancel_or_abandon(execution_id=eid)
+        assert f.runtime.executions.status(eid).external_run_id == "accepted-job"
+        assert f.runtime.executions.status(eid).state == "cancelled"
+        assert events == ["lookup", "cancel"]
 
 
 def test_root_and_standalone_worker_construct_their_coordinator_once(tmp_path, monkeypatch):

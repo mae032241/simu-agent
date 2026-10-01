@@ -11,7 +11,7 @@ def presentation_file_manifest(payload):
     """
     if not isinstance(payload, Mapping) or not isinstance(payload.get('records'), list) or not isinstance(payload.get('bindings'), Mapping):
         return None
-    records, aliases = [], set()
+    records = []
     for record in payload['records']:
         if not isinstance(record, Mapping):
             records.append(None)
@@ -22,10 +22,10 @@ def presentation_file_manifest(payload):
             # File metadata is owned by its plugin; keep it intact for registered
             # presentation providers (including figure family and CSV captions).
             item = dict(record)
-            if isinstance(record.get('alias'), str):
-                aliases.add(record['alias'])
         records.append(item)
-    return {'records': records, 'bindings': {key: value for key, value in payload['bindings'].items() if key in aliases}}
+    # Frozen inputs also identify existing images used by a result diagnosis.
+    # They need no new output receipt or copied attachment to remain displayable.
+    return {'records': records, 'bindings': dict(payload['bindings'])}
 
 
 def append_attachments(result, cohort):

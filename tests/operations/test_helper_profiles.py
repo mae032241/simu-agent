@@ -87,6 +87,7 @@ def test_lightweight_helper_reads_only_its_execution_cache_through_gateway(tmp_p
     monkeypatch.setattr(f.adapter, 'status_details', lambda _: {'state':'running','progress':{
         'log_tails':[{'source':'solver_log','tail':'Newton converged at step 3\n'}]}}, raising=False)
     start(f)
+    f.worker.call_tool('worker_experiment_execute', {'action':'status'})
     monkeypatch.setattr(gateway_module, 'load_operation_services', lambda *a, **kw:dict(f.coordinator.worker_services))
     gateway = UnifiedMCPRouter(f.root)
     parent_profile = f.runs.status(f.run_id).execution_profile['profile']

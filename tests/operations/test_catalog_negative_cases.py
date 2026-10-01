@@ -75,6 +75,17 @@ def test_duplicate_and_protocol_failures_are_closed() -> None:
     _expect("plugin_protocol_unsupported", replace(PLUGIN, protocol_version="2"))
 
 
+@pytest.mark.parametrize('visible,schema', [(True, 'example.input.v1'), (False, '*'), (False, 'opaque')])
+def test_direct_parent_derivation_requires_hidden_typed_port(visible, schema):
+    from scidiscovery.operations.spec import InputDerivationSpec
+    operation = PLUGIN.operations[0]
+    anchor = operation.inputs[0]
+    derived = replace(anchor, name='control_parent', schema_id=schema,
+        agent_visible=visible, derivation=InputDerivationSpec(anchor_port=anchor.name, select='parents'))
+    _expect('input_derivation_invalid', replace(PLUGIN, operations=(
+        replace(operation, inputs=(*operation.inputs, derived)), *PLUGIN.operations[1:])))
+
+
 def test_agent_output_context_and_collection_contracts_fail_closed() -> None:
     agent = PLUGIN.operations[0]
     bad_context = replace(

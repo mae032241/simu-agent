@@ -168,7 +168,8 @@ def test_initialization_missing_outputs_are_visible_or_explicitly_omitted(tmp_pa
             with monkeypatch.context() as patch:
                 patch.setattr(LocalTCADDebugService, 'run', lambda *args, **kwargs: {
                     'state': 'collected', 'mode': 'initialization', 'exit_code': 0,
-                    'summary': 'Solver exited; required files are absent.', 'missing_outputs': missing})
+                    'summary': 'Solver exited; required files are absent.', 'missing_outputs': missing,
+                    'budget': {}})
                 receipt = worker.call_tool('worker_experiment_debug', {'implementation': implementation,
                     'name': f'missing-{index}', 'mode': 'initialization'})
             rows = _pages(root)

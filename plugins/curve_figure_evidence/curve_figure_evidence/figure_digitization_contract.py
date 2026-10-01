@@ -7,6 +7,7 @@ import math
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from scidiscovery.operation_contract import ToolInputError, declared_violation
 
 from .figure_evidence import (
     FigureAxisCalibration,
@@ -84,12 +85,18 @@ class FigurePanelAxisRequest(_DigitizationModel):
         )
 
 
+class FigureScientificUseLimit(_DigitizationModel):
+    pixel_bbox: PixelBox
+    reason: ShortText
+    applies_to: Literal["quantitative_measurement", "interpolation", "all"]
+
+
 class FigureDigitizationSeries(_DigitizationModel):
     series_key: FigureKey
     label: ShortText
     primitive_kind: Literal["line"] = "line"
     color: Annotated[str, Field(pattern=r"^#[0-9a-f]{6}$")]
-    line_style: Literal["solid"] = "solid"
+    line_style: Literal["solid", "dashed", "dotted"] = "solid"
     binding_source: Literal["legend", "annotation", "caption"]
     visible_label: ShortText
     binding_bbox: PixelBox
@@ -97,6 +104,7 @@ class FigureDigitizationSeries(_DigitizationModel):
     exclusion_regions: Annotated[
         tuple[PixelBox, ...], Field(max_length=128)
     ] = ()
+    use_limits: Annotated[tuple[FigureScientificUseLimit, ...], Field(max_length=128)] = ()
     @model_validator(mode="after")
     def _anchors_are_ordered(self) -> FigureDigitizationSeries:
         if any(
@@ -202,27 +210,26 @@ class FigureDigitizationRequest(_DigitizationModel):
         keys = tuple(item.series_key for item in self.series)
         if len(keys) != len(set(keys)):
             raise ValueError("digitization series keys must be unique")
-        for item in self.series:
+        for series_index, item in enumerate(self.series):
             if not _valid_box(
                 item.binding_bbox,
                 width=width,
                 height=height,
             ):
-                raise ValueError(f"series {item.series_key} binding_bbox is out of bounds")
-            boxes = (*self.exclusion_regions, *item.exclusion_regions)
-            if any(
-                not _valid_box(box, width=width, height=height)
-                for box in boxes
-            ):
-                raise ValueError(f"series {item.series_key} exclusion is out of bounds")
-            if any(
-                not (
+                raise declared_violation(f"Series {item.series_key} binding_bbox exceeds the recovered image; correct the legend/annotation box.",
+                    path=f"$.series[{series_index}].binding_bbox")
+            boxes = (*self.exclusion_regions, *item.exclusion_regions,
+                *(limit.pixel_bbox for limit in item.use_limits))
+            if any(not _valid_box(box, width=width, height=height) for box in boxes):
+                raise declared_violation(f"Series {item.series_key} exclusion/use limit exceeds the recovered image; correct exclusion_regions or use_limits.pixel_bbox.",
+                    path=f"$.series[{series_index}]")
+            for seed_index, seed in enumerate(item.seeds):
+                if not (
                     plot_left <= seed[0] < plot_right
                     and plot_top <= seed[1] < plot_bottom
-                )
-                for seed in item.seeds
-            ):
-                raise ValueError(f"series {item.series_key} seed is outside its trace domain")
+                ):
+                    raise declared_violation(f"Series {item.series_key} seed {seed_index} lies outside plot_bbox; correct that guide point or the visible plot box.",
+                        path=f"$.series[{series_index}].seeds[{seed_index}]")
         return self
 
     def require_ready(self) -> tuple[
@@ -234,7 +241,7 @@ class FigureDigitizationRequest(_DigitizationModel):
             or self.axis_calibration is None
             or not self.series
         ):
-            raise ValueError("unresolved figure request cannot be materialized")
+            raise ToolInputError("figure_request_unresolved", "An unresolved request cannot be previewed as measured data; retain its reasons and save the unresolved family, or establish plot_bbox, axis_calibration and series visibly.", path="$.request.request_status")
         if any(value is None for value in self.source.model_dump().values()):
             raise ValueError("ready figure request requires complete recovered source metadata")
         return self.plot_bbox, self.axis_calibration.normalized(), self.series
@@ -283,12 +290,12 @@ def materialize_figure_request(value: dict, source_content: bytes) -> dict:
         return value
     pdf = source.get("source_kind") == "pdf_embedded_image"
     if pdf and (source.get("page") is None or source.get("document_image_index") is None):
-        raise ValueError("ready PDF request must select page and document_image_index")
+        raise ToolInputError("figure_image_selection_required", "Select page and document_image_index from source inspection before previewing a ready PDF request.", path="$.request.source")
     images = inspect_figure_source_bytes(source_content, media_type=source.get("media_type"),
                                         page=source.get("page") if pdf else None)
     selected = [image for image in images if not pdf or image.document_image_index == source["document_image_index"]]
     if len(selected) != 1:
-        raise ValueError("request must select one exact recovered image")
+        raise ToolInputError("figure_image_selection_invalid", "The selected page/document_image_index does not identify one inspected embedded image; inspect the target PDF page and correct the selection.", path="$.request.source.document_image_index")
     metadata = selected[0].public_metadata(local_path="")
     for key in ("recovered_image_sha256", "width", "height", "recovery_tool", "recovery_tool_version",
                 "page", "document_image_index", "page_image_index", "pdf_object_id", "pdf_object_generation"):

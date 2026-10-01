@@ -303,6 +303,20 @@ sudo SCID_PYTHON="$PYTHON" \
 模式仍要求管理员提供符合当前 schema 的完整策略。安装成功不代表远端策略或
 求解器已经通过真实执行验收。
 
+TCAD 的 `agent_execution_policy` 现在区分两个可配置阈值：
+`max_wall_time_seconds` 为单次阈值（示例 3600 秒），
+`max_total_wall_time_seconds` 为同一研究实例的累计阈值（示例 21600 秒）。
+执行仍须有精确控制绑定的研究目标；修改目标载体或 objective key 不会创建新额度池。
+请求先预留声明上限，结束后按 runner 观测的真实耗时结算。安装事务只从随包示例配置
+补充缺失的累计字段以及 `debug.budget_scope`，保留已有显式配置。诊断默认范围 `task`
+累计控制层绑定的完整任务恢复家族；`scientific_subject` 可显式启用同一研究实例的共享历史额度。
+该诊断策略不改变正式执行的实例额度池。诊断名称属于精确 Run，恢复同名作业需要唯一的控制授权来源 Run。
+达到诊断额度时可由
+管理员调整 `debug.total_wall_seconds` / `debug.max_runs`，不会清空历史用量；修改策略后
+需要重建诊断 runtime 或重启其所属服务，以重新读取适配器缓存的策略。
+使用随包 SSH 部署时，会同时升级 VM runner
+代码和远端配置；两端须使用新策略合同。既有审批决定和科学 Run 重试次数不变。
+
 外部适配器会替代本地 `tcad-control.service`。每次 SSH 操作都必须短时返回；后台
 执行和持久 `running`、`status`、`done` 记录由 VM Runner 负责。
 该模式忽略 `TCAD_STATE_ROOT`：安装器不创建本地 TCAD 状态目录、不修改其权限，也不备份其中的数据库。
@@ -331,7 +345,7 @@ Sentaurus 许可证或任何科学模型已经通过。
 叠点审计图，并下载原 CSV。仅按同次调用与原清单精确关联；缺图、缺输出端口或清单不完整时
 显示局部缺口，不重新提取或判定旧资料资格。历史正文翻译暂未实现，无需配置翻译服务。
 
-本版沿用审批 UI 服务及原端口，不新增服务、环境变量或 VM runner 协议；此次更新无需同步 VM。
+资料归档功能本身沿用审批 UI 服务及原端口，不需要 VM 协议变更；TCAD 策略更新仍会同步 VM runner。
 使用原部署配置执行重新安装并重启服务。已绑定会话可通过 `instance_current` 返回的管理 URL
 取得实例浏览/维护入口；URL 过期后重新获取。审批链接仍仅授权原请求，不能代替实例维护凭据。
 
@@ -417,7 +431,7 @@ sudo deploy/cleanup_legacy_services.sh clean
 - **VM IP 变化**：只更新私有 transport 配置或使用 resolver，不要把新地址写进源码。
 - **TCAD 作业似乎卡住**：使用短状态调用，不得用长连接 SSH 等待 Solver。
 
-分析内受控补收集需要控制端、Worker 和 VM helper 匹配更新。本地重装后，执行 `SCID_PYTHON=/absolute/path/to/python deploy/install_ssh_tcad_runner.sh upgrade-code`，沿用现有传输配置只更新 helper 代码。保留原结果目录和远端配置；重启 Codex 会话后再创建新分析 Run。旧 helper 不支持检查时返回不可用，普通离线分析仍可进行。不要为了重新收集而重提原执行。
+分析内受控补收集需要控制端、Worker 和 VM helper 匹配更新。使用随包 SSH 适配器时，主重装事务按选定的 command 配置同步 runner 代码和配置；策略 schema 更新不能只跑代码升级命令。保留原结果目录和显式管理员设置，重新加载 Codex 后再创建新分析 Run。独立维护的外部适配器需自行部署匹配版本。不要为了重新收集而重提原执行。
 
 ## Agent 执行配置
 
@@ -560,3 +574,29 @@ UI 使用安装器已有 `scidiscovery-approval-ui` 服务，且必须指向相�
 升级前保存版本与 wheel 清单、agent-settings、生成配置、签名密钥、state 数据库和 WAL、封存对象、工作区结果及归档目录。通过管理页暂停/停止推进，核清已接受 Worker 与外部作业，并停止所有写者后备份；活跃数据库用 SQLite backup 或既有维护/归档机制，不能只复制主文件。`prepare-upgrade` 复制旧候选时拒绝未完成任务、活跃或身份未核清的宿主；复制后的推进保持暂停，旧会话/派发权清除，预算、封存结果和历史通知保留。管理页重新选择实例，显式恢复之前不会运行。
 
 回滚顺序：管理页停止新派发 → 核对在途/未知提交 → 停 control 与相关宿主 → 备份当前完整状态 → 切换兼容代码/配置 → 保持推进停用并先只读核对。不要用 `git revert`、旧数据库覆盖或恢复旧快照抹掉已经接受的外部提交。A 版本不认识新增推进表；不能假定它会安全拒绝新数据。新控制服务拒绝高于自身的 scheduler `user_version`；归档外层仍为 v1，内含新控制表，不能凭外层版本判断旧代码兼容。无同格式恢复证据时禁止降级读取/写入活动库，保留新版代码停用推进作为只读/人工恢复入口。任何未知提交必须先查回原作业，不能重新发起。
+## 历史未知提交的管理员恢复
+
+升级时先更新并验证远端 runner，再启用新控制面；标准安装事务按此顺序执行。
+部署探测必须通过能力、策略及 `tcad_submission_protocol` 三项只读检查。
+仅替换 runner 文件不能停止已加载旧代码的 RPC/提交进程。
+
+历史请求没有撤销支持标记时，普通取消不会自动释放预算。管理员应先停止本地旧提交者，
+确认远端旧 RPC/提交进程及待处理提交已退出，并升级 runner。不要把“查询不到任务”作为此确认。
+以控制服务账户，在已安装的 Python 环境中执行（替换精确执行 ID；安装路径按实际配置）：
+
+```bash
+PYTHONPATH="${SCID_INSTALL_ROOT:-/opt/scidiscovery}/site" "${SCID_PYTHON:-python3}" \
+  -m scidiscovery.artifact_agent.interfaces.submission_recovery \
+  --state-root "${SCID_STATE_ROOT:-/var/lib/scidiscovery}" \
+  --execution-id EXACT_EXECUTION_ID \
+  --confirm-old-submitters-stopped \
+  --reason '管理员已确认旧提交进程全部退出，远端已升级；记录对应运维凭据'
+```
+
+命令拒绝仍持有本地提交锁的请求，并持久记录管理员 UID、理由、时间与精确提交摘要。
+它不修改执行终态、不删除证据、不释放预算。恢复服务后，对原执行调用普通取消/放弃：
+远端查到任务时接续该任务；只有原子撤销成功后才能释放预留。远端不可达时仍保留原状态和额度。
+此命令不注册为 MCP 或 Worker 工具；同 UID 的技术隔离仍受已披露的 SEC-002 限制。
+
+终态查询短暂失败不会立即按上限扣账。管理员可在 `agent-settings.json` 的 `lifecycle` 中设置
+`terminal_observation_failure_limit`（默认 3，正整数）；连续失败达到阈值才估算，成功查询重置计数。

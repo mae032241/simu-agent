@@ -36,7 +36,20 @@ def configure(
         # Never invent execution authority for a local daemon.
         if not policy.is_file():
             raise ValueError("execution policy is missing; supply the administrator configuration")
-        TCADExecutionPolicy.model_validate_json(policy.read_bytes(), strict=True)
+        raw = json.loads(policy.read_bytes())
+        defaults = json.loads((Path(__file__).resolve().parents[1] / "config/execution-policy.example.json").read_bytes())
+        changed = False
+        authority = raw.get("agent_execution_policy", {})
+        if authority and "max_total_wall_time_seconds" not in authority:
+            authority["max_total_wall_time_seconds"] = defaults["agent_execution_policy"]["max_total_wall_time_seconds"]
+            changed = True
+        debug = raw.get("debug", {})
+        if debug and "budget_scope" not in debug:
+            debug["budget_scope"] = defaults["debug"]["budget_scope"]
+            changed = True
+        TCADExecutionPolicy.model_validate_json(json.dumps(raw), strict=True)
+        if changed:
+            _replace(policy, json.dumps(raw, indent=2).encode())
     transport = (
         {"transport": "command", "command_config_path": str(command_config)}
         if command_config is not None

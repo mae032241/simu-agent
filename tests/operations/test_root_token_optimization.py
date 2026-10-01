@@ -26,9 +26,9 @@ class ReadFixture(RootRunRoutes):
             operation_digest="a" * 64, agent_type="frozen-worker", execution_profile=deepcopy(PROFILE),
             deadline_at="frozen-deadline", last_activity_at="activity", run_id="private-id",
             output_binding_name="run.output", output_ref=SimpleNamespace(kind="science", schema_id="report.v1"),
-            reason="UNSEALED_SCIENCE" * 300, inputs=[], backend_id="test", decision_fields=None,
+            reason="UNSEALED_SCIENCE" * 300, inputs=[], backend_id="test", decision_fields=None, recovery_policy=None,
             signal=SimpleNamespace(model_dump=lambda **_: {"verdict": "accept"}))
-        self.bindings = SimpleNamespace(list=lambda **kwargs: (
+        self.bindings = SimpleNamespace(progression_status=lambda **kwargs: {}, list=lambda **kwargs: (
             [SimpleNamespace(name="run", object_id="private-id")] if kwargs["namespace"] == "run" else []))
         self.artifacts = SimpleNamespace(read=Mock(return_value=json.dumps(PAYLOAD).encode()))
         self.runs = SimpleNamespace(review_wait_projection=lambda _: None, worker_connections=SimpleNamespace(), diagnostic_summary=lambda value: {"failure":{"category":"output_rejected"}}, sanitize_diagnostic=lambda value, diagnostic, **kwargs: diagnostic, status=Mock(return_value=self.value), recovery_available=Mock(return_value=False),

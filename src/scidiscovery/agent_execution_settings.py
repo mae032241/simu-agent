@@ -82,12 +82,15 @@ class ExecutionIOSettings(SettingsValue):
     collection_timeout_seconds: int = Field(default=600, ge=1)
     file_timeout_seconds: int = Field(default=120, ge=1)
     idle_timeout_seconds: int = Field(default=30, ge=1)
+    submission_response_wait_seconds: float = Field(default=0.25, ge=0, le=2, allow_inf_nan=False)
+    approval_wait_budget_seconds: int = Field(default=86400, ge=0)
 
 
 class LifecycleSettings(SettingsValue):
     """Control daemon reconciliation; global settings, no model calls or submissions."""
     interval_seconds: int = Field(default=30, ge=1, le=3600)
     batch_size: int = Field(default=32, ge=1, le=256)
+    terminal_observation_failure_limit: int = Field(default=3, ge=1, le=1000)
 
 
 class MaterialInputSettings(SettingsValue):

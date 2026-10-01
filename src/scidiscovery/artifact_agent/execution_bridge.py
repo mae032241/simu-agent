@@ -42,7 +42,7 @@ class ExecutionAdapter(Protocol):
     def lookup_submission(
         self, submission: LocalFileDescriptor
     ) -> tuple[str, str] | None:
-        """Authoritatively return an existing exact submission, or None."""
+        """Return an existing exact submission; None does not retire an in-flight submit."""
         ...
 
     def status(self, external_run_id: str) -> str: ...
@@ -60,10 +60,15 @@ class ExecutionBridge:
         executions: ExecutionService,
         *,
         adapters: Mapping[str, ExecutionAdapter],
+        lifecycle_settings=None,
     ) -> None:
         self.executions = executions
         self.adapters = dict(adapters)
         self._health_observations = {}
+        from ..agent_execution_settings import LifecycleSettings
+        self.lifecycle_settings = lifecycle_settings or LifecycleSettings()
+        from .service.execution_submission import ExecutionSubmission
+        self.submissions = ExecutionSubmission(self)
         missing_lookup = next(
             (
                 name
@@ -118,6 +123,7 @@ class ExecutionBridge:
         allow_policy_authorization: bool = False,
         budget_subject_schemas: tuple[str, ...] = (),
         budget_owner: str | None = None,
+        before_submit=None,
     ) -> None:
         request = self.executions.request(execution_id)
         adapter = self._adapter(request.executor)
@@ -128,14 +134,15 @@ class ExecutionBridge:
         # policy. Never submit a second solver to resolve an unknown response.
         submission = self.executions.prepared_submission(execution_id)
         if submission is not None:
-            try:
-                recovered = adapter.lookup_submission(submission)
-                if recovered is not None:
-                    self._record_started(execution_id, *recovered)
-                    return
-            except Exception as error:
-                error.failure_stage = "submission_unknown"
-                raise
+            recovered = adapter.lookup_submission(submission)
+            if recovered is not None:
+                if before_submit is not None:
+                    before_submit()
+                self._record_started(execution_id, *recovered)
+                return
+        protocol_check = getattr(adapter, "validate_submission_protocol", None)
+        if callable(protocol_check):
+            protocol_check()  # Before authorization, budget reservation or prepare.
         admission = self.validate_request(
             executor=request.executor,
             preparation_profile=request.preparation_profile,
@@ -156,8 +163,7 @@ class ExecutionBridge:
             if not allow_policy_authorization:
                 raise ExecutionServiceError("compiled execution contract does not permit policy authorization")
             payload = self.executions.authorize_policy(execution_id=execution_id,
-                admission=admission, compiled_identity=compiled_identity,
-                submission_confirmed_absent=submission is not None)
+                admission=admission, compiled_identity=compiled_identity)
         else:
             if approval_id is None:
                 raise ExecutionAuthorizationRequired("current policy requires human execution approval")
@@ -169,34 +175,59 @@ class ExecutionBridge:
             prepare = getattr(adapter, "prepare_with_artifacts", None)
             options = {"preparation_profile": request.preparation_profile,
                        "exchange_directory": Path(payload.local_path).parent}
-            submission = (prepare(payload, artifacts=self.executions.artifacts, **options)
-                if prepare is not None else adapter.prepare(payload, **options))
-            self.executions.record_prepared_submission(execution_id, submission,
-                policy_digest=admission.policy_digest if admission is not None else None)
-        try:
-            recovered = adapter.lookup_submission(submission)
-            if recovered is None:
-                if admission is None:
-                    external_run_id, external_state = adapter.submit(submission)
-                else:
-                    external_run_id, external_state = adapter.submit(submission, authorization=admission)
+            try:
+                submission = (prepare(payload, artifacts=self.executions.artifacts, **options)
+                    if prepare is not None else adapter.prepare(payload, **options))
+                self.executions.record_prepared_submission(execution_id, submission,
+                    policy_digest=admission.policy_digest if admission is not None else None)
+            except Exception:
+                self.executions.release_unsubmitted_budget(execution_id)
+                raise
+        recovered = adapter.lookup_submission(submission)
+        if recovered is None:
+            if before_submit is not None:
+                before_submit()
+            if admission is None:
+                external_run_id, external_state = adapter.submit(submission)
             else:
-                external_run_id, external_state = recovered
-            self._record_started(execution_id, external_run_id, external_state)
-        except Exception as error:
-            # Includes a lost local receipt after the adapter accepted the job.
-            error.failure_stage = "submission_unknown"
-            raise
+                external_run_id, external_state = adapter.submit(submission, authorization=admission)
+        else:
+            if before_submit is not None:
+                before_submit()
+            external_run_id, external_state = recovered
+        self._record_started(execution_id, external_run_id, external_state)
 
     def abandon(self, execution_id: str) -> None:
+        with self.submissions.idle(execution_id, allow_unknown=True):
+            self._abandon(execution_id)
+
+    def _abandon(self, execution_id: str) -> None:
+        if not self._retire_unsubmitted(execution_id):
+            raise ExecutionServiceError("This execution was submitted; use status or cancel instead of abandon.")
+
+    def _retire_unsubmitted(self, execution_id: str) -> bool:
         current = self.executions.status(execution_id)
+        if current.state == "abandoned":
+            return True
+        if current.external_run_id is not None:
+            return False
         descriptor = self.executions.prepared_submission(execution_id)
         if descriptor is not None:
+            retire = getattr(self._adapter(current.executor), "retire_submission", None)
+            if callable(retire) and self.submissions.can_retire(execution_id):
+                found = retire(descriptor)
+                if found is None:
+                    self.executions.abandon(execution_id, absence_confirmed=True)
+                    return True
+                self._record_started(execution_id, *found)
+                return False
             found = self._adapter(current.executor).lookup_submission(descriptor)
             if found is not None:
                 self._record_started(execution_id, *found)
-                raise ExecutionServiceError("This execution was submitted; use status or cancel instead of abandon.")
-        self.executions.abandon(execution_id, submission_confirmed_absent=descriptor is not None)
+                return False
+            raise ExecutionServiceError("This exact prepared submission is not yet visible; an earlier submit may still be processing. Abandonment was not confirmed and its budget remains reserved. Recover the same execution after service recovery, then cancel the confirmed job; do not create a replacement.")
+        self.executions.abandon(execution_id)
+        return True
 
     def _record_started(self, execution_id: str, external_run_id: str, external_state: str) -> None:
         self.executions.record_submission(
@@ -209,6 +240,8 @@ class ExecutionBridge:
                 external_run_id=external_run_id,
                 state=external_state,
             )
+        if external_state in {"succeeded", "failed", "cancelled"} and self.executions.budget_needs_settlement(execution_id):
+            self.sync(execution_id=execution_id)
 
     def validate_request(
         self,
@@ -295,12 +328,23 @@ class ExecutionBridge:
             if current.state not in {"succeeded", "failed", "cancelled", "collected"}:
                 self.executions.record_status(execution_id=execution_id,
                     external_run_id=current.external_run_id, state=external_state)
-            if external_state in {"succeeded", "failed", "cancelled"} and isinstance(details.get("consumed_budget"), dict):
-                self.executions.settle_budget(execution_id, details["consumed_budget"])
+            if external_state in {"succeeded", "failed", "cancelled"}:
+                self.executions.settle_budget(execution_id, details.get("consumed_budget") or {}, finalize_missing=True)
             observation["solver_state"] = external_state
             observation["status_observed_at"] = datetime.now(timezone.utc).isoformat()
             observation.pop("observation_error", None)
+            self.executions.record_observation_result(execution_id, succeeded=True)
+            observation.pop("terminal_query_failures", None)
         except Exception as error:
+            if current.state in {"succeeded", "failed", "cancelled", "collected"}:
+                # A known terminal job must not poll forever for measurements
+                # that may have disappeared with its workspace. Never refund
+                # missing dimensions or mislabel estimates as observations.
+                failures = self.executions.record_observation_result(execution_id, succeeded=False,
+                    previous_failures=observation.get("terminal_query_failures", 0))
+                observation["terminal_query_failures"] = failures
+                if failures >= self.lifecycle_settings.terminal_observation_failure_limit:
+                    self.executions.settle_budget(execution_id, {}, finalize_missing=True)
             from .service.engineering_diagnostics import EngineeringDiagnostics, exception_facts
             observation["observation_error"] = (EngineeringDiagnostics(
                 self.executions.database_path.parent.parent / "engineering-diagnostics").capture(
@@ -310,32 +354,19 @@ class ExecutionBridge:
         return observation.get("progress")
 
     def cancel_or_abandon(self, *, execution_id: str) -> None:
-        """Cancel owned work, abandoning only after authoritative absence.
-
-        A prepared submission may have been accepted remotely without a local
-        receipt. A failed lookup preserves that uncertainty and never submits.
-        """
-        status = self.executions.status(execution_id)
-        if status.state == "abandoned":
-            self.executions.abandon(execution_id)
-            return
-        if status.state in {"created", "authorized"}:
-            prepared = self.executions.prepared_submission(execution_id)
-            try:
-                found = None if prepared is None else self._adapter(status.executor).lookup_submission(prepared)
-                if found is not None:
-                    self._record_started(execution_id, *found)
-            except Exception as error:
-                error.failure_stage = "submission_unknown"
-                raise
-            if found is None:
-                self.executions.abandon(execution_id, submission_confirmed_absent=prepared is not None)
-                return
-        if self.executions.status(execution_id).state != "abandoned":
-            self.cancel(execution_id=execution_id)
+        """Cancel the exact job or atomically retire its uncertain submission."""
+        self.cancel(execution_id=execution_id)
 
     def cancel(self, *, execution_id: str) -> None:
+        with self.submissions.idle(execution_id, allow_unknown=True):
+            self._cancel(execution_id=execution_id)
+
+    def _cancel(self, *, execution_id: str) -> None:
         current = self.executions.status(execution_id)
+        if current.state in {"created", "authorized", "abandoned"}:
+            if self._retire_unsubmitted(execution_id):
+                return
+            current = self.executions.status(execution_id)
         if current.state in {"succeeded", "failed", "cancelled", "collected"}:
             return
         if current.state not in {"submitted", "running", "cancelling"}:
@@ -349,6 +380,8 @@ class ExecutionBridge:
             external_run_id=current.external_run_id,
             state=external_state,
         )
+        if external_state in {"succeeded", "failed", "cancelled"} and self.executions.budget_needs_settlement(execution_id):
+            self.sync(execution_id=execution_id)
 
     def _adapter(self, executor: str) -> ExecutionAdapter:
         try:

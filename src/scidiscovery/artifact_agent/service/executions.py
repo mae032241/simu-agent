@@ -62,6 +62,12 @@ EXECUTION_POLICY_SCHEMA = """
                 CREATE TABLE IF NOT EXISTS execution_prepared_submissions (
                     execution_id TEXT PRIMARY KEY, descriptor_json BLOB NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS execution_budget_estimates (
+                    execution_id TEXT PRIMARY KEY, estimated_json BLOB NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS execution_observation_retries (
+                    execution_id TEXT PRIMARY KEY, failures INTEGER NOT NULL CHECK(failures >= 0)
+                );
 """
 
 
@@ -462,7 +468,7 @@ class ExecutionService:
         return descriptor
 
     def authorize_policy(self, *, execution_id: str, admission: ExecutionAdmission,
-                         compiled_identity: CompiledApprovalIdentity, submission_confirmed_absent: bool = False) -> LocalFileDescriptor:
+                         compiled_identity: CompiledApprovalIdentity) -> LocalFileDescriptor:
         request = self.request(execution_id)
         if request.compiled_identity != compiled_identity or admission.outcome != "policy":
             raise ExecutionApprovalError("policy authorization has an invalid request binding")
@@ -486,8 +492,8 @@ class ExecutionService:
                 raise ExecutionStateConflict("started execution cannot be reauthorized")
             prior = self._current_policy_record(connection, execution_id)
             prepared = connection.execute("SELECT 1 FROM execution_prepared_submissions WHERE execution_id=?", (execution_id,)).fetchone()
-            if prior is not None and prior != record and prepared is not None and not submission_confirmed_absent:
-                raise ExecutionApprovalError("prepared submission must be looked up before policy reauthorization")
+            if prior is not None and prior != record and prepared is not None:
+                raise ExecutionApprovalError("prepared submission remains uncertain; recover its exact submission before changing policy authorization")
             self._reserve_budget(connection, execution_id, request.executor, admission)
             directory.mkdir(mode=0o770, exist_ok=True)
             if Path(descriptor.local_path).exists():
@@ -574,19 +580,18 @@ class ExecutionService:
 
     @staticmethod
     def _budget_remaining(connection, executor, admission, execution_id=None):
-        pool = connection.execute("SELECT allowance_json FROM execution_budget_pools WHERE executor=? AND budget_key=?",
-            (executor, admission.budget_key)).fetchone()
-        remaining = dict(admission.allowance) if pool is None else json.loads(pool["allowance_json"])
+        # Current administrator policy sets the ceiling, including explicit increases.
+        # Historical reservations and actual consumption remain unchanged.
+        remaining = dict(admission.allowance)
         if (set(remaining) != set(admission.budget) or set(admission.allowance) != set(remaining)
                 or any(type(v) is not int or v < 1 for v in (*admission.budget.values(), *admission.allowance.values()))):
             raise ExecutionApprovalError("execution budget dimensions are invalid")
-        remaining = {key: min(value, admission.allowance[key]) for key, value in remaining.items()}
         rows = connection.execute("SELECT * FROM execution_budget_reservations WHERE executor=? AND budget_key=?",
             (executor, admission.budget_key)).fetchall()
         for row in rows:
             if row["execution_id"] == execution_id:
                 continue
-            used = json.loads(row["consumed_json"] or row["reserved_json"])
+            used = {**json.loads(row["reserved_json"]), **json.loads(row["consumed_json"] or "{}")}
             for key in remaining:
                 remaining[key] -= used[key]
         return remaining
@@ -613,7 +618,8 @@ class ExecutionService:
         remaining = self._budget_remaining(connection, executor, admission)
         if admission.outcome == "policy" and any(admission.budget[key] > remaining[key] for key in remaining):
             raise ExecutionApprovalError("cumulative task budget changed before reservation")
-        connection.execute("INSERT OR IGNORE INTO execution_budget_pools VALUES (?, ?, ?)",
+        connection.execute("INSERT INTO execution_budget_pools VALUES (?, ?, ?) "
+            "ON CONFLICT(executor,budget_key) DO UPDATE SET allowance_json=excluded.allowance_json",
             (executor, admission.budget_key, canonical_json(admission.allowance)))
         connection.execute("INSERT INTO execution_budget_reservations VALUES (?, ?, ?, ?, NULL)",
             (execution_id, executor, admission.budget_key, canonical_json(admission.budget)))
@@ -633,43 +639,80 @@ class ExecutionService:
             row = connection.execute("SELECT budget_key FROM execution_budget_reservations WHERE execution_id=?", (execution_id,)).fetchone()
         return None if row is None else row["budget_key"]
 
-    def settle_budget(self, execution_id, consumed):
+    def settle_budget(self, execution_id, consumed, *, finalize_missing=False):
         """Only terminal adapter observations settle a reservation; missing data never refunds."""
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             execution = self._row(connection, execution_id)
             row = connection.execute("SELECT * FROM execution_budget_reservations WHERE execution_id=?", (execution_id,)).fetchone()
-            if row is None or row["consumed_json"] is not None:
+            if row is None:
                 return
             reserved = json.loads(row["reserved_json"])
+            settled = json.loads(row["consumed_json"] or "{}")
             if execution["state"] not in {"succeeded", "failed", "cancelled", "collected"}:
                 raise ExecutionStateConflict("only terminal execution can settle its budget")
-            if set(consumed) != set(reserved) or any(type(v) is not int or v < 0 for v in consumed.values()):
+            if (not consumed and not finalize_missing) or not set(consumed).issubset(reserved) or any(type(v) is not int or v < 0 for v in consumed.values()):
                 raise ExecutionApprovalError("terminal resource observation is invalid")
+            actual = {**consumed, **settled}
             connection.execute("UPDATE execution_budget_reservations SET consumed_json=? WHERE execution_id=?",
-                (canonical_json(consumed), execution_id))
+                (canonical_json(actual), execution_id))
+            previous = connection.execute("SELECT estimated_json FROM execution_budget_estimates WHERE execution_id=?", (execution_id,)).fetchone()
+            estimates = ({key: value for key, value in reserved.items() if key not in actual} if finalize_missing else
+                {key: value for key, value in json.loads(previous[0] if previous else "{}").items() if key not in actual})
+            connection.execute("INSERT OR REPLACE INTO execution_budget_estimates VALUES (?, ?)",
+                (execution_id, canonical_json(estimates)))
             connection.execute("COMMIT")
+
+    def budget_accounting(self, execution_id):
+        with self._connect() as connection:
+            row = connection.execute("SELECT reserved_json,consumed_json FROM execution_budget_reservations WHERE execution_id=?", (execution_id,)).fetchone()
+            estimate_row = connection.execute("SELECT estimated_json FROM execution_budget_estimates WHERE execution_id=?", (execution_id,)).fetchone()
+        if row is None:
+            return {}
+        reserved, actual = json.loads(row["reserved_json"]), json.loads(row["consumed_json"] or "{}")
+        estimated = {key: value for key, value in json.loads(estimate_row[0] if estimate_row else "{}").items() if key not in actual}
+        return {"state": "settled" if set(actual) == set(reserved) else "settled_estimated" if set(actual) | set(estimated) == set(reserved) else "partial" if actual else "reserved",
+            "requested": reserved, "actual": actual,
+            **({"estimated": estimated, "estimate_basis": "reserved_limit_without_terminal_observation"} if estimated else {}),
+            "unsettled_reservation": {key: amount for key, amount in reserved.items() if key not in actual and key not in estimated}}
+
+    def budget_needs_settlement(self, execution_id):
+        value = self.budget_accounting(execution_id)
+        return bool(value.get("unsettled_reservation"))
+
+    def release_unsubmitted_budget(self, execution_id):
+        """Preparation failure cannot consume a reservation when no submission exists."""
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = self._row(connection, execution_id)
+            prepared = connection.execute("SELECT 1 FROM execution_prepared_submissions WHERE execution_id=?", (execution_id,)).fetchone()
+            if row["external_run_id"] is None and prepared is None:
+                connection.execute("DELETE FROM execution_budget_reservations WHERE execution_id=? AND consumed_json IS NULL", (execution_id,))
 
     def authorization(self, execution_id: str) -> dict:
         with self._connect() as connection:
             row = self._row(connection, execution_id)
-            if row["decision_ref_json"] is not None:
-                return {"source": "human", "decision_ref": json.loads(row["decision_ref_json"])}
+            decision = json.loads(row["decision_ref_json"]) if row["decision_ref_json"] else None
             value = self._current_policy_record(connection, execution_id)
-            usage = None
+            result = {"source": "human", "decision_ref": decision} if decision else {"source": "none"}
             if value is not None:
                 admission = ExecutionAdmission.model_validate(value["admission"])
                 remaining = self._budget_remaining(connection, row["executor"], admission)
-                usage = {"scope": "shared_scientific_subject", "remaining": remaining}
-        if value is None:
-            return {"source": "none"}
-        if value["admission"]["outcome"] != "policy":
-            return {"source": "none", "outcome": value["admission"]["outcome"],
-                "policy_digest": value["admission"]["policy_digest"], "reason": value["admission"]["reason"],
-                "budget": value["admission"]["budget"], "allowance": value["admission"]["allowance"],
-                "budget_usage": usage}
-        return {"source": "policy", "policy_digest": value["admission"]["policy_digest"],
-            "budget": value["admission"]["budget"], "budget_key": value["admission"]["budget_key"]}
+                result.update(policy_digest=admission.policy_digest, reason=admission.reason,
+                    budget=admission.budget, allowance=admission.allowance,
+                    per_execution_allowance=admission.per_execution_allowance,
+                    budget_usage={"scope": "shared_scientific_subject",
+                        "remaining": {key: max(0, amount) for key, amount in remaining.items()},
+                        "overage": {key: max(0, -amount) for key, amount in remaining.items()}})
+                if decision is None:
+                    if admission.outcome == "policy":
+                        result.update(source="policy", budget_key=admission.budget_key)
+                    else:
+                        result["outcome"] = admission.outcome
+        accounting = self.budget_accounting(execution_id) if value is not None else {}
+        if accounting:
+            result["accounting"] = accounting
+        return result
 
     def prepared_submission(self, execution_id: str) -> LocalFileDescriptor | None:
         with self._connect() as connection:
@@ -715,7 +758,7 @@ class ExecutionService:
             )
             connection.execute("COMMIT")
 
-    def abandon(self, execution_id: str, *, submission_confirmed_absent: bool = False) -> None:
+    def abandon(self, execution_id: str, *, absence_confirmed=False) -> None:
         """Permanently prevent an unsubmitted execution from being authorized."""
 
         with self._connect() as connection:
@@ -726,8 +769,8 @@ class ExecutionService:
                     "only an unsubmitted execution can be abandoned"
                 )
             prepared = connection.execute("SELECT 1 FROM execution_prepared_submissions WHERE execution_id=?", (execution_id,)).fetchone()
-            if prepared is not None and row["state"] != "abandoned" and not submission_confirmed_absent:
-                raise ExecutionStateConflict("prepared execution needs authoritative absence confirmation before abandonment; query its existing submission")
+            if prepared is not None and row["state"] != "abandoned" and not absence_confirmed:
+                raise ExecutionStateConflict("prepared execution has no permanent absence confirmation; recover its existing submission before cancellation")
             reservation = connection.execute("SELECT reserved_json,consumed_json FROM execution_budget_reservations WHERE execution_id=?", (execution_id,)).fetchone()
             if reservation is not None and reservation["consumed_json"] is None:
                 connection.execute("UPDATE execution_budget_reservations SET consumed_json=? WHERE execution_id=?",
@@ -859,6 +902,21 @@ class ExecutionService:
             logging.getLogger(__name__).warning("Collected execution log cache cleanup deferred")
         return result_ref
 
+    def record_observation_result(self, execution_id: str, *, succeeded: bool, previous_failures=0) -> int:
+        """Persist retry accounting independently of replaceable observation caches."""
+        if type(previous_failures) is not int or previous_failures < 0:
+            previous_failures = 0
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            self._row(connection, execution_id)
+            row = connection.execute("SELECT failures FROM execution_observation_retries WHERE execution_id=?",
+                (execution_id,)).fetchone()
+            # Seed pre-upgrade counts once if their cache is still readable.
+            failures = 0 if succeeded else (row[0] if row is not None else previous_failures) + 1
+            connection.execute("INSERT INTO execution_observation_retries VALUES (?,?) "
+                "ON CONFLICT(execution_id) DO UPDATE SET failures=excluded.failures", (execution_id, failures))
+            return failures
+
     def observation(self, execution_id: str) -> dict:
         from .engineering_diagnostics import read_json
         self.status(execution_id)
@@ -927,9 +985,15 @@ class ExecutionService:
         """Keyset page of already submitted jobs; never resolves uncertain submissions."""
         with self._connect() as connection:
             return tuple(row[0] for row in connection.execute(
-                "SELECT execution_id FROM executions WHERE execution_id > ? "
-                "AND state IN ('submitted','running','cancelling') "
-                "AND external_run_id IS NOT NULL ORDER BY execution_id LIMIT ?", (after, limit)))
+                "SELECT e.execution_id FROM executions e LEFT JOIN execution_budget_reservations b USING(execution_id) "
+                "LEFT JOIN execution_budget_estimates a USING(execution_id) "
+                "WHERE e.execution_id > ? AND e.external_run_id IS NOT NULL AND "
+                "(e.state IN ('submitted','running','cancelling') OR "
+                "(e.state IN ('succeeded','failed','cancelled','collected') AND EXISTS "
+                "(SELECT 1 FROM json_each(CAST(b.reserved_json AS TEXT)) r "
+                "WHERE NOT EXISTS (SELECT 1 FROM json_each(CAST(b.consumed_json AS TEXT)) c WHERE c.key=r.key) "
+                "AND NOT EXISTS (SELECT 1 FROM json_each(CAST(a.estimated_json AS TEXT)) c WHERE c.key=r.key)))) "
+                "ORDER BY e.execution_id LIMIT ?", (after, limit)))
 
     def list_statuses(
         self, *, state: str | None = None, limit: int = 50

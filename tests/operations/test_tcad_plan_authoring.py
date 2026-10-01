@@ -56,7 +56,8 @@ def test_multiple_plan_choices_are_explicit_and_wrong_identity_rejected():
         complete_plan_identity({'plan_key':'wrong'}, {'validation_plans':choices[:1]})
 
 
-def test_multiple_plans_require_a_scientific_choice_before_sealing(tmp_path):
+@pytest.mark.parametrize('embedded', [False, True])
+def test_multiple_plans_require_a_scientific_choice_before_sealing(tmp_path, embedded):
     from copy import deepcopy
     from tests.operations.test_tcad_result_analysis import analysis_materials
     from scidiscovery.artifact_agent.schema.experiment import ExperimentPortfolio
@@ -70,9 +71,23 @@ def test_multiple_plans_require_a_scientific_choice_before_sealing(tmp_path):
     plan['priority_order'].append('alternative_check')
     system = analysis_system(tmp_path,state='failed',bind_names=(),
         plan=ExperimentPortfolio.model_validate_json(canonical_json(plan),strict=True))
+    if embedded:
+        _, runtime, _, request, artifacts, register = system
+        package = json.loads(runtime.artifacts.read(artifacts['package'].ref))
+        package['project']['execution_plan'] = plan
+        sealed = register('embedded-package', canonical_json(package), 'tcad.execution-package.v2')
+        register('embedded-manifest', runtime.artifacts.read(artifacts['manifest'].ref), 'opaque', parents=(sealed.ref,))
+        request['inputs'] = [item for item in request['inputs'] if item['port'] != 'experiment_plan']
+        next(item for item in request['inputs'] if item['port'] == 'runtime_manifest')['artifact_names'] = ['embedded-manifest']
     worker, opened = open_analysis(system)
     form = json.loads(Path(opened['workspace_path'],'schema/result.schema.json').read_bytes())['properties']['payload']
     assert {'plan_key','experiment_key'} <= set(form['required'])
+    if embedded:
+        for choice in form['x-scidiscovery-validation-plans']:
+            assert 'source' not in choice
+            projection = json.loads(Path(opened['workspace_path'], choice['relative_path']).read_bytes())
+            assert projection['project']['execution_plan'] == plan
+            assert 'capability' not in projection
     report = analysis_report()
     report['plan_key'] = 'alternative_plan'  # wrong scientific pair is not silently repaired
     write_analysis(opened,report)

@@ -87,7 +87,7 @@ def debug_tool_description() -> str:
     return (
         "Submit or poll one TCAD development diagnostic under administrator-configured mode, "
         "attempt, wall-time, storage and delivery limits; never scientific evidence. "
-        "Responses expose the shared instance budget and each job reservation. Renaming a job "
+        "Responses expose the configured diagnostic budget scope and each job reservation. Renaming a job "
         "does not reset the budget; repeating a name within the same task polls its submission. "
         "Other tasks own independent names; recovery requires a unique control-authorized source task. "
         "For initialization select declared output_names. Read details_path for retained "
@@ -105,20 +105,63 @@ def _continuation_error(code, message, *, repairable=True, path="$.name"):
         affected_action="tool_call", path=path, repairable=repairable, message=message),))
 
 
+def _settle_wall_usage(ledger, record, elapsed):
+    """Replace one diagnostic reservation once, using trusted terminal timing."""
+    import math
+    if "actual_wall_seconds" in record or type(elapsed) not in (int, float) or not math.isfinite(elapsed) or elapsed < 0:
+        return
+    actual = int(math.ceil(elapsed))
+    reserved = record.get("reserved_wall_seconds")
+    if type(reserved) is not int:
+        return
+    ledger["reserved_wall_seconds"] += actual - reserved
+    record["actual_wall_seconds"] = actual
+
+
+def _budget_records(context, ledger):
+    scope = _debug_policy(context).budget_scope
+    records = {name: item["record"] for name, item in ledger.get("reservations", {}).items()}
+    records.update(ledger.get("runs", {}))
+    task_ids = context.state.get("budget_task_run_ids", (context.run_id,))
+    return {name: record for name, record in records.items()
+        if scope == "scientific_subject" or record.get("run_id") in task_ids}
+
+
+def debug_budget(context, ledger=None):
+    ledger = context.state if ledger is None else ledger
+    policy = _debug_policy(context)
+    records = _budget_records(context, ledger)
+    actual = sum(item.get("actual_wall_seconds", 0) for item in records.values())
+    reserved = sum(item.get("reserved_wall_seconds", 0) for item in records.values()
+        if "actual_wall_seconds" not in item)
+    # Preserve unpaired historical charges only when that shared scope is selected.
+    if policy.budget_scope == "scientific_subject":
+        reserved = max(reserved, ledger.get("reserved_wall_seconds", 0) - actual)
+    used = actual + reserved
+    count = sum(not item.get("submission_absent", False) for item in records.values())
+    remaining = max(0, policy.total_wall_seconds - used)
+    return {"scope": policy.budget_scope, "total_wall_seconds": policy.total_wall_seconds,
+        "used_wall_seconds": used, "actual_wall_seconds": actual, "reserved_wall_seconds": reserved,
+        "remaining_wall_seconds": remaining, "max_runs": policy.max_runs, "created_runs": count,
+        "remaining_runs": max(0, policy.max_runs - count), "run_remaining_seconds": context.remaining_seconds,
+        "effective_wall_seconds": max(0, min(remaining, context.remaining_seconds))}
+
+
+def _budget_error(context, code, setting):
+    budget = debug_budget(context)
+    return _continuation_error(code,
+        f"No new diagnostic was submitted. Diagnostic budget scope={budget['scope']}: "
+        f"actual={budget['actual_wall_seconds']} s, reserved={budget['reserved_wall_seconds']} s, "
+        f"limit={budget['total_wall_seconds']} s; attempts={budget['created_runs']}/{budget['max_runs']}. "
+        "Read status or finish/cancel an existing diagnostic to settle its reservation. "
+        f"If confirmed usage exhausts the allowance, ask the administrator to increase debug.{setting} "
+        "for this scope; renaming or recovering this task does not reset usage. "
+        "An expired parent Run requires task recovery, not a larger diagnostic limit.", repairable=False)
+
+
 def debug_response(context: OperationToolContext, run_name: str, response: dict) -> dict:
     runs = context.state.get("runs", {})
-    used = context.state.get("reserved_wall_seconds", 0)
-    remaining = max(0, _debug_policy(context).total_wall_seconds - used)
-    result = {**response, "budget": {
-        "total_wall_seconds": _debug_policy(context).total_wall_seconds,
-        "reserved_wall_seconds": used,
-        "remaining_wall_seconds": remaining,
-        "max_runs": _debug_policy(context).max_runs,
-        "created_runs": len(context.state.get("reservations", runs)),
-        "remaining_runs": max(0, _debug_policy(context).max_runs - len(context.state.get("reservations", runs))),
-        "run_remaining_seconds": context.remaining_seconds,
-        "effective_wall_seconds": max(0, min(remaining, context.remaining_seconds)),
-    }}
+    result = {**response, "budget": debug_budget(context)}
     record = runs.get(_context_record_key(context, run_name))
     if record is not None:
         result["reserved_wall_seconds_for_run"] = record["reserved_wall_seconds"]
@@ -174,9 +217,16 @@ class LocalTCADDebugService:
                 context.state.update(_read_ledger(path))
             else:
                 context.state.update(schema_version=_LEDGER_VERSION, runs={}, reservations={}, reserved_wall_seconds=0)
+            _context_record_key(context, run_name)  # Reject ambiguous owners before any ledger rewrite.
             context.state["budget_ledger_path"] = str(path)
+            # Control owns the complete recovery family; its siblings count toward
+            # the task allowance without authorizing access to their named jobs.
+            _, task_ids, _ = context.recovery_scope()
+            context.state["budget_task_run_ids"] = task_ids
+            context.state["debug_policy"] = self.adapter.policy.model_dump(mode="json")
             try:
-                return self._run_locked(context, run_name=run_name, mode=mode, output_names=output_names)
+                response = self._run_locked(context, run_name=run_name, mode=mode, output_names=output_names)
+                return debug_response(context, run_name, response)
             finally:
                 self._save_budget(context)
 
@@ -225,7 +275,14 @@ class LocalTCADDebugService:
                 if external is None:
                     found = self.adapter.lookup_submission(LocalFileDescriptor.model_validate_json(json.dumps(reservation["submission"]), strict=True))
                     if found is None:
-                        # No accepted job; its reservation remains spent.
+                        if cancel:
+                            raise _continuation_error("tcad_debug_submission_unknown",
+                                f"Cancellation of diagnostic {alias!r} could not be confirmed. The executor has not yet exposed this exact submission; an earlier submit may still be processing. Its identity and allowance remain reserved. Retry status with the same name after service recovery, then cancel the confirmed job; do not start a replacement.", repairable=False)
+                        active = True
+                        if pending is not None:
+                            pending.append(contract_diagnostic("experiment_diagnostics_pending", phase="protocol",
+                                affected_action="submit", repairable=True,
+                                message=f"Diagnostic {alias!r} has an uncertain submission. Read worker_experiment_debug(action='status', name={alias!r}) after service recovery, then finish or cancel the confirmed job; its allowance remains reserved."))
                         continue
                     external, state = found
                     record = {**record, "external_run_id": external, "state": _state(state)}
@@ -269,16 +326,20 @@ class LocalTCADDebugService:
             if record is None and reservation is None:
                 return absent
             record = record or reservation["record"]
+            if record.get("submission_absent"):
+                return {"name": run_name, "state": "cancelled", "submission": "not_submitted", "allowance_reserved": False}
             external = record.get("external_run_id")
             state = record["state"]
             details = {}
             try:
-                if external is None:
+                if external is None and state not in _TERMINAL:
                     from scidiscovery.artifact_agent.schema.execution import LocalFileDescriptor
                     found = self.adapter.lookup_submission(LocalFileDescriptor.model_validate_json(
                         json.dumps(reservation["submission"]), strict=True))
                     if found is None:
-                        return {**absent, "allowance_reserved": True}
+                        return {"name": run_name, "state": "submission_unknown", "submission": "unknown",
+                            "allowance_reserved": True,
+                            "instruction": "The exact submission is not yet visible; an earlier submit may still be processing. Retry status with the same name after service recovery; do not start a replacement."}
                     external, state = found
                 if state not in _TERMINAL:
                     reader = getattr(self.adapter, "status_details", None)
@@ -300,6 +361,7 @@ class LocalTCADDebugService:
 
     @staticmethod
     def _save_budget(context):
+        """Write each owned record back to its original ledger; never copy history."""
         from scidiscovery.plugin_runtime.workspace import atomic_json
         atomic_json(Path(context.state["budget_ledger_path"]), {key: context.state[key] for key in
             ("schema_version", "debug_policy", "reserved_wall_seconds", "runs", "reservations") if key in context.state})
@@ -321,21 +383,27 @@ class LocalTCADDebugService:
         if record is None and record_key in reservations:
             from scidiscovery.artifact_agent.schema.execution import LocalFileDescriptor
             pending = reservations[record_key]
-            found = self.adapter.lookup_submission(LocalFileDescriptor.model_validate_json(
-                json.dumps(pending["submission"]), strict=True))
-            if found is None:
-                raise _continuation_error("tcad_debug_not_submitted",
-                    "No accepted diagnostic was found for the reserved submission. Its allowance remains reserved; stop and read worker_experiment_debug(action=status) for this diagnostic, or ask the scheduler to read run_status. This version has no trusted absence-certification or refund entry point; retain the reservation until the control reconciliation protocol is integrated.", repairable=False)
-            record = {**pending["record"], "external_run_id": found[0], "state": _state(found[1])}
+            if (self._receipt_directory(context, run_name, pending["record"]["run_id"]) / "receipt.json").is_file():
+                record = pending["record"]
+            else:
+                found = self.adapter.lookup_submission(LocalFileDescriptor.model_validate_json(
+                    json.dumps(pending["submission"]), strict=True))
+                if found is None:
+                    raise _continuation_error("tcad_debug_submission_unknown",
+                        "The exact reserved submission is not yet visible; an earlier submit may still be processing. Its identity and allowance remain reserved. Retry status with the same name after service recovery, then finish or cancel the confirmed job; do not start a replacement.", repairable=False)
+                record = {**pending["record"], "external_run_id": found[0], "state": _state(found[1])}
             runs[record_key] = record
         if record is None:
-            if len(reservations) >= _debug_policy(context).max_runs:
-                raise _continuation_error("tcad_debug_attempts_exhausted",
-                    "The shared scientific-subject diagnostic attempt allowance is exhausted. Renaming a diagnostic or recovering the task does not reset it; an administrator must change the allowance before a new diagnostic.", repairable=False)
+            if debug_budget(context)["remaining_runs"] == 0:
+                raise _budget_error(context, "tcad_debug_attempts_exhausted", "max_runs")
+            self._refresh_budget_usage(context)
             record = self._start(context, run_name, mode, selected)
             runs[record_key] = record
         if not isinstance(record, dict) or record.get("mode") != mode:
             raise TCADDebugError("TCAD debug run_name is bound to another mode")
+        if record.get("submission_absent"):
+            raise _continuation_error("tcad_debug_not_submitted",
+                "Control confirmed this diagnostic was never submitted and retired its reservation. Use a new diagnostic name if it is still needed; this name remains retired.", repairable=True)
         if output_names is not None and tuple(record.get("output_names", ())) != selected:
             raise TCADDebugError("debug run_name is bound to another output selection; poll without output_names")
         if "experiment_implementation_ref" in context.state and record.get("implementation_ref") != context.state["experiment_implementation_ref"]:
@@ -347,6 +415,7 @@ class LocalTCADDebugService:
             raise _continuation_error("tcad_debug_owner_mismatch",
                 "This diagnostic has no retained result and belongs to another task. Use read-only status; recover the owning task to collect or cancel it.")
         state = _state(str(record["state"]))
+        details = {}
         if state not in _TERMINAL:
             try:
                 reader = getattr(self.adapter, "status_details", None)
@@ -363,6 +432,7 @@ class LocalTCADDebugService:
             if isinstance(details.get("progress"), dict):
                 response["progress"] = details["progress"]
             return response
+        _settle_wall_usage(context.state, record, (details.get("consumed_budget") or {}).get("wall_time_seconds"))
         try:
             from scidiscovery.plugin_runtime.collection import CollectionContext
             remaining = context.remaining_seconds - (time.monotonic() - call_started)
@@ -388,16 +458,35 @@ class LocalTCADDebugService:
         context.record_activity("tcad_debug_collected")
         return response
 
+    def _refresh_budget_usage(self, context):
+        """Settle completed jobs before deciding whether another job fits."""
+        for name, record in _budget_records(context, context.state).items():
+            if "actual_wall_seconds" in record or not record.get("external_run_id"):
+                continue
+            reader = getattr(self.adapter, "status_details", None)
+            if not callable(reader):
+                continue
+            try:
+                details = reader(record["external_run_id"])
+            except Exception:
+                continue  # Unknown usage stays reserved; never invent a refund.
+            if details.get("state") in _TERMINAL:
+                record["state"] = details["state"]
+                elapsed = (details.get("consumed_budget") or {}).get("wall_time_seconds")
+                if elapsed is None:
+                    elapsed = (details.get("progress") or {}).get("elapsed_seconds")
+                context.state.setdefault("runs", {})[name] = record
+                _settle_wall_usage(context.state, record, elapsed)
+
     def _start(
         self, context: OperationToolContext, run_name: str, mode: str, output_names: tuple[str, ...]
     ) -> dict[str, object]:
         used = context.state.get("reserved_wall_seconds", 0)
         if type(used) is not int or used < 0:
             raise TCADDebugError("local TCAD debug budget is invalid")
-        remaining = min(context.remaining_seconds, _debug_policy(context).total_wall_seconds - used)
+        remaining = debug_budget(context)["effective_wall_seconds"]
         if remaining < 1:
-            raise _continuation_error("tcad_debug_wall_budget_exhausted",
-                "No wall-time allowance remains in this Run or its shared scientific-subject diagnostic budget. No new diagnostic was submitted. Inspect the existing diagnostic status and budget; do not rename or repeat it to bypass the allowance.", repairable=False)
+            raise _budget_error(context, "tcad_debug_wall_budget_exhausted", "total_wall_seconds")
         project, source_sha, sources = _candidate(context)
         delivery = _delivery_budget(context, project, mode, output_names)
         capability = (context.state["experiment_capability"] if "experiment_capability" in context.state
@@ -541,6 +630,7 @@ class LocalTCADDebugService:
             response["source_diagnostic"] = asdict(collected.source_diagnostic)
         if collected.timing is not None:
             response["progress"] = collected.timing
+            _settle_wall_usage(context.state, record, collected.timing.get("elapsed_seconds"))
         # Validate the complete public response before sealing a control proof.
         # Cache only the diagnostic; the handler refreshes budget on every call.
         debug_response(context, run_name, response)
@@ -594,6 +684,11 @@ class LocalTCADDebugService:
             try:
                 write_control_workspace_file(
                     context.workspace,
+                    Path(f"deck/reports/{mode}-{run_name}.json"),
+                    report_bytes, replace=False, mode=0o400, create_parents=True,
+                )
+                write_control_workspace_file(
+                    context.workspace,
                     Path(f"deck/reports/{mode}.json"),
                     report_bytes,
                     replace=True,
@@ -602,7 +697,7 @@ class LocalTCADDebugService:
                 )
             except WorkspaceError as error:
                 raise TCADDebugError("TCAD debug report path is unsafe") from error
-            retained.append(_file_identity(f"reports/{mode}.json", report_bytes, "application/json"))
+            retained.append(_file_identity(f"reports/{mode}-{run_name}.json", report_bytes, "application/json"))
             proof = {**diagnostic, "files": retained, "collection_complete": (
                 collected.terminal_state == "succeeded" and collected.exit_code == 0
                 and response["diagnostic_layer"] == "complete" and not missing)}
@@ -647,6 +742,14 @@ class LocalTCADDebugService:
                     or proof.get("implementation_ref") != record.get("implementation_ref")
                     or project_debug_sha256(current) != record["project_sha256"]):
                 raise TCADDebugError("Retained diagnostic does not belong to this sealed implementation.")
+        response = dict(receipt["response"])
+        if response.get("state") not in _TERMINAL or response.get("state") != proof.get("state"):
+            raise TCADDebugError("retained diagnostic terminal state changed")
+        if response.get("progress") != proof.get("progress"):
+            raise TCADDebugError("retained diagnostic timing changed")
+        diagnostic_verified = False
+        restored_files = []
+        selected_report = None
         for item in proof["files"]:
             relative = Path(item["relative_path"])
             if relative.is_absolute() or ".." in relative.parts or relative.parts[0] != "reports":
@@ -654,12 +757,30 @@ class LocalTCADDebugService:
             raw = (root / item["sha256"]).read_bytes()
             if len(raw) != item["size_bytes"] or hashlib.sha256(raw).hexdigest() != item["sha256"]:
                 raise TCADDebugError("retained diagnostic bytes changed")
+            if item["relative_path"] == f"reports/diagnostic-{run_name}.json":
+                diagnostic = json.loads(raw)
+                if (diagnostic != {key: value for key, value in proof.items() if key not in {"files", "collection_complete"}}
+                        or any(diagnostic.get(key) != value for key, value in response.items())):
+                    raise TCADDebugError("retained diagnostic response differs from its original bytes")
+                diagnostic_verified = True
+            # Legacy receipts retained the mutable selection path. Its original
+            # bytes remain authoritative; restore them to an attempt archive.
+            if item["relative_path"] == f"reports/{record['mode']}.json":
+                relative = Path(f"reports/{record['mode']}-{run_name}.json")
+            restored_files.append({**item, "relative_path": relative.as_posix()})
+            if relative.as_posix() == f"reports/{record['mode']}-{run_name}.json":
+                selected_report = raw
             target = context.workspace / "deck" / relative
             if target.exists() and target.read_bytes() != raw:
                 raise TCADDebugError("current diagnostic conflicts with the retained original")
             write_control_workspace_file(context.workspace, Path("deck") / relative, raw,
                 replace=True, mode=0o400, create_parents=True)
-        restored = {**proof, "run_id": context.run_id, "operation_id": context.operation_id,
+        if not diagnostic_verified:
+            raise TCADDebugError("retained diagnostic original is missing")
+        if selected_report is not None:
+            write_control_workspace_file(context.workspace, Path(f"deck/reports/{record['mode']}.json"),
+                selected_report, replace=True, mode=0o400, create_parents=True)
+        restored = {**proof, "files": restored_files, "run_id": context.run_id, "operation_id": context.operation_id,
             "recovered_from_run_id": source_run,
             "original_receipt_sha256": canonical_sha256(receipt)}
         records = context.state.setdefault("finalization_records", {})
@@ -673,6 +794,7 @@ class LocalTCADDebugService:
                 for other_key, other in context.state.get("runs", {}).items():
                     other_name = other["run_name"]
                     if (other_key != _record_key(source_run, run_name)
+                            and other["mode"] != record["mode"]
                             and _context_record_key(context, other_name) == other_key and (self._receipt_directory(context, other_name, other["run_id"]) / "receipt.json").is_file()
                             and other.get("project_sha256") == record["project_sha256"]
                             and context.recovery_authorized(other["run_id"])):
@@ -686,7 +808,15 @@ class LocalTCADDebugService:
                 records.clear()
                 records.update(previous)
                 raise
-        return dict(receipt["response"])
+        # The receipt can survive a crash before the budget commit. Reconcile the
+        # original record only after all retained identities and bytes validate.
+        record["state"] = "collected"
+        if record.get("response") != response:
+            record["response"] = response
+        _settle_wall_usage(context.state, record, response.get("progress", {}).get("elapsed_seconds"))
+        context.state.setdefault("runs", {})[_record_key(source_run, run_name)] = record
+        self._save_budget(context)
+        return response
 
 
 def _file_identity(path, raw, media_type):

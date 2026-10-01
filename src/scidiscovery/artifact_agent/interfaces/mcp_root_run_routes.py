@@ -109,9 +109,11 @@ class RootRunRoutes(RunReadProjection):
             return None
         safe = self.runs.sanitize_diagnostic(value, diagnostic,
             repairable=diagnostic.get("repairable_by_output") is True)
-        # Revalidate saved details against the declared contract, including old
-        # records. Engineering attachments and arbitrary messages stay private.
-        return {**{key: safe[key] for key in ("category", "code", "repairable_by_output", "tool_name") if key in safe},
+        # Revalidate saved details, including old records. Only an opaque handle
+        # crosses this boundary; diagnostic_read separately enforces instance scope.
+        from ..service.engineering_diagnostics import diagnostic_locator
+        locator = diagnostic_locator(safe.get("engineering"))
+        return {**({"engineering": locator} if locator else {}),**{key: safe[key] for key in ("category", "code", "repairable_by_output", "tool_name") if key in safe},
             "details": [{key: item[key] for key in
                 ("code", "path", "message", "phase", "affected_action", "repairable", "rule_id") if key in item}
                 for item in safe.get("details", ())]}

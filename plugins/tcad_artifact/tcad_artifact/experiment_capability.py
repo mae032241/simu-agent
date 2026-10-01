@@ -15,7 +15,7 @@ from scidiscovery.operations.spec import ComponentRef, ComponentSpec
 from scidiscovery.operations.tooling import WorkerToolDefinition
 from scidiscovery.operation_contract import DiagnosticError, ToolInputError, validation_diagnostics
 
-from .execution_control import SolverCapabilitySnapshot
+from .execution_control import SolverCapabilitySnapshot, PROCESS_LOG_PATH
 from .project_packager import (ScientificDeckImplementation, DeckProjectDraft, ResolvedProjectInput, ExecutionPackage)
 
 
@@ -60,7 +60,11 @@ def prepare(request, context):
         raise ToolInputError("implementation_method_ambiguous", "Choose exactly one advertised method matching the implementation solver.", path="$.method")
     capability = candidates[0]
     values = authored.model_dump(mode="json")
-    values.update(tool_profile=capability.profile_id, capability_sha256=capability.capability_sha256)
+    values.update(tool_profile=capability.profile_id, capability_sha256=capability.capability_sha256,
+        collect_generated_outputs=True, expected_outputs=[{
+            "name": "process_log", "capture": "process_log", "relative_path": PROCESS_LOG_PATH,
+            "media_type": "text/plain", "max_bytes": authored.resource_limits.max_output_bytes,
+        }])
     project = DeckProjectDraft.model_validate_json(canonical_json(values), strict=True)
     slots = {slot.semantic_name: slot for slot in project.input_slots}
     if set(request.scientific_files) != set(slots):
@@ -136,11 +140,11 @@ def debug(request, context):
             derived_from=("objective_source", request.implementation), metadata={"kind": "experiment_debug", "name": request.name})
         result["reference"] = record["alias"]
         result["artifact_name"] = record["artifact_name"]
-    return result
+    return {**result, "budget": response["budget"]}
 
 
 PREPARE_TOOL = WorkerToolDefinition(name="worker_experiment_prepare",
-    description="Read the TCAD implementation schema or seal an implementation for the current experiment. Control resolves the exact active solver capability and supplied scientific files. Returns the exact public artifact_name immediately and, when required, an independent review request for the scheduler. Sealing itself requires no prior review. A required review suspends controlled work until the exact reviewer finishes; reads/status/cancel remain available. Continue the same task afterward; a pass is required before formal execution.",
+    description="Read the TCAD implementation schema or seal an implementation for the current experiment. Control resolves the exact active solver capability and supplied scientific files, captures stdout and inventories all generated solver files within the declared resource budget; no output path table is needed. Returns the exact public artifact_name immediately and, when required, an independent review request for the scheduler. Sealing itself requires no prior review. A required review suspends controlled work until the exact reviewer finishes; reads/status/cancel remain available. Continue the same task afterward; a pass is required before formal execution.",
     input_model=PrepareInput, capability="experiment.implementation", contextual_handler=prepare,
     required_services=("experiment.execution",), evidence_ports=("tool_evidence", "recovery_manifest_output"))
 DEBUG_TOOL = WorkerToolDefinition(name="worker_experiment_debug", description="Run or poll an optional bounded diagnostic of the exact sealed implementation. Use action=status with the same name for a read-only check after an uncertain response; it never submits or collects. Repeating action=run polls existing submissions but may create one if absent. Diagnostics are separate from formal execution and require no fixed sequence.",
@@ -148,11 +152,13 @@ DEBUG_TOOL = WorkerToolDefinition(name="worker_experiment_debug", description="R
     required_services=("experiment.execution", "tcad.development_debug"), evidence_ports=("tool_evidence", "recovery_manifest_output"))
 CAPABILITY = ExperimentCapability(tools=(ComponentRef("experiment_prepare_tool"), ComponentRef("experiment_debug_tool")),
     instructions="Use the sentaurus-tcad-code Skill for SProcess or SDevice source. Author the scientific plan and standalone implementation in this workspace. Read worker_experiment_prepare(action=schema), write scratch/experiment.json, prepare it and execute its sealed reference. Scientific-file slots resolve exact supplied originals. No fixed development-mode checklist or prior design Run is required.",
-    execution_operation="tcad.experiment.execute.internal", execution_package_schema_version=2)
+    execution_operation="tcad.experiment.execute.internal", execution_package_schema_version=2,
+    output_inventory_name="tcad_manifest")
 COMPONENTS = (
     ComponentSpec("experiment_prepare_tool", "worker_tool", __name__ + ":PREPARE_TOOL"),
     ComponentSpec("experiment_debug_tool", "worker_tool", __name__ + ":DEBUG_TOOL"),
     ComponentSpec("experiment_capability", "experiment_capability", __name__ + ":CAPABILITY",
+        configuration_identity="tcad.experiment:scientific-output-inventory.v1",
         resources=(ComponentRef("experiment_prepare_tool"), ComponentRef("experiment_debug_tool"), ComponentRef("runtime_factory")),
         extends=ComponentRef("experiment_task_protocol", "general_science")),
 )

@@ -20,7 +20,7 @@ def fixture(tmp_path, monkeypatch):
         resource_limits=dict(wall_time_seconds=1, cpu_time_seconds=1, max_memory_bytes=1024,
                              max_output_bytes=1024, max_storage_bytes=1024)))
     class Adapter:
-        policy = policy_snapshot().debug
+        policy = policy_snapshot().debug.model_copy(update={"budget_scope": "scientific_subject"})
         def __init__(self):
             self.submitted, self.collected, self.cancelled, self.states = [], [], [], {}
         def prepare(self, **kwargs):
@@ -52,13 +52,14 @@ def fixture(tmp_path, monkeypatch):
     service = module.LocalTCADDebugService(adapter=adapter, exchange_root=tmp_path / "exchange")
     monkeypatch.setattr(module, "_candidate", lambda _: (project, "b"*64, ()))
     monkeypatch.setattr(module, "_delivery_budget", lambda *args: {"effective_collection_bytes":1024})
-    def context(owner, recovered=()):
+    def context(owner, recovered=(), *, family=()):
         workspace = tmp_path / owner
         workspace.mkdir(exist_ok=True)
         return SimpleNamespace(run_id=owner, operation_id="experiment", workspace=workspace,
             remaining_seconds=100, state={"experiment_project":project.decode(),
                 "experiment_implementation_ref":"same-sealed-implementation", "experiment_capability":b'{}'},
             recovery_authorized=lambda source: source == owner or source in recovered,
+            recovery_scope=lambda: (recovered[-1] if recovered else owner, (owner, *recovered, *family), ()),
             record_activity=lambda _: None)
     path = service.exchange_root / "budgets" / (canonical_sha256({"subject":SUBJECT}) + ".json")
     return service, adapter, context, path
@@ -85,8 +86,7 @@ def test_same_alias_has_independent_submission_collection_and_shared_budget(tmp_
     assert (second.workspace / "deck/reports/log-probe.txt").read_text() == "job 2"
     ledger = json.loads(path.read_bytes())
     assert len(ledger["reservations"]) == 2 and ledger["reserved_wall_seconds"] == 2
-    ledger["debug_policy"]["max_runs"] = 2
-    path.write_bytes(canonical_json(ledger))
+    adapter.policy = adapter.policy.model_copy(update={"max_runs": 2})
     with pytest.raises(DiagnosticError) as error:
         run(service, context("third"))
     assert error.value.details[0]["code"] == "tcad_debug_attempts_exhausted"
@@ -142,8 +142,8 @@ def test_absent_submission_retains_reservation_and_names_only_existing_repair_re
     with pytest.raises(DiagnosticError) as caught:
         run(service, context('recovery', ('first',)))
     wire = json.dumps(caught.value.details)
-    assert 'tcad_debug_not_submitted' in wire
-    assert 'run_status' in wire and 'no trusted absence-certification or refund entry point' in wire
+    assert 'tcad_debug_submission_unknown' in wire
+    assert 'same name after service recovery' in wire and 'do not start a replacement' in wire
     assert 'request control-side budget reconciliation' not in wire
     assert path.read_bytes() == before and adapter.submitted == []
 
@@ -205,3 +205,22 @@ def test_other_task_cannot_restore_terminal_receipt_just_for_same_implementation
     assert run(service, other)["state"] == "running"
     assert len(adapter.submitted) == 2 and adapter.collected == ["1"]
     assert not (other.workspace / "deck/reports/log-probe.txt").exists()
+
+
+def test_task_scope_counts_control_family_without_granting_sibling_job_access(tmp_path, monkeypatch):
+    service, adapter, context, path = fixture(tmp_path, monkeypatch)
+    adapter.policy = adapter.policy.model_copy(update={"budget_scope": "task", "max_runs": 2})
+    first = context("first")
+    assert run(service, first)["budget"]["created_runs"] == 1
+    # An independent task retains its own attempt allowance, with the same instance ledger.
+    unrelated = context("unrelated")
+    assert run(service, unrelated)["budget"]["created_runs"] == 1
+    sibling = context("sibling", ("first",))
+    assert run(service, sibling, name="sibling-probe")["budget"]["created_runs"] == 2
+    recovered = context("recovered", ("first",), family=("sibling",))
+    assert service.status(recovered, run_name="sibling-probe", budget_subject=SUBJECT)["state"] == "not_created"
+    before = path.read_bytes()
+    with pytest.raises(DiagnosticError, match="attempts=2/2"):
+        run(service, recovered, name="renamed")
+    assert path.read_bytes() == before
+    assert len(adapter.submitted) == 3

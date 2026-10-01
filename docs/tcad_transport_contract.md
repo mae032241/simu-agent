@@ -27,16 +27,18 @@ Approval 和 Execution 事实只由通用控制面维护。
 `CommandTCADExecutorAdapter` 每次调用一个管理员拥有的短命令。请求和响应均为有界规范 JSON：
 
 ```json
-{"schema_version":1,"operation":"capabilities|execution_policy|prepare|lookup_submission|submit|status|cancel|collect","payload":{}}
+{"schema_version":1,"operation":"capabilities|execution_policy|submission_protocol|prepare|lookup_submission|submit_retirable|retire_submission|status|cancel|collect","payload":{}}
 ```
 
 transport 只能：
 
 - `capabilities`：读取管理员冻结的 solver capability；
 - `execution_policy`：读取管理员完整策略与 runner/debug 配置；
+- `submission_protocol`：只读确认远端支持版本 1 的提交/原子撤销协议；
 - `prepare`：物化已审查 package 和 JobSpec；
 - `lookup_submission`：按已准备提交的稳定摘要权威查回既有外部任务；
-- `submit`：短时提交并返回外部状态；
+- `submit_retirable`：短时提交并返回外部状态，服从精确摘要的永久撤销标记；
+- `retire_submission`：在提交锁内返回现有任务，或持久撤销尚不存在的精确请求；
 - `status`：执行一次短查询；
 - `cancel`：请求取消并短时返回；
 - `collect`：仅在终态后收集有界原始结果。
@@ -57,9 +59,9 @@ transport 不等待 Solver、不循环轮询、不生成或修改 Deck、不批�
 分析恢复的 `inspect_outputs(..., *, deadline_monotonic=None)` 消费原 IO/Run 较短剩余时间，
 不继承正式收集预算。原 VM 协议、已批准求解任务和原始工作目录保持兼容。
 
-`submit` 必须对同一已准备描述符幂等。每次提交前由 adapter 调用
-`lookup_submission`：查到既有任务则只返回它，权威确认不存在才可提交，查询不可用则在副作用前
-失败。未知提交不能盲目重发。
+`submit_retirable` 必须对同一已准备描述符幂等。首次新提交先验证协议，再通过
+`lookup_submission` 查回已存在的任务。提交结果未知后只能查回原请求或明确撤销，
+`found:false` 不能证明仍在处理的提交已经停止，不能作为重发或释放预算的依据。
 
 公开的 `tcad.solver-capability.v2` 只是 allowlist 投影：包含 solver kind、安全发行标签、允许公开的固定
 参数子集和私有完整配置摘要；不公开完整路径、环境、SSH、许可证或私有参数。Deck 作者、独立

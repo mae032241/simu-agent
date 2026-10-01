@@ -115,7 +115,7 @@ def test_unresolved_figure_keeps_partial_progress_but_cannot_execute(keep):
     parsed = FigureDigitizationRequest.model_validate_json(canonical_json(raw))
     field = 'plot_bbox' if keep == 'all' else keep
     assert parsed.model_dump(mode='json', exclude_unset=True)[field] == raw[field]
-    with pytest.raises(ValueError, match='cannot be materialized'):
+    with pytest.raises(ValueError, match='cannot be previewed as measured data'):
         parsed.require_ready()
     raw['plot_bbox'] = [-1, 0, 100, 100]
     with pytest.raises(ValidationError, match='exceeds'):

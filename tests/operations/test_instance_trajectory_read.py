@@ -23,6 +23,7 @@ from tests.operations.test_instance_read_model import system, bind, approval
 def trajectory(system, tmp_path):
     service = object.__new__(RunService)
     service.database_path = tmp_path / "runs.sqlite3"
+    service.approval_database_path = system.approvals.database_path
     service._initialize()
     service.backend = SimpleNamespace(open=lambda run_id: SimpleNamespace(root=tmp_path / "workspaces" / run_id))
     service.recovery_status = lambda value: {"draft_available": value.state == "failed", "recovery_pending": value.state == "failed"}

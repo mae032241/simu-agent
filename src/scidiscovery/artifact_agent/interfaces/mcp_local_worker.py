@@ -299,46 +299,20 @@ class LocalWorkerMCPRouter:
             from ..service.engineering_diagnostics import exception_facts
             error.scope_lookup_error = exception_facts(scope_error, layer="worker", action="scope")
         engineering = store.capture(error, scope=scope, layer="worker", action=name)
-        scientific = True
-        if not scientific and run_id is not None and run_id == self._run_id and self._workspace is not None and engineering.get("reference"):
-            try:
-                from ..service.local_workspace import write_control_workspace_file
-                engineering["workspace_report"] = "reports/" + engineering["reference"] + ".json"
-                report = {**engineering, "sections": {
-                    section: store.read(engineering["reference"], scopes=(scope,), section=section,
-                        max_bytes=16384) for section in engineering.get("available_sections", ())}}
-                write_control_workspace_file(self._workspace.root,
-                    Path(engineering["workspace_report"]),
-                    json.dumps(report, ensure_ascii=False).encode(),
-                    replace=False, mode=0o400, create_parents=True)
-            except Exception as record_error:
-                from ..service.engineering_diagnostics import exception_facts
-                engineering["workspace_record_error"] = exception_facts(record_error, layer="worker_workspace", action="record")
-        failure = (error if isinstance(error, WorkerToolError) else
-            WorkerToolError(str(error), details=error.details)) if isinstance(error, DiagnosticError) else WorkerToolError(
-            engineering["causes"][0]["message"], details=(contract_diagnostic(
-                engineering["category"], phase="tool_execution", affected_action="tool_call",
-                message=engineering["causes"][0]["message"], error_type=type(error).__name__),))
-        failure.engineering = engineering
-        if scientific:
-            failure.public_engineering = {} if isinstance(error, DiagnosticError) else {"category":engineering["category"]}
+        from ..service.engineering_diagnostics import diagnostic_locator
+        if isinstance(error, DiagnosticError):
+            failure = error if isinstance(error, WorkerToolError) else WorkerToolError(str(error), details=error.details)
+            failure.public_engineering = {}
             if not failure.details:
                 failure.details = (contract_diagnostic("tool_rejected", phase="tool_execution", affected_action="tool_call",
                     message="The experiment action could not complete with its current inputs or configured services."),)
-        if scientific and not isinstance(error, DiagnosticError):
+        else:
             failure = WorkerToolError("The experiment action could not complete. Its control diagnostic has been retained.",
                 details=(contract_diagnostic(engineering["category"], phase="tool_execution",
                     affected_action="tool_call", message="The configured service could not complete this action.",
                     error_type=type(error).__name__),))
-            failure.engineering = engineering
-            failure.public_engineering = {"category":engineering["category"]}
-            return failure
-        if failure is not error and not scientific:
-            failure.public_engineering = {
-                key: engineering[key]
-                for key in ("category", "reference", "available_sections")
-                if key in engineering
-            }
+            failure.public_engineering = {"category": engineering["category"], **diagnostic_locator(engineering)}
+        failure.engineering = engineering
         return failure
 
     def _finish_attempt(self, **values):
@@ -742,6 +716,12 @@ class LocalWorkerMCPRouter:
                 database_path=self.runs.database_path.parent/'executions.sqlite3', result_ref=item.artifact_ref)
 
         from ..service.experiment_execution import scope_experiment_services
+
+        def recovery_scope():
+            origin, family = self.runs.task_family(self._run_id)
+            return (origin, tuple(run.run_id for run in family), tuple((item.port_name, item.artifact_ref)
+                for run in family for item in run.inputs))
+
         return OperationToolContext(
             services=scope_experiment_services({
                 key.partition(":")[2]: self.tool_services[key]
@@ -769,6 +749,7 @@ class LocalWorkerMCPRouter:
             _list_attempts=lambda: self.runs.tool_attempts(self._run_id),
             _execution_scope=execution_scope if tool.evidence_ports else None,
             _recovery_authorized=lambda source: self.runs.recovery_authorized(self._run_id, source),
+            _recovery_scope=recovery_scope,
             _adopt_bound_evidence=(lambda **values: self.runs.adopt_bound_tool_evidence(self._run_id, allowed_ports=tool.evidence_ports, **values)) if tool.evidence_ports else None,
             _accept_evidence=(lambda **values: self.runs.accept_tool_evidence(self._run_id, tool_name=tool.name, allowed_ports=tool.evidence_ports, **values)) if tool.evidence_ports else None,
             _publish_files=(lambda request: self.runs.publish_attachments(self._run_id, request,
@@ -823,6 +804,7 @@ def build_local_worker_router(
         backend=backend,
         scheduler_bindings=scheduler_bindings,
         experiment_execution_factory=experiment_factory,
+        approval_database_path=state / "database" / "approvals.sqlite3",
     )
     services = dict(tool_services or {})
     if compiled.spec.executor.capability is not None:

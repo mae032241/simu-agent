@@ -12,10 +12,10 @@ from tests.operations.test_experiment_continuation import continuation
 from tests.operations.tcad_policy_fixtures import policy_snapshot
 
 
-def experiment(tmp_path, monkeypatch, *, seconds=5400):
+def experiment(tmp_path, monkeypatch, *, seconds=5400, goal="research-objective"):
     from tcad_artifact.execution_policy import execution_admission
     from tcad_artifact.project_packager import ExecutionPackage
-    f = continuation(tmp_path, monkeypatch)
+    f = continuation(tmp_path, monkeypatch, goal=goal)
     body = json.loads(f.runtime.artifacts.read(ArtifactRef.model_validate(f.implementation['artifact_ref'])))
     body['implementation']['resource_limits'].update(wall_time_seconds=seconds, max_storage_bytes=1800000000)
     (f.workspace / 'scratch/experiment.json').write_bytes(canonical_json(body['implementation']))
@@ -70,7 +70,8 @@ def test_worker_approval_ui_accepts_and_resumes_exactly_once(tmp_path, monkeypat
     first = start(f)
     assert first['state'] == 'awaiting_authorization'
     assert first['authorization']['budget']['wall_time_seconds'] == 5400
-    assert first['authorization']['allowance']['wall_time_seconds'] == 3600
+    assert first['authorization']['allowance']['wall_time_seconds'] == 21600
+    assert first['authorization']['per_execution_allowance']['wall_time_seconds'] == 3600
     name = first['approval_name']
     assert f.root.call_tool('approval_status', {'name':name})['status'] == 'pending'
     assert f.adapter.submits == 0

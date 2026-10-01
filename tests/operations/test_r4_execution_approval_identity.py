@@ -280,16 +280,15 @@ def test_unknown_submission_is_recovered_by_lookup_without_resubmit(
             ),
         )
 
-    with pytest.raises(RuntimeError) as captured:
-        root.call_tool("execution_start", {"name": "unknown_submission"}, surface="execution")
-    from scidiscovery.plugin_runtime.diagnostics import exception_facts
-    recovery = exception_facts(captured.value, layer="execution", action="start")["recovery"]
-    assert recovery["stage"] == "submission_unknown" and recovery["retryable"] is False
-    assert "execution_start" in recovery["recovery_condition"]
+    result = root.call_tool("execution_start", {"name": "unknown_submission"}, surface="execution")
+    assert result["submission"]["state"] == "unknown"
     assert adapter.submit_count == 1
-    assert root.call_tool(
-        "execution_status", {"name": "unknown_submission"}
-    , surface="execution")["state"] == "authorized"
+    # Public status now reconciles unknown submissions in the background.
+    # Check the durable state before that recovery instead of starting a query
+    # concurrently with the explicit restart below.
+    execution_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id,
+        namespace="execution", name="unknown_submission")
+    assert runtime.executions.status(execution_id).state == "authorized"
 
     restarted, restarted_root = _reopen(tmp_path, instance, adapter, catalog)
     recovered = restarted_root.call_tool(

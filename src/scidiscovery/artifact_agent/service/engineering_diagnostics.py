@@ -14,6 +14,19 @@ from ...plugin_runtime.diagnostics import redact, exception_facts
 from ...plugin_runtime.workspace import atomic_json, read_json
 
 
+def diagnostic_locator(engineering: object) -> dict:
+    """Expose only a bounded opaque handle; bodies require a scoped explicit read."""
+    if not isinstance(engineering, dict):
+        return {}
+    reference = engineering.get("reference")
+    if not isinstance(reference, str) or not re.fullmatch(r"diag_[0-9a-f]{32}", reference):
+        return {}
+    sections = engineering.get("available_sections", ())
+    return {"reference": reference, "available_sections": [name for name in
+        ("summary", "traceback", "stdout", "stderr")
+        if isinstance(sections, (list, tuple)) and name in sections]}
+
+
 class EngineeringDiagnostics:
     def __init__(self, root: Path):
         self.root = Path(root)
@@ -61,7 +74,10 @@ class EngineeringDiagnostics:
         while current is not None and id(current) not in seen and len(seen) < 8:
             seen.add(id(current))
             frames.append(type(current).__name__ + "\n")
-            frames.extend(traceback.format_tb(current.__traceback__))
+            # Source lines may contain literals and quoted paths; neither is
+            # needed to locate the failing function in a public diagnostic.
+            frames.extend('  File [host-path], line ' + str(frame.lineno) + ', in ' + frame.name + '\n'
+                for frame in traceback.extract_tb(current.__traceback__))
             current = current.__cause__ or current.__context__
         return redact("".join(frames)[-49152:] + "\n" + json.dumps(facts, ensure_ascii=False))
 

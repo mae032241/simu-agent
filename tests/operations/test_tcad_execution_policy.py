@@ -57,7 +57,10 @@ def test_revision_reservations_share_remaining_subject_allowance():
         CREATE TABLE execution_budget_pools (executor TEXT, budget_key TEXT, allowance_json BLOB, PRIMARY KEY(executor,budget_key));
         CREATE TABLE execution_budget_reservations (execution_id TEXT PRIMARY KEY, executor TEXT, budget_key TEXT, reserved_json BLOB, consumed_json BLOB);
     ''')
-    first = policy_snapshot().admission(budget={"max_storage_bytes": 1000, "wall_time_seconds": 3000}, budget_key="a"*64)
+    fields = policy_fields()
+    fields["agent_execution_policy"]["max_total_wall_time_seconds"] = 3600
+    policy = ExecutionPolicySnapshot.model_validate_json(json.dumps(fields), strict=True)
+    first = policy.admission(budget={"max_storage_bytes": 1000, "wall_time_seconds": 3000}, budget_key="a"*64)
     service._reserve_budget(connection, "revision-one", "tcad", first)
     remaining = service._budget_remaining(connection, "tcad", first)
     assert remaining["wall_time_seconds"] == 600
@@ -169,7 +172,7 @@ def test_tightened_policy_reauthorizes_unstarted_request_without_double_reservat
     old = policy_snapshot().admission(budget=budget, budget_key="a"*64)
     service.authorize_policy(execution_id="one", admission=old, compiled_identity=identity)
     fields = policy_fields()
-    fields["agent_execution_policy"]["max_wall_time_seconds"] = 1800
+    fields["agent_execution_policy"].update(max_wall_time_seconds=1800, max_total_wall_time_seconds=1800)
     new = ExecutionPolicySnapshot.model_validate_json(json.dumps(fields), strict=True).admission(budget=budget, budget_key="a"*64)
     service.authorize_policy(execution_id="one", admission=new, compiled_identity=identity)
     with service._connect() as connection:
@@ -199,7 +202,7 @@ def test_policy_deferral_releases_only_never_prepared_reservation(tmp_path, prep
 
 @pytest.mark.parametrize("prepared", [False, True])
 def test_abandoned_unsubmitted_budget_is_released_without_losing_reservation_history(tmp_path, prepared):
-    from scidiscovery.artifact_agent.service.executions import ExecutionStateConflict
+    from scidiscovery.artifact_agent.service.executions import ExecutionStateConflict, ExecutionServiceError
     from scidiscovery.artifact_agent.execution_bridge import ExecutionBridge
     from types import SimpleNamespace
     service, identity = _reauthorization_service(tmp_path)
@@ -210,13 +213,19 @@ def test_abandoned_unsubmitted_budget_is_released_without_losing_reservation_his
         with pytest.raises(ExecutionStateConflict, match="absence confirmation"):
             service.abandon("one")
     bridge = ExecutionBridge(service, adapters={"tcad": SimpleNamespace(lookup_submission=lambda _: None)})
+    if prepared:
+        with pytest.raises(ExecutionServiceError, match="not confirmed"):
+            bridge.abandon("one")
+        assert service.status("one").state == "authorized"
+        assert service.authorization("one")["accounting"]["actual"] == {}
+        return
     bridge.abandon("one")
     bridge.abandon("one")
     with service._connect() as connection:
         row = connection.execute("SELECT * FROM execution_budget_reservations").fetchone()
         assert json.loads(row["reserved_json"])["wall_time_seconds"] == 3000
         assert json.loads(row["consumed_json"]) == {"max_storage_bytes": 0, "wall_time_seconds": 0}
-        assert service._budget_remaining(connection, "tcad", admission)["wall_time_seconds"] == 3600
+        assert service._budget_remaining(connection, "tcad", admission)["wall_time_seconds"] == admission.allowance["wall_time_seconds"]
     assert service.status("one").state == "abandoned"
 
 
@@ -239,4 +248,4 @@ def test_uncertain_or_accepted_submission_is_never_refunded_by_abandon(tmp_path)
         bridge.abandon("one")
     assert service.status("one").state == "submitted"
     with service._connect() as connection:
-        assert service._budget_remaining(connection, "tcad", admission)["wall_time_seconds"] == 600
+        assert service._budget_remaining(connection, "tcad", admission)["wall_time_seconds"] == admission.allowance["wall_time_seconds"] - 3000

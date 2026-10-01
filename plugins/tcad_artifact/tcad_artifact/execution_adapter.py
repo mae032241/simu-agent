@@ -54,6 +54,11 @@ class TCADExecutorAdapter:
     def execution_policy(self) -> ExecutionPolicySnapshot:
         return ExecutionPolicySnapshot.model_validate_json(json.dumps(self._call("tcad_execution_policy", {})), strict=True)
 
+    def validate_submission_protocol(self):
+        value = self._call("tcad_submission_protocol", {})
+        if value != {"version": 1, "submit": "tcad_submit_retirable", "retire": "tcad_retire_submission"}:
+            raise RuntimeError("TCAD submission protocol is incompatible; upgrade the service before submitting.")
+
     def execution_admission(self, raw: bytes, *, preparation_profile: str):
         self.validate_preparation_payload(raw, preparation_profile=preparation_profile)
         return execution_admission(self.execution_policy(), validate_execution_package_json(raw))
@@ -110,6 +115,7 @@ class TCADExecutorAdapter:
         archive: LocalFileDescriptor,
         exchange_directory: Path,
     ) -> LocalFileDescriptor:
+        self.validate_submission_protocol()
         raw = _read_bound_descriptor(
             job_spec_file, exchange_directory=exchange_directory
         )
@@ -140,7 +146,7 @@ class TCADExecutorAdapter:
 
     def submit(self, submission: LocalFileDescriptor, *, authorization=None) -> tuple[str, str]:
         value = self._call(
-            "tcad_submit",
+            "tcad_submit_retirable",
             {
                 "authorization": None if authorization is None else authorization.model_dump(mode="json"),
                 "submission": submission.model_dump(
@@ -165,6 +171,14 @@ class TCADExecutorAdapter:
 
     def status(self, external_run_id: str) -> str:
         return str(self.status_details(external_run_id)["state"])
+
+    def retire_submission(self, submission: LocalFileDescriptor) -> tuple[str, str] | None:
+        value = self._call("tcad_retire_submission", {"submission_sha256": submission.sha256})
+        if value.get("found") is True:
+            return str(value["run_id"]), str(value["state"])
+        if value.get("found") is False and value.get("retired") is True and value.get("submission_sha256") == submission.sha256:
+            return None
+        raise RuntimeError("TCAD service did not confirm exact submission retirement")
 
     def status_details(self, external_run_id: str) -> dict[str, Any]:
         return self._call("tcad_status", {"run_id": external_run_id})

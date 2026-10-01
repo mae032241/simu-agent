@@ -5,7 +5,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import io
-from dataclasses import replace
+import json
 
 from PIL import Image, ImageDraw
 
@@ -76,153 +76,79 @@ def _derive_shared_support(
     request: FigureDigitizationRequest,
     direct: dict[str, tuple[TracePoint, ...]],
 ) -> tuple[dict[str, tuple[TracePoint, ...]], list[dict[str, object]]]:
-    """Share only directly observed pixel clusters whose supports intersect."""
+    """Associate intersecting raster support while retaining every owner's location."""
 
     definitions = {item.series_key: item for item in request.series}
-    direct_by_x = {
-        key: {point.pixel_x_raw: point for point in points}
-        for key, points in direct.items()
-    }
+    direct_by_x = {key: {point.pixel_x_raw: point for point in points}
+        for key, points in direct.items()}
     by_x = {key: dict(points) for key, points in direct_by_x.items()}
     memberships: dict[tuple[str, ...], list[int]] = {}
-    all_x = sorted(
-        {pixel_x for points in direct_by_x.values() for pixel_x in points}
-    )
-    for pixel_x in all_x:
-        available = sorted(
-            (key, points[pixel_x])
-            for key, points in direct_by_x.items()
-            if pixel_x in points
-        )
-        candidates = set()
-        for source_key, source_point in available:
-            low = source_point.pixel_y_subpixel - source_point.uncertainty_px
-            high = source_point.pixel_y_subpixel + source_point.uncertainty_px
-            members = []
+    donors: dict[tuple[int, str], str] = {}
+    for x in sorted({x for points in direct_by_x.values() for x in points}):
+        available = {key: points[x] for key, points in direct_by_x.items() if x in points}
+        edges = {key: {key} for key in definitions}
+        for source_key, point in available.items():
+            low, high = point.cluster_y_min, point.cluster_y_max
             for key, definition in definitions.items():
-                domain = (request.plot_bbox[0], request.plot_bbox[2])
-                if not domain[0] <= pixel_x < domain[1]:
+                if key == source_key:
                     continue
-                location = guide_y(
-                    definition.seeds,
-                    pixel_x,
-                    (request.plot_bbox[1] + request.plot_bbox[3] - 1) / 2.0,
-                )
-                if key == source_key or low < location < high:
-                    members.append(key)
-            candidates.add(tuple(sorted(members)))
-        used: set[str] = set()
-        for members in sorted(candidates, key=lambda value: (-len(value), value)):
-            selected = tuple(key for key in members if key not in used)
-            if len(selected) < 2:
+                other = available.get(key)
+                guide = guide_y(definition.seeds, x, (low + high) / 2)
+                actual = other if other is not None else point
+                excluded = any(left <= px < right and top <= py < bottom
+                    for left, top, right, bottom in (*request.exclusion_regions, *definition.exclusion_regions)
+                    for px, py in ((actual.pixel_x_raw, actual.pixel_y_raw),
+                        (actual.pixel_x_subpixel, actual.pixel_y_subpixel)))
+                intersects = (other is not None and
+                    max(low, other.cluster_y_min) <= min(high, other.cluster_y_max))
+                if not excluded and (intersects or (other is None and low <= guide <= high)):
+                    edges[source_key].add(key)
+                    edges[key].add(source_key)
+                    if other is None:
+                        donors.setdefault((x, key), source_key)
+        used = set()
+        for key in sorted(definitions):
+            if key in used:
                 continue
-            memberships.setdefault(selected, []).append(pixel_x)
-            used.update(selected)
+            members, pending = set(), [key]
+            while pending:
+                member = pending.pop()
+                if member in members:
+                    continue
+                members.add(member)
+                pending.extend(edges[member] - members)
+            used.update(members)
+            if len(members) > 1:
+                memberships.setdefault(tuple(sorted(members)), []).append(x)
 
-    records: list[dict[str, object]] = []
+    records = []
     for members, columns in sorted(memberships.items()):
-        runs: list[tuple[int, int]] = []
+        runs = []
         start = previous = columns[0]
-        for pixel_x in columns[1:]:
-            if pixel_x != previous + 1:
+        for x in columns[1:]:
+            if x != previous + 1:
                 runs.append((start, previous + 1))
-                start = pixel_x
-            previous = pixel_x
+                start = x
+            previous = x
         runs.append((start, previous + 1))
         for left, right in runs:
             group = f"shared_{_sha256(canonical_json((members, left, right)))[:20]}"
-            sources = _coincident_sources(
-                members=members,
-                left=left,
-                right=right,
-                direct_by_x=direct_by_x,
-            )
             max_spread = 0.0
-            for pixel_x in range(left, right):
-                original = [
-                    direct_by_x[key][pixel_x]
-                    for key in members
-                    if pixel_x in direct_by_x[key]
-                ]
-                max_spread = max(
-                    max_spread,
-                    max(point.pixel_y_subpixel for point in original)
-                    - min(point.pixel_y_subpixel for point in original),
-                )
-                source_key = sources[pixel_x]
-                source_point = direct_by_x[source_key][pixel_x]
+            for x in range(left, right):
+                originals = [direct_by_x[key][x] for key in members if x in direct_by_x[key]]
+                max_spread = max(max_spread, max(p.pixel_y_subpixel for p in originals)
+                    - min(p.pixel_y_subpixel for p in originals))
                 for key in members:
-                    domain = (request.plot_bbox[0], request.plot_bbox[2])
-                    by_x[key][pixel_x] = replace(
-                        mark_shared(
-                            source_point,
-                            group=group,
-                            source_series=source_key,
-                            support_kind=(
-                                "direct_pixel"
-                                if key == source_key
-                                else "shared_occlusion"
-                            ),
-                            shared_eligible=True,
-                        ),
-                        point_index=pixel_x - domain[0],
-                        identity_ambiguous=any(
-                            point.identity_ambiguous for point in original
-                        ),
-                    )
-            records.append(
-                {
-                    "group_key": group,
-                    "member_series": list(members),
-                    "pixel_ranges": [[left, right]],
-                    "mode": "coincident_overlap",
-                    "max_member_distance_px": max_spread,
-                }
-            )
-    return (
-        {key: tuple(points[x] for x in sorted(points)) for key, points in by_x.items()},
-        records,
-    )
-
-
-def _coincident_sources(
-    *,
-    members: tuple[str, ...],
-    left: int,
-    right: int,
-    direct_by_x: dict[str, dict[int, TracePoint]],
-) -> dict[int, str]:
-    """Choose real per-column sources while preserving one source for every member."""
-
-    available_by_x = {
-        pixel_x: tuple(
-            member for member in members if pixel_x in direct_by_x[member]
-        )
-        for pixel_x in range(left, right)
-    }
-
-    member_by_x: dict[int, str] = {}
-
-    def assign(member: str, visited: set[int]) -> bool:
-        for pixel_x in range(left, right):
-            if pixel_x in visited or pixel_x not in direct_by_x[member]:
-                continue
-            visited.add(pixel_x)
-            previous = member_by_x.get(pixel_x)
-            if previous is None or assign(previous, visited):
-                member_by_x[pixel_x] = member
-                return True
-        return False
-
-    for member in members:
-        assign(member, set())
-    return {
-        pixel_x: member_by_x[pixel_x]
-        if pixel_x in member_by_x
-        else available_by_x[pixel_x][0]
-        for pixel_x in range(left, right)
-        if available_by_x[pixel_x]
-    }
+                    own = direct_by_x[key].get(x)
+                    source = key if own is not None else donors[(x, key)]
+                    point = own if own is not None else direct_by_x[source][x]
+                    by_x[key][x] = mark_shared(point, group=group, source_series=source,
+                        support_kind="direct_pixel" if own is not None else "shared_pixel",
+                        shared_eligible=not point.identity_ambiguous)
+            records.append({"group_key": group, "member_series": list(members),
+                "pixel_ranges": [[left, right]], "mode": "coincident_overlap",
+                "max_member_distance_px": max_spread})
+    return ({key: tuple(points[x] for x in sorted(points)) for key, points in by_x.items()}, records)
 
 
 def _curve_csv(
@@ -254,21 +180,24 @@ def _curve_csv(
         "coordinate_ownership",
         "shared_group",
         "support_source_series",
+        "identity_resolved",
+        "interpolation_eligible",
+        "interpolation_reason",
+        "pixel_y_support_min",
+        "pixel_y_support_max",
+        "pixel_y_support_ranges",
+        "use_limit_indices",
+        "local_slope",
+        "normal_line_width_px",
+        "pixel_resolution_px",
+        "x_localization_uncertainty_px",
+        "y_localization_uncertainty_px",
     )
     stream = io.StringIO(newline="")
     writer = csv.DictWriter(stream, fieldnames=fields, lineterminator="\n")
     writer.writeheader()
     for point in points:
-        eligible = bool(
-            not series_unresolved and not point.identity_ambiguous
-        )
-        reason = (
-            "ambiguous_path"
-            if point.identity_ambiguous
-            else "series_unresolved"
-            if series_unresolved
-            else ""
-        )
+        eligible, interpolation, reason, use_reason = _point_permissions(series, point, series_unresolved)
         writer.writerow(
             {
                 "panel_key": request.panel_key,
@@ -287,13 +216,13 @@ def _curve_csv(
                 "uncertainty_px": format(point.uncertainty_px, ".17g"),
                 "x_uncertainty": format(
                     _axis_uncertainty(
-                        axes.x, point.pixel_x_subpixel, point.uncertainty_px
+                        axes.x, point.pixel_x_subpixel, point.x_localization_uncertainty_px
                     ),
                     ".17g",
                 ),
                 "y_uncertainty": format(
                     _axis_uncertainty(
-                        axes.y, point.pixel_y_subpixel, point.uncertainty_px
+                        axes.y, point.pixel_y_subpixel, point.y_localization_uncertainty_px
                     ),
                     ".17g",
                 ),
@@ -305,9 +234,37 @@ def _curve_csv(
                 "coordinate_ownership": point.coordinate_ownership,
                 "shared_group": point.shared_group,
                 "support_source_series": point.support_source_series,
+                "identity_resolved": int(not series_unresolved and not point.identity_ambiguous),
+                "interpolation_eligible": int(interpolation),
+                "interpolation_reason": "" if interpolation else (reason or
+                    point.interpolation_reason or "scientific_use_limit"),
+                "pixel_y_support_min": point.pixel_y_support_min,
+                "pixel_y_support_max": point.pixel_y_support_max,
+                "pixel_y_support_ranges": json.dumps(point.pixel_y_support_ranges, separators=(",", ":")),
+                "use_limit_indices": use_reason,
+                "local_slope": format(point.local_slope, ".17g"),
+                "normal_line_width_px": format(point.normal_line_width_px, ".17g"),
+                "pixel_resolution_px": format(point.pixel_resolution_px, ".17g"),
+                "x_localization_uncertainty_px": format(point.x_localization_uncertainty_px, ".17g"),
+                "y_localization_uncertainty_px": format(point.y_localization_uncertainty_px, ".17g"),
             }
         )
     return stream.getvalue().encode("utf-8")
+
+
+def _point_permissions(series: FigureDigitizationSeries, point: TracePoint, unresolved: bool):
+    indices = [index for index, limit in enumerate(series.use_limits)
+        if limit.pixel_bbox[0] <= point.pixel_x_subpixel < limit.pixel_bbox[2]
+        and limit.pixel_bbox[1] <= point.pixel_y_subpixel < limit.pixel_bbox[3]]
+    limits = [series.use_limits[index] for index in indices]
+    eligible = not unresolved and not point.identity_ambiguous and point.measurement_location_resolved and not any(
+        limit.applies_to in {"all", "quantitative_measurement"} for limit in limits)
+    interpolation = eligible and point.interpolation_eligible and not any(
+        limit.applies_to in {"all", "interpolation"} for limit in limits)
+    reason = ("series_unresolved" if unresolved else "ambiguous_path" if point.identity_ambiguous
+        else "raster_support_unresolved" if not point.measurement_location_resolved
+        else "scientific_use_limit" if not eligible else "")
+    return eligible, interpolation, reason, "|".join(str(index) for index in indices)
 
 
 def _audit_overlay(
@@ -329,7 +286,7 @@ def _audit_overlay(
         color = colors[index % len(colors)]
         offset = index * panel_height + 25
         overlay.paste(image, (0, offset))
-        draw.text((4, offset - 20), series.series_key, fill=color)
+        draw.text((4, offset - 20), f"{series.series_key} ({series.line_style})", fill=color)
         left, top, right, bottom = series.binding_bbox
         draw.rectangle((left, top + offset, right, bottom + offset), outline=color, width=1)
         for x, y in series.seeds:
@@ -345,11 +302,12 @@ def _audit_overlay(
         for point in traces[series.series_key]:
             x = int(round(point.pixel_x_subpixel))
             y = int(round(point.pixel_y_subpixel))
-            local_limit = (
-                series.series_key in unresolved
-                or point.identity_ambiguous
-            )
+            eligible, interpolation, _, _ = _point_permissions(series, point, series.series_key in unresolved)
+            local_limit = not eligible or not interpolation
             point_color = "#ff4000" if local_limit else color
+            if local_limit:
+                for low, high in point.pixel_y_support_ranges:
+                    draw.line((x, low + offset, x, high + offset), fill="#ffb080")
             draw.point((x, y + offset), fill=point_color)
             draw.line((x, strip_y, x, strip_y + 4), fill=(
                 "#ff4000" if local_limit else "#d6a000" if point.shared_group else color
@@ -464,7 +422,7 @@ def build_digitized_figure_bundle(
                 "descriptor": {
                     "color": series.color,
                     "color_tolerance": COLOR_MATCH_TOLERANCE,
-                    "line_style": "solid",
+                    "line_style": series.line_style,
                 },
                 "data_item": item,
                 "binding": bindings[key],
@@ -475,6 +433,10 @@ def build_digitized_figure_bundle(
                     finding.message for finding in local_findings
                     if finding.code != "binding_pixels_missing"
                 ],
+                "use_limits": [limit.model_dump(mode="json") for limit in series.use_limits],
+                "exclusion_regions": [list(box) for box in (*request.exclusion_regions, *series.exclusion_regions)],
+                "identity_resolved_point_count": sum(not series_unresolved and not p.identity_ambiguous for p in points),
+                "interpolation_eligible_point_count": sum(_point_permissions(series, p, series_unresolved)[1] for p in points),
                 "uncertainty_px": round(
                     max(
                         (

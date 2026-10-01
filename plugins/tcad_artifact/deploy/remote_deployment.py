@@ -29,7 +29,7 @@ def write(path, raw, mode=0o600):
 
 def probe(runner, config):
     result = {}
-    for name in ("tcad_capabilities", "tcad_execution_policy"):
+    for name in ("tcad_capabilities", "tcad_execution_policy", "tcad_submission_protocol"):
         request = {"schema_version": 1, "operation": "rpc", "payload": {"request": {
             "jsonrpc": "2.0", "id": "deployment", "method": "tools/call",
             "params": {"name": name, "arguments": {}}}}}
@@ -40,12 +40,14 @@ def probe(runner, config):
         value = json.loads(completed.stdout)
         response = value.get("payload", {}).get("response", {})
         if value.get("ok") is not True or "error" in response:
-            raise RuntimeError("Remote capability/policy discovery failed during deployment")
+            raise RuntimeError("Remote capability/policy/submission protocol discovery failed during deployment")
         result[name] = response["result"]["structuredContent"]
     if not result["tcad_capabilities"].get("capabilities"):
         raise RuntimeError("Remote runner has no capabilities")
     if not {"agent_execution_policy", "runner", "debug"}.issubset(result["tcad_execution_policy"]):
         raise RuntimeError("Remote policy discovery is incomplete")
+    if result["tcad_submission_protocol"] != {"version": 1, "submit": "tcad_submit_retirable", "retire": "tcad_retire_submission"}:
+        raise RuntimeError("Remote submission/retirement protocol is incompatible")
     return {"capabilities": len(result["tcad_capabilities"]["capabilities"]), "policy_available": True}
 
 
@@ -81,6 +83,15 @@ def deploy(request):
                 require_idle(config)
             raw = (base64.b64decode(request["configuration"], validate=True)
                    if request.get("configuration") is not None else config.read_bytes())
+            value = json.loads(raw)
+            policy = value.get("agent_execution_policy", {})
+            if "max_total_wall_time_seconds" not in policy and request.get("policy_defaults"):
+                policy["max_total_wall_time_seconds"] = request["policy_defaults"]["max_total_wall_time_seconds"]
+                raw = json.dumps(value, sort_keys=True).encode()
+            debug = value.get("debug", {})
+            if "budget_scope" not in debug and request.get("debug_defaults"):
+                debug["budget_scope"] = request["debug_defaults"]["budget_scope"]
+                raw = json.dumps(value, sort_keys=True).encode()
             write(stage / "runner.candidate", base64.b64decode(request["source"], validate=True), 0o750)
             write(stage / "config.candidate", raw)
             # Probe both protocols before replacing either existing file.
