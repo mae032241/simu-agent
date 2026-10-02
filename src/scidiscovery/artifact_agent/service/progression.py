@@ -74,6 +74,33 @@ class ObservationRetriesExhausted(ProgressionFault):
         super().__init__('observation_retry_exhausted')
 
 
+def fault_diagnostic(error, phase):
+    """Persist bounded code coordinates, never messages, SQL, paths or locals."""
+    result=dict(phase=phase if phase in {'idle','prepared','running'} else 'unprepared',stage='unknown',frames=[])
+    seen=set()
+    for _ in range(4):
+        if error is None or id(error) in seen:
+            break
+        seen.add(id(error))
+        code=getattr(error,'sqlite_errorcode',None);name=getattr(error,'sqlite_errorname',None)
+        if (type(code) is int and 0<=code<=65535 and isinstance(name,str) and len(name)<=64
+                and name.startswith('SQLITE_') and name.isidentifier() and getattr(sqlite3,name,None)==code):
+            result.update(sqlite_errorcode=code,sqlite_errorname=name)
+        frame=error.__traceback__
+        for _ in range(64):
+            if frame is None:
+                break
+            module=frame.tb_frame.f_globals.get('__name__','');function=frame.tb_frame.f_code.co_name
+            if (isinstance(module,str) and module.startswith('scidiscovery.') and len(module)<=128
+                    and all(part.isidentifier() for part in module.split('.')) and function.isidentifier() and len(function)<=96):
+                result['frames']=(result['frames']+[dict(module=module,function=function,line=frame.tb_lineno)])[-4:]
+                if module==__name__ and function not in {'tick','_bounded_tick','_observation'}:
+                    result['stage']=function
+            frame=frame.tb_next
+        error=error.__cause__
+    return result
+
+
 class ProgressionCoordinator:
     def __init__(self, *, runtime, host_factory, facade_factory, clock=time.time):
         self.runtime, self.bindings = runtime, runtime.scheduler_bindings
@@ -595,6 +622,7 @@ class ProgressionCoordinator:
                     self._pending_fault = dict(instance_id=self.instance,
                         expected_host=json.loads(row['host_json'] or 'null'),
                         changes=dict(runtime_status=reason, fault_code=code,
+                            fault_diagnostic=fault_diagnostic(error,checkpoint.get('phase')),
                             fault_class='outcome_unknown' if uncertain else 'observation_exhausted'
                                 if getattr(error, 'code', None) == 'observation_retry_exhausted' else 'configuration_or_runtime',
                             attempts=checkpoint.get('attempts', 0)+(reason == 'host_fault' and not safe)),
@@ -882,7 +910,6 @@ class ProgressionCoordinator:
         if snapshot == checkpoint.get('processed_snapshot'):
             return
         prompt = self._observation(lambda: self._brief(self._decision_row(), snapshot, limits['context_bytes']-len(INSTRUCTION.encode())-1))
-        from .scientific_progress import delivery_coverage, read_intent, terminal_fact
         delivered = json.loads(prompt.split('\n')[-1])
         shown = {value['name']: value for value in delivered['changes']}
         # An acknowledged notice does not consume its omitted results. Rebuild
@@ -891,15 +918,7 @@ class ProgressionCoordinator:
                 and checkpoint.get('runtime_status') not in {'reconciling_interruption', 'recovering_failed_turn'}):
             return
         prior = {value['name']: value for value in checkpoint.get('processed_snapshot', {}).get('runs', [])}
-        terminal_delivery = dict(objective_ref=json.loads(row['objective_ref_json']), items=[])
-        for value in snapshot['runs']:
-            if value == prior.get(value['name']) or value['name'] not in shown:
-                continue
-            projection = shown[value['name']]
-            run = self.runtime.runs.status(self.bindings.resolve(instance=self.instance, namespace='run', name=value['name']))
-            terminal_delivery['items'].append(dict(name=value['name'], run_id=run.run_id,
-                terminal=terminal_fact(self.runtime.runs, run),
-                scientific_intent=read_intent(self.runtime.artifacts, run), delivery=delivery_coverage(projection)))
+        terminal_delivery = self._observation(lambda: self._terminal_delivery(row,snapshot,shown))
         # An omitted result remains pending. Only displayed terminal projections
         # (or a later confirmed native tool receipt) can advance consumption.
         decision_snapshot = dict(snapshot, runs=[value for value in snapshot['runs']
@@ -926,6 +945,21 @@ class ProgressionCoordinator:
         # notice. A late turn/started event cannot acknowledge a newer candidate.
         self._save(dict(phase='running', turn_id=turn, notified_snapshot=notification_snapshot))
         self._submitting = False
+
+    def _terminal_delivery(self,row,snapshot,shown):
+        """Pure post-brief reads; retry before preparing any native submission."""
+        from .scientific_progress import delivery_coverage, read_intent, terminal_fact
+        checkpoint=json.loads(row['checkpoint_json'])
+        prior={value['name']:value for value in checkpoint.get('processed_snapshot',{}).get('runs',[])}
+        delivery=dict(objective_ref=json.loads(row['objective_ref_json']),items=[])
+        for value in snapshot['runs']:
+            if value==prior.get(value['name']) or value['name'] not in shown:
+                continue
+            run=self.runtime.runs.status(self.bindings.resolve(instance=self.instance,namespace='run',name=value['name']))
+            delivery['items'].append(dict(name=value['name'],run_id=run.run_id,
+                terminal=terminal_fact(self.runtime.runs,run),scientific_intent=read_intent(self.runtime.artifacts,run),
+                delivery=delivery_coverage(shown[value['name']])))
+        return delivery
 
     def _check_budget(self, row, limits, allow_round=True, *, force=False):
         from .scheduling_control import background_task_count

@@ -1,6 +1,9 @@
 """Finite recovery through real persisted UI/MCP/control and native boundaries."""
 import json
 import os
+import sqlite3
+import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -11,7 +14,7 @@ from scidiscovery.platforms.codex_root_host import CodexRootHost
 from tests.operations.test_progression import progression, checkpoint, row, Host
 from tests.operations.test_progress_assist import configure
 from tests.operations.test_progression_pacing import busy
-from tests.operations.test_local_worker_contracts import _invoke
+from tests.operations.test_local_worker_contracts import _invoke, _worker, _write_result
 from tests.operations.test_research_loop_budget import loop_ui, authorize, loop_form, historical_checkpoint
 from tests.operations.test_loop_review_budget import configure as ui_configure
 
@@ -38,6 +41,99 @@ def snapshot_busy(p, monkeypatch):
 
 def ready(p):
     p.now[0] = checkpoint(p)['recovery']['next_at']
+
+
+def completed_worker(p):
+    host=start(p,observation_retries=6,observation_retry_seconds=.12,
+        observation_backoff_seconds=.01,max_recoveries=1)
+    root=type(p.root)(p.facade(host.scheduler_session))
+    _invoke(root,'sealed')
+    worker=_worker(p.catalog,p.runtime)
+    worker.call_tool('worker_open_assignment',{})
+    _write_result(worker)
+    worker.call_tool('worker_submit_result',{})
+    host.finish();p.now[0]+=2
+    return host
+
+
+def frozen_loops(cp):
+    # budget_snapshot is a live balance; these are the immutable grant fields.
+    return {identity:{key:value[key] for key in ('authorized_at','deadline_at','authorized_by',
+        'request_fingerprint','config','objective_name','objective_ref_json')}
+        for identity,value in cp['loop_authorizations'].items()}
+
+
+@pytest.mark.parametrize('release',[True,False])
+def test_post_brief_real_database_contention_obeys_existing_recovery_budget(progression,monkeypatch,release):
+    p=progression;host=completed_worker(p);before=checkpoint(p)
+    blocker=sqlite3.connect(p.runtime.runs.database_path,timeout=0,check_same_thread=False)
+    brief=p.coordinator._brief;armed=[];timer=None
+    def brief_then_lock(*args):
+        nonlocal timer
+        value=brief(*args)
+        if not armed or not release:
+            armed.append(1);blocker.execute('BEGIN EXCLUSIVE')
+            if release:
+                timer=threading.Timer(.025,blocker.rollback);timer.start()
+        return value
+    monkeypatch.setattr(p.coordinator,'_brief',brief_then_lock)
+    started=time.monotonic()
+    try:
+        p.coordinator.tick()
+        assert time.monotonic()-started<.8
+        cp=checkpoint(p)
+        assert frozen_loops(cp)==frozen_loops(before)
+        assert cp['budget']['effective_remaining_seconds']<=before['budget']['effective_remaining_seconds']
+        assert cp['current_loop_id']==before['current_loop_id'] and cp['admissions']==before['admissions']
+        if release:
+            assert len(host.prompts)==2 and cp['recovery'].get('used',0)==0
+            assert row(p)['state']=='active'
+        else:
+            assert len(host.prompts)==1 and cp['recovery']['used']==1 and cp['attempts']==before['attempts']
+            assert cp['recovery']['pending_kind']=='observation' and row(p)['state']=='active'
+            diagnostic=cp['fault_diagnostic']
+            assert diagnostic['sqlite_errorcode']==sqlite3.SQLITE_BUSY and diagnostic['sqlite_errorname']=='SQLITE_BUSY'
+            assert diagnostic['stage']=='_terminal_delivery' and diagnostic['phase']=='idle'
+            blocker.rollback()
+            p.coordinator.tick()
+            assert checkpoint(p)['recovery']['used']==1 and len(host.prompts)==1
+            ready(p)
+            with pytest.raises(ProgressionFault,match='observation_retry_exhausted'):p.coordinator.tick()
+            assert row(p)['state']=='paused' and checkpoint(p)['recovery']['used']==1
+            assert len(host.prompts)==1
+    finally:
+        if timer:timer.join()
+        blocker.rollback();blocker.close()
+    if not release:
+        p.coordinator.tick()
+        assert len(host.prompts)==1
+    assert len(p.runtime.runs.list(instance_id=p.instance))==1
+    assert frozen_loops(checkpoint(p))==frozen_loops(before)
+
+
+def test_permanent_database_fault_keeps_bounded_safe_diagnostic_and_never_retries(progression,monkeypatch):
+    p=progression;host=completed_worker(p);before=checkpoint(p);calls=[]
+    brief=p.coordinator._brief
+    def bad_status(_):
+        calls.append(1)
+        with sqlite3.connect(p.runtime.runs.database_path) as db:
+            db.execute('SELECT * FROM "credential_do_not_emit_OR_SQL_text"')
+    def brief_then_fail(*args):
+        value=brief(*args);monkeypatch.setattr(p.runtime.runs,'status',bad_status);return value
+    monkeypatch.setattr(p.coordinator,'_brief',brief_then_fail)
+    with pytest.raises(sqlite3.OperationalError):p.coordinator.tick()
+    cp=checkpoint(p);diagnostic=cp['fault_diagnostic']
+    assert calls==[1] and row(p)['state']=='paused' and row(p)['reason']=='host_fault'
+    assert cp['fault_code']=='OperationalError' and cp['fault_class']=='configuration_or_runtime'
+    assert cp['recovery'].get('used',0)==0 and len(host.prompts)==1 and host.closed
+    assert frozen_loops(cp)==frozen_loops(before) and cp['admissions']==before['admissions']
+    assert diagnostic['stage']=='_terminal_delivery' and diagnostic['phase']=='idle'
+    assert diagnostic['sqlite_errorcode']==sqlite3.SQLITE_ERROR and diagnostic['sqlite_errorname']=='SQLITE_ERROR'
+    assert 0<len(diagnostic['frames'])<=4 and len(json.dumps(diagnostic).encode())<2048
+    assert all(set(frame)=={'module','function','line'} for frame in diagnostic['frames'])
+    assert all(frame['module'].startswith('scidiscovery.') for frame in diagnostic['frames'])
+    assert 'credential_do_not_emit' not in json.dumps(diagnostic)
+    assert not ({'message','sql','locals','filename','path','traceback'} & set(diagnostic))
 
 
 def test_local_observation_backoff_success_and_health_never_refunds(progression, monkeypatch):
