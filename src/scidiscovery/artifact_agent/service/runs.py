@@ -35,7 +35,7 @@ from ...operations.workspace import (
     WorkspaceProtocolError,
     operation_workspace_hooks,
 )
-from ..storage.control_io import connect_database
+from ..storage.control_io import connect_database, bounded_control_io
 from ..schema.artifact import ArtifactRegistration
 from ..schema.common import canonical_json, canonical_sha256
 from ..schema.refs import ActorRef, ArtifactRef
@@ -1184,6 +1184,125 @@ class RunService(ToolEvidenceMixin, RunAdmissionMixin):
         values = {value.run_id:value for value in self._statuses_from_rows(rows)}
         return (tuple((item['name'],values[item['object_id']]) for item in page),
             page[-1]['name'] if len(selected)>limit else None)
+
+    @staticmethod
+    def _attempt_history_query(scope):
+        if scope.get('objective_ref'):
+            where = "d.instance_id=? AND d.collection='admissions' AND json_extract(d.record_json,'$.state')='accepted'"
+            args = [scope['instance_id']]
+            for key, value in scope['objective_ref'].items():
+                where += " AND json_extract(d.record_json,'$.objective_ref." + key + "')=?"
+                args.append(value)
+            tables = "scheduler_control.scheduler_progression_details d LEFT JOIN runs r ON r.run_id=json_extract(d.record_json,'$.run_id') "
+            tables += "LEFT JOIN scheduler_control.scheduler_bindings b ON b.instance=d.instance_id AND b.namespace='run' AND b.name=d.record_key"
+        else:
+            where = 'r.instance_id=? AND r.run_id IN (SELECT value FROM json_each(?))'
+            args = [scope['instance_id'], json.dumps(scope['source_run_ids'])]
+            tables = "runs r LEFT JOIN scheduler_control.scheduler_bindings b ON b.instance=r.instance_id AND b.namespace='run' AND b.object_id=r.run_id "
+            tables += "AND b.name=(SELECT name FROM scheduler_control.scheduler_bindings WHERE instance=r.instance_id AND namespace='run' AND object_id=r.run_id ORDER BY created_at,name LIMIT 1)"
+        if scope['state']:
+            where += ' AND (r.state=? OR r.run_id IS NULL OR r.instance_id<>?)'
+            args.extend((scope['state'], scope['instance_id']))
+        return tables, where, args
+
+    def _attempt_history_terminals(self, scope):
+        tables, where, args = self._attempt_history_query(scope)
+        tables += ' JOIN run_activity a ON a.run_id=r.run_id'
+        where += " AND r.state IN ('completed','failed') AND b.object_id=r.run_id AND r.instance_id=? "
+        where += "AND a.recorded_at=r.completed_at AND a.rowid<=? "
+        where += "AND a.activity=CASE r.state WHEN 'completed' THEN 'completion_committed' ELSE 'framework_failure' END "
+        where += "AND a.rowid=(SELECT MIN(event.rowid) FROM run_activity event WHERE event.run_id=r.run_id AND event.recorded_at=r.completed_at AND event.activity=a.activity)"
+        args.extend((scope['instance_id'], scope['terminal_upper']))
+        return tables, where, args
+
+    def attempt_history_scope(self, *, instance_id, state, limit, source_run_id=None, source_name=None):
+        """Freeze only exact admissions or a recorded direct recovery source."""
+        if state not in {None, 'completed', 'failed'} or not 1 <= limit <= 100:
+            raise ValueError('Attempt history contains terminal tasks only.')
+        deadline = time.monotonic() + 2
+        with bounded_control_io(wait_seconds=lambda: .1, remaining_seconds=lambda: deadline-time.monotonic()), closing(self._connect()) as db:
+            self._attach_scheduler(db)
+            db.execute('PRAGMA query_only = ON')
+            db.execute('BEGIN')
+            row = db.execute('SELECT objective_ref_json,checkpoint_json FROM scheduler_control.scheduler_progression WHERE instance_id=?',
+                (instance_id,)).fetchone()
+            scope = dict(version=1, instance_id=instance_id, state=state, limit=limit, after=None,
+                authorization_loop_id=json.loads(row['checkpoint_json']).get('current_loop_id') if row else None,
+                loop_anchor='authorization_at_first_read',
+                objective_ref=json.loads(row['objective_ref_json']) if row and row['objective_ref_json'] else None,
+                source_task=source_name)
+            if source_run_id:
+                source = db.execute("SELECT instance_id,operation_id,resume_from_run_id,draft_from_run_id,recovery_draft_json,json_extract(recovery_policy_json,'$.loop_id') AS loop_id FROM runs WHERE run_id=?",
+                    (source_run_id,)).fetchone()
+                if source is None or source['instance_id'] != instance_id:
+                    raise RunStateConflict('History source belongs to another instance or is unavailable.')
+                admission = db.execute("SELECT record_json FROM scheduler_control.scheduler_progression_details WHERE instance_id=? AND collection='admissions' AND record_key=?",
+                    (instance_id, source_name)).fetchone()
+                admission = json.loads(admission[0]) if admission else {}
+                if admission.get('state') == 'accepted' and admission.get('run_id') == source_run_id and admission.get('objective_ref'):
+                    scope['objective_ref'] = admission['objective_ref']
+                    scope['authorization_loop_id'] = admission.get('loop_id')
+                    scope['loop_anchor'] = 'task_authorization'
+                else:
+                    scope['objective_ref'] = None
+                    scope['authorization_loop_id'] = source['loop_id']
+                    scope['loop_anchor'] = 'recorded_recovery_source'
+                    parent = source['resume_from_run_id'] or source['draft_from_run_id']
+                    if parent:
+                        original = db.execute('SELECT instance_id,operation_id,state FROM runs WHERE run_id=?', (parent,)).fetchone()
+                        if (not original or original['state'] != 'failed' or original['instance_id'] != instance_id
+                                or original['operation_id'] != source['operation_id']
+                                or (source['resume_from_run_id'] and source['draft_from_run_id'])):
+                            raise RunStateConflict('Recorded recovery source is unavailable or conflicts with its task.')
+                    if not parent and not source['recovery_draft_json']:
+                        return None
+                    scope['source_run_ids'] = [source_run_id, *([parent] if parent else [])]
+            if scope['objective_ref']:
+                scope['objective_ref'] = ArtifactRef.model_validate(scope['objective_ref']).model_dump(mode='json')
+                name = db.execute("SELECT name FROM scheduler_control.scheduler_bindings WHERE instance=? AND namespace='artifact' AND object_id=? ORDER BY name LIMIT 1",
+                    (instance_id, scope['objective_ref']['artifact_id'])).fetchone()
+                scope['objective_name'] = name[0] if name else None
+            elif not source_run_id:
+                raise ValueError('Start an exact frozen goal or use a recorded recovery task navigation.')
+            scope['terminal_upper'] = db.execute("SELECT COALESCE(MAX(a.rowid),0) FROM run_activity a JOIN runs r ON r.run_id=a.run_id WHERE r.instance_id=? "
+                "AND r.state IN ('completed','failed') AND a.recorded_at=r.completed_at AND a.activity=CASE r.state WHEN 'completed' THEN 'completion_committed' ELSE 'framework_failure' END",
+                (instance_id,)).fetchone()[0]
+            tables, where, args = self._attempt_history_query(scope)
+            if db.execute('SELECT 1 FROM '+tables+' WHERE '+where+
+                    ' AND (r.run_id IS NULL OR r.instance_id<>? OR b.object_id IS NULL OR b.object_id<>r.run_id) LIMIT 1',
+                    (*args, instance_id)).fetchone():
+                raise RunStateConflict('Attempt history has an unavailable or conflicting exact Run binding.')
+            scope['terminal_source_missing'] = db.execute('SELECT COUNT(*) FROM '+tables+' WHERE '+where+
+                " AND r.state IN ('completed','failed') AND (r.completed_at IS NULL OR NOT EXISTS (SELECT 1 FROM run_activity a WHERE a.run_id=r.run_id AND a.recorded_at=r.completed_at "
+                "AND a.activity=CASE r.state WHEN 'completed' THEN 'completion_committed' ELSE 'framework_failure' END))", args).fetchone()[0]
+            tables, where, args = self._attempt_history_terminals(scope)
+            scope['terminal_count'] = db.execute('SELECT COUNT(*) FROM '+tables+' WHERE '+where, args).fetchone()[0]
+        return scope
+
+    def attempt_history_page(self, scope):
+        """Return limit+1 thin terminal facts; never hydrate full Runs or science."""
+        deadline = time.monotonic() + 2
+        with bounded_control_io(wait_seconds=lambda: .1, remaining_seconds=lambda: deadline-time.monotonic()), closing(self._connect()) as db:
+            self._attach_scheduler(db)
+            db.execute('PRAGMA query_only = ON')
+            db.execute('BEGIN')
+            if scope['authorization_loop_id'] and not db.execute("SELECT 1 FROM scheduler_control.scheduler_progression_details WHERE instance_id=? AND collection='loop_authorizations' AND record_key=?",
+                    (scope['instance_id'], scope['authorization_loop_id'])).fetchone():
+                raise RunStateConflict('Frozen history authorization context is unavailable; retain unknown.')
+            if not scope['objective_ref']:
+                present = db.execute('SELECT COUNT(*) FROM runs WHERE instance_id=? AND run_id IN (SELECT value FROM json_each(?))',
+                    (scope['instance_id'], json.dumps(scope['source_run_ids']))).fetchone()[0]
+                if present != len(set(scope['source_run_ids'])):
+                    raise RunStateConflict('Recorded recovery history source is unavailable.')
+            tables, where, args = self._attempt_history_terminals(scope)
+            if db.execute('SELECT COUNT(*) FROM '+tables+' WHERE '+where, args).fetchone()[0] != scope['terminal_count']:
+                raise RunStateConflict('Frozen terminal history changed or is unavailable; restart exact navigation.')
+            if scope['after']:
+                where += ' AND (r.completed_at<? OR (r.completed_at=? AND a.rowid<?))'
+                args.extend((scope['after'][0], scope['after'][0], scope['after'][1]))
+            return [dict(row) for row in db.execute('SELECT b.name,r.state,r.completed_at,a.rowid AS terminal_event,'
+                "json_extract(a.diagnostic_json,'$.category') AS failure_category FROM "+tables+' WHERE '+where+
+                ' ORDER BY r.completed_at DESC,a.rowid DESC LIMIT ?', (*args, scope['limit']+1)).fetchall()]
 
     def active_ids(self, *, instance_id: str, limit: int = 31) -> tuple[str, ...]:
         """Bound current tasks by state before paging; never read output payloads."""

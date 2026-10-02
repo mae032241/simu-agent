@@ -383,6 +383,8 @@ def root_response(name, value, arguments):
     if name in {"run_list", "execution_list", "approval_list"}:
         field = {"run_list": "runs", "execution_list": "executions", "approval_list": "approvals"}[name]
         if name == "run_list":
+            if arguments.get('view') == 'history':
+                return value
             return {**value, field: [item if detail and run_is_terminal(item.get("state"))
                 else run_intent_projection(item, intent="status") for item in value[field]]}
         if name == "execution_list" and detail:

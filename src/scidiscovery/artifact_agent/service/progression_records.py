@@ -5,6 +5,14 @@ exact late thread. References count all retained rows; an ephemeral projection
 describes which rows the caller may replace. Unread history is never deletion.
 """
 import json
+import base64
+import hashlib
+import os
+
+from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+from ..schema.common import canonical_json
 
 
 COLLECTIONS = {
@@ -19,6 +27,32 @@ SNAPSHOTS = frozenset({'decision_snapshot', 'processed_snapshot', 'notification_
     'notified_snapshot', 'terminal_delivery'})
 PROJECTION = '_detail_projection'
 ACCOUNTING_PROJECTION = '_accounting_projection'
+
+
+def history_cursor(position, *, secret):
+    """Opaque read continuation; it grants no scheduling or management power."""
+    if type(secret) is not bytes or len(secret) < 32:
+        raise ValueError('Frozen history requires the configured local identity.')
+    key = hashlib.sha256(b'scidiscovery.attempt-history.key.v1\0' + secret).digest()
+    nonce = os.urandom(12)
+    return base64.urlsafe_b64encode(nonce + AESGCM(key).encrypt(nonce,
+        canonical_json(position), b'scidiscovery.attempt-history.v1')).rstrip(b'=').decode('ascii')
+
+
+def read_history_cursor(cursor, *, secret, instance_id, state, limit):
+    try:
+        if type(secret) is not bytes or len(secret) < 32 or not 1 <= len(cursor) <= 2048:
+            raise ValueError('invalid identity or cursor length')
+        sealed = base64.b64decode(cursor + '=' * (-len(cursor) % 4), altchars=b'-_', validate=True)
+        key = hashlib.sha256(b'scidiscovery.attempt-history.key.v1\0' + secret).digest()
+        position = json.loads(AESGCM(key).decrypt(sealed[:12], sealed[12:],
+            b'scidiscovery.attempt-history.v1'))
+        if (position['version'] != 1 or position['instance_id'] != instance_id
+                or position['state'] != state or position['limit'] != limit):
+            raise ValueError('wrong history query')
+        return position
+    except (InvalidTag, ValueError, KeyError, TypeError, UnicodeError) as error:
+        raise ValueError('Invalid history cursor; restart history or use the exact task navigation.') from error
 
 DETAIL_SCHEMA = """
 CREATE TABLE IF NOT EXISTS scheduler_progression_details (

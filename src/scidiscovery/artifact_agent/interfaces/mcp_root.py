@@ -6,6 +6,7 @@ from ...agent_execution_settings import ExecutionProfile
 from ..schema.scientific_progress import ScientificIntent, ProgressAssessment
 
 import threading
+import re
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal
@@ -206,10 +207,19 @@ class ScientificCurrentSelectInput(NamedInput):
 
 
 class RunListInput(PageInput):
+    view: Literal['summary', 'detail', 'history'] = Field(default='summary',
+        description='history reads only recorded terminal facts for an exact frozen goal or the exact recovery source returned by task navigation; it creates no summary or consumption receipt.')
     state: Literal["queued", "running", "completed", "failed"] | None = None
     limit: int = Field(default=20, ge=1, le=100)
-    before: str | None = Field(default=None, pattern=_NAME_PATTERN,
-        description="Continue after this semantic Run name, returned as next_before by the previous page.")
+    before: str | None = Field(default=None, max_length=2048,
+        description='Pass next_before unchanged. summary/detail use a semantic Run name; history uses opaque control navigation bound to the same instance, goal/source, frozen loop, terminal upper bound, state and limit. Same-key restart retains it; a changed key rejects it and requires new navigation.')
+
+    @field_validator('before')
+    @classmethod
+    def semantic_or_history_cursor(cls, value, info):
+        if value is not None and info.data.get('view') != 'history' and not re.fullmatch(_NAME_PATTERN, value):
+            raise ValueError('summary/detail before requires a semantic Run name')
+        return value
 
 
 class ArtifactCatalogInput(NamedReadInput):
@@ -341,7 +351,7 @@ ROOT_TOOLS = (
     RootTool("operation_catalog", "List bounded operation summaries; select operation_id with view=detail for its full compiled contract.", OperationCatalogInput),
     RootTool("operation_preflight", "Optional check without creating. Invoke independently checks admission; this does not reserve resources or authorize execution.", OperationCallInput),
     RootTool("operation_invoke", "Validate and create one Agent, Transform, Effect or Approval from the compiled catalog; no prior preflight required. Success preserves dispatch configuration, exact outputs or approval URLs by executor kind; use the returned detail entry for Run context.", OperationCallInput),
-    RootTool("run_list", "List minimal Runs in this research instance. current_goal_tasks identifies exact frozen-goal members on this page; continue with returned next_before as before and read exact names with run_status.", RunListInput),
+    RootTool("run_list", "List minimal Runs in this research instance. current_goal_tasks identifies exact frozen-goal members on this page. view=history freezes the current exact goal's terminal event range and pages by completed task time; use an older task's run_status navigation attempt_history.read for its exact old goal or recorded recovery source. Pass the returned continuation unchanged; new tasks and later completion do not enter its frozen range. Missing terminal event sources stay explicit; facts, navigation and existing conclusions never establish consumption, qualification or scientific progress.", RunListInput),
     RootTool("run_status", "Read a Run with one intent: decision (default), status, navigation or full. Explicit stage_offset=0 lists sealed stages even while running; stage_reference reads an exact material. Stages never establish final completion or qualification.", RunStatusInput),
     RootTool("run_record_failure", "Record failure of one running minimal Run.", RunFailureInput),
     RootTool("approval_list", "List named reviews in this scheduler instance.", ApprovalListInput),

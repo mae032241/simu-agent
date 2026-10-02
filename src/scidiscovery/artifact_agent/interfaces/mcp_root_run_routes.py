@@ -22,6 +22,8 @@ class RootRunRoutes(RunReadProjection):
 
     def run_list(self, *, state: str | None, limit: int, before: str | None = None,
                  view: str = "summary") -> dict[str, Any]:
+        if view == 'history':
+            return self._attempt_history(state=state, limit=limit, before=before)
         if view not in {"summary", "detail"}:
             raise RootToolError('run_list view must be "summary" or "detail"')
         if self.runs is None:
@@ -54,6 +56,51 @@ class RootRunRoutes(RunReadProjection):
                     intent="status", output_paths=[], index_offset=0, index_limit=16))
         return result(next_before)
 
+    def _attempt_history(self, *, state, limit, before):
+        from ..service.progression_records import history_cursor, read_history_cursor
+        instance = self._instance_id()
+        secret = self.instance_management_secret
+        if type(secret) is not bytes or len(secret) < 32:
+            raise RootToolError('Frozen history requires the configured local identity.')
+        scope = (read_history_cursor(before, secret=secret, instance_id=instance, state=state, limit=limit)
+            if before else self.runs.attempt_history_scope(instance_id=instance, state=state, limit=limit))
+        records = self.runs.attempt_history_page(scope)
+        response = dict(runs=[], next_before=None, continuation=None,
+            history_scope=dict(kind='exact_goal' if scope['objective_ref'] else 'authorized_recovery_source',
+                objective_name=scope.get('objective_name'), source_task=scope.get('source_task'),
+                loop_coverage='exact_goal_across_loops' if scope['objective_ref'] else 'recorded_direct_recovery_source',
+                frozen=True),
+            coverage='recorded_terminal_facts', terminal_source_missing=scope['terminal_source_missing'],
+            original_read='not_confirmed', scientific_summary='not_generated')
+        for index, record in enumerate(records[:limit]):
+            item = dict(name=record['name'], state=record['state'], completed_at=record['completed_at'],
+                read=dict(tool='run_status', name=record['name'], intent='decision'),
+                navigation=dict(tool='run_status', name=record['name'], intent='navigation'))
+            if record['state'] == 'failed':
+                item['failure_category'] = record['failure_category']
+                item['diagnostics'] = dict(tool='run_status', name=record['name'], intent='status', diagnostic_after=0)
+            cursor = (history_cursor(dict(scope, after=[record['completed_at'], record['terminal_event']]), secret=secret)
+                if index+1 < len(records) else None)
+            candidate = dict(response, runs=[*response['runs'], item], next_before=cursor,
+                continuation=dict(tool='run_list', view='history', state=state, limit=limit, before=cursor) if cursor else None)
+            if len(canonical_json(candidate)) > 16384:
+                if not response['runs']:
+                    raise RootToolError('Attempt history entry exceeds its bounded page capacity.')
+                break
+            response = candidate
+        return response
+
+    def _attempt_history_navigation(self, *, name, value):
+        from ..service.progression_records import history_cursor
+        if not self.instance_management_secret:
+            return dict(available=False, reason='local_history_identity_unavailable')
+        scope = self.runs.attempt_history_scope(instance_id=self._instance_id(), state=None, limit=20,
+            source_run_id=value.run_id, source_name=name)
+        if scope is None:
+            return dict(available=False, reason='no_exact_goal_or_authorized_recovery_source')
+        return dict(available=True, read=dict(tool='run_list', view='history', state=None, limit=20,
+            before=history_cursor(scope, secret=self.instance_management_secret)))
+
     def run_status(self, *, name: str, **arguments) -> dict[str, Any]:
         from .mcp_root import parse_run_status_arguments
         request = parse_run_status_arguments({"name": name, **arguments})
@@ -80,6 +127,7 @@ class RootRunRoutes(RunReadProjection):
             result["bound_inputs"] = self._scientific_run_view(value, {"bound_inputs": [
                 {"port": port, "artifact_names": names} for port, names in inputs.items()]})["bound_inputs"]
         if request["intent"] == "navigation":
+            result['attempt_history'] = self._attempt_history_navigation(name=name, value=value)
             evidence = (self.runs.evidence_output_refs(value) if value.state == "completed"
                 else self.runs.sealed_evidence_output_refs(value))
             if evidence:
