@@ -157,19 +157,11 @@ class RecoveryJourney(Journey):
         prior=self.root/'prior-native-turns.json'
         if prior.exists():
             write(self.logdir.parent/'prior-native-terminal.json', verify_prior_turns(self.rpc,read(prior)))
-        self.status('awaiting_user', management_url=value['management_url'])
-        expected_instance = getattr(self, 'case_config', {}).get('instance', 'b0a-calibration')
-        print('请选择已有 ' + expected_instance + ' 实例：' + value['management_url'], flush=True)
-        while value.get('state') == 'unbound':
-            self.pump(); time.sleep(1); value = self.current_instance()
-        if value.get('state') != 'active' or value.get('name') != expected_instance:
-            raise RuntimeError('recovery_requires_original_b0a_calibration_instance')
-        # Public contracts intentionally hide mechanical IDs. Resolve the exact
-        # user-selected name in the supervisor's read-only state, never by recency.
-        database = self.root / 'state/database/scheduler-bindings.sqlite3'
-        with closing(sqlite3.connect(database.as_uri() + '?mode=ro', uri=True)) as db:
-            self.instance = db.execute('SELECT instance_id FROM scheduler_instances WHERE name=?',
-                (value['name'],)).fetchone()[0]
+        closeout_only=self.case_config.get('closeout_only',False)
+        arguments=CLOSEOUT_ARGUMENTS if closeout_only else INGEST_ARGUMENTS
+        if closeout_only and self.case_config.get('text'):
+            arguments = {**arguments, 'text': self.case_config['text']}
+        self.await_loop_authorization(value, objective_name=arguments['name'], text=arguments['text'])
         original = self.row()
         if original['state'] not in {'idle','paused','stopped'} or original['host_json']:
             raise RuntimeError('recovery_requires_quiescent_original_goal')
@@ -177,15 +169,10 @@ class RecoveryJourney(Journey):
             raise RuntimeError('use_pre_progression_snapshot; existing_goal_budget_must_not_be_reset')
         write(self.logdir.parent / 'original-control.json', original)
         original_runs = self.runs_snapshot()
-        closeout_only=getattr(self,'case_config',{}).get('closeout_only',False)
         self.status('scientific_turn', scenario='root_closeout' if closeout_only else 'root_control_recovery')
         # The supervisor submits control commands through the native MCP client;
         # it never fabricates a platform identity or writes control databases.
         (self.root / 'model-submission-started').touch(exist_ok=False)
-        arguments=CLOSEOUT_ARGUMENTS if closeout_only else INGEST_ARGUMENTS
-        if closeout_only and self.case_config.get('text'):
-            arguments = {**arguments, 'text': self.case_config['text']}
-        self.call('artifact_ingest_text', arguments)
         self.control_attempted = True
         self.call('progression_command', dict(command='start', mode='background', objective_name=arguments['name']))
         started=self.wait_row(running_turn, 'started')

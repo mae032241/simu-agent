@@ -15,6 +15,8 @@ import subprocess
 import sys
 import time
 
+from scidiscovery.agent_execution_settings import ProgressionSettings, effective_settings, parse_settings
+
 try:
     from scripts.run_tests import serial_lock
     from scripts.b6_evidence import read, write, digest, rows, control_rows, run_snapshot, participants, sealed_outputs, usage_report, verdict, compare, assess, token_totals, budget_assessment
@@ -34,12 +36,17 @@ def configuration(path):
     value=read(path)
     if value['version']!=1 or not value['instance']:
         raise ValueError('unsupported_acceptance_config')
-    for group in ('progression','resources','managed'):
+    ProgressionSettings.model_validate(value['progression'])
+    for case in value['cases'].values():
+        ProgressionSettings.model_validate({**value['progression'], **case.get('progression', {})})
+    for group in ('resources','managed'):
         if any(type(v) is not int or v<=0 for v in value[group].values()):
             raise ValueError('positive_integer_limits_required')
     for key in ('poll_seconds','stage_timeout_seconds','max_observed_runs'):
         if type(value[key]) not in (int,float) or not 0<value[key]<float('inf'):
             raise ValueError('positive_limits_required')
+    if type(value.get('human_wait_seconds')) is not int or value['human_wait_seconds'] <= 0:
+        raise ValueError('explicit_human_wait_budget_required')
     allowed={'recovery','authority','helper','helper-crash','manual','autonomous'}
     for key, case in value['cases'].items():
         if not re.fullmatch(r'[a-z][a-z0-9-]*',key) or case['runner'] not in {'native','managed'}:
@@ -131,6 +138,21 @@ def harness_digest():
     return digest({p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted([*SCRIPTS.glob('*.py'), SCRIPTS/'test_resources.json', SCRIPTS/'root_host_resources.json'])})
 
 
+def installed_contract(program, settings_file=None, instance_settings=None):
+    """Check the actual installed interpreter's schema/config API without a host."""
+    code=('import json,sys;from scidiscovery.agent_execution_settings import ProgressionSettings,load_settings,effective_settings;'
+        'from scidiscovery.artifact_agent.service.scheduling_control import CONTROL_VERSION;'
+        'value=dict(control_schema=CONTROL_VERSION,progression_fields=sorted(ProgressionSettings.model_fields));'
+        'value.update(effective_settings=effective_settings(load_settings(sys.argv[1]),json.loads(sys.argv[2]))) if len(sys.argv)>1 else None;'
+        'print(json.dumps(value))')
+    arguments=[str(settings_file),json.dumps(instance_settings or {})] if settings_file else []
+    value=json.loads(subprocess.check_output([program['python'],'-I','-c',code,*arguments],
+        cwd=program['project'],text=True,timeout=15))
+    if value['control_schema'] != 9:
+        raise ValueError('installed_candidate_requires_control_schema_9')
+    return value
+
+
 def initialize(root, config, source, installed, previous, prior_results=()):
     settings=configuration(config)
     if root.exists():raise ValueError('suite_already_exists')
@@ -138,18 +160,35 @@ def initialize(root, config, source, installed, previous, prior_results=()):
     if any(root==v or root.is_relative_to(v) or v.is_relative_to(root) for v in (source,installed)):
         raise ValueError('suite_must_be_separate_from_source_and_installation')
     original=read(source/'candidate.json'); program=read(installed/'candidate.json')
+    try:
+        from scripts.accept_progression import require_existing_instance, platform_identity
+    except ModuleNotFoundError:
+        from accept_progression import require_existing_instance, platform_identity
+    require_existing_instance(source)
+    expected=settings.get('benchmark', {}).get('candidate_source_commit')
+    if expected and program.get('head') != expected:
+        raise ValueError('candidate_source_revision_mismatch')
     if not program.get('wheels') or not program.get('profile',{}).get('model'):
         raise ValueError('installed_wheels_and_explicit_model_required_for_comparison')
+    contract=installed_contract(program)
+    if set(settings['progression'])-set(contract['progression_fields']):
+        raise ValueError('installed_candidate_missing_acceptance_settings')
     matches=rows(source,'scheduler-bindings','SELECT instance_id FROM scheduler_instances WHERE name=?',(settings['instance'],))
-    if len(matches)!=1:raise ValueError('existing_instance_not_found')
+    if len(matches)!=1 and rows(source,'scheduler-bindings','SELECT instance_id FROM scheduler_instances LIMIT 1'):
+        raise ValueError('existing_instance_not_found; create_exact_instance_in_management_ui')
     control=control_rows(source)
-    if any(v['host_json'] or v['state'] in {'active','pending'} or json.loads(v['checkpoint_json']).get('started_at') for v in control):
-        raise ValueError('use_quiescent_pre_progression_source; never_reset_spent_budget')
+    if control:
+        raise ValueError('use_fresh_pre_progression_source; retain_existing_control_and_spent_budget')
     if any(v['state'] not in {'completed','failed'} for v in run_snapshot(source)):
         raise ValueError('source_has_unfinished_runs')
     carried = prior_costs(prior_results)
     frozen=dict(prior_attempt_costs=carried, source=str(source),installed=str(installed),previous=str(previous.resolve()) if previous else None,
         config=settings,harness_digest=harness_digest(),
+        freeze_identity=dict(candidate_source_commit=program['head'], state_source_commit=original['head'],
+            control_schema=9, runner_source_commit=subprocess.check_output(['git','rev-parse','HEAD'],cwd=SCRIPTS.parent,text=True).strip(),
+            runner_digest=harness_digest(), platform=platform_identity(),
+            installed_contract=contract,
+            status='source_frozen_live_baseline_pending'),
         baseline_digest=digest(dict(state=_files(source/'state'),project=_files(Path(original['project']),project=True))),
         conditions_digest=digest(dict(program=program,settings=read(source/'agent-settings.json'),config=settings)),
         installed_config_digest=digest(program),source_settings_digest=digest(read(source/'agent-settings.json')))
@@ -169,6 +208,15 @@ def prepare(root, manifest, case_id):
             raise ValueError('rollback_requires_different_previous_build')
     elif digest(read(installed/'candidate.json'))!=manifest['installed_config_digest']:
         raise ValueError('installed_configuration_changed')
+    identity=dict(manifest['freeze_identity'])
+    conditions=manifest['conditions_digest']
+    if case_id=='rollback':
+        program=read(installed/'candidate.json')
+        contract=installed_contract(program)
+        identity.update(candidate_source_commit=program['head'],
+            state_source_commit=read(source/'candidate.json')['head'],
+            control_schema=contract['control_schema'],installed_contract=contract)
+        conditions=digest(dict(program=program,settings=read(source/'agent-settings.json'),config=manifest['config']))
     exclusive_intent(root/(case_id+'.prepare.json'),dict(started_ns=time.time_ns(),source=str(source),installed=str(installed)))
     command=[sys.executable,str(SCRIPTS/'probe_root_host_live.py'),'prepare-upgrade',
         '--candidate',str(target),'--from-candidate',str(source),'--installed-candidate',str(installed)]
@@ -179,20 +227,41 @@ def prepare(root, manifest, case_id):
     if case_id!='rollback' and baseline!=manifest['baseline_digest']:
         raise ValueError('source_changed_since_suite_init')
     config=manifest['config']
-    frozen={**{k:v for k,v in config.items() if k not in {'cases','objectives','quality'}},**case,
+    frozen={**{k:v for k,v in config.items() if k not in {'cases','objectives','quality','auto_checks','grading'}},**case,
         'text':config['objectives'].get(case.get('objective'),''),
-        'baseline_digest':baseline,'conditions_digest':manifest['conditions_digest']}
+        'baseline_digest':baseline,'conditions_digest':conditions,
+        'freeze_identity':identity}
+    frozen['progression']={**config['progression'], **case.get('progression', {})}
+    source_settings=read(target/'agent-settings.json')
+    if digest(source_settings)!=manifest['source_settings_digest'] and case_id!='rollback':
+        raise ValueError('source_settings_changed')
+    source_settings['progression']={**source_settings.get('progression', {}), **frozen['progression']}
+    global_settings=parse_settings(source_settings)
+    source_settings=global_settings.model_dump(exclude_none=True)
+    write(target/'agent-settings.json',source_settings)
+    instance=rows(target,'scheduler-bindings','SELECT agent_settings_json FROM scheduler_instances WHERE name=?',(config['instance'],))
+    instance_settings=json.loads(instance[0]['agent_settings_json'] or '{}') if instance else {}
+    effective=effective_settings(global_settings,instance_settings)
+    actual=installed_contract(read(target/'candidate.json'),target/'agent-settings.json',instance_settings)
+    if case_id=='rollback' and (read(target/'candidate.json')['head'] != identity['candidate_source_commit']
+            or {k:v for k,v in actual.items() if k!='effective_settings'} != identity['installed_contract']):
+        raise ValueError('rollback_installed_identity_changed')
+    if actual['effective_settings'] != effective:
+        raise ValueError('installed_effective_settings_mismatch')
+    if any(effective['progression'][key]!=value for key,value in frozen['progression'].items()):
+        raise ValueError('instance_override_conflicts_acceptance_budget')
+    frozen.update(effective_settings=effective, agent_settings_digest=digest(source_settings),
+        candidate_digest=digest(read(target/'candidate.json')))
     write(target/'acceptance-case.json',frozen)
     write(root/(case_id+'.prepared.json'),dict(case_digest=digest(frozen)))
     resources=read(SCRIPTS/'root_host_resources.json')
+    resources['instance_wait_timeout_seconds']=config['human_wait_seconds']
     resources['execution_timeout_seconds']=config['resources']['timeout_seconds']
     if config.get('budget'):
         resources['execution_timeout_seconds'] = min(resources['execution_timeout_seconds'],
             config['budget']['session']['execution_seconds'])
     write(target/'host-resources.json',resources)
-    if digest(read(target/'agent-settings.json'))!=manifest['source_settings_digest'] and case_id!='rollback':
-        raise ValueError('source_settings_changed')
-    print('已准备：'+str(target),flush=True)
+    print('已准备：'+str(target)+'。run 将先输出本候选精确管理 URL；仅用户页面选择/创建实例、暂停 bootstrap 并确认本场 loop 预算后才请求模型。',flush=True)
 
 
 def run(root,manifest,case_id):
@@ -219,6 +288,9 @@ def run(root,manifest,case_id):
 def result(root,manifest,case_id):
     contract=manifest['config']['cases'][case_id]; target=root/case_id
     checks={}; output=dict(case=case_id,checks=checks,status='not_observed')
+    case_file=target/'acceptance-case.json'
+    identity=read(case_file) if case_file.exists() else manifest
+    output.update({k:identity[k] for k in ('freeze_identity','baseline_digest','conditions_digest') if k in identity})
     journeys=sorted(target.glob('journey-*'))
     if len(journeys)>1:raise ValueError('multiple_attempts_require_separate_accounting')
     if not journeys:
@@ -244,8 +316,15 @@ def result(root,manifest,case_id):
     if 'execution' not in checks:
         checks['execution']='passed' if resource.get('returncode')==0 and closed.get('returncode')==0 else 'not_observed'
     output['resource']=resource
+    if manifest.get('freeze_identity'):
+        execution=read(journey/'execution-time.json') if (journey/'execution-time.json').exists() else {}
+        resource=dict(resource, supervisor_elapsed_seconds=resource.get('elapsed_seconds'),
+            elapsed_seconds=execution.get('elapsed_seconds') if (target/'model-submission-started').exists() else 0)
+        output['resource']=resource
     frozen=read(target/'acceptance-case.json')
     output.update({k:frozen[k] for k in ('baseline_digest','conditions_digest')})
+    output['freeze_identity']=frozen.get('freeze_identity', {'status':'historical_unfrozen'})
+    output['loop_authorization']=read(journey/'loop-authorization.json') if (journey/'loop-authorization.json').exists() else None
     output['objective_digest']=digest(frozen['text'])
     before=read(journey/'before-runs.json') if (journey/'before-runs.json').exists() else run_snapshot(target)
     previous_ids={v['run_id'] for v in before}

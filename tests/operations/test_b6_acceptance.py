@@ -759,9 +759,12 @@ def test_native_loop_never_calls_sealed_stop_success(tmp_path, monkeypatch, reas
     host.case_config = dict(scenario='autonomous', instance='chosen',text='question',multi_task=True,
         max_observed_runs=3, poll_seconds=.1)
     host.initialize_host = lambda **kw: dict(state='active', name='chosen', management_url='http://fixture')
+    # Authorization is covered through source UI/MCP in the owning runner tests;
+    # this fixture starts at its existing post-authorization observation loop.
+    host.await_loop_authorization = lambda *a,**kw: None
     host.status = lambda *a, **kw: None
     host.call = lambda *a, **kw: {}
-    states = iter([dict(state='idle'),dict(state='paused',reason=reason,checkpoint_json='{}')])
+    states = iter([dict(state='paused',reason=reason,checkpoint_json='{}')])
     host.row = lambda: next(states)
     host.pump = lambda: None
     host.observe_background = lambda *a: None

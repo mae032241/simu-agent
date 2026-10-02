@@ -3,18 +3,25 @@
 Run: python scripts/accept_progression.py --candidate <prepared-upgrade-candidate>
 Reuse an existing instance via probe_root_host_live.py prepare-upgrade first.
 This is a foreground supervisor: keep this terminal open. No TCAD or production
-state is used. Select the instance using the printed UI URL; no continue command.
+state is used. Select/create the exact instance and confirm its frozen loop budget
+using the printed UI URL. The foreground supervisor detects confirmation; no
+continue command grants permission or refreshes the budget.
 """
 from __future__ import annotations
 
 import argparse
 from contextlib import closing
+from datetime import datetime
 import json
+import hashlib
 import os
 from pathlib import Path
 import sqlite3
+import shutil
+import subprocess
 import sys
 import time
+from urllib.parse import urlsplit
 
 try:
     from scripts import run_tests as guard
@@ -25,7 +32,7 @@ except ModuleNotFoundError:
 
 
 def require_existing_instance(root):
-    """Validate availability only; instance selection stays in the user page."""
+    """Validate fresh compatible state; only the user page selects/creates instances."""
     if not (root / 'candidate.json').is_file():
         raise ValueError('Prepare an upgrade candidate from the previous acceptance state '
                          'with probe_root_host_live.py prepare-upgrade first.')
@@ -33,9 +40,49 @@ def require_existing_instance(root):
     if not database.is_file():
         raise ValueError('Candidate has no instance database; prepare an upgrade candidate first.')
     with closing(sqlite3.connect(database.resolve().as_uri() + '?mode=ro', uri=True)) as db:
-        if not db.execute('SELECT 1 FROM scheduler_instances LIMIT 1').fetchone():
-            raise ValueError('Candidate contains no existing instance; use prepare-upgrade '
-                             'to retain the previous acceptance evidence instead of creating empty state.')
+        if db.execute('PRAGMA user_version').fetchone()[0] != 9:
+            raise ValueError('acceptance_requires_control_schema_9_fresh_state; preserve_old_evidence')
+        db.execute('SELECT 1 FROM scheduler_instances LIMIT 1')
+
+
+def validate_candidate(root, case):
+    require_existing_instance(root)
+    if not case.get('freeze_identity'):
+        raise ValueError('frozen_acceptance_case_required; prepare_with_accept_b6')
+    if case['freeze_identity'].get('control_schema') != 9:
+        raise ValueError('frozen_control_schema_mismatch')
+    candidate = json.loads((root / 'candidate.json').read_text())
+    if case['freeze_identity']['candidate_source_commit'] != candidate.get('head'):
+        raise ValueError('candidate_source_revision_mismatch')
+    if case['candidate_digest'] != guard_digest(candidate):
+        raise ValueError('prepared_candidate_changed')
+    if case['agent_settings_digest'] != guard_digest(json.loads((root / 'agent-settings.json').read_text())):
+        raise ValueError('frozen_agent_settings_changed')
+    limits=case['effective_settings']['progression']
+    if candidate.get('profile') != dict(model=limits['root_model'], model_reasoning_effort=limits['root_reasoning_effort']):
+        raise ValueError('candidate_root_profile_mismatch')
+
+
+def platform_identity():
+    """Freeze CLI version and executable bytes; this command requests no model."""
+    executable = shutil.which('codex')
+    if not executable:
+        raise ValueError('codex_executable_missing')
+    executable = Path(executable).resolve()
+    version = subprocess.check_output([str(executable), '--version'], text=True, timeout=5).strip()
+    if not version:
+        raise ValueError('codex_version_missing')
+    with executable.open('rb') as stream:
+        checksum = hashlib.file_digest(stream, 'sha256').hexdigest()
+    return dict(version=version, executable_sha256=checksum)
+
+
+def guard_digest(value):
+    try:
+        from scripts.b6_evidence import digest
+    except ModuleNotFoundError:
+        from b6_evidence import digest
+    return digest(value)
 
 
 OBJECTIVE = """请自主完成这个有限研究目标并保留不能判断的部分。
@@ -50,6 +97,126 @@ y=2x+1+c*x*(x-1)*(x-2)（c 未知），若不能，什么新观测能够区分�
 
 
 class Journey(Host):
+    def await_loop_authorization(self, value, *, objective_name, text):
+        """Bootstrap through the actual native MCP coordinates, without a model turn."""
+        case = self.case_config
+        validate_candidate(self.root, case)
+        expected = case['instance']
+        self.status('awaiting_user', management_url=value['management_url'], model_requests=0,
+            expected_instance=expected, next_step='select_or_create_instance')
+        print('请在管理页选择或创建实例 ' + expected + '：' + value['management_url'], flush=True)
+        while value.get('state') == 'unbound':
+            self.pump(); time.sleep(case['poll_seconds']); value = self.current_instance()
+        if value.get('state') != 'active' or value.get('name') != expected:
+            raise RuntimeError('wrong_existing_instance')
+        database = self.root / 'state/database/scheduler-bindings.sqlite3'
+        with closing(sqlite3.connect(database.as_uri() + '?mode=ro', uri=True)) as db:
+            self.instance = db.execute('SELECT instance_id FROM scheduler_instances WHERE name=?', (expected,)).fetchone()[0]
+        self.require_bootstrap_boundary(value)
+        scheduling = self.call('progression_status', {})
+        if (scheduling.get('loop') or {}).get('managed'):
+            raise RuntimeError('case_requires_unspent_loop; never_reset_existing_budget')
+        self.call('artifact_ingest_text', dict(name=objective_name, text=text, on_conflict='reject'))
+        # Ingest claims ordinary interactive ownership. Only the user's page
+        # pauses it; a client-side check cannot safely authorize a later pause.
+        current=self.current_instance()
+        if current.get('name') != expected:
+            raise RuntimeError('selected_instance_changed')
+        self.require_bootstrap_boundary(current, owned=True)
+        self.bootstrap_session=urlsplit(current['management_url']).path.rsplit('/',1)[-1]
+        self.status('awaiting_user', management_url=value['management_url'], model_requests=0,
+            expected_instance=expected, objective_name=objective_name,
+            next_step='pause_bootstrap_then_confirm_loop_budget', frozen_limits=case['effective_settings']['progression'])
+        print('目标已绑定为 ' + objective_name + '。请在同一管理页依次：'
+              '1. 明确暂停本次无模型 bootstrap 交互调度；'
+              '2. 刷新页面，核对该目标与冻结预算，明确确认新研究 loop。'
+              '等待不调用模型：' + value['management_url'], flush=True)
+        while True:
+            value = self.current_instance()
+            if value.get('state') != 'active' or value.get('name') != expected:
+                raise RuntimeError('selected_instance_changed')
+            self.require_bootstrap_owner()
+            self.pump()
+            value = self.current_instance()
+            if value.get('state') != 'active' or value.get('name') != expected:
+                raise RuntimeError('selected_instance_changed')
+            self.require_bootstrap_owner()
+            scheduling = self.call('progression_status', {})
+            if scheduling.get('reason') == 'user_stopped':
+                raise RuntimeError('user_stop')
+            loop = scheduling.get('loop') or {}
+            if loop.get('managed'):
+                self.confirm_loop(scheduling, objective_name)
+                return value
+            time.sleep(case['poll_seconds'])
+
+    def require_bootstrap_owner(self):
+        database=self.root/'state/database/scheduler-bindings.sqlite3'
+        with closing(sqlite3.connect(database.as_uri()+'?mode=ro',uri=True)) as db:
+            row=db.execute('SELECT owner_session,requested_by FROM scheduler_progression WHERE instance_id=?',
+                (self.instance,)).fetchone()
+        if not row or row[0] not in {None,self.bootstrap_session} or row[1] != self.bootstrap_session:
+            raise RuntimeError('bootstrap_owner_changed')
+
+    def require_bootstrap_boundary(self, value, *, owned=False):
+        database = self.root / 'state/database/scheduler-bindings.sqlite3'
+        with closing(sqlite3.connect(database.as_uri() + '?mode=ro', uri=True)) as db:
+            db.row_factory=sqlite3.Row
+            result=db.execute('SELECT * FROM scheduler_progression WHERE instance_id=?', (self.instance,)).fetchone()
+        if result:
+            row=dict(result);checkpoint=json.loads(row['checkpoint_json'])
+            session=urlsplit(value['management_url']).path.rsplit('/',1)[-1]
+            if (row['host_json'] or checkpoint.get('started_at') is not None or checkpoint.get('current_loop_id')
+                    or checkpoint.get('fault_class') == 'outcome_unknown' or checkpoint.get('phase') in {'prepared','running'}
+                    or checkpoint.get('admissions') or checkpoint.get('admissions_ref')
+                    or (owned and (row['state'] != 'active' or row['owner_session'] != session or row['requested_by'] != session))
+                    or not owned):
+                raise RuntimeError('bootstrap_requires_quiescent_unspent_candidate')
+        elif owned:
+            raise RuntimeError('bootstrap_ownership_missing')
+        for name,terminal in [('runs',"'completed','failed'"),('executions',"'succeeded','failed','cancelled','collected','abandoned'")]:
+            path=self.root/f'state/database/{name}.sqlite3'
+            with closing(sqlite3.connect(path.as_uri()+'?mode=ro',uri=True)) as db:
+                if db.execute(f'SELECT 1 FROM {name} WHERE state NOT IN ({terminal}) LIMIT 1').fetchone():
+                    raise RuntimeError('bootstrap_requires_resolved_work')
+
+    def confirm_loop(self, scheduling, objective_name):
+        """Read both public projection and exact frozen control config before submission."""
+        loop = scheduling.get('loop') or {}
+        if (loop.get('authority') != 'explicit_management_ui_budget_confirmation'
+                or loop.get('limits') != self.case_config['effective_settings']['progression']
+                or scheduling.get('objective_name') != objective_name):
+            raise RuntimeError('loop_authorization_mismatch')
+        database = self.root / 'state/database/scheduler-bindings.sqlite3'
+        with closing(sqlite3.connect(database.as_uri() + '?mode=ro', uri=True)) as db:
+            db.row_factory = sqlite3.Row
+            row = dict(db.execute('SELECT * FROM scheduler_progression WHERE instance_id=?', (self.instance,)).fetchone())
+            binding = db.execute("SELECT object_id FROM scheduler_bindings WHERE instance=? AND namespace='artifact' AND name=?",
+                (self.instance, objective_name)).fetchone()
+        if (json.loads(row['config_json'])['effective'] != self.case_config['effective_settings']
+                or not binding or json.loads(row['objective_ref_json'])['artifact_id'] != binding[0]
+                or row['host_json'] or row['state'] != 'paused' or row['reason'] != 'loop_authorized'
+                or row['owner_session'] is not None or row['requested_by'] != self.bootstrap_session
+                or json.loads(row['checkpoint_json']).get('current_loop_id') != loop.get('id')):
+            raise RuntimeError('frozen_loop_config_or_goal_changed')
+        identity = {key: loop[key] for key in ('id', 'authorized_at', 'deadline_at')}
+        if getattr(self, 'loop_identity', identity) != identity:
+            raise RuntimeError('loop_identity_changed; never_replenish_acceptance_budget')
+        remaining = min(datetime.fromisoformat(loop['deadline_at']).timestamp() - time.time(),
+            scheduling['budget']['effective_remaining_seconds'], self.resources['execution_timeout_seconds'])
+        if remaining <= 0:
+            raise RuntimeError('authorized_loop_budget_exhausted')
+        self.loop_identity = identity
+        self.phase = 'execution'
+        deadline = time.monotonic() + remaining
+        self.phase_deadline = min(getattr(self, '_authorized_deadline', deadline), deadline)
+        self._authorized_deadline = self.phase_deadline
+        write(self.logdir.parent / 'loop-authorization.json', dict(**identity, objective_name=objective_name,
+            limits=loop['limits'], effective_settings_digest=guard_digest(self.case_config['effective_settings']),
+            model_requests=0))
+        if not hasattr(self, 'execution_started_at'):
+            self.execution_started_at = time.monotonic()
+
     def wait_for_accepted_tasks(self, status):
         """Drain accepted work under the existing execution deadline; no model call."""
         while not (status.get('closeout') or {}).get('accepted_tasks_terminal', False):
@@ -76,20 +243,13 @@ class Journey(Host):
 
     def run_journey(self):
         value = self.initialize_host(check_native=False)
-        self.status('awaiting_user', management_url=value['management_url'])
-        print('请选择已有验收实例：' + value['management_url'], flush=True)
-        while value.get('state') == 'unbound':
-            self.pump()
-            time.sleep(1)
-            value = self.current_instance()
-        if value.get('state') != 'active':
-            raise RuntimeError('instance_not_selected')
+        self.await_loop_authorization(value, objective_name='acceptance.objective', text=self.case_config['text'])
         self.status('scientific_turn')
         (self.root / 'model-submission-started').touch(exist_ok=False)
         self.turn('请先确认 instance_current，复用所选实例已有原始材料和封存结果，不重复已完成且未变化的工作。'
-            '冻结下方本轮目标原文为 source_text，按公开合同启动后台目标。'
+            '复用 acceptance.objective 的原文与管理页已确认 loop，按公开合同启动后台目标。'
             '本轮只完成目标原文绑定及后台启动，科学任务交给后台 Root 自主选择。'
-            '原文不构成审查或执行例外授权，不新增审批或资格门。\n\n' + OBJECTIVE)
+            '原文不构成审查或执行例外授权，不新增审批或资格门。\n\n' + self.case_config['text'])
         previous = None
         while True:
             self.pump()
@@ -123,15 +283,10 @@ class Journey(Host):
 
 
 def child(root, scenario='science', case_file=None):
-    require_existing_instance(root)
-    settings = json.loads((root / 'agent-settings.json').read_text())
-    # Preserve configured token/resource policy. The native usage counter includes
-    # cached input; a separate tiny fixture cap would stop the two-task journey
-    # before it can test scientific continuation. Only bound this fixture's scope.
     case = json.loads(case_file.read_text()) if case_file else {}
-    settings.setdefault('progression', {}).update(case.get('progression', dict(
-        max_tasks=3, max_rounds=8, max_elapsed_seconds=1200, max_attempts=1)))
-    write(root / 'agent-settings.json', settings)
+    validate_candidate(root, case)
+    if scenario != 'managed' and platform_identity() != case['freeze_identity']['platform']:
+        raise ValueError('frozen_codex_platform_changed')
     journey_type = Journey
     if scenario == 'recovery':
         try:
@@ -161,6 +316,10 @@ def child(root, scenario='science', case_file=None):
             checks=getattr(host, 'case_checks', {})))
         raise
     finally:
+        if hasattr(host, 'execution_started_at'):
+            write(host.logdir.parent / 'execution-time.json', dict(
+                elapsed_seconds=time.monotonic()-host.execution_started_at,
+                source='foreground_supervisor_after_loop_confirmation', human_wait_included=False))
         write(host.logdir.parent / 'started-threads.json', sorted(host.started_threads))
         host.close()
 
@@ -177,7 +336,7 @@ def main():
     parser.add_argument('--lock-fd', type=int, help=argparse.SUPPRESS)
     args = parser.parse_args()
     root = args.candidate.resolve()
-    if args.scenario not in {'science','recovery'} and args.case_file is None:
+    if args.case_file is None:
         parser.error('this scenario requires --case-file from accept_b6.py')
     if args.case_file and json.loads(args.case_file.read_text()).get('scenario', 'managed') != args.scenario:
         parser.error('case scenario mismatch')
@@ -191,7 +350,7 @@ def main():
         return 0
     os.umask(0o077)
     try:
-        require_existing_instance(root)
+        validate_candidate(root, json.loads(args.case_file.read_text()))
     except (ValueError, sqlite3.Error) as error:
         parser.error(str(error))
     prerequisites = preflight() if args.scenario != 'managed' else {'blockers': []}

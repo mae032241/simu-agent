@@ -8,7 +8,19 @@
     "max_tasks": 6,
     "max_rounds": 12,
     "max_elapsed_seconds": 1200,
-    "max_attempts": 1
+    "max_attempts": 1,
+    "max_calendar_seconds": 1200,
+    "max_reviews": 2,
+    "max_tokens": 2000000,
+    "closeout_reserve_tokens": 100000,
+    "token_policy": "bounded_fallback",
+    "max_recoveries": 8,
+    "recovery_failure_threshold": 3,
+    "recovery_backoff_seconds": 1.0,
+    "recovery_backoff_max_seconds": 60.0,
+    "recover_failed_turns": false,
+    "root_model": "gpt-5.6-sol",
+    "root_reasoning_effort": "high"
   },
   "poll_seconds": 0.5,
   "stage_timeout_seconds": 90,
@@ -205,8 +217,11 @@
     "scientific_correction_qualification": "separate trajectory assessment; sealed delivery or early success alone is insufficient",
     "automatic_run_all": false,
     "baseline_commit_role": "historical reference; not a frozen repaired or installed baseline",
-    "freeze_status": "pending",
-    "candidate_commit": null
+    "freeze_status": "source_frozen_execution_pending",
+    "candidate_commit": null,
+    "candidate_source_commit": "e07d6f080efbd56d3f01f0245c2d42deba602935",
+    "control_schema": 9,
+    "candidate_commit_role": "legacy execution candidate field; repaired source revision is candidate_source_commit"
   },
   "auto_checks": {
     "stagnation": {
@@ -306,5 +321,6 @@
     "status_from_score": "score>=floor -> passed; else failed; unscored -> not_observed",
     "auto_check_scope": "free text hit/miss only, no automatic scientific verdict",
     "adoption_scope": "optional local reviewer annotation bound to sealed digest and exact existing Root record; absent -> not_observed"
-  }
+  },
+  "human_wait_seconds": 900
 }

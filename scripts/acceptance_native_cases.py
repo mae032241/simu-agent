@@ -11,6 +11,9 @@ except ModuleNotFoundError:
     from b6_evidence import rows, run_snapshot, participants, sealed_outputs, read, write, verify_prior_turns, usage_report, budget_assessment
 
 
+AUTHORITY_OBJECTIVE='只读旧实例一个小页封存成果，保留限制并通过 progression_report 简短交接。禁止创建科研任务、助手或外部作业。'
+
+
 def recorded_control_call(root, writer, name, arguments):
     """Replay a recorded transport identity at the control socket, without a model.
 
@@ -193,16 +196,16 @@ class NativeCaseJourney(RecoveryJourney):
         if prior.exists():
             write(self.logdir.parent/'prior-native-terminal.json',
                 verify_prior_turns(self.rpc,read(prior)))
-        self.status('awaiting_user', management_url=value['management_url'])
-        print('请选择已有实例 ' + case['instance'] + '：' + value['management_url'], flush=True)
-        while value.get('state')=='unbound':
-            self.pump(); time.sleep(case['poll_seconds']); value=self.current_instance()
-        if value.get('state')!='active' or value.get('name')!=case['instance']:
-            raise RuntimeError('wrong_existing_instance')
-        self.instance=rows(self.root,'scheduler-bindings','SELECT instance_id FROM scheduler_instances WHERE name=?',(value['name'],))[0]['instance_id']
-        original=self.row()
-        if original['state']!='idle':
-            raise RuntimeError('case_requires_pre_progression_snapshot; do_not_reset_existing_budget')
+        objective=case['text']
+        scope = ('根据上一项完整任务的封存结论选择下一项，每次只派发一个负责人。无需为了数量重复无价值的任务。'
+                 if case.get('multi_task') else '只派发一个负责人。')
+        common=('这是隔离验收中的科学任务。使用既有完整任务合同，不拆成 Root 子步骤。'
+            '科学内容必须来自 Worker 封存结果。'+scope+'不运行 TCAD、网络或外部作业。'
+            '负责人可以使用本任务明确要求的助手；否则不使用助手。不要人为睡眠。\n'+objective)
+        if case['scenario']=='authority':
+            common=AUTHORITY_OBJECTIVE
+        objective_name='acceptance.authority' if case['scenario']=='authority' else 'acceptance.objective'
+        self.await_loop_authorization(value, objective_name=objective_name, text=common)
         self.before_runs=run_snapshot(self.root)
         write(self.logdir.parent/'before-runs.json',self.before_runs)
         self.status('scientific_turn',scenario=case['scenario'])
@@ -210,18 +213,13 @@ class NativeCaseJourney(RecoveryJourney):
         (self.root/'model-submission-started').touch(exist_ok=False)
         if case['scenario']=='authority':
             return self.authority()
-        objective=case['text']
-        scope = ('根据上一项完整任务的封存结论选择下一项，每次只派发一个负责人。无需为了数量重复无价值的任务。'
-                 if case.get('multi_task') else '只派发一个负责人。')
-        common=('这是隔离验收中的科学任务。使用既有完整任务合同，不拆成 Root 子步骤。'
-            '科学内容必须来自 Worker 封存结果。'+scope+'不运行 TCAD、网络或外部作业。'
-            '负责人可以使用本任务明确要求的助手；否则不使用助手。不要人为睡眠。\n'+objective)
         if case['scenario']=='autonomous':
-            self.call('artifact_ingest_text',dict(name='acceptance.objective',text=common,on_conflict='reject'))
             self.control_attempted=True
             self.call('progression_command',dict(command='start',mode='background',objective_name='acceptance.objective'))
         else:
-            self.root_host.start_turn('请确认当前实例，冻结以下原文并完成完整任务，等待负责人封存后回读，最终简短报告。\n'+common)
+            self.control_attempted=True
+            self.call('progression_command',dict(command='start',mode='interactive'))
+            self.root_host.start_turn('请确认当前实例，复用 acceptance.objective 原文及已确认 loop 完成完整任务，等待负责人封存后回读，最终简短报告。\n'+common)
         baseline={item['run_id'] for item in self.before_runs}
         injected=None
         while True:
@@ -302,7 +300,6 @@ class NativeCaseJourney(RecoveryJourney):
         self.launch(command,'daemon-after-crash')
 
     def authority(self):
-        self.call('artifact_ingest_text',dict(name='acceptance.authority',text='只读旧实例一个小页封存成果，保留限制并通过 progression_report 简短交接。禁止创建科研任务、助手或外部作业。',on_conflict='reject'))
         self.control_attempted=True
         self.call('progression_command',dict(command='start',mode='background',objective_name='acceptance.authority'))
         active=self.wait_row(lambda r:bool(r.get('host_json')) and r['state']=='active','old-writer',timeout=self.case_config['stage_timeout_seconds'])
