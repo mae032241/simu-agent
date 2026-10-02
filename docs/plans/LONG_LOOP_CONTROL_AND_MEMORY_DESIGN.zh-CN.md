@@ -298,13 +298,13 @@ main 未获准合入时可完成 P0/P1a/P4a 与后续无模型夹具设计；共
 
 ## P1b-prepare：基线准备边界
 
-修复源码基线冻结为 `e07d6f080efbd56d3f01f0245c2d42deba602935`，控制 schema 9；本节点只适配现有 `accept_b6.py init/prepare/run/report` 与 `accept_progression.py` 前台及恢复场次，首审两项修复及定向证据待独立复审。`baseline_digest` 继续绑定原 state/project 原件；`conditions_digest` 继续绑定程序、材料、题目与配置。`freeze_identity` 独立记录 candidate/state 源码 commit、runner commit/digest、实际 installed schema/config API 及 Codex 版本/执行文件哈希。rollback 单独冻结实际旧构建 head/installed contract 与所复制 managed state 的来源，旧 schema 在复制前拒绝，不继承新构建 head。新 runner 的提交不冒充旧源码基线，`c00706f`、S0 和已有失败原件保留；source 通过不表示真实基线、S0 或 S5a 退出。
+修复源码基线冻结为 `e07d6f080efbd56d3f01f0245c2d42deba602935`，控制 schema 9；本节点只适配现有 `accept_b6.py init/prepare/run/report` 与 `accept_progression.py` 前台及恢复场次，首审阻断及报告遗漏均修复，独立复审通过，已提交 `e625a04`。`baseline_digest` 继续绑定原 state/project 原件；`conditions_digest` 继续绑定程序、材料、题目与配置。`freeze_identity` 独立记录 candidate/state 源码 commit、runner commit/digest、实际 installed schema/config API 及 Codex 版本/执行文件哈希。rollback 单独冻结实际旧构建 head/installed contract 与所复制 managed state 的来源，旧 schema 在复制前拒绝，不继承新构建 head。新 runner 的提交不冒充旧源码基线，`c00706f`、S0 和已有失败原件保留；source 通过不表示真实基线、S0 或 S5a 退出。
 
 新场次只使用独立 schema 9、尚无控制记录的 state；旧库拒绝，不迁移或清空旧余额。`prepare` 沿既有 `prepare-upgrade` 复制/生成配置路径，它不启动 daemon、native host 或模型。运行前冻结完整有效设置并用实际 installed interpreter 核对；Root 为 `gpt-5.6-sol/high`，Worker/helper 按冻结配置。人工选择/授额等待单列 900 秒；短场自然期限和启用时长各 1200 秒，研究/审查、Root 回合、tokens 及恢复字段均明确冻结。监督总时限包含启动、人工等待和执行；报告保留全程资源与用量证据，执行计费时间单列，不把人工等待扣入模型场次，也不把缺测换成零。
 
 `run` 先通过实际 native thread/session 的公开 MCP `instance_current` 输出本候选的精确管理 URL。仅用户页面选择或创建配置中的确切实例；runner 绑定已冻结目标原文。随后用户在同一管理页明确执行两步：①暂停本次无模型 bootstrap 交互调度；②刷新页面，以打印的确切目标名明确确认完整 loop 预算。runner 不自动暂停；等待期间改绑实例或换所有者立即拒绝且不请求模型。runner 用既有公开 `progression_status` 核对 loop/目标/预算，完整有效配置只在 harness 内只读核验，不向 Agent 新增内部字段。确认后 `paused/loop_authorized` 合法，前台自动继续；自然 deadline 始终从原 `authorized_at` 起算，普通继续、恢复和换目标不续额。选择已有活动/未知实例拒绝且不摄入、不暂停；原一次性 attempt、共享锁、未知不重放和 stop 信号保留。`report` 只读；旧通用 probe `start/continue` 不作为新 P1b 资格入口。
 
-后续在取得隔离构建/准备与真实运行预算后，用 **源码来自上述 commit 的 schema 9 安装候选** 执行以下既有命令；本准备节点不执行它们，不挪用 S0/P5/P6 余额。命令中的 `python` 须来自已按 [README Development](../../README.md#development) 准备的 runner 开发环境（含测试依赖及相同冻结插件），从本仓库执行；它与候选 `candidate.json` 内核验 installed contract 的独立解释器各负其责，本节点不补装依赖：
+隔离安装候选已准备并独立核验通过。后续在确认新的真实运行预算后，用 **源码来自上述 commit 的 schema 9 安装候选** 执行以下既有命令；本准备节点未执行这些场次命令，不挪用 S0/P5/P6 余额。命令中的 `python` 须来自已按 [README Development](../../README.md#development) 准备的 runner 开发环境（含测试依赖及相同冻结插件），从本仓库执行；它与候选 `candidate.json` 内核验 installed contract 的独立解释器各负其责，本节点不补装依赖：
 
 ```bash
 python scripts/accept_b6.py init --suite /tmp/scid-p1b-baseline --config scripts/acceptance/scientific_progress.json --source /tmp/scid-p1b-e07-install --installed /tmp/scid-p1b-e07-install
