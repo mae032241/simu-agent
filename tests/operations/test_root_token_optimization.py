@@ -34,6 +34,8 @@ class ReadFixture(RootRunRoutes):
         self.runs = SimpleNamespace(review_wait_projection=lambda _: None, worker_connections=SimpleNamespace(), diagnostic_summary=lambda value: {"failure":{"category":"output_rejected"}}, sanitize_diagnostic=lambda value, diagnostic, **kwargs: diagnostic, status=Mock(return_value=self.value), recovery_available=Mock(return_value=False),
             diagnostic_events=Mock(return_value={"events": [{"event_id": 1, "recorded_at": "saved", "diagnostic": {"category":"output_rejected", "code":"fixture", "repairable_by_output":True, "details":[{"path":"$.summary", "message":"exact saved error"}]}}], "next_after": None}),
             evidence_output_refs=Mock(return_value=[]), sealed_evidence_output_refs=Mock(return_value=[]))
+        self.runs.list_bound_page = lambda **query: (tuple((binding.name,self.runs.status(binding.object_id))
+            for binding in self.bindings.list(instance='fixture', namespace='run'))[:query['limit']], None)
         self._operation_catalog = SimpleNamespace(operation=lambda _: SimpleNamespace(
             spec=SimpleNamespace(version="1", inputs=(), decision_fields=("summary", "limitations")), digest="a" * 64))
         self.engineering_diagnostics = SimpleNamespace(capture=Mock())

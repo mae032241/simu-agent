@@ -45,21 +45,14 @@ class RootRunRoutes(RunReadProjection):
             return dict(runs=items, next_before=cursor,
                 **({'current_goal_tasks': [item['name'] for item in items if item['name'] in members]}
                     if members else {}))
-        past_cursor = before is None
-        for binding in self.bindings.list(instance=self._instance_id(), namespace="run"):
-            if not past_cursor:
-                past_cursor = binding.name == before
-                continue
-            value = self.runs.status(binding.object_id)
-            if state is not None and value.state != state:
-                continue
-            if len(items) == limit:
-                return result(items[-1]["name"])
-            items.append(self._scientific_run_view(value, self._run_status_value(binding.name, value))
+        page, next_before = self.runs.list_bound_page(instance_id=self._instance_id(),
+            state=state, limit=limit, before=before)
+        for name, value in page:
+            items.append(self._scientific_run_view(value, self._run_status_value(name, value))
                 if view == "detail" and run_is_terminal(value.state)
-                else self._compact_run_status(name=binding.name, value=value,
+                else self._compact_run_status(name=name, value=value,
                     intent="status", output_paths=[], index_offset=0, index_limit=16))
-        return result(None)
+        return result(next_before)
 
     def run_status(self, *, name: str, **arguments) -> dict[str, Any]:
         from .mcp_root import parse_run_status_arguments

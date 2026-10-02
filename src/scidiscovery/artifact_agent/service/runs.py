@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from contextlib import closing
 
 from ...agent_execution_settings import (EXECUTION_SETTINGS_COLUMNS, AgentSettings, ExecutionIOSettings, ExecutionProfile, MaterialInputSettings,
                                           parse_settings, resolve_settings)
@@ -77,7 +78,7 @@ from .run_records import (
     status_from_row,
     timestamp,
 )
-from .scheduler_bindings import SchedulerBindingService, SchedulerInstanceClosed
+from .scheduler_bindings import SchedulerBindingService, SchedulerInstanceClosed, SchedulerNameNotFound
 from .instance_maintenance import InstanceMaintenanceUnavailable
 
 
@@ -1136,6 +1137,54 @@ class RunService(ToolEvidenceMixin, RunAdmissionMixin):
             rows = connection.execute(query, values).fetchall()
         return self._statuses_from_rows(rows)
 
+    def list_bound_page(self, *, instance_id: str, state: str | None, limit: int,
+                        before: str | None = None) -> tuple[tuple[tuple[str, RunStatus], ...], str | None]:
+        """Select limit+1 bound identities; materialize only this page's Runs.
+
+        Ordering belongs to the immutable semantic binding, not Run timestamps.
+        Sparse state filters may scan more identities inside SQLite, without
+        materializing their Run payloads or returning all bindings to Python.
+        """
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError('Run page limit must be between 1 and 100')
+        if not isinstance(instance_id, str) or not instance_id:
+            raise ValueError('research instance identity is invalid')
+        with closing(self._connect()) as connection:
+            self._attach_scheduler(connection)
+            connection.execute('PRAGMA query_only = ON')
+            connection.execute('BEGIN')
+            where = "b.instance=? AND b.namespace='run'"
+            parameters = [instance_id]
+            if before is not None:
+                cursor = connection.execute('SELECT created_at FROM scheduler_control.scheduler_bindings '
+                    "WHERE instance=? AND namespace='run' AND name=?", (instance_id,before)).fetchone()
+                if cursor is None:
+                    raise SchedulerNameNotFound(f'unknown run name: {before}')
+                where += ' AND (b.created_at<? OR (b.created_at=? AND b.name>?))'
+                parameters.extend((cursor['created_at'],cursor['created_at'],before))
+            if state is not None:
+                # Include broken bindings so a state filter cannot silently
+                # hide missing or foreign Run records.
+                where += ' AND (r.state=? OR r.run_id IS NULL OR r.instance_id<>?)'
+                parameters.extend((state,instance_id))
+            selected = connection.execute('SELECT b.name,b.object_id,r.run_id AS resolved_run_id,'
+                'r.instance_id AS run_instance_id FROM scheduler_control.scheduler_bindings b '
+                'LEFT JOIN runs r ON r.run_id=b.object_id WHERE '+where+
+                ' ORDER BY b.created_at DESC,b.name LIMIT ?', (*parameters,limit+1)).fetchall()
+            for item in selected:
+                if item['resolved_run_id'] is None:
+                    raise RunNotFound('Run does not exist')
+                if item['run_instance_id'] != instance_id:
+                    raise RunStateConflict('Run binding belongs to another instance')
+            page = selected[:limit]
+            rows = connection.execute('SELECT * FROM runs WHERE run_id IN (SELECT value FROM json_each(?))',
+                (json.dumps([item['object_id'] for item in page]),)).fetchall() if page else []
+        # Release the attached read transaction before approval timing opens
+        # other connections. Its existing effective-deadline semantics remain.
+        values = {value.run_id:value for value in self._statuses_from_rows(rows)}
+        return (tuple((item['name'],values[item['object_id']]) for item in page),
+            page[-1]['name'] if len(selected)>limit else None)
+
     def active_ids(self, *, instance_id: str, limit: int = 31) -> tuple[str, ...]:
         """Bound current tasks by state before paging; never read output payloads."""
         if type(limit) is not int or not 1 <= limit <= 101:
@@ -1532,20 +1581,27 @@ class RunService(ToolEvidenceMixin, RunAdmissionMixin):
         return {"events": events, "next_after": events[-1]["event_id"] if len(rows) > limit else None}
 
     def diagnostic_summary(self, value: RunStatus) -> dict[str, Any]:
-        with self._connect() as connection:
-            rows = connection.execute(
-                "SELECT activity, diagnostic_json FROM run_activity WHERE run_id=? ORDER BY rowid",
-                (value.run_id,)).fetchall()
-        rejections = [row for row in rows if row["activity"] == "output_rejected"]
+        with closing(self._connect()) as connection:
+            connection.execute('PRAGMA query_only = ON')
+            connection.execute('BEGIN')
+            def latest(activities):
+                return connection.execute('SELECT activity,diagnostic_json FROM run_activity WHERE run_id=? '
+                    'AND activity IN ('+','.join('?' for _ in activities)+') ORDER BY rowid DESC LIMIT 1',
+                    (value.run_id,*activities)).fetchone()
+            rejection_count = connection.execute("SELECT COUNT(*) FROM run_activity WHERE run_id=? "
+                "AND activity='output_rejected'", (value.run_id,)).fetchone()[0]
+            rejection = latest(('output_rejected',))
+            failure = latest(('framework_failure',))
+            tool_error = latest(('tool_failed','tool_not_computed'))
+            errors = connection.execute('SELECT activity,diagnostic_json FROM run_activity WHERE run_id=? '
+                "AND activity IN ('tool_failed','tool_not_computed','output_rejected','framework_failure') "
+                'AND diagnostic_json IS NOT NULL ORDER BY rowid DESC LIMIT 8', (value.run_id,)).fetchall()
         safe = self._stored_diagnostic
-        failures = [row for row in rows if row["activity"] == "framework_failure"]
-        tool_errors = [row for row in rows if row["activity"] in {"tool_failed", "tool_not_computed"}]
-        errors = [row for row in rows if row["activity"] in {"tool_failed", "tool_not_computed", "output_rejected", "framework_failure"} and row["diagnostic_json"] is not None]
-        return {"latest_tool_error": safe(tool_errors[-1] if tool_errors else None),
-                "recent_errors": [safe(row) for row in errors[-8:]],
-                "rejection_count": len(rejections),
-                "latest_rejection": safe(rejections[-1] if rejections else None),
-                "failure": safe(failures[-1] if failures else None)}
+        return {"latest_tool_error": safe(tool_error),
+                "recent_errors": [safe(row) for row in reversed(errors)],
+                "rejection_count": rejection_count,
+                "latest_rejection": safe(rejection),
+                "failure": safe(failure)}
 
     def successful_tools(self, run_id: str) -> tuple[str, ...]:
         with self._connect() as connection:
@@ -2389,6 +2445,8 @@ class RunService(ToolEvidenceMixin, RunAdmissionMixin):
                                    'reference_material_reserved','reference_io_reserved')""")
             connection.execute("CREATE INDEX IF NOT EXISTS run_loop_scope ON runs(instance_id,"
                 "json_extract(CAST(recovery_policy_json AS TEXT),'$.loop_id'))")
+            connection.execute('CREATE INDEX IF NOT EXISTS run_activity_kind '
+                'ON run_activity(run_id,activity)')
             connection.execute(
                 "INSERT INTO run_activity_sequence(slot,high_water) "
                 "VALUES (1, (SELECT COALESCE(MAX(rowid), 0) FROM run_activity)) "

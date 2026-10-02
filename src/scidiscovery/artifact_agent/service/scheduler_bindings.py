@@ -1219,6 +1219,8 @@ class SchedulerBindingService(SchedulingControl):
                 ON scheduler_bindings(instance, namespace, object_id)
                 """
             )
+            connection.execute('CREATE INDEX IF NOT EXISTS scheduler_bindings_page '
+                'ON scheduler_bindings(instance, namespace, created_at DESC, name)')
             connection.execute(
                 """
                 CREATE UNIQUE INDEX IF NOT EXISTS scheduler_binding_revisions
