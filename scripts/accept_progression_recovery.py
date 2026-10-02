@@ -4,17 +4,15 @@ Run via accept_progression.py --scenario recovery against a prepared state copy.
 This establishes Root lifecycle only; it does not qualify Worker/helper survival.
 """
 import json
-import sqlite3
 import sys
 import time
-from contextlib import closing
 
 try:
     from scripts.accept_progression import Journey, write
-    from scripts.b6_evidence import read, verify_prior_turns
+    from scripts.b6_evidence import read, verify_prior_turns, control_rows, run_snapshot
 except ModuleNotFoundError:
     from accept_progression import Journey, write
-    from b6_evidence import read, verify_prior_turns
+    from b6_evidence import read, verify_prior_turns, control_rows, run_snapshot
 
 
 OBJECTIVE = """本轮是后台控制恢复验收，复用已有封存成果，不重新进行科学计算。
@@ -81,16 +79,14 @@ def recovery_matches(before, after):
 
 class RecoveryJourney(Journey):
     def row(self):
-        path = self.root / 'state/database/scheduler-bindings.sqlite3'
-        with closing(sqlite3.connect(path.as_uri() + '?mode=ro', uri=True)) as db:
-            db.row_factory = sqlite3.Row
-            value = db.execute('SELECT * FROM scheduler_progression WHERE instance_id=?', (self.instance,)).fetchone()
-            return dict(value) if value else dict(state='idle', host_json=None)
+        authorization = self.logdir.parent/'loop-authorization.json'
+        loop_id = read(authorization)['id'] if authorization.exists() else None
+        values = control_rows(self.root, 'SELECT * FROM scheduler_progression WHERE instance_id=?',
+            (self.instance,), accounting=True, loop_id=loop_id, deadline=self.phase_deadline)
+        return values[0] if values else dict(state='idle', host_json=None)
 
     def runs_snapshot(self):
-        path = self.root / 'state/database/runs.sqlite3'
-        with closing(sqlite3.connect(path.as_uri() + '?mode=ro', uri=True)) as db:
-            return list(db.execute('SELECT run_id,state,output_ref_json FROM runs ORDER BY run_id'))
+        return [tuple(value[key] for key in ('run_id','state','output_ref_json')) for value in run_snapshot(self.root)]
 
     def wait_row(self, predicate, label, *, timeout=90, cleanup=False):
         previous_deadline = self.phase_deadline

@@ -18,6 +18,7 @@ COLLECTIONS = {
 SNAPSHOTS = frozenset({'decision_snapshot', 'processed_snapshot', 'notification_snapshot',
     'notified_snapshot', 'terminal_delivery'})
 PROJECTION = '_detail_projection'
+ACCOUNTING_PROJECTION = '_accounting_projection'
 
 DETAIL_SCHEMA = """
 CREATE TABLE IF NOT EXISTS scheduler_progression_details (
@@ -79,19 +80,23 @@ def _capacity(checkpoint, identity, collection):
         if collection == 'admissions' else progression_usage_capacity(settings))
 
 
-def hydrate_control_row(db, row, *, usage_thread=None, extra_loop=None, full=False):
+def hydrate_control_row(db, row, *, usage_thread=None, extra_loop=None, full=False, accounting_only=False):
+    """Accounting reads omit snapshots/history and can never be written back."""
     if row is None:
         return None
     row = dict(row)
     checkpoint = json.loads(row['checkpoint_json'])
     references = checkpoint.pop('detail_collections', {})
-    if PROJECTION in checkpoint:
+    if PROJECTION in checkpoint or ACCOUNTING_PROJECTION in checkpoint:
         raise ValueError('Persisted control projection is invalid; retain the original ledger.')
     projection = dict(counts=references, keys={}, scopes=[], offsets={})
     loaded_bytes = 0
     # Authorization history still has its separate frozen max_loop_scopes bound.
     # Read it first so each loop's own capacity governs its detail projection.
-    ordered = sorted(references, key=lambda name: name != 'loop_authorizations')
+    if accounting_only and (full or extra_loop or usage_thread or not checkpoint.get('current_loop_id')):
+        raise ValueError('Accounting projection requires one exact current research loop.')
+    ordered = sorted((name for name in references if not accounting_only or name in
+        {'loop_authorizations', 'admissions', 'usage_records'}), key=lambda name: name != 'loop_authorizations')
     scopes = {checkpoint.get('current_loop_id'), extra_loop} - {None}
     if usage_thread:
         original = detail_record(db, row['instance_id'], 'usage_records', usage_thread)
@@ -130,6 +135,15 @@ def hydrate_control_row(db, row, *, usage_thread=None, extra_loop=None, full=Fal
             # Query limits protect corrupted state too, before JSON is decoded.
             query += ' LIMIT ?'
             args.append(sum(_capacity(checkpoint, identity, collection) for identity in scopes) + 1)
+        elif accounting_only and collection == 'loop_authorizations':
+            query += ' AND record_key=?'
+            args.append(checkpoint['current_loop_id'])
+            limits = json.loads(row['config_json'])['effective']['progression']
+            sizes = db.execute('SELECT length(CAST(record_json AS BLOB)) FROM scheduler_progression_details '
+                'WHERE instance_id=? AND collection=? AND record_key=?', args).fetchone()
+            if not sizes or sizes[0] > limits['detail_record_bytes']:
+                raise ValueError('Research loop authorization is missing or exceeds its byte capacity.')
+            loaded_bytes += sizes[0]
         elif managed and collection == 'interactive_usage_records':
             query += ' AND record_key=?'
             args.append(usage_thread or '')
@@ -146,14 +160,14 @@ def hydrate_control_row(db, row, *, usage_thread=None, extra_loop=None, full=Fal
                     raise ValueError('Research loop detail capacity reached; retain the original ledger.')
         if collection == 'loop_authorizations':
             limit = json.loads(row['config_json']).get('effective', {}).get('progression', {}).get('max_loop_scopes', 8)
-            if len(values) > limit:
+            if (actual if accounting_only else len(values)) > limit:
                 raise ValueError('Research loop authorization capacity reached; retain the original ledger.')
         if collection not in checkpoint:
             offset = projection['offsets'].get(collection, 0)
             checkpoint[collection] = ([values[str(index)] for index in range(offset, count)]
                 if factory is list else values)
         projection['keys'][collection] = list(values)
-    for name in checkpoint.pop('detail_snapshots', []):
+    for name in ([] if accounting_only else checkpoint.pop('detail_snapshots', [])):
         if name not in SNAPSHOTS:
             raise ValueError('Unknown control snapshot reference.')
         record = detail_record(db, row['instance_id'], 'snapshot', name)
@@ -163,7 +177,12 @@ def hydrate_control_row(db, row, *, usage_thread=None, extra_loop=None, full=Fal
                 (row['instance_id'], 'snapshot', name)).fetchone():
             raise ValueError('Control snapshot is missing.')
         checkpoint.setdefault(name, record)
-    if references:
+    if accounting_only:
+        # Deliberately no writable projection metadata. Retain raw references
+        # and an explicit marker so even replace=True cannot persist this view.
+        checkpoint['detail_collections'] = references
+        checkpoint[ACCOUNTING_PROJECTION] = True
+    elif references:
         projection['scopes'] = sorted(scopes) if checkpoint.get('current_loop_id') and not full else None
         checkpoint[PROJECTION] = projection
         if checkpoint.get('current_loop_id') and not full:
@@ -198,6 +217,8 @@ def store_checkpoint(db, instance_id, checkpoint, *, replace=False):
     the projection metadata through JSON roundtrips. Initialization has no old
     references; maintenance may explicitly request a complete replacement.
     """
+    if ACCOUNTING_PROJECTION in checkpoint:
+        raise ValueError('Read-only accounting projection cannot be persisted.')
     compact = dict(checkpoint)
     compact.pop('_interactive_usage_summary', None)
     compact.pop('_interactive_tasks', None)

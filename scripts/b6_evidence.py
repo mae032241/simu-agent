@@ -2,8 +2,13 @@
 import hashlib
 import json
 import sqlite3
+import time
 from contextlib import closing
 from pathlib import Path
+
+from scidiscovery.artifact_agent.storage.control_io import bounded_control_io, connect_database
+from scidiscovery.artifact_agent.service.progression_records import hydrate_control_row
+from scidiscovery.artifact_agent.service.research_loops import current_loop, loop_usage
 
 
 def digest(value):
@@ -36,23 +41,62 @@ def write(path, value):
     temporary.replace(path)
 
 
-def rows(candidate, database, query, args=()):
+def _read_database(candidate, database, read_transaction, deadline=None):
+    """Retry only a complete read snapshot, within one absolute deadline."""
     path = Path(candidate) / 'state/database' / (database + '.sqlite3')
-    with closing(sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)) as db:
-        db.row_factory = sqlite3.Row
-        # SQLite stores canonical JSON as BLOB in production. Normalize only
-        # declared JSON columns for evidence serialization; preserve all other
-        # binary data and reject invalid UTF-8 instead of stringifying bytes.
-        return [{key: value.decode('utf-8') if key.endswith('_json') and isinstance(value, bytes)
-                 else value for key, value in dict(row).items()} for row in db.execute(query, args)]
+    deadline = min(time.monotonic() + 2., deadline if deadline is not None else float('inf'))
+    with bounded_control_io(wait_seconds=lambda: .1, remaining_seconds=lambda: deadline-time.monotonic()):
+        while True:
+            try:
+                with closing(connect_database(path.resolve().as_uri() + '?mode=ro', uri=True,
+                                              deadline_monotonic=deadline)) as db:
+                    db.row_factory = sqlite3.Row
+                    db.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
+                    db.execute('BEGIN')  # References and records share one read snapshot.
+                    return read_transaction(db)
+            except sqlite3.OperationalError as error:
+                code = getattr(error, 'sqlite_errorcode', 0) & 0xff
+                remaining = deadline-time.monotonic()
+                if code not in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED} or remaining <= 0:
+                    raise
+                # The failed connection has closed; discard partial hydration.
+                time.sleep(min(.01, remaining))
 
 
-def control_rows(candidate, query='SELECT * FROM scheduler_progression', args=()):
+def _json_columns(row):
+    # SQLite stores canonical JSON as BLOB in production. Normalize only
+    # declared JSON columns for evidence serialization; preserve all other
+    # binary data and reject invalid UTF-8 instead of stringifying bytes.
+    return {key: value.decode('utf-8') if key.endswith('_json') and isinstance(value, bytes)
+            else value for key, value in dict(row).items()}
+
+
+def rows(candidate, database, query, args=()):
+    return _read_database(candidate, database,
+        lambda db: [_json_columns(row) for row in db.execute(query, args)])
+
+
+def control_rows(candidate, query='SELECT * FROM scheduler_progression', args=(), *, accounting=False,
+                 loop_id=None, deadline=None):
     # Original A6 snapshots predate progression. Absence is a valid fresh
     # baseline; malformed existing tables still raise instead of hiding errors.
-    if not rows(candidate, 'scheduler-bindings', "SELECT 1 FROM sqlite_master WHERE type='table' AND name='scheduler_progression'"):
-        return []
-    return rows(candidate, 'scheduler-bindings', query, args)
+    def read_transaction(db):
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='scheduler_progression'").fetchone():
+            return []
+        values = []
+        for row in db.execute(query, args):
+            row = _json_columns(row)
+            if accounting and row.get('checkpoint_json'):
+                checkpoint = json.loads(row['checkpoint_json'])
+                if loop_id is not None and checkpoint.get('current_loop_id') != loop_id:
+                    raise ValueError('acceptance_research_loop_changed')
+                if checkpoint.get('current_loop_id'):
+                    row = hydrate_control_row(db, row, accounting_only=True)
+                elif checkpoint.get('detail_collections'):
+                    raise ValueError('acceptance_usage_requires_exact_research_loop')
+            values.append(row)
+        return values
+    return _read_database(candidate, 'scheduler-bindings', read_transaction, deadline)
 
 
 def run_snapshot(candidate):
@@ -87,8 +131,37 @@ def usage_report(journey, workers, helpers, progression=None):
     """Never treat absent counters as zero or add cached input twice."""
     path = Path(journey) / 'usage.json'
     raw = read(path) if path.exists() else {}
-    identities = {v['thread_id']:'worker' for v in workers}
-    identities.update({v['thread_id']:'helper' for v in helpers if v['thread_id']})
+    checkpoint = json.loads(progression['checkpoint_json']) if progression else {}
+    loop_id = current_loop(checkpoint)
+    authorization_path = Path(journey)/'loop-authorization.json'
+    if progression and authorization_path.exists() and read(authorization_path)['id'] != loop_id:
+        raise ValueError('acceptance_research_loop_changed')
+    if checkpoint.get('detail_collections', {}).get('usage_records') and 'usage_records' not in checkpoint:
+        raise ValueError('acceptance_usage_requires_hydration')
+    records = loop_usage(checkpoint, loop_id)
+    if loop_id:
+        run_ids = {v.get('run_id') for v in checkpoint.get('admissions', {}).values()
+            if v.get('loop_id') == loop_id and not v.get('interactive_session_id')}
+        workers = [v for v in workers if v.get('run_id') in run_ids]
+        helpers = [v for v in helpers if v.get('run_id') in run_ids]
+        records = {key:value for key,value in records.items() if not value.get('interactive_session_id')}
+    identities = {v['thread_id']:'worker' for v in workers if v.get('thread_id')}
+    for value in helpers:
+        if value.get('thread_id'):
+            if value['thread_id'] in identities:
+                raise ValueError('acceptance_usage_identity_conflict')
+            identities[value['thread_id']] = 'helper'
+    host = json.loads(progression.get('host_json') or 'null') if progression else None
+    if host:
+        if host['thread_id'] in identities:
+            raise ValueError('acceptance_usage_identity_conflict')
+        identities[host['thread_id']] = 'root'
+    for identity, item in records.items():
+        if item['role'] not in {'root','worker','helper'} or (identity in identities and item['role'] != identities[identity]):
+            raise ValueError('acceptance_usage_identity_conflict')
+        if loop_id and (item.get('thread_id') != identity or item.get('owner') != progression['instance_id']
+                        or (item['role'] != 'root' and identity not in identities)):
+            raise ValueError('acceptance_usage_identity_unbound')
     started_path = Path(journey) / 'started-threads.json'
     started = read(started_path) if started_path.exists() else []
     for identity in started:
@@ -97,13 +170,21 @@ def usage_report(journey, workers, helpers, progression=None):
         identities[raw['root_thread']] = 'setup_root' if progression else 'root'
     observed = {}
     for identity, total in raw.get('threads', {}).items():
+        if loop_id and identity not in identities and identity not in records and identity not in started:
+            continue  # An unrelated observer notification is not this loop's usage.
+        if loop_id and identities.get(identity) in {'root','worker','helper'}:
+            continue  # Cumulative notifications cannot replace loop-owned deltas.
         values = {key:total.get(wire) for key, wire in (
             ('input_tokens','inputTokens'), ('cached_input_tokens','cachedInputTokens'), ('output_tokens','outputTokens'))}
         observed[identity] = dict(role=identities.get(identity, 'unattributed'), tokens=values)
-    checkpoint = json.loads(progression['checkpoint_json']) if progression else {}
-    for identity, item in checkpoint.get('usage_records', {}).items():
+    for identity, item in records.items():
         identities[identity] = item['role']
-        observed[identity] = dict(role=item['role'], tokens=item['counted_tokens'], partial=item['has_gaps'])
+        tokens = item['counted_tokens']
+        if set(tokens) != {'input_tokens','cached_input_tokens','output_tokens'}:
+            raise ValueError('acceptance_usage_invalid')
+        observed[identity] = dict(role=item['role'], tokens=tokens, partial=item['has_gaps'])
+    if checkpoint.get('loop_authorizations', {}).get(loop_id, {}).get('unmeasured_frontend_root'):
+        identities['unmeasured-frontend-participants'] = 'unattributed'
     if progression and not any(v['role']=='root' for v in observed.values()):
         identities['unmeasured-background-root'] = 'root'
     for identity, item in observed.items():
@@ -133,6 +214,8 @@ def usage_report(journey, workers, helpers, progression=None):
         notification_bytes=sum(item.get('bytes', 0) for item in items),
         observed_items=len(items), model_visible_text_bytes=None)
     return dict(groups=groups, coverage='observed' if groups and 'unattributed' not in groups and all(v['coverage']=='observed' for v in groups.values()) else 'partial',
+        accounting_scope=dict(instance_id=progression.get('instance_id'), loop_id=loop_id,
+            source='scheduler_progression_details' if checkpoint.get('_accounting_projection') else 'inline_checkpoint') if progression else None,
         tool_result_bytes=None, tool_output_observation=tool_observation,
         limitations=['No monetary cost estimate.', 'Cumulative native usage does not establish per-request billing.',
             'Tool bytes are not tokens; received notifications may omit native output.'])

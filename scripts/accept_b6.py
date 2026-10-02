@@ -385,7 +385,9 @@ def result(root,manifest,case_id):
     previous_ids={v['run_id'] for v in before}
     new=[v for v in run_snapshot(target) if v['run_id'] not in previous_ids]
     workers,helpers=participants(target,[v['run_id'] for v in new])
-    control=control_rows(target,'SELECT p.* FROM scheduler_progression p JOIN scheduler_instances i ON i.instance_id=p.instance_id WHERE i.name=?',(manifest['config']['instance'],))
+    control=control_rows(target,'SELECT p.* FROM scheduler_progression p JOIN scheduler_instances i ON i.instance_id=p.instance_id WHERE i.name=?',
+        (manifest['config']['instance'],), accounting=True,
+        loop_id=(output['loop_authorization'] or {}).get('id'))
     progression=control[0] if control and control[0].get('checkpoint_json') and json.loads(control[0]['checkpoint_json']).get('started_at') else None
     output['usage']=usage_report(journey,workers,helpers,progression)
     if (target/'model-submission-started').exists() and not output['usage']['groups']:
