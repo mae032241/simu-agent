@@ -182,7 +182,7 @@ class RunAdmissionMixin:
         if wait is None or wait['state'] in {'completed','failed'}:
             return None
         if tool_name in {'worker_open_assignment','worker_heartbeat','worker_submit_result',
-                         'worker_reference_read','worker_materialize_input'}:
+                         'worker_reference_read','worker_read_history','worker_materialize_input'}:
             return None
         if tool_name == 'worker_experiment_execute' and arguments.get('action') in {'capabilities','review','status','logs','read','export','cancel'}:
             return None

@@ -13,7 +13,7 @@ def startup_document(assignment: dict, domain: dict | None = None) -> dict:
     # instructions from the frozen assignment and plugin manifest, once per view.
     result = {key: assignment[key] for key in (
         'operation', 'instruction', 'scientific_intent', 'role_instructions', 'narrative_instruction',
-        'budget', 'inputs', 'reference_access', 'revision', 'recovery_draft', 'tools', 'execution_requirements',
+        'budget', 'inputs', 'reference_access', 'attempt_memory', 'revision', 'recovery_draft', 'tools', 'execution_requirements',
     ) if assignment.get(key) is not None}
     result['output'] = {
         'relative_path': assignment.get('output', {}).get('relative_path', 'output/result.json'),
@@ -40,6 +40,8 @@ def startup_document(assignment: dict, domain: dict | None = None) -> dict:
             'JSON Patch responses reference the last full response, never a prior delta. '
             'Retain unchanged contracts; --full restores lost context.',
     }
+    if 'worker_read_history' in assignment.get('tools', ()):
+        result['reading']['history'] = ('attempt_memory gives a bounded goal/experience overview. Use worker_read_history and next_before for older tasks; unchanged reopen retains the same terminal and judgment range. Summaries are navigation, not consumed originals or scientific validation. Follow an exact item’s worker_reference_read history_task entry when this Operation has that capability; otherwise bind needed originals as scientific inputs. Conditions may have changed, so history does not prohibit a justified retry.')
     if any('same_source_as' in item for item in assignment.get('inputs', ())):
         result['reading']['inputs'] += (
             ' same_source_as identifies the same frozen original under another visible alias: reuse bytes already read. '

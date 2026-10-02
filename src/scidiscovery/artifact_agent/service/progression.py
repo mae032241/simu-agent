@@ -470,6 +470,24 @@ class ProgressionCoordinator:
             output_name = result.get('output_artifact_name')
             if output_name:
                 brief['material_names'].append(output_name)
+        if facade.instance_management_secret:
+            from .run_records import RunStateConflict
+            try:
+                from .progression_records import history_cursor
+                scope = self.runtime.runs.attempt_history_scope(instance_id=self.instance, state=None, limit=8)
+                active = self.runtime.runs.active_ids(instance_id=self.instance, limit=8)
+                current = self.runtime.runs.status(active[0]) if active else None
+                if current is None and snapshot['runs']:
+                    name = snapshot['runs'][0]['name']
+                    identity = self.bindings.resolve(instance=self.instance, namespace='run', name=name)
+                    current = self.runtime.runs.status(identity)
+                brief['attempt_memory'] = self.runtime.runs.memory_overview(scope, audience='root',
+                    page_bytes=min(self._limits.get('context_bytes',49152)//3,8192), current=current,
+                    exclude=[entry['name'] for entry in brief['changes']])
+                brief['attempt_memory']['history'] = dict(tool='run_list', view='history', state=None, limit=8,
+                    before=history_cursor(scope, secret=facade.instance_management_secret))
+            except RunStateConflict:
+                brief['attempt_memory'] = self.runtime.runs._memory_unavailable('exact_history_missing_or_conflicting')
         brief['user_messages'] = []
         for message in snapshot.get('messages', []):
             if message in previous.get('messages', []):
@@ -495,6 +513,9 @@ class ProgressionCoordinator:
                 progress = brief['progress_shadow']
                 brief['progress_shadow'] = dict(mode=progress['mode'], brief_omitted=True,
                     read=dict(tool='progression_status'), reason='context_limit')
+            elif brief.get('attempt_memory') and 'recent' in brief['attempt_memory']:
+                memory = brief['attempt_memory']
+                brief['attempt_memory'] = dict(history=memory['history'], omissions='context_byte_budget; read the frozen time index')
             elif brief['changes']:
                 entry = brief['changes'].pop(0)
                 if entry.get('output_artifact_name') in brief['material_names']:

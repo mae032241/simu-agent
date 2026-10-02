@@ -10,7 +10,7 @@ from typing import Any, Callable
 from pydantic import BaseModel
 
 from .spec import CompiledOperation, OperationSpec, freeze_json, json_projection
-from .lifecycle import AGENT_LIFECYCLE_PROTOCOL, AgentLifecycleInput
+from .lifecycle import AGENT_LIFECYCLE_PROTOCOL, AgentLifecycleInput, AgentHistoryInput
 from ..artifact_agent.operation_tool_context import OperationToolContext
 
 
@@ -190,7 +190,7 @@ def operation_tool_contracts(
     """Deliver each allowed tool's complete Schema with its own reference root."""
     contracts = {
         item.name: {"description": item.description,
-                    "inputSchema": json_projection(_LIFECYCLE_INPUT_SCHEMA)}
+                    "inputSchema": json_projection(AgentHistoryInput.model_json_schema() if item.name == "worker_read_history" else _LIFECYCLE_INPUT_SCHEMA)}
         for item in operation_lifecycle_protocol(compiled).tools
     }
     for tool in operation_worker_tools(compiled):

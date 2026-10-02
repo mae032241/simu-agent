@@ -49,6 +49,7 @@ from .local_workspace import (
     WorkspaceOutputError,
     WorkspaceInput,
 )
+from .attempt_memory import AttemptMemoryMixin
 from .run_assignment import assignment_json, result_schema_json, revision_draft_json
 from .run_current import RunCurrentGuard
 from .run_outputs import (
@@ -96,7 +97,7 @@ _COMPACT_RECOVERY_REASON_CODES = frozenset(
 )
 
 
-class RunService(ToolEvidenceMixin, RunAdmissionMixin):
+class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
     """The only service allowed to publish an Agent result as scientific data."""
 
     def __init__(
@@ -739,9 +740,11 @@ class RunService(ToolEvidenceMixin, RunAdmissionMixin):
                 )
                 connection.execute("ROLLBACK")
             elif row["state"] == "running":
+                self._freeze_memory(connection, row)
                 run_id = str(row["run_id"])
                 connection.execute("COMMIT")
             else:
+                self._freeze_memory(connection, row)
                 connection.execute(
                     """
                     UPDATE runs SET state = 'running', started_at = ?, last_activity_at = ?
@@ -1290,15 +1293,17 @@ class RunService(ToolEvidenceMixin, RunAdmissionMixin):
         args.extend((scope['instance_id'], scope['terminal_upper']))
         return tables, where, args
 
-    def attempt_history_scope(self, *, instance_id, state, limit, source_run_id=None, source_name=None):
+    def attempt_history_scope(self, *, instance_id, state, limit, source_run_id=None, source_name=None, connection=None):
         """Freeze only exact admissions or a recorded direct recovery source."""
         if state not in {None, 'completed', 'failed'} or not 1 <= limit <= 100:
             raise ValueError('Attempt history contains terminal tasks only.')
         deadline = time.monotonic() + 2
-        with bounded_control_io(wait_seconds=lambda: .1, remaining_seconds=lambda: deadline-time.monotonic()), closing(self._connect()) as db:
-            self._attach_scheduler(db)
-            db.execute('PRAGMA query_only = ON')
-            db.execute('BEGIN')
+        from contextlib import nullcontext
+        with bounded_control_io(wait_seconds=lambda: .1, remaining_seconds=lambda: deadline-time.monotonic()), (nullcontext(connection) if connection else closing(self._connect())) as db:
+            if connection is None:
+                self._attach_scheduler(db)
+                db.execute('PRAGMA query_only = ON')
+                db.execute('BEGIN')
             row = db.execute('SELECT objective_ref_json,checkpoint_json FROM scheduler_control.scheduler_progression WHERE instance_id=?',
                 (instance_id,)).fetchone()
             scope = dict(version=1, instance_id=instance_id, state=state, limit=limit, after=None,
@@ -1352,6 +1357,7 @@ class RunService(ToolEvidenceMixin, RunAdmissionMixin):
                 "AND a.activity=CASE r.state WHEN 'completed' THEN 'completion_committed' ELSE 'framework_failure' END))", args).fetchone()[0]
             tables, where, args = self._attempt_history_terminals(scope)
             scope['terminal_count'] = db.execute('SELECT COUNT(*) FROM '+tables+' WHERE '+where, args).fetchone()[0]
+            scope['assessment_upper'] = db.execute('SELECT COALESCE(MAX(sequence),0) FROM scheduler_control.scheduler_progress_assessments WHERE instance_id=?', (instance_id,)).fetchone()[0]
         return scope
 
     def attempt_history_page(self, scope):
@@ -2648,7 +2654,7 @@ class RunService(ToolEvidenceMixin, RunAdmissionMixin):
             connection.executescript(WORKER_CONNECTION_SCHEMA)
             connection.executescript(WORKER_PARTICIPANT_SCHEMA)
             for table, columns in {
-                "runs": {"draft_from_run_id": "TEXT", "recovery_policy_json": "BLOB",
+                "runs": {"memory_scope_json": "BLOB", "draft_from_run_id": "TEXT", "recovery_policy_json": "BLOB",
                          **{name: value[0] for name, value in EXECUTION_SETTINGS_COLUMNS["runs"].items()},
                          **{name: value[0] for name, value in RUN_READ_COLUMNS.items()}},
                 "run_activity": {"diagnostic_json": "BLOB"},

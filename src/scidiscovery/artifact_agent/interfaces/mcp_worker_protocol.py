@@ -9,7 +9,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ...operations.lifecycle import AGENT_LIFECYCLE_PROTOCOL, AgentLifecycleInput
+from ...operations.lifecycle import AGENT_LIFECYCLE_PROTOCOL, AgentLifecycleInput, AgentHistoryInput
 from ...operations.tooling import WorkerToolDefinition
 from ..service.local_pdf_tool import extract_pdf_text_local
 
@@ -42,7 +42,7 @@ class WorkerTool:
         }
 
 LIFECYCLE_WORKER_TOOLS = tuple(
-    WorkerTool(item.name, item.description, AgentLifecycleInput, item.owner_only)
+    WorkerTool(item.name, item.description, AgentHistoryInput if item.name == "worker_read_history" else AgentLifecycleInput, item.owner_only)
     for item in AGENT_LIFECYCLE_PROTOCOL.tools
 )
 

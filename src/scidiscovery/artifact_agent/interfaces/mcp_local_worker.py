@@ -220,7 +220,7 @@ class LocalWorkerMCPRouter:
                     self._active_attempt = self.runs.begin_tool_attempt(self._run_id, tool, arguments,
                         participant=self._activity_participant())
                 else:
-                    timing_enabled = name in self._tools
+                    timing_enabled = name in self._tools and name != "worker_read_history"
                     if timing_enabled and timing_run_id:
                         try:
                             self.runs.record_tool_observation(timing_run_id, "tool_call_started",
@@ -378,6 +378,8 @@ class LocalWorkerMCPRouter:
             waiting = self.runs.worker_review_wait(self._run_id, name, arguments or {})
             if waiting is not None:
                 return waiting
+            if name == "worker_read_history":
+                return self.runs.worker_history(self._run_id, before=parsed.before, limit=parsed.limit)
             if name == "worker_heartbeat":
                 status = self.runs.heartbeat(self._run_id)
                 return {"state": status.state, "remaining_seconds": _remaining(status.deadline_at)}
@@ -500,6 +502,7 @@ class LocalWorkerMCPRouter:
             return self._helper_open_reply(status)
         assignment = json.loads(read_control_workspace_file(self._workspace.root,
             Path("assignment.json"), max_bytes=self._workspace.assignment_path.stat().st_size))
+        assignment['attempt_memory'] = self.runs.worker_memory(self._run_id)
         contracts = self._tool_contract_location(assignment)
         from ..service.worker_start import write_worker_start
         from ...agent_execution_settings import MaterialInputSettings

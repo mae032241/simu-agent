@@ -208,7 +208,7 @@ class ScientificCurrentSelectInput(NamedInput):
 
 class RunListInput(PageInput):
     view: Literal['summary', 'detail', 'history'] = Field(default='summary',
-        description='history reads only recorded terminal facts for an exact frozen goal or the exact recovery source returned by task navigation; it creates no summary or consumption receipt.')
+        description='history reads only recorded terminal facts for an exact frozen goal or the exact recovery source returned by task navigation; it provides bounded attributed saved handoffs, conditions and omissions, not new scientific synthesis or a consumption receipt.')
     state: Literal["queued", "running", "completed", "failed"] | None = None
     limit: int = Field(default=20, ge=1, le=100)
     before: str | None = Field(default=None, max_length=2048,

@@ -64,30 +64,13 @@ class RootRunRoutes(RunReadProjection):
             raise RootToolError('Frozen history requires the configured local identity.')
         scope = (read_history_cursor(before, secret=secret, instance_id=instance, state=state, limit=limit)
             if before else self.runs.attempt_history_scope(instance_id=instance, state=state, limit=limit))
-        records = self.runs.attempt_history_page(scope)
-        response = dict(runs=[], next_before=None, continuation=None,
-            history_scope=dict(kind='exact_goal' if scope['objective_ref'] else 'authorized_recovery_source',
-                objective_name=scope.get('objective_name'), source_task=scope.get('source_task'),
-                loop_coverage='exact_goal_across_loops' if scope['objective_ref'] else 'recorded_direct_recovery_source',
-                frozen=True),
-            coverage='recorded_terminal_facts', terminal_source_missing=scope['terminal_source_missing'],
-            original_read='not_confirmed', scientific_summary='not_generated')
-        for index, record in enumerate(records[:limit]):
-            item = dict(name=record['name'], state=record['state'], completed_at=record['completed_at'],
-                read=dict(tool='run_status', name=record['name'], intent='decision'),
-                navigation=dict(tool='run_status', name=record['name'], intent='navigation'))
-            if record['state'] == 'failed':
-                item['failure_category'] = record['failure_category']
-                item['diagnostics'] = dict(tool='run_status', name=record['name'], intent='status', diagnostic_after=0)
-            cursor = (history_cursor(dict(scope, after=[record['completed_at'], record['terminal_event']]), secret=secret)
-                if index+1 < len(records) else None)
-            candidate = dict(response, runs=[*response['runs'], item], next_before=cursor,
-                continuation=dict(tool='run_list', view='history', state=state, limit=limit, before=cursor) if cursor else None)
-            if len(canonical_json(candidate)) > 16384:
-                if not response['runs']:
-                    raise RootToolError('Attempt history entry exceeds its bounded page capacity.')
-                break
-            response = candidate
+        response = self.runs.memory_page(scope, audience='root', page_bytes=15360,
+            continuation=lambda record: dict(tool='run_list', view='history', state=state, limit=limit,
+                before=history_cursor(dict(scope, after=[record['completed_at'], record['terminal_event']]), secret=secret)))
+        response['history_scope'] = dict(kind='exact_goal' if scope['objective_ref'] else 'authorized_recovery_source',
+            objective_name=scope.get('objective_name'), source_task=scope.get('source_task'),
+            loop_coverage='exact_goal_across_loops' if scope['objective_ref'] else 'recorded_direct_recovery_source', frozen=True)
+        response.setdefault('continuation',None)
         return response
 
     def _attempt_history_navigation(self, *, name, value):
