@@ -327,6 +327,8 @@ python scripts/accept_b6.py report --suite /tmp/scid-p1b-baseline
 
 真实接续场次后来已运行至 Worker completed、Root 一轮，随后以 `host_fault/OperationalError/configuration_or_runtime` 退出，恢复次数 0；原 SQL 消息/栈未保留。现场副本及已安装 e07 代码的锁竞争能确定复现 `_brief` 后纯读组合未纳入有限观察的缺陷，不能据此确认历史原查询。基线 `11bd34d` 上本次仅修复该 post-brief 组合，沿原有限锁重试/恢复预算，不重放整 tick 或 native 提交；故障 checkpoint 增存有界阶段、SQLite code/name 与可信模块函数/行号，不存异常全文、SQL、路径或 locals。8 项精确 source 验证通过（真实 SQLite 短/长锁、永久错误、安全诊断、原恢复额度及未知 native 不重试），11.552 秒／RSS 129146880 B；夹具失败原件单列保留。证据 `/tmp/scid-p1b-host-fault-source-rollup-20261002.json`、`/tmp/scid-p1b-host-fault-source-freeze-20261002.json`，独立审查通过、随本节点提交，未更新安装候选或重跑模型，原失败及预算不改，P1b/S0/S5a 未完成。
 
+新一轮 P1b 已获用户明确授权：干净 `f64cd7e` source/runner，隔离安装与空 schema 9 单场已准备，190 个安装文件与 wheel/source 一致，独立只读核验通过。Root 5.6-sol/high、Worker 6.1-sol/high、helpers inherit；题目不变，科研 1200 秒／200 万总／20 万非缓存 token，人工等待 3600 秒。验收器查询间隔由 0.5 改为 5 秒并显式冻结，生产推进轮询仍为 5 秒；新样本不得把这一条件变化隐去。原失败、用量缺测和原件单独保留，不复制旧科学结果。准备累计 8.837 秒／RSS 206508032 B（包含一次核验字段错误，日志保留），证据 `/tmp/scid-p1b-f64-prepare-evidence-20261002/{freeze,rollup,actual-readback}.json`。当前会话原生目录不可访问；普通终端入口 `bash /tmp/scid-p1b-f64-run.sh` 仅读取冻结候选并启动已准备的唯一场次，用户页面创建/选择 `b0a-calibration`、暂停 bootstrap 并确认 `acceptance.objective` 预算；已有 attempt 则拒绝重跑。本准备节点未运行 native/模型，P1b 结果和评分待完成。
+
 ## P5 样本与成本上限（提议预留，未获新的运行预算授权）
 
 首批仅 3 个场景 × 基线/候选各 1 场，共 6 场：①已有早期失败、跨若干无关尝试后的重复优化倾向；②关键条件变化后应允许有理由重试；③有冻结判据的有效负结果应推进。缺判据的定期确认、真实准入刹车与等待/未知负例先用确定性回放验证。两组使用相同冻结历史原件，不让模型重新生成整个长 loop；候选改变记忆投影/指定策略，差异逐项列出。短场两组固定一致的线程轮换条件，轮换收益单独验证；若轮换改变某组行为，必须单列变量或同步对照，不把综合差异归因于记忆。真实样本只作冻结历史检索与短场决策的探索性结果，不证明历史在真实运行中形成后仍能跨天、跨线程生效；后者由 P6a 验证。不替代主计划第 8 节原 24 场资格，也不声称统计显著或独立分离每项改动收益。
