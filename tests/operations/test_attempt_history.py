@@ -25,7 +25,7 @@ def router(system, *, secret=SECRET, runtime=None, instance=None):
         operation_catalog=system.root.facade._operation_catalog))
 
 
-def history_system(tmp_path, count):
+def history_system(tmp_path, count, *, helper_calls=0):
     system = collection(tmp_path, count)
     system.root = router(system)
     bindings, runs = system.bindings, system.runs
@@ -34,7 +34,7 @@ def history_system(tmp_path, count):
     system.root.facade.session_key = user
     settings = bindings.global_settings
     bindings.global_settings = settings.model_copy(update=dict(
-        helpers=settings.helpers.model_copy(update=dict(max_calls=0)),
+        helpers=settings.helpers.model_copy(update=dict(max_calls=helper_calls)),
         progression=settings.progression.model_copy(update=dict(max_tasks=count+10,max_rounds=1))))
     system.root.call_tool('progression_command', dict(command='takeover',mode='interactive'))
     system.root.call_tool('artifact_ingest_text', dict(name='goal',text='Exact original goal.'))

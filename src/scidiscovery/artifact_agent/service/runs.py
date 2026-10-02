@@ -1126,6 +1126,81 @@ class RunService(ToolEvidenceMixin, RunAdmissionMixin):
         with self._connect() as connection:
             return self._status_from_row(self._row(connection, run_id))
 
+    def progression_handoff(self, *, instance_id: str, limit: int = 8):
+        """One read snapshot: complete mechanical counts, bounded Run details.
+
+        Current-loop accounting is still hydrated from the original control
+        ledger. SQL scans that finite scope; only aggregates and samples leave
+        SQLite, and no historical Run or scientific body is materialized.
+        """
+        if type(limit) is not int or not 1 <= limit <= 8:
+            raise ValueError('Progression handoff limit must be between 1 and 8')
+        from .research_loops import current_loop, loop_usage
+        from .scientific_progress import goal_bound_runs
+        with closing(self._connect()) as connection:
+            self._attach_scheduler(connection)
+            connection.execute('PRAGMA query_only = ON')
+            connection.execute('BEGIN')
+            row = self.scheduler_bindings.progression_status(instance_id=instance_id, internal=True,
+                connection=connection, schema='scheduler_control.')
+            if not row.get('objective_name'):
+                return row, {}
+            checkpoint = json.loads(row['checkpoint_json'])
+            goal = goal_bound_runs(checkpoint, json.loads(row['objective_ref_json']))
+            loop = current_loop(checkpoint)
+            admissions = json.dumps([[name, item.get('run_id'), item.get('state'), name in goal,
+                (not loop or item.get('loop_id') == loop) and not item.get('interactive_session_id')]
+                for name, item in checkpoint.get('admissions', {}).items()])
+            query = """WITH admissions AS (
+                SELECT json_extract(value,'$[0]') AS name,json_extract(value,'$[1]') AS run_id,
+                    json_extract(value,'$[2]') AS admission_state,json_extract(value,'$[3]') AS in_goal,
+                    json_extract(value,'$[4]') AS usage_coverage FROM json_each(?)
+                ), bound AS (
+                SELECT a.*,b.created_at,CASE WHEN a.admission_state IS NOT 'accepted' OR a.run_id IS NULL
+                    THEN 'admission_unresolved' WHEN b.object_id IS NOT a.run_id OR r.run_id IS NULL
+                    OR r.instance_id<>? THEN 'identity_unresolved' ELSE r.state END AS state
+                FROM admissions a LEFT JOIN scheduler_control.scheduler_bindings b
+                    ON b.instance=? AND b.namespace='run' AND b.name=a.name
+                LEFT JOIN runs r ON r.run_id=a.run_id
+                ) """
+            args = (admissions, instance_id, instance_id)
+            counts, goal_counts, unresolved_coverage = {}, {}, 0
+            for item in connection.execute(query + 'SELECT state,in_goal,usage_coverage,COUNT(*) AS count '
+                    'FROM bound GROUP BY state,in_goal,usage_coverage', args).fetchall():
+                counts[item['state']] = counts.get(item['state'], 0) + item['count']
+                if item['in_goal']:
+                    goal_counts[item['state']] = goal_counts.get(item['state'], 0) + item['count']
+                if item['usage_coverage'] and item['state'] in {'admission_unresolved', 'identity_unresolved'}:
+                    unresolved_coverage += item['count']
+            unresolved = "state IN ('admission_unresolved','identity_unresolved')"
+            terminal = "state IN ('completed','failed','timed_out','cancelled','canceled')"
+            def sample(where):
+                return [dict(item) for item in connection.execute(query +
+                    'SELECT name,run_id,state FROM bound WHERE ' + where +
+                    " ORDER BY (state='completed'),created_at DESC,name LIMIT ?", (*args, limit)).fetchall()]
+            in_flight = sample('NOT (' + unresolved + ') AND NOT (' + terminal + ')')
+            uncertain = sample(unresolved)
+            selected = sample('in_goal AND NOT (' + unresolved + ')')
+            rows = connection.execute('SELECT * FROM runs WHERE run_id IN (SELECT value FROM json_each(?))',
+                (json.dumps([item['run_id'] for item in selected]),)).fetchall() if selected else []
+            missing = {item['role']: item['count'] for item in connection.execute(query + """
+                , identities AS (
+                SELECT w.thread_id,'worker' AS role FROM bound a JOIN worker_connections w USING(run_id)
+                    WHERE usage_coverage AND NOT (""" + unresolved + """)
+                UNION SELECT w.thread_id,'helper' AS role FROM bound a JOIN worker_participants w USING(run_id)
+                    WHERE usage_coverage AND NOT (""" + unresolved + """) AND w.thread_id IS NOT NULL
+                ) SELECT role,COUNT(*) AS count FROM identities w WHERE NOT EXISTS (
+                    SELECT 1 FROM json_each(?) measured WHERE measured.value=w.thread_id) GROUP BY role""",
+                (*args, json.dumps(list(loop_usage(checkpoint))))).fetchall()}
+        # Approval deadlines retain the existing exact-cohort read path. Run
+        # state and output references remain the captured rows, even if a
+        # Worker finishes after this read transaction closes.
+        values = {value.run_id: value for value in self._statuses_from_rows(rows)}
+        return row, dict(state_counts=counts, goal_state_counts=goal_counts, missing=missing,
+            unresolved_usage_identities=unresolved_coverage,
+            in_flight=in_flight, unresolved=uncertain,
+            tasks=[(item['name'], values[item['run_id']]) for item in selected])
+
     def list(self, *, instance_id: str, state: str | None = None) -> tuple[RunStatus, ...]:
         query = "SELECT * FROM runs WHERE instance_id = ?"
         values: list[Any] = [instance_id]
@@ -1402,7 +1477,7 @@ class RunService(ToolEvidenceMixin, RunAdmissionMixin):
             rows = connection.execute(query, values).fetchall()
         return self._statuses_from_rows(rows)
 
-    def goal_related_runs(self, *, instance_id, artifact_ref, limit=17, source_limit=128):
+    def goal_related_runs(self, *, instance_id, artifact_ref, limit=17, source_limit=128, identities_only=False):
         """Bounded exact parent lineage; unrelated goals and instances stay separate.
 
         Return omissions explicitly. Superseding a goal is not the same goal.
@@ -1425,6 +1500,21 @@ class RunService(ToolEvidenceMixin, RunAdmissionMixin):
             omitted |= len(children) == child_limit or len(children) > remaining
             queue.extend(child.ref for child in children[:max(0, remaining)] if child.ref not in seen)
         omitted |= bool(queue)
+        if identities_only:
+            # Execution reminders need owner identities, not Run payloads.
+            # Resolve the same exact input/explicit-goal rules once in SQL.
+            refs = json.dumps([ref.model_dump(mode='json') for ref in ordered])
+            match = ' AND '.join("json_extract(i.value,'$.artifact_ref." + field +
+                "')=json_extract(g.value,'$." + field + "')" for field in ('artifact_id', 'sha256', 'kind', 'schema_id'))
+            with self._connect() as connection:
+                rows = connection.execute("SELECT r.run_id FROM runs r WHERE r.instance_id=? "
+                    "AND EXISTS (SELECT 1 FROM json_each(CAST(r.inputs_json AS TEXT)) i JOIN json_each(?) g ON " + match +
+                    ") AND (NOT EXISTS (SELECT 1 FROM json_each(CAST(r.inputs_json AS TEXT)) i "
+                    "WHERE json_extract(i.value,'$.port_name') IN ('objective','research_objective','objective_source')) "
+                    "OR EXISTS (SELECT 1 FROM json_each(CAST(r.inputs_json AS TEXT)) i JOIN json_each(?) g ON " + match +
+                    " WHERE json_extract(i.value,'$.port_name') IN ('objective','research_objective','objective_source'))) "
+                    'ORDER BY r.created_at,r.run_id LIMIT ?', (instance_id, refs, refs, limit+1)).fetchall()
+            return tuple(item['run_id'] for item in rows[:limit]), omitted or len(rows) > limit
         # Resolve scope first; retain only the requested number of full Run
         # records even when an instance has a large historical source graph.
         candidates = {}
@@ -1444,6 +1534,19 @@ class RunService(ToolEvidenceMixin, RunAdmissionMixin):
                 break
         runs = sorted(candidates.values(), key=lambda run:(run.created_at, run.run_id))
         return tuple(runs[:limit]), omitted
+
+    def external_task_states(self, *, instance_id, run_ids):
+        """Thin lifecycle rows for at most the 32 displayed execution owners."""
+        identities = list(set(run_ids))
+        if len(identities) > 32:
+            raise ValueError('External task state cohort exceeds its display limit')
+        with self._connect() as connection:
+            rows = connection.execute('SELECT run_id,state FROM runs WHERE instance_id=? '
+                'AND run_id IN (SELECT value FROM json_each(?))', (instance_id, json.dumps(identities))).fetchall()
+        values = {item['run_id']: item['state'] for item in rows}
+        if len(values) != len(identities):
+            raise RunNotFound('External execution task owner is unavailable in this instance')
+        return values
 
     def recovery_links(self, run_id: str) -> dict[str, str | None]:
         """Read frozen resume/draft identity omitted from the public RunStatus."""

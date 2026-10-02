@@ -76,11 +76,11 @@ CREATE INDEX IF NOT EXISTS progression_detail_goal ON scheduler_progression_deta
 def read_control_row(db, instance_id, *, schema='', usage_thread=None, extra_loop=None, full=False):
     return hydrate_control_row(db, db.execute('SELECT * FROM ' + schema + 'scheduler_progression '
         'WHERE instance_id=?', (instance_id,)).fetchone(), usage_thread=usage_thread,
-        extra_loop=extra_loop, full=full)
+        extra_loop=extra_loop, full=full, schema=schema)
 
 
-def detail_record(db, instance_id, collection, key):
-    row = db.execute('SELECT record_json FROM scheduler_progression_details '
+def detail_record(db, instance_id, collection, key, *, schema=''):
+    row = db.execute('SELECT record_json FROM ' + schema + 'scheduler_progression_details '
         'WHERE instance_id=? AND collection=? AND record_key=?', (instance_id, collection, key)).fetchone()
     return json.loads(row[0]) if row else None
 
@@ -114,7 +114,7 @@ def _capacity(checkpoint, identity, collection):
         if collection == 'admissions' else progression_usage_capacity(settings))
 
 
-def hydrate_control_row(db, row, *, usage_thread=None, extra_loop=None, full=False, accounting_only=False):
+def hydrate_control_row(db, row, *, usage_thread=None, extra_loop=None, full=False, accounting_only=False, schema=''):
     """Accounting reads omit snapshots/history and can never be written back."""
     if row is None:
         return None
@@ -133,7 +133,7 @@ def hydrate_control_row(db, row, *, usage_thread=None, extra_loop=None, full=Fal
         {'loop_authorizations', 'admissions', 'usage_records'}), key=lambda name: name != 'loop_authorizations')
     scopes = {checkpoint.get('current_loop_id'), extra_loop} - {None}
     if usage_thread:
-        original = detail_record(db, row['instance_id'], 'usage_records', usage_thread)
+        original = detail_record(db, row['instance_id'], 'usage_records', usage_thread, schema=schema)
         if original and original.get('loop_id'):
             scopes.add(original['loop_id'])
     if not full and len(scopes) > 2:
@@ -141,11 +141,11 @@ def hydrate_control_row(db, row, *, usage_thread=None, extra_loop=None, full=Fal
     for collection in ordered:
         factory = COLLECTIONS[collection]
         count = references[collection]
-        actual = db.execute('SELECT COUNT(*) FROM scheduler_progression_details '
+        actual = db.execute('SELECT COUNT(*) FROM ' + schema + 'scheduler_progression_details '
             'WHERE instance_id=? AND collection=?', (row['instance_id'], collection)).fetchone()[0]
         if actual != count:
             raise ValueError('Control detail records differ from checkpoint reference.')
-        query = 'SELECT record_key,record_json FROM scheduler_progression_details WHERE instance_id=? AND collection=?'
+        query = 'SELECT record_key,record_json FROM ' + schema + 'scheduler_progression_details WHERE instance_id=? AND collection=?'
         args = [row['instance_id'], collection]
         managed = checkpoint.get('current_loop_id') is not None and not full
         if managed and collection in {'admissions', 'usage_records'}:
@@ -155,7 +155,7 @@ def hydrate_control_row(db, row, *, usage_thread=None, extra_loop=None, full=Fal
             args.extend(sorted(scopes))
             sizes = db.execute("SELECT json_extract(record_json,'$.loop_id'),COUNT(*),"
                 'MAX(length(CAST(record_json AS BLOB))),SUM(length(CAST(record_json AS BLOB))) '
-                'FROM scheduler_progression_details WHERE instance_id=? AND collection=? '
+                'FROM ' + schema + 'scheduler_progression_details WHERE instance_id=? AND collection=? '
                 "AND json_extract(record_json,'$.loop_id') IN (" + ','.join('?' for _ in scopes)
                 + ") GROUP BY json_extract(record_json,'$.loop_id')", args).fetchall()
             for identity, size, maximum, _ in sizes:
@@ -173,7 +173,7 @@ def hydrate_control_row(db, row, *, usage_thread=None, extra_loop=None, full=Fal
             query += ' AND record_key=?'
             args.append(checkpoint['current_loop_id'])
             limits = json.loads(row['config_json'])['effective']['progression']
-            sizes = db.execute('SELECT length(CAST(record_json AS BLOB)) FROM scheduler_progression_details '
+            sizes = db.execute('SELECT length(CAST(record_json AS BLOB)) FROM ' + schema + 'scheduler_progression_details '
                 'WHERE instance_id=? AND collection=? AND record_key=?', args).fetchone()
             if not sizes or sizes[0] > limits['detail_record_bytes']:
                 raise ValueError('Research loop authorization is missing or exceeds its byte capacity.')
@@ -204,9 +204,9 @@ def hydrate_control_row(db, row, *, usage_thread=None, extra_loop=None, full=Fal
     for name in ([] if accounting_only else checkpoint.pop('detail_snapshots', [])):
         if name not in SNAPSHOTS:
             raise ValueError('Unknown control snapshot reference.')
-        record = detail_record(db, row['instance_id'], 'snapshot', name)
+        record = detail_record(db, row['instance_id'], 'snapshot', name, schema=schema)
         # None is a valid snapshot value; distinguish a missing row.
-        if record is None and not db.execute('SELECT 1 FROM scheduler_progression_details '
+        if record is None and not db.execute('SELECT 1 FROM ' + schema + 'scheduler_progression_details '
                 'WHERE instance_id=? AND collection=? AND record_key=?',
                 (row['instance_id'], 'snapshot', name)).fetchone():
             raise ValueError('Control snapshot is missing.')
@@ -229,7 +229,7 @@ def hydrate_control_row(db, row, *, usage_thread=None, extra_loop=None, full=Fal
                     "SUM(json_extract(record_json,'$.counted_tokens.output_tokens')) AS outputs,"
                     "SUM(json_extract(record_json,'$.outcome')='failed') AS failed,"
                     "SUM(json_extract(record_json,'$.has_gaps')) AS missing "
-                    "FROM scheduler_progression_details WHERE instance_id=? AND collection='interactive_usage_records' "
+                    'FROM ' + schema + "scheduler_progression_details WHERE instance_id=? AND collection='interactive_usage_records' "
                     "GROUP BY json_extract(record_json,'$.role')", (row['instance_id'],)):
                 groups[item['role']] = dict(tokens=dict(input_tokens=item['inputs'],
                     cached_input_tokens=item['cached'], output_tokens=item['outputs']),
@@ -237,7 +237,7 @@ def hydrate_control_row(db, row, *, usage_thread=None, extra_loop=None, full=Fal
             checkpoint['_interactive_usage_summary'] = dict(platform='codex', groups=groups,
                 coverage='missing' if not groups else 'partial' if any(group['unmeasured_threads'] for group in groups.values()) else 'observed',
                 individual_request_usage='unavailable')
-            checkpoint['_interactive_tasks'] = db.execute("SELECT COUNT(*) FROM scheduler_progression_details "
+            checkpoint['_interactive_tasks'] = db.execute('SELECT COUNT(*) FROM ' + schema + 'scheduler_progression_details '
                 "WHERE instance_id=? AND collection='admissions' AND json_extract(record_json,'$.interactive_session_id') IS NOT NULL",
                 (row['instance_id'],)).fetchone()[0]
     row['checkpoint_json'] = json.dumps(checkpoint)
@@ -322,6 +322,14 @@ def store_checkpoint(db, instance_id, checkpoint, *, replace=False):
                 + ','.join('?' for _ in SNAPSHOTS) + '))', (instance_id, collection, 'snapshot', *SNAPSHOTS))}
         db.executemany('DELETE FROM scheduler_progression_details WHERE instance_id=? AND collection=? AND record_key=?',
             ((instance_id, collection, key) for key in previous - records.keys()))
+        # Only immutable loop identities are needed for this guard. Keep its
+        # complete scope check, without reading/decoding each old record body
+        # through a separate query before the already conditional UPSERT.
+        previous_loops = dict(db.execute("SELECT record_key,json_extract(record_json,'$.loop_id') "
+            'FROM scheduler_progression_details WHERE instance_id=? AND collection=? '
+            'AND record_key IN (SELECT value FROM json_each(?))',
+            (instance_id, collection, json.dumps(list(records)))).fetchall()) if (
+                collection in {'admissions', 'usage_records'} and not replace and records) else {}
         encoded = []
         for key, item in records.items():
             raw = json.dumps(item, sort_keys=True, allow_nan=False)
@@ -330,8 +338,7 @@ def store_checkpoint(db, instance_id, checkpoint, *, replace=False):
                 if len(raw.encode()) > limits['detail_record_bytes']:
                     raise ValueError('Research loop detail record byte capacity reached; retain original records.')
             if collection in {'admissions', 'usage_records'} and not replace:
-                previous_record = detail_record(db, instance_id, collection, key)
-                if previous_record and previous_record.get('loop_id') != item.get('loop_id'):
+                if key in previous_loops and previous_loops[key] != item.get('loop_id'):
                     raise ValueError('Control detail identity cannot be reassigned across research loops.')
             encoded.append((instance_id, collection, key, raw))
         db.executemany('INSERT INTO scheduler_progression_details VALUES(?,?,?,?) '

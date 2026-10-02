@@ -162,21 +162,20 @@ def test_acceptance_waits_for_accepted_tasks_without_new_model(tmp_path, monkeyp
 
 
 @pytest.mark.parametrize('missing', ['run', 'binding'])
-def test_missing_accepted_identity_is_unresolved_not_empty_success(progression, monkeypatch, missing):
-    from scidiscovery.artifact_agent.service.runs import RunNotFound
-    from scidiscovery.artifact_agent.service.scheduler_bindings import SchedulerNameNotFound
+def test_missing_accepted_identity_is_unresolved_not_empty_success(progression, missing):
     p = progression
     p.coordinator.tick()
     root = p.root.__class__(p.facade(p.coordinator.host.scheduler_session))
     _invoke(root, 'accepted')
     if missing == 'run':
-        def unavailable(*args, **kwargs):
-            raise RunNotFound('fixture missing run')
-        monkeypatch.setattr(p.runtime.runs, 'status', unavailable)
+        identity = checkpoint(p)['admissions']['accepted']['run_id']
+        with p.runtime.runs._connect() as db:
+            db.execute('DELETE FROM run_activity WHERE run_id=?', (identity,))
+            db.execute('DELETE FROM runs WHERE run_id=?', (identity,))
     else:
-        def unavailable(*args, **kwargs):
-            raise SchedulerNameNotFound('fixture missing binding')
-        monkeypatch.setattr(p.runtime.scheduler_bindings, 'get_binding', unavailable)
+        with p.runtime.scheduler_bindings._connect() as db:
+            db.execute("DELETE FROM scheduler_bindings WHERE instance=? AND namespace='run' AND name='accepted'",
+                (p.instance,))
     status = p.root.call_tool('progression_status', {})
     assert status['closeout']['unresolved'][0]['name'] == 'accepted'
     assert not status['closeout']['accepted_tasks_terminal']

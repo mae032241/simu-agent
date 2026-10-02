@@ -161,7 +161,7 @@ def archived_model(runtime, package, manifest):
     binding_reads = _ReadOnly(bindings, {"database_path", "get_instance", "binding_page", "get_binding", "find_name",
         "find_owner", "list", "instance_bindings", "scientific_selections", "selection_records", "list_instances", "progression_status", "progress_assessments", "terminal_deliveries", "progress_shadow"})
     runs.artifacts = artifact_reads
-    run_reads = _ReadOnly(runs, {"status", "active_ids", "recent_ids", "diagnostic_events", "diagnostic_reference_belongs",
+    run_reads = _ReadOnly(runs, {"status", "progression_handoff", "external_task_states", "active_ids", "recent_ids", "diagnostic_events", "diagnostic_reference_belongs",
         "recovery_status", "recovery_available", "diagnostic_summary", "native_identities", "tool_timing", "related_runs", "recovery_links", "backend", "database_path",
         "artifacts", "tool_evidence", "task_lineage", "sealed_material_record",
         "available_material_records", "material_source_aliases", "material_artifact_name"})

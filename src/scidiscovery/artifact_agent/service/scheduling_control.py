@@ -437,11 +437,16 @@ class SchedulingControl:
                         return value
         return None
 
-    def progression_status(self, *, instance_id, session_key=None, internal=False):
+    def progression_status(self, *, instance_id, session_key=None, internal=False, connection=None, schema=''):
         self.get_instance(instance_id=instance_id)
-        with self._connect() as connection:
-            connection.execute('BEGIN')
-            row = read_control_row(connection, instance_id)
+        if connection is not None:
+            # The Run reader borrows one attached read snapshot for control,
+            # all-scope counts and the bounded detail cohort.
+            row = read_control_row(connection, instance_id, schema=schema)
+        else:
+            with self._connect() as connection:
+                connection.execute('BEGIN')
+                row = read_control_row(connection, instance_id)
         if row is None:
             return {'state': 'idle', 'mode': 'interactive', 'reason': 'not_started',
                     'can_schedule': False, 'objective_name': None}

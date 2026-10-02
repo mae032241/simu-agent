@@ -3,14 +3,12 @@ import json
 
 from .run_read_projection import RunReadProjection, run_is_terminal
 from .scheduling_control import progression_status_view
-from .runs import RunNotFound
-from .scheduler_bindings import SchedulerNameNotFound
 from .scientific_progress import goal_bound_runs
 
 
 def progression_read_view(*, bindings, runs, artifacts, operation_catalog, instance_id, session_key=None,
                           progress_cursor=None, progress_limit=4, executions=None, delivery_cursor=None, delivery_limit=8):
-    row = bindings.progression_status(instance_id=instance_id, internal=True)
+    row, handoff = runs.progression_handoff(instance_id=instance_id)
     clock = getattr(bindings, 'control_now', None)
     status = progression_status_view(row, session_key=session_key, now=clock() if clock else None)
     if row.get('historical'):
@@ -25,46 +23,47 @@ def progression_read_view(*, bindings, runs, artifacts, operation_catalog, insta
     projection = RunReadProjection(runs=runs, artifacts=artifacts, operation_catalog=operation_catalog)
     closeout = dict(kind='sealed_task_handoff', goal_assessment='not_inferred',
         stop_reason=status.get('reason'), tasks=[], in_flight=[], unresolved=[], omissions=[])
+    closeout['history_read'] = dict(tool='run_list', view='history', limit=8)
     if current_omitted := status.get('accounting_details', {}).get('historical_records_omitted', {}).get('admissions'):
         closeout['omissions'].append(dict(reason='historical_loop_tasks', count=current_omitted,
             read=dict(tool='run_list', view='summary', limit=8)))
     closeout['budget_scope'] = 'current_loop' if checkpoint.get('current_loop_id') else 'ordinary_interactive'
-    from .research_loops import current_loop, loop_usage
+    from .research_loops import loop_usage
     records = loop_usage(checkpoint)
-    missing = {}
+    missing = dict(handoff['missing'])
     host = json.loads(row.get('host_json') or 'null')
     if host and records.get(host['thread_id'], {}).get('role') != 'root':
         missing['root'] = 1
     elif not host and checkpoint.get('started_at') is not None and not any(record['role'] == 'root' for record in records.values()):
         missing['root'] = 1
     current_runs = goal_bound_runs(checkpoint, json.loads(row["objective_ref_json"]))
+    closeout['state_counts'] = handoff['state_counts']
+    closeout['current_goal_state_counts'] = handoff['goal_state_counts']
+    unresolved_count = sum(count for state, count in handoff['state_counts'].items()
+        if state in {'admission_unresolved', 'identity_unresolved'})
+    active_counts = {state: count for state, count in handoff['state_counts'].items()
+        if not run_is_terminal(state) and state not in {'admission_unresolved', 'identity_unresolved'}}
+    closeout['accepted_tasks_terminal'] = not active_counts and not unresolved_count
+    for field in ('in_flight', 'unresolved'):
+        closeout[field] = [dict(name=item['name'], state=item['state'],
+            read=dict(tool='run_status', name=item['name'], intent='decision')) for item in handoff[field]]
+    if unresolved_count > len(closeout['unresolved']):
+        closeout['omissions'].append(dict(reason='unresolved_detail_limit',
+            count=unresolved_count-len(closeout['unresolved']),
+            original_read='Unbound or conflicting identities require repair before their originals can be read.'))
+    if sum(active_counts.values()) > len(closeout['in_flight']):
+        closeout['omissions'].append(dict(reason='in_flight_detail_limit',
+            count=sum(active_counts.values())-len(closeout['in_flight']),
+            reads=[dict(tool='run_list', view='summary', state=state, limit=8) for state in active_counts]))
+    shown_count = len(handoff['tasks'])
+    resolved_goal_count = sum(count for state, count in handoff['goal_state_counts'].items()
+        if state not in {'admission_unresolved', 'identity_unresolved'})
+    if resolved_goal_count > shown_count:
+        closeout['omissions'].append(dict(reason='task_detail_limit', count=resolved_goal_count-shown_count,
+            read=closeout['history_read'], active_read=dict(tool='run_list', view='summary', limit=8)))
     remaining = 32768
-    for name, admission in checkpoint.get('admissions', {}).items():
+    for name, value in handoff['tasks']:
         read = dict(tool='run_status', name=name, intent='decision')
-        if admission.get('state') != 'accepted' or not admission.get('run_id'):
-            closeout['unresolved'].append(dict(name=name, state='admission_unresolved', read=read))
-            continue
-        try:
-            value = runs.status(admission['run_id'])
-            binding = bindings.get_binding(instance=instance_id, namespace='run', name=name)
-        except (RunNotFound, SchedulerNameNotFound):
-            closeout['unresolved'].append(dict(name=name, state='identity_unresolved', read=read))
-            continue
-        if binding.object_id != value.run_id or value.instance_id != instance_id:
-            closeout['unresolved'].append(dict(name=name, state='identity_unresolved', read=read))
-            continue
-        for identity in runs.native_identities(value.run_id):
-            if current_loop(checkpoint) and admission.get('loop_id') != current_loop(checkpoint):
-                continue  # Old loop telemetry cannot change this loop's coverage.
-            if admission.get('interactive_session_id'):
-                continue  # Independent human usage is not background coverage.
-            if identity['thread_id'] not in records:
-                role = identity['role']
-                missing[role] = missing.get(role, 0) + 1
-        if not run_is_terminal(value.state):
-            closeout['in_flight'].append(dict(name=name, state=value.state, read=read))
-        if name not in current_runs:
-            continue
         item = projection.decision(name=name, value=value)
         # Task dispatch remains an explicit scheduler action; a handoff is read-only.
         item.pop('dispatch', None)
@@ -73,13 +72,12 @@ def progression_read_view(*, bindings, runs, artifacts, operation_catalog, insta
         if size > remaining:
             item = dict(name=name, state=value.state, output_artifact_name=item.get('output_artifact_name'), read=read)
             closeout['omissions'].append(dict(name=name, reason='handoff_context_limit', read=read))
-        else:
-            remaining -= size
+        remaining -= len(json.dumps(item, ensure_ascii=False).encode())
         closeout['tasks'].append(item)
-    closeout['accepted_tasks_terminal'] = not closeout['in_flight'] and not closeout['unresolved']
-    if missing:
+    if missing or handoff['unresolved_usage_identities']:
         status['usage']['coverage'] = 'partial' if records or status['usage'].get('groups') else 'missing'
     status['usage']['unmeasured_participants'] = missing
+    status['usage']['unresolved_task_identities'] = handoff['unresolved_usage_identities']
     status['budget']['token_coverage'] = status['usage']['coverage']
     from .scientific_progress import progress_page, shadow_projection
     status['progress_shadow'] = shadow_projection(bindings=bindings, row=row)
@@ -114,22 +112,28 @@ def external_work_view(*, bindings, runs, artifacts, executions, row, related):
     objective = json.loads(row['objective_ref_json'])
     previous = {item['run_id']: name for name, item in json.loads(row['checkpoint_json']).get('admissions', {}).items()
         if item.get('run_id') and item.get('objective_ref') and item['objective_ref'] != objective}
-    if candidates and not row.get('historical'):
+    candidate_records = []
+    for execution_id in candidates[:32]:
+        refs = executions.record_references(execution_id)
+        owner = artifacts.catalog(refs['request_ref']).labels.get('experiment_run')
+        candidate_records.append((execution_id, refs, owner))
+    if any(owner and owner not in names and owner not in previous for _, _, owner in candidate_records) and not row.get('historical'):
         from ..schema.refs import ArtifactRef
         limits = json.loads(row['config_json']).get('effective', {}).get('progression', {})
         related_tasks, omitted = runs.goal_related_runs(instance_id=row['instance_id'],
-            artifact_ref=ArtifactRef.model_validate(objective), limit=17, source_limit=limits.get('related_source_limit', 128))
+            artifact_ref=ArtifactRef.model_validate(objective), limit=17,
+            source_limit=limits.get('related_source_limit', 128), identities_only=True)
         if omitted or len(related_tasks) > 16:
             view['omissions'].append('goal_source_or_task_limit')
             view['association_coverage'] = 'partial'
         for task in related_tasks[:16]:
-            name = bindings.find_name(instance=row['instance_id'], namespace='run', object_id=task.run_id)
+            name = bindings.find_name(instance=row['instance_id'], namespace='run', object_id=task)
             if name:
-                names[task.run_id] = name
-    for execution_id in candidates[:32]:
-        refs = executions.record_references(execution_id)
-        envelope = artifacts.catalog(refs['request_ref'])
-        owner = envelope.labels.get('experiment_run')
+                names[task] = name
+    owners = [owner for _, refs, owner in candidate_records if owner and (
+        owner in names or owner in previous or refs['payload_ref'].model_dump(mode='json') == objective)]
+    owner_states = runs.external_task_states(instance_id=row['instance_id'], run_ids=owners) if owners else {}
+    for execution_id, refs, owner in candidate_records:
         if owner not in names and owner not in previous and refs['payload_ref'].model_dump(mode='json') != objective:
             # Standalone executions can name the exact goal as a direct original parent.
             payload = artifacts.catalog(refs['payload_ref'])
@@ -141,7 +145,7 @@ def external_work_view(*, bindings, runs, artifacts, executions, row, related):
         name = bindings.find_name(instance=row['instance_id'], namespace='execution', object_id=execution_id)
         value = executions.status(execution_id)
         task_name = names.get(owner) or previous.get(owner)
-        task_active = owner is not None and runs.status(owner).state in {'queued', 'running'}
+        task_active = owner is not None and owner_states[owner] in {'queued', 'running'}
         view['items'].append(dict(name=task_name or name, task_name=task_name, state=value.state,
             goal_scope='previous_goal' if owner in previous and owner not in names else 'current_goal',
             observer='task_worker' if task_active else 'not_verified_after_task_terminal',
