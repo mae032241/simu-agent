@@ -12,12 +12,13 @@ import os
 import sqlite3
 import threading
 import time
+from functools import wraps
 
 from ..schema.refs import ArtifactRef
 from ...platforms.codex_usage import usage_summary
 from .progression_budget import token_budget
 from .maintenance import MaintenanceBusy
-from ..storage.control_io import nonblocking_control_io
+from ..storage.control_io import bounded_control_io, control_io_remaining
 from .scientific_progress import goal_bound_runs
 from ...agent_execution_settings import ProgressionSettings
 
@@ -101,6 +102,14 @@ def fault_diagnostic(error, phase):
     return result
 
 
+def observed(method):
+    """Only declared local reads/atomic observations may be re-executed."""
+    @wraps(method)
+    def observe(self, *args, **kwargs):
+        return self._observation(lambda: method(self, *args, **kwargs))
+    return observe
+
+
 class ProgressionCoordinator:
     def __init__(self, *, runtime, host_factory, facade_factory, clock=time.time):
         self.runtime, self.bindings = runtime, runtime.scheduler_bindings
@@ -158,18 +167,21 @@ class ProgressionCoordinator:
         did not complete. Retrying an absolute observation retains the same
         expected host and values; no new model attempt is granted.
         """
-        started = time.monotonic()
+        deadline = time.monotonic() + min(self._limits['observation_retry_seconds'], control_io_remaining())
         for attempt in range(self._limits['observation_retries'] + 1):
             try:
-                with nonblocking_control_io():
+                with bounded_control_io(wait_seconds=self._database_wait,
+                        remaining_seconds=lambda: min(deadline-time.monotonic(), self._database_remaining())):
                     return operation()
             except (sqlite3.OperationalError, MaintenanceBusy) as error:
                 code = getattr(error, 'sqlite_errorcode', 0) & 255
                 if not isinstance(error, MaintenanceBusy) and code not in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}:
                     raise
+                if self.closed.is_set():
+                    raise ProgressionFault('coordinator_closed') from error
                 if not self._selecting and self._goal_deadline is not None and self.clock() >= self._goal_deadline:
                     raise ProgressionFault('observation_budget_expired') from error
-                remaining = self._limits['observation_retry_seconds'] - (time.monotonic() - started)
+                remaining = min(deadline-time.monotonic(), control_io_remaining())
                 if attempt >= self._limits['observation_retries'] or remaining <= 0:
                     raise ObservationRetriesExhausted() from error
                 # This also guards resources during RPC callbacks waiting on DB.
@@ -181,6 +193,16 @@ class ProgressionCoordinator:
                     delay = min(delay, max(0, self._goal_deadline-self.clock()))
                 if self.closed.wait(delay):
                     raise ProgressionFault('coordinator_closed') from error
+
+    def _database_wait(self):
+        return min(self._limits['sqlite_busy_wait_seconds'], self._limits['event_wait_seconds'])
+
+    def _database_remaining(self):
+        if self.closed.is_set():
+            return 0.
+        if not self._selecting and self._goal_deadline is not None:
+            return max(0., self._goal_deadline-self.clock())
+        return float('inf')
 
     def _row(self):
         value = self._observation(lambda: self.bindings.progression_status(instance_id=self.instance, internal=True))
@@ -228,7 +250,8 @@ class ProgressionCoordinator:
         elif event['method'] == 'thread/tokenUsage/updated':
             identities = self._identities()
             if thread != self.host.identity.thread_id and thread not in identities:
-                original = self.runtime.runs.native_usage_identity(instance_id=self.instance, thread_id=thread)
+                original = self._observation(lambda: self.runtime.runs.native_usage_identity(
+                    instance_id=self.instance, thread_id=thread))
                 if original is not None:
                     identities[thread] = original
             self._save({}, usage_observation=dict(params=params,
@@ -245,6 +268,7 @@ class ProgressionCoordinator:
                 self._save(dict(native_completion=turn.get('status'), usage_records=records,
                     usage_summary=usage_summary(list(loop_usage(dict(checkpoint, usage_records=records)).values()))))
 
+    @observed
     def _terminal_tool_delivery(self, row, checkpoint, params):
         """Native v2 ItemCompletedNotification proves a Root tool result was handed back.
 
@@ -305,6 +329,7 @@ class ProgressionCoordinator:
             known.add(run_id)
         self._save(dict(terminal_delivery=decision, decision_snapshot=snapshot, phase='running'))
 
+    @observed
     def _identities(self):
         """Attribution uses accepted dispatch and exact native bindings."""
         checkpoint = json.loads(self._row()['checkpoint_json'])
@@ -332,8 +357,8 @@ class ProgressionCoordinator:
         for name, intent in admissions.items():
             if intent['state'] != 'prepared' and not intent.get('semantic_binding_pending'):
                 continue
-            matches = self.runtime.runs.admission_matches(instance_id=self.instance,
-                output_fingerprint=intent['output_fingerprint'])
+            matches = self._observation(lambda: self.runtime.runs.admission_matches(instance_id=self.instance,
+                output_fingerprint=intent['output_fingerprint']))
             if intent.get('run_id'):
                 matches = [intent['run_id']] if intent['run_id'] in matches else []
             if len(matches) != 1:
@@ -497,19 +522,21 @@ class ProgressionCoordinator:
         unknown = checkpoint.get('fault_class') == 'outcome_unknown' or (
             checkpoint.get('phase') == 'prepared' and not checkpoint.get('turn_id'))
         if not remaining and not unknown:
-            self.bindings.observe_progression(instance_id=self.instance, expected_host=json.loads(row['host_json'] or 'null'),
-                changes=dict(runtime_status='budget_exhausted', budget=timing), reason='budget_exhausted', stop=True)
+            self._observation(lambda: self.bindings.observe_progression(instance_id=self.instance,
+                expected_host=json.loads(row['host_json'] or 'null'),
+                changes=dict(runtime_status='budget_exhausted', budget=timing), reason='budget_exhausted', stop=True))
             return
         from ...agent_execution_settings import require_progression_capacity
         require_progression_capacity(settings)
         if checkpoint.get('attempts', 0) >= settings['progression']['max_attempts']:
-            self.bindings.observe_progression(instance_id=self.instance, expected_host=json.loads(row['host_json'] or 'null'),
-                changes=dict(runtime_status='attempt_budget_exhausted'), reason='attempt_budget_exhausted', stop=True)
+            self._observation(lambda: self.bindings.observe_progression(instance_id=self.instance,
+                expected_host=json.loads(row['host_json'] or 'null'),
+                changes=dict(runtime_status='attempt_budget_exhausted'), reason='attempt_budget_exhausted', stop=True))
             return
         if checkpoint.get('phase') == 'prepared' and not checkpoint.get('turn_id'):
-            self.bindings.observe_progression(instance_id=self.instance,
+            self._observation(lambda: self.bindings.observe_progression(instance_id=self.instance,
                 expected_host=json.loads(row['host_json'] or 'null'), changes=dict(runtime_status='submission_unknown'),
-                reason='submission_unknown', stop=True)
+                reason='submission_unknown', stop=True))
             return
         self.events = []
         # Transient adapter context, computed with the coordinator's clock;
@@ -552,16 +579,17 @@ class ProgressionCoordinator:
         if not self._reconcile_admissions():
             return
         for identity in self._identities().values():
-            run = self.runtime.runs.status(identity['run_id'])
+            run = self._observation(lambda: self.runtime.runs.status(identity['run_id']))
             if run.state in {'queued', 'running'}:
                 try:
                     host.restore_worker(identity['thread_id'], identity['platform_session'], str(self.runtime.project_root),
                         role=identity['role'])
                 except Exception:
                     # A Worker can seal while native state is being reconciled.
-                    if self.runtime.runs.status(identity['run_id']).state in {'queued', 'running'}:
+                    if self._observation(lambda: self.runtime.runs.status(identity['run_id'])).state in {'queued', 'running'}:
                         raise
 
+    @observed
     def _related_runs(self, row):
         initial = dict(relevant_runs={}, relevant_runs_objective_ref=json.loads(row['objective_ref_json']))
         settings = json.loads(row['config_json'])['effective']
@@ -585,7 +613,7 @@ class ProgressionCoordinator:
         return checkpoint
 
     def tick(self):
-        with nonblocking_control_io():
+        with bounded_control_io(wait_seconds=self._database_wait, remaining_seconds=self._database_remaining):
             return self._bounded_tick()
 
     def _bounded_tick(self):
@@ -680,11 +708,11 @@ class ProgressionCoordinator:
         if getattr(self.host, 'terminal_transport_error', None) and checkpoint.get('last_transport_warning') != 'interrupt_reply_timeout_after_terminal':
             self._save(dict(last_transport_warning='interrupt_reply_timeout_after_terminal'))
         if self._host_terminal(checkpoint):
-            if self.runtime.runs.active_ids(instance_id=self.instance, limit=1):
+            if self._observation(lambda: self.runtime.runs.active_ids(instance_id=self.instance, limit=1)):
                 self._save(dict(runtime_status='paused_accepted_work_continues'))
                 return
             self._settle_turn(checkpoint)
-            self.bindings.release_host(instance_id=self.instance, **self._host_binding())
+            self._observation(lambda: self.bindings.release_host(instance_id=self.instance, **self._host_binding()))
             host, self.host = self.host, None
             self.instance = self._last_row = self._goal_deadline = None
             host.close()
@@ -707,6 +735,7 @@ class ProgressionCoordinator:
             self.host = None
         return True
 
+    @observed
     def _review_continuation(self, row):
         """Keep the original host through an accepted review and owner settlement."""
         from .scheduling_control import accepted_work_authority
@@ -781,7 +810,8 @@ class ProgressionCoordinator:
             # early, including a resume that arrived while recovery was delayed.
             if not self._check_budget(row, limits):
                 return
-            if not limits['enabled'] or not self.bindings.client_enabled(session_key=row['owner_session'] or row['requested_by']):
+            if not limits['enabled'] or not self._observation(lambda: self.bindings.client_enabled(
+                    session_key=row['owner_session'] or row['requested_by'])):
                 self._save({}, reason='client_disabled', stop=True)
                 return
             if self._observation(lambda: self.bindings.progress_boundary(instance_id=self.instance)):
@@ -928,23 +958,27 @@ class ProgressionCoordinator:
         notification_snapshot = snapshot if delivered.get('omitted_results_read') else decision_snapshot
         # Intent is durable before the non-idempotent native turn/start.
         decision_row = self._decision_row()
-        with self.bindings.scheduling_guard(instance_id=self.instance, session_key=decision_row['owner_session'],
-                expected_generation=row['generation'], continuation=continuation):
-            # The policy a native turn starts with; restoring it later must match.
-            permissions = getattr(self.host, 'permissions', None)
-            self._save(dict(phase='prepared', turn_id=None, decision_snapshot=decision_snapshot,
-                notification_snapshot=notification_snapshot, terminal_delivery=terminal_delivery,
-                round_started_at=self.clock(),
-                root_permissions=permissions.declaration() if permissions is not None else None,
-                rounds=checkpoint.get('rounds', 0)+1, runtime_status='deciding',
-                last_report=checkpoint.get('report') or checkpoint.get('last_report'), report=None, native_completion=None),
-                **({} if continuation else dict(reason='host_active')))
+        # The policy a native turn starts with; restoring it later must match.
+        permissions = getattr(self.host, 'permissions', None)
+        self._prepare_turn(row, decision_row, continuation, dict(phase='prepared', turn_id=None,
+            decision_snapshot=decision_snapshot, notification_snapshot=notification_snapshot,
+            terminal_delivery=terminal_delivery, round_started_at=self.clock(),
+            root_permissions=permissions.declaration() if permissions is not None else None,
+            rounds=checkpoint.get('rounds', 0)+1, runtime_status='deciding',
+            last_report=checkpoint.get('report') or checkpoint.get('last_report'), report=None, native_completion=None))
         self._submitting = True
         turn = self.host.start_turn(prompt)
         # Only the successful native turn/start reply confirms this prepared
         # notice. A late turn/started event cannot acknowledge a newer candidate.
         self._save(dict(phase='running', turn_id=turn, notified_snapshot=notification_snapshot))
         self._submitting = False
+
+    @observed
+    def _prepare_turn(self, row, decision_row, continuation, changes):
+        # Guard reads and this one absolute checkpoint write are rollback-safe.
+        with self.bindings.scheduling_guard(instance_id=self.instance, session_key=decision_row['owner_session'],
+                expected_generation=row['generation'], continuation=continuation):
+            self._save(changes, **({} if continuation else dict(reason='host_active')))
 
     def _terminal_delivery(self,row,snapshot,shown):
         """Pure post-brief reads; retry before preparing any native submission."""

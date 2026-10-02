@@ -3,6 +3,7 @@ from datetime import datetime, timezone, timedelta
 import json
 from pathlib import Path
 import sqlite3
+from ..storage.control_io import connect_database
 
 
 def parse_time(value):
@@ -15,7 +16,7 @@ def approval_records(events, approval_database_path):
     if approval_database_path is None:
         raise RuntimeError('Approval timing store is unavailable for this task')
     ids = list({json.loads(event['diagnostic_json'])['approval_id'] for event in events})
-    with sqlite3.connect(Path(approval_database_path).as_uri() + '?mode=ro', uri=True) as db:
+    with connect_database(Path(approval_database_path).as_uri() + '?mode=ro', uri=True) as db:
         db.row_factory = sqlite3.Row
         rows = db.execute("""SELECT r.approval_id,r.status,r.created_at,r.expires_at,r.closed_at,d.decided_at
             FROM approval_requests r LEFT JOIN approval_decisions d USING(approval_id)

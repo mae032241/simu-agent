@@ -1099,7 +1099,8 @@ class ExecutionService:
         timeout = 30.0 if self.deadline_monotonic is None else min(30.0, self.deadline_monotonic - time.monotonic())
         if timeout <= 0:
             raise TimeoutError("execution registration connection budget exhausted")
-        connection = sqlite3.connect(self.database_path, timeout=timeout)
+        from ..storage.control_io import connect_database
+        connection = connect_database(self.database_path, timeout=timeout, deadline_monotonic=self.deadline_monotonic)
         connection.row_factory = sqlite3.Row
         return connection
 

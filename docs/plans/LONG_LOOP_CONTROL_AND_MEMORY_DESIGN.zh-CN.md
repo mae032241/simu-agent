@@ -329,6 +329,8 @@ python scripts/accept_b6.py report --suite /tmp/scid-p1b-baseline
 
 新一轮 P1b 已获用户明确授权：干净 `f64cd7e` source/runner，隔离安装与空 schema 9 单场已准备，190 个安装文件与 wheel/source 一致，独立只读核验通过。Root 5.6-sol/high、Worker 6.1-sol/high、helpers inherit；题目不变，科研 1200 秒／200 万总／20 万非缓存 token，人工等待 3600 秒。验收器查询间隔由 0.5 改为 5 秒并显式冻结，生产推进轮询仍为 5 秒；新样本不得把这一条件变化隐去。原失败、用量缺测和原件单独保留，不复制旧科学结果。准备累计 8.837 秒／RSS 206508032 B（包含一次核验字段错误，日志保留），证据 `/tmp/scid-p1b-f64-prepare-evidence-20261002/{freeze,rollup,actual-readback}.json`。当前会话原生目录不可访问；普通终端入口 `bash /tmp/scid-p1b-f64-run.sh` 仅读取冻结候选并启动已准备的唯一场次，用户页面创建/选择 `b0a-calibration`、暂停 bootstrap 并确认 `acceptance.objective` 预算；已有 attempt 则拒绝重跑。本准备节点未运行 native/模型，P1b 结果和评分待完成。
 
+2026-10-02 后续真实 `f64cd7e` 场次再次失败：有界诊断确认 `_check_budget → _identities → native_loop_identities` 的 `SQLITE_BUSY`，Worker 当时仍为 running，恢复次数 0。当前源码改用统一控制数据库短等待（管理员参数 `progression.sqlite_busy_wait_seconds`，默认 0.1 秒），每次语句/提交按观察绝对期限、原目标剩余时间及存储自身期限收紧；文件锁继续非阻塞。纯读和原子观测复用既有有限恢复，未知原生提交不重放；DELETE journal 与原冻结授额保留。最终 17 项新增及 28 项既有精确 source 回归通过，46.874 秒／RSS 131796992 B，证据 `/tmp/scid-bounded-sqlite-regression-20261002-02`、`/tmp/scid-bounded-sqlite-existing-20261002-01`；前一版 15 项与最终组重叠，不重复累计。独立只读评审通过（无 P1/P2 阻断）；原失败、候选、状态与预算不改，未运行安装/native/模型或全套，P1b、科学效果及 live 安全资格仍未完成。
+
 ## P5 样本与成本上限（提议预留，未获新的运行预算授权）
 
 首批仅 3 个场景 × 基线/候选各 1 场，共 6 场：①已有早期失败、跨若干无关尝试后的重复优化倾向；②关键条件变化后应允许有理由重试；③有冻结判据的有效负结果应推进。缺判据的定期确认、真实准入刹车与等待/未知负例先用确定性回放验证。两组使用相同冻结历史原件，不让模型重新生成整个长 loop；候选改变记忆投影/指定策略，差异逐项列出。短场两组固定一致的线程轮换条件，轮换收益单独验证；若轮换改变某组行为，必须单列变量或同步对照，不把综合差异归因于记忆。真实样本只作冻结历史检索与短场决策的探索性结果，不证明历史在真实运行中形成后仍能跨天、跨线程生效；后者由 P6a 验证。不替代主计划第 8 节原 24 场资格，也不声称统计显著或独立分离每项改动收益。

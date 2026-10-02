@@ -402,6 +402,14 @@ class SchedulingControl:
         value = self.agent_settings(instance_id)
         return {**value, "effective": effective_settings(self.global_settings, value["settings"])}
 
+    def _control_settings_match(self, instance_id, config_json):
+        from ...agent_execution_settings import ProgressionSettings
+        frozen = json.loads(config_json)
+        # A newly introduced IO default does not revise the immutable grant.
+        frozen['effective']['progression'].setdefault('sqlite_busy_wait_seconds',
+            ProgressionSettings().sqlite_busy_wait_seconds)
+        return self.control_settings(instance_id) == frozen
+
     def next_background_progression(self):
         """Select one eligible host without bypassing an unresolved native writer."""
         with self._connect() as connection:
@@ -838,7 +846,7 @@ class SchedulingControl:
                     conflict('scientific_progress_persistent_gap: confirm a new observation window in the management UI.')
             if not completing and (row['state'] != 'active' or row['owner_session'] != identity):
                 conflict('Scheduling is paused or owned by another session; use an explicit control command.')
-            if current_loop(checkpoint) and self.control_settings(instance_id) != json.loads(row['config_json']):
+            if current_loop(checkpoint) and not self._control_settings_match(instance_id, row['config_json']):
                 conflict('Configuration changed; the current research loop retains its frozen snapshot. Restore it or explicitly authorize another loop in the management UI.')
             if expected_generation is not None and row['generation'] != expected_generation:
                 conflict('Stale scheduling generation; reconciliation is required.')
@@ -971,7 +979,7 @@ class SchedulingControl:
                 other = db.execute('SELECT 1 FROM scheduler_progression WHERE instance_id!=? AND host_json IS NOT NULL LIMIT 1', (instance_id,)).fetchone()
             if other:
                 conflict('Another autonomous native host has not been quiesced; runtime is serial.')
-            if self.control_settings(instance_id) != json.loads(row['config_json']):
+            if not self._control_settings_match(instance_id, row['config_json']):
                 conflict('Configuration changed before host activation; the research loop snapshot cannot be replaced by start.')
             self.bind_session(session_key=scheduler_session, instance_id=instance_id)
             with self._connect() as connection:
@@ -1002,7 +1010,7 @@ class SchedulingControl:
             if (row.get('generation') != expected_generation or row['mode'] != 'background'
                     or row['state'] not in {'active', 'pending'} or json.loads(row['host_json'] or 'null') != expected):
                 conflict('Recorded host ownership changed; reconciliation required.')
-            if self.control_settings(instance_id) != json.loads(row['config_json']):
+            if not self._control_settings_match(instance_id, row['config_json']):
                 conflict('Effective configuration changed; restoring a host cannot replace the research loop snapshot.')
             self.bind_session(session_key=scheduler_session, instance_id=instance_id)
             with self._connect() as db:

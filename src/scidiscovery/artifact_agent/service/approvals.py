@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 
 from pydantic import ValidationError
 
-from ..storage.control_io import control_io_nonblocking
+from ..storage.control_io import connect_database
 from ..schema.approval import (
     CompiledApprovalIdentity,
     ApprovalOption,
@@ -1141,10 +1141,9 @@ class ApprovalService:
             connection.execute("PRAGMA foreign_keys = ON")
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path, isolation_level=None, timeout=0 if control_io_nonblocking() else 5.0)
+        connection = connect_database(self.database_path, isolation_level=None, timeout=5.0)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
-        connection.execute("PRAGMA busy_timeout = 0" if control_io_nonblocking() else "PRAGMA busy_timeout = 5000")
         return connection
 
 

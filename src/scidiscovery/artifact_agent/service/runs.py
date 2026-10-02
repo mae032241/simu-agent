@@ -34,7 +34,7 @@ from ...operations.workspace import (
     WorkspaceProtocolError,
     operation_workspace_hooks,
 )
-from ..storage.control_io import control_io_nonblocking
+from ..storage.control_io import connect_database
 from ..schema.artifact import ArtifactRegistration
 from ..schema.common import canonical_json, canonical_sha256
 from ..schema.refs import ActorRef, ArtifactRef
@@ -2396,7 +2396,7 @@ class RunService(ToolEvidenceMixin, RunAdmissionMixin):
             )
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path, timeout=0 if control_io_nonblocking() else 30.0)
+        connection = connect_database(self.database_path, timeout=30.0)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         return connection
