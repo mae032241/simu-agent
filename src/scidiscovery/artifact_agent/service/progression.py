@@ -18,6 +18,8 @@ from ..schema.refs import ArtifactRef
 from ...platforms.codex_usage import usage_summary
 from .progression_budget import token_budget
 from .maintenance import MaintenanceBusy
+from .scheduler_bindings import SchedulerInstanceConflict
+from .scheduling_control import has_unresolved_platform_requests
 from ..storage.control_io import bounded_control_io, control_io_remaining
 from .scientific_progress import goal_bound_runs
 from ...agent_execution_settings import ProgressionSettings
@@ -131,6 +133,9 @@ class ProgressionCoordinator:
         self._deadline_generation = None
         self._last_row = None
         self._selecting = False
+        self._rotating = False
+        self._rotation_generation = None
+        self._rotation_usage_binding = None
 
     def start(self):
         # Exactly one owner per deployed control database, including two daemons.
@@ -225,7 +230,17 @@ class ProgressionCoordinator:
         # terminal state and cumulative accounting are retained.
         if event.get('method') not in {'thread/tokenUsage/updated', 'turn/started', 'turn/completed', 'scid/serverRequest', 'item/completed'}:
             return
-        if self.host is None:
+        if self._rotating and event.get('method')=='thread/tokenUsage/updated':
+            old,identities=self._rotation_usage_binding
+            params=event.get('params',{})
+            if params.get('threadId')==old['thread_id'] or params.get('threadId') in identities:
+                # Already corroborated participants keep their original ledger
+                # even if opening fails or human control prevents attachment.
+                self._observation(lambda:self.bindings.observe_progression(instance_id=self.instance,
+                    expected_host=old,changes={},usage_observation=dict(params=params,
+                        identity=identities.get(params.get('threadId'),{}),root_thread=old['thread_id'])))
+                return
+        if self.host is None or self._rotating:
             if len(self.events) >= 128:
                 raise ProgressionFault('native_initialization_event_limit')
             self.events.append(event)
@@ -448,6 +463,26 @@ class ProgressionCoordinator:
             if value.state in {'queued', 'running'}:
                 brief['active_tasks'].append(dict(name=name, state=value.state, deadline=value.deadline_at,
                     instruction='Observe this accepted task; do not create a replacement or repeat uncertain native dispatch.'))
+        brief['active_external_work'] = []
+        if self.runtime.executions is not None:
+            executions=self.runtime.executions.active_ids(instance_id=self.instance,
+                scheduler_database_path=self.bindings.database_path,limit=9)
+            brief['external_work_omitted']=len(executions)>8
+            if executions:
+                brief['external_work_index']=dict(tool='execution_list',surface='execution',limit=8,
+                    continuation='Use returned next_before; task-owned work is observed through its Run.')
+            for identity in executions[:8]:
+                name=self.bindings.find_name(instance=self.instance,namespace='execution',object_id=identity)
+                if name is None:
+                    brief['external_work_omitted']=True
+                    continue
+                saved=self.runtime.executions.status(identity)
+                owner=facade._task_execution_owner(identity)
+                task=self.bindings.find_name(instance=self.instance,namespace='run',object_id=owner) if owner else None
+                read=(dict(tool='run_status',name=task,intent='status') if task else
+                    dict(tool='execution_list',surface='execution',limit=8))
+                brief['active_external_work'].append(dict(name=name,state=saved.state,read=read,
+                    instruction='Saved service state; accepted work remains owned by the service. Do not replace or resubmit.'))
         def omit_result(entry):
             brief['result_omissions'] = brief.get('result_omissions', 0) + 1
             brief['omitted_results_read'] = dict(tool='run_list', view='summary', limit=8,
@@ -521,6 +556,9 @@ class ProgressionCoordinator:
                 if entry.get('output_artifact_name') in brief['material_names']:
                     brief['material_names'].remove(entry['output_artifact_name'])
                 omit_result(entry)
+            elif brief['active_external_work']:
+                brief['active_external_work'].pop()
+                brief['external_work_omitted']=True
             elif brief['omissions']:
                 brief['omissions'].pop()
                 brief['omission_details_omitted'] = brief.get('omission_details_omitted', 0) + 1
@@ -610,6 +648,77 @@ class ProgressionCoordinator:
                     if self._observation(lambda: self.runtime.runs.status(identity['run_id'])).state in {'queued', 'running'}:
                         raise
 
+    def _rotate_if_due(self,row,limits):
+        cp=json.loads(row['checkpoint_json'])
+        record=cp.get('usage_records',{}).get(self.host.identity.thread_id,{})
+        rounds=limits.get('root_rotate_after_rounds',0)
+        tokens=limits.get('root_rotate_after_input_tokens',0)
+        if not ((rounds and cp.get('rounds',0)-record.get('root_started_round',cp.get('rounds',0))>=rounds)
+                or (tokens and (record.get('high_water',{}).get('input_tokens') or 0)>=tokens)):
+            return False
+        if (not self._host_terminal(cp) or cp.get('native_completion')!='completed'
+                or cp.get('fault_class')=='outcome_unknown' or has_unresolved_platform_requests(cp)
+                or any(i['state']=='prepared' or i.get('semantic_binding_pending') for i in cp.get('admissions',{}).values())):
+            return False
+        # Service completion is not native child quiescence. No cross-thread
+        # notification/ownership transfer is assumed, including released helpers.
+        identities=self._identities()
+        if not hasattr(self.host,'rotation_boundary') or not self.host.rotation_boundary(identities):
+            return False
+        old=self._host_binding()
+        def prepare():
+            # New admission shares this cross-process lock; participants need
+            # an active Run. Revalidate the cohort before fencing its owner.
+            with self.bindings.scheduling_lock():
+                if self.runtime.runs.active_ids(instance_id=self.instance,limit=1) or self._identities()!=identities:
+                    return None
+                with self.runtime.runs._connect() as db:
+                    if db.execute('SELECT 1 FROM worker_participants p JOIN runs r USING(run_id) WHERE r.instance_id=? AND p.thread_id IS NULL LIMIT 1',(self.instance,)).fetchone():
+                        return None
+                return self.bindings.prepare_host_rotation(instance_id=self.instance,
+                    expected_host=old,expected_generation=row['generation'],terminal_turn=self.host.completion)
+        opening=self._observation(prepare)
+        if opening is None:
+            return False
+        self._last_row=opening
+        self._rotation_generation=opening['generation']
+        self._rotation_usage_binding=(old,identities)
+        self.events=[]
+        self._rotating=self._submitting=True
+        try:
+            self.host.rotate_root()
+            try:
+                new=self.bindings.complete_host_rotation(instance_id=self.instance,expected_host=old,
+                    expected_generation=opening['generation'],scheduler_session=self.host.scheduler_session,**self._host_binding())
+            except SchedulerInstanceConflict:
+                changed=self._row()
+                if changed['generation']==opening['generation']:
+                    raise
+                # No turn was opened on the verified new thread. Closing it and
+                # clearing only the old terminal host marker preserves the human
+                # decision, including a takeover while thread/start was in flight.
+                self.host.close();self.host=None
+                def abandon():
+                    with self.bindings.scheduling_lock():
+                        current=self.bindings.progression_status(instance_id=self.instance,internal=True)
+                        self.bindings.abandon_host_rotation(instance_id=self.instance,
+                            expected_host=old,expected_generation=current['generation'])
+                self._observation(abandon)
+                self.events=[]
+                self._submitting=False
+                self._rotation_generation=None
+                return True
+            self._last_row=new
+            self._rotating=self._submitting=False
+            self._rotation_generation=None
+            events,self.events=self.events,[]
+            for event in events:
+                self._event(event)
+            return True
+        finally:
+            self._rotating=False
+            self._rotation_usage_binding=None
+
     @observed
     def _related_runs(self, row):
         initial = dict(relevant_runs={}, relevant_runs_objective_ref=json.loads(row['objective_ref_json']))
@@ -668,6 +777,10 @@ class ProgressionCoordinator:
                         else 'resource_limit' if code == 'resource_limit' else 'host_fault')
                     safe = isinstance(error, ObservationRetriesExhausted) and not uncertain
                     checkpoint = json.loads(row['checkpoint_json'])
+                    rotation_control_changed = (checkpoint.get('native_action')=='root_rotation'
+                        and self._rotation_generation is not None and row['generation']!=self._rotation_generation)
+                    # Opening can fail after a human changed control. Persist
+                    # its unknown outcome without replacing that decision/time.
                     self._pending_fault = dict(instance_id=self.instance,
                         expected_host=json.loads(row['host_json'] or 'null'),
                         changes=dict(runtime_status=reason, fault_code=code,
@@ -675,7 +788,7 @@ class ProgressionCoordinator:
                             fault_class='outcome_unknown' if uncertain else 'observation_exhausted'
                                 if getattr(error, 'code', None) == 'observation_retry_exhausted' else 'configuration_or_runtime',
                             attempts=checkpoint.get('attempts', 0)+(reason == 'host_fault' and not safe)),
-                        reason=reason, stop=True)
+                        reason=None if rotation_control_changed else reason, stop=not rotation_control_changed)
                     if safe:
                         import uuid
                         self._pending_fault['recoverable_fault'] = dict(id=uuid.uuid4().hex, kind='observation',
@@ -689,6 +802,7 @@ class ProgressionCoordinator:
                     host, self.host = self.host, None
                     if host is not None:
                         host.close()
+                    self._rotation_generation=None
             if recovered:
                 return
             raise
@@ -980,6 +1094,8 @@ class ProgressionCoordinator:
         # Intent is durable before the non-idempotent native turn/start.
         decision_row = self._decision_row()
         # The policy a native turn starts with; restoring it later must match.
+        if not continuation and self._rotate_if_due(self._row(),limits):
+            return
         permissions = getattr(self.host, 'permissions', None)
         self._prepare_turn(row, decision_row, continuation, dict(phase='prepared', turn_id=None,
             decision_snapshot=decision_snapshot, notification_snapshot=notification_snapshot,

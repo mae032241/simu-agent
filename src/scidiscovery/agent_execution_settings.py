@@ -161,6 +161,12 @@ class ProgressionSettings(SettingsValue):
     # Root model selection is independent of Worker defaults and frozen with the goal.
     root_model: str = Field(default="gpt-5.6-sol", min_length=1, max_length=256)
     root_reasoning_effort: ReasoningEffort = "high"
+    # Zero disables each trigger. Input is cumulative (cached input included),
+    # not a measurement of the current native context window.
+    root_rotate_after_rounds: int = Field(default=8, ge=0,
+        description="Completed decision rounds on this Root thread before safe rotation; 0 disables this trigger.")
+    root_rotate_after_input_tokens: int = Field(default=500000, ge=0,
+        description="Cumulative native input usage on this Root thread, including cached input; not current context size. 0 disables this trigger.")
     # Native Workers inherit Root permissions; validate their catalog requirements.
     root_approval_policy: Literal["never"] = "never"
     root_sandbox: Literal["read-only", "workspace-write"] = "workspace-write"

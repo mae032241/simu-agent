@@ -129,6 +129,9 @@ def apply_usage_observation(db, row, checkpoint, observation):
         owner=row['instance_id'] if role != 'unattributed' else None, outcome='running')
     records[thread] = {key: record[key] for key in ('platform', 'thread_id', 'role', 'owner',
         'outcome', 'high_water', 'counted_tokens', 'has_gaps', 'coverage')}
+    if previous_record and role == 'root':
+        records[thread].update({key: previous_record[key] for key in
+            ('root_started_round', 'scheduler_session', 'retired', 'retired_after_round') if key in previous_record})
     if loop_id:
         records[thread]['loop_id'] = loop_id
     if not independent:

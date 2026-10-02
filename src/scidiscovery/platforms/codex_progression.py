@@ -135,6 +135,28 @@ class CodexProgressionHost(CodexRootHost):
         elif turn.get('status') != 'inProgress':
             raise HostError('recorded_turn_state_unknown')
 
+    def rotation_boundary(self, identities):
+        """No native child transfer is claimed; every recorded thread must stop."""
+        for thread in {self.identity.thread_id,*identities}:
+            observed=self.connection.rpc('thread/read',dict(threadId=thread,includeTurns=True)).get('thread',{})
+            if observed.get('id')!=thread:
+                raise HostError('rotation_platform_identity_changed')
+            turns=observed.get('turns',[])
+            if not turns or any(t.get('status') not in {'completed','failed','interrupted'} for t in turns):
+                return False
+        return True
+
+    def rotate_root(self):
+        if self.completion is None or self.completion.get('status')!='completed':
+            raise HostError('rotation_root_not_terminal')
+        self.identity,self.turn_id,self.completion=None,None,None
+        try:
+            self.open_root(cwd=self.root_cwd,options=self.root_options)
+            self.verify_tools_and_session(approval_base_url=self.approval_base_url)
+        except BaseException as error:
+            error.native_outcome_unknown=True
+            raise
+
     def restore_worker(self, thread_id, platform_session, cwd, *, role="worker"):
         if role not in {"worker", "helper"}:
             raise ValueError("invalid native participant role")
@@ -228,6 +250,7 @@ class CodexProgressionFactory:
             host.initialize(cwd=str(self.project_root), expected_config=config)
             options = {'model': root_settings.root_model,
                 'config': {'model_reasoning_effort': root_settings.root_reasoning_effort}}
+            host.root_options,host.root_cwd,host.approval_base_url=options,str(self.project_root),self.approval_base_url
             opening_root = True
             host.open_root(cwd=str(self.project_root), prior=prior, options=options,
                 active_turn_id=checkpoint.get('turn_id') if prior else None)

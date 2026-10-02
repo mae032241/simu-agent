@@ -55,6 +55,11 @@ def conflict(message):
     raise SchedulerInstanceConflict(message)
 
 
+def has_unresolved_platform_requests(checkpoint):
+    """Only the adapter's post-send denied notification confirms resolution."""
+    return any(item.get('state')!='denied' for item in checkpoint.get('platform_requests',[]))
+
+
 def is_goal_anchor(artifact):
     """Starting control needs original intent, not prior scientific qualification."""
     from .intake import USER_TEXT_MEDIA_TYPE, USER_TEXT_SOURCE_ORIGIN
@@ -408,7 +413,14 @@ class SchedulingControl:
         # A newly introduced IO default does not revise the immutable grant.
         frozen['effective']['progression'].setdefault('sqlite_busy_wait_seconds',
             ProgressionSettings().sqlite_busy_wait_seconds)
-        return self.control_settings(instance_id) == frozen
+        current=self.control_settings(instance_id)
+        # Old grants did not authorize rotation. Their coordinator uses missing
+        # triggers as disabled; a new deployment default must not block recovery
+        # or revise those grants. Complete new policies still compare exactly.
+        for key in ('root_rotate_after_rounds','root_rotate_after_input_tokens'):
+            if key not in frozen['effective']['progression']:
+                current['effective']['progression'].pop(key,None)
+        return current == frozen
 
     def next_background_progression(self):
         """Select one eligible host without bypassing an unresolved native writer."""
@@ -492,6 +504,7 @@ class SchedulingControl:
             old = self.progression_status(instance_id=instance_id, internal=True)
             exists = old['state'] != 'idle'
             checkpoint = json.loads(old.get('checkpoint_json', '{}'))
+            self._require_not_retired_root(instance_id,session_key)
             managed = bool(current_loop(checkpoint))
             if expected_generation is not None and (not exists or old['generation'] != expected_generation):
                 conflict('Scheduling generation changed; reread control status.')
@@ -998,12 +1011,98 @@ class SchedulingControl:
                 if prior is None:
                     from ...platforms.codex_usage import observe_usage
                     records[thread_id] = dict(observe_usage(dict(threadId=thread_id), role='root',
-                        owner=instance_id, outcome='running'), loop_id=identity, pending_observation=True)
+                        owner=instance_id, outcome='running'), loop_id=identity, pending_observation=True,
+                        root_started_round=checkpoint.get('rounds',0),scheduler_session=scheduler_session)
                 connection.execute("UPDATE scheduler_progression SET state='active', owner_session=?, generation=generation+1, "
                     "reason='host_active', host_json=?,checkpoint_json=? WHERE instance_id=?",
                     (scheduler_session, json.dumps({'platform_session': platform_session, 'thread_id': thread_id}),
                         store_checkpoint(connection, instance_id, checkpoint), instance_id))
             return self.progression_status(instance_id=instance_id, internal=True)
+
+    def _require_not_retired_root(self, instance_id, session_key):
+        with self._connect() as db:
+            if db.execute("SELECT 1 FROM scheduler_progression_details WHERE instance_id=? AND collection='usage_records' "
+                    "AND json_extract(record_json,'$.scheduler_session')=? AND json_extract(record_json,'$.retired')=1 LIMIT 1",
+                    (instance_id,session_key)).fetchone():
+                conflict('This native Root session is retired; only the current writer or management UI may control progression.')
+
+    def prepare_host_rotation(self, *, instance_id, expected_host, expected_generation, terminal_turn):
+        """Trusted coordinator fences the terminal writer before native opening.
+
+        The existing prepared/no-turn boundary makes a crash or lost reply
+        non-replayable. It does not grant a new loop or reset any position.
+        """
+        with self.control_maintenance.guard(instance_id),self.scheduling_lock(),self._connect() as db:
+            row=read_control_row(db,instance_id)
+            cp=json.loads(row['checkpoint_json'])
+            if (row['generation']!=expected_generation or row['state']!='active' or row['mode']!='background'
+                    or json.loads(row['host_json'] or 'null')!=expected_host or cp.get('phase')!='idle'
+                    or cp.get('turn_id') is not None or cp.get('fault_class')=='outcome_unknown'
+                    or cp.get('native_completion')!='completed' or terminal_turn.get('status')!='completed'
+                    or not terminal_turn.get('id') or has_unresolved_platform_requests(cp)
+                    or any(i['state']=='prepared' or i.get('semantic_binding_pending') for i in cp.get('admissions',{}).values())):
+                conflict('Root rotation requires this exact active, terminal, resolved writer.')
+            if not self._control_settings_match(instance_id,row['config_json']):
+                conflict('Root rotation cannot change the frozen research loop policy.')
+            record=cp['usage_records'][expected_host['thread_id']]
+            record.update(retired=True,retired_after_round=cp.get('rounds',0))
+            cp.update(phase='prepared',turn_id=None,native_action='root_rotation',runtime_status='opening_root')
+            db.execute("UPDATE scheduler_progression SET state='pending',owner_session=NULL,generation=generation+1,checkpoint_json=? WHERE instance_id=?",
+                (store_checkpoint(db,instance_id,cp),instance_id))
+        return self.progression_status(instance_id=instance_id,internal=True)
+
+    def complete_host_rotation(self, *, instance_id, expected_host, expected_generation,
+                               scheduler_session, platform_session, thread_id):
+        """Attach only the verified new native coordinates, by generation CAS."""
+        if not platform_session or platform_session!=thread_id or thread_id==expected_host['thread_id']:
+            conflict('Root rotation requires a fresh actual native identity.')
+        self._validate_session_key(scheduler_session)
+        with self.control_maintenance.guard(instance_id),self.scheduling_lock():
+            row=self.progression_status(instance_id=instance_id,internal=True)
+            cp=json.loads(row['checkpoint_json'])
+            if (row['generation']!=expected_generation or row['state']!='pending' or row['mode']!='background'
+                    or json.loads(row['host_json'] or 'null')!=expected_host or cp.get('phase')!='prepared'
+                    or cp.get('native_action')!='root_rotation' or cp.get('turn_id') is not None):
+                conflict('Root rotation ownership changed; do not overwrite human control.')
+            if scheduler_session==cp['usage_records'][expected_host['thread_id']].get('scheduler_session'):
+                conflict('Root rotation requires its new trusted scheduler session.')
+            if not self._control_settings_match(instance_id,row['config_json']):
+                conflict('Root rotation cannot replace the frozen loop configuration.')
+            self.bind_session(session_key=scheduler_session,instance_id=instance_id)
+            with self._connect() as db:
+                from .progression_records import detail_record
+                if detail_record(db,instance_id,'usage_records',thread_id) is not None:
+                    conflict('Root rotation cannot reuse a recorded native thread.')
+                from ...platforms.codex_usage import observe_usage
+                cp['usage_records'][thread_id]=dict(observe_usage(dict(threadId=thread_id),role='root',owner=instance_id,
+                    outcome='running'),loop_id=current_loop(cp),pending_observation=True,
+                    root_started_round=cp.get('rounds',0),scheduler_session=scheduler_session)
+                cp.update(phase='idle',native_action=None,runtime_status='root_rotated')
+                db.execute("UPDATE scheduler_progression SET state='active',owner_session=?,generation=generation+1,host_json=?,checkpoint_json=? WHERE instance_id=?",
+                    (scheduler_session,json.dumps(dict(platform_session=platform_session,thread_id=thread_id)),
+                     store_checkpoint(db,instance_id,cp),instance_id))
+            return self.progression_status(instance_id=instance_id,internal=True)
+
+    def abandon_host_rotation(self, *, instance_id, expected_host, expected_generation):
+        """Known terminal old Root and unopened new turn; preserve human control.
+
+        Only the trusted adapter can corroborate this boundary. No writer is
+        attached, and ownership, loop balances and delivery positions stay put.
+        """
+        with self.control_maintenance.guard(instance_id), self.scheduling_lock(), self._connect() as db:
+            row=read_control_row(db,instance_id)
+            cp=json.loads(row['checkpoint_json'])
+            if (row['generation']!=expected_generation or json.loads(row['host_json'] or 'null')!=expected_host
+                    or cp.get('phase')!='prepared' or cp.get('native_action')!='root_rotation'
+                    or cp.get('turn_id') is not None):
+                conflict('Rotation cleanup changed; preserve the current control decision.')
+            cp.update(phase='idle',native_action=None,runtime_status='root_rotation_control_changed')
+            from .progression_budget import enabled_time
+            now=self.control_now()
+            enabled_time(cp,now,enabled=row['state'] in {'active','pending'})
+            sync_loop_balances(cp,now)
+            db.execute('UPDATE scheduler_progression SET host_json=NULL,checkpoint_json=? WHERE instance_id=?',
+                (store_checkpoint(db,instance_id,cp),instance_id))
 
     def reconnect_host(self, *, instance_id, scheduler_session, platform_session, thread_id, expected_generation):
         """Restore only the exact persisted native host after platform corroboration."""
@@ -1045,6 +1144,7 @@ class SchedulingControl:
         fingerprint = hashlib.sha256(raw).hexdigest()
         with self.control_maintenance.guard(instance_id), self.scheduling_lock():
             self._selected(instance_id, session_key)
+            self._require_not_retired_root(instance_id,session_key)
             row = self.progression_status(instance_id=instance_id, internal=True)
             if row['state'] == 'idle':
                 conflict('Start a frozen goal before sending progression context.')
@@ -1109,6 +1209,7 @@ class SchedulingControl:
             raise ValueError('a completed goal cannot await a question')
         with self.control_maintenance.guard(instance_id), self.scheduling_lock(), self._connect() as db:
             self._selected(instance_id, session_key)
+            self._require_not_retired_root(instance_id,session_key)
             current = self.progression_status(instance_id=instance_id, internal=True)
             cp = json.loads(current.get('checkpoint_json', '{}'))
             if (current['state'] != 'paused' or session_key not in
