@@ -321,6 +321,10 @@ python scripts/accept_b6.py report --suite /tmp/scid-p1b-baseline
 
 本会话启动在环境检查被 `native_daemon_directory_blocked` 拦住，模型请求/派发为零，原 attempt/exit/startup-check 均保留在 `/tmp/scid-p1b-baseline`，未修改 Codex 权限或重放提交。此前 runner 导入路径缺失发生在 attempt 创建前，已修正为准备阶段相同的显式 PYTHONPATH。只读复核通过的普通终端入口为 `bash /tmp/scid-p1b-start.sh`：先核环境和已授权单场条件，再建立独立 `/tmp/scid-p1b-host`；已存在即拒绝重复运行，仍由用户页面选实例、暂停 bootstrap、确认原目标预算。交接记录为上述证据目录的 `launch-blocked.json`。这是同一场尚未发生的模型执行，未扩大额度；真实场次、token 结果和人工评分仍待完成。
 
+后续 host2 在人工等待 900 秒后退出，已建 `b0a-calibration` 和 `acceptance.objective`，仍无模型提交、授额或已接受/未知工作。显式 `resume-wait --from-evidence` 仅允许这种已确认模型前超时；复用原实例及冻结题目字节，新原生会话沿既有 `thread/start`，旧空线程身份只保留为来源证据，不尝试恢复空 rollout。用户在新精确管理 URL 选择原实例，必要时明确接管，再暂停并确认原 loop 预算；脚本不代选、接管、暂停或授额。人工窗口是正整数配置，本轮显式 3600 秒，父/子监督同源，人工轮询沿冻结 `progression.poll_seconds=5`；原 case/host-resources 与科学 1200 秒、200 万/20 万 token 条件不改，授权后沿原 deadline，不续额。新关联记录保留原件 SHA、旧/新 harness 身份和重新核验的套件余额，报告仅读取该精确关联输出；失败清除活 URL，重复/未知/已启动工作拒绝。
+
+原 16 项定向 source 验证及真实 host2 只读 eligibility/余额证据保留于 `/tmp/scid-p1b-wait-recovery-rollup-20261002.json`、`/tmp/scid-p1b-wait-recovery-freeze-20261002.json`。独立复审发现 status 读取后 UI 授额可与下一次本地读取交错；修复仅对已核验无工作/精确题目/配置/所有者的合法 managed 转换重新读公开状态并沿原 `confirm_loop`，不吞其他拒绝。修前失败保留，修后 12 项精测通过（含首次/循环 status 后真实 HTTP 授额、错误所有者/题目/配置/未知工作及既有正常路径），deadline 不重置；新证据 `/tmp/scid-p1b-wait-recovery-review-fix-rollup-20261002.json`、`/tmp/scid-p1b-wait-recovery-review-fix-freeze-20261002.json`，独立复审通过、原授额竞态阻断已关闭，随本节点提交；未启动 native/模型或执行接续。使用 README 开发环境解释器的既有 wrapper `bash /tmp/scid-p1b-resume-wait.sh`，准确参数为 `resume-wait auto-stagnation-1 --suite /tmp/scid-p1b-host2 --from-evidence /tmp/scid-p1b-host2/auto-stagnation-1/journey-1790919037924275143 --human-wait-seconds 3600`；这仍是原授权单场，P1b/S0/S5a 与用户评分均未完成。
+
 ## P5 样本与成本上限（提议预留，未获新的运行预算授权）
 
 首批仅 3 个场景 × 基线/候选各 1 场，共 6 场：①已有早期失败、跨若干无关尝试后的重复优化倾向；②关键条件变化后应允许有理由重试；③有冻结判据的有效负结果应推进。缺判据的定期确认、真实准入刹车与等待/未知负例先用确定性回放验证。两组使用相同冻结历史原件，不让模型重新生成整个长 loop；候选改变记忆投影/指定策略，差异逐项列出。短场两组固定一致的线程轮换条件，轮换收益单独验证；若轮换改变某组行为，必须单列变量或同步对照，不把综合差异归因于记忆。真实样本只作冻结历史检索与短场决策的探索性结果，不证明历史在真实运行中形成后仍能跨天、跨线程生效；后者由 P6a 验证。不替代主计划第 8 节原 24 场资格，也不声称统计显著或独立分离每项改动收益。

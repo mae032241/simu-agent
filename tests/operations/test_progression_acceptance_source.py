@@ -10,12 +10,194 @@ import pytest
 
 from scripts import accept_progression as entry
 from scripts import accept_b6 as suite
-from scripts.acceptance_native_cases import NativeCaseJourney
+from scripts.acceptance_native_cases import NativeCaseJourney,case_objective
 from scripts.accept_progression_recovery import RecoveryJourney
 from scripts.b6_evidence import digest, write
 from tests.operations.test_m6a_direct_instance_management import _setup, _root, _request
 
 SOURCE='e07d6f080efbd56d3f01f0245c2d42deba602935'
+
+
+def expired_wait(r,*,objective=None):
+    j=r.journey;r.select()
+    j.platform_session=j.thread
+    r.root.call_tool('artifact_ingest_text',dict(name='acceptance.objective',text=objective or case_objective(r.case),on_conflict='reject'))
+    with sqlite3.connect(j.root/'state/database/scheduler-bindings.sqlite3') as db:
+        assert json.loads(db.execute('SELECT config_json FROM scheduler_progression').fetchone()[0])=={}
+    old=j.logdir.parent
+    write(old/'summary.json',dict(status='failed',failure_type='TimeoutError',diagnostic='instance_wait_timeout',rpc_error=None))
+    write(old/'resource.json',dict(returncode=1,stop_reason='exited',elapsed_seconds=912))
+    write(old/'thread.json',dict(thread_id=j.thread,session_id=j.platform_session))
+    write(old/'started-threads.json',[])
+    write(old/'usage.json',dict(threads={},items=[]))
+    write(j.root/'progress.json',dict(state='awaiting_user',management_url=j.current_instance()['management_url'],evidence=str(old)))
+    return old
+
+
+def wait_suite(r):
+    j=r.journey;old=expired_wait(r);case_id=j.root.name;root=j.root.parent
+    r.case.update(human_wait_seconds=900,baseline_digest='frozen-state',conditions_digest='frozen-conditions')
+    write(j.root/'acceptance-case.json',r.case)
+    budget=dict(total_tokens=2000000,uncached_tokens=200000,execution_seconds=1200)
+    manifest=dict(harness_digest='old-harness',freeze_identity=r.case['freeze_identity'],prior_attempt_costs=[],
+        config=dict(instance=r.case['instance'],cases={case_id:dict(requires=['sealed_delivery'])},budget=dict(suite=budget,session=budget)))
+    write(root/'suite.json',manifest)
+    write(root/(case_id+'.prepared.json'),dict(case_digest=digest(r.case)))
+    write(root/(case_id+'.attempt.json'),dict(original=True))
+    write(root/(case_id+'.exit.json'),dict(returncode=1))
+    write(root/(case_id+'.result.json'),dict(status='not_observed'))
+    write(j.root/'host-resources.json',dict(startup_timeout_seconds=120,instance_wait_timeout_seconds=900,execution_timeout_seconds=1200))
+    return root,manifest,case_id,old
+
+
+@pytest.mark.parametrize('bad',['model','turn','grant','unknown','objective','identity','rpc'])
+def test_wait_resume_rejects_unsafe_source_through_actual_bootstrap_routes(runner,bad):
+    r=runner;j=r.journey;old=expired_wait(r,objective='Different original' if bad=='objective' else None)
+    if bad=='model':(j.root/'model-submission-started').touch()
+    elif bad=='turn':write(old/'started-threads.json',[j.thread])
+    elif bad=='grant':r.command('pause');r.grant()
+    elif bad=='unknown':
+        with sqlite3.connect(j.root/'state/database/scheduler-bindings.sqlite3') as db:
+            db.execute('UPDATE scheduler_progression SET checkpoint_json=?',(json.dumps(dict(fault_class='outcome_unknown')),))
+    elif bad=='objective':
+        assert r.root.call_tool('artifact_catalog',dict(name='acceptance.objective',view='content'))['text']=='Different original'
+    elif bad=='identity':write(old/'thread.json',dict(thread_id=j.thread,session_id='different'))
+    else:write(old/'summary.json',dict(status='failed',failure_type='TimeoutError',diagnostic='instance_wait_timeout',rpc_error={'unknown':True}))
+    with pytest.raises(ValueError,match='wait_resume_'):
+        entry.wait_source(j.root,r.case,old)
+    assert not (j.root/'wait-resume-1').exists()
+
+
+@pytest.mark.parametrize('outcome',['grant','fast_grant','identity','stop','status_grant','loop_status_grant',
+    'status_wrong_owner','status_wrong_goal','status_wrong_config','status_unknown'])
+def test_wait_resume_new_native_session_reuses_exact_objective_via_real_ui(runner,monkeypatch,outcome):
+    from scidiscovery.platforms.codex_root_host import CodexRootHost
+    r=runner;j=r.journey;old=expired_wait(r)
+    old_hash={p.name:entry.file_hash(p) for p in old.glob('*.json')}
+    source=entry.wait_source(j.root,r.case,old)
+    j.wait_resume=dict(source=source,human_wait_seconds=3600,human_poll_seconds=r.case['effective_settings']['progression']['poll_seconds'])
+    j.resources['instance_wait_timeout_seconds']=3600
+    j.logdir=j.root/'wait-resume-1/fixture-logs';j.logdir.mkdir(parents=True)
+    j.__class__=NativeCaseJourney
+    current=_root(r.runtime,session_key='sch_'+'2'*32,secret=r.secret,base=r.base)
+    requests=[]
+    def initialize(host,*args,**kw):
+        assert kw==dict(check_native=False)
+        def rpc(method,params):
+            requests.append(method)
+            assert method=='thread/start' and params['ephemeral'] is False and 'threadId' not in params
+            return dict(thread=dict(id='new-actual-thread',sessionId='invalid' if outcome=='identity' else 'new-actual-thread'))
+        native=CodexRootHost(SimpleNamespace(on_event=lambda _:None,rpc=rpc,failed=False));native._initialized=True
+        identity=native.open_root(cwd=str(j.root))
+        j.thread,j.platform_session=identity.thread_id,identity.session_id
+        def mcp(method,params):
+            assert method=='mcpServer/tool/call' and params['threadId']==identity.thread_id
+            assert params['_meta']['x-codex-turn-metadata']==dict(session_id=identity.session_id,thread_id=identity.thread_id)
+            name=params['arguments']['name'];r.calls.append(name)
+            return dict(structuredContent=current.call_tool(name,params['arguments']['arguments']))
+        j.rpc=mcp
+        return j.current_instance()
+    monkeypatch.setattr(entry.Host,'initialize_host',initialize)
+    pumps=[]
+    def pump():
+        assert not (j.root/'model-submission-started').exists()
+        pumps.append(1)
+        if len(pumps)==1:
+            r.select_existing(current,r.case['instance'])
+            r.command('takeover',current)
+            if outcome=='fast_grant':
+                r.command('pause',current);r.grant(router=current)
+        elif outcome=='stop':r.command('stop',current)
+        elif outcome=='loop_status_grant':pass
+        elif len(pumps)==2:r.command('pause',current)
+        else:r.grant(router=current)
+    j.pump=pump
+    original=j.call
+    statuses=[]
+    def call(name,args):
+        if name=='progression_command':
+            assert args['command']=='start' and len(pumps)==dict(fast_grant=1,status_grant=1,loop_status_grant=2).get(outcome,3)
+            raise RuntimeError('fixture_model_boundary')
+        value=original(name,args)
+        if name=='progression_status':
+            statuses.append(value)
+            index=2 if outcome=='loop_status_grant' else 1
+            if len(statuses)==index and (outcome.startswith('status_') or outcome=='loop_status_grant'):
+                assert not (value.get('loop') or {}).get('managed')
+                if outcome=='status_wrong_goal':
+                    current.call_tool('artifact_ingest_text',dict(name='other.objective',text='Other original',on_conflict='reject'))
+                r.command('pause',current)
+                r.grant(objective='other.objective' if outcome=='status_wrong_goal' else 'acceptance.objective',router=current)
+                if outcome=='status_wrong_owner':
+                    other=_root(r.runtime,session_key='sch_'+'3'*32,secret=r.secret,base=r.base)
+                    r.select_existing(other,r.case['instance']);r.command('takeover',other)
+                elif outcome in {'status_wrong_config','status_unknown'}:
+                    with sqlite3.connect(j.root/'state/database/scheduler-bindings.sqlite3') as db:
+                        field='config_json' if outcome=='status_wrong_config' else 'checkpoint_json'
+                        changed=json.loads(db.execute('SELECT '+field+' FROM scheduler_progression').fetchone()[0])
+                        if field=='config_json':changed['effective']['defaults']['model']='other'
+                        else:changed['fault_class']='outcome_unknown'
+                        db.execute('UPDATE scheduler_progression SET '+field+'=?',(json.dumps(changed),))
+        return value
+    j.call=call
+    expected={'identity':'actual_root_identity_invalid','stop':'user_stop','status_wrong_owner':'bootstrap_owner_changed',
+        'status_wrong_goal':'loop_authorization_mismatch','status_wrong_config':'wait_resume_requires_unspent_known_bootstrap',
+        'status_unknown':'wait_resume_requires_unspent_known_bootstrap'}.get(outcome,'fixture_model_boundary')
+    with pytest.raises((RuntimeError,ValueError),match=expected):
+        j.run_case()
+    assert requests==['thread/start']
+    assert 'artifact_ingest_text' not in r.calls
+    assert old_hash=={p.name:entry.file_hash(p) for p in old.glob('*.json')}
+    if outcome in {'grant','fast_grant','status_grant','loop_status_grant'}:
+        status=current.call_tool('progression_status',{});clock=j.phase_deadline
+        j.confirm_loop(status,'acceptance.objective')
+        assert j.phase_deadline<=clock
+    else:assert not (j.root/'model-submission-started').exists()
+
+
+@pytest.mark.parametrize('outcome',['ok','exhausted','failed'])
+def test_resume_wait_link_preserves_old_records_uses_exact_output_and_checks_suite_budget(runner,monkeypatch,outcome):
+    import os
+    r=runner;j=r.journey;root,manifest,case_id,old=wait_suite(r)
+    monkeypatch.setattr(suite,'serial_lock',lambda:entry.guard.serial_lock(int(os.environ['SCID_TEST_LOCK_FD'])))
+    protected=[root/'suite.json',root/(case_id+'.attempt.json'),root/(case_id+'.exit.json'),root/(case_id+'.result.json'),
+        j.root/'acceptance-case.json',j.root/'host-resources.json',*[p for p in old.glob('*.json')]]
+    before={str(p):entry.file_hash(p) for p in protected}
+    launched=[]
+    real_run=suite.subprocess.run
+    def start(command,**kw):
+        if command[0]=='git':return real_run(command,**kw)
+        launched.append(command)
+        link=root/(case_id+'.resume-wait.json');record=json.loads(link.read_text())
+        assert record['human_wait_seconds']==3600 and record['original_harness_digest']=='old-harness'
+        monkeypatch.setattr(entry,'preflight',lambda:dict(blockers=[]))
+        monkeypatch.setattr(entry.sys,'argv',command[1:])
+        def guarded(command,env,limits,output,*args,**kwargs):
+            assert limits['timeout_seconds']==4920
+            write(output/'summary.json',dict(status='source_fixture',checks={}))
+            return dict(returncode=1 if outcome=='failed' else 0,stop_reason='exited',elapsed_seconds=1)
+        monkeypatch.setattr(entry.guard,'run_one',guarded)
+        return SimpleNamespace(returncode=entry.main())
+    monkeypatch.setattr(suite.subprocess,'run',start)
+    if outcome=='exhausted':
+        manifest['prior_attempt_costs']=[dict(costs=dict(total_tokens=2000000,uncached_tokens=200000,execution_seconds=1200))]
+        with pytest.raises(ValueError,match='acceptance_suite_budget_insufficient'):
+            suite.resume_wait(root,manifest,case_id,old,3600)
+        assert not launched and not (root/(case_id+'.resume-wait.json')).exists()
+    else:
+        assert suite.resume_wait(root,manifest,case_id,old,3600)==(1 if outcome=='failed' else 0)
+        report=suite.result(root,manifest,case_id)
+        assert report['evidence']!=str(old) and report['wait_resume']['human_wait_seconds']==3600
+        assert report['resource']['elapsed_seconds']==0 and report['usage']['coverage'] in {'missing','partial'}
+        if outcome=='failed':
+            progress=json.loads((j.root/'progress.json').read_text())
+            assert progress['state']=='failed' and 'management_url' not in progress and progress['model_requests']==0
+        with pytest.raises(FileExistsError):suite.resume_wait(root,manifest,case_id,old,3600)
+        assert len(launched)==1
+        record=json.loads((root/(case_id+'.resume-wait.json')).read_text())
+        record['output']=str(root/'foreign-output');write(root/(case_id+'.resume-wait.json'),record)
+        with pytest.raises(ValueError,match='wait_resume_link_mismatch'):suite.result(root,manifest,case_id)
+    assert before=={str(p):entry.file_hash(p) for p in protected}
 
 
 @pytest.fixture
@@ -74,13 +256,13 @@ def runner(tmp_path, monkeypatch):
         values,_=form(router)
         status,_,raw=_request(base,'POST','/instances/progression',form=dict(values,command=command))
         assert status==303,raw
-    def grant(objective='acceptance.objective'):
-        values,page=form()
+    def grant(objective='acceptance.objective',router=None):
+        values,page=form(router)
         page=page.split('data-loop-authorization>',1)[-1]
         match=re.search(r"name='confirmation_binding' value='([^']+)'",page)
         assert match, 'UI loop budget proposal unavailable'
         binding=match[1]
-        instance=runtime.scheduler_bindings.session_instance(session_key=root.facade.session_key)
+        instance=runtime.scheduler_bindings.session_instance(session_key=(router or root).facade.session_key)
         status,_,raw=_request(base,'POST','/instances/progression',form=dict(values,instance_id=instance,
             command='authorize_loop',confirmation_binding=binding,objective_name=objective,confirm_loop_budget='yes'))
         assert status==303,raw

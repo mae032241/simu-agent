@@ -14,6 +14,14 @@ except ModuleNotFoundError:
 AUTHORITY_OBJECTIVE='只读旧实例一个小页封存成果，保留限制并通过 progression_report 简短交接。禁止创建科研任务、助手或外部作业。'
 
 
+def case_objective(case):
+    scope = ('根据上一项完整任务的封存结论选择下一项，每次只派发一个负责人。无需为了数量重复无价值的任务。'
+             if case.get('multi_task') else '只派发一个负责人。')
+    return ('这是隔离验收中的科学任务。使用既有完整任务合同，不拆成 Root 子步骤。'
+            '科学内容必须来自 Worker 封存结果。'+scope+'不运行 TCAD、网络或外部作业。'
+            '负责人可以使用本任务明确要求的助手；否则不使用助手。不要人为睡眠。\n'+case['text'])
+
+
 def recorded_control_call(root, writer, name, arguments):
     """Replay a recorded transport identity at the control socket, without a model.
 
@@ -196,12 +204,7 @@ class NativeCaseJourney(RecoveryJourney):
         if prior.exists():
             write(self.logdir.parent/'prior-native-terminal.json',
                 verify_prior_turns(self.rpc,read(prior)))
-        objective=case['text']
-        scope = ('根据上一项完整任务的封存结论选择下一项，每次只派发一个负责人。无需为了数量重复无价值的任务。'
-                 if case.get('multi_task') else '只派发一个负责人。')
-        common=('这是隔离验收中的科学任务。使用既有完整任务合同，不拆成 Root 子步骤。'
-            '科学内容必须来自 Worker 封存结果。'+scope+'不运行 TCAD、网络或外部作业。'
-            '负责人可以使用本任务明确要求的助手；否则不使用助手。不要人为睡眠。\n'+objective)
+        common=case_objective(case)
         if case['scenario']=='authority':
             common=AUTHORITY_OBJECTIVE
         objective_name='acceptance.authority' if case['scenario']=='authority' else 'acceptance.objective'

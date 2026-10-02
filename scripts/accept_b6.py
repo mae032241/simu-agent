@@ -285,6 +285,50 @@ def run(root,manifest,case_id):
     return completed.returncode
 
 
+def resume_wait(root,manifest,case_id,evidence,human_wait_seconds=None):
+    """One explicit linked recovery of a confirmed pre-model human timeout."""
+    try:
+        from scripts.accept_progression import wait_source,file_hash
+    except ModuleNotFoundError:
+        from accept_progression import wait_source,file_hash
+    target=(root/case_id).resolve();evidence=evidence.resolve()
+    case=read(target/'acceptance-case.json')
+    human_wait_seconds=human_wait_seconds if human_wait_seconds is not None else case['human_wait_seconds']
+    if type(human_wait_seconds) is not int or human_wait_seconds<=0:
+        raise ValueError('positive_human_wait_seconds_required')
+    if digest(case)!=read(root/(case_id+'.prepared.json'))['case_digest']:
+        raise ValueError('prepared_case_changed')
+    with serial_lock() as lock:
+        source=wait_source(target,case,evidence)
+        if sorted(target.glob('journey-*'))!=[evidence]:
+            raise ValueError('wait_resume_requires_one_exact_original_attempt')
+        paths=[root/'suite.json',root/(case_id+'.attempt.json'),root/(case_id+'.exit.json'),root/(case_id+'.result.json'),
+            root/(case_id+'.prepared.json'),target/'candidate.json',target/'agent-settings.json',
+            target/'acceptance-case.json',target/'host-resources.json',
+            *[evidence/name for name in ('summary.json','resource.json','thread.json','usage.json','started-threads.json')]]
+        if read(root/(case_id+'.exit.json')).get('returncode')!=1:
+            raise ValueError('wait_resume_original_exit_not_confirmed')
+        allowance=budget_admission(root,manifest)
+        link=root/(case_id+'.resume-wait.json')
+        exclusive_intent(link,dict(kind='confirmed_pre_model_wait_timeout',native_session_policy='new_thread_start; old_identity_is_evidence_only',case_digest=digest(case),
+            prior_evidence=str(evidence),source=source,prior_files={str(path):file_hash(path) for path in paths},
+            prior_progress=read(target/'progress.json'),human_wait_seconds=human_wait_seconds,
+            human_poll_seconds=case['effective_settings']['progression']['poll_seconds'],
+            budget=allowance,
+            output=str(target/('wait-resume-'+str(time.time_ns()))),
+            original_harness_digest=manifest['harness_digest'],original_freeze_identity=case['freeze_identity'],
+            runner_digest=harness_digest(),runner_source_commit=subprocess.check_output(['git','rev-parse','HEAD'],cwd=SCRIPTS.parent,text=True).strip()))
+        command=[sys.executable,str(SCRIPTS/'accept_progression.py'),'--candidate',str(target),
+            '--scenario',case['scenario'],'--case-file',str(target/'acceptance-case.json'),
+            '--resume-wait',str(link),'--lock-fd',str(lock.fileno())]
+        completed=subprocess.run(command,check=False,pass_fds=(lock.fileno(),))
+        exclusive_intent(root/(case_id+'.resume-wait.exit.json'),dict(returncode=completed.returncode,ended_ns=time.time_ns()))
+    report=result(root,manifest,case_id)
+    write(root/(case_id+'.resume-wait.result.json'),report)
+    print(json.dumps(report,ensure_ascii=False,indent=2))
+    return completed.returncode
+
+
 def result(root,manifest,case_id):
     contract=manifest['config']['cases'][case_id]; target=root/case_id
     checks={}; output=dict(case=case_id,checks=checks,status='not_observed')
@@ -292,7 +336,18 @@ def result(root,manifest,case_id):
     identity=read(case_file) if case_file.exists() else manifest
     output.update({k:identity[k] for k in ('freeze_identity','baseline_digest','conditions_digest') if k in identity})
     journeys=sorted(target.glob('journey-*'))
-    if len(journeys)>1:raise ValueError('multiple_attempts_require_separate_accounting')
+    link=root/(case_id+'.resume-wait.json')
+    if link.exists():
+        try:
+            from scripts.accept_progression import wait_link
+        except ModuleNotFoundError:
+            from accept_progression import wait_link
+        recovery=wait_link(target,read(case_file),link)
+        journeys=[Path(recovery['output'])] if Path(recovery['output']).is_dir() else []
+        output['wait_resume']={k:recovery[k] for k in ('prior_evidence','output','native_session_policy','human_wait_seconds','human_poll_seconds',
+            'original_harness_digest','runner_digest','runner_source_commit')}
+        output['original_wait_failure']='instance_wait_timeout; retained separately'
+    elif len(journeys)>1:raise ValueError('multiple_attempts_require_separate_accounting')
     if not journeys:
         if case_id=='rollback' and not manifest.get('previous'):
             output.update(status='blocked',blockers=['previous_installed_candidate_missing'])
@@ -309,7 +364,7 @@ def result(root,manifest,case_id):
     if summary.get('status') in {'failed','incomplete'}:
         checks['execution']='failed'
     resource=read(journey/'resource.json') if (journey/'resource.json').exists() else {}
-    exit_file=root/(case_id+'.exit.json')
+    exit_file=root/(case_id+('.resume-wait.exit.json' if link.exists() else '.exit.json'))
     closed=read(exit_file) if exit_file.exists() else {}
     if resource.get('stop_reason') not in {None,'exited'} or resource.get('returncode') not in {None,0} or closed.get('returncode') not in {None,0}:
         checks['execution']='failed'
@@ -386,7 +441,7 @@ def result(root,manifest,case_id):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action',choices=('init','prepare','run','report','review','package'))
+    parser.add_argument('action',choices=('init','prepare','run','resume-wait','report','review','package'))
     parser.add_argument('case',nargs='?')
     parser.add_argument('--suite',type=Path,required=True)
     parser.add_argument('--config',type=Path,default=DEFAULT)
@@ -395,6 +450,8 @@ def main():
     parser.add_argument('--previous-installed',type=Path)
     parser.add_argument('--prior-result',type=Path,action='append',default=[],
         help='Charge a previous observed attempt against this suite budget; repeatable')
+    parser.add_argument('--from-evidence',type=Path,help='exact confirmed pre-model wait timeout directory; resume-wait only')
+    parser.add_argument('--human-wait-seconds',type=int,help='explicit recovery-only human window; scientific budget unchanged')
     parser.add_argument('--review-file',type=Path)
     args=parser.parse_args();os.umask(0o077);root=args.suite.resolve()
     if args.action=='init':
@@ -421,6 +478,12 @@ def main():
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         if args.action=='prepare':prepare(root,manifest,args.case)
         elif args.action=='run':return run(root,manifest,args.case)
+        elif args.action=='resume-wait':
+            if not args.from_evidence:parser.error('resume-wait requires --from-evidence')
+            try:return resume_wait(root,manifest,args.case,args.from_evidence,args.human_wait_seconds)
+            except (ValueError,FileNotFoundError) as error:
+                write(root/args.case/'progress.json',dict(state='wait_resume_refused',diagnostic=str(error),model_requests='not_requested'))
+                raise
         else:
             if not args.review_file:parser.error('review requires --review-file')
             current=result(root,manifest,args.case);template=current.get('review_template')
