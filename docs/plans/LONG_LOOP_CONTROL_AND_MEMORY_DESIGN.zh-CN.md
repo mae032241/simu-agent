@@ -315,6 +315,12 @@ python scripts/accept_b6.py report --suite /tmp/scid-p1b-baseline
 
 `/tmp/scid-p1b-e07-install` 已从干净 `e07d6f0` 构建；准备 runner 为 `e625a04`。实际 installed core-only、控制 schema 9、实例/会话/任务/执行均为空，源码/安装字节和摘要经独立只读核验一致。Root 为 `gpt-5.6-sol/high`，Worker 沿本机配置为 `gpt-6-astra/high`，作为新的明确比较条件，不声称与旧 S0 相同。构建与空库初始化串行 5.226 秒、峰值 RSS 157908992 B，无资源止损；2 GB 地址空间限制与 1.5 GB 采样 RSS 止损生效，无进程树 cgroup 硬限。准备证据 `/tmp/scid-p1b-e07-prepare-evidence-20261002/rollup.json` 及 `freeze.json`；未调用 Codex/native/模型，未运行 suite init/prepare/run。候选准备核验通过，真实预算和模型场次仍待确认；执行时 runner 身份继续单独冻结。后续 P2/P3/P4b 候选复用同一材料/题目/预算/插件/平台与执行控制条件，变化须同步对照或逐项声明，不能将差异直接归因于记忆。源码准备退出条件已满足：UI/MCP 正负例、准备与监督/报告夹具及相关锁/未知/恢复回归通过，独立复审通过。首审发现的误暂停竞态、回滚身份与未启动报告遗漏均已修复；原 108 项、修复 18 项和报告修复 3 项证据分别保留，不重复累计。最终冻结与证据为 `/tmp/scid-p1b-entry-report-fix-freeze-20261002.json`、`/tmp/scid-p1b-entry-report-fix-rollup-20261002.json`；真实运行和用户评分继续保持待授权/待评。
 
+### P1b 单场授权与普通终端交接（2026-10-02）
+
+用户已授权仅 `auto-stagnation-1` 一场，并指定 Worker 改为 `gpt-6.1-sol`；实际冻结 Root `gpt-5.6-sol/high`、Worker `gpt-6.1-sol/high`、helper 默认继承。套件仅含本场，总/单场预算均为输入加输出 200 万 token、非缓存输入加输出 20 万、执行 1200 秒，人工等待另列 900 秒；去掉不存在的配对元信息，科学题目不变，不宣称人工/自主对比。原安装准备的 Astra 配置证据保留为历史，新配置与 actual installed readback 记录于 `/tmp/scid-p1b-one-case-prepare-evidence-20261002/freeze.json`；init/prepare 与独立核验通过，串行 3.650 秒、峰值 RSS 202194944 B。
+
+本会话启动在环境检查被 `native_daemon_directory_blocked` 拦住，模型请求/派发为零，原 attempt/exit/startup-check 均保留在 `/tmp/scid-p1b-baseline`，未修改 Codex 权限或重放提交。此前 runner 导入路径缺失发生在 attempt 创建前，已修正为准备阶段相同的显式 PYTHONPATH。只读复核通过的普通终端入口为 `bash /tmp/scid-p1b-start.sh`：先核环境和已授权单场条件，再建立独立 `/tmp/scid-p1b-host`；已存在即拒绝重复运行，仍由用户页面选实例、暂停 bootstrap、确认原目标预算。交接记录为上述证据目录的 `launch-blocked.json`。这是同一场尚未发生的模型执行，未扩大额度；真实场次、token 结果和人工评分仍待完成。
+
 ## P5 样本与成本上限（提议预留，未获新的运行预算授权）
 
 首批仅 3 个场景 × 基线/候选各 1 场，共 6 场：①已有早期失败、跨若干无关尝试后的重复优化倾向；②关键条件变化后应允许有理由重试；③有冻结判据的有效负结果应推进。缺判据的定期确认、真实准入刹车与等待/未知负例先用确定性回放验证。两组使用相同冻结历史原件，不让模型重新生成整个长 loop；候选改变记忆投影/指定策略，差异逐项列出。短场两组固定一致的线程轮换条件，轮换收益单独验证；若轮换改变某组行为，必须单列变量或同步对照，不把综合差异归因于记忆。真实样本只作冻结历史检索与短场决策的探索性结果，不证明历史在真实运行中形成后仍能跨天、跨线程生效；后者由 P6a 验证。不替代主计划第 8 节原 24 场资格，也不声称统计显著或独立分离每项改动收益。
