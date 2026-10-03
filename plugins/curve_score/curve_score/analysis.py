@@ -20,6 +20,7 @@ from scidiscovery.artifact_agent.schema.common import (
     canonical_sha256,
 )
 from .schema import (
+    metric_bundle_matches,
     CurveAvailability,
     CurveBundle,
     CurveComparison,
@@ -188,7 +189,7 @@ class _ResidualAtom(SchemaModel):
 def validate_curve_error_inputs(portfolio, contract, metric_report, bundle) -> CurveComparisonSpec:
     """Input identity only; no metric recomputation or plot rendering."""
     spec = _exact_comparison_spec(portfolio, contract, metric_report)
-    if canonical_sha256(bundle) != metric_report.curve_bundle_sha256:
+    if not metric_bundle_matches(bundle, metric_report):
         raise ValueError("curve bundle digest does not match metric report")
     return spec
 
@@ -215,6 +216,8 @@ def analyze_curve_error(
         validation_plan_sha256=metric_report.validation_plan_sha256,
         covered_validation_check_keys=metric_report.covered_validation_check_keys,
     )
+    # Input validation has established this exact current or historical identity.
+    recomputed = recomputed.model_copy(update={"curve_bundle_sha256": metric_report.curve_bundle_sha256})
     if canonical_json(recomputed) != canonical_json(metric_report):
         raise OperationInvocationError("input_metric_not_reproducible", port="metric_report",
                                        message="The metric report does not reproduce from its bound curve inputs.")
@@ -252,7 +255,7 @@ def compute_curve_error(
     The legacy transform above still verifies its complete-plan inputs. Analysis
     tools save these numerical renderer inputs before attempting optional plots.
     """
-    if (canonical_sha256(bundle) != metric_report.curve_bundle_sha256
+    if (not metric_bundle_matches(bundle, metric_report)
             or canonical_sha256(spec) != metric_report.comparison_spec_sha256):
         raise ValueError("localization inputs differ from the metric report")
     check_budget()
@@ -315,7 +318,7 @@ def compute_curve_error(
             comparison=saved_comparison, reference=reference, candidate=candidate))
 
     return CurveErrorNumerics(selection_comparison_key=comparison_key,
-        curve_bundle_sha256=canonical_sha256(bundle),
+        curve_bundle_sha256=metric_report.curve_bundle_sha256,
         comparison_spec_sha256=canonical_sha256(spec), items=tuple(items))
 
 

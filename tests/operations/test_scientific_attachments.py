@@ -185,3 +185,58 @@ def test_attachment_recovery_reuses_exact_receipts(tmp_path):
     assert following.call_tool('worker_publish_files',args)==saved
     assert runtime.runs.tool_evidence(following._run_id)==records
     assert finish(following,opened,saved['files'][0]['reference'])['state']=='completed'
+
+
+def test_attachment_publication_and_retry_allow_large_binding_aggregate(tmp_path, monkeypatch):
+    from dataclasses import replace
+    from scidiscovery.artifact_agent.service.attachments import publish_attachments
+    from scidiscovery.attachment_tools import PublishFiles
+    from scidiscovery.artifact_agent.schema.common import canonical_json
+    _, runtime, _, worker, _, _, workspace, alias, _, args = publish_fixture(tmp_path)
+    runs, rid = runtime.runs, worker._run_id
+    owner = runs.status(rid)
+    # Model a legacy frozen input set; each input and the new file are bounded.
+    expanded = replace(owner, inputs=tuple(replace(owner.inputs[0], source_name=alias if i == 0 else f'legacy_{i}')
+        for i in range(128)))
+    require = runs._require_running
+    monkeypatch.setattr(runs, '_require_running', lambda current: expanded if current == rid else require(current))
+    monkeypatch.setattr(runs, '_refresh_evidence_schema', lambda _: None)
+    request = PublishFiles.model_validate_json(canonical_json({**args, 'files': args['files'][:1]}))
+    first = publish_attachments(runs, rid, request, workspace=workspace)
+    assert publish_attachments(runs, rid, request, workspace=workspace) == first
+    snapshot = json.loads(runs._encode_evidence_snapshot(expanded, runs.tool_evidence(rid), [], None, []))
+    assert len(snapshot['bindings']) == 129
+
+
+def test_reference_access_does_not_consume_attachment_receipt_allowance(tmp_path):
+    from scidiscovery.artifact_agent.schema.common import canonical_json
+    _, runtime, root, worker, opened, _, _, _, _, args = publish_fixture(tmp_path)
+    args['files'] = args['files'][:1]
+    saved = worker.call_tool('worker_publish_files', args)
+    assert finish(worker, opened, saved['files'][0]['reference'])['state'] == 'completed'
+    auditor, source = audit_worker(root, runtime)
+    listed = auditor.call_tool('worker_reference_read', {'source': source})
+    auditor.call_tool('worker_reference_read', {'source': source, 'action': 'read',
+        'reference': listed['references'][0]['reference'], 'delivery': 'file'})
+    runs, rid = runtime.runs, auditor._run_id
+    assert len(runs.reference_access_records(rid)) == 1
+    # Recreate a legacy owner with 127 receipts and one independently bounded
+    # reference access. Its last allowed scientific file must still fit.
+    template = runs.tool_evidence(worker._run_id)[0]
+    with runs._connect() as db:
+        for number in range(2, 129):
+            record = {**template, 'alias': f'legacy_{number}', 'output_port': 'tool_evidence',
+                'metadata': {'kind': 'historical_observation', 'derived_from': [source]}}
+            db.execute('INSERT INTO run_tool_evidence VALUES (?,?,?,?,?)',
+                (rid, number, f'legacy-{number}', canonical_json(record), record['alias']))
+    workspace = Path(auditor.call_tool('worker_open_assignment', {})['assignment_path']).parent
+    (workspace / 'scratch' / 'last.csv').write_text('x,y\n1,2\n')
+    request = {'source_aliases': [source], 'files': [{'path': 'scratch/last.csv', 'purpose': 'Last bounded receipt'}]}
+    retained = auditor.call_tool('worker_publish_files', request)
+    assert retained['state'] == 'retained'
+    assert auditor.call_tool('worker_publish_files', request) == retained
+    snapshot = json.loads(runs._evidence_snapshot(rid))
+    assert len(snapshot['records']) == 128 and len(snapshot['accesses']) == 1
+    (workspace / 'scratch' / 'last.csv').write_text('x,y\n1,3\n')
+    with pytest.raises(DiagnosticError):
+        auditor.call_tool('worker_publish_files', request)

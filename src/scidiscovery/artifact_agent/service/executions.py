@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from contextlib import nullcontext
 import json
 import os
 import sqlite3
@@ -59,6 +60,14 @@ EXECUTION_POLICY_SCHEMA = """
                     budget_key TEXT NOT NULL, reserved_json BLOB NOT NULL,
                     consumed_json BLOB
                 );
+                CREATE TABLE IF NOT EXISTS execution_budget_extensions (
+                    decision_id TEXT PRIMARY KEY, execution_id TEXT NOT NULL,
+                    executor TEXT NOT NULL, budget_key TEXT NOT NULL,
+                    additional_seconds INTEGER NOT NULL CHECK(additional_seconds > 0),
+                    decision_ref_json BLOB NOT NULL, created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS execution_budget_extensions_owner
+                    ON execution_budget_extensions(executor, budget_key);
                 CREATE TABLE IF NOT EXISTS execution_prepared_submissions (
                     execution_id TEXT PRIMARY KEY, descriptor_json BLOB NOT NULL
                 );
@@ -81,6 +90,10 @@ class ExecutionStateConflict(ExecutionServiceError):
 
 class ExecutionApprovalError(ExecutionServiceError):
     pass
+
+
+class ExecutionBudgetNotApplicable(ExecutionApprovalError):
+    """This execution contract has no cumulative wall-time allowance."""
 
 
 @dataclass(frozen=True)
@@ -118,7 +131,10 @@ class ExecutionService:
         exchange_root: Path | str,
         service_actor: ActorRef,
         deadline_monotonic: float | None = None,
+        budget_extension_limits=None,
     ) -> None:
+        from ...agent_execution_settings import BudgetExtensionSettings
+        self.budget_extension_limits = budget_extension_limits or BudgetExtensionSettings()
         self.deadline_monotonic = deadline_monotonic
         self.artifacts = artifacts
         self.approvals = approvals
@@ -414,6 +430,10 @@ class ExecutionService:
             raise ExecutionApprovalError(
                 "execution approval compiled identity is missing or changed"
             )
+        if decision.additional_wall_time_seconds:
+            if self.execution_for_approval(approval_id) != execution_id:
+                raise ExecutionApprovalError('Budget extension belongs to another execution')
+            self.apply_budget_extension(approval_id)
         connection = self._connect()
         try:
             connection.execute("BEGIN IMMEDIATE")
@@ -511,11 +531,13 @@ class ExecutionService:
         return None if row is None else json.loads(row["record_json"])
 
     def _record_policy_decision(self, connection, execution_id, record):
-        prior = self._current_policy_record(connection, execution_id)
-        if prior is not None and any(prior[key] != record[key] for key in ("request_ref", "payload_ref", "compiled_identity")):
-            raise ExecutionApprovalError("policy reauthorization changed the exact execution identity")
-        if prior is not None and any(prior["admission"][key] != record["admission"][key] for key in ("budget_key", "budget")):
-            raise ExecutionApprovalError("policy reauthorization changed the frozen budget owner or request")
+        # Pointer loss cannot erase the frozen owner and request of past policy.
+        for stored in connection.execute('SELECT record_json FROM execution_policy_authorizations WHERE execution_id=?', (execution_id,)):
+            prior = json.loads(stored['record_json'])
+            if any(prior[key] != record[key] for key in ("request_ref", "payload_ref", "compiled_identity")):
+                raise ExecutionApprovalError("policy reauthorization changed the exact execution identity")
+            if any(prior["admission"][key] != record["admission"][key] for key in ("budget_key", "budget")):
+                raise ExecutionApprovalError("policy reauthorization changed the frozen budget owner or request")
         digest = canonical_sha256(record)
         connection.execute("INSERT OR IGNORE INTO execution_policy_authorizations VALUES (?, ?, ?, ?)",
             (execution_id, digest, canonical_json(record), _timestamp()))
@@ -579,10 +601,19 @@ class ExecutionService:
         raise ExecutionApprovalError("scientific execution budget subject is missing")
 
     @staticmethod
+    def _budget_allowance(connection, executor, admission):
+        allowance = dict(admission.allowance)
+        extra = connection.execute("SELECT COALESCE(SUM(additional_seconds), 0) FROM execution_budget_extensions WHERE executor=? AND budget_key=?",
+            (executor, admission.budget_key)).fetchone()[0]
+        if 'wall_time_seconds' in allowance:
+            allowance['wall_time_seconds'] += extra
+        return allowance
+
+    @staticmethod
     def _budget_remaining(connection, executor, admission, execution_id=None):
         # Current administrator policy sets the ceiling, including explicit increases.
         # Historical reservations and actual consumption remain unchanged.
-        remaining = dict(admission.allowance)
+        remaining = ExecutionService._budget_allowance(connection, executor, admission)
         if (set(remaining) != set(admission.budget) or set(admission.allowance) != set(remaining)
                 or any(type(v) is not int or v < 1 for v in (*admission.budget.values(), *admission.allowance.values()))):
             raise ExecutionApprovalError("execution budget dimensions are invalid")
@@ -595,6 +626,133 @@ class ExecutionService:
             for key in remaining:
                 remaining[key] -= used[key]
         return remaining
+
+    def execution_for_approval(self, approval_id):
+        """Resolve the exact request frozen into this approval, never a UI supplied execution ID."""
+        if self.approvals is None:
+            raise ExecutionApprovalError('Approval service is unavailable')
+        status = self.approvals.status(approval_id)
+        approval = ApprovalRequest.model_validate_json(self.artifacts.read(status.approval_request_ref), strict=True)
+        refs = [r for r in approval.subject_refs if r.schema_id == 'scidiscovery.execution-request']
+        if approval.kind != 'execution_authorization' or len(refs) != 1:
+            raise ExecutionApprovalError('Approval does not identify one execution request')
+        request = ExecutionRequest.model_validate_json(self.artifacts.read(refs[0]), strict=True)
+        registered = self.artifacts.get_by_id(self.request_artifact_id(request.execution_id))
+        if (registered.ref != refs[0] or approval.subject_refs != (refs[0], request.payload_ref)
+                or approval.compiled_identity != request.compiled_identity):
+            raise ExecutionApprovalError('Approval does not bind the exact execution')
+        return request.execution_id
+
+    def _extension_scope(self, execution_id, *, connection=None):
+        """Recover immutable grant ownership independently of the policy pointer."""
+        with (self._connect() if connection is None else nullcontext(connection)) as db:
+            row = self._row(db, execution_id)
+            request_ref = _parse_ref(row['request_ref_json'])
+            request = ExecutionRequest.model_validate_json(self.artifacts.read(request_ref), strict=True)
+            scopes = set()
+            budgets = set()
+            for history in db.execute('SELECT digest, record_json FROM execution_policy_authorizations WHERE execution_id=?', (execution_id,)):
+                record = json.loads(history['record_json'])
+                if (canonical_sha256(record) != history['digest']
+                        or _parse_ref(canonical_json(record['request_ref'])) != request_ref
+                        or _parse_ref(canonical_json(record['payload_ref'])) != request.payload_ref
+                        or record['compiled_identity'] != request.compiled_identity.model_dump(mode='json')):
+                    raise ExecutionApprovalError('Budget policy history does not bind the exact execution')
+                admission = ExecutionAdmission.model_validate(record['admission'])
+                if 'wall_time_seconds' not in admission.allowance:
+                    raise ExecutionBudgetNotApplicable('Execution has no wall time budget')
+                scopes.add((row['executor'], admission.budget_key))
+                budgets.add(canonical_json(admission.budget))
+            if len(scopes) != 1 or len(budgets) != 1:
+                raise ExecutionApprovalError('Execution has no unique immutable budget policy history')
+            scope = next(iter(scopes))
+            reservation = db.execute('SELECT executor, budget_key, reserved_json FROM execution_budget_reservations WHERE execution_id=?', (execution_id,)).fetchone()
+            if reservation is not None and ((reservation['executor'], reservation['budget_key']) != scope
+                    or canonical_json(json.loads(reservation['reserved_json'])) not in budgets):
+                raise ExecutionApprovalError('Budget reservation differs from its immutable policy history')
+            return scope
+
+    def validate_budget_extension(self, approval_id, seconds):
+        from .approvals import ApprovalError, ApprovalAccessDenied, BudgetExtensionAccountingError
+        from ..storage import CASIntegrityError, RegistryIntegrityError, ArtifactReferenceError
+        status = self.approvals.status(approval_id)
+        # Exact replay is checked by the approval service. New administrator
+        # limits must not invalidate a decision already sealed before restart.
+        if status.status != 'pending':
+            return
+        limits = self.budget_extension_limits
+        if type(seconds) is not int or seconds < 0 or seconds > limits.max_seconds_per_decision:
+            raise ApprovalAccessDenied('Additional time exceeds the configured per-decision limit')
+        scope = self._extension_scope(self.execution_for_approval(approval_id))
+        with self._connect() as db:
+            rows = db.execute('SELECT decision_id, additional_seconds FROM execution_budget_extensions WHERE executor=? AND budget_key=?', scope).fetchall()
+            # Immutable policy history retains the pool even if its current
+            # pointer is missing. Reservations also survive instance archiving.
+            requests = db.execute('''SELECT e.execution_id, e.request_ref_json FROM executions e
+                WHERE e.executor=? AND e.execution_id IN (
+                    SELECT execution_id FROM execution_policy_authorizations
+                    WHERE json_extract(record_json, '$.admission.budget_key')=?
+                    UNION SELECT execution_id FROM execution_budget_reservations
+                    WHERE executor=? AND budget_key=?)''', (*scope, *scope)).fetchall()
+        projected = {row['decision_id'] for row in rows}
+        used = sum(row['additional_seconds'] for row in rows)
+        execution_ids = {row['execution_id'] for row in requests}
+        # A crash after sealing a decision cannot make its grant disappear from
+        # admission accounting before the idempotent projection is repaired.
+        try:
+            for aid, decision in self.approvals.budget_extension_decisions(
+                    execution_refs=tuple(_parse_ref(row['request_ref_json']) for row in requests),
+                    projected_decision_ids=projected):
+                if self.execution_for_approval(aid) not in execution_ids:
+                    raise ExecutionApprovalError('Decision has no exact request in this budget pool')
+                used += decision.additional_wall_time_seconds
+        except (ApprovalError, ExecutionApprovalError, ArtifactNotFoundError,
+                CASIntegrityError, RegistryIntegrityError, ArtifactReferenceError,
+                ValidationError, json.JSONDecodeError) as error:
+            raise BudgetExtensionAccountingError(
+                '无法核对当前预算池的历史授权，请修复相关审批记录后重试；本次未封存决定。') from error
+        if used + seconds > limits.max_total_seconds_per_pool:
+            raise ApprovalAccessDenied('Additional time exceeds the configured cumulative grant limit')
+
+    def record_budget_extension_decision(self, **arguments):
+        """Serialize the short human grant transaction, never solver submission IO."""
+        import fcntl
+        approval_id = arguments['approval_id']
+        seconds = arguments['additional_wall_time_seconds']
+        # All grant writers use this control-private lock. It covers validation,
+        # sealing and projection across processes; ordinary approvals do not wait.
+        with (self.exchange_root / '.budget-approval.lock').open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            ref = self.approvals.record_ui_decision(**arguments,
+                budget_extension_validator=lambda: self.validate_budget_extension(approval_id, seconds))
+            self.apply_budget_extension(approval_id)
+            return ref
+
+    def apply_budget_extension(self, approval_id):
+        """Idempotent projection of a sealed human decision; also repairs an interrupted UI write."""
+        status = self.approvals.status(approval_id)
+        if status.status != 'decided' or status.decision_ref is None:
+            return
+        decision = HumanDecision.model_validate_json(self.artifacts.read(status.decision_ref), strict=True)
+        if not decision.additional_wall_time_seconds:
+            return
+        execution_id = self.execution_for_approval(approval_id)
+        approval = ApprovalRequest.model_validate_json(self.artifacts.read(status.approval_request_ref), strict=True)
+        if (decision.approval_request_ref != status.approval_request_ref or decision.subject_refs != approval.subject_refs
+                or not execution_decision_authorizes(approval, decision)):
+            raise ExecutionApprovalError('Budget extension requires the exact sealed execution authorization')
+        with self._connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            existing = db.execute('SELECT decision_ref_json FROM execution_budget_extensions WHERE decision_id=?',
+                (decision.decision_id,)).fetchone()
+            if existing:
+                if _parse_ref(existing[0]) != status.decision_ref:
+                    raise ExecutionApprovalError('Budget extension decision identity changed')
+                return
+            executor, budget_key = self._extension_scope(execution_id, connection=db)
+            db.execute('INSERT INTO execution_budget_extensions VALUES (?, ?, ?, ?, ?, ?, ?)',
+                (decision.decision_id, execution_id, executor, budget_key,
+                 decision.additional_wall_time_seconds, status.decision_ref.canonical_json(), decision.decided_at))
 
     def budget_admission(self, *, executor, admission, execution_id=None, allow_denial=False):
         with self._connect() as connection:
@@ -699,7 +857,8 @@ class ExecutionService:
                 admission = ExecutionAdmission.model_validate(value["admission"])
                 remaining = self._budget_remaining(connection, row["executor"], admission)
                 result.update(policy_digest=admission.policy_digest, reason=admission.reason,
-                    budget=admission.budget, allowance=admission.allowance,
+                    budget=admission.budget, allowance=self._budget_allowance(connection, row['executor'], admission),
+                    configured_allowance=admission.allowance,
                     per_execution_allowance=admission.per_execution_allowance,
                     budget_usage={"scope": "shared_scientific_subject",
                         "remaining": {key: max(0, amount) for key, amount in remaining.items()},

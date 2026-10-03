@@ -312,7 +312,77 @@ def scheduling_summary(value):
     return result
 
 
-def root_response(name, value, arguments):
+def _list_page(result, *, field, items):
+    result = {**result, field:items}
+    if field == "runs" and "current_goal_tasks" in result:
+        names = {item["name"] for item in items}
+        result["current_goal_tasks"] = [name for name in result["current_goal_tasks"] if name in names]
+    return result
+
+
+def _bounded_list(result, *, field, key, budget):
+    """Deliver complete entries or explicit omission markers with a usable cursor."""
+    def size(value):
+        return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+    items, selected = result[field], []
+    for index, item in enumerate(items):
+        candidate = _list_page(result, field=field, items=[*selected, item])
+        if index + 1 < len(items):
+            candidate.update(next_before=item[key], page_limited_by="bytes")
+        if size(candidate) > budget:
+            if selected:
+                return _list_page({**result, "next_before":selected[-1][key], "page_limited_by":"bytes"},
+                    field=field, items=selected)
+            # Do not make one oversized object a permanent pagination barrier.
+            # This is an omission marker, never a substitute scientific summary.
+            request = ({"name":"run_status", "arguments":{"name":item[key], "intent":"navigation"}}
+                if field == "runs" else {"name":"artifact_catalog", "arguments":{"name":item[key]}})
+            item = {key:item[key], "entry_omitted":"page_byte_budget", "read_request":request}
+            candidate[field] = [item]
+            if size(candidate) > budget:
+                # The exact per-object read_request supersedes the page's generic
+                # detail template; avoid repeating navigation at the minimum budget.
+                result = {name:value for name, value in result.items() if name != "detail"}
+                candidate.pop("detail", None)
+            if size(candidate) > budget:
+                raise RootToolError("list_metadata_too_large: response exceeds configured page budget")
+        selected.append(item)
+    result = _list_page(result, field=field, items=selected)
+    if size(result) > budget:
+        raise RootToolError("list_metadata_too_large: response exceeds configured page budget")
+    return result
+
+
+def append_attention(response, notices, *, budget=None, field=None, key=None):
+    """Fit the complete reply; never acknowledge notices omitted by its byte limit."""
+    def size(value):
+        return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+    result = dict(response)
+    selected = []
+    for event in notices['events']:
+        candidate = {**result, 'attention_notifications':{
+            'events':[*selected, event], 'more_available':False}}
+        # Keep at least one list item: an empty page cannot advance next_before.
+        # Trim only while trying to deliver the first notice, not an entire burst.
+        while (budget is not None and size(candidate)>budget and not selected
+                and field and len(result.get(field, ()))>1):
+            result = _list_page(result, field=field, items=result[field][:-1])
+            result.update(next_before=result[field][-1][key], page_limited_by='bytes')
+            candidate = {**result, 'attention_notifications':{
+                'events':[event], 'more_available':False}}
+        if budget is not None and size(candidate)>budget:
+            break
+        selected.append(event)
+    if not selected:
+        return response, 0
+    result['attention_notifications'] = {'events':selected,
+        'more_available':notices['more_available'] or len(selected)<len(notices['events'])}
+    return result, len(selected)
+
+
+def root_response(name, value, arguments, *, read_settings=None):
     """Never replace a scientific object, precise request, or error with a verdict."""
     detail = arguments.get("view") == "detail"
     if name in {"execution_status", "execution_sync", "execution_start", "execution_cancel", "execution_abandon"}:
@@ -374,8 +444,14 @@ def root_response(name, value, arguments):
         if name == "instance_list" and not detail:
             result[field] = [pick(item, "name", "title", "state") for item in items]
         if name == "scientific_inventory":
-            result["catalog"] = {"tool": "operation_catalog", "scope": "public"}
-            result["current_selections"] = {"tool": "scientific_current"}
+            if not detail:
+                result[field] = [pick(item, "artifact_name", "kind", "schema", "historical",
+                    "selected_current", "claim_admissible", "producer_handoff") for item in items]
+            result["detail"] = {"tool": "artifact_catalog", "name": "<artifact_name>", "view": "detail"}
+            from ...agent_execution_settings import MCPReadSettings
+            settings = read_settings or MCPReadSettings()
+            return _bounded_list(result, field=field, key=key,
+                budget=settings.detail_max_bytes if detail else settings.summary_max_bytes)
         if name == "execution_outputs":
             result["execution_name"] = value["execution_name"]
             result["result_artifact_name"] = value.get("result_artifact_name")
@@ -385,8 +461,15 @@ def root_response(name, value, arguments):
         if name == "run_list":
             if arguments.get('view') == 'history':
                 return value
-            return {**value, field: [item if detail and run_is_terminal(item.get("state"))
-                else run_intent_projection(item, intent="status") for item in value[field]]}
+            result = {**value, field: [
+                (item if run_is_terminal(item.get("state")) else run_intent_projection(item, intent="status"))
+                if detail else pick(item, "name", "operation_id", "state",
+                    "operation_contract_status", "recovery_available") for item in value[field]]}
+            result["detail"] = {"tool": "run_status", "name": "<name>"}
+            from ...agent_execution_settings import MCPReadSettings
+            settings = read_settings or MCPReadSettings()
+            return _bounded_list(result, field=field, key="name",
+                budget=settings.detail_max_bytes if detail else settings.summary_max_bytes)
         if name == "execution_list" and detail:
             return {**value, field: [root_response("execution_status", item, arguments) for item in value[field]]}
         if not detail:

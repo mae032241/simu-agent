@@ -56,6 +56,37 @@ def test_estimated_settlement_survives_archive_and_later_actual_observation(arch
     assert 'estimated' not in after
 
 
+def test_human_time_extension_survives_archive_and_restore(archive_system):
+    from scidiscovery.artifact_agent.schema.approval import ApprovalOption, LocalIdentityRef
+    runtime, archive, first, _ = archive_system
+    (owned, foreign), admission = _policy_executions(archive_system)
+    launch = runtime.approvals.create_request(approval_id='apr_extension', kind='execution_authorization',
+        subject_refs=runtime.executions.approval_subject_refs(owned), question='Authorize and extend this subject?',
+        options=(ApprovalOption(option_id='authorize_execution', label='Authorize', description='Exact request.', requires_rationale=False),
+            ApprovalOption(option_id='reject_execution', label='Reject', description='Do not authorize.', requires_rationale=False)),
+        requested_by=runtime.actor, idempotency_key='extension', compiled_identity=runtime.executions.request(owned).compiled_identity)
+    runtime.scheduler_bindings.bind(instance=first, namespace='approval', name='extension', object_id='apr_extension')
+    review = runtime.approvals.review('apr_extension', access_token=launch.access_token)
+    runtime.executions.record_budget_extension_decision(approval_id='apr_extension', access_token=launch.access_token,
+        csrf_token=review.csrf_token, decision_nonce=review.decision_nonce, selected_option='authorize_execution',
+        rationale='Additional time for this scientific subject.', decided_by=LocalIdentityRef(identity_id='user', display_name='User'),
+        ui_session_id='fixture', additional_wall_time_seconds=7200)
+    runtime.executions.apply_budget_extension('apr_extension')
+    before = runtime.executions.authorization(owned)
+    assert before['allowance']['wall_time_seconds'] == 10800
+    save_archive(archive, first)
+    snapshot = archive.archived_model(first).executions.authorization(owned)
+    # An instance snapshot carries its own usage; the active shared ledger
+    # remains the cross-instance admission authority.
+    assert snapshot['allowance'] == before['allowance']
+    assert snapshot['accounting'] == before['accounting']
+    assert runtime.executions.authorization(foreign)['allowance']['wall_time_seconds'] == 10800
+    assert runtime.executions.authorization(foreign)['budget_usage'] == before['budget_usage']
+    restore_archive(archive, first)
+    runtime.executions.apply_budget_extension('apr_extension')
+    assert runtime.executions.authorization(owned) == before
+
+
 def _rows(path):
     with readonly(path) as db:
         return {table: [dict(row) for row in db.execute('SELECT * FROM '+table+' ORDER BY rowid')]

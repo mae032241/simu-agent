@@ -2,7 +2,7 @@
 from __future__ import annotations
 from typing import Annotated, Protocol
 from pydantic import Field, model_serializer
-from ..artifact_agent.schema.common import ContractDiagnostic, SchemaModel, Identifier
+from ..artifact_agent.schema.common import ContractDiagnostic, SchemaModel, Identifier, canonical_json
 from ..artifact_agent.schema.validation import ValidationCheckResult
 from ..artifact_agent.schema.layered_diagnosis import CalculationRecord
 from ..operation_contract import declared_violation
@@ -38,6 +38,12 @@ class CalculationResult(CalculationRecord):
         if self.validation is None:
             value.pop('validation', None)
         return value
+
+    def canonical_json(self) -> bytes:
+        # SchemaModel canonicalization reads fields directly, bypassing Pydantic
+        # serializers. An absent optional projection must not change old bytes.
+        return canonical_json({name: getattr(self, name) for name in type(self).model_fields
+            if name != "validation" or self.validation is not None})
 
 class CalculationTools(Protocol):
     def complete_calculation(self, record: CalculationResult, *, diagnostics=(), summary=False) -> dict: ...

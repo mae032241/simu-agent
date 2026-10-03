@@ -24,9 +24,13 @@ from scidiscovery.artifact_agent.storage import CASObjectMissingError
 
 
 class Runs:
-    def __init__(self):
+    def __init__(self, bindings):
+        self.bindings = bindings
         self.records = {}
         self.diagnostic_reads = []
+
+    def progression_handoff(self, *, instance_id, limit=8):
+        return self.bindings.progression_status(instance_id=instance_id, internal=True), {}
 
     def status(self, run_id):
         try:
@@ -56,7 +60,7 @@ def system(tmp_path):
     executions = ExecutionService(artifacts=artifacts, approvals=approvals,
                                   database_path=tmp_path / "executions.sqlite3",
                                   exchange_root=tmp_path / "exchange", service_actor=actor)
-    runs = Runs()
+    runs = Runs(bindings)
     model = InstanceReadModel(artifacts=artifacts, bindings=bindings, runs=runs,
                              approvals=approvals, executions=executions, operation_catalog=None)
     a = bindings.create_instance(name="one", title="One", objective="Management description, not a scientific objective")
@@ -324,3 +328,68 @@ def test_embedded_goal_navigation_and_overview_share_frozen_carrier(system,schem
     refs, gaps = system.model._objective_navigation(system.a,binding,(goal.ref,))
     assert len(refs) == 1 and refs[0]['artifact_id'] == goal.artifact_id
     assert not gaps
+
+
+def test_supported_historical_producer_keeps_exact_matching_reviews(system, monkeypatch):
+    import json
+    from pathlib import Path
+    from tests.operations.test_tcad_result_analysis import CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN
+    from scidiscovery.operations.catalog import compile_catalog
+    from scidiscovery.artifact_agent.service import tool_evidence
+    from tests.operations.test_evidence_upgrade_lifecycle import legacy_schema
+    catalog = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN))
+    with monkeypatch.context() as patch:
+        patch.setattr(tool_evidence, 'TOOL_EVIDENCE_SCHEMA', legacy_schema(tool_evidence.TOOL_EVIDENCE_SCHEMA))
+        predecessor = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN))
+    old = next(catalog.recorded_operation(key, version=predecessor.operation(key).spec.version,
+            digest=predecessor.operation(key).digest)
+        for key in predecessor.operation_ids()
+        if catalog.operation(key).digest != predecessor.operation(key).digest and catalog.operation(key).spec.review
+        and catalog.operation(key).spec.review.reviewer_operation)
+    system.model.operation_catalog = catalog
+    envelope = system.artifacts.register(b'{}', ArtifactRegistration(kind='fixture', schema_id='fixture.v1',
+        payload_schema_version=1, media_type='application/json', creator=system.actor,
+        labels={'operation_id': old.spec.operation_id, 'operation_version': old.spec.version,
+                'operation_digest': old.digest}), idempotency_key='old-subject')
+    bind(system, system.a, 'artifact', 'old-subject', envelope.artifact_id)
+    reviewed = artifact(system, 'reviewed', instance=system.a)
+    bind(system, system.a, 'run', 'original-review', 'old-review')
+    follower = SimpleNamespace(run_id='old-review', state='completed', output_ref=reviewed.ref, signal=None,
+        operation_id=old.spec.review.reviewer_operation,
+        inputs=[SimpleNamespace(port_name=old.spec.review.reviewer_input_port, artifact_ref=envelope.ref)])
+    monkeypatch.setattr(system.runs, 'related_runs', lambda **args: [follower] if args['relation'] == 'input' else [], raising=False)
+    binding = SimpleNamespace(namespace='artifact', object_id=envelope.artifact_id)
+    relations = system.model._relationships(system.a, binding, (envelope.ref,))
+    assert [r['key'] for r in relations['matching_reviews']] == ['run:original-review']
+    assert not any(g.get('code') == 'matching_review_contract_unavailable' for g in relations['gaps'])
+    for version, digest in [('wrong-version', old.digest), (old.spec.version, 'f' * 64)]:
+        wrong = SimpleNamespace(labels={**envelope.labels, 'operation_version': version, 'operation_digest': digest})
+        assert system.model._recorded_review_edge(wrong) == (None, 'contract_unavailable')
+
+
+def test_abi23_original_bytes_do_not_gain_current_qualification(system):
+    import json
+    from pathlib import Path
+    from tests.operations.test_tcad_result_analysis import CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN
+    from scidiscovery.operations.catalog import compile_catalog
+    catalog = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN))
+    identity = 'science.evidence.extract.v1'
+    digest = json.loads((Path(__file__).parents[1] / 'fixtures/operation_digests_964713f.json').read_bytes())['operation_digests'][identity]
+    labels = {'operation_id': identity, 'operation_version': catalog.operation(identity).spec.version,
+              'operation_digest': digest}
+    payload = {'conclusion': 'Original ABI23 bytes', 'limitations': ['No v5 migration or current qualification.']}
+    original = system.artifacts.register(canonical_json(payload), ArtifactRegistration(kind='fixture',
+        schema_id='fixture.v1', payload_schema_version=1, media_type='application/json', creator=system.actor,
+        labels=labels), idempotency_key='abi23-original')
+    bind(system, system.a, 'artifact', 'abi23-original', original.artifact_id)
+    value = run(system, 'abi23-original-run', output=original.ref)
+    value.operation_id, value.operation_version, value.operation_digest = identity, labels['operation_version'], digest
+    system.model.operation_catalog = catalog
+    view = system.model.node(system.a, 'run:abi23-original-run')
+    assert view['sealed_output']['payload'] == payload
+    assert view['qualification']['state'] == 'not_evaluated'
+    assert view['qualification']['reason'] == 'historical_read_does_not_establish_current_qualification'
+    assert not catalog.can_recover(identity, digest, catalog.operation(identity).digest)
+    relationships = system.model.node(system.a, 'artifact:abi23-original')['relationships']
+    assert not relationships['matching_reviews']
+    assert any(gap['code'] == 'matching_review_contract_unavailable' for gap in relationships['gaps'])

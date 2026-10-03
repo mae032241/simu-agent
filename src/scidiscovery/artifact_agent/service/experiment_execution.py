@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 
 from ...operation_contract import contract_diagnostic, DiagnosticError, ToolInputError
 
@@ -27,6 +28,48 @@ class ExperimentExecution:
 
     def task_origin(self, run):
         return self.task_lineage(run)[-1].run_id
+
+    def publish_diagnostic_files(self, context, *, implementation, name, workspace, outputs):
+        """Deliver verified control-owned diagnostic files through common streamed publication."""
+        import time
+        from pathlib import Path
+        from ...attachment_tools import AttachmentFile, PublishFiles
+        from ...agent_execution_settings import AttachmentSettings
+        from ...plugin_runtime.workspace import write_control_workspace_stream
+        settings = AttachmentSettings.model_validate((self.runs.status(context.run_id).recovery_policy or {}).get('attachments', {}))
+        deadline = time.monotonic() + context.remaining_seconds
+        files, delivered = [], []
+        for item in outputs:
+            if 'relative_path' not in item:
+                continue
+            source = Path(workspace) / item['relative_path']
+            if source.is_symlink() or not source.resolve().is_relative_to(Path(workspace).resolve()):
+                raise ValueError('Diagnostic output is outside its controlled workspace')
+            filename = Path(item.get('source_path') or item['name']).name
+            target = Path('scratch/debug') / name / item['name'] / filename
+            digest, size = hashlib.sha256(), 0
+            def chunks():
+                nonlocal size
+                with source.open('rb') as stream:
+                    for chunk in iter(lambda: stream.read(settings.chunk_bytes), b''):
+                        size += len(chunk)
+                        if size > min(settings.max_item_bytes, item['size_bytes']) or time.monotonic() >= deadline:
+                            raise ValueError('Diagnostic output exceeded its delivery budget')
+                        digest.update(chunk)
+                        yield chunk
+                if size != item['size_bytes'] or digest.hexdigest() != item['sha256']:
+                    raise ValueError('Diagnostic output differs from its controlled identity')
+            write_control_workspace_stream(context.workspace, target, chunks())
+            source_name = item.get('source_path') or item['name']
+            caption = source_name if len(source_name) <= 512 else source_name[:511] + '…'
+            files.append(AttachmentFile(path=target.as_posix(), purpose=f'Native diagnostic output {caption} ({item["name"]}); requires scientific assessment, not a formal execution result.'))
+            delivered.append({'name': item['name'], 'file_name': source_name, 'path': target.as_posix(),
+                'size_bytes': size, 'sha256': item['sha256']})
+        if files:
+            published = context.publish_files(PublishFiles(files=tuple(files), source_aliases=(implementation,)))
+            for item, retained in zip(delivered, published['files'], strict=True):
+                item['reference'] = retained['reference']
+        return delivered
 
     def task_lineage(self, run):
         return self.runs.task_lineage(run.run_id)
@@ -80,6 +123,7 @@ class ExperimentExecution:
         origin = self.task_origin(run)
         active = self._domain_active(run)
         blockers = []
+        incomplete = []
         for binding in self.runs.scheduler_bindings.list(instance=run.instance_id, namespace="execution",
                 name_prefix="experiment-" + origin + "-"):
             if self._execution_owner(binding.object_id) != origin:
@@ -90,35 +134,101 @@ class ExperimentExecution:
                 # Final delivery must not depend on the next background observation.
                 self.bridge.sync(execution_id=binding.object_id, diagnostic_scope="instance:" + run.instance_id)
                 status = self.executions.status(binding.object_id)
-            if status.state not in {"succeeded", "failed", "cancelled", "collected", "abandoned"}:
+            summary = getattr(self.collection, 'summary', None)
+            collection = summary(binding.object_id) if callable(summary) and status.state in {
+                'succeeded', 'failed', 'cancelled'} else {}
+            # A collector may finish while its summary is being observed.
+            status = self.executions.status(binding.object_id)
+            collection_failed = (collection.get('state') in {'failed', 'timed_out', 'interrupted'}
+                and not collection.get('recovery_pending', False))
+            if status.state in {'succeeded', 'failed', 'cancelled'} and collection_failed:
+                incomplete.append(binding.name.removeprefix('experiment-' + origin + '-'))
+            if status.state == 'collected' and run.accepted_candidate_digest is None:
+                # Background collection can finish without another Worker call.
+                # Reconcile its receipt before the finalizer snapshots materials.
+                from types import SimpleNamespace
+                try:
+                    implementation = self._execution_implementation_record(run, binding.object_id)
+                except DiagnosticError as error:
+                    if not error.details or any(item['code'] not in {
+                            'experiment_implementation_unavailable', 'experiment_implementation_ambiguous'} for item in error.details):
+                        raise  # Proof/integrity failures must reach the submission policy.
+                    # No exact receipt can be synthesized. Keep the collected files,
+                    # and permit only an explicitly limited scientific conclusion.
+                    incomplete.append(binding.name.removeprefix('experiment-' + origin + '-'))
+                    implementation = None
+                if implementation is not None:
+                    context = SimpleNamespace(run_id=run.run_id, accept_evidence=lambda **values:
+                        self.runs.accept_tool_evidence(run.run_id, tool_name='worker_experiment_execute',
+                            allowed_ports=('tool_evidence', 'recovery_manifest_output'), **values))
+                    name = binding.name.removeprefix('experiment-' + origin + '-')
+                    self._execution_status(context, SimpleNamespace(name=name), binding.object_id, implementation, seal=True)
+            if ((status.state not in {"failed", "cancelled", "collected", "abandoned"}
+                    and not (status.state == 'succeeded' and collection_failed))
+                    or collection.get('recovery_pending', False)
+                    or (status.state != 'collected' and collection.get('state') in {
+                        'pending', 'running', 'stopping', 'stop_pending', 'unknown'})):
                 name = binding.name.removeprefix("experiment-" + origin + "-")
                 blockers.append(contract_diagnostic("experiment_outstanding_work", phase="protocol",
                     affected_action="submit", repairable=True,
-                    message=f"Execution {name!r} is {status.state}. Read worker_experiment_execute(action='status', name={name!r}); finish it or call action='cancel' with the same name, then resubmit the unchanged report."))
+                    message=(f"Execution {name!r} has undelivered results (collection={collection.get('state', 'not_started')}). "
+                        f"Use worker_experiment_execute(action='collect', name={name!r}) if collection has not started; "
+                        "if it is already active, read status until collected, then resubmit the report. Do not rerun the solver."
+                        if status.state in {'succeeded', 'failed', 'cancelled'} else
+                        f"Execution {name!r} is {status.state}. Read worker_experiment_execute(action='status', name={name!r}); finish it or call action='cancel' with the same name, then resubmit the unchanged report.")))
         blockers.extend(active)
         if blockers:
             from ...operation_contract import bounded_diagnostics
             raise RunOutputError("Outstanding experiment work must finish before final delivery.",
                 category="execution_pending", details=bounded_diagnostics(blockers, phase="protocol", action="submit"))
+        return tuple(incomplete)
+
+    @staticmethod
+    def validate_incomplete_delivery(content, names):
+        from .run_outputs import RunOutputError
+        report = json.loads(content)
+        if report.get('outcome') in {'blocked', 'inconclusive'} and any(
+                isinstance(item, str) and item.strip() for item in report.get('limitations', ())):
+            return
+        raise RunOutputError('Execution results were not delivered.', details=(contract_diagnostic(
+            'experiment_collection_incomplete', phase='protocol', affected_action='submit', repairable=True,
+            message=f"Result collection or exact implementation binding is incomplete for {list(names)[:8]!r}. Submit outcome blocked/inconclusive with limitations explaining the missing delivery or binding. Root can inspect retained results and choose recovery; retry collection only if collection actually failed. Do not rerun the solver or claim completed delivery."),))
 
     def _execution_owner(self, execution_id):
         envelope = self.executions.artifacts.get_by_id(self.executions.request_artifact_id(execution_id))
         return envelope.labels.get("experiment_run")
 
     def implementation(self, context, alias):
+        return self._implementation_payload(self._selected_implementation(context, alias))
+
+    def _selected_implementation(self, context, alias):
         from .sealed_materials import material_error
         record = self.runs.sealed_material_record(self.runs.status(context.run_id), alias)
         if record is None or record.get("metadata", {}).get("kind") != "experiment_implementation":
             raise material_error("experiment_implementation_unavailable",
                 "Choose a sealed implementation created in or explicitly bound to this task.")
-        return self._implementation_payload(record)
+        return record
 
     def _implementation_payload(self, record):
         from ..schema.refs import ArtifactRef
         from .sealed_materials import material_error
         material = ArtifactRef.model_validate(record["artifact_ref"])
-        packages = [ref for ref in self.executions.artifacts.verify(material).parent_refs
+        envelope = self.executions.artifacts.verify(material)
+        parents = envelope.parent_refs
+        if 'control_parents' in record:
+            direct = tuple(ArtifactRef.model_validate(ref) for ref in record['control_parents'])
+            if any(ref not in parents for ref in direct):
+                raise material_error('experiment_implementation_package_invalid', 'Controlled package is not an exact implementation parent.')
+            parents = direct
+        packages = [ref for ref in parents
             if self.executions.artifacts.verify(ref).kind == "experiment_execution_package"]
+        if len(packages) > 1 and 'control_parents' not in record:
+            # Historical tool receipts inherited all frozen inputs. Only those
+            # exact inputs may be excluded; never select by recency or filename.
+            producer_id = envelope.labels.get('tool_producer_run')
+            if producer_id is not None:
+                inherited = {item.artifact_ref for item in self.runs.status(producer_id).inputs}
+                packages = [ref for ref in packages if ref not in inherited]
         if len(packages) != 1:
             raise material_error("experiment_implementation_package_invalid",
                 "The sealed implementation has no unique controlled execution package.")
@@ -197,16 +307,71 @@ class ExperimentExecution:
     def _implementation_record(self, context, payload_ref):
         return self._run_implementation_record(self.runs.status(context.run_id), payload_ref)
 
-    def _run_implementation_record(self, run, payload_ref):
-        records = [item for item in self.runs.available_material_records(run)
+    def _execution_implementation_record(self, run, execution_id):
+        envelope = self.executions.artifacts.get_by_id(self.executions.request_artifact_id(execution_id))
+        from ..schema.refs import ArtifactRef
+        raw = envelope.labels.get("implementation_receipt")
+        receipt = ArtifactRef.model_validate_json(raw, strict=True) if raw is not None else None
+        from .run_attention import BINDING_CODES
+        scope = 'implementation:' + execution_id
+        try:
+            payload = self.executions.request(execution_id).payload_ref
+            if receipt is None:
+                # Request scope identifies the recovery root, not the package author.
+                # A successor may have sealed the package after that root ended.
+                author = self.executions.artifacts.verify(payload).labels.get("experiment_run")
+                if author:
+                    owner = self.runs.status(author)
+                    if owner.instance_id != run.instance_id:
+                        from .sealed_materials import material_error
+                        raise material_error("experiment_implementation_unavailable",
+                            "The historical package author belongs to another instance.")
+                    original = self._run_implementation_record(owner, payload)
+                else:
+                    # Older packages without author metadata require uniqueness over
+                    # the whole original task family, never the consumer's subset.
+                    origin = envelope.labels.get("experiment_run")
+                    if not origin:
+                        from .sealed_materials import material_error
+                        raise material_error("experiment_implementation_unavailable",
+                            "The historical execution has no authoritative implementation owner. Preserve its results and request control repair.")
+                    _, family = self.runs.task_family(origin)
+                    if any(owner.instance_id != run.instance_id for owner in family):
+                        from .sealed_materials import material_error
+                        raise material_error("experiment_implementation_unavailable",
+                            "The historical execution belongs to another instance.")
+                    original = self._matching_implementation_record(
+                        [item for owner in family for item in self.runs.available_material_records(owner)], payload)
+                receipt = ArtifactRef.model_validate(original['artifact_ref'])
+            record = self._run_implementation_record(run, payload, receipt_ref=receipt)
+        except DiagnosticError as error:
+            code = next((item['code'] for item in error.details if item['code'] in BINDING_CODES), None)
+            if code:
+                self.runs.record_attention(run.run_id, scope=scope, code=code)
+            raise
+        self.runs.record_attention(run.run_id, scope=scope, code=None)
+        return record
+
+    def _run_implementation_record(self, run, payload_ref, *, receipt_ref=None):
+        return self._matching_implementation_record(self.runs.available_material_records(run), payload_ref,
+            receipt_ref=receipt_ref)
+
+    def _matching_implementation_record(self, materials, payload_ref, *, receipt_ref=None):
+        records = [item for item in materials
             if item.get("metadata", {}).get("kind") == "experiment_implementation"
+            and (receipt_ref is None or canonical_json(item["artifact_ref"]) == receipt_ref.canonical_json())
             and self._implementation_payload(item) == payload_ref]
         if not records:
             from .sealed_materials import material_error
             raise material_error("experiment_implementation_unavailable",
                 "Bind the exact sealed implementation used by this execution.")
         if len({canonical_json(item["artifact_ref"]) for item in records}) != 1:
-            raise ValueError("Execution has conflicting implementation receipts.")
+            from .sealed_materials import material_error
+            raise material_error("experiment_implementation_ambiguous",
+                "This historical execution did not retain its exact implementation receipt. "
+                "Preserve the execution and its collected results. Root must inspect the retained records; "
+                "the Worker cannot repair a historical execution binding. Once work is idle, submit blocked "
+                "or inconclusive with limitations describing this missing exact binding. Do not rerun the solver.")
         return records[0]
 
     def _cancel(self, execution_id):
@@ -324,10 +489,10 @@ class ExperimentExecution:
             implementation = None
             if request.action == "status" and self.executions.status(execution_id).state == "collected":
                 try:
-                    implementation = self._implementation_record(context, self.executions.request(execution_id).payload_ref)
+                    implementation = self._execution_implementation_record(run, execution_id)
                 except DiagnosticError:
                     pass  # State remains readable even when scientific originals need rebinding.
-            return self._execution_status(context, request, execution_id, implementation, seal=False)
+            return self._execution_status(context, request, execution_id, implementation, seal=request.action == 'status')
         if request.action in {"capabilities", "review", "start", "advance"}:
             run, effect, identity, _ = self._contract(context)
             plan = effect_operation_plan(effect)
@@ -337,8 +502,7 @@ class ExperimentExecution:
                    if k in {"solver_kind", "release", "description", "limitations", "capabilities"}}}
                 for item in self.capabilities(context)]}
         if request.action == "review":
-            payload = self.implementation(context, request.implementation)
-            implementation = self._implementation_record(context, payload)
+            implementation = self._selected_implementation(context, request.implementation)
             result = {"implementation": request.implementation,
                 "review": self.review_handoff(run, implementation)}
             review = self._implementation_review(run, implementation)
@@ -359,14 +523,29 @@ class ExperimentExecution:
         if request.action == "start":
             if request.implementation is None:
                 raise ToolInputError("experiment_implementation_required", "Choose a sealed implementation before starting execution.", path="$.implementation")
-            payload = self.implementation(context, request.implementation)
-            reviewed = self._required_review(run, self._implementation_record(context, payload))
-            self.executions.create(executor=plan.executor, preparation_profile=plan.preparation_profile,
-                payload_ref=payload, execution_id=execution_id, compiled_identity=identity,
-                labels={"operation_id": identity.operation_id, "operation_version": identity.operation_version,
-                    "operation_digest": identity.operation_digest, "approval_contract_digest": identity.approval_contract_digest,
-                    "experiment_run": self.task_origin(run),
-                    **({"implementation_review": reviewed.model_dump_json()} if reviewed is not None else {})})
+            implementation = self._selected_implementation(context, request.implementation)
+            payload = self._implementation_payload(implementation)
+            reviewed = self._required_review(run, implementation)
+            from .executions import ExecutionNotFound
+            try:
+                self.executions.status(execution_id)
+            except ExecutionNotFound:
+                existing = False
+            else:
+                existing = True
+                original = self._execution_implementation_record(run, execution_id)
+                if original["artifact_ref"] != implementation["artifact_ref"]:
+                    raise ToolInputError("experiment_execution_implementation_changed",
+                        "This execution name is bound to another exact implementation. Use status for the original execution; "
+                        "use a new name only for an intentionally new execution.", path="$.implementation")
+            if not existing:
+                self.executions.create(executor=plan.executor, preparation_profile=plan.preparation_profile,
+                    payload_ref=payload, execution_id=execution_id, compiled_identity=identity,
+                    labels={"operation_id": identity.operation_id, "operation_version": identity.operation_version,
+                        "operation_digest": identity.operation_digest, "approval_contract_digest": identity.approval_contract_digest,
+                        "experiment_run": self.task_origin(run),
+                        "implementation_receipt": canonical_json(implementation["artifact_ref"]).decode("utf-8"),
+                        **({"implementation_review": reviewed.model_dump_json()} if reviewed is not None else {})})
             self.runs.scheduler_bindings.bind(instance=run.instance_id, namespace="execution",
                 name="experiment-" + self.task_origin(run) + "-" + request.name, object_id=execution_id)
         from .executions import ExecutionNotFound
@@ -385,16 +564,47 @@ class ExperimentExecution:
                 raise invalid("For logs use direction and its returned cursor; offset is only for collected output read.")
             return self.executions.cached_log(execution_id, log_index=request.log_index,
                 direction=request.direction, cursor=request.cursor, max_bytes=self._io_settings(context).read_page_bytes)
-        implementation = self._implementation_record(context, current.payload_ref)
+        if request.action == "collect":
+            # Transport is bound to the immutable execution request. A missing
+            # scientific receipt must not strand already-computed remote files.
+            if self.collection is None:
+                raise ValueError("The controlled collection service is unavailable.")
+            self.collection.collect(execution_id, scope="instance:" + run.instance_id,
+                total_seconds=min(context.remaining_seconds, self._io_settings(context).collection_timeout_seconds),
+                file_timeout_seconds=self._io_settings(context).file_timeout_seconds,
+                idle_timeout_seconds=self._io_settings(context).idle_timeout_seconds)
+            details = ()
+            try:
+                implementation = self._execution_implementation_record(run, execution_id)
+            except DiagnosticError as error:
+                if not error.details or any(item['code'] not in {
+                        'experiment_implementation_unavailable', 'experiment_implementation_ambiguous'} for item in error.details):
+                    raise
+                implementation, details = None, error.details
+                self.runs.record_error_observation(run.run_id, 'tool_failed', diagnostic={
+                    'category':'tool_failed', 'tool_name':'worker_experiment_execute', 'details':details})
+            result = self._execution_status(context, request, execution_id, implementation, seal=True)
+            if details:
+                result['delivery_diagnostics'] = list(details)
+            return result
+        implementation = self._execution_implementation_record(run, execution_id)
         private_outputs = implementation["metadata"].get("private_outputs", ())
         if request.action in {"read", "export"}:
+            if self.executions.status(execution_id).state != 'collected':
+                raise ToolInputError('experiment_collection_pending',
+                    'Outputs are not collected yet. Read status for this same execution and wait for collection state completed; do not repeat the solver.', path='$.action')
             outputs = [item for item in self.executions.outputs(execution_id) if item.logical_name not in private_outputs]
-            item = next((item for item in outputs if item.logical_name == request.output_name), None)
-            if item is None:
-                raise ToolInputError("experiment_output_unknown", "Select one collected output by its scientific name.", path="$.output_name")
+            names, _ = self._output_file_names(context, execution_id, implementation['metadata'].get('output_inventory_name'))
+            matches = [item for item in outputs if request.output_name is not None
+                and request.output_name in {item.logical_name, names.get(item.logical_name)}]
+            if len(matches) != 1:
+                raise ToolInputError("experiment_output_unknown", "Select an exact name or file_name returned by status for this collected execution."
+                    + ' Available examples: ' + repr([names.get(item.logical_name, item.logical_name) for item in outputs[:6]])
+                    + (f' ({len(outputs)-6} more; read status).' if len(outputs)>6 else '.'), path="$.output_name")
+            item = matches[0]
             envelope = self.executions.artifacts.get_by_id(item.artifact_id)
             if request.action == "export":
-                return self._export(context, request, envelope)
+                return self._export(context, request.model_copy(update={'output_name': item.logical_name}), envelope)
             if not (item.media_type.startswith("text/") or item.media_type == "application/json"):
                 return {"name": item.logical_name, "media_type": item.media_type, "size_bytes": item.size_bytes,
                     "availability": "retained_binary", "instruction": "Use export to obtain the exact file for local domain analysis."}
@@ -422,13 +632,6 @@ class ExperimentExecution:
                 return self._authorization_response(run, request.name, execution_id, self._approval_status(execution_id))
             if request.action == "advance" and self.executions.status(execution_id).external_run_id is not None:
                 self.bridge.sync(execution_id=execution_id, diagnostic_scope="instance:" + run.instance_id)
-        elif request.action == "collect":
-            if self.collection is None:
-                raise ValueError("The controlled collection service is unavailable.")
-            self.collection.collect(execution_id, scope="instance:" + run.instance_id,
-                total_seconds=min(context.remaining_seconds, self._io_settings(context).collection_timeout_seconds),
-                file_timeout_seconds=self._io_settings(context).file_timeout_seconds,
-                idle_timeout_seconds=self._io_settings(context).idle_timeout_seconds)
         return self._execution_status(context, request, execution_id, implementation, seal=True)
 
     def _execution_status(self, context, request, execution_id, implementation, *, seal):
@@ -449,7 +652,7 @@ class ExperimentExecution:
             manifest = ExecutionResultManifest.model_validate_json(self.executions.artifacts.read(status.result_ref), strict=True)
             result["terminal_state"] = manifest.terminal_state
             if implementation is None:
-                result["outputs_status"] = "Bind the original implementation to read collected scientific outputs. Execution state is available."
+                result["outputs_status"] = "Collected files are retained, but their exact implementation receipt is unavailable. Root must inspect the binding; once work is idle, submit blocked/inconclusive with limitations. Do not rerun the solver."
                 return result
             private_outputs = implementation["metadata"].get("private_outputs", ())
             names, inventory_note = self._output_file_names(context, execution_id,
@@ -469,6 +672,16 @@ class ExperimentExecution:
                     metadata={"kind": "experiment_execution", "name": request.name, "implementation": implementation["alias"]})
                 result["reference"] = record["alias"]
                 result["artifact_name"] = record["artifact_name"]
+        elif status.state in {'succeeded', 'failed', 'cancelled'}:
+            summary = getattr(self.collection, 'summary', None)
+            collection = summary(execution_id) if callable(summary) else {}
+            from .engineering_diagnostics import diagnostic_locator
+            result['collection'] = {'state': collection.get('state', 'unknown')}
+            if diagnostic := diagnostic_locator(collection.get('error')):
+                result['collection']['diagnostic'] = diagnostic
+            result['outputs_status'] = 'not_collected'
+            result['next_action'] = {'tool': 'worker_experiment_execute', 'arguments': {'action': 'status', 'name': request.name}}
+            result['instruction'] = 'Solver termination is not collection completion. After collect is accepted, poll status until state=collected; then use its reference and exact output names. Never resubmit the solver to recover collection.'
         return result
 
     def _output_file_names(self, context, execution_id, inventory_name):
@@ -511,15 +724,17 @@ class ExperimentExecution:
             return {}, "The collected output inventory does not match its exact files; original filenames are withheld. Preserve the collected execution and ask for collection repair; do not resubmit the solver."
 
     def recover_start(self, execution_id, *, instance_id):
-        """Advance the original request after its entire scientific task has failed."""
+        """Recover the original request after all scientific owners have closed."""
         from .executions import ExecutionServiceError
         owner = self._execution_owner(execution_id)
         if owner is None or not self.runs.task_recovery_available(owner, instance_id=instance_id):
-            raise ExecutionServiceError("Execution recovery requires an entirely failed task lineage")
+            raise ExecutionServiceError("Execution recovery requires a closed failed or limited task lineage")
         run = self.runs.status(owner)
         state = self.executions.status(execution_id)
         if state.external_run_id is not None:
             return  # Already submitted: recovery must not create another solver.
+        if not self.runs.task_recovery_available(owner, instance_id=instance_id, for_start=True):
+            raise ExecutionServiceError("A completed limited task permits result recovery only; a new execution requires a new scientific task.")
         if state.state not in {"created", "authorized"}:
             raise ExecutionServiceError("This execution cannot be started; inspect its terminal state")
         _, effect, identity, _ = self._contract_for_run(run)
@@ -528,7 +743,7 @@ class ExperimentExecution:
         if (request.compiled_identity != identity or request.executor != plan.executor
                 or request.preparation_profile != plan.preparation_profile):
             raise ExecutionServiceError("Execution recovery contract differs from the original request")
-        implementation = self._run_implementation_record(run, request.payload_ref)
+        implementation = self._execution_implementation_record(run, execution_id)
         self._required_review(run, implementation)
         approval = self._approval_status(execution_id)
         if approval is not None and (approval.status != "decided" or self._authorization_state(approval) != "created"):
@@ -569,7 +784,10 @@ class ExperimentExecution:
         if state.state in {"created", "authorized"} and state.external_run_id is None:
             actions.append("execution_abandon")
             approval = self._approval_status(execution_id)
-            if approval is None or (approval.status == "decided" and self._authorization_state(approval) == "created"):
+            owner = self._execution_owner(execution_id)
+            run = self.runs.status(owner) if owner is not None else None
+            if (run is not None and self.runs.task_recovery_available(owner, instance_id=run.instance_id, for_start=True)
+                    and (approval is None or (approval.status == "decided" and self._authorization_state(approval) == "created"))):
                 actions.append("execution_start")
         elif state.state in {"submitted", "running", "cancelling"}:
             actions.append("execution_cancel")
@@ -603,7 +821,12 @@ class ExperimentExecution:
         state = self._authorization_state(approval)
         self._reconcile_authorization(execution_id, approval)
         authorization = self.executions.authorization(execution_id)
+        from datetime import datetime, timezone
+        current = self.runs.status(run.run_id)
+        remaining = max(0, int((datetime.fromisoformat(current.deadline_at.replace('Z', '+00:00')) - datetime.now(timezone.utc)).total_seconds()))
         result = {"name": name, "state": state,
+            "task_budget": {"deadline_at": current.deadline_at, "remaining_seconds": remaining,
+                "instruction": "Use this current task budget or worker_heartbeat, not the assignment's initial deadline, while awaiting approval."},
             "execution_state": self.executions.status(execution_id).state, "authorization": {"status": approval.status,
             **{key: authorization[key] for key in ("reason", "budget", "allowance", "per_execution_allowance", "budget_usage", "accounting") if key in authorization}}}
         bound = self.runs.scheduler_bindings.find_name(instance=run.instance_id, namespace="approval", object_id="apr_" + execution_id)
@@ -721,6 +944,11 @@ class _TaskExperimentTools:
         private = service.exchange_root / "experiment-workspaces" / self.__coordinator.task_origin(run)
         private.mkdir(parents=True, exist_ok=True, mode=0o700)
         return replace(context, workspace=private, output_directory=private / "output")
+
+    def publish_diagnostic_files(self, context, *, implementation, name, workspace, outputs):
+        self.__scope(context)
+        return self.__coordinator.publish_diagnostic_files(context, implementation=implementation,
+            name=name, workspace=workspace, outputs=outputs)
 
     def cancel_diagnostics(self, context, *, service_name, name):
         run = self.__scope(context)

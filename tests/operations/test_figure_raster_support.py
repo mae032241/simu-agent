@@ -823,20 +823,19 @@ def test_crossing_consumer_cannot_invent_a_crossing_across_an_unsupported_gap():
     assert curve_crossings(series, 5, "either", CurveDomain(start=0, stop=4, unit="x"), "linear_y") == ()
 
 
-def test_supplied_original_raster_local_candidates_do_not_imply_physical_multivalued_behavior(tmp_path):
-    # This optional local check contains no scientific identity/calibration claim
-    # and never copies the private source into repository fixtures.
+def test_synthetic_raster_local_candidates_do_not_imply_physical_multivalued_behavior():
+    # Public, deterministic geometry reproduces disconnected column candidates
+    # and two empty columns without depending on the private publication image.
     from curve_figure_evidence.figure_line_tracker import _column_candidates
-    path = Path("/tmp/scid-fig3-visual-check/original-000.jpg")
-    if not path.exists():
-        pytest.skip("The supplied private raster is available only in the local repair session.")
-    image = Image.open(path).convert("RGB")
+    image = Image.new("RGB", (930, 660), "white")
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((890, 40, 909, 192), fill="black")
+    draw.rectangle((890, 240, 909, 248), fill="black")
     candidates = _column_candidates(image, x=902, top=40, bottom=280, rgb=(0, 0, 0), tolerance=24, exclusions=())
     assert [(item["support_min"], item["support_max"]) for item in candidates] == [(40, 192), (240, 248)]
     assert _column_candidates(image, x=814, top=40, bottom=650, rgb=(0, 0, 0), tolerance=24, exclusions=()) == []
     assert _column_candidates(image, x=815, top=40, bottom=650, rgb=(0, 0, 0), tolerance=24, exclusions=()) == []
-    # Local algorithm check only: these guide anchors do not establish a
-    # scientific identity or calibration for the private publication.
+    # This verifies geometry, not scientific identity or paper calibration.
     trace = trace_continuous_line(image, rgb=(0, 0, 0), tolerance=24,
         seeds=((890, 245), (909, 245)), bounds=(890, 40, 910, 280), exclusions=())
     assert trace.points

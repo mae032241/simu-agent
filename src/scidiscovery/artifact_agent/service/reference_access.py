@@ -11,6 +11,7 @@ import uuid
 from ..schema.common import canonical_json
 from ..schema.refs import ArtifactRef
 from .run_records import RunStateConflict, timestamp
+from .reference_proofs import ReferenceProofError
 from ...plugin_runtime.workspace import WorkspaceError
 from ..storage.cas import CASIntegrityError
 
@@ -382,7 +383,7 @@ class ReferenceAccessMixin:
                 material = resolve_material(self, value, bound.source_name)
                 if material is not None:
                     producer = self.status(material['producer_run_id'])
-                    authorized_manifest = self.reference_manifest(producer)
+                    authorized_manifest = self.reference_manifest(producer, subject_ref=source_ref)
         if producer is None or (authorized_manifest is None and
                 (producer.state != 'completed' or producer.output_ref is None)):
             raise ReferenceAccessError('reference_producer_missing', 'Source has no exact completed producer; bind required originals explicitly.')
@@ -404,11 +405,7 @@ class ReferenceAccessMixin:
         records = manifest.get('records', [])
         if not isinstance(bindings, dict) or not isinstance(records, list):
             raise ReferenceAccessError('reference_manifest_invalid', 'Producer manifest has invalid bindings or records.')
-        # Every binding must remain an exact parent of this producer manifest.
-        parents = self.artifacts.catalog(manifest_ref).parent_refs
-        for binding in bindings.values():
-            if _ref(binding['artifact_ref']) not in parents:
-                raise ReferenceAccessError('reference_manifest_unpaired', 'Manifest binding is not an exact manifest parent.')
+        self._verify_reference_manifest(producer, manifest_ref, manifest)
         selected = None
         if source_ref != producer.output_ref:
             matches = [record for record in records if _ref(record['artifact_ref']) == source_ref]
@@ -426,15 +423,27 @@ class ReferenceAccessMixin:
                     if material is not None and material['producer_run_id'] != producer.run_id:
                         owner = self.status(material['producer_run_id'])
                         return self._reference_pair(value, source_ref, policy, call, root_ref,
-                            original_proof=(owner.run_id, self.reference_manifest(owner)))
+                            original_proof=(owner.run_id, self.reference_manifest(owner, subject_ref=source_ref)))
             if len(matches) != 1:
                 raise ReferenceAccessError('reference_record_unpaired', 'Tool original is not uniquely recorded in its producer manifest.')
             selected = matches[0]
-            original = [r for r in self.tool_evidence(producer.run_id)
-                        if _ref(r['artifact_ref']) == source_ref]
-            if len(original) != 1 or original[0] != selected:
-                raise ReferenceAccessError('reference_record_unpaired', 'Material differs from its immutable producer receipt.')
+            self._verify_reference_record(producer, source_ref, selected)
         return producer, manifest, selected, manifest_ref
+
+    def _verify_reference_manifest(self, producer, manifest_ref, manifest):
+        """The same immutable receipt authority for reading and finalization."""
+        envelope = self.artifacts.catalog(manifest_ref)
+        if (manifest_ref.schema_id != 'scidiscovery.tool-evidence-manifest.v1'
+                or envelope.labels.get('tool_producer_run') != producer.run_id):
+            raise ReferenceAccessError('reference_manifest_unpaired', 'Expected an exact producer-bound manifest.')
+        for binding in manifest.get('bindings', {}).values():
+            if _ref(binding['artifact_ref']) not in envelope.parent_refs:
+                raise ReferenceAccessError('reference_manifest_unpaired', 'Manifest binding is not an exact manifest parent.')
+
+    def _verify_reference_record(self, producer, target, selected):
+        original = [r for r in self.tool_evidence(producer.run_id) if _ref(r['artifact_ref']) == target]
+        if len(original) != 1 or original[0] != selected:
+            raise ReferenceAccessError('reference_record_unpaired', 'Material differs from its immutable producer receipt.')
 
     def _reference_calculation_origin(self, value, manifest, calculation, policy, call):
         alias = calculation.attempt.manifest_alias
@@ -457,7 +466,8 @@ class ReferenceAccessMixin:
     def _reference_edges(self, value, source_ref, policy, call, pointer=None, reference=None, root_ref=None):
         producer, manifest, selected, manifest_ref = self._reference_pair(value, source_ref, policy, call, root_ref)
         if selected and selected.get('metadata', {}).get('kind') == 'experiment_execution':
-            return self._execution_output_edges(value, source_ref, policy, call, producer, manifest_ref, pointer, reference), []
+            return self._execution_output_edges(value, source_ref, policy, call, producer, manifest_ref, pointer, reference,
+                selected=selected, manifest=manifest), []
         rules = [rule for rule in policy.rules if rule.schema_id == source_ref.schema_id]
         aliases = []
         sections = []
@@ -588,7 +598,7 @@ class ReferenceAccessMixin:
                 # The exact target has already been resolved from this source's
                 # sealed bindings/receipts and checked against its owner. Task
                 # completion is not a prerequisite for an immutable tool proof.
-                proof = ((target_producer.run_id, self.reference_manifest(target_producer))
+                proof = ((target_producer.run_id, self.reference_manifest(target_producer, subject_ref=target))
                          if target_producer.state != 'completed' else None)
                 original_run, _, original_record, original_manifest = self._reference_pair(
                     value, target, policy, call, original_proof=proof)
@@ -604,11 +614,22 @@ class ReferenceAccessMixin:
                           '_proof_manifest': original_proof[1] if original_proof else None})
         return edges, sections
 
-    def _execution_output_edges(self, value, source_ref, policy, call, producer, proof_ref, pointer, reference):
+    def _execution_output_edges(self, value, source_ref, policy, call, producer, proof_ref, pointer, reference, *, selected, manifest):
         """Join a sealed public receipt to its exact control manifest, not to IDs supplied by a caller."""
         from ..schema.execution import ExecutionResultManifest
         parents = [ref for ref in self.artifacts.catalog(source_ref).parent_refs
                    if ref.schema_id == 'scidiscovery.execution-result']
+        if 'control_parents' in selected:
+            direct = [_ref(ref) for ref in selected['control_parents'] if ref['schema_id'] == 'scidiscovery.execution-result']
+            if any(ref not in parents for ref in direct):
+                raise ReferenceAccessError('reference_execution_unpaired', 'Execution result is not an exact receipt parent.')
+            parents = direct
+        elif len(parents) > 1:
+            # Historical receipts included every frozen input as a parent. The
+            # original sealed proof distinguishes those inputs from this result;
+            # never choose by recency, schema alone or a Worker supplied name.
+            inputs = {_ref(item['artifact_ref']) for item in manifest.get('bindings', {}).values()}
+            parents = [ref for ref in parents if ref not in inputs]
         if len(parents) != 1:
             raise ReferenceAccessError('reference_execution_unpaired', 'Execution receipt has no unique sealed result manifest.')
         result = ExecutionResultManifest.model_validate_json(self._reference_read_bytes(value, parents[0], policy, call))
@@ -858,12 +879,10 @@ class ReferenceAccessMixin:
                     if any(item.source_name == alias and item.artifact_ref != target for item in value.inputs) or any(
                             r['alias'] == alias and r.get('record_type') != 'reference_access' for r in current):
                         raise ReferenceAccessError('reference_alias_conflict', 'Controlled reference alias conflicts with an existing source.')
-                    snapshot = self._encode_evidence_snapshot(value,
+                    self._encode_evidence_snapshot(value,
                         [r for r in current if r.get('record_type') != 'reference_access'],
                         [*[r for r in current if r.get('record_type') == 'reference_access'], record],
-                        recovery, self.tool_attempts(run_id))
-                    if len(snapshot) > 1024 * 1024:
-                        raise ReferenceAccessError('reference_manifest_limit', 'Controlled source manifest would exceed its byte limit.')
+                        recovery, self.tool_attempts(run_id, connection=connection))
                     ordinal = len(current) + 1
                     connection.execute('INSERT INTO run_tool_evidence VALUES (?,?,?,?,?)', (run_id, ordinal, request_key, canonical_json(record), alias))
                 self._reference_settle(connection, value, call, response, request_key=request_key)
@@ -871,8 +890,10 @@ class ReferenceAccessMixin:
             self._reference_publish_file(run_id, response, raw, target=target if file_delivery else None, call=call)
             self._refresh_evidence_schema(run_id)
             return response
-        except (ReferenceAccessError, RunStateConflict, ValueError, KeyError, OSError, WorkspaceError, CASIntegrityError) as error:
+        except (ReferenceAccessError, RunStateConflict, ValueError, KeyError, OSError, WorkspaceError, CASIntegrityError, ReferenceProofError) as error:
             response = {'state': 'rejected', 'code': getattr(error, 'code', 'reference_run_closed' if isinstance(error, RunStateConflict) else 'reference_unavailable'), 'message': str(error)}
+            if isinstance(error, ReferenceProofError):
+                response.update(code=error.details[0]['code'], diagnostics=list(error.details))
             if source_authorized and response['code'] in {'reference_producer_missing', 'reference_manifest_unpaired'}:
                 workspace = self.backend.open(run_id)
                 path = workspace.input_paths.get(request.source)
@@ -962,10 +983,8 @@ class ReferenceAccessMixin:
                 accesses = [r for r in current if r.get('record_type') == 'reference_access']
                 if len(accesses) >= policy.max_records:
                     raise RunCheckerError('preserved reference records exceed declared limit', category='integrity_failure')
-                snapshot = self._encode_evidence_snapshot(value, [r for r in current if r.get('record_type') != 'reference_access'],
-                    [*accesses, record], recovery, self.tool_attempts(run_id))
-                if len(snapshot) > 1024 * 1024:
-                    raise RunCheckerError('preserved reference manifest exceeds byte limit', category='integrity_failure')
+                self._encode_evidence_snapshot(value, [r for r in current if r.get('record_type') != 'reference_access'],
+                    [*accesses, record], recovery, self.tool_attempts(run_id, connection=connection))
                 connection.execute('INSERT INTO run_tool_evidence VALUES (?,?,?,?,?)',
                     (run_id, len(current) + 1, key, canonical_json(record), alias))
 
@@ -1000,16 +1019,20 @@ class ReferenceAccessMixin:
             return raw
         manifest_ref = _ref(record.get('proof_manifest_ref') or record['authorizing_manifest_ref'])
         producer = self.status(record.get('proof_run_id') or record['authorizing_run_id'])
-        if (producer.state != 'completed' or producer.instance_id != value.instance_id or producer.output_ref is None
-                or manifest_ref not in self.artifacts.catalog(producer.output_ref).parent_refs
-                or self.artifacts.catalog(manifest_ref).labels.get('tool_producer_run') != producer.run_id):
-            raise RunCheckerError('reference calculation producer manifest is unpaired', category='integrity_failure')
-        manifest = ToolEvidenceManifest.model_validate_json(read(manifest_ref))
+        if producer.instance_id != value.instance_id:
+            raise RunCheckerError('reference calculation producer belongs to another instance', category='integrity_failure')
+        document = json.loads(read(manifest_ref))
+        manifest = ToolEvidenceManifest.model_validate_json(canonical_json(document))
         target = _ref(record['artifact_ref'])
-        exact = [r for r in manifest.records if _ref(r['artifact_ref']) == target
+        exact = [r for r in document['records'] if _ref(r['artifact_ref']) == target
                  and r.get('metadata', {}).get('kind') == 'calculation_record']
         if len(exact) != 1:
             return None
+        try:
+            self._verify_reference_manifest(producer, manifest_ref, document)
+            self._verify_reference_record(producer, target, exact[0])
+        except ReferenceAccessError as error:
+            raise RunCheckerError(str(error), category='integrity_failure') from error
         calculation = controlled_calculation(read(target), exact[0])
         if calculation.attempt is None:
             raise RunCheckerError('reference calculation has no controlled attempt', category='integrity_failure')

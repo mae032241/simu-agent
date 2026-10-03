@@ -50,6 +50,8 @@ from .local_workspace import (
     WorkspaceInput,
 )
 from .attempt_memory import AttemptMemoryMixin
+from ..storage import CASIntegrityError
+from .reference_proofs import ReferenceProofError
 from .run_assignment import assignment_json, result_schema_json, revision_draft_json
 from .run_current import RunCurrentGuard
 from .run_outputs import (
@@ -784,13 +786,13 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
             self.adopt_tool_evidence(run_id)
             if tool_evidence_ports(self._compiled(self.status(run_id))):
                 self._refresh_evidence_schema(run_id)
-        except RunCheckerError as error:
+        except (RunCheckerError, ReferenceProofError) as error:
             value = self.status(run_id)
             from .engineering_diagnostics import EngineeringDiagnostics
             engineering = EngineeringDiagnostics(self.database_path.parent.parent / "engineering-diagnostics").capture(
                 error, scope="instance:" + value.instance_id, layer="run_open", action="open")
             self.record_failure(run_id, reason=f"preserved tool evidence cannot be opened: {error}",
-                category=error.category, expected_state="running",
+                category=getattr(error, 'category', 'integrity_failure'), expected_state="running",
                 expected_last_activity_at=value.last_activity_at, engineering=engineering)
             raise RunStateConflict("preserved tool evidence integrity failure", run_id=run_id) from error
         return self.status(run_id), workspace
@@ -823,44 +825,77 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
         value = self._require_running(run_id)
         try:
             sealed, validated = self._validated_candidate(value, trusted_tool_records=trusted_tool_records)
-        except (RunCheckerError, RunContractUnavailable) as error:
-            from .engineering_diagnostics import EngineeringDiagnostics
-            engineering = EngineeringDiagnostics(self.database_path.parent.parent / "engineering-diagnostics").capture(
-                error, scope="instance:" + value.instance_id, layer="run_checker", action="submit")
-            self.record_failure(
-                run_id,
-                reason=f"Run validation framework failure: {str(error)[:512]}",
-                category=getattr(error, "category", "integrity_failure"),
-                candidate_digest=getattr(error, "candidate_digest", None),
-                engineering=engineering,
-                expected_state="running",
-                expected_last_activity_at=value.last_activity_at,
-            )
-            return "failed", ()
-        except (RunOutputError, WorkspaceError) as error:
-            diagnostic = self.record_error_observation(run_id, "output_rejected",
-                                 diagnostic=self.rejection_diagnostic(value, error))
-            return "rejected", tuple(diagnostic.get("details", ()))
-        self._accept_candidate(run_id, sealed.digest)
-        output = self._register_candidate(value, validated, sealed.digest)
-        self._complete(run_id, sealed.digest, output, validated.signal)
+            self._accept_candidate(run_id, sealed.digest)
+            output = self._register_candidate(value, validated, sealed.digest)
+            self._complete(run_id, sealed.digest, output, validated.signal)
+        except Exception as error:
+            return self._submission_failure(run_id, error)
         return "completed", ()
+
+    def _submission_failure(self, run_id, error):
+        from .submission_errors import classify_submission_error
+        from .engineering_diagnostics import EngineeringDiagnostics
+        import logging
+        # Report the original failure even if its database is now unavailable.
+        # Never mutate from a cached state: completion may already have committed.
+        try:
+            value = self.status(run_id)
+        except Exception as state_error:
+            state_failure = classify_submission_error(state_error)
+            logging.getLogger(__name__).error("Submission state unavailable for %s (%s); inspect control storage",
+                run_id, type(state_error).__name__, exc_info=True)
+            details = state_failure.details if state_failure.disposition == 'retry' else (contract_diagnostic(
+                'submission_state_unavailable', phase='protocol', affected_action='submit', repairable=False,
+                message='Control cannot confirm the persisted task state. Preserve the report; Root must restore control storage and query this same task before retrying. Do not start another execution.'),)
+            return 'rejected', details
+        if value.state in {"completed", "failed"}:
+            return value.state, ()
+        failure = classify_submission_error(error, deadline_expired=expired(value.deadline_at))
+        # Expected form corrections need structured fields, not a traceback file.
+        engineering = None
+        if failure.disposition != 'reject':
+            engineering = EngineeringDiagnostics(self.database_path.parent.parent / "engineering-diagnostics",
+                settings=self.agent_settings.diagnostics).capture(
+                error, scope="instance:" + value.instance_id, layer="run_submission", action="submit")
+        try:
+            if failure.disposition == "fail":
+                self.record_failure(run_id, reason=f"Submission stopped: {failure.details[0]['code']}",
+                    category=failure.category, candidate_digest=getattr(error, "candidate_digest", None),
+                    engineering=engineering, details=failure.details, expected_state="running",
+                    expected_last_activity_at=value.last_activity_at, timed_out=failure.category == 'run_timeout')
+                return "failed", failure.details
+            diagnostic = self.record_error_observation(run_id, "output_rejected" if failure.disposition == "reject" else "tool_failed",
+                diagnostic={"category": failure.category, "details": failure.details,
+                    **({"engineering": engineering} if engineering else {})})
+        except Exception as recording_error:
+            # A lifecycle write or its post-commit cleanup can fail as well.
+            # Re-read if possible; never report a terminal transition we cannot confirm.
+            try:
+                current = self.status(run_id)
+                if current.state in {'completed', 'failed'}:
+                    return current.state, failure.details if current.state == 'failed' else ()
+            except Exception:
+                pass
+            logging.getLogger(__name__).error("Submission diagnostic/lifecycle write unavailable for %s (%s)",
+                run_id, type(recording_error).__name__, exc_info=True)
+            if classify_submission_error(recording_error).disposition == 'retry':
+                return "rejected", classify_submission_error(recording_error).details
+            return 'rejected', (contract_diagnostic('submission_state_unavailable', phase='protocol',
+                affected_action='submit', repairable=False,
+                message='Control could not confirm the failure record. Root must restore control storage and query the existing task; preserve its draft and do not rerun the solver.'),)
+        return "rejected", tuple(diagnostic.get("details", ()))
 
     def validate_candidate(self, run_id: str) -> ValidatedRunOutput:
         value = self._require_running(run_id)
         try:
             _, validated = self._validated_candidate(value, final_submission=False)
-        except (RunCheckerError, RunContractUnavailable) as error:
-            self.record_failure(run_id, reason=f"Run validation framework failure: {str(error)[:512]}",
-                category=getattr(error, "category", "integrity_failure"),
-                candidate_digest=getattr(error, "candidate_digest", None),
-                expected_state="running", expected_last_activity_at=value.last_activity_at)
-            raise
-        except (RunOutputError, WorkspaceError) as error:
-            diagnostic = self.record_error_observation(run_id, "output_rejected",
-                diagnostic=self.rejection_diagnostic(value, error))
-            raise RunOutputError("candidate requires correction", details=tuple(diagnostic.get("details", ())),
-                                 recorded=True) from error
+        except Exception as error:
+            state, details = self._submission_failure(run_id, error)
+            if state == "failed":
+                if isinstance(error, (RunCheckerError, RunContractUnavailable)):
+                    raise
+                raise RunCheckerError("Candidate validation stopped; inspect the retained submission diagnostic.") from error
+            raise RunOutputError("Candidate validation interrupted.", details=details, recorded=True) from error
         return validated
 
     def _recovery_policy(self, compiled: Any) -> dict[str, Any]:
@@ -883,7 +918,7 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
         self, run_id: str, *, reason: str, expected_state: str,
         expected_last_activity_at: str | None, timed_out: bool = False,
         category: str = "runtime_failure", candidate_digest: str | None = None,
-        engineering: dict | None = None,
+        engineering: dict | None = None, details: tuple = (),
     ) -> RunStatus:
         value = self.status(run_id)
         if value.state == "failed":
@@ -899,6 +934,8 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
         diagnostic = self._safe_diagnostic("run_timeout" if timed_out else category, repairable=False)
         if engineering:
             diagnostic["engineering"] = engineering
+        if details:
+            diagnostic = self.sanitize_diagnostic(value, {**diagnostic, "details": details}, repairable=False)
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             if timed_out and not expired(self._status_from_row(self._row(connection, run_id)).deadline_at):
@@ -962,8 +999,12 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
             if retain_original and workspace:
                 from ...plugin_runtime.observation import request_stop
                 request_stop(workspace.root)
+            proof_unavailable = None
             if coverage is None and value.accepted_candidate_digest is None and value.recovery_candidate_digest is None:
-                self._prepare_evidence_snapshot(value.run_id)
+                try:
+                    self._prepare_evidence_snapshot(value.run_id)
+                except ReferenceProofError as error:
+                    proof_unavailable = error.details[0]['code']
             if coverage is not None:
                 digest = coverage
             elif value.accepted_candidate_digest is not None:
@@ -996,6 +1037,8 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
                 "files": [{"relative_path": item.relative_path, "media_type": item.media_type,
                            "size_bytes": item.size_bytes, "sha256": item.sha256} for item in draft.files],
             }
+            if proof_unavailable:
+                manifest['evidence_proof_unavailable'] = proof_unavailable
             if retain_original:
                 manifest.update(recovery_pending=True, code="writers_unconfirmed",
                     original_retained=True)
@@ -1030,19 +1073,29 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
             expected_last_activity_at=value.last_activity_at,
         )
 
-    def task_recovery_available(self, origin: str, *, instance_id: str) -> bool:
-        """Only an entirely failed recovery lineage can be taken over by Root."""
+    def task_recovery_available(self, origin: str, *, instance_id: str, for_start: bool = False) -> bool:
+        """Closed limited owners permit result recovery, but never a new start."""
         with self._connect() as connection:
             rows = connection.execute("""
-                WITH RECURSIVE family(run_id, state) AS (
-                    SELECT run_id, state FROM runs WHERE run_id=? AND instance_id=?
+                WITH RECURSIVE family(run_id, state, output_ref_json) AS (
+                    SELECT run_id, state, output_ref_json FROM runs WHERE run_id=? AND instance_id=?
                     UNION
-                    SELECT r.run_id, r.state FROM runs r JOIN family f
+                    SELECT r.run_id, r.state, r.output_ref_json FROM runs r JOIN family f
                       ON r.resume_from_run_id=f.run_id OR r.draft_from_run_id=f.run_id
                     WHERE r.instance_id=?
-                ) SELECT state FROM family
+                ) SELECT state, output_ref_json FROM family
             """, (origin, instance_id, instance_id)).fetchall()
-        return bool(rows) and all(row[0] == "failed" for row in rows)
+        for state, output in rows:
+            if state == 'failed':
+                continue
+            if for_start or state != 'completed' or not output:
+                return False
+            ref = ArtifactRef.model_validate_json(output)
+            if ref.schema_id != 'scidiscovery.experiment-report.v1':
+                return False
+            if json.loads(self.artifacts.read(ref)).get('outcome') not in {'blocked', 'inconclusive'}:
+                return False
+        return bool(rows)
 
     def expired_active_ids(self, *, after: str = "", limit: int = 32) -> tuple[str, ...]:
         with self._connect() as connection:
@@ -1754,6 +1807,11 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
         connection.execute(
             "INSERT INTO run_activity(rowid,run_id,activity,recorded_at,diagnostic_json) VALUES (?,?,?,?,?)",
             (event_id, run_id, activity, recorded_at, diagnostic_json))
+        if activity in {'tool_failed', 'output_rejected'} and diagnostic_json:
+            from .run_attention import record, SUBMISSION_CODES
+            for detail in json.loads(diagnostic_json).get('details', ()):
+                if detail.get('code') in SUBMISSION_CODES:
+                    record(RunService, connection, run_id, scope='submission:' + detail['code'], code=detail['code'], now=recorded_at)
         return event_id
 
     def record_error_observation(self, run_id: str, activity: str, *, diagnostic: dict[str, Any]) -> dict[str, Any]:
@@ -1864,6 +1922,37 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
                   for row in rows[:limit]]
         return {"events": events, "next_after": events[-1]["event_id"] if len(rows) > limit else None}
 
+    def record_attention(self, run_id, *, scope, code):
+        from .run_attention import record
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            value = self._row(connection, run_id)
+            now = timestamp()
+            record(self, connection, run_id, scope=scope, code=code, now=now)
+            if code is None and scope.startswith('implementation:'):
+                # A successful exact lookup during recovery repairs that same
+                # execution's issue in its earlier owner as well, never another job.
+                rows = connection.execute("SELECT DISTINCT a.run_id FROM run_activity a JOIN runs r ON r.run_id=a.run_id "
+                    "WHERE r.instance_id=? AND a.run_id!=? AND a.activity='attention_state' "
+                    "AND json_extract(CAST(a.diagnostic_json AS TEXT),'$.scope')=?",
+                    (value['instance_id'], run_id, scope)).fetchall()
+                for row in rows:
+                    record(self, connection, row['run_id'], scope=scope, code=None, now=now)
+
+    def attention_issues(self, *, run_id=None, instance_id=None):
+        from .run_attention import issues
+        with self._connect() as connection:
+            return issues(connection, run_id=run_id, instance_id=instance_id)
+
+    def pending_attention_notices(self, *, instance, observer, limit=8):
+        from .run_attention import pending_notices
+        with self._connect() as connection:
+            return pending_notices(self, connection, instance=instance, observer=observer, limit=limit)
+
+    def submission_attention(self, value: RunStatus):
+        from .run_attention import projection
+        return projection([item for _, item in self.attention_issues(run_id=value.run_id)])
+
     def diagnostic_summary(self, value: RunStatus) -> dict[str, Any]:
         with closing(self._connect()) as connection:
             connection.execute('PRAGMA query_only = ON')
@@ -1961,11 +2050,12 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
     ) -> tuple[Any, ValidatedRunOutput]:
         compiled = self._compiled(value)
         assert compiled.spec.limits is not None
+        incomplete_collections = ()
         if final_submission and compiled.spec.executor.capability is not None:
             coordinator = getattr(self, "experiment_executions", None)
             if coordinator is None:
-                raise RunCheckerError("The experiment execution service is unavailable.")
-            coordinator.require_idle(value)
+                raise ConnectionError("Experiment reconciliation service unavailable")
+            incomplete_collections = coordinator.require_idle(value)
         try:
             if value.accepted_candidate_digest is None:
                 self._finalize_workspace(compiled, value.run_id, final_submission=final_submission, trusted_tool_records=trusted_tool_records)
@@ -1986,10 +2076,6 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
             raise RunCheckerError("accepted candidate integrity failed", category="integrity_failure") from error
         except WorkspaceError as error:
             raise RunCheckerError("Run workspace integrity failed", category="integrity_failure") from error
-        except TimeoutError as error:
-            raise RunCheckerError("candidate preparation tool timed out", category="tool_timeout") from error
-        except Exception as error:
-            raise RunCheckerError("candidate preparation failed", category="checker_failure") from error
         # Reserve half the remaining Run time for publishing after domain replay.
         remaining = (datetime.fromisoformat(value.deadline_at.replace("Z", "+00:00"))
                      - datetime.now(timezone.utc)).total_seconds()
@@ -2008,6 +2094,8 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
                 reference_calculation_resolver=lambda alias: self.reference_calculation_sources(value, alias, validation_deadline=validation_deadline, validation_budget=reference_validation_budget),
                 sealed_material_resolver=lambda alias: self.sealed_material_record(value, alias),
             )
+            if incomplete_collections:
+                coordinator.validate_incomplete_delivery(validated.content, incomplete_collections)
         except WorkspaceError as error:
             failure = RunCheckerError("sealed candidate integrity failed", category="integrity_failure")
             failure.candidate_digest = sealed.digest
@@ -2029,8 +2117,8 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
                 if reference_only:
                     self.artifacts.verify(item.artifact_ref)
                 content = b"" if reference_only else self.artifacts.read(item.artifact_ref)
-            except Exception as error:
-                raise RunCheckerError("exact Run input registration or bytes are unavailable", category="integrity_failure") from error
+            except CASIntegrityError as error:
+                raise RunCheckerError("exact Run input bytes failed verification", category="integrity_failure") from error
             if (
                 envelope.ref != item.artifact_ref
                 or envelope.media_type != item.media_type
@@ -2150,6 +2238,8 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
                     "workspace backend cannot publish a finalized output"
                 )
             writer(run_id, raw)
+        except TimeoutError as error:
+            raise RunCheckerError("workspace finalization timed out", category="tool_timeout") from error
         except WorkspaceProtocolError as error:
             # The finalizer deliberately reports a correctable workspace error.
             # Keep its reason even when it has no per-field diagnostic details.
@@ -2307,6 +2397,12 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
                 connection.execute("ROLLBACK")
                 raise RunStateConflict("Run completion compare-and-set failed")
             self._append_activity(connection, run_id, 'completion_committed', completed_at, None)
+            from .run_attention import record, issues
+            for _, issue in issues(connection, run_id=run_id):
+                if issue['scope'].startswith('submission:'):
+                    record(self, connection, run_id, scope=issue['scope'], code=None, now=completed_at)
+            from .run_attention import supersede_submission_ancestors
+            supersede_submission_ancestors(self, connection, row, now=completed_at)
             connection.execute("COMMIT")
         from .presentation_summaries import enqueue
         enqueue(self, value, output)
@@ -2322,11 +2418,9 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
 
     def _compiled(self, value: RunStatus) -> Any:
         try:
-            compiled = self.operation_catalog.operation(value.operation_id)
+            compiled = self.operation_catalog.recorded_operation(value.operation_id, version=value.operation_version, digest=value.operation_digest)
         except KeyError as error:
             raise RunContractUnavailable("Run operation is no longer installed") from error
-        if compiled.spec.version != value.operation_version or compiled.digest != value.operation_digest:
-            raise RunContractUnavailable("Run operation contract changed")
         return compiled
 
     def validate_resume(
@@ -2621,15 +2715,15 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
                 return current
             current = str(parent)
 
-    @staticmethod
     def _recovery_digest(
+        self,
         source: RunStatus,
         operation_digest: str,
         input_refs: tuple[ArtifactRef, ...],
     ) -> str:
         if source.state != "failed" or source.recovery_draft is None:
             raise RunStateConflict("source Run has no recovery draft")
-        if source.operation_digest != operation_digest:
+        if not self.operation_catalog.can_recover(source.operation_id, source.operation_digest, operation_digest):
             raise RunStateConflict("recovery Operation digest differs")
         if tuple(item.artifact_ref for item in source.inputs) != input_refs:
             raise RunStateConflict("recovery inputs differ")
@@ -2709,6 +2803,8 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
             )
             connection.executescript(WORKER_CONNECTION_SCHEMA)
             connection.executescript(WORKER_PARTICIPANT_SCHEMA)
+            from .run_attention import NOTICE_SCHEMA
+            connection.executescript(NOTICE_SCHEMA)
             for table, columns in {
                 "runs": {"memory_scope_json": "BLOB", "draft_from_run_id": "TEXT", "recovery_policy_json": "BLOB",
                          **{name: value[0] for name, value in EXECUTION_SETTINGS_COLUMNS["runs"].items()},
@@ -2720,6 +2816,14 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
                 for name, kind in columns.items():
                     if name not in existing:
                         connection.execute(f"ALTER TABLE {table} ADD COLUMN {name} {kind}")
+            connection.execute("""CREATE UNIQUE INDEX IF NOT EXISTS run_attention_notice
+                ON run_activity(run_id) WHERE activity='attention_notice'""")
+            connection.execute("""CREATE INDEX IF NOT EXISTS run_attention_open_notice
+                ON run_activity(run_id) WHERE activity='attention_notice'
+                    AND json_extract(CAST(diagnostic_json AS TEXT),'$.state')='attention_required'""")
+            connection.execute("""CREATE INDEX IF NOT EXISTS run_attention_scope
+                ON run_activity(run_id,json_extract(CAST(diagnostic_json AS TEXT),'$.scope'))
+                WHERE activity='attention_state'""")
             connection.execute("""CREATE UNIQUE INDEX IF NOT EXISTS run_approval_wait
                 ON run_activity(run_id,json_extract(CAST(diagnostic_json AS TEXT),'$.approval_id'))
                 WHERE activity='approval_wait_started'""")
@@ -2736,6 +2840,15 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
                 "VALUES (1, (SELECT COALESCE(MAX(rowid), 0) FROM run_activity)) "
                 "ON CONFLICT(slot) DO UPDATE SET high_water = MAX(high_water, excluded.high_water)"
             )
+            from .run_attention import migrate_running, migrate_notices
+            migrate_notices(connection)
+            migrate_running(self, connection)
+            from .run_attention import refresh_notice
+            missing = connection.execute("SELECT DISTINCT a.run_id FROM run_activity a "
+                "WHERE a.activity='attention_state' AND NOT EXISTS (SELECT 1 FROM run_attention_notices n "
+                "WHERE n.run_id=a.run_id)").fetchall()
+            for row in missing:
+                refresh_notice(self, connection, row['run_id'], now=timestamp())
 
     def _connect(self) -> sqlite3.Connection:
         connection = connect_database(self.database_path, timeout=30.0)

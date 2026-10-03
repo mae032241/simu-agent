@@ -20,7 +20,8 @@ def execution_budget(model, approval_id):
         if registered.ref != refs[0]:
             return {}
         value = model.executions.authorization(execution.execution_id)
-        return {key: value[key] for key in ('reason', 'budget', 'allowance', 'per_execution_allowance', 'budget_usage', 'accounting') if key in value}
+        value["budget_extension_limits"] = model.executions.budget_extension_limits.model_dump()
+        return {key: value[key] for key in ('reason', 'budget', 'allowance', 'configured_allowance', 'budget_extension_limits', 'per_execution_allowance', 'budget_usage', 'accounting') if key in value}
     except Exception as error:
         logging.getLogger(__name__).warning('approval budget display unavailable: %s', type(error).__name__)
         return {}
@@ -76,6 +77,9 @@ def render_approval_focus(presentation, *, subject_ids, evidence_href, authoriza
             body += '<p class="source-note">累计免审批阈值：' + '；'.join(
                 label + ' ' + _amount(key, cumulative[key]) for key, label in
                 (('wall_time_seconds', '时长'), ('max_storage_bytes', '存储')) if key in cumulative) + '</p>'
+            configured = authorization.get('configured_allowance', {}).get('wall_time_seconds')
+            if type(configured) is int and cumulative.get('wall_time_seconds', configured) > configured:
+                body += '<p class="source-note">其中用户已追加累计时长：' + _amount('wall_time_seconds', cumulative['wall_time_seconds'] - configured) + '。</p>'
         accounting = authorization.get('accounting') or {}
         if accounting:
             actual = accounting.get('actual', {}).get('wall_time_seconds')

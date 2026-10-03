@@ -227,12 +227,18 @@ def test_control_manifest_fault_is_not_a_worker_output_rejection(tmp_path, monke
         document['records'] = 'invalid control record collection'
         return canonical_json(document)
     monkeypatch.setattr(worker.runs, '_evidence_snapshot', invalid_manifest)
-    assert submit(worker, opened, analysis_report())['state'] == 'failed'
-    status = system[2].call_tool('run_status', {'name': 'analysis', 'output_paths': []})
-    diagnostic = worker.runs.diagnostic_summary(worker.runs.status(worker._run_id))
-    assert diagnostic['rejection_count'] == 0
-    assert diagnostic['failure']['category'] == 'checker_failure'
-    assert diagnostic['failure']['repairable_by_output'] is False
+    result = submit(worker, opened, analysis_report())
+    assert result['state'] == 'rejected' and 'submission_intervention_required' in str(result)
+    current = worker.runs.status(worker._run_id)
+    assert current.state == 'running' and current.output_ref is None
+    status = system[2].call_tool('run_status', {'name':'analysis', 'intent':'status', 'diagnostic_after':0})
+    assert status['attention_required']['code'] == 'submission_intervention_required'
+    assert status['attention_notifications']['events'][0]['name'] == 'analysis'
+    assert status['diagnostic_events']['events']
+    assert system[2].call_tool('lifecycle_events', {})['attention_notifications']['events'][0]['name'] == 'analysis'
+    diagnostic = worker.runs.diagnostic_summary(current)
+    assert diagnostic['rejection_count'] == 0 and diagnostic['failure'] is None
+    assert diagnostic['latest_tool_error']['repairable_by_output'] is False
 
 
 def test_generic_analysis_accepts_result_material_without_a_fixed_plan_gate(tmp_path):
@@ -406,14 +412,22 @@ def test_unsealed_and_unpaired_manifest_roots_fail_closed(harness):
     assert not harness.reference_access_records('reader')
 
 
-def test_binding_count_is_checked_before_committing_access(harness):
+def test_binding_aggregate_does_not_reject_bounded_reference_access(harness):
     _, root, handle = prepared(harness)
     harness.inputs['reader'] = tuple(SimpleNamespace(source_name=f'root_{index}', port_name='reference_material', artifact_ref=root)
                                      for index in range(128))
     response = harness.call('reader', action='read', reference=handle)
-    assert response['state'] == 'rejected'
-    assert 'binding limit' in response['message']
-    assert not harness.reference_access_records('reader')
+    assert response.get('state') != 'rejected', response
+    assert len(harness.reference_access_records('reader')) == 1
+    snapshot = json.loads(harness._encode_evidence_snapshot(harness.status('reader'), [],
+        harness.reference_access_records('reader'), None, []))
+    assert len(snapshot['bindings']) == 129
+    harness.run('continued', [root] * 128, parent='reader')
+    harness.adopt_reference_access('continued')
+    assert harness.reference_access_records('continued')[0]['alias'] == response['source']
+    recovered = json.loads(harness._encode_evidence_snapshot(harness.status('continued'), [],
+        harness.reference_access_records('continued'), None, []))
+    assert len(recovered['bindings']) == 129
 
 
 def test_adoption_retains_committed_fact_when_worker_call_budget_is_exhausted(harness):

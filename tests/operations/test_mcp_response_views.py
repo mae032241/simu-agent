@@ -22,6 +22,67 @@ def router(**methods):
     return RootMCPRouter(facade)
 
 
+@pytest.mark.parametrize('tool', ['run_list', 'scientific_inventory'])
+def test_large_summary_lists_obey_configured_bytes_and_resume_without_loss(tmp_path, tool):
+    from scidiscovery.agent_execution_settings import load_settings
+    config = tmp_path / 'agent-settings.json'
+    config.write_text(json.dumps({'mcp_read': {'summary_max_bytes': 2048}}))
+    entries = []
+    for i in range(100):
+        name = f'm8/material/{i:03d}/' + 'x' * 120
+        if tool == 'run_list':
+            entries.append({'name': name, 'operation_id': 'science.experiment.v1',
+                'state': 'queued', 'operation_contract_status': 'historical', 'recovery_available': False,
+                'execution_profile': {'profile': {'model': 'model', 'reasoning_effort': 'high'}},
+                'dispatch': {'instruction': '重复说明' * 1000}})
+        else:
+            entries.append({'artifact_name': name, 'kind': 'report', 'schema': 'scientific.report.v1',
+                'historical': True, 'selected_current': False, 'claim_admissible': False,
+                'producer_handoff': 'blocked', 'revision': 27})
+    field, key = ('runs', 'name') if tool == 'run_list' else ('objects', 'artifact_name')
+    if tool == 'run_list':
+        def listing(**args):
+            items, cursor = page(entries, key=key, limit=args['limit'], before=args['before'])
+            return {field: items, 'next_before': cursor}
+    else:
+        def listing(**args):
+            return {field: entries}
+    root = router(**{tool: listing})
+    root.facade.runs.agent_settings = load_settings(config)
+    seen, cursor = [], None
+    for _ in range(101):
+        result = root.call_tool(tool, {'view': 'summary', 'limit': 100, 'before': cursor})
+        assert len(json.dumps(result, ensure_ascii=False, separators=(',', ':')).encode()) <= 2048
+        assert result[field]
+        assert 'dispatch' not in json.dumps(result) and 'execution_profile' not in json.dumps(result)
+        if tool == 'scientific_inventory':
+            assert all(item['claim_admissible'] is False and item['producer_handoff'] == 'blocked'
+                and item['historical'] is True for item in result[field])
+            assert 'revision' not in json.dumps(result)
+        seen.extend(item[key] for item in result[field])
+        cursor = result['next_before']
+        if cursor is None:
+            break
+        assert cursor == seen[-1] and result['page_limited_by'] == 'bytes'
+    assert seen == [item[key] for item in entries]
+
+
+def test_list_byte_pagination_preserves_owner_continuation_and_exact_detail():
+    from scidiscovery.agent_execution_settings import MCPReadSettings
+    from scidiscovery.artifact_agent.interfaces.mcp_response_views import root_response
+    settings = MCPReadSettings(summary_max_bytes=1024, detail_max_bytes=1024)
+    rows = [{'name': str(i), 'state': 'completed', 'reason': '中文原文' * 60} for i in range(3)]
+    result = root_response('run_list', {'runs': rows, 'next_before': '2'}, {'view': 'detail'}, read_settings=settings)
+    assert result['runs'] == rows[:1] and result['next_before'] == '0'
+    assert len(json.dumps(result, ensure_ascii=False, separators=(',', ':')).encode()) <= 1024
+    result = root_response('run_list', {'runs': rows[:1], 'next_before': '0'}, {'view': 'detail'}, read_settings=settings)
+    assert result['next_before'] == '0' and result['runs'] == rows[:1]
+    omitted = root_response('run_list', {'runs': [{**rows[0], 'reason': '中文' * 2000}], 'next_before': None},
+        {'view': 'detail'}, read_settings=settings)
+    assert omitted['runs'][0]['entry_omitted'] == 'page_byte_budget'
+    assert omitted['runs'][0]['name'] == rows[0]['name'] and omitted['next_before'] is None
+
+
 def test_execution_poll_is_short_but_exact_logs_and_failure_remain_readable():
     full = {"name": "execution", "state": "failed", "solver_state": "failed",
         "progress": {"elapsed_seconds": 19, "exit_code": 1,
@@ -583,3 +644,61 @@ def test_execution_inventory_detail_does_not_bypass_log_cache_reader():
     result = root_response('execution_list', value, {'view':'detail'})
     assert 'body must remain' not in json.dumps(result)
     assert result['executions'][0]['progress']['log_count'] == 1
+
+
+@pytest.mark.parametrize('tool,field,key', [('run_list','runs','name'), ('scientific_inventory','objects','artifact_name')])
+@pytest.mark.parametrize('name_length', [5, 256])
+def test_oversized_detail_is_explicit_and_does_not_block_following_objects(tool, field, key, name_length):
+    from scidiscovery.agent_execution_settings import MCPReadSettings
+    from scidiscovery.artifact_agent.interfaces.mcp_response_views import root_response, page
+    settings = MCPReadSettings(detail_max_bytes=1024)
+    rows = [{key:f'item{i}'.ljust(name_length, 'x'), 'reason':'x' * (20000 if i == 1 else 100)} for i in range(4)]
+    cursor, seen, omissions = None, [], []
+    for _ in range(6):
+        selected, following = page(rows, key=key, before=cursor, limit=100) if tool == 'run_list' else (rows, None)
+        response = root_response(tool, {field:selected, 'next_before':following},
+            {'view':'detail', 'before':cursor, 'limit':100}, read_settings=settings)
+        assert len(json.dumps(response, ensure_ascii=False, separators=(',', ':')).encode()) <= 1024
+        for item in response[field]:
+            seen.append(item[key])
+            if 'entry_omitted' in item:
+                omissions.append(item[key])
+                assert item['read_request']['arguments']['name'] == item[key]
+        cursor = response['next_before']
+        if cursor is None:
+            break
+    assert seen == [item[key] for item in rows] and omissions == [rows[1][key]]
+
+
+def test_byte_limited_run_page_keeps_goal_membership_on_delivered_page():
+    from scidiscovery.agent_execution_settings import MCPReadSettings
+    from scidiscovery.artifact_agent.interfaces.mcp_response_views import root_response, append_attention
+    rows = [{'name':f'run_{i}', 'state':'failed', 'reason':'r'*250} for i in range(8)]
+    members = [row['name'] for row in rows]
+    response = root_response('run_list', {'runs':rows, 'next_before':None,
+        'current_goal_tasks':members}, {'view':'detail'},
+        read_settings=MCPReadSettings(detail_max_bytes=1024))
+    assert 0 < len(response['runs']) < len(rows)
+    assert response['current_goal_tasks'] == [row['name'] for row in response['runs']]
+    notices = {'events':[{'name':'attention', 'state':'attention_required', 'note':'n'*250}],
+        'more_available':False}
+    reply, count = append_attention(response, notices, budget=1024, field='runs', key='name')
+    assert count == 1
+    assert reply['current_goal_tasks'] == [row['name'] for row in reply['runs']]
+    assert reply['next_before'] == reply['runs'][-1]['name']
+    # Continue at the actual returned page key, including the extra notice trim.
+    seen = [row['name'] for row in reply['runs']]
+    cursor = reply['next_before']
+    for _ in range(8):
+        remaining = rows[members.index(cursor)+1:]
+        page = root_response('run_list', {'runs':remaining, 'next_before':None,
+            'current_goal_tasks':[row['name'] for row in remaining]}, {'view':'detail'},
+            read_settings=MCPReadSettings(detail_max_bytes=1024))
+        assert page['current_goal_tasks'] == [row['name'] for row in page['runs']]
+        seen.extend(row['name'] for row in page['runs'])
+        cursor = page['next_before']
+        if cursor is None:
+            break
+    else:
+        pytest.fail('finite eight-member fixture did not finish within eight pages')
+    assert seen == members

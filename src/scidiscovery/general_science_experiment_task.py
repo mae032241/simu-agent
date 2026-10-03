@@ -133,7 +133,8 @@ class ExecuteExperiment(BaseModel):
     name: str = Field(default="experiment", pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$")
     implementation: str | None = Field(default=None, max_length=128,
         description="Sealed implementation created in or explicitly bound to this task; required for start or review. review records a wait for the exact independent review and returns its invocation for the scheduler. When the review finishes, the same action returns its complete sealed scientific outcome. Controlled work waits for the review outcome; reads/status/cancel remain available. It creates no execution and dispatches no Agent.")
-    output_name: str | None = Field(default=None, max_length=256)
+    output_name: str | None = Field(default=None, max_length=1024,
+        description="read/export: use an exact output name or verified file_name returned by status after collection completes; never guess a generated identifier.")
     offset: int = Field(default=0, ge=0, description="read only: byte offset; continue at the returned next_offset. For logs use direction/cursor.")
     direction: Literal["tail", "before", "after"] = "tail"
     cursor: str | None = Field(default=None, max_length=2048, description="logs only: pass the returned before/after cursor unchanged; tail needs no cursor.")
@@ -181,8 +182,28 @@ def validate_completion(payload, sources, handoff):
         resolved = sources.sealed_material_record(alias)
         if resolved is not None:
             records[alias] = resolved
-    if any(alias not in records for alias in report.adopted_stages):
-        raise SemanticRuleViolation("Adopted stages must identify sealed materials created in or explicitly bound to this task.")
+    def repair(message):
+        for alias in sources:
+            if alias not in records:
+                resolved = sources.sealed_material_record(alias)
+                if resolved is not None:
+                    records[alias] = resolved
+        groups = {}
+        for alias, item in records.items():
+            metadata = item.get('metadata', {})
+            kind = metadata.get('kind')
+            label = {'experiment_implementation': 'implementation', 'experiment_execution': 'collected_execution'}.get(kind)
+            if kind == 'experiment_stage' and metadata.get('stage') == 'validity':
+                label = 'validity'
+            if label:
+                groups.setdefault(label, []).append(alias)
+        candidates = '; '.join(f'{key}={values[:6]}' + (f' ({len(values)-6} more)' if len(values)>6 else '')
+            for key, values in groups.items())
+        raise SemanticRuleViolation(message + ' Available exact material aliases: ' + (candidates or 'none')
+            + '. Adopt materials from the same execution chain; an author-written execution stage or review is not a collected-execution receipt.')
+    unknown = [alias for alias in report.adopted_stages if alias not in records]
+    if unknown:
+        repair('Unknown adopted_stages: ' + repr(unknown[:6]) + '.')
     selected = [records[alias] for alias in report.adopted_stages]
     for alias, record in zip(report.adopted_stages, selected):
         if record.get("tool_name") != "worker_experiment_stage":
@@ -226,7 +247,9 @@ def validate_completion(payload, sources, handoff):
         and item["metadata"].get("stage") == "validity"
         and executions.intersection(source_identity(item, alias) for alias in item["metadata"].get("derived_from", ()))]
     if not implementations or not executions or not validity:
-        raise SemanticRuleViolation("A completed experiment must adopt a sealed implementation, its collected execution, and a validity assessment citing that execution. Otherwise report blocked or inconclusive.")
+        missing = ('implementation' if not implementations else 'execution linked to selected implementation' if not executions
+            else 'validity citing selected execution')
+        repair('Completed experiment is missing ' + missing + '.')
 
 
 def finalize(request):

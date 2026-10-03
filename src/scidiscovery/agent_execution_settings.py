@@ -86,6 +86,12 @@ class ExecutionIOSettings(SettingsValue):
     approval_wait_budget_seconds: int = Field(default=86400, ge=0)
 
 
+class BudgetExtensionSettings(SettingsValue):
+    """Administrator limits on new human time grants; historical decisions persist."""
+    max_seconds_per_decision: int = Field(default=21600, ge=0, le=2**53-1)
+    max_total_seconds_per_pool: int = Field(default=86400, ge=0, le=2**53-1)
+
+
 class LifecycleSettings(SettingsValue):
     """Control daemon reconciliation; global settings, no model calls or submissions."""
     interval_seconds: int = Field(default=30, ge=1, le=3600)
@@ -237,6 +243,19 @@ class PresentationSettings(SettingsValue):
     memory_limit_bytes: int = Field(default=2147483648, ge=268435456)
 
 
+class MCPReadSettings(SettingsValue):
+    """Global JSON page budgets for Root task and scientific-object lists."""
+    summary_max_bytes: int = Field(default=4096, ge=1024, le=262144)
+    detail_max_bytes: int = Field(default=32768, ge=1024, le=1048576)
+
+
+class DiagnosticsSettings(SettingsValue):
+    """Retention of expendable engineering traces, never sealed scientific evidence."""
+    max_records: int = Field(default=1024, ge=1)
+    max_total_bytes: int = Field(default=67108864, ge=1024)
+    retention_seconds: int = Field(default=604800, ge=1)
+
+
 class AgentSettings(SettingsValue):
     schema_version: Literal[1] = 1
     defaults: DefaultSettings = Field(default_factory=DefaultSettings)
@@ -244,10 +263,13 @@ class AgentSettings(SettingsValue):
     progression: ProgressionSettings = Field(default_factory=ProgressionSettings)
     helpers: HelperSettings = Field(default_factory=HelperSettings)
     execution_io: ExecutionIOSettings = Field(default_factory=ExecutionIOSettings)
+    budget_extensions: BudgetExtensionSettings = Field(default_factory=BudgetExtensionSettings)
     lifecycle: LifecycleSettings = Field(default_factory=LifecycleSettings)
+    diagnostics: DiagnosticsSettings = Field(default_factory=DiagnosticsSettings)
     input_materials: MaterialInputSettings = Field(default_factory=MaterialInputSettings)
     attachments: AttachmentSettings = Field(default_factory=AttachmentSettings)
     presentation: PresentationSettings = Field(default_factory=PresentationSettings)
+    mcp_read: MCPReadSettings = Field(default_factory=MCPReadSettings)
 
     def sparse(self) -> dict:
         return self.model_dump(exclude_none=True, exclude_unset=True)

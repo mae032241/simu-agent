@@ -18,9 +18,12 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 from typing import TYPE_CHECKING
 
+from pydantic import ValidationError
+from ..service.executions import ExecutionApprovalError, ExecutionBudgetNotApplicable
 from ..schema.approval import LocalIdentityRef
 from ..service.approvals import (
     ApprovalAccessDenied,
+    BudgetExtensionAccountingError,
     ApprovalError,
     ApprovalExpired,
     ApprovalService,
@@ -895,8 +898,20 @@ class ApprovalUI:
                 nonce = _required(form, "nonce")
                 selected = _required(form, "selected_option")
                 rationale = _required(form, "rationale", allow_blank=True)
+                from decimal import Decimal, DecimalException
+                try:
+                    hours = Decimal(_one(form, 'additional_wall_time_hours') or '0')
+                    seconds = hours * 3600
+                    if not seconds.is_finite() or seconds < 0 or seconds > 2**53-1 or seconds != seconds.to_integral_value():
+                        raise ValueError('追加时长必须是非负的整秒数')
+                    additional_seconds = int(seconds)
+                except DecimalException as error:
+                    raise ValueError('追加时长无效') from error
                 if _required(form, "confirm") != "confirm":
                     raise ValueError("confirmation mismatch")
+            except (UnicodeDecodeError, ValueError):
+                return self._error(handler, HTTPStatus.BAD_REQUEST, '审批表单格式或字段无效。')
+            try:
                 if self._approval_frozen(parts[1]):
                     return self._error(handler, HTTPStatus.CONFLICT, "实例正在维护或已经归档；此审批只可读取。")
                 review = self.service.review(parts[1], access_token=token)
@@ -907,7 +922,14 @@ class ApprovalUI:
                         "该实例管理审批已经停用，只能读取历史内容。",
                     )
                 with self._approval_write_guard(parts[1]):
-                    decision_ref = self.service.record_ui_decision(
+                    executions = None
+                    if additional_seconds:
+                        owner = self._approval_owner(parts[1])
+                        if owner is None or self.read_model is None:
+                            raise ApprovalError('当前审批没有可调整的累计执行预算')
+                        executions = self._model(owner[0].instance_id).executions
+                    decide = executions.record_budget_extension_decision if executions is not None else self.service.record_ui_decision
+                    decision_ref = decide(
                         approval_id=parts[1],
                         access_token=token,
                         csrf_token=csrf,
@@ -916,9 +938,19 @@ class ApprovalUI:
                         rationale=rationale,
                         decided_by=self.identity,
                         ui_session_id=self.session_id,
+                        additional_wall_time_seconds=additional_seconds,
                     )
-            except (UnicodeDecodeError, ValueError, ApprovalAccessDenied):
+            except BudgetExtensionAccountingError as error:
+                return self._error(handler, HTTPStatus.CONFLICT, str(error))
+            except ApprovalAccessDenied:
                 return self._error(handler, HTTPStatus.FORBIDDEN)
+            except ExecutionBudgetNotApplicable:
+                return self._error(handler, HTTPStatus.CONFLICT, '此执行未配置累计耗时预算，不支持追加耗时；可按原审批选项处理。')
+            except ExecutionApprovalError:
+                return self._error(handler, HTTPStatus.CONFLICT, '执行授权与预算记录不一致，请修复相关控制记录后重试。')
+            except (ValidationError, json.JSONDecodeError, UnicodeDecodeError):
+                LOGGER.exception('stored approval or budget record is invalid')
+                return self._error(handler, HTTPStatus.CONFLICT, '已有审批或预算记录无法校验，请修复记录后重试。')
             except ApprovalExpired:
                 return self._error(handler, HTTPStatus.GONE)
             except (ApprovalError, CASIntegrityError):

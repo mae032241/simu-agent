@@ -502,6 +502,17 @@ Controlled analysis evidence recovery requires matching control/Worker packages 
 
 ## Agent execution settings
 
+The global `agent-settings.json` section `mcp_read` bounds complete JSON pages for
+`run_list` and `scientific_inventory`: `summary_max_bytes` defaults to 4096 and
+`detail_max_bytes` to 32768. `limit` is an item ceiling; byte limits may shorten a
+page, so continue with the returned `next_before`. Summaries omit per-task dispatch
+instructions and model profiles while retaining scientific qualification flags.
+If one entry exceeds the budget, its bounded `entry_omitted` marker retains the
+exact name and a `read_request` for `run_status` or `artifact_catalog`. Pagination
+advances past that marker, so following objects remain reachable. The omitted
+body is not a scientific summary, and omitted objects are not absent. These are global control
+settings, not instance overrides. The page budget also covers appended attention notices; notices omitted for lack of space remain pending. Before rolling back to an older release that does not recognize `mcp_read`, remove that section from the configuration.
+
 The instance directory has separate Agent Settings and archive-management entries. Agent Settings obtains editing access and opens the dedicated settings page; saving stays on that page.
 
 The installer creates `${SCID_CONFIG_ROOT}/agent-settings.json` (default `/etc/scidiscovery/agent-settings.json`) only when absent, with `zh-CN`, `gpt-6-sol`, and `medium` defaults. An existing file that exactly matches the previous generated default is upgraded transactionally to the new default; customized files are preserved. Control and UI services use the same `SCID_AGENT_SETTINGS_FILE`; global-file edits require restarting both services. Missing files retain compatibility defaults; malformed existing files report their path and fields.

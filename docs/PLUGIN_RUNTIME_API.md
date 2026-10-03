@@ -120,6 +120,12 @@ per-Run service: `capabilities(context)`, `seal_implementation(context, *, paylo
 scientific_material, sources, private_outputs=())`, `read_implementation(context,
 alias)`, `source_alias(context, ref)`, `diagnostic_context(context, *, service_name)`,
 `cancel_diagnostics(context, *, service_name, name)`, and `command(context, request)`.
+`publish_diagnostic_files(context, *, implementation, name, workspace, outputs)`
+streams identity-checked diagnostic originals through common attachment publication.
+`workspace` and output descriptors come from the trusted diagnostic service, never
+Agent-authored paths. Returned references retain diagnostic scope; publication is
+not formal execution or scientific qualification. The tool declares `attachments`
+in its evidence ports to use this delivery capability.
 `ExperimentMethod` supplies `key`/`content`; `SealedImplementation` supplies exact
 `artifact_ref`/`content`. Commands still pass the task's frozen execution and budget
 gates; these callbacks cannot bind another Run or expose the coordinator.

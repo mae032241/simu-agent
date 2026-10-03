@@ -350,17 +350,17 @@ ROOT_TOOLS = (
     RootTool("instance_current", "Read the bound research instance or return its direct local management URL.", ReadInput),
     RootTool("instance_list", "List research instances without exposing internal identity.", InstanceListInput),
     RootTool("instance_close", "Close the current research instance against further writes.", EmptyInput),
-    RootTool("scientific_inventory", "List current immutable scientific objects without suggesting a workflow or capability.", PageInput),
+    RootTool("scientific_inventory", "List scientific-object metadata within the configured page byte budget. Summary retains qualification flags; use artifact_catalog for one object's details. limit is a maximum; continue with next_before.", PageInput),
     RootTool("scientific_current", "Read explicit current scientific-object selections for this research instance.", PageInput),
     RootTool("scientific_current_select", "Compare-and-set one immutable scientific object as the explicit current selection.", ScientificCurrentSelectInput),
-    RootTool("lifecycle_events", "Return persistent semantic task, approval, and execution state changes for this scheduler process.", LifecycleEventsInput),
+    RootTool("lifecycle_events", "Return persistent semantic task, approval, execution and attention changes for this scheduler process. Attention notices are also included automatically in ordinary Root tool replies; reading a notice does not resolve it.", LifecycleEventsInput),
     RootTool("artifact_ingest_file", "Freeze and bind one project file under a semantic name.", IngestFileInput),
     RootTool("artifact_ingest_text", "Freeze original user text and bind it under a semantic name in the current instance; does not create a Run.", IngestTextInput),
     RootTool("artifact_catalog", "Read metadata, paged originals (view=content), or direct parents for one exact named scientific material.", ArtifactCatalogInput),
     RootTool("operation_catalog", "List bounded operation summaries; select operation_id with view=detail for its full compiled contract.", OperationCatalogInput),
     RootTool("operation_preflight", "Optional check without creating. Invoke independently checks admission; this does not reserve resources or authorize execution.", OperationCallInput),
     RootTool("operation_invoke", "Validate and create one Agent, Transform, Effect or Approval from the compiled catalog; no prior preflight required. Success preserves dispatch configuration, exact outputs or approval URLs by executor kind; use the returned detail entry for Run context.", OperationCallInput),
-    RootTool("run_list", "List minimal Runs in this research instance. current_goal_tasks identifies exact frozen-goal members on this page. view=history freezes terminal and judgment upper bounds for the exact goal and bounded immutable supersedes ancestors authorized in this instance; revision_scope reports missing ancestry and the 2048-character cursor capacity. Names, schema and common parents do not imply revisions; existing frozen scopes never expand. Use an older task's run_status navigation attempt_history.read for its exact old goal or recorded recovery source. Pass the returned continuation unchanged; later tasks/completion/judgments stay out. Missing content remains unknown; attributed Worker conclusions and Root judgments are not controlled verification, consumption or qualification.", RunListInput),
+    RootTool("run_list", "List minimal Runs in this research instance. Summary/detail pages obey the configured byte budget; limit is a maximum and next_before continues the page. Read run_status for dispatch or conclusions. current_goal_tasks identifies exact frozen-goal members on this page. view=history freezes terminal and judgment upper bounds for the exact goal and bounded immutable supersedes ancestors authorized in this instance; revision_scope reports missing ancestry and the 2048-character cursor capacity. Names, schema and common parents do not imply revisions; existing frozen scopes never expand. Use an older task's run_status navigation attempt_history.read for its exact old goal or recorded recovery source. Pass the returned continuation unchanged; later tasks/completion/judgments stay out. Missing content remains unknown; attributed Worker conclusions and Root judgments are not controlled verification, consumption or qualification.", RunListInput),
     RootTool("run_status", "Read a Run with one intent: decision (default), status, navigation or full. Explicit stage_offset=0 lists sealed stages even while running; stage_reference reads an exact material. Stages never establish final completion or qualification.", RunStatusInput),
     RootTool("run_record_failure", "Record failure of one running minimal Run.", RunFailureInput),
     RootTool("approval_list", "List named reviews in this scheduler instance.", ApprovalListInput),
@@ -702,6 +702,36 @@ class RootMCPRouter:
                     return self._call_tool(name, arguments)
             return self._call_tool(name, arguments)
 
+    def _with_attention(self, response, *, name=None, values=None):
+        if not isinstance(response, dict):
+            return response
+        try:
+            prepare = getattr(self.facade, 'prepare_attention_notifications', None)
+            if prepare is None:
+                return response
+            batch = prepare()
+            if batch is None:
+                return response
+            notices, delivery = batch
+            budget = field = key = None
+            if name in {'run_list', 'scientific_inventory'}:
+                from ...agent_execution_settings import MCPReadSettings
+                settings = getattr(getattr(self.facade.runs, 'agent_settings', None), 'mcp_read', None) or MCPReadSettings()
+                budget = settings.detail_max_bytes if values.get('view') == 'detail' else settings.summary_max_bytes
+                field, key = ('runs', 'name') if name == 'run_list' else ('objects', 'artifact_name')
+            from .mcp_response_views import append_attention
+            result, count = append_attention(response, notices, budget=budget, field=field, key=key)
+            claimed = self.facade.acknowledge_attention_notifications(delivery, count)
+            if not claimed:
+                return response
+            result['attention_notifications']['events'] = [notices['events'][index] for index in claimed]
+            return result
+        except Exception:
+            # Notification failure must never mask a committed scientific action.
+            import logging
+            logging.getLogger(__name__).warning("Root attention notification deferred", exc_info=True)
+            return response
+
     def _call_tool(self, name: str, arguments: dict[str, Any] | None) -> Any:
         # Invocation validates immutable inputs before its own scheduling guard.
         if (name in SCHEDULING_WRITES and name != "operation_invoke"
@@ -730,7 +760,7 @@ class RootMCPRouter:
         values = {field: getattr(parsed, field) for field in type(parsed).model_fields}
         try:
             if name == "run_status":
-                return self.facade.run_status(**parsed.model_dump(exclude_unset=True))
+                return self._with_attention(self.facade.run_status(**parsed.model_dump(exclude_unset=True)))
             # Presentation options are never part of an immutable operation request.
             query = dict(values)
             query.pop("view", None)
@@ -749,7 +779,9 @@ class RootMCPRouter:
             if name == "scientific_inventory":
                 query["include_operations"] = False
             from .mcp_response_views import root_response
-            return root_response(name, getattr(self.facade, name)(**query), values)
+            settings = getattr(getattr(self.facade.runs, "agent_settings", None), "mcp_read", None)
+            response = root_response(name, getattr(self.facade, name)(**query), values, read_settings=settings)
+            return response if name == "lifecycle_events" else self._with_attention(response, name=name, values=values)
         except Exception as error:
             from ..service.instance_maintenance import InstanceMaintenanceBusy, InstanceMaintenanceUnavailable
             if isinstance(error, (InstanceMaintenanceBusy, InstanceMaintenanceUnavailable)):

@@ -186,6 +186,32 @@ class RootInstanceRoutes:
             ],
         }
 
+    def prepare_attention_notifications(self, *, channel="reply", limit=8):
+        """Read pending notices without acknowledging or acquiring a write lock."""
+        if self.session_key is not None and not self.bindings.client_enabled(session_key=self.session_key):
+            return None
+        try:
+            instance = self._instance_id()
+        except RootToolError:
+            return None
+        observer = 'attention:' + channel + ':' + (self.session_key or 'facade')
+        notices, receipts = self.runs.pending_attention_notices(instance=instance, observer=observer, limit=limit)
+        if not notices['events']:
+            return None
+        return notices, (instance, observer, receipts)
+
+    def acknowledge_attention_notifications(self, delivery, count):
+        instance, observer, receipts = delivery
+        return self.bindings.acknowledge_attention(instance=instance, observer=observer, receipts=receipts[:count])
+
+    def attention_notifications(self, *, channel="reply", limit=8):
+        batch = self.prepare_attention_notifications(channel=channel, limit=limit)
+        if batch is None:
+            return None
+        notices, delivery = batch
+        claimed = self.acknowledge_attention_notifications(delivery, len(notices['events']))
+        return {**notices, 'events':[notices['events'][index] for index in claimed]} if claimed else None
+
     def lifecycle_events(self, *, limit: int | None = None) -> dict[str, Any]:
         """Read changed lifecycle states through a durable service-owned cursor."""
 
@@ -213,7 +239,9 @@ class RootInstanceRoutes:
             states=tuple(states),
             limit=limit,
         )
+        attention = self.attention_notifications(channel="lifecycle")
         return {
+            **({"attention_notifications":attention} if attention else {}),
             "poll_again": limit is not None and len(changes) == limit,
             "events": [
                 {

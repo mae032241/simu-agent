@@ -226,7 +226,7 @@ Root interface declarations also own their surface: ordinary `research` omits th
 Effect execution or historical recovery. This is one declaration projection, not
 another Operation registry or authorization. Task-managed execution stays with
 `worker_experiment_execute` while its owner or any recovery descendant is active.
-When the entire lineage has failed, the execution surface and lifecycle events
+When every owner has failed or sealed a limited experiment conclusion, the execution surface and lifecycle events
 expose the original execution for status, sync, logs, collect and outputs, plus
 state-appropriate explicit start, abandon or cancel. Starting reuses the exact request,
 implementation and approval; it checks the frozen task contract, required independent
@@ -349,6 +349,125 @@ are mapped only at the transport boundary, preserving the original, review subje
 authorization. Collection alone does not establish scientific success; analysis must
 still report missing target observations.
 
+Execution receipts distinguish direct control parents from inherited scientific
+inputs in the private evidence manifest. Result lookup uses that exact link; older
+receipts may exclude inputs proven by their original frozen manifest, but ambiguity
+is never resolved by recency. Asynchronous collection is explicitly reported as
+pending delivery. Subsequent task status and pre-finalization reconciliation create
+the same idempotent execution receipt once results have been collected, including
+collected results from cancelled or failed executions. A terminal state alone does
+not create a receipt or trigger collection.
+Final delivery refreshes solver status before reconciling collected receipts. A
+successful execution without collected results, or a terminal execution with an
+active/uncertain collector, blocks finalization. A definitively failed, timed-out or
+interrupted collector with no active recovery permits a blocked/inconclusive report
+with nonempty limitations, never completed or a fabricated collection receipt.
+A stopped failed/cancelled execution can still support a limited report. A collector finishing during refresh is reconciled
+in that same submission attempt. Status observation never implicitly starts collection.
+When every owner has failed or sealed a limited experiment conclusion, Root may
+recover the original execution's status/results. Later collection cannot rewrite
+the sealed report; new conclusions need a new delivery based on those results.
+Any queued or running owner still prevents takeover. Limited completed owners permit
+result recovery only; starting an unsubmitted request still requires an entirely failed
+owner lineage, the original review and execution authorization.
+Read/export accept exact output identifiers or verified solver-relative filenames.
+Finalization identifies missing chain edges and lists bounded available aliases,
+without selecting scientific validity on the Worker's behalf.
+Initialization diagnostics automatically publish their verified native files through
+streamed attachments; no output path declarations are needed. These remain diagnostic
+materials, not formal execution receipts. A missing expected output does not prevent
+retention of other generated files; collection errors and terminal failure remain explicit.
+
+Reading and replaying a sealed calculation use the same exact producer receipt and
+parent bindings, independent of whether its owner is running, failed or completed.
+Publication freezes one private reference proof per material; later reads reuse it
+even if the owner adds evidence. Historical materials create this proof once on first
+access. Parent derivation filters against the declared schema, media and size contract
+before checking cardinality. For historical implementations without `control_parents`,
+only the original producer's exact frozen inputs may be excluded to resolve a package;
+unresolved ambiguity remains an error.
+
+Evidence admission builds its proof from the receipt transaction's captured records
+before committing the receipt and public binding. Proof failure rolls back admission;
+an identical retry also repairs a historical receipt missing its proof. A CAS proof
+left by an interrupted transaction is reused only if its exact subject receipt still
+matches, so a later alias allocation cannot adopt an orphan's binding.
+Current attempts are read through that same SQLite connection, and immutable recovery
+origins are verified before taking the write lock; no second Run-database reader waits
+on the receipt transaction. Per-material proofs retain the declared dependency closure
+and matching calculation attempts, including exact recovery namespaces, rather than
+unrelated later receipts. Existing proofs retain their original bytes. Legacy missing
+proofs can be repaired even when the whole Run exceeds snapshot limits; a genuinely
+oversized dependency closure returns `reference_proof_limit` without truncation.
+The aggregate input/receipt/access binding map has no additional 128-entry gate.
+Per-collection and per-attempt limits remain; all writers and recovery/finalization
+use the same 1 MiB encoded-manifest budget. New receipts check the complete snapshot
+before committing, while identical receipt retries reuse their fixed proof. Oversize
+legacy data receives an explicit diagnostic to preserve materials and continue from
+selected exact sources, not an opaque runtime error or a silently truncated proof.
+Reference proof failures still settle the response/time reservation; an assignment
+proof failure terminates the Run while retaining originals. Explicit adoption and
+recovery copying validate the complete combined proof before committing. Final
+submission uses one error policy from reconciliation through finalization, proof
+construction, checking, candidate acceptance, Artifact registration and completion.
+Temporary storage/connection failures preserve the Run and allow unchanged retry;
+correctable output errors remain declared rejections. Irreparable proof limits and
+verified integrity failures terminate the task with retained evidence, drafts and
+explicit Root recovery instructions. Unknown exceptions retain engineering traces
+and require intervention, without classifying them as scientific failure or advising
+automatic retry. A draft may be preserved without a publishable proof; its
+`evidence_proof_unavailable` marker never grants scientific validity. Idempotent
+publication keys and accepted candidate identity survive interruptions. A committed
+completion is never reversed by an optional post-commit failure. Attachment
+streaming and Artifact registration finish before taking the Run write lock; the
+transaction rechecks state, quotas and the complete proof. Unbound immutable objects
+left by rejection are reused by publication key, never treated as accepted evidence.
+
+Within the v5 storage generation and current ABI25 declarations, the binding-limit
+revision retains one explicit predecessor contract: the catalog
+recompiles the original 128-binding schema and complete output contracts, accepting
+an in-flight identity only when its old digest matches exactly. Old output remains
+subject to that old contract. Failed predecessors may explicitly recover to the
+current widened contract without rewriting original task, draft or proof identities.
+Catalog `recorded_operation` resolves exact ID/version/digest for Run producer families,
+derived inputs, historical Transform interpretation and approval UI review relationships.
+Root reports `current`, `supported_historical` or `unavailable` separately from output
+availability. New invocations and current scientific qualification retain current-policy
+checks; historical availability grants no authorization. These readers share the resolver,
+so a supported predecessor can complete and supply downstream inputs after upgrade.
+Tests exercise exact predecessor reads, old-contract completion, and both draft and
+resume recovery. The actual 964713f ABI23 golden digests remain preserved, but that
+deployment's unmarked/older state and archives are rejected by the existing breaking
+upgrade policy; this is not an ABI23 migration or recovery path. Original bytes remain
+readable when explicitly supplied as materials, without current qualification or an
+invented historical review edge. Other contract differences are not ignored; unknown
+digests remain unavailable.
+Budget-extension accounting maps known record/integrity failures to a repairable UI
+conflict; unexpected technical errors retain their traceback in server logs and return
+the ordinary service-unavailable response without sealing a decision.
+Grant validation and projection resolve one frozen budget owner from exact policy
+history, even when its current pointer is missing; conflicting history is rejected.
+Reauthorization also checks that history, so losing a pointer cannot change the pool.
+Approval forms use 400 for malformed fields, 403 for access denial, and 409 for
+known execution/record conflicts. New zero-extension decisions omit the optional
+field; already sealed explicit-zero decisions preserve their bytes. Nonzero grants
+still require a grant-aware reader when downgrading.
+Parent derivation uses original control receipt edges when present, verifying their
+membership in the immutable envelope. Without those edges, only exact producer input
+parents can resolve historical ambiguity; no unadvertised kind constraint is invented.
+UI presentation accumulates direct parents only until its byte budget is reached,
+retaining an explicit omission marker instead of building the entire list first.
+New receipts also retain exact derived_from parent references. Historical empty
+control_parents can recover those edges from the original producer's exact sources;
+empty must not silently mean no ancestry. An execution without a wall-time allowance
+is reported as ineligible for time extension, rather than as corrupt control state.
+
+New curve scores identify the support-aware algorithm as `curve-operators.v2` or
+`analysis-curve-operators.v2`. Historical v1 calculations still require exact source
+bytes and full numeric replay. Compatibility accepts the pre-shared-support bundle
+digest only when no shared support is declared; it never accepts changed metrics or
+rewrites the sealed record. Changed historical metrics require a new calculation.
+
 `LayeredDiagnosisReport` concentrates conclusions in `summary` and `overall_verdict`,
 with evidence and optional `limitations`. Its complete legacy `gates` object,
 remaining contradiction, next action and hypothesis assessments are optional. For
@@ -412,6 +531,25 @@ Terminal jobs awaiting accounting remain in bounded background synchronization, 
 collected jobs. Preparation failure before a saved submission releases its reservation;
 an uncertain submission retains it. Repeated settlement never refunds recorded usage.
 A current policy increase changes the ceiling without resetting historical consumption.
+Execution approval pages can optionally append a human-chosen cumulative wall-time
+extension when authorizing the exact request. The signed decision binds the increment;
+an idempotent durable ledger applies it to this executor/scientific-subject pool across
+revisions and restarts. Per-request thresholds, storage limits and usage are unchanged.
+Reject/cancel decisions cannot extend budgets. Archive/restore retains these grants,
+and interrupted projection is repaired by an identical UI retry or execution authorization.
+Installation agent settings bound new extensions with
+`budget_extensions.max_seconds_per_decision` (default 21600 seconds) and
+`budget_extensions.max_total_seconds_per_pool` (default 86400 seconds of additional
+grants). Zero disables new grants. Validation counts both projected grants and sealed
+decisions awaiting projection; a short control-side lock serializes validation,
+decision sealing and projection. Lowering these settings does not invalidate an
+already sealed grant. Historical decisions preserve their original canonical bytes,
+including both omitted and explicit-zero extension fields. These administrative
+limits are shown in the approval UI, not added to Worker forms.
+Grant accounting selects exact requests from the pool's durable policy history and
+reservation records before loading unprojected decisions. Missing current policy
+pointers do not erase sealed grants; an unreadable decision blocks only its relevant
+pool with an explicit UI conflict. Projected grants use their retained ledger rows.
 Approval UI separates the requested increment, per-request threshold, cumulative balance
 and overage; a negative balance is never presented as this request's available time.
 The install transaction fills a missing cumulative threshold from the bundled config
@@ -523,6 +661,9 @@ or expiry; simultaneous waits count once. Total credit is capped by the Run's fr
 including historical pending approvals without expiry. The original deadline stays unchanged, and
 repeated reads or daemon restarts cannot accumulate extra work time. Worker calls,
 Root status and timeout reconciliation use the same projection. An approval created
+while work is active returns the current deadline and remaining task time in
+`task_budget`; the initial assignment deadline must not be reused as a live clock.
+An approval created
 after expiry cannot revive a task. Existing failed tasks remain failed and can only
 use explicit recovery of their original execution as described above.
 Batch status reads load wait events and approval records once per batch. The local Worker
@@ -590,6 +731,91 @@ holds both the archive and extracted files. Archive transfer uses the collection
 and idle budgets; per-file budget applies during extraction. UI shows archive bytes
 received separately from files verified. Upgrading uses the existing joint local
 and remote runner install transaction; old runners fail with an upgrade diagnostic.
+
+Execution requests retain the exact scientific implementation receipt separately from
+its private executable package. Several scientific descriptions may share a package;
+review/start use the selected receipt, and collection/recovery/final reconciliation
+use the frozen receipt. Historical requests without that identity require a unique
+match; ambiguity is never evidence of integrity corruption. Once execution and
+collection are idle, a missing/ambiguous exact receipt permits only a blocked or
+inconclusive report with limitations; control never invents a receipt. Completed
+delivery stays rejected. Root sees binding ambiguity in normal status and can inspect
+retained results without rerunning the solver. Mechanical collection remains available
+under the frozen execution identity even before receipt binding is repaired; it
+withholds scientific output projection and receipt publication until binding is exact. Selecting a new description does not
+inherit an earlier description's independent review.
+
+Submission retry classification follows explicit causes across wrappers; implicit
+exception context remains diagnostic evidence only. A declared integrity/admission
+failure cannot be overridden by an earlier lock/connection error. `repairable` alone
+does not identify who can repair a problem: submission correction is declared by
+RunOutputError/WorkspaceOutputError; other DiagnosticErrors require Root intervention.
+Submission errors follow their explicit cause across wrappers. Declared finalizer/checker
+budget exhaustion stops the task; a connection interruption or SQLite busy may be
+retried only within the task deadline. An unclassified timeout requires investigation,
+not automatic retry or an assumed exhausted budget. Storage exhaustion stops the
+Run when the failure can be persisted. If control storage cannot confirm state, the
+caller gets `submission_state_unavailable`; it must query the same task after repair,
+not assume termination or start another solver. Running tasks that need investigation
+expose a short `attention_required` field through normal Root status polling.
+Attention is a durable control-issue projection, independent of the last tool error.
+Submission issue codes coexist; implementation issues bind one exact execution.
+Ordinary rejections and successful unrelated tools cannot erase either. A missing
+historical implementation receipt requires intervention; a bad caller alias, an
+expected not-created object or a transient transport failure does not. Successful
+submission resolves its submission issues. A verified exact receipt lookup resolves
+only that execution's binding issues, including its earlier recovery owners. A
+limited report can close its Run without pretending that an unresolved execution
+binding has been repaired; its attention remains visible after completion.
+
+Ordinary Root tool responses automatically include bounded `attention_notifications`
+on first observation, changed issues or recurrence. Repeated identical observations
+update last-seen time but do not notify again; reading a notice never resolves it.
+`lifecycle_events` has an independent durable notification cursor. Notices contain
+semantic task names and safe codes, not private execution bindings or trace bodies.
+This is delivery on the next Root tool response, not unsolicited process wake-up:
+a disconnected/idle Root must reconnect or call a tool. Notification failure does
+not turn a committed operation into a failed tool call; durable status remains
+available for retry. Issue transitions live in the Run activity store; mutable notification snapshots
+live in `run_attention_notices` in the same database. Both share instance archive/restore.
+Legacy notice rows remain untouched, and migration preserves their cursor versions.
+
+Successful `resume_from` completion marks the ancestor's submission issues as
+`superseded`; it does not erase diagnostics or clear execution-binding issues.
+`draft_from` may change scientific inputs and cannot establish that repair.
+Legacy requests without an exact receipt resolve uniquely against the sealed package
+author's complete receipts, then map that exact receipt to a consumer alias. Request
+`experiment_run` denotes the recovery root, which may differ from the package author.
+Packages without author metadata require uniqueness across the original task family;
+a narrowed successor input set is never proof that a historical ambiguity is repaired.
+
+Notification reads use one compact transition snapshot per task and indexed joins,
+not historical issue scans or an inventory of all Run bindings. Closed snapshots
+are sent only to observers that have an outstanding notice; an acknowledged closed
+snapshot is excluded. Unchanged notification/lifecycle reads take no write lock.
+Acknowledgement atomically claims each version per observer; concurrent replies
+include only notices they successfully claimed. Claims advance monotonically and
+only cover notices that fit the final reply. This does not guarantee network delivery
+after a response is lost. `mcp_read` byte budgets include list entries, cursors and appended notices;
+when a notice cannot fit it remains pending. Codes are capped by the eight-issue
+projection; `issues_truncated` marks omissions while `total` counts all open issues.
+
+Expected output corrections store structured diagnostics without traceback files.
+Engineering traces are deduplicated by exact failure and scope; collection enforces
+bounded storage, and serial lifecycle maintenance applies the global agent-settings
+`diagnostics` policy (defaults: 1024 records, 67108864 bytes, 604800 seconds).
+Only the control lifecycle daemon publishes the derived retention policy cache;
+capture/prune callers read it without overwriting it with local settings. If that cache
+is damaged, recording and cleanup use bounded fallback settings, and the daemon
+restores it from authoritative configuration without requiring a readable old cache.
+Log bodies use atomic replacement. Live reads share the retention lock with writers
+and cleanup; historical read-only archives need no new lock file.
+Expiry removes diagnostic JSON/stdout/stderr only, never CAS or sealed evidence.
+References in Root records do not pin traces: the count/byte budget can evict them
+before seven days. Durable Run error summaries remain; the full trace is expendable.
+A retained locator may expire; diagnostic reads report this explicitly. Old settings
+without this optional section use defaults; remove it before rolling back to a
+program version that does not recognize it.
 
 Engineering failures use one bounded, redacted diagnostic projection. Root reads
 details by an instance/session-scoped `diagnostic_read` reference. Worker runtime errors

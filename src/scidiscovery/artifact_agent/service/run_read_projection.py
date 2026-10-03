@@ -25,6 +25,7 @@ def run_intent_projection(value, *, intent):
         "recovery_available",
         "sealed_output_status",
         "diagnostics_available",
+        "attention_required",
         "content_unavailable",
         "sealed_stages",
         "dispatch",
@@ -178,17 +179,8 @@ class RunReadProjection:
     ) -> dict[str, Any]:
         include_payload = intent in {"navigation", "decision", "full"}
         output_status, output = self._sealed_output(value, include_payload=include_payload)
-        try:
-            compiled = self._operation_catalog.operation(value.operation_id)
-        except KeyError:
-            contract_status = "historical"
-        else:
-            contract_status = (
-                "current"
-                if compiled.spec.version == value.operation_version
-                and compiled.digest == value.operation_digest
-                else "historical"
-            )
+        contract_status = self._operation_catalog.recorded_contract_status(value.operation_id,
+            version=value.operation_version, digest=value.operation_digest)
         result = {
             "name": name,
             "operation_id": value.operation_id,
@@ -215,6 +207,9 @@ class RunReadProjection:
             task_intent = read_intent(self.artifacts, value)
             if task_intent is not None:
                 result["scientific_intent"] = task_intent
+        attention = self.runs.submission_attention(value)
+        if attention is not None:
+            result["attention_required"] = attention
         if value.state == "failed":
             result["diagnostic_summary"] = self.runs.diagnostic_summary(value)
         if intent != "status" and value.state != "completed":
@@ -242,7 +237,8 @@ class RunReadProjection:
                 # retires; it never establishes current scientific qualification.
                 fields = value.decision_fields
                 if fields is None and contract_status == "current":
-                    fields = compiled.spec.decision_fields
+                    fields = self._operation_catalog.recorded_operation(value.operation_id,
+                        version=value.operation_version, digest=value.operation_digest).spec.decision_fields
                 if fields is None:
                     result["default_output_unavailable"] = "decision_fields_not_recorded"
                     result["output_index"] = (self._output_index(output, "", index_offset, index_limit)
@@ -294,12 +290,13 @@ class RunReadProjection:
             }.get(failure.get("category"), "The Run failed. Read the saved diagnostic page to identify a repair or choose another scientific action.")
         allowed = {"scientific_intent", "name", "operation_id", "operation_contract_status", "state", "agent_type", "execution_profile",
             "created_at", "started_at", "completed_at", "deadline_at", "last_activity_at", "output_artifact_name",
-            "recovery_available", "draft_from", "diagnostics_available", "reason", "diagnostic_events", "sealed_output_status", "sealed_output",
+            "recovery_available", "draft_from", "diagnostics_available", "attention_required", "reason", "diagnostic_events", "sealed_output_status", "sealed_output",
             "scheduler_signal_status", "scheduler_signal", "scheduler_signal_omissions", "output_delivery", "output_metadata", "selected_output",
             "output_index", "default_output_unavailable", "evidence_outputs", "bound_inputs", "content_unavailable", "dispatch"}
         result = {key:item for key,item in result.items() if key in allowed}
         try:
-            ports = self._operation_catalog.operation(value.operation_id).spec.inputs
+            ports = self._operation_catalog.recorded_operation(value.operation_id,
+                version=value.operation_version, digest=value.operation_digest).spec.inputs
             visible = {port.name for port in ports if port.agent_visible and port.derivation is None}
         except KeyError:
             visible = set()
@@ -322,17 +319,9 @@ class RunReadProjection:
 
         if value.state != "completed" or value.output_ref is None:
             return "unavailable", None
-        output_status = "available"
-        try:
-            compiled = self._operation_catalog.operation(value.operation_id)
-        except KeyError:
-            output_status = "historical"
-        else:
-            if (
-                compiled.spec.version != value.operation_version
-                or compiled.digest != value.operation_digest
-            ):
-                output_status = "historical"
+        contract_status = self._operation_catalog.recorded_contract_status(value.operation_id,
+            version=value.operation_version, digest=value.operation_digest)
+        output_status = "historical" if contract_status == "unavailable" else "available"
         metadata = {"artifact_name": value.output_binding_name, "kind": value.output_ref.kind,
             "schema": value.output_ref.schema_id}
         if not include_payload:

@@ -56,6 +56,10 @@ class ApprovalAccessDenied(ApprovalError):
     pass
 
 
+class BudgetExtensionAccountingError(ApprovalError):
+    """A relevant historical authorization could not be accounted for safely."""
+
+
 class ApprovalExpired(ApprovalError):
     pass
 
@@ -633,6 +637,33 @@ class ApprovalService:
             row["decision_nonce"],
         )
 
+    def budget_extension_decisions(self, *, execution_refs, projected_decision_ids):
+        """Read only unprojected decisions for exact requests in the selected pool.
+
+        Request creation records are durable control metadata. Filter with those
+        before opening any decision Artifact, so an unrelated broken decision
+        cannot prevent grants in another pool.
+        """
+        refs = {ref.artifact_id: ref for ref in execution_refs}
+        if not refs:
+            return
+        with self._connect() as connection:
+            rows = connection.execute("""
+                SELECT d.approval_id, d.decision_ref_json FROM approval_decisions d
+                JOIN approval_requests a ON a.approval_id=d.approval_id
+                WHERE d.selected_option IN ('authorize_execution', 'authorize_execution_with_exception', 'approve')
+                  AND d.decision_id NOT IN (SELECT value FROM json_each(?))
+                  AND json_extract(a.create_request_json, '$.kind')='execution_authorization'
+                  AND EXISTS (SELECT 1 FROM json_each(a.create_request_json, '$.subject_refs') s
+                    WHERE json_extract(s.value, '$.artifact_id') IN (SELECT value FROM json_each(?)))
+            """, (json.dumps(sorted(projected_decision_ids)), json.dumps(list(refs))))
+            for row in rows:
+                decision = self._load_decision(ArtifactRef.model_validate_json(row['decision_ref_json']))
+                if not any(refs.get(ref.artifact_id) == ref for ref in decision.subject_refs):
+                    raise ApprovalError('Budget decision differs from its pool request identity')
+                if decision.additional_wall_time_seconds:
+                    yield row['approval_id'], decision
+
     def record_ui_decision(
         self,
         *,
@@ -644,8 +675,16 @@ class ApprovalService:
         rationale: str,
         decided_by: LocalIdentityRef,
         ui_session_id: str,
+        additional_wall_time_seconds: int = 0,
+        budget_extension_validator=None,
         now: datetime | None = None,
     ) -> ArtifactRef:
+        if type(additional_wall_time_seconds) is not int or not 0 <= additional_wall_time_seconds <= 2**53-1:
+            raise ApprovalAccessDenied("budget extension must be a nonnegative integer number of seconds")
+        if additional_wall_time_seconds:
+            if budget_extension_validator is None:
+                raise ApprovalAccessDenied("Budget extensions require the execution policy service")
+            budget_extension_validator()
         submitted_at = _now(now)
         prepared = self._prepare_decision_attempt(
             approval_id=approval_id,
@@ -657,6 +696,7 @@ class ApprovalService:
             decided_by=decided_by,
             ui_session_id=ui_session_id,
             submitted_at=submitted_at,
+            additional_wall_time_seconds=additional_wall_time_seconds,
         )
         decision_time = _parse_time(prepared.decided_at)
         connection = self._connect()
@@ -679,6 +719,7 @@ class ApprovalService:
                     existing.selected_option == selected_option
                     and existing.rationale == rationale
                     and existing.decided_by == decided_by
+                    and existing.additional_wall_time_seconds == additional_wall_time_seconds
                 ):
                     connection.execute("ROLLBACK")
                     return existing_ref
@@ -705,6 +746,7 @@ class ApprovalService:
                     "nonce_hash": request.nonce_hash,
                     "csrf_hash": row["csrf_token_hash"],
                     "ui_session_id": prepared.ui_session_id,
+                    **({"additional_wall_time_seconds": additional_wall_time_seconds} if additional_wall_time_seconds else {}),
                 }
             )
             receipt = hmac.new(
@@ -720,6 +762,7 @@ class ApprovalService:
                 decided_by=decided_by,
                 decided_at=prepared.decided_at,
                 ui_receipt=receipt,
+                **({"additional_wall_time_seconds": additional_wall_time_seconds} if additional_wall_time_seconds else {}),
             )
             decision_envelope = self.artifacts.register(
                 decision.canonical_json(),
@@ -800,6 +843,7 @@ class ApprovalService:
         decided_by: LocalIdentityRef,
         ui_session_id: str,
         submitted_at: datetime,
+        additional_wall_time_seconds: int = 0,
     ) -> _PreparedDecision:
         binding = canonical_json(
             {
@@ -807,6 +851,7 @@ class ApprovalService:
                 "selected_option": selected_option,
                 "rationale": rationale,
                 "decided_by": decided_by,
+                **({"additional_wall_time_seconds": additional_wall_time_seconds} if additional_wall_time_seconds else {}),
             }
         )
         binding_hash = hashlib.sha256(binding).hexdigest()
@@ -837,6 +882,11 @@ class ApprovalService:
             request_ref = _parse_ref(row["request_ref_json"], row["request_ref_sha256"])
             request = self._load_request(request_ref)
             option = _decision_option(request, selected_option)
+            if additional_wall_time_seconds:
+                from types import SimpleNamespace
+                from ..schema.approval import execution_decision_authorizes
+                if not execution_decision_authorizes(request, SimpleNamespace(selected_option=selected_option)):
+                    raise ApprovalAccessDenied("Only an execution authorization may extend its cumulative time budget")
             if option is None:
                 raise ApprovalAccessDenied("selected option is not registered")
             if option.requires_rationale and not rationale.strip():

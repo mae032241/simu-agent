@@ -64,7 +64,9 @@ def test_human_wait_preserves_work_time_across_repeated_reads_and_restart(tmp_pa
     time.now += timedelta(hours=12)
     for _ in range(2):
         assert f.runs.reconcile_expired_active(run_ids=(f.run_id,)) == 0
-        assert f.worker.call_tool('worker_experiment_execute', {'action': 'status'})['state'] == 'awaiting_authorization'
+        response = f.worker.call_tool('worker_experiment_execute', {'action': 'status'})
+        assert response['state'] == 'awaiting_authorization'
+        assert parse_time(response['task_budget']['deadline_at']) == original + timedelta(hours=12)
         assert parse_time(f.runs.status(f.run_id).deadline_at) == original + timedelta(hours=12)
     with f.runs._connect() as db:
         assert db.execute("SELECT COUNT(*) FROM run_activity WHERE run_id=? AND activity='approval_wait_started'", (f.run_id,)).fetchone()[0] == 1

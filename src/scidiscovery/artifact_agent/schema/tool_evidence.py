@@ -41,7 +41,10 @@ class ToolAttempt(SchemaModel):
 
 
 class ToolAttemptProof(SchemaModel):
-    bindings: dict[str, ToolSourceBinding] = Field(default_factory=dict, max_length=128)
+    # These combine separately bounded inputs, receipts and reference accesses.
+    # The control serializer bounds their complete encoded size; the per-call
+    # read_sources limit is not an aggregate Run binding limit.
+    bindings: dict[str, ToolSourceBinding] = Field(default_factory=dict)
     attempts: tuple[ToolAttempt, ...] = Field(default=(), max_length=64)
 
 

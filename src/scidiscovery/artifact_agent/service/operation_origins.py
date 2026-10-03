@@ -160,14 +160,10 @@ class OperationOrigins:
             }
         )
         try:
-            producer = self._operation_catalog.operation(status.operation_id)
+            producer = self._operation_catalog.recorded_operation(status.operation_id, version=status.operation_version, digest=status.operation_digest)
         except KeyError:
             producer = None
-        if (
-            producer is None
-            or producer.spec.version != status.operation_version
-            or producer.digest != status.operation_digest
-        ):
+        if producer is None:
             return ProducerOutputFamily(
                 primary_ref=status.output_ref,
                 operation_id=status.operation_id,
@@ -347,14 +343,10 @@ class OperationOrigins:
                 family_identity=family_identity,
             )
         try:
-            compiled = self._operation_catalog.operation(operation_id)
+            compiled = self._operation_catalog.recorded_operation(operation_id, version=operation_version, digest=operation_digest)
         except KeyError:
             return unavailable("producer_contract_unavailable")
-        if (
-            compiled.spec.version != operation_version
-            or compiled.digest != operation_digest
-            or compiled.spec.executor.kind != "transform"
-        ):
+        if compiled.spec.executor.kind != "transform":
             return unavailable("producer_contract_unavailable")
         input_groups = self._transform_input_groups(compiled, envelope.parent_refs, verify_inputs=verify_inputs)
         if input_groups is None:
@@ -475,6 +467,39 @@ class OperationOrigins:
             for label, port_name, _ in expected_labels
         )
 
+    def _derived_parent_refs(self, ref, port):
+        """Prefer exact control receipt edges over inherited task input parents."""
+        envelope = self.artifacts.verify(ref)
+        parents = envelope.parent_refs
+        producer_id = envelope.labels.get('tool_producer_run')
+        producer = None
+        if self.runs is not None and producer_id and envelope.labels.get('tool_name'):
+            producer = self.runs.status(producer_id)
+            if producer.instance_id != self._instance_id():
+                raise OperationInvocationError('input_origin_unavailable', port=port.name)
+            receipts = [item for item in self.runs.tool_evidence(producer_id)
+                if ArtifactRef.model_validate(item['artifact_ref']) == ref]
+            if len(receipts) != 1 or receipts[0]['tool_name'] != envelope.labels['tool_name']:
+                raise OperationInvocationError('input_origin_unavailable', port=port.name)
+            if receipts[0].get('control_parents'):
+                direct = tuple(ArtifactRef.model_validate(item) for item in receipts[0]['control_parents'])
+                if any(parent not in parents for parent in direct):
+                    raise OperationInvocationError('input_origin_unavailable', port=port.name)
+                parents = direct
+                producer = None  # Explicit edges require no historical inference.
+            elif receipts[0].get('metadata', {}).get('derived_from'):
+                direct = tuple(self.runs.source_descriptor(producer, alias).artifact_ref
+                    for alias in receipts[0]['metadata']['derived_from'])
+                if any(parent not in parents for parent in direct):
+                    raise OperationInvocationError('input_origin_unavailable', port=port.name)
+                parents, producer = direct, None
+        matches = [parent for parent in parents
+            if self._artifact_matches_input_port(self.artifacts.catalog(parent), port)]
+        if producer is not None and len(matches) > 1:
+            inherited = {item.artifact_ref for item in producer.inputs}
+            matches = [parent for parent in matches if parent not in inherited]
+        return matches
+
     @staticmethod
     def _artifact_matches_input_port(envelope: Any, port: Any) -> bool:
         return bool(
@@ -562,8 +587,7 @@ class OperationOrigins:
                 # No public parent alias, completed author, head or global lookup
                 # is needed to bind a control-owned typed execution package.
                 refs = list(dict.fromkeys(parent for ref in refs
-                    for parent in self.artifacts.verify(ref).parent_refs
-                    if self.artifacts.catalog(parent).schema_id == port.schema_id))
+                    for parent in self._derived_parent_refs(ref, port)))
                 private_names = {ref: anchors[0].artifact_name for ref in refs}
             elif rule.select != "subject":
                 if len(refs) != 1:
@@ -580,7 +604,7 @@ class OperationOrigins:
                 family = family_for(refs[0])
                 if family is None or family.contract_availability != "current" or family.producer_instance_id != self._instance_id():
                     reject("input_origin_unavailable")
-                producer = self._operation_catalog.operation(family.operation_id)
+                producer = self._operation_catalog.recorded_operation(family.operation_id, version=family.operation_version, digest=family.operation_digest)
                 declared = next((item for item in producer.spec.outputs if item.name == rule.producer_output_port), None)
                 if declared is None:
                     reject("input_origin_output_undeclared")
@@ -630,10 +654,7 @@ class OperationOrigins:
         if operation_id is None:
             return False
         try:
-            producer = self._operation_catalog.operation(operation_id)
+            producer = self._operation_catalog.recorded_operation(operation_id, version=envelope.labels.get("operation_version"), digest=envelope.labels.get("operation_digest"))
         except KeyError:
             return True
-        return (
-            envelope.labels.get("operation_version") != producer.spec.version
-            or envelope.labels.get("operation_digest") != producer.digest
-        )
+        return False

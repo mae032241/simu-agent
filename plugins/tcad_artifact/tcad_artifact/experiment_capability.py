@@ -94,7 +94,6 @@ class DebugInput(BaseModel):
     implementation: str | None = Field(default=None, max_length=128)
     name: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
     mode: Literal["preflight", "smoke", "initialization"] = "preflight"
-    output_names: list[str] | None = None
 
 
 def debug(request, context):
@@ -126,8 +125,11 @@ def debug(request, context):
     scoped = execution.diagnostic_context(context, service_name="tcad.development_debug")
     private = scoped.workspace
     response = service.run(scoped, run_name=request.name, mode=request.mode,
-        budget_subject=execution.budget_subject(context), output_names=request.output_names)
+        budget_subject=execution.budget_subject(context))
     result = {key: response[key] for key in ("state", "mode", "summary", "exit_code", "missing_outputs") if key in response}
+    files = execution.publish_diagnostic_files(context, implementation=request.implementation,
+        name=request.name, workspace=private, outputs=response.get('outputs', []))
+    result.update(outputs=files, development_only=True, scientific_claim_admissible=False)
     log = private / "deck/reports" / ("log-" + request.name + ".txt")
     if log.is_file():
         with log.open("rb") as stream:
@@ -137,7 +139,7 @@ def debug(request, context):
         result.update(log=str(relative), log_truncated=len(raw) > 65536)
     if response.get("state") in {"collected", "succeeded", "failed", "cancelled"}:
         record = context.accept_evidence(raw=canonical_json(result), media_type="application/json",
-            derived_from=("objective_source", request.implementation), metadata={"kind": "experiment_debug", "name": request.name})
+            derived_from=("objective_source", request.implementation, *(item['reference'] for item in files)), metadata={"kind": "experiment_debug", "name": request.name})
         result["reference"] = record["alias"]
         result["artifact_name"] = record["artifact_name"]
     return {**result, "budget": response["budget"]}
@@ -147,9 +149,9 @@ PREPARE_TOOL = WorkerToolDefinition(name="worker_experiment_prepare",
     description="Read the TCAD implementation schema or seal an implementation for the current experiment. Control resolves the exact active solver capability and supplied scientific files, captures stdout and inventories all generated solver files within the declared resource budget; no output path table is needed. Returns the exact public artifact_name immediately and, when required, an independent review request for the scheduler. Sealing itself requires no prior review. A required review suspends controlled work until the exact reviewer finishes; reads/status/cancel remain available. Continue the same task afterward; a pass is required before formal execution.",
     input_model=PrepareInput, capability="experiment.implementation", contextual_handler=prepare,
     required_services=("experiment.execution",), evidence_ports=("tool_evidence", "recovery_manifest_output"))
-DEBUG_TOOL = WorkerToolDefinition(name="worker_experiment_debug", description="Run or poll an optional bounded diagnostic of the exact sealed implementation. Use action=status with the same name for a read-only check after an uncertain response; it never submits or collects. Repeating action=run polls existing submissions but may create one if absent. Diagnostics are separate from formal execution and require no fixed sequence.",
+DEBUG_TOOL = WorkerToolDefinition(name="worker_experiment_debug", description="Run or poll an optional bounded diagnostic of the exact sealed implementation. Initialization automatically collects and publishes generated native files within configured budgets; no output names or paths are authored. Use action=status with the same name for a read-only check after an uncertain response; it never submits or collects. Repeating action=run polls or recovers delivery for the same submission but may create one if absent. Diagnostics are separate from formal execution and require no fixed sequence.",
     input_model=DebugInput, capability="experiment.debug", contextual_handler=debug,
-    required_services=("experiment.execution", "tcad.development_debug"), evidence_ports=("tool_evidence", "recovery_manifest_output"))
+    required_services=("experiment.execution", "tcad.development_debug"), evidence_ports=("tool_evidence", "attachments", "recovery_manifest_output"))
 CAPABILITY = ExperimentCapability(tools=(ComponentRef("experiment_prepare_tool"), ComponentRef("experiment_debug_tool")),
     instructions="Use the sentaurus-tcad-code Skill for SProcess or SDevice source. Author the scientific plan and standalone implementation in this workspace. Read worker_experiment_prepare(action=schema), write scratch/experiment.json, prepare it and execute its sealed reference. Scientific-file slots resolve exact supplied originals. No fixed development-mode checklist or prior design Run is required.",
     execution_operation="tcad.experiment.execute.internal", execution_package_schema_version=2,

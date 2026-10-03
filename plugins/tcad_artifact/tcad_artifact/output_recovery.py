@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 from scidiscovery.operations.tooling import WorkerToolDefinition
+from scidiscovery.operation_contract import DiagnosticError
 from scidiscovery.artifact_agent.schema.common import canonical_json
 from scidiscovery.artifact_agent.schema.refs import ArtifactRef
 from scidiscovery.plugin_runtime.diagnostics import RunCheckerError
@@ -138,6 +139,11 @@ def inspect_tool(request,context):
                 response[field + '_omitted'] = max(0, len(items)-10)
             response['details_path'] = details
         return response
+    except DiagnosticError as error:
+        codes = {item['code'] for item in error.details}
+        if codes and codes <= {'reference_proof_limit', 'reference_proof_contract_limit'}:
+            return {'status': 'limit_exceeded', 'reason': 'evidence_budget'}
+        raise
     except RunCheckerError:
         raise
     except Exception as error:
@@ -194,6 +200,11 @@ def accept_tool(request,context):
             return {'status':'ambiguous_mapping','reason':'ambiguous_mapping'}
         if str(error) in {'file_bytes','metadata_bytes','evidence_budget'}:
             return {'status':'limit_exceeded','reason':str(error)}
+        raise
+    except DiagnosticError as error:
+        codes = {item['code'] for item in error.details}
+        if codes and codes <= {'reference_proof_limit', 'reference_proof_contract_limit'}:
+            return {'status': 'limit_exceeded', 'reason': 'evidence_budget'}
         raise
     except RunCheckerError:
         raise

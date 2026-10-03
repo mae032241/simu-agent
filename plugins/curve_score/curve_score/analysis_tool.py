@@ -18,7 +18,8 @@ from scidiscovery.operation_contract import SemanticRuleViolation, contract_diag
 from scidiscovery.operations.tooling import WorkerToolDefinition
 from .schema import CurveAxis, CurveBundle, CurveComparison, CurveComparisonSpec, CurveOperatorSpec, CurveSeries, evaluate_curve_consistency
 
-ALGORITHM_VERSION = "analysis-curve-operators.v1"
+ALGORITHM_VERSION = "analysis-curve-operators.v2"
+LEGACY_ALGORITHM_VERSION = "analysis-curve-operators.v1"
 MAX_COMPARISONS = 16
 MAX_SAMPLES = 4096
 MAX_OPERATORS = 16
@@ -202,15 +203,15 @@ def bundle_from_sources(request: AnalysisScoreRequest, sources: Mapping[str, byt
     return CurveBundle(source_profile="analysis_inputs", source_digests=tuple(dict.fromkeys(_digests(request, sources).values())), series=tuple(series))
 
 
-def evaluate_analysis_request(*, record_key: str, request: dict[str, Any], sources: Mapping[str, bytes], bundle: CurveBundle | None = None, deadline: float | None = None, validated_request: ScoreRequest | None = None) -> CalculationRecord:
+def evaluate_analysis_request(*, record_key: str, request: dict[str, Any], sources: Mapping[str, bytes], bundle: CurveBundle | None = None, deadline: float | None = None, validated_request: ScoreRequest | None = None, algorithm_version: str = ALGORITHM_VERSION) -> CalculationRecord:
     """Evaluate explicit request; a domain adapter may supply its freshly parsed bundle."""
     try:
         parsed = validated_request or parse_score_request(AnalysisScoreRequest, request)
     except ValidationError as error:
         return CalculationRecord(record_key=record_key, request=request, input_digests={},
-            algorithm_version=ALGORITHM_VERSION, status="unavailable", reason_code="invalid_arguments",
+            algorithm_version=algorithm_version, status="unavailable", reason_code="invalid_arguments",
             diagnostics=validation_diagnostics(error, schema=AnalysisScoreRequest.model_json_schema())[:8])
-    base = dict(record_key=record_key, input_digests={}, request=parsed.raw_request, algorithm_version=ALGORITHM_VERSION)
+    base = dict(record_key=record_key, input_digests={}, request=parsed.raw_request, algorithm_version=algorithm_version)
     try:
         check_deadline(deadline)
         aliases = _aliases(parsed)
@@ -240,7 +241,7 @@ def evaluate_analysis_request(*, record_key: str, request: dict[str, Any], sourc
         interpolation_work = sum(item.evaluation_points * len(item.operators) * (points_by_key.get(item.reference_series, 0) + points_by_key.get(item.candidate_series, 0)) for item in spec.comparisons)
         if work > MAX_WORK or interpolation_work > MAX_INTERPOLATION_WORK:
             raise ScoreLimitError("calculation_work_limit")
-        report = evaluate_curve_consistency(bundle, spec, operator_version=ALGORITHM_VERSION, check_budget=lambda: check_deadline(deadline))
+        report = evaluate_curve_consistency(bundle, spec, operator_version=algorithm_version, check_budget=lambda: check_deadline(deadline))
         check_deadline(deadline)
         # Keep aggregate/scalar metrics only; crossing samples can be very large.
         result = report.model_dump(mode="json")
@@ -273,17 +274,31 @@ def replay_calculation(record: CalculationRecord, sources: Mapping[str, bytes], 
         digests = {}
     matches = (all(digests.get(name) == digest for name, digest in record.input_digests.items())
                if record.status == "error" else record.input_digests == digests)
-    if record.algorithm_version != ALGORITHM_VERSION or not matches:
+    if record.algorithm_version not in {ALGORITHM_VERSION, LEGACY_ALGORITHM_VERSION} or not matches:
         raise SemanticRuleViolation("calculation algorithm or exact source bytes differ")
     if record.status == "error":
         if record.result is not None:
             raise SemanticRuleViolation("unfinished calculation cannot supply numeric evidence")
         return
-    replay = evaluate_analysis_request(record_key=record.record_key, request=record.request, sources=sources, bundle=bundle, deadline=deadline)
+    replay = evaluate_analysis_request(record_key=record.record_key, request=record.request, sources=sources, bundle=bundle, deadline=deadline, algorithm_version=record.algorithm_version)
     if replay.status == "error":
         raise SemanticRuleViolation("calculation replay budget exhausted; remove this calculation and submit limited analysis")
-    if canonical_json(record.model_dump(mode="json", exclude={"attempt", "diagnostics", "validation"})) != canonical_json(replay.model_dump(mode="json", exclude={"attempt", "diagnostics", "validation"})):
-        raise SemanticRuleViolation("calculation record differs from deterministic replay")
+    def same_record(candidate):
+        return canonical_json(record.model_dump(mode="json", exclude={"attempt", "diagnostics", "validation"})) == canonical_json(candidate.model_dump(mode="json", exclude={"attempt", "diagnostics", "validation"}))
+    if same_record(replay):
+        return
+    if record.algorithm_version == LEGACY_ALGORITHM_VERSION and replay.result is not None:
+        # V1 shipped in two wire layouts. Accept a historical digest only after
+        # recomputing every metric and verifying all original source bytes. Never
+        # drop nonempty shared-support declarations or ignore numeric differences.
+        from .schema import pre_shared_support_digest
+        actual_bundle = bundle or bundle_from_sources(parse_score_request(AnalysisScoreRequest, record.request), sources, deadline=deadline)
+        old_digest = pre_shared_support_digest(actual_bundle)
+        if old_digest is not None:
+            result = {**replay.result, "curve_bundle_sha256": old_digest}
+            if same_record(replay.model_copy(update={"result": result})):
+                return
+    raise SemanticRuleViolation("calculation record differs from deterministic replay")
 
 
 def run_score_tool(request: AnalysisScoreInput, context: OperationToolContext,

@@ -24,6 +24,7 @@ from .diagnostic_tool import DIAGNOSTIC_GUIDANCE, DIAGNOSTIC_PLOT_OUTPUT, record
 from .analysis_files import GUIDANCE as ANALYSIS_FILES_GUIDANCE
 from scidiscovery.plugin_runtime.calculations import analysis_evidence_aliases
 from .schema import (
+    metric_bundle_matches,
     CurveBundle,
     CurveComparisonSpec,
     CurveConsistencyReport,
@@ -465,7 +466,7 @@ def _curve_error_inputs(sources: dict[str, bytes]) -> None:
         for name, model in (("experiment_plan", ExperimentPortfolio), ("curve_contract", CurveExperimentContract),
                             ("metric_report", CurveConsistencyReport), ("curve_bundle", CurveBundle))
     )
-    if canonical_sha256(bundle) != report.curve_bundle_sha256:
+    if not metric_bundle_matches(bundle, report):
         raise OperationInvocationError("input_metric_bundle_mismatch", port="metric_report", field="curve_bundle_sha256",
                                        message="The metric report must identify the exact bound curve bundle.")
     try:

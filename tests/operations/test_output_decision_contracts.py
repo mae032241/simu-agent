@@ -95,7 +95,8 @@ def test_historical_reads_frozen_decision_fields_or_explicit_navigation(tmp_path
     replacement = compile_catalog((CORE_PLUGIN, changed, CURVE, TCAD, FIGURE))
     runtime.runs.operation_catalog = root.facade._operation_catalog = replacement
     result = root.call_tool('run_status', {'name':'author'})
-    assert result['operation_contract_status'] == result['sealed_output_status'] == 'historical'
+    assert result['operation_contract_status'] == 'unavailable'
+    assert result['sealed_output_status'] == 'historical'
     if legacy:
         assert result['default_output_unavailable'] == 'decision_fields_not_recorded'
         assert result['selected_output'] is None

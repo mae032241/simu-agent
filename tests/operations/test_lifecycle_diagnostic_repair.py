@@ -95,7 +95,7 @@ def test_status_and_cancel_need_no_new_effect_contract_or_material_binding(tmp_p
     def forbidden(*args, **kwargs):
         pytest.fail("cleanup must not require new Effect admission or scientific material binding")
     monkeypatch.setattr(f.coordinator, "_contract", forbidden)
-    monkeypatch.setattr(f.coordinator, "_implementation_record", forbidden)
+    monkeypatch.setattr(f.coordinator, "_execution_implementation_record", forbidden)
     for action, expected in (("status", "created"), ("cancel", "abandoned"), ("status", "abandoned")):
         assert f.worker.call_tool("worker_experiment_execute", {"action": action, "name": "obsolete"})["state"] == expected
     assert f.worker.call_tool("worker_experiment_execute", {"action": "status", "name": "absent"}) == {

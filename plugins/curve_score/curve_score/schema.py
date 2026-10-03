@@ -153,6 +153,23 @@ class CurveSeries(SchemaModel):
         return self
 
 
+def pre_shared_support_digest(bundle):
+    """Exact pre-4872459 identity, only for records without shared observations."""
+    if any(series.shared_support for series in bundle.series):
+        return None
+    payload = bundle.model_dump(mode="json")
+    for series in payload["series"]:
+        series.pop("shared_support")
+    return canonical_sha256(payload)
+
+
+def metric_bundle_matches(bundle, report):
+    if report.curve_bundle_sha256 == canonical_sha256(bundle):
+        return True
+    return (report.operator_version in {"curve-operators.v1", "analysis-curve-operators.v1"}
+            and report.curve_bundle_sha256 == pre_shared_support_digest(bundle))
+
+
 class CurveSeriesDeclaration(SchemaModel):
     series_key: Identifier
     case_key: Identifier
@@ -842,7 +859,7 @@ def evaluate_curve_consistency(
     bundle: CurveBundle,
     spec: CurveComparisonSpec,
     *,
-    operator_version: str = "curve-operators.v1",
+    operator_version: str = "curve-operators.v2",
     validation_plan_sha256: str | None = None,
     covered_validation_check_keys: tuple[str, ...] = (),
     check_budget: Callable[[], None] | None = None,

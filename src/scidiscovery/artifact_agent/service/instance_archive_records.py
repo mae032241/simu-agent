@@ -9,6 +9,7 @@ from __future__ import annotations
 from copy import deepcopy
 from ...agent_execution_settings import EXECUTION_SETTINGS_COLUMNS
 from .run_records import RUN_READ_COLUMNS
+from .run_attention import NOTICE_SCHEMA
 from .worker_connections import WORKER_CONNECTION_SCHEMA, WORKER_CONNECTION_COLUMNS, WORKER_PARTICIPANT_SCHEMA
 
 import base64
@@ -28,10 +29,10 @@ DATABASES = {
 TABLES = {
     "scheduler": ("scheduler_instances", "scheduler_bindings", "scheduler_observations",
                   "scheduler_scientific_selections", "scheduler_sessions", "scheduler_progression", "scheduler_progression_details", "scheduler_dispatch_intents", "scheduler_progress_assessments", "scheduler_terminal_deliveries", "scheduler_progress_facts", "scheduler_progress_shadow"),
-    "runs": ("runs", "run_activity", "run_tool_evidence", "run_activity_sequence", "worker_connections", "worker_participants"),
+    "runs": ("runs", "run_activity", "run_tool_evidence", "run_activity_sequence", "run_attention_notices", "worker_connections", "worker_participants"),
     "approvals": ("approval_requests", "approval_decisions", "used_nonces", "decision_attempts"),
     "executions": ("executions", "execution_policy_authorizations", "execution_current_policy",
-                   "execution_budget_pools", "execution_budget_reservations", "execution_prepared_submissions", "execution_budget_estimates", "execution_observation_retries"),
+                   "execution_budget_pools", "execution_budget_reservations", "execution_prepared_submissions", "execution_budget_estimates", "execution_observation_retries", "execution_budget_extensions"),
     "artifacts": ("artifact_envelopes", "artifact_links", "idempotency_records", "artifact_events"),
     "dispatch": ("active_transport",),
     "views": ("metadata", "nodes", "events", "preferences", "display_summaries"),
@@ -45,7 +46,7 @@ CONTROL_PAYLOADS = {
 # Budget keys identify control-owned allowance pools. The active ledger
 # remains authoritative even while its execution is archived; snapshots retain
 # exact copies for inspection and conflict-checked restoration.
-RETAINED_EXECUTION_TABLES = frozenset({"execution_budget_pools", "execution_budget_reservations", "execution_budget_estimates"})
+RETAINED_EXECUTION_TABLES = frozenset({"execution_budget_pools", "execution_budget_reservations", "execution_budget_estimates", "execution_budget_extensions"})
 
 MAX_RECORD_BYTES = 16 * 1024 * 1024
 MAX_CONTROL_PAYLOAD_BYTES = 16 * 1024 * 1024
@@ -253,7 +254,7 @@ def execution_settings_restore_view(data):
             row.update(state="paused", reason="archive_restored", owner_session=None, requested_by=None, host_json=None,
                        generation=generation)
     if "runs" in projected["schema"]["tables"]:
-        for table, ddl in (("worker_connections", WORKER_CONNECTION_SCHEMA), ("worker_participants", WORKER_PARTICIPANT_SCHEMA)):
+        for table, ddl in (("worker_connections", WORKER_CONNECTION_SCHEMA), ("worker_participants", WORKER_PARTICIPANT_SCHEMA), ("run_attention_notices", NOTICE_SCHEMA)):
             if table in projected["schema"]["tables"]:
                 continue
             projected = deepcopy(projected)
@@ -268,6 +269,11 @@ def execution_settings_restore_view(data):
                 [*projected["schema"]["objects"], *addition["objects"]], key=lambda item: (item["type"], item["name"]))
             projected["schema"]["tables"].update(addition["tables"])
             projected["tables"][table] = []
+            if table == "run_attention_notices":
+                projected["tables"][table] = [
+                    {"run_id": row["run_id"], "version": row["__archive_rowid__"],
+                     "diagnostic_json": row["diagnostic_json"]}
+                    for row in projected["tables"].get("run_activity", []) if row["activity"] == "attention_notice"]
     if "executions" in projected["schema"]["tables"]:
         from .executions import EXECUTION_POLICY_SCHEMA
         with sqlite3.connect(":memory:") as transient:
@@ -475,6 +481,12 @@ class Records:
                     continue
                 result[database]["tables"][table] = self._materialize_ids(database, table, column, ids)
         execution_tables = result.get("executions", {}).get("tables", {})
+        extension_owners = {(row['executor'], row['budget_key']) for row in execution_tables.get('execution_budget_extensions', [])}
+        extension_owners.update((row['executor'], row['budget_key']) for row in execution_tables.get('execution_budget_reservations', []))
+        if 'execution_budget_extensions' in execution_tables:
+            execution_tables['execution_budget_extensions'] = [row for executor, budget_key in sorted(extension_owners)
+                for row in self._materialize('executions', 'execution_budget_extensions',
+                    where='executor=? AND budget_key=?', parameters=(executor, budget_key))]
         for executor, budget_key in sorted({(row["executor"], row["budget_key"])
                 for row in execution_tables.get("execution_budget_reservations", [])}):
             pools = self._materialize("executions", "execution_budget_pools",

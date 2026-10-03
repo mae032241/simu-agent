@@ -57,7 +57,10 @@ class LocalWorkerMCPRouter:
         trusted_caller: tuple[str, str] | None = None,
         participant: dict | None = None,
     ) -> None:
-        compiled = runs.operation_catalog.operation(operation_id)
+        try:
+            compiled = runs.operation_catalog.operation(operation_id, digest=operation_digest)
+        except KeyError as error:
+            raise ValueError("local Worker operation identity is invalid") from error
         if compiled.digest != operation_digest or compiled.spec.executor.kind != "agent":
             raise ValueError("local Worker operation identity is invalid")
         self.runs = runs
@@ -794,7 +797,7 @@ def build_local_worker_router(
     scheduler_bindings = SchedulerBindingService(
         state / "database" / "scheduler-bindings.sqlite3"
     )
-    compiled = catalog.operation(operation_id)
+    compiled = catalog.operation(operation_id, digest=operation_digest)
     from ..service.experiment_execution import open_experiment_services, bind_experiment_services
     experiment_factory = (lambda owner: open_experiment_services(owner, catalog, state_root=state,
         plugin_configs=plugin_configs or {}, approval_secret_file=approval_secret_file,

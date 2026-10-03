@@ -42,7 +42,7 @@ def _relationships(model, instance_id, keys):
     return {key: model.node(instance_id, key)["relationships"] for key in keys}
 
 
-def _archived_and_restored_draft(tmp_path):
+def _archived_and_restored_draft(tmp_path, *, attention=False, legacy_notice=False):
     catalog, runtime, instance, root = _local_archive_system(tmp_path)
     _invoke(root, "failed_source")
     original_worker = _worker(catalog, runtime)
@@ -63,15 +63,26 @@ def _archived_and_restored_draft(tmp_path):
     source_input = next(item for item in source.inputs if item.port_name == "source_table")
     preserved = runtime.runs.backend.root / "recovery" / source.recovery_draft["draft_digest"] / "result.json"
     assert preserved.read_bytes() == draft_bytes
+    # Pause before opening attention: ordinary Root replies deliver pending notices.
+    root.call_tool('progression_command', {'command':'pause'})
+    if attention:
+        runtime.runs.record_attention(original_id, scope='submission:submission_intervention_required',
+            code='submission_intervention_required')
+    if legacy_notice:
+        with runtime.runs._connect() as connection:
+            connection.execute("UPDATE run_activity SET activity='attention_notice' WHERE rowid="
+                "(SELECT version FROM run_attention_notices WHERE run_id=?)", (original_id,))
+            connection.execute('DROP TABLE run_attention_notices')
     activities = _activity_rows(runtime.runs, original_id)
     original_links = _relationships(_live_model(runtime), instance.instance_id,
         ("artifact:source_csv", "run:failed_source"))
     assert any(link["key"] == "run:failed_source" and link["relation"] == "consumes"
         for link in original_links["artifact:source_csv"]["successors"])
-    root.call_tool("progression_command", {"command": "pause"})
     service = InstanceArchive(runtime)
     assert save_archive(service, instance.instance_id)["storage_state"] == "archived"
     assert not preserved.exists()
+    if legacy_notice:
+        runtime.runs._initialize()  # Upgrade the live schema before restoring an old archive.
 
     archived = service.archived_model(instance.instance_id)
     assert archived.overview(instance.instance_id)["instance"]["name"] == instance.name
@@ -187,3 +198,13 @@ def test_archive_browse_restore_preserves_real_continuation_admission_and_assign
     assert _relationships(_live_model(runtime), instance.instance_id, original_links) == original_links
     assert runtime.runs.status(source.run_id) == source
     assert _activity_rows(runtime.runs, source.run_id) == activities
+
+
+@pytest.mark.parametrize('legacy_notice', [False, True])
+def test_attention_snapshot_and_delivery_cursor_survive_archive_restore(tmp_path, legacy_notice):
+    _, runtime, _, root, source, _, _ = _archived_and_restored_draft(tmp_path, attention=True, legacy_notice=legacy_notice)
+    result = root.call_tool('run_status', {'name':'failed_source', 'intent':'status'})
+    assert result['attention_required']['code'] == 'submission_intervention_required'
+    assert result['attention_notifications']['events'][0]['name'] == 'failed_source'
+    assert root.facade.prepare_attention_notifications() is None
+    assert runtime.runs.submission_attention(source) is not None

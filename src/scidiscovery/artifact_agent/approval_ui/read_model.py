@@ -943,9 +943,8 @@ class InstanceReadModel:
         if not self.operation_catalog:
             return None, "contract_unavailable"
         try:
-            compiled = self.operation_catalog.operation(labels["operation_id"])
-            if compiled.digest != labels["operation_digest"]:
-                return None, "contract_unavailable"
+            compiled = self.operation_catalog.recorded_operation(labels["operation_id"],
+                version=labels.get("operation_version"), digest=labels["operation_digest"])
             edge = compiled.spec.review
             return edge, "available" if edge and edge.reviewer_operation else "not_declared"
         except (KeyError, AttributeError):
@@ -1130,10 +1129,17 @@ class InstanceReadModel:
             # Parent identity verification is independent of graph traversal.
             # Keep the complete immutable edges when they fit the existing byte
             # budget; unrelated ancestors still use the bounded lineage queue.
-            parents = [{"artifact_id": parent.artifact_id, "ref": parent.model_dump(mode="json"),
-                "source_pointer": f"/parent_refs/{i}"} for i, parent in enumerate(envelope.parent_refs)]
-            if json_size(parents) <= MAX_PAYLOAD_BYTES:
-                view["provenance"] = parents
+            parents, used = [], 2  # JSON list delimiters.
+            for i, parent in enumerate(envelope.parent_refs):
+                item = {"artifact_id": parent.artifact_id, "ref": parent.model_dump(mode="json"),
+                    "source_pointer": f"/parent_refs/{i}"}
+                size = json_size(item) + (2 if parents else 0)
+                if used + size > MAX_PAYLOAD_BYTES:
+                    break
+                parents.append(item)
+                used += size
+            view["provenance"] = parents
+            if len(parents) == len(envelope.parent_refs):
                 view["gaps"] = [item for item in view["gaps"] if item["code"] != "provenance_page_limit"]
         if not paths or envelope.size_bytes > MAX_SOURCE_BYTES or envelope.content_encoding != "identity":
             return view

@@ -234,7 +234,12 @@ def _real_experiment(tmp_path, monkeypatch, solver="sprocess", before_submit=Non
     worker = LocalWorkerMCPRouter(runtime.runs, operation_id=compiled.spec.operation_id,
         operation_digest=compiled.digest, tool_services=services, run_id=author_id)
     worker.call_tool("worker_open_assignment", {})
-    assert worker.call_tool("worker_experiment_debug", request) == first_debug
+    reopened_debug = worker.call_tool("worker_experiment_debug", request)
+    assert {k: v for k, v in reopened_debug.items() if k != 'budget'} == {
+        k: v for k, v in first_debug.items() if k != 'budget'}
+    assert {k: v for k, v in reopened_debug['budget'].items() if k != 'run_remaining_seconds'} == {
+        k: v for k, v in first_debug['budget'].items() if k != 'run_remaining_seconds'}
+    assert reopened_debug['budget']['run_remaining_seconds'] <= first_debug['budget']['run_remaining_seconds']
     assert worker.call_tool("worker_experiment_debug", {"action":"cancel", "name":"diagnostic"})["state"] == "inactive"
     assert debugger.submits == 1
     ledger = next((tmp_path / "debug/budgets").glob("*.json"))
@@ -253,7 +258,7 @@ def _real_experiment(tmp_path, monkeypatch, solver="sprocess", before_submit=Non
     assert collected["terminal_state"] == "succeeded"
     before = len(runtime.runs.tool_evidence(worker._run_id))
     status = worker.call_tool("worker_experiment_execute", {"action":"status"})
-    assert "reference" not in status and len(runtime.runs.tool_evidence(worker._run_id)) == before
+    assert status['reference'] == collected['reference'] and len(runtime.runs.tool_evidence(worker._run_id)) == before
     assert worker.call_tool("worker_experiment_execute", {"action":"read", "output_name":"observation"})["text"] == "observed fixture\n"
     exported = worker.call_tool("worker_experiment_execute", {"action":"export", "output_name":"binary"})
     assert (workspace / exported["path"]).read_bytes() == b"observed fixture\n"

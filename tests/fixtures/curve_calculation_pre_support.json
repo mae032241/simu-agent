@@ -1,0 +1,170 @@
+{
+  "sources": {
+    "curve_bundle": "{\"schema_version\":1,\"series\":[{\"availability\":{\"rationale\":\"Fixture curve.\",\"reason_code\":null,\"schema_version\":1,\"status\":\"available\"},\"case_key\":\"baseline\",\"exclusions\":[],\"points\":[{\"schema_version\":1,\"x\":0.0,\"y\":10000000000.0},{\"schema_version\":1,\"x\":0.5,\"y\":100000000000.0},{\"schema_version\":1,\"x\":1.0,\"y\":1000000000000.0}],\"role\":\"reference\",\"schema_version\":1,\"scientific_role\":\"diagnostic_series\",\"series_key\":\"reference\",\"source_locator\":\"fixture:reference\",\"valid_intervals\":[],\"x_axis\":{\"name\":\"depth\",\"scale\":\"linear\",\"schema_version\":1,\"unit\":\"um\"},\"y_axis\":{\"name\":\"carrier\",\"scale\":\"log10\",\"schema_version\":1,\"unit\":\"cm^-3\"}},{\"availability\":{\"rationale\":\"Fixture curve.\",\"reason_code\":null,\"schema_version\":1,\"status\":\"available\"},\"case_key\":\"baseline\",\"exclusions\":[],\"points\":[{\"schema_version\":1,\"x\":0.0,\"y\":10000000000.0},{\"schema_version\":1,\"x\":0.5,\"y\":10000000000000.0},{\"schema_version\":1,\"x\":1.0,\"y\":1000000000000.0}],\"role\":\"candidate\",\"schema_version\":1,\"scientific_role\":\"numerical_variant\",\"series_key\":\"candidate\",\"source_locator\":\"fixture:candidate\",\"valid_intervals\":[],\"x_axis\":{\"name\":\"depth\",\"scale\":\"linear\",\"schema_version\":1,\"unit\":\"um\"},\"y_axis\":{\"name\":\"carrier\",\"scale\":\"log10\",\"schema_version\":1,\"unit\":\"cm^-3\"}}],\"source_digests\":[\"1111111111111111111111111111111111111111111111111111111111111111\"],\"source_profile\":\"fixture\"}"
+  },
+  "record": {
+    "schema_version": 1,
+    "record_key": "same",
+    "request": {
+      "comparison_spec": {
+        "aggregate_rule": "all_required",
+        "comparisons": [
+          {
+            "candidate_series": "candidate",
+            "comparison_key": "implementation_residual",
+            "domain": {
+              "min_points": 2,
+              "schema_version": 1,
+              "start": 0.0,
+              "stop": 1.0,
+              "unit": "um"
+            },
+            "evaluation_points": 257,
+            "floor_mask": null,
+            "gate_scope": "numerical_qualification",
+            "interpolation": "log10_y",
+            "metric_profile": "smooth_curve",
+            "operators": [
+              {
+                "crossing_direction": "either",
+                "kind": "residual_rms",
+                "level": null,
+                "operator_key": "profile_rms_operator",
+                "schema_version": 1,
+                "second_level": null,
+                "threshold": {
+                  "comparison": "le",
+                  "schema_version": 1,
+                  "unit": "decade",
+                  "value": 0.2
+                },
+                "validation_check_key": "profile_rms",
+                "value_space": "log10",
+                "x": null
+              }
+            ],
+            "purpose": "implementation_sanity",
+            "reference_series": "reference",
+            "required": true,
+            "schema_version": 1
+          }
+        ],
+        "reference_dispositions": [],
+        "schema_version": 1,
+        "series_declarations": [
+          {
+            "case_key": "baseline",
+            "max_points": 1000000,
+            "min_points": 2,
+            "role": "reference",
+            "schema_version": 1,
+            "scientific_role": "diagnostic_series",
+            "series_key": "reference",
+            "source": "solver_output",
+            "x_axis": {
+              "name": "depth",
+              "scale": "linear",
+              "schema_version": 1,
+              "unit": "um"
+            },
+            "y_axis": {
+              "name": "carrier",
+              "scale": "log10",
+              "schema_version": 1,
+              "unit": "cm^-3"
+            }
+          },
+          {
+            "case_key": "baseline",
+            "max_points": 1000000,
+            "min_points": 2,
+            "role": "candidate",
+            "schema_version": 1,
+            "scientific_role": "numerical_variant",
+            "series_key": "candidate",
+            "source": "solver_output",
+            "x_axis": {
+              "name": "depth",
+              "scale": "linear",
+              "schema_version": 1,
+              "unit": "um"
+            },
+            "y_axis": {
+              "name": "carrier",
+              "scale": "log10",
+              "schema_version": 1,
+              "unit": "cm^-3"
+            }
+          }
+        ],
+        "spec_key": "implementation_curve"
+      },
+      "sources": [
+        {
+          "format": "bundle",
+          "input_alias": "curve_bundle"
+        }
+      ]
+    },
+    "algorithm_version": "analysis-curve-operators.v1",
+    "status": "computed",
+    "result": {
+      "schema_version": 1,
+      "curve_bundle_sha256": "9820c192c81f7d80b6cf4e00669e09b520b0e60a584e61c47a95323d96e29668",
+      "comparison_spec_sha256": "f1cb7fd2cf8ed816512540b635af782f7024a2a3a960903f1c7745aedaa95480",
+      "normalizer_profile": "analysis_inputs",
+      "operator_version": "analysis-curve-operators.v1",
+      "comparisons": [
+        {
+          "schema_version": 1,
+          "comparison_key": "implementation_residual",
+          "required": true,
+          "purpose": "implementation_sanity",
+          "gate_scope": "numerical_qualification",
+          "metric_profile": "smooth_curve",
+          "status": "fail",
+          "metrics": [
+            {
+              "schema_version": 1,
+              "comparison_key": "implementation_residual",
+              "operator_key": "profile_rms_operator",
+              "kind": "residual_rms",
+              "status": "available",
+              "value": 1.15246943459051,
+              "unit": "decade",
+              "reason_code": null,
+              "rationale": "The metric was computed from the declared continuous domain."
+            }
+          ],
+          "checks": [
+            {
+              "schema_version": 1,
+              "comparison_key": "implementation_residual",
+              "operator_key": "profile_rms_operator",
+              "status": "fail",
+              "observed_value": 1.15246943459051,
+              "threshold": {
+                "schema_version": 1,
+                "comparison": "le",
+                "value": 0.2,
+                "unit": "decade"
+              },
+              "reason_code": null
+            }
+          ],
+          "rationale": "One or more deterministic curve checks failed."
+        }
+      ],
+      "aggregate_status": "fail",
+      "validation_scope": "standalone",
+      "validation_plan_sha256": null,
+      "covered_validation_check_keys": [],
+      "interpretation_boundary": "deterministic_metrics_only_no_physical_interpretation"
+    },
+    "reason_code": null,
+    "input_digests": {
+      "curve_bundle": "133516d423679bfea95c5c61ca2d82c2912b1f86ba1fbd689c85bf77c496ebf5"
+    },
+    "diagnostics": []
+  }
+}
