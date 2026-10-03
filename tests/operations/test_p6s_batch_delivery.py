@@ -110,7 +110,7 @@ def test_release_uses_real_completed_original_public_ack_and_monotonic_threshold
     assert 'A_validation' not in native.case_objective(dict(text=d.payloads[0]['text']))
 
 
-def test_running_prediction_then_completed_adopted_comparison_requires_actual_rotation(delivery):
+def test_final_prediction_then_completed_adopted_comparison_requires_actual_rotation(delivery):
     d = delivery
     completed_design(d)
     d.now[0] = 1500
@@ -123,11 +123,13 @@ def test_running_prediction_then_completed_adopted_comparison_requires_actual_ro
     assert len(messages(d)) == 1
     d.now[0] = 3300
     d.journey.deliver_batches(d.journey.row())
-    assert len(messages(d)) == 2
+    assert len(messages(d)) == 1
     assert d.f.runtime.runs.status(declaration_author.run_id).state == 'running'
     measured_fixture_usage(declaration_author.worker)
     submit_staged_report(declaration_author, [declaration['reference']])
     assert d.f.runtime.runs.status(declaration_author.run_id).state == 'completed'
+    d.journey.deliver_batches(d.journey.row())
+    assert len(messages(d)) == 2
     consumer = d.f.start('comparison', (declaration['artifact_name'], 'acceptance.p6s.A_validation'))
     comparison = consumer.worker.call_tool('worker_experiment_stage',
         comparison_request(consumer.aliases[declaration['artifact_name']], consumer.aliases['acceptance.p6s.A_validation'], status='fail'))
@@ -167,10 +169,14 @@ def test_existing_message_ack_is_reused_and_wrong_alias_does_not_precommit(deliv
     # a lost post-model precommit/rotation observation or claim host recovery.
     del d.journey._delivery_scope
     author = d.f.start('wrong-condition', ('condition',))
-    author.worker.call_tool('worker_experiment_stage', prediction_request(author.aliases['condition']))
+    stage = author.worker.call_tool('worker_experiment_stage', prediction_request(author.aliases['condition']))
+    measured_fixture_usage(author.worker)
+    submit_staged_report(author, [stage['reference']])
     d.now[0] = 3300
     d.journey.deliver_batches(d.journey.row())
     assert messages(d) == original and not hasattr(d.journey, '_batch_prediction')
+    observation = json.loads((d.journey.logdir.parent/'batch-delivery-observation.json').read_text())
+    assert any(v['reason']=='prediction_conditions_not_discrimination' for v in observation['facts']['waiting'])
 
 
 def test_multiple_precommitments_and_incomplete_receipt_coverage_remain_unknown(delivery):
@@ -188,6 +194,176 @@ def test_multiple_precommitments_and_incomplete_receipt_coverage_remain_unknown(
     assert len(messages(d)) == 1 and not hasattr(d.journey, '_batch_prediction')
     d.journey.case_config['max_observed_runs'] = 1
     with pytest.raises(ValueError, match='coverage_limit'):
+        d.journey.deliver_batches(d.journey.row())
+    assert len(messages(d)) == 1
+
+
+def test_final_adoption_selects_revision_not_the_historical_preview_count(delivery):
+    d = delivery
+    completed_design(d)
+    d.now[0] = 1500
+    d.journey.deliver_batches(d.journey.row())
+    author = d.f.start('revised-prediction', ('acceptance.p6s.A_discrimination',))
+    request = prediction_request(author.aliases['acceptance.p6s.A_discrimination'])
+    preview = author.worker.call_tool('worker_experiment_stage', request)
+    request['conclusion'] = 'Adopt the corrected prediction rather than the earlier preview.'
+    adopted = author.worker.call_tool('worker_experiment_stage', request)
+    d.now[0] = 3300
+    d.journey.deliver_batches(d.journey.row())
+    assert len(messages(d)) == 1
+    measured_fixture_usage(author.worker)
+    submit_staged_report(author, [adopted['reference']])
+    result = d.f.runtime.runs.status(author.run_id)
+    assert result.state == 'completed'  # a legitimate prediction-only, inconclusive report
+    d.journey.deliver_batches(d.journey.row())
+    assert len(messages(d)) == 2
+    selected = d.journey._batch_prediction_binding
+    assert selected['run_id'] == author.run_id
+    assert selected['report_ref'] == result.output_ref.model_dump(mode='json')
+    assert selected['artifact_ref'] == d.f.runtime.artifacts.get_by_id(
+        d.bindings.resolve(instance=d.journey.instance, namespace='artifact', name=adopted['artifact_name'])).ref.model_dump(mode='json')
+    assert selected['artifact_ref'] != d.f.runtime.artifacts.get_by_id(
+        d.bindings.resolve(instance=d.journey.instance, namespace='artifact', name=preview['artifact_name'])).ref.model_dump(mode='json')
+    # A later final C has no replacement semantics. It neither changes the
+    # already released B binding nor blocks the exact comparison of B.
+    later = d.f.start('later-prediction', ('acceptance.p6s.A_discrimination', 'condition'))
+    replacement = later.worker.call_tool('worker_experiment_stage',
+        prediction_request(later.aliases['acceptance.p6s.A_discrimination']))
+    unrelated = later.worker.call_tool('worker_experiment_stage', prediction_request(later.aliases['condition']))
+    measured_fixture_usage(later.worker)
+    submit_staged_report(later, [replacement['reference'], unrelated['reference']])
+    consumer = d.f.start('selected-comparison', (adopted['artifact_name'], 'acceptance.p6s.A_validation'))
+    compared = consumer.worker.call_tool('worker_experiment_stage', comparison_request(
+        consumer.aliases[adopted['artifact_name']], consumer.aliases['acceptance.p6s.A_validation'], status='fail'))
+    measured_fixture_usage(consumer.worker)
+    submit_staged_report(consumer, [compared['reference']])
+    d.now[0] = 5100
+    _, active = safe_fixture_rotation(d)
+    d.journey.deliver_batches(active)
+    assert len(messages(d)) == 3 and d.journey._batch_prediction_binding == selected
+    assert d.journey._batch_release_observations[-1]['prediction_binding'] == selected
+
+
+def test_unrelated_completed_predictions_are_unknown_and_restart_cannot_guess_selection(delivery):
+    d = delivery
+    completed_design(d)
+    d.now[0] = 1500
+    d.journey.deliver_batches(d.journey.row())
+    for name in ('independent-one', 'independent-two'):
+        author = d.f.start(name, ('acceptance.p6s.A_discrimination',))
+        stage = author.worker.call_tool('worker_experiment_stage', prediction_request(author.aliases['acceptance.p6s.A_discrimination']))
+        measured_fixture_usage(author.worker)
+        submit_staged_report(author, [stage['reference']])
+    d.now[0] = 3300
+    d.journey.deliver_batches(d.journey.row())
+    observation = json.loads((d.journey.logdir.parent/'batch-delivery-observation.json').read_text())
+    assert observation['reason'] == 'multiple_adopted_predictions_no_declared_replacement'
+    assert len(observation['facts']['declarations']) == 2 and len(messages(d)) == 1
+    # Existing exact public ack alone cannot recover which final report caused
+    # a release. A new observer must not choose either candidate by recency.
+    d.f.root.call_tool('progression_message', dict(name='acceptance.p6s.A_validation', text=d.payloads[2]['text']))
+    d.now[0] = 5100
+    d.journey.deliver_batches(d.journey.row())
+    observation = json.loads((d.journey.logdir.parent/'batch-delivery-observation.json').read_text())
+    assert observation['reason'] == 'prediction_release_binding_unavailable'
+    assert observation['post_model_restart_supported'] is False and len(messages(d)) == 2
+
+
+def test_batch_opening_and_discrimination_discover_only_the_bench_delivery_protocol(delivery):
+    d = delivery
+    opening = native.case_objective(dict(text=d.payloads[0]['text'], batch_delivery=d.spec))
+    for text in (opening, d.payloads[1]['text']):
+        assert 'science.experiment.v1' in text
+        assert 'prediction_declaration' in text and 'adopted_stages' in text
+        assert 'x=4' in text
+    assert 'prediction_declaration' not in native.case_objective(dict(text='An ordinary task.'))
+    assert 'A_validation' not in opening and 'B_changed_condition' not in opening
+
+
+@pytest.mark.parametrize('large_candidate', [False, True])
+def test_large_unrelated_input_does_not_mask_candidate_but_unread_adopted_stage_blocks_uniqueness(delivery, large_candidate):
+    d = delivery
+    completed_design(d)
+    d.now[0] = 1500
+    d.journey.deliver_batches(d.journey.row())
+    d.f.register('large-ordinary-material', b'x'*70000)
+    author = d.f.start('healthy', ('acceptance.p6s.A_discrimination', 'large-ordinary-material'))
+    declared = author.worker.call_tool('worker_experiment_stage', prediction_request(author.aliases['acceptance.p6s.A_discrimination']))
+    measured_fixture_usage(author.worker)
+    submit_staged_report(author, [declared['reference']])
+    if large_candidate:
+        other = d.f.start('large-final', ('acceptance.p6s.A_discrimination',))
+        request = prediction_request(other.aliases['acceptance.p6s.A_discrimination'])
+        request['limitations'] = ['A retained long scientific limitation. '*2000]
+        large = other.worker.call_tool('worker_experiment_stage', request)
+        measured_fixture_usage(other.worker)
+        submit_staged_report(other, [large['reference']])
+        assert d.f.runtime.runs.status(other.run_id).state == 'completed'
+    d.now[0] = 3300
+    d.journey.deliver_batches(d.journey.row())
+    observation = json.loads((d.journey.logdir.parent/'batch-delivery-observation.json').read_text())
+    assert len(observation['facts']['declarations']) == 1
+    assert observation['facts']['declaration_coverage_complete'] is not large_candidate
+    assert len(messages(d)) == (1 if large_candidate else 2)
+    if large_candidate:
+        assert observation['reason']=='adopted_prediction_coverage_unknown'
+        assert any(v['reason']=='adopted_stage_body_limit' for v in observation['facts']['waiting'])
+    else:
+        assert any(v['reason']=='adopted_stage_without_prediction_or_comparison' for v in observation['facts']['waiting'])
+
+
+def test_copied_declaration_is_rejected_by_final_adoption_and_cannot_release(delivery):
+    from scidiscovery.artifact_agent.schema.common import canonical_json
+    d = delivery
+    completed_design(d)
+    d.now[0] = 1500
+    d.journey.deliver_batches(d.journey.row())
+    d.f.register('copied-prediction', canonical_json(prediction_request('invented-producer-alias')))
+    author = d.f.start('copied-consumer', ('copied-prediction', 'observation'))
+    compared = author.worker.call_tool('worker_experiment_stage',
+        comparison_request(author.aliases['copied-prediction'], author.aliases['observation']))
+    measured_fixture_usage(author.worker)
+    result = submit_staged_report(author, [compared['reference']])
+    assert d.f.runtime.runs.status(author.run_id).state != 'completed'
+    assert 'unique original stage receipt' in json.dumps(result)
+    d.now[0] = 5100
+    d.journey.deliver_batches(d.journey.row())
+    assert len(messages(d)) == 1
+
+
+@pytest.mark.parametrize('corruption', ['bytes', 'receipt', 'namespace'])
+def test_selected_original_corruption_is_hard_failure_not_waiting(delivery, corruption):
+    import sqlite3
+    d = delivery
+    completed_design(d)
+    d.now[0] = 1500
+    d.journey.deliver_batches(d.journey.row())
+    author = d.f.start('original', ('acceptance.p6s.A_discrimination',))
+    declared = author.worker.call_tool('worker_experiment_stage', prediction_request(author.aliases['acceptance.p6s.A_discrimination']))
+    measured_fixture_usage(author.worker)
+    submit_staged_report(author, [declared['reference']])
+    ref = d.f.runtime.runs.tool_evidence(author.run_id)[0]['artifact_ref']
+    if corruption == 'bytes':
+        path = d.journey.root/'state/artifacts/sha256'/ref['sha256'][:2]/ref['sha256'][2:]
+        raw = path.read_bytes()
+        path.write_bytes(raw.replace(b'condition A', b'condition B'))  # equal-size altered bytes
+    else:
+        with sqlite3.connect(d.journey.root/'state/database/runs.sqlite3') as db:
+            if corruption == 'receipt':
+                raw = db.execute('SELECT record_json FROM run_tool_evidence WHERE run_id=?', (author.run_id,)).fetchone()[0]
+                record = json.loads(raw)
+                record['size_bytes'] += 1
+                db.execute('UPDATE run_tool_evidence SET record_json=? WHERE run_id=?', (json.dumps(record), author.run_id))
+            else:
+                raw = db.execute('SELECT inputs_json FROM runs WHERE run_id=?', (author.run_id,)).fetchone()[0]
+                inputs = json.loads(raw)
+                for item in inputs:
+                    if item['source_name'] == author.aliases['acceptance.p6s.A_discrimination']:
+                        item['source_name'] = 'wrong-producer-namespace'
+                db.execute('UPDATE runs SET inputs_json=? WHERE run_id=?', (json.dumps(inputs), author.run_id))
+    d.now[0] = 3300
+    with pytest.raises(Exception, match={'bytes':'bytes_mismatch', 'receipt':'original control receipt',
+            'namespace':'condition_namespace_missing'}[corruption]):
         d.journey.deliver_batches(d.journey.row())
     assert len(messages(d)) == 1
 
@@ -232,12 +408,15 @@ def test_completed_comparison_requires_exact_observation_prediction_and_adoption
     d.journey.deliver_batches(d.journey.row())
     author = d.f.start('declaration', ('acceptance.p6s.A_discrimination', 'condition'))
     declared = author.worker.call_tool('worker_experiment_stage', prediction_request(author.aliases['acceptance.p6s.A_discrimination']))
+    measured_fixture_usage(author.worker)
+    submit_staged_report(author, [declared['reference']])
     d.now[0] = 3300
     d.journey.deliver_batches(d.journey.row())
     if missing == 'wrong_prediction':
-        declared = author.worker.call_tool('worker_experiment_stage', prediction_request(author.aliases['condition']))
-    measured_fixture_usage(author.worker)
-    submit_staged_report(author, [declared['reference']])
+        wrong_author = d.f.start('different-declaration', ('condition',))
+        declared = wrong_author.worker.call_tool('worker_experiment_stage', prediction_request(wrong_author.aliases['condition']))
+        measured_fixture_usage(wrong_author.worker)
+        submit_staged_report(wrong_author, [declared['reference']])
     consumer = d.f.start('comparison', (declared['artifact_name'], 'acceptance.p6s.A_validation', 'observation'))
     observation = consumer.aliases['observation' if missing == 'wrong_observation' else 'acceptance.p6s.A_validation']
     compared = consumer.worker.call_tool('worker_experiment_stage', comparison_request(

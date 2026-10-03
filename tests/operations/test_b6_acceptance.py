@@ -890,6 +890,11 @@ def test_p6s_host_material_spec_is_frozen_and_public_projection_excludes_answers
     assert suite.configuration(config_file)['cases']['p6s']['batch_delivery'] == spec
     bodies = batch_payloads(spec)
     assert all('private_answer' not in v['text'] and 'host-only scoring' not in v['text'] for v in bodies)
+    from scripts.acceptance_native_cases import case_objective
+    opening = case_objective(dict(text=bodies[0]['text'], batch_delivery=spec))
+    assert 'prediction_declaration' in opening and 'adopted_stages' in bodies[1]['text']
+    assert all(secret not in opening for secret in ('private_answer', 'host-only scoring', str(path),
+        'A_validation', 'B_changed_condition'))
     before = digest(config)
     material['batches'][0]['observations'][0]['answer'] = 'private'
     write(path, material)

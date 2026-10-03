@@ -6,10 +6,10 @@ import time
 
 try:
     from scripts.accept_progression_recovery import RecoveryJourney
-    from scripts.b6_evidence import rows, run_snapshot, participants, sealed_outputs, read, write, verify_prior_turns, usage_report, budget_assessment, batch_scientific_facts, BatchMaterialReader, batch_payloads
+    from scripts.b6_evidence import rows, run_snapshot, participants, sealed_outputs, read, write, verify_prior_turns, usage_report, budget_assessment, batch_scientific_facts, BatchMaterialReader, batch_payloads, P6S_PREDICTION_PROTOCOL
 except ModuleNotFoundError:
     from accept_progression_recovery import RecoveryJourney
-    from b6_evidence import rows, run_snapshot, participants, sealed_outputs, read, write, verify_prior_turns, usage_report, budget_assessment, batch_scientific_facts, BatchMaterialReader, batch_payloads
+    from b6_evidence import rows, run_snapshot, participants, sealed_outputs, read, write, verify_prior_turns, usage_report, budget_assessment, batch_scientific_facts, BatchMaterialReader, batch_payloads, P6S_PREDICTION_PROTOCOL
 
 
 AUTHORITY_OBJECTIVE='只读旧实例一个小页封存成果，保留限制并通过 progression_report 简短交接。禁止创建科研任务、助手或外部作业。'
@@ -21,7 +21,8 @@ def case_objective(case):
              if case.get('multi_task') else '只派发一个负责人。')
     return ('这是隔离验收中的科学任务。使用既有完整任务合同，不拆成 Root 子步骤。'
             '科学内容必须来自 Worker 封存结果。'+scope+'不运行 TCAD、网络或外部作业。'
-            '负责人可以使用本任务明确要求的助手；否则不使用助手。不要人为睡眠。\n'+case['text'])
+            '负责人可以使用本任务明确要求的助手；否则不使用助手。不要人为睡眠。\n'+case['text']
+            + ('\n'+P6S_PREDICTION_PROTOCOL if case.get('batch_delivery') else ''))
 
 
 def recorded_control_call(root, writer, name, arguments):
@@ -187,7 +188,8 @@ class NativeCaseJourney(RecoveryJourney):
             next_batch=batches[index]['name'] if index<3 else None, elapsed_seconds=elapsed,
             science_passed=False, post_model_restart_supported=False,
             releases=getattr(self, '_batch_release_observations', []),
-            prediction=getattr(self, '_batch_prediction', None), rotation=getattr(self, '_batch_rotation_proof', None))
+            prediction=getattr(self, '_batch_prediction', None),
+            prediction_binding=getattr(self, '_batch_prediction_binding', None), rotation=getattr(self, '_batch_rotation_proof', None))
         if index == 3 or control.get('state') != 'active' or elapsed < (1500,3300,5100)[index]:
             observation['status'] = 'complete' if index==3 else 'waiting'
             observation['reason'] = 'saved' if index==3 else 'control_inactive' if control.get('state')!='active' else 'release_time'
@@ -197,15 +199,25 @@ class NativeCaseJourney(RecoveryJourney):
         facts = batch_scientific_facts(self.root, control, max_runs=int(self.case_config['max_observed_runs']),
             discrimination=acks[0], validation=acks[1], prediction=prediction)
         ready = bool(facts['first_results']) if index==0 else False
-        if index == 1 and len(facts['declarations']) == 1:
-            prediction = facts['declarations'][0]['artifact_ref']
+        reason = 'first_completed_experiment_unknown' if index==0 else 'adopted_prediction_unknown'
+        if index == 1 and not facts['declaration_coverage_complete']:
+            reason = 'adopted_prediction_coverage_unknown'
+        elif index == 1 and len(facts['declarations']) == 1:
+            self._batch_prediction_binding = facts['declarations'][0]
+            prediction = self._batch_prediction_binding['artifact_ref']
             self._batch_prediction = prediction
             ready = True
+        elif index == 1 and len(facts['declarations']) > 1:
+            reason = 'multiple_adopted_predictions_no_declared_replacement'
         if index == 2:
             ready = bool(prediction and facts['comparisons'] and getattr(self, '_batch_rotation_proof', None))
+            reason = ('prediction_release_binding_unavailable' if not prediction or not getattr(self, '_batch_prediction_binding', None)
+                else 'adopted_comparison_unknown' if not facts['comparisons'] else 'safe_rotation_unknown')
+            ready = ready and bool(getattr(self, '_batch_prediction_binding', None))
         observation.update(status='eligible' if ready else 'waiting',
-            reason='exact_sealed_proof' if ready else 'sealed_or_rotation_proof_unknown', facts=facts,
-            prediction=prediction, rotation=getattr(self, '_batch_rotation_proof', None))
+            reason='exact_sealed_proof' if ready else reason, facts=facts,
+            prediction=prediction, prediction_binding=getattr(self, '_batch_prediction_binding', None),
+            rotation=getattr(self, '_batch_rotation_proof', None))
         if not ready:
             write(self.logdir.parent/'batch-delivery-observation.json', observation)
             return
@@ -240,7 +252,8 @@ class NativeCaseJourney(RecoveryJourney):
         # or restart source; saved status still comes exclusively from control.
         releases = getattr(self, '_batch_release_observations', [])
         releases.append(dict(name=names[index], elapsed_seconds=elapsed, artifact_ref=ack,
-            facts=facts, prediction=prediction, rotation=getattr(self, '_batch_rotation_proof', None)))
+            facts=facts, prediction=prediction, prediction_binding=getattr(self, '_batch_prediction_binding', None),
+            rotation=getattr(self, '_batch_rotation_proof', None)))
         self._batch_release_observations = releases
         observation['releases'] = releases
         write(self.logdir.parent/'batch-delivery-observation.json', observation)

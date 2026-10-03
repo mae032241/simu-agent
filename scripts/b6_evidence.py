@@ -128,6 +128,18 @@ def sealed_outputs(candidate, runs):
     return evidence
 
 
+P6S_PREDICTION_PROTOCOL = (
+    '本合成机制验收使用公开 science.experiment.v1 完整任务；先查当前合同。'
+    '本 bench 的预测任务须在 worker_experiment_stage 的设计阶段使用可选 prediction_declaration，'
+    '绑定实际收到的鉴别材料 alias，给出工况 A、x=4 的预测及可证伪判据；尚未投递的观测不可作为输入。'
+    '允许在同一任务内修订，最终 ExperimentReport.adopted_stages 必须仅采用一个确切声明原件；'
+    'running 预览不触发投递。预测子任务可按实际范围交付 outcome=inconclusive，'
+    '不必等待未投递的验证观测，也不代表科学结论已验证。'
+    '后续比较任务使用可选 comparison，引用投递所依据的确切声明和实际验证材料 alias，'
+    '最终 adopted_stages 采用比较原件；not_run 不算已比较，负结果仍须保留。'
+    '这些交付条件只属于本 bench，普通任务的可选字段仍可省略。')
+
+
 def batch_payloads(spec):
     """Project only the four public batches from one exact host-side fixture."""
     path = Path(spec['materials_file'])
@@ -153,10 +165,19 @@ def batch_payloads(spec):
                     or v['error_abs'] <= 0 for v in batch['observations'])):
             raise ValueError('batch_public_observation_invalid')
         text = json.dumps(batch, ensure_ascii=False, sort_keys=True, allow_nan=False)
+        if name == 'A_discrimination':
+            text += '\n' + P6S_PREDICTION_PROTOCOL
         if not 1 <= len(text) <= 16000:
             raise ValueError('batch_public_text_limit')
         result.append(dict(name=name, text=text))
     return result
+
+
+class BatchBodyLimit(ValueError):
+    """Body was not read; receipt role may already have been verified by the resolver."""
+    def __init__(self, tool_name):
+        super().__init__('batch_scientific_body_limit')
+        self.tool_name = tool_name
 
 
 class BatchMaterialReader:
@@ -222,7 +243,7 @@ class BatchMaterialReader:
     def verify(self, ref):
         envelope = self.catalog(ref)
         if envelope.size_bytes > 65536:
-            raise ValueError('batch_scientific_body_limit')
+            raise BatchBodyLimit(envelope.labels.get('tool_name'))
         path = self.root/'state/artifacts/sha256'/ref.sha256[:2]/ref.sha256[2:]
         with path.open('rb') as stream:
             if path.stat().st_size != envelope.size_bytes or hashlib.file_digest(stream, 'sha256').hexdigest() != ref.sha256:
@@ -256,38 +277,73 @@ def batch_scientific_facts(candidate, control, *, max_runs, discrimination=None,
     if len(admissions) > max_runs:
         raise ValueError('batch_admission_coverage_limit')
     reader = BatchMaterialReader(candidate, control['instance_id'], sorted(admissions))
-    facts = dict(first_results=[], declarations=[], comparisons=[])
+    facts = dict(first_results=[], declarations=[], comparisons=[], waiting=[], declaration_coverage_complete=True)
     for identity in sorted(admissions):
         value = reader.status(identity)
         if value.operation_id != 'science.experiment.v1':
             continue  # This optional benchmark uses the declared complete experiment contract.
-        report = ExperimentReport.model_validate_json(json.dumps(reader.read_json(value.output_ref))).model_dump(mode='json') if value.state == 'completed' and value.output_ref else None
-        if report is not None:
-            facts['first_results'].append(dict(run_id=identity, artifact_ref=value.output_ref))
-        for raw in reader.tool_evidence(identity):
-            if raw.get('tool_name') != 'worker_experiment_stage':
+        if value.state != 'completed':
+            facts['waiting'].append(dict(run_id=identity, reason='experiment_not_completed'))
+            continue
+        if value.output_ref is None:
+            raise ValueError('batch_completed_report_missing')
+        try:
+            report = ExperimentReport.model_validate_json(json.dumps(reader.read_json(value.output_ref)))
+        except BatchBodyLimit:
+            facts['declaration_coverage_complete'] = False
+            facts['waiting'].append(dict(run_id=identity, reason='completed_report_body_limit'))
+            continue
+        facts['first_results'].append(dict(run_id=identity, artifact_ref=value.output_ref))
+        if not report.adopted_stages:
+            facts['waiting'].append(dict(run_id=identity, reason='no_adopted_stages'))
+        adopted_refs = set()
+        for alias in report.adopted_stages:
+            try:
+                record = reader.material(identity, alias)
+            except BatchBodyLimit as error:
+                # resolve_material checks the unique original receipt and its
+                # role/namespace before verify raises this precise read limit.
+                # An unread stage can hide another declaration; a non-stage
+                # receipt cannot. Neither unread body gains scientific credit.
+                if error.tool_name == 'worker_experiment_stage':
+                    facts['declaration_coverage_complete'] = False
+                facts['waiting'].append(dict(run_id=identity, reason='adopted_stage_body_limit'
+                    if error.tool_name == 'worker_experiment_stage' else 'unrelated_material_body_limit', alias=alias))
                 continue
-            record = reader.material(identity, raw['alias'])
             if record is None:
-                raise ValueError('batch_stage_receipt_missing')
+                raise ValueError('batch_adopted_receipt_missing')
+            ref = ArtifactRef.model_validate(record['artifact_ref'])
+            if ref in adopted_refs:
+                continue
+            adopted_refs.add(ref)
+            if record.get('tool_name') != 'worker_experiment_stage':
+                facts['waiting'].append(dict(run_id=identity, reason='adopted_material_not_stage', artifact_ref=record['artifact_ref']))
+                continue
             stage = StageSubmission.model_validate_json(json.dumps(reader.read_json(record['artifact_ref'])))
             refs = record['source_refs']
+            if stage.prediction_declaration is None and stage.comparison is None:
+                facts['waiting'].append(dict(run_id=identity, reason='adopted_stage_without_prediction_or_comparison', artifact_ref=record['artifact_ref']))
             if stage.prediction_declaration and discrimination:
                 conditions = [refs.get(name) for name in stage.prediction_declaration.conditions]
-                if None not in conditions and ArtifactRef.model_validate(discrimination) in conditions:
-                    facts['declarations'].append(dict(run_id=identity, artifact_ref=record['artifact_ref']))
-            if not (stage.comparison and report is not None and prediction and validation):
+                if None in conditions:
+                    raise ValueError('batch_prediction_condition_namespace_missing')
+                if record['producer_run_id'] != identity:
+                    facts['waiting'].append(dict(run_id=identity, reason='prediction_not_authored_by_adopting_run', artifact_ref=record['artifact_ref']))
+                elif ArtifactRef.model_validate(discrimination) in conditions:
+                    facts['declarations'].append(dict(run_id=identity, artifact_ref=record['artifact_ref'], report_ref=value.output_ref))
+                else:
+                    facts['waiting'].append(dict(run_id=identity, reason='prediction_conditions_not_discrimination', artifact_ref=record['artifact_ref']))
+            if not (stage.comparison and prediction and validation):
                 continue
-            adopted_refs = []
-            for alias in report.get('adopted_stages', []):
-                adopted = reader.material(identity, alias)
-                if adopted is not None:
-                    adopted_refs.append(ArtifactRef.model_validate(adopted['artifact_ref']))
             comparison = stage.comparison
-            if (ArtifactRef.model_validate(record['artifact_ref']) not in adopted_refs
-                    or refs.get(comparison.prediction) != ArtifactRef.model_validate(prediction)
-                    or ArtifactRef.model_validate(validation) not in [refs.get(name) for name in comparison.observations]
-                    or comparison.result.status == 'not_run'):
+            observation_refs = [refs.get(name) for name in comparison.observations]
+            if refs.get(comparison.prediction) is None or None in observation_refs:
+                raise ValueError('batch_comparison_source_namespace_missing')
+            reason = ('comparison_prediction_not_selected' if refs[comparison.prediction] != ArtifactRef.model_validate(prediction)
+                else 'comparison_observations_not_validation' if ArtifactRef.model_validate(validation) not in observation_refs
+                else 'comparison_not_run' if comparison.result.status == 'not_run' else None)
+            if reason:
+                facts['waiting'].append(dict(run_id=identity, reason=reason, artifact_ref=record['artifact_ref']))
                 continue
             declaration = reader.material(identity, comparison.prediction)
             if declaration is None or declaration.get('tool_name') != 'worker_experiment_stage':
@@ -297,7 +353,7 @@ def batch_scientific_facts(candidate, control, *, max_runs, discrimination=None,
                     or comparison.result.check_key != declared.prediction_declaration.criterion.check_key
                     or comparison.result.evaluation_mode != declared.prediction_declaration.criterion.evaluation_mode):
                 raise ValueError('batch_comparison_criterion_mismatch')
-            facts['comparisons'].append(dict(run_id=identity, artifact_ref=record['artifact_ref']))
+            facts['comparisons'].append(dict(run_id=identity, artifact_ref=record['artifact_ref'], report_ref=value.output_ref))
     return facts
 
 
