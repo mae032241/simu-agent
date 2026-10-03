@@ -16,7 +16,7 @@ from ..schema.refs import ArtifactRef
 from .run_outputs import InputBindingDescriptor, RunCheckerError
 from .run_records import RunError, RunStateConflict, RunContractUnavailable
 from .reference_access import ReferenceAccessMixin
-from .reference_proofs import encode_snapshot, material_snapshot, source_bindings
+from .reference_proofs import encode_snapshot, material_snapshot, source_bindings, proof_error
 
 _UNPREPARED = object()
 
@@ -474,7 +474,8 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
             else:
                 records = [r for r in all_records if r.get('record_type') != 'reference_access' and r.get('output_port', 'tool_evidence') == 'tool_evidence']
                 if len([r for r in all_records if r.get('record_type') != 'reference_access']) >= 128 or len(records) >= port.max_items or sum(r['size_bytes'] for r in records)+len(raw) > port.collection.max_total_bytes:
-                    raise ValueError('evidence_budget')
+                    raise proof_error('reference_proof_limit',
+                        'The receipt collection budget is exhausted. Preserve existing materials and continue in a new task with exact selected sources; unchanged retries cannot add this receipt.')
                 if metadata.get('output_name') and any(r['metadata'].get('output_name')==metadata['output_name'] for r in records):
                     raise ValueError('ambiguous_mapping')
                 reserved = {r['alias'] for r in all_records}
@@ -501,7 +502,8 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
                     idempotency_key=f'run:{run_id}:tool:{key}' + (f':{alias}' if external_source else '')).ref
                 record={'alias':alias,'artifact_ref':artifact.model_dump(mode='json'),'source_ref':source_ref.model_dump(mode='json') if source_ref is not None else None,
                         'media_type':media_type,'size_bytes':len(raw),'metadata':metadata,'tool_name':tool_name,
-                        'control_parents': [ref.model_dump(mode='json') for ref in trusted_parent_refs]}
+                        'control_parents': [ref.model_dump(mode='json') for ref in
+                            (trusted_parent_refs or derived_refs or ((source_ref,) if source_ref else ()))]}
                 connection.execute('INSERT INTO run_tool_evidence VALUES (?,?,?,?,?)',(run_id,ordinal,key,canonical_json(record),alias))
                 all_records.append(record)
                 # Apply the same complete manifest budget used by finalization,
@@ -557,6 +559,7 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
                     or len(raw) != record["size_bytes"] or len(raw) > port.max_item_bytes
                     or hashlib.sha256(raw).hexdigest() != ref.sha256):
                 raise ValueError("reuse member is missing or differs from its original receipt")
+        recovery = self.recovery_tool_proof(value)
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = self._row(connection, run_id)
@@ -568,7 +571,8 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
             bound_aliases = {i.source_name for i in value.inputs}
             additions = []
             for record in records:
-                if record["alias"] in bound_aliases or (record["alias"] in existing and existing[record["alias"]] != record):
+                if record["alias"] in bound_aliases or (record["alias"] in existing
+                        and canonical_json(existing[record["alias"]]) != canonical_json(record)):
                     raise ValueError("reuse receipt alias conflicts with a current binding")
                 if record["alias"] not in existing:
                     additions.append(record)
@@ -576,6 +580,10 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
             if (len(evidence) > min(port.max_items, 128)
                     or sum(r["size_bytes"] for r in evidence) > port.collection.max_total_bytes):
                 raise ValueError("reuse exceeds the compiled evidence collection budget")
+            if additions:
+                self._encode_evidence_snapshot(value, evidence,
+                    [r for r in current if r.get('record_type') == 'reference_access'],
+                    recovery, self.tool_attempts(run_id, connection=connection))
             for offset, record in enumerate(additions, start=1):
                 key = hashlib.sha256(canonical_json({"sha256": record["artifact_ref"]["sha256"],
                     "metadata": record["metadata"], "source": record["source_ref"]})).hexdigest()
@@ -598,7 +606,7 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
     def _encode_evidence_snapshot(value, records, accesses, recovery, attempts):
         bindings = source_bindings(value, records, accesses)
         if len(attempts) + _recovery_attempt_count(recovery) > 64:
-            raise RunCheckerError('tool attempt proof budget exceeded')
+            raise proof_error('reference_proof_limit', 'The complete proof exceeds the tool attempt budget; preserve its evidence and continue with selected sources in a new task.')
         # Access evidence records identity and provided scope. Tool delivery
         # bodies (including old host paths) belong only to the local replay log.
         published_accesses = [{key: item for key, item in record.items() if key != 'response'} for record in accesses]
@@ -660,10 +668,21 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
 
     def _prepare_evidence_snapshot(self, run_id):
         value=self.status(run_id)
-        if not tool_evidence_ports(self._compiled(value)):
+        compiled = self._compiled(value)
+        ports = tool_evidence_ports(compiled)
+        if not ports:
             return
         workspace=self.backend.open(run_id)
         raw=self._evidence_snapshot(run_id)
+        if compiled.digest != self.operation_catalog.operation(value.operation_id).digest:
+            # A retained old identity must not publish a proof that only its
+            # widened successor contract accepts. Private recovery reading may
+            # reconstruct that proof, but old public output still obeys its ABI.
+            from jsonschema.validators import validator_for
+            schema = compiled.output_contracts[ports['recovery_manifest_output'].name]
+            if next(validator_for(schema)(schema).iter_errors(json.loads(raw)), None) is not None:
+                raise proof_error('reference_proof_contract_limit',
+                    'The proof exceeds this task\'s frozen predecessor contract. Preserve its materials and explicitly recover to the current contract; do not rewrite the original task identity.')
         raw = scientific_evidence_projection(raw)
         if len(raw)>1024*1024:
             raise RunCheckerError('tool evidence manifest exceeds limit')
@@ -863,6 +882,8 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
                 raise RunCheckerError('preserved evidence exceeds this operation capability',category='integrity_failure')
         available_refs = {item.artifact_ref for item in value.inputs}
         available_refs.update(ArtifactRef.model_validate(r["artifact_ref"]) for r in self.reference_access_records(run_id))
+        recovery = self.recovery_tool_proof(value)
+        pending = []
         for index, record in enumerate(previous):
             port_name = record.get('output_port', 'tool_evidence')
             port = ports[port_name]
@@ -905,23 +926,32 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
                 raise RunCheckerError('preserved evidence alias conflicts with current input',category='integrity_failure')
             key = record.get('publication_key') or hashlib.sha256(canonical_json({'sha256':ref.sha256,
                 'metadata':record['metadata'], 'source':record['source_ref']})).hexdigest()
-            # Adopt the exact receipt and CAS reference. Re-registering these bytes
-            # would falsely make the new Run their original collecting producer.
-            with self._connect() as connection:
-                connection.execute('BEGIN IMMEDIATE')
-                row = self._row(connection,run_id)
-                if row['state'] != 'running' or row['accepted_candidate_digest'] is not None:
-                    raise RunStateConflict('Run no longer accepts preserved evidence')
-                found = connection.execute('SELECT record_json FROM run_tool_evidence WHERE run_id=? AND evidence_key=?',(run_id,key)).fetchone()
-                if found:
-                    if json.loads(found[0]) != record:
-                        raise RunCheckerError('preserved receipt conflicts with current receipt',category='integrity_failure')
-                    available_refs.add(ref)
-                    continue
-                ordinal = connection.execute('SELECT COUNT(*) FROM run_tool_evidence WHERE run_id=?',(run_id,)).fetchone()[0]+1
-                connection.execute('INSERT INTO run_tool_evidence VALUES (?,?,?,?,?)',
-                    (run_id,ordinal,key,canonical_json(record),record['alias']))
+            pending.append((key, record))
             available_refs.add(ref)
+        # Admit the complete union before committing any recovered receipt.
+        with self._connect() as connection:
+            connection.execute('BEGIN IMMEDIATE')
+            row = self._row(connection, run_id)
+            if row['state'] != 'running' or row['accepted_candidate_digest'] is not None:
+                raise RunStateConflict('Run no longer accepts preserved evidence')
+            stored = connection.execute('SELECT evidence_key,record_json FROM run_tool_evidence WHERE run_id=? ORDER BY ordinal', (run_id,)).fetchall()
+            existing = {r[0]: json.loads(r[1]) for r in stored}
+            additions = []
+            for key, record in pending:
+                if key in existing:
+                    if existing[key] != record:
+                        raise RunCheckerError('preserved receipt conflicts with current receipt', category='integrity_failure')
+                else:
+                    additions.append((key, record))
+            if additions:
+                all_records = [*existing.values(), *(record for _, record in additions)]
+                self._encode_evidence_snapshot(value,
+                    [r for r in all_records if r.get('record_type') != 'reference_access'],
+                    [r for r in all_records if r.get('record_type') == 'reference_access'], recovery,
+                    self.tool_attempts(run_id, connection=connection))
+                for ordinal, (key, record) in enumerate(additions, len(stored) + 1):
+                    connection.execute('INSERT INTO run_tool_evidence VALUES (?,?,?,?,?)',
+                        (run_id, ordinal, key, canonical_json(record), record['alias']))
 
     def validation_source_ports(self, value):
         """Expected source wiring comes from bindings/receipts, never descriptors."""

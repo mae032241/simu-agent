@@ -226,7 +226,7 @@ Root interface declarations also own their surface: ordinary `research` omits th
 Effect execution or historical recovery. This is one declaration projection, not
 another Operation registry or authorization. Task-managed execution stays with
 `worker_experiment_execute` while its owner or any recovery descendant is active.
-When the entire lineage has failed, the execution surface and lifecycle events
+When every owner has failed or sealed a limited experiment conclusion, the execution surface and lifecycle events
 expose the original execution for status, sync, logs, collect and outputs, plus
 state-appropriate explicit start, abandon or cancel. Starting reuses the exact request,
 implementation and approval; it checks the frozen task contract, required independent
@@ -354,9 +354,15 @@ collected results from cancelled or failed executions. A terminal state alone do
 not create a receipt or trigger collection.
 Final delivery refreshes solver status before reconciling collected receipts. A
 successful execution without collected results, or a terminal execution with an
-active/uncertain collector, blocks finalization; a stopped failed/cancelled execution
-can still support a limited report. A collector finishing during refresh is reconciled
+active/uncertain collector, blocks finalization. A definitively failed, timed-out or
+interrupted collector with no active recovery permits a blocked/inconclusive report
+with nonempty limitations, never completed or a fabricated collection receipt.
+A stopped failed/cancelled execution can still support a limited report. A collector finishing during refresh is reconciled
 in that same submission attempt. Status observation never implicitly starts collection.
+When every owner has failed or sealed a limited experiment conclusion, Root may
+recover the original execution's status/results. Later collection cannot rewrite
+the sealed report; new conclusions need a new delivery based on those results.
+Any queued or running owner still prevents takeover.
 Read/export accept exact output identifiers or verified solver-relative filenames.
 Finalization identifies missing chain edges and lists bounded available aliases,
 without selecting scientific validity on the Worker's behalf.
@@ -392,6 +398,20 @@ use the same 1 MiB encoded-manifest budget. New receipts check the complete snap
 before committing, while identical receipt retries reuse their fixed proof. Oversize
 legacy data receives an explicit diagnostic to preserve materials and continue from
 selected exact sources, not an opaque runtime error or a silently truncated proof.
+Reference proof failures still settle the response/time reservation; an assignment
+proof failure terminates the Run while retaining originals. Explicit adoption and
+recovery copying validate the complete combined proof before committing. Final
+receipt reconciliation participates in the same diagnostic mapping. Attachment
+streaming and Artifact registration finish before taking the Run write lock; the
+transaction rechecks state, quotas and the complete proof. Unbound immutable objects
+left by rejection are reused by publication key, never treated as accepted evidence.
+
+The binding-limit revision retains one explicit predecessor contract: the catalog
+recompiles the original 128-binding schema and complete output contracts, accepting
+an in-flight identity only when its old digest matches exactly. Old output remains
+subject to that old contract. Failed predecessors may explicitly recover to the
+current widened contract without rewriting original task, draft or proof identities.
+Other contract differences are not ignored; unknown digests remain unavailable.
 Budget-extension accounting maps known record/integrity failures to a repairable UI
 conflict; unexpected technical errors retain their traceback in server logs and return
 the ordinary service-unavailable response without sealing a decision.
@@ -407,6 +427,10 @@ membership in the immutable envelope. Without those edges, only exact producer i
 parents can resolve historical ambiguity; no unadvertised kind constraint is invented.
 UI presentation accumulates direct parents only until its byte budget is reached,
 retaining an explicit omission marker instead of building the entire list first.
+New receipts also retain exact derived_from parent references. Historical empty
+control_parents can recover those edges from the original producer's exact sources;
+empty must not silently mean no ancestry. An execution without a wall-time allowance
+is reported as ineligible for time extension, rather than as corrupt control state.
 
 New curve scores identify the support-aware algorithm as `curve-operators.v2` or
 `analysis-curve-operators.v2`. Historical v1 calculations still require exact source

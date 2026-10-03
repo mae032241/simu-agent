@@ -11,6 +11,7 @@ import uuid
 from ..schema.common import canonical_json
 from ..schema.refs import ArtifactRef
 from .run_records import RunStateConflict, timestamp
+from .reference_proofs import ReferenceProofError
 from ...plugin_runtime.workspace import WorkspaceError
 
 
@@ -791,8 +792,10 @@ class ReferenceAccessMixin:
             self._reference_publish_file(run_id, response, raw, target=target if file_delivery else None, call=call)
             self._refresh_evidence_schema(run_id)
             return response
-        except (ReferenceAccessError, RunStateConflict, ValueError, KeyError, OSError, WorkspaceError) as error:
+        except (ReferenceAccessError, ReferenceProofError, RunStateConflict, ValueError, KeyError, OSError, WorkspaceError) as error:
             response = {'state': 'rejected', 'code': getattr(error, 'code', 'reference_run_closed' if isinstance(error, RunStateConflict) else 'reference_unavailable'), 'message': str(error)}
+            if isinstance(error, ReferenceProofError):
+                response.update(code=error.details[0]['code'], diagnostics=list(error.details))
             if source_authorized and response['code'] in {'reference_producer_missing', 'reference_manifest_unpaired'}:
                 workspace = self.backend.open(run_id)
                 path = workspace.input_paths.get(request.source)

@@ -215,7 +215,7 @@ def test_orphan_proof_cannot_override_receipt_after_rollback(tmp_path, monkeypat
     assert len(matches) == 1 and matches[0]['alias'] == record['alias'] == 'tool_evidence_002'
 
 
-@pytest.mark.parametrize('receipt', ['exact', 'legacy', 'forged'])
+@pytest.mark.parametrize('receipt', ['exact', 'legacy', 'forged', 'derived_with_empty_control'])
 def test_parent_derivation_uses_sealed_control_edges(tmp_path, monkeypatch, receipt):
     from types import SimpleNamespace
     from tests.operations.test_tcad_result_analysis import analysis_system
@@ -235,6 +235,9 @@ def test_parent_derivation_uses_sealed_control_edges(tmp_path, monkeypatch, rece
     record = {'artifact_ref':anchor.model_dump(mode='json'), 'tool_name':'fixture_tool'}
     if receipt != 'legacy':
         record['control_parents'] = [correct.model_dump(mode='json')]
+    if receipt == 'derived_with_empty_control':
+        record.update(control_parents=[], metadata={'derived_from': ['original_source']})
+        monkeypatch.setattr(runtime.runs, 'source_descriptor', lambda *_: SimpleNamespace(artifact_ref=correct))
     monkeypatch.setattr(runtime.runs, 'status', lambda _: SimpleNamespace(
         instance_id=resolver._instance_id(), inputs=(SimpleNamespace(artifact_ref=extra),)))
     monkeypatch.setattr(runtime.runs, 'tool_evidence', lambda _: [record])

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 
 from ...operation_contract import contract_diagnostic, DiagnosticError, ToolInputError
 
@@ -94,6 +95,7 @@ class ExperimentExecution:
         origin = self.task_origin(run)
         active = self._domain_active(run)
         blockers = []
+        incomplete = []
         for binding in self.runs.scheduler_bindings.list(instance=run.instance_id, namespace="execution",
                 name_prefix="experiment-" + origin + "-"):
             if self._execution_owner(binding.object_id) != origin:
@@ -109,6 +111,10 @@ class ExperimentExecution:
                 'succeeded', 'failed', 'cancelled'} else {}
             # A collector may finish while its summary is being observed.
             status = self.executions.status(binding.object_id)
+            collection_failed = (collection.get('state') in {'failed', 'timed_out', 'interrupted'}
+                and not collection.get('recovery_pending', False))
+            if status.state in {'succeeded', 'failed', 'cancelled'} and collection_failed:
+                incomplete.append(binding.name.removeprefix('experiment-' + origin + '-'))
             if status.state == 'collected' and run.accepted_candidate_digest is None:
                 # Background collection can finish without another Worker call.
                 # Reconcile its receipt before the finalizer snapshots materials.
@@ -123,7 +129,9 @@ class ExperimentExecution:
                             allowed_ports=('tool_evidence', 'recovery_manifest_output'), **values))
                     name = binding.name.removeprefix('experiment-' + origin + '-')
                     self._execution_status(context, SimpleNamespace(name=name), binding.object_id, implementation, seal=True)
-            if (status.state not in {"failed", "cancelled", "collected", "abandoned"}
+            if ((status.state not in {"failed", "cancelled", "collected", "abandoned"}
+                    and not (status.state == 'succeeded' and collection_failed))
+                    or collection.get('recovery_pending', False)
                     or (status.state != 'collected' and collection.get('state') in {
                         'pending', 'running', 'stopping', 'stop_pending', 'unknown'})):
                 name = binding.name.removeprefix("experiment-" + origin + "-")
@@ -139,6 +147,18 @@ class ExperimentExecution:
             from ...operation_contract import bounded_diagnostics
             raise RunOutputError("Outstanding experiment work must finish before final delivery.",
                 category="execution_pending", details=bounded_diagnostics(blockers, phase="protocol", action="submit"))
+        return tuple(incomplete)
+
+    @staticmethod
+    def validate_incomplete_delivery(content, names):
+        from .run_outputs import RunOutputError
+        report = json.loads(content)
+        if report.get('outcome') in {'blocked', 'inconclusive'} and any(
+                isinstance(item, str) and item.strip() for item in report.get('limitations', ())):
+            return
+        raise RunOutputError('Execution results were not delivered.', details=(contract_diagnostic(
+            'experiment_collection_incomplete', phase='protocol', affected_action='submit', repairable=True,
+            message=f"Collection failed for {list(names)[:8]!r}. Retry collection, or submit outcome blocked/inconclusive with limitations explaining the missing results. Do not claim completion from uncollected results."),))
 
     def _execution_owner(self, execution_id):
         envelope = self.executions.artifacts.get_by_id(self.executions.request_artifact_id(execution_id))
@@ -589,11 +609,11 @@ class ExperimentExecution:
             return {}, "The collected output inventory does not match its exact files; original filenames are withheld. Preserve the collected execution and ask for collection repair; do not resubmit the solver."
 
     def recover_start(self, execution_id, *, instance_id):
-        """Advance the original request after its entire scientific task has failed."""
+        """Recover the original request after all scientific owners have closed."""
         from .executions import ExecutionServiceError
         owner = self._execution_owner(execution_id)
         if owner is None or not self.runs.task_recovery_available(owner, instance_id=instance_id):
-            raise ExecutionServiceError("Execution recovery requires an entirely failed task lineage")
+            raise ExecutionServiceError("Execution recovery requires a closed failed or limited task lineage")
         run = self.runs.status(owner)
         state = self.executions.status(execution_id)
         if state.external_run_id is not None:

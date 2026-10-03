@@ -2,6 +2,7 @@
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
+import json
 import mimetypes
 import os
 from pathlib import Path
@@ -90,21 +91,43 @@ def publish_attachments(runs, run_id, request, *, workspace):
         staged = list({item[-1]: item for item in staged}.values())
         recovery = runs.recovery_tool_proof(run)
         attempts = runs.tool_attempts(run_id)
-        result = []
-        with runs._connect() as connection:
-            import json
-            connection.execute('BEGIN IMMEDIATE')
-            row = runs._row(connection, run_id)
-            if row['state'] != 'running' or row['accepted_candidate_digest'] is not None:
-                raise RunStateConflict('Run no longer accepts scientific attachments')
-            records = [json.loads(r[0]) for r in connection.execute('SELECT record_json FROM run_tool_evidence WHERE run_id=?',(run_id,))]
+        # File IO and Artifact registry writes finish before acquiring the Run
+        # write lock. An interrupted publication can leave an unbound immutable
+        # object; the same publication key reuses it on retry.
+        def check_receipt_budget(existing):
+            records = list(existing.values())
             attachments = [r for r in records if r.get('output_port') == 'attachments']
-            existing = {r[0]: json.loads(r[1]) for r in connection.execute('SELECT evidence_key,record_json FROM run_tool_evidence WHERE run_id=?',(run_id,))}
             new = [item for item in staged if item[-1] not in existing]
             if (len(attachments) + len(new) > settings.max_files
                     or sum(r.get('record_type') != 'reference_access' for r in records) + len(new) > 128
                     or sum(r['size_bytes'] for r in attachments) + sum(item[2] for item in new) > settings.max_total_bytes):
                 raise ToolInputError("attachment_publication_invalid", 'The task attachment count or total byte budget would be exceeded')
+
+        prepared = {}
+        with runs._connect() as connection:
+            known = {row[0]: json.loads(row[1]) for row in connection.execute(
+                'SELECT evidence_key,record_json FROM run_tool_evidence WHERE run_id=?', (run_id,))}
+        check_receipt_budget(known)
+        for path, digest, size, media, metadata, key in staged:
+            if key in known:
+                continue
+            prepared[key] = runs.artifacts.register_file(path, ArtifactRegistration(kind=port.kind,
+                schema_id=port.schema_id, payload_schema_version=1, media_type=media, creator=runs.service_actor,
+                parent_refs=parents, labels={'operation_id':run.operation_id, 'operation_version':run.operation_version,
+                    'operation_digest':run.operation_digest, 'operation_output_port':'attachments',
+                    'tool_name':'worker_publish_files', 'tool_producer_run':run_id, 'source_origin':'agent_authored'},
+                confidentiality='run_private'), expected_sha256=digest, expected_size=size,
+                idempotency_key=f'run:{run_id}:attachment:{key}', chunk_bytes=settings.chunk_bytes,
+                check_budget=check_budget)
+        result = []
+        with runs._connect() as connection:
+            connection.execute('BEGIN IMMEDIATE')
+            row = runs._row(connection, run_id)
+            if row['state'] != 'running' or row['accepted_candidate_digest'] is not None:
+                raise RunStateConflict('Run no longer accepts scientific attachments')
+            records = [json.loads(r[0]) for r in connection.execute('SELECT record_json FROM run_tool_evidence WHERE run_id=?',(run_id,))]
+            existing = {r[0]: json.loads(r[1]) for r in connection.execute('SELECT evidence_key,record_json FROM run_tool_evidence WHERE run_id=?',(run_id,))}
+            check_receipt_budget(existing)
             for path, digest, size, media, metadata, key in staged:
                 check_budget()
                 if key in existing:
@@ -116,14 +139,7 @@ def publish_attachments(runs, run_id, request, *, workspace):
                     while f'attachment_{number:03d}' in reserved:
                         number += 1
                     alias = f'attachment_{number:03d}'
-                    envelope = runs.artifacts.register_file(path, ArtifactRegistration(kind=port.kind,
-                        schema_id=port.schema_id, payload_schema_version=1, media_type=media, creator=runs.service_actor,
-                        parent_refs=parents, labels={'operation_id':run.operation_id, 'operation_version':run.operation_version,
-                            'operation_digest':run.operation_digest, 'operation_output_port':'attachments',
-                            'tool_name':'worker_publish_files', 'tool_producer_run':run_id, 'source_origin':'agent_authored'},
-                        confidentiality='run_private'), expected_sha256=digest, expected_size=size,
-                        idempotency_key=f'run:{run_id}:attachment:{key}', chunk_bytes=settings.chunk_bytes,
-                        check_budget=check_budget)
+                    envelope = prepared[key]
                     record = {'alias':alias, 'artifact_ref':envelope.ref.model_dump(mode='json'),
                         'source_ref':sources[0].model_dump(mode='json'), 'media_type':media, 'size_bytes':size,
                         'metadata':metadata, 'tool_name':'worker_publish_files', 'output_port':'attachments', 'publication_key':key}

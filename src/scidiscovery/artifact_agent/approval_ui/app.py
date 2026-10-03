@@ -19,7 +19,7 @@ from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 from typing import TYPE_CHECKING
 
 from pydantic import ValidationError
-from ..service.executions import ExecutionApprovalError
+from ..service.executions import ExecutionApprovalError, ExecutionBudgetNotApplicable
 from ..schema.approval import LocalIdentityRef
 from ..service.approvals import (
     ApprovalAccessDenied,
@@ -923,6 +923,8 @@ class ApprovalUI:
                 return self._error(handler, HTTPStatus.CONFLICT, str(error))
             except ApprovalAccessDenied:
                 return self._error(handler, HTTPStatus.FORBIDDEN)
+            except ExecutionBudgetNotApplicable:
+                return self._error(handler, HTTPStatus.CONFLICT, '此执行未配置累计耗时预算，不支持追加耗时；可按原审批选项处理。')
             except ExecutionApprovalError:
                 return self._error(handler, HTTPStatus.CONFLICT, '执行授权与预算记录不一致，请修复相关控制记录后重试。')
             except (ValidationError, json.JSONDecodeError, UnicodeDecodeError):

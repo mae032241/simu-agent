@@ -293,7 +293,7 @@ class OperationOrigins:
                 family_identity=family_identity,
             )
         try:
-            compiled = self._operation_catalog.operation(operation_id)
+            compiled = self._operation_catalog.operation(operation_id, digest=operation_digest)
         except KeyError:
             return unavailable("producer_contract_unavailable")
         if (
@@ -432,12 +432,18 @@ class OperationOrigins:
                 if ArtifactRef.model_validate(item['artifact_ref']) == ref]
             if len(receipts) != 1 or receipts[0]['tool_name'] != envelope.labels['tool_name']:
                 raise OperationInvocationError('input_origin_unavailable', port=port.name)
-            if 'control_parents' in receipts[0]:
+            if receipts[0].get('control_parents'):
                 direct = tuple(ArtifactRef.model_validate(item) for item in receipts[0]['control_parents'])
                 if any(parent not in parents for parent in direct):
                     raise OperationInvocationError('input_origin_unavailable', port=port.name)
                 parents = direct
                 producer = None  # Explicit edges require no historical inference.
+            elif receipts[0].get('metadata', {}).get('derived_from'):
+                direct = tuple(self.runs.source_descriptor(producer, alias).artifact_ref
+                    for alias in receipts[0]['metadata']['derived_from'])
+                if any(parent not in parents for parent in direct):
+                    raise OperationInvocationError('input_origin_unavailable', port=port.name)
+                parents, producer = direct, None
         matches = [parent for parent in parents
             if self._artifact_matches_input_port(self.artifacts.catalog(parent), port)]
         if producer is not None and len(matches) > 1:

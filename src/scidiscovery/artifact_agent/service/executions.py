@@ -92,6 +92,10 @@ class ExecutionApprovalError(ExecutionServiceError):
     pass
 
 
+class ExecutionBudgetNotApplicable(ExecutionApprovalError):
+    """This execution contract has no cumulative wall-time allowance."""
+
+
 @dataclass(frozen=True)
 class ExecutionStatusView:
     execution_id: str
@@ -656,7 +660,7 @@ class ExecutionService:
                     raise ExecutionApprovalError('Budget policy history does not bind the exact execution')
                 admission = ExecutionAdmission.model_validate(record['admission'])
                 if 'wall_time_seconds' not in admission.allowance:
-                    raise ExecutionApprovalError('Execution has no wall time budget')
+                    raise ExecutionBudgetNotApplicable('Execution has no wall time budget')
                 scopes.add((row['executor'], admission.budget_key))
                 budgets.add(canonical_json(admission.budget))
             if len(scopes) != 1 or len(budgets) != 1:

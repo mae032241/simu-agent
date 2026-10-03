@@ -46,6 +46,7 @@ class CompiledCatalog:
         "_runtime_factories",
         "_runtime_configuration_digests",
         "_runtime_identity_digests",
+        "_historical_operations",
     )
     def __init__(
         self,
@@ -53,8 +54,10 @@ class CompiledCatalog:
         runtime_factories: Mapping[str, RuntimePluginFactory] | None = None,
         runtime_configuration_digests: Mapping[str, str] | None = None,
         runtime_identity_digests: Mapping[str, str] | None = None,
+        historical_operations: Mapping[tuple[str, str], CompiledOperation] | None = None,
     ) -> None:
         self._operations = MappingProxyType(dict(operations))
+        self._historical_operations = MappingProxyType(dict(historical_operations or {}))
         self._runtime_factories = MappingProxyType(dict(runtime_factories or {}))
         self._runtime_configuration_digests = MappingProxyType(
             dict(runtime_configuration_digests or {})
@@ -68,7 +71,18 @@ class CompiledCatalog:
             == set(self._runtime_identity_digests)
         ):
             raise ValueError("runtime plugin catalog metadata is incomplete")
-    def operation(self, operation_id: str) -> CompiledOperation: return self._operations[operation_id]
+    def operation(self, operation_id: str, *, digest: str | None = None) -> CompiledOperation:
+        current = self._operations[operation_id]
+        if digest is None or digest == current.digest:
+            return current
+        return self._historical_operations[operation_id, digest]
+
+    def can_recover(self, operation_id: str, source_digest: str, target_digest: str) -> bool:
+        # Only the explicitly reconstructed evidence-limit predecessor may
+        # advance to today's contract. No arbitrary digest aliases or downgrade.
+        return (source_digest == target_digest or
+            ((operation_id, source_digest) in self._historical_operations
+             and self._operations[operation_id].digest == target_digest))
     def operation_ids(self) -> tuple[str, ...]: return tuple(self._operations)
     def scheduler_projection(self) -> tuple[SchedulerOperationView, ...]: return tuple(scheduler_operation_view(item.spec) for item in self._operations.values())
     def runtime_factory(self, plugin_id: str) -> RuntimePluginFactory:
@@ -953,7 +967,32 @@ def compile_catalog(plugins: Iterable[PluginDefinition], *, capability_selection
         plugin_map[owner] = plugin.model_copy(update={"operations": tuple(operations)})
     compiled_parts, runtime_factories, runtime_configuration_digests, runtime_identity_digests, used = _validate_operation_contracts(plugin_map, components)
     approval_provider_ids = _validate_review_graph(plugin_map, components, compiled_parts, used)
-    return _build_compiled_catalog(plugin_map, components, compiled_parts, approval_provider_ids, runtime_factories, runtime_configuration_digests, runtime_identity_digests, used)
+    current = _build_compiled_catalog(plugin_map, components, compiled_parts, approval_provider_ids, runtime_factories, runtime_configuration_digests, runtime_identity_digests, used)
+    # The only supported predecessor differs in the control proof's aggregate
+    # binding constraint. Recompile its actual resource and output contracts so
+    # old identities retain their own validators, rather than ignoring digests.
+    previous_components = dict(components)
+    changed = False
+    for key, component in components.items():
+        if component.spec.implementation != 'scidiscovery.artifact_agent.service.tool_evidence:TOOL_EVIDENCE_SCHEMA':
+            continue
+        schema = json.loads(component.implementation)
+        for node in (schema, *schema.get('$defs', {}).values()):
+            binding = node.get('properties', {}).get('bindings')
+            if binding is not None and 'maxProperties' not in binding:
+                binding['maxProperties'] = 128
+                changed = True
+        resource = json.dumps(schema, ensure_ascii=False, separators=(',', ':'), sort_keys=True)
+        previous_components[key] = replace(component, implementation=resource,
+            resource_digest=_resource_digest(component.spec, resource, component.plugin_id))
+    if not changed:
+        return current
+    previous = _build_compiled_catalog(plugin_map, previous_components, compiled_parts, approval_provider_ids,
+        runtime_factories, runtime_configuration_digests, runtime_identity_digests, used)
+    historical = {(key, previous.operation(key).digest): previous.operation(key) for key in current.operation_ids()
+        if current.operation(key).digest != previous.operation(key).digest}
+    return CompiledCatalog(current._operations, runtime_factories, runtime_configuration_digests,
+        runtime_identity_digests, historical)
 @lru_cache(maxsize=1)
 def compile_installed_catalog() -> CompiledCatalog:
     selected = tuple(entry_points().select(group=PLUGIN_ENTRY_POINT_GROUP))

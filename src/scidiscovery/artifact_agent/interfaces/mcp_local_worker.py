@@ -57,7 +57,7 @@ class LocalWorkerMCPRouter:
         trusted_caller: tuple[str, str] | None = None,
         participant: dict | None = None,
     ) -> None:
-        compiled = runs.operation_catalog.operation(operation_id)
+        compiled = runs.operation_catalog.operation(operation_id, digest=operation_digest)
         if compiled.digest != operation_digest or compiled.spec.executor.kind != "agent":
             raise ValueError("local Worker operation identity is invalid")
         self.runs = runs
@@ -764,7 +764,7 @@ def build_local_worker_router(
         approval_database_path=state / "database" / "approvals.sqlite3",
     )
     services = dict(tool_services or {})
-    compiled = catalog.operation(operation_id)
+    compiled = catalog.operation(operation_id, digest=operation_digest)
     if compiled.spec.executor.capability is not None:
         from ..service.experiment_execution import open_experiment_services, bind_experiment_services
         coordinator = open_experiment_services(runs, catalog, state_root=state,

@@ -105,7 +105,7 @@ def test_budget_extension_http_roundtrip_replay_recovery_and_scope(tmp_path, mon
             assert b'fixture budget programming defect' not in body
             assert 'fixture budget programming defect' in caplog.text
             assert f.runtime.approvals.status(aid).status == 'pending'
-        from scidiscovery.artifact_agent.service.executions import ExecutionApprovalError
+        from scidiscovery.artifact_agent.service.executions import ExecutionApprovalError, ExecutionBudgetNotApplicable
         import json
         for error in (ExecutionApprovalError('fixture policy unavailable'),
                       json.JSONDecodeError('fixture stored record damaged', '', 0)):
@@ -117,6 +117,14 @@ def test_budget_extension_http_roundtrip_replay_recovery_and_scope(tmp_path, mon
                 assert status == 409
                 assert b'fixture' not in body
                 assert f.runtime.approvals.status(aid).status == 'pending'
+        with monkeypatch.context() as patch:
+            def not_applicable(*_, **kwargs):
+                raise ExecutionBudgetNotApplicable('No wall-time allowance')
+            patch.setattr(service, '_extension_scope', not_applicable)
+            status, _, body = _request(base, 'POST', endpoint, form=form)
+            assert status == 409 and '不支持追加耗时' in body.decode()
+            assert '记录不一致' not in body.decode()
+            assert f.runtime.approvals.status(aid).status == 'pending'
         # Crash after recording the human decision: an identical HTTP retry repairs
         # the budget projection without approving twice or incrementing twice.
         apply = service.apply_budget_extension

@@ -710,13 +710,13 @@ class RunService(ToolEvidenceMixin):
             self.adopt_tool_evidence(run_id)
             if tool_evidence_ports(self._compiled(self.status(run_id))):
                 self._refresh_evidence_schema(run_id)
-        except RunCheckerError as error:
+        except (RunCheckerError, ReferenceProofError) as error:
             value = self.status(run_id)
             from .engineering_diagnostics import EngineeringDiagnostics
             engineering = EngineeringDiagnostics(self.database_path.parent.parent / "engineering-diagnostics").capture(
                 error, scope="instance:" + value.instance_id, layer="run_open", action="open")
             self.record_failure(run_id, reason=f"preserved tool evidence cannot be opened: {error}",
-                category=error.category, expected_state="running",
+                category=getattr(error, 'category', 'integrity_failure'), expected_state="running",
                 expected_last_activity_at=value.last_activity_at, engineering=engineering)
             raise RunStateConflict("preserved tool evidence integrity failure", run_id=run_id) from error
         return self.status(run_id), workspace
@@ -957,18 +957,28 @@ class RunService(ToolEvidenceMixin):
         )
 
     def task_recovery_available(self, origin: str, *, instance_id: str) -> bool:
-        """Only an entirely failed recovery lineage can be taken over by Root."""
+        """Root may recover results after all owners failed or closed with limits."""
         with self._connect() as connection:
             rows = connection.execute("""
-                WITH RECURSIVE family(run_id, state) AS (
-                    SELECT run_id, state FROM runs WHERE run_id=? AND instance_id=?
+                WITH RECURSIVE family(run_id, state, output_ref_json) AS (
+                    SELECT run_id, state, output_ref_json FROM runs WHERE run_id=? AND instance_id=?
                     UNION
-                    SELECT r.run_id, r.state FROM runs r JOIN family f
+                    SELECT r.run_id, r.state, r.output_ref_json FROM runs r JOIN family f
                       ON r.resume_from_run_id=f.run_id OR r.draft_from_run_id=f.run_id
                     WHERE r.instance_id=?
-                ) SELECT state FROM family
+                ) SELECT state, output_ref_json FROM family
             """, (origin, instance_id, instance_id)).fetchall()
-        return bool(rows) and all(row[0] == "failed" for row in rows)
+        for state, output in rows:
+            if state == 'failed':
+                continue
+            if state != 'completed' or not output:
+                return False
+            ref = ArtifactRef.model_validate_json(output)
+            if ref.schema_id != 'scidiscovery.experiment-report.v1':
+                return False
+            if json.loads(self.artifacts.read(ref)).get('outcome') not in {'blocked', 'inconclusive'}:
+                return False
+        return bool(rows)
 
     def expired_active_ids(self, *, after: str = "", limit: int = 32) -> tuple[str, ...]:
         with self._connect() as connection:
@@ -1448,12 +1458,13 @@ class RunService(ToolEvidenceMixin):
     ) -> tuple[Any, ValidatedRunOutput]:
         compiled = self._compiled(value)
         assert compiled.spec.limits is not None
-        if final_submission and compiled.spec.executor.capability is not None:
-            coordinator = getattr(self, "experiment_executions", None)
-            if coordinator is None:
-                raise RunCheckerError("The experiment execution service is unavailable.")
-            coordinator.require_idle(value)
+        incomplete_collections = ()
         try:
+            if final_submission and compiled.spec.executor.capability is not None:
+                coordinator = getattr(self, "experiment_executions", None)
+                if coordinator is None:
+                    raise RunCheckerError("The experiment execution service is unavailable.")
+                incomplete_collections = coordinator.require_idle(value)
             if value.accepted_candidate_digest is None:
                 self._finalize_workspace(compiled, value.run_id, final_submission=final_submission, trusted_tool_records=trusted_tool_records)
                 self._prepare_evidence_snapshot(value.run_id)
@@ -1499,6 +1510,8 @@ class RunService(ToolEvidenceMixin):
                 reference_calculation_resolver=lambda alias: self.reference_calculation_sources(value, alias, validation_deadline=validation_deadline, validation_budget=reference_validation_budget),
                 sealed_material_resolver=lambda alias: self.sealed_material_record(value, alias),
             )
+            if incomplete_collections:
+                coordinator.validate_incomplete_delivery(validated.content, incomplete_collections)
         except WorkspaceError as error:
             failure = RunCheckerError("sealed candidate integrity failed", category="integrity_failure")
             failure.candidate_digest = sealed.digest
@@ -1807,7 +1820,7 @@ class RunService(ToolEvidenceMixin):
 
     def _compiled(self, value: RunStatus) -> Any:
         try:
-            compiled = self.operation_catalog.operation(value.operation_id)
+            compiled = self.operation_catalog.operation(value.operation_id, digest=value.operation_digest)
         except KeyError as error:
             raise RunContractUnavailable("Run operation is no longer installed") from error
         if compiled.spec.version != value.operation_version or compiled.digest != value.operation_digest:
@@ -2068,15 +2081,15 @@ class RunService(ToolEvidenceMixin):
                 return current
             current = str(parent)
 
-    @staticmethod
     def _recovery_digest(
+        self,
         source: RunStatus,
         operation_digest: str,
         input_refs: tuple[ArtifactRef, ...],
     ) -> str:
         if source.state != "failed" or source.recovery_draft is None:
             raise RunStateConflict("source Run has no recovery draft")
-        if source.operation_digest != operation_digest:
+        if not self.operation_catalog.can_recover(source.operation_id, source.operation_digest, operation_digest):
             raise RunStateConflict("recovery Operation digest differs")
         if tuple(item.artifact_ref for item in source.inputs) != input_refs:
             raise RunStateConflict("recovery inputs differ")
