@@ -19,12 +19,12 @@ from scidiscovery.agent_execution_settings import ProgressionSettings, effective
 
 try:
     from scripts.run_tests import serial_lock
-    from scripts.b6_evidence import read, write, digest, rows, control_rows, run_snapshot, participants, sealed_outputs, usage_report, verdict, compare, assess, token_totals, budget_assessment
+    from scripts.b6_evidence import read, write, digest, rows, control_rows, run_snapshot, participants, sealed_outputs, usage_report, verdict, compare, assess, token_totals, budget_assessment, batch_payloads
     from scripts.root_host_upgrade import _files
     from scripts import s0_scoring
 except ModuleNotFoundError:
     from run_tests import serial_lock
-    from b6_evidence import read, write, digest, rows, control_rows, run_snapshot, participants, sealed_outputs, usage_report, verdict, compare, assess, token_totals, budget_assessment
+    from b6_evidence import read, write, digest, rows, control_rows, run_snapshot, participants, sealed_outputs, usage_report, verdict, compare, assess, token_totals, budget_assessment, batch_payloads
     from root_host_upgrade import _files
     import s0_scoring
 
@@ -55,6 +55,15 @@ def configuration(path):
             raise ValueError('unknown_native_scenario')
         if not case['requires'] or ('objective' in case and case['objective'] not in value['objectives']):
             raise ValueError('case_contract_incomplete')
+        delivery = case.get('batch_delivery')
+        if delivery is not None:
+            if (case['runner'] != 'native' or case['scenario'] != 'autonomous'
+                    or not case.get('multi_task') or delivery.get('version') != 1
+                    or set(delivery) != {'version', 'materials_file', 'materials_sha256'}
+                    or not isinstance(delivery.get('materials_sha256'), str)
+                    or not re.fullmatch('[0-9a-f]{64}', delivery['materials_sha256'])):
+                raise ValueError('batch_delivery_requires_four_autonomous_batches')
+            batch_payloads(delivery)
     budget = value.get('budget')
     if budget:
         for group in ('suite', 'session'):
@@ -208,6 +217,17 @@ def prepare(root, manifest, case_id):
             raise ValueError('rollback_requires_different_previous_build')
     elif digest(read(installed/'candidate.json'))!=manifest['installed_config_digest']:
         raise ValueError('installed_configuration_changed')
+    if case.get('batch_delivery'):
+        material = Path(case['batch_delivery']['materials_file']).resolve()
+        # Clone copies candidate.json's actual project (core installations may
+        # use build/core-workdir), not an assumed source/project directory.
+        for candidate, project in ((source, Path(read(source/'candidate.json')['project'])),
+                (target, Path(read(target/'candidate.json')['project']) if (target/'candidate.json').exists() else target/'project')):
+            if project.is_symlink() or not project.resolve().is_relative_to(candidate.resolve()):
+                raise ValueError('source_or_target_project_must_belong_to_its_candidate')
+            if material.is_relative_to(project.resolve()):
+                raise ValueError('future_batch_material_must_remain_outside_agent_project')
+        batch_payloads(case['batch_delivery'])
     identity=dict(manifest['freeze_identity'])
     conditions=manifest['conditions_digest']
     if case_id=='rollback':
@@ -231,6 +251,10 @@ def prepare(root, manifest, case_id):
         'text':config['objectives'].get(case.get('objective'),''),
         'baseline_digest':baseline,'conditions_digest':conditions,
         'freeze_identity':identity}
+    if case.get('batch_delivery'):
+        # The other three payloads stay in this host-side frozen case, outside
+        # project; only objective plus the initial batch enters the opening text.
+        frozen['text'] += '\n' + batch_payloads(case['batch_delivery'])[0]['text']
     frozen['progression']={**config['progression'], **case.get('progression', {})}
     source_settings=read(target/'agent-settings.json')
     if digest(source_settings)!=manifest['source_settings_digest'] and case_id!='rollback':
@@ -377,6 +401,11 @@ def result(root,manifest,case_id):
             elapsed_seconds=execution.get('elapsed_seconds') if (target/'model-submission-started').exists() else 0)
         output['resource']=resource
     frozen=read(target/'acceptance-case.json')
+    if frozen.get('batch_delivery'):
+        output['batch_delivery'] = dict(
+            observation=read(journey/'batch-delivery-observation.json') if (journey/'batch-delivery-observation.json').exists() else None,
+            closeout=read(journey/'batch-delivery-closeout.json') if (journey/'batch-delivery-closeout.json').exists() else None,
+            science_status='not_observed', meaning='Saved originals are transport/structural evidence, not native consumption or P6s scientific qualification.')
     output.update({k:frozen[k] for k in ('baseline_digest','conditions_digest')})
     output['freeze_identity']=frozen.get('freeze_identity', {'status':'historical_unfrozen'})
     output['loop_authorization']=read(journey/'loop-authorization.json') if (journey/'loop-authorization.json').exists() else None

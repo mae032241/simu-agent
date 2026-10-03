@@ -1,17 +1,19 @@
 """Serial native acceptance cases. Scientific content is always authored by Workers."""
+import hashlib
 import json
 import sys
 import time
 
 try:
     from scripts.accept_progression_recovery import RecoveryJourney
-    from scripts.b6_evidence import rows, run_snapshot, participants, sealed_outputs, read, write, verify_prior_turns, usage_report, budget_assessment
+    from scripts.b6_evidence import rows, run_snapshot, participants, sealed_outputs, read, write, verify_prior_turns, usage_report, budget_assessment, batch_scientific_facts, BatchMaterialReader, batch_payloads
 except ModuleNotFoundError:
     from accept_progression_recovery import RecoveryJourney
-    from b6_evidence import rows, run_snapshot, participants, sealed_outputs, read, write, verify_prior_turns, usage_report, budget_assessment
+    from b6_evidence import rows, run_snapshot, participants, sealed_outputs, read, write, verify_prior_turns, usage_report, budget_assessment, batch_scientific_facts, BatchMaterialReader, batch_payloads
 
 
 AUTHORITY_OBJECTIVE='只读旧实例一个小页封存成果，保留限制并通过 progression_report 简短交接。禁止创建科研任务、助手或外部作业。'
+NEUTRAL_CHANGED_CONDITION_QUESTION='请依据此前封存记录说明，是否值得再提高原三个采样点上的参数拟合精度；并判断工况变化后应重新检验哪些结论。'
 
 
 def case_objective(case):
@@ -74,6 +76,175 @@ def check_stale_writer(root, writer, output):
 
 
 class NativeCaseJourney(RecoveryJourney):
+    def record_batch_closeout(self, control):
+        if not getattr(self, 'case_config', {}).get('batch_delivery'):
+            return
+        result = dict(science_passed=False, reason=control.get('reason'),
+            post_model_restart_supported=False)
+        try:
+            cp = self._batch_scope(control)
+            batches = batch_payloads(self.case_config['batch_delivery'])[1:]
+            saved, omitted = [], []
+            for batch in batches:
+                name = 'acceptance.p6s.'+batch['name']
+                text = batch['text'] + ('\n'+NEUTRAL_CHANGED_CONDITION_QUESTION if batch['name']=='B_changed_condition' else '')
+                ack = self._batch_ack(cp, name, text)
+                (saved if ack else omitted).append(dict(name=name, artifact_ref=ack))
+            result.update(status='complete' if not omitted else 'omitted', saved=saved, omitted=omitted,
+                scope=self._delivery_scope)
+        except Exception as error:
+            result.update(status='unknown', error=str(error))
+        write(self.logdir.parent/'batch-delivery-closeout.json', result)
+
+    def _batch_scope(self, control):
+        cp = json.loads(control.get('checkpoint_json') or '{}')
+        scope = dict(instance=self.instance, goal=json.loads(control.get('objective_ref_json') or 'null'),
+            loop=cp.get('current_loop_id'))
+        if (control.get('instance_id') != self.instance or control.get('mode') != 'background'
+                or not scope['goal'] or not scope['loop']):
+            raise RuntimeError('batch_scope_unconfirmed')
+        authorization = self.logdir.parent/'loop-authorization.json'
+        if not authorization.exists() or read(authorization)['id'] != scope['loop']:
+            raise RuntimeError('batch_loop_authorization_changed')
+        objective_name = read(authorization)['objective_name']
+        bound = rows(self.root, 'scheduler-bindings',
+            "SELECT object_id FROM scheduler_bindings WHERE instance=? AND namespace='artifact' AND name=?",
+            (self.instance, objective_name))
+        if control.get('objective_name') != objective_name or bound != [{'object_id':scope['goal']['artifact_id']}]:
+            raise RuntimeError('batch_authorized_goal_changed')
+        if hasattr(self, '_delivery_scope') and self._delivery_scope != scope:
+            raise RuntimeError('batch_goal_or_loop_changed')
+        self._delivery_scope = scope
+        return cp
+
+    def _batch_ack(self, cp, name, text):
+        matching = [v for v in cp.get('messages', []) if v.get('name') == name]
+        if not matching:
+            return None
+        if len(matching) != 1 or matching[0].get('fingerprint') != hashlib.sha256(text.encode()).hexdigest():
+            raise RuntimeError('batch_ack_conflict')
+        ref = matching[0]['artifact_ref']
+        reader = BatchMaterialReader(self.root, self.instance, [])
+        from scidiscovery.artifact_agent.schema.refs import ArtifactRef
+        envelope = reader.verify(ArtifactRef.model_validate(ref))
+        if envelope.size_bytes > 65536:
+            raise RuntimeError('batch_ack_original_limit')
+        raw = (self.root/'state/artifacts/sha256'/ref['sha256'][:2]/ref['sha256'][2:]).read_bytes()
+        bound = rows(self.root, 'scheduler-bindings',
+            "SELECT object_id FROM scheduler_bindings WHERE instance=? AND namespace='artifact' AND name=?",
+            (self.instance, name))
+        if (envelope.size_bytes > 65536 or raw != text.encode() or bound != [{'object_id':ref['artifact_id']}]):
+            raise RuntimeError('batch_ack_original_mismatch')
+        return ref
+
+    def _observe_batch_rotation(self, control, cp):
+        host = json.loads(control.get('host_json') or 'null')
+        boundary = cp.get('rotation_boundary') or {}
+        record = cp.get('usage_records', {}).get((host or {}).get('thread_id'), {})
+        # This boundary is written by prepare_host_rotation after terminal-old-
+        # writer checks and revocation. A generation change alone is insufficient.
+        if (control.get('state') == 'pending' and control.get('owner_session') is None
+                and cp.get('phase') == 'prepared' and cp.get('native_action') == 'root_rotation'
+                and cp.get('native_completion') == 'completed' and cp.get('turn_id') is None
+                and host and host.get('platform_session') == host.get('thread_id')
+                and record.get('role') == 'root' and record.get('owner') == self.instance
+                and record.get('loop_id') == self._delivery_scope['loop'] and record.get('retired') is True
+                and record.get('scheduler_session') and boundary.get('unchecked') == 0
+                and boundary.get('unknown') == 0 and boundary.get('checked', -1) >= 0 and not boundary.get('reasons')):
+            self._batch_rotation_boundary = dict(old=host, old_session=record['scheduler_session'],
+                generation=control['generation'], boundary=boundary, scope=self._delivery_scope)
+        prior = getattr(self, '_batch_rotation_boundary', None)
+        if (prior and control.get('state') == 'active' and cp.get('native_action') is None
+                and host and host.get('platform_session') == host.get('thread_id')
+                and host != prior['old'] and control.get('owner_session') != prior['old_session']
+                and control.get('generation') == prior['generation']+1
+                and record.get('role') == 'root' and record.get('owner') == self.instance
+                and record.get('loop_id') == prior['scope']['loop']
+                and record.get('scheduler_session') == control.get('owner_session')
+                and record.get('scheduler_session')):
+            self._batch_rotation_proof = dict(**prior, new=host, new_session=control['owner_session'])
+
+    def deliver_batches(self, control):
+        """One bounded poll hook; checkpoint.messages is the sole delivery ack.
+
+        Cached proof is a same-process observation, not a restart ledger. Missing
+        prepared-rotation or precommit observation remains unknown on re-entry.
+        """
+        delivery = self.case_config.get('batch_delivery')
+        if delivery is None:
+            return
+        cp = self._batch_scope(control)
+        self._observe_batch_rotation(control, cp)
+        batches = batch_payloads(delivery)[1:]
+        texts = [v['text'] + ('\n'+NEUTRAL_CHANGED_CONDITION_QUESTION if v['name']=='B_changed_condition' else '') for v in batches]
+        names = ['acceptance.p6s.'+v['name'] for v in batches]
+        acks = [self._batch_ack(cp, name, text) for name, text in zip(names, texts)]
+        if any(acks[i] is not None and acks[i-1] is None for i in range(1,3)):
+            raise RuntimeError('batch_ack_order_unknown')
+        elapsed = time.monotonic()-self.case_started_at
+        index = next((i for i, ack in enumerate(acks) if ack is None), 3)
+        observation = dict(scope=self._delivery_scope, saved=[name for name, ack in zip(names, acks) if ack],
+            next_batch=batches[index]['name'] if index<3 else None, elapsed_seconds=elapsed,
+            science_passed=False, post_model_restart_supported=False,
+            releases=getattr(self, '_batch_release_observations', []),
+            prediction=getattr(self, '_batch_prediction', None), rotation=getattr(self, '_batch_rotation_proof', None))
+        if index == 3 or control.get('state') != 'active' or elapsed < (1500,3300,5100)[index]:
+            observation['status'] = 'complete' if index==3 else 'waiting'
+            observation['reason'] = 'saved' if index==3 else 'control_inactive' if control.get('state')!='active' else 'release_time'
+            write(self.logdir.parent/'batch-delivery-observation.json', observation)
+            return
+        prediction = getattr(self, '_batch_prediction', None)
+        facts = batch_scientific_facts(self.root, control, max_runs=int(self.case_config['max_observed_runs']),
+            discrimination=acks[0], validation=acks[1], prediction=prediction)
+        ready = bool(facts['first_results']) if index==0 else False
+        if index == 1 and len(facts['declarations']) == 1:
+            prediction = facts['declarations'][0]['artifact_ref']
+            self._batch_prediction = prediction
+            ready = True
+        if index == 2:
+            ready = bool(prediction and facts['comparisons'] and getattr(self, '_batch_rotation_proof', None))
+        observation.update(status='eligible' if ready else 'waiting',
+            reason='exact_sealed_proof' if ready else 'sealed_or_rotation_proof_unknown', facts=facts,
+            prediction=prediction, rotation=getattr(self, '_batch_rotation_proof', None))
+        if not ready:
+            write(self.logdir.parent/'batch-delivery-observation.json', observation)
+            return
+        if getattr(self, '_batch_submission_unknown', False):
+            raise RuntimeError('batch_submission_unknown_do_not_replay')
+        # Save intent as an observation before the sole public submission. If the
+        # reply is lost, only a read of the authoritative checkpoint can resolve it.
+        observation.update(status='submitting', name=names[index])
+        write(self.logdir.parent/'batch-delivery-observation.json', observation)
+        error = None
+        try:
+            self.call('progression_message', dict(name=names[index], text=texts[index],
+                expected_scope=dict(objective_name=control['objective_name'], loop_id=self._delivery_scope['loop'])))
+        except Exception as failure:
+            error = failure
+        try:
+            fresh = self.row()
+            fresh_cp = self._batch_scope(fresh)
+            ack = self._batch_ack(fresh_cp, names[index], texts[index])
+        except Exception as failure:
+            self._batch_submission_unknown = True
+            observation.update(status='unknown', reason='submission_ack_read_unavailable', error=str(failure))
+            write(self.logdir.parent/'batch-delivery-observation.json', observation)
+            raise RuntimeError('batch_submission_unknown_do_not_replay') from failure
+        if ack is None:
+            self._batch_submission_unknown = True
+            observation.update(status='unknown', reason='submission_without_exact_ack', error=str(error) if error else None)
+            write(self.logdir.parent/'batch-delivery-observation.json', observation)
+            raise RuntimeError('batch_submission_unknown_do_not_replay') from error
+        observation.update(status='saved', artifact_ref=ack)
+        # At most three external proof observations, never a submission authority
+        # or restart source; saved status still comes exclusively from control.
+        releases = getattr(self, '_batch_release_observations', [])
+        releases.append(dict(name=names[index], elapsed_seconds=elapsed, artifact_ref=ack,
+            facts=facts, prediction=prediction, rotation=getattr(self, '_batch_rotation_proof', None)))
+        self._batch_release_observations = releases
+        observation['releases'] = releases
+        write(self.logdir.parent/'batch-delivery-observation.json', observation)
+
     def observe_background(self, control, current):
         """Bounded external observations on the existing acceptance poll loop."""
         if control.get('instance_id') != self.instance or control.get('mode') != 'background':
@@ -154,6 +325,10 @@ class NativeCaseJourney(RecoveryJourney):
                     stage = 'writer_release'
                     self.wait_row(lambda r:r['state'] in {'paused','stopped'} and not r['host_json'],
                         'closeout-released',timeout=self.case_config['stage_timeout_seconds'],cleanup=True)
+                    # Observation failures must never prevent the existing pause
+                    # or writer-release cleanup from running.
+                    stage = 'batch_closeout'
+                    self.record_batch_closeout(control)
                 if hasattr(self, 'case_started_at'):
                     stage = 'sealed_evidence'
                     before = {v['run_id'] for v in self.before_runs}
@@ -249,6 +424,8 @@ class NativeCaseJourney(RecoveryJourney):
             if any(v['state'] in {'failed','timed_out','cancelled'} for v in current):
                 checks['sealed_delivery']='failed'
                 raise RuntimeError('accepted_worker_failed')
+            if control is not None:
+                self.deliver_batches(control)
             all_sealed=bool(current) and all(v['state']=='completed' for v in current)
             if case['scenario']=='autonomous':
                 if self.background_finished(control, all_sealed):

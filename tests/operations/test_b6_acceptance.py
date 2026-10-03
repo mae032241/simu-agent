@@ -234,9 +234,10 @@ def test_background_wait_observer_binds_real_window_and_scoring_digest(tmp_path,
     report = suite.result(tmp_path,manifest,case)
     observer = _background_observer(journey)
     clock = iter([1.,2.])
-    monkeypatch.setattr(native.time,'monotonic',lambda:next(clock))
     live = [dict(run_id='r2',state='running',output_ref_json=None)]
-    assert observer.observe_background(_background_control(),live)
+    with monkeypatch.context() as clocks:
+        clocks.setattr(native.time,'monotonic',lambda:next(clock))
+        assert observer.observe_background(_background_control(),live)
     before = scorer.collect(target,journey,report['scoring_evidence']['sealed_outputs'],report['scoring_evidence']['details'],[],
         _background_control())
     completed = [dict(run_id='r2',state='completed',output_ref_json=json.dumps(report['scoring_evidence']['sealed_outputs'][-1]['reference']))]
@@ -248,7 +249,9 @@ def test_background_wait_observer_binds_real_window_and_scoring_digest(tmp_path,
             checkpoint=json.loads(terminal['checkpoint_json'])
             checkpoint.update(runtime_status='goal_completed',report={'completed':True,'summary':'当前目标完成。'})
             terminal['checkpoint_json']=json.dumps(checkpoint)
-    assert observer.observe_background(terminal,completed)
+    with monkeypatch.context() as clocks:
+        clocks.setattr(native.time,'monotonic',lambda:next(clock))
+        assert observer.observe_background(terminal,completed)
     evidence = scorer.collect(target,journey,report['scoring_evidence']['sealed_outputs'],report['scoring_evidence']['details'],[],terminal)
     assert digest(evidence) != digest(before)
     records = scorer.background_records(journey,terminal)
@@ -604,6 +607,29 @@ def test_native_cleanup_does_not_hide_original_failure(tmp_path):
     assert diagnostic['error_code']=='unclassified_error'
 
 
+def test_batch_closeout_write_failure_happens_after_pause_and_writer_release(tmp_path):
+    from scripts.acceptance_native_cases import NativeCaseJourney
+    host = object.__new__(NativeCaseJourney)
+    host.logdir = tmp_path/'logs'
+    host.case_config = dict(stage_timeout_seconds=1)
+    def uncertain():
+        host.control_attempted = True
+        raise TimeoutError('uncertain_submit')
+    host.run_case = uncertain
+    host.row = lambda:dict(state='active', reason='host_active')
+    calls = []
+    host.call = lambda name, args:calls.append('pause') or {}
+    host.wait_row = lambda *args, **kw:calls.append('writer_release')
+    def unwritable(control):
+        calls.append('batch_closeout')
+        raise OSError('observation file unavailable')
+    host.record_batch_closeout = unwritable
+    with pytest.raises(TimeoutError, match='uncertain_submit'):
+        host.run_journey()
+    assert calls == ['pause', 'writer_release', 'batch_closeout']
+    assert read_json(tmp_path/'closeout-error.json')['stage'] == 'batch_closeout'
+
+
 def test_managed_launcher_is_bounded_and_only_targets_its_owned_unit(tmp_path,monkeypatch):
     from scripts import acceptance_managed as managed
     host=managed.ManagedJourney.__new__(managed.ManagedJourney)
@@ -809,6 +835,84 @@ def test_final_budget_bypasses_interval_and_preserves_unknown(tmp_path, monkeypa
 
 def read_json(path):
     return json.loads(path.read_text())
+
+
+@pytest.mark.parametrize('inside_project', [True, False])
+def test_p6s_prepare_checks_actual_core_workdir_before_clone(tmp_path, monkeypatch, inside_project):
+    import hashlib
+    source, installed, root = (tmp_path/name for name in ('source', 'installed', 'suite'))
+    project = source/'build/core-workdir'
+    project.mkdir(parents=True)
+    installed.mkdir()
+    root.mkdir()
+    write(source/'candidate.json', dict(project=str(project)))
+    write(installed/'candidate.json', dict(head='frozen-installed'))
+    material = (project if inside_project else tmp_path/'host-materials')/'materials.json'
+    material.parent.mkdir(parents=True, exist_ok=True)
+    material.write_bytes((suite.SCRIPTS/'acceptance/fixtures/hourly_loop_memory/materials.json').read_bytes())
+    spec = dict(version=1, materials_file=str(material), materials_sha256=hashlib.sha256(material.read_bytes()).hexdigest())
+    manifest = dict(source=str(source), installed=str(installed), previous=None,
+        config=dict(cases={'p6s':dict(batch_delivery=spec)}), installed_config_digest=digest(read_json(installed/'candidate.json')),
+        freeze_identity={}, conditions_digest='frozen-conditions')
+    clones = []
+    class CloneReached(Exception):
+        pass
+    def clone(command, **values):
+        clones.append(command)
+        raise CloneReached
+    monkeypatch.setattr(suite.subprocess, 'run', clone)
+    if inside_project:
+        with pytest.raises(ValueError, match='outside_agent_project'):
+            suite.prepare(root, manifest, 'p6s')
+        assert clones == [] and not (root/'p6s.prepare.json').exists()
+        assert not (root/'p6s').exists()
+    else:
+        # Positive boundary reaches the existing clone entrance, not a second
+        # installer; the sentinel prevents any real installation in this test.
+        with pytest.raises(CloneReached):
+            suite.prepare(root, manifest, 'p6s')
+        assert len(clones) == 1 and (root/'p6s.prepare.json').exists()
+
+
+def test_p6s_host_material_spec_is_frozen_and_public_projection_excludes_answers(tmp_path):
+    import hashlib
+    from scripts.b6_evidence import batch_payloads
+    material = read_json(suite.SCRIPTS/'acceptance/fixtures/hourly_loop_memory/materials.json')
+    material['private_answer'] = 'host-only scoring answer'
+    path = tmp_path/'materials.json'
+    write(path, material)
+    spec = dict(version=1, materials_file=str(path), materials_sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+    config = suite.configuration(suite.SCRIPTS/'acceptance/scientific_progress.json')
+    config['cases'] = {'p6s':dict(runner='native', scenario='autonomous', multi_task=True,
+        objective=next(iter(config['objectives'])), requires=['sealed_delivery','quality'], batch_delivery=spec)}
+    config_file = tmp_path/'config.json'
+    write(config_file, config)
+    assert suite.configuration(config_file)['cases']['p6s']['batch_delivery'] == spec
+    bodies = batch_payloads(spec)
+    assert all('private_answer' not in v['text'] and 'host-only scoring' not in v['text'] for v in bodies)
+    before = digest(config)
+    material['batches'][0]['observations'][0]['answer'] = 'private'
+    write(path, material)
+    with pytest.raises(ValueError, match='digest_changed'):
+        suite.configuration(config_file)
+    config['cases']['p6s']['batch_delivery']['materials_sha256'] = hashlib.sha256(path.read_bytes()).hexdigest()
+    write(config_file, config)
+    assert digest(config) != before
+    with pytest.raises(ValueError, match='public_observation'):
+        suite.configuration(config_file)
+
+
+def test_p6s_report_keeps_saved_complete_separate_from_science(tmp_path):
+    manifest, case, target, journey = _s0_fixture(tmp_path)
+    frozen = read_json(target/'acceptance-case.json')
+    frozen['batch_delivery'] = {'version':1}
+    write(target/'acceptance-case.json', frozen)
+    write(journey/'batch-delivery-observation.json', dict(status='complete', science_passed=False))
+    write(journey/'batch-delivery-closeout.json', dict(status='complete', omitted=[], science_passed=False))
+    result = suite.result(tmp_path, manifest, case)
+    assert result['batch_delivery']['closeout']['status']=='complete'
+    assert result['batch_delivery']['science_status']=='not_observed'
+    assert result['checks'].get('quality') != 'passed'
 
 
 def test_report_checks_final_usage_even_when_old_exit_and_delivery_pass(tmp_path):

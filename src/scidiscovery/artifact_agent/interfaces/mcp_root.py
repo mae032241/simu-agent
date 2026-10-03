@@ -62,10 +62,19 @@ class ProgressionCommandInput(RootToolInput):
         description="Exact frozen original user text or research objective for start; changes require pausing first.")
 
 
+class ProgressionMessageScope(RootToolInput):
+    objective_name: str = Field(pattern=_NAME_PATTERN,
+        description="Exact immutable instance name of the expected frozen goal; control resolves its original Artifact binding.")
+    loop_id: str = Field(min_length=1, max_length=256,
+        description="Unchanged loop.id from the captured control status; a caller scope constraint, never a budget authorization.")
+
+
 class ProgressionMessageInput(RootToolInput):
     name: str = Field(pattern=_NAME_PATTERN)
     text: str = Field(min_length=1, max_length=16384,
         description="Original user direction or supplementary information; saved unchanged for the next safe decision.")
+    expected_scope: ProgressionMessageScope | None = Field(default=None,
+        description="Optional caller guard: atomically require this exact frozen goal and authorized loop to remain active/background with available total budget before any saved acknowledgement or intake. Does not resume control, grant authority or judge science. Omit for ordinary reader context, including paused goals.")
 
 
 class ProgressionStatusInput(RootToolInput):
@@ -333,7 +342,7 @@ SCHEDULING_WRITES = frozenset({
 })
 
 ROOT_TOOLS = (
-    RootTool("progression_message", "Save original user context for the started goal from an authorized reading session, without taking over the background writer. Does not grant approvals or resume a paused goal.", ProgressionMessageInput),
+    RootTool("progression_message", "Save original user context for the started goal from an authorized reading session, without taking over the background writer. Optional expected_scope atomically constrains saving and old acknowledgements to the exact active/background goal and authorized loop with available total budget. Does not grant approvals, resume a paused goal or judge science.", ProgressionMessageInput),
     RootTool("progression_report", "Optionally record a goal outcome, waiting condition, user question or evidence-based task assessment. Corrections append immutable history. Ordinary tasks and stages require no extra report. Root supported advance and new bytes are not verified progress. The configured consumed unverified window requires direction confirmation in assist; only a first predeclared controlled test resolution or qualified independent exact test judgment can clear it. Waiting does not count, repeated checks and target revisions do not renew the window, and human continuation does not renew resource budgets. No research is triggered by this report.", ProgressionReportInput),
     RootTool("progression_status", "Read scheduling ownership, frozen objective, sealed task handoff and recent Root assessment history; continue assessment history with progress_cursor and terminal delivery history with delivery_cursor. Accepted work has independent Run state.", ProgressionStatusInput),
     RootTool("progression_command", "Start, pause, resume, stop or explicitly take over scheduling for the selected instance. Background work requires a research loop budget explicitly authorized in the management UI; this command cannot create or replenish it. All later interactive and background work retains that loop across goal changes and recovery. Background start remains pending until its host is available. Pause/stop do not cancel accepted work or clear scientific pauses. The management UI confirms a new consumed observation window without refunding limits.", ProgressionCommandInput),
@@ -580,6 +589,9 @@ class RootToolFacade(
             yield generation
 
     def progression_message(self, **values):
+        scope = values.get('expected_scope')
+        if isinstance(scope, ProgressionMessageScope):
+            values['expected_scope'] = scope.model_dump(mode='json')
         return self.bindings.progression_message(instance_id=self._instance_id(), session_key=self.session_key,
             intake=self.intake, **values)
 

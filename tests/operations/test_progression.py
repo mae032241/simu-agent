@@ -158,6 +158,88 @@ def test_reader_message_is_original_and_wakes_at_safe_boundary(progression):
     assert p.runtime.artifacts.read(ArtifactRef.model_validate(ref)) == b'Also retain negative results.'
 
 
+@pytest.mark.parametrize('transition', ['goal', 'loop', 'pause', 'closed', 'deadline'])
+def test_guarded_message_rejects_changed_scope_before_intake_or_old_ack(progression, monkeypatch, transition):
+    p = progression
+    p.coordinator.tick()
+    bindings = p.runtime.scheduler_bindings
+    captured = checkpoint(p)
+    expected = dict(objective_name='goal', loop_id=captured['current_loop_id'])
+    values = dict(name='future.batch', text='Host-side future observations.', expected_scope=expected)
+    assert p.root.call_tool('progression_message', values)['state'] == 'saved'
+    original_messages = checkpoint(p)['messages']
+    if transition == 'goal':
+        ref = p.root.facade.intake.ingest_text(content=b'A different goal.')
+        bindings.bind(instance=p.instance, namespace='artifact', name='different.goal',
+            object_id=ref.artifact_id, request_fingerprint='c'*64)
+        p.root.call_tool('progression_command', dict(command='pause'))
+        p.coordinator.host.finish()
+        p.coordinator.tick()
+        p.root.call_tool('progression_command', dict(command='start', mode='background', objective_name='different.goal'))
+        p.coordinator.tick()
+        assert row(p)['state'] == 'active' and row(p)['objective_name'] == 'different.goal'
+    elif transition == 'loop':
+        p.root.call_tool('progression_command', dict(command='pause'))
+        thread = p.coordinator.host.identity.thread_id
+        p.coordinator.host.finish()
+        p.coordinator.tick()
+        old = json.loads(row(p).get('host_json') or 'null')
+        if old:
+            bindings.release_host(instance_id=p.instance, **old)
+        from scidiscovery.platforms.codex_usage import observe_usage
+        records = checkpoint(p)['usage_records']
+        records[thread].update(observe_usage(dict(threadId=thread, tokenUsage=dict(total=dict(
+            inputTokens=10, cachedInputTokens=0, outputTokens=1))), role='root', owner=p.instance))
+        bindings.observe_progression(instance_id=p.instance, expected_host=None, changes=dict(usage_records=records))
+        proposal = bindings.loop_authorization_proposal(instance_id=p.instance, session_key=p.user)
+        ref = p.runtime.artifacts.get_by_id(bindings.resolve(instance=p.instance, namespace='artifact', name='goal')).ref
+        bindings.authorize_loop_from_ui(instance_id=p.instance, session_key=p.user,
+            confirmation_binding=proposal['confirmation_binding'], objective_name='goal', objective_ref=ref)
+        p.root.call_tool('progression_command', dict(command='start', mode='background', objective_name='goal'))
+        def new_host(control, event):
+            host = Host(control, event)
+            host.identity = SimpleNamespace(thread_id='new-loop-root', session_id='new-loop-root')
+            return host
+        p.coordinator.host_factory = new_host
+        p.coordinator.tick()
+        assert row(p)['state'] == 'active'
+        assert checkpoint(p)['current_loop_id'] != expected['loop_id']
+    elif transition == 'deadline':
+        from datetime import datetime
+        p.now[0] = datetime.fromisoformat(captured['loop_authorizations'][expected['loop_id']]['deadline_at']).timestamp()
+        assert row(p)['state'] == 'active'  # deadline reached before coordinator stop
+    else:
+        p.root.call_tool('progression_command', dict(command='pause' if transition == 'pause' else 'stop'))
+    messages_before = checkpoint(p).get('messages', [])
+    ingested = []
+    monkeypatch.setattr(p.root.facade.intake, 'ingest_text', lambda **kw: ingested.append(kw))
+    for name in ('future.batch', 'another.future.batch'):
+        with pytest.raises(SchedulerInstanceConflict, match='Expected message scope'):
+            p.root.call_tool('progression_message', dict(values, name=name))
+    assert ingested == [] and checkpoint(p).get('messages', []) == messages_before
+    assert not any(v.name == 'another.future.batch' for v in bindings.list(instance=p.instance, namespace='artifact'))
+    assert len(original_messages) == 1
+
+
+def test_guarded_message_same_scope_idempotence_and_unguarded_paused_compatibility(progression):
+    p = progression
+    p.coordinator.tick()
+    expected = dict(objective_name='goal', loop_id=checkpoint(p)['current_loop_id'])
+    values = dict(name='future.batch', text='Frozen host observations.', expected_scope=expected)
+    assert p.root.call_tool('progression_message', values)['state'] == 'saved'
+    original = checkpoint(p)['messages']
+    assert p.root.call_tool('progression_message', values)['state'] == 'saved'
+    assert checkpoint(p)['messages'] == original
+    from scidiscovery.artifact_agent.service.scheduler_bindings import SchedulerNameConflict
+    other = p.root.facade.intake.ingest_text(content=b'Different original.')
+    with pytest.raises(SchedulerNameConflict):
+        p.runtime.scheduler_bindings.bind(instance=p.instance, namespace='artifact', name='goal',
+            object_id=other.artifact_id, request_fingerprint='d'*64)
+    p.root.call_tool('progression_command', dict(command='pause'))
+    assert p.root.call_tool('progression_message', dict(name='ordinary.context', text='Reader context while paused.'))['state'] == 'saved'
+    assert row(p)['state'] == 'paused' and len(checkpoint(p)['messages']) == 2
+
+
 def test_lost_native_start_is_not_replayed(progression):
     p = progression
     p.coordinator.tick()

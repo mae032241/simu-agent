@@ -1,6 +1,6 @@
 # P6s：小时级多轮记忆验收任务
 
-状态：题目、数据与评分草案已构造，准备边界独立复核通过；本候选 core 离线安装及仅初始材料的无模型 `init`／`prepare` 已完成，实物证据独立复核通过（core 离线安装＋initial 无模型准备）。分批投递、隔离与完整预算仍 pending，未运行本场。本文供验收执行者与评分者使用，不交给被测 Root/Worker。S3-R 的规则见[设计](LONG_LOOP_CONTROL_AND_MEMORY_DESIGN.zh-CN.md)，排期与候选资格矩阵见[主计划](SCIENTIFIC_PROGRESS_AND_CORRECTION_PLAN.zh-CN.md)。
+状态：题目、数据与评分草案已构造，准备边界独立复核通过；`41c3bb4` core 离线安装及仅初始材料的无模型 `init`／`prepare` 实物证据独立复核通过。分批接线源码与有限无模型回归已有证据；增量补验 failed-Run 停止、原子消息 scope 与真实 project 路径拒绝均通过，独立增量复审通过（源码接线资格，纳入本提交节点，未部署）；新源码尚未安装／重冻场次，隔离与完整预算仍 pending，未运行本场。独立增量复审见 `/tmp/scid-p6s-delivery-review-20261003-v2.md`，限定源码与有限无模型回归。本文供验收执行者与评分者使用，不交给被测 Root/Worker。S3-R 的规则见[设计](LONG_LOOP_CONTROL_AND_MEMORY_DESIGN.zh-CN.md)，排期与候选资格矩阵见[主计划](SCIENTIFIC_PROGRESS_AND_CORRECTION_PLAN.zh-CN.md)。
 
 ## 规模与目标
 
@@ -27,16 +27,20 @@
 
 ## 运行前准备边界
 
-本准备记录固定 source candidate 为 `41c3bb45cf789ca0e6ae671d72e77e61cbf0fd09`，不是后续文档 HEAD；installed 实物与资格／旧 unknown 限制由主计划维护。本轮沿既有格式冻结 initial 配置与场次，不改 runner，不授权模型预算。实际命令、哈希、资源及读回见 `/tmp/scid-candidate-install-20261003-implementation-v2.md`（静态复审纠正资源冻结元数据，未重跑），本轮实物证据独立复核通过（core 离线安装＋initial 无模型准备）。
+此前安装准备记录固定 source candidate 为 `41c3bb45cf789ca0e6ae671d72e77e61cbf0fd09`，不是后续文档 HEAD；installed 实物与资格／旧 unknown 限制由主计划维护。该轮只冻结 initial 配置与场次，未改 runner／授权模型预算，实际命令、哈希、资源及读回见 `/tmp/scid-candidate-install-20261003-implementation-v2.md`（静态复审纠正资源冻结元数据，未重跑），实物证据独立复核通过。本轮新增接线不改写该 candidate／source／case，也不赋予其新 schema 支持。
 
 | 现成入口 | 可复用范围与未满足条件 |
 |---|---|
 | [accept_b6.py](../../scripts/accept_b6.py) `init`／`prepare` | 已从本候选实际 installed 读回 schema 9／配置 API；独立 source 与 `/tmp/scid-candidate-install-20261003-p6s-suite/p6s-inputs` 已冻结。复制后 instance／session／progression／dispatch／Run／execution 均为 0，只含 objective＋A_initial；未创建／选择／绑定实例或启动 host／模型。空 state 不算 P5 同历史资格，不沿用旧 P1b 安装通过 |
-| 场次配置 | 现格式要求 `version=1`、确切 `instance`、`progression`、`resources`、`managed`、`poll_seconds`、`stage_timeout_seconds`、`max_observed_runs`、`human_wait_seconds`、`objectives` 与 `cases`；native 场次只支持已有 `recovery/authority/helper/helper-crash/manual/autonomous`，没有 hourly／batch 场景。P6s 可在既有自主场次接线，不能仅增加一个场景字符串或把题库当配置 |
+| 场次配置 | 原字段／场景不变；源码新增仅限 native／autonomous、`multi_task=true` 的可选 `batch_delivery={version:1,materials_file:绝对host路径,materials_sha256:文件SHA256}`，本 bench 明确采用 `science.experiment.v1`，不扩展通用科学 producer 判定。spec 纳入已有 case／conditions 指纹；题库文件不直接当 runner 配置。prepare 只把 objective＋A_initial 公共投影放入 opening text，材料文件须位于 source／target 的 candidate.json 实际 project 规范路径外（包括 build/core-workdir），prepare intent／clone 前拒绝项目内材料，并沿既有候选内路径与 symlink 约束检查；不是只检查名为 project 的目录 |
 | 预算与报告 | initial case 已冻结 `progression.max_tasks=8`、`max_reviews=2`、`max_rounds=20`、总 token 400 万，自然期限／启用时长与 `resources.timeout_seconds` 均为 10800 秒；只是提议，未授权。可选 `budget` 尚未配置：40 万非缓存、suite／人工审查预留未冻结，不声称完整预算／`run` 就绪，不继承 S0/P5 额度。installed 原始 Worker 默认 `gpt-6-astra/high` 保留；派生 source／case 按正式 AgentSettings 实际读回 `gpt-6.1-sol/high`，Root `gpt-5.6-sol/high`，无 operation override，不继承开发 xhigh；helper 沿冻结设置，未执行 |
 | 时限作用 | `resources.timeout_seconds=10800` 在 prepare 中生成 host execution timeout；自然期限／启用时长另有同值提议，未实跑。`managed.runtime_seconds=180` 属 managed runner，本 native/autonomous 场次不用；`stage_timeout_seconds=90` 是 cleanup 等待 writer 释放及 authority 等待窗口；`human_wait_seconds=900` 是实例选择／人工等待窗口，prepare 写入 host resources。各自独立，不等于全停止链 3 小时，不机械扩大清理／人工窗口 |
-| 分批释放与证据 | [NativeCaseJourney.run_case](../../scripts/acceptance_native_cases.py) 目前只绑定一次目标并观察新 Run／用量；没有按本题释放条件投递后续材料的钩子。后续须在原监督内绑定确切封存结果、预测及判据 ref、轮换身份和释放记录，使用既有材料／用户消息入口；任务与科学判断仍归 Root／Worker，不写硬编码任务 DAG。若既有消息合同不足，先界定最小接口范围，不拼接私有入口 |
+| 分批释放与证据 | [NativeCaseJourney.run_case](../../scripts/acceptance_native_cases.py) 在原 poll／预算／cleanup 链接入三次后续 `progression_message`：同单调开场时间的 25／55／85 分钟下限，以及确切 goal／loop 的 completed 实验报告、封存预测／判据、最终采用的比较和实际轮换边界。`checkpoint.messages` 是唯一 saved ack；runner 使用公开 `expected_scope={objective_name,loop_id}`，控制解析不可改绑的确切目标原件，在既有 maintenance＋scheduling 锁内、旧 ack／intake／bind 前核 exact goal／loop、active/background、未 completed／unknown 和现有总预算事实。可选 review／helper 额度归零不单独判整个 loop 关闭；普通无 guard 消息仍可保存到 paused goal，不恢复或授权。lost reply 只读核对原件，unknown 不重放。接线与模拟事件回归独立增量复审通过（源码接线资格，纳入本提交节点，未部署），真实消息消费与轮换未验证 |
 | 评分材料隔离 | [RootPermissions](../../src/scidiscovery/platforms/codex_root_host.py) 及现有有效设置仅有 `never`、`read-only/workspace-write`、network 和写范围校验，未接线题库目录 read-deny／read-scope；[Host.launch](../../scripts/probe_root_host_live.py) 同 UID 直接启动子进程。不能据此声称平台绝对无法隔离，但现准备没有可审计读隔离。运行环境须证明 Root、Worker、helper 及原生工具不能读取完整题库、答案、未来批次或控制日志中的相同内容；只交付当时允许的 objective／当前批次，保留 Worker 声明权限。未证明则记污染／未验证，不给独立预测与记忆资格 |
+
+可选科学字段由[完整实验工具](../../src/scidiscovery/general_science_experiment_task.py)拥有：design 的 `prediction_declaration` 明示 PredictionTest／ValidationCheck／条件别名，validity 的 `comparison` 明示确切声明／观测别名／ValidationCheckResult。每个结构绑定原件最多 65536 bytes；普通 `materials` 不收紧。handler 实读并冻结引用，跨任务声明的唯一原 receipt／原 namespace 在最终 adoption 验证，输入不会因可读而继承当前 stage 或科学资格。running prediction 只作预承诺；running comparison、未采用比较和 `not_run` 不释放 B。负结果可继续，本题 x=4／工况及科学正确性仍按冻结 rubric 评定，结构通过不计 P6s 科学通过。
+
+安全轮换须实际观察既有 `prepare_host_rotation` 写入的旧 writer terminal／撤权边界及随后 `complete_host_rotation` 建立的新实际身份，保留 exact goal／loop。错过 prepared 采样、缺原件／receipt、覆盖限额或多个不同预承诺均 unknown，不用 generation／最近 schema 猜。至多三条外部释放 proof 观察保留在现 evidence；它们不是投递权威或恢复账本。early complete／预算 cleanup 记录 saved 与 omitted，report 将 saved complete 与 `science_status=not_observed` 分开。现 runner 仍只支持原 pre-model `resume_wait`，不声称 post-model 宿主重启恢复。源码证据见 `/tmp/scid-p6s-delivery-implementation-20261003.md`，真实模型／native／TCAD 均未运行；需独立复审后另冻新候选／场次，不能直接复用旧 installed 获得此能力。
 
 已有 CLI 的形式如下，尖括号是通用参数占位，**不是可执行交接命令**。本轮已按实际输入执行 `init`／`prepare`；题库隔离与新科学预算仍 pending，二者不是无模型准备前置。未执行 `run`，初始准备不等于运行就绪：
 

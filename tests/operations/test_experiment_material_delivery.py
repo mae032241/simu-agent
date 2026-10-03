@@ -219,3 +219,172 @@ def test_file_delivery_preserves_declared_limits_and_bounds_aggregate_inline(cat
         read_artifact=lambda ref: goal if ref==source.ref else raw)
     assert {x.artifact_name:x.exposure for x in bound.inputs if x.port_name=='scientific_materials'}=={
         'a':'on_demand','b':'on_demand','c':'file_reference'}
+
+
+@pytest.fixture
+def staged_experiment(tmp_path, monkeypatch, catalog):
+    from types import SimpleNamespace
+    from scidiscovery.artifact_agent import runtime as runtime_module
+    from scidiscovery.artifact_agent.interfaces.mcp_root import RootMCPRouter, RootToolFacade
+    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+    from scidiscovery.artifact_agent.service.worker_connections import WorkerConnections
+    from scidiscovery.artifact_agent.service.experiment_execution import ExperimentExecution, bind_experiment_services
+    monkeypatch.setattr(runtime_module, 'compile_installed_catalog', lambda: catalog)
+    project = tmp_path / 'project'
+    project.mkdir()
+    runtime = runtime_module.open_runtime(project_root=project, state_root=tmp_path / 'state',
+        approval_receipt_secret=b'b' * 32)
+    # Use the real finalization guard with no adapters or submitted executions.
+    coordinator = ExperimentExecution(runs=runtime.runs, executions=runtime.executions,
+        bridge=None, collection=None, approval_base_url=None)
+    runtime.runs.experiment_executions = coordinator
+    instance = runtime.scheduler_bindings.create_instance(name='predictions', title='Predictions', objective='Compare observations.')
+    def register(name, raw, schema='opaque'):
+        env = runtime.artifacts.register(raw, ArtifactRegistration(kind='material', schema_id=schema,
+            payload_schema_version=1, media_type='application/json', creator=runtime.actor), idempotency_key=name)
+        runtime.scheduler_bindings.bind(instance=instance.instance_id, namespace='artifact', name=name, object_id=env.artifact_id)
+        return env
+    objective = register('objective', canonical_json(json.loads(_foundation())['objective_contract']),
+        'scidiscovery.research-objective.v1')
+    condition = register('condition', b'{"condition":"A","x":3,"y":8}')
+    observation = register('observation', b'{"condition":"A","x":4,"y":13}')
+    root = RootMCPRouter(RootToolFacade(runtime.artifacts, runtime.intake, runs=runtime.runs,
+        approvals=runtime.approvals, executions=runtime.executions, bindings=runtime.scheduler_bindings,
+        instance=instance.instance_id, operation_catalog=catalog))
+    def start(name, names=('condition', 'observation')):
+        reply = root.call_tool('operation_invoke', {'name':name, 'operation_id':'science.experiment.v1',
+            'inputs':[{'port':'subject','artifact_names':['objective']},
+                      {'port':'scientific_materials','artifact_names':list(names)}], 'instruction':'Seal an explicit prediction and comparison.'})
+        assert reply['result']['state'] == 'queued'
+        run_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace='run', name=name)
+        WorkerConnections(runtime.runs).attach(run_id=run_id, platform_session=name, thread_id=name)
+        compiled = catalog.operation('science.experiment.v1')
+        class UnusedService:
+            def __getattr__(self, name):
+                raise AttributeError(name)
+        services = {key: UnusedService() for tool in compiled.worker_tools for key in tool.required_services}
+        services = bind_experiment_services(runtime.runs, compiled, services, coordinator=coordinator)
+        worker = LocalWorkerMCPRouter(runtime.runs, operation_id=compiled.spec.operation_id,
+            operation_digest=compiled.digest, tool_services=services)
+        opened = worker.call_tool('worker_open_assignment', {})
+        run = runtime.runs.status(run_id)
+        aliases = {v.artifact_name:v.source_name for v in run.inputs}
+        return SimpleNamespace(worker=worker, run_id=run_id, workspace=Path(opened['workspace_path']), aliases=aliases)
+    return SimpleNamespace(runtime=runtime, root=root, register=register, start=start,
+        objective=objective, condition=condition, observation=observation, catalog=catalog, instance=instance)
+
+
+def prediction_request(condition_alias):
+    return dict(stage='design', conclusion='A bounded held-out prediction, with explicit criterion.',
+        prediction_declaration=dict(prediction=dict(hypothesis_key='Q', prediction_key='held-out',
+            observable='condition A y at x=4', expected_result='y in [12.55,13.45]',
+            falsifying_result='observation interval disjoint from the prediction'),
+            criterion=dict(check_key='held-out', observable='condition A y at x=4', metric='interval agreement',
+                evaluation_mode='reviewed_qualitative', acceptance_condition='Intervals overlap',
+                failure_action='Retain the falsification and its scope', basis='Predeclared held-out test'),
+            conditions=[condition_alias]))
+
+
+def comparison_request(prediction_alias, observation_alias, **result_changes):
+    result = dict(check_key='held-out', status='pass', evaluation_mode='reviewed_qualitative',
+        observed_text='The held-out interval overlaps the prediction.', evidence_keys=[observation_alias],
+        rationale='This comparison does not establish a unique mechanism.')
+    result.update(result_changes)
+    return dict(stage='validity', conclusion='Compared the exact predeclared test.',
+        comparison=dict(prediction=prediction_alias, observations=[observation_alias], result=result))
+
+
+def test_optional_prediction_and_comparison_bind_real_sources_and_receipts(staged_experiment):
+    f = staged_experiment
+    author = f.start('author')
+    declared = author.worker.call_tool('worker_experiment_stage', prediction_request(author.aliases['condition']))
+    compared = author.worker.call_tool('worker_experiment_stage',
+        comparison_request(declared['reference'], author.aliases['observation']))
+    records = f.runtime.runs.tool_evidence(author.run_id)
+    declaration, comparison = records
+    assert declaration['alias'] == declared['reference'] and comparison['alias'] == compared['reference']
+    assert declaration['tool_name'] == comparison['tool_name'] == 'worker_experiment_stage'
+    from scidiscovery.artifact_agent.schema.refs import ArtifactRef
+    decl_ref = ArtifactRef.model_validate(declaration['artifact_ref'])
+    cmp_ref = ArtifactRef.model_validate(comparison['artifact_ref'])
+    assert f.condition.ref in f.runtime.artifacts.catalog(decl_ref).parent_refs
+    assert decl_ref in f.runtime.artifacts.catalog(cmp_ref).parent_refs
+    assert f.observation.ref in f.runtime.artifacts.catalog(cmp_ref).parent_refs
+    assert json.loads(f.runtime.artifacts.read(cmp_ref))['comparison']['result']['check_key'] == 'held-out'
+
+
+def submit_staged_report(author, aliases):
+    (author.workspace / 'output/result.json').write_bytes(canonical_json({'schema_version':1,
+        'payload':{'summary':'Compared frozen materials with retained limitations.', 'outcome':'inconclusive',
+            'remaining_question':'The observations do not establish a unique mechanism.', 'adopted_stages':list(aliases)}}))
+    return author.worker.call_tool('worker_submit_result', {})
+
+
+def test_cross_task_prediction_receipt_is_verified_at_final_adoption(staged_experiment):
+    f = staged_experiment
+    first = f.start('first')
+    declaration = first.worker.call_tool('worker_experiment_stage', prediction_request(first.aliases['condition']))
+    assert f.runtime.runs.status(first.run_id).state == 'running'  # sealing alone is a preview
+    submit_staged_report(first, [declaration['reference']])
+    assert f.runtime.runs.status(first.run_id).state == 'completed'
+    second = f.start('second', (declaration['artifact_name'], 'observation'))
+    compared = second.worker.call_tool('worker_experiment_stage',
+        comparison_request(second.aliases[declaration['artifact_name']], second.aliases['observation'], status='fail'))
+    submit_staged_report(second, [compared['reference']])
+    assert f.runtime.runs.status(second.run_id).state == 'completed'
+
+
+def test_forged_cross_task_declaration_cannot_complete_final_adoption(staged_experiment):
+    f = staged_experiment
+    f.register('copied-json', canonical_json(prediction_request('someone_else_namespace')))
+    author = f.start('consumer', ('copied-json', 'observation'))
+    comparison = author.worker.call_tool('worker_experiment_stage',
+        comparison_request(author.aliases['copied-json'], author.aliases['observation']))
+    # The preview only checks actual bytes/structure; it does not grant an original receipt.
+    assert comparison['state'] == 'sealed'
+    result = submit_staged_report(author, [comparison['reference']])
+    status = f.runtime.runs.status(author.run_id)
+    assert status.state != 'completed', result
+    assert 'unique original stage receipt' in json.dumps(result) + str(status.reason)
+
+
+@pytest.mark.parametrize('change', ['check_key', 'evaluation_mode', 'invented_evidence', 'unreadable', 'duplicate'])
+def test_comparison_refuses_wrong_criterion_and_unreadable_evidence(staged_experiment, change):
+    f = staged_experiment
+    author = f.start('negative')
+    declared = author.worker.call_tool('worker_experiment_stage', prediction_request(author.aliases['condition']))
+    request = comparison_request(declared['reference'], author.aliases['observation'])
+    if change == 'check_key': request['comparison']['result']['check_key'] = 'different'
+    elif change == 'evaluation_mode':
+        request['comparison']['result'].update(evaluation_mode='deterministic_threshold', observed_value=13, unit='1')
+    elif change == 'invented_evidence': request['comparison']['result']['evidence_keys'] = ['invented']
+    elif change == 'unreadable':
+        request['comparison'].update(observations=['unavailable']); request['comparison']['result']['evidence_keys'] = ['unavailable']
+    else: request['comparison']['observations'] *= 2
+    with pytest.raises(Exception):
+        author.worker.call_tool('worker_experiment_stage', request)
+    assert len(f.runtime.runs.tool_evidence(author.run_id)) == 1
+
+
+def test_ordinary_stage_without_scientific_fields_still_completes(staged_experiment):
+    author = staged_experiment.start('ordinary')
+    stage = author.worker.call_tool('worker_experiment_stage', {'stage':'design', 'conclusion':'Useful ordinary design.'})
+    result = submit_staged_report(author, [stage['reference']])
+    status = staged_experiment.runtime.runs.status(author.run_id)
+    assert status.state == 'completed', status.reason
+
+
+def test_optional_source_limit_is_visible_and_large_ordinary_materials_remain_usable(staged_experiment):
+    from scidiscovery.general_science_experiment_task import StageSubmission
+    f = staged_experiment
+    f.register('large-observation', b'x'*65537)
+    author = f.start('bounded', ('large-observation',))
+    alias = author.aliases['large-observation']
+    ordinary = author.worker.call_tool('worker_experiment_stage', dict(stage='validity', conclusion='Ordinary large material.', materials=[alias]))
+    with pytest.raises(Exception, match='65536'):
+        author.worker.call_tool('worker_experiment_stage', prediction_request(alias))
+    assert len(f.runtime.runs.tool_evidence(author.run_id)) == 1
+    schema = json.dumps(StageSubmission.model_json_schema())
+    assert '65536 bytes' in schema and 'ordinary stage materials' in schema
+    submit_staged_report(author, [ordinary['reference']])
+    assert f.runtime.runs.status(author.run_id).state == 'completed'

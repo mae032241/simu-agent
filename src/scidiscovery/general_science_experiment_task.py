@@ -1,12 +1,15 @@
 """A complete scientific experiment, with immutable stage evidence in one Run."""
 from __future__ import annotations
 
+import hashlib
 import json
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .artifact_agent.schema.common import canonical_json
+from .artifact_agent.schema.experiment import PredictionTest, ValidationCheck
+from .artifact_agent.schema.validation import ValidationCheckResult
 from .plugin_runtime.results import materialize_summary_handoff, finalize_result, validate_finalizer_payload
 from .general_science_agent_operations import _input
 from .operation_declaration import schema_resource, scientific_agent_operation, semantic_contract
@@ -15,7 +18,7 @@ from .operations.spec import (CallableComponent, CollectionSpec, ComponentRef,
 from .operations.tooling import WorkerToolDefinition
 from .agent_execution_settings import MaterialInputSettings
 from .operations.workspace import WorkspaceProtocolError
-from .operation_contract import SemanticRuleViolation, DiagnosticError
+from .operation_contract import SemanticRuleViolation, DiagnosticError, ToolInputError
 
 
 class ExperimentReport(BaseModel):
@@ -28,6 +31,39 @@ class ExperimentReport(BaseModel):
         description="Tool-returned references or current input names of sealed materials adopted in this report. Control verifies their original receipts.")
 
 
+MaterialAlias = Annotated[str, Field(min_length=1, max_length=256)]
+
+
+class PredictionDeclaration(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+    prediction: PredictionTest
+    criterion: ValidationCheck
+    conditions: Annotated[tuple[MaterialAlias, ...], Field(min_length=1, max_length=32,
+        description="Actual accessible input/material aliases defining the prediction's conditions; control reads and freezes exact originals, each at most 65536 bytes. Larger materials remain usable through ordinary stage materials.")]
+
+    @model_validator(mode="after")
+    def unique_conditions(self):
+        if len(set(self.conditions)) != len(self.conditions):
+            raise ValueError("prediction conditions must be unique")
+        return self
+
+
+class PredictionComparison(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+    prediction: MaterialAlias = Field(description="Accessible alias of the exact sealed prediction declaration, at most 65536 bytes, not a revised fit or copied JSON.")
+    observations: Annotated[tuple[MaterialAlias, ...], Field(min_length=1, max_length=32,
+        description="Actual observations used in this comparison; result.evidence_keys names these exact aliases. This optional binding reads each original, at most 65536 bytes; larger data remain usable through ordinary stage materials.")]
+    result: ValidationCheckResult
+
+    @model_validator(mode="after")
+    def actual_evidence(self):
+        if len(set(self.observations)) != len(self.observations):
+            raise ValueError("comparison observations must be unique")
+        if not self.result.evidence_keys or not set(self.result.evidence_keys).issubset(self.observations):
+            raise ValueError("comparison evidence_keys must name actual observations")
+        return self
+
+
 class StageSubmission(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     stage: Literal["design", "implementation", "debug", "execution", "validity"]
@@ -37,11 +73,55 @@ class StageSubmission(BaseModel):
         description="Unresolved question or blocker, when there is one.")
     materials: tuple[str, ...] = Field(default=(), max_length=32,
         description="Exact current input or previously sealed stage aliases.")
+    prediction_declaration: PredictionDeclaration | None = Field(default=None,
+        description="Optional design-stage scientific precommitment: prediction, criterion and actual conditions. Sealing fixes bytes and references, not scientific correctness or final task completion.")
+    comparison: PredictionComparison | None = Field(default=None,
+        description="Optional validity-stage comparison against that exact declaration. Handler reads/binds originals; final adoption validation checks the declaration's unique original tool receipt. A preview is not a completed validation; not_run means no test.")
+
+    @model_validator(mode="after")
+    def scientific_roles(self):
+        if self.prediction_declaration is not None and self.stage != "design":
+            raise ValueError("prediction_declaration belongs to design")
+        if self.comparison is not None and self.stage != "validity":
+            raise ValueError("comparison belongs to validity")
+        return self
+
+
+def _same_criterion(declaration, comparison):
+    if (comparison.result.check_key != declaration.criterion.check_key
+            or comparison.result.evaluation_mode != declaration.criterion.evaluation_mode):
+        raise SemanticRuleViolation("Comparison must retain the exact declaration's check_key and evaluation_mode.")
+
+
+def _read_stage_source(context, alias):
+    source = context.source_descriptor(alias)
+    if source.size_bytes > 65536:
+        raise ToolInputError("experiment_scientific_source_too_large",
+            "This optional prediction/comparison binding reads each original up to 65536 bytes; use ordinary stage materials for larger data.")
+    raw = (context.read_evidence(alias) if source.port_name in {"tool_evidence", "reference_access"}
+        else context.read_input(alias))
+    if hashlib.sha256(raw).hexdigest() != source.artifact_ref.sha256:
+        raise SemanticRuleViolation("Scientific source differs from its frozen original.")
+    return raw
 
 
 def submit_stage(request, context):
+    aliases = list(request.materials)
+    if request.prediction_declaration is not None:
+        aliases.extend(request.prediction_declaration.conditions)
+        for alias in request.prediction_declaration.conditions:
+            _read_stage_source(context, alias)
+    if request.comparison is not None:
+        comparison = request.comparison
+        declaration = StageSubmission.model_validate_json(_read_stage_source(context, comparison.prediction), strict=True)
+        if declaration.prediction_declaration is None:
+            raise SemanticRuleViolation("Comparison needs an exact sealed prediction declaration.")
+        _same_criterion(declaration.prediction_declaration, comparison)
+        for alias in comparison.observations:
+            _read_stage_source(context, alias)
+        aliases.extend((comparison.prediction, *comparison.observations))
     record = context.accept_evidence(raw=canonical_json(request.model_dump(mode="json")),
-        media_type="application/json", derived_from=("objective_source", *request.materials),
+        media_type="application/json", derived_from=tuple(dict.fromkeys(("objective_source", *aliases))),
         metadata={"kind": "experiment_stage", "stage": request.stage})
     return {"stage": request.stage, "reference": record["alias"], "state": "sealed",
         "artifact_name": record["artifact_name"]}
@@ -104,6 +184,32 @@ def validate_completion(payload, sources, handoff):
     if any(alias not in records for alias in report.adopted_stages):
         raise SemanticRuleViolation("Adopted stages must identify sealed materials created in or explicitly bound to this task.")
     selected = [records[alias] for alias in report.adopted_stages]
+    for alias, record in zip(report.adopted_stages, selected):
+        if record.get("tool_name") != "worker_experiment_stage":
+            continue
+        stage = StageSubmission.model_validate_json(sources[alias], strict=True)
+        if stage.comparison is None:
+            continue
+        # Body aliases belong to the original producer, even after another task
+        # binds this comparison under a different name.
+        source_refs = record.get("source_refs") or {
+            name: descriptor.artifact_ref for name, descriptor in sources.binding_descriptors.items()}
+        prediction_ref = source_refs.get(stage.comparison.prediction)
+        prediction_alias = next((name for name, descriptor in sources.binding_descriptors.items()
+            if descriptor.artifact_ref == prediction_ref), None)
+        declaration_record = sources.sealed_material_record(prediction_alias) if prediction_alias else None
+        if declaration_record is None or declaration_record.get("tool_name") != "worker_experiment_stage":
+            raise SemanticRuleViolation("Adopted comparison requires the declaration's unique original stage receipt; bind that exact material.")
+        declaration = StageSubmission.model_validate_json(sources[prediction_alias], strict=True)
+        if declaration.prediction_declaration is None:
+            raise SemanticRuleViolation("The exact declaration receipt has no scientific prediction.")
+        _same_criterion(declaration.prediction_declaration, stage.comparison)
+        for name in declaration.prediction_declaration.conditions:
+            if name not in declaration_record["source_refs"]:
+                raise SemanticRuleViolation("Prediction condition is missing from its original producer namespace.")
+        for name in stage.comparison.observations:
+            if name not in source_refs:
+                raise SemanticRuleViolation("Comparison observation is missing from its original producer namespace.")
     if report.outcome != "completed":
         return
     def identity(item):
@@ -149,6 +255,15 @@ limitations instead of inventing missing evidence or claiming unavailable execut
 Keep normal corrections in this task. Ask for a scientific decision only when
 the research direction must change. Submit useful stage conclusions with
 worker_experiment_stage, citing sealed materials and noting unresolved questions.
+When useful, a design stage may include prediction_declaration with a prediction,
+criterion and aliases of the actual conditions. A validity stage may include a
+comparison naming that exact sealed declaration and observation aliases; result
+evidence_keys name those observation aliases. These optional bounded declarations
+fix references, not scientific truth. Sealing reads/binds the available originals;
+final adoption additionally verifies the declaration's original stage receipt.
+Bind a previous declaration as scientific_materials for that validation. Retain
+the original prediction/criterion when comparing held-out observations; a revised
+fit is a new declaration, not the original independent test. not_run is no test.
 Include execution interpretation when useful: executor facts do not supply your
 scientific conclusion. Rework seals a new version; retain the exact versions you
 adopt in the final report. Stage sealing is neither review nor final completion.
@@ -195,7 +310,7 @@ from .plugin_runtime.results import result_draft_schema, RESULT_PROJECTION_VERSI
 FINALIZER = CallableComponent("workspace_finalizer", WorkspaceFinalizer(
     finalize, result_draft_schema, RESULT_PROJECTION_VERSION))
 STAGE_TOOL = WorkerToolDefinition(name="worker_experiment_stage",
-    description="Seal a stage conclusion and its exact scientific materials in this experiment. Returns a local reference and an immutable artifact_name for another task or independent review while this Run is active. Continue working after sealing.",
+    description="Seal a stage conclusion and exact scientific materials. Optional design prediction_declaration freezes a prediction/criterion/conditions; optional validity comparison reads that exact declaration and actual observations. Handler checks structure and exact bindings; original declaration receipt is additionally checked when the final report adopts the comparison (bind the declaration as scientific_materials). Sealing alone is a preview, not scientific correctness or final validation; not_run does not test a prediction. Returns a local reference and immutable artifact_name; continue working after sealing.",
     input_model=StageSubmission, capability="experiment.stage", contextual_handler=submit_stage, owner_only=True,
     evidence_ports=("tool_evidence", "recovery_manifest_output"))
 EXECUTE_TOOL = WorkerToolDefinition(name="worker_experiment_execute",
@@ -260,7 +375,7 @@ OPERATION = scientific_agent_operation(
             schema_resource=_REF("experiment_task_schema"), kind="experiment_report", max_item_bytes=65536,
             validator=_REF("experiment_task_validator"), validator_rule_id="experiment.sealed_material",
             context_validator=_REF("experiment_completion_validator"), context_rule_id="experiment.sealed_material",
-            context_sources=("tool_evidence",),
+            context_sources=("tool_evidence", "scientific_materials"),
             semantic_contract=_REF("experiment_task_contract")),
         OutputPortSpec(name="tool_evidence", description="Sealed stages, implementations and execution observations.",
             schema="opaque", media_types=("application/json", "application/octet-stream", "text/plain", "text/csv"),

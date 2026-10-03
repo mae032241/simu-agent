@@ -1,6 +1,7 @@
 """Small acceptance evidence helpers; no model calls or scientific state writes."""
 import hashlib
 import json
+import math
 import sqlite3
 import time
 from contextlib import closing
@@ -125,6 +126,179 @@ def sealed_outputs(candidate, runs):
                 raise ValueError('sealed_bytes_mismatch')
         evidence.append(dict(run_id=run['run_id'], reference=ref, path=str(path)))
     return evidence
+
+
+def batch_payloads(spec):
+    """Project only the four public batches from one exact host-side fixture."""
+    path = Path(spec['materials_file'])
+    if not path.is_absolute() or path.stat().st_size > 65536:
+        raise ValueError('batch_material_requires_bounded_absolute_host_file')
+    raw = path.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != spec['materials_sha256']:
+        raise ValueError('batch_material_digest_changed')
+    material = json.loads(raw)
+    names = ['A_initial', 'A_discrimination', 'A_validation', 'B_changed_condition']
+    if (material.get('fixture_version') != 1 or material.get('kind') != 'hourly_loop_memory_materials_not_runner_config'
+            or len(material.get('batches', [])) != 4):
+        raise ValueError('unsupported_batch_material')
+    result = []
+    for name, batch in zip(names, material['batches']):
+        if batch.get('name') != name or set(batch) != {'name', 'condition', 'public_note', 'observations'}:
+            raise ValueError('batch_public_projection_invalid')
+        if (batch['condition'] != ('B' if name == 'B_changed_condition' else 'A')
+                or not isinstance(batch['public_note'], str) or not 1 <= len(batch['public_note']) <= 8192
+                or not isinstance(batch['observations'], list) or not 1 <= len(batch['observations']) <= 32
+                or any(not isinstance(v, dict) or set(v) != {'x', 'y', 'error_abs'}
+                    or any(type(n) not in (int, float) or not math.isfinite(n) for n in v.values())
+                    or v['error_abs'] <= 0 for v in batch['observations'])):
+            raise ValueError('batch_public_observation_invalid')
+        text = json.dumps(batch, ensure_ascii=False, sort_keys=True, allow_nan=False)
+        if not 1 <= len(text) <= 16000:
+            raise ValueError('batch_public_text_limit')
+        result.append(dict(name=name, text=text))
+    return result
+
+
+class BatchMaterialReader:
+    """Read-only, bounded adapter for the existing original-receipt resolver.
+
+    No runtime is opened: reads cannot migrate state, bind an instance or submit
+    work. The resolver retains the original producer's alias namespace.
+    """
+    def __init__(self, candidate, instance, run_ids):
+        from types import SimpleNamespace
+        from scidiscovery.artifact_agent.schema.refs import ArtifactRef
+        self.root, self.instance = Path(candidate), instance
+        if len(run_ids) > 128:
+            raise ValueError('batch_run_read_limit')
+        self.artifacts = self
+        self.values, self.records = {}, {}
+        for identity in run_ids:
+            found = rows(candidate, 'runs',
+                'SELECT instance_id,state,operation_id,CASE WHEN length(inputs_json)<=262144 THEN inputs_json END AS inputs_json,output_ref_json FROM runs WHERE run_id=?', (identity,))
+            if len(found) != 1 or found[0]['instance_id'] != instance:
+                raise ValueError('batch_run_scope_mismatch')
+            value = found[0]
+            if value['inputs_json'] is None:
+                raise ValueError('batch_input_namespace_limit')
+            inputs = json.loads(value['inputs_json'])
+            if len(inputs) > 128:
+                raise ValueError('batch_input_namespace_limit')
+            self.values[identity] = SimpleNamespace(run_id=identity, instance_id=instance,
+                state=value['state'], operation_id=value['operation_id'], output_ref=json.loads(value['output_ref_json']) if value['output_ref_json'] else None,
+                inputs=[SimpleNamespace(source_name=v['source_name'], artifact_ref=ArtifactRef.model_validate(v['artifact_ref']))
+                    for v in inputs])
+            records = rows(candidate, 'runs',
+                'SELECT CASE WHEN length(record_json)<=262144 THEN record_json END AS record_json FROM run_tool_evidence WHERE run_id=? ORDER BY ordinal LIMIT 129', (identity,))
+            if len(records) > 128 or any(v['record_json'] is None for v in records) or sum(len(v['record_json'].encode()) for v in records) > 262144:
+                raise ValueError('batch_receipt_coverage_limit')
+            self.records[identity] = [json.loads(v['record_json']) for v in records]
+
+    def status(self, identity):
+        if identity not in self.values:
+            raise ValueError('batch_original_producer_outside_goal_loop')
+        return self.values[identity]
+
+    def tool_evidence(self, identity):
+        return [v for v in self.records[identity] if v.get('record_type') != 'reference_access']
+
+    def reference_access_records(self, identity):
+        return [v for v in self.records[identity] if v.get('record_type') == 'reference_access']
+
+    def catalog(self, ref):
+        from scidiscovery.artifact_agent.schema.artifact import ArtifactEnvelope
+        found = rows(self.root, 'artifact_agent',
+            'SELECT CASE WHEN length(envelope_json)<=262144 THEN envelope_json END AS envelope_json,envelope_sha256 FROM artifact_envelopes WHERE artifact_id=?', (ref.artifact_id,))
+        if len(found) != 1 or found[0]['envelope_json'] is None:
+            raise ValueError('batch_artifact_envelope_unavailable')
+        raw = found[0]['envelope_json'].encode()
+        if hashlib.sha256(raw).hexdigest() != found[0]['envelope_sha256']:
+            raise ValueError('batch_artifact_envelope_corrupt')
+        envelope = ArtifactEnvelope.model_validate_json(raw)
+        if envelope.ref != ref:
+            raise ValueError('batch_artifact_ref_mismatch')
+        return envelope
+
+    def verify(self, ref):
+        envelope = self.catalog(ref)
+        if envelope.size_bytes > 65536:
+            raise ValueError('batch_scientific_body_limit')
+        path = self.root/'state/artifacts/sha256'/ref.sha256[:2]/ref.sha256[2:]
+        with path.open('rb') as stream:
+            if path.stat().st_size != envelope.size_bytes or hashlib.file_digest(stream, 'sha256').hexdigest() != ref.sha256:
+                raise ValueError('batch_artifact_bytes_mismatch')
+        return envelope
+
+    def read_json(self, ref):
+        from scidiscovery.artifact_agent.schema.refs import ArtifactRef
+        ref = ArtifactRef.model_validate(ref)
+        envelope = self.verify(ref)
+        if envelope.size_bytes > 65536:
+            raise ValueError('batch_scientific_body_limit')
+        return json.loads((self.root/'state/artifacts/sha256'/ref.sha256[:2]/ref.sha256[2:]).read_bytes())
+
+    def material(self, identity, alias):
+        from scidiscovery.artifact_agent.service.sealed_materials import resolve_material
+        return resolve_material(self, self.status(identity), alias)
+
+
+def batch_scientific_facts(candidate, control, *, max_runs, discrimination=None, validation=None, prediction=None):
+    """Exact current goal/loop admissions; science correctness is not inferred."""
+    from scidiscovery.artifact_agent.schema.refs import ArtifactRef
+    from scidiscovery.general_science_experiment_task import StageSubmission, ExperimentReport
+    cp = json.loads(control['checkpoint_json'])
+    goal, loop = json.loads(control['objective_ref_json']), cp.get('current_loop_id')
+    if not loop:
+        raise ValueError('batch_research_loop_missing')
+    admissions = {v['run_id'] for v in cp.get('admissions', {}).values()
+        if v.get('state') == 'accepted' and v.get('loop_id') == loop and v.get('objective_ref') == goal
+        and not v.get('interactive_session_id') and v.get('run_id')}
+    if len(admissions) > max_runs:
+        raise ValueError('batch_admission_coverage_limit')
+    reader = BatchMaterialReader(candidate, control['instance_id'], sorted(admissions))
+    facts = dict(first_results=[], declarations=[], comparisons=[])
+    for identity in sorted(admissions):
+        value = reader.status(identity)
+        if value.operation_id != 'science.experiment.v1':
+            continue  # This optional benchmark uses the declared complete experiment contract.
+        report = ExperimentReport.model_validate_json(json.dumps(reader.read_json(value.output_ref))).model_dump(mode='json') if value.state == 'completed' and value.output_ref else None
+        if report is not None:
+            facts['first_results'].append(dict(run_id=identity, artifact_ref=value.output_ref))
+        for raw in reader.tool_evidence(identity):
+            if raw.get('tool_name') != 'worker_experiment_stage':
+                continue
+            record = reader.material(identity, raw['alias'])
+            if record is None:
+                raise ValueError('batch_stage_receipt_missing')
+            stage = StageSubmission.model_validate_json(json.dumps(reader.read_json(record['artifact_ref'])))
+            refs = record['source_refs']
+            if stage.prediction_declaration and discrimination:
+                conditions = [refs.get(name) for name in stage.prediction_declaration.conditions]
+                if None not in conditions and ArtifactRef.model_validate(discrimination) in conditions:
+                    facts['declarations'].append(dict(run_id=identity, artifact_ref=record['artifact_ref']))
+            if not (stage.comparison and report is not None and prediction and validation):
+                continue
+            adopted_refs = []
+            for alias in report.get('adopted_stages', []):
+                adopted = reader.material(identity, alias)
+                if adopted is not None:
+                    adopted_refs.append(ArtifactRef.model_validate(adopted['artifact_ref']))
+            comparison = stage.comparison
+            if (ArtifactRef.model_validate(record['artifact_ref']) not in adopted_refs
+                    or refs.get(comparison.prediction) != ArtifactRef.model_validate(prediction)
+                    or ArtifactRef.model_validate(validation) not in [refs.get(name) for name in comparison.observations]
+                    or comparison.result.status == 'not_run'):
+                continue
+            declaration = reader.material(identity, comparison.prediction)
+            if declaration is None or declaration.get('tool_name') != 'worker_experiment_stage':
+                raise ValueError('batch_declaration_original_receipt_missing')
+            declared = StageSubmission.model_validate_json(json.dumps(reader.read_json(declaration['artifact_ref'])))
+            if (declared.prediction_declaration is None
+                    or comparison.result.check_key != declared.prediction_declaration.criterion.check_key
+                    or comparison.result.evaluation_mode != declared.prediction_declaration.criterion.evaluation_mode):
+                raise ValueError('batch_comparison_criterion_mismatch')
+            facts['comparisons'].append(dict(run_id=identity, artifact_ref=record['artifact_ref']))
+    return facts
 
 
 def usage_report(journey, workers, helpers, progression=None):

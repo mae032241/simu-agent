@@ -1138,7 +1138,7 @@ class SchedulingControl:
             with self._connect() as connection:
                 connection.execute('UPDATE scheduler_progression SET host_json=NULL WHERE instance_id=?', (instance_id,))
 
-    def progression_message(self, *, instance_id, session_key, name, text, intake):
+    def progression_message(self, *, instance_id, session_key, name, text, intake, expected_scope=None):
         """Reader-authorized original user context, applied at the next safe turn."""
         if not isinstance(text, str) or not 1 <= len(text) <= 16384:
             raise ValueError('message must contain 1..16384 characters')
@@ -1152,6 +1152,34 @@ class SchedulingControl:
             if row['state'] == 'idle':
                 conflict('Start a frozen goal before sending progression context.')
             checkpoint = json.loads(row['checkpoint_json'])
+            if expected_scope is not None:
+                # Caller precondition shares every goal/loop transition's lock.
+                # Named bindings cannot be rebound; resolve the actual original,
+                # rather than accepting a caller's claimed Artifact or labels.
+                if not isinstance(expected_scope, dict) or set(expected_scope) != {'objective_name', 'loop_id'}:
+                    raise ValueError('expected_scope requires exact objective_name and loop_id')
+                self._validate_name(expected_scope['objective_name'], label='expected goal name')
+                goal = intake.artifacts.get_by_id(self.resolve(instance=instance_id, namespace='artifact',
+                    name=expected_scope['objective_name'])).ref
+                loop = current_loop(checkpoint)
+                if (row['state'] != 'active' or row['mode'] != 'background'
+                        or goal != ArtifactRef.model_validate_json(row['objective_ref_json'])
+                        or not loop or loop != expected_scope['loop_id']
+                        or (checkpoint.get('report') or {}).get('completed')):
+                    conflict('Expected message scope is no longer an active background goal and loop.')
+                if checkpoint.get('fault_class') == 'outcome_unknown':
+                    conflict('Expected message scope has an unresolved native outcome.')
+                limits = json.loads(row['config_json'])['effective']['progression']
+                view = progression_status_view(row, now=self.control_now())
+                budget = view['budget']
+                resources = view['resources'] or {}
+                if (not limits['enabled'] or budget['effective_remaining_seconds'] <= 0
+                        or budget['remaining_tokens'] <= 0
+                        or any(budget[key] >= limits['max_' + key] for key in ('rounds', 'attempts'))
+                        or (resources.get('owned_tree_rss_bytes', 0) +
+                            (resources.get('control_daemon_rss_bytes') or 0)) >= limits['max_rss_bytes']
+                        or row['reason'] in {'budget_exhausted', 'attempt_budget_exhausted', 'resource_limit'}):
+                    conflict('Expected message scope has no remaining total progression budget.')
             messages = checkpoint.get('messages', [])
             old = next((v for v in messages if v['name'] == name), None)
             if old is not None:
