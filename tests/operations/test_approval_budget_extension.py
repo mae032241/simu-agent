@@ -87,6 +87,14 @@ def test_budget_extension_http_roundtrip_replay_recovery_and_scope(tmp_path, mon
                     {'additional_wall_time_hours':'NaN'}, {'additional_wall_time_hours':'-1'}):
             assert _request(base, 'POST', endpoint, form={**form, **bad})[0] == 403
             assert f.runtime.approvals.status(aid).status == 'pending'
+        from scidiscovery.artifact_agent.service.approvals import BudgetExtensionAccountingError
+        with monkeypatch.context() as patch:
+            def unavailable(*_):
+                raise BudgetExtensionAccountingError('无法核对当前预算池的历史授权')
+            patch.setattr(service, 'validate_budget_extension', unavailable)
+            status, _, body = _request(base, 'POST', endpoint, form=form)
+            assert status == 409 and '当前预算池' in body.decode()
+            assert f.runtime.approvals.status(aid).status == 'pending'
         # Crash after recording the human decision: an identical HTTP retry repairs
         # the budget projection without approving twice or incrementing twice.
         apply = service.apply_budget_extension

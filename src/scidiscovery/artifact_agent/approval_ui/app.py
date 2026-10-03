@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 from ..schema.approval import LocalIdentityRef
 from ..service.approvals import (
     ApprovalAccessDenied,
+    BudgetExtensionAccountingError,
     ApprovalError,
     ApprovalExpired,
     ApprovalService,
@@ -916,6 +917,8 @@ class ApprovalUI:
                         ui_session_id=self.session_id,
                         additional_wall_time_seconds=additional_seconds,
                     )
+            except BudgetExtensionAccountingError as error:
+                return self._error(handler, HTTPStatus.CONFLICT, str(error))
             except (UnicodeDecodeError, ValueError, ApprovalAccessDenied):
                 return self._error(handler, HTTPStatus.FORBIDDEN)
             except ApprovalExpired:

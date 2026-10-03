@@ -55,6 +55,10 @@ class ApprovalAccessDenied(ApprovalError):
     pass
 
 
+class BudgetExtensionAccountingError(ApprovalError):
+    """A relevant historical authorization could not be accounted for safely."""
+
+
 class ApprovalExpired(ApprovalError):
     pass
 
@@ -632,11 +636,30 @@ class ApprovalService:
             row["decision_nonce"],
         )
 
-    def budget_extension_decisions(self):
-        """Sealed human grants, including decisions awaiting execution projection."""
+    def budget_extension_decisions(self, *, execution_refs, projected_decision_ids):
+        """Read only unprojected decisions for exact requests in the selected pool.
+
+        Request creation records are durable control metadata. Filter with those
+        before opening any decision Artifact, so an unrelated broken decision
+        cannot prevent grants in another pool.
+        """
+        refs = {ref.artifact_id: ref for ref in execution_refs}
+        if not refs:
+            return
         with self._connect() as connection:
-            for row in connection.execute("SELECT approval_id, decision_ref_json FROM approval_decisions WHERE selected_option IN ('authorize_execution', 'authorize_execution_with_exception', 'approve')"):
+            rows = connection.execute("""
+                SELECT d.approval_id, d.decision_ref_json FROM approval_decisions d
+                JOIN approval_requests a ON a.approval_id=d.approval_id
+                WHERE d.selected_option IN ('authorize_execution', 'authorize_execution_with_exception', 'approve')
+                  AND d.decision_id NOT IN (SELECT value FROM json_each(?))
+                  AND json_extract(a.create_request_json, '$.kind')='execution_authorization'
+                  AND EXISTS (SELECT 1 FROM json_each(a.create_request_json, '$.subject_refs') s
+                    WHERE json_extract(s.value, '$.artifact_id') IN (SELECT value FROM json_each(?)))
+            """, (json.dumps(sorted(projected_decision_ids)), json.dumps(list(refs))))
+            for row in rows:
                 decision = self._load_decision(ArtifactRef.model_validate_json(row['decision_ref_json']))
+                if not any(refs.get(ref.artifact_id) == ref for ref in decision.subject_refs):
+                    raise ApprovalError('Budget decision differs from its pool request identity')
                 if decision.additional_wall_time_seconds:
                     yield row['approval_id'], decision
 

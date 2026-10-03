@@ -369,6 +369,12 @@ before checking cardinality. For historical implementations without `control_par
 only the original producer's exact frozen inputs may be excluded to resolve a package;
 unresolved ambiguity remains an error.
 
+Evidence admission builds its proof from the receipt transaction's captured records
+before committing the receipt and public binding. Proof failure rolls back admission;
+an identical retry also repairs a historical receipt missing its proof. A CAS proof
+left by an interrupted transaction is reused only if its exact subject receipt still
+matches, so a later alias allocation cannot adopt an orphan's binding.
+
 New curve scores identify the support-aware algorithm as `curve-operators.v2` or
 `analysis-curve-operators.v2`. Historical v1 calculations still require exact source
 bytes and full numeric replay. Compatibility accepts the pre-shared-support bundle
@@ -453,6 +459,10 @@ decision sealing and projection. Lowering these settings does not invalidate an
 already sealed grant. Historical decisions preserve their original canonical bytes,
 including both omitted and explicit-zero extension fields. These administrative
 limits are shown in the approval UI, not added to Worker forms.
+Grant accounting selects exact requests from the pool's durable policy history and
+reservation records before loading unprojected decisions. Missing current policy
+pointers do not erase sealed grants; an unreadable decision blocks only its relevant
+pool with an explicit UI conflict. Projected grants use their retained ledger rows.
 Approval UI separates the requested increment, per-request threshold, cumulative balance
 and overage; a negative balance is never presented as this request's available time.
 The install transaction fills a missing cumulative threshold from the bundled config

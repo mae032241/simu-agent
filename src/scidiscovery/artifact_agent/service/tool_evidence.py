@@ -459,46 +459,52 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
             if row['state'] != 'running' or row['accepted_candidate_digest'] is not None:
                 raise RunStateConflict('Run no longer accepts tool evidence')
             existing = connection.execute('SELECT record_json FROM run_tool_evidence WHERE run_id=? AND evidence_key=?',(run_id,key)).fetchone()
+            all_records = [json.loads(r[0]) for r in connection.execute(
+                'SELECT record_json FROM run_tool_evidence WHERE run_id=? ORDER BY ordinal', (run_id,))]
             if existing:
                 record = json.loads(existing[0])
-                if port.agent_visible:
-                    binding = self._bind_evidence_output(connection, value, record["alias"], ArtifactRef.model_validate(record["artifact_ref"]))
-                    return {**record, "artifact_name": binding.name}
-                return record
-            all_records = [json.loads(r[0]) for r in connection.execute('SELECT record_json FROM run_tool_evidence WHERE run_id=?',(run_id,))]
-            records = [r for r in all_records if r.get('record_type') != 'reference_access' and r.get('output_port', 'tool_evidence') == 'tool_evidence']
-            if len([r for r in all_records if r.get('record_type') != 'reference_access']) >= 128 or len(records) >= port.max_items or sum(r['size_bytes'] for r in records)+len(raw) > port.collection.max_total_bytes:
-                raise ValueError('evidence_budget')
-            if metadata.get('output_name') and any(r['metadata'].get('output_name')==metadata['output_name'] for r in records):
-                raise ValueError('ambiguous_mapping')
-            reserved = {r['alias'] for r in all_records}
-            for item in value.inputs:
-                if item.port_name == 'recovery_manifest':
-                    reserved.update(r['alias'] for r in json.loads(self.artifacts.read(item.artifact_ref)).get('records', ()))
-            ordinal=len(all_records)+1
-            number=ordinal
-            while f'tool_evidence_{number:03d}' in reserved:
-                number+=1
-            alias=f'tool_evidence_{number:03d}'
-            artifact=self.artifacts.register(raw,ArtifactRegistration(kind=port.kind,schema_id=port.schema_id,
-                payload_schema_version=1,media_type=media_type,creator=self.service_actor,
-                parent_refs=tuple(parent_refs),
-                labels={'operation_id':value.operation_id,'operation_digest':value.operation_digest,'operation_version':value.operation_version,
-                        'operation_output_port':'tool_evidence','tool_name':tool_name,'tool_producer_run':run_id,
-                        **({'source_origin':'public_web', 'original_source_alias':alias} if external_source else {}),
-                        **({'analysis_artifact_kind':metadata['kind']} if metadata.get('kind') in
-                           {'calculation_record', 'calculation_details', 'analysis_script', 'analysis_derived'} else {}),
-                        **({'logical_name':metadata['output_name']} if metadata.get('output_name') else {})},confidentiality='run_private'),
-                idempotency_key=f'run:{run_id}:tool:{key}').ref
-            record={'alias':alias,'artifact_ref':artifact.model_dump(mode='json'),'source_ref':source_ref.model_dump(mode='json') if source_ref is not None else None,
-                    'media_type':media_type,'size_bytes':len(raw),'metadata':metadata,'tool_name':tool_name,
-                    'control_parents': [ref.model_dump(mode='json') for ref in trusted_parent_refs]}
-            connection.execute('INSERT INTO run_tool_evidence VALUES (?,?,?,?,?)',(run_id,ordinal,key,canonical_json(record),alias))
+                artifact = ArtifactRef.model_validate(record['artifact_ref'])
+            else:
+                records = [r for r in all_records if r.get('record_type') != 'reference_access' and r.get('output_port', 'tool_evidence') == 'tool_evidence']
+                if len([r for r in all_records if r.get('record_type') != 'reference_access']) >= 128 or len(records) >= port.max_items or sum(r['size_bytes'] for r in records)+len(raw) > port.collection.max_total_bytes:
+                    raise ValueError('evidence_budget')
+                if metadata.get('output_name') and any(r['metadata'].get('output_name')==metadata['output_name'] for r in records):
+                    raise ValueError('ambiguous_mapping')
+                reserved = {r['alias'] for r in all_records}
+                for item in value.inputs:
+                    if item.port_name == 'recovery_manifest':
+                        reserved.update(r['alias'] for r in json.loads(self.artifacts.read(item.artifact_ref)).get('records', ()))
+                ordinal=len(all_records)+1
+                number=ordinal
+                while f'tool_evidence_{number:03d}' in reserved:
+                    number+=1
+                alias=f'tool_evidence_{number:03d}'
+                artifact=self.artifacts.register(raw,ArtifactRegistration(kind=port.kind,schema_id=port.schema_id,
+                    payload_schema_version=1,media_type=media_type,creator=self.service_actor,
+                    parent_refs=tuple(parent_refs),
+                    labels={'operation_id':value.operation_id,'operation_digest':value.operation_digest,'operation_version':value.operation_version,
+                            'operation_output_port':'tool_evidence','tool_name':tool_name,'tool_producer_run':run_id,
+                            **({'source_origin':'public_web', 'original_source_alias':alias} if external_source else {}),
+                            **({'analysis_artifact_kind':metadata['kind']} if metadata.get('kind') in
+                               {'calculation_record', 'calculation_details', 'analysis_script', 'analysis_derived'} else {}),
+                            **({'logical_name':metadata['output_name']} if metadata.get('output_name') else {})},confidentiality='run_private'),
+                    # External originals carry their alias in immutable labels.
+                    # A rolled-back attempt may leave an orphan CAS object while
+                    # a later successful receipt consumes that alias.
+                    idempotency_key=f'run:{run_id}:tool:{key}' + (f':{alias}' if external_source else '')).ref
+                record={'alias':alias,'artifact_ref':artifact.model_dump(mode='json'),'source_ref':source_ref.model_dump(mode='json') if source_ref is not None else None,
+                        'media_type':media_type,'size_bytes':len(raw),'metadata':metadata,'tool_name':tool_name,
+                        'control_parents': [ref.model_dump(mode='json') for ref in trusted_parent_refs]}
+                connection.execute('INSERT INTO run_tool_evidence VALUES (?,?,?,?,?)',(run_id,ordinal,key,canonical_json(record),alias))
+                all_records.append(record)
+            # The receipt transaction supplies its own uncommitted records. Proof
+            # failure rolls back the receipt and public binding; existing receipts
+            # pass through the same repair path. CAS registration is idempotent.
+            self.reference_manifest(value, subject_ref=artifact, stored_records=all_records)
             if port.agent_visible:
-                binding = self._bind_evidence_output(connection, value, alias, artifact)
-                record = {**record, "artifact_name": binding.name}
+                binding = self._bind_evidence_output(connection, value, record['alias'], artifact)
+                record = {**record, 'artifact_name': binding.name}
         self._refresh_evidence_schema(run_id)
-        self.reference_manifest(value, subject_ref=artifact)
         if metadata.get("kind") == "experiment_stage":
             from .presentation_summaries import enqueue
             enqueue(self, value, artifact)
@@ -661,7 +667,7 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
                     'operation_output_port':'recovery_manifest_output','tool_producer_run':value.run_id},confidentiality='run_private'),
             idempotency_key=f'run:{value.run_id}:tool-manifest:{hashlib.sha256(self._evidence_snapshot(value.run_id)).hexdigest()}').ref
 
-    def reference_manifest(self, value, *, subject_ref=None):
+    def reference_manifest(self, value, *, subject_ref=None, stored_records=None):
         """Freeze stored receipt facts for a bound reader, without recompiling its producer.
 
         One captured set supplies both bytes and parents. A later publication
@@ -669,17 +675,28 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
         This private proof is neither a final report nor a new scientific product.
         """
         from ..storage import ArtifactNotFoundError, ArtifactIdentityConflictError, IdempotencyConflictError
+        records = (self.tool_evidence(value.run_id) if stored_records is None else
+                   [r for r in stored_records if r.get('record_type') != 'reference_access'])
+        selected = [r for r in records if ArtifactRef.model_validate(r['artifact_ref']) == subject_ref]
+        if subject_ref is not None and len(selected) != 1:
+            raise RunStateConflict('Reference proof subject is not a unique sealed producer material')
         proof_id = ('reference_proof_' + hashlib.sha256(canonical_json({
             'run': value.run_id, 'subject': subject_ref})).hexdigest()) if subject_ref is not None else None
         if proof_id is not None:
             try:
+                existing = self.artifacts.get_by_id(proof_id).ref
+                document = json.loads(self.artifacts.read(existing))
+                if selected[0] in document['records']:
+                    return existing
+                # A prior receipt transaction can roll back after CAS succeeds.
+                # Its orphan proof must not dictate a subsequently assigned alias.
+                proof_id = 'reference_proof_' + hashlib.sha256(canonical_json({
+                    'run': value.run_id, 'subject': subject_ref, 'receipt': selected[0]})).hexdigest()
                 return self.artifacts.get_by_id(proof_id).ref
             except ArtifactNotFoundError:
                 pass
-        records = self.tool_evidence(value.run_id)
-        if subject_ref is not None and not any(ArtifactRef.model_validate(r['artifact_ref']) == subject_ref for r in records):
-            raise RunStateConflict('Reference proof subject is not a sealed producer material')
-        accesses = self.reference_access_records(value.run_id)
+        accesses = (self.reference_access_records(value.run_id) if stored_records is None else
+                    [r for r in stored_records if r.get('record_type') == 'reference_access'])
         raw = self._encode_evidence_snapshot(value, records, accesses,
             self._recovery_tool_proof_from_records(value), self.tool_attempts(value.run_id))
         ToolEvidenceManifest.model_validate_json(raw)

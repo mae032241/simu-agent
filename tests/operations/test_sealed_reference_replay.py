@@ -126,3 +126,85 @@ def test_published_material_reuses_its_fixed_proof_after_later_work(tmp_path):
     worker.call_tool('worker_curve_score', {'record_key': 'unrelated', 'request': score_inputs()[1]})
     assert runs.reference_manifest(runs.status(worker._run_id), subject_ref=ref) == first
     assert runs.artifacts.catalog(first).labels['operation_output_port'] == 'reference_proof'
+
+
+def evidence_submission(tmp_path):
+    from tests.operations.test_analysis_claim_scope import generic_worker
+    worker, _, _ = generic_worker(tmp_path, return_system=True)
+    runs = worker.runs
+    owner = runs.status(worker._run_id)
+    return runs, owner, dict(run_id=owner.run_id, tool_name='worker_curve_score', allowed_ports=('tool_evidence',),
+        raw=b'{}', media_type='application/json', metadata={'kind': 'analysis_derived'},
+        derived_from=(owner.inputs[0].source_name,))
+
+
+@pytest.mark.parametrize('failure', ['limit', 'storage'])
+def test_proof_failure_rolls_back_receipt_and_retry_completes(tmp_path, monkeypatch, failure):
+    from scidiscovery.artifact_agent.service.run_outputs import RunCheckerError
+    from scidiscovery.artifact_agent.schema.refs import ArtifactRef
+    runs, owner, args = evidence_submission(tmp_path)
+    before = runs.tool_evidence(owner.run_id)
+    with monkeypatch.context() as patch:
+        if failure == 'limit':
+            patch.setattr(runs, 'tool_attempts', lambda _: tuple({} for _ in range(65)))
+            error = RunCheckerError
+        else:
+            register = runs.artifacts.register
+            def fail_proof(raw, registration, **kwargs):
+                if registration.kind == 'tool_evidence_manifest':
+                    raise OSError('fixture proof storage failure')
+                return register(raw, registration, **kwargs)
+            patch.setattr(runs.artifacts, 'register', fail_proof)
+            error = OSError
+        with pytest.raises(error):
+            runs.accept_tool_evidence(**args)
+    assert runs.tool_evidence(owner.run_id) == before
+    record = runs.accept_tool_evidence(**args)
+    assert len(runs.tool_evidence(owner.run_id)) == len(before) + 1
+    ref = ArtifactRef.model_validate(record['artifact_ref'])
+    proof = runs.reference_manifest(owner, subject_ref=ref)
+    assert any(r['artifact_ref'] == record['artifact_ref'] for r in json.loads(runs.artifacts.read(proof))['records'])
+
+
+def test_retry_repairs_historical_missing_proof_once(tmp_path, monkeypatch):
+    from scidiscovery.artifact_agent.schema.refs import ArtifactRef
+    runs, owner, args = evidence_submission(tmp_path)
+    with monkeypatch.context() as patch:
+        patch.setattr(runs, 'reference_manifest', lambda *a, **k: None)
+        original = runs.accept_tool_evidence(**args)
+    snapshots = []
+    encode = runs._encode_evidence_snapshot
+    def capture(*args):
+        snapshots.append(True)
+        return encode(*args)
+    monkeypatch.setattr(runs, '_encode_evidence_snapshot', capture)
+    assert runs.accept_tool_evidence(**args) == original
+    assert runs.accept_tool_evidence(**args) == original
+    assert len(snapshots) == 1
+    assert len(runs.tool_evidence(owner.run_id)) == 1
+    assert runs.reference_manifest(owner, subject_ref=ArtifactRef.model_validate(original['artifact_ref']))
+
+
+@pytest.mark.parametrize('external', [False, True])
+def test_orphan_proof_cannot_override_receipt_after_rollback(tmp_path, monkeypatch, external):
+    from scidiscovery.artifact_agent.schema.refs import ArtifactRef
+    if external:
+        from tests.operations.test_evidence_source_capture import open_extraction
+        _, runtime, _, worker, _, _ = open_extraction(tmp_path)
+        runs = runtime.runs
+        owner = runs.status(worker._run_id)
+        args = dict(run_id=owner.run_id, tool_name='worker_capture_source', allowed_ports=('tool_evidence',),
+            raw=b'{}', media_type='text/plain', metadata={'origin': 'public_web'}, external_source=True)
+    else:
+        runs, owner, args = evidence_submission(tmp_path)
+    with monkeypatch.context() as patch:
+        patch.setattr(runs, '_bind_evidence_output', lambda *a, **k: (_ for _ in ()).throw(OSError('binding interrupted')))
+        with pytest.raises(OSError):
+            runs.accept_tool_evidence(**args)
+    assert not runs.tool_evidence(owner.run_id)
+    runs.accept_tool_evidence(**{**args, 'raw': b'{"later": true}'})
+    record = runs.accept_tool_evidence(**args)
+    ref = ArtifactRef.model_validate(record['artifact_ref'])
+    proof = runs.reference_manifest(owner, subject_ref=ref)
+    matches = [r for r in json.loads(runs.artifacts.read(proof))['records'] if r['artifact_ref'] == record['artifact_ref']]
+    assert len(matches) == 1 and matches[0]['alias'] == record['alias'] == 'tool_evidence_002'

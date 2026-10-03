@@ -10,6 +10,37 @@ from scidiscovery.artifact_agent.schema.common import canonical_json
 from scidiscovery.plugin_runtime.calculations import CalculationResult
 from scidiscovery.operation_contract import SemanticRuleViolation
 
+SUPPORT_CASES = ('none', 'covering_interval', 'gap', 'exclusion', 'outside_exclusion', 'unavailable')
+SUPPORT_OPERATORS = ('residual_rms', 'point_difference', 'crossing_shift', 'width_shift')
+
+
+def support_case(support, operator):
+    value = json.loads((Path(__file__).parents[1] / 'fixtures/curve_calculation_pre_support.json').read_text())
+    bundle = json.loads(value['sources']['curve_bundle'])
+    request = value['record']['request']
+    series = bundle['series'][0]
+    comparison = request['comparison_spec']['comparisons'][0]
+    if support == 'covering_interval':
+        series['valid_intervals'] = [{'start': 0., 'stop': 1.}]
+    elif support == 'gap':
+        series['valid_intervals'] = [{'start': 0., 'stop': .4}, {'start': .6, 'stop': 1.}]
+    elif support == 'exclusion':
+        series['exclusions'] = [{'start': .2, 'stop': .4}]
+    elif support == 'outside_exclusion':
+        series['exclusions'] = [{'start': .8, 'stop': 1.}]
+        comparison['domain']['stop'] = .5
+    elif support == 'unavailable':
+        series['availability'].update(status='unavailable', reason_code='source_missing')
+    op = {'operator_key': 'probe', 'kind': operator, 'value_space': 'linear'}
+    if operator == 'point_difference':
+        op['x'] = .25
+    if operator in {'crossing_shift', 'width_shift'}:
+        op['level'] = 5e10
+    if operator == 'width_shift':
+        op['second_level'] = 8e10
+    comparison['operators'] = [op]
+    return request, {'curve_bundle': canonical_json(bundle)}
+
 
 def historical():
     value = json.loads((Path(__file__).parents[1] / 'fixtures/curve_calculation_pre_support.json').read_text())
@@ -50,3 +81,20 @@ def test_legacy_compatibility_does_not_relax_exact_replay(damage):
         document['algorithm_version'] = 'analysis-curve-operators.v2'
     with pytest.raises(SemanticRuleViolation):
         replay_calculation(CalculationResult.model_validate_json(canonical_json(document)), sources)
+
+
+@pytest.mark.parametrize('support', SUPPORT_CASES)
+@pytest.mark.parametrize('operator', SUPPORT_OPERATORS)
+def test_historical_support_semantics_replay_from_fixed_vectors(support, operator):
+    import hashlib
+    request, sources = support_case(support, operator)
+    vectors = json.loads((Path(__file__).parents[1] / 'fixtures/curve_support_v1.json').read_text())
+    vector = vectors['cases'][operator + '/' + support]
+    record = CalculationResult.model_validate_json(canonical_json(dict(
+        record_key='old', request=request, input_digests={k: hashlib.sha256(v).hexdigest() for k, v in sources.items()},
+        algorithm_version='analysis-curve-operators.v1', status=vector['status'],
+        reason_code=vector['reason_code'], result=vector['result'])))
+    # The expected digest and numerical result were captured with the actual
+    # pre-4872459 evaluator. CI never imports git history or an external image.
+    assert hashlib.sha256(record.canonical_json()).hexdigest() == vector['record_sha256']
+    replay_calculation(record, sources)

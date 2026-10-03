@@ -1,0 +1,595 @@
+{
+  "evaluator_commit": "0c49a22d3e83bf00ccf6c441b4f2a215b84a974d",
+  "evaluator_file": "plugins/curve_score/curve_score/schema.py",
+  "evaluator_sha256": "db9ef2cd6526452f6eec73c313f1f6fee89ee780650afdfefa8aa5c53c8a6043",
+  "cases": {
+    "residual_rms/none": {
+      "status": "computed",
+      "reason_code": null,
+      "result": {
+        "schema_version": 1,
+        "curve_bundle_sha256": "9820c192c81f7d80b6cf4e00669e09b520b0e60a584e61c47a95323d96e29668",
+        "comparison_spec_sha256": "fa8b57b453272b991ccf7d9cc460762ee3ee126ff9968808f40dbfc999560f17",
+        "normalizer_profile": "analysis_inputs",
+        "operator_version": "analysis-curve-operators.v1",
+        "comparisons": [
+          {
+            "schema_version": 1,
+            "comparison_key": "implementation_residual",
+            "required": true,
+            "purpose": "implementation_sanity",
+            "gate_scope": "numerical_qualification",
+            "metric_profile": "smooth_curve",
+            "status": "inconclusive",
+            "metrics": [
+              {
+                "schema_version": 1,
+                "comparison_key": "implementation_residual",
+                "operator_key": "probe",
+                "kind": "residual_rms",
+                "status": "available",
+                "value": 3649727294320.387,
+                "unit": "cm^-3",
+                "reason_code": null,
+                "rationale": "The metric was computed from the declared continuous domain."
+              }
+            ],
+            "checks": [],
+            "rationale": "Metrics are available but no thresholded check was declared."
+          }
+        ],
+        "aggregate_status": "inconclusive",
+        "validation_scope": "standalone",
+        "validation_plan_sha256": null,
+        "covered_validation_check_keys": [],
+        "interpretation_boundary": "deterministic_metrics_only_no_physical_interpretation"
+      },
+      "record_sha256": "a3cb0c7d1d8cd9e1aee9b7390b2f626534548b8b499d8072f44595bbfe2aa86d"
+    },
+    "residual_rms/covering_interval": {
+      "status": "computed",
+      "reason_code": null,
+      "result": {
+        "schema_version": 1,
+        "curve_bundle_sha256": "dc825b32d555b94216420a92e865fa126ad70ceda314db9f97a2f9b507930474",
+        "comparison_spec_sha256": "fa8b57b453272b991ccf7d9cc460762ee3ee126ff9968808f40dbfc999560f17",
+        "normalizer_profile": "analysis_inputs",
+        "operator_version": "analysis-curve-operators.v1",
+        "comparisons": [
+          {
+            "schema_version": 1,
+            "comparison_key": "implementation_residual",
+            "required": true,
+            "purpose": "implementation_sanity",
+            "gate_scope": "numerical_qualification",
+            "metric_profile": "smooth_curve",
+            "status": "inconclusive",
+            "metrics": [
+              {
+                "schema_version": 1,
+                "comparison_key": "implementation_residual",
+                "operator_key": "probe",
+                "kind": "residual_rms",
+                "status": "available",
+                "value": 3649727294320.387,
+                "unit": "cm^-3",
+                "reason_code": null,
+                "rationale": "The metric was computed from the declared continuous domain."
+              }
+            ],
+            "checks": [],
+            "rationale": "Metrics are available but no thresholded check was declared."
+          }
+        ],
+        "aggregate_status": "inconclusive",
+        "validation_scope": "standalone",
+        "validation_plan_sha256": null,
+        "covered_validation_check_keys": [],
+        "interpretation_boundary": "deterministic_metrics_only_no_physical_interpretation"
+      },
+      "record_sha256": "5c89ce5de8172d13834194b74d47b4463c8dd751435f71022feb2747f84d6fe2"
+    },
+    "residual_rms/gap": {
+      "status": "unavailable",
+      "reason_code": "continuous_domain_unavailable",
+      "result": null,
+      "record_sha256": "b69dbf7085d7c955a5cf1cce6214c07f8affb232b9e692348d78ee261de66a35"
+    },
+    "residual_rms/exclusion": {
+      "status": "unavailable",
+      "reason_code": "domain_excluded",
+      "result": null,
+      "record_sha256": "d27be62cdcce21ce0c9e42f1ae742ef993e90d25328078a2699c7f6fb5a0ec5e"
+    },
+    "residual_rms/outside_exclusion": {
+      "status": "computed",
+      "reason_code": null,
+      "result": {
+        "schema_version": 1,
+        "curve_bundle_sha256": "bba2427e8bbed916fff9395ed8d18e72ab5f2c171fed625d20a4d958d3a3de55",
+        "comparison_spec_sha256": "8f307c15c9f06e4e7a67be4893134300d3b233c738bebea98bde40e4744c76bf",
+        "normalizer_profile": "analysis_inputs",
+        "operator_version": "analysis-curve-operators.v1",
+        "comparisons": [
+          {
+            "schema_version": 1,
+            "comparison_key": "implementation_residual",
+            "required": true,
+            "purpose": "implementation_sanity",
+            "gate_scope": "numerical_qualification",
+            "metric_profile": "smooth_curve",
+            "status": "inconclusive",
+            "metrics": [
+              {
+                "schema_version": 1,
+                "comparison_key": "implementation_residual",
+                "operator_key": "probe",
+                "kind": "residual_rms",
+                "status": "available",
+                "value": 2681107602837.9185,
+                "unit": "cm^-3",
+                "reason_code": null,
+                "rationale": "The metric was computed from the declared continuous domain."
+              }
+            ],
+            "checks": [],
+            "rationale": "Metrics are available but no thresholded check was declared."
+          }
+        ],
+        "aggregate_status": "inconclusive",
+        "validation_scope": "standalone",
+        "validation_plan_sha256": null,
+        "covered_validation_check_keys": [],
+        "interpretation_boundary": "deterministic_metrics_only_no_physical_interpretation"
+      },
+      "record_sha256": "314ca2a020ded5673329eab1644225a91e3d5b677d7f4a9cde6093e6fa52791f"
+    },
+    "residual_rms/unavailable": {
+      "status": "unavailable",
+      "reason_code": "reference_unavailable",
+      "result": null,
+      "record_sha256": "1e56ccbd35de808ced4fdf77052ef257d4ca94625a7419991ba5a60c4afee3c5"
+    },
+    "point_difference/none": {
+      "status": "computed",
+      "reason_code": null,
+      "result": {
+        "schema_version": 1,
+        "curve_bundle_sha256": "9820c192c81f7d80b6cf4e00669e09b520b0e60a584e61c47a95323d96e29668",
+        "comparison_spec_sha256": "1ca53e5f91947a93c9454f8658c547cbdc41c4962cc1474d6e8f6dac271e3d6f",
+        "normalizer_profile": "analysis_inputs",
+        "operator_version": "analysis-curve-operators.v1",
+        "comparisons": [
+          {
+            "schema_version": 1,
+            "comparison_key": "implementation_residual",
+            "required": true,
+            "purpose": "implementation_sanity",
+            "gate_scope": "numerical_qualification",
+            "metric_profile": "smooth_curve",
+            "status": "inconclusive",
+            "metrics": [
+              {
+                "schema_version": 1,
+                "comparison_key": "implementation_residual",
+                "operator_key": "probe",
+                "kind": "point_difference",
+                "status": "available",
+                "value": 284604989415.1542,
+                "unit": "cm^-3",
+                "reason_code": null,
+                "rationale": "The metric was computed from the declared continuous domain."
+              }
+            ],
+            "checks": [],
+            "rationale": "Metrics are available but no thresholded check was declared."
+          }
+        ],
+        "aggregate_status": "inconclusive",
+        "validation_scope": "standalone",
+        "validation_plan_sha256": null,
+        "covered_validation_check_keys": [],
+        "interpretation_boundary": "deterministic_metrics_only_no_physical_interpretation"
+      },
+      "record_sha256": "a8eac9bb990560a7f00d8aef57705318e07c5ceaa505dc30facd53cc276bc56b"
+    },
+    "point_difference/covering_interval": {
+      "status": "computed",
+      "reason_code": null,
+      "result": {
+        "schema_version": 1,
+        "curve_bundle_sha256": "dc825b32d555b94216420a92e865fa126ad70ceda314db9f97a2f9b507930474",
+        "comparison_spec_sha256": "1ca53e5f91947a93c9454f8658c547cbdc41c4962cc1474d6e8f6dac271e3d6f",
+        "normalizer_profile": "analysis_inputs",
+        "operator_version": "analysis-curve-operators.v1",
+        "comparisons": [
+          {
+            "schema_version": 1,
+            "comparison_key": "implementation_residual",
+            "required": true,
+            "purpose": "implementation_sanity",
+            "gate_scope": "numerical_qualification",
+            "metric_profile": "smooth_curve",
+            "status": "inconclusive",
+            "metrics": [
+              {
+                "schema_version": 1,
+                "comparison_key": "implementation_residual",
+                "operator_key": "probe",
+                "kind": "point_difference",
+                "status": "available",
+                "value": 284604989415.1542,
+                "unit": "cm^-3",
+                "reason_code": null,
+                "rationale": "The metric was computed from the declared continuous domain."
+              }
+            ],
+            "checks": [],
+            "rationale": "Metrics are available but no thresholded check was declared."
+          }
+        ],
+        "aggregate_status": "inconclusive",
+        "validation_scope": "standalone",
+        "validation_plan_sha256": null,
+        "covered_validation_check_keys": [],
+        "interpretation_boundary": "deterministic_metrics_only_no_physical_interpretation"
+      },
+      "record_sha256": "b5b30a7942ff8a30d134cc0c9367ca670d367f6f8658e0557d91b51a0c14b263"
+    },
+    "point_difference/gap": {
+      "status": "unavailable",
+      "reason_code": "continuous_domain_unavailable",
+      "result": null,
+      "record_sha256": "86c42c98738fd8a485cdf6348c45c5516f410ed3d75f5f67c89bb886ec0703bd"
+    },
+    "point_difference/exclusion": {
+      "status": "unavailable",
+      "reason_code": "domain_excluded",
+      "result": null,
+      "record_sha256": "69c08da08ad436cb2311c5315ad7db2947562517333b5b38a1da556bdead192a"
+    },
+    "point_difference/outside_exclusion": {
+      "status": "computed",
+      "reason_code": null,
+      "result": {
+        "schema_version": 1,
+        "curve_bundle_sha256": "bba2427e8bbed916fff9395ed8d18e72ab5f2c171fed625d20a4d958d3a3de55",
+        "comparison_spec_sha256": "96152982abda318900535b3ba5db41f925abb393b3ee6e8b0a1085aafb45913d",
+        "normalizer_profile": "analysis_inputs",
+        "operator_version": "analysis-curve-operators.v1",
+        "comparisons": [
+          {
+            "schema_version": 1,
+            "comparison_key": "implementation_residual",
+            "required": true,
+            "purpose": "implementation_sanity",
+            "gate_scope": "numerical_qualification",
+            "metric_profile": "smooth_curve",
+            "status": "inconclusive",
+            "metrics": [
+              {
+                "schema_version": 1,
+                "comparison_key": "implementation_residual",
+                "operator_key": "probe",
+                "kind": "point_difference",
+                "status": "available",
+                "value": 284604989415.1542,
+                "unit": "cm^-3",
+                "reason_code": null,
+                "rationale": "The metric was computed from the declared continuous domain."
+              }
+            ],
+            "checks": [],
+            "rationale": "Metrics are available but no thresholded check was declared."
+          }
+        ],
+        "aggregate_status": "inconclusive",
+        "validation_scope": "standalone",
+        "validation_plan_sha256": null,
+        "covered_validation_check_keys": [],
+        "interpretation_boundary": "deterministic_metrics_only_no_physical_interpretation"
+      },
+      "record_sha256": "ba2dc51fd3633a53f35402357e9fe14a04a19a73d5c90f78a1e1cd38c0369b69"
+    },
+    "point_difference/unavailable": {
+      "status": "unavailable",
+      "reason_code": "reference_unavailable",
+      "result": null,
+      "record_sha256": "023adcf2da3092a667416110c938272e1fc57aa38aeb9cdeec78c059e2659593"
+    },
+    "crossing_shift/none": {
+      "status": "computed",
+      "reason_code": null,
+      "result": {
+        "schema_version": 1,
+        "curve_bundle_sha256": "9820c192c81f7d80b6cf4e00669e09b520b0e60a584e61c47a95323d96e29668",
+        "comparison_spec_sha256": "6f448341f88e2487a50810061a1206abaa45c3d0a8f1a5c790af93f56382649f",
+        "normalizer_profile": "analysis_inputs",
+        "operator_version": "analysis-curve-operators.v1",
+        "comparisons": [
+          {
+            "schema_version": 1,
+            "comparison_key": "implementation_residual",
+            "required": true,
+            "purpose": "implementation_sanity",
+            "gate_scope": "numerical_qualification",
+            "metric_profile": "smooth_curve",
+            "status": "inconclusive",
+            "metrics": [
+              {
+                "schema_version": 1,
+                "comparison_key": "implementation_residual",
+                "operator_key": "probe",
+                "kind": "crossing_shift",
+                "status": "available",
+                "value": -0.2329900014453396,
+                "unit": "um",
+                "reason_code": null,
+                "rationale": "The metric was computed from the declared continuous domain."
+              }
+            ],
+            "checks": [],
+            "rationale": "Metrics are available but no thresholded check was declared."
+          }
+        ],
+        "aggregate_status": "inconclusive",
+        "validation_scope": "standalone",
+        "validation_plan_sha256": null,
+        "covered_validation_check_keys": [],
+        "interpretation_boundary": "deterministic_metrics_only_no_physical_interpretation"
+      },
+      "record_sha256": "d7bd54275e85c28f5f4d02ff27eafd16ca21467a01d98b9e20bff1868250e5ad"
+    },
+    "crossing_shift/covering_interval": {
+      "status": "computed",
+      "reason_code": null,
+      "result": {
+        "schema_version": 1,
+        "curve_bundle_sha256": "dc825b32d555b94216420a92e865fa126ad70ceda314db9f97a2f9b507930474",
+        "comparison_spec_sha256": "6f448341f88e2487a50810061a1206abaa45c3d0a8f1a5c790af93f56382649f",
+        "normalizer_profile": "analysis_inputs",
+        "operator_version": "analysis-curve-operators.v1",
+        "comparisons": [
+          {
+            "schema_version": 1,
+            "comparison_key": "implementation_residual",
+            "required": true,
+            "purpose": "implementation_sanity",
+            "gate_scope": "numerical_qualification",
+            "metric_profile": "smooth_curve",
+            "status": "inconclusive",
+            "metrics": [
+              {
+                "schema_version": 1,
+                "comparison_key": "implementation_residual",
+                "operator_key": "probe",
+                "kind": "crossing_shift",
+                "status": "available",
+                "value": -0.2329900014453396,
+                "unit": "um",
+                "reason_code": null,
+                "rationale": "The metric was computed from the declared continuous domain."
+              }
+            ],
+            "checks": [],
+            "rationale": "Metrics are available but no thresholded check was declared."
+          }
+        ],
+        "aggregate_status": "inconclusive",
+        "validation_scope": "standalone",
+        "validation_plan_sha256": null,
+        "covered_validation_check_keys": [],
+        "interpretation_boundary": "deterministic_metrics_only_no_physical_interpretation"
+      },
+      "record_sha256": "9671f4fff764f81893c026aa55d493243739361e7b8723a9032c72edd4cebd0e"
+    },
+    "crossing_shift/gap": {
+      "status": "unavailable",
+      "reason_code": "continuous_domain_unavailable",
+      "result": null,
+      "record_sha256": "89e8af56e5dffe388269aeb6e5d0ff2815ec7c48e26cdbdb2b96d9371ee3c2c9"
+    },
+    "crossing_shift/exclusion": {
+      "status": "unavailable",
+      "reason_code": "domain_excluded",
+      "result": null,
+      "record_sha256": "322749d2e3a17a30dded72bdb46c10e490c4ecd95bd290936969b7f0efc9a14c"
+    },
+    "crossing_shift/outside_exclusion": {
+      "status": "computed",
+      "reason_code": null,
+      "result": {
+        "schema_version": 1,
+        "curve_bundle_sha256": "bba2427e8bbed916fff9395ed8d18e72ab5f2c171fed625d20a4d958d3a3de55",
+        "comparison_spec_sha256": "0be1f32b72ccdcedbd109a86c9adb0c4fe13fad497f25319c963502f248e28d4",
+        "normalizer_profile": "analysis_inputs",
+        "operator_version": "analysis-curve-operators.v1",
+        "comparisons": [
+          {
+            "schema_version": 1,
+            "comparison_key": "implementation_residual",
+            "required": true,
+            "purpose": "implementation_sanity",
+            "gate_scope": "numerical_qualification",
+            "metric_profile": "smooth_curve",
+            "status": "inconclusive",
+            "metrics": [
+              {
+                "schema_version": 1,
+                "comparison_key": "implementation_residual",
+                "operator_key": "probe",
+                "kind": "crossing_shift",
+                "status": "available",
+                "value": -0.2329900014453396,
+                "unit": "um",
+                "reason_code": null,
+                "rationale": "The metric was computed from the declared continuous domain."
+              }
+            ],
+            "checks": [],
+            "rationale": "Metrics are available but no thresholded check was declared."
+          }
+        ],
+        "aggregate_status": "inconclusive",
+        "validation_scope": "standalone",
+        "validation_plan_sha256": null,
+        "covered_validation_check_keys": [],
+        "interpretation_boundary": "deterministic_metrics_only_no_physical_interpretation"
+      },
+      "record_sha256": "8e3dd21acf86a5238873ecd7f59354a872b416103c085bd553acc50cf7e816f9"
+    },
+    "crossing_shift/unavailable": {
+      "status": "unavailable",
+      "reason_code": "reference_unavailable",
+      "result": null,
+      "record_sha256": "4bdcfacc2fc79554bcf63f532c57438c29eda471c48d5908401d5b44614c9a04"
+    },
+    "width_shift/none": {
+      "status": "computed",
+      "reason_code": null,
+      "result": {
+        "schema_version": 1,
+        "curve_bundle_sha256": "9820c192c81f7d80b6cf4e00669e09b520b0e60a584e61c47a95323d96e29668",
+        "comparison_spec_sha256": "709f98d9950f9ca413b97c5849d6a033a94785978c9600b6a55c1e89478e75ee",
+        "normalizer_profile": "analysis_inputs",
+        "operator_version": "analysis-curve-operators.v1",
+        "comparisons": [
+          {
+            "schema_version": 1,
+            "comparison_key": "implementation_residual",
+            "required": true,
+            "purpose": "implementation_sanity",
+            "gate_scope": "numerical_qualification",
+            "metric_profile": "smooth_curve",
+            "status": "inconclusive",
+            "metrics": [
+              {
+                "schema_version": 1,
+                "comparison_key": "implementation_residual",
+                "operator_key": "probe",
+                "kind": "width_shift",
+                "status": "available",
+                "value": -0.06803999421864167,
+                "unit": "um",
+                "reason_code": null,
+                "rationale": "The metric was computed from the declared continuous domain."
+              }
+            ],
+            "checks": [],
+            "rationale": "Metrics are available but no thresholded check was declared."
+          }
+        ],
+        "aggregate_status": "inconclusive",
+        "validation_scope": "standalone",
+        "validation_plan_sha256": null,
+        "covered_validation_check_keys": [],
+        "interpretation_boundary": "deterministic_metrics_only_no_physical_interpretation"
+      },
+      "record_sha256": "2368fe64a0959ab933794f7432cdf843a42276342138049b5a3abc28c237c657"
+    },
+    "width_shift/covering_interval": {
+      "status": "computed",
+      "reason_code": null,
+      "result": {
+        "schema_version": 1,
+        "curve_bundle_sha256": "dc825b32d555b94216420a92e865fa126ad70ceda314db9f97a2f9b507930474",
+        "comparison_spec_sha256": "709f98d9950f9ca413b97c5849d6a033a94785978c9600b6a55c1e89478e75ee",
+        "normalizer_profile": "analysis_inputs",
+        "operator_version": "analysis-curve-operators.v1",
+        "comparisons": [
+          {
+            "schema_version": 1,
+            "comparison_key": "implementation_residual",
+            "required": true,
+            "purpose": "implementation_sanity",
+            "gate_scope": "numerical_qualification",
+            "metric_profile": "smooth_curve",
+            "status": "inconclusive",
+            "metrics": [
+              {
+                "schema_version": 1,
+                "comparison_key": "implementation_residual",
+                "operator_key": "probe",
+                "kind": "width_shift",
+                "status": "available",
+                "value": -0.06803999421864167,
+                "unit": "um",
+                "reason_code": null,
+                "rationale": "The metric was computed from the declared continuous domain."
+              }
+            ],
+            "checks": [],
+            "rationale": "Metrics are available but no thresholded check was declared."
+          }
+        ],
+        "aggregate_status": "inconclusive",
+        "validation_scope": "standalone",
+        "validation_plan_sha256": null,
+        "covered_validation_check_keys": [],
+        "interpretation_boundary": "deterministic_metrics_only_no_physical_interpretation"
+      },
+      "record_sha256": "0e7e1a089fe0a2edbe6987873f80d8a58f2650b0b6faf9f7aab3516b5662307d"
+    },
+    "width_shift/gap": {
+      "status": "unavailable",
+      "reason_code": "continuous_domain_unavailable",
+      "result": null,
+      "record_sha256": "682618778bd6766fcf954b8f72d0d1b3d43069721bf1ce106f654a9a91eac3cd"
+    },
+    "width_shift/exclusion": {
+      "status": "unavailable",
+      "reason_code": "domain_excluded",
+      "result": null,
+      "record_sha256": "9a12674598b3f60c7899c3f1226884017b7769c8dcd746859d7ac57a2c4a76c3"
+    },
+    "width_shift/outside_exclusion": {
+      "status": "computed",
+      "reason_code": null,
+      "result": {
+        "schema_version": 1,
+        "curve_bundle_sha256": "bba2427e8bbed916fff9395ed8d18e72ab5f2c171fed625d20a4d958d3a3de55",
+        "comparison_spec_sha256": "10fa444563c5e04f2fc21edfaa1dcd34a455e11ed9f4a0a2fa415a9186901ede",
+        "normalizer_profile": "analysis_inputs",
+        "operator_version": "analysis-curve-operators.v1",
+        "comparisons": [
+          {
+            "schema_version": 1,
+            "comparison_key": "implementation_residual",
+            "required": true,
+            "purpose": "implementation_sanity",
+            "gate_scope": "numerical_qualification",
+            "metric_profile": "smooth_curve",
+            "status": "inconclusive",
+            "metrics": [
+              {
+                "schema_version": 1,
+                "comparison_key": "implementation_residual",
+                "operator_key": "probe",
+                "kind": "width_shift",
+                "status": "available",
+                "value": -0.06803999421864167,
+                "unit": "um",
+                "reason_code": null,
+                "rationale": "The metric was computed from the declared continuous domain."
+              }
+            ],
+            "checks": [],
+            "rationale": "Metrics are available but no thresholded check was declared."
+          }
+        ],
+        "aggregate_status": "inconclusive",
+        "validation_scope": "standalone",
+        "validation_plan_sha256": null,
+        "covered_validation_check_keys": [],
+        "interpretation_boundary": "deterministic_metrics_only_no_physical_interpretation"
+      },
+      "record_sha256": "dc8918b057744fd343e662cfc9cd590a5061a966f8a9cc6b6fd1ff2497f99dd0"
+    },
+    "width_shift/unavailable": {
+      "status": "unavailable",
+      "reason_code": "reference_unavailable",
+      "result": null,
+      "record_sha256": "a446f8543f56d7da4a0d0f3748165415c8dedfe28e666ddc6d7a16706b52192e"
+    }
+  }
+}

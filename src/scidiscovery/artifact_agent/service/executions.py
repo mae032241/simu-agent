@@ -647,7 +647,7 @@ class ExecutionService:
             return self._row(db, execution_id)['executor'], admission.budget_key
 
     def validate_budget_extension(self, approval_id, seconds):
-        from .approvals import ApprovalAccessDenied
+        from .approvals import ApprovalAccessDenied, BudgetExtensionAccountingError
         status = self.approvals.status(approval_id)
         # Exact replay is checked by the approval service. New administrator
         # limits must not invalidate a decision already sealed before restart.
@@ -658,14 +658,30 @@ class ExecutionService:
             raise ApprovalAccessDenied('Additional time exceeds the configured per-decision limit')
         scope = self._extension_scope(self.execution_for_approval(approval_id))
         with self._connect() as db:
-            rows = db.execute('SELECT decision_id, executor, budget_key, additional_seconds FROM execution_budget_extensions').fetchall()
+            rows = db.execute('SELECT decision_id, additional_seconds FROM execution_budget_extensions WHERE executor=? AND budget_key=?', scope).fetchall()
+            # Immutable policy history retains the pool even if its current
+            # pointer is missing. Reservations also survive instance archiving.
+            requests = db.execute('''SELECT e.execution_id, e.request_ref_json FROM executions e
+                WHERE e.executor=? AND e.execution_id IN (
+                    SELECT execution_id FROM execution_policy_authorizations
+                    WHERE json_extract(record_json, '$.admission.budget_key')=?
+                    UNION SELECT execution_id FROM execution_budget_reservations
+                    WHERE executor=? AND budget_key=?)''', (*scope, *scope)).fetchall()
         projected = {row['decision_id'] for row in rows}
-        used = sum(row['additional_seconds'] for row in rows if (row['executor'], row['budget_key']) == scope)
+        used = sum(row['additional_seconds'] for row in rows)
+        execution_ids = {row['execution_id'] for row in requests}
         # A crash after sealing a decision cannot make its grant disappear from
         # admission accounting before the idempotent projection is repaired.
-        for aid, decision in self.approvals.budget_extension_decisions():
-            if decision.decision_id not in projected and self._extension_scope(self.execution_for_approval(aid)) == scope:
+        try:
+            for aid, decision in self.approvals.budget_extension_decisions(
+                    execution_refs=tuple(_parse_ref(row['request_ref_json']) for row in requests),
+                    projected_decision_ids=projected):
+                if self.execution_for_approval(aid) not in execution_ids:
+                    raise ExecutionApprovalError('Decision has no exact request in this budget pool')
                 used += decision.additional_wall_time_seconds
+        except Exception as error:
+            raise BudgetExtensionAccountingError(
+                '无法核对当前预算池的历史授权，请修复相关审批记录后重试；本次未封存决定。') from error
         if used + seconds > limits.max_total_seconds_per_pool:
             raise ApprovalAccessDenied('Additional time exceeds the configured cumulative grant limit')
 
