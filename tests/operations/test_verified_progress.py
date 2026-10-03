@@ -72,8 +72,9 @@ def science_progression(tmp_path, request, monkeypatch):
     bundle = curve._bundle().model_dump(mode='json')
     if not options.get('negative'):
         bundle['series'][1]['points'] = deepcopy(bundle['series'][0]['points'])
-    register('generic_results', b'Exact later bounded observation.', 'opaque', parents=(criterion,))
-    register('generic_bundle', canonical_json(bundle), 'scidiscovery.curve-bundle.v1', parents=(criterion,))
+    parents = (criterion,) if options.get('posthoc') or options.get('qualitative') else (criterion, artifacts['conditions'].ref)
+    register('generic_results', b'Exact later bounded observation.', 'opaque', parents=parents)
+    register('generic_bundle', canonical_json(bundle), 'scidiscovery.curve-bundle.v1', parents=parents)
     if options.get('posthoc'):
         register('conditions', canonical_json(contract), 'scidiscovery.curve-experiment-contract.v1', parents=(artifacts['plan'].ref,))
     if options.get('prestart'):
@@ -127,7 +128,7 @@ def finite_count_tool(request, context):
 
 
 def scientific_result(p, root, name, *, controlled=False, conditions=True, scope_mismatch=False,
-                      plan_name='plan', condition_name='conditions', bundle_name='generic_bundle', deliver=True):
+                      plan_name='plan', condition_name='conditions', bundle_name='generic_bundle', result_name='generic_results', deliver=True):
     from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
     from scidiscovery.artifact_agent.schema.common import canonical_json
     from tests.operations.test_result_analysis_tool import score_inputs
@@ -135,7 +136,7 @@ def scientific_result(p, root, name, *, controlled=False, conditions=True, scope
     if p.options.get('prestart') and plan_name == 'plan':
         plan_name = 'prestart-plan'
     inputs = [dict(port='experiment_plan', artifact_names=[plan_name]),
-        dict(port='experiment_results', artifact_names=['generic_results']), dict(port='curve_bundle', artifact_names=[bundle_name])]
+        dict(port='experiment_results', artifact_names=[result_name]), dict(port='curve_bundle', artifact_names=[bundle_name])]
     if conditions:
         inputs.append(dict(port='reference_material', artifact_names=[condition_name]))
     root.call_tool('operation_invoke', dict(name=name, operation_id='science.result.diagnose.v1', inputs=inputs,
@@ -146,6 +147,9 @@ def scientific_result(p, root, name, *, controlled=False, conditions=True, scope
     worker = LocalWorkerMCPRouter(p.runtime.runs, operation_id='science.result.diagnose.v1',
         operation_digest=p.catalog.operation('science.result.diagnose.v1').digest, run_id=run_id, trusted_caller=caller)
     opened = worker.call_tool('worker_open_assignment', {})
+    description = next(tool['description'] for tool in worker.list_tools() if tool['name'] == 'worker_curve_score')
+    assert 'immutable ancestors' in description and '64 distinct original envelopes' in description
+    assert 'do not prove original generation time' in description
     scoring = score_inputs()[1]
     scoring['comparison_spec'] = deepcopy(p.contract['comparison_spec'])
     if scope_mismatch:
@@ -271,6 +275,8 @@ def scientific_review(p, root, name, subject, *, explicit=True, mismatch=None):
     schema = Path(opened['output_directory']).parent / 'schema' / 'result.schema.json'
     form = json.loads(schema.read_text())['properties']['payload']
     assert 'scientific_test' in form['properties'] and 'scientific_test' not in form['required']
+    assert 'immutable ancestor' in form['properties']['scientific_test']['description']
+    assert '64 distinct original envelopes' in form['properties']['scientific_test']['description']
     subject_input = Path(opened['output_directory']).parent / 'inputs' / 'subject.json'
     assert json.loads(subject_input.read_text())['plan_key'] == 'validate_implementation'
     payload = dict(verdict='pass', summary='The exact scientific test conclusion meets its prior qualitative criterion.')
@@ -549,7 +555,7 @@ def test_resealed_reworded_plan_and_fresh_copy_of_result_do_not_renew_resolved_c
     p.register('reworded-conditions', canonical_json(p.contract), 'scidiscovery.curve-experiment-contract.v1',
         parents=(p.artifacts['reworded-plan'].ref,))
     p.register('fresh-bundle', p.runtime.artifacts.read(p.artifacts['generic_bundle'].ref),
-        'scidiscovery.curve-bundle.v1', parents=(p.artifacts['reworded-plan'].ref,))
+        'scidiscovery.curve-bundle.v1', parents=(p.artifacts['reworded-plan'].ref, p.artifacts['reworded-conditions'].ref))
     rewritten, _ = scientific_result(p, root, 'reworded-resolution', controlled=True,
         plan_name='reworded-plan', condition_name='reworded-conditions', bundle_name='fresh-bundle')
     proof = lambda worker: terminal_fact(p.runtime.runs, p.runtime.runs.status(worker._run_id))['verified_progress']
@@ -825,7 +831,7 @@ def test_background_truncated_old_family_cannot_clear_real_consumption_window(sc
     p.register('omitted-family-conditions', canonical_json(p.contract), 'scidiscovery.curve-experiment-contract.v1',
         parents=(p.artifacts['omitted-family-plan'].ref,))
     p.register('omitted-family-measurement', p.runtime.artifacts.read(p.artifacts['generic_bundle'].ref),
-        'scidiscovery.curve-bundle.v1', parents=(p.artifacts['omitted-family-plan'].ref,))
+        'scidiscovery.curve-bundle.v1', parents=(p.artifacts['omitted-family-plan'].ref, p.artifacts['omitted-family-conditions'].ref))
     for index in range(3):
         worker, _ = scientific_result(p, root, f'old-truncated-family-repeat-{index}', controlled=True,
             plan_name='omitted-family-plan', condition_name='omitted-family-conditions', bundle_name='omitted-family-measurement')
@@ -857,7 +863,7 @@ def test_threshold_micro_revisions_do_not_renew_exploration_family(science_progr
         p.register(conditions_name, canonical_json(contract), 'scidiscovery.curve-experiment-contract.v1',
             parents=(p.artifacts[plan_name].ref,))
         p.register(bundle_name, p.runtime.artifacts.read(p.artifacts['generic_bundle'].ref),
-            'scidiscovery.curve-bundle.v1', parents=(p.artifacts[plan_name].ref,))
+            'scidiscovery.curve-bundle.v1', parents=(p.artifacts[plan_name].ref, p.artifacts[conditions_name].ref))
         scientific_result(p, root, f'threshold-repeat-{index}', controlled=True,
             plan_name=plan_name, condition_name=conditions_name, bundle_name=bundle_name)
     status = settle(p)['progress_shadow']
@@ -880,7 +886,7 @@ def test_new_structured_experimental_condition_can_resolve_a_new_family(science_
     p.register('changed-condition-contract', canonical_json(p.contract), 'scidiscovery.curve-experiment-contract.v1',
         parents=(p.artifacts['changed-condition-plan'].ref,))
     p.register('changed-condition-result', p.runtime.artifacts.read(p.artifacts['generic_bundle'].ref),
-        'scidiscovery.curve-bundle.v1', parents=(p.artifacts['changed-condition-plan'].ref,))
+        'scidiscovery.curve-bundle.v1', parents=(p.artifacts['changed-condition-plan'].ref, p.artifacts['changed-condition-contract'].ref))
     scientific_result(p, root, 'new-condition-resolution', controlled=True, plan_name='changed-condition-plan',
         condition_name='changed-condition-contract', bundle_name='changed-condition-result')
     status = settle(p)['progress_shadow']
@@ -938,3 +944,118 @@ def test_optional_corrupt_manifest_stays_unknown_without_blocking_real_delivery(
     native_delivery(p, root, 'corrupt-optional-proof')
     after = settle(p)['progress_shadow']
     assert after['counts']['unverified_progress'] == 1 and after['counts']['verified_test_resolutions'] == 0
+
+
+@pytest.mark.parametrize('science_progression', [{}, dict(qualitative=True)], indirect=True)
+@pytest.mark.parametrize('timing', ['strict', 'same_time', 'rollback'])
+def test_parent_lineage_sealing_proof_ignores_wall_clock(science_progression, monkeypatch, timing):
+    from scidiscovery.artifact_agent.schema.common import canonical_json
+    from scidiscovery.artifact_agent.service import artifacts as artifact_service
+    from scidiscovery.artifact_agent.service.scientific_progress import terminal_fact
+    p = science_progression
+    clock = ['2030-01-02T00:00:00Z']
+    with monkeypatch.context() as patched:
+        patched.setattr(artifact_service, '_utc_now', lambda: clock[0])
+        p.register('lineage-plan', p.runtime.artifacts.read(p.artifacts['plan'].ref), 'scidiscovery.experiment-portfolio.v1')
+        p.register('lineage-conditions', canonical_json(p.contract), 'scidiscovery.curve-experiment-contract.v1',
+            parents=(p.artifacts['lineage-plan'].ref,))
+        clock[0] = {'strict': '2030-01-03T00:00:00Z', 'same_time': clock[0], 'rollback': '2030-01-01T00:00:00Z'}[timing]
+        source = 'generic_results' if p.options.get('qualitative') else 'generic_bundle'
+        # Reusing old bytes is permitted: this proves sealing before evaluation,
+        # never their original generation time or scientific authenticity.
+        original = p.artifacts[source]
+        p.register('lineage-observation', p.runtime.artifacts.read(original.ref), original.schema_id,
+            parents=(p.artifacts['lineage-plan' if p.options.get('qualitative') else 'lineage-conditions'].ref,))
+    root = active(p)
+    worker, _ = scientific_result(p, root, 'lineage-subject', controlled=not p.options.get('qualitative'),
+        conditions=not p.options.get('qualitative'), plan_name='lineage-plan', condition_name='lineage-conditions',
+        bundle_name='generic_bundle' if p.options.get('qualitative') else 'lineage-observation',
+        result_name='lineage-observation' if p.options.get('qualitative') else 'generic_results')
+    if p.options.get('qualitative'):
+        worker = scientific_review(p, root, 'lineage-review', 'lineage-subject')
+    proof = terminal_fact(p.runtime.runs, p.runtime.runs.status(worker._run_id))['verified_progress']
+    assert proof['status'] == 'verified_test_resolution' and proof['resolutions'], proof
+
+
+@pytest.mark.parametrize('science_progression', [{}, dict(qualitative=True)], indirect=True)
+@pytest.mark.parametrize('damage', ['no_path', 'wrong_refs', 'missing_original', 'cycle'])
+def test_unproven_exact_lineage_is_unknown_without_blocking_delivery(science_progression, monkeypatch, damage):
+    from scidiscovery.artifact_agent.schema.common import canonical_json
+    from scidiscovery.artifact_agent.service.scientific_progress import terminal_fact
+    from scidiscovery.artifact_agent.storage.sqlite import ArtifactRegistryError
+    p = science_progression
+    source = 'generic_results' if p.options.get('qualitative') else 'generic_bundle'
+    original = p.artifacts[source]
+    parents = ()
+    if damage == 'wrong_refs':
+        p.register('other-plan', p.runtime.artifacts.read(p.artifacts['plan'].ref), 'scidiscovery.experiment-portfolio.v1')
+        p.register('other-conditions', canonical_json(p.contract), 'scidiscovery.curve-experiment-contract.v1',
+            parents=(p.artifacts['other-plan'].ref,))
+        parents = (p.artifacts['other-conditions'].ref,)
+    elif damage in {'missing_original', 'cycle'}:
+        intermediate = p.register('lineage-intermediate', b'An immutable intermediate.', 'opaque',
+            parents=(p.artifacts['conditions'].ref,))
+        parents = (intermediate.ref,)
+    observation = p.register('unproven-observation', p.runtime.artifacts.read(original.ref), original.schema_id, parents=parents)
+    root = active(p)
+    worker, _ = scientific_result(p, root, 'unproven-subject', controlled=not p.options.get('qualitative'), deliver=False,
+        bundle_name='generic_bundle' if p.options.get('qualitative') else 'unproven-observation',
+        result_name='unproven-observation' if p.options.get('qualitative') else 'generic_results')
+    if p.options.get('qualitative'):
+        worker = scientific_review(p, root, 'unproven-review', 'unproven-subject')
+    catalog = p.runtime.artifacts.catalog
+    def damaged_catalog(ref):
+        if damage in {'missing_original', 'cycle'} and ref == intermediate.ref:
+            if damage == 'missing_original':
+                raise ArtifactRegistryError('Original lineage record is unavailable.')
+            return catalog(ref).model_copy(update={'parent_refs': (observation.ref,)})
+        return catalog(ref)
+    with monkeypatch.context() as patched:
+        patched.setattr(p.runtime.artifacts, 'catalog', damaged_catalog)
+        proof = terminal_fact(p.runtime.runs, p.runtime.runs.status(worker._run_id))['verified_progress']
+    assert proof['status'] == 'unknown' and not proof['resolutions'], proof
+    assert proof['reason'] == {'no_path': 'sealing_order_unproven', 'wrong_refs': 'sealing_order_unproven',
+        'missing_original': 'sealing_order_original_unavailable_or_inconsistent', 'cycle': 'sealing_order_lineage_inconsistent'}[damage], proof
+    assert p.runtime.runs.status(worker._run_id).state == 'completed'
+
+
+@pytest.mark.parametrize('science_progression', [{}, dict(qualitative=True)], indirect=True)
+@pytest.mark.parametrize('depth', [61, 62])
+def test_exact_lineage_budget_keeps_omission_unknown(science_progression, depth):
+    from scidiscovery.artifact_agent.service.scientific_progress import terminal_fact
+    p = science_progression
+    parent = p.artifacts['conditions'].ref
+    for index in range(depth):
+        parent = p.register(f'lineage-hop-{index}', b'Finite ancestry.', 'opaque', parents=(parent,)).ref
+    source = 'generic_results' if p.options.get('qualitative') else 'generic_bundle'
+    original = p.artifacts[source]
+    p.register('bounded-observation', p.runtime.artifacts.read(original.ref), original.schema_id, parents=(parent,))
+    root = active(p)
+    worker, _ = scientific_result(p, root, 'bounded-subject', controlled=not p.options.get('qualitative'),
+        bundle_name='generic_bundle' if p.options.get('qualitative') else 'bounded-observation',
+        result_name='bounded-observation' if p.options.get('qualitative') else 'generic_results')
+    if p.options.get('qualitative'):
+        worker = scientific_review(p, root, 'bounded-review', 'bounded-subject')
+    proof = terminal_fact(p.runtime.runs, p.runtime.runs.status(worker._run_id))['verified_progress']
+    assert proof['status'] == ('verified_test_resolution' if depth == 61 else 'unknown'), proof
+    if depth == 62:
+        assert proof['reason'] == 'sealing_order_proof_omitted', proof
+
+
+def test_quantitative_conditions_must_be_exact_observation_ancestors(science_progression):
+    from scidiscovery.artifact_agent.service.scientific_progress import terminal_fact
+    p = science_progression
+    p.register('plan-only-measurement', p.runtime.artifacts.read(p.artifacts['generic_bundle'].ref),
+        'scidiscovery.curve-bundle.v1', parents=(p.artifacts['plan'].ref,))
+    worker, _ = scientific_result(p, active(p), 'conditions-unproven', controlled=True, bundle_name='plan-only-measurement')
+    proof = terminal_fact(p.runtime.runs, p.runtime.runs.status(worker._run_id))['verified_progress']
+    assert proof['status'] == 'unknown' and proof['reason'] == 'sealing_order_unproven', proof
+
+
+def test_source_is_not_its_own_prior_sealed_ancestor(science_progression):
+    from scidiscovery.artifact_agent.service.verified_progress import _prior_sealed_sources
+    p = science_progression
+    ref = p.artifacts['plan'].ref
+    assert _prior_sealed_sources(p.runtime.runs.artifacts, (ref,), (ref,)) == 'sealing_order_unproven'
+    limitations = p.root.call_tool('progression_status', {})['progress_shadow']['limitations']
+    assert any('64 distinct original envelopes' in item and 'do not prove original generation time' in item for item in limitations)

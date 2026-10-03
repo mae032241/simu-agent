@@ -4,7 +4,6 @@ Registered evaluators provide the public CalculationValidation projection.
 Control verifies exact original bindings and paired receipts. This proves a
 bounded test resolution, not physical truth or relative optimization.
 """
-from datetime import datetime
 import json
 import math
 
@@ -27,8 +26,54 @@ def freeze_criteria(artifacts, inputs):
         if item.artifact_ref.schema_id == 'scidiscovery.experiment-portfolio.v1']
 
 
-def _time(value):
-    return datetime.fromisoformat(value.replace('Z', '+00:00'))
+_SEALING_PROOF_MAX_REFS = 64
+
+
+def _prior_sealed_sources(artifacts, required, measured):
+    """Prove exact originals were sealed before each source via immutable parents.
+
+    This proves sealing order, not generation time or scientific authenticity.
+    A shared cache bounds the whole proof to 64 distinct original envelopes.
+    """
+    required, cache = set(required), {}
+    if not required or not measured:
+        return 'sealing_order_unproven'
+    try:
+        for source in measured:
+            if source in required:
+                return 'sealing_order_unproven'  # A source is not its own ancestor.
+            if source not in cache:
+                if len(cache) >= _SEALING_PROOF_MAX_REFS:
+                    return 'sealing_order_proof_omitted'
+                cache[source] = artifacts.catalog(source)
+            seen, active, found = set(), {source}, set()
+            stack = [(source, iter(cache[source].parent_refs))]
+            while stack:
+                parent = next(stack[-1][1], None)
+                if parent is None:
+                    ref, _ = stack.pop()
+                    active.remove(ref)
+                    seen.add(ref)
+                    continue
+                if parent in active:
+                    return 'sealing_order_lineage_inconsistent'
+                if parent in seen:
+                    continue
+                if parent not in cache:
+                    if len(cache) >= _SEALING_PROOF_MAX_REFS:
+                        return 'sealing_order_proof_omitted'
+                    cache[parent] = artifacts.catalog(parent)
+                if parent in required:
+                    found.add(parent)
+                    if required <= found:
+                        break
+                active.add(parent)
+                stack.append((parent, iter(cache[parent].parent_refs)))
+            if not required <= found:
+                return 'sealing_order_unproven'
+        return None
+    except _proof_errors():
+        return 'sealing_order_original_unavailable_or_inconsistent'
 
 
 def _cited(report, alias):
@@ -148,23 +193,22 @@ def verified_progress(runs, value):
                 ref = ArtifactRef.model_validate(raw_ref)
                 if ref not in {item.artifact_ref for item in value.inputs} or descriptors.get(validation.plan_source) is None or descriptors[validation.plan_source].artifact_ref != ref:
                     continue
-                envelope = runs.artifacts.catalog(ref)
                 portfolio = ExperimentPortfolio.model_validate_json(runs.artifacts.read(ref), strict=True)
                 plans = [plan for plan in portfolio.validation_plans if plan.plan_key == report.plan_key
                     and plan.experiment_key == report.experiment_key]
                 if len(plans) != 1 or portfolio.study_kind != report.study_kind:
                     continue
-                # A new criterion cannot bless already existing measured bytes.
-                # Exact actual reads are derived from the controlled attempt.
+                # Immutable exact parents prove sealing order independently of
+                # registration clocks; actual reads come from the controlled attempt.
                 measured = [descriptors[name].artifact_ref for name in validation.result_sources if name in descriptors
                     and record.input_digests.get(name) == descriptors[name].sha256]
-                sealed_at = max(_time(envelope.created_at), _time(runs.artifacts.catalog(condition.artifact_ref).created_at))
-                if len(measured) != len(validation.result_sources) or not measured or any(
-                        sealed_at >= _time(runs.artifacts.catalog(source).created_at) for source in measured):
+                reason = _prior_sealed_sources(runs.artifacts, (ref, condition.artifact_ref), measured)
+                if len(measured) != len(validation.result_sources) or reason:
+                    unknown = dict(unknown, reason=reason or 'sealing_order_unproven')
                     continue
                 resolutions.extend(_metric_resolutions(portfolio, plans[0], record))
         return dict(status='verified_test_resolution' if resolutions else 'unknown',
-            reason='first_resolution_requires_consumption_and_deduplication', resolutions=resolutions,
+            reason='first_resolution_requires_consumption_and_deduplication' if resolutions else unknown['reason'], resolutions=resolutions,
             output=value.output_ref.model_dump(mode='json'))
     except _proof_errors() as error:
         # Optional progress cannot make an otherwise accepted task unreadable.
@@ -233,8 +277,9 @@ def _review_progress(runs, value):
                     or checks[0].check_key != conclusion.result.check_key):
                 continue
             inputs = [i.artifact_ref for i in producer.inputs if i.port_name in {'experiment_results', 'solver_outputs', 'execution_result'}]
-            sealed = _time(runs.artifacts.catalog(ref).created_at)
-            if not inputs or any(sealed >= _time(runs.artifacts.catalog(i).created_at) for i in inputs):
+            reason = _prior_sealed_sources(runs.artifacts, (ref,), inputs)
+            if reason:
+                unknown = dict(unknown, reason=reason)
                 continue
             check = checks[0]
             return dict(status='verified_test_resolution', reason='qualified_independent_exact_test_conclusion',

@@ -15,7 +15,7 @@ class ExperimentReview(BaseModel):
     findings: tuple[str, ...] = Field(default=(), max_length=32)
     limitations: tuple[str, ...] = Field(default=(), max_length=32)
     scientific_test: ReviewedTestConclusion | None = Field(default=None,
-        description="Optional explicit independent judgment of one exact predeclared scientific test in the reviewed subject. Reuse its experiment_key, plan_key and check_key; state the observation, result and evidence aliases. Quality pass alone is not test progress. Control resolves original identities, prior sealing and independence; this field cannot establish deterministic numerical proof.")
+        description="Optional explicit independent judgment of one exact predeclared scientific test in the reviewed subject. Reuse its experiment_key, plan_key and check_key; state the observation, result and evidence aliases. Quality pass alone is not test progress. For verified progress, prior sealing requires the exact frozen plan to be an immutable ancestor of each actual observation input of the reviewed diagnosis. Each sealing proof checks at most 64 distinct original envelopes; absent, damaged or incompletely covered lineage leaves progress unknown. Registration timestamps are not order proof. Control checks original identities and independence, not original generation time, source novelty or scientific authenticity; this field cannot establish deterministic numerical proof.")
 
 
 PROMPT = """Independently assess the exact sealed subject and requested scientific

@@ -878,7 +878,12 @@ def shadow_projection(*, bindings, row):
         limitations=['Exact references and payload digests detect identical evidence, not semantic paraphrases.',
             'Assist observes process, citation coverage and repeated failures; Root judgments are not independently '
             'verified for scientific stagnation. The unverified window requires direction confirmation, not a stagnation verdict.',
-            'Only first resolution of a predeclared supported test clears the unverified window; relative improvement is not supported.',
+            'Only first resolution of a predeclared supported test clears the unverified window. Prior sealing requires '
+            'exact plan and quantitative conditions (plan alone for independent qualitative review) as immutable ancestors '
+            'of every observed input. Each proof checks at most 64 distinct original envelopes; absent, damaged or '
+            'incompletely covered lineage remains unknown. Registration timestamps are not order proof. Sealing and '
+            'controlled evaluation do not prove original generation time, source novelty or scientific authenticity. '
+            'Relative improvement is not supported.',
             'Optional intent or assessments may produce process signals; new Root judgments or new bytes are not verified progress.',
             'Code-mode wrapped results are unobserved; new terminal results may arrive only in the next brief.',
             'Direct completion or stop may omit that next brief; no same-turn hard stop is claimed.'])
