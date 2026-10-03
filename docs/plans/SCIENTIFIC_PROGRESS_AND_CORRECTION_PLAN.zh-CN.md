@@ -401,16 +401,16 @@ P4a 结构简化追加（基于 `6e85a31`，未部署）：统一预留／Run �
 
 固定 22 文件仍使用同一 P0 基线：物理行 13443→13571（+128），非空非注释行 12325→12452（+127）。本轮相对 `6e85a31` 净减 57／62，不能替代整体净减少；原净减少目标未达到；用户已明确将其转为后续待办，P4a 按已通过的功能、结构及独立评审收口，不宣称行数达标。核算：`/tmp/scid-p4a-closeout-20261002/counts.json`；串行回归与失败复核在 `/tmp/scid-p4a-closeout-final-20261002` 及后续 `-final-r2`、`-final-r3`、`-final-r4` 同日期目录。用户已授权合入最新 main；当前已核对已提交头 `ff451e9`，尚未合入，接下来执行同步与冲突验证；main 工作区未提交改动不纳入同步。
 
-详细规则迁至[长 loop 控制与记忆设计](LONG_LOOP_CONTROL_AND_MEMORY_DESIGN.zh-CN.md)，本节是唯一实施排期与状态入口。目标容量为 100–300 个研究任务／3–7 天，先做预计 4–6 个任务的小时级 P6s，再验收 30 任务／24 小时；审查任务另有额度，共享 loop 总资源预算。新 loop 仅由用户管理页或事先授权的有限策略创建。
+详细规则迁至[长 loop 控制与记忆设计](LONG_LOOP_CONTROL_AND_MEMORY_DESIGN.zh-CN.md)，本节是唯一实施排期与状态入口。目标容量为 100–300 个研究任务／3–7 天。真实效果主测采用原版LHTB，原小时级P6s仅作独立机制回归，不作为LHTB统一前置。进入30任务／24小时验收前，独立核实多轮、恢复与安全轮换的对应资格；不为满足原合成题预计4–6任务而拆完整任务或凑次数。审查任务另有额度，共享 loop 总资源预算。新 loop 仅由用户管理页或事先授权的有限策略创建。
 
-下表按实际串行顺序排列。P0 实现、定向验证及独立评审完成；P1a 行为规则与计数基线已独立审查通过，P4a 前次修复已提交 `67bcd4d`；追加独立人工范围返回后台修复已通过定向验证和独立复审，代码净减少目标仍未达到并已转为后续待办；结构收口节点 `47961d8` 已通过独立评审，未部署，其余生产改动与运行验收待实施，P6s 题库草案已构造。工作量为单执行者的有效人日粗估，包含定向验证与一次独立评审修正，不是交付日期；模型/服务等待、main 就绪、人工绑定/评分与长跑墙钟另计。P1a 核实后更新估算，不以增删行数作为产量目标。
+下表保留控制准备、效果／机制验收与规模节点；2026-10-03 真实效果主测改选原版 LHTB，原 P6s 合成题降为独立机制回归，具体下一步见[选题与验收分工](#真实效果题与机制回归分工)。P0 实现、定向验证及独立评审完成；P1a 行为规则与计数基线已独立审查通过，P4a 前次修复已提交 `67bcd4d`；追加独立人工范围返回后台修复已通过定向验证和独立复审，代码净减少目标仍未达到并已转为后续待办；结构收口节点 `47961d8` 已通过独立评审，未部署，其余生产改动与运行验收待实施，P6s 题库草案已构造。工作量为单执行者的有效人日粗估，包含定向验证与一次独立评审修正，不是交付日期；模型/服务等待、main 就绪、人工绑定/评分与长跑墙钟另计。P1a 核实后更新估算，不以增删行数作为产量目标。
 
 | 节点 | 工作量 | 最小退出条件 |
 |---|---|---|
 | P0 防空转（完成，未部署） | 1–2 人日 | 相同省略不重复唤醒；未消费结果仍可读；分页、重启与未知提交语义保留 |
 | P1a 行为规则（完成） | 1–2 人日 | 冻结暂停/恢复/时间/授权规则、审查分类与删除清单、控制层代码计数范围，独立评审确认责任承接 |
 | P4a 控制收敛（功能与结构收口，未部署） | 3–5 人日 | 科研专用 episode/handoff 许可退役；单一调度权威与原生安全保护通过；固定范围净减少按用户决定保留为后续待办 |
-| main 同步 | 1–3 人日，冲突范围待定 | 用户通知可合入后核对执行修复及预算/存储身份，记录共同条件 |
+| main 同步 | 1–3 人日，冲突范围待定 | 新模型对照前在独立干净集成工作区，重钉确切 committed main／dev 与共同祖先，仅合入选定已提交修复，处理 receipt／finalization／恢复合同重叠；main／dev 未提交用户改动不纳入，不以当前 dev 定向绿替代集成资格 |
 | P1c Loop 计账（分子节点，完整节点未完成） | 3–5 人日 | P1c-1 已提交 `2f735b0`；P1c-2a 恢复修复后独立复审通过、已提交 `74c6120`；P1c-2b 首审拒绝历史判断入口缺口，修复与定向验证完成、独立复审通过，已提交 `a59e5c5`，未部署；完整前台原生遥测单列后续实测能力，有限策略仍不可用，不能自动续额 |
 | P1d-1 自然期限与统一时间口径（独立复核通过） | 1–2 人日 | 首评 3 个 P1 经复审关闭；追加暂停遥测 1 个 P1，修复及真实 pipe 定向验证完成，最终独立复核通过。冻结自然期限与启用时长，既有单作业时限独立，确切已接受工作权限保留。规则与退出范围见[设计节点](LONG_LOOP_CONTROL_AND_MEMORY_DESIGN.zh-CN.md#p1d-1-自然期限与统一时间口径独立复核通过)；原 156／91 项证据保留，本轮 17 项证据单列 `/tmp/scid-p1d1-review2-fix-rollup-20261002.json`，不重复累计；随本节点提交，未部署、未授予真实运行资格 |
 | P1d-2 有限故障恢复（独立复审通过） | 1–2 人日 | 基线 `cc2affd`；规则由[设计节点](LONG_LOOP_CONTROL_AND_MEMORY_DESIGN.zh-CN.md#p1d-2-有限故障恢复独立复审通过)拥有。原 275 source 项／4 lane 排除及失败历史保留 `/tmp/scid-p1d2-source-rollup-20261002.json`；全局选择故障错误归旧 host 的 P1 已修，修前 2 项失败、修后 13 项通过，证据单列 `/tmp/scid-p1d2-review-fix-rollup-20261002.json`，不重复累计；原 reviewer 独立复审通过，随本节点提交，未部署、未授予真实运行资格 |
@@ -420,9 +420,27 @@ P4a 结构简化追加（基于 `6e85a31`，未部署）：统一预留／Run �
 | P3b Root 轮换（源码与独立复审完成，未部署） | 2–4 人日 | 轮换沿冻结回合／累计输入阈值、安全终态及既有 owner/generation 接线；旧 writer 撤权，活动原生子任务延期，未知 opening 不重放。loop 预算、迟到用量、通知和消费位置保留，新 Root 接续 P3 记忆与有界外部作业导航。独立评审发现的安全清理计时与已拒绝平台请求阻断均保留修前反例并修复；最终 owning 24 项及相关计时 4 项通过，原邻接 8 批属较早代码证据。模拟启动 9177 B／简报 6202 B，冻结 `/tmp/scid-p3b-source-freeze-v2-20261003.json`；未运行真实 native／模型、部署或长跑，不声称跨线程子任务自动转移 |
 | P4b 止损依据（源码与独立复审完成，未部署） | 3–5 人日 | 实例级连续未核验窗口覆盖新输出、自报 advance、改目标；仅确切先验检验的首次可信解决计进展，同条件重复不清零。公共计算投影与显式独立定性判断已接真实工具／封存／消费／准入链；普通无标准任务仍可交付，到阈值要求方向确认。人工继续不续预算，接受工作继续，shadow→assist 保留历史并产生有效新触发。两项消费窗口阻断已保留真实红绿并修复：任务去重先于限量，实际消费位置独立于交付分页；状态／归档格式 v4 拒绝旧顺序。最终 owning 35 项、相关存储／格式 16 项通过，较早邻接时序单列，冻结 `/tmp/scid-p4b-freeze-v2-20261003.json`。一次先前有效负结果核验失败原因未确证，原红及诊断保留，科学断言未放宽。未部署／运行模型，不代表科研质量或长跑收益；具体支持范围由设计 P4 节拥有 |
 | P5 短场效果 | 1–2 人日准备/分析，评分与运行另计 | 3 场景×基线/候选共 6 场；只证明冻结历史检索与短场决策效果，预算/评分规则见设计。源码候选与准备缺口已列于下表，独立复核通过（准备边界）；尚未准备可运行场次 |
-| P6s 小型先行验收 | 1–2 人日接线/分析，另约 2 小时运行 | [题目、数据与评分草案已构造](HOURLY_LOOP_MEMORY_BENCHMARK.zh-CN.md)，[准备边界](HOURLY_LOOP_MEMORY_BENCHMARK.zh-CN.md#运行前准备边界)独立复核通过；`41c3bb4` core 安装及 initial 无模型准备实物已独立复核。分批接线源码与有限无模型回归已有证据；增量补验 failed-Run 停止、原子消息 scope 与真实 project 路径拒绝均通过，独立增量复审通过（源码接线资格，纳入本提交节点，未部署）；新源码未安装／重冻场次，多轮、真实消息消费／轮换及经验用于决策均未运行验证 |
+| 原版 LHTB 效果 pilot（主测） | 环境／分析另计；原题 agent 上限 N-body 3h、covshift 4h，未授权 | 首选 nbody-accel-iterative，第二题 tabular-data-feature-covshift；沿各自公开题／评分／反馈合同，确切候选与题环境仍待冻结。不依赖原合成题 A/B 钩子；单题两模式仅 pilot，不授统计效果或官方全集排名 |
+| P6s 合成机制回归（保留） | 1–2 人日接线/分析，原约 2 小时运行提议未授权 | [题目、数据与评分草案已构造](HOURLY_LOOP_MEMORY_BENCHMARK.zh-CN.md)，[准备边界](HOURLY_LOOP_MEMORY_BENCHMARK.zh-CN.md#运行前准备边界)独立复核通过；`41c3bb4` core 安装及 initial 无模型准备实物已独立复核。分批接线源码与有限无模型回归已有证据；增量补验 failed-Run 停止、原子消息 scope 与真实 project 路径拒绝均通过，独立增量复审通过（源码接线资格，纳入本提交节点，未部署）；新源码未安装／重冻场次，多轮、真实消息消费／轮换及经验用于决策均未运行验证 |
 | P6a 第一阶段 | 1–2 人日准备/分析，另 24 小时运行 | 30 任务容量、跨天恢复及实际安全轮换；真实早期失败跨天跨线程找回、指导下一步且条件变化可合理重试 |
 | P6b 目标规模 | 2–3 人日准备/分析，另 3–7 天分档运行 | P6a 通过后按实测另授预算；100–300 任务容量与实际持续时长分别报告，提前科学完成正常收尾 |
+
+### 真实效果题与机制回归分工
+
+2026-10-03 选题决定（选题调整独立复审通过）：原版 LHTB 是当前真实效果主测候选，首选 N-body，随后 covshift；本地 `123/lhtb-tasks` 两题已稀疏检出，来源固定 `d78f5eb52ad754c5ee9154741af73130a85a65b8`，不是已准备镜像或已运行场次。主计划拥有这项选题／资格决定；[P6s 文档](HOURLY_LOOP_MEMORY_BENCHMARK.zh-CN.md)继续拥有原合成题机制与其局部评分。
+
+| 原版题与顺序 | 冻结来源的资源／任务声明（非授权或实测） | 验收范围与待冻结项 |
+|---|---|---|
+| 首选 `nbody-accel-iterative` | [原 manifest](https://github.com/zli12321/LHTB/blob/d78f5eb52ad754c5ee9154741af73130a85a65b8/tasks/nbody-accel-iterative/task.toml)：agent 3h、4 CPU、memory_MB=8192、GPU=0、network=false；continue_until_timeout=true，单次 verifier 可 1h | 沿[原 instruction](https://github.com/zli12321/LHTB/blob/d78f5eb52ad754c5ee9154741af73130a85a65b8/tasks/nbody-accel-iterative/instruction.md)核数值正确性与实际加速／原评分；执行前钉定实际 harness 对继续至时限的支持、结束行为及有效反馈，不默认 stock harness 等价 |
+| 第二题 `tabular-data-feature-covshift` | [原 manifest](https://github.com/zli12321/LHTB/blob/d78f5eb52ad754c5ee9154741af73130a85a65b8/tasks/tabular-data-feature-covshift/task.toml)：agent 4h、1 CPU、memory_MB=4096、GPU=0、network=false；未设置 continue_until_timeout，单次 verifier 10min | 沿[原 instruction](https://github.com/zli12321/LHTB/blob/d78f5eb52ad754c5ee9154741af73130a85a65b8/tasks/tabular-data-feature-covshift/instruction.md)保留至少 25 次不同实验与原停滞条件、隐藏泛化评分；冻结有效版本／反馈，不抹掉实验要求或擅自复制第一题的继续策略 |
+
+这些是原题声明。原题数值评分沿原verifier；构建、verifier与实际人工介入分别记账，不新增人工评分要求。MB 字段不冒充实际 RSS 字节或已测峰值。更换题目不授权 3h／4h费用，不继承原 P6s token 或时长提议。若缩预算、改题、增分批材料／工况或改变反馈，须另冻并标 **LHTB-derived／custom pilot**，不能称原版同条件成绩。原题不强迫 `science.experiment.v1`、可选 declaration、A/B 批次或 Operation DAG，不新增 runner。
+
+下一步按已核修复优先级先完成 committed main／dev 集成；N1 重连终态 native proof 的恢复活性须在本次运行范围内处理，N5 先复现 usage→attach→lifecycle 归属交错，不能复现则保留具体 unknown／排除条件，不预防性重构。随后冻结 exact candidate／task／镜像 digest、依赖、有效反馈与继续／停止行为、全部角色预算，并在实际 Root／Worker／helper 和原生进程环境验证公开输入可读、隐藏 tests／答案及其副本不可读；完整 checkout 不挂给被测环境。当前尚未 ready，未运行模型／Docker／评分。N2／N6 的有界覆盖与 unknown 限制按所选 mode 明确报告，不以高分授长期资格。
+
+Native Codex Goal 与 SciDiscovery 对照须同任务、profile、公开资料、有效反馈及整体时间／token／CPU／内存；Root、Workers、helper、失败／恢复／收尾全部角色成本计入，保留声明 native 权限，记录人工介入和 unknown。单题两模式只构成 pilot，不支持统计效果或官方全集排名。
+
+原合成题仅用于分批释放／确切原件／轮换／等待／记忆与预算 cleanup 回归，S1–S4 只适用于该题，LHTB 沿自身评分。B1 模型可见释放合同、B2 合法声明修订选择、B3 完成轮换证明与 B5 合法不匹配／完整性失败分类仍为独立机制待办，不作为原版 LHTB 主测开跑统一前置；B4 真实读隔离须覆盖各自场次。N-body 高分不关闭这些项；实际多轮、等待、轮换或记忆使用未发生即未验证，不人为拆完整任务凑覆盖。所有已提交实现、有限回归、原安装／initial 准备与历史未知结论继续保留。
 
 **2026-10-03 候选准备边界（边界复核通过；core 离线安装／initial 无模型准备独立复核通过，未运行）：** 已沿既有受限入口完成 core 离线安装及 P6s initial 无模型 `init`／`prepare`，不改生产源码或 runner。P5/P6s 的 source candidate 固定为 `41c3bb45cf789ca0e6ae671d72e77e61cbf0fd09`；后续文档提交的 HEAD 不自动替换它，也不冒充 installed identity。实物与资源证据见 `/tmp/scid-candidate-install-20261003-implementation-v2.md`（静态复审纠正资源冻结元数据，未重跑）。主计划拥有候选／资格状态，P5 场景和成本上限仍由[长 loop 设计 P5 节](LONG_LOOP_CONTROL_AND_MEMORY_DESIGN.zh-CN.md#p5-样本与成本上限提议预留未获新的运行预算授权)拥有，P6s 的释放与评分规则由[任务文档](HOURLY_LOOP_MEMORY_BENCHMARK.zh-CN.md)拥有。
 
@@ -431,7 +449,7 @@ P4a 结构简化追加（基于 `6e85a31`，未部署）：统一预留／Run �
 | 源码资格 | `5100763` 的两入口先验核验只证明限定不可变谱系中的封存先后，不保证观测生成／真实性；量化缺 exact conditions 祖先仍为 unknown。`41c3bb4` 仅补有限分页回归／诊断、未改分页生产代码；原 P3、P4b 偶发失败根因继续 unknown。两节点已独立复审，不替代安装／模型／长跑资格 |
 | 基线与安装身份 | 本 source candidate 的 core wheel SHA-256 为 `f5c8bb8493555065b05bb3241c0cc9697c65fc064907bcde923046d618c42c72`；已从实际 site-packages 读回 schema 9／catalog，并核源码、wheel、installed bytes 和 RECORD。安装原始默认 Worker 为 `gpt-6-astra/high`，保留原快照；独立派生 source／case 经正式 AgentSettings 配置并实际读回 `gpt-6.1-sol/high`，Root 为 `gpt-5.6-sol/high`，未调用模型。P5 exact baseline／installed bytes 仍未选定，不沿用旧 P1b 资格 |
 | 同源历史与原件 | P5 三场景已在设计定义，但供两组复制的 schema 9、`scheduler_progression` 无行且 Run 仅为 `completed`／`failed` 的确切 state，以及原件名称、冻结 ref／bytes 和适用条件清单尚未绑定。合法终态历史可以保留，同一场景两组复用相同历史原件，不重新生成历史；安装代码与 state 来源分别冻结。已有 progression 记录不合现入口时保留准备缺口并选择／构造合法来源，不删除合法 control／既有成本记录来适配 |
-| 题目与评分 | P5 复用设计中的三个场景及本计划第 8 节的质量／证据边界，逐场 rubric 与检索／决策证据仍待冻结；P6s [materials.json](../../scripts/acceptance/fixtures/hourly_loop_memory/materials.json) 及任务文档 S1–S4／R1–R4 已有草案。本轮只冻结 objective＋A_initial；未来批次／答案未复制入被测 project，评分未运行。逐场报告可由用户按冻结 rubric 比较，不要求新增自动汇总功能 |
+| 题目与评分 | P5 复用设计中的三个场景及本计划第 8 节的质量／证据边界，逐场 rubric 与检索／决策证据仍待冻结；P6s [materials.json](../../scripts/acceptance/fixtures/hourly_loop_memory/materials.json) 及任务文档 S1–S4／R1–R4 保留为原合成机制题草案，不再作为主要科学效果题；LHTB 主测沿上方原题评分，不挪用 S1–S4。本轮只冻结 objective＋A_initial；未来批次／答案未复制入被测 project，评分未运行。逐场报告可由用户按冻结 rubric 比较，不要求新增自动汇总功能 |
 | 配置与投递 | 既有 `accept_b6` 已生成 `/tmp/scid-candidate-install-20261003-p6s-suite/p6s-inputs`：schema 9，instance／session／progression／dispatch／Run／execution 均为 0，目标实例名只是预期值，未创建／选择／绑定。空 state 不冒充 P5 同历史。新增可选 host 材料路径／摘要与原 poll 投递 hook、消息原子 caller scope 及实际 project 防复制检查的源码证据独立增量复审通过（源码接线资格，纳入本提交节点，未部署），精确合同由[P6s 准备边界](HOURLY_LOOP_MEMORY_BENCHMARK.zh-CN.md#运行前准备边界)拥有；只支持明确的完整实验合同，不把 completed、saved 或模拟轮换当科学效果。旧实物不改写／不自动支持新字段，后续需另冻新候选与场次 |
 | 时限作用 | `resources.timeout_seconds=10800` 生成 host execution timeout；自然期限／启用时长另有同值提议，未授权／实跑。`managed.runtime_seconds=180` 本 native 场次不用；`stage_timeout_seconds=90` 用于 native cleanup 释放 writer／authority 等待；`human_wait_seconds=900` 是实例选择／人工等待窗口。后三者不是整场科学上限，不机械改成 3 小时，也不声称全停止链已对齐 |
 | 隔离与资源 | 现 Root 权限配置只声明审批、读写 sandbox 和网络，没有已接线的题库 read-deny／read-scope；同 UID 仅移位或提示隐藏不构成隔离。需核验实际环境对 Root／Worker／helper 及其原生工具拒绝读取答案／未来批次，同时保留声明权限。P5/P6s 的 token／时长／评分上限仍是分别预留的草案，新科学预算未授权，S0 余额不结转为新授权 |
@@ -609,7 +627,7 @@ S5a 必须保留负例：Root 逐轮给出不同 payload、完整引用与 advan
 
 ## 9. 提交顺序、规模与当前待办
 
-当前后续串行顺序：**P0 → P1a 行为规则 → P4a 控制收敛 → main 同步验证（已获用户授权） → P1c/P1d Loop 计账与时间/恢复 → P1b 效果基线 → P2/P3 最小记忆 → P3b Root 轮换 → P4b 止损依据 → P5 短场探索性验证 → P6s 小时级多轮 → P6a 30 任务／24 小时 → P6b 100–300 任务／3–7 天**；S5a 剩余科研资格、S4 独立验证与 S5b 发布仍逐项收口，长跑不替代它们。已提交的 S3 追加缺陷修复保留为基线；P0/P1a 已完成，P4a 结构收敛已独立复核收口。用户已授权将最新已提交 main 合入 dev，main 工作区未提交内容不纳入；P4a 行数目标已转后续待办。S0 r7 执行及核账已完成，正式质量待评；剩余额度不足下一整场，不再自动补跑。T 首轮及短收尾结束，T4、额外导航优化后置，不再重跑 negative 成本支线。完整基线预算不足时明确保留 S0 未完成；可继续源码开发，但不能宣称科研纠偏效果、S0 正式退出或发布就绪。补齐正式矩阵需要另行明确资源与样本策略，不挪用 S5a 预算。后续若更改基准合同或读取规则，需补同条件对照或明确不能归因。
+当前后续串行顺序：**P0 → P1a 行为规则 → P4a 控制收敛 → main 同步验证（已获用户授权） → P1c/P1d Loop 计账与时间/恢复 → P1b 效果基线 → P2/P3 最小记忆 → P3b Root 轮换 → P4b 止损依据 → 原版 LHTB 效果 pilot 与 P5 短场／P6s 合成机制回归分别验收 → P6a 30 任务／24 小时 → P6b 100–300 任务／3–7 天**；S5a 剩余科研资格、S4 独立验证与 S5b 发布仍逐项收口，长跑不替代它们。已提交的 S3 追加缺陷修复保留为基线；P0/P1a 已完成，P4a 结构收敛已独立复核收口。用户已授权将最新已提交 main 合入 dev，main 工作区未提交内容不纳入；P4a 行数目标已转后续待办。S0 r7 执行及核账已完成，正式质量待评；剩余额度不足下一整场，不再自动补跑。T 首轮及短收尾结束，T4、额外导航优化后置，不再重跑 negative 成本支线。完整基线预算不足时明确保留 S0 未完成；可继续源码开发，但不能宣称科研纠偏效果、S0 正式退出或发布就绪。补齐正式矩阵需要另行明确资源与样本策略，不挪用 S5a 预算。后续若更改基准合同或读取规则，需补同条件对照或明确不能归因。
 每批先删除被替代分支、补最小有意义负例，再提交可审阅节点；不跨批堆积未说明的改动。
 
 现有工作树按责任拆为独立节点：Worker 复用顺序修复及复现；S0 基准/用量设施；R0.1–2 目标、预算与当前任务读取；R0.3 后台权限；R0.4–6 表单、科学读取与绑定。拆分前检查依赖，相关测试随实现提交，不回退其他人的改动。与本计划无关的 CONTRIBUTING 和证据文件不混入提交。代码提交与部署分别报告实际结果；R0-B 代码先于 S0 恢复完成，后续基线使用相同合同和读取规则。
