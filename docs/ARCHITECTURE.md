@@ -766,6 +766,22 @@ not turn a committed operation into a failed tool call; durable status remains
 available for retry. Attention lives in the existing Run activity store and shares
 its archive/restore lifecycle.
 
+Successful `resume_from` completion marks the ancestor's submission issues as
+`superseded`; it does not erase diagnostics or clear execution-binding issues.
+`draft_from` may change scientific inputs and cannot establish that repair.
+Legacy requests without an exact receipt must resolve uniquely against the original
+request owner's complete available receipts before mapping to a consumer alias;
+a narrowed successor input set is never proof that a historical ambiguity is repaired.
+
+Notification reads use one compact transition snapshot per task and indexed joins,
+not historical issue scans or an inventory of all Run bindings. Closed snapshots
+are sent only to observers that have an outstanding notice; an acknowledged closed
+snapshot is excluded. Unchanged notification/lifecycle reads take no write lock.
+Acknowledgement advances monotonically and only for notices included in the final
+reply. `mcp_read` byte budgets include list entries, cursors and appended notices;
+when a notice cannot fit it remains pending. Codes are capped by the eight-issue
+projection; `issues_truncated` marks omissions while `total` counts all open issues.
+
 Expected output corrections store structured diagnostics without traceback files.
 Engineering traces are deduplicated by exact failure and scope; collection enforces
 bounded storage, and serial lifecycle maintenance applies the global agent-settings

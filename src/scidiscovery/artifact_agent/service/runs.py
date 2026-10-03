@@ -1437,6 +1437,11 @@ class RunService(ToolEvidenceMixin):
         with self._connect() as connection:
             return issues(connection, run_id=run_id, instance_id=instance_id)
 
+    def pending_attention_notices(self, *, instance, observer, limit=8):
+        from .run_attention import pending_notices
+        with self._connect() as connection:
+            return pending_notices(self, connection, instance=instance, observer=observer, limit=limit)
+
     def submission_attention(self, value: RunStatus):
         from .run_attention import projection
         return projection([item for _, item in self.attention_issues(run_id=value.run_id)])
@@ -1876,6 +1881,8 @@ class RunService(ToolEvidenceMixin):
             for _, issue in issues(connection, run_id=run_id):
                 if issue['scope'].startswith('submission:'):
                     record(self, connection, run_id, scope=issue['scope'], code=None, now=completed_at)
+            from .run_attention import supersede_submission_ancestors
+            supersede_submission_ancestors(self, connection, row, now=completed_at)
             connection.execute("COMMIT")
         from .presentation_summaries import enqueue
         enqueue(self, value, output)
@@ -2248,6 +2255,11 @@ class RunService(ToolEvidenceMixin):
                 for name, kind in columns.items():
                     if name not in existing:
                         connection.execute(f"ALTER TABLE {table} ADD COLUMN {name} {kind}")
+            connection.execute("""CREATE UNIQUE INDEX IF NOT EXISTS run_attention_notice
+                ON run_activity(run_id) WHERE activity='attention_notice'""")
+            connection.execute("""CREATE INDEX IF NOT EXISTS run_attention_open_notice
+                ON run_activity(run_id) WHERE activity='attention_notice'
+                    AND json_extract(CAST(diagnostic_json AS TEXT),'$.state')='attention_required'""")
             connection.execute("""CREATE INDEX IF NOT EXISTS run_attention_scope
                 ON run_activity(run_id,json_extract(CAST(diagnostic_json AS TEXT),'$.scope'))
                 WHERE activity='attention_state'""")
@@ -2265,6 +2277,12 @@ class RunService(ToolEvidenceMixin):
             )
             from .run_attention import migrate_running
             migrate_running(self, connection)
+            from .run_attention import refresh_notice
+            missing = connection.execute("SELECT DISTINCT a.run_id FROM run_activity a "
+                "WHERE a.activity='attention_state' AND NOT EXISTS (SELECT 1 FROM run_activity n "
+                "WHERE n.run_id=a.run_id AND n.activity='attention_notice')").fetchall()
+            for row in missing:
+                refresh_notice(self, connection, row['run_id'], now=timestamp())
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.database_path, timeout=30.0)

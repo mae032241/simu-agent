@@ -286,7 +286,7 @@ ROOT_TOOLS = (
     RootTool("instance_current", "Read the bound research instance or return its direct local management URL.", ReadInput),
     RootTool("instance_list", "List research instances without exposing internal identity.", InstanceListInput),
     RootTool("instance_close", "Close the current research instance against further writes.", EmptyInput),
-    RootTool("scientific_inventory", "List current immutable scientific objects without suggesting a workflow or capability.", PageInput),
+    RootTool("scientific_inventory", "List scientific-object metadata within the configured page byte budget. Summary retains qualification flags; use artifact_catalog for one object's details. limit is a maximum; continue with next_before.", PageInput),
     RootTool("scientific_current", "Read explicit current scientific-object selections for this research instance.", PageInput),
     RootTool("scientific_current_select", "Compare-and-set one immutable scientific object as the explicit current selection.", ScientificCurrentSelectInput),
     RootTool("lifecycle_events", "Return persistent semantic task, approval, execution and attention changes for this scheduler process. Attention notices are also included automatically in ordinary Root tool replies; reading a notice does not resolve it.", LifecycleEventsInput),
@@ -296,7 +296,7 @@ ROOT_TOOLS = (
     RootTool("operation_catalog", "List bounded operation summaries; select operation_id with view=detail for its full compiled contract.", OperationCatalogInput),
     RootTool("operation_preflight", "Optional check without creating. Invoke independently checks admission; this does not reserve resources or authorize execution.", OperationCallInput),
     RootTool("operation_invoke", "Validate and create one Agent, Transform, Effect or Approval from the compiled catalog; no prior preflight required. Success preserves dispatch configuration, exact outputs or approval URLs by executor kind; use the returned detail entry for Run context.", OperationCallInput),
-    RootTool("run_list", "List minimal Runs in this research instance.", RunListInput),
+    RootTool("run_list", "List task names, states and recovery/contract flags within the configured page byte budget. Read one run_status for dispatch configuration or conclusions. limit is a maximum; continue with next_before.", RunListInput),
     RootTool("run_status", "Read a Run with one intent: decision (default), status, navigation or full. Explicit stage_offset=0 lists sealed stages even while running; stage_reference reads an exact material. Stages never establish final completion or qualification.", RunStatusInput),
     RootTool("run_record_failure", "Record failure of one running minimal Run.", RunFailureInput),
     RootTool("approval_list", "List named reviews in this scheduler instance.", ApprovalListInput),
@@ -599,18 +599,32 @@ class RootMCPRouter:
                     return self._call_tool(name, arguments)
             return self._call_tool(name, arguments)
 
-    def _with_attention(self, response):
+    def _with_attention(self, response, *, name=None, values=None):
         if not isinstance(response, dict):
             return response
         try:
-            notices = self.facade.attention_notifications()
+            prepare = getattr(self.facade, 'prepare_attention_notifications', None)
+            if prepare is None:
+                return response
+            batch = prepare()
+            if batch is None:
+                return response
+            notices, delivery = batch
+            budget = field = key = None
+            if name in {'run_list', 'scientific_inventory'}:
+                from ...agent_execution_settings import MCPReadSettings
+                settings = getattr(getattr(self.facade.runs, 'agent_settings', None), 'mcp_read', None) or MCPReadSettings()
+                budget = settings.detail_max_bytes if values.get('view') == 'detail' else settings.summary_max_bytes
+                field, key = ('runs', 'name') if name == 'run_list' else ('objects', 'artifact_name')
+            from .mcp_response_views import append_attention
+            result, count = append_attention(response, notices, budget=budget, field=field, key=key)
+            self.facade.acknowledge_attention_notifications(delivery, count)
+            return result
         except Exception:
             # Notification failure must never mask a committed scientific action.
-            # Durable attention remains visible on status and can be retried.
             import logging
             logging.getLogger(__name__).warning("Root attention notification deferred", exc_info=True)
             return response
-        return {**response, "attention_notifications":notices} if notices else response
 
     def _call_tool(self, name: str, arguments: dict[str, Any] | None) -> Any:
         try:
@@ -651,8 +665,9 @@ class RootMCPRouter:
             if name == "scientific_inventory":
                 query["include_operations"] = False
             from .mcp_response_views import root_response
-            response = root_response(name, getattr(self.facade, name)(**query), values)
-            return response if name == "lifecycle_events" else self._with_attention(response)
+            settings = getattr(getattr(self.facade.runs, "agent_settings", None), "mcp_read", None)
+            response = root_response(name, getattr(self.facade, name)(**query), values, read_settings=settings)
+            return response if name == "lifecycle_events" else self._with_attention(response, name=name, values=values)
         except Exception as error:
             from ..service.instance_maintenance import InstanceMaintenanceBusy, InstanceMaintenanceUnavailable
             if isinstance(error, (InstanceMaintenanceBusy, InstanceMaintenanceUnavailable)):

@@ -275,8 +275,19 @@ class ExperimentExecution:
         from .run_attention import BINDING_CODES
         scope = 'implementation:' + execution_id
         try:
-            record = self._run_implementation_record(run, self.executions.request(execution_id).payload_ref,
-                receipt_ref=receipt)
+            payload = self.executions.request(execution_id).payload_ref
+            if receipt is None:
+                # Visibility in a successor is not the original execution identity.
+                # Legacy uniqueness must be proved against the frozen request owner,
+                # including receipts omitted by the consumer's input/adoption scope.
+                owner = envelope.labels.get("experiment_run")
+                if not owner:
+                    from .sealed_materials import material_error
+                    raise material_error("experiment_implementation_unavailable",
+                        "The historical execution has no authoritative implementation owner. Preserve its results and request control repair.")
+                original = self._run_implementation_record(self.runs.status(owner), payload)
+                receipt = ArtifactRef.model_validate(original['artifact_ref'])
+            record = self._run_implementation_record(run, payload, receipt_ref=receipt)
         except DiagnosticError as error:
             code = next((item['code'] for item in error.details if item['code'] in BINDING_CODES), None)
             if code:

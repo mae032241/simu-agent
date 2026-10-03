@@ -6,6 +6,7 @@
     "reasoning_effort": "medium"
   },
   "operations": {},
+  "mcp_read": {"summary_max_bytes": 4096, "detail_max_bytes": 32768},
   "execution_io": {"approval_wait_budget_seconds": 86400},
   "budget_extensions": {"max_seconds_per_decision": 21600, "max_total_seconds_per_pool": 86400},
   "diagnostics": {"max_records": 1024, "max_total_bytes": 67108864, "retention_seconds": 604800},

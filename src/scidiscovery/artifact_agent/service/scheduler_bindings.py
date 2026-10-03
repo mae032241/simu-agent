@@ -965,6 +965,23 @@ class SchedulerBindingService:
         values = [str(row["approval_id"]) for row in bound]
         return tuple(dict.fromkeys(values))
 
+    def acknowledge_attention(self, *, instance, observer, receipts):
+        """Acknowledge only notifications retained in the final reply, monotonically."""
+        if not receipts:
+            return
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            for name, version, active in receipts:
+                connection.execute("""INSERT INTO scheduler_observations
+                    (instance, observer_key, object_type, name, state, observed_at)
+                    VALUES (?,?,'attention',?,?,?)
+                    ON CONFLICT(instance,observer_key,object_type,name) DO UPDATE SET
+                        state=excluded.state, observed_at=excluded.observed_at
+                    WHERE instr(scheduler_observations.state,':')=0
+                        OR CAST(substr(scheduler_observations.state,instr(scheduler_observations.state,':')+1) AS INTEGER)
+                            <CAST(substr(excluded.state,instr(excluded.state,':')+1) AS INTEGER)""",
+                    (instance, observer, name, ('v:' if active else 'done:') + str(version), _timestamp()))
+
     def observe_state_changes(
         self,
         *,
@@ -993,8 +1010,19 @@ class SchedulerBindingService:
         observed_at = _timestamp()
         changes: list[SchedulerStateChange] = []
         with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
+            # Read-only fast path. Recheck selected changes under the write lock;
+            # an unchanged lifecycle query should not contend with mutations.
+            pending = []
             for object_type, name, state in sorted(normalized):
+                row = connection.execute("SELECT state FROM scheduler_observations "
+                    "WHERE instance=? AND observer_key=? AND object_type=? AND name=?",
+                    (instance, observer_key, object_type, name)).fetchone()
+                if row is None or row['state'] != state:
+                    pending.append((object_type, name, state))
+            if not pending:
+                return ()
+            connection.execute("BEGIN IMMEDIATE")
+            for object_type, name, state in pending:
                 row = connection.execute(
                     """
                     SELECT state FROM scheduler_observations
@@ -1128,6 +1156,9 @@ class SchedulerBindingService:
                 )
                 """
             )
+            connection.execute("""CREATE INDEX IF NOT EXISTS attention_pending_observers
+                ON scheduler_observations(instance,observer_key,name)
+                WHERE object_type='attention' AND substr(state,1,5)!='done:'""")
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS scheduler_scientific_selections (

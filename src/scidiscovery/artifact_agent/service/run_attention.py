@@ -13,16 +13,16 @@ BINDING_CODES = frozenset({"experiment_implementation_ambiguous", "experiment_im
 ACTION = "Inspect this task with intent=status, diagnostic_after=0; preserve retained results and choose recovery. Do not repeat execution."
 
 
-def record(runs, connection, run_id, *, scope, code, now):
+def record(runs, connection, run_id, *, scope, code, now, resolution="resolved"):
     """An observation repeats a stable issue; code changes/recurrences notify again."""
     row = connection.execute("SELECT rowid, diagnostic_json FROM run_activity WHERE run_id=? "
         "AND activity='attention_state' AND json_extract(CAST(diagnostic_json AS TEXT),'$.scope')=? "
         "ORDER BY rowid DESC LIMIT 1", (run_id, scope)).fetchone()
     prior = json.loads(row['diagnostic_json']) if row else None
-    if code is None and (prior is None or prior['state'] == 'resolved'):
+    if code is None and (prior is None or prior['state'] != 'open'):
         return
     same = prior and prior['state'] == 'open' and prior['code'] == code
-    data = {'scope':scope, 'code':code or prior['code'], 'state':'open' if code else 'resolved',
+    data = {'scope':scope, 'code':code or prior['code'], 'state':'open' if code else resolution,
         'first_seen_at':prior['first_seen_at'] if same or code is None else now,
         'last_seen_at':now, 'generation':prior['generation'] if same or code is None else None}
     # Repeated observations update only the projection row. Original errors remain
@@ -35,6 +35,70 @@ def record(runs, connection, run_id, *, scope, code, now):
     if data['generation'] is None:
         data['generation'] = event
         connection.execute("UPDATE run_activity SET diagnostic_json=? WHERE rowid=?", (canonical_json(data), event))
+    refresh_notice(runs, connection, run_id, now=now, closed_state=resolution)
+
+
+def refresh_notice(runs, connection, run_id, *, now, closed_state="resolved"):
+    """One compact pending-delivery projection per Run, refreshed only on transitions."""
+    attention = projection([item for _, item in issues(connection, run_id=run_id)])
+    data = {'state':'attention_required' if attention else closed_state}
+    if attention:
+        codes = list(dict.fromkeys(item['code'] for item in attention['issues']))
+        data['attention_required'] = {'code':attention['code'], 'codes':codes,
+            'total':attention['total'], 'issues_truncated':attention['has_more']}
+    connection.execute("DELETE FROM run_activity WHERE run_id=? AND activity='attention_notice'", (run_id,))
+    runs._append_activity(connection, run_id, 'attention_notice', now, canonical_json(data))
+
+
+def pending_notices(runs, connection, *, instance, observer, limit):
+    # A bounded join to named Runs and the observer cursor. It never reads
+    # historical attention_state rows or enumerates all scheduler bindings.
+    runs._attach_scheduler(connection)
+    changed = "(o.state IS NULL OR instr(o.state,':')=0 OR CAST(substr(o.state,instr(o.state,':')+1) AS INTEGER)<a.rowid)"
+    rows = connection.execute("""SELECT a.rowid AS version, b.name, a.diagnostic_json
+        FROM run_activity a JOIN runs r ON r.run_id=a.run_id
+        JOIN scheduler_control.scheduler_bindings b ON b.instance=r.instance_id
+            AND b.namespace='run' AND b.object_id=r.run_id
+        LEFT JOIN scheduler_control.scheduler_observations o ON o.instance=b.instance
+            AND o.observer_key=? AND o.object_type='attention' AND o.name=b.name
+        WHERE a.activity='attention_notice' AND r.instance_id=?
+            AND json_extract(CAST(a.diagnostic_json AS TEXT),'$.state')='attention_required'
+            AND """ + changed + """
+        UNION ALL
+        SELECT a.rowid AS version, b.name, a.diagnostic_json
+        FROM scheduler_control.scheduler_observations o
+        JOIN scheduler_control.scheduler_bindings b ON b.instance=o.instance
+            AND b.namespace='run' AND b.name=o.name
+        JOIN run_activity a ON a.run_id=b.object_id AND a.activity='attention_notice'
+        WHERE o.instance=? AND o.observer_key=? AND o.object_type='attention'
+            AND substr(o.state,1,5)!='done:'
+            AND json_extract(CAST(a.diagnostic_json AS TEXT),'$.state')!='attention_required'
+            AND """ + changed + """ ORDER BY 1, 2 LIMIT ?""",
+        (observer, instance, instance, observer, limit + 1)).fetchall()
+    events, receipts = [], []
+    for row in rows[:limit]:
+        event = {'name':row['name'], **json.loads(row['diagnostic_json'])}
+        if event['state'] == 'attention_required':
+            event['read_request'] = {'name':'run_status', 'arguments':{'name':row['name'],
+                'intent':'status', 'diagnostic_after':0, 'diagnostic_limit':8}}
+        events.append(event)
+        receipts.append((row['name'], row['version'], event['state'] == 'attention_required'))
+    return {'events':events, 'more_available':len(rows)>limit}, receipts
+
+
+def supersede_submission_ancestors(runs, connection, row, *, now):
+    # Successful resume proves continuity of the same frozen scientific inputs.
+    # draft_from can change the question and cannot resolve its ancestor's issues.
+    parent, seen = row['resume_from_run_id'], set()
+    while parent and parent not in seen:
+        seen.add(parent)
+        previous = runs._row(connection, parent)
+        if (previous['instance_id'], previous['operation_id']) != (row['instance_id'], row['operation_id']):
+            break
+        for _, issue in issues(connection, run_id=parent):
+            if issue['scope'].startswith('submission:') and issue['code'] in SUBMISSION_CODES:
+                record(runs, connection, parent, scope=issue['scope'], code=None, now=now, resolution='superseded')
+        parent = previous['resume_from_run_id']
 
 
 def issues(connection, *, run_id=None, instance_id=None):

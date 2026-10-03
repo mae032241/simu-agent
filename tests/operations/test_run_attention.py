@@ -77,7 +77,7 @@ def test_notification_failure_cannot_turn_success_into_failed_tool(tmp_path, mon
     def busy(**_):
         raise sqlite3.OperationalError('database is locked')
     with monkeypatch.context() as patch:
-        patch.setattr(root.facade, 'attention_notifications', busy)
+        patch.setattr(root.facade, 'prepare_attention_notifications', busy)
         assert 'attention_notifications' not in root.call_tool('instance_current', {})
     assert original()['events'][0]['state'] == 'attention_required'
 

@@ -129,6 +129,12 @@ class PresentationSettings(SettingsValue):
     memory_limit_bytes: int = Field(default=2147483648, ge=268435456)
 
 
+class MCPReadSettings(SettingsValue):
+    """Global JSON page budgets for Root task and scientific-object lists."""
+    summary_max_bytes: int = Field(default=4096, ge=1024, le=262144)
+    detail_max_bytes: int = Field(default=32768, ge=1024, le=1048576)
+
+
 class DiagnosticsSettings(SettingsValue):
     """Retention of expendable engineering traces, never sealed scientific evidence."""
     max_records: int = Field(default=1024, ge=1)
@@ -148,6 +154,7 @@ class AgentSettings(SettingsValue):
     input_materials: MaterialInputSettings = Field(default_factory=MaterialInputSettings)
     attachments: AttachmentSettings = Field(default_factory=AttachmentSettings)
     presentation: PresentationSettings = Field(default_factory=PresentationSettings)
+    mcp_read: MCPReadSettings = Field(default_factory=MCPReadSettings)
 
     def sparse(self) -> dict:
         return self.model_dump(exclude_none=True, exclude_unset=True)

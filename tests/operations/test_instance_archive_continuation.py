@@ -49,7 +49,7 @@ def _relationships(model, instance_id, keys):
     return {key: model.node(instance_id, key)["relationships"] for key in keys}
 
 
-def _archived_and_restored_draft(tmp_path):
+def _archived_and_restored_draft(tmp_path, *, attention=False):
     catalog, runtime, instance, root = _hardened_system(tmp_path)
     _invoke(root, "failed_source")
     original_worker = _worker(catalog, runtime)
@@ -75,6 +75,9 @@ def _archived_and_restored_draft(tmp_path):
     source_input = next(item for item in source.inputs if item.port_name == "source_table")
     preserved = runtime.runs.backend.root / "recovery" / source.recovery_draft["draft_digest"] / "result.json"
     assert preserved.read_bytes() == draft_bytes
+    if attention:
+        runtime.runs.record_attention(original_id, scope='submission:submission_intervention_required',
+            code='submission_intervention_required')
     activities = _activity_rows(runtime.runs, original_id)
     original_links = _relationships(_live_model(runtime), instance.instance_id,
         ("artifact:source_csv", "run:failed_source"))
@@ -199,3 +202,12 @@ def test_archive_browse_restore_preserves_real_continuation_admission_and_assign
     assert _relationships(_live_model(runtime), instance.instance_id, original_links) == original_links
     assert runtime.runs.status(source.run_id) == source
     assert _activity_rows(runtime.runs, source.run_id) == activities
+
+
+def test_attention_snapshot_and_delivery_cursor_survive_archive_restore(tmp_path):
+    _, runtime, _, root, source, _, _ = _archived_and_restored_draft(tmp_path, attention=True)
+    result = root.call_tool('run_status', {'name':'failed_source', 'intent':'status'})
+    assert result['attention_required']['code'] == 'submission_intervention_required'
+    assert result['attention_notifications']['events'][0]['name'] == 'failed_source'
+    assert root.facade.prepare_attention_notifications() is None
+    assert runtime.runs.submission_attention(source) is not None
