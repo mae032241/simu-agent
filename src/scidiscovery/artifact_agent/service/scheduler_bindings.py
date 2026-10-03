@@ -977,7 +977,7 @@ class SchedulerBindingService:
 
         if not isinstance(observer_key, str) or not observer_key:
             raise ValueError("scheduler observer key is invalid")
-        allowed = {"run", "approval", "execution"}
+        allowed = {"run", "approval", "execution", "attention"}
         normalized: list[tuple[str, str, str]] = []
         for object_type, name, state in states:
             if object_type not in allowed:

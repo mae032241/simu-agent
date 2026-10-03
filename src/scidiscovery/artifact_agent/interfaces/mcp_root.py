@@ -289,7 +289,7 @@ ROOT_TOOLS = (
     RootTool("scientific_inventory", "List current immutable scientific objects without suggesting a workflow or capability.", PageInput),
     RootTool("scientific_current", "Read explicit current scientific-object selections for this research instance.", PageInput),
     RootTool("scientific_current_select", "Compare-and-set one immutable scientific object as the explicit current selection.", ScientificCurrentSelectInput),
-    RootTool("lifecycle_events", "Return persistent semantic task, approval, and execution state changes for this scheduler process.", LifecycleEventsInput),
+    RootTool("lifecycle_events", "Return persistent semantic task, approval, execution and attention changes for this scheduler process. Attention notices are also included automatically in ordinary Root tool replies; reading a notice does not resolve it.", LifecycleEventsInput),
     RootTool("artifact_ingest_file", "Freeze and bind one project file under a semantic name.", IngestFileInput),
     RootTool("artifact_ingest_text", "Freeze original user text and bind it under a semantic name in the current instance; does not create a Run.", IngestTextInput),
     RootTool("artifact_catalog", "Read metadata or paged direct parents for one bound semantic input.", ArtifactCatalogInput),
@@ -599,6 +599,19 @@ class RootMCPRouter:
                     return self._call_tool(name, arguments)
             return self._call_tool(name, arguments)
 
+    def _with_attention(self, response):
+        if not isinstance(response, dict):
+            return response
+        try:
+            notices = self.facade.attention_notifications()
+        except Exception:
+            # Notification failure must never mask a committed scientific action.
+            # Durable attention remains visible on status and can be retried.
+            import logging
+            logging.getLogger(__name__).warning("Root attention notification deferred", exc_info=True)
+            return response
+        return {**response, "attention_notifications":notices} if notices else response
+
     def _call_tool(self, name: str, arguments: dict[str, Any] | None) -> Any:
         try:
             tool = self._tools[name]
@@ -619,7 +632,7 @@ class RootMCPRouter:
         values = {field: getattr(parsed, field) for field in type(parsed).model_fields}
         try:
             if name == "run_status":
-                return self.facade.run_status(**parsed.model_dump(exclude_unset=True))
+                return self._with_attention(self.facade.run_status(**parsed.model_dump(exclude_unset=True)))
             # Presentation options are never part of an immutable operation request.
             query = dict(values)
             query.pop("view", None)
@@ -638,7 +651,8 @@ class RootMCPRouter:
             if name == "scientific_inventory":
                 query["include_operations"] = False
             from .mcp_response_views import root_response
-            return root_response(name, getattr(self.facade, name)(**query), values)
+            response = root_response(name, getattr(self.facade, name)(**query), values)
+            return response if name == "lifecycle_events" else self._with_attention(response)
         except Exception as error:
             from ..service.instance_maintenance import InstanceMaintenanceBusy, InstanceMaintenanceUnavailable
             if isinstance(error, (InstanceMaintenanceBusy, InstanceMaintenanceUnavailable)):

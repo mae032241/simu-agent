@@ -215,10 +215,9 @@ class RootRunRoutes:
         }
         if value.state == "failed":
             result["diagnostic_summary"] = self.runs.diagnostic_summary(value)
-        elif value.state == "running":
-            attention = self.runs.submission_attention(value)
-            if attention is not None:
-                result["attention_required"] = attention
+        attention = self.runs.submission_attention(value)
+        if attention is not None:
+            result["attention_required"] = attention
         if intent != "status" and value.state != "completed":
             result["content_unavailable"] = "run_not_completed"
         if intent == "full" and value.state == "completed":

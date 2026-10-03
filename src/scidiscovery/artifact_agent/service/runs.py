@@ -1300,6 +1300,11 @@ class RunService(ToolEvidenceMixin):
         connection.execute(
             "INSERT INTO run_activity(rowid,run_id,activity,recorded_at,diagnostic_json) VALUES (?,?,?,?,?)",
             (event_id, run_id, activity, recorded_at, diagnostic_json))
+        if activity in {'tool_failed', 'output_rejected'} and diagnostic_json:
+            from .run_attention import record, SUBMISSION_CODES
+            for detail in json.loads(diagnostic_json).get('details', ()):
+                if detail.get('code') in SUBMISSION_CODES:
+                    record(RunService, connection, run_id, scope='submission:' + detail['code'], code=detail['code'], now=recorded_at)
         return event_id
 
     def record_error_observation(self, run_id: str, activity: str, *, diagnostic: dict[str, Any]) -> dict[str, Any]:
@@ -1410,22 +1415,31 @@ class RunService(ToolEvidenceMixin):
                   for row in rows[:limit]]
         return {"events": events, "next_after": events[-1]["event_id"] if len(rows) > limit else None}
 
-    def submission_attention(self, value: RunStatus):
-        """A bounded alert for Root's normal status polling, without traceback bodies."""
-        if value.state != 'running':
-            return None
+    def record_attention(self, run_id, *, scope, code):
+        from .run_attention import record
         with self._connect() as connection:
-            row = connection.execute("SELECT diagnostic_json FROM run_activity WHERE run_id=? "
-                "AND activity IN ('tool_failed','output_rejected') ORDER BY rowid DESC LIMIT 1",
-                (value.run_id,)).fetchone()
-        if row is None or row['diagnostic_json'] is None:
-            return None
-        raw = json.loads(row['diagnostic_json'])
-        for item in raw.get('details', ()):
-            if item.get('code') in {'submission_intervention_required', 'submission_timeout_unclassified',
-                    'experiment_implementation_ambiguous'}:
-                return {'code': item['code'], 'action': 'Inspect this task with intent=diagnostics before retrying submission.'}
-        return None
+            connection.execute("BEGIN IMMEDIATE")
+            value = self._row(connection, run_id)
+            now = timestamp()
+            record(self, connection, run_id, scope=scope, code=code, now=now)
+            if code is None and scope.startswith('implementation:'):
+                # A successful exact lookup during recovery repairs that same
+                # execution's issue in its earlier owner as well, never another job.
+                rows = connection.execute("SELECT DISTINCT a.run_id FROM run_activity a JOIN runs r ON r.run_id=a.run_id "
+                    "WHERE r.instance_id=? AND a.run_id!=? AND a.activity='attention_state' "
+                    "AND json_extract(CAST(a.diagnostic_json AS TEXT),'$.scope')=?",
+                    (value['instance_id'], run_id, scope)).fetchall()
+                for row in rows:
+                    record(self, connection, row['run_id'], scope=scope, code=None, now=now)
+
+    def attention_issues(self, *, run_id=None, instance_id=None):
+        from .run_attention import issues
+        with self._connect() as connection:
+            return issues(connection, run_id=run_id, instance_id=instance_id)
+
+    def submission_attention(self, value: RunStatus):
+        from .run_attention import projection
+        return projection([item for _, item in self.attention_issues(run_id=value.run_id)])
 
     def diagnostic_summary(self, value: RunStatus) -> dict[str, Any]:
         with self._connect() as connection:
@@ -1858,6 +1872,10 @@ class RunService(ToolEvidenceMixin):
             if cursor.rowcount != 1:
                 connection.execute("ROLLBACK")
                 raise RunStateConflict("Run completion compare-and-set failed")
+            from .run_attention import record, issues
+            for _, issue in issues(connection, run_id=run_id):
+                if issue['scope'].startswith('submission:'):
+                    record(self, connection, run_id, scope=issue['scope'], code=None, now=completed_at)
             connection.execute("COMMIT")
         from .presentation_summaries import enqueue
         enqueue(self, value, output)
@@ -2230,6 +2248,9 @@ class RunService(ToolEvidenceMixin):
                 for name, kind in columns.items():
                     if name not in existing:
                         connection.execute(f"ALTER TABLE {table} ADD COLUMN {name} {kind}")
+            connection.execute("""CREATE INDEX IF NOT EXISTS run_attention_scope
+                ON run_activity(run_id,json_extract(CAST(diagnostic_json AS TEXT),'$.scope'))
+                WHERE activity='attention_state'""")
             connection.execute("""CREATE UNIQUE INDEX IF NOT EXISTS run_approval_wait
                 ON run_activity(run_id,json_extract(CAST(diagnostic_json AS TEXT),'$.approval_id'))
                 WHERE activity='approval_wait_started'""")
@@ -2242,6 +2263,8 @@ class RunService(ToolEvidenceMixin):
                 "VALUES (1, (SELECT COALESCE(MAX(rowid), 0) FROM run_activity)) "
                 "ON CONFLICT(slot) DO UPDATE SET high_water = MAX(high_water, excluded.high_water)"
             )
+            from .run_attention import migrate_running
+            migrate_running(self, connection)
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.database_path, timeout=30.0)

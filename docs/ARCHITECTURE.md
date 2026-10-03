@@ -745,6 +745,26 @@ Run when the failure can be persisted. If control storage cannot confirm state, 
 caller gets `submission_state_unavailable`; it must query the same task after repair,
 not assume termination or start another solver. Running tasks that need investigation
 expose a short `attention_required` field through normal Root status polling.
+Attention is a durable control-issue projection, independent of the last tool error.
+Submission issue codes coexist; implementation issues bind one exact execution.
+Ordinary rejections and successful unrelated tools cannot erase either. A missing
+historical implementation receipt requires intervention; a bad caller alias, an
+expected not-created object or a transient transport failure does not. Successful
+submission resolves its submission issues. A verified exact receipt lookup resolves
+only that execution's binding issues, including its earlier recovery owners. A
+limited report can close its Run without pretending that an unresolved execution
+binding has been repaired; its attention remains visible after completion.
+
+Ordinary Root tool responses automatically include bounded `attention_notifications`
+on first observation, changed issues or recurrence. Repeated identical observations
+update last-seen time but do not notify again; reading a notice never resolves it.
+`lifecycle_events` has an independent durable notification cursor. Notices contain
+semantic task names and safe codes, not private execution bindings or trace bodies.
+This is delivery on the next Root tool response, not unsolicited process wake-up:
+a disconnected/idle Root must reconnect or call a tool. Notification failure does
+not turn a committed operation into a failed tool call; durable status remains
+available for retry. Attention lives in the existing Run activity store and shares
+its archive/restore lifecycle.
 
 Expected output corrections store structured diagnostics without traceback files.
 Engineering traces are deduplicated by exact failure and scope; collection enforces

@@ -272,8 +272,18 @@ class ExperimentExecution:
         from ..schema.refs import ArtifactRef
         raw = envelope.labels.get("implementation_receipt")
         receipt = ArtifactRef.model_validate_json(raw, strict=True) if raw is not None else None
-        return self._run_implementation_record(run, self.executions.request(execution_id).payload_ref,
-            receipt_ref=receipt)
+        from .run_attention import BINDING_CODES
+        scope = 'implementation:' + execution_id
+        try:
+            record = self._run_implementation_record(run, self.executions.request(execution_id).payload_ref,
+                receipt_ref=receipt)
+        except DiagnosticError as error:
+            code = next((item['code'] for item in error.details if item['code'] in BINDING_CODES), None)
+            if code:
+                self.runs.record_attention(run.run_id, scope=scope, code=code)
+            raise
+        self.runs.record_attention(run.run_id, scope=scope, code=None)
+        return record
 
     def _run_implementation_record(self, run, payload_ref, *, receipt_ref=None):
         records = [item for item in self.runs.available_material_records(run)

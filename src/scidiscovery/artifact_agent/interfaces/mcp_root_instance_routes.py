@@ -183,6 +183,42 @@ class RootInstanceRoutes:
             ],
         }
 
+    def attention_notifications(self, *, channel="reply", limit=8):
+        """Deliver control notices on ordinary replies, with a durable observer cursor."""
+        if self.session_key is not None and not self.bindings.client_enabled(session_key=self.session_key):
+            return None
+        try:
+            instance = self._instance_id()
+        except RootToolError:
+            return None
+        from ..service.run_attention import projection
+        by_run = {}
+        for run_id, issue in self.runs.attention_issues(instance_id=instance):
+            by_run.setdefault(run_id, []).append(issue)
+        if not by_run:
+            return None
+        names = {binding.object_id:binding.name for binding in self.bindings.list(instance=instance, namespace="run")
+            if binding.object_id in by_run}
+        states, values = [], {}
+        for run_id, issues in by_run.items():
+            if run_id not in names:
+                continue
+            name = names[run_id]
+            active = [item for item in issues if item['state'] == 'open']
+            # Observation times are deliberately excluded: repeats do not notify.
+            state = canonical_sha256([(item['scope'], item['code'], item['generation']) for item in active]) if active else 'resolved'
+            states.append(('attention', name, state))
+            values[name] = projection(issues)
+        changes = self.bindings.observe_state_changes(instance=instance,
+            observer_key='attention:' + channel + ':' + (self.session_key or 'facade'),
+            states=tuple(states), limit=limit)
+        events = [{'name':item.name, 'state':'attention_required' if values[item.name] else 'resolved',
+            **({'attention_required':{'code':values[item.name]['code'], 'codes':list(dict.fromkeys(i['code'] for i in values[item.name]['issues'])), 'total':values[item.name]['total']},
+                'read_request':{'name':'run_status', 'arguments':{'name':item.name, 'intent':'status', 'diagnostic_after':0, 'diagnostic_limit':8}}}
+               if values[item.name] else {})} for item in changes
+            if item.previous_state is not None or values[item.name] is not None]
+        return {'events':events, 'more_available':len(changes) == limit} if events or len(changes) == limit else None
+
     def lifecycle_events(self, *, limit: int | None = None) -> dict[str, Any]:
         """Read changed lifecycle states through a durable service-owned cursor."""
 
@@ -210,7 +246,9 @@ class RootInstanceRoutes:
             states=tuple(states),
             limit=limit,
         )
+        attention = self.attention_notifications(channel="lifecycle")
         return {
+            **({"attention_notifications":attention} if attention else {}),
             "poll_again": limit is not None and len(changes) == limit,
             "events": [
                 {
