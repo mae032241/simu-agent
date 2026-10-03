@@ -582,18 +582,29 @@ def test_history_bound_calculation_keeps_consumer_authority_and_original_produce
     assert not runtime.runs.reference_access_records(negative._run_id)
 
 
-def test_failed_condition_original_cross_page_changed_input_retry_and_scope_negatives(tmp_path,monkeypatch):
+@pytest.mark.parametrize('terminal_order', ['increasing', 'same_time', 'rollback'])
+def test_failed_condition_original_cross_page_changed_input_retry_and_scope_negatives(tmp_path,monkeypatch,terminal_order):
+    from datetime import datetime, timedelta
+    from types import SimpleNamespace
     from scidiscovery.artifact_agent.service import runs as run_service
+    from scidiscovery.artifact_agent.service.progression_records import read_history_cursor
+    from tests.operations.test_attempt_history import router
     system=science_system(tmp_path)
     _,runtime,root,_,artifacts,register=system
     failed,opened=science_worker(system,'early-failure')
     value=runtime.runs.status(failed._run_id)
     terminal_clock=run_service.timestamp()
-    # The chronological fixture deliberately ties wall-clock timestamps;
-    # durable terminal event order must still page every exact task once.
+    clocks = dict(increasing=1, same_time=0, rollback=-1)
+    middle_clock = (datetime.fromisoformat(terminal_clock.replace('Z','+00:00'))
+        + timedelta(milliseconds=clocks[terminal_order])).isoformat().replace('+00:00','Z')
+    clock = [terminal_clock]
+    # Explicit contract expectations, independently of the SQL implementation:
+    # newest terminal timestamp first; equal timestamps use later terminal event.
+    expected = ['early-failure','unrelated-terminal'] if terminal_order == 'rollback' else ['unrelated-terminal','early-failure']
     with monkeypatch.context() as patch:
-        patch.setattr(run_service,'timestamp',lambda:terminal_clock)
+        patch.setattr(run_service,'timestamp',lambda:clock[0])
         runtime.runs.record_failure(failed._run_id,reason='Fixture engineering failure under original finite conditions',expected_state='running',expected_last_activity_at=value.last_activity_at)
+        clock[0] = middle_clock
         middle,opened=science_worker(system,'unrelated-terminal',instruction='Inspect a separate finite observation boundary in the same originals.')
         complete_science(middle,opened)
     original_ref=root.facade._resolve('artifact','generic_results')
@@ -609,17 +620,45 @@ def test_failed_condition_original_cross_page_changed_input_retry_and_scope_nega
     opened=worker.call_tool('worker_open_assignment',{})
     page=worker.call_tool('worker_read_history',dict(limit=1))
     pages=[page]
+    instance = root.facade._instance_id()
+    root_pages, root_scope = [], None
+    frozen = runtime.runs._worker_memory_binding(identity)
+    def capture():
+        with closing(runtime.runs._connect()) as db:
+            terminals=[dict(i) for i in db.execute('SELECT r.run_id,r.state,r.completed_at,a.activity,a.recorded_at,a.rowid AS event FROM runs r JOIN run_activity a USING(run_id) WHERE a.activity IN (\'framework_failure\',\'completion_committed\')')]
+        diagnostic = dict(terminal_order=terminal_order,expected=expected,pages=pages,root_pages=root_pages,
+            memory=frozen,root_scope=root_scope,terminals=terminals)
+        metrics('condition-history-'+terminal_order,diagnostic)
+        return terminals
+    capture()
+    public = router(SimpleNamespace(runtime=runtime,root=root,instance=instance))
+    root_pages.append(public.call_tool('run_list',dict(view='history',limit=1)))
+    capture()
+    root_scope = read_history_cursor(root_pages[0]['next_before'],secret=SECRET,instance_id=instance,state=None,limit=1)
+    worker.call_tool('worker_open_assignment',{})
+    capture()
     while pages[-1]['next_before']:
         assert len(pages)<3, 'Exact two-task index must not repeat or loop.'
         pages.append(worker.call_tool('worker_read_history',dict(limit=1,before=pages[-1]['next_before'])))
-    with closing(runtime.runs._connect()) as db:
-        terminals=[dict(i) for i in db.execute('SELECT r.run_id,r.state,r.completed_at,a.activity,a.recorded_at,a.rowid AS event FROM runs r JOIN run_activity a USING(run_id) WHERE a.activity IN (\'framework_failure\',\'completion_committed\')')]
-    metrics('condition-history',dict(pages=pages,memory=runtime.runs._worker_memory_binding(identity),terminals=terminals))
-    assert len(terminals)==2 and {i['completed_at'] for i in terminals}=={terminal_clock}
-    assert all(i['recorded_at']==terminal_clock for i in terminals)
+        capture()
+    while root_pages[-1]['continuation']:
+        assert len(root_pages)<3, 'Exact Root continuation must not repeat or loop.'
+        query=dict(root_pages[-1]['continuation']);query.pop('tool')
+        root_pages.append(public.call_tool('run_list',query))
+        capture()
+    terminals=capture()
+    by_run={item['run_id']:item for item in terminals}
+    assert runtime.runs._worker_memory_binding(identity) == frozen
+    assert root_scope['terminal_upper'] == frozen['scope']['terminal_upper']
+    assert len(terminals)==2 and by_run[failed._run_id]['completed_at']==terminal_clock
+    assert by_run[middle._run_id]['completed_at']==middle_clock
+    assert by_run[failed._run_id]['event']<by_run[middle._run_id]['event']
+    assert all(item['recorded_at']==item['completed_at'] for item in terminals)
+    assert frozen['scope']['terminal_count']==root_scope['terminal_count']==2
     names=[i['name'] for p in pages for i in p['runs']]
-    assert names==['unrelated-terminal','early-failure'] and len(set(names))==2
-    early=pages[-1]
+    root_names=[i['name'] for p in root_pages for i in p['runs']]
+    assert names==root_names==expected and len(set(names))==len(set(root_names))==2
+    early=next(p for p in pages if p['runs'][0]['name']=='early-failure')
     assert early['runs'][0]['name']=='early-failure'
     assert early['runs'][0]['result_nature']=='engineering_failure_not_scientific_negation'
     historical_input=next(i for i in early['runs'][0]['frozen_inputs'] if i['original_name']=='experiment_results')

@@ -199,6 +199,7 @@ def test_frozen_pages_find_early_failure_without_new_work_or_full_run_reads(tmp_
 
 def test_cursor_is_query_bound_and_late_completion_stays_out_after_restart(tmp_path):
     from scidiscovery.artifact_agent.runtime import open_runtime
+    from scidiscovery.artifact_agent.service.progression_records import read_history_cursor
     system = history_system(tmp_path,30)
     add_terminal(system,'already-queued',9000)
     identity = 'run_'+f'{9000:032x}'
@@ -207,6 +208,8 @@ def test_cursor_is_query_bound_and_late_completion_stays_out_after_restart(tmp_p
         db.execute("UPDATE runs SET state='queued',completed_at=NULL WHERE run_id=?", (identity,))
     first = system.root.call_tool('run_list',dict(view='history',limit=7))
     token = first['next_before']
+    frozen_scope = read_history_cursor(token,secret=SECRET,instance_id=system.instance,state=None,limit=7)
+    metrics('history-late-completion',dict(scope=frozen_scope,pages=[first],expected=system.expected))
     tampered = token[:20]+('A' if token[20]!='A' else 'B')+token[21:]
     for change in (dict(before=tampered),dict(state='completed'),dict(limit=8)):
         with pytest.raises(ValueError,match='Invalid history cursor'):
@@ -220,12 +223,28 @@ def test_cursor_is_query_bound_and_late_completion_stays_out_after_restart(tmp_p
     reopened = open_runtime(project_root=system.runtime.project_root,state_root=system.runtime.state_root,
         worker_backend='local')
     cold = router(system,runtime=reopened)
-    names, page = [item['name'] for item in first['runs']], first
+    names, page, pages = [item['name'] for item in first['runs']], first, [first]
     while page['continuation']:
+        assert len(pages)<5, 'This 30-member, limit-7 frozen fixture must finish in five pages without repeating or looping.'
         query = dict(page['continuation']);query.pop('tool')
         page = cold.call_tool('run_list',query)
+        pages.append(page)
         names.extend(item['name'] for item in page['runs'])
+        metrics('history-late-completion',dict(scope=frozen_scope,pages=pages,names=names,expected=system.expected))
     assert names == system.expected and 'already-queued' not in names
+    # New navigation sees the later terminal event. Its backdated timestamp ties
+    # the oldest two tasks, so the new event explicitly precedes both in that tie.
+    fresh = cold.call_tool('run_list',dict(view='history',limit=7))
+    fresh_pages, fresh_names = [fresh], [item['name'] for item in fresh['runs']]
+    while fresh_pages[-1]['continuation']:
+        assert len(fresh_pages)<6, 'Finite fresh scope must not repeat or loop.'
+        query=dict(fresh_pages[-1]['continuation']);query.pop('tool')
+        fresh_pages.append(cold.call_tool('run_list',query))
+        fresh_names.extend(item['name'] for item in fresh_pages[-1]['runs'])
+        metrics('history-late-completion',dict(scope=frozen_scope,pages=pages,names=names,
+            fresh_pages=fresh_pages,fresh_names=fresh_names,expected=system.expected))
+    assert fresh_names == [*system.expected[:-2],'already-queued',*system.expected[-2:]]
+    assert len(set(fresh_names))==31
     changed = router(system,runtime=reopened,secret=b'z'*32)
     with pytest.raises(ValueError,match='Invalid history cursor'):
         changed.call_tool('run_list',dict(view='history',limit=7,before=token))
