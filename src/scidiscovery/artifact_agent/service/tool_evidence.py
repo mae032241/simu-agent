@@ -490,7 +490,8 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
                         **({'logical_name':metadata['output_name']} if metadata.get('output_name') else {})},confidentiality='run_private'),
                 idempotency_key=f'run:{run_id}:tool:{key}').ref
             record={'alias':alias,'artifact_ref':artifact.model_dump(mode='json'),'source_ref':source_ref.model_dump(mode='json') if source_ref is not None else None,
-                    'media_type':media_type,'size_bytes':len(raw),'metadata':metadata,'tool_name':tool_name}
+                    'media_type':media_type,'size_bytes':len(raw),'metadata':metadata,'tool_name':tool_name,
+                    'control_parents': [ref.model_dump(mode='json') for ref in trusted_parent_refs]}
             connection.execute('INSERT INTO run_tool_evidence VALUES (?,?,?,?,?)',(run_id,ordinal,key,canonical_json(record),alias))
             if port.agent_visible:
                 binding = self._bind_evidence_output(connection, value, alias, artifact)

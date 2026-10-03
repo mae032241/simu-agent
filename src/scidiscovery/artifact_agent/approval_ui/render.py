@@ -138,7 +138,7 @@ def render_review(
     )
     page_end = (
         "</div>"
-        f"<aside class='decision-column'>{_render_decision(review, access_token, identity, read_only=read_only)}</aside>"
+        f"<aside class='decision-column'>{_render_decision(review, access_token, identity, read_only=read_only, authorization=authorization)}</aside>"
         "</div></main></body></html>"
     )
     raw_panel = _render_raw_subjects(review, access_token)
@@ -351,6 +351,7 @@ def _render_decision(
     identity: LocalIdentityRef,
     *,
     read_only: bool,
+    authorization: dict | None = None,
 ) -> str:
     if read_only:
         return (
@@ -381,6 +382,16 @@ def _render_decision(
         for option in review.request.options
     )
     action = f"/review/{quote(review.request.approval_id, safe='')}/decision"
+    extension = ''
+    allowance = (authorization or {}).get('allowance', {})
+    if review.request.kind == 'execution_authorization' and 'wall_time_seconds' in allowance:
+        extension = ("<fieldset class='budget-extension'><legend>追加累计耗时预算（可选）</legend>"
+            "<p>适用于同一科学主体的后续执行及修订；本次批准仍只针对当前请求。"
+            "单次上限、存储额度和已用时长不变。仅选择批准执行时生效。</p>"
+            f"<p>当前累计时长上限：{allowance['wall_time_seconds'] / 3600:g} 小时。</p>"
+            "<label>追加小时数 <input type='number' name='additional_wall_time_hours' min='0' step='0.25' value='0' "
+            f"data-current-seconds='{allowance['wall_time_seconds']}'></label>"
+            "<p class='budget-extension-preview' aria-live='polite'>不追加累计预算</p></fieldset>")
     return (
         "<section class='decision-panel'><p class='eyebrow'>人工决定</p>"
         "<h2>请选择本次决定</h2>"
@@ -391,6 +402,7 @@ def _render_decision(
         f"<input type='hidden' name='nonce' value='{html.escape(review.decision_nonce, quote=True)}'>"
         "<input type='hidden' name='confirm' value='confirm'>"
         f"<div class='decision-options'>{options}</div>"
+        + extension +
         "<label class='rationale'><span>决定理由 <small class='rationale-state'>选填</small></span>"
         "<textarea name='rationale' maxlength='16384'></textarea></label>"
         "<p class='identity'>审批身份 "

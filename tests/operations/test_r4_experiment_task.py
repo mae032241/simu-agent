@@ -237,7 +237,7 @@ def _real_experiment(tmp_path, monkeypatch, solver="sprocess", before_submit=Non
     assert collected["terminal_state"] == "succeeded"
     before = len(runtime.runs.tool_evidence(worker._run_id))
     status = worker.call_tool("worker_experiment_execute", {"action":"status"})
-    assert "reference" not in status and len(runtime.runs.tool_evidence(worker._run_id)) == before
+    assert status['reference'] == collected['reference'] and len(runtime.runs.tool_evidence(worker._run_id)) == before
     assert worker.call_tool("worker_experiment_execute", {"action":"read", "output_name":"observation"})["text"] == "observed fixture\n"
     exported = worker.call_tool("worker_experiment_execute", {"action":"export", "output_name":"binary"})
     assert (workspace / exported["path"]).read_bytes() == b"observed fixture\n"

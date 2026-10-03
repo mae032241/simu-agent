@@ -31,7 +31,7 @@ TABLES = {
     "runs": ("runs", "run_activity", "run_tool_evidence", "run_activity_sequence", "worker_connections", "worker_participants"),
     "approvals": ("approval_requests", "approval_decisions", "used_nonces", "decision_attempts"),
     "executions": ("executions", "execution_policy_authorizations", "execution_current_policy",
-                   "execution_budget_pools", "execution_budget_reservations", "execution_prepared_submissions", "execution_budget_estimates", "execution_observation_retries"),
+                   "execution_budget_pools", "execution_budget_reservations", "execution_prepared_submissions", "execution_budget_estimates", "execution_observation_retries", "execution_budget_extensions"),
     "artifacts": ("artifact_envelopes", "artifact_links", "idempotency_records", "artifact_events"),
     "dispatch": ("active_transport",),
     "views": ("metadata", "nodes", "events", "preferences", "display_summaries"),
@@ -45,7 +45,7 @@ CONTROL_PAYLOADS = {
 # Budget keys identify scientific subjects across instances. The active ledger
 # remains authoritative even while its execution is archived; snapshots retain
 # exact copies for inspection and conflict-checked restoration.
-RETAINED_EXECUTION_TABLES = frozenset({"execution_budget_pools", "execution_budget_reservations", "execution_budget_estimates"})
+RETAINED_EXECUTION_TABLES = frozenset({"execution_budget_pools", "execution_budget_reservations", "execution_budget_estimates", "execution_budget_extensions"})
 
 MAX_RECORD_BYTES = 16 * 1024 * 1024
 MAX_CONTROL_PAYLOAD_BYTES = 16 * 1024 * 1024
@@ -426,6 +426,12 @@ class Records:
                     continue
                 result[database]["tables"][table] = self._materialize_ids(database, table, column, ids)
         execution_tables = result.get("executions", {}).get("tables", {})
+        extension_owners = {(row['executor'], row['budget_key']) for row in execution_tables.get('execution_budget_extensions', [])}
+        extension_owners.update((row['executor'], row['budget_key']) for row in execution_tables.get('execution_budget_reservations', []))
+        if 'execution_budget_extensions' in execution_tables:
+            execution_tables['execution_budget_extensions'] = [row for executor, budget_key in sorted(extension_owners)
+                for row in self._materialize('executions', 'execution_budget_extensions',
+                    where='executor=? AND budget_key=?', parameters=(executor, budget_key))]
         for executor, budget_key in sorted({(row["executor"], row["budget_key"])
                 for row in execution_tables.get("execution_budget_reservations", [])}):
             pools = self._materialize("executions", "execution_budget_pools",

@@ -248,6 +248,7 @@ class HumanDecision(SchemaModel):
     decided_at: UtcRfc3339
     ui_receipt: Sha256
     previous_decision_ref: ArtifactRef | None = None
+    additional_wall_time_seconds: Annotated[int, Field(ge=0, le=2**53-1)] = 0
 
     @model_validator(mode="after")
     def _validate_subject_hash(self) -> HumanDecision:

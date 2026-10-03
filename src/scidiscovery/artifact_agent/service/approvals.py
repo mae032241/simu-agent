@@ -643,8 +643,11 @@ class ApprovalService:
         rationale: str,
         decided_by: LocalIdentityRef,
         ui_session_id: str,
+        additional_wall_time_seconds: int = 0,
         now: datetime | None = None,
     ) -> ArtifactRef:
+        if type(additional_wall_time_seconds) is not int or not 0 <= additional_wall_time_seconds <= 2**53-1:
+            raise ApprovalAccessDenied("budget extension must be a nonnegative integer number of seconds")
         submitted_at = _now(now)
         prepared = self._prepare_decision_attempt(
             approval_id=approval_id,
@@ -656,6 +659,7 @@ class ApprovalService:
             decided_by=decided_by,
             ui_session_id=ui_session_id,
             submitted_at=submitted_at,
+            additional_wall_time_seconds=additional_wall_time_seconds,
         )
         decision_time = _parse_time(prepared.decided_at)
         connection = self._connect()
@@ -678,6 +682,7 @@ class ApprovalService:
                     existing.selected_option == selected_option
                     and existing.rationale == rationale
                     and existing.decided_by == decided_by
+                    and existing.additional_wall_time_seconds == additional_wall_time_seconds
                 ):
                     connection.execute("ROLLBACK")
                     return existing_ref
@@ -704,6 +709,7 @@ class ApprovalService:
                     "nonce_hash": request.nonce_hash,
                     "csrf_hash": row["csrf_token_hash"],
                     "ui_session_id": prepared.ui_session_id,
+                    **({"additional_wall_time_seconds": additional_wall_time_seconds} if additional_wall_time_seconds else {}),
                 }
             )
             receipt = hmac.new(
@@ -719,6 +725,7 @@ class ApprovalService:
                 decided_by=decided_by,
                 decided_at=prepared.decided_at,
                 ui_receipt=receipt,
+                additional_wall_time_seconds=additional_wall_time_seconds,
             )
             decision_envelope = self.artifacts.register(
                 decision.canonical_json(),
@@ -799,6 +806,7 @@ class ApprovalService:
         decided_by: LocalIdentityRef,
         ui_session_id: str,
         submitted_at: datetime,
+        additional_wall_time_seconds: int = 0,
     ) -> _PreparedDecision:
         binding = canonical_json(
             {
@@ -806,6 +814,7 @@ class ApprovalService:
                 "selected_option": selected_option,
                 "rationale": rationale,
                 "decided_by": decided_by,
+                **({"additional_wall_time_seconds": additional_wall_time_seconds} if additional_wall_time_seconds else {}),
             }
         )
         binding_hash = hashlib.sha256(binding).hexdigest()
@@ -836,6 +845,11 @@ class ApprovalService:
             request_ref = _parse_ref(row["request_ref_json"], row["request_ref_sha256"])
             request = self._load_request(request_ref)
             option = _decision_option(request, selected_option)
+            if additional_wall_time_seconds:
+                from types import SimpleNamespace
+                from ..schema.approval import execution_decision_authorizes
+                if not execution_decision_authorizes(request, SimpleNamespace(selected_option=selected_option)):
+                    raise ApprovalAccessDenied("Only an execution authorization may extend its cumulative time budget")
             if option is None:
                 raise ApprovalAccessDenied("selected option is not registered")
             if option.requires_rationale and not rationale.strip():

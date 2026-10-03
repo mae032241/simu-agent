@@ -28,6 +28,48 @@ class ExperimentExecution:
     def task_origin(self, run):
         return self.task_lineage(run)[-1].run_id
 
+    def publish_diagnostic_files(self, context, *, implementation, name, workspace, outputs):
+        """Deliver verified control-owned diagnostic files through common streamed publication."""
+        import time
+        from pathlib import Path
+        from ...attachment_tools import AttachmentFile, PublishFiles
+        from ...agent_execution_settings import AttachmentSettings
+        from ...plugin_runtime.workspace import write_control_workspace_stream
+        settings = AttachmentSettings.model_validate((self.runs.status(context.run_id).recovery_policy or {}).get('attachments', {}))
+        deadline = time.monotonic() + context.remaining_seconds
+        files, delivered = [], []
+        for item in outputs:
+            if 'relative_path' not in item:
+                continue
+            source = Path(workspace) / item['relative_path']
+            if source.is_symlink() or not source.resolve().is_relative_to(Path(workspace).resolve()):
+                raise ValueError('Diagnostic output is outside its controlled workspace')
+            filename = Path(item.get('source_path') or item['name']).name
+            target = Path('scratch/debug') / name / item['name'] / filename
+            digest, size = hashlib.sha256(), 0
+            def chunks():
+                nonlocal size
+                with source.open('rb') as stream:
+                    for chunk in iter(lambda: stream.read(settings.chunk_bytes), b''):
+                        size += len(chunk)
+                        if size > min(settings.max_item_bytes, item['size_bytes']) or time.monotonic() >= deadline:
+                            raise ValueError('Diagnostic output exceeded its delivery budget')
+                        digest.update(chunk)
+                        yield chunk
+                if size != item['size_bytes'] or digest.hexdigest() != item['sha256']:
+                    raise ValueError('Diagnostic output differs from its controlled identity')
+            write_control_workspace_stream(context.workspace, target, chunks())
+            source_name = item.get('source_path') or item['name']
+            caption = source_name if len(source_name) <= 512 else source_name[:511] + '…'
+            files.append(AttachmentFile(path=target.as_posix(), purpose=f'Native diagnostic output {caption} ({item["name"]}); requires scientific assessment, not a formal execution result.'))
+            delivered.append({'name': item['name'], 'file_name': source_name, 'path': target.as_posix(),
+                'size_bytes': size, 'sha256': item['sha256']})
+        if files:
+            published = context.publish_files(PublishFiles(files=tuple(files), source_aliases=(implementation,)))
+            for item, retained in zip(delivered, published['files'], strict=True):
+                item['reference'] = retained['reference']
+        return delivered
+
     def task_lineage(self, run):
         return self.runs.task_lineage(run.run_id)
 
@@ -58,6 +100,20 @@ class ExperimentExecution:
                 continue
             self._reconcile_authorization(binding.object_id)
             status = self.executions.status(binding.object_id)
+            if status.state == 'collected' and run.accepted_candidate_digest is None:
+                # Background collection can finish without another Worker call.
+                # Reconcile its receipt before the finalizer snapshots materials.
+                from types import SimpleNamespace
+                try:
+                    implementation = self._run_implementation_record(run, self.executions.request(binding.object_id).payload_ref)
+                except DiagnosticError:
+                    implementation = None  # A blocked report may legitimately lack this bound material.
+                if implementation is not None:
+                    context = SimpleNamespace(run_id=run.run_id, accept_evidence=lambda **values:
+                        self.runs.accept_tool_evidence(run.run_id, tool_name='worker_experiment_execute',
+                            allowed_ports=('tool_evidence', 'recovery_manifest_output'), **values))
+                    name = binding.name.removeprefix('experiment-' + origin + '-')
+                    self._execution_status(context, SimpleNamespace(name=name), binding.object_id, implementation, seal=True)
             if status.external_run_id is not None and status.state in {"submitted", "running", "cancelling"}:
                 # Final delivery must not depend on the next background observation.
                 self.bridge.sync(execution_id=binding.object_id, diagnostic_scope="instance:" + run.instance_id)
@@ -89,7 +145,13 @@ class ExperimentExecution:
         from ..schema.refs import ArtifactRef
         from .sealed_materials import material_error
         material = ArtifactRef.model_validate(record["artifact_ref"])
-        packages = [ref for ref in self.executions.artifacts.verify(material).parent_refs
+        parents = self.executions.artifacts.verify(material).parent_refs
+        if 'control_parents' in record:
+            direct = tuple(ArtifactRef.model_validate(ref) for ref in record['control_parents'])
+            if any(ref not in parents for ref in direct):
+                raise material_error('experiment_implementation_package_invalid', 'Controlled package is not an exact implementation parent.')
+            parents = direct
+        packages = [ref for ref in parents
             if self.executions.artifacts.verify(ref).kind == "experiment_execution_package"]
         if len(packages) != 1:
             raise material_error("experiment_implementation_package_invalid",
@@ -306,7 +368,7 @@ class ExperimentExecution:
                     implementation = self._implementation_record(context, self.executions.request(execution_id).payload_ref)
                 except DiagnosticError:
                     pass  # State remains readable even when scientific originals need rebinding.
-            return self._execution_status(context, request, execution_id, implementation, seal=False)
+            return self._execution_status(context, request, execution_id, implementation, seal=request.action == 'status')
         if request.action in {"capabilities", "review", "start", "advance"}:
             run, effect, identity, _ = self._contract(context)
             plan = effect_operation_plan(effect)
@@ -367,13 +429,21 @@ class ExperimentExecution:
         implementation = self._implementation_record(context, current.payload_ref)
         private_outputs = implementation["metadata"].get("private_outputs", ())
         if request.action in {"read", "export"}:
+            if self.executions.status(execution_id).state != 'collected':
+                raise ToolInputError('experiment_collection_pending',
+                    'Outputs are not collected yet. Read status for this same execution and wait for collection state completed; do not repeat the solver.', path='$.action')
             outputs = [item for item in self.executions.outputs(execution_id) if item.logical_name not in private_outputs]
-            item = next((item for item in outputs if item.logical_name == request.output_name), None)
-            if item is None:
-                raise ToolInputError("experiment_output_unknown", "Select one collected output by its scientific name.", path="$.output_name")
+            names, _ = self._output_file_names(context, execution_id, implementation['metadata'].get('output_inventory_name'))
+            matches = [item for item in outputs if request.output_name is not None
+                and request.output_name in {item.logical_name, names.get(item.logical_name)}]
+            if len(matches) != 1:
+                raise ToolInputError("experiment_output_unknown", "Select an exact name or file_name returned by status for this collected execution."
+                    + ' Available examples: ' + repr([names.get(item.logical_name, item.logical_name) for item in outputs[:6]])
+                    + (f' ({len(outputs)-6} more; read status).' if len(outputs)>6 else '.'), path="$.output_name")
+            item = matches[0]
             envelope = self.executions.artifacts.get_by_id(item.artifact_id)
             if request.action == "export":
-                return self._export(context, request, envelope)
+                return self._export(context, request.model_copy(update={'output_name': item.logical_name}), envelope)
             if not (item.media_type.startswith("text/") or item.media_type == "application/json"):
                 return {"name": item.logical_name, "media_type": item.media_type, "size_bytes": item.size_bytes,
                     "availability": "retained_binary", "instruction": "Use export to obtain the exact file for local domain analysis."}
@@ -448,6 +518,16 @@ class ExperimentExecution:
                     metadata={"kind": "experiment_execution", "name": request.name, "implementation": implementation["alias"]})
                 result["reference"] = record["alias"]
                 result["artifact_name"] = record["artifact_name"]
+        elif status.state in {'succeeded', 'failed', 'cancelled'}:
+            summary = getattr(self.collection, 'summary', None)
+            collection = summary(execution_id) if callable(summary) else {}
+            from .engineering_diagnostics import diagnostic_locator
+            result['collection'] = {'state': collection.get('state', 'unknown')}
+            if diagnostic := diagnostic_locator(collection.get('error')):
+                result['collection']['diagnostic'] = diagnostic
+            result['outputs_status'] = 'not_collected'
+            result['next_action'] = {'tool': 'worker_experiment_execute', 'arguments': {'action': 'status', 'name': request.name}}
+            result['instruction'] = 'Solver termination is not collection completion. After collect is accepted, poll status until state=collected; then use its reference and exact output names. Never resubmit the solver to recover collection.'
         return result
 
     def _output_file_names(self, context, execution_id, inventory_name):
@@ -581,7 +661,12 @@ class ExperimentExecution:
         state = self._authorization_state(approval)
         self._reconcile_authorization(execution_id, approval)
         authorization = self.executions.authorization(execution_id)
+        from datetime import datetime, timezone
+        current = self.runs.status(run.run_id)
+        remaining = max(0, int((datetime.fromisoformat(current.deadline_at.replace('Z', '+00:00')) - datetime.now(timezone.utc)).total_seconds()))
         result = {"name": name, "state": state,
+            "task_budget": {"deadline_at": current.deadline_at, "remaining_seconds": remaining,
+                "instruction": "Use this current task budget or worker_heartbeat, not the assignment's initial deadline, while awaiting approval."},
             "execution_state": self.executions.status(execution_id).state, "authorization": {"status": approval.status,
             **{key: authorization[key] for key in ("reason", "budget", "allowance", "per_execution_allowance", "budget_usage", "accounting") if key in authorization}}}
         bound = self.runs.scheduler_bindings.find_name(instance=run.instance_id, namespace="approval", object_id="apr_" + execution_id)
@@ -699,6 +784,11 @@ class _TaskExperimentTools:
         private = service.exchange_root / "experiment-workspaces" / self.__coordinator.task_origin(run)
         private.mkdir(parents=True, exist_ok=True, mode=0o700)
         return replace(context, workspace=private, output_directory=private / "output")
+
+    def publish_diagnostic_files(self, context, *, implementation, name, workspace, outputs):
+        self.__scope(context)
+        return self.__coordinator.publish_diagnostic_files(context, implementation=implementation,
+            name=name, workspace=workspace, outputs=outputs)
 
     def cancel_diagnostics(self, context, *, service_name, name):
         run = self.__scope(context)

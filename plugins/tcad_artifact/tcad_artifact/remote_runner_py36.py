@@ -872,7 +872,7 @@ def _collect_expected(root, expected, limits, records=None, errors=None, *, arch
             if "total output" in str(failure):
                 failures[-1] += "; %d later outputs not inspected" % (len(expected)-index-1)
                 break
-    if collect_generated_outputs and not failures:
+    if collect_generated_outputs:
         try:
             _collect_generated(root, archive_entries, expected, limits, records)
         except (OSError, RuntimeError, ValueError) as failure:

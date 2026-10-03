@@ -344,6 +344,20 @@ are mapped only at the transport boundary, preserving the original, review subje
 authorization. Collection alone does not establish scientific success; analysis must
 still report missing target observations.
 
+Execution receipts distinguish direct control parents from inherited scientific
+inputs in the private evidence manifest. Result lookup uses that exact link; older
+receipts may exclude inputs proven by their original frozen manifest, but ambiguity
+is never resolved by recency. Asynchronous collection is explicitly reported as
+pending delivery. Subsequent task status and pre-finalization reconciliation create
+the same idempotent execution receipt, including cancelled or failed executions.
+Read/export accept exact output identifiers or verified solver-relative filenames.
+Finalization identifies missing chain edges and lists bounded available aliases,
+without selecting scientific validity on the Worker's behalf.
+Initialization diagnostics automatically publish their verified native files through
+streamed attachments; no output path declarations are needed. These remain diagnostic
+materials, not formal execution receipts. A missing expected output does not prevent
+retention of other generated files; collection errors and terminal failure remain explicit.
+
 `LayeredDiagnosisReport` concentrates conclusions in `summary` and `overall_verdict`,
 with evidence and optional `limitations`. Its complete legacy `gates` object,
 remaining contradiction, next action and hypothesis assessments are optional. For
@@ -407,6 +421,12 @@ Terminal jobs awaiting accounting remain in bounded background synchronization, 
 collected jobs. Preparation failure before a saved submission releases its reservation;
 an uncertain submission retains it. Repeated settlement never refunds recorded usage.
 A current policy increase changes the ceiling without resetting historical consumption.
+Execution approval pages can optionally append a human-chosen cumulative wall-time
+extension when authorizing the exact request. The signed decision binds the increment;
+an idempotent durable ledger applies it to this executor/scientific-subject pool across
+revisions and restarts. Per-request thresholds, storage limits and usage are unchanged.
+Reject/cancel decisions cannot extend budgets. Archive/restore retains these grants,
+and interrupted projection is repaired by an identical UI retry or execution authorization.
 Approval UI separates the requested increment, per-request threshold, cumulative balance
 and overage; a negative balance is never presented as this request's available time.
 The install transaction fills a missing cumulative threshold from the bundled config
@@ -516,6 +536,9 @@ or expiry; simultaneous waits count once. Total credit is capped by the Run's fr
 including historical pending approvals without expiry. The original deadline stays unchanged, and
 repeated reads or daemon restarts cannot accumulate extra work time. Worker calls,
 Root status and timeout reconciliation use the same projection. An approval created
+while work is active returns the current deadline and remaining task time in
+`task_budget`; the initial assignment deadline must not be reused as a live clock.
+An approval created
 after expiry cannot revive a task. Existing failed tasks remain failed and can only
 use explicit recovery of their original execution as described above.
 Batch status reads load wait events and approval records once per batch. Both Worker

@@ -375,7 +375,8 @@ class ReferenceAccessMixin:
     def _reference_edges(self, value, source_ref, policy, call, pointer=None, reference=None, root_ref=None):
         producer, manifest, selected, manifest_ref = self._reference_pair(value, source_ref, policy, call, root_ref)
         if selected and selected.get('metadata', {}).get('kind') == 'experiment_execution':
-            return self._execution_output_edges(value, source_ref, policy, call, producer, manifest_ref, pointer, reference), []
+            return self._execution_output_edges(value, source_ref, policy, call, producer, manifest_ref, pointer, reference,
+                selected=selected, manifest=manifest), []
         rules = [rule for rule in policy.rules if rule.schema_id == source_ref.schema_id]
         aliases = []
         sections = []
@@ -522,11 +523,22 @@ class ReferenceAccessMixin:
                           '_proof_manifest': original_proof[1] if original_proof else None})
         return edges, sections
 
-    def _execution_output_edges(self, value, source_ref, policy, call, producer, proof_ref, pointer, reference):
+    def _execution_output_edges(self, value, source_ref, policy, call, producer, proof_ref, pointer, reference, *, selected, manifest):
         """Join a sealed public receipt to its exact control manifest, not to IDs supplied by a caller."""
         from ..schema.execution import ExecutionResultManifest
         parents = [ref for ref in self.artifacts.catalog(source_ref).parent_refs
                    if ref.schema_id == 'scidiscovery.execution-result']
+        if 'control_parents' in selected:
+            direct = [_ref(ref) for ref in selected['control_parents'] if ref['schema_id'] == 'scidiscovery.execution-result']
+            if any(ref not in parents for ref in direct):
+                raise ReferenceAccessError('reference_execution_unpaired', 'Execution result is not an exact receipt parent.')
+            parents = direct
+        elif len(parents) > 1:
+            # Historical receipts included every frozen input as a parent. The
+            # original sealed proof distinguishes those inputs from this result;
+            # never choose by recency, schema alone or a Worker supplied name.
+            inputs = {_ref(item['artifact_ref']) for item in manifest.get('bindings', {}).values()}
+            parents = [ref for ref in parents if ref not in inputs]
         if len(parents) != 1:
             raise ReferenceAccessError('reference_execution_unpaired', 'Execution receipt has no unique sealed result manifest.')
         result = ExecutionResultManifest.model_validate_json(self._reference_read_bytes(value, parents[0], policy, call))
