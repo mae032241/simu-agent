@@ -220,7 +220,12 @@ def _real_experiment(tmp_path, monkeypatch, solver="sprocess", before_submit=Non
     worker = LocalWorkerMCPRouter(runtime.runs, operation_id=compiled.spec.operation_id,
         operation_digest=compiled.digest, tool_services=services, run_id=author_id)
     worker.call_tool("worker_open_assignment", {})
-    assert worker.call_tool("worker_experiment_debug", request) == first_debug
+    reopened_debug = worker.call_tool("worker_experiment_debug", request)
+    assert {k: v for k, v in reopened_debug.items() if k != 'budget'} == {
+        k: v for k, v in first_debug.items() if k != 'budget'}
+    assert {k: v for k, v in reopened_debug['budget'].items() if k != 'run_remaining_seconds'} == {
+        k: v for k, v in first_debug['budget'].items() if k != 'run_remaining_seconds'}
+    assert reopened_debug['budget']['run_remaining_seconds'] <= first_debug['budget']['run_remaining_seconds']
     assert worker.call_tool("worker_experiment_debug", {"action":"cancel", "name":"diagnostic"})["state"] == "inactive"
     assert debugger.submits == 1
     ledger = next((tmp_path / "debug/budgets").glob("*.json"))

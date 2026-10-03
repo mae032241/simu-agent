@@ -618,6 +618,8 @@ class ExperimentExecution:
         state = self.executions.status(execution_id)
         if state.external_run_id is not None:
             return  # Already submitted: recovery must not create another solver.
+        if not self.runs.task_recovery_available(owner, instance_id=instance_id, for_start=True):
+            raise ExecutionServiceError("A completed limited task permits result recovery only; a new execution requires a new scientific task.")
         if state.state not in {"created", "authorized"}:
             raise ExecutionServiceError("This execution cannot be started; inspect its terminal state")
         _, effect, identity, _ = self._contract_for_run(run)
@@ -666,7 +668,10 @@ class ExperimentExecution:
         if state.state in {"created", "authorized"} and state.external_run_id is None:
             actions.append("execution_abandon")
             approval = self._approval_status(execution_id)
-            if approval is None or (approval.status == "decided" and self._authorization_state(approval) == "created"):
+            owner = self._execution_owner(execution_id)
+            run = self.runs.status(owner) if owner is not None else None
+            if (run is not None and self.runs.task_recovery_available(owner, instance_id=run.instance_id, for_start=True)
+                    and (approval is None or (approval.status == "decided" and self._authorization_state(approval) == "created"))):
                 actions.append("execution_start")
         elif state.state in {"submitted", "running", "cancelling"}:
             actions.append("execution_cancel")

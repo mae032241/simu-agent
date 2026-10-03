@@ -1,5 +1,7 @@
 """Upgrade, failed collection, proof admission and error settlement boundaries."""
 import json
+import sqlite3
+from pathlib import Path
 import pytest
 
 from scidiscovery.artifact_agent.schema.common import canonical_json
@@ -85,7 +87,7 @@ def legacy_schema(resource):
     return json.dumps(schema, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
 
 
-@pytest.mark.parametrize('recover', [False, True])
+@pytest.mark.parametrize('recover', [None, 'draft_from', 'resume_from'])
 def test_old_task_reopens_or_recovers_under_exact_supported_contract(tmp_path, monkeypatch, recover):
     from tests.operations.test_analysis_claim_scope import generic_worker, submit
     from tests.operations.test_result_analysis_tool import limited_report
@@ -100,6 +102,8 @@ def test_old_task_reopens_or_recovers_under_exact_supported_contract(tmp_path, m
     old_catalog, runtime, root, *_ = system
     runs = runtime.runs
     owner = runs.status(worker._run_id)
+    golden = json.loads((Path(__file__).parents[1] / 'fixtures/operation_digests_964713f.json').read_bytes())
+    assert owner.operation_digest == golden['operation_digests'][owner.operation_id]
     assert owner.operation_digest != current.operation(owner.operation_id).digest
     historical = current.operation(owner.operation_id, digest=owner.operation_digest)
     assert historical.output_contracts == old_catalog.operation(owner.operation_id).output_contracts
@@ -112,7 +116,7 @@ def test_old_task_reopens_or_recovers_under_exact_supported_contract(tmp_path, m
     if recover:
         runs.record_failure(owner.run_id, reason='Interrupted before upgrade', expected_state=owner.state,
             expected_last_activity_at=owner.last_activity_at)
-        made = root.call_tool('operation_invoke', dict(name='upgraded_recovery', draft_from='generic_analysis', max_attempts=2,
+        made = root.call_tool('operation_invoke', dict(name='upgraded_recovery', **{recover: 'generic_analysis'}, max_attempts=2,
             operation_id=owner.operation_id, instruction='Continue exact interrupted task.', inputs=[
                 dict(port='experiment_plan', artifact_names=['plan']),
                 dict(port='experiment_results', artifact_names=['generic_results']), dict(port='curve_bundle', artifact_names=['generic_bundle'])]))
@@ -132,6 +136,21 @@ def test_old_task_reopens_or_recovers_under_exact_supported_contract(tmp_path, m
                 runs._prepare_evidence_snapshot(owner.run_id)
             assert caught.value.details[0]['code'] == 'reference_proof_contract_limit'
     assert submit(following, opened, limited_report())['state'] == 'completed'
+    name = 'upgraded_recovery' if recover else 'generic_analysis'
+    status = root.call_tool('run_status', dict(name=name))
+    assert status['operation_contract_status'] == 'current'
+    assert status['sealed_output_status'] == 'available'
+    downstream = root.call_tool('operation_invoke', dict(name='downstream_analysis', max_attempts=2,
+        operation_id=owner.operation_id, instruction='Use the exact sealed prior analysis.', inputs=[
+            dict(port='experiment_plan', artifact_names=['plan']),
+            dict(port='experiment_results', artifact_names=['generic_results']),
+            dict(port='curve_bundle', artifact_names=['generic_bundle']),
+            dict(port='prior_analysis', artifact_names=[name + '.output'])]))
+    assert downstream['result']['state'] == 'queued', downstream
+    consumer = LocalWorkerMCPRouter(runs, operation_id=owner.operation_id,
+        operation_digest=current.operation(owner.operation_id).digest)
+    assignment = consumer.call_tool('worker_open_assignment', {})
+    assert submit(consumer, assignment, limited_report())['state'] == 'completed'
 
 
 def test_attachment_streaming_does_not_hold_run_write_lock(tmp_path, monkeypatch):
@@ -247,3 +266,72 @@ def test_explicit_adopt_checks_combined_proof_before_commit(tmp_path, monkeypatc
     with monkeypatch.context() as patch:
         patch.setattr(reference_proofs, 'MAX_SNAPSHOT_BYTES', 1)
         assert runs.adopt_bound_tool_evidence(rid, allowed_ports=('tool_evidence',), manifest_alias='preserved') == saved
+
+
+@pytest.mark.parametrize('error', [sqlite3.OperationalError('database is locked'),
+    TimeoutError('control observation timed out')])
+def test_transient_reconciliation_rejects_without_failing_owner(tmp_path, monkeypatch, error):
+    from tests.operations.test_experiment_approval_handoff import experiment
+    from tests.operations.test_experiment_continuation import submit
+    f = experiment(tmp_path, monkeypatch, seconds=60)
+    def unavailable(_):
+        raise error
+    with monkeypatch.context() as patch:
+        patch.setattr(f.coordinator, 'require_idle', unavailable)
+        reply = submit(f, [f.alias], outcome='inconclusive')
+    assert reply['state'] == 'rejected' and 'execution_reconciliation_unavailable' in str(reply)
+    assert f.runs.status(f.run_id).state == 'running'
+    assert f.worker.call_tool('worker_submit_result', {})['state'] == 'completed'
+    assert f.adapter.submits == 0
+
+
+@pytest.mark.parametrize('error', [ValueError('ambiguous control mapping'), OSError('CAS unavailable')])
+def test_unclassified_reconciliation_error_preserves_task_and_diagnostics(tmp_path, monkeypatch, error):
+    from tests.operations.test_experiment_approval_handoff import experiment
+    from tests.operations.test_experiment_continuation import submit
+    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import WorkerToolError
+    f = experiment(tmp_path, monkeypatch, seconds=60)
+    def unavailable(_):
+        raise error
+    with monkeypatch.context() as patch:
+        patch.setattr(f.coordinator, 'require_idle', unavailable)
+        with pytest.raises(WorkerToolError) as caught:
+            submit(f, [f.alias], outcome='inconclusive')
+    assert caught.value.engineering['reference']
+    assert f.runs.status(f.run_id).state == 'running'
+    assert f.worker.call_tool('worker_submit_result', {})['state'] == 'completed'
+
+
+def test_limited_completed_owner_cannot_start_legacy_unsubmitted_request(tmp_path, monkeypatch):
+    from tests.operations.test_experiment_approval_handoff import experiment, start
+    from tests.operations.test_experiment_continuation import submit
+    from scidiscovery.artifact_agent.service.executions import ExecutionServiceError
+    f = experiment(tmp_path, monkeypatch, seconds=5400)
+    assert start(f)['state'] == 'awaiting_authorization'
+    # Represent a legacy/control-inconsistent closed owner. Current delivery
+    # admission normally prevents closing with an unsubmitted request.
+    with monkeypatch.context() as patch:
+        patch.setattr(f.coordinator, 'require_idle', lambda _: ())
+        assert submit(f, [f.alias], outcome='blocked')['state'] == 'completed'
+    binding = next(b for b in f.runtime.scheduler_bindings.list(instance=f.instance.instance_id,
+        namespace='execution') if b.name.startswith('experiment-' + f.run_id + '-'))
+    assert f.runs.task_recovery_available(f.run_id, instance_id=f.instance.instance_id)
+    assert not f.runs.task_recovery_available(f.run_id, instance_id=f.instance.instance_id, for_start=True)
+    # Even auto-authorization eligibility must not add start to the menu.
+    monkeypatch.setattr(f.coordinator, '_approval_status', lambda _: None)
+    assert 'execution_start' not in f.coordinator.recovery_actions(binding.object_id)
+    f.root.facade.execution_bridge = f.coordinator.bridge
+    with pytest.raises(ExecutionServiceError, match='result recovery only'):
+        f.root.call_tool('execution_start', {'name': binding.name}, surface='execution')
+    assert f.adapter.submits == 0
+
+
+def test_real_964713f_operation_identities_remain_resolvable():
+    # Generated once by importing the actual archived commit, not by modifying
+    # current schema definitions. The fixture needs neither git nor old code in CI.
+    from tests.operations.test_tcad_result_analysis import CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN
+    from scidiscovery.operations.catalog import compile_catalog
+    golden = json.loads((Path(__file__).parents[1] / 'fixtures/operation_digests_964713f.json').read_bytes())
+    catalog = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN))
+    for operation_id, digest in golden['operation_digests'].items():
+        assert catalog.operation(operation_id, digest=digest).digest == digest

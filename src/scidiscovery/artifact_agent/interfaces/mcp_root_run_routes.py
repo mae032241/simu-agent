@@ -191,7 +191,7 @@ class RootRunRoutes:
         include_payload = intent in {"navigation", "decision", "full"}
         output_status, output = self._sealed_output(value, include_payload=include_payload)
         try:
-            compiled = self._operation_catalog.operation(value.operation_id)
+            compiled = self._operation_catalog.operation(value.operation_id, digest=value.operation_digest)
         except KeyError:
             contract_status = "historical"
         else:
@@ -320,7 +320,7 @@ class RootRunRoutes:
             "output_index", "default_output_unavailable", "evidence_outputs", "bound_inputs", "content_unavailable", "dispatch"}
         result = {key:item for key,item in result.items() if key in allowed}
         try:
-            ports = self._operation_catalog.operation(value.operation_id).spec.inputs
+            ports = self._operation_catalog.operation(value.operation_id, digest=value.operation_digest).spec.inputs
             visible = {port.name for port in ports if port.agent_visible and port.derivation is None}
         except KeyError:
             visible = set()
@@ -401,7 +401,7 @@ class RootRunRoutes:
             return "unavailable", None
         output_status = "available"
         try:
-            compiled = self._operation_catalog.operation(value.operation_id)
+            compiled = self._operation_catalog.operation(value.operation_id, digest=value.operation_digest)
         except KeyError:
             output_status = "historical"
         else:

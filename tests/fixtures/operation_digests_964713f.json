@@ -1,0 +1,27 @@
+{
+  "operation_digests": {
+    "science.evidence.audit.intake.v1": "52b1a1f6f050fa0379269e794ef55c90fe922bf702c8acd352d48d60b35b88e2",
+    "science.evidence.audit.v1": "ab46cf6a03197be72a3bf3a1dce09af83e254b5a82ccacc34f73be1e9c47931f",
+    "science.evidence.extract.v1": "77b90c1f1718eb2898b565d32653f4cc9b2f9a6522db36372085ed0a17d35c40",
+    "science.evidence.qualify.v1": "843f684652bff9ea6d48d418bcae76452be0648dc4e295659281d852902bb42e",
+    "science.experiment.v1": "9a5c7a5553677ca8f8d9ae05502cd112b15360f4e1adc93b074de7d009214c8d",
+    "science.hypothesis.criticize.v1": "7cc021b92e35de62270fa3881a5061604227fc04f31d440859704c5e31d91df0",
+    "science.hypothesis.propose.v1": "edcebcc10b9c529ac4141d32d4165b99c74113696dcd16832159d3b59cd4d1a0",
+    "science.intake.split.v1": "92ea61b1c5b2b3aa7017577b70b304273d217e4b44458dced94a8fd83c110e29",
+    "science.object.review.v1": "9c4c301c7bc95b2a1ec5cda6545bd7a3c1b514e921d8c03b15d9dc8eefd12233",
+    "science.objective.project.v1": "219ef392406bc3c7f0e140d115a924618ccef43050b06e487cbb9798297a2431",
+    "science.result.diagnose.v1": "3a5a53a16970375206a01943e256a9697bcac389ff0f008bc54c56bc92df2916",
+    "tcad.execution-context.project.v1": "3b5b636514618559930f6d3fc90f42306cca396ec2af7fce4ce4f071f1b63ba9",
+    "tcad.experiment.execute.internal": "a2baeb8319c5c2a5b5f14af2adc9a80141577be0cecd37dcc8a4a5ccba6fa381",
+    "tcad.parameter.evidence.extract.v1": "96295a2eb9351a8ff2532543c7ccf3785e0a1258687c2c2c1488dd8cb8d91b30",
+    "tcad.result.analyze.v1": "0e429465f1975cf3586ad8ac6d0e724bc3a26d70db35eabcc9e3b2a133d124a3",
+    "tcad.runtime-attestation.v1": "311bdf2325000bf6fa2f708eb89b3338965b17886805cf3634dec27e68e70c54"
+  },
+  "plugins": [
+    "builtin",
+    "general_science",
+    "curve_score",
+    "tcad_artifact"
+  ],
+  "source_commit": "964713fea3b126970049d145979d4610b903d670"
+}

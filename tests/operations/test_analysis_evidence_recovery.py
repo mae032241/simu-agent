@@ -553,3 +553,30 @@ def test_missing_execution_binding_reports_exact_repair_without_discovery():
     assert result['reason']=='execution_result_not_bound'
     assert result['message']=='tool requested an undeclared Run input'
     assert 'result_artifact_name' in result['repair'] and 'Frozen inputs' in result['repair']
+
+
+@pytest.mark.parametrize('tool', ['worker_tcad_inspect_outputs', 'worker_tcad_accept_output'])
+@pytest.mark.parametrize('code', ['reference_proof_limit', 'reference_proof_contract_limit', 'reference_proof_incomplete'])
+def test_evidence_admission_limits_keep_declared_tcad_status(tmp_path, monkeypatch, tool, code):
+    from scidiscovery.artifact_agent.service.reference_proofs import proof_error
+    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import WorkerToolError
+    system, worker, _, _ = recovery_system(tmp_path)
+    arguments = {'relative_path': 'A_actual.plx'}
+    if tool == 'worker_tcad_accept_output':
+        inspected = worker.call_tool('worker_tcad_inspect_outputs', arguments)
+        arguments = dict(evidence_alias=inspected['evidence_alias'], output_name='A',
+            rationale='Exact mapping', evidence_aliases=[inspected['evidence_alias']])
+    runs = system[1].runs
+    before = runs.tool_evidence(worker._run_id)
+    def reject(*args, **kwargs):
+        raise proof_error(code, 'Fixture evidence admission failure.')
+    monkeypatch.setattr(runs, 'accept_tool_evidence', reject)
+    if code == 'reference_proof_incomplete':
+        with pytest.raises(WorkerToolError) as caught:
+            worker.call_tool(tool, arguments)
+        assert code in str(caught.value.details)
+    else:
+        reply = worker.call_tool(tool, arguments)
+        assert reply['status'] == 'limit_exceeded' and reply['reason'] == 'evidence_budget'
+    assert runs.tool_evidence(worker._run_id) == before
+    assert runs.status(worker._run_id).state == 'running'

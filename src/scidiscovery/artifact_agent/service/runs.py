@@ -956,8 +956,8 @@ class RunService(ToolEvidenceMixin):
             expected_last_activity_at=value.last_activity_at,
         )
 
-    def task_recovery_available(self, origin: str, *, instance_id: str) -> bool:
-        """Root may recover results after all owners failed or closed with limits."""
+    def task_recovery_available(self, origin: str, *, instance_id: str, for_start: bool = False) -> bool:
+        """Closed limited owners permit result recovery, but never a new start."""
         with self._connect() as connection:
             rows = connection.execute("""
                 WITH RECURSIVE family(run_id, state, output_ref_json) AS (
@@ -971,7 +971,7 @@ class RunService(ToolEvidenceMixin):
         for state, output in rows:
             if state == 'failed':
                 continue
-            if state != 'completed' or not output:
+            if for_start or state != 'completed' or not output:
                 return False
             ref = ArtifactRef.model_validate_json(output)
             if ref.schema_id != 'scidiscovery.experiment-report.v1':
@@ -1459,12 +1459,31 @@ class RunService(ToolEvidenceMixin):
         compiled = self._compiled(value)
         assert compiled.spec.limits is not None
         incomplete_collections = ()
-        try:
-            if final_submission and compiled.spec.executor.capability is not None:
-                coordinator = getattr(self, "experiment_executions", None)
-                if coordinator is None:
-                    raise RunCheckerError("The experiment execution service is unavailable.")
+        # Reconciliation observes external/control state; it is not a candidate
+        # checker. Undeclared failures propagate without terminating the Run.
+        if final_submission and compiled.spec.executor.capability is not None:
+            coordinator = getattr(self, "experiment_executions", None)
+            if coordinator is None:
+                raise RunOutputError("The experiment execution service is unavailable.", details=(
+                    contract_diagnostic("execution_reconciliation_unavailable", phase="protocol",
+                        affected_action="submit", repairable=True,
+                        message="Restore the execution reconciliation service, then resubmit the unchanged report."),))
+            try:
                 incomplete_collections = coordinator.require_idle(value)
+            except ReferenceProofError as error:
+                raise RunOutputError("The execution receipt proof cannot be sealed.", details=tuple(
+                    contract_diagnostic(item['code'], phase='protocol', affected_action='submit',
+                        repairable=item['repairable'], message=item['message']) for item in error.details)) from error
+            except (sqlite3.OperationalError, TimeoutError) as error:
+                if isinstance(error, sqlite3.OperationalError) and not (
+                    (getattr(error, 'sqlite_errorcode', 0) & 255) in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}
+                    or str(error) in {"database is locked", "database table is locked"}):
+                    raise
+                raise RunOutputError("Execution reconciliation is temporarily unavailable.", details=(
+                    contract_diagnostic("execution_reconciliation_unavailable", phase="protocol",
+                        affected_action="submit", repairable=True,
+                        message="Reconciliation could not finish. Preserve the report and retry submission after the control service recovers; do not rerun the solver."),)) from error
+        try:
             if value.accepted_candidate_digest is None:
                 self._finalize_workspace(compiled, value.run_id, final_submission=final_submission, trusted_tool_records=trusted_tool_records)
                 self._prepare_evidence_snapshot(value.run_id)

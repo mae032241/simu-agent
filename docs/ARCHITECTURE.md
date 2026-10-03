@@ -362,7 +362,9 @@ in that same submission attempt. Status observation never implicitly starts coll
 When every owner has failed or sealed a limited experiment conclusion, Root may
 recover the original execution's status/results. Later collection cannot rewrite
 the sealed report; new conclusions need a new delivery based on those results.
-Any queued or running owner still prevents takeover.
+Any queued or running owner still prevents takeover. Limited completed owners permit
+result recovery only; starting an unsubmitted request still requires an entirely failed
+owner lineage, the original review and execution authorization.
 Read/export accept exact output identifiers or verified solver-relative filenames.
 Finalization identifies missing chain edges and lists bounded available aliases,
 without selecting scientific validity on the Worker's behalf.
@@ -401,7 +403,10 @@ selected exact sources, not an opaque runtime error or a silently truncated proo
 Reference proof failures still settle the response/time reservation; an assignment
 proof failure terminates the Run while retaining originals. Explicit adoption and
 recovery copying validate the complete combined proof before committing. Final
-receipt reconciliation participates in the same diagnostic mapping. Attachment
+receipt reconciliation maps proof errors to declared rejections. Temporary database
+lock/timeout failures reject submission without failing the owner; other unexpected
+reconciliation errors retain engineering diagnostics and leave the Run active. They
+are not candidate-checker failures. Attachment
 streaming and Artifact registration finish before taking the Run write lock; the
 transaction rechecks state, quotas and the complete proof. Unbound immutable objects
 left by rejection are reused by publication key, never treated as accepted evidence.
@@ -411,7 +416,10 @@ recompiles the original 128-binding schema and complete output contracts, accept
 an in-flight identity only when its old digest matches exactly. Old output remains
 subject to that old contract. Failed predecessors may explicitly recover to the
 current widened contract without rewriting original task, draft or proof identities.
-Other contract differences are not ignored; unknown digests remain unavailable.
+Run producer families, derived inputs and Root status resolve the same frozen digest,
+so a supported predecessor can complete and supply downstream inputs after upgrade.
+Tests pin digests compiled from the actual 964713f source and exercise both draft and
+resume recovery. Other contract differences are not ignored; unknown digests remain unavailable.
 Budget-extension accounting maps known record/integrity failures to a repairable UI
 conflict; unexpected technical errors retain their traceback in server logs and return
 the ordinary service-unavailable response without sealing a decision.

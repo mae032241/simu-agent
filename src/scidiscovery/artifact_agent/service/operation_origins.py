@@ -108,7 +108,7 @@ class OperationOrigins:
             }
         )
         try:
-            producer = self._operation_catalog.operation(status.operation_id)
+            producer = self._operation_catalog.operation(status.operation_id, digest=status.operation_digest)
         except KeyError:
             producer = None
         if (
@@ -528,7 +528,7 @@ class OperationOrigins:
                 family = family_for(refs[0])
                 if family is None or family.contract_availability != "current" or family.producer_instance_id != self._instance_id():
                     reject("input_origin_unavailable")
-                producer = self._operation_catalog.operation(family.operation_id)
+                producer = self._operation_catalog.operation(family.operation_id, digest=family.operation_digest)
                 declared = next((item for item in producer.spec.outputs if item.name == rule.producer_output_port), None)
                 if declared is None:
                     reject("input_origin_output_undeclared")
@@ -578,7 +578,7 @@ class OperationOrigins:
         if operation_id is None:
             return False
         try:
-            producer = self._operation_catalog.operation(operation_id)
+            producer = self._operation_catalog.operation(operation_id, digest=envelope.labels.get("operation_digest"))
         except KeyError:
             return True
         return (
