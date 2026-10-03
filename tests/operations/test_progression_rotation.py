@@ -200,31 +200,17 @@ def test_factory_unknown_opening_never_replays_on_cold_start(progression,tmp_pat
     finally: restored.close()
 
 
-def test_factory_context_recovery_is_bounded_originals_page_and_same_thread_is_incremental(progression,tmp_path,monkeypatch):
+def test_factory_context_recovery_is_bounded_originals_page_and_same_thread_is_incremental(progression,tmp_path):
     p=progression
-    brief=p.coordinator._brief
-    def diagnose_capacity(*args):
-        try:return brief(*args)
-        except Exception as error:
-            trace=error.__traceback__
-            while trace:
-                frame=trace.tb_frame
-                if frame.f_code.co_name=='_brief' and 'brief' in frame.f_locals:
-                    value=frame.f_locals['brief']
-                    error.add_note(json.dumps(dict(brief_limit_bytes=args[-1],
-                        brief_bytes=len(json.dumps(value,ensure_ascii=False).encode()),
-                        field_bytes={key:len(json.dumps(item,ensure_ascii=False).encode()) for key,item in value.items()},
-                        budget_field_bytes={key:len(json.dumps(item,ensure_ascii=False).encode())
-                            for key,item in (value.get('budget') or {}).items()})))
-                    break
-                trace=trace.tb_next
-            raise
-    monkeypatch.setattr(p.coordinator,'_brief',diagnose_capacity)
     native,_=setup(p,tmp_path,root_rotate_after_rounds=2,context_bytes=8192)
     original='方向界限'*4095
     for name in ('early-direction','early-limit'):
         p.root.call_tool('progression_message',dict(name=name,text=original))
     p.coordinator.tick();completed(p)
+    initial=json.loads(calls(native,'turn/start')[-1]['input'][0]['text'].split('\n')[-1])
+    assert initial['budget']==checkpoint(p)['budget']
+    assert initial['budget']['token_coverage']=='partial'
+    assert initial['budget']['limits']==json.loads(row(p)['config_json'])['effective']['progression']
     wake(p,'increment-before-rotation');completed(p)
     wake(p,'new-direction')
     assert len(calls(native,'thread/start'))==2
@@ -252,9 +238,20 @@ def test_factory_context_recovery_is_bounded_originals_page_and_same_thread_is_i
     assert fresh.call_tool(latest['user_messages_read']['tool'],{})['messages'][-1]['name']=='same-thread-increment'
     assert fresh.call_tool('artifact_catalog',dict(name='same-thread-increment',view='content'))['text']=='Retain this exact new condition.'
     assert checkpoint(p)['usage_records']['root-2']['context_delivered']
+    assert all(len(item['input'][0]['text'].encode())<=8192 for item in calls(native,'turn/start'))
     from tests.operations.test_run_list_bounds import metrics
     metrics('rotation-context-recovery',dict(startup_bytes=len(prompt.encode()),saved_messages=4,
         original_pages=len(recovered),original_bytes=len(original.encode()),same_thread_messages=1))
+
+
+def test_insufficient_legal_context_fails_before_starting_a_turn(progression,tmp_path):
+    from scidiscovery.artifact_agent.service.progression import ProgressionFault
+    p=progression
+    native,_=setup(p,tmp_path,context_bytes=4096)
+    with pytest.raises(ProgressionFault,match='decision_brief_capacity'):
+        p.coordinator.tick()
+    assert calls(native,'turn/start')==[]
+    assert checkpoint(p).get('phase') not in {'prepared','running'}
 
 
 @pytest.mark.parametrize('command',['pause','takeover'])

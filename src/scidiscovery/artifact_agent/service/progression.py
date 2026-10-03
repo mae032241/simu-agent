@@ -441,6 +441,9 @@ class ProgressionCoordinator:
             **({'review_requests':review_requests} if review_requests else {}))
 
     def _brief(self, row, snapshot, limit):
+        def encode(value):
+            return json.dumps(value, ensure_ascii=False, separators=(',', ':'))
+
         facade = self.facade_factory(row['owner_session'])
         ref = ArtifactRef.model_validate_json(row['objective_ref_json'])
         artifact = self.runtime.artifacts.catalog(ref)
@@ -521,14 +524,14 @@ class ProgressionCoordinator:
                 continue
             result = facade.run_status(name=run['name'], intent='decision')
             brief['changes'].append(result)
-            if len(json.dumps(brief, ensure_ascii=False).encode()) > limit:
+            if len(encode(brief).encode()) > limit:
                 candidate = dict(brief, progress_shadow=compact_progress())
                 # Apply the existing optional-overview fallback before losing
                 # an otherwise complete new delivery. Oversized results retain
                 # their omission; no excerpt is counted as consumption.
-                if len(json.dumps(candidate, ensure_ascii=False).encode()) <= limit:
+                if len(encode(candidate).encode()) <= limit:
                     brief['progress_shadow'] = candidate['progress_shadow']
-            if len(json.dumps(brief, ensure_ascii=False).encode()) > limit:
+            if len(encode(brief).encode()) > limit:
                 brief['changes'].pop()
                 omit_result(run)
                 continue
@@ -563,11 +566,11 @@ class ProgressionCoordinator:
                 continue
             ref = ArtifactRef.model_validate(message['artifact_ref'])
             size = self.runtime.artifacts.catalog(ref).size_bytes
-            if len(json.dumps(brief, ensure_ascii=False).encode()) + size >= limit - 2048:
+            if len(encode(brief).encode()) + size >= limit - 2048:
                 candidate = dict(brief, progress_shadow=compact_progress())
-                if len(json.dumps(candidate, ensure_ascii=False).encode()) + size < limit - 2048:
+                if len(encode(candidate).encode()) + size < limit - 2048:
                     brief['progress_shadow'] = candidate['progress_shadow']
-            if len(json.dumps(brief, ensure_ascii=False).encode()) + size < limit - 2048:
+            if len(encode(brief).encode()) + size < limit - 2048:
                 raw = self.runtime.artifacts.read(ref)
                 brief['user_messages'].append(dict(name=message['name'], original=raw.decode('utf-8')))
             else:
@@ -587,7 +590,7 @@ class ProgressionCoordinator:
                 continuation='Use returned next_before as before; status=pending selects current requests. Read approval_status by exact name before acting.')
         if len(snapshot['approvals']) > 8:
             brief['omissions'].append(dict(read='approval_list', omitted=len(snapshot['approvals'])-8))
-        while len(json.dumps(brief, ensure_ascii=False).encode()) > limit:
+        while len(encode(brief).encode()) > limit:
             if brief['approval_changes']:
                 brief['approval_changes'].pop(0)
                 brief['omissions'].append(dict(read='approval_list', reason='context_limit'))
@@ -615,7 +618,7 @@ class ProgressionCoordinator:
                 brief['omission_details_omitted'] = brief.get('omission_details_omitted', 0) + 1
             else:
                 raise ProgressionFault('decision_brief_capacity')
-        return INSTRUCTION + '\n' + json.dumps(brief, ensure_ascii=False)
+        return INSTRUCTION + '\n' + encode(brief)
 
     def _connect(self, row):
         self._restored_turn_id = None
