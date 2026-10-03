@@ -141,8 +141,19 @@ def test_factory_rotates_exact_writer_and_preserves_loop_positions(progression,t
     p.coordinator.tick();completed(p)
     old_root=p.root.__class__(p.facade(p.coordinator.host.scheduler_session))
     old=checkpoint(p)
+    old_turn=p.coordinator.host.completion['id']
+    original_generation=row(p)['generation']
     wake(p)
     rotated=checkpoint(p)
+    receipt=rotated['root_rotation_receipt']
+    assert receipt['old']==dict(platform_session='root-1',thread_id='root-1')
+    assert receipt['new']==dict(platform_session='root-2',thread_id='root-2')
+    assert receipt['terminal_turn']==old_turn
+    assert receipt['scope']==dict(instance=p.instance,loop=old['current_loop_id'],goal=json.loads(row(p)['objective_ref_json']))
+    assert receipt['prepared_generation']==original_generation+1
+    assert receipt['completed_generation']==row(p)['generation']==original_generation+2
+    with p.runtime.runs._connect() as db:
+        assert receipt['run_activity_fence']==db.execute('SELECT COALESCE(MAX(rowid),0) FROM run_activity').fetchone()[0]
     assert json.loads(row(p)['host_json'])==dict(platform_session='root-2',thread_id='root-2')
     assert rotated['current_loop_id']==old['current_loop_id']
     assert rotated['rounds']==old['rounds']==1

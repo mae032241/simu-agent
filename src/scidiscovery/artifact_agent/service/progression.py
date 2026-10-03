@@ -759,8 +759,13 @@ class ProgressionCoordinator:
                 with self.runtime.runs._connect() as db:
                     if db.execute('SELECT 1 FROM worker_participants p JOIN runs r USING(run_id) WHERE r.instance_id=? AND p.thread_id IS NULL LIMIT 1',(self.instance,)).fetchone():
                         return None
+                    # Only committed visible events form this fence. The Run
+                    # allocator serializes event IDs in the original write
+                    # transaction; an uncommitted completion is not included.
+                    activity_fence = db.execute('SELECT COALESCE(MAX(rowid),0) FROM run_activity').fetchone()[0]
                 return self.bindings.prepare_host_rotation(instance_id=self.instance,
-                    expected_host=old,expected_generation=row['generation'],terminal_turn=self.host.completion)
+                    expected_host=old,expected_generation=row['generation'],terminal_turn=self.host.completion,
+                    run_activity_fence=activity_fence)
         opening=self._observation(prepare)
         if opening is None:
             return False

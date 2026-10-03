@@ -65,7 +65,7 @@ def messages(d):
     return json.loads(d.journey.row()['checkpoint_json']).get('messages', [])
 
 
-def safe_fixture_rotation(d):
+def safe_fixture_rotation(d, *, observe_prepared=True, before_complete=None):
     """Synthetic terminal events, followed by real fence/attach CAS services."""
     control = d.journey.row()
     old = json.loads(control['host_json'])
@@ -76,15 +76,208 @@ def safe_fixture_rotation(d):
     d.bindings.observe_progression(instance_id=d.journey.instance, expected_host=old,
         changes=dict(usage_records=records, phase='idle', turn_id=None, native_completion='completed',
             rotation_boundary=dict(checked=2, unchecked=0, unknown=0, reasons=[])))
+    with d.f.runtime.runs._connect() as db:
+        fence = db.execute('SELECT COALESCE(MAX(rowid),0) FROM run_activity').fetchone()[0]
     prepared = d.bindings.prepare_host_rotation(instance_id=d.journey.instance, expected_host=old,
-        expected_generation=control['generation'], terminal_turn=d.coordinator.host.completion)
-    d.journey.deliver_batches(prepared)
-    new_session = 'sch_'+'c'*32
+        expected_generation=control['generation'], terminal_turn=d.coordinator.host.completion, run_activity_fence=fence)
+    if observe_prepared:
+        d.journey.deliver_batches(prepared)
+    if before_complete:
+        before_complete(prepared)
+    new_session = 'sch_'+('c' if old['thread_id'] != 'new-root' else 'd')*32
+    new_thread = 'new-root' if old['thread_id'] != 'new-root' else 'next-root'
     active = d.bindings.complete_host_rotation(instance_id=d.journey.instance, expected_host=old,
         expected_generation=prepared['generation'], scheduler_session=new_session,
-        platform_session='new-root', thread_id='new-root')
+        platform_session=new_thread, thread_id=new_thread)
     d.f.root.facade.session_key = new_session
     return prepared, active
+
+
+def completed_batch_comparison(d, *, compare=True):
+    completed_design(d)
+    d.now[0] = 1500
+    d.journey.deliver_batches(d.journey.row())
+    author = d.f.start('prediction-before-rotation', ('acceptance.p6s.A_discrimination',))
+    declared = author.worker.call_tool('worker_experiment_stage', prediction_request(author.aliases['acceptance.p6s.A_discrimination']))
+    measured_fixture_usage(author.worker)
+    submit_staged_report(author, [declared['reference']])
+    d.now[0] = 3300
+    d.journey.deliver_batches(d.journey.row())
+    if not compare:
+        return declared, author
+    consumer = d.f.start('comparison-before-rotation', (declared['artifact_name'], 'acceptance.p6s.A_validation'))
+    compared = consumer.worker.call_tool('worker_experiment_stage', comparison_request(
+        consumer.aliases[declared['artifact_name']], consumer.aliases['acceptance.p6s.A_validation'], status='fail'))
+    measured_fixture_usage(consumer.worker)
+    submit_staged_report(consumer, [compared['reference']])
+    d.now[0] = 5100
+    return consumer
+
+
+def test_rotation_completed_between_polls_releases_from_durable_receipt(delivery):
+    d = delivery
+    completed_batch_comparison(d)
+    _, active = safe_fixture_rotation(d, observe_prepared=False)
+    d.journey.deliver_batches(active)
+    assert len(messages(d)) == 3  # no poll saw the prepared state
+    saved = messages(d)
+    d.journey.deliver_batches(d.journey.row())
+    assert messages(d) == saved
+
+
+def test_late_usage_retains_preparation_fence_and_completed_receipt_with_continuous_counts(delivery):
+    d = delivery
+    completed_batch_comparison(d)
+    captured = {}
+    def usage(control, amount):
+        host = json.loads(control['host_json'])
+        thread = captured['old']['thread_id']
+        d.bindings.observe_progression(instance_id=d.journey.instance, expected_host=host, changes={},
+            usage_observation=dict(params=dict(threadId=thread, tokenUsage=dict(total=dict(
+                inputTokens=amount, cachedInputTokens=0, outputTokens=10))), identity={}, root_thread=host['thread_id']))
+        return json.loads(d.journey.row()['checkpoint_json'])
+    def late(prepared):
+        captured['old'] = json.loads(prepared['host_json'])
+        original = json.loads(prepared['checkpoint_json'])['usage_records'][captured['old']['thread_id']]
+        after = usage(prepared, 100)['usage_records'][captured['old']['thread_id']]
+        assert after['retired_after_turn'] == original['retired_after_turn']
+        assert after['retired_after_activity'] == original['retired_after_activity']
+        assert after['counted_tokens']['input_tokens'] == 100
+    _, active = safe_fixture_rotation(d, observe_prepared=False, before_complete=late)
+    receipt = json.loads(active['checkpoint_json'])['root_rotation_receipt']
+    after = usage(active, 200)
+    assert after['root_rotation_receipt'] == receipt
+    assert after['usage_records'][captured['old']['thread_id']]['counted_tokens']['input_tokens'] == 200
+    d.journey.deliver_batches(d.journey.row())
+    assert len(messages(d)) == 3
+
+
+def test_early_rotation_does_not_cover_later_comparison_but_next_rotation_does(delivery):
+    d = delivery
+    declared, author = completed_batch_comparison(d, compare=False)
+    _, early = safe_fixture_rotation(d, observe_prepared=False)
+    early_receipt = json.loads(early['checkpoint_json'])['root_rotation_receipt']
+    fresh_host = json.loads(early['host_json'])
+    d.bindings.observe_progression(instance_id=d.journey.instance, expected_host=fresh_host, changes={},
+        usage_observation=dict(params=dict(threadId=fresh_host['thread_id'], tokenUsage=dict(total=dict(
+            inputTokens=10, cachedInputTokens=0, outputTokens=1))), identity={}, root_thread=fresh_host['thread_id']))
+    consumer = d.f.start('comparison-after-rotation', (declared['artifact_name'], 'acceptance.p6s.A_validation'))
+    compared = consumer.worker.call_tool('worker_experiment_stage', comparison_request(
+        consumer.aliases[declared['artifact_name']], consumer.aliases['acceptance.p6s.A_validation'], status='fail'))
+    measured_fixture_usage(consumer.worker)
+    submit_staged_report(consumer, [compared['reference']])
+    # The legacy fixture helper replaces Root records; restore its trusted
+    # session metadata from the current control owner via the existing service.
+    current = d.journey.row()
+    cp = json.loads(current['checkpoint_json'])
+    cp['usage_records'][fresh_host['thread_id']]['scheduler_session'] = current['owner_session']
+    d.bindings.observe_progression(instance_id=d.journey.instance, expected_host=fresh_host,
+        changes=dict(usage_records=cp['usage_records']))
+    d.now[0] = 5100
+    d.journey.deliver_batches(d.journey.row())
+    observation = json.loads((d.journey.logdir.parent/'batch-delivery-observation.json').read_text())
+    event = observation['facts']['comparisons'][0]['completion_event']
+    assert event > early_receipt['run_activity_fence']
+    assert observation['reason']=='comparison_before_rotation_unknown' and len(messages(d)) == 2
+    _, later = safe_fixture_rotation(d, observe_prepared=False)
+    assert json.loads(later['checkpoint_json'])['root_rotation_receipt']['run_activity_fence'] >= event
+    d.journey.deliver_batches(later)
+    assert len(messages(d)) == 3
+
+
+@pytest.mark.parametrize('damage', ['missing', 'version', 'goal', 'loop', 'generation', 'boundary', 'terminal', 'retirement'])
+def test_missing_or_inconsistent_receipt_is_unknown_not_a_generation_inference(delivery, damage):
+    d = delivery
+    completed_batch_comparison(d)
+    _, active = safe_fixture_rotation(d, observe_prepared=False)
+    cp = json.loads(active['checkpoint_json'])
+    receipt = cp['root_rotation_receipt']
+    if damage == 'missing': cp.pop('root_rotation_receipt')
+    elif damage == 'version': receipt['version'] = 999
+    elif damage == 'goal': receipt['scope']['goal']['sha256'] = '0'*64
+    elif damage == 'loop': receipt['scope']['loop'] = 'other-loop'
+    elif damage == 'generation': receipt['completed_generation'] += 1
+    elif damage == 'boundary': receipt['boundary']['unknown'] = 1
+    elif damage == 'terminal': receipt['terminal_turn'] = None
+    else: cp['usage_records'][receipt['old']['thread_id']]['retired_after_turn'] = 'wrong-turn'
+    # Corrupt a read snapshot, not the authority. All unrelated new host and
+    # retired/generation facts still exist and must not substitute for receipt.
+    d.journey.deliver_batches(dict(active, checkpoint_json=json.dumps(cp)))
+    observation = json.loads((d.journey.logdir.parent/'batch-delivery-observation.json').read_text())
+    assert observation['reason']=='safe_rotation_unknown' and len(messages(d)) == 2
+
+
+@pytest.mark.parametrize('cancel', ['complete_failure', 'pause', 'takeover'])
+def test_unsuccessful_rotation_never_publishes_a_receipt_or_releases(delivery, cancel):
+    d = delivery
+    completed_batch_comparison(d)
+    control = d.journey.row()
+    old = json.loads(control['host_json'])
+    d.coordinator.host.finish()
+    d.bindings.observe_progression(instance_id=d.journey.instance, expected_host=old,
+        changes=dict(phase='idle', turn_id=None, native_completion='completed',
+            rotation_boundary=dict(checked=2, unchecked=0, unknown=0, reasons=[])))
+    prepared = d.bindings.prepare_host_rotation(instance_id=d.journey.instance, expected_host=old,
+        expected_generation=control['generation'], terminal_turn=d.coordinator.host.completion)
+    assert 'root_rotation_receipt' not in json.loads(prepared['checkpoint_json'])
+    if cancel == 'complete_failure':
+        with pytest.raises(Exception, match='fresh actual native identity'):
+            d.bindings.complete_host_rotation(instance_id=d.journey.instance, expected_host=old,
+                expected_generation=prepared['generation'], scheduler_session='sch_'+'d'*32, **old)
+        d.bindings.abandon_host_rotation(instance_id=d.journey.instance, expected_host=old,
+            expected_generation=prepared['generation'])
+    else:
+        d.bindings.progression_command(instance_id=d.journey.instance, session_key=None, command='pause')
+        with pytest.raises(Exception, match='ownership changed'):
+            d.bindings.complete_host_rotation(instance_id=d.journey.instance, expected_host=old,
+                expected_generation=prepared['generation'], scheduler_session='sch_'+'d'*32,
+                platform_session='never-bound', thread_id='never-bound')
+        current = d.journey.row()
+        d.bindings.abandon_host_rotation(instance_id=d.journey.instance, expected_host=old, expected_generation=current['generation'])
+        if cancel == 'takeover':
+            d.bindings.progression_command(instance_id=d.journey.instance, session_key='sch_'+'a'*32, command='takeover')
+    assert 'root_rotation_receipt' not in json.loads(d.journey.row()['checkpoint_json'])
+    if cancel == 'takeover':
+        with pytest.raises(RuntimeError, match='scope_unconfirmed'):
+            d.journey.deliver_batches(d.journey.row())
+    else:
+        d.journey.deliver_batches(d.journey.row())
+    assert len(messages(d)) == 2
+
+
+def test_rotation_receipt_survives_runtime_reopen_and_archive_without_public_bindings(delivery):
+    from scidiscovery.artifact_agent.runtime import open_runtime
+    from tests.operations.synchronous_archive_fixture import SynchronousFixtureArchive
+    from tests.operations.test_instance_archive import save_archive, restore_archive
+    d = delivery
+    consumer = completed_batch_comparison(d)
+    _, active = safe_fixture_rotation(d, observe_prepared=False)
+    receipt = json.loads(active['checkpoint_json'])['root_rotation_receipt']
+    public = d.f.root.call_tool('progression_status', {})
+    assert all(key not in json.dumps(public) for key in ('root_rotation_receipt','old_session','new_session','retired_after_activity'))
+    reopened = open_runtime(project_root=d.f.runtime.project_root, state_root=d.f.runtime.state_root,
+        approval_receipt_secret=b'b'*32)
+    read = reopened.scheduler_bindings.progression_status(instance_id=d.journey.instance, internal=True)
+    assert json.loads(read['checkpoint_json'])['root_rotation_receipt'] == receipt
+    d.journey.deliver_batches(read)  # keep B2's existing same-process selection
+    assert len(messages(d)) == 3
+    d.f.root.call_tool('progression_command', dict(command='pause'))
+    d.bindings.release_host(instance_id=d.journey.instance, **receipt['new'])
+    with d.f.runtime.runs._connect() as db:
+        event = db.execute("SELECT rowid FROM run_activity WHERE run_id=? AND activity='completion_committed'", (consumer.run_id,)).fetchone()[0]
+    d.f.runtime.runs._synchronous_archive_fixture = True
+    output = d.f.runtime.runs.status(consumer.run_id).output_ref
+    service = SynchronousFixtureArchive(d.f.runtime)
+    save_archive(service, d.journey.instance)
+    archived = service.archived_model(d.journey.instance)
+    archived_control = archived.bindings.progression_status(instance_id=d.journey.instance, internal=True)
+    assert json.loads(archived_control['checkpoint_json'])['root_rotation_receipt'] == receipt
+    assert archived.runs.status(consumer.run_id).output_ref == output
+    restore_archive(service, d.journey.instance)
+    restored = d.bindings.progression_status(instance_id=d.journey.instance, internal=True)
+    assert json.loads(restored['checkpoint_json'])['root_rotation_receipt'] == receipt
+    with d.f.runtime.runs._connect() as db:
+        assert db.execute("SELECT rowid FROM run_activity WHERE run_id=? AND activity='completion_committed'", (consumer.run_id,)).fetchone()[0] == event
 
 
 def test_release_uses_real_completed_original_public_ack_and_monotonic_threshold(delivery):

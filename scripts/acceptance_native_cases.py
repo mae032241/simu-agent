@@ -139,37 +139,54 @@ class NativeCaseJourney(RecoveryJourney):
         return ref
 
     def _observe_batch_rotation(self, control, cp):
-        host = json.loads(control.get('host_json') or 'null')
-        boundary = cp.get('rotation_boundary') or {}
-        record = cp.get('usage_records', {}).get((host or {}).get('thread_id'), {})
-        # This boundary is written by prepare_host_rotation after terminal-old-
-        # writer checks and revocation. A generation change alone is insufficient.
-        if (control.get('state') == 'pending' and control.get('owner_session') is None
-                and cp.get('phase') == 'prepared' and cp.get('native_action') == 'root_rotation'
-                and cp.get('native_completion') == 'completed' and cp.get('turn_id') is None
-                and host and host.get('platform_session') == host.get('thread_id')
-                and record.get('role') == 'root' and record.get('owner') == self.instance
-                and record.get('loop_id') == self._delivery_scope['loop'] and record.get('retired') is True
-                and record.get('scheduler_session') and boundary.get('unchecked') == 0
-                and boundary.get('unknown') == 0 and boundary.get('checked', -1) >= 0 and not boundary.get('reasons')):
-            self._batch_rotation_boundary = dict(old=host, old_session=record['scheduler_session'],
-                generation=control['generation'], boundary=boundary, scope=self._delivery_scope)
-        prior = getattr(self, '_batch_rotation_boundary', None)
-        if (prior and control.get('state') == 'active' and cp.get('native_action') is None
-                and host and host.get('platform_session') == host.get('thread_id')
-                and host != prior['old'] and control.get('owner_session') != prior['old_session']
-                and control.get('generation') == prior['generation']+1
-                and record.get('role') == 'root' and record.get('owner') == self.instance
-                and record.get('loop_id') == prior['scope']['loop']
-                and record.get('scheduler_session') == control.get('owner_session')
-                and record.get('scheduler_session')):
-            self._batch_rotation_proof = dict(**prior, new=host, new_session=control['owner_session'])
+        # Read the control's successful CAS receipt, never infer completion from
+        # independently observed generations, retirement or transient prepared.
+        self._batch_rotation_proof = None
+        from scidiscovery.artifact_agent.service.scheduling_control import ROOT_ROTATION_RECEIPT_BYTES
+        receipt = cp.get('root_rotation_receipt')
+        if not isinstance(receipt, dict) or len(json.dumps(receipt).encode()) > ROOT_ROTATION_RECEIPT_BYTES:
+            return
+        required = {'version', 'scope', 'old', 'old_session', 'new', 'new_session',
+            'prepared_generation', 'completed_generation', 'terminal_turn', 'run_activity_fence', 'boundary'}
+        if set(receipt) != required or receipt.get('version') != 1 or receipt.get('scope') != self._delivery_scope:
+            return
+        old, new = receipt['old'], receipt['new']
+        if not all(isinstance(host, dict) and set(host) == {'platform_session','thread_id'}
+                and isinstance(host['thread_id'], str) and host['thread_id']
+                and host['platform_session'] == host['thread_id'] for host in (old,new)):
+            return
+        boundary = receipt['boundary']
+        if (not isinstance(boundary, dict) or set(boundary) != {'checked','unchecked','unknown','reasons'}
+                or type(boundary['checked']) is not int or boundary['checked'] < 0
+                or type(boundary['unchecked']) is not int or boundary['unchecked'] != 0
+                or type(boundary['unknown']) is not int or boundary['unknown'] != 0 or boundary['reasons'] != []):
+            return
+        before, after = receipt['prepared_generation'], receipt['completed_generation']
+        fence = receipt['run_activity_fence']
+        if (type(before) is not int or before < 0 or type(after) is not int or after != before+1
+                or type(fence) is not int or fence < 0 or control.get('generation', -1) < after
+                or not isinstance(receipt['terminal_turn'], str) or not receipt['terminal_turn']
+                or old == new or receipt['old_session'] == receipt['new_session']
+                or not receipt['old_session'] or not receipt['new_session']
+                or json.loads(control.get('host_json') or 'null') != new
+                or control.get('owner_session') != receipt['new_session']):
+            return
+        records = cp.get('usage_records', {})
+        old_record, new_record = (records.get(host['thread_id'], {}) for host in (old,new))
+        for record, session in ((old_record, receipt['old_session']), (new_record, receipt['new_session'])):
+            if (record.get('role') != 'root' or record.get('owner') != self.instance
+                    or record.get('loop_id') != self._delivery_scope['loop'] or record.get('scheduler_session') != session):
+                return
+        if (old_record.get('retired') is not True or old_record.get('retired_after_turn') != receipt['terminal_turn']
+                or old_record.get('retired_after_activity') != fence):
+            return
+        self._batch_rotation_proof = receipt
 
     def deliver_batches(self, control):
         """One bounded poll hook; checkpoint.messages is the sole delivery ack.
 
         Cached proof is a same-process observation, not a restart ledger. Missing
-        prepared-rotation or precommit observation remains unknown on re-entry.
+        prediction selection observation remains unknown on re-entry.
         """
         delivery = self.case_config.get('batch_delivery')
         if delivery is None:
@@ -210,9 +227,14 @@ class NativeCaseJourney(RecoveryJourney):
         elif index == 1 and len(facts['declarations']) > 1:
             reason = 'multiple_adopted_predictions_no_declared_replacement'
         if index == 2:
-            ready = bool(prediction and facts['comparisons'] and getattr(self, '_batch_rotation_proof', None))
+            rotation = getattr(self, '_batch_rotation_proof', None)
+            before_rotation = [value for value in facts['comparisons'] if rotation
+                and type(value['completion_event']) is int and value['completion_event'] > 0
+                and value['completion_event'] <= rotation['run_activity_fence']]
+            ready = bool(prediction and before_rotation)
             reason = ('prediction_release_binding_unavailable' if not prediction or not getattr(self, '_batch_prediction_binding', None)
-                else 'adopted_comparison_unknown' if not facts['comparisons'] else 'safe_rotation_unknown')
+                else 'adopted_comparison_unknown' if not facts['comparisons'] else 'safe_rotation_unknown'
+                if not rotation else 'comparison_before_rotation_unknown')
             ready = ready and bool(getattr(self, '_batch_prediction_binding', None))
         observation.update(status='eligible' if ready else 'waiting',
             reason='exact_sealed_proof' if ready else reason, facts=facts,

@@ -148,7 +148,8 @@ def apply_usage_observation(db, row, checkpoint, observation):
         'outcome', 'high_water', 'counted_tokens', 'has_gaps', 'coverage')}
     if previous_record and role == 'root':
         records[thread].update({key: previous_record[key] for key in
-            ('root_started_round', 'scheduler_session', 'retired', 'retired_after_round', 'context_delivered') if key in previous_record})
+            ('root_started_round', 'scheduler_session', 'retired', 'retired_after_round',
+             'retired_after_turn', 'retired_after_activity', 'context_delivered') if key in previous_record})
     if previous_record:
         records[thread].update({key: previous_record[key] for key in ('native_turn', 'native_terminal') if key in previous_record})
     if loop_id:

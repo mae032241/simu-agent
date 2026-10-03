@@ -21,6 +21,7 @@ from ..storage.control_io import control_io_nonblocking
 from .research_loops import current_loop, loop_usage, loop_task_count, loop_task_budget, loop_scope_view, sync_loop_balances, loop_usage_summary
 
 CONTROL_VERSION = 9
+ROOT_ROTATION_RECEIPT_BYTES = 8192
 CONTROL_SCHEMA = """
 CREATE TABLE IF NOT EXISTS scheduler_progression (
     instance_id TEXT PRIMARY KEY REFERENCES scheduler_instances(instance_id),
@@ -1029,12 +1030,15 @@ class SchedulingControl:
                     (instance_id,session_key)).fetchone():
                 conflict('This native Root session is retired; only the current writer or management UI may control progression.')
 
-    def prepare_host_rotation(self, *, instance_id, expected_host, expected_generation, terminal_turn):
+    def prepare_host_rotation(self, *, instance_id, expected_host, expected_generation, terminal_turn,
+                              run_activity_fence=None):
         """Trusted coordinator fences the terminal writer before native opening.
 
         The existing prepared/no-turn boundary makes a crash or lost reply
         non-replayable. It does not grant a new loop or reset any position.
         """
+        if run_activity_fence is not None and (type(run_activity_fence) is not int or run_activity_fence < 0):
+            raise ValueError('Root rotation requires an exact committed Run activity fence.')
         with self.control_maintenance.guard(instance_id),self.scheduling_lock(),self._connect() as db:
             row=read_control_row(db,instance_id)
             cp=json.loads(row['checkpoint_json'])
@@ -1048,7 +1052,8 @@ class SchedulingControl:
             if not self._control_settings_match(instance_id,row['config_json']):
                 conflict('Root rotation cannot change the frozen research loop policy.')
             record=cp['usage_records'][expected_host['thread_id']]
-            record.update(retired=True,retired_after_round=cp.get('rounds',0))
+            record.update(retired=True,retired_after_round=cp.get('rounds',0),
+                retired_after_turn=terminal_turn['id'],retired_after_activity=run_activity_fence)
             cp.update(phase='prepared',turn_id=None,native_action='root_rotation',runtime_status='opening_root')
             db.execute("UPDATE scheduler_progression SET state='pending',owner_session=NULL,generation=generation+1,checkpoint_json=? WHERE instance_id=?",
                 (store_checkpoint(db,instance_id,cp),instance_id))
@@ -1080,6 +1085,20 @@ class SchedulingControl:
                 cp['usage_records'][thread_id]=dict(observe_usage(dict(threadId=thread_id),role='root',owner=instance_id,
                     outcome='running'),loop_id=current_loop(cp),pending_observation=True,
                     root_started_round=cp.get('rounds',0),scheduler_session=scheduler_session)
+                old_record = cp['usage_records'][expected_host['thread_id']]
+                boundary = cp.get('rotation_boundary') or {}
+                # One latest, optional receipt, committed with the successful
+                # host CAS. It records control quiescence, not process exit/RSS
+                # reclamation, and survives through the existing archive path.
+                receipt = dict(version=1,
+                    scope=dict(instance=instance_id, goal=json.loads(row['objective_ref_json']), loop=current_loop(cp)),
+                    old=expected_host, old_session=old_record.get('scheduler_session'),
+                    new=dict(platform_session=platform_session,thread_id=thread_id), new_session=scheduler_session,
+                    prepared_generation=expected_generation, completed_generation=expected_generation+1,
+                    terminal_turn=old_record.get('retired_after_turn'),
+                    run_activity_fence=old_record.get('retired_after_activity'),
+                    boundary={key:boundary.get(key) for key in ('checked','unchecked','unknown','reasons')})
+                cp['root_rotation_receipt'] = receipt if len(json.dumps(receipt).encode()) <= ROOT_ROTATION_RECEIPT_BYTES else None
                 cp.update(phase='idle',native_action=None,runtime_status='root_rotated')
                 db.execute("UPDATE scheduler_progression SET state='active',owner_session=?,generation=generation+1,host_json=?,checkpoint_json=? WHERE instance_id=?",
                     (scheduler_session,json.dumps(dict(platform_session=platform_session,thread_id=thread_id)),

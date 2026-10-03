@@ -353,7 +353,12 @@ def batch_scientific_facts(candidate, control, *, max_runs, discrimination=None,
                     or comparison.result.check_key != declared.prediction_declaration.criterion.check_key
                     or comparison.result.evaluation_mode != declared.prediction_declaration.criterion.evaluation_mode):
                 raise ValueError('batch_comparison_criterion_mismatch')
-            facts['comparisons'].append(dict(run_id=identity, artifact_ref=record['artifact_ref'], report_ref=value.output_ref))
+            completion = rows(candidate, 'runs', "SELECT rowid AS event_id FROM run_activity WHERE run_id=? "
+                "AND activity='completion_committed' LIMIT 2", (identity,))
+            if len(completion) > 1:
+                raise ValueError('batch_comparison_completion_event_ambiguous')
+            facts['comparisons'].append(dict(run_id=identity, artifact_ref=record['artifact_ref'], report_ref=value.output_ref,
+                completion_event=completion[0]['event_id'] if completion else None))
     return facts
 
 
