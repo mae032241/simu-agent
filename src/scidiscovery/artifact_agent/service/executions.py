@@ -647,7 +647,8 @@ class ExecutionService:
             return self._row(db, execution_id)['executor'], admission.budget_key
 
     def validate_budget_extension(self, approval_id, seconds):
-        from .approvals import ApprovalAccessDenied, BudgetExtensionAccountingError
+        from .approvals import ApprovalError, ApprovalAccessDenied, BudgetExtensionAccountingError
+        from ..storage import CASIntegrityError, RegistryIntegrityError, ArtifactReferenceError
         status = self.approvals.status(approval_id)
         # Exact replay is checked by the approval service. New administrator
         # limits must not invalidate a decision already sealed before restart.
@@ -679,7 +680,9 @@ class ExecutionService:
                 if self.execution_for_approval(aid) not in execution_ids:
                     raise ExecutionApprovalError('Decision has no exact request in this budget pool')
                 used += decision.additional_wall_time_seconds
-        except Exception as error:
+        except (ApprovalError, ExecutionApprovalError, ArtifactNotFoundError,
+                CASIntegrityError, RegistryIntegrityError, ArtifactReferenceError,
+                ValidationError, json.JSONDecodeError) as error:
             raise BudgetExtensionAccountingError(
                 '无法核对当前预算池的历史授权，请修复相关审批记录后重试；本次未封存决定。') from error
         if used + seconds > limits.max_total_seconds_per_pool:

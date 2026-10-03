@@ -140,14 +140,18 @@ def evidence_submission(tmp_path):
 
 @pytest.mark.parametrize('failure', ['limit', 'storage'])
 def test_proof_failure_rolls_back_receipt_and_retry_completes(tmp_path, monkeypatch, failure):
-    from scidiscovery.artifact_agent.service.run_outputs import RunCheckerError
+    from scidiscovery.artifact_agent.service import tool_evidence
+    from scidiscovery.artifact_agent.service.reference_proofs import proof_error
+    from scidiscovery.operation_contract import DiagnosticError
     from scidiscovery.artifact_agent.schema.refs import ArtifactRef
     runs, owner, args = evidence_submission(tmp_path)
     before = runs.tool_evidence(owner.run_id)
     with monkeypatch.context() as patch:
         if failure == 'limit':
-            patch.setattr(runs, 'tool_attempts', lambda _: tuple({} for _ in range(65)))
-            error = RunCheckerError
+            def excessive_dependencies(*args):
+                raise proof_error('reference_proof_limit', 'Fixture dependency limit')
+            patch.setattr(tool_evidence, 'material_snapshot', excessive_dependencies)
+            error = DiagnosticError
         else:
             register = runs.artifacts.register
             def fail_proof(raw, registration, **kwargs):
@@ -173,11 +177,12 @@ def test_retry_repairs_historical_missing_proof_once(tmp_path, monkeypatch):
         patch.setattr(runs, 'reference_manifest', lambda *a, **k: None)
         original = runs.accept_tool_evidence(**args)
     snapshots = []
-    encode = runs._encode_evidence_snapshot
+    from scidiscovery.artifact_agent.service import tool_evidence
+    encode = tool_evidence.material_snapshot
     def capture(*args):
         snapshots.append(True)
         return encode(*args)
-    monkeypatch.setattr(runs, '_encode_evidence_snapshot', capture)
+    monkeypatch.setattr(tool_evidence, 'material_snapshot', capture)
     assert runs.accept_tool_evidence(**args) == original
     assert runs.accept_tool_evidence(**args) == original
     assert len(snapshots) == 1

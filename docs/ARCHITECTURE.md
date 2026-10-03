@@ -374,6 +374,16 @@ before committing the receipt and public binding. Proof failure rolls back admis
 an identical retry also repairs a historical receipt missing its proof. A CAS proof
 left by an interrupted transaction is reused only if its exact subject receipt still
 matches, so a later alias allocation cannot adopt an orphan's binding.
+Current attempts are read through that same SQLite connection, and immutable recovery
+origins are verified before taking the write lock; no second Run-database reader waits
+on the receipt transaction. Per-material proofs retain the declared dependency closure
+and matching calculation attempts, including exact recovery namespaces, rather than
+unrelated later receipts. Existing proofs retain their original bytes. Legacy missing
+proofs can be repaired even when the whole Run exceeds snapshot limits; a genuinely
+oversized dependency closure returns `reference_proof_limit` without truncation.
+Budget-extension accounting maps known record/integrity failures to a repairable UI
+conflict; unexpected technical errors retain their traceback in server logs and return
+the ordinary service-unavailable response without sealing a decision.
 
 New curve scores identify the support-aware algorithm as `curve-operators.v2` or
 `analysis-curve-operators.v2`. Historical v1 calculations still require exact source

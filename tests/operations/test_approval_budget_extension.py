@@ -64,7 +64,7 @@ def test_sealed_zero_extension_decisions_survive_upgrade_and_retry(tmp_path, mon
 
 
 @pytest.mark.process_e2e
-def test_budget_extension_http_roundtrip_replay_recovery_and_scope(tmp_path, monkeypatch):
+def test_budget_extension_http_roundtrip_replay_recovery_and_scope(tmp_path, monkeypatch, caplog):
     f = experiment(tmp_path, monkeypatch)
     pending = start(f)
     target = urlparse(pending['review_url'])
@@ -94,6 +94,15 @@ def test_budget_extension_http_roundtrip_replay_recovery_and_scope(tmp_path, mon
             patch.setattr(service, 'validate_budget_extension', unavailable)
             status, _, body = _request(base, 'POST', endpoint, form=form)
             assert status == 409 and '当前预算池' in body.decode()
+            assert f.runtime.approvals.status(aid).status == 'pending'
+        with monkeypatch.context() as patch:
+            def broken_accounting(**kwargs):
+                raise TypeError('fixture budget programming defect')
+            patch.setattr(f.runtime.approvals, 'budget_extension_decisions', broken_accounting)
+            status, _, body = _request(base, 'POST', endpoint, form=form)
+            assert status == 503
+            assert b'fixture budget programming defect' not in body
+            assert 'fixture budget programming defect' in caplog.text
             assert f.runtime.approvals.status(aid).status == 'pending'
         # Crash after recording the human decision: an identical HTTP retry repairs
         # the budget projection without approving twice or incrementing twice.

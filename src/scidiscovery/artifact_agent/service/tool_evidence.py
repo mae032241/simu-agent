@@ -1,6 +1,7 @@
 """Run-owned, opt-in evidence obtained by registered tools (never mutable inputs)."""
 from __future__ import annotations
 import hashlib
+from contextlib import nullcontext
 import json
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,9 @@ from ..schema.refs import ArtifactRef
 from .run_outputs import InputBindingDescriptor, RunCheckerError
 from .run_records import RunError, RunStateConflict, RunContractUnavailable
 from .reference_access import ReferenceAccessMixin
+from .reference_proofs import material_snapshot, source_bindings
+
+_UNPREPARED = object()
 
 
 def _recovery_origins(proof):
@@ -353,8 +357,8 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
                 raise RunStateConflict("candidate no longer accepts read receipts")
             self._append_activity(connection, run_id, "tool_attempt_read", timestamp(), raw)
 
-    def tool_attempts(self, run_id):
-        with self._connect() as connection:
+    def tool_attempts(self, run_id, *, connection=None):
+        with (self._connect() if connection is None else nullcontext(connection)) as connection:
             rows = connection.execute("SELECT activity,diagnostic_json FROM run_activity WHERE run_id=? AND activity IN ('tool_attempt_started','tool_attempt_read','tool_attempt_completed') ORDER BY rowid",(run_id,)).fetchall()
         attempts = {}
         for row in rows:
@@ -452,6 +456,9 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
         if trusted_parent_refs:
             key_material['control_parents'] = [ref.model_dump(mode='json') for ref in trusted_parent_refs]
         key = hashlib.sha256(canonical_json(key_material)).hexdigest()
+        # Recovery origins are immutable once this Run starts. Read and verify
+        # them before holding the receipt write lock on the shared Run database.
+        recovery = self._recovery_tool_proof_from_records(value, reference=True)
         with self._connect() as connection:
             self._attach_scheduler(connection)
             connection.execute('BEGIN IMMEDIATE')
@@ -500,7 +507,8 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
             # The receipt transaction supplies its own uncommitted records. Proof
             # failure rolls back the receipt and public binding; existing receipts
             # pass through the same repair path. CAS registration is idempotent.
-            self.reference_manifest(value, subject_ref=artifact, stored_records=all_records)
+            self.reference_manifest(value, subject_ref=artifact, stored_records=all_records,
+                connection=connection, recovery=recovery)
             if port.agent_visible:
                 binding = self._bind_evidence_output(connection, value, record['alias'], artifact)
                 record = {**record, 'artifact_name': binding.name}
@@ -581,10 +589,7 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
 
     @staticmethod
     def _encode_evidence_snapshot(value, records, accesses, recovery, attempts):
-        bindings = {item.source_name:{"schema_version":1,"artifact_ref":item.artifact_ref.model_dump(mode="json"), "port_name":item.port_name} for item in value.inputs}
-        bindings.update({r['alias']:{"schema_version":1,"artifact_ref":r['artifact_ref'], "port_name":r.get("output_port", "tool_evidence")} for r in records})
-        for record in accesses:
-            bindings.setdefault(record['alias'], {'schema_version':1,'artifact_ref':record['artifact_ref'], 'port_name':'reference_access'})
+        bindings = source_bindings(value, records, accesses)
         if len(bindings) > 128:
             raise ValueError('controlled source binding limit exceeded')
         if len(attempts) + _recovery_attempt_count(recovery) > 64:
@@ -606,7 +611,7 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
             return None
         return self._recovery_tool_proof_from_records(value)
 
-    def _recovery_tool_proof_from_records(self, value):
+    def _recovery_tool_proof_from_records(self, value, *, reference=False):
         """Historical origins need their sealed records, not today's compiler."""
         with self._connect() as connection:
             row = self._row(connection, value.run_id)
@@ -620,6 +625,20 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
         draft = self._verify_draft(source, manifest['draft_digest'])
         # The draft verifies recovery authorization; its public receipt is not
         # an identity proof. Reconstruct the exact proof from the sealed Run DB.
+        if reference:
+            # Project bounds only after selecting the material's dependencies;
+            # unrelated historical receipts must not prevent legacy proof repair.
+            prior = self._recovery_tool_proof_from_records(source, reference=True)
+            attempts = self.tool_attempts(source.run_id)
+            if not attempts:
+                return prior
+            return {'schema_version': 1,
+                'bindings': source_bindings(source, self.tool_evidence(source.run_id),
+                    self.reference_access_records(source.run_id)),
+                'attempts': attempts, 'source_request_digest': source.request_digest,
+                'operation_digest': source.operation_digest, 'draft_digest': draft.digest,
+                'ancestors': ([{k: v for k, v in prior.items() if k != 'ancestors'},
+                    *prior.get('ancestors', ())] if prior else [])}
         previous = ToolEvidenceManifest.model_validate_json(self._encode_evidence_snapshot(
             source, self.tool_evidence(source.run_id), self.reference_access_records(source.run_id),
             self._recovery_tool_proof_from_records(source), self.tool_attempts(source.run_id)))
@@ -667,7 +686,8 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
                     'operation_output_port':'recovery_manifest_output','tool_producer_run':value.run_id},confidentiality='run_private'),
             idempotency_key=f'run:{value.run_id}:tool-manifest:{hashlib.sha256(self._evidence_snapshot(value.run_id)).hexdigest()}').ref
 
-    def reference_manifest(self, value, *, subject_ref=None, stored_records=None):
+    def reference_manifest(self, value, *, subject_ref=None, stored_records=None,
+                           connection=None, recovery=_UNPREPARED):
         """Freeze stored receipt facts for a bound reader, without recompiling its producer.
 
         One captured set supplies both bytes and parents. A later publication
@@ -697,15 +717,26 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
                 pass
         accesses = (self.reference_access_records(value.run_id) if stored_records is None else
                     [r for r in stored_records if r.get('record_type') == 'reference_access'])
-        raw = self._encode_evidence_snapshot(value, records, accesses,
-            self._recovery_tool_proof_from_records(value), self.tool_attempts(value.run_id))
-        ToolEvidenceManifest.model_validate_json(raw)
+        if recovery is _UNPREPARED:
+            recovery = self._recovery_tool_proof_from_records(value, reference=subject_ref is not None)
+        attempts = self.tool_attempts(value.run_id, connection=connection)
+        raw = (material_snapshot(value, selected[0], records, accesses, attempts, recovery)
+            if subject_ref is not None else
+            self._encode_evidence_snapshot(value, records, accesses, recovery, attempts))
+        document = ToolEvidenceManifest.model_validate_json(raw)
+        if subject_ref is None:
+            # Preserve the historical full-snapshot registration identity.
+            parents = tuple(dict.fromkeys((*[i.artifact_ref for i in value.inputs],
+                *[ArtifactRef.model_validate(r['artifact_ref']) for r in (*records, *accesses)])))
+        else:
+            origins = (document, *_recovery_origins(document.recovery))
+            parents = tuple(dict.fromkeys(binding.artifact_ref
+                for origin in origins for binding in origin.bindings.values()))
         try:
             return self.artifacts.register(raw, ArtifactRegistration(artifact_id=proof_id, kind='tool_evidence_manifest',
                 schema_id='scidiscovery.tool-evidence-manifest.v1', payload_schema_version=1,
                 media_type='application/json', creator=self.service_actor,
-                parent_refs=tuple(dict.fromkeys((*[item.artifact_ref for item in value.inputs],
-                    *[ArtifactRef.model_validate(r['artifact_ref']) for r in (*records, *accesses)]))),
+                parent_refs=parents,
                 labels={'operation_id':value.operation_id, 'operation_digest':value.operation_digest,
                     'operation_version':value.operation_version, 'operation_output_port':'reference_proof' if proof_id else 'recovery_manifest_output',
                     'tool_producer_run':value.run_id}, confidentiality='run_private'),
