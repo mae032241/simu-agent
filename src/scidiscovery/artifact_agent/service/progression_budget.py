@@ -85,6 +85,22 @@ def require_task_budget(checkpoint, limits):
                 f"Remaining={budget['remaining_tokens']}, reserve={budget['closeout_reserve_tokens']}.")
 
 
+def _reconcile_attribution(record, *, role, owner):
+    """Only control-resolved attribution may label an ownerless observation.
+
+    Loop ownership is checked by the caller before this shared reduction. The
+    existing usage path also resolves Root; lifecycle callers resolve attached
+    Workers/helpers. Counters and native facts are not reset or reconstructed.
+    """
+    if record['role'] == 'unattributed' and role != 'unattributed':
+        if record['owner'] is not None:
+            raise ValueError('Unattributed usage has a conflicting original owner.')
+        return {**record, 'role': role, 'owner': owner}
+    if (record['role'], record['owner']) != (role, owner):
+        raise ValueError('Native observation differs from its original role or owner.')
+    return record
+
+
 def apply_usage_observation(db, row, checkpoint, observation):
     """Reduce exact cumulative counters inside the same ledger write transaction."""
     from ...platforms.codex_usage import observe_usage
@@ -123,8 +139,9 @@ def apply_usage_observation(db, row, checkpoint, observation):
             if any(value is not None for value in (previous['high_water'][key], other['high_water'][key])) else None
             for key in previous['high_water']}
         previous['has_gaps'] = True
-    if previous and previous['role'] == 'unattributed' and role != 'unattributed':
-        previous = {**previous, 'role': role, 'owner': row['instance_id']}
+    if previous:
+        previous = _reconcile_attribution(previous, role=role,
+            owner=row['instance_id'] if role != 'unattributed' else None)
     record = observe_usage(params, previous=previous, role=role,
         owner=row['instance_id'] if role != 'unattributed' else None, outcome='running')
     records[thread] = {key: record[key] for key in ('platform', 'thread_id', 'role', 'owner',
@@ -150,8 +167,9 @@ def apply_native_observation(db, row, checkpoint, observation):
     if record is None:
         record = dict(observe_usage(dict(threadId=thread), role=identity['role'], owner=row['instance_id']),
             loop_id=identity['loop_id'], pending_observation=True)
-    if record.get('loop_id') != identity['loop_id'] or record['role'] != identity['role']:
+    if record.get('loop_id') != identity['loop_id']:
         raise ValueError('Native lifecycle proof differs from the original thread usage identity.')
+    record = _reconcile_attribution(record, role=identity['role'], owner=row['instance_id'])
     binding = identity['binding_key']
     turn_id = observation.get('turn_id')
     turn = dict(binding_key=binding,turn_id=turn_id,connection_id=observation.get('connection_id'))

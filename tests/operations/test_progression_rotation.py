@@ -669,6 +669,86 @@ def test_production_started_notification_during_other_read_invalidates_rotation_
     assert len(calls(native,'thread/start'))==1 and row(p)['state']=='active'
 
 
+@pytest.mark.parametrize('order',['usage_first','lifecycle_first'])
+@pytest.mark.parametrize('role',['worker','helper'])
+def test_native_attribution_interleaving_uses_public_binding_and_preserves_counters(progression,tmp_path,order,role):
+    from scidiscovery.artifact_agent.interfaces.mcp_gateway import UnifiedMCPRouter
+    from tests.operations.test_unified_mcp import call,result
+    from tests.operations.test_local_worker_contracts import _invoke
+    p=progression
+    native,_=setup(p,tmp_path,root_rotate_after_rounds=0)
+    p.coordinator.tick();completed(p)
+    host=p.coordinator.host
+    root=p.root.__class__(p.facade(host.scheduler_session))
+    _invoke(root,'attribution-owner')
+    gateway=UnifiedMCPRouter(root)
+    profile=root.call_tool('run_status',dict(name='attribution-owner'))['execution_profile']['profile']
+    session=host.identity.session_id
+    owner='attribution-worker';thread=owner if role=='worker' else 'attribution-helper'
+    def emit(event):
+        (native/'native-events.json').write_text(json.dumps([event]))
+        host.connection.rpc('thread/read',dict(threadId=host.identity.thread_id,includeTurns=True))
+    def usage(input_tokens,cached,output):
+        return dict(method='thread/tokenUsage/updated',params=dict(threadId=thread,
+            tokenUsage=dict(total=dict(inputTokens=input_tokens,cachedInputTokens=cached,outputTokens=output))))
+    if role=='helper':
+        result(call(gateway,'worker_attach',dict(name='attribution-owner',thread_id=owner),session=session))
+        result(call(gateway,'worker_open_assignment',child=owner,profile=profile,session=session))
+        result(call(gateway,'worker_helper',dict(name='inspection',task='Inspect this finite data.'),
+            child=owner,profile=profile,session=session))
+    if order=='usage_first':
+        emit(usage(100,None,20))
+        unbound=checkpoint(p)['usage_records'][thread]
+        assert unbound['role']=='unattributed' and unbound['owner'] is None and unbound['has_gaps']
+        assert unbound['counted_tokens']['input_tokens']==100
+    if role=='worker':
+        result(call(gateway,'worker_attach',dict(name='attribution-owner',thread_id=owner),session=session))
+        result(call(gateway,'worker_open_assignment',child=owner,profile=profile,session=session))
+    else:
+        reply=gateway.handle(dict(jsonrpc='2.0',id=1,method='tools/call',params=dict(
+            name='scid_call',arguments=dict(name='worker_open_assignment',arguments={}),
+            _meta={'x-codex-turn-metadata':dict(session_id=session,thread_id=thread,parent_thread_id=owner,
+                subagent_kind='thread_spawn',model=profile['model'],reasoning_effort=profile['reasoning_effort'])})))
+        assert result(reply)['state']=='opened'
+    identity=p.coordinator._identities()[thread]
+    emit(dict(method='turn/started',params=dict(threadId=thread,turn=dict(id='bound-turn'))))
+    if order=='usage_first':
+        upgraded=checkpoint(p)['usage_records'][thread]
+        for key in ('counted_tokens','high_water','has_gaps','coverage'):
+            assert upgraded[key]==unbound[key]
+    else:
+        emit(usage(100,10,20))
+    emit(usage(125,20,25))
+    emit(dict(method='turn/completed',params=dict(threadId=thread,turn=dict(id='bound-turn',status='completed'))))
+    terminal=checkpoint(p)['usage_records'][thread]['native_terminal']
+    emit(usage(125,20,25));emit(usage(100,10,20));emit(usage(150,25,35))
+    saved=checkpoint(p)['usage_records'][thread]
+    assert (saved['role'],saved['owner'],saved['loop_id'])==(role,p.instance,identity['loop_id'])
+    assert saved['counted_tokens']==saved['high_water']==dict(input_tokens=150,cached_input_tokens=25,output_tokens=35)
+    assert saved['has_gaps'] and saved['native_terminal']==terminal
+    assert terminal['binding_key']==identity['binding_key'] and terminal['connection_id']==host.native_connection_id
+    status=root.call_tool('progression_status',{})
+    assert status['usage']['groups'][role]['tokens']==saved['counted_tokens']
+    assert row(p)['state']=='active' and len(calls(native,'turn/start'))==1
+    # Invalid runtime observations must roll back the same real ledger, not
+    # manufacture another attribution baseline or a synthetic checkpoint.
+    before=checkpoint(p)
+    for changed in (dict(role='helper' if role=='worker' else 'worker'),dict(loop_id='other-loop')):
+        with pytest.raises(ValueError,match='original'):
+            p.coordinator._save({},native_observation=dict(identity={**identity,**changed},
+                source='turn_started',turn_id='rejected-turn',connection_id=host.native_connection_id))
+        assert checkpoint(p)==before
+    foreign=p.runtime.scheduler_bindings.create_instance(name='foreign-attribution',title='Foreign scope',objective='Separate test scope.')
+    with pytest.raises(SchedulerInstanceConflict,match='Native host binding changed'):
+        p.runtime.scheduler_bindings.observe_progression(instance_id=foreign.instance_id,
+            expected_host=json.loads(row(p)['host_json']),changes={},native_observation=dict(identity=identity,
+                source='turn_started',turn_id='rejected-turn',connection_id=host.native_connection_id))
+    from scidiscovery.artifact_agent.service.progression_budget import _reconcile_attribution
+    with pytest.raises(ValueError,match='original role or owner'):
+        _reconcile_attribution(saved,role=role,owner=foreign.instance_id)
+    assert saved==checkpoint(p)['usage_records'][thread] and checkpoint(p)==before
+
+
 @pytest.mark.parametrize('run_state',['completed','failed'])
 @pytest.mark.parametrize('helper',[False,True])
 @pytest.mark.parametrize('limit',[1,2])

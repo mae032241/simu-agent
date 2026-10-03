@@ -409,6 +409,8 @@ N1 重连终态 proof 活性（2026-10-03，基线 `f68f615`，源码完成、�
 
 简报容量修复（2026-10-03，基线 `3368b62`，源码完成、独立审查通过（仅源码边界）、纳入本提交节点、未部署）：仅统一简报字节检查与输出的紧凑 JSON，完整预算及原件导航保留；未增加预算投影、删字段、改消息策略或提高阈值。原 8192 B 恢复回归及中文多字节／完整预算／每次投递上界通过，另有 4096 B 不足时零 turn/start 拒绝与省略／消息唤醒两项邻接通过；仅四个定向节点，不宣称重新跑完整 owning。N1 settings 的旧订阅说明精确跟随已审实现；原红和诊断夹具错误时序见 `/tmp/scid-brief-capacity-20261003-implementation.md`。容量确实不足仍报明确 fault，真实 app-server、安装和科研资格未取得。
 
+N5 归属交错修复（2026-10-03，基线 `d268a5a`，源码完成、独立审查通过（仅源码边界）、纳入本提交节点、未部署）：公开 gateway attach／helper 入场后，有限协议 peer 的原 AppServer→event reducer→observe_progression 路径复现“未归属用量已存→确切绑定→首个 lifecycle”被 ValueError 中断。usage／lifecycle 在既有锁事务共用小归属规则，保留累计计数、高水位、缺测、原 loop 和 native facts，不增预算或重设 baseline；稳定角色／owner、跨 loop 与外实例宿主冲突仍拒绝。Worker／helper 两种顺序及必要 dedup、退役 loop、N1 proof 邻接共 14 个不同节点通过；不称完整 owning 重跑，真实平台发序仍未测。红绿与拒绝边界证据 `/tmp/scid-n5-attribution-20261003-implementation.md`，不授 native／安装／科学资格。
+
 下表保留控制准备、效果／机制验收与规模节点；2026-10-03 真实效果主测改选原版 LHTB，原 P6s 合成题降为独立机制回归，具体下一步见[选题与验收分工](#真实效果题与机制回归分工)。P0 实现、定向验证及独立评审完成；P1a 行为规则与计数基线已独立审查通过，P4a 前次修复已提交 `67bcd4d`；追加独立人工范围返回后台修复已通过定向验证和独立复审，代码净减少目标仍未达到并已转为后续待办；结构收口节点 `47961d8` 已通过独立评审，未部署，其余生产改动与运行验收待实施，P6s 题库草案已构造。工作量为单执行者的有效人日粗估，包含定向验证与一次独立评审修正，不是交付日期；模型/服务等待、main 就绪、人工绑定/评分与长跑墙钟另计。P1a 核实后更新估算，不以增删行数作为产量目标。
 
 | 节点 | 工作量 | 最小退出条件 |
@@ -442,7 +444,7 @@ N1 重连终态 proof 活性（2026-10-03，基线 `f68f615`，源码完成、�
 
 这些是原题声明。原题数值评分沿原verifier；构建、verifier与实际人工介入分别记账，不新增人工评分要求。MB 字段不冒充实际 RSS 字节或已测峰值。更换题目不授权 3h／4h费用，不继承原 P6s token 或时长提议。若缩预算、改题、增分批材料／工况或改变反馈，须另冻并标 **LHTB-derived／custom pilot**，不能称原版同条件成绩。原题不强迫 `science.experiment.v1`、可选 declaration、A/B 批次或 Operation DAG，不新增 runner。
 
-committed main／dev 集成与 N1 已独立审查并落库；合法 8192 B Root 简报容量修复已独立审查通过、纳入本提交节点，源码具体阻断闭合。下一步 N5 先复现 usage→attach→lifecycle 归属交错，不能复现则保留具体 unknown／排除条件，不预防性重构。随后冻结 exact candidate／task／镜像 digest、依赖、有效反馈与继续／停止行为、全部角色预算，并在实际 Root／Worker／helper 和原生进程环境验证公开输入可读、隐藏 tests／答案及其副本不可读；完整 checkout 不挂给被测环境。当前尚未 ready，未运行模型／Docker／评分。N2／N6 的有界覆盖与 unknown 限制按所选 mode 明确报告，不以高分授长期资格。
+committed main／dev 集成、N1 与合法 8192 B Root 简报容量修复已独立审查并落库；N5 源码可达归属反例的限定修复已独立审查通过，纳入本提交节点。其余机制修复按当前范围分别收口，随后冻结 exact candidate／task／镜像 digest、依赖、有效反馈与继续／停止行为、全部角色预算，并在实际 Root／Worker／helper 和原生进程环境验证公开输入可读、隐藏 tests／答案及其副本不可读；完整 checkout 不挂给被测环境。当前尚未 ready，未运行模型／Docker／评分。N2／N6 的有界覆盖与 unknown 限制按所选 mode 明确报告，不以高分授长期资格。
 
 Native Codex Goal 与 SciDiscovery 对照须同任务、profile、公开资料、有效反馈及整体时间／token／CPU／内存；Root、Workers、helper、失败／恢复／收尾全部角色成本计入，保留声明 native 权限，记录人工介入和 unknown。单题两模式只构成 pilot，不支持统计效果或官方全集排名。
 
