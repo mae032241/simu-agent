@@ -137,7 +137,7 @@ def restore_archive(service, instance_id):
     return service.restore(instance_id, preview["fingerprint"])
 
 
-@pytest.mark.parametrize('old_format', [None, 'scidiscovery-state-v3'])
+@pytest.mark.parametrize('old_format', [None, 'scidiscovery-state-v3', 'scidiscovery-state-v4'])
 def test_previous_control_format_archive_is_rejected_before_restore_writes(archive_system, old_format):
     from scidiscovery.artifact_agent.service.instance_archive_files import durable_json, hash_file
     runtime, service, first, _ = archive_system

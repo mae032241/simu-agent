@@ -580,7 +580,7 @@ class SchedulingControl:
                 if mode == 'background' and ref_json and self.progress_run_reader:
                     from .scientific_progress import freeze_observation_scope
                     freeze_observation_scope(connection, dict(instance_id=instance_id, **values),
-                        self.progress_run_reader, self)
+                        self.progress_run_reader, self, background_reader=getattr(self, 'progress_background_reader', None))
                 if ref_json:
                     from .scientific_progress import refresh_shadow
                     from ..schema.common import canonical_sha256
@@ -1209,6 +1209,7 @@ class SchedulingControl:
                 state['window_start_sequence'] = window['window_start_sequence']
                 state['through_sequence'] = max(state.get('through_sequence', 0), window['through_sequence'])
                 state['omitted'] = state.get('omitted', False) or window['omitted']
+                state['background_proof_coverage'] = window.get('background_proof_coverage', 'complete')
             return state or None
 
     def progression_report(self, *, instance_id, session_key, summary, completed=False, question=None,

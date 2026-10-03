@@ -82,13 +82,14 @@ def observe_deliveries(db, row, checkpoint, *, boundary=None):
             continue  # A hidden brief item is not an actual delivery.
         sequence = db.execute('SELECT coalesce(max(sequence),0)+1 FROM scheduler_terminal_deliveries WHERE instance_id=?',
             (row['instance_id'],)).fetchone()[0]
+        delivery_value = dict(item['delivery'], observation_role=_delivery_role(db, row, item['run_id'], item['terminal']))
         updated = db.execute('INSERT INTO scheduler_terminal_deliveries VALUES(?,?,?,?,?,?,?,?,?,?,?) '
             'ON CONFLICT(instance_id,goal_key,run_id) DO UPDATE SET '
             'delivery_json=excluded.delivery_json,host_json=excluded.host_json,turn_id=excluded.turn_id,'
             'consumed_boundary=excluded.consumed_boundary '
             'WHERE scheduler_terminal_deliveries.consumed_boundary IS NULL',
             (sequence, row['instance_id'], goal_key, item['run_id'], item['name'], json.dumps(objective),
-             json.dumps(item['terminal']), json.dumps(item['delivery']), row['host_json'], turn,
+             json.dumps(item['terminal']), json.dumps(delivery_value), row['host_json'], turn,
              decision.get('boundary')))
         if updated.rowcount and decision.get('boundary'):
             delivery = db.execute('SELECT sequence FROM scheduler_terminal_deliveries '
@@ -103,7 +104,8 @@ def observe_deliveries(db, row, checkpoint, *, boundary=None):
                 consumption_sequence=consumption, delivery_sequence=delivery['sequence'],
                 task_name=item['name'], terminal=item['terminal'],
                 task_classification=item['terminal'].get('task_classification'),
-                intent=item.get('scientific_intent'), delivery=item['delivery']))
+                observation_role=delivery_value['observation_role'], run_id=item['run_id'],
+                intent=item.get('scientific_intent'), delivery=delivery_value))
             changed = True
     if changed:
         refresh_shadow(db, row, goal_key)
@@ -123,6 +125,7 @@ def terminal_fact(runs, value):
         reason=value.reason, task_classification=(value.recovery_policy or {}).get('task_classification'))
     from .verified_progress import verified_progress
     terminal['verified_progress'] = verified_progress(runs, value)
+    terminal['terminal_event'] = terminal_position(runs, instance_id=value.instance_id, run_id=value.run_id)
     if value.state in {'failed', 'timed_out'}:
         failure = runs.diagnostic_summary(value).get('failure') or {}
         terminal['failure_key'] = (dict(operation_id=value.operation_id, operation_digest=value.operation_digest,
@@ -130,6 +133,73 @@ def terminal_fact(runs, value):
             if failure.get('category') and failure.get('code') else None)
         terminal['failure_classification'] = 'recorded_diagnostic' if terminal['failure_key'] else 'unknown'
     return terminal
+
+
+def terminal_position(runs, *, instance_id, run_id=None):
+    """The existing committed terminal event is a causal position, not wall time."""
+    with runs._connect() as db:
+        return db.execute("SELECT coalesce(max(a.rowid),0) FROM run_activity a JOIN runs r ON r.run_id=a.run_id "
+            "WHERE r.instance_id=? AND (? IS NULL OR r.run_id=?) AND r.state IN ('completed','failed') "
+            "AND a.recorded_at=r.completed_at AND a.activity=CASE r.state WHEN 'completed' "
+            "THEN 'completion_committed' ELSE 'framework_failure' END", (instance_id, run_id, run_id)).fetchone()[0]
+
+
+def background_snapshot(runs, *, instance_id, observed=()):
+    """Bounded optional proof knowledge; the high water covers all terminal identities."""
+    from .verified_progress import verified_progress, _proof_errors
+    upper = terminal_position(runs, instance_id=instance_id)
+    with runs._connect() as db:
+        query = ("FROM runs r JOIN run_activity a ON a.run_id=r.run_id "
+            "WHERE r.instance_id=? AND r.state='completed' AND a.activity='completion_committed' "
+            "AND a.recorded_at=r.completed_at AND a.rowid<=? AND json_extract(r.output_ref_json,'$.schema_id') "
+            "IN ('scidiscovery.layered-diagnosis.v1','scidiscovery.experiment-review.v1','scidiscovery.scientific-review.v1') "
+            'AND r.run_id NOT IN (SELECT value FROM json_each(?)) ')
+        args = (instance_id, upper, json.dumps(sorted(observed)))
+        candidate_count = db.execute('SELECT count(*) '+query, args).fetchone()[0]
+        records = db.execute('SELECT r.run_id '+query+'ORDER BY a.rowid LIMIT 16', args).fetchall()
+    keys, checked, unavailable = set(), [], []
+    for item in records:
+        try:
+            proof = verified_progress(runs, runs.status(item['run_id']))
+        except _proof_errors() as error:
+            proof = dict(status='unknown', reason='background_proof_unavailable', error=type(error).__name__)
+        if any(part in proof.get('reason', '') for part in ('unavailable', 'inconsistent', 'missing', 'ambiguous', 'invalid')):
+            unavailable.append(item['run_id'])
+        else:
+            checked.append(item['run_id'])
+        if proof['status'] == 'verified_test_resolution':
+            keys.update(item['key'] for item in proof['resolutions'])
+    return dict(terminal_upper=upper, known_resolutions=sorted(keys)[:128], checked_runs=checked,
+        unavailable_runs=unavailable, candidate_count=candidate_count, proof_omitted=candidate_count > 16 or len(keys) > 128,
+        family_omitted=len(keys) > 128,
+        proof_coverage='bounded_unknown' if candidate_count > 16 or unavailable or len(keys) > 128 else 'complete')
+
+
+def _delivery_role(db, row, run_id, terminal):
+    # Once actually observed, a goal revision cannot relabel a Run as background.
+    previous = db.execute('SELECT fact_json FROM scheduler_progress_facts WHERE instance_id=? AND run_id=? '
+        "AND json_extract(fact_json,'$.consumption_sequence') IS NOT NULL ORDER BY "
+        "json_extract(fact_json,'$.consumption_sequence') LIMIT 1", (row['instance_id'], run_id)).fetchone()
+    if previous:
+        return json.loads(previous['fact_json']).get('observation_role', 'observed')
+    record = db.execute('SELECT state_json FROM scheduler_progress_shadow WHERE instance_id=? AND goal_key=?',
+        (row['instance_id'], EXPLORATION_KEY)).fetchone()
+    state = json.loads(record['state_json']) if record else {}
+    history = state.get('background_history')
+    if history is not None:
+        if run_id in state.get('observed_before_start', []):
+            return 'observed'
+        position = terminal.get('terminal_event')
+        if type(position) is not int or position <= 0:
+            return 'unknown'
+        return 'background' if position <= history['terminal_upper'] else 'observed'
+    # Existing exact scope identities remain meaningful, but do not invent a
+    # high water for a scope frozen before this field was introduced.
+    scopes = [json.loads(item['state_json']).get('observation_scope', {}) for item in db.execute(
+        'SELECT state_json FROM scheduler_progress_shadow WHERE instance_id=?', (row['instance_id'],))]
+    if any(run_id in scope.get('background', {}) for scope in scopes):
+        return 'background'
+    return 'unknown' if any(scope.get('related_omitted') for scope in scopes) else 'observed'
 
 
 def delivery_coverage(projection):
@@ -166,7 +236,8 @@ def terminal_delivery_page(*, bindings, row, cursor=None, limit=8):
         next_cursor = (base64.urlsafe_b64encode(canonical_json(dict(scope=scope, after=record['sequence']))).decode()
             if index+1 < len(records) else None)
         item = terminal_delivery_view([record])[0]
-        item['observation_role'] = 'background' if record['run_id'] in observation.get('background', {}) else 'observed'
+        item['observation_role'] = json.loads(record['delivery_json']).get('observation_role',
+            'background' if record['run_id'] in observation.get('background', {}) else 'observed')
         candidate = dict(items=[*page['items'], item], next_cursor=next_cursor,
             omitted=next_cursor is not None, continuation=dict(tool='progression_status', delivery_cursor=next_cursor,
                 delivery_limit=limit) if next_cursor else None)
@@ -385,7 +456,7 @@ def shadow_policy(row):
     return policy
 
 
-def freeze_observation_scope(db, row, reader, bindings):
+def freeze_observation_scope(db, row, reader, bindings, *, background_reader=None):
     """Freeze exact pre-start terminal identities once per goal, under scheduling lock.
 
     Existing consumption and admissions remain observed. Neither a restart nor a
@@ -406,9 +477,24 @@ def freeze_observation_scope(db, row, reader, bindings):
         return
     checkpoint = json.loads(row['checkpoint_json'])
     observed = {item['run_id'] for item in db.execute('SELECT run_id FROM scheduler_terminal_deliveries '
-        'WHERE instance_id=? AND goal_key=?', (row['instance_id'], goal_key))}
+        'WHERE instance_id=?', (row['instance_id'],))}
     observed.update(item['run_id'] for item in checkpoint.get('admissions', {}).values()
-        if item.get('run_id') and item.get('objective_ref') == objective.model_dump(mode='json'))
+        if item.get('run_id') and item.get('state') == 'accepted')
+    frozen_scopes = []
+    for item in db.execute('SELECT state_json FROM scheduler_progress_shadow WHERE instance_id=?', (row['instance_id'],)):
+        existing = json.loads(item['state_json'])
+        if 'observation_scope' in existing:
+            frozen_scopes.append(existing['observation_scope'])
+            observed.update(existing['observation_scope'].get('initial_observed', []))
+    global_record = db.execute('SELECT state_json FROM scheduler_progress_shadow WHERE instance_id=? AND goal_key=?',
+        (row['instance_id'], EXPLORATION_KEY)).fetchone()
+    if global_record:
+        global_state = json.loads(global_record['state_json'])
+        if 'background_history' not in global_state and not frozen_scopes and background_reader:
+            global_state.update(background_history=background_reader(instance_id=row['instance_id'], observed=observed),
+                observed_before_start=sorted(observed))
+            db.execute('UPDATE scheduler_progress_shadow SET state_json=? WHERE instance_id=? AND goal_key=?',
+                (json.dumps(global_state), row['instance_id'], EXPLORATION_KEY))
     limits = json.loads(row['config_json'])['effective']['progression']
     related, omitted = reader(instance_id=row['instance_id'], artifact_ref=objective,
         limit=17, source_limit=limits['related_source_limit'])
@@ -455,13 +541,15 @@ def observation_facts(db, row, goal_key, policy, state):
     _consumption_high_water(db, row['instance_id'])
     records = db.execute('SELECT f.fact_json FROM scheduler_terminal_deliveries d '
         'JOIN scheduler_progress_facts f USING(instance_id,goal_key,run_id) '
-        'WHERE d.instance_id=? AND d.goal_key=? AND d.consumed_boundary IS NOT NULL' + exclusion +
+        'WHERE d.instance_id=? AND d.goal_key=? AND d.consumed_boundary IS NOT NULL '
+        "AND coalesce(json_extract(f.fact_json,'$.observation_role'),'observed')='observed'" + exclusion +
         " ORDER BY json_extract(f.fact_json,'$.consumption_sequence') LIMIT ?",
         (row['instance_id'], goal_key, *background, *selected, limit + 1)).fetchall()
     return [_consumed_fact(item) for item in records[:limit]], len(records) > limit
 
 
-def reduce_shadow(facts, *, advances=None, known_evidence=(), known_resolutions=(), allow_root_advance=False):
+def reduce_shadow(facts, *, advances=None, known_evidence=(), known_resolutions=(), allow_root_advance=False,
+                  allow_new_resolution=True):
     """Content identity detects reuse, never scientific truth or semantic equivalence."""
     counts = dict(consumed=0, no_progress=0, refinement=0, coverage_gap=0, unchanged_evidence=0,
         repeated_failure=0)
@@ -472,7 +560,7 @@ def reduce_shadow(facts, *, advances=None, known_evidence=(), known_resolutions=
     for fact in facts:
         proof = fact['terminal'].get('verified_progress') or {}
         verified = proof.get('resolutions', []) if proof.get('status') == 'verified_test_resolution' else []
-        new_resolution = any(item['key'] not in resolved_checks for item in verified)
+        new_resolution = allow_new_resolution and any(item['key'] not in resolved_checks for item in verified)
         resolved_checks.update(item['key'] for item in verified)
         if (fact.get('task_classification') or {}).get('kind') == 'independent_review':
             if new_resolution:
@@ -527,9 +615,11 @@ def refresh_shadow(db, row, goal_key):
     prior_through = prior.get('through_sequence', 0)
     prior_facts, facts = [f for f in facts if f['sequence'] <= window_start], [f for f in facts if f['sequence'] > window_start]
     advances = []
+    background_keys, background_complete = _background_knowledge(db, row)
     counts = reduce_shadow(facts, advances=advances, allow_root_advance=policy['unverified_progress_threshold'] is None,
-        known_resolutions=[resolution['key'] for fact in prior_facts
-            for resolution in (fact['terminal'].get('verified_progress') or {}).get('resolutions', [])], known_evidence=[item['output']
+        allow_new_resolution=background_complete,
+        known_resolutions=[*background_keys, *[resolution['key'] for fact in prior_facts
+            for resolution in (fact['terminal'].get('verified_progress') or {}).get('resolutions', [])]], known_evidence=[item['output']
         for item in prior.get('observation_scope', {}).get('background', {}).values() if item['output']] +
         [item['ref'] for fact in prior_facts if (fact.get('assessment') or {}).get('supported')
             for item in fact['assessment'].get('evidence', [])])
@@ -594,9 +684,45 @@ def exploration_facts(db, row):
         "row_number() OVER (PARTITION BY d.run_id ORDER BY json_extract(f.fact_json,'$.consumption_sequence')) AS occurrence "
         'FROM scheduler_terminal_deliveries d JOIN scheduler_progress_facts f USING(instance_id,goal_key,run_id) '
         'WHERE d.instance_id=? AND d.consumed_boundary IS NOT NULL) '
-        'SELECT fact_json FROM consumed WHERE occurrence=1 AND position>?' + exclusion +
+        "SELECT fact_json FROM consumed WHERE occurrence=1 AND position>? "
+        "AND coalesce(json_extract(fact_json,'$.observation_role'),'observed')='observed'" + exclusion +
         ' ORDER BY position LIMIT ?', (row['instance_id'], initial, *excluded, capacity + 1)).fetchall()
     return [_consumed_fact(item) for item in selected[:capacity]], len(selected) > capacity
+
+
+def _background_knowledge(db, row):
+    record = db.execute('SELECT state_json FROM scheduler_progress_shadow WHERE instance_id=? AND goal_key=?',
+        (row['instance_id'], EXPLORATION_KEY)).fetchone()
+    state = json.loads(record['state_json']) if record else {}
+    history = state.get('background_history', {})
+    keys = set(history.get('known_resolutions', []))
+    # Background tasks outside the startup proof budget can still provide exact
+    # known families when actually delivered. They never produce new progress.
+    for item in db.execute("SELECT DISTINCT json_extract(value.value,'$.key') AS family FROM scheduler_progress_facts f, "
+        "json_each(f.fact_json,'$.terminal.verified_progress.resolutions') value WHERE f.instance_id=? "
+        "AND json_extract(f.fact_json,'$.observation_role')='background' "
+        "AND json_extract(f.fact_json,'$.terminal.verified_progress.status')='verified_test_resolution' LIMIT 129",
+        (row['instance_id'],)):
+        keys.add(item['family'])
+    # Omitted or corrupt background proof is explicit uncertainty about novelty,
+    # not an execution gate or evidence of scientific failure.
+    checked = history.get('checked_runs', [])
+    additional = db.execute("SELECT count(DISTINCT run_id) FROM scheduler_progress_facts WHERE instance_id=? "
+        "AND json_extract(fact_json,'$.observation_role')='background' "
+        "AND json_extract(fact_json,'$.terminal.output.schema_id') IN "
+        "('scidiscovery.layered-diagnosis.v1','scidiscovery.experiment-review.v1','scidiscovery.scientific-review.v1') "
+        "AND json_extract(fact_json,'$.terminal.verified_progress.reason') NOT LIKE '%unavailable%' "
+        "AND json_extract(fact_json,'$.terminal.verified_progress.reason') NOT LIKE '%inconsistent%' "
+        "AND json_extract(fact_json,'$.terminal.verified_progress.reason') NOT LIKE '%missing%' "
+        "AND json_extract(fact_json,'$.terminal.verified_progress.reason') NOT LIKE '%ambiguous%' "
+        "AND run_id NOT IN (SELECT value FROM json_each(?))", (row['instance_id'], json.dumps(checked))).fetchone()[0]
+    # Checking every Run cannot recover families discarded from its proof.
+    # Preserve that uncertainty even when a later bounded read has 128 keys.
+    # Earlier snapshots without the specific flag cannot prove which omission
+    # occurred, so their generic omission remains conservative uncertainty.
+    family_omitted = history.get('family_omitted', history.get('proof_omitted', False))
+    complete = not family_omitted and len(checked) + additional >= history.get('candidate_count', 0) and len(keys) <= 128
+    return keys, complete
 
 
 def refresh_exploration(db, row, goal_key):
@@ -609,11 +735,12 @@ def refresh_exploration(db, row, goal_key):
     facts, omitted = exploration_facts(db, row)
     initial = prior.get('initial_sequence', 0)
     start = prior.get('window_start_sequence', initial)
-    resolved_checks, advances, unverified, research = set(), [], 0, 0
+    background_keys, background_complete = _background_knowledge(db, row)
+    resolved_checks, advances, unverified, research = set(background_keys), [], 0, 0
     for fact in facts:
         proof = fact['terminal'].get('verified_progress') or {}
         resolutions = proof.get('resolutions', []) if proof.get('status') == 'verified_test_resolution' else []
-        fresh = any(item['key'] not in resolved_checks for item in resolutions)
+        fresh = background_complete and any(item['key'] not in resolved_checks for item in resolutions)
         resolved_checks.update(item['key'] for item in resolutions)
         if fact['sequence'] <= start:
             continue
@@ -626,7 +753,7 @@ def refresh_exploration(db, row, goal_key):
             advances.append(fact['sequence'])
     through = max([start, *(f['sequence'] for f in facts)])
     counts = dict(unverified_progress=unverified, consumed_research_tasks=research,
-        verified_test_resolutions=len(resolved_checks))
+        verified_test_resolutions=len(resolved_checks - background_keys))
     notices, dispositions = list(prior.get('notices', [])), list(prior.get('dispositions', []))
     resolved = {item['notice_id'] for item in dispositions}
     for notice in notices:
@@ -644,6 +771,10 @@ def refresh_exploration(db, row, goal_key):
     state = dict(initial_sequence=initial, window_start_sequence=start, through_sequence=through,
         counts=counts, notices=notices, dispositions=dispositions, omitted=omitted,
         scope='instance_consumed_research_across_goals_and_loops')
+    for key in ('background_history', 'observed_before_start'):
+        if key in prior:
+            state[key] = prior[key]
+    state['background_proof_coverage'] = 'complete' if background_complete else 'bounded_unknown'
     if state != prior:
         db.execute('INSERT INTO scheduler_progress_shadow VALUES(?,?,?) '
             'ON CONFLICT(instance_id,goal_key) DO UPDATE SET state_json=excluded.state_json',
@@ -728,6 +859,7 @@ def shadow_projection(*, bindings, row):
     # Notice snapshots stay in the DB; the common public projection is bounded.
     return dict(mode=policy['progress_mode'], policy=policy, counts=state.get('counts', reduce_shadow([])),
         position_basis='first_confirmed_consumption',
+        background_proof_coverage=state.get('background_proof_coverage', 'complete'),
         window_start_sequence=state.get('window_start_sequence', 0),
         notices=[{key: item[key] for key in ('id', 'reason', 'trigger_counts', 'through_sequence', 'would_act', 'state',
             'dispatch_changed')} for item in state.get('notices', [])[-5:]],

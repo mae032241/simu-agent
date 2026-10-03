@@ -11,9 +11,10 @@ import os
 import stat
 from pathlib import Path
 
-# v4 gives scientific windows an actual confirmed-consumption position. v3
-# delivery creation positions cannot reconstruct that order and are not migrated.
-STATE_FORMAT = "scidiscovery-state-v4"
+# v5 freezes pre-background terminal scope and deduplicates exploration families
+# independently of cutoffs. Older stored family hashes and scopes cannot establish
+# these meanings; existing stores and archives are rejected, never migrated.
+STATE_FORMAT = "scidiscovery-state-v5"
 MARKER = ".scidiscovery-state.json"
 
 

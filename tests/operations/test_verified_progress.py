@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from tests.operations.test_progression import progression, row
+from tests.operations.test_progression import progression, unmanaged_progression, row
 from tests.operations.test_progress_assist import configure, next_turn
 from tests.operations.test_progress_shadow import native_delivery
 from tests.operations.test_scientific_progress import active, request, assess, INTENT
@@ -15,7 +15,7 @@ from tests.operations.test_human_progress_continuation import paused, human_ui, 
 
 
 @pytest.fixture
-def science_progression(tmp_path, request):
+def science_progression(tmp_path, request, monkeypatch):
     from tests.operations.test_tcad_result_analysis import analysis_system
     from tests.operations import test_m2_curve_analysis_boundary as curve
     from tests.operations.research_loop_fixtures import authorize_loop
@@ -26,6 +26,20 @@ def science_progression(tmp_path, request):
     options = getattr(request, 'param', {})
     plan = curve._plan().model_dump(mode='json')
     check = plan['validation_plans'][0]['numerical']['checks'][0]
+    if options.get('multiple_checks'):
+        from dataclasses import replace
+        from curve_score import analysis_tool
+        checks = []
+        for index in range(options['multiple_checks']):
+            checks.append(dict(check, check_key=f'm{index:03}', evaluator_profile='fixture.finite-counts.v1',
+                evaluator_metric=f'point_count_plus_{index}', threshold=dict(operator='le', value=3+index, unit='1')))
+        plan['validation_plans'][0]['numerical']['checks'] = checks[:128]
+        if len(checks) > 128:
+            plan['validation_plans'][0]['physical'] = dict(applicability='required', rationale='A further finite check.', checks=checks[128:])
+        # A registered test evaluator uses the public projection and normal
+        # controlled completion. The Agent never authors values or receipts.
+        monkeypatch.setattr(analysis_tool, 'CURVE_SCORE_TOOL', replace(analysis_tool.CURVE_SCORE_TOOL,
+            contextual_handler=finite_count_tool))
     if options.get('negative'):
         plan['validation_plans'][0]['physical'] = dict(applicability='required', rationale='A finite falsifiable observation.', checks=[check])
         plan['validation_plans'][0]['numerical'] = dict(applicability='not_applicable', rationale='This finite math fixture has no solver prerequisite.', checks=[])
@@ -42,6 +56,11 @@ def science_progression(tmp_path, request):
     root.call_tool('progression_command', dict(command='takeover', mode='interactive'))
     root.call_tool('artifact_ingest_text', dict(name='goal', text='Resolve the predeclared finite test, retaining its boundary.'))
     root.call_tool('progression_command', dict(command='pause'))
+    criterion = artifacts['plan'].ref
+    if options.get('prestart'):
+        goal_ref = runtime.artifacts.get_by_id(root.facade._resolve('artifact', 'goal')).ref
+        criterion = register('prestart-plan', runtime.artifacts.read(criterion),
+            'scidiscovery.experiment-portfolio.v1', parents=(goal_ref,)).ref
     settings = runtime.scheduler_bindings.global_settings
     runtime.scheduler_bindings.global_settings = settings.model_copy(update=dict(progression=settings.progression.model_copy(
         update=dict(progress_mode='assist', no_progress_threshold=100, refinement_threshold=100, observation_gap_threshold=100))))
@@ -49,16 +68,19 @@ def science_progression(tmp_path, request):
     if options.get('negative'):
         contract['comparison_spec']['comparisons'][0]['gate_scope'] = 'objective'
     if not options.get('posthoc'):
-        register('conditions', canonical_json(contract), 'scidiscovery.curve-experiment-contract.v1', parents=(artifacts['plan'].ref,))
+        register('conditions', canonical_json(contract), 'scidiscovery.curve-experiment-contract.v1', parents=(criterion,))
     bundle = curve._bundle().model_dump(mode='json')
     if not options.get('negative'):
         bundle['series'][1]['points'] = deepcopy(bundle['series'][0]['points'])
-    register('generic_results', b'Exact later bounded observation.', 'opaque', parents=(artifacts['plan'].ref,))
-    register('generic_bundle', canonical_json(bundle), 'scidiscovery.curve-bundle.v1', parents=(artifacts['plan'].ref,))
+    register('generic_results', b'Exact later bounded observation.', 'opaque', parents=(criterion,))
+    register('generic_bundle', canonical_json(bundle), 'scidiscovery.curve-bundle.v1', parents=(criterion,))
     if options.get('posthoc'):
         register('conditions', canonical_json(contract), 'scidiscovery.curve-experiment-contract.v1', parents=(artifacts['plan'].ref,))
-    authorize_loop(runtime, instance, user, 'goal')
-    root.call_tool('progression_command', dict(command='start', mode='background', objective_name='goal'))
+    if options.get('prestart'):
+        root.call_tool('progression_command', dict(command='start', mode='interactive', objective_name='goal'))
+    else:
+        authorize_loop(runtime, instance, user, 'goal')
+        root.call_tool('progression_command', dict(command='start', mode='background', objective_name='goal'))
     def facade(session):
         value = copy(root.facade)
         value.session_key = session
@@ -70,12 +92,48 @@ def science_progression(tmp_path, request):
     coordinator.close()
 
 
+def finite_count_tool(request, context):
+    """Registered fixture evaluator: exact finite point count plus named offset."""
+    import hashlib
+    from curve_score.analysis_tool import evaluate_analysis_request
+    from scidiscovery.artifact_agent.schema.experiment import ExperimentPortfolio
+    from scidiscovery.artifact_agent.schema.validation import ValidationCheckResult, evaluate_threshold
+    from scidiscovery.plugin_runtime.calculations import CalculationResult, CalculationValidation
+    plan_alias, = context.input_names_for_port('experiment_plan')
+    conditions_alias, = context.input_names_for_port('reference_material')
+    sources = {alias: context.read_evidence(alias) for alias in (plan_alias, conditions_alias, 'curve_bundle')}
+    portfolio = ExperimentPortfolio.model_validate_json(sources[plan_alias], strict=True)
+    plan, = portfolio.validation_plans
+    bundle = json.loads(sources['curve_bundle'])
+    count = len(bundle['series'][0]['points'])
+    results = []
+    for dimension in (plan.numerical, plan.physical, plan.experimental):
+        for check in dimension.checks:
+            observed = count + int(check.evaluator_metric.removeprefix('point_count_plus_'))
+            passed = evaluate_threshold(observed, check.threshold, observed_unit='1')
+            results.append(ValidationCheckResult(check_key=check.check_key, status='pass' if passed else 'fail',
+                evaluation_mode='deterministic_threshold', observed_value=observed, observed_text=str(observed),
+                unit='1', evidence_keys=('curve_bundle',), rationale='Count.'))
+    curve_result = evaluate_analysis_request(record_key=request.record_key, request=request.request.raw_request,
+        sources={'curve_bundle': sources['curve_bundle']})
+    assert curve_result.status == 'computed'
+    record = CalculationResult(record_key=request.record_key, request=request.request.raw_request,
+        algorithm_version='fixture.finite-counts.v1', status='computed', result=curve_result.result,
+        input_digests={alias: hashlib.sha256(raw).hexdigest() for alias, raw in sources.items()},
+        validation=CalculationValidation(plan_source=plan_alias, conditions_source=conditions_alias,
+            result_sources=('curve_bundle',), evaluator_profile='fixture.finite-counts.v1',
+            experiment_key=plan.experiment_key, plan_key=plan.plan_key, results=tuple(results)))
+    return context.complete_calculation(record, summary=True)
+
+
 def scientific_result(p, root, name, *, controlled=False, conditions=True, scope_mismatch=False,
-                      plan_name='plan', condition_name='conditions', bundle_name='generic_bundle'):
+                      plan_name='plan', condition_name='conditions', bundle_name='generic_bundle', deliver=True):
     from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
     from scidiscovery.artifact_agent.schema.common import canonical_json
     from tests.operations.test_result_analysis_tool import score_inputs
     from tests.operations import test_m2_curve_analysis_boundary as curve
+    if p.options.get('prestart') and plan_name == 'plan':
+        plan_name = 'prestart-plan'
     inputs = [dict(port='experiment_plan', artifact_names=[plan_name]),
         dict(port='experiment_results', artifact_names=['generic_results']), dict(port='curve_bundle', artifact_names=[bundle_name])]
     if conditions:
@@ -112,7 +170,8 @@ def scientific_result(p, root, name, *, controlled=False, conditions=True, scope
     measured_fixture_usage(worker)
     assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
     assess(root, name, outcome='advance')
-    native_delivery(p, root, name)
+    if deliver:
+        native_delivery(p, root, name)
     return worker, score
 
 
@@ -663,3 +722,219 @@ def test_actual_consumption_positions_survive_cold_read_archive_and_restore(paus
     restore_archive(archive, p.instance)
     assert positions(p.runtime.scheduler_bindings) == expected
     assert p.runtime.scheduler_bindings.progress_shadow(instance_id=p.instance, objective_ref=objective) == before
+
+
+def test_prestart_terminal_history_beyond_detail_capacity_never_counts_as_new_exploration(unmanaged_progression):
+    from tests.operations.research_loop_fixtures import authorize_loop
+    p = unmanaged_progression
+    p.root.call_tool('progression_command', dict(command='takeover'))
+    p.root.call_tool('artifact_ingest_text', dict(name='history-revision', text='Retain the exact shared historical evidence.'))
+    p.root.call_tool('progression_command', dict(command='pause'))
+    p.root.call_tool('progression_command', dict(command='start', mode='interactive', objective_name='goal'))
+    memory_csv(p, 'prestart-shared', ['goal', 'history-revision'])
+    for index in range(22):
+        consumed_csv(p, p.root, f'old-background-{index}', 'prestart-shared', deliver=False)
+    settings = p.runtime.scheduler_bindings.global_settings
+    p.runtime.scheduler_bindings.global_settings = settings.model_copy(update=dict(progression=settings.progression.model_copy(
+        update=dict(progress_mode='assist', no_progress_threshold=100, refinement_threshold=100, observation_gap_threshold=100))))
+    p.root.call_tool('progression_command', dict(command='pause'))
+    authorize_loop(p.runtime, p.instance, p.user, 'goal')
+    p.root.call_tool('progression_command', dict(command='start', mode='background', objective_name='goal'))
+    root = active(p)
+    for index in range(22):
+        native_delivery(p, root, f'old-background-{index}')
+    old = settle(p)['progress_shadow']
+    assert old['counts']['consumed_research_tasks'] == 0, old
+    assert old['counts']['unverified_progress'] == 0 and row(p)['state'] == 'active'
+    root = switch_background_goal(p, 'history-revision')
+    native_delivery(p, root, 'old-background-21')
+    consumed_csv(p, root, 'new-observed-first', 'prestart-shared')
+    assert settle(p)['progress_shadow']['counts']['consumed_research_tasks'] == 1
+    root = switch_background_goal(p, 'goal')
+    native_delivery(p, root, 'new-observed-first')
+    consumed_csv(p, root, 'new-observed-second', 'prestart-shared')
+    assert settle(p)['progress_shadow']['counts']['consumed_research_tasks'] == 2
+    root = switch_background_goal(p, 'history-revision')
+    consumed_csv(p, root, 'new-observed-third', 'prestart-shared')
+    assert settle(p)['progress_shadow']['counts']['unverified_progress'] == 3
+    assert row(p)['state'] == 'paused'
+    with pytest.raises(Exception, match='paused|progress'):
+        root.call_tool('operation_invoke', request('after-real-exploration-window'))
+
+
+@pytest.mark.parametrize('science_progression', [dict(prestart=True)], indirect=True)
+def test_background_verified_family_is_known_without_claiming_fresh_progress(science_progression):
+    from tests.operations.research_loop_fixtures import authorize_loop
+    p = science_progression
+    scientific_result(p, p.root, 'old-scientific-solution', controlled=True, deliver=False)
+    p.root.call_tool('progression_command', dict(command='pause'))
+    authorize_loop(p.runtime, p.instance, p.user, 'goal')
+    p.root.call_tool('progression_command', dict(command='start', mode='background', objective_name='goal'))
+    root = active(p)
+    for index in range(3):
+        scientific_result(p, root, f'background-family-repeat-{index}', controlled=True)
+    status = settle(p)['progress_shadow']
+    assert status['counts']['consumed_research_tasks'] == 3, status
+    assert status['counts']['unverified_progress'] == 3
+    assert row(p)['state'] == 'paused'
+
+
+@pytest.mark.parametrize('science_progression', [dict(prestart=True, multiple_checks=128),
+    dict(prestart=True, multiple_checks=129)], indirect=True)
+def test_background_family_budget_retains_exact_128_129_omission(science_progression):
+    from scidiscovery.artifact_agent.service.scientific_progress import background_snapshot
+    from scidiscovery.artifact_agent.service.verified_progress import verified_progress
+    p = science_progression
+    worker, _ = scientific_result(p, p.root, 'old-multiple-checks', controlled=True, deliver=False)
+    proof = verified_progress(p.runtime.runs, p.runtime.runs.status(worker._run_id))
+    assert proof['status'] == 'verified_test_resolution', proof
+    assert len({item['key'] for item in proof['resolutions']}) == p.options['multiple_checks']
+    snapshot = background_snapshot(p.runtime.runs, instance_id=p.instance)
+    assert len(snapshot['known_resolutions']) == 128
+    assert snapshot['candidate_count'] == 1 and snapshot['checked_runs'] == [worker._run_id]
+    assert snapshot.get('family_omitted', False) == (p.options['multiple_checks'] > 128), snapshot
+    assert snapshot['proof_coverage'] == ('complete' if p.options['multiple_checks'] == 128 else 'bounded_unknown')
+
+
+@pytest.mark.parametrize('science_progression', [dict(prestart=True, multiple_checks=129)], indirect=True)
+def test_background_truncated_old_family_cannot_clear_real_consumption_window(science_progression):
+    from scidiscovery.artifact_agent.schema.common import canonical_json
+    from scidiscovery.artifact_agent.service.verified_progress import verified_progress
+    from tests.operations.research_loop_fixtures import authorize_loop
+    p = science_progression
+    old_worker, _ = scientific_result(p, p.root, 'old-129-families', controlled=True, deliver=False)
+    old_proof = verified_progress(p.runtime.runs, p.runtime.runs.status(old_worker._run_id))
+    assert old_proof['status'] == 'verified_test_resolution' and len(old_proof['resolutions']) == 129, old_proof
+    omitted = sorted(old_proof['resolutions'], key=lambda item: item['key'])[-1]
+    # The old task is outside this goal's initial brief. Its proof remains in
+    # the instance background snapshot, without being redelivered in full.
+    p.root.call_tool('artifact_ingest_text', dict(name='current-multiple-check-goal', text='Retain prior checks while confirming this new direction.'))
+    p.root.call_tool('progression_command', dict(command='pause'))
+    authorize_loop(p.runtime, p.instance, p.user, 'current-multiple-check-goal')
+    p.root.call_tool('progression_command', dict(command='start', mode='background', objective_name='current-multiple-check-goal'))
+    root = active(p)
+    plan = json.loads(p.runtime.artifacts.read(p.artifacts['prestart-plan'].ref))
+    checks = [check for dimension in ('numerical', 'physical', 'experimental')
+        for check in plan['validation_plans'][0][dimension]['checks'] if check['check_key'] == omitted['check_key']]
+    assert len(checks) == 1
+    plan['validation_plans'][0]['numerical']['checks'] = checks
+    for dimension in ('physical', 'experimental'):
+        plan['validation_plans'][0][dimension] = dict(applicability='not_applicable', rationale='No further check.', checks=[])
+    goal_ref = p.runtime.artifacts.get_by_id(root.facade._resolve('artifact', 'current-multiple-check-goal')).ref
+    p.register('omitted-family-plan', canonical_json(plan), 'scidiscovery.experiment-portfolio.v1', parents=(goal_ref,))
+    p.register('omitted-family-conditions', canonical_json(p.contract), 'scidiscovery.curve-experiment-contract.v1',
+        parents=(p.artifacts['omitted-family-plan'].ref,))
+    p.register('omitted-family-measurement', p.runtime.artifacts.read(p.artifacts['generic_bundle'].ref),
+        'scidiscovery.curve-bundle.v1', parents=(p.artifacts['omitted-family-plan'].ref,))
+    for index in range(3):
+        worker, _ = scientific_result(p, root, f'old-truncated-family-repeat-{index}', controlled=True,
+            plan_name='omitted-family-plan', condition_name='omitted-family-conditions', bundle_name='omitted-family-measurement')
+        proof = verified_progress(p.runtime.runs, p.runtime.runs.status(worker._run_id))
+        assert [item['key'] for item in proof['resolutions']] == [omitted['key']], proof
+    status = settle(p)['progress_shadow']
+    assert status['counts']['consumed_research_tasks'] == 3, status
+    assert status['counts']['unverified_progress'] == 3, status
+    assert status['background_proof_coverage'] == 'bounded_unknown'
+    assert row(p)['state'] == 'paused'
+
+
+@pytest.mark.parametrize('science_progression', [{}, dict(negative=True)], indirect=True)
+def test_threshold_micro_revisions_do_not_renew_exploration_family(science_progression):
+    from scidiscovery.artifact_agent.schema.common import canonical_json
+    p = science_progression
+    root = active(p)
+    scientific_result(p, root, 'first-threshold-solution', controlled=True)
+    for index in range(3):
+        plan = json.loads(p.runtime.artifacts.read(p.artifacts['plan'].ref))
+        dimension = 'physical' if p.options.get('negative') else 'numerical'
+        check = plan['validation_plans'][0][dimension]['checks'][0]
+        check['threshold']['value'] += (index+1)*.000001
+        contract = deepcopy(p.contract)
+        contract['comparison_spec']['comparisons'][0]['operators'][0]['threshold']['value'] = check['threshold']['value']
+        p.contract = contract
+        plan_name, conditions_name, bundle_name = (f'threshold-{index}-{suffix}' for suffix in ('plan', 'conditions', 'bundle'))
+        p.register(plan_name, canonical_json(plan), 'scidiscovery.experiment-portfolio.v1')
+        p.register(conditions_name, canonical_json(contract), 'scidiscovery.curve-experiment-contract.v1',
+            parents=(p.artifacts[plan_name].ref,))
+        p.register(bundle_name, p.runtime.artifacts.read(p.artifacts['generic_bundle'].ref),
+            'scidiscovery.curve-bundle.v1', parents=(p.artifacts[plan_name].ref,))
+        scientific_result(p, root, f'threshold-repeat-{index}', controlled=True,
+            plan_name=plan_name, condition_name=conditions_name, bundle_name=bundle_name)
+    status = settle(p)['progress_shadow']
+    assert status['counts']['verified_test_resolutions'] == 1, status
+    assert status['counts']['unverified_progress'] == 3
+    assert row(p)['state'] == 'paused'
+
+
+def test_new_structured_experimental_condition_can_resolve_a_new_family(science_progression):
+    from scidiscovery.artifact_agent.schema.common import canonical_json
+    p = science_progression
+    root = active(p)
+    scientific_result(p, root, 'original-condition', controlled=True)
+    scientific_result(p, root, 'unknown-between-conditions')
+    plan = json.loads(p.runtime.artifacts.read(p.artifacts['plan'].ref))
+    plan['proposals'][0]['changed_factors'] = [dict(name='mesh_level', factor_type='implementation',
+        values=[2], unit='level', rationale='A distinct structured implementation condition.')]
+    plan['proposals'][0]['cases'][0]['settings'] = [dict(name='mesh_level', value=2, unit='level')]
+    p.register('changed-condition-plan', canonical_json(plan), 'scidiscovery.experiment-portfolio.v1')
+    p.register('changed-condition-contract', canonical_json(p.contract), 'scidiscovery.curve-experiment-contract.v1',
+        parents=(p.artifacts['changed-condition-plan'].ref,))
+    p.register('changed-condition-result', p.runtime.artifacts.read(p.artifacts['generic_bundle'].ref),
+        'scidiscovery.curve-bundle.v1', parents=(p.artifacts['changed-condition-plan'].ref,))
+    scientific_result(p, root, 'new-condition-resolution', controlled=True, plan_name='changed-condition-plan',
+        condition_name='changed-condition-contract', bundle_name='changed-condition-result')
+    status = settle(p)['progress_shadow']
+    assert status['counts']['verified_test_resolutions'] == 2
+    assert status['counts']['unverified_progress'] == 0
+    assert row(p)['state'] == 'active'
+
+
+@pytest.mark.parametrize('science_progression', [dict(prestart=True)], indirect=True)
+def test_optional_corrupt_background_proof_does_not_block_first_start(science_progression, monkeypatch):
+    from scidiscovery.artifact_agent.schema.common import canonical_json
+    from tests.operations.research_loop_fixtures import authorize_loop
+    p = science_progression
+    worker, _ = scientific_result(p, p.root, 'old-unavailable-proof', controlled=True, deliver=False)
+    value = p.runtime.runs.status(worker._run_id)
+    paired = next(ref for ref in p.runtime.artifacts.catalog(value.output_ref).parent_refs
+        if ref.schema_id == 'scidiscovery.tool-evidence-manifest.v1')
+    read = p.runtime.artifacts.read
+    manifest = json.loads(read(paired))
+    manifest['records'][0].pop('alias')
+    monkeypatch.setattr(p.runtime.artifacts, 'read', lambda ref: canonical_json(manifest) if ref == paired else read(ref))
+    p.root.call_tool('progression_command', dict(command='pause'))
+    authorize_loop(p.runtime, p.instance, p.user, 'goal')
+    p.root.call_tool('progression_command', dict(command='start', mode='background', objective_name='goal'))
+    root = active(p)
+    assert p.root.call_tool('progression_status', {})['progress_shadow']['background_proof_coverage'] == 'bounded_unknown'
+    native_delivery(p, root, 'old-unavailable-proof')
+    assert settle(p)['progress_shadow']['counts']['consumed_research_tasks'] == 0
+
+
+@pytest.mark.parametrize('damage', ['missing_alias', 'missing_attempt', 'duplicate_attempt'])
+def test_optional_corrupt_manifest_stays_unknown_without_blocking_real_delivery(science_progression, monkeypatch, damage):
+    from scidiscovery.artifact_agent.schema.common import canonical_json
+    from scidiscovery.artifact_agent.service.scientific_progress import terminal_fact
+    from scidiscovery.artifact_agent.service.verified_progress import verified_progress
+    p = science_progression
+    root = active(p)
+    worker, _ = scientific_result(p, root, 'corrupt-optional-proof', controlled=True, deliver=False)
+    value = p.runtime.runs.status(worker._run_id)
+    paired = next(ref for ref in p.runtime.artifacts.catalog(value.output_ref).parent_refs
+        if ref.schema_id == 'scidiscovery.tool-evidence-manifest.v1')
+    read = p.runtime.artifacts.read
+    manifest = json.loads(read(paired))
+    if damage == 'missing_alias':
+        manifest['records'][0].pop('alias')
+    elif damage == 'missing_attempt':
+        manifest['attempts'] = []
+    else:
+        manifest['attempts'].append(deepcopy(manifest['attempts'][0]))
+    monkeypatch.setattr(p.runtime.artifacts, 'read', lambda ref: canonical_json(manifest) if ref == paired else read(ref))
+    proof = verified_progress(p.runtime.runs, value)
+    assert proof['status'] == 'unknown' and not proof['resolutions'], proof
+    assert terminal_fact(p.runtime.runs, value)['verified_progress']['status'] == 'unknown'
+    assert root.call_tool('run_status', dict(name='corrupt-optional-proof', intent='decision'))['state'] == 'completed'
+    native_delivery(p, root, 'corrupt-optional-proof')
+    after = settle(p)['progress_shadow']
+    assert after['counts']['unverified_progress'] == 1 and after['counts']['verified_test_resolutions'] == 0

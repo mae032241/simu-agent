@@ -155,6 +155,9 @@ def open_runtime(
             approval_database_path=state / "database" / "approvals.sqlite3",
         )
         scheduler_bindings.progress_run_reader = runs.goal_related_runs
+        from .service.scientific_progress import background_snapshot
+        scheduler_bindings.progress_background_reader = lambda *, instance_id, observed: background_snapshot(
+            runs, instance_id=instance_id, observed=observed)
         scheduler_bindings.progress_native_identity_reader = runs.native_identities
         scheduler_bindings.progress_native_loop_identity_reader = runs.native_loop_identities
         scheduler_bindings.progress_active_work_reader = lambda *, instance_id: (

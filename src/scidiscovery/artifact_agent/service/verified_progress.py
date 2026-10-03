@@ -42,12 +42,15 @@ def _cited(report, alias):
 
 
 def _resolution_key(portfolio, plan, check):
-    # Artifact identity, prose rewrites and fresh files cannot renew a resolved
-    # check. A genuinely changed numeric rule or experimental conditions can.
-    proposal = next(p for p in portfolio.proposals if p.experiment_key == plan.experiment_key)
+    # Exact thresholds verify an outcome, but changing the cutoff cannot make
+    # repeated exploration novel. Structured experimental conditions can.
+    proposals = [p for p in portfolio.proposals if p.experiment_key == plan.experiment_key]
+    if len(proposals) != 1:
+        raise ValueError('Resolution family requires one exact experiment proposal.')
+    proposal = proposals[0]
     return canonical_sha256(dict(
         metric=check.evaluator_metric, profile=check.evaluator_profile,
-        threshold=check.threshold,
+        evaluation_mode=check.evaluation_mode,
         cases=sorted([dict(role=case.scientific_role, settings=sorted(
             [s.model_dump() for s in case.settings], key=lambda s: s['name'])) for case in proposal.cases], key=canonical_json),
         factors=sorted([factor.model_dump(exclude={'rationale'}) for factor in proposal.changed_factors], key=lambda f: f['name'])))
@@ -112,17 +115,30 @@ def verified_progress(runs, value):
         descriptors = {item.source_name: runs.source_descriptor(value, item.source_name) for item in value.inputs}
         sources = ValidationSources({name: b'' for name in descriptors}, descriptors, tool_snapshot=snapshot)
         resolutions = []
+        aliases = []
+        for receipt in manifest.records:
+            alias, metadata = receipt.get('alias'), receipt.get('metadata', {})
+            if not isinstance(alias, str) or not alias or not isinstance(metadata, dict):
+                return dict(unknown, reason='calculation_receipt_identity_missing_or_invalid')
+            aliases.append(alias)
+        if len(set(aliases)) != len(aliases):
+            return dict(unknown, reason='calculation_receipt_identity_ambiguous')
         for receipt in manifest.records:
             alias = receipt['alias']
             if receipt.get('metadata', {}).get('kind') != 'calculation_record' or not _cited(report, alias):
                 continue
+            if not isinstance(receipt.get('artifact_ref'), dict):
+                return dict(unknown, reason='calculation_receipt_original_missing')
             calculation_ref = ArtifactRef.model_validate(receipt['artifact_ref'])
             record = controlled_calculation(runs.artifacts.read(calculation_ref), receipt)
             if record.status != 'computed' or record.validation is None or record.attempt is None or record.attempt.proof_kind != 'current':
                 continue
+            attempts = [a for a in manifest.attempts if a.attempt_key == record.attempt.attempt_key]
+            if len(attempts) != 1:
+                return dict(unknown, reason='calculation_attempt_missing_or_ambiguous')
+            attempt = attempts[0]
             calculation_sources(record, sources)
             validation = record.validation
-            attempt = next(a for a in manifest.attempts if a.attempt_key == record.attempt.attempt_key)
             if not {validation.plan_source, validation.conditions_source, *validation.result_sources} <= set(attempt.read_sources):
                 continue
             condition = descriptors.get(validation.conditions_source)
@@ -170,11 +186,15 @@ def _review_progress(runs, value):
     """Qualified exact-object review, with one unambiguous prior scientific test."""
     unknown = dict(status='unknown', reason='review_quality_is_not_test_progress', resolutions=[])
     classification = (value.recovery_policy or {}).get('task_classification') or {}
-    if classification.get('kind') != 'independent_review' or len(classification.get('subjects', [])) != 1:
+    if not isinstance(classification, dict):
+        return unknown
+    subjects = classification.get('subjects', [])
+    if (classification.get('kind') != 'independent_review' or not isinstance(subjects, (list, tuple))
+            or len(subjects) != 1 or not isinstance(subjects[0], dict) or 'ref' not in subjects[0]):
         return unknown
     try:
         review = json.loads(runs.artifacts.read(value.output_ref))
-        if review.get('verdict') != 'pass' or not review.get('scientific_test'):
+        if not isinstance(review, dict) or review.get('verdict') != 'pass' or not review.get('scientific_test'):
             return unknown
         conclusion = ReviewedTestConclusion.model_validate_json(canonical_json(review['scientific_test']), strict=True)
         if conclusion.result.evaluation_mode != 'reviewed_qualitative' or conclusion.result.status not in {'pass', 'fail'}:
@@ -185,7 +205,7 @@ def _review_progress(runs, value):
             if identity is None:
                 return unknown
             runs.worker_connections._require_independent(db, value, identity['platform_session'], identity['thread_id'])
-        subject = ArtifactRef.model_validate(classification['subjects'][0]['ref'])
+        subject = ArtifactRef.model_validate(subjects[0]['ref'])
         if subject.schema_id != 'scidiscovery.layered-diagnosis.v1' or subject not in {
                 i.artifact_ref for i in value.inputs if i.port_name in compiled.spec.independent_review_ports}:
             return unknown
