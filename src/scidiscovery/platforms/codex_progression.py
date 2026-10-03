@@ -86,7 +86,8 @@ class CodexProgressionHost(CodexRootHost):
 
     def _subscribe_native(self, thread_id, platform_session, cwd):
         # Resume loads/subscribes without a turn or a permission override. Only
-        # current-connection new/active participants may enter via rotation.
+        # exact control-bound participants enter here, including terminal ones
+        # whose persisted proof belongs to a previous connection.
         result = self.connection.rpc('thread/resume',dict(threadId=thread_id,cwd=cwd,excludeTurns=True))
         thread = result.get('thread', {})
         if (thread.get('id'), thread.get('sessionId')) != (thread_id, platform_session):
@@ -179,8 +180,7 @@ class CodexProgressionHost(CodexRootHost):
                 break
             last = identity['binding_key']
             subscribed = self.native_subscriptions.get(identity['thread_id']) == identity['platform_session']
-            if not subscribed and (identity['binding_key'] not in self.initial_native_bindings
-                    or identity['run_state'] in {'queued','running'}):
+            if not subscribed:
                 checked += 1
                 try:
                     self._subscribe_native(identity['thread_id'],identity['platform_session'],self.root_cwd)

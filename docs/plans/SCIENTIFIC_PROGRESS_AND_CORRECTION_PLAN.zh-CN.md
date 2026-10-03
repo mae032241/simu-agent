@@ -405,6 +405,8 @@ P4a 结构简化追加（基于 `6e85a31`，未部署）：统一预留／Run �
 
 main 同步（2026-10-03，独立审查通过，仅源码边界；纳入本 merge 节点／未部署）：固定 dev `045aec3` 与已提交 main `30e7e1b`，在独立集成 worktree 合入 13 项修复链；双方工作区未提交内容未纳入。文本冲突及 receipt／finalization／attention／有界分页组合已处理，定向源码证据冻结于 `/tmp/scid-main-integration-20261003-implementation.md`。保留 main 的同版 proof 上限前驱读回、完成与恢复；按既定 v5 破坏政策不迁移 ABI23 旧 Run／归档，历史原件可读不授当前资格。旧曲线 golden 不改写，缺省可选 validation 的 canonical bytes 已修复。N1／N5、真实隔离、安装和原生／科学运行资格仍待后续节点，本候选不改变 LHTB 选题或授权新预算。
 
+N1 重连终态 proof 活性（2026-10-03，基线 `f68f615`，源码完成、独立审查通过（仅源码边界）、纳入本提交节点、未部署）：新 host 为当前控制绑定的旧终态参与者取得本连接订阅及读取证明，不信旧连接 proof，不启动科学 turn 或修改权限；resume／read 共用冻结上限与公平游标。真实 coordinator 重建覆盖 completed／failed Worker、helper、上限 1／2，以及活跃、身份错误、不可订阅、未知终态、新事件与预算耗尽负例。owning 文件 48 项通过、1 项既有基线红；原红与精确命令冻结于 `/tmp/scid-n1-reconnect-20261003-implementation.md`。该失败为合法 8192 B Root 首 turn 容量不足：最小简报 4914 B 超其 4838 B 余量，合并前 `045aec3` 与合并后 `f68f615` 均复现；单列 N-body 前的后续修复，不改容量阈值、不删测试，不授真实 native／模型／科学资格。
+
 下表保留控制准备、效果／机制验收与规模节点；2026-10-03 真实效果主测改选原版 LHTB，原 P6s 合成题降为独立机制回归，具体下一步见[选题与验收分工](#真实效果题与机制回归分工)。P0 实现、定向验证及独立评审完成；P1a 行为规则与计数基线已独立审查通过，P4a 前次修复已提交 `67bcd4d`；追加独立人工范围返回后台修复已通过定向验证和独立复审，代码净减少目标仍未达到并已转为后续待办；结构收口节点 `47961d8` 已通过独立评审，未部署，其余生产改动与运行验收待实施，P6s 题库草案已构造。工作量为单执行者的有效人日粗估，包含定向验证与一次独立评审修正，不是交付日期；模型/服务等待、main 就绪、人工绑定/评分与长跑墙钟另计。P1a 核实后更新估算，不以增删行数作为产量目标。
 
 | 节点 | 工作量 | 最小退出条件 |
@@ -438,7 +440,7 @@ main 同步（2026-10-03，独立审查通过，仅源码边界；纳入本 merg
 
 这些是原题声明。原题数值评分沿原verifier；构建、verifier与实际人工介入分别记账，不新增人工评分要求。MB 字段不冒充实际 RSS 字节或已测峰值。更换题目不授权 3h／4h费用，不继承原 P6s token 或时长提议。若缩预算、改题、增分批材料／工况或改变反馈，须另冻并标 **LHTB-derived／custom pilot**，不能称原版同条件成绩。原题不强迫 `science.experiment.v1`、可选 declaration、A/B 批次或 Operation DAG，不新增 runner。
 
-下一步按已核修复优先级先完成 committed main／dev 集成；N1 重连终态 native proof 的恢复活性须在本次运行范围内处理，N5 先复现 usage→attach→lifecycle 归属交错，不能复现则保留具体 unknown／排除条件，不预防性重构。随后冻结 exact candidate／task／镜像 digest、依赖、有效反馈与继续／停止行为、全部角色预算，并在实际 Root／Worker／helper 和原生进程环境验证公开输入可读、隐藏 tests／答案及其副本不可读；完整 checkout 不挂给被测环境。当前尚未 ready，未运行模型／Docker／评分。N2／N6 的有界覆盖与 unknown 限制按所选 mode 明确报告，不以高分授长期资格。
+committed main／dev 集成已独立审查并落库；N1 已独立审查通过；下一步单列修复已复现的合法 8192 B Root 首 turn 容量阻断，须先于 N-body 运行准备。N5 先复现 usage→attach→lifecycle 归属交错，不能复现则保留具体 unknown／排除条件，不预防性重构。随后冻结 exact candidate／task／镜像 digest、依赖、有效反馈与继续／停止行为、全部角色预算，并在实际 Root／Worker／helper 和原生进程环境验证公开输入可读、隐藏 tests／答案及其副本不可读；完整 checkout 不挂给被测环境。当前尚未 ready，未运行模型／Docker／评分。N2／N6 的有界覆盖与 unknown 限制按所选 mode 明确报告，不以高分授长期资格。
 
 Native Codex Goal 与 SciDiscovery 对照须同任务、profile、公开资料、有效反馈及整体时间／token／CPU／内存；Root、Workers、helper、失败／恢复／收尾全部角色成本计入，保留声明 native 权限，记录人工介入和 unknown。单题两模式只构成 pilot，不支持统计效果或官方全集排名。
 

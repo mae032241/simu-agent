@@ -43,7 +43,12 @@ for line in sys.stdin:
                 emit({'method':'thread/tokenUsage/updated','params':{'threadId':'root-1','tokenUsage':{'total':{
                   'inputTokens':175,'cachedInputTokens':75,'outputTokens':25}}}})
             if state['next']>1 and mode in {'lost-opening','lost-opening-late'}: sys.exit(0)
-        else: thread=p['threadId']
+        else:
+            thread=p['threadId']
+            unavailable=json.loads((base/'resume-unavailable.json').read_text()) if (base/'resume-unavailable.json').exists() else []
+            if thread in unavailable:
+                emit({'id':msg['id'],'error':{'code':-32000,'message':'Subscription unavailable'}})
+                continue
         sessions=json.loads((base/'thread-sessions.json').read_text()) if (base/'thread-sessions.json').exists() else {}
         result={'thread':{'id':thread,'sessionId':sessions.get(thread,thread if thread.startswith('root-') else 'source-test-session')}}
         if 'approvalPolicy' in p:
@@ -57,6 +62,7 @@ for line in sys.stdin:
             continue
         child_status=(base/'child-status').read_text() if (base/'child-status').exists() else 'completed'
         sessions=json.loads((base/'thread-sessions.json').read_text()) if (base/'thread-sessions.json').exists() else {}
+        if (base/'read-sessions.json').exists(): sessions.update(json.loads((base/'read-sessions.json').read_text()))
         result={'thread':{'id':p['threadId'],'sessionId':sessions.get(p['threadId'],p['threadId'] if p['threadId'].startswith('root-') else 'source-test-session'),'turns':state['threads'].get(p['threadId'],
           [] if child_status=='missing' else [{'id':'worker-turn','status':child_status}])}}
     elif method=='mcpServerStatus/list': result={'data':[{'name':'scidiscovery','tools':{'scid_catalog':{},'scid_describe':{},'scid_call':{}}}]}
@@ -194,8 +200,26 @@ def test_factory_unknown_opening_never_replays_on_cold_start(progression,tmp_pat
     finally: restored.close()
 
 
-def test_factory_context_recovery_is_bounded_originals_page_and_same_thread_is_incremental(progression,tmp_path):
+def test_factory_context_recovery_is_bounded_originals_page_and_same_thread_is_incremental(progression,tmp_path,monkeypatch):
     p=progression
+    brief=p.coordinator._brief
+    def diagnose_capacity(*args):
+        try:return brief(*args)
+        except Exception as error:
+            trace=error.__traceback__
+            while trace:
+                frame=trace.tb_frame
+                if frame.f_code.co_name=='_brief' and 'brief' in frame.f_locals:
+                    value=frame.f_locals['brief']
+                    error.add_note(json.dumps(dict(brief_limit_bytes=args[-1],
+                        brief_bytes=len(json.dumps(value,ensure_ascii=False).encode()),
+                        field_bytes={key:len(json.dumps(item,ensure_ascii=False).encode()) for key,item in value.items()},
+                        budget_field_bytes={key:len(json.dumps(item,ensure_ascii=False).encode())
+                            for key,item in (value.get('budget') or {}).items()})))
+                    break
+                trace=trace.tb_next
+            raise
+    monkeypatch.setattr(p.coordinator,'_brief',diagnose_capacity)
     native,_=setup(p,tmp_path,root_rotate_after_rounds=2,context_bytes=8192)
     original='方向界限'*4095
     for name in ('early-direction','early-limit'):
@@ -648,6 +672,127 @@ def test_production_started_notification_during_other_read_invalidates_rotation_
     assert len(calls(native,'thread/start'))==1 and row(p)['state']=='active'
 
 
+@pytest.mark.parametrize('run_state',['completed','failed'])
+@pytest.mark.parametrize('helper',[False,True])
+@pytest.mark.parametrize('limit',[1,2])
+def test_rebuilt_coordinator_resubscribes_terminal_cohort_and_rotates_without_new_turn(progression,tmp_path,run_state,helper,limit):
+    from scidiscovery.artifact_agent.service.progression import ProgressionCoordinator
+    from scidiscovery.helper_tool import HelperRequest
+    from tests.operations.test_local_worker_contracts import _invoke,_worker,_write_result
+    p=progression
+    native,factory=setup(p,tmp_path,root_rotation_check_limit=limit)
+    p.coordinator.tick();completed(p)
+    root=p.root.__class__(p.facade(p.coordinator.host.scheduler_session))
+    _invoke(root,'cold-terminal-owner')
+    worker=_worker(p.catalog,p.runtime);worker.call_tool('worker_open_assignment',{})
+    run=p.runtime.runs.status(worker._run_id)
+    connections=p.runtime.runs.worker_connections
+    if helper:
+        connections.helper_request(run.run_id,HelperRequest(name='inspection',task='Inspect the same finite data.'))
+        connections.participant(platform_session=worker._trusted_caller[0],thread_id='cold-helper',
+            parent_thread=worker._trusted_caller[1],admit=True,model=run.execution_profile['profile']['model'],
+            reasoning_effort=run.execution_profile['profile']['reasoning_effort'])
+        connections.release_helpers(run.run_id)
+    for identity in p.coordinator._identities().values():
+        p.coordinator._event(dict(method='thread/tokenUsage/updated',params=dict(threadId=identity['thread_id'],
+            tokenUsage=dict(total=dict(inputTokens=10,cachedInputTokens=0,outputTokens=1)))))
+    if run_state=='completed':
+        _write_result(worker,observe_tokens=False)
+        assert worker.call_tool('worker_submit_result',{})['state']=='completed'
+    else:
+        run=p.runtime.runs.status(run.run_id)
+        p.runtime.runs.record_failure(run.run_id,reason='Finite fixture failure',expected_state='running',
+            expected_last_activity_at=run.last_activity_at)
+    (native/'child-status').write_text(run_state)
+    identities=p.coordinator._identities()
+    proof=p.coordinator.host.rotation_boundary(identities,known={},limit=4)
+    assert proof['safe']
+    for observation in proof['observations']:p.coordinator._save({},native_observation=observation)
+    before=checkpoint(p)
+    original=p.runtime.runs.status(run.run_id)
+    p.coordinator.close()
+    fresh=ProgressionCoordinator(runtime=p.runtime,host_factory=factory,facade_factory=p.facade,clock=lambda:p.now[0])
+    p.coordinator=fresh
+    fresh._connect(row(p));fresh._settle_turn(checkpoint(p))
+    assert fresh.host.native_subscriptions=={}
+    assert fresh.host.initial_native_bindings=={i['binding_key'] for i in identities.values()}
+    resumes=len(calls(native,'thread/resume'));reads=len(calls(native,'thread/read'))
+    limits=json.loads(row(p)['config_json'])['effective']['progression']
+    for attempt in range(2*len(identities)):
+        prior=len(calls(native,'thread/resume'))+len(calls(native,'thread/read'))
+        rotated=fresh._rotate_if_due(row(p),limits)
+        assert len(calls(native,'thread/resume'))+len(calls(native,'thread/read'))-prior<=limit
+        if rotated:break
+    else:pytest.fail('A finite terminal cohort never acquired fresh subscribed proof on reconnect.')
+    participant_resumes=[c for c in calls(native,'thread/resume')[resumes:] if c['threadId'] in identities]
+    assert participant_resumes==[dict(threadId=i['thread_id'],cwd=str(p.runtime.project_root),excludeTurns=True)
+        for i in sorted(identities.values(),key=lambda i:i['binding_key'])]
+    assert len(calls(native,'thread/read'))-reads==len(identities)
+    after=checkpoint(p)
+    for thread,identity in identities.items():
+        old=before['usage_records'][thread];new=after['usage_records'][thread]
+        assert new['high_water']==old['high_water'] and new['counted_tokens']==old['counted_tokens']
+        assert new['native_terminal']['binding_key']==identity['binding_key']
+        assert new['native_terminal']['connection_id']!=old['native_terminal']['connection_id']
+    assert after['current_loop_id']==before['current_loop_id'] and after['attempts']==before['attempts']
+    assert p.runtime.runs.status(run.run_id)==original
+    assert len(calls(native,'thread/start'))==2 and len(calls(native,'turn/start'))==1
+
+
+@pytest.mark.parametrize('failure,reason',[
+    ('inProgress','native_turn_not_terminal'),('unknown','native_turn_not_terminal'),
+    ('unavailable','native_subscription_unconfirmed'),('identity','native_subscription_unconfirmed'),
+    ('read_identity','native_identity_unconfirmed'),('event','native_turn_changed_during_read')])
+def test_rebuilt_terminal_cohort_keeps_unknown_native_state_unsafe(progression,tmp_path,failure,reason):
+    from scidiscovery.artifact_agent.service.progression import ProgressionCoordinator
+    p=progression
+    native,factory=setup(p,tmp_path,root_rotation_check_limit=2)
+    p.coordinator.tick();completed(p)
+    root=p.root.__class__(p.facade(p.coordinator.host.scheduler_session))
+    thread=_terminal_native_worker(p,root,'cold-unknown')
+    proof=p.coordinator.host.rotation_boundary(p.coordinator._identities(),known={},limit=2)
+    assert proof['safe']
+    for observation in proof['observations']:p.coordinator._save({},native_observation=observation)
+    p.coordinator.close()
+    if failure in {'inProgress','unknown'}:(native/'child-status').write_text(failure)
+    if failure=='unavailable':(native/'resume-unavailable.json').write_text(json.dumps([thread]))
+    if failure in {'identity','read_identity'}:
+        (native/('thread-sessions.json' if failure=='identity' else 'read-sessions.json')).write_text(json.dumps({thread:'wrong-session'}))
+    if failure=='event':
+        (native/'native-events.json').write_text(json.dumps(dict(method='thread/read',threadId=thread,
+            events=[dict(method='turn/started',params=dict(threadId=thread,turn=dict(id='new-native-turn')))])))
+    fresh=ProgressionCoordinator(runtime=p.runtime,host_factory=factory,facade_factory=p.facade,clock=lambda:p.now[0])
+    p.coordinator=fresh
+    fresh._connect(row(p));fresh._settle_turn(checkpoint(p))
+    before=len(calls(native,'thread/resume'))+len(calls(native,'thread/read'))
+    assert not fresh._rotate_if_due(row(p),json.loads(row(p)['config_json'])['effective']['progression'])
+    assert len(calls(native,'thread/resume'))+len(calls(native,'thread/read'))-before<=2
+    assert checkpoint(p)['rotation_boundary']['reasons']==[reason]
+    assert len(calls(native,'thread/start'))==1 and len(calls(native,'turn/start'))==1
+    assert row(p)['state']=='active'
+
+
+def test_rebuilt_terminal_cohort_cannot_reconnect_after_loop_budget_exhaustion(progression,tmp_path):
+    from datetime import datetime
+    from scidiscovery.artifact_agent.service.progression import ProgressionCoordinator
+    p=progression
+    native,factory=setup(p,tmp_path)
+    p.coordinator.tick();completed(p)
+    root=p.root.__class__(p.facade(p.coordinator.host.scheduler_session))
+    _terminal_native_worker(p,root,'budget-terminal')
+    before=checkpoint(p)
+    p.coordinator.close()
+    p.now[0]=datetime.fromisoformat(before['loop_authorizations'][before['current_loop_id']]['deadline_at']).timestamp()+1
+    requests=(native/'requests.jsonl').read_bytes()
+    fresh=ProgressionCoordinator(runtime=p.runtime,host_factory=factory,facade_factory=p.facade,clock=lambda:p.now[0])
+    p.coordinator=fresh
+    fresh.tick()
+    assert fresh.host is None and row(p)['reason']=='budget_exhausted'
+    assert (native/'requests.jsonl').read_bytes()==requests
+    for thread,record in before['usage_records'].items():
+        assert checkpoint(p)['usage_records'][thread]['counted_tokens']==record['counted_tokens']
+
+
 def test_new_app_server_rechecks_persisted_terminal_proof_without_loading_old_history(progression,tmp_path):
     from scidiscovery.artifact_agent.service.progression import ProgressionCoordinator
     p=progression
@@ -667,15 +812,16 @@ def test_new_app_server_rechecks_persisted_terminal_proof_without_loading_old_hi
     before=len(calls(native,'thread/read'));resumes=len(calls(native,'thread/resume'))
     assert not fresh._rotate_if_due(row(p),json.loads(row(p)['config_json'])['effective']['progression'])
     assert calls(native,'thread/read')[before:]==[dict(threadId=thread,includeTurns=True)]
-    assert len(calls(native,'thread/resume'))==resumes
+    assert len(calls(native,'thread/resume'))==resumes+1
     assert checkpoint(p)['usage_records'][thread]['native_terminal']==saved
     assert len(calls(native,'thread/start'))==1 and row(p)['state']=='active'
-    # Even terminal thread/read does not establish a cold connection subscription.
+    # The first check subscribed, but inProgress did not establish terminal proof.
     (native/'child-status').write_text('completed')
-    assert not fresh._rotate_if_due(row(p),json.loads(row(p)['config_json'])['effective']['progression'])
-    assert len(calls(native,'thread/resume'))==resumes
-    assert checkpoint(p)['usage_records'][thread]['native_terminal']==saved
-    assert checkpoint(p)['rotation_boundary']['reasons']==['native_subscription_unconfirmed']
+    assert fresh._rotate_if_due(row(p),json.loads(row(p)['config_json'])['effective']['progression'])
+    assert len(calls(native,'thread/resume'))==resumes+1
+    current=checkpoint(p)['usage_records'][thread]['native_terminal']
+    assert current['binding_key']==saved['binding_key'] and current['connection_id']!=saved['connection_id']
+    assert checkpoint(p)['rotation_boundary']['reasons']==[]
 
 
 @pytest.mark.parametrize('limit',[1,2])
