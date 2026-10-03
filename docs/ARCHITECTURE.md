@@ -723,10 +723,21 @@ Execution requests retain the exact scientific implementation receipt separately
 its private executable package. Several scientific descriptions may share a package;
 review/start use the selected receipt, and collection/recovery/final reconciliation
 use the frozen receipt. Historical requests without that identity require a unique
-match; ambiguity is repairable and never evidence of integrity corruption. Selecting
-a new description does not inherit an earlier description's independent review.
+match; ambiguity is never evidence of integrity corruption. Once execution and
+collection are idle, a missing/ambiguous exact receipt permits only a blocked or
+inconclusive report with limitations; control never invents a receipt. Completed
+delivery stays rejected. Root sees binding ambiguity in normal status and can inspect
+retained results without rerunning the solver. Mechanical collection remains available
+under the frozen execution identity even before receipt binding is repaired; it
+withholds scientific output projection and receipt publication until binding is exact. Selecting a new description does not
+inherit an earlier description's independent review.
 
-Submission errors follow their cause across wrappers. Declared finalizer/checker
+Submission retry classification follows explicit causes across wrappers; implicit
+exception context remains diagnostic evidence only. A declared integrity/admission
+failure cannot be overridden by an earlier lock/connection error. `repairable` alone
+does not identify who can repair a problem: submission correction is declared by
+RunOutputError/WorkspaceOutputError; other DiagnosticErrors require Root intervention.
+Submission errors follow their explicit cause across wrappers. Declared finalizer/checker
 budget exhaustion stops the task; a connection interruption or SQLite busy may be
 retried only within the task deadline. An unclassified timeout requires investigation,
 not automatic retry or an assumed exhausted budget. Storage exhaustion stops the
@@ -739,7 +750,15 @@ Expected output corrections store structured diagnostics without traceback files
 Engineering traces are deduplicated by exact failure and scope; collection enforces
 bounded storage, and serial lifecycle maintenance applies the global agent-settings
 `diagnostics` policy (defaults: 1024 records, 67108864 bytes, 604800 seconds).
+Only the control lifecycle daemon publishes the derived retention policy cache;
+capture/prune callers read it without overwriting it with local settings. If that cache
+is damaged, recording and cleanup use bounded fallback settings, and the daemon
+restores it from authoritative configuration without requiring a readable old cache.
+Log bodies use atomic replacement. Live reads share the retention lock with writers
+and cleanup; historical read-only archives need no new lock file.
 Expiry removes diagnostic JSON/stdout/stderr only, never CAS or sealed evidence.
+References in Root records do not pin traces: the count/byte budget can evict them
+before seven days. Durable Run error summaries remain; the full trace is expendable.
 A retained locator may expire; diagnostic reads report this explicitly. Old settings
 without this optional section use defaults; remove it before rolling back to a
 program version that does not recognize it.

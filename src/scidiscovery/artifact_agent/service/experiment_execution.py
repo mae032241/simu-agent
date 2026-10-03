@@ -122,9 +122,13 @@ class ExperimentExecution:
                 try:
                     implementation = self._execution_implementation_record(run, binding.object_id)
                 except DiagnosticError as error:
-                    if not error.details or any(item['code'] != 'experiment_implementation_unavailable' for item in error.details):
+                    if not error.details or any(item['code'] not in {
+                            'experiment_implementation_unavailable', 'experiment_implementation_ambiguous'} for item in error.details):
                         raise  # Proof/integrity failures must reach the submission policy.
-                    implementation = None  # A blocked report may legitimately lack this bound material.
+                    # No exact receipt can be synthesized. Keep the collected files,
+                    # and permit only an explicitly limited scientific conclusion.
+                    incomplete.append(binding.name.removeprefix('experiment-' + origin + '-'))
+                    implementation = None
                 if implementation is not None:
                     context = SimpleNamespace(run_id=run.run_id, accept_evidence=lambda **values:
                         self.runs.accept_tool_evidence(run.run_id, tool_name='worker_experiment_execute',
@@ -160,7 +164,7 @@ class ExperimentExecution:
             return
         raise RunOutputError('Execution results were not delivered.', details=(contract_diagnostic(
             'experiment_collection_incomplete', phase='protocol', affected_action='submit', repairable=True,
-            message=f"Collection failed for {list(names)[:8]!r}. Retry collection, or submit outcome blocked/inconclusive with limitations explaining the missing results. Do not claim completion from uncollected results."),))
+            message=f"Result collection or exact implementation binding is incomplete for {list(names)[:8]!r}. Submit outcome blocked/inconclusive with limitations explaining the missing delivery or binding. Root can inspect retained results and choose recovery; retry collection only if collection actually failed. Do not rerun the solver or claim completed delivery."),))
 
     def _execution_owner(self, execution_id):
         envelope = self.executions.artifacts.get_by_id(self.executions.request_artifact_id(execution_id))
@@ -284,8 +288,9 @@ class ExperimentExecution:
             from .sealed_materials import material_error
             raise material_error("experiment_implementation_ambiguous",
                 "This historical execution did not retain its exact implementation receipt. "
-                "Preserve the execution and its collected results; Root must bind only the exact original "
-                "implementation in a recovery task before collecting or finalizing. Do not rerun the solver.")
+                "Preserve the execution and its collected results. Root must inspect the retained records; "
+                "the Worker cannot repair a historical execution binding. Once work is idle, submit blocked "
+                "or inconclusive with limitations describing this missing exact binding. Do not rerun the solver.")
         return records[0]
 
     def _cancel(self, execution_id):
@@ -494,6 +499,29 @@ class ExperimentExecution:
                 raise invalid("For logs use direction and its returned cursor; offset is only for collected output read.")
             return self.executions.cached_log(execution_id, log_index=request.log_index,
                 direction=request.direction, cursor=request.cursor, max_bytes=self._io_settings(context).read_page_bytes)
+        if request.action == "collect":
+            # Transport is bound to the immutable execution request. A missing
+            # scientific receipt must not strand already-computed remote files.
+            if self.collection is None:
+                raise ValueError("The controlled collection service is unavailable.")
+            self.collection.collect(execution_id, scope="instance:" + run.instance_id,
+                total_seconds=min(context.remaining_seconds, self._io_settings(context).collection_timeout_seconds),
+                file_timeout_seconds=self._io_settings(context).file_timeout_seconds,
+                idle_timeout_seconds=self._io_settings(context).idle_timeout_seconds)
+            details = ()
+            try:
+                implementation = self._execution_implementation_record(run, execution_id)
+            except DiagnosticError as error:
+                if not error.details or any(item['code'] not in {
+                        'experiment_implementation_unavailable', 'experiment_implementation_ambiguous'} for item in error.details):
+                    raise
+                implementation, details = None, error.details
+                self.runs.record_error_observation(run.run_id, 'tool_failed', diagnostic={
+                    'category':'tool_failed', 'tool_name':'worker_experiment_execute', 'details':details})
+            result = self._execution_status(context, request, execution_id, implementation, seal=True)
+            if details:
+                result['delivery_diagnostics'] = list(details)
+            return result
         implementation = self._execution_implementation_record(run, execution_id)
         private_outputs = implementation["metadata"].get("private_outputs", ())
         if request.action in {"read", "export"}:
@@ -539,13 +567,6 @@ class ExperimentExecution:
                 return self._authorization_response(run, request.name, execution_id, self._approval_status(execution_id))
             if request.action == "advance" and self.executions.status(execution_id).external_run_id is not None:
                 self.bridge.sync(execution_id=execution_id, diagnostic_scope="instance:" + run.instance_id)
-        elif request.action == "collect":
-            if self.collection is None:
-                raise ValueError("The controlled collection service is unavailable.")
-            self.collection.collect(execution_id, scope="instance:" + run.instance_id,
-                total_seconds=min(context.remaining_seconds, self._io_settings(context).collection_timeout_seconds),
-                file_timeout_seconds=self._io_settings(context).file_timeout_seconds,
-                idle_timeout_seconds=self._io_settings(context).idle_timeout_seconds)
         return self._execution_status(context, request, execution_id, implementation, seal=True)
 
     def _execution_status(self, context, request, execution_id, implementation, *, seal):
@@ -566,7 +587,7 @@ class ExperimentExecution:
             manifest = ExecutionResultManifest.model_validate_json(self.executions.artifacts.read(status.result_ref), strict=True)
             result["terminal_state"] = manifest.terminal_state
             if implementation is None:
-                result["outputs_status"] = "Bind the original implementation to read collected scientific outputs. Execution state is available."
+                result["outputs_status"] = "Collected files are retained, but their exact implementation receipt is unavailable. Root must inspect the binding; once work is idle, submit blocked/inconclusive with limitations. Do not rerun the solver."
                 return result
             private_outputs = implementation["metadata"].get("private_outputs", ())
             names, inventory_note = self._output_file_names(context, execution_id,

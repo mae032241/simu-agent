@@ -17,8 +17,9 @@ class LifecycleReconciler:
     def tick(self):
         try:
             from .engineering_diagnostics import EngineeringDiagnostics
-            EngineeringDiagnostics(self.runs.database_path.parent.parent / "engineering-diagnostics",
-                settings=self.runs.agent_settings.diagnostics).prune()
+            diagnostics = EngineeringDiagnostics(self.runs.database_path.parent.parent / "engineering-diagnostics")
+            diagnostics.publish_retention_policy(self.runs.agent_settings.diagnostics)
+            diagnostics.prune()
         except Exception as error:
             _LOG.warning("Engineering diagnostic retention deferred (%s)", type(error).__name__)
         size = self.settings.batch_size

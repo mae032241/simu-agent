@@ -29,7 +29,9 @@ def classify_submission_error(error, *, deadline_expired=False):
     while cause is not None and id(cause) not in seen:
         seen.add(id(cause))
         causes.append(cause)
-        cause = cause.__cause__ or (None if cause.__suppress_context__ else cause.__context__)
+        # Implicit context means only "occurred while handling", not causation.
+        # It remains in engineering traces but cannot authorize retry.
+        cause = cause.__cause__
     integrity = next((e for e in causes if isinstance(e, CASIntegrityError)), None)
     proof = next((e for e in causes if isinstance(e, ReferenceProofError)), None)
     if integrity is not None:
@@ -52,6 +54,9 @@ def classify_submission_error(error, *, deadline_expired=False):
     if any(isinstance(e, RunCheckerError) and e.category == 'tool_timeout' for e in causes):
         return _failure('fail', 'tool_timeout', 'submission_step_timeout',
             'A bounded finalization or validation step exhausted its time budget. Root must inspect the diagnostic and choose recovery; unchanged automatic resubmission is not advised.')
+    if isinstance(error, RunCheckerError) and error.category in {'integrity_failure', 'admission_defect'}:
+        return _failure('fail', error.category, 'submission_control_failure',
+            'A declared control invariant failed. Root must inspect the retained diagnostic and repair control state before choosing recovery; a preceding connection or lock error does not authorize retry.')
     for e in causes:
         if isinstance(e, sqlite3.OperationalError) and (
                 (getattr(e, 'sqlite_errorcode', 0) & 255) in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}
@@ -67,8 +72,12 @@ def classify_submission_error(error, *, deadline_expired=False):
             'The task cannot complete under its frozen control contract. Root must inspect the retained diagnostic and recovery details before continuing; do not rewrite scientific conclusions to bypass this failure.')
     if isinstance(error, RunOutputError):
         return SubmissionFailure('reject', error.category, error.details)
-    if isinstance(error, DiagnosticError) and error.details and all(item.get('repairable') for item in error.details):
-        return SubmissionFailure('reject', 'output_rejected', error.details)
+    if isinstance(error, DiagnosticError):
+        # repairable does not identify the repair owner or make a frozen binding
+        # editable by this Worker. Only RunOutputError/WorkspaceOutputError promise
+        # a caller-correctable submission; other declared diagnostics need control.
+        return _failure('intervene', 'runtime_failure', 'submission_intervention_required',
+            'Submission requires control intervention. Root must inspect the retained diagnostic and repair the exact control binding, or use run_record_failure to close this task and retain its draft. The Worker must not repeatedly resubmit or rerun the solver.')
     if isinstance(error, WorkspaceOutputError):
         return _failure('reject', 'output_rejected', 'output_invalid',
             'Correct the declared candidate files before resubmitting.', repairable=True)

@@ -1422,7 +1422,8 @@ class RunService(ToolEvidenceMixin):
             return None
         raw = json.loads(row['diagnostic_json'])
         for item in raw.get('details', ()):
-            if item.get('code') in {'submission_intervention_required', 'submission_timeout_unclassified'}:
+            if item.get('code') in {'submission_intervention_required', 'submission_timeout_unclassified',
+                    'experiment_implementation_ambiguous'}:
                 return {'code': item['code'], 'action': 'Inspect this task with intent=diagnostics before retrying submission.'}
         return None
 

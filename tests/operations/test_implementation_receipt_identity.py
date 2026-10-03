@@ -66,7 +66,7 @@ def test_legacy_ambiguous_package_is_repairable_and_does_not_choose_latest(tmp_p
         f.coordinator._run_implementation_record(f.runs.status(f.run_id), f.coordinator._implementation_payload(original))
     assert caught.value.details[0]['code'] == 'experiment_implementation_ambiguous'
     from scidiscovery.artifact_agent.service.submission_errors import classify_submission_error
-    assert classify_submission_error(caught.value).disposition == 'reject'
+    assert classify_submission_error(caught.value).disposition == 'intervene'
     assert f.runs.status(f.run_id).state == 'running'
 
 
@@ -92,3 +92,46 @@ def test_historical_execution_without_receipt_identity_keeps_unique_binding(tmp_
     eid = pending_execution(f)
     recovered = f.coordinator._execution_implementation_record(f.runs.status(f.run_id), eid)
     assert recovered['artifact_ref'] == f.implementation['artifact_ref']
+
+
+@pytest.mark.parametrize('outcome', ['blocked', 'inconclusive'])
+def test_legacy_ambiguous_collected_execution_can_close_with_limited_report(tmp_path, monkeypatch, outcome):
+    f = experiment(tmp_path, monkeypatch, seconds=60)
+    create = f.runtime.executions.create
+    def historical_request(**kwargs):
+        kwargs['labels'] = {k:v for k,v in kwargs['labels'].items() if k != 'implementation_receipt'}
+        return create(**kwargs)
+    with monkeypatch.context() as patch:
+        patch.setattr(f.runtime.executions, 'create', historical_request)
+        assert start(f)['state'] == 'running'
+    eid = execution_id(f)
+    revised_material(f)
+    f.adapter.state = 'succeeded'
+    f.coordinator.bridge.sync(execution_id=eid)
+    collected = f.worker.call_tool('worker_experiment_execute', {'action':'collect'})
+    assert collected['state'] == 'collected' and 'reference' not in collected
+    assert 'outputs' not in collected and 'delivery_diagnostics' in collected
+    assert f.runtime.executions.status(eid).state == 'collected'
+    assert not any(r['metadata'].get('kind') == 'experiment_execution' for r in f.runs.tool_evidence(f.run_id))
+    status = f.root.call_tool('run_status', {'name':'continuation', 'intent':'status'})
+    assert status['attention_required']['code'] == 'experiment_implementation_ambiguous'
+    # Ordinary limited reports still need to state this missing binding explicitly.
+    first = submit(f, [f.alias], outcome=outcome)
+    assert first['state'] == 'rejected' and 'experiment_collection_incomplete' in str(first)
+    (f.workspace / 'output/result.json').write_bytes(canonical_json({'schema_version':1, 'payload':{
+        'summary':'Exact historical implementation binding is unavailable.', 'outcome':outcome,
+        'limitations':['Collected results cannot be assigned to one exact historical implementation receipt.'],
+        'remaining_question':'Control must repair the historical binding.', 'adopted_stages':[f.alias]}}))
+    result = f.worker.call_tool('worker_submit_result', {})
+    assert result['state'] == 'completed', result
+    assert f.adapter.submits == 1
+    assert f.runtime.executions.status(eid).state == 'collected'
+    assert not any(r['metadata'].get('kind') == 'experiment_execution' for r in f.runs.tool_evidence(f.run_id))
+
+
+def test_incomplete_binding_cannot_be_published_as_completed():
+    from scidiscovery.artifact_agent.service.experiment_execution import ExperimentExecution
+    from scidiscovery.artifact_agent.service.run_outputs import RunOutputError
+    with pytest.raises(RunOutputError):
+        ExperimentExecution.validate_incomplete_delivery(canonical_json({
+            'outcome':'completed', 'limitations':['Ambiguous implementation.']}), ('legacy',))

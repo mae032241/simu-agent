@@ -223,7 +223,7 @@ def test_deadline_exhaustion_during_submission_is_terminal_not_retry(tmp_path, m
     assert runs.status(worker._run_id).state == 'failed'
 
 
-def test_implicit_connection_cause_is_retryable_unless_explicitly_suppressed():
+def test_implicit_connection_context_does_not_authorize_retry():
     from scidiscovery.artifact_agent.service.submission_errors import classify_submission_error
     from scidiscovery.artifact_agent.service.run_outputs import RunCheckerError
     def wrapped(suppress):
@@ -236,5 +236,35 @@ def test_implicit_connection_cause_is_retryable_unless_explicitly_suppressed():
                 raise RunCheckerError('wrapped failure')
         except RunCheckerError as error:
             return error
-    assert classify_submission_error(wrapped(False)).disposition == 'retry'
+    assert classify_submission_error(wrapped(False)).disposition == 'fail'
     assert classify_submission_error(wrapped(True)).disposition == 'fail'
+
+
+@pytest.mark.parametrize('explicit', [False, True])
+def test_control_invariant_cannot_be_overridden_by_preceding_lock_error(explicit):
+    from scidiscovery.artifact_agent.service.submission_errors import classify_submission_error
+    from scidiscovery.artifact_agent.service.run_outputs import RunCheckerError
+    try:
+        try:
+            raise sqlite3.OperationalError('database is locked')
+        except sqlite3.OperationalError as previous:
+            if explicit:
+                raise RunCheckerError('control invariant violated', category='integrity_failure') from previous
+            raise RunCheckerError('control invariant violated', category='integrity_failure')
+    except RunCheckerError as error:
+        failure = classify_submission_error(error)
+        assert failure.disposition == 'fail' and failure.category == 'integrity_failure'
+
+
+def test_repairable_does_not_imply_worker_can_repair_frozen_control_state(tmp_path, monkeypatch):
+    from scidiscovery.operation_contract import DiagnosticError, contract_diagnostic
+    worker, opened, system = generic_worker(tmp_path, return_system=True)
+    runs, root = system[1].runs, system[2]
+    def requires_control(*args, **kwargs):
+        raise DiagnosticError('Control repair needed', details=(contract_diagnostic(
+            'fixture_binding_needs_repair', phase='protocol', affected_action='submit',
+            repairable=True, message='Control must repair this binding.'),))
+    monkeypatch.setattr(runs, '_finalize_workspace', requires_control)
+    reply = submit(worker, opened, limited_report())
+    assert reply['state'] == 'rejected' and 'submission_intervention_required' in str(reply)
+    assert root.call_tool('run_status', {'name':'generic_analysis', 'intent':'status'})['attention_required']
