@@ -15,6 +15,12 @@ class LifecycleReconciler:
         self._thread = threading.Thread(target=self._loop, name="scid-lifecycle", daemon=True)
 
     def tick(self):
+        try:
+            from .engineering_diagnostics import EngineeringDiagnostics
+            EngineeringDiagnostics(self.runs.database_path.parent.parent / "engineering-diagnostics",
+                settings=self.runs.agent_settings.diagnostics).prune()
+        except Exception as error:
+            _LOG.warning("Engineering diagnostic retention deferred (%s)", type(error).__name__)
         size = self.settings.batch_size
         ids = self.runs.expired_active_ids(after=self._run_cursor, limit=size)
         self._run_cursor = ids[-1] if len(ids) == size else ""

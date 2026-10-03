@@ -760,29 +760,54 @@ class RunService(ToolEvidenceMixin):
     def _submission_failure(self, run_id, error):
         from .submission_errors import classify_submission_error
         from .engineering_diagnostics import EngineeringDiagnostics
-        value = self.status(run_id)
-        engineering = EngineeringDiagnostics(self.database_path.parent.parent / "engineering-diagnostics").capture(
-            error, scope="instance:" + value.instance_id, layer="run_submission", action="submit")
-        # Completion may have committed before an optional post-commit hook failed.
-        # Keep the engineering trace without reversing a committed result.
+        import logging
+        # Report the original failure even if its database is now unavailable.
+        # Never mutate from a cached state: completion may already have committed.
+        try:
+            value = self.status(run_id)
+        except Exception as state_error:
+            state_failure = classify_submission_error(state_error)
+            logging.getLogger(__name__).error("Submission state unavailable for %s (%s); inspect control storage",
+                run_id, type(state_error).__name__, exc_info=True)
+            details = state_failure.details if state_failure.disposition == 'retry' else (contract_diagnostic(
+                'submission_state_unavailable', phase='protocol', affected_action='submit', repairable=False,
+                message='Control cannot confirm the persisted task state. Preserve the report; Root must restore control storage and query this same task before retrying. Do not start another execution.'),)
+            return 'rejected', details
         if value.state in {"completed", "failed"}:
             return value.state, ()
-        failure = classify_submission_error(error)
-        if failure.disposition == "fail":
-            self.record_failure(run_id, reason=f"Submission stopped: {failure.details[0]['code']}",
-                category=failure.category, candidate_digest=getattr(error, "candidate_digest", None),
-                engineering=engineering, details=failure.details, expected_state="running",
-                expected_last_activity_at=value.last_activity_at)
-            return "failed", failure.details
+        failure = classify_submission_error(error, deadline_expired=expired(value.deadline_at))
+        # Expected form corrections need structured fields, not a traceback file.
+        engineering = None
+        if failure.disposition != 'reject':
+            engineering = EngineeringDiagnostics(self.database_path.parent.parent / "engineering-diagnostics",
+                settings=self.agent_settings.diagnostics).capture(
+                error, scope="instance:" + value.instance_id, layer="run_submission", action="submit")
         try:
+            if failure.disposition == "fail":
+                self.record_failure(run_id, reason=f"Submission stopped: {failure.details[0]['code']}",
+                    category=failure.category, candidate_digest=getattr(error, "candidate_digest", None),
+                    engineering=engineering, details=failure.details, expected_state="running",
+                    expected_last_activity_at=value.last_activity_at, timed_out=failure.category == 'run_timeout')
+                return "failed", failure.details
             diagnostic = self.record_error_observation(run_id, "output_rejected" if failure.disposition == "reject" else "tool_failed",
-                diagnostic={"category": failure.category, "details": failure.details, "engineering": engineering})
+                diagnostic={"category": failure.category, "details": failure.details,
+                    **({"engineering": engineering} if engineering else {})})
         except Exception as recording_error:
-            if classify_submission_error(recording_error).disposition != "retry":
-                raise
-            # The same busy database may also reject the activity write. No
-            # lifecycle mutation is needed to return the declared interruption.
-            return "rejected", failure.details
+            # A lifecycle write or its post-commit cleanup can fail as well.
+            # Re-read if possible; never report a terminal transition we cannot confirm.
+            try:
+                current = self.status(run_id)
+                if current.state in {'completed', 'failed'}:
+                    return current.state, failure.details if current.state == 'failed' else ()
+            except Exception:
+                pass
+            logging.getLogger(__name__).error("Submission diagnostic/lifecycle write unavailable for %s (%s)",
+                run_id, type(recording_error).__name__, exc_info=True)
+            if classify_submission_error(recording_error).disposition == 'retry':
+                return "rejected", classify_submission_error(recording_error).details
+            return 'rejected', (contract_diagnostic('submission_state_unavailable', phase='protocol',
+                affected_action='submit', repairable=False,
+                message='Control could not confirm the failure record. Root must restore control storage and query the existing task; preserve its draft and do not rerun the solver.'),)
         return "rejected", tuple(diagnostic.get("details", ()))
 
     def validate_candidate(self, run_id: str) -> ValidatedRunOutput:
@@ -1385,6 +1410,22 @@ class RunService(ToolEvidenceMixin):
                   for row in rows[:limit]]
         return {"events": events, "next_after": events[-1]["event_id"] if len(rows) > limit else None}
 
+    def submission_attention(self, value: RunStatus):
+        """A bounded alert for Root's normal status polling, without traceback bodies."""
+        if value.state != 'running':
+            return None
+        with self._connect() as connection:
+            row = connection.execute("SELECT diagnostic_json FROM run_activity WHERE run_id=? "
+                "AND activity IN ('tool_failed','output_rejected') ORDER BY rowid DESC LIMIT 1",
+                (value.run_id,)).fetchone()
+        if row is None or row['diagnostic_json'] is None:
+            return None
+        raw = json.loads(row['diagnostic_json'])
+        for item in raw.get('details', ()):
+            if item.get('code') in {'submission_intervention_required', 'submission_timeout_unclassified'}:
+                return {'code': item['code'], 'action': 'Inspect this task with intent=diagnostics before retrying submission.'}
+        return None
+
     def diagnostic_summary(self, value: RunStatus) -> dict[str, Any]:
         with self._connect() as connection:
             rows = connection.execute(
@@ -1663,6 +1704,8 @@ class RunService(ToolEvidenceMixin):
                     "workspace backend cannot publish a finalized output"
                 )
             writer(run_id, raw)
+        except TimeoutError as error:
+            raise RunCheckerError("workspace finalization timed out", category="tool_timeout") from error
         except WorkspaceProtocolError as error:
             # The finalizer deliberately reports a correctable workspace error.
             # Keep its reason even when it has no per-field diagnostic details.

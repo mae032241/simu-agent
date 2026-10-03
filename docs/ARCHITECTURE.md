@@ -719,6 +719,31 @@ and idle budgets; per-file budget applies during extraction. UI shows archive by
 received separately from files verified. Upgrading uses the existing joint local
 and remote runner install transaction; old runners fail with an upgrade diagnostic.
 
+Execution requests retain the exact scientific implementation receipt separately from
+its private executable package. Several scientific descriptions may share a package;
+review/start use the selected receipt, and collection/recovery/final reconciliation
+use the frozen receipt. Historical requests without that identity require a unique
+match; ambiguity is repairable and never evidence of integrity corruption. Selecting
+a new description does not inherit an earlier description's independent review.
+
+Submission errors follow their cause across wrappers. Declared finalizer/checker
+budget exhaustion stops the task; a connection interruption or SQLite busy may be
+retried only within the task deadline. An unclassified timeout requires investigation,
+not automatic retry or an assumed exhausted budget. Storage exhaustion stops the
+Run when the failure can be persisted. If control storage cannot confirm state, the
+caller gets `submission_state_unavailable`; it must query the same task after repair,
+not assume termination or start another solver. Running tasks that need investigation
+expose a short `attention_required` field through normal Root status polling.
+
+Expected output corrections store structured diagnostics without traceback files.
+Engineering traces are deduplicated by exact failure and scope; collection enforces
+bounded storage, and serial lifecycle maintenance applies the global agent-settings
+`diagnostics` policy (defaults: 1024 records, 67108864 bytes, 604800 seconds).
+Expiry removes diagnostic JSON/stdout/stderr only, never CAS or sealed evidence.
+A retained locator may expire; diagnostic reads report this explicitly. Old settings
+without this optional section use defaults; remove it before rolling back to a
+program version that does not recognize it.
+
 Engineering failures use one bounded, redacted diagnostic projection. Root reads
 details by an instance/session-scoped `diagnostic_read` reference. Worker runtime errors
 and explicit Root diagnostic pages carry only a locator and section names, never inline

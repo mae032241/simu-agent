@@ -120,7 +120,7 @@ class ExperimentExecution:
                 # Reconcile its receipt before the finalizer snapshots materials.
                 from types import SimpleNamespace
                 try:
-                    implementation = self._run_implementation_record(run, self.executions.request(binding.object_id).payload_ref)
+                    implementation = self._execution_implementation_record(run, binding.object_id)
                 except DiagnosticError as error:
                     if not error.details or any(item['code'] != 'experiment_implementation_unavailable' for item in error.details):
                         raise  # Proof/integrity failures must reach the submission policy.
@@ -167,12 +167,15 @@ class ExperimentExecution:
         return envelope.labels.get("experiment_run")
 
     def implementation(self, context, alias):
+        return self._implementation_payload(self._selected_implementation(context, alias))
+
+    def _selected_implementation(self, context, alias):
         from .sealed_materials import material_error
         record = self.runs.sealed_material_record(self.runs.status(context.run_id), alias)
         if record is None or record.get("metadata", {}).get("kind") != "experiment_implementation":
             raise material_error("experiment_implementation_unavailable",
                 "Choose a sealed implementation created in or explicitly bound to this task.")
-        return self._implementation_payload(record)
+        return record
 
     def _implementation_payload(self, record):
         from ..schema.refs import ArtifactRef
@@ -260,20 +263,29 @@ class ExperimentExecution:
                 "inputs": [{"port": "subject", "artifact_names": [name]}],
                 "instruction": "Independently review this exact sealed implementation against its bound research objective, scientific constraints and required observables. Report missing evidence and limitations explicitly; execution permission does not establish scientific validity."}}
 
-    def _implementation_record(self, context, payload_ref):
-        return self._run_implementation_record(self.runs.status(context.run_id), payload_ref)
+    def _execution_implementation_record(self, run, execution_id):
+        envelope = self.executions.artifacts.get_by_id(self.executions.request_artifact_id(execution_id))
+        from ..schema.refs import ArtifactRef
+        raw = envelope.labels.get("implementation_receipt")
+        receipt = ArtifactRef.model_validate_json(raw, strict=True) if raw is not None else None
+        return self._run_implementation_record(run, self.executions.request(execution_id).payload_ref,
+            receipt_ref=receipt)
 
-    def _run_implementation_record(self, run, payload_ref):
+    def _run_implementation_record(self, run, payload_ref, *, receipt_ref=None):
         records = [item for item in self.runs.available_material_records(run)
             if item.get("metadata", {}).get("kind") == "experiment_implementation"
+            and (receipt_ref is None or canonical_json(item["artifact_ref"]) == receipt_ref.canonical_json())
             and self._implementation_payload(item) == payload_ref]
         if not records:
             from .sealed_materials import material_error
             raise material_error("experiment_implementation_unavailable",
                 "Bind the exact sealed implementation used by this execution.")
         if len({canonical_json(item["artifact_ref"]) for item in records}) != 1:
-            from .run_outputs import RunCheckerError
-            raise RunCheckerError("Execution has conflicting implementation receipts.", category="integrity_failure")
+            from .sealed_materials import material_error
+            raise material_error("experiment_implementation_ambiguous",
+                "This historical execution did not retain its exact implementation receipt. "
+                "Preserve the execution and its collected results; Root must bind only the exact original "
+                "implementation in a recovery task before collecting or finalizing. Do not rerun the solver.")
         return records[0]
 
     def _cancel(self, execution_id):
@@ -407,7 +419,7 @@ class ExperimentExecution:
             implementation = None
             if request.action == "status" and self.executions.status(execution_id).state == "collected":
                 try:
-                    implementation = self._implementation_record(context, self.executions.request(execution_id).payload_ref)
+                    implementation = self._execution_implementation_record(run, execution_id)
                 except DiagnosticError:
                     pass  # State remains readable even when scientific originals need rebinding.
             return self._execution_status(context, request, execution_id, implementation, seal=request.action == 'status')
@@ -420,8 +432,7 @@ class ExperimentExecution:
                    if k in {"solver_kind", "release", "description", "limitations", "capabilities"}}}
                 for item in self.capabilities(context)]}
         if request.action == "review":
-            payload = self.implementation(context, request.implementation)
-            implementation = self._implementation_record(context, payload)
+            implementation = self._selected_implementation(context, request.implementation)
             result = {"implementation": request.implementation,
                 "review": self.review_handoff(run, implementation)}
             review = self._implementation_review(run, implementation)
@@ -442,14 +453,29 @@ class ExperimentExecution:
         if request.action == "start":
             if request.implementation is None:
                 raise ToolInputError("experiment_implementation_required", "Choose a sealed implementation before starting execution.", path="$.implementation")
-            payload = self.implementation(context, request.implementation)
-            reviewed = self._required_review(run, self._implementation_record(context, payload))
-            self.executions.create(executor=plan.executor, preparation_profile=plan.preparation_profile,
-                payload_ref=payload, execution_id=execution_id, compiled_identity=identity,
-                labels={"operation_id": identity.operation_id, "operation_version": identity.operation_version,
-                    "operation_digest": identity.operation_digest, "approval_contract_digest": identity.approval_contract_digest,
-                    "experiment_run": self.task_origin(run),
-                    **({"implementation_review": reviewed.model_dump_json()} if reviewed is not None else {})})
+            implementation = self._selected_implementation(context, request.implementation)
+            payload = self._implementation_payload(implementation)
+            reviewed = self._required_review(run, implementation)
+            from .executions import ExecutionNotFound
+            try:
+                self.executions.status(execution_id)
+            except ExecutionNotFound:
+                existing = False
+            else:
+                existing = True
+                original = self._execution_implementation_record(run, execution_id)
+                if original["artifact_ref"] != implementation["artifact_ref"]:
+                    raise ToolInputError("experiment_execution_implementation_changed",
+                        "This execution name is bound to another exact implementation. Use status for the original execution; "
+                        "use a new name only for an intentionally new execution.", path="$.implementation")
+            if not existing:
+                self.executions.create(executor=plan.executor, preparation_profile=plan.preparation_profile,
+                    payload_ref=payload, execution_id=execution_id, compiled_identity=identity,
+                    labels={"operation_id": identity.operation_id, "operation_version": identity.operation_version,
+                        "operation_digest": identity.operation_digest, "approval_contract_digest": identity.approval_contract_digest,
+                        "experiment_run": self.task_origin(run),
+                        "implementation_receipt": canonical_json(implementation["artifact_ref"]).decode("utf-8"),
+                        **({"implementation_review": reviewed.model_dump_json()} if reviewed is not None else {})})
             self.runs.scheduler_bindings.bind(instance=run.instance_id, namespace="execution",
                 name="experiment-" + self.task_origin(run) + "-" + request.name, object_id=execution_id)
         from .executions import ExecutionNotFound
@@ -468,7 +494,7 @@ class ExperimentExecution:
                 raise invalid("For logs use direction and its returned cursor; offset is only for collected output read.")
             return self.executions.cached_log(execution_id, log_index=request.log_index,
                 direction=request.direction, cursor=request.cursor, max_bytes=self._io_settings(context).read_page_bytes)
-        implementation = self._implementation_record(context, current.payload_ref)
+        implementation = self._execution_implementation_record(run, execution_id)
         private_outputs = implementation["metadata"].get("private_outputs", ())
         if request.action in {"read", "export"}:
             if self.executions.status(execution_id).state != 'collected':
@@ -631,7 +657,7 @@ class ExperimentExecution:
         if (request.compiled_identity != identity or request.executor != plan.executor
                 or request.preparation_profile != plan.preparation_profile):
             raise ExecutionServiceError("Execution recovery contract differs from the original request")
-        implementation = self._run_implementation_record(run, request.payload_ref)
+        implementation = self._execution_implementation_record(run, execution_id)
         self._required_review(run, implementation)
         approval = self._approval_status(execution_id)
         if approval is not None and (approval.status != "decided" or self._authorization_state(approval) != "created"):

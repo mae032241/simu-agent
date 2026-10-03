@@ -120,9 +120,121 @@ def test_collected_receipt_reconciliation_does_not_hide_proof_failures(tmp_path,
     from tests.operations.test_experiment_approval_handoff import experiment
     from scidiscovery.artifact_agent.service.reference_proofs import ReferenceProofError
     f = experiment(tmp_path, monkeypatch, seconds=60)
-    def unavailable(*args):
+    def unavailable(*args, **kwargs):
         raise proof_error('reference_proof_limit', 'Exact implementation proof exceeds budget.')
     monkeypatch.setattr(f.coordinator, '_run_implementation_record', unavailable)
     with pytest.raises(ReferenceProofError):
         from dataclasses import replace
         f.coordinator.require_idle(replace(f.runs.status(f.old_id), accepted_candidate_digest=None))
+
+
+def test_reporting_survives_unreadable_status(tmp_path, monkeypatch):
+    worker, opened, system = generic_worker(tmp_path, return_system=True)
+    runs = system[1].runs
+    def locked(*args, **kwargs):
+        raise sqlite3.OperationalError('database is locked')
+    with monkeypatch.context() as patch:
+        patch.setattr(runs, 'status', locked)
+        state, details = runs._submission_failure(worker._run_id, sqlite3.OperationalError('database is locked'))
+    assert state == 'rejected' and details[0]['code'] == 'submission_temporarily_unavailable'
+    assert runs.status(worker._run_id).state == 'running'
+
+
+def test_wrapped_connection_and_storage_errors_have_same_transient_policy():
+    from scidiscovery.artifact_agent.service.run_outputs import RunCheckerError
+    from scidiscovery.artifact_agent.service.submission_errors import classify_submission_error
+    for cause in (ConnectionError('reset'), sqlite3.OperationalError('database is locked')):
+        error = RunCheckerError('wrapped transport')
+        error.__cause__ = cause
+        assert classify_submission_error(error).disposition == 'retry'
+    timeout = RunCheckerError('bounded step', category='tool_timeout')
+    timeout.__cause__ = TimeoutError()
+    assert classify_submission_error(timeout).disposition == 'fail'
+    assert classify_submission_error(TimeoutError()).disposition == 'intervene'
+    assert classify_submission_error(ConnectionError(), deadline_expired=True).category == 'run_timeout'
+
+
+@pytest.mark.parametrize('error,code', [(TimeoutError('step exhausted'), 'submission_step_timeout'),
+    (OSError(28, 'disk full'), 'submission_storage_exhausted')])
+def test_budget_or_storage_exhaustion_is_visible_as_failure(tmp_path, monkeypatch, error, code):
+    worker, opened, system = generic_worker(tmp_path, return_system=True)
+    runs = system[1].runs
+    def exhausted(*args, **kwargs):
+        raise error
+    if isinstance(error, TimeoutError):
+        from scidiscovery.artifact_agent.service import runs as run_module
+        monkeypatch.setattr(run_module, 'operation_workspace_hooks', lambda _: {'workspace_finalizer':exhausted})
+    else:
+        monkeypatch.setattr(runs, '_finalize_workspace', exhausted)
+    reply = submit(worker, opened, limited_report())
+    assert reply['state'] == 'failed' and code in str(reply)
+    state = runs.status(worker._run_id)
+    assert state.state == 'failed' and state.recovery_draft
+    assert code in str(runs.diagnostic_summary(state))
+
+
+def test_no_false_terminal_ack_when_failure_cannot_be_persisted(tmp_path, monkeypatch):
+    worker, opened, system = generic_worker(tmp_path, return_system=True)
+    runs = system[1].runs
+    def full(*args, **kwargs):
+        raise OSError(28, 'disk full')
+    monkeypatch.setattr(runs, '_finalize_workspace', full)
+    monkeypatch.setattr(runs, 'record_failure', full)
+    reply = submit(worker, opened, limited_report())
+    assert reply['state'] == 'rejected' and 'submission_state_unavailable' in str(reply)
+    assert runs.status(worker._run_id).state == 'running'
+
+
+def test_normal_output_rejection_does_not_allocate_traceback(tmp_path):
+    worker, opened, system = generic_worker(tmp_path, return_system=True)
+    from scidiscovery.artifact_agent.service.run_outputs import RunOutputError
+    runs = system[1].runs
+    root = runs.database_path.parent.parent / 'engineering-diagnostics'
+    before = set(root.glob('diag_*.json'))
+    assert runs._submission_failure(worker._run_id, RunOutputError('correct the form'))[0] == 'rejected'
+    assert set(root.glob('diag_*.json')) == before
+
+
+def test_unclassified_failure_signals_root_in_normal_status(tmp_path, monkeypatch):
+    worker, opened, system = generic_worker(tmp_path, return_system=True)
+    runs, root = system[1].runs, system[2]
+    def interrupted(*args, **kwargs):
+        raise RuntimeError('Control needs investigation')
+    with monkeypatch.context() as patch:
+        patch.setattr(runs, '_finalize_workspace', interrupted)
+        assert submit(worker, opened, limited_report())['state'] == 'rejected'
+    status = root.call_tool('run_status', {'name':'generic_analysis', 'intent':'status'})
+    assert status['attention_required']['code'] == 'submission_intervention_required'
+    assert 'traceback' not in str(status)
+    assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
+    assert 'attention_required' not in root.call_tool('run_status', {'name':'generic_analysis', 'intent':'status'})
+
+
+def test_deadline_exhaustion_during_submission_is_terminal_not_retry(tmp_path, monkeypatch):
+    worker, opened, system = generic_worker(tmp_path, return_system=True)
+    runs = system[1].runs
+    def interrupted(*args, **kwargs):
+        with runs._connect() as connection:
+            connection.execute("UPDATE runs SET deadline_at='2000-01-01T00:00:00Z' WHERE run_id=?", (worker._run_id,))
+        raise ConnectionError('interrupted after deadline')
+    monkeypatch.setattr(runs, '_finalize_workspace', interrupted)
+    reply = submit(worker, opened, limited_report())
+    assert reply['state'] == 'failed' and 'submission_deadline_exhausted' in str(reply)
+    assert runs.status(worker._run_id).state == 'failed'
+
+
+def test_implicit_connection_cause_is_retryable_unless_explicitly_suppressed():
+    from scidiscovery.artifact_agent.service.submission_errors import classify_submission_error
+    from scidiscovery.artifact_agent.service.run_outputs import RunCheckerError
+    def wrapped(suppress):
+        try:
+            try:
+                raise ConnectionError('reset')
+            except ConnectionError:
+                if suppress:
+                    raise RunCheckerError('independent failure') from None
+                raise RunCheckerError('wrapped failure')
+        except RunCheckerError as error:
+            return error
+    assert classify_submission_error(wrapped(False)).disposition == 'retry'
+    assert classify_submission_error(wrapped(True)).disposition == 'fail'

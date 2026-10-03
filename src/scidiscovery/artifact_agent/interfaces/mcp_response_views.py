@@ -25,6 +25,7 @@ def run_intent_projection(value, *, intent):
         "recovery_available",
         "sealed_output_status",
         "diagnostics_available",
+        "attention_required",
         "content_unavailable",
         "sealed_stages",
         "dispatch",

@@ -129,6 +129,13 @@ class PresentationSettings(SettingsValue):
     memory_limit_bytes: int = Field(default=2147483648, ge=268435456)
 
 
+class DiagnosticsSettings(SettingsValue):
+    """Retention of expendable engineering traces, never sealed scientific evidence."""
+    max_records: int = Field(default=1024, ge=1)
+    max_total_bytes: int = Field(default=67108864, ge=1024)
+    retention_seconds: int = Field(default=604800, ge=1)
+
+
 class AgentSettings(SettingsValue):
     schema_version: Literal[1] = 1
     defaults: DefaultSettings = Field(default_factory=DefaultSettings)
@@ -137,6 +144,7 @@ class AgentSettings(SettingsValue):
     execution_io: ExecutionIOSettings = Field(default_factory=ExecutionIOSettings)
     budget_extensions: BudgetExtensionSettings = Field(default_factory=BudgetExtensionSettings)
     lifecycle: LifecycleSettings = Field(default_factory=LifecycleSettings)
+    diagnostics: DiagnosticsSettings = Field(default_factory=DiagnosticsSettings)
     input_materials: MaterialInputSettings = Field(default_factory=MaterialInputSettings)
     attachments: AttachmentSettings = Field(default_factory=AttachmentSettings)
     presentation: PresentationSettings = Field(default_factory=PresentationSettings)

@@ -215,6 +215,10 @@ class RootRunRoutes:
         }
         if value.state == "failed":
             result["diagnostic_summary"] = self.runs.diagnostic_summary(value)
+        elif value.state == "running":
+            attention = self.runs.submission_attention(value)
+            if attention is not None:
+                result["attention_required"] = attention
         if intent != "status" and value.state != "completed":
             result["content_unavailable"] = "run_not_completed"
         if intent == "full" and value.state == "completed":
@@ -306,7 +310,7 @@ class RootRunRoutes:
             }.get(failure.get("category"), "The Run failed. Read the saved diagnostic page to identify a repair or choose another scientific action.")
         allowed = {"name", "operation_id", "operation_contract_status", "state", "agent_type", "execution_profile",
             "created_at", "started_at", "completed_at", "deadline_at", "last_activity_at", "output_artifact_name",
-            "recovery_available", "draft_from", "diagnostics_available", "reason", "diagnostic_events", "sealed_output_status", "sealed_output",
+            "recovery_available", "draft_from", "diagnostics_available", "attention_required", "reason", "diagnostic_events", "sealed_output_status", "sealed_output",
             "scheduler_signal_status", "scheduler_signal", "scheduler_signal_omissions", "output_delivery", "output_metadata", "selected_output",
             "output_index", "default_output_unavailable", "evidence_outputs", "bound_inputs", "content_unavailable", "dispatch"}
         result = {key:item for key,item in result.items() if key in allowed}
