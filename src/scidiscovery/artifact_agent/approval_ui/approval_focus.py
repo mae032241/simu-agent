@@ -20,7 +20,8 @@ def execution_budget(model, approval_id):
         if registered.ref != refs[0]:
             return {}
         value = model.executions.authorization(execution.execution_id)
-        return {key: value[key] for key in ('reason', 'budget', 'allowance', 'configured_allowance', 'per_execution_allowance', 'budget_usage', 'accounting') if key in value}
+        value["budget_extension_limits"] = model.executions.budget_extension_limits.model_dump()
+        return {key: value[key] for key in ('reason', 'budget', 'allowance', 'configured_allowance', 'budget_extension_limits', 'per_execution_allowance', 'budget_usage', 'accounting') if key in value}
     except Exception as error:
         logging.getLogger(__name__).warning('approval budget display unavailable: %s', type(error).__name__)
         return {}

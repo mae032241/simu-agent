@@ -385,12 +385,16 @@ def _render_decision(
     extension = ''
     allowance = (authorization or {}).get('allowance', {})
     if review.request.kind == 'execution_authorization' and 'wall_time_seconds' in allowance:
+        limits = (authorization or {}).get('budget_extension_limits', {})
+        maximum = limits.get('max_seconds_per_decision', 0) / 3600
+        total_maximum = limits.get('max_total_seconds_per_pool', 0) / 3600
         extension = ("<fieldset class='budget-extension'><legend>追加累计耗时预算（可选）</legend>"
             "<p>适用于同一科学主体的后续执行及修订；本次批准仍只针对当前请求。"
             "单次上限、存储额度和已用时长不变。仅选择批准执行时生效。</p>"
             f"<p>当前累计时长上限：{allowance['wall_time_seconds'] / 3600:g} 小时。</p>"
+            f"<p>单次追加上限：{maximum:g} 小时；同一预算池累计追加上限：{total_maximum:g} 小时。</p>"
             "<label>追加小时数 <input type='number' name='additional_wall_time_hours' min='0' step='0.25' value='0' "
-            f"data-current-seconds='{allowance['wall_time_seconds']}'></label>"
+            f"max='{maximum:g}' data-current-seconds='{allowance['wall_time_seconds']}'></label>"
             "<p class='budget-extension-preview' aria-live='polite'>不追加累计预算</p></fieldset>")
     return (
         "<section class='decision-panel'><p class='eyebrow'>人工决定</p>"

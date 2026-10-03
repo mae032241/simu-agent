@@ -126,7 +126,10 @@ class ExecutionService:
         exchange_root: Path | str,
         service_actor: ActorRef,
         deadline_monotonic: float | None = None,
+        budget_extension_limits=None,
     ) -> None:
+        from ...agent_execution_settings import BudgetExtensionSettings
+        self.budget_extension_limits = budget_extension_limits or BudgetExtensionSettings()
         self.deadline_monotonic = deadline_monotonic
         self.artifacts = artifacts
         self.approvals = approvals
@@ -632,6 +635,53 @@ class ExecutionService:
                 or approval.compiled_identity != request.compiled_identity):
             raise ExecutionApprovalError('Approval does not bind the exact execution')
         return request.execution_id
+
+    def _extension_scope(self, execution_id):
+        with self._connect() as db:
+            record = self._current_policy_record(db, execution_id)
+            if record is None:
+                raise ExecutionApprovalError('Execution has no cumulative budget policy')
+            admission = ExecutionAdmission.model_validate(record['admission'])
+            if 'wall_time_seconds' not in admission.allowance:
+                raise ExecutionApprovalError('Execution has no wall time budget')
+            return self._row(db, execution_id)['executor'], admission.budget_key
+
+    def validate_budget_extension(self, approval_id, seconds):
+        from .approvals import ApprovalAccessDenied
+        status = self.approvals.status(approval_id)
+        # Exact replay is checked by the approval service. New administrator
+        # limits must not invalidate a decision already sealed before restart.
+        if status.status != 'pending':
+            return
+        limits = self.budget_extension_limits
+        if type(seconds) is not int or seconds < 0 or seconds > limits.max_seconds_per_decision:
+            raise ApprovalAccessDenied('Additional time exceeds the configured per-decision limit')
+        scope = self._extension_scope(self.execution_for_approval(approval_id))
+        with self._connect() as db:
+            rows = db.execute('SELECT decision_id, executor, budget_key, additional_seconds FROM execution_budget_extensions').fetchall()
+        projected = {row['decision_id'] for row in rows}
+        used = sum(row['additional_seconds'] for row in rows if (row['executor'], row['budget_key']) == scope)
+        # A crash after sealing a decision cannot make its grant disappear from
+        # admission accounting before the idempotent projection is repaired.
+        for aid, decision in self.approvals.budget_extension_decisions():
+            if decision.decision_id not in projected and self._extension_scope(self.execution_for_approval(aid)) == scope:
+                used += decision.additional_wall_time_seconds
+        if used + seconds > limits.max_total_seconds_per_pool:
+            raise ApprovalAccessDenied('Additional time exceeds the configured cumulative grant limit')
+
+    def record_budget_extension_decision(self, **arguments):
+        """Serialize the short human grant transaction, never solver submission IO."""
+        import fcntl
+        approval_id = arguments['approval_id']
+        seconds = arguments['additional_wall_time_seconds']
+        # All grant writers use this control-private lock. It covers validation,
+        # sealing and projection across processes; ordinary approvals do not wait.
+        with (self.exchange_root / '.budget-approval.lock').open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            ref = self.approvals.record_ui_decision(**arguments,
+                budget_extension_validator=lambda: self.validate_budget_extension(approval_id, seconds))
+            self.apply_budget_extension(approval_id)
+            return ref
 
     def apply_budget_extension(self, approval_id):
         """Idempotent projection of a sealed human decision; also repairs an interrupted UI write."""

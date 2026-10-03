@@ -632,6 +632,14 @@ class ApprovalService:
             row["decision_nonce"],
         )
 
+    def budget_extension_decisions(self):
+        """Sealed human grants, including decisions awaiting execution projection."""
+        with self._connect() as connection:
+            for row in connection.execute("SELECT approval_id, decision_ref_json FROM approval_decisions WHERE selected_option IN ('authorize_execution', 'authorize_execution_with_exception', 'approve')"):
+                decision = self._load_decision(ArtifactRef.model_validate_json(row['decision_ref_json']))
+                if decision.additional_wall_time_seconds:
+                    yield row['approval_id'], decision
+
     def record_ui_decision(
         self,
         *,
@@ -644,10 +652,15 @@ class ApprovalService:
         decided_by: LocalIdentityRef,
         ui_session_id: str,
         additional_wall_time_seconds: int = 0,
+        budget_extension_validator=None,
         now: datetime | None = None,
     ) -> ArtifactRef:
         if type(additional_wall_time_seconds) is not int or not 0 <= additional_wall_time_seconds <= 2**53-1:
             raise ApprovalAccessDenied("budget extension must be a nonnegative integer number of seconds")
+        if additional_wall_time_seconds:
+            if budget_extension_validator is None:
+                raise ApprovalAccessDenied("Budget extensions require the execution policy service")
+            budget_extension_validator()
         submitted_at = _now(now)
         prepared = self._prepare_decision_attempt(
             approval_id=approval_id,

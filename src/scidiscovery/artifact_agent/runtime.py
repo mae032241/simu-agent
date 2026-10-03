@@ -136,6 +136,7 @@ def open_runtime(
                 approvals=approvals,
                 database_path=state / "database" / "executions.sqlite3",
                 exchange_root=state / "execution-exchange",
+                budget_extension_limits=agent_settings.budget_extensions,
                 service_actor=actor,
             )
             if approvals is not None

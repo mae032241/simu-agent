@@ -349,7 +349,9 @@ inputs in the private evidence manifest. Result lookup uses that exact link; old
 receipts may exclude inputs proven by their original frozen manifest, but ambiguity
 is never resolved by recency. Asynchronous collection is explicitly reported as
 pending delivery. Subsequent task status and pre-finalization reconciliation create
-the same idempotent execution receipt, including cancelled or failed executions.
+the same idempotent execution receipt once results have been collected, including
+collected results from cancelled or failed executions. A terminal state alone does
+not create a receipt or trigger collection.
 Read/export accept exact output identifiers or verified solver-relative filenames.
 Finalization identifies missing chain edges and lists bounded available aliases,
 without selecting scientific validity on the Worker's behalf.
@@ -357,6 +359,21 @@ Initialization diagnostics automatically publish their verified native files thr
 streamed attachments; no output path declarations are needed. These remain diagnostic
 materials, not formal execution receipts. A missing expected output does not prevent
 retention of other generated files; collection errors and terminal failure remain explicit.
+
+Reading and replaying a sealed calculation use the same exact producer receipt and
+parent bindings, independent of whether its owner is running, failed or completed.
+Publication freezes one private reference proof per material; later reads reuse it
+even if the owner adds evidence. Historical materials create this proof once on first
+access. Parent derivation filters against the declared schema, media and size contract
+before checking cardinality. For historical implementations without `control_parents`,
+only the original producer's exact frozen inputs may be excluded to resolve a package;
+unresolved ambiguity remains an error.
+
+New curve scores identify the support-aware algorithm as `curve-operators.v2` or
+`analysis-curve-operators.v2`. Historical v1 calculations still require exact source
+bytes and full numeric replay. Compatibility accepts the pre-shared-support bundle
+digest only when no shared support is declared; it never accepts changed metrics or
+rewrites the sealed record. Changed historical metrics require a new calculation.
 
 `LayeredDiagnosisReport` concentrates conclusions in `summary` and `overall_verdict`,
 with evidence and optional `limitations`. Its complete legacy `gates` object,
@@ -427,6 +444,15 @@ an idempotent durable ledger applies it to this executor/scientific-subject pool
 revisions and restarts. Per-request thresholds, storage limits and usage are unchanged.
 Reject/cancel decisions cannot extend budgets. Archive/restore retains these grants,
 and interrupted projection is repaired by an identical UI retry or execution authorization.
+Installation agent settings bound new extensions with
+`budget_extensions.max_seconds_per_decision` (default 21600 seconds) and
+`budget_extensions.max_total_seconds_per_pool` (default 86400 seconds of additional
+grants). Zero disables new grants. Validation counts both projected grants and sealed
+decisions awaiting projection; a short control-side lock serializes validation,
+decision sealing and projection. Lowering these settings does not invalidate an
+already sealed grant. Historical decisions preserve their original canonical bytes,
+including both omitted and explicit-zero extension fields. These administrative
+limits are shown in the approval UI, not added to Worker forms.
 Approval UI separates the requested increment, per-request threshold, cumulative balance
 and overage; a negative balance is never presented as this request's available time.
 The install transaction fills a missing cumulative threshold from the bundled config

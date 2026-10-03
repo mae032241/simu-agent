@@ -250,6 +250,21 @@ class HumanDecision(SchemaModel):
     previous_decision_ref: ArtifactRef | None = None
     additional_wall_time_seconds: Annotated[int, Field(ge=0, le=2**53-1)] = 0
 
+    def canonical_json(self) -> bytes:
+        # Preserve both sealed wire layouts: decisions predating budget grants
+        # omit the field; deployed grant-aware writers also recorded explicit 0.
+        # Never rewrite immutable historical decisions to add a default.
+        if 'additional_wall_time_seconds' not in self.model_fields_set:
+            return encode_canonical_json({
+                name: getattr(self, name) for name in type(self).model_fields
+                if name != 'additional_wall_time_seconds'
+            })
+        return encode_canonical_json(self)
+
+    @property
+    def content_hash(self) -> str:
+        return canonical_sha256(json.loads(self.canonical_json()))
+
     @model_validator(mode="after")
     def _validate_subject_hash(self) -> HumanDecision:
         if self.subject_set_sha256 != subject_set_sha256(self.subject_refs):

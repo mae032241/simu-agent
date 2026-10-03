@@ -145,7 +145,8 @@ class ExperimentExecution:
         from ..schema.refs import ArtifactRef
         from .sealed_materials import material_error
         material = ArtifactRef.model_validate(record["artifact_ref"])
-        parents = self.executions.artifacts.verify(material).parent_refs
+        envelope = self.executions.artifacts.verify(material)
+        parents = envelope.parent_refs
         if 'control_parents' in record:
             direct = tuple(ArtifactRef.model_validate(ref) for ref in record['control_parents'])
             if any(ref not in parents for ref in direct):
@@ -153,6 +154,13 @@ class ExperimentExecution:
             parents = direct
         packages = [ref for ref in parents
             if self.executions.artifacts.verify(ref).kind == "experiment_execution_package"]
+        if len(packages) > 1 and 'control_parents' not in record:
+            # Historical tool receipts inherited all frozen inputs. Only those
+            # exact inputs may be excluded; never select by recency or filename.
+            producer_id = envelope.labels.get('tool_producer_run')
+            if producer_id is not None:
+                inherited = {item.artifact_ref for item in self.runs.status(producer_id).inputs}
+                packages = [ref for ref in packages if ref not in inherited]
         if len(packages) != 1:
             raise material_error("experiment_implementation_package_invalid",
                 "The sealed implementation has no unique controlled execution package.")

@@ -86,6 +86,12 @@ class ExecutionIOSettings(SettingsValue):
     approval_wait_budget_seconds: int = Field(default=86400, ge=0)
 
 
+class BudgetExtensionSettings(SettingsValue):
+    """Administrator limits on new human time grants; historical decisions persist."""
+    max_seconds_per_decision: int = Field(default=21600, ge=0, le=2**53-1)
+    max_total_seconds_per_pool: int = Field(default=86400, ge=0, le=2**53-1)
+
+
 class LifecycleSettings(SettingsValue):
     """Control daemon reconciliation; global settings, no model calls or submissions."""
     interval_seconds: int = Field(default=30, ge=1, le=3600)
@@ -129,6 +135,7 @@ class AgentSettings(SettingsValue):
     operations: dict[str, OperationSettings] = Field(default_factory=dict)
     helpers: HelperSettings = Field(default_factory=HelperSettings)
     execution_io: ExecutionIOSettings = Field(default_factory=ExecutionIOSettings)
+    budget_extensions: BudgetExtensionSettings = Field(default_factory=BudgetExtensionSettings)
     lifecycle: LifecycleSettings = Field(default_factory=LifecycleSettings)
     input_materials: MaterialInputSettings = Field(default_factory=MaterialInputSettings)
     attachments: AttachmentSettings = Field(default_factory=AttachmentSettings)

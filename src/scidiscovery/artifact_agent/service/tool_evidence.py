@@ -209,10 +209,11 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
         record = self.sealed_material_record(value, alias)
         if record is None:
             raise RunStateConflict("No exact sealed material is available under this alias")
+        producer = self.status(record["producer_run_id"])
+        self.reference_manifest(producer, subject_ref=ArtifactRef.model_validate(record["artifact_ref"]))
         name = self.material_artifact_name(value, record)
         if name is not None:
             return name
-        producer = self.status(record["producer_run_id"])
         port = tool_evidence_ports(self._compiled(producer)).get(record.get("output_port", "tool_evidence"))
         if port is None or not port.agent_visible:
             raise RunStateConflict("The sealed material has no public output contract")
@@ -497,6 +498,7 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
                 binding = self._bind_evidence_output(connection, value, alias, artifact)
                 record = {**record, "artifact_name": binding.name}
         self._refresh_evidence_schema(run_id)
+        self.reference_manifest(value, subject_ref=artifact)
         if metadata.get("kind") == "experiment_stage":
             from .presentation_summaries import enqueue
             enqueue(self, value, artifact)
@@ -659,27 +661,42 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
                     'operation_output_port':'recovery_manifest_output','tool_producer_run':value.run_id},confidentiality='run_private'),
             idempotency_key=f'run:{value.run_id}:tool-manifest:{hashlib.sha256(self._evidence_snapshot(value.run_id)).hexdigest()}').ref
 
-    def reference_manifest(self, value):
+    def reference_manifest(self, value, *, subject_ref=None):
         """Freeze stored receipt facts for a bound reader, without recompiling its producer.
 
         One captured set supplies both bytes and parents. A later publication
         cannot change this proof or make the snapshot's idempotency key drift.
         This private proof is neither a final report nor a new scientific product.
         """
+        from ..storage import ArtifactNotFoundError, ArtifactIdentityConflictError, IdempotencyConflictError
+        proof_id = ('reference_proof_' + hashlib.sha256(canonical_json({
+            'run': value.run_id, 'subject': subject_ref})).hexdigest()) if subject_ref is not None else None
+        if proof_id is not None:
+            try:
+                return self.artifacts.get_by_id(proof_id).ref
+            except ArtifactNotFoundError:
+                pass
         records = self.tool_evidence(value.run_id)
+        if subject_ref is not None and not any(ArtifactRef.model_validate(r['artifact_ref']) == subject_ref for r in records):
+            raise RunStateConflict('Reference proof subject is not a sealed producer material')
         accesses = self.reference_access_records(value.run_id)
         raw = self._encode_evidence_snapshot(value, records, accesses,
             self._recovery_tool_proof_from_records(value), self.tool_attempts(value.run_id))
         ToolEvidenceManifest.model_validate_json(raw)
-        return self.artifacts.register(raw, ArtifactRegistration(kind='tool_evidence_manifest',
-            schema_id='scidiscovery.tool-evidence-manifest.v1', payload_schema_version=1,
-            media_type='application/json', creator=self.service_actor,
-            parent_refs=tuple(dict.fromkeys((*[item.artifact_ref for item in value.inputs],
-                *[ArtifactRef.model_validate(r['artifact_ref']) for r in (*records, *accesses)]))),
-            labels={'operation_id':value.operation_id, 'operation_digest':value.operation_digest,
-                'operation_version':value.operation_version, 'operation_output_port':'recovery_manifest_output',
-                'tool_producer_run':value.run_id}, confidentiality='run_private'),
-            idempotency_key=f'run:{value.run_id}:reference-manifest:{hashlib.sha256(raw).hexdigest()}').ref
+        try:
+            return self.artifacts.register(raw, ArtifactRegistration(artifact_id=proof_id, kind='tool_evidence_manifest',
+                schema_id='scidiscovery.tool-evidence-manifest.v1', payload_schema_version=1,
+                media_type='application/json', creator=self.service_actor,
+                parent_refs=tuple(dict.fromkeys((*[item.artifact_ref for item in value.inputs],
+                    *[ArtifactRef.model_validate(r['artifact_ref']) for r in (*records, *accesses)]))),
+                labels={'operation_id':value.operation_id, 'operation_digest':value.operation_digest,
+                    'operation_version':value.operation_version, 'operation_output_port':'reference_proof' if proof_id else 'recovery_manifest_output',
+                    'tool_producer_run':value.run_id}, confidentiality='run_private'),
+                idempotency_key=proof_id or f'run:{value.run_id}:reference-manifest:{hashlib.sha256(raw).hexdigest()}').ref
+        except (ArtifactIdentityConflictError, IdempotencyConflictError):
+            if proof_id is None:
+                raise
+            return self.artifacts.get_by_id(proof_id).ref
 
     def evidence_output_refs(self, value):
         if value.state!='completed' or value.output_ref is None:

@@ -904,7 +904,8 @@ class ApprovalUI:
                         execution_id = executions.execution_for_approval(parts[1])
                         if 'wall_time_seconds' not in executions.authorization(execution_id).get('allowance', {}):
                             raise ApprovalError('当前执行没有累计耗时预算')
-                    decision_ref = self.service.record_ui_decision(
+                    decide = executions.record_budget_extension_decision if executions is not None else self.service.record_ui_decision
+                    decision_ref = decide(
                         approval_id=parts[1],
                         access_token=token,
                         csrf_token=csrf,
@@ -915,8 +916,6 @@ class ApprovalUI:
                         ui_session_id=self.session_id,
                         additional_wall_time_seconds=additional_seconds,
                     )
-                    if executions is not None:
-                        executions.apply_budget_extension(parts[1])
             except (UnicodeDecodeError, ValueError, ApprovalAccessDenied):
                 return self._error(handler, HTTPStatus.FORBIDDEN)
             except ApprovalExpired:

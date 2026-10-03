@@ -479,7 +479,7 @@ class OperationOrigins:
                 # is needed to bind a control-owned typed execution package.
                 refs = list(dict.fromkeys(parent for ref in refs
                     for parent in self.artifacts.verify(ref).parent_refs
-                    if self.artifacts.catalog(parent).schema_id == port.schema_id))
+                    if self._artifact_matches_input_port(self.artifacts.catalog(parent), port)))
                 private_names = {ref: anchors[0].artifact_name for ref in refs}
             elif rule.select != "subject":
                 if len(refs) != 1:
