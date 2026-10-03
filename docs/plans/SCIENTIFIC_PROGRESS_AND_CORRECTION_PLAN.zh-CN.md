@@ -420,22 +420,23 @@ P4a 结构简化追加（基于 `6e85a31`，未部署）：统一预留／Run �
 | P3b Root 轮换（源码与独立复审完成，未部署） | 2–4 人日 | 轮换沿冻结回合／累计输入阈值、安全终态及既有 owner/generation 接线；旧 writer 撤权，活动原生子任务延期，未知 opening 不重放。loop 预算、迟到用量、通知和消费位置保留，新 Root 接续 P3 记忆与有界外部作业导航。独立评审发现的安全清理计时与已拒绝平台请求阻断均保留修前反例并修复；最终 owning 24 项及相关计时 4 项通过，原邻接 8 批属较早代码证据。模拟启动 9177 B／简报 6202 B，冻结 `/tmp/scid-p3b-source-freeze-v2-20261003.json`；未运行真实 native／模型、部署或长跑，不声称跨线程子任务自动转移 |
 | P4b 止损依据（源码与独立复审完成，未部署） | 3–5 人日 | 实例级连续未核验窗口覆盖新输出、自报 advance、改目标；仅确切先验检验的首次可信解决计进展，同条件重复不清零。公共计算投影与显式独立定性判断已接真实工具／封存／消费／准入链；普通无标准任务仍可交付，到阈值要求方向确认。人工继续不续预算，接受工作继续，shadow→assist 保留历史并产生有效新触发。两项消费窗口阻断已保留真实红绿并修复：任务去重先于限量，实际消费位置独立于交付分页；状态／归档格式 v4 拒绝旧顺序。最终 owning 35 项、相关存储／格式 16 项通过，较早邻接时序单列，冻结 `/tmp/scid-p4b-freeze-v2-20261003.json`。一次先前有效负结果核验失败原因未确证，原红及诊断保留，科学断言未放宽。未部署／运行模型，不代表科研质量或长跑收益；具体支持范围由设计 P4 节拥有 |
 | P5 短场效果 | 1–2 人日准备/分析，评分与运行另计 | 3 场景×基线/候选共 6 场；只证明冻结历史检索与短场决策效果，预算/评分规则见设计。源码候选与准备缺口已列于下表，独立复核通过（准备边界）；尚未准备可运行场次 |
-| P6s 小型先行验收 | 1–2 人日接线/分析，另约 2 小时运行 | [题目、数据与评分草案已构造](HOURLY_LOOP_MEMORY_BENCHMARK.zh-CN.md)，[准备边界](HOURLY_LOOP_MEMORY_BENCHMARK.zh-CN.md#运行前准备边界)独立复核通过（准备边界），分批投递接线未实现；多轮、等待、一次轮换及早期经验实际用于决策均尚未运行验证 |
+| P6s 小型先行验收 | 1–2 人日接线/分析，另约 2 小时运行 | [题目、数据与评分草案已构造](HOURLY_LOOP_MEMORY_BENCHMARK.zh-CN.md)，[准备边界](HOURLY_LOOP_MEMORY_BENCHMARK.zh-CN.md#运行前准备边界)独立复核通过；本候选 core 安装及仅初始材料的无模型 `init`／`prepare` 已完成，实物证据独立复核通过（core 离线安装＋initial 无模型准备）。分批投递未接线，多轮、等待、轮换及经验用于决策均未运行验证 |
 | P6a 第一阶段 | 1–2 人日准备/分析，另 24 小时运行 | 30 任务容量、跨天恢复及实际安全轮换；真实早期失败跨天跨线程找回、指导下一步且条件变化可合理重试 |
 | P6b 目标规模 | 2–3 人日准备/分析，另 3–7 天分档运行 | P6a 通过后按实测另授预算；100–300 任务容量与实际持续时长分别报告，提前科学完成正常收尾 |
 
-**2026-10-03 候选准备边界（独立复核通过（准备边界），未安装／未运行）：** 本次只更新准备状态，不改生产源码或 runner。P5/P6s 的 source candidate 固定为 `41c3bb45cf789ca0e6ae671d72e77e61cbf0fd09`；后续文档提交的 HEAD 不自动替换它，也不冒充 installed identity。主计划拥有候选／资格状态，P5 场景和成本上限仍由[长 loop 设计 P5 节](LONG_LOOP_CONTROL_AND_MEMORY_DESIGN.zh-CN.md#p5-样本与成本上限提议预留未获新的运行预算授权)拥有，P6s 的释放与评分规则由[任务文档](HOURLY_LOOP_MEMORY_BENCHMARK.zh-CN.md)拥有。
+**2026-10-03 候选准备边界（边界复核通过；core 离线安装／initial 无模型准备独立复核通过，未运行）：** 已沿既有受限入口完成 core 离线安装及 P6s initial 无模型 `init`／`prepare`，不改生产源码或 runner。P5/P6s 的 source candidate 固定为 `41c3bb45cf789ca0e6ae671d72e77e61cbf0fd09`；后续文档提交的 HEAD 不自动替换它，也不冒充 installed identity。实物与资源证据见 `/tmp/scid-candidate-install-20261003-implementation-v2.md`（静态复审纠正资源冻结元数据，未重跑）。主计划拥有候选／资格状态，P5 场景和成本上限仍由[长 loop 设计 P5 节](LONG_LOOP_CONTROL_AND_MEMORY_DESIGN.zh-CN.md#p5-样本与成本上限提议预留未获新的运行预算授权)拥有，P6s 的释放与评分规则由[任务文档](HOURLY_LOOP_MEMORY_BENCHMARK.zh-CN.md)拥有。
 
 | 准备项 | 已有事实与剩余输入 |
 |---|---|
 | 源码资格 | `5100763` 的两入口先验核验只证明限定不可变谱系中的封存先后，不保证观测生成／真实性；量化缺 exact conditions 祖先仍为 unknown。`41c3bb4` 仅补有限分页回归／诊断、未改分页生产代码；原 P3、P4b 偶发失败根因继续 unknown。两节点已独立复审，不替代安装／模型／长跑资格 |
-| 基线与安装身份 | P5 同期 baseline 的 exact source commit／installed bytes 尚未选定；本 source candidate 的实际安装候选与 wheel／解释器／installed contract 均未取得。旧 P1b `f64cd7e` 安装核验是历史证据，不能沿用为本候选通过 |
+| 基线与安装身份 | 本 source candidate 的 core wheel SHA-256 为 `f5c8bb8493555065b05bb3241c0cc9697c65fc064907bcde923046d618c42c72`；已从实际 site-packages 读回 schema 9／catalog，并核源码、wheel、installed bytes 和 RECORD。安装原始默认 Worker 为 `gpt-6-astra/high`，保留原快照；独立派生 source／case 经正式 AgentSettings 配置并实际读回 `gpt-6.1-sol/high`，Root 为 `gpt-5.6-sol/high`，未调用模型。P5 exact baseline／installed bytes 仍未选定，不沿用旧 P1b 资格 |
 | 同源历史与原件 | P5 三场景已在设计定义，但供两组复制的 schema 9、`scheduler_progression` 无行且 Run 仅为 `completed`／`failed` 的确切 state，以及原件名称、冻结 ref／bytes 和适用条件清单尚未绑定。合法终态历史可以保留，同一场景两组复用相同历史原件，不重新生成历史；安装代码与 state 来源分别冻结。已有 progression 记录不合现入口时保留准备缺口并选择／构造合法来源，不删除合法 control／既有成本记录来适配 |
-| 题目与评分 | P5 复用设计中的三个场景及本计划第 8 节的质量／证据边界，逐场 rubric 与检索／决策证据仍待冻结；P6s [materials.json](../../scripts/acceptance/fixtures/hourly_loop_memory/materials.json) 及任务文档 S1–S4／R1–R4 已有草案，尚无运行前冻结摘要与评分结果。逐场报告可由用户按冻结 rubric 比较，不要求新增自动汇总功能 |
-| 配置与投递 | 既有 `accept_b6` 格式可冻结单场目标、预算和 installed identity；`scientific_progress.json` 是 S0 场次，不是 P5/P6s 配置。P6s 还缺按真实封存结果／预测／安全轮换释放四批材料的接线，不能把完整题库塞进一次 `text` 投递 |
+| 题目与评分 | P5 复用设计中的三个场景及本计划第 8 节的质量／证据边界，逐场 rubric 与检索／决策证据仍待冻结；P6s [materials.json](../../scripts/acceptance/fixtures/hourly_loop_memory/materials.json) 及任务文档 S1–S4／R1–R4 已有草案。本轮只冻结 objective＋A_initial；未来批次／答案未复制入被测 project，评分未运行。逐场报告可由用户按冻结 rubric 比较，不要求新增自动汇总功能 |
+| 配置与投递 | 既有 `accept_b6` 已生成 `/tmp/scid-candidate-install-20261003-p6s-suite/p6s-inputs`：schema 9，instance／session／progression／dispatch／Run／execution 均为 0，目标实例名只是预期值，未创建／选择／绑定。空 state 不冒充 P5 同历史。P6s 仍缺按真实封存结果／预测／安全轮换释放四批材料的接线，不能把完整题库塞进一次 `text` 投递 |
+| 时限作用 | `resources.timeout_seconds=10800` 生成 host execution timeout；自然期限／启用时长另有同值提议，未授权／实跑。`managed.runtime_seconds=180` 本 native 场次不用；`stage_timeout_seconds=90` 用于 native cleanup 释放 writer／authority 等待；`human_wait_seconds=900` 是实例选择／人工等待窗口。后三者不是整场科学上限，不机械改成 3 小时，也不声称全停止链已对齐 |
 | 隔离与资源 | 现 Root 权限配置只声明审批、读写 sandbox 和网络，没有已接线的题库 read-deny／read-scope；同 UID 仅移位或提示隐藏不构成隔离。需核验实际环境对 Root／Worker／helper 及其原生工具拒绝读取答案／未来批次，同时保留声明权限。P5/P6s 的 token／时长／评分上限仍是分别预留的草案，新科学预算未授权，S0 余额不结转为新授权 |
 
-下一步取得实际 installed／合法 source／场次配置后，可先无模型执行既有 `init`／`prepare` 并冻结确切输入，把题库隔离与新科学预算标为 pending；二者不是无模型准备的前置，准备完成也不代表 `run` 就绪。实际模型运行仍需可审查的题库隔离条件、独立 P5/P6s 资源预留及相应接线；未具备时不启动模型。隔离可使用已有平台读范围或外部执行环境，但必须有实际拒绝读取的证据，不预设唯一技术方案。具体既有 CLI、冻结字段与接线缺口见 P6s 的准备边界；本节点不新增占位配置、第二运行器或审批 gate。
+P6s initial 无模型准备已完成，未执行 `run`；题库隔离、新科学预算与动态释放仍 pending，不代表节点 3 全部就绪。已冻结 8 研究／2 审查／20 Root 回合、400 万总 token 和 10800 秒的提议值；40 万非缓存及完整 suite／人工审查预算未冻结，不能当已授权或完整预算。P5 仍须选定 exact baseline／同历史 state／原件。实际模型运行仍需可审查的隔离条件、独立资源预留及相应接线；未具备时不启动模型。隔离必须有实际拒绝读取证据，不预设唯一技术方案；本节点不新增运行器或审批 gate。
 
 P0 节点证据（2026-10-01，纳入本提交节点）：真实 tick 反例确认 3 次轮询多开 3 个 Root 回合；修复后 delivery 文件 10 项通过，相邻边界原 8 项通过及旧语义用例修正后两参数通过，分组有重叠不相加。证据在 `/tmp/scid-p0-delivery-20261001-003`、`/tmp/scid-p0-boundaries-20261001-001` 和 `-002`；生产净增 13 行。独立只读评审未发现本补丁可达阻断，未运行真实模型/安装/TCAD，不代表 P6 资格。
 

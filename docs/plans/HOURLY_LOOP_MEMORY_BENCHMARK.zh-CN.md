@@ -1,6 +1,6 @@
 # P6s：小时级多轮记忆验收任务
 
-状态：题目、数据与评分草案已构造；候选准备边界已列明，独立复核通过（准备边界），分批投递接线待实现，尚未安装／运行本候选。本文供验收执行者与评分者使用，不交给被测 Root/Worker。S3-R 的规则见[设计](LONG_LOOP_CONTROL_AND_MEMORY_DESIGN.zh-CN.md)，排期与候选资格矩阵见[主计划](SCIENTIFIC_PROGRESS_AND_CORRECTION_PLAN.zh-CN.md)。
+状态：题目、数据与评分草案已构造，准备边界独立复核通过；本候选 core 离线安装及仅初始材料的无模型 `init`／`prepare` 已完成，实物证据独立复核通过（core 离线安装＋initial 无模型准备）。分批投递、隔离与完整预算仍 pending，未运行本场。本文供验收执行者与评分者使用，不交给被测 Root/Worker。S3-R 的规则见[设计](LONG_LOOP_CONTROL_AND_MEMORY_DESIGN.zh-CN.md)，排期与候选资格矩阵见[主计划](SCIENTIFIC_PROGRESS_AND_CORRECTION_PLAN.zh-CN.md)。
 
 ## 规模与目标
 
@@ -27,17 +27,18 @@
 
 ## 运行前准备边界
 
-本准备记录固定 source candidate 为 `41c3bb45cf789ca0e6ae671d72e77e61cbf0fd09`，不是后续文档 HEAD 或实际 installed identity；资格与旧 unknown 限制由主计划维护。这里只列既有入口可承担的准备和未实现的控制，不创建新配置／运行器，不授权模型预算。
+本准备记录固定 source candidate 为 `41c3bb45cf789ca0e6ae671d72e77e61cbf0fd09`，不是后续文档 HEAD；installed 实物与资格／旧 unknown 限制由主计划维护。本轮沿既有格式冻结 initial 配置与场次，不改 runner，不授权模型预算。实际命令、哈希、资源及读回见 `/tmp/scid-candidate-install-20261003-implementation-v2.md`（静态复审纠正资源冻结元数据，未重跑），本轮实物证据独立复核通过（core 离线安装＋initial 无模型准备）。
 
 | 现成入口 | 可复用范围与未满足条件 |
 |---|---|
-| [accept_b6.py](../../scripts/accept_b6.py) `init`／`prepare` | 从明确 `--source`／`--installed` 读取 candidate.json，核实际 installed schema 9／配置 API，并冻结 source、state、runner、wheel、有效设置及摘要；`prepare` 复制静止 state/project，不启动 host／模型。本候选 installed bytes 和本场 state 尚未准备，不沿用旧 P1b 安装通过 |
+| [accept_b6.py](../../scripts/accept_b6.py) `init`／`prepare` | 已从本候选实际 installed 读回 schema 9／配置 API；独立 source 与 `/tmp/scid-candidate-install-20261003-p6s-suite/p6s-inputs` 已冻结。复制后 instance／session／progression／dispatch／Run／execution 均为 0，只含 objective＋A_initial；未创建／选择／绑定实例或启动 host／模型。空 state 不算 P5 同历史资格，不沿用旧 P1b 安装通过 |
 | 场次配置 | 现格式要求 `version=1`、确切 `instance`、`progression`、`resources`、`managed`、`poll_seconds`、`stage_timeout_seconds`、`max_observed_runs`、`human_wait_seconds`、`objectives` 与 `cases`；native 场次只支持已有 `recovery/authority/helper/helper-crash/manual/autonomous`，没有 hourly／batch 场景。P6s 可在既有自主场次接线，不能仅增加一个场景字符串或把题库当配置 |
-| 预算与报告 | 既有整场入场预留、失败成本结转、角色 usage 观察、资源监督、停止／终态与只读 `report` 可复用。运行前分别冻结 `progression.max_tasks=8`、`max_reviews=2`、`max_rounds=20`，自然期限／启用时长、`resources.timeout_seconds` 及 `budget.session.execution_seconds` 明确采用本场时长上限；400 万总／40 万非缓存及 3 小时仍是待授权草案，不继承 S0 配置。Root 保持 `gpt-5.6-sol/high`，Worker/helper 沿实际冻结条件，不使用开发 agent 的模型替代 |
+| 预算与报告 | initial case 已冻结 `progression.max_tasks=8`、`max_reviews=2`、`max_rounds=20`、总 token 400 万，自然期限／启用时长与 `resources.timeout_seconds` 均为 10800 秒；只是提议，未授权。可选 `budget` 尚未配置：40 万非缓存、suite／人工审查预留未冻结，不声称完整预算／`run` 就绪，不继承 S0/P5 额度。installed 原始 Worker 默认 `gpt-6-astra/high` 保留；派生 source／case 按正式 AgentSettings 实际读回 `gpt-6.1-sol/high`，Root `gpt-5.6-sol/high`，无 operation override，不继承开发 xhigh；helper 沿冻结设置，未执行 |
+| 时限作用 | `resources.timeout_seconds=10800` 在 prepare 中生成 host execution timeout；自然期限／启用时长另有同值提议，未实跑。`managed.runtime_seconds=180` 属 managed runner，本 native/autonomous 场次不用；`stage_timeout_seconds=90` 是 cleanup 等待 writer 释放及 authority 等待窗口；`human_wait_seconds=900` 是实例选择／人工等待窗口，prepare 写入 host resources。各自独立，不等于全停止链 3 小时，不机械扩大清理／人工窗口 |
 | 分批释放与证据 | [NativeCaseJourney.run_case](../../scripts/acceptance_native_cases.py) 目前只绑定一次目标并观察新 Run／用量；没有按本题释放条件投递后续材料的钩子。后续须在原监督内绑定确切封存结果、预测及判据 ref、轮换身份和释放记录，使用既有材料／用户消息入口；任务与科学判断仍归 Root／Worker，不写硬编码任务 DAG。若既有消息合同不足，先界定最小接口范围，不拼接私有入口 |
 | 评分材料隔离 | [RootPermissions](../../src/scidiscovery/platforms/codex_root_host.py) 及现有有效设置仅有 `never`、`read-only/workspace-write`、network 和写范围校验，未接线题库目录 read-deny／read-scope；[Host.launch](../../scripts/probe_root_host_live.py) 同 UID 直接启动子进程。不能据此声称平台绝对无法隔离，但现准备没有可审计读隔离。运行环境须证明 Root、Worker、helper 及原生工具不能读取完整题库、答案、未来批次或控制日志中的相同内容；只交付当时允许的 objective／当前批次，保留 Worker 声明权限。未证明则记污染／未验证，不给独立预测与记忆资格 |
 
-已有 CLI 的核对形式如下，尖括号表示尚未取得的具体输入，**不是可执行交接命令**；取得实际 installed／合法 source／场次配置后，可无模型执行 `init`／`prepare` 并冻结确切路径与场次文件，题库隔离与新科学预算可继续标为 pending。二者不是无模型准备前置，准备完成不等于 `run` 就绪。本准备节点不创建占位文件，也不执行这些命令：
+已有 CLI 的形式如下，尖括号是通用参数占位，**不是可执行交接命令**。本轮已按实际输入执行 `init`／`prepare`；题库隔离与新科学预算仍 pending，二者不是无模型准备前置。未执行 `run`，初始准备不等于运行就绪：
 
 ```text
 python scripts/accept_b6.py init --suite <新套件目录> --config <冻结场次配置> --source <静止state候选> --installed <本源码实际安装候选>
@@ -46,7 +47,7 @@ python scripts/accept_b6.py run <已配置case-id> --suite <套件目录>
 python scripts/accept_b6.py report --suite <套件目录>
 ```
 
-`init` 要求 source 的 schema 9、`scheduler_progression` 无行，且没有非 `completed`／`failed` Run；允许保留合法终态历史。已有 progression 记录不合入口时记录准备缺口并选择／构造合法来源，不删除合法 control／既有消耗记录。`prepare` 冻结 `suite.json` 的 `freeze_identity`、`baseline_digest`／`conditions_digest` 及 `acceptance-case.json` 的有效设置、candidate／settings 摘要。`run` 才启动 native host，并输出精确管理 URL；只有用户页面选择／创建确切实例、暂停 bootstrap、确认本场 loop 预算后才请求模型。预算确认不解除具体行动合同声明的科学资格、暂停条件或 Effect 执行授权；普通任务／阶段不新增统一审批或独立审查 gate，配置执行策略可按具体合同直接授权适用请求。普通继续／恢复不续额；本节点没有做这些动作。后续新 suite 如需结转前场成本，`init --prior-result <确切终态result.json>` 可重复指定，只结转成本，不继承科学结论。
+`init` 要求 source 的 schema 9、`scheduler_progression` 无行，且没有非 `completed`／`failed` Run；允许保留合法终态历史。已有 progression 记录不合入口时记录准备缺口并选择／构造合法来源，不删除合法 control／既有消耗记录。`prepare` 冻结 `suite.json` 的 `freeze_identity`、`baseline_digest`／`conditions_digest` 及 `acceptance-case.json` 的有效设置、candidate／settings 摘要。`run` 才启动 native host，并输出精确管理 URL；只有用户页面选择／创建确切实例、暂停 bootstrap、确认本场 loop 预算后才请求模型。预算确认不解除具体行动合同声明的科学资格、暂停条件或 Effect 执行授权；普通任务／阶段不新增统一审批或独立审查 gate，配置执行策略可按具体合同直接授权适用请求。普通继续／恢复不续额；本轮未执行 `run` 或这些 UI／模型动作。后续新 suite 如需结转前场成本，`init --prior-result <确切终态result.json>` 可重复指定，只结转成本，不继承科学结论。
 
 P5 可按已有场次分别封存报告，由用户按冻结 rubric 人工比较 baseline／candidate，不必增加自动汇总；现 `report` 的 `pair` 比较只实现 manual／auto，不能把 baseline／candidate 标签塞入该结构冒充支持。P5 的三场景／原件、两组 installed 条件与资源单独冻结，不把本 P6s 题库当成已准备的六场 P5。
 
