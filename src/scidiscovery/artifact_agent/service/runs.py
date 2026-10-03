@@ -1446,18 +1446,25 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
         """Indexed loop join replaces an RPC/read for every historical admission."""
         with self._connect() as connection:
             rows = connection.execute(
-                "SELECT w.thread_id,w.platform_session,'worker' AS role,r.run_id FROM runs r "
+                "SELECT w.thread_id,w.platform_session,'worker' AS role,r.run_id,r.state AS run_state,r.started_at,"
+                "w.attachment_sequence,w.attached_at AS binding_at,NULL AS released_at FROM runs r "
                 "JOIN worker_connections w USING(run_id) WHERE r.instance_id=? "
                 "AND json_extract(CAST(r.recovery_policy_json AS TEXT),'$.loop_id')=? UNION ALL "
-                "SELECT w.thread_id,w.platform_session,'helper' AS role,r.run_id FROM runs r "
+                "SELECT w.thread_id,w.platform_session,'helper' AS role,r.run_id,r.state AS run_state,r.started_at,"
+                "0 AS attachment_sequence,w.admitted_at AS binding_at,w.released_at FROM runs r "
                 "JOIN worker_participants w USING(run_id) WHERE r.instance_id=? "
                 "AND json_extract(CAST(r.recovery_policy_json AS TEXT),'$.loop_id')=? "
                 "AND w.thread_id IS NOT NULL LIMIT ?", (instance_id, loop_id, instance_id, loop_id, capacity + 1)).fetchall()
         if len(rows) > capacity:
             raise RunStateConflict('Native loop identity capacity reached; retain original bindings.')
         result = {}
-        for row in rows:
+        for row in sorted(rows, key=lambda row: (row['thread_id'], row['attachment_sequence'], row['binding_at'] or '')):
             identity = dict(row, loop_id=loop_id)
+            from ..schema.common import canonical_sha256
+            identity['binding_key'] = canonical_sha256({key: identity[key] for key in
+                ('thread_id', 'platform_session', 'role', 'run_id', 'attachment_sequence', 'binding_at')})
+            identity['empty_safe'] = (row['role'] == 'worker' and row['run_state'] not in {'queued','running'}
+                and row['started_at'] is None)
             previous = result.get(row['thread_id'])
             if previous and (previous['role'], previous['platform_session']) != (row['role'], row['platform_session']):
                 raise RunStateConflict('Native usage thread ownership is ambiguous; retain original bindings.')

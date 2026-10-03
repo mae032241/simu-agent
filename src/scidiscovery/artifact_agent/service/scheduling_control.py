@@ -136,6 +136,7 @@ def progression_status_view(value, *, session_key=None, now=None):
         'fault_code': checkpoint.get('fault_code'),
         'platform_requests': [{key: item[key] for key in ('method', 'state', 'questions', 'elicitation', 'omitted') if key in item}
             for item in checkpoint.get('platform_requests', [])],
+        'rotation_boundary': checkpoint.get('rotation_boundary'),
         'last_command': checkpoint.get('last_command'),
         'human_continuation': human_continuation_view(value, checkpoint),
         'interactive_session': interactive_session_view(value, checkpoint),
@@ -417,7 +418,7 @@ class SchedulingControl:
         # Old grants did not authorize rotation. Their coordinator uses missing
         # triggers as disabled; a new deployment default must not block recovery
         # or revise those grants. Complete new policies still compare exactly.
-        for key in ('root_rotate_after_rounds','root_rotate_after_input_tokens','unverified_progress_threshold'):
+        for key in ('root_rotate_after_rounds','root_rotate_after_input_tokens','root_rotation_check_limit','unverified_progress_threshold'):
             if key not in frozen['effective']['progression']:
                 current['effective']['progression'].pop(key,None)
         return current == frozen
@@ -1208,7 +1209,10 @@ class SchedulingControl:
                 state['dispositions'] = [*state.get('dispositions', []), *window['dispositions']]
                 state['window_start_sequence'] = window['window_start_sequence']
                 state['through_sequence'] = max(state.get('through_sequence', 0), window['through_sequence'])
-                state['omitted'] = state.get('omitted', False) or window['omitted']
+                initial_empty = (not window['through_sequence'] and not any(window['counts'].values())
+                    and not window['notices'] and not window['dispositions'])
+                state['omitted'] = state.get('omitted', False) or (window.get('omitted', False)
+                    if initial_empty else window['omitted'])
                 state['background_proof_coverage'] = window.get('background_proof_coverage', 'complete')
             return state or None
 
@@ -1253,7 +1257,7 @@ class SchedulingControl:
             status.update(assessment_receipts=receipts, assessment_read=dict(tool='progression_status'))
         return status
 
-    def observe_progression(self, *, instance_id, expected_host, changes, reason=None, stop=False, completed_turn=None, terminal_turn=None, usage_observation=None,
+    def observe_progression(self, *, instance_id, expected_host, changes, reason=None, stop=False, completed_turn=None, terminal_turn=None, usage_observation=None, native_observation=None,
                             recoverable_fault=None, recovery_health=None):
         """Trusted runtime observations survive pause; they grant no dispatch authority.
 
@@ -1262,7 +1266,8 @@ class SchedulingControl:
         """
         with self.control_maintenance.guard(instance_id), self.scheduling_lock(), self._connect() as db:
             row = read_control_row(db, instance_id,
-                usage_thread=usage_observation['params'].get('threadId') if usage_observation else None,
+                usage_thread=usage_observation['params'].get('threadId') if usage_observation else
+                    native_observation['identity']['thread_id'] if native_observation else None,
                 extra_loop=usage_observation['identity'].get('loop_id') if usage_observation else None)
             if row is None or json.loads(row['host_json'] or 'null') != expected_host:
                 conflict('Native host binding changed during observation.')
@@ -1271,6 +1276,9 @@ class SchedulingControl:
             if usage_observation:
                 from .progression_budget import apply_usage_observation
                 apply_usage_observation(db, row, checkpoint, usage_observation)
+            if native_observation:
+                from .progression_budget import apply_native_observation
+                apply_native_observation(db, row, checkpoint, native_observation)
             from .scientific_progress import observe_deliveries, scientific_pause
             if terminal_turn is not None and checkpoint.get('turn_id'):
                 if terminal_turn.get('id') != checkpoint['turn_id']:

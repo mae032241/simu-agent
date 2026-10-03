@@ -169,6 +169,8 @@ class ProgressionSettings(SettingsValue):
         description="Completed decision rounds on this Root thread before safe rotation; 0 disables this trigger.")
     root_rotate_after_input_tokens: int = Field(default=500000, ge=0,
         description="Cumulative native input usage on this Root thread, including cached input; not current context size. 0 disables this trigger.")
+    root_rotation_check_limit: int = Field(default=16, ge=1, le=128,
+        description="Maximum total native resume and read RPCs per rotation attempt. Only new or active participants may resume without a turn or permission override; unconfirmed old subscriptions defer. Exact terminal proof is reusable only on its subscribed connection and event version.")
     # Native Workers inherit Root permissions; validate their catalog requirements.
     root_approval_policy: Literal["never"] = "never"
     root_sandbox: Literal["read-only", "workspace-write"] = "workspace-write"

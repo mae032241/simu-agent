@@ -24,6 +24,12 @@ for line in sys.stdin:
     with (base/'requests.jsonl').open('a') as log: log.write(json.dumps(msg)+'\n')
     if 'id' not in msg: continue
     method,p=msg['method'],msg['params']
+    notifications=base/'native-events.json'
+    if notifications.exists():
+        events=json.loads(notifications.read_text())
+        if isinstance(events,list) or (events['method']==method and events['threadId']==p.get('threadId')):
+            notifications.unlink()
+            for event in events if isinstance(events,list) else events['events']:emit(event)
     if method=='initialize': result={}
     elif method=='config/read': result={'config':config}
     elif method in ('thread/start','thread/resume'):
@@ -38,12 +44,20 @@ for line in sys.stdin:
                   'inputTokens':175,'cachedInputTokens':75,'outputTokens':25}}}})
             if state['next']>1 and mode in {'lost-opening','lost-opening-late'}: sys.exit(0)
         else: thread=p['threadId']
-        result={'thread':{'id':thread,'sessionId':thread},'approvalPolicy':p['approvalPolicy'],
-          'sandbox':{'type':{'read-only':'readOnly','workspace-write':'workspaceWrite'}[p['sandbox']],
-          'networkAccess':p.get('config',{}).get('sandbox_workspace_write',{}).get('network_access',False),'writableRoots':[]}}
+        sessions=json.loads((base/'thread-sessions.json').read_text()) if (base/'thread-sessions.json').exists() else {}
+        result={'thread':{'id':thread,'sessionId':sessions.get(thread,thread if thread.startswith('root-') else 'source-test-session')}}
+        if 'approvalPolicy' in p:
+            result.update(approvalPolicy=p['approvalPolicy'],sandbox={
+              'type':{'read-only':'readOnly','workspace-write':'workspaceWrite'}[p['sandbox']],
+              'networkAccess':p.get('config',{}).get('sandbox_workspace_write',{}).get('network_access',False),'writableRoots':[]})
     elif method=='thread/read':
+        unavailable=json.loads((base/'unavailable.json').read_text()) if (base/'unavailable.json').exists() else []
+        if p['threadId'] in unavailable:
+            emit({'id':msg['id'],'error':{'code':-32000,'message':'Historical native thread unavailable'}})
+            continue
         child_status=(base/'child-status').read_text() if (base/'child-status').exists() else 'completed'
-        result={'thread':{'id':p['threadId'],'turns':state['threads'].get(p['threadId'],
+        sessions=json.loads((base/'thread-sessions.json').read_text()) if (base/'thread-sessions.json').exists() else {}
+        result={'thread':{'id':p['threadId'],'sessionId':sessions.get(p['threadId'],p['threadId'] if p['threadId'].startswith('root-') else 'source-test-session'),'turns':state['threads'].get(p['threadId'],
           [] if child_status=='missing' else [{'id':'worker-turn','status':child_status}])}}
     elif method=='mcpServerStatus/list': result={'data':[{'name':'scidiscovery','tools':{'scid_catalog':{},'scid_describe':{},'scid_call':{}}}]}
     elif method=='mcpServer/tool/call':
@@ -117,6 +131,7 @@ def wake(p, name='new-context'):
 def test_factory_rotates_exact_writer_and_preserves_loop_positions(progression,tmp_path):
     p=progression
     native,_=setup(p,tmp_path)
+    p.root.call_tool('progression_message',dict(name='prior-direction',text='Retain the original direction and its unresolved limit.'))
     p.coordinator.tick();completed(p)
     old_root=p.root.__class__(p.facade(p.coordinator.host.scheduler_session))
     old=checkpoint(p)
@@ -145,7 +160,9 @@ def test_factory_rotates_exact_writer_and_preserves_loop_positions(progression,t
     prompt=calls(native,'turn/start')[-1]['input'][0]['text']
     brief=json.loads(prompt.split('\n')[-1])
     assert brief['objective']['original']=='Compare exact data and retain limitations.'
-    assert brief['user_messages'][0]['name']=='new-context'
+    assert brief['user_messages']==[
+        dict(name='prior-direction',original='Retain the original direction and its unresolved limit.'),
+        dict(name='new-context',original='Retain this exact new condition.')]
     assert 'attempt_memory' in brief
     assert all(c['model']=='gpt-5.6-sol' and c['config']['model_reasoning_effort']=='high' for c in calls(native,'thread/start'))
     from tests.operations.test_run_list_bounds import metrics
@@ -175,6 +192,45 @@ def test_factory_unknown_opening_never_replays_on_cold_start(progression,tmp_pat
         assert len(calls(native,'thread/start'))==2 and len(calls(native,'turn/start'))==1
         assert checkpoint(p)['current_loop_id']==failed['current_loop_id']
     finally: restored.close()
+
+
+def test_factory_context_recovery_is_bounded_originals_page_and_same_thread_is_incremental(progression,tmp_path):
+    p=progression
+    native,_=setup(p,tmp_path,root_rotate_after_rounds=2,context_bytes=8192)
+    original='方向界限'*4095
+    for name in ('early-direction','early-limit'):
+        p.root.call_tool('progression_message',dict(name=name,text=original))
+    p.coordinator.tick();completed(p)
+    wake(p,'increment-before-rotation');completed(p)
+    wake(p,'new-direction')
+    assert len(calls(native,'thread/start'))==2
+    p.now[0]+=6;p.coordinator.tick();completed(p)
+    fresh=p.root.__class__(p.facade(p.coordinator.host.scheduler_session))
+    prompt=calls(native,'turn/start')[-1]['input'][0]['text']
+    brief=json.loads(prompt.split('\n')[-1])
+    assert len(prompt.encode())<=8192
+    index=fresh.call_tool(brief['user_messages_read']['tool'],{})[brief['user_messages_read']['field']]
+    assert [item['name'] for item in index]==['early-direction','early-limit','increment-before-rotation','new-direction']
+    recovered=[]
+    cursor=None
+    while True:
+        page=fresh.call_tool('artifact_catalog',dict(name='early-direction',view='content',content_cursor=cursor))
+        recovered.append(page['text'])
+        cursor=page['next_cursor']
+        if cursor is None:break
+    assert len(recovered)>1 and ''.join(recovered)==original
+    assert all(item['name'] not in {'early-direction','early-limit'} for item in brief['user_messages'])
+    wake(p,'same-thread-increment');completed(p)
+    assert p.coordinator.host.identity.thread_id=='root-2'
+    assert len(calls(native,'turn/start'))==4
+    latest=json.loads(calls(native,'turn/start')[-1]['input'][0]['text'].split('\n')[-1])
+    assert all(item['name']=='same-thread-increment' for item in latest['user_messages'])
+    assert fresh.call_tool(latest['user_messages_read']['tool'],{})['messages'][-1]['name']=='same-thread-increment'
+    assert fresh.call_tool('artifact_catalog',dict(name='same-thread-increment',view='content'))['text']=='Retain this exact new condition.'
+    assert checkpoint(p)['usage_records']['root-2']['context_delivered']
+    from tests.operations.test_run_list_bounds import metrics
+    metrics('rotation-context-recovery',dict(startup_bytes=len(prompt.encode()),saved_messages=4,
+        original_pages=len(recovered),original_bytes=len(original.encode()),same_thread_messages=1))
 
 
 @pytest.mark.parametrize('command',['pause','takeover'])
@@ -355,7 +411,9 @@ def test_late_usage_multiple_rotations_and_cold_identity_keep_same_budget(progre
         while restored.host.poll(.01) is None: assert time.monotonic()<deadline
         assert len(calls(native,'turn/start'))==3
         prompt=calls(native,'turn/start')[-1]['input'][0]['text']
-        assert json.loads(prompt.split('\n')[-1])['user_messages']==[dict(name='message-2',original='Retain this exact new condition.')]
+        assert json.loads(prompt.split('\n')[-1])['user_messages']==[
+            dict(name='message-1',original='Retain this exact new condition.'),
+            dict(name='message-2',original='Retain this exact new condition.')]
         restored.tick()
         assert checkpoint(p)['usage_summary']['groups']['root']['tokens']['input_tokens']==400
         assert len(calls(native,'turn/start'))==3
@@ -378,10 +436,11 @@ def test_rotation_settings_use_existing_configuration_and_frozen_loop(progressio
     from scidiscovery.agent_execution_settings import parse_settings,effective_settings,packaged_default_model
     from scidiscovery.artifact_agent.approval_ui.agent_settings import apply_form
     p=progression
-    native,_=setup(p,tmp_path,root_rotate_after_rounds=2,root_rotate_after_input_tokens=321)
+    native,_=setup(p,tmp_path,root_rotate_after_rounds=2,root_rotate_after_input_tokens=321,root_rotation_check_limit=3)
     frozen=json.loads(row(p)['config_json'])
     cp=checkpoint(p)
     assert cp['loop_authorizations'][cp['current_loop_id']]['config']==frozen
+    assert frozen['effective']['progression']['root_rotation_check_limit']==3
     schema=parse_settings({}).model_json_schema()['$defs']['ProgressionSettings']['properties']
     assert 'not current context size' in schema['root_rotate_after_input_tokens']['description']
     assert effective_settings(parse_settings({}),{})['progression']['root_rotate_after_rounds']==8
@@ -389,6 +448,9 @@ def test_rotation_settings_use_existing_configuration_and_frozen_loop(progressio
     import scidiscovery
     packaged=json.loads((Path(scidiscovery.__file__).parent/'default_agent_settings.json').read_text())
     assert packaged['progression']['root_rotate_after_input_tokens']==500000
+    assert packaged['progression']['root_rotation_check_limit']==16
+    for value in (0,129,True,None):
+        with pytest.raises(ValueError): parse_settings(dict(progression=dict(root_rotation_check_limit=value)))
     for value in (-1,True,None):
         with pytest.raises(ValueError): parse_settings(dict(progression=dict(root_rotate_after_rounds=value)))
     preserved=apply_form({'progression':{'root_rotate_after_rounds':2,'root_rotate_after_input_tokens':321}},
@@ -399,6 +461,11 @@ def test_rotation_settings_use_existing_configuration_and_frozen_loop(progressio
         inputs=[dict(port='source_table',artifact_names=['source_csv'])],instruction='Same scientific request.'))['normalized_request']['execution_profile']
     assert worker_profile['model']==packaged_default_model()
     bindings=p.runtime.scheduler_bindings
+    original_settings=bindings.global_settings
+    bindings.global_settings=original_settings.model_copy(update=dict(progression=original_settings.progression.model_copy(
+        update=dict(root_rotation_check_limit=4))))
+    assert not bindings._control_settings_match(p.instance,row(p)['config_json'])
+    bindings.global_settings=original_settings
     bindings.global_settings=bindings.global_settings.model_copy(update=dict(progression=bindings.global_settings.progression.model_copy(
         update=dict(root_rotate_after_rounds=0,root_rotate_after_input_tokens=0))))
     assert json.loads(row(p)['config_json'])==frozen
@@ -418,7 +485,7 @@ def test_old_frozen_config_without_rotation_keys_recovers_with_triggers_disabled
     bindings=p.runtime.scheduler_bindings
     control=row(p);cp=checkpoint(p)
     config=json.loads(control['config_json'])
-    for key in ('root_rotate_after_rounds','root_rotate_after_input_tokens'):
+    for key in ('root_rotate_after_rounds','root_rotate_after_input_tokens','root_rotation_check_limit'):
         config['effective']['progression'].pop(key)
     cp['loop_authorizations'][cp['current_loop_id']]['config']=config
     from scidiscovery.artifact_agent.service.progression_records import store_checkpoint
@@ -493,6 +560,259 @@ def test_framework_failure_does_not_prove_native_child_quiescence(progression,tm
     assert fresh.call_tool('run_status',dict(name='early-failure',intent='navigation'))['state']=='failed'
 
 
+def test_terminal_cache_binding_expires_when_actual_worker_thread_is_reused(progression,tmp_path):
+    from tests.operations.test_local_worker_contracts import _invoke,_worker,_write_result
+    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+    p=progression
+    native,_=setup(p,tmp_path)
+    p.coordinator.tick();completed(p)
+    root=p.root.__class__(p.facade(p.coordinator.host.scheduler_session))
+    _invoke(root,'cached-worker')
+    old=_worker(p.catalog,p.runtime);old.call_tool('worker_open_assignment',{})
+    _write_result(old,observe_tokens=False)
+    p.coordinator._event(dict(method='thread/tokenUsage/updated',params=dict(threadId=old._trusted_caller[1],
+        tokenUsage=dict(total=dict(inputTokens=10,cachedInputTokens=0,outputTokens=1)))))
+    old.call_tool('worker_submit_result',{})
+    identities=p.coordinator._identities()
+    observed=p.coordinator.host.rotation_boundary(identities,known={},limit=2)
+    assert observed['safe']
+    for observation in observed['observations']:p.coordinator._save({},native_observation=observation)
+    thread=old._trusted_caller[1]
+    old_key=checkpoint(p)['usage_records'][thread]['native_terminal']['binding_key']
+    _invoke(root,'reused-worker')
+    identity=root.facade._resolve('run','reused-worker')
+    p.runtime.runs.worker_connections.attach(run_id=identity,platform_session=old._trusted_caller[0],thread_id=thread)
+    value=p.runtime.runs.status(identity)
+    worker=LocalWorkerMCPRouter(p.runtime.runs,operation_id=value.operation_id,operation_digest=value.operation_digest,
+        run_id=identity,trusted_caller=old._trusted_caller)
+    worker.call_tool('worker_open_assignment',{})
+    _write_result(worker,observe_tokens=False)
+    p.coordinator._event(dict(method='thread/tokenUsage/updated',params=dict(threadId=worker._trusted_caller[1],
+        tokenUsage=dict(total=dict(inputTokens=20,cachedInputTokens=0,outputTokens=2)))))
+    worker.call_tool('worker_submit_result',{})
+    identities=p.coordinator._identities()
+    assert identities[thread]['binding_key']!=old_key
+    # A delayed old completion cannot certify this new attachment.
+    def notify(*events):
+        (native/'native-events.json').write_text(json.dumps(events))
+        p.coordinator.host.connection.rpc('mcpServerStatus/list',dict(threadId=p.coordinator.host.identity.thread_id))
+    notify(dict(method='turn/completed',params=dict(threadId=thread,turn=dict(id='worker-turn',status='completed'))))
+    assert checkpoint(p)['usage_records'][thread]['native_terminal']['binding_key']==old_key
+    (native/'child-status').write_text('inProgress')
+    before=len(calls(native,'thread/read'))
+    boundary=p.coordinator.host.rotation_boundary(identities,
+        known={thread:checkpoint(p)['usage_records'][thread]['native_terminal']},limit=1)
+    assert not boundary['safe'] and boundary['unknown']==1
+    assert len(calls(native,'thread/read'))==before+1
+    notify(dict(method='turn/started',params=dict(threadId=thread,turn=dict(id='new-worker-turn'))),
+        dict(method='turn/completed',params=dict(threadId=thread,turn=dict(id='new-worker-turn',status='completed'))))
+    latest=checkpoint(p)['usage_records'][thread]['native_terminal']
+    assert latest['binding_key']==identities[thread]['binding_key'] and latest['turn_id']=='new-worker-turn'
+    before=len(calls(native,'thread/read'))
+    assert p.coordinator.host.rotation_boundary(identities,known={thread:latest},limit=1)['safe']
+    assert len(calls(native,'thread/read'))==before
+
+
+def _terminal_native_worker(p,root,name):
+    from tests.operations.test_local_worker_contracts import _invoke,_worker,_write_result
+    _invoke(root,name)
+    worker=_worker(p.catalog,p.runtime);worker.call_tool('worker_open_assignment',{})
+    _write_result(worker,observe_tokens=False)
+    p.coordinator._event(dict(method='thread/tokenUsage/updated',params=dict(threadId=worker._trusted_caller[1],
+        tokenUsage=dict(total=dict(inputTokens=10,cachedInputTokens=0,outputTokens=1)))))
+    worker.call_tool('worker_submit_result',{})
+    return worker._trusted_caller[1]
+
+
+@pytest.mark.parametrize('changed',['cached','reading'])
+def test_production_started_notification_during_other_read_invalidates_rotation_fence(progression,tmp_path,changed):
+    p=progression
+    native,_=setup(p,tmp_path)
+    p.coordinator.tick();completed(p)
+    root=p.root.__class__(p.facade(p.coordinator.host.scheduler_session))
+    thread=_terminal_native_worker(p,root,'previously-terminal')
+    proof=p.coordinator.host.rotation_boundary(p.coordinator._identities(),known={},limit=2)
+    assert proof['safe']
+    for observation in proof['observations']:p.coordinator._save({},native_observation=observation)
+    other=_terminal_native_worker(p,root,'newly-terminal')
+    affected=thread if changed=='cached' else other
+    p.coordinator._settle_turn(checkpoint(p))
+    (native/'native-events.json').write_text(json.dumps(dict(method='thread/read',threadId=other,
+        events=[dict(method='turn/started',params=dict(threadId=affected,turn=dict(id='late-new-native-turn')))])))
+    before=len(calls(native,'thread/read'))
+    assert not p.coordinator._rotate_if_due(row(p),json.loads(row(p)['config_json'])['effective']['progression'])
+    assert calls(native,'thread/read')[before:]==[dict(threadId=other,includeTurns=True)]
+    assert 'native_terminal' not in checkpoint(p)['usage_records'][affected]
+    assert checkpoint(p)['rotation_boundary']['reasons']==[
+        'native_terminal_proof_invalidated' if changed=='cached' else 'native_turn_changed_during_read']
+    assert len(calls(native,'thread/start'))==1 and row(p)['state']=='active'
+
+
+def test_new_app_server_rechecks_persisted_terminal_proof_without_loading_old_history(progression,tmp_path):
+    from scidiscovery.artifact_agent.service.progression import ProgressionCoordinator
+    p=progression
+    native,factory=setup(p,tmp_path)
+    p.coordinator.tick();completed(p)
+    root=p.root.__class__(p.facade(p.coordinator.host.scheduler_session))
+    thread=_terminal_native_worker(p,root,'old-proof')
+    proof=p.coordinator.host.rotation_boundary(p.coordinator._identities(),known={},limit=2)
+    assert proof['safe']
+    for observation in proof['observations']:p.coordinator._save({},native_observation=observation)
+    saved=checkpoint(p)['usage_records'][thread]['native_terminal']
+    p.coordinator.close()
+    (native/'child-status').write_text('inProgress')
+    fresh=ProgressionCoordinator(runtime=p.runtime,host_factory=factory,facade_factory=p.facade,clock=lambda:p.now[0])
+    p.coordinator=fresh
+    fresh._connect(row(p));fresh._settle_turn(checkpoint(p))
+    before=len(calls(native,'thread/read'));resumes=len(calls(native,'thread/resume'))
+    assert not fresh._rotate_if_due(row(p),json.loads(row(p)['config_json'])['effective']['progression'])
+    assert calls(native,'thread/read')[before:]==[dict(threadId=thread,includeTurns=True)]
+    assert len(calls(native,'thread/resume'))==resumes
+    assert checkpoint(p)['usage_records'][thread]['native_terminal']==saved
+    assert len(calls(native,'thread/start'))==1 and row(p)['state']=='active'
+    # Even terminal thread/read does not establish a cold connection subscription.
+    (native/'child-status').write_text('completed')
+    assert not fresh._rotate_if_due(row(p),json.loads(row(p)['config_json'])['effective']['progression'])
+    assert len(calls(native,'thread/resume'))==resumes
+    assert checkpoint(p)['usage_records'][thread]['native_terminal']==saved
+    assert checkpoint(p)['rotation_boundary']['reasons']==['native_subscription_unconfirmed']
+
+
+@pytest.mark.parametrize('limit',[1,2])
+def test_fast_complete_task_subscribes_on_production_rotation_without_new_turn_or_permission_override(progression,tmp_path,limit):
+    p=progression
+    native,_=setup(p,tmp_path,root_rotation_check_limit=limit)
+    p.coordinator.tick();completed(p)
+    root=p.root.__class__(p.facade(p.coordinator.host.scheduler_session))
+    thread=_terminal_native_worker(p,root,'fast-complete')
+    assert not calls(native,'thread/resume')
+    p.coordinator._settle_turn(checkpoint(p))
+    limits=json.loads(row(p)['config_json'])['effective']['progression']
+    batches=[]
+    for attempt in range(2 if limit==1 else 1):
+        before=len(calls(native,'thread/resume'))+len(calls(native,'thread/read'))
+        rotated=p.coordinator._rotate_if_due(row(p),limits)
+        batches.append(len(calls(native,'thread/resume'))+len(calls(native,'thread/read'))-before)
+        assert batches[-1]<=limit
+        assert rotated is (limit==2 or attempt==1)
+    assert calls(native,'thread/resume')==[dict(threadId=thread,cwd=str(p.runtime.project_root),excludeTurns=True)]
+    assert calls(native,'thread/read')==[dict(threadId=thread,includeTurns=True)]
+    assert len(calls(native,'turn/start'))==1 and len(calls(native,'thread/start'))==2
+    assert row(p)['state']=='active'
+    from tests.operations.test_run_list_bounds import metrics
+    metrics('rotation-subscription-'+str(limit),dict(rpc_batches=batches,participant_resume=1,participant_read=1,
+        extra_model_turns=0,old_terminal_resumes=0))
+
+
+@pytest.mark.parametrize('opened',[False,True])
+def test_protocol_empty_thread_requires_closed_never_started_task(progression,tmp_path,opened):
+    from tests.operations.test_local_worker_contracts import _invoke,_worker
+    p=progression
+    native,_=setup(p,tmp_path)
+    p.coordinator.tick();completed(p)
+    root=p.root.__class__(p.facade(p.coordinator.host.scheduler_session))
+    _invoke(root,'empty-worker')
+    worker=_worker(p.catalog,p.runtime)
+    if opened:worker.call_tool('worker_open_assignment',{})
+    value=p.runtime.runs.status(root.facade._resolve('run','empty-worker'))
+    p.runtime.runs.record_failure(value.run_id,reason='Cancelled before any new native work.',
+        expected_state=value.state,expected_last_activity_at=value.last_activity_at)
+    (native/'child-status').write_text('missing')
+    p.coordinator._settle_turn(checkpoint(p))
+    result=p.coordinator._rotate_if_due(row(p),json.loads(row(p)['config_json'])['effective']['progression'])
+    assert result is (not opened)
+    assert len(calls(native,'thread/start'))==(1 if opened else 2)
+    assert row(p)['state']=='active'
+    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+    fresh=LocalWorkerMCPRouter(p.runtime.runs,operation_id=value.operation_id,operation_digest=value.operation_digest,
+        run_id=value.run_id,trusted_caller=worker._trusted_caller)
+    with pytest.raises(Exception,match='terminal|queued|running|assignment'):
+        fresh.call_tool('worker_open_assignment',{})
+
+
+def test_protocol_1500_cached_terminal_bindings_need_no_rpc_and_unknown_cohort_is_batched(progression,tmp_path):
+    """Capacity fixture clones retained proof; live reconciliation uses the real peer."""
+    from copy import deepcopy
+    from tests.operations.test_local_worker_contracts import _invoke,_worker,_write_result
+    from scidiscovery.artifact_agent.service.progression_records import store_checkpoint
+    p=progression
+    native,_=setup(p,tmp_path,max_tasks=1510,detail_capacity=16384,root_rotation_check_limit=2)
+    p.coordinator.tick();completed(p)
+    root=p.root.__class__(p.facade(p.coordinator.host.scheduler_session))
+    _invoke(root,'terminal-prototype')
+    prototype=_worker(p.catalog,p.runtime);prototype.call_tool('worker_open_assignment',{})
+    _write_result(prototype,observe_tokens=False)
+    p.coordinator._event(dict(method='thread/tokenUsage/updated',params=dict(threadId=prototype._trusted_caller[1],
+        tokenUsage=dict(total=dict(inputTokens=10,cachedInputTokens=0,outputTokens=1)))))
+    prototype.call_tool('worker_submit_result',{})
+    identities=p.coordinator._identities()
+    proof=p.coordinator.host.rotation_boundary(identities,known={},limit=2)
+    assert proof['safe'] and len(proof['observations'])==1
+    for observation in proof['observations']:p.coordinator._save({},native_observation=observation)
+    prototype_thread=prototype._trusted_caller[1]
+    prototype_record=deepcopy(checkpoint(p)['usage_records'][prototype_thread])
+    with p.runtime.runs._connect() as db:
+        template=dict(db.execute('SELECT * FROM runs WHERE run_id=?',(prototype._run_id,)).fetchone())
+        for index in range(1500):
+            identity='run_'+f'{index+50000:032x}'
+            saved=dict(template,run_id=identity,output_binding_name=f'cache-history-{index}.output',
+                output_logical_name=f'cache-history-{index}.output')
+            db.execute('INSERT INTO runs ('+','.join(saved)+') VALUES ('+','.join('?' for _ in saved)+')',list(saved.values()))
+            db.execute('INSERT INTO worker_connections VALUES(?,?,?,?,?)',
+                (identity,'source-test-session',f'cache-history-{index}','2026-10-03T00:00:00Z',1))
+    cp=checkpoint(p)
+    identities=p.coordinator._identities()
+    for thread,identity in identities.items():
+        if thread==prototype_thread:continue
+        record=deepcopy(prototype_record)
+        record['thread_id']=thread
+        record['native_terminal']['binding_key']=identity['binding_key']
+        cp['usage_records'][thread]=record
+        # Capacity clone of the same genuinely subscribed prototype connection.
+        p.coordinator.host.native_subscriptions[thread]=identity['platform_session']
+    with p.runtime.scheduler_bindings._connect() as db:
+        db.execute('UPDATE scheduler_progression SET checkpoint_json=? WHERE instance_id=?',
+            (store_checkpoint(db,p.instance,cp),p.instance))
+    old_threads=set(identities)
+    (native/'unavailable.json').write_text(json.dumps(sorted(old_threads)))
+    unknown=[]
+    for index in range(3):
+        _invoke(root,f'late-native-{index}')
+        worker=_worker(p.catalog,p.runtime);worker.call_tool('worker_open_assignment',{})
+        _write_result(worker,observe_tokens=False)
+        p.coordinator._event(dict(method='thread/tokenUsage/updated',params=dict(threadId=worker._trusted_caller[1],
+            tokenUsage=dict(total=dict(inputTokens=10,cachedInputTokens=0,outputTokens=1)))))
+        worker.call_tool('worker_submit_result',{})
+        unknown.append(worker._trusted_caller[1])
+    (native/'child-status').write_text('inProgress')
+    p.coordinator._settle_turn(checkpoint(p))
+    limits=json.loads(row(p)['config_json'])['effective']['progression']
+    batches=[]
+    for _ in range(3):
+        before=len(calls(native,'thread/read'))
+        prior_resumes=len(calls(native,'thread/resume'))
+        assert not p.coordinator._rotate_if_due(row(p),limits)
+        batch=calls(native,'thread/read')[before:]
+        batches.append(len(batch)+len(calls(native,'thread/resume'))-prior_resumes)
+        assert len(batch)==1 and batches[-1]==2 and {call['threadId'] for call in batch}<=set(unknown)
+        assert row(p)['state']=='active' and checkpoint(p)['rotation_boundary']['unchecked']==2
+        public=p.root.call_tool('progression_status',{})['rotation_boundary']
+        assert public==checkpoint(p)['rotation_boundary']
+        assert public['checked']==2 and public['unknown']==1 and public['reasons']==['native_turn_not_terminal']
+    assert len({call['threadId'] for call in calls(native,'thread/read')[-3:]})==3
+    (native/'child-status').write_text('completed')
+    before=len(calls(native,'thread/read'))
+    assert not p.coordinator._rotate_if_due(row(p),limits)
+    assert p.coordinator._rotate_if_due(row(p),limits)
+    final=calls(native,'thread/read')[before:]
+    assert len(final)==3 and {call['threadId'] for call in final}==set(unknown)
+    assert len(calls(native,'thread/start'))==2
+    assert checkpoint(p)['rounds']==1
+    from tests.operations.test_run_list_bounds import metrics
+    metrics('rotation-native-cohort',dict(retained_terminal_bindings=len(old_threads),unknown_bindings=3,
+        rpc_batches=batches,terminal_reconciliation_rpc=len(final),historical_rpc=0))
+
+
 def test_rotation_hands_off_saved_external_job_without_resubmitting_or_refreshing(tmp_path):
     from copy import copy
     from types import SimpleNamespace
@@ -502,6 +822,7 @@ def test_rotation_hands_off_saved_external_job_without_resubmitting_or_refreshin
     user='sch_'+'a'*32
     runtime.scheduler_bindings.bind_session(session_key=user,instance_id=instance.instance_id)
     facade.session_key=user
+    facade.approval_base_url='http://127.0.0.1:8765'
     root.call_tool('artifact_ingest_text',dict(name='goal',text='Retain the accepted external computation.'))
     now=[1000.0]
     def make_facade(session):
@@ -511,7 +832,7 @@ def test_rotation_hands_off_saved_external_job_without_resubmitting_or_refreshin
     p=SimpleNamespace(runtime=runtime,instance=instance.instance_id,root=root,user=user,catalog=catalog,
         now=now,facade=make_facade,coordinator=coordinator)
     try:
-        native,_=setup(p,tmp_path)
+        native,_=setup(p,tmp_path,root_rotate_after_rounds=2)
         coordinator.tick();completed(p)
         original_root=type(root)(make_facade(coordinator.host.scheduler_session))
         _create_effect(original_root,name='accepted-effect')
@@ -521,18 +842,30 @@ def test_rotation_hands_off_saved_external_job_without_resubmitting_or_refreshin
         identity=runtime.scheduler_bindings.resolve(instance=p.instance,namespace='execution',name='accepted-effect')
         before=runtime.executions.status(identity)
         submissions=dict(adapter.submissions)
+        _create_effect(original_root,name='pending-effect')
+        wake(p,'pending-before-rotation');completed(p)
+        assert original_root.call_tool('approval_status',dict(name='pending-effect.approval'))['status']=='pending'
         wake(p)
         assert len(calls(native,'thread/start'))==2
         p.now[0]+=6;coordinator.tick();completed(p)
         brief=json.loads(calls(native,'turn/start')[-1]['input'][0]['text'].split('\n')[-1])
-        assert len(brief['active_external_work'])==1
-        saved=brief['active_external_work'][0]
+        saved_work={value['name']:value for value in brief['active_external_work']}
+        assert len(saved_work)==len(brief['active_external_work'])==2
+        assert set(saved_work)=={'accepted-effect','pending-effect'}
+        assert saved_work['pending-effect']['state']=='created'
+        saved=saved_work['accepted-effect']
         assert saved['name']=='accepted-effect' and saved['state']=='submitted'
         query=dict(saved['read']);tool=query.pop('tool');surface=query.pop('surface')
         fresh=type(root)(make_facade(coordinator.host.scheduler_session))
+        assert {value['name']:value['status'] for value in brief['approval_changes']}=={
+            'accepted-effect.approval':'decided','pending-effect.approval':'pending'}
+        pending=fresh.call_tool('approval_status',dict(name='pending-effect.approval'))
+        assert pending['status']=='pending' and pending['review_url']
         inventory=fresh.call_tool(tool,query,surface=surface)
-        assert inventory['executions'][0]['name']=='accepted-effect'
+        execution_names=[value['name'] for value in inventory['executions']]
+        assert len(execution_names)==len(set(execution_names))==2
+        assert set(execution_names)=={'accepted-effect','pending-effect'}
         assert runtime.executions.status(identity)==before
         assert adapter.submit_count==1 and adapter.submissions==submissions
-        assert coordinator.host.identity.thread_id=='root-2' and checkpoint(p)['rounds']==2
+        assert coordinator.host.identity.thread_id=='root-2' and checkpoint(p)['rounds']==3
     finally: coordinator.close()

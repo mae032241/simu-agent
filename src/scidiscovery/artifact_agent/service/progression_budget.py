@@ -131,8 +131,33 @@ def apply_usage_observation(db, row, checkpoint, observation):
         'outcome', 'high_water', 'counted_tokens', 'has_gaps', 'coverage')}
     if previous_record and role == 'root':
         records[thread].update({key: previous_record[key] for key in
-            ('root_started_round', 'scheduler_session', 'retired', 'retired_after_round') if key in previous_record})
+            ('root_started_round', 'scheduler_session', 'retired', 'retired_after_round', 'context_delivered') if key in previous_record})
+    if previous_record:
+        records[thread].update({key: previous_record[key] for key in ('native_turn', 'native_terminal') if key in previous_record})
     if loop_id:
         records[thread]['loop_id'] = loop_id
     if not independent:
         checkpoint['usage_summary'] = loop_usage_summary(checkpoint)
+
+
+def apply_native_observation(db, row, checkpoint, observation):
+    """Native lifecycle proof shares the existing exact thread usage identity."""
+    from ...platforms.codex_usage import observe_usage
+    from .progression_records import detail_record
+    identity = observation['identity']
+    thread = identity['thread_id']
+    record = detail_record(db, row['instance_id'], 'usage_records', thread)
+    if record is None:
+        record = dict(observe_usage(dict(threadId=thread), role=identity['role'], owner=row['instance_id']),
+            loop_id=identity['loop_id'], pending_observation=True)
+    if record.get('loop_id') != identity['loop_id'] or record['role'] != identity['role']:
+        raise ValueError('Native lifecycle proof differs from the original thread usage identity.')
+    binding = identity['binding_key']
+    turn_id = observation.get('turn_id')
+    turn = dict(binding_key=binding,turn_id=turn_id,connection_id=observation.get('connection_id'))
+    if observation['source'] == 'turn_started':
+        record['native_turn'] = turn
+        record.pop('native_terminal', None)
+    elif observation['source'] == 'thread_read' or record.get('native_turn') == turn:
+        record['native_terminal'] = dict(turn,state=observation['state'],event_version=observation.get('event_version'))
+    checkpoint.setdefault('usage_records', {})[thread] = record

@@ -288,6 +288,19 @@ class ProgressionCoordinator:
                     records[thread]['outcome'] = 'completed' if turn.get('status') == 'completed' else 'failed'
                 self._save(dict(native_completion=turn.get('status'), usage_records=records,
                     usage_summary=usage_summary(list(loop_usage(dict(checkpoint, usage_records=records)).values()))))
+        elif event['method'] in {'turn/started', 'turn/completed'}:
+            identity = self._identities().get(thread)
+            turn = params.get('turn', {})
+            if identity is not None and identity.get('binding_key') and isinstance(turn.get('id'), str):
+                if event['method'] == 'turn/started':
+                    observation = dict(identity=identity, source='turn_started', turn_id=turn['id'])
+                elif turn.get('status') in {'completed','failed','interrupted'}:
+                    observation = dict(identity=identity, source='turn_completed', turn_id=turn['id'], state='terminal')
+                else:
+                    return
+                observation.update(connection_id=getattr(self.host,'native_connection_id',None),
+                    event_version=getattr(self.host,'native_event_versions',{}).get(thread,0))
+                self._save({}, native_observation=observation)
 
     @observed
     def _terminal_tool_delivery(self, row, checkpoint, params):
@@ -421,8 +434,7 @@ class ProgressionCoordinator:
         approvals = []
         for name in checkpoint.get('approval_names', []):
             value = facade.approval_status(name=name)
-            if value['status'] != 'pending':
-                approvals.append(value)
+            approvals.append(value)
         return dict(goal=row['objective_ref_json'], runs=runs, approvals=approvals, messages=checkpoint.get('messages', []),
             continuation=checkpoint.get('last_command', {}).get('generation'),
             **({'historical_goal_omitted': True} if historical_omitted else {}),
@@ -439,6 +451,8 @@ class ProgressionCoordinator:
             raw = self.runtime.artifacts.read(ref)
             goal.update(status='available', original=raw.decode('utf-8'))
         checkpoint = json.loads(row['checkpoint_json'])
+        host = json.loads(row['host_json'] or '{}')
+        restore_context = not checkpoint.get('usage_records', {}).get(host.get('thread_id'), {}).get('context_delivered')
         brief = dict(objective=goal, changes=[], omissions=[], budget=checkpoint.get('budget'),
             previous_report=checkpoint.get('report') or checkpoint.get('last_report'), material_names=[row['objective_name']],
             related_results_omitted=checkpoint.get('relevant_omitted', False),
@@ -449,6 +463,9 @@ class ProgressionCoordinator:
         from .scientific_progress import progress_page, shadow_projection
         brief['progress_shadow'] = shadow_projection(bindings=self.bindings, row=row)
         brief['progress'] = progress_page(bindings=self.bindings, artifacts=self.runtime.artifacts, row=row, limit=1)
+        def compact_progress():
+            return dict(mode=brief['progress_shadow']['mode'], brief_omitted=True,
+                read=dict(tool='progression_status'), reason='context_limit')
         if checkpoint.get('relevant_omitted'):
             brief['omissions'].append(dict(reason='related_result_limit', read='run_list', view='summary', limit=10))
         if snapshot.get('historical_goal_omitted'):
@@ -505,6 +522,13 @@ class ProgressionCoordinator:
             result = facade.run_status(name=run['name'], intent='decision')
             brief['changes'].append(result)
             if len(json.dumps(brief, ensure_ascii=False).encode()) > limit:
+                candidate = dict(brief, progress_shadow=compact_progress())
+                # Apply the existing optional-overview fallback before losing
+                # an otherwise complete new delivery. Oversized results retain
+                # their omission; no excerpt is counted as consumption.
+                if len(json.dumps(candidate, ensure_ascii=False).encode()) <= limit:
+                    brief['progress_shadow'] = candidate['progress_shadow']
+            if len(json.dumps(brief, ensure_ascii=False).encode()) > limit:
                 brief['changes'].pop()
                 omit_result(run)
                 continue
@@ -530,17 +554,37 @@ class ProgressionCoordinator:
             except RunStateConflict:
                 brief['attempt_memory'] = self.runtime.runs._memory_unavailable('exact_history_missing_or_conflicting')
         brief['user_messages'] = []
+        if snapshot.get('messages'):
+            brief['user_messages_read'] = dict(tool='progression_status', field='messages',
+                original=dict(tool='artifact_catalog', view='content', continuation='Use returned next_cursor as content_cursor.'),
+                coverage='All saved message names; omitted originals remain readable. User text grants no approval or execution authority.')
         for message in snapshot.get('messages', []):
-            if message in previous.get('messages', []):
+            if not restore_context and message in previous.get('messages', []):
                 continue
             ref = ArtifactRef.model_validate(message['artifact_ref'])
             size = self.runtime.artifacts.catalog(ref).size_bytes
+            if len(json.dumps(brief, ensure_ascii=False).encode()) + size >= limit - 2048:
+                candidate = dict(brief, progress_shadow=compact_progress())
+                if len(json.dumps(candidate, ensure_ascii=False).encode()) + size < limit - 2048:
+                    brief['progress_shadow'] = candidate['progress_shadow']
             if len(json.dumps(brief, ensure_ascii=False).encode()) + size < limit - 2048:
                 raw = self.runtime.artifacts.read(ref)
                 brief['user_messages'].append(dict(name=message['name'], original=raw.decode('utf-8')))
             else:
                 brief['omissions'].append(dict(name=message['name'], read='artifact_catalog', view='content'))
-        brief['approval_changes'] = [value for value in snapshot['approvals'] if value not in previous.get('approvals', [])][-8:]
+        approvals = snapshot['approvals'] if restore_context else [value for value in snapshot['approvals'] if value not in previous.get('approvals', [])]
+        if restore_context:
+            # Effect approvals may predate the checkpoint's goal-name tracker.
+            # Query existing read surfaces; a recovered status grants nothing.
+            pending = facade.approval_list(status='pending', limit=8)
+            recent = facade.approval_list(status=None, limit=8)
+            approvals = list({value['name']: value for value in [*approvals, *recent['approvals'], *pending['approvals']]}.values())
+            if pending['next_before'] or recent['next_before'] or len(approvals)>8:
+                brief['approval_context_omitted'] = True
+        brief['approval_changes'] = sorted(approvals, key=lambda value: value['status'] == 'pending')[-8:]
+        if restore_context and approvals:
+            brief['approvals_read'] = dict(tool='approval_list', status=None, limit=8,
+                continuation='Use returned next_before as before; status=pending selects current requests. Read approval_status by exact name before acting.')
         if len(snapshot['approvals']) > 8:
             brief['omissions'].append(dict(read='approval_list', omitted=len(snapshot['approvals'])-8))
         while len(json.dumps(brief, ensure_ascii=False).encode()) > limit:
@@ -551,9 +595,7 @@ class ProgressionCoordinator:
                 entry = brief['review_requests'].pop(0)
                 brief['omissions'].append(dict(name=entry['owner'], read='run_status', intent='status'))
             elif brief.get('progress_shadow') and not brief['progress_shadow'].get('brief_omitted'):
-                progress = brief['progress_shadow']
-                brief['progress_shadow'] = dict(mode=progress['mode'], brief_omitted=True,
-                    read=dict(tool='progression_status'), reason='context_limit')
+                brief['progress_shadow'] = compact_progress()
             elif brief.get('attempt_memory') and 'recent' in brief['attempt_memory']:
                 memory = brief['attempt_memory']
                 brief['attempt_memory'] = dict(history=memory['history'], omissions='context_byte_budget; read the frozen time index')
@@ -565,6 +607,9 @@ class ProgressionCoordinator:
             elif brief['active_external_work']:
                 brief['active_external_work'].pop()
                 brief['external_work_omitted']=True
+            elif brief['user_messages']:
+                entry = brief['user_messages'].pop()
+                brief['omission_details_omitted'] = brief.get('omission_details_omitted', 0) + 1
             elif brief['omissions']:
                 brief['omissions'].pop()
                 brief['omission_details_omitted'] = brief.get('omission_details_omitted', 0) + 1
@@ -626,6 +671,8 @@ class ProgressionCoordinator:
                 scheduler_session=host.scheduler_session, platform_session=host.identity.session_id,
                 thread_id=host.identity.thread_id, expected_generation=row['generation'])
         self._last_row = row
+        if hasattr(host,'initial_native_bindings'):
+            host.initial_native_bindings = {identity['binding_key'] for identity in self._identities().values()}
         initial = dict(runtime_status='connected')
         if 'started_at' not in checkpoint:
             initial.update(started_at=self.clock(), **{key: checkpoint.get(key, 0)
@@ -669,14 +716,42 @@ class ProgressionCoordinator:
         # Service completion is not native child quiescence. No cross-thread
         # notification/ownership transfer is assumed, including released helpers.
         identities=self._identities()
-        if not hasattr(self.host,'rotation_boundary') or not self.host.rotation_boundary(identities):
+        if not hasattr(self.host,'rotation_boundary'):
+            return False
+        def terminal_proofs():
+            # Exact thin proof projection, including identities outside the
+            # ordinary bounded checkpoint detail sample. This is the same ledger.
+            with self.bindings._connect() as db:
+                return {value['record_key']:json.loads(value['proof'] or '{}') for value in db.execute(
+                    "SELECT record_key,json_extract(record_json,'$.native_terminal') AS proof "
+                    "FROM scheduler_progression_details WHERE instance_id=? AND collection='usage_records' "
+                    'AND record_key IN (SELECT value FROM json_each(?))',
+                    (self.instance,json.dumps(list(identities))))}
+        host = self.host
+        connection = host.native_connection_id
+        known = self._observation(terminal_proofs)
+        boundary = self.host.rotation_boundary(identities, known=known,
+            limit=limits.get('root_rotation_check_limit',16), after=cp.get('rotation_checked_through'))
+        for observation in boundary['observations']:
+            self._save({}, native_observation=observation)
+        self._save(dict(rotation_checked_through=boundary['next_after'], rotation_boundary={key: boundary[key]
+            for key in ('checked','unchecked','unknown','reasons')}))
+        if not boundary['safe']:
             return False
         old=self._host_binding()
         def prepare():
             # New admission shares this cross-process lock; participants need
             # an active Run. Revalidate the cohort before fencing its owner.
             with self.bindings.scheduling_lock():
+                self.host.poll(0)
                 if self.runtime.runs.active_ids(instance_id=self.instance,limit=1) or self._identities()!=identities:
+                    return None
+                proofs = terminal_proofs()
+                invalid = [identity for thread,identity in identities.items()
+                    if not host.native_terminal_current(identity,proofs.get(thread,{}))]
+                if self.host is not host or host.native_connection_id != connection or invalid:
+                    self._save(dict(rotation_boundary=dict(checked=boundary['checked'],unchecked=0,
+                        unknown=len(invalid),reasons=['native_terminal_proof_invalidated'])))
                     return None
                 with self.runtime.runs._connect() as db:
                     if db.execute('SELECT 1 FROM worker_participants p JOIN runs r USING(run_id) WHERE r.instance_id=? AND p.thread_id IS NULL LIMIT 1',(self.instance,)).fetchone():
@@ -1113,7 +1188,11 @@ class ProgressionCoordinator:
         turn = self.host.start_turn(prompt)
         # Only the successful native turn/start reply confirms this prepared
         # notice. A late turn/started event cannot acknowledge a newer candidate.
-        self._save(dict(phase='running', turn_id=turn, notified_snapshot=notification_snapshot))
+        records = json.loads(self._row()['checkpoint_json']).get('usage_records', {})
+        record = records.get(self.host.identity.thread_id)
+        if record is not None:
+            record['context_delivered'] = True
+        self._save(dict(phase='running', turn_id=turn, notified_snapshot=notification_snapshot, usage_records=records))
         self._submitting = False
 
     @observed
