@@ -618,7 +618,10 @@ class RootMCPRouter:
                 field, key = ('runs', 'name') if name == 'run_list' else ('objects', 'artifact_name')
             from .mcp_response_views import append_attention
             result, count = append_attention(response, notices, budget=budget, field=field, key=key)
-            self.facade.acknowledge_attention_notifications(delivery, count)
+            claimed = self.facade.acknowledge_attention_notifications(delivery, count)
+            if not claimed:
+                return response
+            result['attention_notifications']['events'] = [notices['events'][index] for index in claimed]
             return result
         except Exception:
             # Notification failure must never mask a committed scientific action.

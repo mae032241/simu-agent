@@ -1,11 +1,28 @@
 """Durable control issues, separate from the latest tool/form failure.
 
-Stored in run_activity so existing archive/restore retains them. Only control
-checks open/resolve issues; observing a notification does not resolve one.
+Control issues retain their transition history; notification snapshots live in
+a separate projection table. Observing a notification does not resolve an issue.
 """
 import json
 
 from ..schema.common import canonical_json
+
+NOTICE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS run_attention_notices (
+    run_id TEXT PRIMARY KEY REFERENCES runs(run_id),
+    version INTEGER NOT NULL,
+    diagnostic_json BLOB NOT NULL
+);
+CREATE INDEX IF NOT EXISTS run_attention_notices_open ON run_attention_notices(run_id)
+    WHERE json_extract(CAST(diagnostic_json AS TEXT),'$.state')='attention_required';
+"""
+
+
+def migrate_notices(connection):
+    """Copy legacy projections without rewriting the immutable activity history/cursors."""
+    connection.execute("""INSERT OR IGNORE INTO run_attention_notices(run_id,version,diagnostic_json)
+        SELECT run_id,rowid,diagnostic_json FROM run_activity WHERE activity='attention_notice'""")
+
 
 SUBMISSION_CODES = frozenset({"submission_intervention_required", "submission_timeout_unclassified",
     "submission_state_unavailable"})
@@ -46,30 +63,33 @@ def refresh_notice(runs, connection, run_id, *, now, closed_state="resolved"):
         codes = list(dict.fromkeys(item['code'] for item in attention['issues']))
         data['attention_required'] = {'code':attention['code'], 'codes':codes,
             'total':attention['total'], 'issues_truncated':attention['has_more']}
-    connection.execute("DELETE FROM run_activity WHERE run_id=? AND activity='attention_notice'", (run_id,))
-    runs._append_activity(connection, run_id, 'attention_notice', now, canonical_json(data))
+    content = canonical_json(data)
+    version = runs._append_activity(connection, run_id, 'attention_changed', now, content)
+    connection.execute("""INSERT INTO run_attention_notices(run_id,version,diagnostic_json) VALUES (?,?,?)
+        ON CONFLICT(run_id) DO UPDATE SET version=excluded.version,diagnostic_json=excluded.diagnostic_json""",
+        (run_id, version, content))
 
 
 def pending_notices(runs, connection, *, instance, observer, limit):
     # A bounded join to named Runs and the observer cursor. It never reads
     # historical attention_state rows or enumerates all scheduler bindings.
     runs._attach_scheduler(connection)
-    changed = "(o.state IS NULL OR instr(o.state,':')=0 OR CAST(substr(o.state,instr(o.state,':')+1) AS INTEGER)<a.rowid)"
-    rows = connection.execute("""SELECT a.rowid AS version, b.name, a.diagnostic_json
-        FROM run_activity a JOIN runs r ON r.run_id=a.run_id
+    changed = "(o.state IS NULL OR instr(o.state,':')=0 OR CAST(substr(o.state,instr(o.state,':')+1) AS INTEGER)<a.version)"
+    rows = connection.execute("""SELECT a.version AS version, b.name, a.diagnostic_json
+        FROM run_attention_notices a JOIN runs r ON r.run_id=a.run_id
         JOIN scheduler_control.scheduler_bindings b ON b.instance=r.instance_id
             AND b.namespace='run' AND b.object_id=r.run_id
         LEFT JOIN scheduler_control.scheduler_observations o ON o.instance=b.instance
             AND o.observer_key=? AND o.object_type='attention' AND o.name=b.name
-        WHERE a.activity='attention_notice' AND r.instance_id=?
+        WHERE r.instance_id=?
             AND json_extract(CAST(a.diagnostic_json AS TEXT),'$.state')='attention_required'
             AND """ + changed + """
         UNION ALL
-        SELECT a.rowid AS version, b.name, a.diagnostic_json
+        SELECT a.version AS version, b.name, a.diagnostic_json
         FROM scheduler_control.scheduler_observations o
         JOIN scheduler_control.scheduler_bindings b ON b.instance=o.instance
             AND b.namespace='run' AND b.name=o.name
-        JOIN run_activity a ON a.run_id=b.object_id AND a.activity='attention_notice'
+        JOIN run_attention_notices a ON a.run_id=b.object_id
         WHERE o.instance=? AND o.observer_key=? AND o.object_type='attention'
             AND substr(o.state,1,5)!='done:'
             AND json_extract(CAST(a.diagnostic_json AS TEXT),'$.state')!='attention_required'

@@ -2245,6 +2245,8 @@ class RunService(ToolEvidenceMixin):
             )
             connection.executescript(WORKER_CONNECTION_SCHEMA)
             connection.executescript(WORKER_PARTICIPANT_SCHEMA)
+            from .run_attention import NOTICE_SCHEMA
+            connection.executescript(NOTICE_SCHEMA)
             for table, columns in {
                 "runs": {"draft_from_run_id": "TEXT", "recovery_policy_json": "BLOB",
                          **{name: value[0] for name, value in EXECUTION_SETTINGS_COLUMNS["runs"].items()},
@@ -2275,12 +2277,13 @@ class RunService(ToolEvidenceMixin):
                 "VALUES (1, (SELECT COALESCE(MAX(rowid), 0) FROM run_activity)) "
                 "ON CONFLICT(slot) DO UPDATE SET high_water = MAX(high_water, excluded.high_water)"
             )
-            from .run_attention import migrate_running
+            from .run_attention import migrate_running, migrate_notices
+            migrate_notices(connection)
             migrate_running(self, connection)
             from .run_attention import refresh_notice
             missing = connection.execute("SELECT DISTINCT a.run_id FROM run_activity a "
-                "WHERE a.activity='attention_state' AND NOT EXISTS (SELECT 1 FROM run_activity n "
-                "WHERE n.run_id=a.run_id AND n.activity='attention_notice')").fetchall()
+                "WHERE a.activity='attention_state' AND NOT EXISTS (SELECT 1 FROM run_attention_notices n "
+                "WHERE n.run_id=a.run_id)").fetchall()
             for row in missing:
                 refresh_notice(self, connection, row['run_id'], now=timestamp())
 

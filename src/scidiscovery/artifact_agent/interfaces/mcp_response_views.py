@@ -333,20 +333,34 @@ def execution_summary(value):
 
 
 def _bounded_list(result, *, field, key, budget):
-    """Keep complete entries and resume after the last actually delivered key."""
-    items = result[field]
-    selected = []
+    """Deliver complete entries or explicit omission markers with a usable cursor."""
+    def size(value):
+        return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+    items, selected = result[field], []
     for index, item in enumerate(items):
-        candidate = {**result, field: [*selected, item]}
+        candidate = {**result, field:[*selected, item]}
         if index + 1 < len(items):
             candidate.update(next_before=item[key], page_limited_by="bytes")
-        size = len(json.dumps(candidate, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
-        if size > budget:
-            if not selected:
-                raise RootToolError("list_entry_too_large: use summary or read the named object's detail separately")
-            return {**result, field: selected, "next_before": selected[-1][key], "page_limited_by": "bytes"}
+        if size(candidate) > budget:
+            if selected:
+                return {**result, field:selected, "next_before":selected[-1][key], "page_limited_by":"bytes"}
+            # Do not make one oversized object a permanent pagination barrier.
+            # This is an omission marker, never a substitute scientific summary.
+            request = ({"name":"run_status", "arguments":{"name":item[key], "intent":"navigation"}}
+                if field == "runs" else {"name":"artifact_catalog", "arguments":{"name":item[key]}})
+            item = {key:item[key], "entry_omitted":"page_byte_budget", "read_request":request}
+            candidate[field] = [item]
+            if size(candidate) > budget:
+                # The exact per-object read_request supersedes the page's generic
+                # detail template; avoid repeating navigation at the minimum budget.
+                result = {name:value for name, value in result.items() if name != "detail"}
+                candidate.pop("detail", None)
+            if size(candidate) > budget:
+                raise RootToolError("list_metadata_too_large: response exceeds configured page budget")
         selected.append(item)
-    if len(json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > budget:
+    result = {**result, field:selected}
+    if size(result) > budget:
         raise RootToolError("list_metadata_too_large: response exceeds configured page budget")
     return result
 

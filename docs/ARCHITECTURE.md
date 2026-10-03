@@ -763,22 +763,27 @@ semantic task names and safe codes, not private execution bindings or trace bodi
 This is delivery on the next Root tool response, not unsolicited process wake-up:
 a disconnected/idle Root must reconnect or call a tool. Notification failure does
 not turn a committed operation into a failed tool call; durable status remains
-available for retry. Attention lives in the existing Run activity store and shares
-its archive/restore lifecycle.
+available for retry. Issue transitions live in the Run activity store; mutable notification snapshots
+live in `run_attention_notices` in the same database. Both share instance archive/restore.
+Legacy notice rows remain untouched, and migration preserves their cursor versions.
 
 Successful `resume_from` completion marks the ancestor's submission issues as
 `superseded`; it does not erase diagnostics or clear execution-binding issues.
 `draft_from` may change scientific inputs and cannot establish that repair.
-Legacy requests without an exact receipt must resolve uniquely against the original
-request owner's complete available receipts before mapping to a consumer alias;
+Legacy requests without an exact receipt resolve uniquely against the sealed package
+author's complete receipts, then map that exact receipt to a consumer alias. Request
+`experiment_run` denotes the recovery root, which may differ from the package author.
+Packages without author metadata require uniqueness across the original task family;
 a narrowed successor input set is never proof that a historical ambiguity is repaired.
 
 Notification reads use one compact transition snapshot per task and indexed joins,
 not historical issue scans or an inventory of all Run bindings. Closed snapshots
 are sent only to observers that have an outstanding notice; an acknowledged closed
 snapshot is excluded. Unchanged notification/lifecycle reads take no write lock.
-Acknowledgement advances monotonically and only for notices included in the final
-reply. `mcp_read` byte budgets include list entries, cursors and appended notices;
+Acknowledgement atomically claims each version per observer; concurrent replies
+include only notices they successfully claimed. Claims advance monotonically and
+only cover notices that fit the final reply. This does not guarantee network delivery
+after a response is lost. `mcp_read` byte budgets include list entries, cursors and appended notices;
 when a notice cannot fit it remains pending. Codes are capped by the eight-issue
 projection; `issues_truncated` marks omissions while `total` counts all open issues.
 

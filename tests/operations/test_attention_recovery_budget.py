@@ -171,3 +171,97 @@ def test_notification_codes_are_bounded_and_omission_is_explicit(tmp_path):
     detail = event['attention_required']
     assert detail['total'] == 10 and detail['issues_truncated']
     assert len(detail['codes']) <= 8
+
+
+@pytest.mark.parametrize('author_metadata', [True, False])
+def test_legacy_execution_created_by_resume_successor_retains_receipt(tmp_path, monkeypatch, author_metadata):
+    from pathlib import Path
+    from tests.operations.test_experiment_approval_handoff import experiment, start
+    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+    from scidiscovery.artifact_agent.service.experiment_execution import bind_experiment_services
+    from scidiscovery.artifact_agent.schema.common import canonical_json
+    f = experiment(tmp_path, monkeypatch, seconds=60)
+    origin = f.run_id
+    value = f.runs.status(origin)
+    f.runs.record_failure(origin, reason='Owner interrupted before submission', expected_state='running',
+        expected_last_activity_at=value.last_activity_at)
+    result = f.root.call_tool('operation_invoke', {**f.invocation, 'name':'resumed',
+        'resume_from':'continuation', 'max_attempts':2})
+    assert result['result']['state'] == 'queued', result
+    f.run_id = f.runtime.scheduler_bindings.resolve(instance=f.instance.instance_id, namespace='run', name='resumed')
+    f.runs.worker_connections.attach(run_id=f.run_id, platform_session='resume-fixture', thread_id='resumed')
+    compiled = f.catalog.operation('science.experiment.v1')
+    services = bind_experiment_services(f.runs, compiled, dict(f.coordinator.worker_services), coordinator=f.coordinator)
+    f.worker = LocalWorkerMCPRouter(f.runs, operation_id=compiled.spec.operation_id,
+        operation_digest=compiled.digest, tool_services=services)
+    f.workspace = Path(f.worker.call_tool('worker_open_assignment', {})['workspace_path'])
+    # Seal a NEW package in S; O cannot see this receipt. The execution request
+    # still labels O as its task root, as pre-receipt-tag releases did.
+    from scidiscovery.artifact_agent.schema.refs import ArtifactRef
+    body = json.loads(f.runtime.artifacts.read(ArtifactRef.model_validate(f.implementation['artifact_ref'])))
+    body['implementation']['resource_limits']['wall_time_seconds'] = 60
+    (f.workspace / 'scratch/experiment.json').write_bytes(canonical_json(body['implementation']))
+    register = f.runtime.artifacts.register
+    create = f.runtime.executions.create
+    def historical_package(payload, registration, **kwargs):
+        if not author_metadata and registration.kind == 'experiment_execution_package':
+            registration = registration.model_copy(update={'labels':{
+                k:v for k,v in registration.labels.items() if k != 'experiment_run'}})
+        return register(payload, registration, **kwargs)
+    def historical_request(**kwargs):
+        kwargs['labels'] = {k:v for k,v in kwargs['labels'].items() if k != 'implementation_receipt'}
+        return create(**kwargs)
+    with monkeypatch.context() as patch:
+        patch.setattr(f.runtime.artifacts, 'register', historical_package)
+        f.alias = f.worker.call_tool('worker_experiment_prepare', {})['implementation']
+        patch.setattr(f.runtime.executions, 'create', historical_request)
+        assert start(f)['state'] == 'running'
+    bindings = f.runtime.scheduler_bindings.list(instance=f.instance.instance_id, namespace='execution',
+        name_prefix='experiment-' + origin + '-')
+    assert len(bindings) == 1
+    eid = bindings[0].object_id
+    assert f.coordinator._execution_owner(eid) == origin != f.run_id
+    exact = f.runs.sealed_material_record(f.runs.status(f.run_id), f.alias)
+    assert f.coordinator._execution_implementation_record(f.runs.status(f.run_id), eid)['artifact_ref'] == exact['artifact_ref']
+    f.adapter.state = 'succeeded'
+    f.worker.call_tool('worker_experiment_execute', {'action':'advance'})
+    collected = f.worker.call_tool('worker_experiment_execute', {'action':'collect'})
+    assert collected['state'] == 'collected'
+    assert f.worker.call_tool('worker_experiment_execute', {'action':'export', 'output_name':'binary'})['path']
+    assert f.adapter.submits == 1
+
+
+def test_concurrent_replies_claim_each_notification_once(tmp_path, monkeypatch):
+    worker, _, system = generic_worker(tmp_path, return_system=True)
+    runs, root = system[1].runs, system[2]
+    runs._submission_failure(worker._run_id, RuntimeError('control'))
+    # Deterministically interleave two responses after both have peeked, before
+    # either claims. This also exercises the public response filtering boundary.
+    batch = root.facade.prepare_attention_notifications()
+    monkeypatch.setattr(root.facade, 'prepare_attention_notifications', lambda **_: batch)
+    assert root.call_tool('instance_current', {})['attention_notifications']['events']
+    assert 'attention_notifications' not in root.call_tool('instance_current', {})
+    assert root.facade.attention_notifications() is None
+
+
+def test_notice_projection_does_not_rewrite_history_and_migrates_cursor(tmp_path):
+    from scidiscovery.artifact_agent.service.run_attention import migrate_notices
+    worker, _, system = generic_worker(tmp_path, return_system=True)
+    runs, root = system[1].runs, system[2]
+    run_id = worker._run_id
+    runs._submission_failure(run_id, RuntimeError('control'))
+    assert root.call_tool('instance_current', {})['attention_notifications']['events']
+    with runs._connect() as connection:
+        # Downgrade just the projection to the immediately preceding format.
+        row = connection.execute('SELECT * FROM run_attention_notices WHERE run_id=?', (run_id,)).fetchone()
+        connection.execute("UPDATE run_activity SET activity='attention_notice' WHERE rowid=?", (row['version'],))
+        connection.execute('DELETE FROM run_attention_notices WHERE run_id=?', (run_id,))
+        migrate_notices(connection)
+        migrate_notices(connection)
+        old = tuple(connection.execute('SELECT rowid,* FROM run_activity WHERE rowid=?', (row['version'],)).fetchone())
+    assert root.facade.prepare_attention_notifications() is None  # original version cursor survives
+    runs._submission_failure(run_id, TimeoutError('another issue'))
+    assert root.call_tool('instance_current', {})['attention_notifications']['events']
+    with runs._connect() as connection:
+        assert tuple(connection.execute('SELECT rowid,* FROM run_activity WHERE rowid=?', (row['version'],)).fetchone()) == old
+        assert connection.execute('SELECT count(*) FROM run_attention_notices WHERE run_id=?', (run_id,)).fetchone()[0] == 1

@@ -966,13 +966,14 @@ class SchedulerBindingService:
         return tuple(dict.fromkeys(values))
 
     def acknowledge_attention(self, *, instance, observer, receipts):
-        """Acknowledge only notifications retained in the final reply, monotonically."""
+        """Atomically claim retained notices; return winning positions for reply filtering."""
         if not receipts:
-            return
+            return ()
+        claimed = []
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            for name, version, active in receipts:
-                connection.execute("""INSERT INTO scheduler_observations
+            for index, (name, version, active) in enumerate(receipts):
+                cursor = connection.execute("""INSERT INTO scheduler_observations
                     (instance, observer_key, object_type, name, state, observed_at)
                     VALUES (?,?,'attention',?,?,?)
                     ON CONFLICT(instance,observer_key,object_type,name) DO UPDATE SET
@@ -981,6 +982,9 @@ class SchedulerBindingService:
                         OR CAST(substr(scheduler_observations.state,instr(scheduler_observations.state,':')+1) AS INTEGER)
                             <CAST(substr(excluded.state,instr(excluded.state,':')+1) AS INTEGER)""",
                     (instance, observer, name, ('v:' if active else 'done:') + str(version), _timestamp()))
+                if cursor.rowcount:
+                    claimed.append(index)
+        return tuple(claimed)
 
     def observe_state_changes(
         self,

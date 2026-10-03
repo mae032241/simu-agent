@@ -9,6 +9,7 @@ from __future__ import annotations
 from copy import deepcopy
 from ...agent_execution_settings import EXECUTION_SETTINGS_COLUMNS
 from .run_records import RUN_READ_COLUMNS
+from .run_attention import NOTICE_SCHEMA
 from .worker_connections import WORKER_CONNECTION_SCHEMA, WORKER_PARTICIPANT_SCHEMA
 
 import base64
@@ -28,7 +29,7 @@ DATABASES = {
 TABLES = {
     "scheduler": ("scheduler_instances", "scheduler_bindings", "scheduler_observations",
                   "scheduler_scientific_selections", "scheduler_sessions"),
-    "runs": ("runs", "run_activity", "run_tool_evidence", "run_activity_sequence", "worker_connections", "worker_participants"),
+    "runs": ("runs", "run_activity", "run_tool_evidence", "run_activity_sequence", "run_attention_notices", "worker_connections", "worker_participants"),
     "approvals": ("approval_requests", "approval_decisions", "used_nonces", "decision_attempts"),
     "executions": ("executions", "execution_policy_authorizations", "execution_current_policy",
                    "execution_budget_pools", "execution_budget_reservations", "execution_prepared_submissions", "execution_budget_estimates", "execution_observation_retries", "execution_budget_extensions"),
@@ -207,7 +208,7 @@ def execution_settings_restore_view(data):
                 row[name] = default
     projected = data if result is None else result
     if "runs" in projected["schema"]["tables"]:
-        for table, ddl in (("worker_connections", WORKER_CONNECTION_SCHEMA), ("worker_participants", WORKER_PARTICIPANT_SCHEMA)):
+        for table, ddl in (("worker_connections", WORKER_CONNECTION_SCHEMA), ("worker_participants", WORKER_PARTICIPANT_SCHEMA), ("run_attention_notices", NOTICE_SCHEMA)):
             if table in projected["schema"]["tables"]:
                 continue
             projected = deepcopy(projected)
@@ -219,6 +220,11 @@ def execution_settings_restore_view(data):
                 [*projected["schema"]["objects"], *addition["objects"]], key=lambda item: (item["type"], item["name"]))
             projected["schema"]["tables"].update(addition["tables"])
             projected["tables"][table] = []
+            if table == "run_attention_notices":
+                projected["tables"][table] = [
+                    {"run_id": row["run_id"], "version": row["__archive_rowid__"],
+                     "diagnostic_json": row["diagnostic_json"]}
+                    for row in projected["tables"].get("run_activity", []) if row["activity"] == "attention_notice"]
     if "executions" in projected["schema"]["tables"]:
         from .executions import EXECUTION_POLICY_SCHEMA
         with sqlite3.connect(":memory:") as transient:

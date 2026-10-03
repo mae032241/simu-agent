@@ -277,15 +277,31 @@ class ExperimentExecution:
         try:
             payload = self.executions.request(execution_id).payload_ref
             if receipt is None:
-                # Visibility in a successor is not the original execution identity.
-                # Legacy uniqueness must be proved against the frozen request owner,
-                # including receipts omitted by the consumer's input/adoption scope.
-                owner = envelope.labels.get("experiment_run")
-                if not owner:
-                    from .sealed_materials import material_error
-                    raise material_error("experiment_implementation_unavailable",
-                        "The historical execution has no authoritative implementation owner. Preserve its results and request control repair.")
-                original = self._run_implementation_record(self.runs.status(owner), payload)
+                # Request scope identifies the recovery root, not the package author.
+                # A successor may have sealed the package after that root ended.
+                author = self.executions.artifacts.verify(payload).labels.get("experiment_run")
+                if author:
+                    owner = self.runs.status(author)
+                    if owner.instance_id != run.instance_id:
+                        from .sealed_materials import material_error
+                        raise material_error("experiment_implementation_unavailable",
+                            "The historical package author belongs to another instance.")
+                    original = self._run_implementation_record(owner, payload)
+                else:
+                    # Older packages without author metadata require uniqueness over
+                    # the whole original task family, never the consumer's subset.
+                    origin = envelope.labels.get("experiment_run")
+                    if not origin:
+                        from .sealed_materials import material_error
+                        raise material_error("experiment_implementation_unavailable",
+                            "The historical execution has no authoritative implementation owner. Preserve its results and request control repair.")
+                    _, family = self.runs.task_family(origin)
+                    if any(owner.instance_id != run.instance_id for owner in family):
+                        from .sealed_materials import material_error
+                        raise material_error("experiment_implementation_unavailable",
+                            "The historical execution belongs to another instance.")
+                    original = self._matching_implementation_record(
+                        [item for owner in family for item in self.runs.available_material_records(owner)], payload)
                 receipt = ArtifactRef.model_validate(original['artifact_ref'])
             record = self._run_implementation_record(run, payload, receipt_ref=receipt)
         except DiagnosticError as error:
@@ -297,7 +313,11 @@ class ExperimentExecution:
         return record
 
     def _run_implementation_record(self, run, payload_ref, *, receipt_ref=None):
-        records = [item for item in self.runs.available_material_records(run)
+        return self._matching_implementation_record(self.runs.available_material_records(run), payload_ref,
+            receipt_ref=receipt_ref)
+
+    def _matching_implementation_record(self, materials, payload_ref, *, receipt_ref=None):
+        records = [item for item in materials
             if item.get("metadata", {}).get("kind") == "experiment_implementation"
             and (receipt_ref is None or canonical_json(item["artifact_ref"]) == receipt_ref.canonical_json())
             and self._implementation_payload(item) == payload_ref]

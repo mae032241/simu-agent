@@ -433,8 +433,10 @@ sudo deploy/cleanup_legacy_services.sh clean
 `agent-settings.json` 中的 `mcp_read` 控制：`summary_max_bytes` 默认 4096，
 `detail_max_bytes` 默认 32768。`limit` 是条数上限；字节预算可能让本页更短，
 须使用返回的 `next_before` 续读。摘要不含逐任务派发说明或模型配置，科学对象的
-资格标记仍保留。单条详情超过预算时，按名称使用 `run_status` 或 `artifact_catalog`
-读取，不能把未返回对象当作不存在。这是公共控制面设置，实例覆盖不适用。预算包含追加的 attention 通知，装不下的通知保持待交付。回滚到不认识 `mcp_read` 的旧版前，须从配置中移除该节。
+资格标记仍保留。单条对象超过预算时，返回 `entry_omitted` 标记、精确名称和
+`read_request` 读取入口；`next_before` 可越过该标记，后续对象不会被挡住。
+省略标记不代表科学结论，须用 `run_status` 或 `artifact_catalog` 按名读取原内容，
+不能把未返回对象当作不存在。这是公共控制面设置，实例覆盖不适用。预算包含追加的 attention 通知，装不下的通知保持待交付。回滚到不认识 `mcp_read` 的旧版前，须从配置中移除该节。
 
 安装器首次创建 `${SCID_CONFIG_ROOT}/agent-settings.json`（默认 `/etc/scidiscovery/agent-settings.json`），默认使用简体中文新报告、`gpt-6-sol`、`medium`。已有文件若与上一版安装器生成的默认内容完全相同，会在安装事务中升级为新默认值；自定义文件保持不变。控制服务与审批/管理页面通过相同的 `SCID_AGENT_SETTINGS_FILE` 读取它；修改公共文件后重启两个服务生效。缺文件沿用兼容默认；文件存在但内容错误时显示具体字段错误，不静默回退。
 初始模型值来自随包提供的 `scidiscovery/default_agent_settings.json`；Agent Operation 声明不再固定模型。

@@ -199,15 +199,15 @@ class RootInstanceRoutes:
 
     def acknowledge_attention_notifications(self, delivery, count):
         instance, observer, receipts = delivery
-        self.bindings.acknowledge_attention(instance=instance, observer=observer, receipts=receipts[:count])
+        return self.bindings.acknowledge_attention(instance=instance, observer=observer, receipts=receipts[:count])
 
     def attention_notifications(self, *, channel="reply", limit=8):
         batch = self.prepare_attention_notifications(channel=channel, limit=limit)
         if batch is None:
             return None
         notices, delivery = batch
-        self.acknowledge_attention_notifications(delivery, len(notices['events']))
-        return notices
+        claimed = self.acknowledge_attention_notifications(delivery, len(notices['events']))
+        return {**notices, 'events':[notices['events'][index] for index in claimed]} if claimed else None
 
     def lifecycle_events(self, *, limit: int | None = None) -> dict[str, Any]:
         """Read changed lifecycle states through a durable service-owned cursor."""

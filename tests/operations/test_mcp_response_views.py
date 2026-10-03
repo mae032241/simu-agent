@@ -76,9 +76,10 @@ def test_list_byte_pagination_preserves_owner_continuation_and_exact_detail():
     assert len(json.dumps(result, ensure_ascii=False, separators=(',', ':')).encode()) <= 1024
     result = root_response('run_list', {'runs': rows[:1], 'next_before': '0'}, {'view': 'detail'}, read_settings=settings)
     assert result['next_before'] == '0' and result['runs'] == rows[:1]
-    with pytest.raises(RootToolError, match='list_entry_too_large'):
-        root_response('run_list', {'runs': [{**rows[0], 'reason': '中文' * 2000}], 'next_before': None},
-            {'view': 'detail'}, read_settings=settings)
+    omitted = root_response('run_list', {'runs': [{**rows[0], 'reason': '中文' * 2000}], 'next_before': None},
+        {'view': 'detail'}, read_settings=settings)
+    assert omitted['runs'][0]['entry_omitted'] == 'page_byte_budget'
+    assert omitted['runs'][0]['name'] == rows[0]['name'] and omitted['next_before'] is None
 
 
 def test_execution_poll_is_short_but_exact_logs_and_failure_remain_readable():
@@ -642,3 +643,27 @@ def test_execution_inventory_detail_does_not_bypass_log_cache_reader():
     result = root_response('execution_list', value, {'view':'detail'})
     assert 'body must remain' not in json.dumps(result)
     assert result['executions'][0]['progress']['log_count'] == 1
+
+
+@pytest.mark.parametrize('tool,field,key', [('run_list','runs','name'), ('scientific_inventory','objects','artifact_name')])
+@pytest.mark.parametrize('name_length', [5, 256])
+def test_oversized_detail_is_explicit_and_does_not_block_following_objects(tool, field, key, name_length):
+    from scidiscovery.agent_execution_settings import MCPReadSettings
+    from scidiscovery.artifact_agent.interfaces.mcp_response_views import root_response, page
+    settings = MCPReadSettings(detail_max_bytes=1024)
+    rows = [{key:f'item{i}'.ljust(name_length, 'x'), 'reason':'x' * (20000 if i == 1 else 100)} for i in range(4)]
+    cursor, seen, omissions = None, [], []
+    for _ in range(6):
+        selected, following = page(rows, key=key, before=cursor, limit=100) if tool == 'run_list' else (rows, None)
+        response = root_response(tool, {field:selected, 'next_before':following},
+            {'view':'detail', 'before':cursor, 'limit':100}, read_settings=settings)
+        assert len(json.dumps(response, ensure_ascii=False, separators=(',', ':')).encode()) <= 1024
+        for item in response[field]:
+            seen.append(item[key])
+            if 'entry_omitted' in item:
+                omissions.append(item[key])
+                assert item['read_request']['arguments']['name'] == item[key]
+        cursor = response['next_before']
+        if cursor is None:
+            break
+    assert seen == [item[key] for item in rows] and omissions == [rows[1][key]]
