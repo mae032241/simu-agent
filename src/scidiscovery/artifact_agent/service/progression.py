@@ -50,7 +50,13 @@ queued/running. Helpers belong to its owner and retain native permissions.
 At complete-task selection, scientific_intent may state intent, target and expected observation.
 Use progression_report when recording a goal conclusion, specific question, waiting
 condition or task assessment is useful. Its optional assessments cite exact sealed
-output names and distinguish advance, no_progress and unknown; no extra report gate. Consider remaining tokens, the closeout reserve
+output names and distinguish advance, no_progress and unknown; no extra report gate.
+Root advance and fresh files are judgments, not verified progress. The consumed
+unverified window requires direction confirmation after its frozen threshold.
+Only first resolution of a predeclared supported scientific test can clear it;
+repeated checks, summaries and renamed targets cannot. No relative optimization
+score or automatic review-for-unlocking workflow is provided.
+Consider remaining tokens, the closeout reserve
 and observed Worker-thread costs before selecting more work; these are not exact
 predictions of a new task. When budget.new_task_allowed is false, consume
 accepted results and report the supported conclusion or unfinished work; do not

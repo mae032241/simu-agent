@@ -79,6 +79,17 @@ class ValidationCheckResult(SchemaModel):
         return self
 
 
+class ReviewedTestConclusion(SchemaModel):
+    """Optional explicit independent judgment of one existing planned test.
+
+    These are scientific names and a conclusion, not control references. Control
+    resolves the exact reviewed subject and its presealed plan automatically.
+    """
+    experiment_key: Identifier
+    plan_key: Identifier
+    result: ValidationCheckResult
+
+
 class ValidationDimensionReport(SchemaModel):
     status: Literal["pass", "fail", "inconclusive", "not_applicable"]
     summary: Annotated[str, Field(min_length=1, max_length=4096)]
@@ -275,6 +286,7 @@ __all__ = [
     "HypothesisAssessment",
     "HypothesisAssessmentOutcome",
     "ValidationCheckResult",
+    "ReviewedTestConclusion",
     "ValidationDimensionReport",
     "ValidationEvidence",
     "ValidationReport",

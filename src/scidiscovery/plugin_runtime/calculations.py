@@ -1,18 +1,43 @@
 """Scientific calculation values and narrow capabilities for domain algorithms."""
 from __future__ import annotations
 from typing import Annotated, Protocol
-from pydantic import Field
-from ..artifact_agent.schema.common import ContractDiagnostic
+from pydantic import Field, model_serializer
+from ..artifact_agent.schema.common import ContractDiagnostic, SchemaModel, Identifier
+from ..artifact_agent.schema.validation import ValidationCheckResult
 from ..artifact_agent.schema.layered_diagnosis import CalculationRecord
 from ..operation_contract import declared_violation
 
-__all__ = ["CalculationResult", "CalculationTools", "CalculationEvidence",
+__all__ = ["CalculationResult", "CalculationValidation", "CalculationTools", "CalculationEvidence",
     "analysis_source_claims", "analysis_evidence_aliases"]
+
+class CalculationValidation(SchemaModel):
+    """Optional registered-evaluator projection of existing planned checks.
+
+    Scientific aliases identify already bound originals. Control resolves refs,
+    actual read receipts, prior sealing and first resolution; this is not a
+    Worker result field and cannot independently confer qualification.
+    """
+    plan_source: Identifier
+    conditions_source: Identifier
+    result_sources: Annotated[tuple[Identifier, ...], Field(min_length=1, max_length=40)]
+    evaluator_profile: Identifier
+    experiment_key: Identifier
+    plan_key: Identifier
+    results: Annotated[tuple[ValidationCheckResult, ...], Field(min_length=1, max_length=384)]
+
 
 class CalculationResult(CalculationRecord):
     """Algorithm result with exact input hashes; contains no receipt or attempts."""
     input_digests: Annotated[dict[str, str], Field(max_length=40)]
     diagnostics: tuple[ContractDiagnostic, ...] = Field(default=(), max_length=8)
+    validation: CalculationValidation | None = None
+
+    @model_serializer(mode='wrap')
+    def _omit_absent_validation(self, serializer):
+        value = serializer(self)
+        if self.validation is None:
+            value.pop('validation', None)
+        return value
 
 class CalculationTools(Protocol):
     def complete_calculation(self, record: CalculationResult, *, diagnostics=(), summary=False) -> dict: ...

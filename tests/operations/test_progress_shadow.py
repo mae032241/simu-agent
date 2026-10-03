@@ -8,6 +8,7 @@ from scidiscovery.agent_execution_settings import ProgressionSettings, AgentSett
 from scidiscovery.artifact_agent.schema.common import canonical_sha256
 from scidiscovery.artifact_agent.service.scientific_progress import (
     PROGRESS_SCHEMA, _update_fact, observe_deliveries, reduce_shadow, refresh_shadow, shadow_policy,
+    exploration_facts, EXPLORATION_KEY,
 )
 from tests.operations.test_progression import progression, row, checkpoint
 from tests.operations.test_scientific_progress import active, finish, assess, INTENT
@@ -39,6 +40,8 @@ def test_negative_scientific_result_and_new_analysis_can_advance_but_file_change
     base = [fact(1, 'no_progress')]
     assert reduce_shadow(base + [fact(2, 'unknown', 'new-file')])['no_progress'] == 1
     negative = fact(3, 'advance', 'sealed-mechanism-exclusion')
+    assert reduce_shadow(base + [negative])['no_progress'] == 1
+    negative['terminal']['verified_progress'] = dict(status='verified_test_resolution', resolutions=[dict(key='prior-check')])
     assert reduce_shadow(base + [negative])['no_progress'] == 0
     assert reduce_shadow(base + [negative])['unchanged_evidence'] == 0
     # A recoverable engineering failure never supplies a scientific classification.
@@ -95,11 +98,13 @@ def test_repeated_settlement_late_correction_and_new_episode_preserve_snapshots(
     _update_fact(db, current['instance_id'], goal_key, '3', dict(assessment=fact(3, 'advance', 'late-new')['assessment']))
     refresh_shadow(db, current, goal_key)
     corrected = state(db)
-    assert corrected['counts']['no_progress'] == 0
+    assert corrected['counts']['no_progress'] == 2
     assert snapshot in corrected['notices'] and corrected['dispositions'] == []
-    decision = consume(db, current, goal_key, fact(4, 'advance', 'actual-new-result'))
+    verified = fact(4, 'advance', 'actual-new-result')
+    verified['terminal']['verified_progress'] = dict(status='verified_test_resolution', resolutions=[dict(key='prior-check')])
+    decision = consume(db, current, goal_key, verified)
     settled = state(db)
-    assert next(item for item in settled['notices'] if item['reason'] == 'refinement')['would_act'] == 'refinement_hint'
+    assert settled['counts']['refinement'] == 0
     assert any(item['notice_id'] == snapshot['id'] for item in settled['dispositions'])
     observe_deliveries(db, current, decision, boundary='next_task_admission')
     assert state(db) == settled
@@ -122,6 +127,34 @@ def test_bounded_replay_omits_excess_and_off_preserves_records():
     current['config_json'] = json.dumps(settings)
     consume(db, current, goal_key, fact(4))
     assert state(db) == saved
+
+
+def test_unique_consumption_capacity_reports_omission_and_respects_initial_window():
+    db, current, goal_key = database()
+    settings = json.loads(current['config_json'])
+    settings['effective']['progression'].update(max_tasks=2, max_reviews=0)
+    current['config_json'] = json.dumps(settings)
+    consume(db, current, goal_key, fact(1))
+    for index in range(4):
+        objective = dict(json.loads(current['objective_ref_json']), artifact_id=f'goal-{index}')
+        current['objective_ref_json'] = json.dumps(objective)
+        goal_key = canonical_sha256(objective)
+        consume(db, current, goal_key, fact(1))
+    consume(db, current, goal_key, fact(2))
+    consume(db, current, goal_key, fact(3))
+    facts, omitted = exploration_facts(db, current)
+    assert [item['task_name'] for item in facts] == ['renamed-1', 'renamed-2']
+    assert omitted  # The full distinct cohort has three tasks, despite duplicates.
+    # A first-start window excludes the Run consumed before it, including all
+    # later goal re-deliveries. Only genuinely later first consumptions remain.
+    prior = json.loads(db.execute('SELECT state_json FROM scheduler_progress_shadow '
+        'WHERE instance_id=? AND goal_key=?', (current['instance_id'], EXPLORATION_KEY)).fetchone()[0])
+    prior['initial_sequence'] = facts[0]['consumption_sequence']
+    db.execute('UPDATE scheduler_progress_shadow SET state_json=? WHERE instance_id=? AND goal_key=?',
+        (json.dumps(prior), current['instance_id'], EXPLORATION_KEY))
+    facts, omitted = exploration_facts(db, current)
+    assert [item['task_name'] for item in facts] == ['renamed-2', 'renamed-3']
+    assert not omitted
 
 
 def test_settings_freeze_defaults_and_do_not_enable_old_goals():
@@ -159,7 +192,7 @@ def test_real_consumption_without_reports_triggers_shadow_and_readonly_shared_pr
     shadow = status['progress_shadow']
     assert shadow['counts']['consumed'] == 3 and shadow['counts']['coverage_gap'] == 3
     assert shadow['counts']['no_progress'] == 0
-    assert {item['reason'] for item in shadow['notices']} == {'coverage_gap', 'unchanged_evidence'}
+    assert {item['reason'] for item in shadow['notices']} == {'coverage_gap', 'unchanged_evidence', 'unverified_progress'}
     assert status['state'] == 'active' and '科研进展观测与提示' in render_progression(status, instance_id=p.instance)
     before = row(p)
     assert root.call_tool('progression_status', {})['progress_shadow'] == shadow
@@ -201,7 +234,7 @@ def test_correction_before_settlement_does_not_create_stale_trigger():
     # Latest immutable judgment is present before the terminal consumption.
     corrected = fact(3, 'advance', 'negative-result-excludes-candidate')
     consume(db, current, goal_key, corrected)
-    assert state(db)['counts']['no_progress'] == 0
+    assert state(db)['counts']['no_progress'] == 2
     assert not any(item['reason'] == 'no_progress' for item in state(db)['notices'])
 
 

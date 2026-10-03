@@ -137,6 +137,38 @@ def restore_archive(service, instance_id):
     return service.restore(instance_id, preview["fingerprint"])
 
 
+@pytest.mark.parametrize('old_format', [None, 'scidiscovery-state-v3'])
+def test_previous_control_format_archive_is_rejected_before_restore_writes(archive_system, old_format):
+    from scidiscovery.artifact_agent.service.instance_archive_files import durable_json, hash_file
+    runtime, service, first, _ = archive_system
+    artifact(runtime, first, 'old-format-evidence')
+    save_archive(service, first)
+    index = service._index(first)
+    path = service.root / first / 'manifest.json'
+    manifest = json.loads(path.read_bytes())
+    if old_format is None:
+        manifest.pop('state_format')
+    else:
+        manifest['state_format'] = old_format
+    # Represent a genuinely registered prior-generation package, rather than a
+    # digest mismatch. It must never restore legacy creation order as consumption.
+    durable_json(path, manifest)
+    index['manifest_sha256'] = hash_file(path)['sha256']
+    service._save(index)
+    before = {item.relative_to(service.root).as_posix(): item.read_bytes()
+        for item in service.root.rglob('*') if item.is_file()}
+    with pytest.raises(ArchiveError, match='control state format is incompatible'):
+        service.archived_model(first)
+    preview = service.restore_preview(first)
+    assert not preview['ready']
+    assert 'control state format is incompatible' in json.dumps(preview)
+    with pytest.raises(ArchiveError):
+        service.restore(first, 'old-format-cannot-authorize')
+    assert runtime.scheduler_bindings.get_instance(instance_id=first).state == 'closed'
+    assert {item.relative_to(service.root).as_posix(): item.read_bytes()
+        for item in service.root.rglob('*') if item.is_file()} == before
+
+
 def test_shared_parent_and_same_digest_are_copied_but_retained_for_other_closed_instance(archive_system):
     runtime, service, first, second = archive_system
     parent = artifact(runtime, first, "parent", b"shared bytes")

@@ -417,7 +417,7 @@ class SchedulingControl:
         # Old grants did not authorize rotation. Their coordinator uses missing
         # triggers as disabled; a new deployment default must not block recovery
         # or revise those grants. Complete new policies still compare exactly.
-        for key in ('root_rotate_after_rounds','root_rotate_after_input_tokens'):
+        for key in ('root_rotate_after_rounds','root_rotate_after_input_tokens','unverified_progress_threshold'):
             if key not in frozen['effective']['progression']:
                 current['effective']['progression'].pop(key,None)
         return current == frozen
@@ -701,7 +701,7 @@ class SchedulingControl:
 
     def background_continuations(self, *, instance_id, session_key):
         """UI candidates come from immutable paused-goal deliveries, never recency."""
-        from .scientific_progress import scientific_pause, observation_facts, shadow_policy
+        from .scientific_progress import scientific_pause, observation_facts, shadow_policy, exploration_facts, EXPLORATION_KEY
         from ..schema.common import canonical_sha256
         from .progression_budget import token_budget, time_budget
         self._selected(instance_id, session_key)
@@ -743,10 +743,12 @@ class SchedulingControl:
                 if not names:
                     options.append(dict(error='原后台目标绑定缺失或已改变；请在实例工作台核对原件和绑定，修复后重新确认。', causes=causes))
                     continue
+                state_key = causes[0].get('progress_state_key', goal_key)
                 state = json.loads(db.execute('SELECT state_json FROM scheduler_progress_shadow '
-                    'WHERE instance_id=? AND goal_key=?', (instance_id, goal_key)).fetchone()['state_json'])
+                    'WHERE instance_id=? AND goal_key=?', (instance_id, state_key)).fetchone()['state_json'])
                 target_row = dict(row, objective_ref_json=ref_json, checkpoint_json=json.dumps(checkpoint))
-                facts, _ = observation_facts(db, target_row, goal_key, shadow_policy(row), state)
+                facts, _ = (exploration_facts(db, target_row) if state_key == EXPLORATION_KEY else
+                    observation_facts(db, target_row, goal_key, shadow_policy(row), state))
                 through = max([0, *(fact['sequence'] for fact in facts)])
                 window = state.get('window_start_sequence', 0)
                 for name in sorted(names):
@@ -1195,7 +1197,19 @@ class SchedulingControl:
         with self._connect() as db:
             record = db.execute('SELECT state_json FROM scheduler_progress_shadow '
                 'WHERE instance_id=? AND goal_key=?', (instance_id, canonical_sha256(objective_ref))).fetchone()
-            return json.loads(record['state_json']) if record else None
+            state = json.loads(record['state_json']) if record else {}
+            from .scientific_progress import EXPLORATION_KEY
+            exploration = db.execute('SELECT state_json FROM scheduler_progress_shadow '
+                'WHERE instance_id=? AND goal_key=?', (instance_id, EXPLORATION_KEY)).fetchone()
+            if exploration:
+                window = json.loads(exploration['state_json'])
+                state['counts'] = {**state.get('counts', {}), **window['counts']}
+                state['notices'] = [*state.get('notices', []), *window['notices']]
+                state['dispositions'] = [*state.get('dispositions', []), *window['dispositions']]
+                state['window_start_sequence'] = window['window_start_sequence']
+                state['through_sequence'] = max(state.get('through_sequence', 0), window['through_sequence'])
+                state['omitted'] = state.get('omitted', False) or window['omitted']
+            return state or None
 
     def progression_report(self, *, instance_id, session_key, summary, completed=False, question=None,
                            assessments=(), artifacts=None, runs=None):

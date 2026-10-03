@@ -14,7 +14,8 @@ def test_new_state_and_restart(tmp_path):
     ensure_state_format(state)
 
 
-@pytest.mark.parametrize('marker', [None, '{}', '{', '{"format":"old"}', '{"format":"scidiscovery-state-v2"}'])
+@pytest.mark.parametrize('marker', [None, '{}', '{', '{"format":"old"}', '{"format":"scidiscovery-state-v2"}',
+    '{"format":"scidiscovery-state-v3"}'])
 def test_rejects_old_state_without_writes(tmp_path, marker):
     from scidiscovery.artifact_agent.runtime import open_runtime
     state = tmp_path / 'state'

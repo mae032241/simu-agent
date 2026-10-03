@@ -354,6 +354,8 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
             recovery_policy['task_classification'] = classification
             frozen_inputs = self.current.freeze(connection, instance_id, raw_inputs,
                 compiled=compiled, origins=self.input_origins(instance_id))
+            from .verified_progress import freeze_criteria
+            recovery_policy['progress_criteria'] = freeze_criteria(self.artifacts, frozen_inputs)
             active_revision = active_direct_revision_ports(
                 compiled, (item.port_name for item in frozen_inputs)
             )

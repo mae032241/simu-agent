@@ -23,6 +23,7 @@ from .instance_archive_records import (ArchiveError, Records, ReadTicket, build_
     digest, encode, quote, readonly, row_where, transfer_records, attached, schema,
     execution_settings_restore_view, execution_settings_tombstone, RETAINED_EXECUTION_TABLES)
 from .instance_maintenance import InstanceMaintenance, InstanceMaintenanceBusy, backend_writer_guards
+from ..state_format import STATE_FORMAT
 
 
 class InstanceArchive:
@@ -77,7 +78,7 @@ class InstanceArchive:
             raise ArchiveError("research instance does not exist")
         files = Files(self.runtime, records, selected, instance_id).collect()
         files["unsupported"].extend(self._plugin_scope(selected))
-        return {"version": 1, "instance_id": instance_id, "project_root": str(self.project_root),
+        return {"version": 1, "state_format": STATE_FORMAT, "instance_id": instance_id, "project_root": str(self.project_root),
                 "state_root": str(self.state_root), "backend_id": self.runtime.runs.backend.backend_id,
                 "backend_version": self.runtime.runs.backend.backend_version,
                 "database_paths": {key: str(path) for key, path in records.paths.items()},
@@ -378,7 +379,7 @@ class InstanceArchive:
                 snapshot["exclusive_artifact_ids"] = exclusive
                 snapshot["shared_digests"] = sorted(shared)
                 durable_json(records / "snapshot.json", encode(snapshot))
-                manifest = {"version": 1, "instance_id": index["instance_id"], "job_id": index["job_id"],
+                manifest = {"version": 1, "state_format": STATE_FORMAT, "instance_id": index["instance_id"], "job_id": index["job_id"],
                             "project_root": snapshot["project_root"], "state_root": snapshot["state_root"],
                             "files": snapshot["files"], "roots": snapshot["roots"], "gaps": snapshot["gaps"],
                             "unowned": snapshot["unowned"], "records": {path.name: hash_file(path) for path in sorted(records.iterdir())}}
@@ -591,6 +592,8 @@ class InstanceArchive:
         value = json.loads(path.read_bytes())
         if value.get("version") != 1 or value.get("instance_id") != index["instance_id"]:
             raise ArchiveError("registered archive identity or version differs")
+        if value.get('state_format') != STATE_FORMAT:
+            raise ArchiveError('archive control state format is incompatible; historical consumption positions cannot be migrated')
         return value
 
     def _package_snapshot(self, index, manifest=None):
@@ -598,7 +601,10 @@ class InstanceArchive:
         path = self.root / index["instance_id"] / "records" / "snapshot.json"
         if hash_file(path)["sha256"] != manifest["records"]["snapshot.json"]["sha256"]:
             raise ArchiveError("raw record snapshot digest differs")
-        return decode(json.loads(path.read_bytes()))
+        snapshot = decode(json.loads(path.read_bytes()))
+        if snapshot.get('state_format') != STATE_FORMAT:
+            raise ArchiveError('archive snapshot control state format is incompatible')
+        return snapshot
 
     def _restore_validation(self, index, *, capture=None, capture_objects=None, verified_files=None, verified_objects=None):
         if verified_objects is None:

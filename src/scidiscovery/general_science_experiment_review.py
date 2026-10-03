@@ -5,6 +5,7 @@ from typing import Literal
 from .general_science_agent_operations import _input
 from .operation_declaration import schema_resource, scientific_agent_operation, semantic_contract
 from .operations.spec import CallableComponent, ComponentRef, ComponentSpec, OutputPortSpec, SemanticRuleSpec
+from .artifact_agent.schema.validation import ReviewedTestConclusion
 
 
 class ExperimentReview(BaseModel):
@@ -13,6 +14,8 @@ class ExperimentReview(BaseModel):
     summary: str = Field(min_length=1, max_length=8192)
     findings: tuple[str, ...] = Field(default=(), max_length=32)
     limitations: tuple[str, ...] = Field(default=(), max_length=32)
+    scientific_test: ReviewedTestConclusion | None = Field(default=None,
+        description="Optional explicit independent judgment of one exact predeclared scientific test in the reviewed subject. Reuse its experiment_key, plan_key and check_key; state the observation, result and evidence aliases. Quality pass alone is not test progress. Control resolves original identities, prior sealing and independence; this field cannot establish deterministic numerical proof.")
 
 
 PROMPT = """Independently assess the exact sealed subject and requested scientific
@@ -23,6 +26,12 @@ fixed preflight, initialization, review witness, or old plan/skeleton format.
 Stage submission and independent assessment do not grant execution authorization.
 Return the declared ExperimentReview; use revise, blocked or inconclusive when
 the subject cannot support the requested claim. Do not edit the reviewed subject.
+If judging a specific predeclared qualitative test, scientific_test may preserve
+its exact experiment/plan/check names, observed conclusion and source aliases.
+Read the exact subject and prior criterion through the declared reference tool.
+Omit it for general quality review or when the test evidence is unavailable.
+An overall pass alone is not scientific progress; this field is optional and
+does not authorize work, renew budgets or require a review to unlock dispatch.
 """
 SCHEMA = schema_resource(ExperimentReview, "scidiscovery.experiment-review.v1")
 CONTRACT = semantic_contract(SemanticRuleSpec("experiment.review",

@@ -146,6 +146,8 @@ class ProgressionSettings(SettingsValue):
     sqlite_busy_wait_seconds: float = Field(default=.1, ge=0, le=1)
     related_source_limit: int = Field(default=128, ge=1, le=4096)
     progress_mode: Literal["off", "shadow", "assist"] = "shadow"
+    unverified_progress_threshold: int = Field(default=3, ge=1, le=100,
+        description="Consumed research tasks without a newly verified predeclared test resolution; a direction checkpoint, not a claim of scientific stagnation.")
     no_progress_threshold: int = Field(default=3, ge=1, le=100)
     refinement_threshold: int = Field(default=4, ge=1, le=100)
     observation_gap_threshold: int = Field(default=3, ge=1, le=100)

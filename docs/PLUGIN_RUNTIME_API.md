@@ -301,6 +301,27 @@ the validation sources verifies receipts/origins before returning result values;
 never returns attempts or recovery state. Both contexts implement the public structural
 protocols without a second service registry.
 
+`CalculationResult.validation` is an optional `CalculationValidation` value generated
+by a registered evaluator tool, using an already bound `ExperimentPortfolio`, frozen
+applicability conditions and exact result source aliases. It carries existing
+`ValidationCheckResult` values; it is not an Agent authoring field or a qualification.
+Control resolves originals from actual read receipts and the paired final manifest,
+requires criteria and conditions sealed before measured bytes, checks finite values,
+units and thresholds, and counts only the first resolution of the same scientific
+check. Fresh artifact identities or repeated results do not renew progress. The curve
+adapter supports an exactly matching prebound curve contract; other tools may omit
+this value and remain usable with progress unknown. Relative improvement is not
+supported. Absent validation is omitted from serialized results, retaining existing
+receipt bytes. Numerical replay remains separate from this optional projection.
+
+Independent `ExperimentReview.scientific_test` may optionally record an explicit
+`ReviewedTestConclusion` using existing scientific plan/check names and
+`ValidationCheckResult`. Control requires the exact independent subject, a prior
+unambiguous qualitative check and the same conclusion. A general quality pass,
+missing field or mismatched subject/plan remains progress unknown; normal review
+submission stays available. These scientific fields appear in the complete Worker
+authoring form and can be read with existing named output-field selection.
+
 `publish_analysis_file` registers immutable bytes and a task-local preview.
 `publish_calculation_checkpoint` accepts checkpoint bytes, algorithm/record identity,
 source aliases and numerical identity values. Control derives exact source references

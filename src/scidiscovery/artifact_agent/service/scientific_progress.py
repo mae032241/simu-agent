@@ -8,6 +8,8 @@ from ..schema.common import canonical_json, canonical_sha256
 from ..schema.refs import ActorRef, ArtifactRef
 from ..schema.scientific_progress import ScientificIntent, ProgressAssessment
 
+EXPLORATION_KEY = 'consumed_exploration_window'
+
 
 PROGRESS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS scheduler_progress_assessments (
@@ -76,6 +78,8 @@ def observe_deliveries(db, row, checkpoint, *, boundary=None):
     for item in decision['items']:
         if item['terminal']['state'] not in {'completed', 'failed', 'timed_out', 'cancelled', 'canceled'}:
             continue
+        if item.get('delivery', {}).get('coverage') == 'omitted':
+            continue  # A hidden brief item is not an actual delivery.
         sequence = db.execute('SELECT coalesce(max(sequence),0)+1 FROM scheduler_terminal_deliveries WHERE instance_id=?',
             (row['instance_id'],)).fetchone()[0]
         updated = db.execute('INSERT INTO scheduler_terminal_deliveries VALUES(?,?,?,?,?,?,?,?,?,?,?) '
@@ -90,8 +94,14 @@ def observe_deliveries(db, row, checkpoint, *, boundary=None):
             delivery = db.execute('SELECT sequence FROM scheduler_terminal_deliveries '
                 'WHERE instance_id=? AND goal_key=? AND run_id=?',
                 (row['instance_id'], goal_key, item['run_id'])).fetchone()
+            # Navigation position is assigned when the delivery is prepared.
+            # Consumption gets its own position only at this confirmed boundary,
+            # in the same serialized control transaction as the delivery update.
+            consumption = db.execute("SELECT coalesce(max(json_extract(fact_json,'$.consumption_sequence')),0)+1 "
+                'FROM scheduler_progress_facts WHERE instance_id=?', (row['instance_id'],)).fetchone()[0]
             _update_fact(db, row['instance_id'], goal_key, item['run_id'], dict(
-                sequence=delivery['sequence'], task_name=item['name'], terminal=item['terminal'],
+                consumption_sequence=consumption, delivery_sequence=delivery['sequence'],
+                task_name=item['name'], terminal=item['terminal'],
                 task_classification=item['terminal'].get('task_classification'),
                 intent=item.get('scientific_intent'), delivery=item['delivery']))
             changed = True
@@ -111,6 +121,8 @@ def terminal_fact(runs, value):
     """Freeze trusted machine diagnostics; failure prose is explanation only."""
     terminal = dict(state=value.state, output=value.output_ref.model_dump(mode='json') if value.output_ref else None,
         reason=value.reason, task_classification=(value.recovery_policy or {}).get('task_classification'))
+    from .verified_progress import verified_progress
+    terminal['verified_progress'] = verified_progress(runs, value)
     if value.state in {'failed', 'timed_out'}:
         failure = runs.diagnostic_summary(value).get('failure') or {}
         terminal['failure_key'] = (dict(operation_id=value.operation_id, operation_digest=value.operation_digest,
@@ -335,6 +347,28 @@ def _update_fact(db, instance_id, goal_key, run_id, change):
         (instance_id, goal_key, run_id, json.dumps(fact)))
 
 
+def _consumption_high_water(db, instance_id):
+    record = db.execute("SELECT coalesce(max(json_extract(f.fact_json,'$.consumption_sequence')),0) AS position, "
+        "sum(CASE WHEN json_type(f.fact_json,'$.consumption_sequence')='integer' "
+        "AND json_extract(f.fact_json,'$.consumption_sequence')>0 THEN 0 ELSE 1 END) AS invalid "
+        'FROM scheduler_terminal_deliveries d LEFT JOIN scheduler_progress_facts f '
+        'USING(instance_id,goal_key,run_id) WHERE d.instance_id=? AND d.consumed_boundary IS NOT NULL',
+        (instance_id,)).fetchone()
+    if record['invalid']:
+        raise ValueError('Incompatible progress state: confirmed consumption position is missing; use a new empty state root.')
+    return record['position']
+
+
+def _consumed_fact(record):
+    fact = json.loads(record['fact_json'])
+    position = fact.get('consumption_sequence')
+    if type(position) is not int or position <= 0:
+        raise ValueError('Confirmed delivery requires its actual consumption position.')
+    # Reducers and window watermarks use consumption only. Delivery cursors keep
+    # the original terminal_deliveries.sequence and never change meaning.
+    return dict(fact, sequence=position)
+
+
 def shadow_policy(row):
     from ...agent_execution_settings import ProgressionSettings
     frozen = json.loads(row['config_json']).get('effective', {}).get('progression', {})
@@ -342,6 +376,9 @@ def shadow_policy(row):
     keys = ('progress_mode', 'no_progress_threshold', 'refinement_threshold', 'observation_gap_threshold',
         'max_tasks', 'max_reviews')
     policy = {key: frozen.get(key, defaults[key]) for key in keys}
+    # A prior grant did not authorize the new checkpoint. It remains legacy
+    # behavior until an explicit new loop configuration contains this key.
+    policy['unverified_progress_threshold'] = frozen.get('unverified_progress_threshold')
     # Old goals must explicitly restart to adopt a newly introduced policy.
     if 'progress_mode' not in frozen:
         policy['progress_mode'] = 'off'
@@ -357,6 +394,11 @@ def freeze_observation_scope(db, row, reader, bindings):
     """
     objective = ArtifactRef.model_validate_json(row['objective_ref_json'])
     goal_key = canonical_sha256(objective)
+    if shadow_policy(row)['unverified_progress_threshold'] is not None:
+        through = _consumption_high_water(db, row['instance_id'])
+        db.execute('INSERT OR IGNORE INTO scheduler_progress_shadow VALUES(?,?,?)',
+            (row['instance_id'], EXPLORATION_KEY, json.dumps(dict(initial_sequence=through,
+                window_start_sequence=through, through_sequence=through, counts={}, notices=[], dispositions=[]))))
     previous = db.execute('SELECT state_json FROM scheduler_progress_shadow WHERE instance_id=? AND goal_key=?',
         (row['instance_id'], goal_key)).fetchone()
     state = json.loads(previous['state_json']) if previous else {}
@@ -410,22 +452,35 @@ def observation_facts(db, row, goal_key, policy, state):
         if item.get('run_id') and item.get('interactive_session_id')]
     if selected:
         exclusion += ' AND d.run_id NOT IN (' + ','.join('?' for _ in selected) + ')'
+    _consumption_high_water(db, row['instance_id'])
     records = db.execute('SELECT f.fact_json FROM scheduler_terminal_deliveries d '
         'JOIN scheduler_progress_facts f USING(instance_id,goal_key,run_id) '
         'WHERE d.instance_id=? AND d.goal_key=? AND d.consumed_boundary IS NOT NULL' + exclusion +
-        ' ORDER BY d.sequence LIMIT ?', (row['instance_id'], goal_key, *background, *selected, limit + 1)).fetchall()
-    return [json.loads(item['fact_json']) for item in records[:limit]], len(records) > limit
+        " ORDER BY json_extract(f.fact_json,'$.consumption_sequence') LIMIT ?",
+        (row['instance_id'], goal_key, *background, *selected, limit + 1)).fetchall()
+    return [_consumed_fact(item) for item in records[:limit]], len(records) > limit
 
 
-def reduce_shadow(facts, *, advances=None, known_evidence=()):
+def reduce_shadow(facts, *, advances=None, known_evidence=(), known_resolutions=(), allow_root_advance=False):
     """Content identity detects reuse, never scientific truth or semantic equivalence."""
     counts = dict(consumed=0, no_progress=0, refinement=0, coverage_gap=0, unchanged_evidence=0,
         repeated_failure=0)
     refs = {canonical_sha256(ref) for ref in known_evidence}
     digests = {ref['sha256'] for ref in known_evidence}
     failure = None
+    resolved_checks = set(known_resolutions)
     for fact in facts:
+        proof = fact['terminal'].get('verified_progress') or {}
+        verified = proof.get('resolutions', []) if proof.get('status') == 'verified_test_resolution' else []
+        new_resolution = any(item['key'] not in resolved_checks for item in verified)
+        resolved_checks.update(item['key'] for item in verified)
         if (fact.get('task_classification') or {}).get('kind') == 'independent_review':
+            if new_resolution:
+                for key in counts:
+                    if key != 'consumed':
+                        counts[key] = 0
+                if advances is not None:
+                    advances.append(fact['sequence'])
             continue  # Delivery and assessment history remain; review is not a new exploration.
         counts['consumed'] += 1
         assessment = fact.get('assessment') or {}
@@ -441,11 +496,14 @@ def reduce_shadow(facts, *, advances=None, known_evidence=()):
         counts['coverage_gap'] = counts['coverage_gap'] + 1 if gap else 0
         if classification == 'no_progress' and supported:
             counts['no_progress'] += 1
-        elif classification == 'advance' and supported and novel:
+        if new_resolution or (allow_root_advance and classification == 'advance' and supported and novel):
             counts['no_progress'] = 0
+            counts['refinement'] = counts['coverage_gap'] = counts['unchanged_evidence'] = 0
             if advances is not None:
                 advances.append(fact['sequence'])
         counts['refinement'] = counts['refinement'] + 1 if (fact.get('intent') or {}).get('intent') == 'refine' else 0
+        if new_resolution:
+            counts['refinement'] = 0
         terminal = fact['terminal']
         current = terminal.get('failure_key') if terminal['state'] in {'failed', 'timed_out'} else None
         counts['repeated_failure'] = (counts['repeated_failure'] + 1 if current == failure else 1) if current else 0
@@ -469,12 +527,14 @@ def refresh_shadow(db, row, goal_key):
     prior_through = prior.get('through_sequence', 0)
     prior_facts, facts = [f for f in facts if f['sequence'] <= window_start], [f for f in facts if f['sequence'] > window_start]
     advances = []
-    counts = reduce_shadow(facts, advances=advances, known_evidence=[item['output']
+    counts = reduce_shadow(facts, advances=advances, allow_root_advance=policy['unverified_progress_threshold'] is None,
+        known_resolutions=[resolution['key'] for fact in prior_facts
+            for resolution in (fact['terminal'].get('verified_progress') or {}).get('resolutions', [])], known_evidence=[item['output']
         for item in prior.get('observation_scope', {}).get('background', {}).values() if item['output']] +
         [item['ref'] for fact in prior_facts if (fact.get('assessment') or {}).get('supported')
             for item in fact['assessment'].get('evidence', [])])
-    notices = prior.get('notices', [])
-    dispositions = prior.get('dispositions', [])
+    notices = list(prior.get('notices', []))
+    dispositions = list(prior.get('dispositions', []))
     resolved = {item['notice_id'] for item in dispositions}
     thresholds = dict(no_progress=policy['no_progress_threshold'], refinement=policy['refinement_threshold'],
         coverage_gap=policy['observation_gap_threshold'], unchanged_evidence=policy['observation_gap_threshold'],
@@ -492,11 +552,11 @@ def refresh_shadow(db, row, goal_key):
         if counts[reason] < threshold or active:
             continue
         notices.append(dict(id=canonical_sha256(dict(goal=goal_key, reason=reason,
-            sequence=facts[-1]['sequence'])), reason=reason,
+            sequence=facts[-1]['sequence'], mode=policy['progress_mode'])), reason=reason,
             trigger_counts=counts.copy(), policy=policy, through_sequence=facts[-1]['sequence'],
             task_names=[item['task_name'] for item in facts],
             assessment_refs=[item['assessment']['assessment_ref'] for item in facts if item.get('assessment')],
-            would_act='refinement_hint' if reason == 'refinement' else 'pause_dispatch',
+            would_act='refinement_hint' if reason == 'refinement' and policy['unverified_progress_threshold'] is None else 'pause_dispatch',
             state='shadow_recorded', dispatch_changed=False))
     state = dict(counts=counts, notices=notices, dispositions=dispositions,
         through_sequence=max([window_start, *(fact['sequence'] for fact in facts)]),
@@ -508,6 +568,86 @@ def refresh_shadow(db, row, goal_key):
         db.execute('INSERT INTO scheduler_progress_shadow VALUES(?,?,?) '
             'ON CONFLICT(instance_id,goal_key) DO UPDATE SET state_json=excluded.state_json',
             (row['instance_id'], goal_key, encoded))
+    refresh_exploration(db, row, goal_key)
+
+
+def exploration_facts(db, row):
+    """Same durable consumption ledger, once per Run across goal revisions."""
+    checkpoint = json.loads(dict(row).get('checkpoint_json', '{}'))
+    limits = json.loads(row['config_json']).get('effective', {}).get('progression', {})
+    capacity = max(limits.get('max_tasks', 8) + limits.get('max_reviews', 2),
+        len(checkpoint.get('admissions', {})), sum(
+            value['config']['effective']['progression']['max_tasks'] + value['config']['effective']['progression']['max_reviews']
+            for value in checkpoint.get('loop_authorizations', {}).values()))
+    excluded = {item['run_id'] for item in checkpoint.get('admissions', {}).values()
+        if item.get('interactive_session_id') and item.get('run_id')}
+    initial_record = db.execute('SELECT state_json FROM scheduler_progress_shadow WHERE instance_id=? AND goal_key=?',
+        (row['instance_id'], EXPLORATION_KEY)).fetchone()
+    initial = json.loads(initial_record['state_json']).get('initial_sequence', 0) if initial_record else 0
+    _consumption_high_water(db, row['instance_id'])
+    exclusion = (' AND run_id NOT IN (' + ','.join('?' for _ in excluded) + ')') if excluded else ''
+    # Choose each Run's first actual consumption across all goals before either
+    # the initial window or the bounded read. Later re-deliveries cannot occupy
+    # the prefix or make a previously consumed Run novel after a UI window.
+    selected = db.execute("WITH consumed AS (SELECT d.run_id,f.fact_json, "
+        "json_extract(f.fact_json,'$.consumption_sequence') AS position, "
+        "row_number() OVER (PARTITION BY d.run_id ORDER BY json_extract(f.fact_json,'$.consumption_sequence')) AS occurrence "
+        'FROM scheduler_terminal_deliveries d JOIN scheduler_progress_facts f USING(instance_id,goal_key,run_id) '
+        'WHERE d.instance_id=? AND d.consumed_boundary IS NOT NULL) '
+        'SELECT fact_json FROM consumed WHERE occurrence=1 AND position>?' + exclusion +
+        ' ORDER BY position LIMIT ?', (row['instance_id'], initial, *excluded, capacity + 1)).fetchall()
+    return [_consumed_fact(item) for item in selected[:capacity]], len(selected) > capacity
+
+
+def refresh_exploration(db, row, goal_key):
+    policy = shadow_policy(row)
+    if policy['unverified_progress_threshold'] is None:
+        return
+    record = db.execute('SELECT state_json FROM scheduler_progress_shadow WHERE instance_id=? AND goal_key=?',
+        (row['instance_id'], EXPLORATION_KEY)).fetchone()
+    prior = json.loads(record['state_json']) if record else {}
+    facts, omitted = exploration_facts(db, row)
+    initial = prior.get('initial_sequence', 0)
+    start = prior.get('window_start_sequence', initial)
+    resolved_checks, advances, unverified, research = set(), [], 0, 0
+    for fact in facts:
+        proof = fact['terminal'].get('verified_progress') or {}
+        resolutions = proof.get('resolutions', []) if proof.get('status') == 'verified_test_resolution' else []
+        fresh = any(item['key'] not in resolved_checks for item in resolutions)
+        resolved_checks.update(item['key'] for item in resolutions)
+        if fact['sequence'] <= start:
+            continue
+        review = (fact.get('task_classification') or {}).get('kind') == 'independent_review'
+        if not review:
+            research += 1
+            unverified += 1
+        if fresh:
+            unverified = 0
+            advances.append(fact['sequence'])
+    through = max([start, *(f['sequence'] for f in facts)])
+    counts = dict(unverified_progress=unverified, consumed_research_tasks=research,
+        verified_test_resolutions=len(resolved_checks))
+    notices, dispositions = list(prior.get('notices', [])), list(prior.get('dispositions', []))
+    resolved = {item['notice_id'] for item in dispositions}
+    for notice in notices:
+        if notice['id'] not in resolved and any(sequence > max(notice['through_sequence'], prior.get('through_sequence', 0))
+                for sequence in advances):
+            dispositions.append(dict(notice_id=notice['id'], state='new_verified_result_after_trigger', through_sequence=through))
+            resolved.add(notice['id'])
+    active = next((item for item in reversed(notices) if item['id'] not in resolved
+        and item['policy']['progress_mode'] == policy['progress_mode']), None)
+    if unverified >= policy['unverified_progress_threshold'] and not active:
+        notices.append(dict(id=canonical_sha256(dict(instance=row['instance_id'], reason='unverified_progress',
+                sequence=through, mode=policy['progress_mode'])),
+            goal_key=goal_key, reason='unverified_progress', trigger_counts=counts.copy(), policy=policy,
+            through_sequence=through, would_act='pause_dispatch', state='shadow_recorded', dispatch_changed=False))
+    state = dict(initial_sequence=initial, window_start_sequence=start, through_sequence=through,
+        counts=counts, notices=notices, dispositions=dispositions, omitted=omitted,
+        scope='instance_consumed_research_across_goals_and_loops')
+    if state != prior:
+        db.execute('INSERT INTO scheduler_progress_shadow VALUES(?,?,?) '
+            'ON CONFLICT(instance_id,goal_key) DO UPDATE SET state_json=excluded.state_json',
+            (row['instance_id'], EXPLORATION_KEY, json.dumps(state)))
 
 
 
@@ -540,9 +680,9 @@ def scientific_pause(db, row, checkpoint):
             (row['instance_id'],)):
         state = json.loads(record['state_json'])
         resolved = {item['notice_id'] for item in state.get('dispositions', [])}
-        causes.extend(dict(goal_key=record['goal_key'], id=item['id'], reason=item['reason'],
+        causes.extend(dict(goal_key=item.get('goal_key', record['goal_key']), progress_state_key=record['goal_key'], id=item['id'], reason=item['reason'],
             through_sequence=state.get('through_sequence', 0)) for item in state.get('notices', [])
-            if item['id'] not in resolved and item['reason'] != 'refinement'
+            if item['id'] not in resolved and item['would_act'] == 'pause_dispatch'
             and item['policy']['progress_mode'] == 'assist')
     return dict(causes=causes) if causes else None
 
@@ -564,6 +704,19 @@ def open_observation_window(db, row):
         'ON CONFLICT(instance_id,goal_key) DO UPDATE SET state_json=excluded.state_json',
         (row['instance_id'], goal_key, json.dumps(state)))
     refresh_shadow(db, row, goal_key)
+    record = db.execute('SELECT state_json FROM scheduler_progress_shadow WHERE instance_id=? AND goal_key=?',
+        (row['instance_id'], EXPLORATION_KEY)).fetchone()
+    if record:
+        state = json.loads(record['state_json'])
+        global_facts, _ = exploration_facts(db, row)
+        through = max([through, *(fact['sequence'] for fact in global_facts)])
+        resolved = {item['notice_id'] for item in state.get('dispositions', [])}
+        state['dispositions'].extend(dict(notice_id=item['id'], state='human_continue', through_sequence=through)
+            for item in state['notices'] if item['id'] not in resolved)
+        state['window_start_sequence'] = through
+        db.execute('UPDATE scheduler_progress_shadow SET state_json=? WHERE instance_id=? AND goal_key=?',
+            (json.dumps(state), row['instance_id'], EXPLORATION_KEY))
+        refresh_exploration(db, row, goal_key)
     return through
 
 
@@ -574,6 +727,7 @@ def shadow_projection(*, bindings, row):
     scope = state.get('observation_scope', {})
     # Notice snapshots stay in the DB; the common public projection is bounded.
     return dict(mode=policy['progress_mode'], policy=policy, counts=state.get('counts', reduce_shadow([])),
+        position_basis='first_confirmed_consumption',
         window_start_sequence=state.get('window_start_sequence', 0),
         notices=[{key: item[key] for key in ('id', 'reason', 'trigger_counts', 'through_sequence', 'would_act', 'state',
             'dispatch_changed')} for item in state.get('notices', [])[-5:]],
@@ -591,7 +745,8 @@ def shadow_projection(*, bindings, row):
         authority='control_observation_not_scientific_judgment',
         limitations=['Exact references and payload digests detect identical evidence, not semantic paraphrases.',
             'Assist observes process, citation coverage and repeated failures; Root judgments are not independently '
-            'verified for scientific stagnation. Different payloads with cited advance judgments can evade that signal.',
-            'Refinement is a hint. Optional intent or assessments may still produce observation-gap protection in assist mode.',
+            'verified for scientific stagnation. The unverified window requires direction confirmation, not a stagnation verdict.',
+            'Only first resolution of a predeclared supported test clears the unverified window; relative improvement is not supported.',
+            'Optional intent or assessments may produce process signals; new Root judgments or new bytes are not verified progress.',
             'Code-mode wrapped results are unobserved; new terminal results may arrive only in the next brief.',
             'Direct completion or stop may omit that next brief; no same-turn hard stop is claimed.'])

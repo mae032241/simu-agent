@@ -78,7 +78,13 @@ def test_two_tasks_preserve_intents_results_judgment_history_and_readonly_ui(pro
     assert [(v['task_name'], v['revision']) for v in items] == [('first', 2), ('second', 1)]
     assert items[0]['classification'] == 'unknown'
     assert items[1]['classification'] == 'no_progress'
-    assert first['closeout']['tasks'][0]['scientific_intent'] == INTENT
+    tasks = first['closeout']['tasks']
+    assert len(tasks) == 2
+    intents = {item['name']: item['scientific_intent'] for item in tasks}
+    assert len(intents) == len(tasks) and intents == {
+        'first': INTENT,
+        'second': {**INTENT, 'intent': 'validate', 'expected': 'Test the same observation boundary'},
+    }
     next_page = root.call_tool('progression_status', dict(progress_limit=2, progress_cursor=first['progress']['next_cursor']))
     assert next_page['progress']['items'][0]['classification'] == 'advance'
     assert next_page['progress']['items'][0]['revision'] == 1

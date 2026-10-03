@@ -26,6 +26,7 @@ class ReferencePolicy:
         ReferenceRule('scidiscovery.scientific-foundation.v1', '/items/*/evidence_keys/*'),
         ReferenceRule('scidiscovery.scientific-intake.v1', '/scientific_foundation/items/*/evidence_keys/*'),
         ReferenceRule('scidiscovery.scientific-review.v1', '/findings/*/evidence_keys/*'),
+        ReferenceRule('scidiscovery.experiment-review.v1', '/scientific_test/result/evidence_keys/*'),
 
         ReferenceRule('scidiscovery.layered-diagnosis.v1', '/source_references/*/input_alias'),
         ReferenceRule('scidiscovery.layered-diagnosis.v1', '/evidence/*/source_key'),

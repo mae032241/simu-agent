@@ -11,7 +11,9 @@ import os
 import stat
 from pathlib import Path
 
-STATE_FORMAT = "scidiscovery-state-v3"
+# v4 gives scientific windows an actual confirmed-consumption position. v3
+# delivery creation positions cannot reconstruct that order and are not migrated.
+STATE_FORMAT = "scidiscovery-state-v4"
 MARKER = ".scidiscovery-state.json"
 
 

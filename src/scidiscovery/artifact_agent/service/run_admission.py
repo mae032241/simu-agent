@@ -86,7 +86,7 @@ class RunAdmissionMixin:
             return review_owner
         checkpoint = json.loads(row['checkpoint_json'])
         from .research_loops import current_loop
-        if current_loop(checkpoint) and self.scheduler_bindings.control_settings(instance_id) != json.loads(row['config_json']):
+        if current_loop(checkpoint) and not self.scheduler_bindings._control_settings_match(instance_id, row['config_json']):
             raise OperationInvocationError('loop_configuration_changed',
                 message='The research loop retains its frozen configuration; direct creation and recovery cannot replace it.')
         from .scheduling_control import require_control_admission

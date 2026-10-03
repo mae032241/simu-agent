@@ -94,6 +94,7 @@ def session_controls(rows, *, token, csrf, current=None, expires_at=None, workbe
                 "此决定不代表科学问题已解决，不增加预算；确认从已消费水位开启下一观察窗口；"
                 "使用原 loop 的剩余额度，明确暂停不计推进启用时间。未知提交须先核清。"
                 "后续窗口仍会按科研阈值暂停；返回后台仍受原预算约束。</p>"
+                "<p>上方连续未核验窗口覆盖本实例已消费科研任务，跨目标修订保留；本次确认从该水位开启下一窗口，保留旧触发，不代表科学结论已核验。</p>"
                 + "<form method='post' action='/instances/progression'>" + common
                 + hidden("command", "human_continue") + hidden("instance_id", current.instance_id)
                 + hidden("confirmation_binding", human_confirmation)

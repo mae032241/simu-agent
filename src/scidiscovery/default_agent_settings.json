@@ -6,7 +6,7 @@
     "reasoning_effort": "medium"
   },
   "operations": {},
-  "progression": {"root_model": "gpt-5.6-sol", "root_reasoning_effort": "high", "root_rotate_after_rounds": 8, "root_rotate_after_input_tokens": 500000},
+  "progression": {"root_model": "gpt-5.6-sol", "root_reasoning_effort": "high", "root_rotate_after_rounds": 8, "root_rotate_after_input_tokens": 500000, "unverified_progress_threshold": 3},
   "execution_io": {"approval_wait_budget_seconds": 86400},
   "lifecycle": {"interval_seconds": 30, "batch_size": 32, "terminal_observation_failure_limit": 3},
   "presentation": {

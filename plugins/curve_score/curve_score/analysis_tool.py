@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError,
 
 from scidiscovery.artifact_agent.operation_tool_context import OperationToolContext
 from scidiscovery.artifact_agent.schema.common import canonical_json, Identifier
-from scidiscovery.plugin_runtime.calculations import CalculationResult as CalculationRecord
+from scidiscovery.plugin_runtime.calculations import CalculationResult as CalculationRecord, CalculationValidation
 from scidiscovery.operation_contract import SemanticRuleViolation, contract_diagnostic, declared_violation, validation_diagnostics
 from scidiscovery.operations.tooling import WorkerToolDefinition
 from .schema import CurveAxis, CurveBundle, CurveComparison, CurveComparisonSpec, CurveOperatorSpec, CurveSeries, evaluate_curve_consistency
@@ -282,7 +282,7 @@ def replay_calculation(record: CalculationRecord, sources: Mapping[str, bytes], 
     replay = evaluate_analysis_request(record_key=record.record_key, request=record.request, sources=sources, bundle=bundle, deadline=deadline)
     if replay.status == "error":
         raise SemanticRuleViolation("calculation replay budget exhausted; remove this calculation and submit limited analysis")
-    if canonical_json(record.model_dump(mode="json", exclude={"attempt", "diagnostics"})) != canonical_json(replay.model_dump(mode="json", exclude={"attempt", "diagnostics"})):
+    if canonical_json(record.model_dump(mode="json", exclude={"attempt", "diagnostics", "validation"})) != canonical_json(replay.model_dump(mode="json", exclude={"attempt", "diagnostics", "validation"})):
         raise SemanticRuleViolation("calculation record differs from deterministic replay")
 
 
@@ -307,6 +307,12 @@ def run_score_tool(request: AnalysisScoreInput, context: OperationToolContext,
         result = CalculationRecord(record_key=request.record_key, request=raw_request,
             input_digests={}, algorithm_version=ALGORITHM_VERSION, status="error",
             reason_code="calculation_time_budget")
+    if result.status == 'computed':
+        validation = _planned_validation(context, result)
+        if validation is not None:
+            candidate = result.model_copy(update={'validation': validation})
+            if len(canonical_json(candidate)) <= 32 * 1024:
+                result = candidate
     diagnostics = () if result.status == "computed" else (contract_diagnostic(
         result.reason_code or result.status, phase="tool_execution", affected_action="tool_call",
         message="The tool returned no numeric result; retain its specific reason and limitations.",
@@ -314,8 +320,55 @@ def run_score_tool(request: AnalysisScoreInput, context: OperationToolContext,
     return context.complete_calculation(result, diagnostics=diagnostics, summary=True)
 
 
+def _planned_validation(context, record):
+    """Optional existing input contract; ordinary scoring remains available."""
+    from scidiscovery.artifact_agent.schema.experiment import ExperimentPortfolio
+    from scidiscovery.artifact_agent.schema.validation import ValidationCheckResult
+    from .schema import CurveExperimentContract, validate_curve_experiment_contract
+    plans = context.input_names_for_port('experiment_plan')
+    if len(plans) != 1:
+        return None
+    candidates = [alias for alias in context.input_names_for_port('reference_material')
+        if context.source_descriptor(alias).artifact_ref.schema_id == 'scidiscovery.curve-experiment-contract.v1']
+    if len(candidates) != 1:
+        return None
+    plan_alias, condition_alias = plans[0], candidates[0]
+    try:
+        portfolio = ExperimentPortfolio.model_validate_json(context.read_input(plan_alias), strict=True)
+        contract = CurveExperimentContract.model_validate_json(context.read_input(condition_alias), strict=True)
+        if context.source_descriptor(plan_alias).artifact_ref not in context.source_descriptor(condition_alias).parent_refs:
+            return None
+        if canonical_json(contract.comparison_spec) != canonical_json(record.request['comparison_spec']):
+            return None
+        covered = validate_curve_experiment_contract(contract, portfolio,
+            expected_evaluator_profile='scidiscovery.curve-score.v1')
+        plan = next(p for p in portfolio.validation_plans if p.experiment_key == contract.experiment_key)
+        results = []
+        declarations = {c.comparison_key: c for c in contract.comparison_spec.comparisons}
+        for comparison in record.result['comparisons']:
+            operators = {o.operator_key: o for o in declarations[comparison['comparison_key']].operators}
+            metrics = {m['operator_key']: m for m in comparison['metrics']}
+            for tested in comparison['checks']:
+                operator = operators[tested['operator_key']]
+                if operator.validation_check_key not in covered or tested['status'] not in {'pass', 'fail'}:
+                    continue
+                metric = metrics[tested['operator_key']]
+                observed = abs(tested['observed_value']) if operator.threshold.comparison == 'abs_le' else tested['observed_value']
+                results.append(ValidationCheckResult(check_key=operator.validation_check_key,
+                    status=tested['status'], evaluation_mode='deterministic_threshold',
+                    observed_value=observed, observed_text=f"{observed} {metric['unit']}", unit=metric['unit'], evidence_keys=tuple(record.input_digests),
+                    rationale='Registered curve evaluator applied the exact predeclared comparison contract.'))
+        if not results or len({r.check_key for r in results}) != len(results):
+            return None
+        return CalculationValidation(plan_source=plan_alias, conditions_source=condition_alias,
+            result_sources=tuple(record.input_digests), evaluator_profile='scidiscovery.curve-score.v1',
+            experiment_key=plan.experiment_key, plan_key=plan.plan_key, results=tuple(results))
+    except (ValidationError, SemanticRuleViolation, ValueError):
+        return None  # Missing optional progress support is not a scoring gate.
+
+
 def score_tool(request: AnalysisScoreInput, context: OperationToolContext) -> dict[str, Any]:
     return run_score_tool(request, context, evaluate_analysis_request)
 
 
-CURVE_SCORE_TOOL = WorkerToolDefinition(name="worker_curve_score", description="Optionally score bound bundle/explicit CSV columns. Returns compact metrics; read calculation_ref with the evidence reader for the scientific record. Cite the returned calculation_ref; the complete record and receipt are saved automatically. Unsupported metrics are never substituted.", input_model=AnalysisScoreInput, capability="analysis.curve_score", contextual_handler=score_tool, record_attempts=True, evidence_ports=("tool_evidence", "recovery_manifest_output"))
+CURVE_SCORE_TOOL = WorkerToolDefinition(name="worker_curve_score", description="Optionally score bound bundle/explicit CSV columns. Returns compact metrics; read calculation_ref with the evidence reader for the scientific record. Cite the returned calculation_ref; the complete record and receipt are saved automatically. Unsupported metrics are never substituted. When experiment_plan and exactly one predeclared curve contract in reference_material match the unchanged comparison_spec, the registered evaluator retains an optional ValidationCheckResult projection. Control verifies prior originals and first resolution at consumption; ordinary scoring without this projection remains available and does not establish verified progress.", input_model=AnalysisScoreInput, capability="analysis.curve_score", contextual_handler=score_tool, record_attempts=True, evidence_ports=("tool_evidence", "recovery_manifest_output"))
