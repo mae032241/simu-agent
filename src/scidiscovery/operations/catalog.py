@@ -77,6 +77,23 @@ class CompiledCatalog:
             return current
         return self._historical_operations[operation_id, digest]
 
+    def recorded_operation(self, operation_id: str, *, version: str, digest: str) -> CompiledOperation:
+        """Interpret immutable records using an exact supported identity, never a fallback."""
+        if not digest:
+            raise KeyError((operation_id, version, digest))
+        compiled = self.operation(operation_id, digest=digest)
+        if compiled.spec.version != version:
+            raise KeyError((operation_id, version, digest))
+        return compiled
+
+    def recorded_contract_status(self, operation_id: str, *, version: str, digest: str) -> str:
+        """Presentation status only; availability grants no current qualification."""
+        try:
+            compiled = self.recorded_operation(operation_id, version=version, digest=digest)
+        except KeyError:
+            return "unavailable"
+        return "current" if compiled.digest == self.operation(operation_id).digest else "supported_historical"
+
     def can_recover(self, operation_id: str, source_digest: str, target_digest: str) -> bool:
         # Only the explicitly reconstructed evidence-limit predecessor may
         # advance to today's contract. No arbitrary digest aliases or downgrade.

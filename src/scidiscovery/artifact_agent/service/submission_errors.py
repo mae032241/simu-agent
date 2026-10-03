@@ -1,0 +1,74 @@
+"""One lifecycle policy for failures anywhere in a Run submission.
+
+This classifies declared failures, not scientific conclusions. Unknown exceptions
+require intervention; only explicitly transient failures recommend unchanged retry.
+"""
+from dataclasses import dataclass
+import sqlite3
+
+from ...operation_contract import contract_diagnostic
+from ..storage import CASIntegrityError
+from .local_workspace import WorkspaceError, WorkspaceOutputError
+from .reference_proofs import ReferenceProofError
+from .run_records import RunContractUnavailable
+from .run_outputs import RunCheckerError, RunOutputError
+
+
+@dataclass(frozen=True)
+class SubmissionFailure:
+    disposition: str
+    category: str
+    details: tuple
+
+
+def classify_submission_error(error):
+    # Some lower-level adapters wrap storage failures. Preserve their causes
+    # without making every checker/ValueError automatically retryable.
+    causes, seen, cause = [], set(), error
+    while cause is not None and id(cause) not in seen:
+        seen.add(id(cause))
+        causes.append(cause)
+        cause = cause.__cause__
+    integrity = next((e for e in causes if isinstance(e, CASIntegrityError)), None)
+    proof = next((e for e in causes if isinstance(e, ReferenceProofError)), None)
+    if integrity is not None:
+        return _failure('fail', 'integrity_failure', 'submission_integrity_failure',
+            'Exact evidence failed integrity verification. This task has stopped; restore the original control evidence before Root chooses recovery. Retained drafts are not sealed scientific results.')
+    if proof is not None:
+        details = tuple(contract_diagnostic(item['code'], phase='protocol', affected_action='submit',
+            repairable=False, message=(item['message'] + ' This task has stopped and its existing materials are retained. '
+                'Root should inspect run_status diagnostics and recovery. Start a new task with selected exact materials; '
+                'use draft_from or resume_from only if the retained proof fits after repair. Do not resubmit unchanged or rerun the solver.'))
+            for item in proof.details)
+        category = 'runtime_failure' if all(item['code'] in {'reference_proof_limit', 'reference_proof_contract_limit'} for item in proof.details) else 'integrity_failure'
+        return SubmissionFailure('fail', category, details)
+    for e in causes:
+        if isinstance(e, sqlite3.OperationalError) and (
+                (getattr(e, 'sqlite_errorcode', 0) & 255) in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}
+                or str(e) in {'database is locked', 'database table is locked'}):
+            return _retry()
+    if isinstance(error, (TimeoutError, ConnectionError)):
+        return _retry()
+    if isinstance(error, (RunCheckerError, RunContractUnavailable)):
+        return _failure('fail', getattr(error, 'category', 'integrity_failure'), 'submission_control_failure',
+            'The task cannot complete under its frozen control contract. Root must inspect the retained diagnostic and recovery details before continuing; do not rewrite scientific conclusions to bypass this failure.')
+    if isinstance(error, RunOutputError):
+        return SubmissionFailure('reject', error.category, error.details)
+    if isinstance(error, WorkspaceOutputError):
+        return _failure('reject', 'output_rejected', 'output_invalid',
+            'Correct the declared candidate files before resubmitting.', repairable=True)
+    if isinstance(error, WorkspaceError):
+        return _failure('fail', 'integrity_failure', 'submission_integrity_failure',
+            'Candidate workspace integrity could not be established. Root must inspect the retained diagnostic before recovery.')
+    return _failure('intervene', 'runtime_failure', 'submission_intervention_required',
+        'An unclassified control failure interrupted submission. Preserve the unchanged report. Root must inspect the stored engineering diagnostic before retrying, or use run_record_failure to close the task and recover its materials; automatic retry is not advised.')
+
+
+def _failure(disposition, category, code, message, *, repairable=False):
+    return SubmissionFailure(disposition, category, (contract_diagnostic(code,
+        phase='protocol', affected_action='submit', repairable=repairable, message=message),))
+
+
+def _retry():
+    return _failure('retry', 'runtime_failure', 'submission_temporarily_unavailable',
+        'A temporary storage or connection failure interrupted submission. Preserve the unchanged report and retry after the control service recovers. Existing receipts and publication identities will be reused; do not rerun the solver.', repairable=True)

@@ -108,14 +108,10 @@ class OperationOrigins:
             }
         )
         try:
-            producer = self._operation_catalog.operation(status.operation_id, digest=status.operation_digest)
+            producer = self._operation_catalog.recorded_operation(status.operation_id, version=status.operation_version, digest=status.operation_digest)
         except KeyError:
             producer = None
-        if (
-            producer is None
-            or producer.spec.version != status.operation_version
-            or producer.digest != status.operation_digest
-        ):
+        if producer is None:
             return ProducerOutputFamily(
                 primary_ref=status.output_ref,
                 operation_id=status.operation_id,
@@ -293,14 +289,10 @@ class OperationOrigins:
                 family_identity=family_identity,
             )
         try:
-            compiled = self._operation_catalog.operation(operation_id, digest=operation_digest)
+            compiled = self._operation_catalog.recorded_operation(operation_id, version=operation_version, digest=operation_digest)
         except KeyError:
             return unavailable("producer_contract_unavailable")
-        if (
-            compiled.spec.version != operation_version
-            or compiled.digest != operation_digest
-            or compiled.spec.executor.kind != "transform"
-        ):
+        if compiled.spec.executor.kind != "transform":
             return unavailable("producer_contract_unavailable")
         input_groups = self._transform_input_groups(compiled, envelope.parent_refs)
         if input_groups is None:
@@ -528,7 +520,7 @@ class OperationOrigins:
                 family = family_for(refs[0])
                 if family is None or family.contract_availability != "current" or family.producer_instance_id != self._instance_id():
                     reject("input_origin_unavailable")
-                producer = self._operation_catalog.operation(family.operation_id, digest=family.operation_digest)
+                producer = self._operation_catalog.recorded_operation(family.operation_id, version=family.operation_version, digest=family.operation_digest)
                 declared = next((item for item in producer.spec.outputs if item.name == rule.producer_output_port), None)
                 if declared is None:
                     reject("input_origin_output_undeclared")
@@ -578,10 +570,7 @@ class OperationOrigins:
         if operation_id is None:
             return False
         try:
-            producer = self._operation_catalog.operation(operation_id, digest=envelope.labels.get("operation_digest"))
+            producer = self._operation_catalog.recorded_operation(operation_id, version=envelope.labels.get("operation_version"), digest=envelope.labels.get("operation_digest"))
         except KeyError:
             return True
-        return (
-            envelope.labels.get("operation_version") != producer.spec.version
-            or envelope.labels.get("operation_digest") != producer.digest
-        )
+        return False

@@ -937,9 +937,8 @@ class InstanceReadModel:
         if not self.operation_catalog:
             return None, "contract_unavailable"
         try:
-            compiled = self.operation_catalog.operation(labels["operation_id"])
-            if compiled.digest != labels["operation_digest"]:
-                return None, "contract_unavailable"
+            compiled = self.operation_catalog.recorded_operation(labels["operation_id"],
+                version=labels.get("operation_version"), digest=labels["operation_digest"])
             edge = compiled.spec.review
             return edge, "available" if edge and edge.reviewer_operation else "not_declared"
         except (KeyError, AttributeError):

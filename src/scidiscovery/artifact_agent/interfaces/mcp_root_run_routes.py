@@ -190,17 +190,8 @@ class RootRunRoutes:
     ) -> dict[str, Any]:
         include_payload = intent in {"navigation", "decision", "full"}
         output_status, output = self._sealed_output(value, include_payload=include_payload)
-        try:
-            compiled = self._operation_catalog.operation(value.operation_id, digest=value.operation_digest)
-        except KeyError:
-            contract_status = "historical"
-        else:
-            contract_status = (
-                "current"
-                if compiled.spec.version == value.operation_version
-                and compiled.digest == value.operation_digest
-                else "historical"
-            )
+        contract_status = self._operation_catalog.recorded_contract_status(value.operation_id,
+            version=value.operation_version, digest=value.operation_digest)
         result = {
             "name": name,
             "operation_id": value.operation_id,
@@ -320,7 +311,7 @@ class RootRunRoutes:
             "output_index", "default_output_unavailable", "evidence_outputs", "bound_inputs", "content_unavailable", "dispatch"}
         result = {key:item for key,item in result.items() if key in allowed}
         try:
-            ports = self._operation_catalog.operation(value.operation_id, digest=value.operation_digest).spec.inputs
+            ports = self._operation_catalog.recorded_operation(value.operation_id, version=value.operation_version, digest=value.operation_digest).spec.inputs
             visible = {port.name for port in ports if port.agent_visible and port.derivation is None}
         except KeyError:
             visible = set()
@@ -399,17 +390,9 @@ class RootRunRoutes:
 
         if value.state != "completed" or value.output_ref is None:
             return "unavailable", None
-        output_status = "available"
-        try:
-            compiled = self._operation_catalog.operation(value.operation_id, digest=value.operation_digest)
-        except KeyError:
-            output_status = "historical"
-        else:
-            if (
-                compiled.spec.version != value.operation_version
-                or compiled.digest != value.operation_digest
-            ):
-                output_status = "historical"
+        contract_status = self._operation_catalog.recorded_contract_status(value.operation_id,
+            version=value.operation_version, digest=value.operation_digest)
+        output_status = "historical" if contract_status == "unavailable" else "available"
         metadata = {"artifact_name": value.output_binding_name, "kind": value.output_ref.kind,
             "schema": value.output_ref.schema_id}
         if not include_payload:

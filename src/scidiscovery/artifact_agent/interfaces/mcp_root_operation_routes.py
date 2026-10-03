@@ -1040,9 +1040,9 @@ class RootOperationRoutes:
             return artifact.handoff_verdict in _NONQUALIFYING_HANDOFF_VERDICTS
         envelope = self.artifacts.catalog(artifact.ref)
         family = self._transform_output_family(artifact.artifact_name, envelope)
-        if family is None:
+        if family is None or family.contract_availability != "current":
             return False
-        producer = self._operation_catalog.operation(family.operation_id)
+        producer = self._operation_catalog.recorded_operation(family.operation_id, version=family.operation_version, digest=family.operation_digest)
         if producer.spec.consequence == "explore" or producer.spec.catalog_scope == "internal":
             return False
         found_historical_verdict = False
@@ -1081,7 +1081,7 @@ class RootOperationRoutes:
                 "input_producer_family_mismatch", port=anchor.port_name
             )
         try:
-            producer = self._operation_catalog.operation(family.operation_id)
+            producer = self._operation_catalog.recorded_operation(family.operation_id, version=family.operation_version, digest=family.operation_digest)
         except KeyError as error:
             raise OperationInvocationError(
                 "input_producer_family_mismatch", port=anchor.port_name

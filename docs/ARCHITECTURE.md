@@ -403,10 +403,17 @@ selected exact sources, not an opaque runtime error or a silently truncated proo
 Reference proof failures still settle the response/time reservation; an assignment
 proof failure terminates the Run while retaining originals. Explicit adoption and
 recovery copying validate the complete combined proof before committing. Final
-receipt reconciliation maps proof errors to declared rejections. Temporary database
-lock/timeout failures reject submission without failing the owner; other unexpected
-reconciliation errors retain engineering diagnostics and leave the Run active. They
-are not candidate-checker failures. Attachment
+submission uses one error policy from reconciliation through finalization, proof
+construction, checking, candidate acceptance, Artifact registration and completion.
+Temporary storage/connection failures preserve the Run and allow unchanged retry;
+correctable output errors remain declared rejections. Irreparable proof limits and
+verified integrity failures terminate the task with retained evidence, drafts and
+explicit Root recovery instructions. Unknown exceptions retain engineering traces
+and require intervention, without classifying them as scientific failure or advising
+automatic retry. A draft may be preserved without a publishable proof; its
+`evidence_proof_unavailable` marker never grants scientific validity. Idempotent
+publication keys and accepted candidate identity survive interruptions. A committed
+completion is never reversed by an optional post-commit failure. Attachment
 streaming and Artifact registration finish before taking the Run write lock; the
 transaction rechecks state, quotas and the complete proof. Unbound immutable objects
 left by rejection are reused by publication key, never treated as accepted evidence.
@@ -416,7 +423,11 @@ recompiles the original 128-binding schema and complete output contracts, accept
 an in-flight identity only when its old digest matches exactly. Old output remains
 subject to that old contract. Failed predecessors may explicitly recover to the
 current widened contract without rewriting original task, draft or proof identities.
-Run producer families, derived inputs and Root status resolve the same frozen digest,
+Catalog `recorded_operation` resolves exact ID/version/digest for Run producer families,
+derived inputs, historical Transform interpretation and approval UI review relationships.
+Root reports `current`, `supported_historical` or `unavailable` separately from output
+availability. New invocations and current scientific qualification retain current-policy
+checks; historical availability grants no authorization. These readers share the resolver,
 so a supported predecessor can complete and supply downstream inputs after upgrade.
 Tests pin digests compiled from the actual 964713f source and exercise both draft and
 resume recovery. Other contract differences are not ignored; unknown digests remain unavailable.

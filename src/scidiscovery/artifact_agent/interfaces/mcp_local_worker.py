@@ -57,7 +57,10 @@ class LocalWorkerMCPRouter:
         trusted_caller: tuple[str, str] | None = None,
         participant: dict | None = None,
     ) -> None:
-        compiled = runs.operation_catalog.operation(operation_id, digest=operation_digest)
+        try:
+            compiled = runs.operation_catalog.operation(operation_id, digest=operation_digest)
+        except KeyError as error:
+            raise ValueError("local Worker operation identity is invalid") from error
         if compiled.digest != operation_digest or compiled.spec.executor.kind != "agent":
             raise ValueError("local Worker operation identity is invalid")
         self.runs = runs

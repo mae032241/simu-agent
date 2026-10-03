@@ -121,7 +121,9 @@ class ExperimentExecution:
                 from types import SimpleNamespace
                 try:
                     implementation = self._run_implementation_record(run, self.executions.request(binding.object_id).payload_ref)
-                except DiagnosticError:
+                except DiagnosticError as error:
+                    if not error.details or any(item['code'] != 'experiment_implementation_unavailable' for item in error.details):
+                        raise  # Proof/integrity failures must reach the submission policy.
                     implementation = None  # A blocked report may legitimately lack this bound material.
                 if implementation is not None:
                     context = SimpleNamespace(run_id=run.run_id, accept_evidence=lambda **values:
@@ -270,7 +272,8 @@ class ExperimentExecution:
             raise material_error("experiment_implementation_unavailable",
                 "Bind the exact sealed implementation used by this execution.")
         if len({canonical_json(item["artifact_ref"]) for item in records}) != 1:
-            raise ValueError("Execution has conflicting implementation receipts.")
+            from .run_outputs import RunCheckerError
+            raise RunCheckerError("Execution has conflicting implementation receipts.", category="integrity_failure")
         return records[0]
 
     def _cancel(self, execution_id):

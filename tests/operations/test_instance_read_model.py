@@ -307,3 +307,35 @@ def test_large_historical_json_supports_exact_pointer_and_bounded_navigation(sys
     absent = system.model.artifact(system.a, source.artifact_id, pointer="/parameters/01")
     assert absent["payload_state"] == "missing" and "payload" not in absent
     assert json_size(navigation) < MAX_RESPONSE_BYTES
+
+
+def test_supported_historical_producer_keeps_exact_matching_reviews(system, monkeypatch):
+    import json
+    from pathlib import Path
+    from tests.operations.test_tcad_result_analysis import CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN
+    from scidiscovery.operations.catalog import compile_catalog
+    catalog = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN))
+    old_digests = json.loads((Path(__file__).parents[1] / 'fixtures/operation_digests_964713f.json').read_bytes())['operation_digests']
+    old = next(catalog.recorded_operation(key, version=catalog.operation(key).spec.version, digest=digest)
+        for key, digest in old_digests.items()
+        if catalog.operation(key).digest != digest and catalog.operation(key).spec.review
+        and catalog.operation(key).spec.review.reviewer_operation)
+    system.model.operation_catalog = catalog
+    envelope = system.artifacts.register(b'{}', ArtifactRegistration(kind='fixture', schema_id='fixture.v1',
+        payload_schema_version=1, media_type='application/json', creator=system.actor,
+        labels={'operation_id': old.spec.operation_id, 'operation_version': old.spec.version,
+                'operation_digest': old.digest}), idempotency_key='old-subject')
+    bind(system, system.a, 'artifact', 'old-subject', envelope.artifact_id)
+    reviewed = artifact(system, 'reviewed', instance=system.a)
+    bind(system, system.a, 'run', 'original-review', 'old-review')
+    follower = SimpleNamespace(run_id='old-review', state='completed', output_ref=reviewed.ref, signal=None,
+        operation_id=old.spec.review.reviewer_operation,
+        inputs=[SimpleNamespace(port_name=old.spec.review.reviewer_input_port, artifact_ref=envelope.ref)])
+    monkeypatch.setattr(system.runs, 'related_runs', lambda **args: [follower] if args['relation'] == 'input' else [], raising=False)
+    binding = SimpleNamespace(namespace='artifact', object_id=envelope.artifact_id)
+    relations = system.model._relationships(system.a, binding, (envelope.ref,))
+    assert [r['key'] for r in relations['matching_reviews']] == ['run:original-review']
+    assert not any(g.get('code') == 'matching_review_contract_unavailable' for g in relations['gaps'])
+    for version, digest in [('wrong-version', old.digest), (old.spec.version, 'f' * 64)]:
+        wrong = SimpleNamespace(labels={**envelope.labels, 'operation_version': version, 'operation_digest': digest})
+        assert system.model._recorded_review_edge(wrong) == (None, 'contract_unavailable')

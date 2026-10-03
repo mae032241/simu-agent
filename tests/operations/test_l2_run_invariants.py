@@ -421,9 +421,9 @@ def test_candidate_binding_crash_windows_and_response_replay(
         "_register_candidate",
         lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("after seal")),
     )
-    with pytest.raises(WorkerToolError) as error:
-        worker.call_tool("worker_submit_result", {})
-    assert "after seal" not in str(error.value.details)
+    reply = worker.call_tool("worker_submit_result", {})
+    assert reply['state'] == 'rejected' and 'submission_intervention_required' in str(reply)
+    assert "after seal" not in str(reply)
     current = runtime.runs.status(worker._run_id)
     diagnostic = runtime.runs.diagnostic_summary(current)["latest_tool_error"]
     assert diagnostic["engineering"]["reference"]
@@ -460,9 +460,9 @@ def test_candidate_binding_crash_windows_and_response_replay(
         "_complete",
         lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("after artifact")),
     )
-    with pytest.raises(WorkerToolError) as error:
-        second_worker.call_tool("worker_submit_result", {})
-    assert "after artifact" not in str(error.value.details)
+    reply = second_worker.call_tool("worker_submit_result", {})
+    assert reply['state'] == 'rejected' and 'submission_intervention_required' in str(reply)
+    assert "after artifact" not in str(reply)
     diagnostic = runtime.runs.diagnostic_summary(runtime.runs.status(second_worker._run_id))["latest_tool_error"]
     assert "after artifact" in store.read(diagnostic["engineering"]["reference"], scopes=("instance:" + current.instance_id,))["text"]
     before = len(runtime.artifacts.list_artifacts(kind="observation", limit=100))
@@ -875,7 +875,7 @@ def test_source_projection_generation_handles_old_run_without_reusing_it(
             with pytest.raises(Exception, match="Run deadline expired"):
                 restarted.runs.submit(run_id)
         else:
-            assert restarted.runs.submit(run_id) == ("failed", ())
+            assert restarted.runs.submit(run_id)[0] == "failed"
         status = new_root.call_tool("run_status", {"name": name})
         failure_request = {
             "name": name,
@@ -1609,7 +1609,8 @@ def test_unavailable_contract_preserves_latest_domain_files_and_reconciles(
     (deck / "device.cmd").write_text("latest B", encoding="utf-8")
     runtime.runs.operation_catalog = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN))
     if entry == "submit":
-        assert runtime.runs.submit(run_id) == ("failed", ())
+        state, diagnostics = runtime.runs.submit(run_id)
+        assert state == "failed" and diagnostics[0]['code'] == 'submission_control_failure'
     elif entry == "preview":
         with pytest.raises(RunContractUnavailable):
             runtime.runs.validate_candidate(run_id)
@@ -1696,16 +1697,19 @@ def test_recovery_without_snapshot_keeps_original_and_reports_pending(
     def broken_seal(*args, **kwargs):
         raise OSError("snapshot write failed: /srv/private/run/candidate.json token=fixture-secret")
     monkeypatch.setattr(runtime.runs.backend, "seal", broken_seal)
-    assert runtime.runs.submit(run_id) == ("failed", ())
+    state, diagnostics = runtime.runs.submit(run_id)
+    assert state == "rejected" and diagnostics[0]['code'] == 'submission_intervention_required'
+    assert runtime.runs.status(run_id).state == 'running'
+    runtime.runs.fail(run_id, reason='Root closes the task after inspecting the retained storage failure.')
     failed = runtime.runs.status(run_id)
     assert output.is_file()
     assert runtime.runs.recovery_status(failed)["recovery_pending"]
     summary = runtime.runs.diagnostic_summary(failed)
-    assert summary["failure"]["category"] == "checker_failure"
+    assert summary["failure"]["category"] == "runtime_failure"
     projected = json.dumps(summary)
     assert "snapshot write failed" in projected
     assert "fixture-secret" not in projected and "/srv/private" not in projected
-    engineering = summary["failure"]["engineering"]
+    engineering = summary["latest_tool_error"]["engineering"]
     assert any(cause["type"] == "OSError" for cause in engineering["causes"])
     report = root.call_tool("diagnostic_read", {"reference": engineering["reference"], "section": "traceback"})
     assert "snapshot write failed" in report["text"]

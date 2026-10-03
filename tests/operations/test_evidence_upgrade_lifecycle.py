@@ -138,7 +138,7 @@ def test_old_task_reopens_or_recovers_under_exact_supported_contract(tmp_path, m
     assert submit(following, opened, limited_report())['state'] == 'completed'
     name = 'upgraded_recovery' if recover else 'generic_analysis'
     status = root.call_tool('run_status', dict(name=name))
-    assert status['operation_contract_status'] == 'current'
+    assert status['operation_contract_status'] == ('current' if recover else 'supported_historical')
     assert status['sealed_output_status'] == 'available'
     downstream = root.call_tool('operation_invoke', dict(name='downstream_analysis', max_attempts=2,
         operation_id=owner.operation_id, instruction='Use the exact sealed prior analysis.', inputs=[
@@ -192,9 +192,10 @@ def test_delivery_reconciliation_proof_error_is_structured(tmp_path, monkeypatch
         raise reference_proofs.proof_error('reference_proof_limit', 'Complete receipt proof exceeds budget.')
     monkeypatch.setattr(f.coordinator, 'require_idle', failed)
     result = submit(f, [f.alias], outcome='inconclusive')
-    assert result['state'] == 'rejected'
+    assert result['state'] == 'failed'
     assert 'reference_proof_limit' in json.dumps(result)
-    assert f.runs.status(f.run_id).state == 'running'
+    assert 'Root' in json.dumps(result)
+    assert f.runs.status(f.run_id).state == 'failed'
 
 
 def test_derived_receipt_retains_its_exact_parent_edges(tmp_path):
@@ -279,7 +280,7 @@ def test_transient_reconciliation_rejects_without_failing_owner(tmp_path, monkey
     with monkeypatch.context() as patch:
         patch.setattr(f.coordinator, 'require_idle', unavailable)
         reply = submit(f, [f.alias], outcome='inconclusive')
-    assert reply['state'] == 'rejected' and 'execution_reconciliation_unavailable' in str(reply)
+    assert reply['state'] == 'rejected' and 'submission_temporarily_unavailable' in str(reply)
     assert f.runs.status(f.run_id).state == 'running'
     assert f.worker.call_tool('worker_submit_result', {})['state'] == 'completed'
     assert f.adapter.submits == 0
@@ -295,9 +296,8 @@ def test_unclassified_reconciliation_error_preserves_task_and_diagnostics(tmp_pa
         raise error
     with monkeypatch.context() as patch:
         patch.setattr(f.coordinator, 'require_idle', unavailable)
-        with pytest.raises(WorkerToolError) as caught:
-            submit(f, [f.alias], outcome='inconclusive')
-    assert caught.value.engineering['reference']
+        reply = submit(f, [f.alias], outcome='inconclusive')
+    assert reply['state'] == 'rejected' and 'submission_intervention_required' in str(reply)
     assert f.runs.status(f.run_id).state == 'running'
     assert f.worker.call_tool('worker_submit_result', {})['state'] == 'completed'
 
