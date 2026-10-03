@@ -14,6 +14,187 @@ from tests.operations.test_progression import progression, unmanaged_progression
 from tests.operations.test_scientific_progress import finish, request, assess, active
 
 
+def test_compiled_independent_reviewer_history_is_neutral_but_subject_original_remains_readable(progression):
+    import subprocess,sys
+    from blind_csv_plugin.plugin import PLUGIN,REVIEWER
+    from scidiscovery.builtin_plugin import CORE_PLUGIN
+    from scidiscovery.general_science_plugin import PLUGIN as GENERAL
+    from scidiscovery.operations.catalog import compile_catalog
+    p=progression
+    spec=REVIEWER.model_copy(update=dict(operation_id='blind.csv.inspect.v1',independent_review_ports=('csv_observation',)))
+    catalog=compile_catalog((CORE_PLUGIN,GENERAL,PLUGIN.model_copy(update=dict(operations=(*PLUGIN.operations,spec)))))
+    p.catalog=catalog;p.runtime.runs.operation_catalog=catalog;p.root.facade._operation_catalog=catalog
+    root=active(p)
+    finish(p,root,'author')
+    assess(root,'author',reason='The scheduler endorsed this existing conclusion.')
+    subject=root.call_tool('run_status',dict(name='author'))['output_artifact_name']
+    root.call_tool('operation_invoke',dict(name='independent-inspection',operation_id=spec.operation_id,
+        inputs=[dict(port='source_table',artifact_names=['source_csv']),dict(port='csv_observation',artifact_names=[subject])],
+        instruction='Inspect the exact subject independently.'))
+    identity=root.facade._resolve('run','independent-inspection')
+    caller=('audit-session','independent-inspection-thread')
+    p.runtime.runs.worker_connections.attach(run_id=identity,platform_session=caller[0],thread_id=caller[1])
+    compiled=catalog.operation(spec.operation_id)
+    worker=LocalWorkerMCPRouter(p.runtime.runs,operation_id=spec.operation_id,operation_digest=compiled.digest,
+        run_id=identity,trusted_caller=caller)
+    opened=worker.call_tool('worker_open_assignment',{})
+    startup=json.loads(Path(opened['start_here_path']).read_bytes())
+    page=worker.call_tool('worker_read_history',dict(limit=1))
+    for memory in (startup['attempt_memory'],page):
+        assert all(key not in json.dumps(memory) for key in ('worker_verdict','root_judgment','scientific_fields','Bounded result.'))
+    assert page['runs'][0]['name']=='author' and 'summary' not in page['runs'][0]
+    assert any(i['source_name']=='csv_observation' for i in startup['inputs'])
+    original=subprocess.run([sys.executable,'tools/read_input.py','csv_observation'],cwd=opened['workspace_path'],
+        capture_output=True,text=True,check=True)
+    assert 'The bounded arithmetic mean is two.' in original.stdout
+
+
+def test_bad_handoff_content_is_local_unknown_and_healthy_history_remains_readable(progression):
+    p=progression
+    root=active(p)
+    finish(p,root,'healthy')
+    finish(p,root,'broken-handoff')
+    identity=root.facade._resolve('run','broken-handoff')
+    with p.runtime.runs._connect() as db:
+        db.execute('UPDATE runs SET signal_json=? WHERE run_id=?',(b'{',identity))
+    _invoke(root,'memory-reader')
+    worker=_worker(p.catalog,p.runtime)
+    opened=worker.call_tool('worker_open_assignment',{})
+    startup=json.loads(Path(opened['start_here_path']).read_bytes())['attempt_memory']
+    page=worker.call_tool('worker_read_history',dict(limit=1))
+    assert page['runs'][0]['name']=='broken-handoff'
+    assert 'worker_handoff_invalid' in page['runs'][0]['omissions']
+    healthy=worker.call_tool('worker_read_history',dict(limit=1,before=page['next_before']))
+    assert healthy['runs'][0]['name']=='healthy' and healthy['runs'][0]['summary']=='Bounded result.'
+    assert 'healthy' in json.dumps(startup)
+    from tests.operations.test_attempt_history import router
+    public=router(p)
+    root_page=public.call_tool('run_list',dict(view='history',limit=1))
+    assert 'worker_handoff_invalid' in root_page['runs'][0]['omissions']
+    assert public.call_tool('run_list',dict(view='history',limit=1,before=root_page['next_before']))['runs'][0]['name']=='healthy'
+
+
+def test_invalid_optional_judgment_reference_does_not_hide_healthy_history(progression):
+    from tests.operations.test_attempt_history import router
+    p=progression;root=active(p)
+    for name in ('healthy-judgment','invalid-judgment'):
+        finish(p,root,name);assess(root,name)
+    _invoke(root,'judgment-reader')  # Current accepted identity is fully valid.
+    identity=root.facade._resolve('run','invalid-judgment')
+    with p.runtime.scheduler_bindings._connect() as db:
+        changed=db.execute('UPDATE scheduler_progress_assessments SET artifact_ref_json=? WHERE instance_id=? AND run_id=?',
+            (canonical_json(dict(artifact_id='incomplete')),p.instance,identity))
+        assert changed.rowcount==1
+    worker=_worker(p.catalog,p.runtime)
+    opened=worker.call_tool('worker_open_assignment',{})
+    startup=json.loads(Path(opened['start_here_path']).read_bytes())['attempt_memory']
+    page=worker.call_tool('worker_read_history',dict(limit=1))
+    broken=page['runs'][0]
+    assert broken['name']=='invalid-judgment'
+    assert 'root_judgment_original_unavailable' in broken['omissions']
+    assert broken['content_coverage'].startswith('partial_unknown') and 'root_judgment' not in broken
+    healthy=worker.call_tool('worker_read_history',dict(limit=1,before=page['next_before']))['runs'][0]
+    assert healthy['name']=='healthy-judgment' and healthy['root_judgment']['outcome']=='advance'
+    assert 'healthy-judgment' in json.dumps(startup)
+    public=router(p);root_page=public.call_tool('run_list',dict(view='history',limit=1))
+    assert 'root_judgment_original_unavailable' in root_page['runs'][0]['omissions']
+    assert public.call_tool('run_list',dict(view='history',limit=1,before=root_page['next_before']))['runs'][0]['root_judgment']['outcome']=='advance'
+    assert not p.runtime.runs.reference_access_records(worker._run_id)
+    assert worker.call_tool('worker_open_assignment',{})['start_here_path']==opened['start_here_path']
+
+
+@pytest.mark.parametrize('invalid_inputs',[b'{',b'{}',b'"scalar"',b'["bare element"]',b'[{}]','mixed_object_and_scalar'])
+def test_invalid_optional_input_index_does_not_block_open_or_healthy_pages(progression,invalid_inputs):
+    from tests.operations.test_attempt_history import router
+    p=progression;root=active(p)
+    finish(p,root,'healthy-input-index');finish(p,root,'invalid-input-index')
+    _invoke(root,'input-index-reader')
+    identity=root.facade._resolve('run','invalid-input-index')
+    with p.runtime.runs._connect() as db:
+        if invalid_inputs=='mixed_object_and_scalar':
+            valid=json.loads(db.execute('SELECT inputs_json FROM runs WHERE run_id=?',(identity,)).fetchone()[0])
+            invalid_inputs=canonical_json([valid[0],'bare element'])
+        db.execute('UPDATE runs SET inputs_json=? WHERE run_id=?',(invalid_inputs,identity))
+    worker=_worker(p.catalog,p.runtime)
+    opened=worker.call_tool('worker_open_assignment',{})
+    startup=json.loads(Path(opened['start_here_path']).read_bytes())['attempt_memory']
+    assert 'healthy-input-index' in json.dumps(startup)
+    assert 'invalid-input-index' not in json.dumps(startup['exact_source_related'])
+    first=worker.call_tool('worker_read_history',dict(limit=1))
+    broken=first['runs'][0]
+    assert broken['name']=='invalid-input-index' and 'input_index_invalid' in broken['omissions']
+    assert broken['content_coverage'].startswith('partial_unknown') and not broken['frozen_inputs']
+    healthy=worker.call_tool('worker_read_history',dict(limit=1,before=first['next_before']))['runs'][0]
+    assert healthy['name']=='healthy-input-index' and healthy['frozen_inputs']
+    public=router(p);page=public.call_tool('run_list',dict(view='history',limit=1))
+    assert 'input_index_invalid' in page['runs'][0]['omissions']
+    assert public.call_tool('run_list',dict(view='history',limit=1,before=page['next_before']))['runs'][0]['name']=='healthy-input-index'
+    assert not p.runtime.runs.reference_access_records(worker._run_id)
+    # Optional association never repairs a damaged source or broadens membership.
+    with pytest.raises(Exception):
+        worker.call_tool('worker_reference_read',dict(history_task='invalid-input-index',action='read',reference='unbound-source'))
+    with pytest.raises(Exception):
+        worker.call_tool('worker_reference_read',dict(history_task='unbound-foreign-task'))
+    assert not p.runtime.runs.reference_access_records(worker._run_id)
+    assert worker.call_tool('worker_open_assignment',{})['start_here_path']==opened['start_here_path']
+
+
+def revision_goal(p, name, previous, *, supersedes=True):
+    from scidiscovery.artifact_agent.schema.artifact import ArtifactRegistration
+    old=p.runtime.artifacts.get_by_id(p.root.facade._resolve('artifact',previous))
+    new=p.runtime.artifacts.register(('Exact revised direction '+name).encode(),ArtifactRegistration(
+        kind=old.kind,schema_id=old.schema_id,payload_schema_version=old.payload_schema_version,
+        media_type=old.media_type,creator=old.creator,labels=old.labels,
+        supersedes_ref=old.ref if supersedes else None,parent_refs=() if supersedes else (old.ref,)),idempotency_key='revision-'+name)
+    p.runtime.scheduler_bindings.bind(instance=p.instance,namespace='artifact',name=name,object_id=new.artifact_id)
+    p.root.call_tool('progression_command',dict(command='pause'))
+    proposal=p.runtime.scheduler_bindings.loop_authorization_proposal(instance_id=p.instance,session_key=p.user)
+    p.runtime.scheduler_bindings.authorize_loop_from_ui(instance_id=p.instance,session_key=p.user,
+        confirmation_binding=proposal['confirmation_binding'],objective_name=name,objective_ref=new.ref)
+    p.root.call_tool('progression_command',dict(command='start',mode='interactive',objective_name=name))
+    return new
+
+
+def test_explicit_revision_lineage_is_shared_frozen_and_judgments_keep_actual_goal(unmanaged_progression):
+    from tests.operations.research_loop_fixtures import authorize_loop
+    from tests.operations.test_attempt_history import router
+    p=unmanaged_progression
+    authorize_loop(p.runtime,p.instance,p.user,'goal')
+    p.root.call_tool('progression_command',dict(command='start',mode='interactive',objective_name='goal'))
+    finish(p,p.root,'under-a');assess(p.root,'under-a')
+    revision_goal(p,'goal-b','goal')
+    finish(p,p.root,'under-b')
+    revision_goal(p,'goal-c','goal-b')
+    _invoke(p.root,'lineage-reader')
+    worker=_worker(p.catalog,p.runtime)
+    opened=worker.call_tool('worker_open_assignment',{})
+    first=worker.call_tool('worker_read_history',dict(limit=1))
+    assert first['runs'][0]['name']=='under-b'
+    second=worker.call_tool('worker_read_history',dict(limit=1,before=first['next_before']))
+    assert second['runs'][0]['name']=='under-a'
+    assert second['runs'][0]['root_judgment']['outcome']=='advance'
+    public=router(p)
+    root_page=public.call_tool('run_list',dict(view='history',limit=1))
+    assert root_page['runs'][0]['name']=='under-b'
+    old_cursor=root_page['next_before']
+    old_scope=deepcopy(p.runtime.runs._worker_memory_binding(worker._run_id)['scope'])
+    assert len(old_scope['objective_ancestors'])==2
+    # The encrypted old-scope format deliberately remains exact, never expanded.
+    exact=dict(old_scope);exact.pop('objective_ancestors');exact['terminal_count']=0
+    assert p.runtime.runs.attempt_history_page(exact)==[]
+    assert worker.call_tool('worker_open_assignment',{})['start_here_path']==opened['start_here_path']
+    assert worker.call_tool('worker_read_history',dict(limit=1))==first
+    from tests.operations.test_local_worker_contracts import _write_result
+    _write_result(worker);assert worker.call_tool('worker_submit_result',{})['state']=='completed'
+    finish(p,p.root,'after-freeze')
+    assert public.call_tool('run_list',dict(view='history',limit=1,before=old_cursor))['runs'][0]['name']=='under-a'
+    with p.runtime.runs._connect() as db:
+        assert json.loads(db.execute('SELECT memory_scope_json FROM runs WHERE run_id=?',(worker._run_id,)).fetchone()[0])['scope']==old_scope
+    revision_goal(p,'goal-d','goal-c')
+    revision_goal(p,'unrelated','goal-d',supersedes=False)
+    assert public.call_tool('run_list',dict(view='history',limit=1))['runs']==[]
+
+
 
 def capacity_system(p,count):
     from types import SimpleNamespace
@@ -134,11 +315,11 @@ def test_actual_root_continuation_brief_keeps_old_failure_and_frozen_index(progr
     assert next(i for i in current['runs'] if i['name']=='early')['root_judgment_revision']==2
 
 
-def science_system(tmp_path):
+def science_system(tmp_path, *, plan=None):
     from tests.operations.test_tcad_result_analysis import analysis_system
     from tests.operations.research_loop_fixtures import authorize_loop
     from tests.operations import test_m2_curve_analysis_boundary as curve
-    system=analysis_system(tmp_path)
+    system=analysis_system(tmp_path,plan=plan)
     catalog,runtime,root,_,artifacts,register=system
     instance=root.facade._instance_id()
     user='sch_'+'a'*32
@@ -179,13 +360,66 @@ def complete_science(worker,opened,alias='experiment_results'):
     assert reply['state']=='completed',reply
 
 
+def test_scientific_negative_is_attributed_conditioned_and_not_engineering_failure(tmp_path):
+    from tests.operations.test_analysis_handoff_report import compact_report
+    from tests.operations import test_m2_curve_analysis_boundary as curve
+    system=science_system(tmp_path,plan=curve._compiler_plan())
+    _,runtime,root,_,_,_=system
+    for name,negative in (('finite-negative',True),('blocked-delivery',False)):
+        worker,opened=science_worker(system,name)
+        payload=compact_report('experiment_results',verdict='fail' if not negative else 'inconclusive')
+        payload.update(study_kind='scientific',summary='The finite prediction remains conditional.',
+            remaining_contradiction='The tested prediction differs from the observation; other mechanisms remain open.')
+        if negative:
+            payload['hypothesis_assessments']=[dict(hypothesis_key='hypothesis_implementation',outcome='contradicts',
+                evidence_keys=['experiment_results'],rationale='Only the bound finite observation contradicts this prediction.')]
+        (Path(opened['workspace_path'])/'output/result.json').write_bytes(canonical_json(dict(payload=payload)))
+        reply=worker.call_tool('worker_submit_result',{})
+        metrics('scientific-submission-'+name,reply)
+        assert reply['state']=='completed',reply
+    failed,_=science_worker(system,'engineering-failed')
+    value=runtime.runs.status(failed._run_id)
+    runtime.runs.record_failure(failed._run_id,reason='No numerical output could be produced.',
+        expected_state='running',expected_last_activity_at=value.last_activity_at)
+    reader,opened=science_worker(system,'inspect-memory',instruction='Inspect the existing finite conclusions and their original conditions.')
+    startup=json.loads(Path(opened['start_here_path']).read_bytes())['attempt_memory']
+    metrics('scientific-memory',startup)
+    assert startup['scientific_negative_candidates'],startup
+    assert startup['scientific_negative_candidates'][0]['name']=='finite-negative'
+    page=reader.call_tool('worker_read_history',dict(limit=8))
+    items={i['name']:i for i in page['runs']}
+    negative=items['finite-negative']
+    assert negative['scientific_fields']['/hypothesis_assessments'][0]['outcome']=='contradicts'
+    assert negative['scientific_authority']=='sealed_worker_conclusion_not_controlled_verification'
+    assert negative['scientific_fields']['/remaining_contradiction']
+    assert negative['frozen_inputs'] and negative['original']['history_task']=='finite-negative'
+    assert 'scientific_negative' not in items['blocked-delivery']
+    assert items['engineering-failed']['result_nature']=='engineering_failure_not_scientific_negation'
+    assert 'scientific_fields' not in items['engineering-failed']
+    directory=reader.call_tool('worker_reference_read',dict(history_task='finite-negative'))
+    report=next(i for i in directory['references'] if i['original_name']=='report')
+    original=reader.call_tool('worker_reference_read',dict(history_task='finite-negative',action='read',reference=report['reference'],limit=8192))
+    assert 'contradicts' in json.dumps(original['fragment'])
+    # Content damage is local; exact scope and strict original checks stay intact.
+    ref=runtime.runs.status(root.facade._resolve('run','blocked-delivery')).output_ref
+    runtime.artifacts.cas.path_for(ref.sha256).write_bytes(b'{')
+    changed=reader.call_tool('worker_read_history',dict(limit=8))
+    items={i['name']:i for i in changed['runs']}
+    assert 'scientific_fields_original_unavailable' in items['blocked-delivery']['omissions']
+    assert items['finite-negative']['scientific_fields']==negative['scientific_fields']
+
+
 def test_history_original_registers_real_citation_then_final_manifest_and_missing_are_not_success(tmp_path):
+    from types import SimpleNamespace
     system=science_system(tmp_path)
     _,runtime,root,_,_,_=system
+    lineage=SimpleNamespace(runtime=runtime,root=root,instance=root.facade._instance_id(),user=root.facade.session_key)
     early,opened=science_worker(system,'early-science')
     complete_science(early,opened)
+    revision_goal(lineage,'science-goal-b','goal')
     middle,opened=science_worker(system,'middle-science')
     complete_science(middle,opened)
+    revision_goal(lineage,'science-goal-c','science-goal-b')
     from scidiscovery.artifact_agent.interfaces.mcp_root import RootMCPRouter,RootToolFacade
     other=runtime.scheduler_bindings.create_instance(name='foreign-science-instance',title='Foreign',objective='Independent research')
     for name in ('plan','generic_results','generic_bundle'):

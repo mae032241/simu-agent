@@ -1269,10 +1269,11 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
     def _attempt_history_query(scope):
         if scope.get('objective_ref'):
             where = "d.instance_id=? AND d.collection='admissions' AND json_extract(d.record_json,'$.state')='accepted'"
-            args = [scope['instance_id']]
-            for key, value in scope['objective_ref'].items():
-                where += " AND json_extract(d.record_json,'$.objective_ref." + key + "')=?"
-                args.append(value)
+            # Older frozen scopes deliberately retain their original exact goal.
+            args = [scope['instance_id'], json.dumps([scope['objective_ref'], *scope.get('objective_ancestors', ())])]
+            where += " AND EXISTS (SELECT 1 FROM json_each(?) goal WHERE " + ' AND '.join(
+                "json_extract(d.record_json,'$.objective_ref."+key+"')=json_extract(goal.value,'$."+key+"')"
+                for key in ('artifact_id','kind','schema_id','sha256')) + ')'
             tables = "scheduler_control.scheduler_progression_details d LEFT JOIN runs r ON r.run_id=json_extract(d.record_json,'$.run_id') "
             tables += "LEFT JOIN scheduler_control.scheduler_bindings b ON b.instance=d.instance_id AND b.namespace='run' AND b.name=d.record_key"
         else:
@@ -1284,6 +1285,48 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
             where += ' AND (r.state=? OR r.run_id IS NULL OR r.instance_id<>?)'
             args.extend((scope['state'], scope['instance_id']))
         return tables, where, args
+
+    def _attempt_history_lineage(self, db, scope):
+        """Follow only immutable revision edges authorized by exact instance names.
+
+        The existing 2048-character opaque cursor bounds the ancestor set. Reserve
+        space for terminal counts and the largest subsequent time position; the
+        same frozen set is used for Root, Worker and strict original membership.
+        """
+        from ..storage.sqlite import ArtifactNotFoundError, ArtifactReferenceError
+        scope['objective_ancestors']=[]
+        scope['lineage']=dict(coverage='no_explicit_revision_relation', ancestor_count=0)
+        ref=ArtifactRef.model_validate(scope['objective_ref'])
+        seen={ref.artifact_id}
+        while True:
+            try:
+                ancestor=self.artifacts.catalog(ref).supersedes_ref
+            except ArtifactNotFoundError:
+                scope['lineage']['coverage']='incomplete_revision_metadata_unavailable'
+                break
+            except ArtifactReferenceError as error:
+                raise RunStateConflict('Exact revision metadata conflicts with the goal identity.') from error
+            if ancestor is None:
+                break
+            if ancestor.artifact_id in seen:
+                raise RunStateConflict('Exact revision lineage contains a conflicting cycle.')
+            name=db.execute("SELECT name FROM scheduler_control.scheduler_bindings WHERE instance=? AND namespace='artifact' AND object_id=? ORDER BY name LIMIT 1",
+                (scope['instance_id'],ancestor.artifact_id)).fetchone()
+            if name is None:
+                raise RunStateConflict('Revision ancestor is not authorized in this exact instance.')
+            candidate=dict(scope,objective_ancestors=[*scope['objective_ancestors'],ancestor.model_dump(mode='json')],
+                lineage=dict(coverage='explicit_supersedes_ancestors',ancestor_count=len(scope['objective_ancestors'])+1))
+            # 28 AES-GCM/nonce bytes plus base64 expansion; conservative room for
+            # upper bounds and a later page position, never truncate a reference.
+            probe=dict(candidate, terminal_count=2**63-1, terminal_source_missing=2**63-1,
+                terminal_upper=2**63-1, assessment_upper=2**63-1, after=['9999-12-31T23:59:59.999999Z',2**63-1],limit=100)
+            if len(canonical_json(probe))+160 > 1508:
+                scope['lineage'].update(coverage='incomplete_revision_cursor_capacity',
+                    next_objective=name[0], reason='2048_character_cursor; older objectives are outside this frozen range')
+                break
+            scope.update(candidate)
+            seen.add(ancestor.artifact_id)
+            ref=ancestor
 
     def _attempt_history_terminals(self, scope):
         tables, where, args = self._attempt_history_query(scope)
@@ -1344,6 +1387,9 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
                 name = db.execute("SELECT name FROM scheduler_control.scheduler_bindings WHERE instance=? AND namespace='artifact' AND object_id=? ORDER BY name LIMIT 1",
                     (instance_id, scope['objective_ref']['artifact_id'])).fetchone()
                 scope['objective_name'] = name[0] if name else None
+                if name is None:
+                    raise RunStateConflict('Exact history goal is not authorized in this instance.')
+                self._attempt_history_lineage(db, scope)
             elif not source_run_id:
                 raise ValueError('Start an exact frozen goal or use a recorded recovery task navigation.')
             scope['terminal_upper'] = db.execute("SELECT COALESCE(MAX(a.rowid),0) FROM run_activity a JOIN runs r ON r.run_id=a.run_id WHERE r.instance_id=? "
@@ -1383,8 +1429,9 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
             if scope['after']:
                 where += ' AND (r.completed_at<? OR (r.completed_at=? AND a.rowid<?))'
                 args.extend((scope['after'][0], scope['after'][0], scope['after'][1]))
+            goal="json_extract(d.record_json,'$.objective_ref')" if scope.get('objective_ref') else 'NULL'
             return [dict(row) for row in db.execute('SELECT b.name,r.state,r.completed_at,a.rowid AS terminal_event,'
-                "json_extract(a.diagnostic_json,'$.category') AS failure_category FROM "+tables+' WHERE '+where+
+                "json_extract(a.diagnostic_json,'$.category') AS failure_category,"+goal+' AS objective_ref_json FROM '+tables+' WHERE '+where+
                 ' ORDER BY r.completed_at DESC,a.rowid DESC LIMIT ?', (*args, scope['limit']+1)).fetchall()]
 
     def active_ids(self, *, instance_id: str, limit: int = 31) -> tuple[str, ...]:

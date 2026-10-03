@@ -17,6 +17,54 @@ from tests.operations.test_progression import progression
 SECRET = b'history-fixture-secret-' + b'x'*32
 
 
+def test_revision_cursor_capacity_is_explicit_and_foreign_ancestor_is_refused(progression):
+    from scidiscovery.artifact_agent.schema.artifact import ArtifactRegistration
+    from scidiscovery.artifact_agent.service.run_records import RunStateConflict
+    from scidiscovery.artifact_agent.service.progression_records import history_cursor,read_history_cursor
+    from tests.operations.test_attempt_memory import revision_goal
+    from tests.operations.test_local_worker_contracts import _invoke,_worker
+    p=progression
+    previous='goal'
+    for index in range(10):
+        old=p.runtime.artifacts.get_by_id(p.root.facade._resolve('artifact',previous))
+        name='revision-'+str(index)
+        new=p.runtime.artifacts.register(('direction '+name).encode(),ArtifactRegistration(
+            kind=old.kind,schema_id=old.schema_id,payload_schema_version=old.payload_schema_version,
+            media_type=old.media_type,creator=old.creator,labels=old.labels,supersedes_ref=old.ref),idempotency_key=name)
+        p.runtime.scheduler_bindings.bind(instance=p.instance,namespace='artifact',name=name,object_id=new.artifact_id)
+        previous=name
+    revision_goal(p,'current-revision',previous)
+    scope=p.runtime.runs.attempt_history_scope(instance_id=p.instance,state=None,limit=100)
+    assert scope['lineage']['coverage']=='incomplete_revision_cursor_capacity'
+    assert 1<=len(scope['objective_ancestors'])<11
+    for after in (None,['9999-12-31T23:59:59.999999Z',2**63-1]):
+        token=history_cursor(dict(scope,after=after),secret=SECRET)
+        assert len(token)<=2048
+        assert read_history_cursor(token,secret=SECRET,instance_id=p.instance,state=None,limit=100)['objective_ancestors']==scope['objective_ancestors']
+    page=router(p).call_tool('run_list',dict(view='history',limit=1))
+    navigation=page['revision_scope']['original']
+    original=router(p).call_tool(navigation.pop('tool'),navigation)
+    assert original['text'] and original['complete']
+    # Merely registering a global object does not authorize it in this instance.
+    foreign=p.runtime.scheduler_bindings.create_instance(name='foreign-revisions',title='Foreign',objective='Different research')
+    foreign_goal=p.runtime.artifacts.register(b'Foreign direction',ArtifactRegistration(
+        kind=old.kind,schema_id=old.schema_id,payload_schema_version=old.payload_schema_version,
+        media_type=old.media_type,creator=old.creator,labels=old.labels),idempotency_key='foreign-goal')
+    p.runtime.scheduler_bindings.bind(instance=foreign.instance_id,namespace='artifact',name='foreign-goal',object_id=foreign_goal.artifact_id)
+    # Build the explicit edge without ever binding its target into this instance.
+    bad=p.runtime.artifacts.register(b'Current goal pointing outside',ArtifactRegistration(
+        kind=old.kind,schema_id=old.schema_id,payload_schema_version=old.payload_schema_version,
+        media_type=old.media_type,creator=old.creator,labels=old.labels,supersedes_ref=foreign_goal.ref),idempotency_key='foreign-edge-current')
+    p.runtime.scheduler_bindings.bind(instance=p.instance,namespace='artifact',name='outside-lineage',object_id=bad.artifact_id)
+    revision_goal(p,'outside-current','outside-lineage')
+    with pytest.raises(RunStateConflict,match='not authorized'):
+        p.runtime.runs.attempt_history_scope(instance_id=p.instance,state=None,limit=1)
+    _invoke(p.root,'authorized-current-task')
+    worker=_worker(p.catalog,p.runtime)
+    worker.call_tool('worker_open_assignment',{})
+    assert worker.call_tool('worker_read_history',{})['coverage']=='unknown_not_empty'
+
+
 def router(system, *, secret=SECRET, runtime=None, instance=None):
     runtime = runtime or system.runtime
     return RootMCPRouter(RootToolFacade(runtime.artifacts, runtime.intake, runs=runtime.runs,
@@ -109,16 +157,21 @@ def test_frozen_pages_find_early_failure_without_new_work_or_full_run_reads(tmp_
     def full_rows(rows):
         counts['full_runs'] += len(tuple(rows))
         pytest.fail('history must not hydrate complete Runs')
+    original_read=system.runtime.artifacts.read
     def payload(*args,**kwargs):
         counts['payload_reads'] += 1
-        pytest.fail('history must not read scientific originals')
+        return original_read(*args,**kwargs)
     with monkeypatch.context() as patch:
         patch.setattr(system.runs,'_connect',Connection)
         patch.setattr(system.runs,'_statuses_from_rows',full_rows)
         patch.setattr(system.runtime.artifacts,'read',payload)
+        scope=system.runs.attempt_history_scope(instance_id=system.instance,state=None,limit=7)
+        assert len(system.runs.attempt_history_page(scope))==8
+        assert counts['payload_reads']==0  # The service time index stays thin.
         first = result(call(system.gateway,'run_list',dict(view='history',limit=7)))
     add_terminal(system,'later-backdated-task',count+1000)
     names, page, pages, peak = [], first, 0, 0
+    page_reads=[counts['payload_reads']]
     with monkeypatch.context() as patch:
         patch.setattr(system.runs,'_connect',Connection)
         patch.setattr(system.runs,'_statuses_from_rows',full_rows)
@@ -130,13 +183,16 @@ def test_frozen_pages_find_early_failure_without_new_work_or_full_run_reads(tmp_
             pages += 1
             if not page['continuation']: break
             query = dict(page['continuation']);query.pop('tool')
+            previous_reads=counts['payload_reads']
             page = system.root.call_tool('run_list',query)
+            page_reads.append(counts['payload_reads']-previous_reads)
     assert names == system.expected and len(set(names)) == count
     assert page['runs'][-1]['state'] == 'failed'
-    assert counts['full_runs'] == counts['payload_reads'] == counts['reader_writes'] == 0
+    assert counts['full_runs'] == counts['reader_writes'] == 0
+    assert counts['payload_reads']==count-1 and max(page_reads)<=7
     assert counts['max_identity_rows'] <= 8 and peak <= 16384
     assert first['history_scope']['loop_coverage'] == 'exact_goal_across_loops'
-    metrics(f'history-{count}',dict(**counts,tasks=count,pages=pages,peak_response_bytes=peak))
+    metrics(f'history-{count}',dict(**counts,tasks=count,pages=pages,peak_response_bytes=peak,max_page_original_reads=max(page_reads)))
     failure = system.root.call_tool('run_status',dict(name='task-0000',intent='status',diagnostic_after=0))
     assert failure['state'] == 'failed' and failure['diagnostic_events']['events']
 

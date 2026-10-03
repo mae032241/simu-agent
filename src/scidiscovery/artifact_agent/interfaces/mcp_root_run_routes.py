@@ -69,7 +69,11 @@ class RootRunRoutes(RunReadProjection):
                 before=history_cursor(dict(scope, after=[record['completed_at'], record['terminal_event']]), secret=secret)))
         response['history_scope'] = dict(kind='exact_goal' if scope['objective_ref'] else 'authorized_recovery_source',
             objective_name=scope.get('objective_name'), source_task=scope.get('source_task'),
-            loop_coverage='exact_goal_across_loops' if scope['objective_ref'] else 'recorded_direct_recovery_source', frozen=True)
+            loop_coverage='exact_goals_and_explicit_revision_ancestors_across_loops' if scope.get('objective_ancestors') else ('exact_goal_across_loops' if scope['objective_ref'] else 'recorded_direct_recovery_source'), frozen=True)
+        if scope.get('lineage',{}).get('next_objective'):
+            response['revision_scope']=dict(response['revision_scope'],
+                original=dict(tool='artifact_catalog',name=scope['lineage']['next_objective'],view='content'),
+                limitation='This goal original is readable; its older tasks are outside this frozen time index. Use exact old task navigation when available.')
         response.setdefault('continuation',None)
         return response
 
