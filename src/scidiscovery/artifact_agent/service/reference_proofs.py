@@ -1,13 +1,38 @@
 """Bounded receipt dependency closure, without database or workspace reads."""
+from pydantic import ValidationError
 from ..schema.common import canonical_json
 from ..schema.tool_evidence import ToolEvidenceManifest
 from ...operation_contract import DiagnosticError, contract_diagnostic
 
 
+class ReferenceProofError(DiagnosticError):
+    """A bounded, declared control-proof failure; never a scientific verdict."""
+
+
 def proof_error(code, message):
-    return DiagnosticError(message, details=(contract_diagnostic(code,
+    return ReferenceProofError(message, details=(contract_diagnostic(code,
         phase='tool_execution', affected_action='tool_call', repairable=False,
         message=message),))
+
+
+# The existing sealed-manifest / workspace budget applies to every writer.
+MAX_SNAPSHOT_BYTES = 1024 * 1024
+
+
+def encode_snapshot(document):
+    raw = canonical_json(document)
+    if len(raw) > MAX_SNAPSHOT_BYTES:
+        raise proof_error('reference_proof_limit',
+            'The complete evidence proof exceeds its byte budget. Preserve the existing materials and continue in a new task with exact selected sources; unchanged retries cannot repair this limit.')
+    try:
+        ToolEvidenceManifest.model_validate_json(raw)
+    except ValidationError as error:
+        if any(item['type'] == 'too_long' for item in error.errors()):
+            raise proof_error('reference_proof_limit',
+                'The evidence proof exceeds a declared receipt or attempt collection limit; preserve the existing evidence and continue with selected sources in a new task.') from error
+        raise proof_error('reference_proof_incomplete',
+            'A stored evidence proof record is invalid; repair its original control record before reuse.') from error
+    return raw
 
 
 def source_bindings(value, records, accesses):
@@ -38,9 +63,6 @@ def material_snapshot(value, selected, records, accesses, attempts, recovery):
             raise proof_error('reference_proof_incomplete',
                 'A declared material dependency has no exact stored binding; repair its original receipt before reuse.')
         needed.add(alias)
-        if len(needed) > 128:
-            raise proof_error('reference_proof_limit',
-                'This material requires more than 128 exact bindings. Automatic proof repair cannot truncate them; publish a bounded material with its complete required sources.')
         record = by_alias.get(alias)
         if record is None:
             continue
@@ -97,8 +119,7 @@ def material_snapshot(value, selected, records, accesses, attempts, recovery):
             raise proof_error('reference_proof_incomplete', 'The calculation has no matching stored attempt; repair its original receipt before reuse.')
     recovery_values = [{**origin, 'attempts': list(origin['attempts'].values())}
         for origin in recovery_origins.values()]
-    if (sum(len(o['attempts']) for o in recovery_values) + len(current_attempts) > 64
-            or any(len(o['bindings']) > 128 for o in recovery_values)):
+    if sum(len(o['attempts']) for o in recovery_values) + len(current_attempts) > 64:
         raise proof_error('reference_proof_limit', 'Required recovery evidence exceeds the proof limits; automatic repair cannot truncate it. Publish a bounded material with complete required sources.')
     selected_accesses = [{k: v for k, v in r.items() if k != 'response'}
         for r in accesses if r['alias'] in needed]
@@ -110,6 +131,4 @@ def material_snapshot(value, selected, records, accesses, attempts, recovery):
         'accesses': selected_accesses,
         'attempts': list(current_attempts.values()),
         'recovery': {**recovery_values[0], 'ancestors': recovery_values[1:]} if recovery_values else None}
-    raw = canonical_json(document)
-    ToolEvidenceManifest.model_validate_json(raw)
-    return raw
+    return encode_snapshot(document)

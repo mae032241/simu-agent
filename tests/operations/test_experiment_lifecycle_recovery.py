@@ -17,7 +17,13 @@ def test_final_delivery_refreshes_execution_without_waiting_for_background(tmp_p
     monkeypatch.setattr(f.coordinator.collection, "collect", lambda *args, **kwargs: pytest.fail("delivery collected data"))
     # No status/advance call and no lifecycle tick between remote exit and submit.
     result = submit(f, [f.alias], outcome="inconclusive")
-    assert result["state"] == "completed", result
+    # Success still needs explicit collection; failed/cancelled jobs without an
+    # active collector may close with an inconclusive report.
+    if remote_state == "succeeded":
+        assert result["state"] == "rejected", result
+        assert "experiment_outstanding_work" in str(result)
+    else:
+        assert result["state"] == "completed", result
     assert f.adapter.submits == 1
 
 

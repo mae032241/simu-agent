@@ -12,7 +12,7 @@ from tests.operations.test_approval_wait_recovery import execution
 from tests.operations.test_instance_archive import archive_system
 
 
-@pytest.mark.parametrize('legacy', [True, False])
+@pytest.mark.parametrize('legacy', [True, False, None], ids=['historical-omitted', 'historical-zero', 'current-zero'])
 def test_sealed_zero_extension_decisions_survive_upgrade_and_retry(tmp_path, monkeypatch, legacy):
     import hashlib
     import json
@@ -42,11 +42,12 @@ def test_sealed_zero_extension_decisions_survive_upgrade_and_retry(tmp_path, mon
         return canonical_json(document)
 
     with monkeypatch.context() as patch:
-        patch.setattr(HumanDecision, 'canonical_json', wire_bytes)
+        if legacy is not None:
+            patch.setattr(HumanDecision, 'canonical_json', wire_bytes)
         runtime.approvals.record_ui_decision(**request)
     ref = runtime.approvals.status(aid).decision_ref
     raw = runtime.artifacts.read(ref)
-    assert ('additional_wall_time_seconds' not in json.loads(raw)) is legacy
+    assert ('additional_wall_time_seconds' not in json.loads(raw)) is (legacy is not False)
     runtime, root = _reopen(tmp_path, instance, adapter, catalog)
     runtime.approvals.review(aid, access_token=access)
     loaded = runtime.approvals._load_decision(ref)
@@ -83,9 +84,9 @@ def test_budget_extension_http_roundtrip_replay_recovery_and_scope(tmp_path, mon
     try:
         page = _request(base, 'GET', target.path+'?'+target.query)[2].decode()
         assert '追加累计耗时预算' in page and '同一科学主体' in page
-        for bad in ({'csrf':'wrong'}, {'selected_option':'reject_execution'},
-                    {'additional_wall_time_hours':'NaN'}, {'additional_wall_time_hours':'-1'}):
-            assert _request(base, 'POST', endpoint, form={**form, **bad})[0] == 403
+        for bad, expected in (({'csrf':'wrong'}, 403), ({'selected_option':'reject_execution'}, 403),
+                    ({'additional_wall_time_hours':'NaN'}, 400), ({'additional_wall_time_hours':'-1'}, 400)):
+            assert _request(base, 'POST', endpoint, form={**form, **bad})[0] == expected
             assert f.runtime.approvals.status(aid).status == 'pending'
         from scidiscovery.artifact_agent.service.approvals import BudgetExtensionAccountingError
         with monkeypatch.context() as patch:
@@ -104,6 +105,18 @@ def test_budget_extension_http_roundtrip_replay_recovery_and_scope(tmp_path, mon
             assert b'fixture budget programming defect' not in body
             assert 'fixture budget programming defect' in caplog.text
             assert f.runtime.approvals.status(aid).status == 'pending'
+        from scidiscovery.artifact_agent.service.executions import ExecutionApprovalError
+        import json
+        for error in (ExecutionApprovalError('fixture policy unavailable'),
+                      json.JSONDecodeError('fixture stored record damaged', '', 0)):
+            with monkeypatch.context() as patch:
+                def broken_scope(*_, **kwargs):
+                    raise error
+                patch.setattr(service, '_extension_scope', broken_scope)
+                status, _, body = _request(base, 'POST', endpoint, form=form)
+                assert status == 409
+                assert b'fixture' not in body
+                assert f.runtime.approvals.status(aid).status == 'pending'
         # Crash after recording the human decision: an identical HTTP retry repairs
         # the budget projection without approving twice or incrementing twice.
         apply = service.apply_budget_extension

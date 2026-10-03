@@ -352,6 +352,11 @@ pending delivery. Subsequent task status and pre-finalization reconciliation cre
 the same idempotent execution receipt once results have been collected, including
 collected results from cancelled or failed executions. A terminal state alone does
 not create a receipt or trigger collection.
+Final delivery refreshes solver status before reconciling collected receipts. A
+successful execution without collected results, or a terminal execution with an
+active/uncertain collector, blocks finalization; a stopped failed/cancelled execution
+can still support a limited report. A collector finishing during refresh is reconciled
+in that same submission attempt. Status observation never implicitly starts collection.
 Read/export accept exact output identifiers or verified solver-relative filenames.
 Finalization identifies missing chain edges and lists bounded available aliases,
 without selecting scientific validity on the Worker's behalf.
@@ -381,9 +386,27 @@ and matching calculation attempts, including exact recovery namespaces, rather t
 unrelated later receipts. Existing proofs retain their original bytes. Legacy missing
 proofs can be repaired even when the whole Run exceeds snapshot limits; a genuinely
 oversized dependency closure returns `reference_proof_limit` without truncation.
+The aggregate input/receipt/access binding map has no additional 128-entry gate.
+Per-collection and per-attempt limits remain; all writers and recovery/finalization
+use the same 1 MiB encoded-manifest budget. New receipts check the complete snapshot
+before committing, while identical receipt retries reuse their fixed proof. Oversize
+legacy data receives an explicit diagnostic to preserve materials and continue from
+selected exact sources, not an opaque runtime error or a silently truncated proof.
 Budget-extension accounting maps known record/integrity failures to a repairable UI
 conflict; unexpected technical errors retain their traceback in server logs and return
 the ordinary service-unavailable response without sealing a decision.
+Grant validation and projection resolve one frozen budget owner from exact policy
+history, even when its current pointer is missing; conflicting history is rejected.
+Reauthorization also checks that history, so losing a pointer cannot change the pool.
+Approval forms use 400 for malformed fields, 403 for access denial, and 409 for
+known execution/record conflicts. New zero-extension decisions omit the optional
+field; already sealed explicit-zero decisions preserve their bytes. Nonzero grants
+still require a grant-aware reader when downgrading.
+Parent derivation uses original control receipt edges when present, verifying their
+membership in the immutable envelope. Without those edges, only exact producer input
+parents can resolve historical ambiguity; no unadvertised kind constraint is invented.
+UI presentation accumulates direct parents only until its byte budget is reached,
+retaining an explicit omission marker instead of building the entire list first.
 
 New curve scores identify the support-aware algorithm as `curve-operators.v2` or
 `analysis-curve-operators.v2`. Historical v1 calculations still require exact source

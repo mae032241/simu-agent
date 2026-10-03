@@ -112,3 +112,57 @@ def test_missing_later_case_preserves_completed_generated_files(tmp_path, missin
         archive_entries=(), collect_generated_outputs=True)
     assert 'finished-case.plx' in {item['relative_path'] for item in records}
     assert bool(errors) == missing_required  # Partial bytes never turn failure into success.
+
+
+@pytest.mark.parametrize('collect_pending', [False, True])
+def test_final_delivery_waits_for_terminal_execution_collection(tmp_path, monkeypatch, collect_pending):
+    f = experiment(tmp_path, monkeypatch, seconds=60)
+    start(f)
+    eid = execution(f).object_id
+    f.adapter.state = 'succeeded'
+    if collect_pending:
+        f.worker.call_tool('worker_experiment_execute', {'action': 'advance'})
+        with monkeypatch.context() as patch:
+            patch.setattr(f.coordinator.collection, 'collect', lambda *a, **kw: {'state': 'pending'})
+            f.worker.call_tool('worker_experiment_execute', {'action': 'collect'})
+    rejected = submit(f, [f.alias], outcome='blocked')
+    assert rejected['state'] == 'rejected', rejected
+    assert 'experiment_outstanding_work' in json.dumps(rejected)
+    assert f.runs.status(f.run_id).state == 'running'
+    assert f.runtime.executions.status(eid).state == 'succeeded'
+    assert f.runtime.executions.status(eid).result_ref is None
+    f.coordinator.collection.collect(eid)
+    # Finalization itself must publish the completed collector's receipt.
+    assert submit(f, [f.alias], outcome='blocked')['state'] == 'completed'
+    receipts = [r for r in f.runs.tool_evidence(f.run_id) if r['metadata'].get('kind') == 'experiment_execution']
+    assert len(receipts) == 1
+    assert f.adapter.submits == 1
+
+
+@pytest.mark.parametrize('terminal', ['failed', 'cancelled'])
+def test_failed_solver_still_waits_for_active_collector(tmp_path, monkeypatch, terminal):
+    f = experiment(tmp_path, monkeypatch, seconds=60)
+    start(f)
+    f.adapter.state = terminal
+    with monkeypatch.context() as patch:
+        patch.setattr(f.coordinator.collection, 'summary', lambda _: {'state': 'running'}, raising=False)
+        rejected = submit(f, [f.alias], outcome='blocked')
+        assert rejected['state'] == 'rejected', rejected
+    # A failure without an active collector may still report its limitation.
+    assert submit(f, [f.alias], outcome='blocked')['state'] == 'completed'
+
+
+def test_collection_completed_during_final_sync_is_reconciled(tmp_path, monkeypatch):
+    f = experiment(tmp_path, monkeypatch, seconds=60)
+    start(f)
+    eid = execution(f).object_id
+    f.adapter.state = 'succeeded'
+    sync = f.coordinator.bridge.sync
+    def finish_while_syncing(**kwargs):
+        result = sync(**kwargs)
+        f.coordinator.collection.collect(eid)
+        return result
+    monkeypatch.setattr(f.coordinator.bridge, 'sync', finish_while_syncing)
+    assert submit(f, [f.alias], outcome='blocked')['state'] == 'completed'
+    assert len([r for r in f.runs.tool_evidence(f.run_id)
+        if r['metadata'].get('kind') == 'experiment_execution']) == 1

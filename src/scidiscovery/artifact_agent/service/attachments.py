@@ -102,7 +102,7 @@ def publish_attachments(runs, run_id, request, *, workspace):
             existing = {r[0]: json.loads(r[1]) for r in connection.execute('SELECT evidence_key,record_json FROM run_tool_evidence WHERE run_id=?',(run_id,))}
             new = [item for item in staged if item[-1] not in existing]
             if (len(attachments) + len(new) > settings.max_files
-                    or len(records) + len(new) > 128
+                    or sum(r.get('record_type') != 'reference_access' for r in records) + len(new) > 128
                     or sum(r['size_bytes'] for r in attachments) + sum(item[2] for item in new) > settings.max_total_bytes):
                 raise ToolInputError("attachment_publication_invalid", 'The task attachment count or total byte budget would be exceeded')
             for path, digest, size, media, metadata, key in staged:
@@ -132,12 +132,8 @@ def publish_attachments(runs, run_id, request, *, workspace):
                     records.append(record); existing[key] = record
                 result.append({'reference':record['alias'], 'file_name':metadata['file_name'],
                     'purpose':metadata['purpose'], 'media_type':media, 'size_bytes':size})
-            snapshot = runs._encode_evidence_snapshot(run,
+            runs._encode_evidence_snapshot(run,
                 [r for r in records if r.get('record_type') != 'reference_access'],
                 [r for r in records if r.get('record_type') == 'reference_access'], recovery, attempts)
-            from ..schema.tool_evidence import ToolEvidenceManifest
-            ToolEvidenceManifest.model_validate_json(snapshot)
-            if len(snapshot) > 1024 * 1024:
-                raise ToolInputError("attachment_publication_invalid", 'Controlled source manifest would exceed its byte limit')
         runs._refresh_evidence_schema(run_id)
         return {'state':'retained', 'files':result, 'qualification':'not_evaluated'}

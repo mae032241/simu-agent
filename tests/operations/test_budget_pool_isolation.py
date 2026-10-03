@@ -83,3 +83,36 @@ def test_bad_decision_is_isolated_and_projected_grants_use_the_ledger(archive_sy
         with pytest.raises(BudgetExtensionAccountingError, match='当前预算池'):
             service.record_budget_extension_decision(**requests[1])
         assert runtime.approvals.status(requests[1]['approval_id']).status == 'pending'
+
+
+def test_grant_projection_recovers_missing_policy_pointer(archive_system, monkeypatch):
+    runtime, ids, requests = grants(archive_system)
+    service = runtime.executions
+    scope = service._extension_scope(ids[0])
+    seal_without_projection(service, requests[0], monkeypatch)
+    with service._connect() as db:
+        db.execute('DELETE FROM execution_current_policy WHERE execution_id=?', (ids[0],))
+    assert service._extension_scope(ids[0]) == scope
+    for _ in range(2):
+        service.apply_budget_extension(requests[0]['approval_id'])
+    with service._connect() as db:
+        rows = db.execute('SELECT executor,budget_key,additional_seconds FROM execution_budget_extensions WHERE execution_id=?', (ids[0],)).fetchall()
+    assert len(rows) == 1
+    assert tuple(rows[0]) == (*scope, 60)
+
+
+def test_lost_policy_pointer_cannot_move_budget_pool(archive_system):
+    from scidiscovery.artifact_agent.schema.execution import ExecutionAdmission
+    from scidiscovery.artifact_agent.service.executions import ExecutionApprovalError
+    runtime, _, requests = grants(archive_system)
+    service = runtime.executions
+    eid = service.execution_for_approval(requests[2]['approval_id'])
+    with service._connect() as db:
+        record = service._current_policy_record(db, eid)
+        db.execute('DELETE FROM execution_current_policy WHERE execution_id=?', (eid,))
+        db.execute('DELETE FROM execution_budget_reservations WHERE execution_id=?', (eid,))
+    admission = ExecutionAdmission.model_validate(record['admission']).model_copy(update={'budget_key': 'a'*64})
+    with pytest.raises(ExecutionApprovalError, match='frozen budget owner'):
+        service.authorize_policy(execution_id=eid, admission=admission,
+            compiled_identity=service.request(eid).compiled_identity)
+    assert service._extension_scope(eid)[1] == record['admission']['budget_key']

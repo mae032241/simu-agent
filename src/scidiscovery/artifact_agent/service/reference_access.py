@@ -780,12 +780,10 @@ class ReferenceAccessMixin:
                     if any(item.source_name == alias and item.artifact_ref != target for item in value.inputs) or any(
                             r['alias'] == alias and r.get('record_type') != 'reference_access' for r in current):
                         raise ReferenceAccessError('reference_alias_conflict', 'Controlled reference alias conflicts with an existing source.')
-                    snapshot = self._encode_evidence_snapshot(value,
+                    self._encode_evidence_snapshot(value,
                         [r for r in current if r.get('record_type') != 'reference_access'],
                         [*[r for r in current if r.get('record_type') == 'reference_access'], record],
-                        recovery, self.tool_attempts(run_id))
-                    if len(snapshot) > 1024 * 1024:
-                        raise ReferenceAccessError('reference_manifest_limit', 'Controlled source manifest would exceed its byte limit.')
+                        recovery, self.tool_attempts(run_id, connection=connection))
                     ordinal = len(current) + 1
                     connection.execute('INSERT INTO run_tool_evidence VALUES (?,?,?,?,?)', (run_id, ordinal, request_key, canonical_json(record), alias))
                 self._reference_settle(connection, value, call, response, request_key=request_key)
@@ -884,10 +882,8 @@ class ReferenceAccessMixin:
                 accesses = [r for r in current if r.get('record_type') == 'reference_access']
                 if len(accesses) >= policy.max_records:
                     raise RunCheckerError('preserved reference records exceed declared limit', category='integrity_failure')
-                snapshot = self._encode_evidence_snapshot(value, [r for r in current if r.get('record_type') != 'reference_access'],
-                    [*accesses, record], recovery, self.tool_attempts(run_id))
-                if len(snapshot) > 1024 * 1024:
-                    raise RunCheckerError('preserved reference manifest exceeds byte limit', category='integrity_failure')
+                self._encode_evidence_snapshot(value, [r for r in current if r.get('record_type') != 'reference_access'],
+                    [*accesses, record], recovery, self.tool_attempts(run_id, connection=connection))
                 connection.execute('INSERT INTO run_tool_evidence VALUES (?,?,?,?,?)',
                     (run_id, len(current) + 1, key, canonical_json(record), alias))
 

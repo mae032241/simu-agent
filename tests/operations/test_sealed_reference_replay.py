@@ -213,3 +213,35 @@ def test_orphan_proof_cannot_override_receipt_after_rollback(tmp_path, monkeypat
     proof = runs.reference_manifest(owner, subject_ref=ref)
     matches = [r for r in json.loads(runs.artifacts.read(proof))['records'] if r['artifact_ref'] == record['artifact_ref']]
     assert len(matches) == 1 and matches[0]['alias'] == record['alias'] == 'tool_evidence_002'
+
+
+@pytest.mark.parametrize('receipt', ['exact', 'legacy', 'forged'])
+def test_parent_derivation_uses_sealed_control_edges(tmp_path, monkeypatch, receipt):
+    from types import SimpleNamespace
+    from tests.operations.test_tcad_result_analysis import analysis_system
+    from scidiscovery.artifact_agent.schema.artifact import ArtifactRegistration
+    from scidiscovery.operations.input_validation import OperationInvocationError
+    _, runtime, root, _, artifacts, _ = analysis_system(tmp_path)
+    correct = artifacts['package'].ref
+    envelope = runtime.artifacts.catalog(correct)
+    extra = runtime.artifacts.register(runtime.artifacts.read(correct), ArtifactRegistration(
+        kind=envelope.kind, schema_id=envelope.schema_id, payload_schema_version=1,
+        media_type=envelope.media_type, creator=runtime.actor), idempotency_key='other-package').ref
+    anchor = runtime.artifacts.register(b'{}', ArtifactRegistration(kind='experiment_material', schema_id='opaque',
+        payload_schema_version=1, media_type='application/json', creator=runtime.actor,
+        parent_refs=(extra, correct) if receipt != 'forged' else (extra,),
+        labels={'tool_producer_run':'fixture', 'tool_name':'fixture_tool'}), idempotency_key='control-anchor').ref
+    resolver = root.facade._input_origins()
+    record = {'artifact_ref':anchor.model_dump(mode='json'), 'tool_name':'fixture_tool'}
+    if receipt != 'legacy':
+        record['control_parents'] = [correct.model_dump(mode='json')]
+    monkeypatch.setattr(runtime.runs, 'status', lambda _: SimpleNamespace(
+        instance_id=resolver._instance_id(), inputs=(SimpleNamespace(artifact_ref=extra),)))
+    monkeypatch.setattr(runtime.runs, 'tool_evidence', lambda _: [record])
+    port = SimpleNamespace(name='package', schema_id=correct.schema_id,
+        media_types=('application/json',), max_item_bytes=1000000)
+    if receipt == 'forged':
+        with pytest.raises(OperationInvocationError):
+            resolver._derived_parent_refs(anchor, port)
+    else:
+        assert resolver._derived_parent_refs(anchor, port) == [correct]

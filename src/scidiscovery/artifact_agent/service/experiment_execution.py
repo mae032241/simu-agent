@@ -100,6 +100,15 @@ class ExperimentExecution:
                 continue
             self._reconcile_authorization(binding.object_id)
             status = self.executions.status(binding.object_id)
+            if status.external_run_id is not None and status.state in {"submitted", "running", "cancelling"}:
+                # Final delivery must not depend on the next background observation.
+                self.bridge.sync(execution_id=binding.object_id, diagnostic_scope="instance:" + run.instance_id)
+                status = self.executions.status(binding.object_id)
+            summary = getattr(self.collection, 'summary', None)
+            collection = summary(binding.object_id) if callable(summary) and status.state in {
+                'succeeded', 'failed', 'cancelled'} else {}
+            # A collector may finish while its summary is being observed.
+            status = self.executions.status(binding.object_id)
             if status.state == 'collected' and run.accepted_candidate_digest is None:
                 # Background collection can finish without another Worker call.
                 # Reconcile its receipt before the finalizer snapshots materials.
@@ -114,15 +123,17 @@ class ExperimentExecution:
                             allowed_ports=('tool_evidence', 'recovery_manifest_output'), **values))
                     name = binding.name.removeprefix('experiment-' + origin + '-')
                     self._execution_status(context, SimpleNamespace(name=name), binding.object_id, implementation, seal=True)
-            if status.external_run_id is not None and status.state in {"submitted", "running", "cancelling"}:
-                # Final delivery must not depend on the next background observation.
-                self.bridge.sync(execution_id=binding.object_id, diagnostic_scope="instance:" + run.instance_id)
-                status = self.executions.status(binding.object_id)
-            if status.state not in {"succeeded", "failed", "cancelled", "collected", "abandoned"}:
+            if (status.state not in {"failed", "cancelled", "collected", "abandoned"}
+                    or (status.state != 'collected' and collection.get('state') in {
+                        'pending', 'running', 'stopping', 'stop_pending', 'unknown'})):
                 name = binding.name.removeprefix("experiment-" + origin + "-")
                 blockers.append(contract_diagnostic("experiment_outstanding_work", phase="protocol",
                     affected_action="submit", repairable=True,
-                    message=f"Execution {name!r} is {status.state}. Read worker_experiment_execute(action='status', name={name!r}); finish it or call action='cancel' with the same name, then resubmit the unchanged report."))
+                    message=(f"Execution {name!r} has undelivered results (collection={collection.get('state', 'not_started')}). "
+                        f"Use worker_experiment_execute(action='collect', name={name!r}) if collection has not started; "
+                        "if it is already active, read status until collected, then resubmit the report. Do not rerun the solver."
+                        if status.state in {'succeeded', 'failed', 'cancelled'} else
+                        f"Execution {name!r} is {status.state}. Read worker_experiment_execute(action='status', name={name!r}); finish it or call action='cancel' with the same name, then resubmit the unchanged report.")))
         blockers.extend(active)
         if blockers:
             from ...operation_contract import bounded_diagnostics

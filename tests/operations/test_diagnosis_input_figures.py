@@ -90,3 +90,23 @@ def test_diagnosis_page_serves_original_input_png(diagnosis):
         assert _request(base, "GET", route.replace(s.a, s.b), cookie=cookie)[0] == 403
     finally:
         ui.stop()
+
+
+def test_parent_presentation_stops_serializing_at_byte_budget(diagnosis, monkeypatch):
+    from scidiscovery.artifact_agent.approval_ui.view_models import MAX_PAYLOAD_BYTES, json_size
+    s, report, _, image = diagnosis
+    calls = []
+    class Parent:
+        artifact_id = image.artifact_id
+        def model_dump(self, **kwargs):
+            calls.append(True)
+            return image.ref.model_dump(**kwargs)
+    # Already loaded metadata may be large; rendering must not duplicate all of it.
+    envelope = SimpleNamespace(**report.model_dump(), ref=report.ref)
+    envelope.parent_refs = (Parent(),) * 100000
+    monkeypatch.setattr(s.model, '_artifact_view', lambda *_: dict(payload_state='available',
+        payload={}, gaps=[{'code':'provenance_page_limit'}]))
+    view = s.model._presentation_view(s.a, envelope)
+    assert 100 < len(calls) < 1000
+    assert json_size(view['provenance']) <= MAX_PAYLOAD_BYTES
+    assert any(g['code'] == 'provenance_page_limit' for g in view['gaps'])

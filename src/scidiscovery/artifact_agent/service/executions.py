@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from contextlib import nullcontext
 import json
 import os
 import sqlite3
@@ -526,11 +527,13 @@ class ExecutionService:
         return None if row is None else json.loads(row["record_json"])
 
     def _record_policy_decision(self, connection, execution_id, record):
-        prior = self._current_policy_record(connection, execution_id)
-        if prior is not None and any(prior[key] != record[key] for key in ("request_ref", "payload_ref", "compiled_identity")):
-            raise ExecutionApprovalError("policy reauthorization changed the exact execution identity")
-        if prior is not None and any(prior["admission"][key] != record["admission"][key] for key in ("budget_key", "budget")):
-            raise ExecutionApprovalError("policy reauthorization changed the frozen budget owner or request")
+        # Pointer loss cannot erase the frozen owner and request of past policy.
+        for stored in connection.execute('SELECT record_json FROM execution_policy_authorizations WHERE execution_id=?', (execution_id,)):
+            prior = json.loads(stored['record_json'])
+            if any(prior[key] != record[key] for key in ("request_ref", "payload_ref", "compiled_identity")):
+                raise ExecutionApprovalError("policy reauthorization changed the exact execution identity")
+            if any(prior["admission"][key] != record["admission"][key] for key in ("budget_key", "budget")):
+                raise ExecutionApprovalError("policy reauthorization changed the frozen budget owner or request")
         digest = canonical_sha256(record)
         connection.execute("INSERT OR IGNORE INTO execution_policy_authorizations VALUES (?, ?, ?, ?)",
             (execution_id, digest, canonical_json(record), _timestamp()))
@@ -636,15 +639,34 @@ class ExecutionService:
             raise ExecutionApprovalError('Approval does not bind the exact execution')
         return request.execution_id
 
-    def _extension_scope(self, execution_id):
-        with self._connect() as db:
-            record = self._current_policy_record(db, execution_id)
-            if record is None:
-                raise ExecutionApprovalError('Execution has no cumulative budget policy')
-            admission = ExecutionAdmission.model_validate(record['admission'])
-            if 'wall_time_seconds' not in admission.allowance:
-                raise ExecutionApprovalError('Execution has no wall time budget')
-            return self._row(db, execution_id)['executor'], admission.budget_key
+    def _extension_scope(self, execution_id, *, connection=None):
+        """Recover immutable grant ownership independently of the policy pointer."""
+        with (self._connect() if connection is None else nullcontext(connection)) as db:
+            row = self._row(db, execution_id)
+            request_ref = _parse_ref(row['request_ref_json'])
+            request = ExecutionRequest.model_validate_json(self.artifacts.read(request_ref), strict=True)
+            scopes = set()
+            budgets = set()
+            for history in db.execute('SELECT digest, record_json FROM execution_policy_authorizations WHERE execution_id=?', (execution_id,)):
+                record = json.loads(history['record_json'])
+                if (canonical_sha256(record) != history['digest']
+                        or _parse_ref(canonical_json(record['request_ref'])) != request_ref
+                        or _parse_ref(canonical_json(record['payload_ref'])) != request.payload_ref
+                        or record['compiled_identity'] != request.compiled_identity.model_dump(mode='json')):
+                    raise ExecutionApprovalError('Budget policy history does not bind the exact execution')
+                admission = ExecutionAdmission.model_validate(record['admission'])
+                if 'wall_time_seconds' not in admission.allowance:
+                    raise ExecutionApprovalError('Execution has no wall time budget')
+                scopes.add((row['executor'], admission.budget_key))
+                budgets.add(canonical_json(admission.budget))
+            if len(scopes) != 1 or len(budgets) != 1:
+                raise ExecutionApprovalError('Execution has no unique immutable budget policy history')
+            scope = next(iter(scopes))
+            reservation = db.execute('SELECT executor, budget_key, reserved_json FROM execution_budget_reservations WHERE execution_id=?', (execution_id,)).fetchone()
+            if reservation is not None and ((reservation['executor'], reservation['budget_key']) != scope
+                    or canonical_json(json.loads(reservation['reserved_json'])) not in budgets):
+                raise ExecutionApprovalError('Budget reservation differs from its immutable policy history')
+            return scope
 
     def validate_budget_extension(self, approval_id, seconds):
         from .approvals import ApprovalError, ApprovalAccessDenied, BudgetExtensionAccountingError
@@ -723,15 +745,9 @@ class ExecutionService:
                 if _parse_ref(existing[0]) != status.decision_ref:
                     raise ExecutionApprovalError('Budget extension decision identity changed')
                 return
-            record = self._current_policy_record(db, execution_id)
-            if record is None:
-                raise ExecutionApprovalError('Execution has no cumulative budget policy')
-            admission = ExecutionAdmission.model_validate(record['admission'])
-            row = self._row(db, execution_id)
-            if 'wall_time_seconds' not in admission.allowance:
-                raise ExecutionApprovalError('Execution has no wall time budget')
+            executor, budget_key = self._extension_scope(execution_id, connection=db)
             db.execute('INSERT INTO execution_budget_extensions VALUES (?, ?, ?, ?, ?, ?, ?)',
-                (decision.decision_id, execution_id, row['executor'], admission.budget_key,
+                (decision.decision_id, execution_id, executor, budget_key,
                  decision.additional_wall_time_seconds, status.decision_ref.canonical_json(), decision.decided_at))
 
     def budget_admission(self, *, executor, admission, execution_id=None, allow_denial=False):

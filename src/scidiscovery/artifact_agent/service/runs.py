@@ -47,6 +47,7 @@ from .local_workspace import (
     WorkspaceOutputError,
     WorkspaceInput,
 )
+from .reference_proofs import ReferenceProofError
 from .run_assignment import assignment_json, result_schema_json, revision_draft_json
 from .run_current import RunCurrentGuard
 from .run_outputs import (
@@ -1464,6 +1465,10 @@ class RunService(ToolEvidenceMixin):
             )
         except (RunOutputError, RunCheckerError):
             raise
+        except ReferenceProofError as error:
+            raise RunOutputError('The complete control evidence proof cannot be sealed.', details=tuple(
+                contract_diagnostic(item['code'], phase='protocol', affected_action='submit',
+                    repairable=item['repairable'], message=item['message']) for item in error.details)) from error
         except WorkspaceOutputError as error:
             if value.accepted_candidate_digest is None:
                 raise RunOutputError("candidate files require correction", details=(

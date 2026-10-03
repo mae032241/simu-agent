@@ -18,6 +18,8 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlencode, urlparse
 from typing import TYPE_CHECKING
 
+from pydantic import ValidationError
+from ..service.executions import ExecutionApprovalError
 from ..schema.approval import LocalIdentityRef
 from ..service.approvals import (
     ApprovalAccessDenied,
@@ -886,6 +888,9 @@ class ApprovalUI:
                     raise ValueError('追加时长无效') from error
                 if _required(form, "confirm") != "confirm":
                     raise ValueError("confirmation mismatch")
+            except (UnicodeDecodeError, ValueError):
+                return self._error(handler, HTTPStatus.BAD_REQUEST, '审批表单格式或字段无效。')
+            try:
                 if self._approval_frozen(parts[1]):
                     return self._error(handler, HTTPStatus.CONFLICT, "实例正在维护或已经归档；此审批只可读取。")
                 review = self.service.review(parts[1], access_token=token)
@@ -902,9 +907,6 @@ class ApprovalUI:
                         if owner is None or self.read_model is None:
                             raise ApprovalError('当前审批没有可调整的累计执行预算')
                         executions = self._model(owner[0].instance_id).executions
-                        execution_id = executions.execution_for_approval(parts[1])
-                        if 'wall_time_seconds' not in executions.authorization(execution_id).get('allowance', {}):
-                            raise ApprovalError('当前执行没有累计耗时预算')
                     decide = executions.record_budget_extension_decision if executions is not None else self.service.record_ui_decision
                     decision_ref = decide(
                         approval_id=parts[1],
@@ -919,8 +921,13 @@ class ApprovalUI:
                     )
             except BudgetExtensionAccountingError as error:
                 return self._error(handler, HTTPStatus.CONFLICT, str(error))
-            except (UnicodeDecodeError, ValueError, ApprovalAccessDenied):
+            except ApprovalAccessDenied:
                 return self._error(handler, HTTPStatus.FORBIDDEN)
+            except ExecutionApprovalError:
+                return self._error(handler, HTTPStatus.CONFLICT, '执行授权与预算记录不一致，请修复相关控制记录后重试。')
+            except (ValidationError, json.JSONDecodeError, UnicodeDecodeError):
+                LOGGER.exception('stored approval or budget record is invalid')
+                return self._error(handler, HTTPStatus.CONFLICT, '已有审批或预算记录无法校验，请修复记录后重试。')
             except ApprovalExpired:
                 return self._error(handler, HTTPStatus.GONE)
             except (ApprovalError, CASIntegrityError):

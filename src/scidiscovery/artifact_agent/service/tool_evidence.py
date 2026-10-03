@@ -16,7 +16,7 @@ from ..schema.refs import ArtifactRef
 from .run_outputs import InputBindingDescriptor, RunCheckerError
 from .run_records import RunError, RunStateConflict, RunContractUnavailable
 from .reference_access import ReferenceAccessMixin
-from .reference_proofs import material_snapshot, source_bindings
+from .reference_proofs import encode_snapshot, material_snapshot, source_bindings
 
 _UNPREPARED = object()
 
@@ -291,13 +291,13 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
         value = self._require_running(run_id)
         request = arguments.get("request", arguments) if isinstance(arguments, dict) else arguments
         digest = hashlib.sha256(canonical_json(request)).hexdigest()
+        recovery = self.recovery_tool_proof(value)
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = self._row(connection, run_id)
             if row['state'] != 'running' or row['accepted_candidate_digest'] is not None:
                 raise RunStateConflict("candidate no longer accepts tool attempts")
             count = connection.execute("SELECT COUNT(*) FROM run_activity WHERE run_id=? AND activity='tool_attempt_started'", (run_id,)).fetchone()[0]
-            recovery = self.recovery_tool_proof(value)
             if count + _recovery_attempt_count(recovery) >= 64:
                 raise ToolAttemptLimit()
             record = ToolAttempt(attempt_key=f"attempt_{count+1:03d}", tool_name=tool.name,
@@ -504,6 +504,13 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
                         'control_parents': [ref.model_dump(mode='json') for ref in trusted_parent_refs]}
                 connection.execute('INSERT INTO run_tool_evidence VALUES (?,?,?,?,?)',(run_id,ordinal,key,canonical_json(record),alias))
                 all_records.append(record)
+                # Apply the same complete manifest budget used by finalization,
+                # references and attachments before accepting a new receipt.
+                self._encode_evidence_snapshot(value,
+                    [r for r in all_records if r.get('record_type') != 'reference_access'],
+                    [r for r in all_records if r.get('record_type') == 'reference_access'],
+                    ToolRecoveryProof.model_validate_json(canonical_json(recovery)) if recovery else None,
+                    self.tool_attempts(run_id, connection=connection))
             # The receipt transaction supplies its own uncommitted records. Proof
             # failure rolls back the receipt and public binding; existing receipts
             # pass through the same repair path. CAS registration is idempotent.
@@ -590,14 +597,12 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
     @staticmethod
     def _encode_evidence_snapshot(value, records, accesses, recovery, attempts):
         bindings = source_bindings(value, records, accesses)
-        if len(bindings) > 128:
-            raise ValueError('controlled source binding limit exceeded')
         if len(attempts) + _recovery_attempt_count(recovery) > 64:
             raise RunCheckerError('tool attempt proof budget exceeded')
         # Access evidence records identity and provided scope. Tool delivery
         # bodies (including old host paths) belong only to the local replay log.
         published_accesses = [{key: item for key, item in record.items() if key != 'response'} for record in accesses]
-        return canonical_json({'schema_version':1,'records':records,'accesses':published_accesses,'bindings':bindings,
+        return encode_snapshot({'schema_version':1,'records':records,'accesses':published_accesses,'bindings':bindings,
             'attempts':attempts, 'recovery':recovery})
 
     def _evidence_snapshot(self, run_id):

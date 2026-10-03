@@ -406,14 +406,22 @@ def test_unsealed_and_unpaired_manifest_roots_fail_closed(harness):
     assert not harness.reference_access_records('reader')
 
 
-def test_binding_count_is_checked_before_committing_access(harness):
+def test_binding_aggregate_does_not_reject_bounded_reference_access(harness):
     _, root, handle = prepared(harness)
     harness.inputs['reader'] = tuple(SimpleNamespace(source_name=f'root_{index}', port_name='reference_material', artifact_ref=root)
                                      for index in range(128))
     response = harness.call('reader', action='read', reference=handle)
-    assert response['state'] == 'rejected'
-    assert 'binding limit' in response['message']
-    assert not harness.reference_access_records('reader')
+    assert response.get('state') != 'rejected', response
+    assert len(harness.reference_access_records('reader')) == 1
+    snapshot = json.loads(harness._encode_evidence_snapshot(harness.status('reader'), [],
+        harness.reference_access_records('reader'), None, []))
+    assert len(snapshot['bindings']) == 129
+    harness.run('continued', [root] * 128, parent='reader')
+    harness.adopt_reference_access('continued')
+    assert harness.reference_access_records('continued')[0]['alias'] == response['source']
+    recovered = json.loads(harness._encode_evidence_snapshot(harness.status('continued'), [],
+        harness.reference_access_records('continued'), None, []))
+    assert len(recovered['bindings']) == 129
 
 
 def test_adoption_retains_committed_fact_when_worker_call_budget_is_exhausted(harness):

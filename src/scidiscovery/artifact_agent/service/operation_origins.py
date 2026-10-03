@@ -418,6 +418,33 @@ class OperationOrigins:
             for label, port_name, _ in expected_labels
         )
 
+    def _derived_parent_refs(self, ref, port):
+        """Prefer exact control receipt edges over inherited task input parents."""
+        envelope = self.artifacts.verify(ref)
+        parents = envelope.parent_refs
+        producer_id = envelope.labels.get('tool_producer_run')
+        producer = None
+        if self.runs is not None and producer_id and envelope.labels.get('tool_name'):
+            producer = self.runs.status(producer_id)
+            if producer.instance_id != self._instance_id():
+                raise OperationInvocationError('input_origin_unavailable', port=port.name)
+            receipts = [item for item in self.runs.tool_evidence(producer_id)
+                if ArtifactRef.model_validate(item['artifact_ref']) == ref]
+            if len(receipts) != 1 or receipts[0]['tool_name'] != envelope.labels['tool_name']:
+                raise OperationInvocationError('input_origin_unavailable', port=port.name)
+            if 'control_parents' in receipts[0]:
+                direct = tuple(ArtifactRef.model_validate(item) for item in receipts[0]['control_parents'])
+                if any(parent not in parents for parent in direct):
+                    raise OperationInvocationError('input_origin_unavailable', port=port.name)
+                parents = direct
+                producer = None  # Explicit edges require no historical inference.
+        matches = [parent for parent in parents
+            if self._artifact_matches_input_port(self.artifacts.catalog(parent), port)]
+        if producer is not None and len(matches) > 1:
+            inherited = {item.artifact_ref for item in producer.inputs}
+            matches = [parent for parent in matches if parent not in inherited]
+        return matches
+
     @staticmethod
     def _artifact_matches_input_port(envelope: Any, port: Any) -> bool:
         return bool(
@@ -478,8 +505,7 @@ class OperationOrigins:
                 # No public parent alias, completed author, head or global lookup
                 # is needed to bind a control-owned typed execution package.
                 refs = list(dict.fromkeys(parent for ref in refs
-                    for parent in self.artifacts.verify(ref).parent_refs
-                    if self._artifact_matches_input_port(self.artifacts.catalog(parent), port)))
+                    for parent in self._derived_parent_refs(ref, port)))
                 private_names = {ref: anchors[0].artifact_name for ref in refs}
             elif rule.select != "subject":
                 if len(refs) != 1:

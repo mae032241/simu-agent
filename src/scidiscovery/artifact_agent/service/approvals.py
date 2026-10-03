@@ -761,7 +761,7 @@ class ApprovalService:
                 decided_by=decided_by,
                 decided_at=prepared.decided_at,
                 ui_receipt=receipt,
-                additional_wall_time_seconds=additional_wall_time_seconds,
+                **({"additional_wall_time_seconds": additional_wall_time_seconds} if additional_wall_time_seconds else {}),
             )
             decision_envelope = self.artifacts.register(
                 decision.canonical_json(),
