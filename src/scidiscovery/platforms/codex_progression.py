@@ -261,10 +261,12 @@ class CodexProgressionHost(CodexRootHost):
 
 
 class CodexProgressionFactory:
-    def __init__(self, *, project_root, state_root, socket_path, approval_base_url, command=None, catalog=None):
+    def __init__(self, *, project_root, state_root, socket_path, approval_base_url, command=None, catalog=None,
+                 permissions: RootPermissions | None = None):
         self.project_root, self.state_root = Path(project_root), Path(state_root)
         self.socket_path, self.approval_base_url = str(socket_path), approval_base_url
         self.command, self.catalog = command, catalog
+        self.permissions = permissions
 
     def root_permissions(self, limits, checkpoint, prior):
         """Frozen goal policy, checked against inherited Worker needs before any launch."""
@@ -273,6 +275,12 @@ class CodexProgressionFactory:
         permissions = RootPermissions(limits.get('root_approval_policy', default.root_approval_policy),
             limits.get('root_sandbox', default.root_sandbox),
             limits.get('root_network_access', default.root_network_access))
+        if self.permissions is not None:
+            if (self.permissions.approval_policy != permissions.approval_policy
+                    or self.permissions.sandbox != permissions.sandbox
+                    or self.permissions.network_access != permissions.network_access):
+                raise HostError('root_permissions_incompatible: injected policy differs from frozen goal')
+            permissions = self.permissions
         if self.catalog is None:
             from ..operations.catalog import compile_installed_catalog
             self.catalog = compile_installed_catalog()
@@ -303,6 +311,12 @@ class CodexProgressionFactory:
         checkpoint = json.loads(row['checkpoint_json'])
         prior = RootIdentity(previous['thread_id'], previous['platform_session']) if previous else None
         permissions = self.root_permissions(limits, checkpoint, prior)
+        if permissions.permission_profile is not None:
+            # The named definition stays in private CODEX_HOME, not project/model inputs.
+            permissions.verify_config(personal)
+            if any(key in personal for key in ('sandbox_mode', 'sandbox_workspace_write')):
+                raise HostError('root_permissions_conflicting_override')
+            permissions.verify_options({'config': config})
         directory = self.state_root / 'progression-logs'
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         log = PrivateLog(directory / 'host.stderr', limits['log_bytes'])

@@ -8,6 +8,8 @@ model request. Disconnect does not cancel or prove quiescence of native Workers.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+import json
 import time
 
 from .codex_app_server import AppServer, HostError
@@ -49,22 +51,62 @@ class RootPermissions:
 
     Native child Agents inherit the Root sandbox and network; settings validation
     rejects values that would remove a Worker capability declared in the catalog.
-    Sent and verified on start/resume, sent on every turn. never is not isolation."""
+    Sent and verified on start/resume, sent on every turn. never is not isolation.
+    A named profile freezes its private host definition; this adapter alone does
+    not prove native child inheritance or restrict host-side MCP tools."""
     approval_policy: str = "never"
     sandbox: str = "workspace-write"
     network_access: bool = True
+    permission_profile: str | None = None
+    profile_definition: str | None = None
 
     def __post_init__(self):
         if (self.approval_policy != "never" or self.sandbox not in _SANDBOX_TYPE
                 or type(self.network_access) is not bool
                 or (self.sandbox == "read-only" and self.network_access)):
             raise HostError("root_permissions_unsupported")
+        if self.permission_profile is not None or self.profile_definition is not None:
+            try:
+                definition = json.loads(self.profile_definition)
+                valid = (isinstance(self.permission_profile, str) and bool(self.permission_profile.strip())
+                         and isinstance(definition, dict) and 'extends' not in definition
+                         and isinstance(definition.get('filesystem'), dict) and bool(definition['filesystem'])
+                         and definition.get('network', {}).get('enabled') is self.network_access)
+            except (TypeError, ValueError, AttributeError):
+                valid = False
+            if not valid:
+                raise HostError("root_permissions_unsupported")
+            # Freeze a self-contained definition, including exact path grants.
+            object.__setattr__(self, 'profile_definition', json.dumps(
+                definition, sort_keys=True, separators=(',', ':')))
 
     def declaration(self) -> dict:
-        return {"approval_policy": self.approval_policy, "sandbox": self.sandbox,
-                "network_access": self.network_access}
+        result = {"approval_policy": self.approval_policy, "sandbox": self.sandbox,
+                  "network_access": self.network_access}
+        if self.permission_profile is not None:
+            result['permission_profile'] = {'id': self.permission_profile,
+                'sha256': hashlib.sha256(self.profile_definition.encode()).hexdigest()}
+        return result
+
+    def verify_config(self, config: dict):
+        if self.permission_profile is not None:
+            profiles = config.get('permissions', {}) if isinstance(config, dict) else None
+            if (not isinstance(profiles, dict) or profiles.get(self.permission_profile)
+                    != json.loads(self.profile_definition)):
+                raise HostError('root_permissions_mismatch')
+
+    def verify_options(self, options: dict):
+        if self.permission_profile is None:
+            return
+        config = options.get('config', {})
+        if (any(key in options for key in ('sandbox', 'sandboxPolicy', 'permissions'))
+                or any(key in config for key in ('sandbox_mode', 'sandbox_workspace_write',
+                                                 'permissions', 'default_permissions'))):
+            raise HostError('root_permissions_conflicting_override')
 
     def thread(self) -> dict:
+        if self.permission_profile is not None:
+            return {'approvalPolicy': self.approval_policy, 'permissions': self.permission_profile}
         params = {"approvalPolicy": self.approval_policy, "sandbox": self.sandbox}
         if self.sandbox == "workspace-write":
             # Config.sandbox_workspace_write (exported v2 schema); replaces personal values.
@@ -73,10 +115,17 @@ class RootPermissions:
         return params
 
     def turn(self) -> dict:
+        if self.permission_profile is not None:
+            return {'approvalPolicy': self.approval_policy, 'permissions': self.permission_profile}
         return {"approvalPolicy": self.approval_policy,
                 "sandboxPolicy": {"type": _SANDBOX_TYPE[self.sandbox], "networkAccess": self.network_access}}
 
     def verify(self, result: dict, *, cwd: str):
+        if self.permission_profile is not None:
+            active = result.get('activePermissionProfile', {})
+            if (not isinstance(active, dict) or active.get('id') != self.permission_profile
+                    or active.get('extends') is not None):
+                raise HostError('root_permissions_mismatch')
         sandbox = result.get("sandbox") if isinstance(result, dict) else None
         roots = sandbox.get("writableRoots", []) if isinstance(sandbox, dict) else None
         # The working directory is writable under workspace-write anyway; any other root widens it.
@@ -122,6 +171,8 @@ class CodexRootHost:
         actual = self.connection.rpc("config/read", {"cwd": cwd, "includeLayers": False})
         try:
             require_config(expected_config, actual["config"])
+            if self.permissions is not None:
+                self.permissions.verify_config(actual['config'])
         except (HostError, KeyError, TypeError):
             self.connection.failed = True
             raise
@@ -147,6 +198,7 @@ class CodexRootHost:
             params = {**(options or {}), "cwd": cwd, "ephemeral": False}
             method = "thread/start"
         if self.permissions is not None:
+            self.permissions.verify_options(params)
             declared = self.permissions.thread()
             config = {**params.get("config", {}), **declared.pop("config", {})}
             params.update(declared, **({"config": config} if config else {}))

@@ -49,4 +49,12 @@ Public 准备沿同一 guard 包装运行 `python scripts/prepare_covshift_local
 
 ## 下一环节仍未激活
 
+### Named permission profile 接线（独立审查通过，限定源码边界）
+
+[RootPermissions](../src/scidiscovery/platforms/codex_root_host.py) 可由宿主注入一个自包含的 named profile 与冻结定义，fresh `thread/start`、exact `thread/resume` 和 `turn/start` 使用正式 `permissions` 参数，不同时发送旧 sandbox 覆盖项；`config/read` 的确切定义、返回 active profile 和旧权限投影不一致即拒绝。[Factory](../src/scidiscovery/platforms/codex_progression.py) 注入必须匹配 goal 已冻结的 approval／sandbox／network，仍执行 catalog 能力检查，不新增 AgentSettings／配置 ABI，也不改 Worker／helper 原身份或权限。16 个源码模拟协议／准备边界检查与 1 个原有 Factory 轮换邻接通过；这不是实际平台角色继承证据。
+
+正常宿主独立 `command/exec` 的合成 public／private／同 CODEX_HOME auth-history／禁网／native child canary 已通过（`/tmp/scid-covshift-live-20261004-host-repro-002/result.json`）；其范围不是 Root／Worker／helper。可复用的下一预检为 [probe_covshift_permissions.py](../scripts/probe_covshift_permissions.py)：经现有默认 serial_lock／run_one，fresh 无认证 CODEX_HOME，只挂合成 public 与精确 arg0／native binary／Python runtime；真实 Root 启动、paused Goal set/get/clear、重连 resume 后再次检查原生命令，任何失败返回非 0，不发 turn、不设 active Goal、不绑定实例。调用形式为 `<已审新candidate的python> scripts/probe_covshift_permissions.py --installed-candidate <新candidate目录> --output /tmp/scid-covshift-<新目录> --codex-native <确切native二进制> --native-sha256 <冻结SHA256>`；入口拒绝 prefix／两模块 origin 不属于该安装的情况，记录 candidate source commit、metadata／模块 SHA。当前旧 b150983 installed candidate **不含本轮两模块改动**，须独立审查、提交及新候选字节读回后才能使用，当前不是可执行 installed 资格。源码测试模拟 turn 参数；真实 turn／Worker／helper 未调用，profile runtime 与 paused Goal 预检尚未运行。
+
+`launch_ready=false`：完整 catalog 的 `science.evidence.extract.v1` 固有网络／web_search 声明仍阻止 native 禁网 Root，不能简单将 `root_network_access=false` 绕过校验；宿主 MCP source capture 等另有受控 HTTP／原件读取，不受 native profile 约束。后续需冻结宿主进程级读／出网边界（模型 API 单独放行），或沿已有 catalog constructor 明确构造、审查 custom 任务实例；本环节不实现 catalog filter、不扩大科学资格，也不声称 Agent 已不能看到答案。全角色计量与停止、账户模型可用性、双驱动及可信评分交接仍待完成。
+
 用户已确认 **Native Goal 与 SciDiscovery 各一次、每模式全角色共用 1800 s wall deadline** 的 custom 链路 smoke；不是每个角色各获 30 分钟，也不是原题 4 h 同条件成绩。两模式实际 driver、有效 profile／反馈、任务与模型 API 的网络边界、Root／Worker／helper 的真实读隔离、trusted host-only 隐藏评分、全角色 token／费用上限与停止仍待冻结；不沿用 P6s 4M。原全角色6.1-sol/high提案未激活，alias仍未 runtime核实，progression mode未选；不把开发6.1/xhigh当场次条件。本轮未启动 model／Goal／app-server／科研实例／评分，不授权新科研费用；launch_ready=false。
