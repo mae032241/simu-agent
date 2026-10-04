@@ -671,3 +671,17 @@ def test_actual_native_pending_first_usage_and_terminal_gap(tmp_path,role):
         assert driver.reconcile_control(meter,measured)['coverage']=='observed_with_frontend_receipts'
         assert meter.total()==(142 if role=='helper' else 131) and meter.deadline==1800
     finally:fixture.close()
+
+
+def test_explicit_memory_budget_overrides_both_supervisors():
+    spec={'resources':{'observed_tree_rss_stop_bytes':13000000000,
+        'app_server_tree_rss_bytes':13000000000,'minimum_available_bytes':1000000000,
+        'available_drop_stop_bytes':13000000000}}
+    limits,app=driver.resource_limits(spec)
+    assert app==limits['observed_tree_rss_stop_bytes']==13000000000
+    assert limits['minimum_available_bytes']==1000000000
+    assert limits['available_drop_stop_bytes']==13000000000
+    for bad in ({'app_server_tree_rss_bytes':0},{'unknown':1},
+                {'app_server_tree_rss_bytes':True},{'app_server_tree_rss_bytes':2000000000}):
+        with pytest.raises(ValueError,match='invalid_resource_budget'):
+            driver.resource_limits({'resources':bad})

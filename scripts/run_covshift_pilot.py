@@ -50,6 +50,18 @@ def arm_limits(spec):
     return dict(value)
 
 
+def resource_limits(spec):
+    limits=json.loads(guard.DEFAULT_CONFIG.read_text())['limits']
+    supplied=spec.get('resources',{})
+    allowed={'observed_tree_rss_stop_bytes','minimum_available_bytes','available_drop_stop_bytes','app_server_tree_rss_bytes'}
+    if not isinstance(supplied,dict) or set(supplied)-allowed or any(type(v) is not int or v<=0 for v in supplied.values()):
+        raise ValueError('invalid_resource_budget')
+    app=supplied.get('app_server_tree_rss_bytes',1000000000)
+    limits.update({k:v for k,v in supplied.items() if k!='app_server_tree_rss_bytes'})
+    if app>limits['observed_tree_rss_stop_bytes']:raise ValueError('invalid_resource_budget')
+    return limits,app
+
+
 def write(path, value):
     local.write(Path(path), value)
 
@@ -213,7 +225,9 @@ def permissions(spec):
 
 def prepare(launch_path, output, native, auth_file=None, provider_config=None, *,
         native_goal_tokens=TOKENS,native_goal_wall_seconds=WALL,
-        scidiscovery_tokens=TOKENS,scidiscovery_wall_seconds=WALL):
+        scidiscovery_tokens=TOKENS,scidiscovery_wall_seconds=WALL,resource_config=None):
+    resources=json.loads(regular(resource_config)) if resource_config is not None else {}
+    resource_limits({'resources':resources})
     launch = load_launch(launch_path)
     budgets={arm:arm_limits({'limits':{'all_role_tokens':tokens,'trial_wall_seconds':wall}})
         for arm,tokens,wall in (('native_goal',native_goal_tokens,native_goal_wall_seconds),
@@ -228,8 +242,8 @@ def prepare(launch_path, output, native, auth_file=None, provider_config=None, *
         'candidate_metadata_sha256':launch['candidate_metadata_sha256'],
         'native':str(native),'native_sha256':sha(native),'code_mode_host':code_mode_host,'task_revision':launch['task_revision'],
         'limits':{'trial_wall_seconds':WALL,'all_role_tokens':MAX_TOKENS,'startup_seconds':300,
-            'virtual_address_space':'not_capped_by_supervisor','tree_rss_bytes':1500000000,
-            'app_server_tree_rss_bytes':1000000000,'log_bytes':8388608,'numerical_threads':1,
+            'virtual_address_space':'not_capped_by_supervisor','tree_rss_bytes':resource_limits({'resources':resources})[0]['observed_tree_rss_stop_bytes'],
+            'app_server_tree_rss_bytes':resource_limits({'resources':resources})[1],'log_bytes':8388608,'numerical_threads':1,
             'cpu_affinity':'one CPU chosen from supervisor allowed set',
             'token_semantics':'observed cumulative thread counters; asynchronous stop can overshoot; missing coverage stops'},
         'profile':{'model':MODEL,'reasoning_effort':'high'},'arm_limits':budgets,
@@ -251,7 +265,7 @@ def prepare(launch_path, output, native, auth_file=None, provider_config=None, *
         settings=json.loads(regular(launch['arms'][arm]['agent_settings_proposal']))
         settings['progression'].update(enabled=arm=='scidiscovery',root_network_access=False,
             max_elapsed_seconds=budget['trial_wall_seconds'],max_calendar_seconds=budget['trial_wall_seconds'],
-            max_tokens=budget['all_role_tokens'],
+            max_tokens=budget['all_role_tokens'],max_rss_bytes=resource_limits({'resources':resources})[1],
             token_policy='bounded_fallback',closeout_reserve_tokens=10000)
         write(base/'agent-settings.json',settings)
         env=dict(os.environ,SCID_AGENT_SETTINGS_FILE=str(base/'agent-settings.json'))
@@ -263,7 +277,7 @@ def prepare(launch_path, output, native, auth_file=None, provider_config=None, *
         (base/'evidence/init.log').write_bytes(completed.stdout)
         if completed.returncode:
             raise RuntimeError('installed_initializer_failed:'+arm)
-        spec={'arm':arm,'limits':budget,'root':str(base),'project':str(project),'python':str(installed),
+        spec={'arm':arm,'limits':budget,'resources':resources,'root':str(base),'project':str(project),'python':str(installed),
             'task_python':launch['task_python'],'native':str(native),'native_sha256':result['native_sha256'],
             'code_mode_host':code_mode_host,
             'environment':{**launch['arms'][arm]['environment'],
@@ -666,7 +680,7 @@ def launch_root(spec,meter):
             write(Path(spec['root'])/'evidence/permission-projection.json',{k:reply.get(k) for k in ('approvalPolicy','activePermissionProfile','sandbox')})
         return reply
     connection.rpc=observed_rpc
-    host=CodexProgressionHost(connection,log,permissions(spec));host.resource_limit=1000000000
+    host=CodexProgressionHost(connection,log,permissions(spec));host.resource_limit=resource_limits(spec)[1]
     connection.checkpoint=lambda:(meter.check(),host.guard_resources())
     host.initialize(cwd=str(project),expected_config=config)
     # No legacy sandbox override and no parent/fork history.
@@ -905,6 +919,7 @@ def main():
     parser.add_argument('--native-goal-wall-seconds',type=int,default=WALL)
     parser.add_argument('--scidiscovery-tokens',type=int,default=TOKENS)
     parser.add_argument('--scidiscovery-wall-seconds',type=int,default=WALL)
+    parser.add_argument('--resource-config',type=Path)
     parser.add_argument('--ui-url');parser.add_argument('--_lease-fd',type=int,help=argparse.SUPPRESS)
     args=parser.parse_args()
     if args._lease_fd is not None:
@@ -913,7 +928,7 @@ def main():
         if args.action=='prepare':
             prepare(args.launch,args.output,args.native,args.auth_file,args.provider_config,
                 native_goal_tokens=args.native_goal_tokens,native_goal_wall_seconds=args.native_goal_wall_seconds,
-                scidiscovery_tokens=args.scidiscovery_tokens,scidiscovery_wall_seconds=args.scidiscovery_wall_seconds)
+                scidiscovery_tokens=args.scidiscovery_tokens,scidiscovery_wall_seconds=args.scidiscovery_wall_seconds,resource_config=args.resource_config)
             return 0
         spec=json.loads(regular(args.spec))
         if args.action=='_daemon': return daemon(spec,args.ui_url)
@@ -931,6 +946,7 @@ def main():
     if evidence.exists(): raise RuntimeError('fresh_supervision_required; no uncertain replay')
     metadata=json.loads(regular(Path(candidate)/'candidate.json'))
     limits=json.loads(guard.DEFAULT_CONFIG.read_text())['limits']
+    if args.action!='prepare': limits=resource_limits(spec)[0]
     if args.action=='run': limits={**limits,'timeout_seconds':300+arm_limits(spec)['trial_wall_seconds']}
     env=dict(os.environ);env.pop('PYTHONPATH',None);env['PYTHONNOUSERSITE']='1'
     env['PYTHONDONTWRITEBYTECODE']='1'

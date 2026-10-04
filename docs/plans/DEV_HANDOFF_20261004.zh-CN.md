@@ -82,3 +82,7 @@
 ## 新双臂200万预算入口
 
 用户已将新场每臂预算授权为2000000 tokens，时间沿用1800秒。新目录`/tmp/scid-covshift-direct-2m-20261004-001`已准备，两个spec均核对该预算。入口默认仍200000，显式参数可到2000000；旧spec不变。定向源码测试通过，未启动模型；顺序Native Goal后SciDiscovery，不并发。新目录取代之前未启动的20万目录。
+
+## 13GB内存配置
+
+Native新场实际在909733 observed tokens、933.435秒科学阶段后触发原1GB host resource_limit；已有44模型及公开submitted记录，异常结束，不重放。用户授权放开内存，现以scripts/acceptance/covshift_resources_13gb.json显式配置两臂树RSS/AppServer/后台Root为13000000000 bytes，最小系统可用1000000000，下降止损13000000000；无AS限制。新目录`/tmp/scid-covshift-direct-13gb-20261004-001`已准备，两臂settings/spec核对一致，尚无模型调用。优先运行未执行Sci臂；不自动重跑Native，原成本/异常终态保留。两臂内存条件不同须在比较里说明。
