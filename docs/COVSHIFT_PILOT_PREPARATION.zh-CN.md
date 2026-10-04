@@ -72,8 +72,29 @@ Public 准备沿同一 guard 包装运行 `python scripts/prepare_covshift_local
 
 ### 双模式公开输入交接（独立审查通过，限定输入与 MCP 路径边界）
 
-[prepare_covshift_pilot.py](../scripts/prepare_covshift_pilot.py) 消费上述净化工程包与 exact installed candidate identity，通过既有默认 serial_lock／run_one 生成两臂独立输入。当前 `/tmp/scid-covshift-paired-20261004-inputs-001/launch.json` 绑定 candidate `e77c61f`；每臂科学输入只含原 instruction 与 exp_cli.py／runner.py／train.csv／val.csv／净化 meta.json，并附原镜像语义的 `exp` wrapper。不复制 task.toml／Dockerfile／开发源码或计划，workspace／runs／submission 全空，不带旧训练文件／模型／实验日志。launch 与 settings proposal 留在 host，不能作为模型正文或 project 输入；两臂均冻结候选6.1-sol/high，默认 helper 与 lightweight 候选一致，Scid progression 尚未激活。
+[prepare_covshift_pilot.py](../scripts/prepare_covshift_pilot.py) 消费上述净化工程包与 exact installed candidate identity，通过既有默认 serial_lock／run_one 生成两臂独立输入。当前增量输入 `/tmp/scid-covshift-driver-20261004-v2-inputs-001/launch.json` 绑定 candidate `e77c61f`（旧 paired-001 保留）；每臂科学输入只含原 instruction 与 exp_cli.py／runner.py／train.csv／val.csv／净化 meta.json，并附原镜像语义的 `exp` wrapper。不复制 task.toml／Dockerfile／开发源码或计划，workspace／runs／submission 全空，不带旧训练文件／模型／实验日志。launch 与 settings proposal 留在 host，不能作为模型正文或 project 输入；两臂均冻结候选6.1-sol/high，默认 helper 与 lightweight 候选一致，Scid progression 尚未激活。
 
-实际驱动必须消费 launch 中的精确只读／可写绑定：harness→`/opt/exp`（read）、exp wrapper→`/usr/local/bin/exp`（read），workspace→`/workspace`、runs→`/opt/exp/runs`、submission→`/submission`（write）。两臂使用相同 PATH／EXP_*，保留原60 s run、45 s audit、0.10阈值；原题绝对路径不靠修改题面迁就本机。当前只生成绑定输入，`bindings_enforced=false`、`launch_ready=false`；chmod 与路径移动不是 OS 隔离证明。
+实际驱动必须消费 launch 中的精确只读／可写绑定：harness→`/opt/exp`（read）、每臂私有只读 `project/bin/exp` 通过该臂 PATH 使用，workspace→`/workspace`、runs→`/opt/exp/runs`、submission→`/submission`（write）。两臂使用相同 PATH／EXP_*，保留原60 s run、45 s audit、0.10阈值；原题绝对路径不靠修改题面迁就本机。当前只生成绑定输入，`bindings_enforced=false`、`launch_ready=false`；chmod 与路径移动不是 OS 隔离证明。
 
 5 项 source 检查核两臂完整公开集合／空输出、篡改与错误 candidate 拒绝，以及真实三工具 MCP→artifact_ingest_file：公开原件可封存，绝对／..／直接和父目录 symlink 越界均拒绝且无新 Artifact 绑定。该范围不能推出任意 plugin／外部 MCP 已隔离。后续真实 Goal／Sci driver、native Worker/helper canary 和全角色 hard-stop 仍需宿主证据；实例与 loop 必须由既有管理 UI 选择／授权，不能脚本暗建。评分须让不可信 pickle 只在无隐藏 labels／metric／results 权限的推断边界加载，把 features→predictions 交回可信原 grader；尚未证明原 grader 的实际加载入口可被该边界替代，不自造分数或读取评分器／答案源码。
+
+
+### 任务专用双驱动（独立审查通过，限定源码接线；尚未实际激活）
+
+[run_covshift_pilot.py](../scripts/run_covshift_pilot.py) 提供同一 `prepare → preflight → run` 入口，消费上述 exact launch。无模型实物已生成于 `/tmp/scid-covshift-driver-20261004-v2-prepared-004/pilot.json`：两臂新 project、相同七个公开输入、只读绝对路径别名、三个独立可写输出目录及受控 Worker workspace；控制／认证／历史只在 app-server 宿主边界，native named profile 不可读。外层白名单 bwrap 自有 PID namespace、die-with-parent；模型 API 保留宿主网络，任务命令禁网。仅加载 scid 自有 MCP，原题／评分资产／开发仓库不挂载。该安装 source `e77c61f` **不含新 daemon Factory 注入**；因此 preflight/run 拒绝旧安装，必须先审查、提交、构建并读回新候选，不能将本次 prepare 当 installed driver 资格。
+
+准备命令为 `python scripts/run_covshift_pilot.py prepare --launch <冻结launch.json> --output <全新目录> --native <冻结native二进制>`；入口自带原 serial_lock/run_one，勿外套锁。可选 `--auth-file`／`--provider-config` 只向 fresh host-only CODEX_HOME 复制认证和 provider transport 配置，不复制个人 MCP／AGENTS／skills／会话。普通宿主使用新候选的 Python 对每臂 `--spec <pilot.json返回的spec路径>` 执行 `preflight`，然后同入口 `run`；没有自动重放或进程重启恢复。两臂的实际 aliases、fresh Root／模型配置和有效权限投影不符即拒绝。当前未提供真实账户配置，不运行此环境已知受 socket mask 阻断的 native/thread 路径。
+
+`run` 先核 account/model/list，按 frozen 6.1-sol/high 拒绝静默换模型；在同一 200k／1800s 内执行仅合成输入的付费 role canary。放行须有真实 commandExecution item、实际 thread/session 与无权限覆写的 resume 投影；Sci 还核本场 exact Worker/helper attach。模型自报、standalone canary 和源码模拟均不能取得角色资格。canary 通过后科学 Root 为 fresh thread，不继承开发或 canary 对话；Native 使用 persisted Goal paused→首 turn→active 自动续行，Goal tokenBudget 扣除 canary 已观测成本，Sci 使用既有管理页面选新实例、授权 exact loop 并真实 background Factory。UI 冻结原件／loop／完整 effective profile 不匹配即拒绝；脚本不创建／绑定实例，不增加额度。
+
+两臂共用单 CPU affinity、数值线程1、AS 2000000000 B／监督树 RSS1500000000 B／每 app-server 树 RSS1000000000 B／日志8MiB。开发和 preflight 仍默认300s；付费入口的独立监督窗口为 startup≤300s 加全角色 trial≤1800s，首付费 canary 激活后 deadline 不重置。计量复用 native usage high-water 和现有 loop records 去重；未知／回退或完成后无用量保守停，200k 为已观测异步停止阈值，in-flight 通知延迟可能超额，结果记录实测 overrun，不承诺零超额或固定美元上限。Native Goal aggregate 与 per-thread 用量不相加。此资源是 custom 条件，不冒充原题4h／4GiB或正式排名。
+
+监督完成并清理拥有的进程后，宿主只检查 exp 的 regular `runs/submitted_model.pkl`／`submitted.json`、size 和 SHA，**不反序列化**；512MiB 是本入口工程检查边界，不重定义原题合法提交上限。可信原 grader 的隔离推断适配尚未完成，scoring=not_run。源码检查验证参数、幂等拒绝、计量／角色门禁及默认 daemon 兼容，实际账户／角色继承／两臂付费运行未验证；当前 `launch_ready=false`，不得将无模型 prepare 或 synthetic mock 计为科学通过。
+
+
+本节点 v2 挂载增量已独立审查通过，首用量语义以后续 v3 为准：取消只读 `/usr` 下新建系统 exp alias；实际每臂 PATH 指向该臂私有只读 bin。`/opt/exp/runs` 在新 harness 中预留空只读挂载点，再覆盖既定可写 runs 目录；解释器仅补完整、有界 symlink 链的精确 runtime 文件，不新增用户 home 白名单。两臂的完整 outer mounts 已在默认 guard 下实际执行 `/usr/bin/true` 和 `exp --help`，核 wrapper 来源／SHA／只读、公开 instruction SHA 与三输出目录写入，均通过；未执行任务训练／AppServer／模型。
+
+Sci interactive canary 所产生的同 loop `unmeasured_frontend_root` 保持不变，控制侧仍 partial；launcher 使用既有有界 accounting projection 与本实例／loop 的真实 accepted Worker/helper attach，逐一核 role／session／owner／loop，再与已取得真实 canary command receipts 的前台线程计量合并、按线程去重。缺 participant、覆盖遗漏、counter gap／回退或 scope 冲突仍停止，不能只因控制 partial 就抹掉已观测的前台用量，也不把 pending／unknown 当零。真实 control interactive→background＋attached Worker 回归通过，未清账／重授权／改变期限；全角色宿主实时通知和计量完整性仍须运行时资格，已核 identity 的原生执行中线程可显式 pending 等首 usage；尚无原生事实的 attach 只等5秒，终态后5秒仍缺用量、实际缺字段／回退或身份冲突停止，pending 不能解释为已知零或全 observed。旧 v1 与失败 mount 证据保留，launch_ready=false／scoring=not_run 不变。
+
+
+v3 独立增量审查通过（源码边界；真实角色／双臂运行／评分仍未验证）：上述 pending 依据原 `pending_observation`／`native_turn`／`native_terminal`（Root 复用同控制行的 host/phase/turn），不只看 Run.running。原 native producer 先记录合法首 turn、尚无计量时，结果显式 `pending_native_usage`、pending_threads 与 known_tokens_lower_bound，原1800s期限仍运行；首 usage 正常归并。真实 Worker 与 helper 公开 attach／control 原生观测序列已覆盖首 pending、执行中等待、终态缺失拒绝及迟到首 usage，不新增 core 机制／账本，不重跑已通过的实际 mounts，不授 live 角色或科学资格。

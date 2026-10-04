@@ -90,6 +90,7 @@ def prepare(output, prepared, candidate, python, source_commit):
             target.parent.mkdir(exist_ok=True)
             target.write_bytes(raw);target.chmod(0o444)
             files[str(target.relative_to(project))]=digest(raw)
+        (project/'harness/runs').mkdir(mode=0o555)  # Empty mountpoint, no additional task material.
         for name in ('workspace','runs','submission'):
             (project/name).mkdir()
         (project/'bin').mkdir()
@@ -101,7 +102,7 @@ def prepare(output, prepared, candidate, python, source_commit):
             'EXP_TRAIN':'/opt/exp/train.csv','EXP_VAL':'/opt/exp/val.csv','EXP_META':'/opt/exp/meta.json',
             'EXP_RUNNER':'/opt/exp/runner.py','EXP_DEFAULT_SCRIPT':'/workspace/train.py',
             'EXP_WALL_CAP_S':'60','EXP_AUDIT_BUDGET_S':'45','EXP_AUDIT_LEAKAGE_THRESHOLD':'0.10',
-            'PATH':str(python.parent)+':/usr/local/bin:/usr/bin:/bin',
+            'PATH':str(project/'bin')+':'+str(python.parent)+':/usr/bin:/bin',
             'OMP_NUM_THREADS':'1','OPENBLAS_NUM_THREADS':'1','MKL_NUM_THREADS':'1'}
         launch['arms'][arm]={'project':str(project), 'public_files_sha256':files,
             'agent_settings_proposal':str(base/'agent-settings.proposal.json'),
@@ -109,7 +110,6 @@ def prepare(output, prepared, candidate, python, source_commit):
             'task_path_bindings':[
                 {'source':str(project/'harness'),'target':'/opt/exp','access':'read'},
                 {'source':str(project/'instruction.md'),'target':'/instruction.md','access':'read'},
-                {'source':str(project/'bin/exp'),'target':'/usr/local/bin/exp','access':'read'},
                 {'source':str(project/'workspace'),'target':'/workspace','access':'write'},
                 {'source':str(project/'runs'),'target':'/opt/exp/runs','access':'write'},
                 {'source':str(project/'submission'),'target':'/submission','access':'write'}],

@@ -131,7 +131,7 @@ class RootBrokerRouter:
             return router
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, *, progression_host_factory: Callable[..., Any] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="scidiscovery-control-daemon")
     parser.add_argument("--project-root", type=Path, required=True)
     parser.add_argument("--state-root", type=Path, required=True)
@@ -220,7 +220,7 @@ def main(argv: list[str] | None = None) -> int:
     from ...platforms.codex_progression import CodexProgressionFactory
     progression = ProgressionCoordinator(runtime=startup_runtime,
         facade_factory=lambda session: router._router(session).facade,
-        host_factory=CodexProgressionFactory(project_root=project_root, state_root=state_root,
+        host_factory=progression_host_factory if progression_host_factory is not None else CodexProgressionFactory(project_root=project_root, state_root=state_root,
             socket_path=args.socket, approval_base_url=args.approval_base_url,
             catalog=startup_runtime.operation_catalog))
     def stop(*_):

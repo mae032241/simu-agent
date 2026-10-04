@@ -48,7 +48,10 @@ def test_two_arms_have_same_image_view_empty_outputs_and_frozen_shared_limits(tm
         assert settings.defaults.model==settings.progression.root_model=='gpt-6.1-sol'
         assert settings.defaults.reasoning_effort==settings.progression.root_reasoning_effort=='high'
         assert settings.helpers.profiles['lightweight'].model=='gpt-6.1-sol'
-    assert native['environment']==scid['environment']
+    assert {k:v for k,v in native['environment'].items() if k!='PATH'}=={k:v for k,v in scid['environment'].items() if k!='PATH'}
+    for arm in (native,scid):
+        assert arm['environment']['PATH'].split(':')[0]==arm['project']+'/bin'
+        assert not any(binding['target']=='/usr/local/bin/exp' for binding in arm['task_path_bindings'])
 
 
 @pytest.mark.parametrize('change', ['wrong_commit','changed_wheel','changed_public'])
