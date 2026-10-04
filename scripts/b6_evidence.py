@@ -104,6 +104,55 @@ def run_snapshot(candidate):
     return rows(candidate, 'runs', 'SELECT run_id,state,output_ref_json FROM runs ORDER BY run_id')
 
 
+def accepted_goal_loop(control):
+    """One exact admission scope shared by exploration and batch proofs."""
+    cp = json.loads(control['checkpoint_json'])
+    scope = dict(instance=control['instance_id'], goal=json.loads(control['objective_ref_json']),
+        loop=cp.get('current_loop_id'))
+    if not scope['instance'] or not scope['goal'] or not scope['loop']:
+        raise ValueError('acceptance_goal_loop_missing')
+    identities = {v['run_id'] for v in cp.get('admissions', {}).values()
+        if v.get('state') == 'accepted' and v.get('loop_id') == scope['loop'] and v.get('objective_ref') == scope['goal']
+        and not v.get('interactive_session_id') and v.get('run_id')}
+    return scope, identities
+
+
+def accepted_case_runs(candidate, control, *, max_runs, expected_scope=None):
+    scope, identities = accepted_goal_loop(control)
+    if expected_scope is not None and scope != expected_scope:
+        raise ValueError('acceptance_goal_loop_changed')
+    if len(identities) > max_runs:
+        raise ValueError('acceptance_run_scope_exceeded')
+    if not identities:
+        return []
+    found = rows(candidate, 'runs', 'SELECT run_id,state,output_ref_json FROM runs WHERE instance_id=? '
+        'AND run_id IN ('+','.join('?' for _ in identities)+') ORDER BY run_id', (scope['instance'], *sorted(identities)))
+    if {v['run_id'] for v in found} != identities:
+        raise ValueError('acceptance_admitted_run_scope_mismatch')
+    return found
+
+
+def authorized_case_scope(candidate, control, authorization):
+    scope = accepted_goal_loop(control)[0]
+    bound = rows(candidate, 'scheduler-bindings',
+        "SELECT object_id FROM scheduler_bindings WHERE instance=? AND namespace='artifact' AND name=?",
+        (scope['instance'], authorization['objective_name']))
+    if (scope['loop'] != authorization['id'] or control.get('objective_name') != authorization['objective_name']
+            or bound != [{'object_id':scope['goal']['artifact_id']}]):
+        raise ValueError('acceptance_authorized_goal_loop_changed')
+    return scope
+
+
+def exploratory_case(case):
+    """Only autonomous multi-task/batch benches retain failed attempts and continue."""
+    return case.get('scenario') == 'autonomous' and bool(case.get('multi_task') or case.get('batch_delivery'))
+
+
+def case_delivery_ready(runs, *, exploratory=False):
+    terminal = {'completed','failed','timed_out','cancelled'} if exploratory else {'completed'}
+    return bool(runs) and any(v['state']=='completed' for v in runs) and all(v['state'] in terminal for v in runs)
+
+
 def participants(candidate, run_ids):
     workers, helpers = [], []
     for run in run_ids:
@@ -113,7 +162,11 @@ def participants(candidate, run_ids):
     return workers, helpers
 
 
-def sealed_outputs(candidate, runs):
+def sealed_outputs(candidate, runs, *, exploratory=False):
+    if exploratory:
+        if not case_delivery_ready(runs, exploratory=True):
+            raise ValueError('case_required_sealed_delivery_missing')
+        runs = [v for v in runs if v['state'] == 'completed']
     evidence = []
     for run in runs:
         if run['state'] != 'completed' or not run['output_ref_json']:
@@ -267,13 +320,7 @@ def batch_scientific_facts(candidate, control, *, max_runs, discrimination=None,
     """Exact current goal/loop admissions; science correctness is not inferred."""
     from scidiscovery.artifact_agent.schema.refs import ArtifactRef
     from scidiscovery.general_science_experiment_task import StageSubmission, ExperimentReport
-    cp = json.loads(control['checkpoint_json'])
-    goal, loop = json.loads(control['objective_ref_json']), cp.get('current_loop_id')
-    if not loop:
-        raise ValueError('batch_research_loop_missing')
-    admissions = {v['run_id'] for v in cp.get('admissions', {}).values()
-        if v.get('state') == 'accepted' and v.get('loop_id') == loop and v.get('objective_ref') == goal
-        and not v.get('interactive_session_id') and v.get('run_id')}
+    _, admissions = accepted_goal_loop(control)
     if len(admissions) > max_runs:
         raise ValueError('batch_admission_coverage_limit')
     reader = BatchMaterialReader(candidate, control['instance_id'], sorted(admissions))
@@ -362,7 +409,7 @@ def batch_scientific_facts(candidate, control, *, max_runs, discrimination=None,
     return facts
 
 
-def usage_report(journey, workers, helpers, progression=None):
+def usage_report(journey, workers, helpers, progression=None, *, candidate=None, exact_scope=None):
     """Never treat absent counters as zero or add cached input twice."""
     path = Path(journey) / 'usage.json'
     raw = read(path) if path.exists() else {}
@@ -374,9 +421,33 @@ def usage_report(journey, workers, helpers, progression=None):
     if checkpoint.get('detail_collections', {}).get('usage_records') and 'usage_records' not in checkpoint:
         raise ValueError('acceptance_usage_requires_hydration')
     records = loop_usage(checkpoint, loop_id)
+    excluded_threads = set()
     if loop_id:
         run_ids = {v.get('run_id') for v in checkpoint.get('admissions', {}).values()
             if v.get('loop_id') == loop_id and not v.get('interactive_session_id')}
+        if exact_scope is not None:
+            scope, selected = accepted_goal_loop(progression)
+            if scope != exact_scope:
+                raise ValueError('acceptance_goal_loop_changed')
+            outside = {v['run_id'] for v in checkpoint.get('admissions', {}).values()
+                if v.get('state')=='accepted' and v.get('loop_id')==loop_id and v.get('objective_ref')!=scope['goal']
+                and not v.get('interactive_session_id') and v.get('run_id')}
+            outside_workers, outside_helpers = participants(candidate, sorted(outside))
+            excluded_roles = {v['thread_id']:'worker' for v in outside_workers if v.get('thread_id')}
+            for value in outside_helpers:
+                if value.get('thread_id'):
+                    if value['thread_id'] in excluded_roles:
+                        raise ValueError('acceptance_usage_identity_conflict')
+                    excluded_roles[value['thread_id']] = 'helper'
+            for identity, item in records.items():
+                if (item.get('thread_id') != identity or item.get('owner') != progression['instance_id']
+                        or item.get('role') not in {'root','worker','helper'}):
+                    raise ValueError('acceptance_usage_identity_unbound')
+                if identity in excluded_roles and item['role'] != excluded_roles[identity]:
+                    raise ValueError('acceptance_usage_identity_conflict')
+            excluded_threads = set(excluded_roles)
+            records = {k:v for k,v in records.items() if k not in excluded_threads}
+            run_ids = selected
         workers = [v for v in workers if v.get('run_id') in run_ids]
         helpers = [v for v in helpers if v.get('run_id') in run_ids]
         records = {key:value for key,value in records.items() if not value.get('interactive_session_id')}
@@ -386,6 +457,8 @@ def usage_report(journey, workers, helpers, progression=None):
             if value['thread_id'] in identities:
                 raise ValueError('acceptance_usage_identity_conflict')
             identities[value['thread_id']] = 'helper'
+    if excluded_threads.intersection(identities):
+        raise ValueError('acceptance_usage_identity_conflict')
     host = json.loads(progression.get('host_json') or 'null') if progression else None
     if host:
         if host['thread_id'] in identities:
@@ -400,11 +473,15 @@ def usage_report(journey, workers, helpers, progression=None):
     started_path = Path(journey) / 'started-threads.json'
     started = read(started_path) if started_path.exists() else []
     for identity in started:
+        if identity in excluded_threads:
+            continue
         identities.setdefault(identity, 'unattributed')
     if raw.get('root_thread') and (not started_path.exists() or raw['root_thread'] in started or raw['root_thread'] in raw.get('threads', {})):
         identities[raw['root_thread']] = 'setup_root' if progression else 'root'
     observed = {}
     for identity, total in raw.get('threads', {}).items():
+        if identity in excluded_threads:
+            continue
         if loop_id and identity not in identities and identity not in records and identity not in started:
             continue  # An unrelated observer notification is not this loop's usage.
         if loop_id and identities.get(identity) in {'root','worker','helper'}:

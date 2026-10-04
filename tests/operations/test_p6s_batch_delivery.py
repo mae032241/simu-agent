@@ -707,11 +707,63 @@ def test_native_poll_calls_delivery_after_budget_and_closeout_records_omissions(
     assert closeout['reason']=='budget_exhausted' and closeout['science_passed'] is False
 
 
-def test_native_poll_stops_failed_run_before_an_otherwise_eligible_delivery(delivery):
+def test_exploratory_native_poll_retains_failed_attempt_and_finishes_valid_retry(delivery):
+    from scripts.b6_evidence import read, usage_report, token_totals
+    d = delivery
+    host = d.journey
+    host.case_config.pop('batch_delivery')
+    host.case_config.update(scenario='autonomous', text='Explore one complete task at a time.',
+        multi_task=True, poll_seconds=0, progression=dict(max_rounds=8))
+    host.limits, host.resources = dict(log_bytes=8388608), dict(protocol_frame_bytes=1048576)
+    host.initialize_host = lambda **kw: dict(state='active')
+    host.await_loop_authorization = lambda *args, **kw: None  # actual fixture loop already authorized
+    host.status = lambda *args, **kw: None
+    public = host.call
+    host.call = lambda name, args: {} if name=='progression_command' else public(name, args)
+    original_row = host.row
+    attempted, costs, ticks = [], [], [0]
+    def row():
+        control = original_row()
+        if ticks[0] == 2:
+            cp = json.loads(control['checkpoint_json'])
+            cp.update(native_completion='completed', turn_id=None)
+            control.update(state='stopped', reason='goal_completed', checkpoint_json=json.dumps(cp))
+        return control
+    host.row = row
+    def pump():
+        ticks[0] += 1
+        assert ticks[0] <= 2, 'run_case did not finish within the finite fixture'
+        if ticks[0] == 1:
+            failed = d.f.start('failed-attempt', ('condition',))
+            measured_fixture_usage(failed.worker)
+            d.f.runtime.runs.fail(failed.run_id, reason='fixture engineering failure')
+            attempted.append(failed.run_id)
+        else:
+            attempted.append(completed_design(d, name='valid-retry').run_id)
+    host.pump = pump
+    def budget(workers, helpers, **kw):
+        costs.append((set(v['run_id'] for v in workers), token_totals(
+            usage_report(host.logdir.parent, workers, helpers, host.row()))))
+    host.check_case_budget = budget
+    host.save_usage = lambda: None
+    host.run_case()
+    assert ticks[0] == 2 and costs[-1][0] == set(attempted)
+    assert costs[-1][1]['total_tokens'] > costs[0][1]['total_tokens'] > 0
+    assert {v['run_id'] for v in read(host.logdir.parent/'participants.json')['workers']} == set(attempted)
+    assert [v['run_id'] for v in read(host.logdir.parent/'sealed-evidence.json')] == [attempted[1]]
+    observations = [json.loads(v) for v in (host.logdir.parent/'background-observations.jsonl').read_text().splitlines()]
+    assert any(v['state']=='failed' for item in observations for v in item['runs'])
+    assert read(host.logdir.parent/'summary.json')['checks']['sealed_delivery'] == 'passed'
+
+
+@pytest.mark.parametrize('scenario', ['autonomous','helper','helper-crash'])
+def test_single_task_and_helper_poll_stops_failed_run(delivery, scenario):
     from scidiscovery.artifact_agent.schema.common import canonical_json
     d = delivery
     host = d.journey
-    host.case_config.update(scenario='autonomous', text=d.payloads[0]['text'], multi_task=True, poll_seconds=1)
+    host.case_config.pop('batch_delivery')
+    host.case_config.update(scenario=scenario, text=d.payloads[0]['text'], multi_task=False, poll_seconds=1)
+    host.root_host = SimpleNamespace(start_turn=lambda *a:None, completion=None)
     host.initialize_host = lambda **kw: dict(state='active')
     host.await_loop_authorization = lambda *args, **kw: None
     host.status = lambda *args, **kw: None
@@ -737,6 +789,35 @@ def test_native_poll_stops_failed_run_before_an_otherwise_eligible_delivery(deli
     with pytest.raises(RuntimeError, match='accepted_worker_failed'):
         host.run_case()
     assert messages(d) == []
+
+
+@pytest.mark.parametrize('missing', ['future_batches','comparison','selection',None])
+def test_p6s_goal_completion_requires_existing_batch_causal_proofs(delivery, missing):
+    d = delivery
+    if missing == 'future_batches':
+        completed_design(d)
+    else:
+        completed_batch_comparison(d, compare=missing != 'comparison')
+        _, active = safe_fixture_rotation(d, observe_prepared=False)
+        d.journey.deliver_batches(active)
+        if missing == 'comparison':
+            # An ordinary public message ack cannot replace the comparison proof.
+            batch = d.payloads[-1]
+            d.journey.call('progression_message', dict(name='acceptance.p6s.B_changed_condition',
+                text=batch['text']+'\n'+native.NEUTRAL_CHANGED_CONDITION_QUESTION))
+        elif missing == 'selection':
+            del d.journey._batch_prediction_binding
+    control = d.journey.row()
+    cp = json.loads(control['checkpoint_json'])
+    cp.update(native_completion='completed', turn_id=None)
+    control.update(state='stopped', reason='goal_completed', owner_session=None, host_json=None, checkpoint_json=json.dumps(cp))
+    d.journey.deliver_batches(control)  # terminal control no longer authorizes a current writer
+    d.journey.case_checks = {}
+    if missing is None:
+        assert d.journey.background_finished(control, True)
+    else:
+        with pytest.raises(RuntimeError, match='without_required_batch'):
+            d.journey.background_finished(control, True)
 
 
 def test_frozen_material_digest_and_wrong_scope_fail_closed(delivery):

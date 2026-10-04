@@ -778,9 +778,11 @@ def test_suite_carries_failed_costs_across_fresh_state_without_promoting_sample(
 
 @pytest.mark.parametrize('reason', ['budget_exhausted','host_fault','user_paused'])
 def test_native_loop_never_calls_sealed_stop_success(tmp_path, monkeypatch, reason):
+    import sqlite3
     from scripts import acceptance_native_cases as native
     host = object.__new__(native.NativeCaseJourney)
     host.root = tmp_path
+    host.instance = 'instance'
     host.logdir = tmp_path/'logs'
     host.case_config = dict(scenario='autonomous', instance='chosen',text='question',multi_task=True,
         max_observed_runs=3, poll_seconds=.1)
@@ -790,15 +792,27 @@ def test_native_loop_never_calls_sealed_stop_success(tmp_path, monkeypatch, reas
     host.await_loop_authorization = lambda *a,**kw: None
     host.status = lambda *a, **kw: None
     host.call = lambda *a, **kw: {}
-    states = iter([dict(state='paused',reason=reason,checkpoint_json='{}')])
+    goal = dict(artifact_id='goal')
+    cp = dict(current_loop_id='loop', admissions={'sealed':dict(run_id='sealed', state='accepted',
+        loop_id='loop', objective_ref=goal)})
+    scope = dict(instance_id='instance', objective_name='acceptance.objective',
+        objective_ref_json=json.dumps(goal), checkpoint_json=json.dumps(cp))
+    write(tmp_path/'loop-authorization.json', dict(id='loop', objective_name='acceptance.objective'))
+    database = tmp_path/'state/database'
+    database.mkdir(parents=True)
+    with sqlite3.connect(database/'scheduler-bindings.sqlite3') as db:
+        db.execute('CREATE TABLE scheduler_bindings(instance,namespace,name,object_id)')
+        db.execute('INSERT INTO scheduler_bindings VALUES(?,?,?,?)', ('instance','artifact','acceptance.objective','goal'))
+    states = iter([dict(scope, state='paused',reason='loop_authorized'), dict(scope, state='paused',reason=reason)])
     host.row = lambda: next(states)
     host.pump = lambda: None
     host.observe_background = lambda *a: None
     host.check_case_budget = lambda *a, **kw: None  # Reproduce the sub-second throttled sample.
     host.save_usage = lambda: None
-    snapshots = iter([[],[dict(run_id='sealed',state='completed')]])
-    monkeypatch.setattr(native,'run_snapshot',lambda *a: next(snapshots))
-    monkeypatch.setattr(native,'rows',lambda *a: [dict(instance_id='instance')])
+    monkeypatch.setattr(native,'run_snapshot',lambda *a: [])
+    # This existing stop-policy unit has synthetic pages; real selector/SQL is
+    # exercised separately by test_b6_case_run_scope's polling/report fixture.
+    monkeypatch.setattr(native,'accepted_case_runs',lambda *a, **kw: [dict(run_id='sealed',state='completed')])
     monkeypatch.setattr(native,'participants',lambda *a: ([],[]))
     monkeypatch.setattr(native,'sealed_outputs',lambda *a: [])
     with pytest.raises(RuntimeError, match='background_stopped:'+reason):

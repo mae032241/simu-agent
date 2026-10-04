@@ -6,10 +6,10 @@ import time
 
 try:
     from scripts.accept_progression_recovery import RecoveryJourney
-    from scripts.b6_evidence import rows, run_snapshot, participants, sealed_outputs, read, write, verify_prior_turns, usage_report, budget_assessment, batch_scientific_facts, BatchMaterialReader, batch_payloads, P6S_PREDICTION_PROTOCOL
+    from scripts.b6_evidence import rows, run_snapshot, participants, sealed_outputs, read, write, verify_prior_turns, usage_report, budget_assessment, batch_scientific_facts, BatchMaterialReader, batch_payloads, P6S_PREDICTION_PROTOCOL, authorized_case_scope, accepted_case_runs, exploratory_case, case_delivery_ready
 except ModuleNotFoundError:
     from accept_progression_recovery import RecoveryJourney
-    from b6_evidence import rows, run_snapshot, participants, sealed_outputs, read, write, verify_prior_turns, usage_report, budget_assessment, batch_scientific_facts, BatchMaterialReader, batch_payloads, P6S_PREDICTION_PROTOCOL
+    from b6_evidence import rows, run_snapshot, participants, sealed_outputs, read, write, verify_prior_turns, usage_report, budget_assessment, batch_scientific_facts, BatchMaterialReader, batch_payloads, P6S_PREDICTION_PROTOCOL, authorized_case_scope, accepted_case_runs, exploratory_case, case_delivery_ready
 
 
 AUTHORITY_OBJECTIVE='只读旧实例一个小页封存成果，保留限制并通过 progression_report 简短交接。禁止创建科研任务、助手或外部作业。'
@@ -77,6 +77,24 @@ def check_stale_writer(root, writer, output):
 
 
 class NativeCaseJourney(RecoveryJourney):
+    def current_case_runs(self, control=None):
+        baseline = {v['run_id'] for v in self.before_runs}
+        if exploratory_case(self.case_config):
+            current = accepted_case_runs(self.root, control or self.row(),
+                max_runs=self.case_config['max_observed_runs'], expected_scope=self._case_run_scope)
+        else:
+            current = run_snapshot(self.root)
+        return [v for v in current if v['run_id'] not in baseline]
+
+    def record_case_evidence(self, current):
+        workers, helpers = participants(self.root, [v['run_id'] for v in current])
+        write(self.logdir.parent/'run-outcomes.json', current)
+        write(self.logdir.parent/'participants.json', dict(workers=workers, helpers=helpers))
+        if case_delivery_ready(current, exploratory=exploratory_case(self.case_config)):
+            write(self.logdir.parent/'sealed-evidence.json', sealed_outputs(self.root, current,
+                exploratory=exploratory_case(self.case_config)))
+            self.case_checks['sealed_delivery'] = 'passed' if self.case_config.get('multi_task') or len(current)==1 else 'failed'
+
     def record_batch_closeout(self, control):
         if not getattr(self, 'case_config', {}).get('batch_delivery'):
             return
@@ -335,7 +353,8 @@ class NativeCaseJourney(RecoveryJourney):
         self.save_usage()
         write(self.logdir.parent/'started-threads.json', sorted(self.started_threads))
         control = self.row() if self.case_config['scenario'] == 'autonomous' else None
-        usage = usage_report(self.logdir.parent, workers, helpers, control)
+        usage = usage_report(self.logdir.parent, workers, helpers, control, candidate=self.root,
+            exact_scope=self._case_run_scope if exploratory_case(self.case_config) else None)
         observation = budget_assessment(usage, budget['session'], now - self.case_started_at)
         write(self.logdir.parent/('budget-final.json' if final else 'budget-observation.json'), observation)
         self.case_checks['budget'] = observation['status']
@@ -373,13 +392,7 @@ class NativeCaseJourney(RecoveryJourney):
                     self.record_batch_closeout(control)
                 if hasattr(self, 'case_started_at'):
                     stage = 'sealed_evidence'
-                    before = {v['run_id'] for v in self.before_runs}
-                    current = [v for v in run_snapshot(self.root) if v['run_id'] not in before]
-                    workers, helpers = participants(self.root, [v['run_id'] for v in current])
-                    if current and all(v['state'] == 'completed' for v in current):
-                        write(self.logdir.parent/'sealed-evidence.json', sealed_outputs(self.root, current))
-                        write(self.logdir.parent/'participants.json', dict(workers=workers, helpers=helpers))
-                        self.case_checks['sealed_delivery'] = 'passed' if self.case_config.get('multi_task') or len(current) == 1 else 'failed'
+                    self.record_case_evidence(self.current_case_runs())
             except Exception as error:
                 self.record_closeout_error('closeout-error', error, stage, reason)
                 if not original_failure:
@@ -388,7 +401,7 @@ class NativeCaseJourney(RecoveryJourney):
                 if hasattr(self, 'case_started_at'):
                     active_failure = sys.exc_info()[0] is not None or original_failure
                     try:
-                        current = [v for v in run_snapshot(self.root) if v['run_id'] not in {b['run_id'] for b in self.before_runs}]
+                        current = self.current_case_runs()
                         workers, helpers = participants(self.root, [v['run_id'] for v in current])
                         self.check_case_budget(workers, helpers, final=True)
                     except Exception as error:
@@ -410,6 +423,28 @@ class NativeCaseJourney(RecoveryJourney):
         self.case_checks['native_completion'] = 'passed'
         if not all_sealed:
             raise RuntimeError('background_completed_without_sealed_delivery')
+        if getattr(self, 'case_config', {}).get('batch_delivery'):
+            cp = self._batch_scope(control)
+            batches = batch_payloads(self.case_config['batch_delivery'])[1:]
+            acks = [self._batch_ack(cp, 'acceptance.p6s.'+v['name'], v['text'] + (
+                '\n'+NEUTRAL_CHANGED_CONDITION_QUESTION if v['name']=='B_changed_condition' else '')) for v in batches]
+            prediction = getattr(self, '_batch_prediction', None)
+            binding = getattr(self, '_batch_prediction_binding', None)
+            if any(v is None for v in acks) or not prediction or not binding:
+                raise RuntimeError('background_completed_without_required_batches')
+            # A natural stop clears current ownership. Retain the same-process
+            # proof already used for this exact saved B message, not a new host
+            # authorization or a replay of an observation file after restart.
+            releases = [v for v in getattr(self, '_batch_release_observations', [])
+                if v['name']=='acceptance.p6s.B_changed_condition']
+            if len(releases)!=1 or releases[0]['artifact_ref']!=acks[2] or releases[0]['prediction_binding']!=binding:
+                raise RuntimeError('background_completed_without_required_batch_proof')
+            rotation = releases[0]['rotation']
+            facts = batch_scientific_facts(self.root, control, max_runs=self.case_config['max_observed_runs'],
+                discrimination=acks[0], validation=acks[1], prediction=prediction)
+            if not rotation or not any(type(v['completion_event']) is int and 0<v['completion_event']<=rotation['run_activity_fence']
+                    for v in facts['comparisons']):
+                raise RuntimeError('background_completed_without_required_batch_proof')
         return True
 
     def run_case(self):
@@ -426,6 +461,12 @@ class NativeCaseJourney(RecoveryJourney):
             common=AUTHORITY_OBJECTIVE
         objective_name='acceptance.authority' if case['scenario']=='authority' else 'acceptance.objective'
         self.await_loop_authorization(value, objective_name=objective_name, text=common)
+        if exploratory_case(case):
+            control = self.row()
+            authorization = read(self.logdir.parent/'loop-authorization.json')
+            self._case_run_scope = authorized_case_scope(self.root, control, authorization)
+            if self._case_run_scope['instance'] != self.instance:
+                raise RuntimeError('acceptance_authorized_goal_loop_changed')
         self.before_runs=run_snapshot(self.root)
         write(self.logdir.parent/'before-runs.json',self.before_runs)
         self.status('scientific_turn',scenario=case['scenario'])
@@ -440,14 +481,13 @@ class NativeCaseJourney(RecoveryJourney):
             self.control_attempted=True
             self.call('progression_command',dict(command='start',mode='interactive'))
             self.root_host.start_turn('请确认当前实例，复用 acceptance.objective 原文及已确认 loop 完成完整任务，等待负责人封存后回读，最终简短报告。\n'+common)
-        baseline={item['run_id'] for item in self.before_runs}
         injected=None
         while True:
             self.pump()
-            current=[v for v in run_snapshot(self.root) if v['run_id'] not in baseline]
+            control = self.row() if case['scenario']=='autonomous' else None
+            current=self.current_case_runs(control)
             if len(current)>case['max_observed_runs']:
                 raise RuntimeError('acceptance_run_scope_exceeded')
-            control = self.row() if case['scenario']=='autonomous' else None
             if control is not None:
                 self.observe_background(control, current)
             workers,helpers=participants(self.root,[v['run_id'] for v in current])
@@ -463,12 +503,12 @@ class NativeCaseJourney(RecoveryJourney):
                             checks['fault_injected']='passed'
                             write(self.logdir.parent/'fault-participants.json',injected)
                             break
-            if any(v['state'] in {'failed','timed_out','cancelled'} for v in current):
+            if not exploratory_case(case) and any(v['state'] in {'failed','timed_out','cancelled'} for v in current):
                 checks['sealed_delivery']='failed'
                 raise RuntimeError('accepted_worker_failed')
             if control is not None:
                 self.deliver_batches(control)
-            all_sealed=bool(current) and all(v['state']=='completed' for v in current)
+            all_sealed=case_delivery_ready(current, exploratory=exploratory_case(case))
             if case['scenario']=='autonomous':
                 if self.background_finished(control, all_sealed):
                     self.check_case_budget(workers, helpers, final=True)
@@ -482,10 +522,7 @@ class NativeCaseJourney(RecoveryJourney):
                     break
                 if not current:raise RuntimeError('no_scientific_task_created')
             time.sleep(case['poll_seconds'])
-        evidence=sealed_outputs(self.root,current)
-        write(self.logdir.parent/'sealed-evidence.json',evidence)
-        write(self.logdir.parent/'participants.json',dict(workers=workers,helpers=helpers))
-        checks['sealed_delivery']='passed' if (bool(current) if case.get('multi_task') else len(current)==1) else 'failed'
+        self.record_case_evidence(current)
         if case.get('multi_task'):
             # A correct early stop is useful science, but is not an observation
             # of a multi-task stagnation trigger. Human review must distinguish it.

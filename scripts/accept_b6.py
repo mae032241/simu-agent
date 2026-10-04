@@ -19,12 +19,12 @@ from scidiscovery.agent_execution_settings import ProgressionSettings, effective
 
 try:
     from scripts.run_tests import serial_lock
-    from scripts.b6_evidence import read, write, digest, rows, control_rows, run_snapshot, participants, sealed_outputs, usage_report, verdict, compare, assess, token_totals, budget_assessment, batch_payloads
+    from scripts.b6_evidence import read, write, digest, rows, control_rows, run_snapshot, participants, sealed_outputs, usage_report, verdict, compare, assess, token_totals, budget_assessment, batch_payloads, authorized_case_scope, accepted_case_runs, exploratory_case
     from scripts.root_host_upgrade import _files
     from scripts import s0_scoring
 except ModuleNotFoundError:
     from run_tests import serial_lock
-    from b6_evidence import read, write, digest, rows, control_rows, run_snapshot, participants, sealed_outputs, usage_report, verdict, compare, assess, token_totals, budget_assessment, batch_payloads
+    from b6_evidence import read, write, digest, rows, control_rows, run_snapshot, participants, sealed_outputs, usage_report, verdict, compare, assess, token_totals, budget_assessment, batch_payloads, authorized_case_scope, accepted_case_runs, exploratory_case
     from root_host_upgrade import _files
     import s0_scoring
 
@@ -412,13 +412,23 @@ def result(root,manifest,case_id):
     output['objective_digest']=digest(frozen['text'])
     before=read(journey/'before-runs.json') if (journey/'before-runs.json').exists() else run_snapshot(target)
     previous_ids={v['run_id'] for v in before}
-    new=[v for v in run_snapshot(target) if v['run_id'] not in previous_ids]
-    workers,helpers=participants(target,[v['run_id'] for v in new])
     control=control_rows(target,'SELECT p.* FROM scheduler_progression p JOIN scheduler_instances i ON i.instance_id=p.instance_id WHERE i.name=?',
         (manifest['config']['instance'],), accounting=True,
         loop_id=(output['loop_authorization'] or {}).get('id'))
     progression=control[0] if control and control[0].get('checkpoint_json') and json.loads(control[0]['checkpoint_json']).get('started_at') else None
-    output['usage']=usage_report(journey,workers,helpers,progression)
+    scope = None
+    if exploratory_case(contract):
+        if not control or output['loop_authorization'] is None:
+            raise ValueError('acceptance_authorized_goal_loop_missing')
+        progression = control[0]
+        scope = authorized_case_scope(target, control[0], output['loop_authorization'])
+        new = accepted_case_runs(target, control[0], max_runs=contract['max_observed_runs'], expected_scope=scope)
+        new = [v for v in new if v['run_id'] not in previous_ids]
+    else:
+        new=[v for v in run_snapshot(target) if v['run_id'] not in previous_ids]
+    workers,helpers=participants(target,[v['run_id'] for v in new])
+    output['run_outcomes'] = new
+    output['usage']=usage_report(journey,workers,helpers,progression, candidate=target, exact_scope=scope)
     if (target/'model-submission-started').exists() and not output['usage']['groups']:
         output['usage']['coverage']='partial'
     if frozen.get('budget') and (target/'model-submission-started').exists():
@@ -437,7 +447,7 @@ def result(root,manifest,case_id):
             checks['execution'] = 'failed'
     evidence_path=journey/'sealed-evidence.json'
     if evidence_path.exists():
-        evidence=sealed_outputs(target,new)
+        evidence=sealed_outputs(target,new, exploratory=exploratory_case(contract))
         if evidence!=read(evidence_path):raise ValueError('sealed_evidence_changed')
         rubric=manifest['config']['quality'][contract['objective']]
         objective = contract['objective'] if manifest['config'].get('grading', {}).get('format') == 's0-v1' else None
