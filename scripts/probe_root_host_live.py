@@ -507,9 +507,7 @@ def supervised(root, action, task_file=None):
         for key in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS", "TOKIO_WORKER_THREADS", "RAYON_NUM_THREADS"):
             environment[key] = "1"
         result = guard.run_one([sys.executable, str(Path(__file__).resolve()), "_" + action,
-                              "--candidate", str(root), *task_arguments], environment, limits, output, lock.fileno(),
-                              limit_address_space=resources["limit_address_space"]
-                              if action in ("bind", "verify", "live", "native", "resume", "lifecycle", "lifecycle-resume") else True)
+                              "--candidate", str(root), *task_arguments], environment, limits, output, lock.fileno())
         write(output / "resource.json", result)
         if result["returncode"] != 0 or result["stop_reason"] != "exited":
             previous = json.loads((root / "progress.json").read_text()) if (root / "progress.json").exists() else {}

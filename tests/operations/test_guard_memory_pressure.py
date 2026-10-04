@@ -1,6 +1,7 @@
 """No real memory pressure: inject /proc samples into the serial supervisor."""
 import json
 import os
+import resource
 import sys
 
 import pytest
@@ -31,8 +32,36 @@ def test_ram_shortage_and_drop_are_immediate():
     assert watch.sample(drop)==['available_drop']
 
 
+def test_legacy_AS_config_warns_and_is_ignored_but_unknown_limits_still_reject(tmp_path,monkeypatch,capsys):
+    config=tmp_path/'resources.json'
+    config.write_text(json.dumps({'limits':{'address_space_bytes':1}}))
+    monkeypatch.setattr(sys,'argv',['run_tests.py','--config',str(config),'--output',str(tmp_path/'out'),
+        'tests/nonexistent-guard-target.py'])
+    with pytest.raises(SystemExit):guard.main()
+    error=capsys.readouterr().err
+    # The public parser reaches target validation, not an obsolete AS/RSS relation.
+    assert 'address_space_bytes is obsolete and ignored' in error
+    assert 'target must exist under tests/' in error
+    config.write_text(json.dumps({'limits':{'unexpected_limit':1}}))
+    with pytest.raises(SystemExit):guard.main()
+    assert 'exactly the documented positive limits' in capsys.readouterr().err
+    assert not (tmp_path/'out').exists()
+
+
 @pytest.mark.process_e2e
-@pytest.mark.parametrize('scenario', ['sustained_dirty','dirty_at_start','rss','timeout','low_available','runtime_low_available','runtime_drop'])
+def test_supervision_preserves_inherited_AS_without_applying_legacy_limit(tmp_path):
+    config=limits();assert 'address_space_bytes' not in config
+    config['address_space_bytes']=64*1024*1024  # Old direct caller dictionary is inert too.
+    script='import json,resource;print(json.dumps(resource.getrlimit(resource.RLIMIT_AS)))'
+    with (tmp_path/'inherited').open('w') as lock:
+        result=guard.run_one([sys.executable,'-c',script],dict(os.environ),config,tmp_path,lock.fileno())
+    assert result['returncode']==0 and result['stop_reason']=='exited'
+    assert json.loads((tmp_path/'pytest.log').read_text())==list(resource.getrlimit(resource.RLIMIT_AS))
+    assert result['address_space_limit_enabled'] is False
+
+
+@pytest.mark.process_e2e
+@pytest.mark.parametrize('scenario', ['sustained_dirty','dirty_at_start','rss','timeout','log','low_available','runtime_low_available','runtime_drop'])
 def test_guard_process_limits_remain_effective(tmp_path,monkeypatch,scenario):
     config=limits();config.update(sample_interval_seconds=.01,timeout_seconds=3)
     clean=snapshot(config);high=snapshot(config,dirty=4_000_000_000)
@@ -52,6 +81,9 @@ def test_guard_process_limits_remain_effective(tmp_path,monkeypatch,scenario):
     if scenario=='timeout':config['timeout_seconds']=.03
     marker=tmp_path/'child_started'
     script="import sys,time;from pathlib import Path;Path(sys.argv[1]).touch();time.sleep(.25)"
+    if scenario=='log':
+        config['log_bytes']=64
+        script="import sys,time;from pathlib import Path;Path(sys.argv[1]).touch();print('x'*1000,flush=True);time.sleep(.25)"
     with (tmp_path/'inherited').open('w') as lock:
         result=guard.run_one([sys.executable,'-c',script,str(marker)],dict(os.environ),config,tmp_path,lock.fileno())
     if scenario in {'sustained_dirty','dirty_at_start'}:
@@ -68,8 +100,9 @@ def test_guard_process_limits_remain_effective(tmp_path,monkeypatch,scenario):
         expected=['available_below_minimum','available_drop'] if scenario=='runtime_low_available' else ['available_drop']
         assert result['memory_stop_triggers']==expected
     else:
-        assert result['stop_reason']=={'rss':'observed_tree_rss_limit','timeout':'timeout'}[scenario]
+        assert result['stop_reason']=={'rss':'observed_tree_rss_limit','timeout':'timeout','log':'log_limit'}[scenario]
         assert result['memory_stop_triggers']==[]
+        if scenario=='log':assert (tmp_path/'pytest.log').stat().st_size==64
 
 
 

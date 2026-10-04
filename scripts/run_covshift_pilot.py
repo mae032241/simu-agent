@@ -212,7 +212,7 @@ def prepare(launch_path, output, native, auth_file=None, provider_config=None):
         'candidate_metadata_sha256':launch['candidate_metadata_sha256'],
         'native':str(native),'native_sha256':sha(native),'code_mode_host':code_mode_host,'task_revision':launch['task_revision'],
         'limits':{'trial_wall_seconds':WALL,'all_role_tokens':TOKENS,'startup_seconds':300,
-            'address_space_bytes':2000000000,'tree_rss_bytes':1500000000,
+            'virtual_address_space':'not_capped_by_supervisor','tree_rss_bytes':1500000000,
             'app_server_tree_rss_bytes':1000000000,'log_bytes':8388608,'numerical_threads':1,
             'cpu_affinity':'one CPU chosen from supervisor allowed set',
             'token_semantics':'observed cumulative thread counters; asynchronous stop can overshoot; missing coverage stops'},

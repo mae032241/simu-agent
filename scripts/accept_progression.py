@@ -542,7 +542,7 @@ def main():
             result = guard.run_one([sys.executable, str(Path(__file__).resolve()), '--child',
                 '--candidate', str(root), '--scenario', args.scenario,
                 *(['--case-file', str(args.case_file.resolve())] if args.case_file else []),
-                *(['--resume-wait',str(args.resume_wait.resolve())] if recovery else [])], environment, limits, output, lock.fileno(), limit_address_space=False)
+                *(['--resume-wait',str(args.resume_wait.resolve())] if recovery else [])], environment, limits, output, lock.fileno())
         finally:
             stop.set()
             thread.join(timeout=1)

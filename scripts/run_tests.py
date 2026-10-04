@@ -1,7 +1,8 @@
 """Run one explicit pytest lane serially, with bounded memory, logs and lifetime.
 
-Linux RLIMIT_AS is a per-process hard ceiling. Tree RSS and system memory are
-sampled emergency stops, not a cgroup aggregate hard limit or an OOM guarantee.
+Virtual address space is not capped: modern runtimes reserve large sparse ranges.
+Tree RSS and system memory are sampled emergency stops, not a cgroup aggregate
+hard limit or an OOM guarantee. Inherited OS limits are not raised.
 """
 from __future__ import annotations
 
@@ -61,7 +62,7 @@ class MemoryPressure:
         ) if triggered]
 
 
-def run_one(command, environment, limits, output, lock_fd, *, limit_address_space=True):
+def run_one(command, environment, limits, output, lock_fd):
     """Stream output to a capped log; always clean the child group and observed tree."""
     baseline = current = memory()
     admission_started = time.monotonic()
@@ -73,8 +74,6 @@ def run_one(command, environment, limits, output, lock_fd, *, limit_address_spac
                 "observed_tree_rss_high_water_bytes": 0, "memory_stop_triggers": triggers}
 
     def restrict():
-        if limit_address_space:
-            resource.setrlimit(resource.RLIMIT_AS, (limits["address_space_bytes"],) * 2)
         resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
     started = time.monotonic()
@@ -144,7 +143,7 @@ def run_one(command, environment, limits, output, lock_fd, *, limit_address_spac
             "observed_tree_rss_high_water_bytes": peak,
             "system_memory_baseline": baseline, "system_memory_final": current,
             "memory_stop_triggers": memory_triggers,
-            "address_space_limit_enabled": limit_address_space}
+            "address_space_limit_enabled": False}
 
 
 def main():
@@ -158,18 +157,20 @@ def main():
     args = parser.parse_args()
     defaults = json.loads(DEFAULT_CONFIG.read_text())
     supplied = json.loads(args.config.read_text())
-    config = {**defaults, **supplied, "limits": {**defaults["limits"], **supplied.get("limits", {})}}
+    supplied_limits = dict(supplied.get("limits", {}))
+    if "address_space_bytes" in supplied_limits:
+        supplied_limits.pop("address_space_bytes")
+        print("address_space_bytes is obsolete and ignored; virtual address space is not capped", file=sys.stderr)
+    config = {**defaults, **supplied, "limits": {**defaults["limits"], **supplied_limits}}
     limits = config["limits"]
     required = defaults["limits"].keys()
     if set(limits) != set(required) or any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v <= 0
                                          for v in limits.values()):
         parser.error("resource config must contain exactly the documented positive limits")
-    if not isinstance(limits["address_space_bytes"], int) or not isinstance(limits["log_bytes"], int):
-        parser.error("address_space_bytes and log_bytes must be integers")
+    if not isinstance(limits["log_bytes"], int):
+        parser.error("log_bytes must be an integer")
     if config["numeric_threads"] != 1:
         parser.error("numeric_threads must be 1; concurrent test workers are unsupported")
-    if limits["observed_tree_rss_stop_bytes"] >= limits["address_space_bytes"]:
-        parser.error("tree RSS emergency stop must be below the per-process address limit")
     if args.per_file and args.lane == "installed":
         parser.error("installed lane must share one session to reuse built wheels")
     targets = args.targets or ["tests"]

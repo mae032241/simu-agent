@@ -235,8 +235,7 @@ def main(argv=None) -> int:
         command = [sys.executable, str(Path(__file__).resolve()), "--protocol-child", "--output", str(output)]
         if args.permissions:
             command.append("--permissions")
-        measured = guard.run_one(command, environment, limits, output, lock.fileno(),
-            limit_address_space=host_resources["limit_address_space"] if args.permissions else True)
+        measured = guard.run_one(command, environment, limits, output, lock.fileno())
         (output / "resource.json").write_text(json.dumps(measured, indent=2) + "\n")
         protocol_path = output / "protocol.json"
         protocol = json.loads(protocol_path.read_text()) if protocol_path.exists() else None

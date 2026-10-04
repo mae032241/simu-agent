@@ -12,7 +12,7 @@
 
 ## 重建入口与监督
 
-从本仓库根目录使用 Python 3.12／Linux x86_64。下面是调用**既有** serial_lock／run_one 的最小环境重建方式，新目录须尚不存在；所有命令默认 AS2000000000 B／RSS 止损1500000000 B／300 s／8 MiB log，数值线程为 1。联网步骤仅 binary PyPI wheels，随后离线安装；本轮不是系统安装或新资源授权。
+从本仓库根目录使用 Python 3.12／Linux x86_64。下面是调用**既有** serial_lock／run_one 的最小环境重建方式，新目录须尚不存在；所有命令不主动限制虚拟地址空间，保留 RSS 止损1500000000 B／300 s／8 MiB log，数值线程为 1。联网步骤仅 binary PyPI wheels，随后离线安装；本轮不是系统安装或新资源授权。
 
 ```python
 import json, os, sys
@@ -87,7 +87,7 @@ Public 准备沿同一 guard 包装运行 `python scripts/prepare_covshift_local
 
 `run` 先核 account/model/list，按 frozen 6.1-sol/high 拒绝静默换模型；在同一 200k／1800s 内执行仅合成输入的付费 role canary。放行须有真实 commandExecution item、实际 thread/session 与无权限覆写的 resume 投影；Sci 还核本场 exact Worker/helper attach。模型自报、standalone canary 和源码模拟均不能取得角色资格。canary 通过后科学 Root 为 fresh thread，不继承开发或 canary 对话；Native 使用 persisted Goal paused→首 turn→active 自动续行，Goal tokenBudget 扣除 canary 已观测成本，Sci 使用既有管理页面选新实例、授权 exact loop 并真实 background Factory。UI 冻结原件／loop／完整 effective profile 不匹配即拒绝；脚本不创建／绑定实例，不增加额度。
 
-两臂共用单 CPU affinity、数值线程1、AS 2000000000 B／监督树 RSS1500000000 B／每 app-server 树 RSS1000000000 B／日志8MiB。开发和 preflight 仍默认300s；付费入口的独立监督窗口为 startup≤300s 加全角色 trial≤1800s，首付费 canary 激活后 deadline 不重置。计量复用 native usage high-water 和现有 loop records 去重；未知／回退或完成后无用量保守停，200k 为已观测异步停止阈值，in-flight 通知延迟可能超额，结果记录实测 overrun，不承诺零超额或固定美元上限。Native Goal aggregate 与 per-thread 用量不相加。此资源是 custom 条件，不冒充原题4h／4GiB或正式排名。
+两臂共用单 CPU affinity、数值线程1，不主动设置 RLIMIT_AS，保留监督树 RSS1500000000 B／每 app-server 树 RSS1000000000 B／日志8MiB。开发和 preflight 仍默认300s；付费入口的独立监督窗口为 startup≤300s 加全角色 trial≤1800s，首付费 canary 激活后 deadline 不重置。计量复用 native usage high-water 和现有 loop records 去重；未知／回退或完成后无用量保守停，200k 为已观测异步停止阈值，in-flight 通知延迟可能超额，结果记录实测 overrun，不承诺零超额或固定美元上限。Native Goal aggregate 与 per-thread 用量不相加。此资源是 custom 条件，不冒充原题4h／4GiB或正式排名。
 
 监督完成并清理拥有的进程后，宿主只检查 exp 的 regular `runs/submitted_model.pkl`／`submitted.json`、size 和 SHA，**不反序列化**；512MiB 是本入口工程检查边界，不重定义原题合法提交上限。可信原 grader 的隔离推断适配尚未完成，scoring=not_run。源码检查验证参数、幂等拒绝、计量／角色门禁及默认 daemon 兼容，实际账户／角色继承／两臂付费运行未验证；当前 `launch_ready=false`，不得将无模型 prepare 或 synthetic mock 计为科学通过。
 
@@ -108,3 +108,6 @@ v3 独立增量审查通过（源码边界；真实角色／双臂运行／评�
 本次最小修复待独立审查：launcher 识别平台 `subAgentActivity` 的 exact parent／agentThreadId，冻结并只读挂载 sidecar 单文件及 SHA；prompt 明确 helper 的确切模型，先核实际线程配置、最终核 fresh host 有界日志中 canary 线程的每个 completed turn_context 模型／effort，而不把 Thread.model 当 per-turn telemetry。该门禁只覆盖 role canary，不能保证第一次错误模型调用零成本，也未逐 turn 强制后续科学阶段的 helper／Goal 续行模型。仍要求真实 exact commandExecution、session 和无权限覆写的 inherited profile；新增直接 Root turn/start 请求数、科学请求数及全角色 distinct(thread,turn) 数，usage 更新不是 turn 数。旧 installed／spec 不含该修复，不能因此获得运行资格。
 
 无模型真实 runtime 检查已形成另一明确阻断：按本机0.159.2官方 framed 协议，connection/ready 和 session/open 成功；在原默认 AS2000000000 B 下执行最小 `text(2+2)`，V8 因无法预留 sandbox 虚拟地址空间退出（SIGTRAP），未执行 JavaScript。证据 `/tmp/scid-covshift-native-canary-20261004-runtime-probe-003/result.json`；这不是 RSS 超限，也不据此擅自提高 test 或 trial 资源。sidecar 挂载修复、standalone Python canary 与 --help 均不能替代 code-mode 执行资格；实际 runtime 资源条件、余额处置、真实 helper 权限／全角色计量和 trusted scoring 仍待定，launch_ready=false、scoring=not_run，当前不授权任何 paid/native retry。
+
+
+用户明确取消开发检查及 pilot 监督的虚拟地址空间限制。本轮唯一无模型 sidecar 诊断已通过：官方0.159.2 framed `text(2+2)` 返回4、exit0、0模型，监督0.049s；exact sidecar 的 VmPeak1487235182592B、RSS/HWM22110208B，说明稀疏 VA 预留不能当实际内存消耗。原AS2GB失败／付费原件保持。当前源码增量待独立审查：共享 run_one 不再主动设置 RLIMIT_AS；RSS／可用内存／CPU线程／超时／日志／UID串行锁保留，旧资源配置的 address_space_bytes 警告后忽略，不突破外部父进程已施加的OS硬限。只更新开发／验证和pilot监督，不改变科学执行／展示助手自身已冻结的资源契约；旧spec／安装资格不被追认。新资源策略与V8零模型通过不授权付费重试／额度重置，Native已耗87393、余112607且跨进程余额续用仍未支持；实际角色与评分继续pending、launch_ready=false。

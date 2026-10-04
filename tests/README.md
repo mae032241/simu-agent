@@ -26,14 +26,14 @@ python scripts/run_tests.py --lane installed --collect-only --output /tmp/scid-i
 
 资源设置来自 [scripts/test_resources.json](../scripts/test_resources.json)，可用 `--config PATH` 提供完整配置或显式覆盖部分 `limits`：
 
-- 每进程地址空间硬上限 2,000,000,000 B；整棵进程树 RSS 采样止损 1,500,000,000 B。
+- 不主动限制虚拟地址空间；整棵进程树 RSS 采样止损 1,500,000,000 B。
 - 系统可用内存至少 8 GiB、下降不超过 2 GB；Dirty 不超过 128 MiB。
 - 每批 300 秒；数值库线程固定为 1；输出日志预算 8 MiB。
 - 同一用户的所有此类测试共享 `/tmp/scid-tests-UID.lock`，拒绝并行；pytest 也拒绝 xdist 多 worker。
 - 主日志流式写入并严格截到上限；安装子命令日志落盘，由监督器采样总量止损，可能有一个采样周期的超量，不会全量读入内存。
 - 正常退出、超时、信号和监督异常均清理子进程组及已观测的后代。每批临时环境、pip 暂存目录随后删除，保留日志及 `result.json`。
 
-这不是 cgroup 聚合硬隔离：`RLIMIT_AS` 是每进程上限，RSS/系统内存/脏页都是采样保护；瞬间分配和在两次采样间脱离父进程组的未知后代仍有限制。不要据此承诺绝不 OOM。当前 Linux 环境未发现可用的 `memory.max` 控制文件。
+这不是 cgroup 聚合硬隔离：RSS/系统内存都是采样保护；瞬间分配和在两次采样间脱离父进程组的未知后代仍有限制。不要据此承诺绝不 OOM。V8 等现代 runtime 会预留远大于实际 RSS 的稀疏虚拟地址范围，监督器不再设置 `RLIMIT_AS`，也不尝试突破外部父进程已施加的 OS 限额。旧 `--config` 中的 `limits.address_space_bytes` 明确警告后忽略，其余保护不变。当前 Linux 环境未发现可用的 `memory.max` 控制文件。
 
 CI 使用单独的 [test_resources_ci.json](../scripts/test_resources_ci.json)，只将可用内存门槛显式设为 2 GiB，适配内存小于 8 GiB 的托管 runner；其他上限不变。源码、安装、进程层在每个 job 内顺序执行。不同 Python 版本的 CI job 属于独立主机。
 
