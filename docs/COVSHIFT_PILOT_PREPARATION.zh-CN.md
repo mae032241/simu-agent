@@ -120,3 +120,6 @@ v3 独立增量审查通过（源码边界；真实角色／双臂运行／评�
 
 
 2026-10-04 零模型权限诊断002的宿主结果为失败，尚未补齐权限资格。`thread/read` 冷读返回 notLoaded／空 turns；独立核查确认原线程使用分页历史，诊断遗漏 `thread_history_1.sqlite`（原 turns/items/projection=2/12/2，副本=0/0/0）。本次0.653s、RSS130678784B，无内存止损、无新模型回合，原pins保持。003已补齐一致性历史副本并保持严格终态／身份／权限检查，37项本地检查与独立审查通过，宿主尚未执行；不放宽空历史判定，不重跑付费canary。当前Native累计167264 tokens、余额32736，science=0、scoring=not_run、launch_ready=false。细节及下一入口以[当前交接](plans/DEV_HANDOFF_20261004.zh-CN.md)为准。
+
+
+003宿主补验随后失败：历史read已通过，冷resume触发sandbox helper mkdir `.git`，被诊断将原write submission绑定改为只读的外层挂载阻断，RPC -32603。1.049s、RSS269078528B，无内存止损／新模型回合，原pins不变。003的本地检查及独审不再作为可重跑命令依据；004已保留原逻辑写权限并映射到私有副本，48项本地回归与独审通过；真实宿主尚未执行。历史001–003原件保留，预算与science=0／launch_ready=false不变。

@@ -1,6 +1,6 @@
 # 2026-10-04 Covshift 当前交接
 
-状态：**002 已在宿主执行并失败：分页历史数据库未复制，冷读取返回空 turns；003 已修复并独立审查通过，可运行零模型宿主补验；尚未执行003。** 本文是当前工作交接／审计记录；运行与资格边界继续归 [Covshift 准备记录](../COVSHIFT_PILOT_PREPARATION.zh-CN.md)，选题与科学效果归 [主计划](SCIENTIFIC_PROGRESS_AND_CORRECTION_PLAN.zh-CN.md)。不替换 20261003 交接或历史失败原件。
+状态：**002 已在宿主执行并失败：分页历史数据库未复制，冷读取返回空 turns；003 宿主补验失败：外层只读改写阻断冷恢复的目录创建；004已修复，48项本地检查及独审通过，宿主尚未执行。** 本文是当前工作交接／审计记录；运行与资格边界继续归 [Covshift 准备记录](../COVSHIFT_PILOT_PREPARATION.zh-CN.md)，选题与科学效果归 [主计划](SCIENTIFIC_PROGRESS_AND_CORRECTION_PLAN.zh-CN.md)。不替换 20261003 交接或历史失败原件。
 
 ## 可直接接手的状态
 
@@ -47,20 +47,32 @@
 
 独立只读核查发现：两份原 rollout 均使用 paginated history；002 只备份 state／goals 库，遗漏 `thread_history_1.sqlite`。原历史 turns/items/projection 为 2/12/2，副本为 0/0/0。原两线程各有一个 completed turn，rollout 与持久投影身份、尾偏移一致。003 将补齐历史库的一致性副本和冻结检查，保留非空 completed turns 与完整权限门禁，不将空历史视为成功。现有源码快照标识 0.159.2，但其精确下载 tag／commit 与二进制的对应尚未独立证明。
 
-003 由独立执行者修复并经另一位审查者独审通过；37项纯本地注入检查通过（0 RPC／模型；0.329s、RSS45113344B，无内存止损），包括002缺历史库复现与补齐副本后原门禁通过。此结果不是宿主权限资格；可运行下列003零模型命令，不重复执行002。原001／002证据保持不变。开发执行与审查使用 `gpt-6.1-sol/high`，不主动启用 fast；本地测试串行，不启动付费模型。
+003 由独立执行者修复并经另一位审查者独审通过；37项纯本地注入检查通过（0 RPC／模型；0.329s、RSS45113344B，无内存止损），包括002缺历史库复现与补齐副本后原门禁通过。此结果不是宿主权限资格；003后来已在宿主失败，下面只保留历史说明；002／003均不重复执行。原001／002证据保持不变。开发执行与审查使用 `gpt-6.1-sol/high`，不主动启用 fast；本地测试串行，不启动付费模型。
 
-## 003唯一下一命令
+## 003历史命令（已失败，不重跑）
 
-[003独立审查](/tmp/scid-covshift-canary-permissions-20261004-003/independent-review.md)核对备份、原件pins、exact身份与完整权限门禁，未发现阻断。诊断冻结见同目录 `freeze.json`，其中记录文档的是审查前版本；本节为审查后的入口更新。003尚无宿主 `result.json`，不等于角色权限已通过。
+[003独立审查](/tmp/scid-covshift-canary-permissions-20261004-003/independent-review.md)核对备份、原件pins、exact身份与完整权限门禁，未发现阻断。诊断冻结见同目录 `freeze.json`，其中记录文档的是审查前版本；本节为审查后的入口更新。003随后已执行，宿主结果失败；此前本地测试与独审未覆盖真实嵌套沙箱目录创建需求。
+
+003原命令入口为该目录 `check.py`；已失败退役，不提供重跑命令。此前独审的通过范围只覆盖当时的代码和本地证据，未覆盖真实嵌套沙箱初始化。
+
+## 003宿主失败与004修复
+
+003真实结果：`thread/read`已返回completed，`thread/resume`返回RPC -32603。监督1.049s、RSS269078528B、return1/exited，无内存止损、无新turn／active Goal，原pins不变。私有日志与冻结绑定表只读核对确认：sandbox helper在submission逻辑目录内mkdir `.git`时遇到只读文件系统；该目录原是write grant／`--bind`，003却将其改为`--ro-bind`。这是诊断自己的外层挂载与恢复初始化冲突，不是科学任务失败。
+
+004已修正为对精确原可写绑定使用私有副本并保留原逻辑目标和`--bind`。原目录不放开写权限，冻结named grants不变；原历史库修复与完整终态／权限门禁保留。48项纯本地回归通过（0.293s、RSS49094656B；0 native／RPC／模型），其中mkdir正例是在私有副本执行Python操作，并非真实sandbox运行。独审已通过，使用下面唯一004入口，不重复003。原费用和科学资格不变。
+
+## 004唯一下一命令
+
+[004独立审查](/tmp/scid-covshift-canary-permissions-20261004-004/independent-review.md)通过，冻结清单见同目录 `freeze.json`。本节是冻结后的文档入口更新，不改诊断代码。审查核对全部原write挂载映射至私有副本，原逻辑target与named grants保持；尚未真实运行004。
 
 ```sh
-/tmp/scid-covshift-remaining-20261004-candidate/build/core/bin/python -I /tmp/scid-covshift-canary-permissions-20261004-003/check.py
+/tmp/scid-covshift-remaining-20261004-candidate/build/core/bin/python -I /tmp/scid-covshift-canary-permissions-20261004-004/check.py
 ```
 
-只认003的 `result.json` status=pass且 `supervision/resource.json` exited／returncode0。无AS上限，保留UID串行锁、tree RSS1.5e9／appserver1e9、CPU1／数值线程1、300s／8MiB日志；不外套第二锁。此命令只读原件、操作隔离副本，不请求新turn／active Goal；不能用于启动科学阶段或重置额度。失败先读安全诊断，不盲重跑。
+只认004 `result.json` status=pass且 `supervision/resource.json` exited／returncode0。无AS上限，UID串行锁、tree RSS1.5e9／appserver1e9、CPU1／数值线程1、300s／8MiB日志保持，不外套第二锁。原件只读，写入隔离副本；不请求新turn／active Goal。失败保留原件，先读安全诊断，不盲重跑或启用付费canary。
 
 ## 后续边界
 
-即使003通过，也只补齐这些exact旧线程的权限门禁。现有`run`会无条件再次付费canary，然后新建科学线程；没有继续旧run／跳canary／跨进程复用proof入口。剩32736不能新开200k；任何下一paid尝试先定具体预算处置及真实可消费入口，不能靠本交接假造恢复能力。
+即使后续补验通过，也只补齐这些exact旧线程的权限门禁。现有`run`会无条件再次付费canary，然后新建科学线程；没有继续旧run／跳canary／跨进程复用proof入口。剩32736不能新开200k；任何下一paid尝试先定具体预算处置及真实可消费入口，不能靠本交接假造恢复能力。
 
-真实Sci Worker/helper继承、全角色科学阶段模型／计量与停止、Native/Sci正式双驱动效果、trusted评分仍未取得资格。pickle不得在有隐藏labels/metric/results权限的宿主直接加载；原评分隔离代理尚未实现，不能自造等价分数。不要读hidden verifier／solution／参考解；不要让被测线程继承本交接或开发对话。002先前已独审但宿主失败；003及本次交接更新独审通过后本地提交，不push。
+真实Sci Worker/helper继承、全角色科学阶段模型／计量与停止、Native/Sci正式双驱动效果、trusted评分仍未取得资格。pickle不得在有隐藏labels/metric/results权限的宿主直接加载；原评分隔离代理尚未实现，不能自造等价分数。不要读hidden verifier／solution／参考解；不要让被测线程继承本交接或开发对话。002先前已独审但宿主失败；004及本次交接更新独审通过后本地提交，不push。
