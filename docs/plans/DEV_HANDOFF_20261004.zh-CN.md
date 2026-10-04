@@ -1,0 +1,58 @@
+# 2026-10-04 Covshift 当前交接
+
+状态：**002 零模型诊断与本交接已独立审查通过，纳入本次文档节点；002 尚未在宿主执行。** 本文是当前工作交接／审计记录；运行与资格边界继续归 [Covshift 准备记录](../COVSHIFT_PILOT_PREPARATION.zh-CN.md)，选题与科学效果归 [主计划](SCIENTIFIC_PROGRESS_AND_CORRECTION_PLAN.zh-CN.md)。不替换 20261003 交接或历史失败原件。
+
+## 可直接接手的状态
+
+- integration：`/tmp/scid-main-integration-20261003-001`；dev：`/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2`。两处代码基线 `36cce914af3959020182784377738f720e2c21b4`；integration 本次交接／入口链接已独审，纳入本次文档节点。dev 的用户 `CONTRIBUTING.md`、未跟踪 `DEV_HANDOFF_20261003.zh-CN.md`／`evidence/` 保留，不纳入提交、不 stash/reset。
+- 已安装 candidate：`/tmp/scid-covshift-remaining-20261004-candidate`；其干净 source：`/tmp/scid-covshift-remaining-20261004-source`，source commit `f5a709f9ca5c84daf6a187d79633a1fad992ced3`，wheel SHA256 `823336ded79ebd276f58bac5ed7b9c4d2bb94944dee0f2716a2865684c5c8f1a`。36c 只改 host launcher／测试／状态文案，未改产品 core；002 显式加载该安装的 core 与钉定 36c launcher，不冒充旧 snapshot 已含新脚本。
+- 环境：`/tmp/scid-covshift-local-20261004-env`；真实公开 exp CLI 工程 smoke 保留于 `...-prepared-001`。正式公开输入为 `/tmp/scid-covshift-remaining-20261004-inputs-001/launch.json`，不是包含 Dockerfile／task.toml 的旧工程包；固定 LHTB `d78f5eb52ad754c5ee9154741af73130a85a65b8`，只交 agent 公开视图、净化 meta 与题面，不带 generator／rawmeta／hidden tests／答案／开发历史。
+- 已认证双臂 spec：`/tmp/scid-covshift-remaining-20261004-auth-prepared-001/{native_goal,scidiscovery}/spec.json`。认证／provider 仅私有程序复制，禁止打印正文；旧包／结果不覆盖。当前无可直接继续科学阶段的命令，勿重跑旧 `run`。
+
+## 原授权和实际消耗
+
+用户原授权是每模式各一次 custom 链路 smoke，**全角色合计 200000 tokens／1800s**，模型候选全角色 `gpt-6.1-sol/high`；开发 agent 的 xhigh 不是试验条件。缓存输入不再额外相加，异步 usage 可能有在途计量偏差，不将观察后 stop 称作理论零超额 cap，也不承诺固定美元费用。
+
+| Native 尝试 | 原件根目录 | tokens | phase／supervisor秒 | 实际结果 |
+|---|---|---:|---|---|
+| 初次 | `/tmp/scid-covshift-write-projection-20261004-auth-prepared-001/native_goal` | 87393 | 33.948／38.238 | canary：helper 模型 Astra 漂移，sidecar 未挂；未进科学 |
+| 减额替代 | `/tmp/scid-covshift-remaining-20261004-auth-prepared-001/native_goal` | 79871 | 39.866／43.826 | canary：两实际角色模型正确、OS 十二 checks 成功，旧裸命令比较误拒；未进科学 |
+
+累计 **167264，余额32736**。原 supervisor 合计82.064s；保守逐次向上取整已预留83s，不自动重置墙钟／tokens或退款。替代 spec 原上限112607／1761已被使用，不能再次原样启动。Sci arm 尚未启动，原200000／1800未使用；这不授予此刻自动启动。两组 **science=0、active Goal 未启动、trusted scoring=not_run、launch_ready=false**；原题4h／25次内部实验没有完成，25实验也不等于25 Root任务。
+
+## 已审代码与证据
+
+| 提交 | 本节点范围／审查事实 |
+|---|---|
+| `19ec2bc` | 独立依赖环境、公开 exp 工程 smoke；无模型 |
+| `e77c61f` | 启动时全局任务禁网，默认off；owned native／web／HTTP拒绝，模型API保留，外部plugin/MCP不由flag兜底 |
+| `dfec6bd`／`65d0183`／`2490466` | 双臂公开输入、真实Goal/Sci driver、exact named write-root投影；均独审后提交 |
+| `af5ad0a` | 两正常宿主零模型preflight通过的限定资格记录，不等于live Worker/helper资格 |
+| `35114d7` | exact sidecar只读SHA、真实SubAgentActivity父子绑定、canary实际turn_context模型门禁／真实turn计数 |
+| `a019231` | 用户授权不主动施加RLIMIT_AS；保留RSS／CPU线程／超时／日志／UID锁，V8零模型算术成功；历史AS失败保留 |
+| `f5a709f` | 每臂更低冻结预算参数；不是跨进程恢复系统，科学prompt明确6.1/high不代表全程强制 |
+| `36cce91` | 仅接受裸exact命令或严格三项`/usr/bin/bash,-lc,expected`的回执投影；原status/exit/身份/权限/模型/usage门禁保留 |
+
+36c 独审：`/tmp/scid-covshift-canary-receipt-20261004-independent-review-v1.md`；提交记录：`...-commit.md`。真实红→5项定向绿、受控离线回放只确证两份原OS回执／canary模型事实，**没有补齐当时未执行的 read/resume 权限门禁**，不提供跨run proof复用或跳过canary。
+
+## 001失败、002修正与唯一下一命令
+
+001：`/tmp/scid-covshift-canary-permissions-20261004-001/result.json` 和 `supervision/resource.json`，return1/exited、0.779s、RSS145768448B。initialize/config通过，之后本地RuntimeError被压成通用reason；实际失败分支不可追溯，不能猜成auth/cold根因，也不能称真实角色权限失败。原pins／state比较为unchanged，原与副本rollout均未变，无新turn／active Goal请求。完整断网阻断模型API；原预算不变。
+
+002：`/tmp/scid-covshift-canary-permissions-20261004-002`。匹配0.159.2官方源码证明：goal/get能读未加载的已封存线程；thread/read不加载，合法状态是notLoaded；原诊断在resume前强求idle是确定契约错误，**不是001实际退出分支的追认**。GoalService读取本地独立`goals_1.sqlite`，该读取链无auth硬前置；当前两个exact线程无Goal行。002一致性备份/pin state和真实Goal DB、两条exact rollout、原配置，保持原逻辑路径，不复制auth、不挂旧control socket、使用私有tmp；整个AppServer unshare-net。先核原终态／inactive Goal，初始只接受notLoaded/idle；无override excludeTurns resume后严格idle／同thread/session／权限，再走原完整门禁并复核Goal。新turn、active/unknown、未知身份／权限仍拒绝。
+
+002异常也保留stage、last RPC／标准code、有限本地reason、脱敏status和调用序列／原件hash；不吐raw response、error.message、config／provider／URL／会话。20项**纯本地注入**通过（0 RPC／daemon／模型，默认guard0.298s、RSS38973440B），不等于真实补验通过。
+
+经 [002 独立审查](/tmp/scid-covshift-canary-permissions-20261004-002/independent-review.md) 通过，普通宿主可执行以下零模型补验；本交接落库时仍未执行：
+
+```sh
+/tmp/scid-covshift-remaining-20261004-candidate/build/core/bin/python -I /tmp/scid-covshift-canary-permissions-20261004-002/check.py
+```
+
+只认新目录 `result.json` status=pass **且** `supervision/resource.json` exited／returncode0。默认无AS，UID串行锁、tree RSS1.5e9／appserver1e9、CPU1／数值线程1、300s／8MiB日志保持；不外套第二锁。代码钉**实际文件SHA**，不钉会变的worktree HEAD，纯文档提交不使此命令失效。原件不修改；失败先读安全诊断，不盲重放。
+
+## 后续边界
+
+即使002通过，也只补齐这些exact旧线程的权限门禁。现有`run`会无条件再次付费canary，然后新建科学线程；没有继续旧run／跳canary／跨进程复用proof入口。剩32736不能新开200k；任何下一paid尝试先定具体预算处置及真实可消费入口，不能靠本交接假造恢复能力。
+
+真实Sci Worker/helper继承、全角色科学阶段模型／计量与停止、Native/Sci正式双驱动效果、trusted评分仍未取得资格。pickle不得在有隐藏labels/metric/results权限的宿主直接加载；原评分隔离代理尚未实现，不能自造等价分数。不要读hidden verifier／solution／参考解；不要让被测线程继承本交接或开发对话。002／本交接已独审，本次文档节点落库；后续每个实质环节独审后本地提交，不push。

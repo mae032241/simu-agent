@@ -2,6 +2,8 @@
 
 状态（2026-10-04）：**独立 Python 环境与一次真实公开 exp CLI 工程 smoke 独立审查通过（环境与公开 CLI 工程 smoke）；launch_ready=false。** 当前首 pilot 选 covshift；原 N-body 24 粒子工程 smoke 和所有旧 candidate 保留。选题／科学资格由[主计划](plans/SCIENTIFIC_PROGRESS_AND_CORRECTION_PLAN.zh-CN.md#真实效果题与机制回归分工)拥有；本文只交接本机环境，不是模型驱动或正式 trial。
 
+当前接手状态／原预算及零模型补验入口见 [2026-10-04 工作交接](plans/DEV_HANDOFF_20261004.zh-CN.md)；该交接／002诊断已独立审查通过，002尚未宿主执行；交接是审计记录，不替代本文运行规则。
+
 ## 已准备
 
 - Task 固定 LHTB `d78f5eb52ad754c5ee9154741af73130a85a65b8` 的 `tabular-data-feature-covshift`，原题／checkout 不修改。公开包 `/tmp/scid-covshift-local-20261004-prepared-001/public` 仅 8 文件：task.toml、instruction.md、environment/Dockerfile，以及 harness 的 exp_cli.py、runner.py、train.csv、val.csv、净化 meta.json。trusted 准备代码复刻 Dockerfile：删除 meta 的 a_perturbation／estimated_A_score／noise_sigma；只记录原件与净化结果 hash，不输出敏感值、不导出／运行 generator，不读 hidden tests／verifier／reference。
