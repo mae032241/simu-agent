@@ -39,6 +39,16 @@ TOKENS = 200000
 OBJECTIVE = 'covshift.pilot.objective'
 
 
+def arm_limits(spec):
+    """Explicit new-attempt caps; absent in older specs means original defaults."""
+    value=spec.get('limits',{'trial_wall_seconds':WALL,'all_role_tokens':TOKENS})
+    if (not isinstance(value,dict) or set(value)!={'trial_wall_seconds','all_role_tokens'}
+            or any(type(value[key]) is not int or not 0<value[key]<=maximum
+                for key,maximum in (('trial_wall_seconds',WALL),('all_role_tokens',TOKENS)))):
+        raise ValueError('invalid_arm_budget')
+    return dict(value)
+
+
 def write(path, value):
     local.write(Path(path), value)
 
@@ -200,8 +210,13 @@ def permissions(spec):
         profile_definition=json.dumps(spec['definition']))
 
 
-def prepare(launch_path, output, native, auth_file=None, provider_config=None):
+def prepare(launch_path, output, native, auth_file=None, provider_config=None, *,
+        native_goal_tokens=TOKENS,native_goal_wall_seconds=WALL,
+        scidiscovery_tokens=TOKENS,scidiscovery_wall_seconds=WALL):
     launch = load_launch(launch_path)
+    budgets={arm:arm_limits({'limits':{'all_role_tokens':tokens,'trial_wall_seconds':wall}})
+        for arm,tokens,wall in (('native_goal',native_goal_tokens,native_goal_wall_seconds),
+            ('scidiscovery',scidiscovery_tokens,scidiscovery_wall_seconds))}
     output = Path(output).absolute(); native = Path(native).resolve(strict=True)
     code_mode_host=native_runtime(native)
     output.mkdir(mode=0o700)
@@ -216,8 +231,11 @@ def prepare(launch_path, output, native, auth_file=None, provider_config=None):
             'app_server_tree_rss_bytes':1000000000,'log_bytes':8388608,'numerical_threads':1,
             'cpu_affinity':'one CPU chosen from supervisor allowed set',
             'token_semantics':'observed cumulative thread counters; asynchronous stop can overshoot; missing coverage stops'},
-        'profile':{'model':MODEL,'reasoning_effort':'high'},'arms':{},'launch_ready':False}
+        'profile':{'model':MODEL,'reasoning_effort':'high'},'arm_limits':budgets,
+        'budget_semantics':'limits are original authorization ceilings; arm_limits are new-attempt caps, not resumed state',
+        'arms':{},'launch_ready':False}
     for arm in ('native_goal','scidiscovery'):
+        budget=budgets[arm]
         base = output/arm; project=base/'project'; project.mkdir(parents=True)
         for name in ('workspace','runs','submission','.scidiscovery-runs'):
             (project/name).mkdir()
@@ -231,7 +249,8 @@ def prepare(launch_path, output, native, auth_file=None, provider_config=None):
         (base/'codex-home/tmp/arg0').mkdir(parents=True,mode=0o700)
         settings=json.loads(regular(launch['arms'][arm]['agent_settings_proposal']))
         settings['progression'].update(enabled=arm=='scidiscovery',root_network_access=False,
-            max_elapsed_seconds=WALL,max_calendar_seconds=WALL,max_tokens=TOKENS,
+            max_elapsed_seconds=budget['trial_wall_seconds'],max_calendar_seconds=budget['trial_wall_seconds'],
+            max_tokens=budget['all_role_tokens'],
             token_policy='bounded_fallback',closeout_reserve_tokens=10000)
         write(base/'agent-settings.json',settings)
         env=dict(os.environ,SCID_AGENT_SETTINGS_FILE=str(base/'agent-settings.json'))
@@ -243,7 +262,7 @@ def prepare(launch_path, output, native, auth_file=None, provider_config=None):
         (base/'evidence/init.log').write_bytes(completed.stdout)
         if completed.returncode:
             raise RuntimeError('installed_initializer_failed:'+arm)
-        spec={'arm':arm,'root':str(base),'project':str(project),'python':str(installed),
+        spec={'arm':arm,'limits':budget,'root':str(base),'project':str(project),'python':str(installed),
             'task_python':launch['task_python'],'native':str(native),'native_sha256':result['native_sha256'],
             'code_mode_host':code_mode_host,
             'environment':{**launch['arms'][arm]['environment'],
@@ -304,14 +323,16 @@ def prepare(launch_path, output, native, auth_file=None, provider_config=None):
 
 class Meter:
     """Ephemeral observation of existing platform counters, not another ledger."""
-    def __init__(self, clock=time.monotonic):
+    def __init__(self, clock=time.monotonic, *, tokens=TOKENS,wall_seconds=WALL):
+        budget=arm_limits({'limits':{'all_role_tokens':tokens,'trial_wall_seconds':wall_seconds}})
+        self.token_limit=budget['all_role_tokens'];self.wall_seconds=budget['trial_wall_seconds']
         self.clock=clock; self.records={}; self.started={}; self.deadline=None; self.reason=None
         self.canary_command=None;self.proofs={};self.children={};self.control_records={};self.completed={}
         self.frontend_roles={};self.frontend_loop=None
         self.turns_requested=0;self.scientific_turns_requested=0;self.observed_turns=set()
     def activate(self):
         if self.deadline is not None: raise RuntimeError('trial_already_submitted')
-        self.deadline=self.clock()+WALL
+        self.deadline=self.clock()+self.wall_seconds
     def observe(self,event):
         from scidiscovery.platforms.codex_usage import observe_usage
         params=event.get('params',{}); thread=params.get('threadId')
@@ -359,7 +380,7 @@ class Meter:
     def check(self):
         if self.deadline is None: return
         if self.clock()>=self.deadline: self.reason='wall_deadline'
-        if self.total()>=TOKENS: self.reason='observed_token_limit'
+        if self.total()>=self.token_limit: self.reason='observed_token_limit'
         if any(not any(source.get(thread,{}).get('coverage')=='observed' and not source[thread].get('has_gaps')
                 for source in (self.records,self.control_records)) and self.clock()-when>5
                 for thread,when in self.completed.items()):
@@ -562,7 +583,7 @@ def attached_roles(spec,instance_id,loop_id):
 
 
 def role_canary(host,meter,spec,current=None,loop=None):
-    """A bounded paid synthetic stage inside the same 200k/1800s budget.
+    """A bounded paid synthetic stage inside the same frozen arm budget.
 
     It never sends the Covshift question. Scientific activation requires real
     native command receipts for every role; ordinary completion chat is ignored.
@@ -710,8 +731,10 @@ def verify_account(connection):
 
 def arm_action(spec,action):
     """Paid activation exists only in run; no automatic retries or recovery."""
-    base=Path(spec['root']); meter=Meter(); children=[]; host=None;listener=None
+    budget=arm_limits(spec);tokens=budget['all_role_tokens'];wall=budget['trial_wall_seconds']
+    base=Path(spec['root']); meter=Meter(tokens=tokens,wall_seconds=wall); children=[]; host=None;listener=None
     result={'status':'fail','action':action,'arm':spec['arm'],'turns_requested':0,
+        'limits':budget,
         'active_goal_requested':False,'actual_worker_helper_isolation':'not_verified',
         'scoring':'not_run','launch_ready':False}
     try:
@@ -754,22 +777,22 @@ def arm_action(spec,action):
             if current.get('state')!='unbound': raise RuntimeError('preflight_instance_not_fresh')
         if action=='preflight':
             if spec['arm']=='native_goal':
-                host.connection.rpc('thread/goal/set',{'threadId':host.identity.thread_id,'objective':'Synthetic paused preflight','status':'paused','tokenBudget':TOKENS})
+                host.connection.rpc('thread/goal/set',{'threadId':host.identity.thread_id,'objective':'Synthetic paused preflight','status':'paused','tokenBudget':tokens})
                 goal=host.connection.rpc('thread/goal/get',{'threadId':host.identity.thread_id}).get('goal')
-                if not isinstance(goal,dict) or goal.get('status')!='paused' or goal.get('tokensUsed')!=0 or goal.get('tokenBudget')!=TOKENS:
+                if not isinstance(goal,dict) or goal.get('status')!='paused' or goal.get('tokensUsed')!=0 or goal.get('tokenBudget')!=tokens:
                     raise RuntimeError('paused_goal_budget_mismatch')
                 host.connection.rpc('thread/goal/clear',{'threadId':host.identity.thread_id})
             result.update(status='pass',qualification='fresh Root + exact aliases; no role spawn or accounting qualification')
             return result
         result['phase']='account_and_model'; result['account']=verify_account(host.connection)
-        text=regular(Path(spec['project'])/'instruction.md').decode()
+        text=regular(Path(spec['project'])/'instruction.md').decode()+f'\nFrozen trial profile for Root, Workers and native helpers: {MODEL}/high. Use fresh helper context and do not substitute another model or effort; stop if unavailable.'
         if spec['arm']=='native_goal':
             result['phase']='paid_synthetic_role_canary'
             result['role_canary']=role_canary(host,meter,spec)
             host.close();host=launch_root(spec,meter)  # fresh scientific thread, no canary history
             result['scientific_identity']={'thread_id':host.identity.thread_id,'session_id':host.identity.session_id}
             goal='Complete the public task in /instruction.md using exp. Save the audited final submission in /submission. Do not access any private or hidden material.'
-            host.connection.rpc('thread/goal/set',{'threadId':host.identity.thread_id,'objective':goal,'status':'paused','tokenBudget':max(1,TOKENS-meter.total())})
+            host.connection.rpc('thread/goal/set',{'threadId':host.identity.thread_id,'objective':goal,'status':'paused','tokenBudget':max(1,tokens-meter.total())})
             meter.turns_requested+=1;meter.scientific_turns_requested+=1
             host.start_turn(text+'\nPublic paths: /opt/exp, /workspace, /submission. Use exp; all native network is disabled.')
             host.connection.rpc('thread/goal/set',{'threadId':host.identity.thread_id,'status':'active'})
@@ -792,7 +815,7 @@ def arm_action(spec,action):
                 raise RuntimeError('pilot_requires_fresh_instance; keep_existing_records')
             canary_objective='covshift.pilot.isolation'
             public_call(host,'artifact_ingest_text',{'name':canary_objective,'text':'Synthetic engineering isolation qualification only. No Covshift experiment.','on_conflict':'reject'})
-            print('In the same management page pause interactive scheduling, then authorize the new loop for covshift.pilot.isolation (1800s / 200000 total tokens).',flush=True)
+            print(f'In the same management page pause interactive scheduling, then authorize the new loop for covshift.pilot.isolation ({wall}s / {tokens} total tokens).',flush=True)
             scheduling=public_call(host,'progression_status',{})
             while time.monotonic()<until:
                 loop=scheduling.get('loop') or {}
@@ -801,8 +824,8 @@ def arm_action(spec,action):
             loop=scheduling.get('loop') or {}
             if (loop.get('authority')!='explicit_management_ui_budget_confirmation'
                     or scheduling.get('objective_name')!=canary_objective
-                    or loop.get('limits',{}).get('max_tokens')!=TOKENS
-                    or loop['limits'].get('max_elapsed_seconds')!=WALL):
+                    or loop.get('limits',{}).get('max_tokens')!=tokens
+                    or loop['limits'].get('max_elapsed_seconds')!=wall):
                 raise RuntimeError('actual_loop_authorization_mismatch')
             confirm_loop(spec,current,scheduling,canary_objective)
             result['authorized_loop_id']=loop['id']
@@ -822,7 +845,7 @@ def arm_action(spec,action):
                 result['combined_usage_coverage']=reconcile_control(meter,control_usage(spec,loop['id'],current))
                 budget=scheduling.get('budget',{})
                 result['control_budget']=budget
-                if type(budget.get('observed_tokens')) is int and budget['observed_tokens']>=TOKENS:
+                if type(budget.get('observed_tokens')) is int and budget['observed_tokens']>=tokens:
                     raise RuntimeError('observed_control_token_limit')
                 if scheduling.get('state') in ('stopped','paused','intervention_required'):
                     result['stop_reason']='progression_'+scheduling['state'];break
@@ -846,13 +869,13 @@ def arm_action(spec,action):
         observed=max(meter.total(),control_tokens if type(control_tokens) is int else 0)
         result['observed_thread_tokens']=meter.total()
         result['observed_total_tokens']=observed
-        result['observed_token_overrun']=max(0,observed-TOKENS)
+        result['observed_token_overrun']=max(0,observed-tokens)
         result['usage_records']=list(meter.records.values())
         result['turns_requested']=meter.turns_requested  # Direct Root turn/start attempts, including canary.
         result['scientific_turns_requested']=meter.scientific_turns_requested
         result['observed_all_role_turns']=len(meter.observed_turns)
         result['trial_started']=meter.deadline is not None
-        result['phase_wall_seconds']=0 if meter.deadline is None else round(time.monotonic()-(meter.deadline-WALL),3)
+        result['phase_wall_seconds']=0 if meter.deadline is None else round(time.monotonic()-(meter.deadline-wall),3)
         write(base/(action+'-result.json'),result)
     return result
 
@@ -863,12 +886,20 @@ def main():
     parser.add_argument('--launch',type=Path);parser.add_argument('--output',type=Path)
     parser.add_argument('--native',type=Path);parser.add_argument('--spec',type=Path)
     parser.add_argument('--auth-file',type=Path);parser.add_argument('--provider-config',type=Path)
+    parser.add_argument('--native-goal-tokens',type=int,default=TOKENS)
+    parser.add_argument('--native-goal-wall-seconds',type=int,default=WALL)
+    parser.add_argument('--scidiscovery-tokens',type=int,default=TOKENS)
+    parser.add_argument('--scidiscovery-wall-seconds',type=int,default=WALL)
     parser.add_argument('--ui-url');parser.add_argument('--_lease-fd',type=int,help=argparse.SUPPRESS)
     args=parser.parse_args()
     if args._lease_fd is not None:
         os.close(args._lease_fd)  # Before any task/native code; supervisor retains lease.
         os.sched_setaffinity(0,{min(os.sched_getaffinity(0))})
-        if args.action=='prepare': prepare(args.launch,args.output,args.native,args.auth_file,args.provider_config);return 0
+        if args.action=='prepare':
+            prepare(args.launch,args.output,args.native,args.auth_file,args.provider_config,
+                native_goal_tokens=args.native_goal_tokens,native_goal_wall_seconds=args.native_goal_wall_seconds,
+                scidiscovery_tokens=args.scidiscovery_tokens,scidiscovery_wall_seconds=args.scidiscovery_wall_seconds)
+            return 0
         spec=json.loads(regular(args.spec))
         if args.action=='_daemon': return daemon(spec,args.ui_url)
         result=arm_action(spec,args.action)
@@ -885,7 +916,7 @@ def main():
     if evidence.exists(): raise RuntimeError('fresh_supervision_required; no uncertain replay')
     metadata=json.loads(regular(Path(candidate)/'candidate.json'))
     limits=json.loads(guard.DEFAULT_CONFIG.read_text())['limits']
-    if args.action=='run': limits={**limits,'timeout_seconds':300+WALL}
+    if args.action=='run': limits={**limits,'timeout_seconds':300+arm_limits(spec)['trial_wall_seconds']}
     env=dict(os.environ);env.pop('PYTHONPATH',None);env['PYTHONNOUSERSITE']='1'
     env['PYTHONDONTWRITEBYTECODE']='1'
     if args.action!='prepare':

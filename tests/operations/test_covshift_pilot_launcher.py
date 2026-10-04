@@ -28,7 +28,8 @@ def test_preparation_rejects_changed_public_bytes_before_create(tmp_path,monkeyp
     assert not (tmp_path/'new').exists()
 
 
-def test_prepare_consumes_exact_candidate_builds_same_aliases_and_fresh_settings(tmp_path,monkeypatch):
+@pytest.mark.parametrize('tokens,wall',[(200000,1800),(112607,1761)])
+def test_prepare_consumes_exact_candidate_builds_same_aliases_and_fresh_settings(tmp_path,monkeypatch,tokens,wall):
     source=pair(tmp_path,monkeypatch)
     invoked=[]
     def init(command,**kwargs):
@@ -38,19 +39,25 @@ def test_prepare_consumes_exact_candidate_builds_same_aliases_and_fresh_settings
         invoked.append(command)
         return SimpleNamespace(returncode=0,stdout=b'fixture init: no processes')
     monkeypatch.setattr(driver.subprocess,'run',init)
-    result=driver.prepare(source,tmp_path/'new',native_bundle(tmp_path))
+    result=driver.prepare(source,tmp_path/'new',native_bundle(tmp_path),
+        native_goal_tokens=tokens,native_goal_wall_seconds=wall)
     assert len(invoked)==2 and result['launch_ready'] is False
     assert result['limits']['all_role_tokens']==200000 and result['limits']['trial_wall_seconds']==1800
     specs=[json.loads(Path(p).read_text()) for p in result['arms'].values()]
     assert specs[0]['public_sha256']==specs[1]['public_sha256']
     for spec in specs:
+        expected={'all_role_tokens':tokens if spec['arm']=='native_goal' else 200000,
+            'trial_wall_seconds':wall if spec['arm']=='native_goal' else 1800}
+        assert spec['limits']==expected==result['arm_limits'][spec['arm']]
         settings=json.loads(Path(spec['root'],'agent-settings.json').read_text())
         from scidiscovery.agent_execution_settings import parse_settings
         effective=parse_settings(settings)
         assert effective.debug_disable_task_network and effective.defaults.model==driver.MODEL
         assert effective.progression.enabled==(spec['arm']=='scidiscovery')
         assert effective.progression.root_network_access is False
-        assert effective.progression.max_tokens==200000
+        assert effective.progression.max_tokens==expected['all_role_tokens']
+        assert effective.progression.max_elapsed_seconds==expected['trial_wall_seconds']
+        assert effective.progression.max_calendar_seconds==expected['trial_wall_seconds']
         assert spec['settings_sha256']==driver.sha(Path(spec['root'],'agent-settings.json'))
         for key in ('/workspace','/opt/exp/runs','/submission'):
             assert spec['definition']['filesystem'][key]=='write'
@@ -278,7 +285,8 @@ def test_canary_and_control_usage_share_budget_without_reset_or_double_count():
     with pytest.raises(RuntimeError,match='already_submitted'):meter.activate()
 
 
-def test_scientific_native_goal_is_fresh_and_canary_tokens_not_reset(tmp_path,monkeypatch):
+@pytest.mark.parametrize('tokens,wall',[(200000,1800),(112607,1761)])
+def test_scientific_native_goal_is_fresh_and_canary_tokens_not_reset(tmp_path,monkeypatch,tokens,wall):
     from types import SimpleNamespace
     import scidiscovery.artifact_agent.interfaces.mcp_daemon as installed
     source=pair(tmp_path,monkeypatch)
@@ -287,7 +295,8 @@ def test_scientific_native_goal_is_fresh_and_canary_tokens_not_reset(tmp_path,mo
         (project/'.codex/config.toml').write_text('web_search="disabled"\n')
         return SimpleNamespace(returncode=0,stdout=b'fixture')
     monkeypatch.setattr(driver.subprocess,'run',init)
-    prepared=driver.prepare(source,tmp_path/'runtime',native_bundle(tmp_path))
+    prepared=driver.prepare(source,tmp_path/'runtime',native_bundle(tmp_path),
+        native_goal_tokens=tokens,native_goal_wall_seconds=wall)
     spec=json.loads(Path(prepared['arms']['native_goal']).read_text())
     monkeypatch.setattr(installed,'__file__',str(Path(spec['python']).parent.parent/'installed-mcp-daemon.py'))
     requests=[]; hosts=[]
@@ -317,12 +326,65 @@ def test_scientific_native_goal_is_fresh_and_canary_tokens_not_reset(tmp_path,mo
     assert result['status']=='stopped_not_scored'
     assert result['observed_total_tokens']==135 and len(hosts)==2
     paused=next(params for thread,method,params in requests if thread=='fresh-science-root' and method=='thread/goal/set' and params['status']=='paused')
-    assert paused['tokenBudget']==200000-120
+    assert paused['tokenBudget']==tokens-120
+    assert result['limits']==spec['limits']
+    science_prompt=next(params['text'] for thread,method,params in requests if method=='turn/start')
+    assert 'gpt-6.1-sol/high' in science_prompt
     assert len([r for r in requests if r[1]=='turn/start'])==1
     assert result['scientific_identity']['thread_id']=='fresh-science-root'
     assert result['turns_requested']==1 and result['scientific_turns_requested']==1
     assert result['observed_all_role_turns']==2
     assert result['actual_worker_helper_isolation']=='not_verified'  # simulation never earns live qualification.
+
+
+def test_reduced_arm_limits_stop_invalid_limits_reject_and_legacy_defaults_remain():
+    budget={'all_role_tokens':112607,'trial_wall_seconds':1761}
+    assert driver.arm_limits({'limits':budget})==budget
+    assert driver.arm_limits({})=={'all_role_tokens':200000,'trial_wall_seconds':1800}
+    for key,values in {'all_role_tokens':(0,-1,True,200001,'112607'),
+            'trial_wall_seconds':(0,-1,True,1801,1761.0)}.items():
+        for value in values:
+            with pytest.raises(ValueError,match='arm_budget'):
+                driver.arm_limits({'limits':{**budget,key:value}})
+    with pytest.raises(ValueError,match='arm_budget'):
+        driver.arm_limits({'limits':{**budget,'unknown':1}})
+    now=[0.];meter=driver.Meter(lambda:now[0],tokens=112607,wall_seconds=1761)
+    meter.activate();meter.observe(usage('canary',100,20))
+    meter.observe(usage('science',112480,1))
+    assert meter.total()==112601
+    with pytest.raises(RuntimeError,match='observed_token_limit'):
+        meter.observe(usage('science',112487,1))
+    assert meter.total()==112608
+    meter=driver.Meter(lambda:now[0],tokens=112607,wall_seconds=1761);meter.activate()
+    now[0]=1760;meter.check();now[0]=1761
+    with pytest.raises(RuntimeError,match='wall_deadline'):meter.check()
+
+
+def test_actual_launcher_supervisor_uses_reduced_frozen_arm_cap(tmp_path,monkeypatch):
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+    source=pair(tmp_path,monkeypatch)
+    def init(command,**kwargs):
+        project=Path(command[command.index('--project-root')+1]);(project/'.codex').mkdir()
+        (project/'.codex/config.toml').write_text('web_search="disabled"\n')
+        return SimpleNamespace(returncode=0,stdout=b'fixture')
+    monkeypatch.setattr(driver.subprocess,'run',init)
+    prepared=driver.prepare(source,tmp_path/'runtime',native_bundle(tmp_path),
+        native_goal_tokens=112607,native_goal_wall_seconds=1761)
+    spec_path=prepared['arms']['native_goal'];observed=[]
+    @contextmanager
+    def lease(): yield SimpleNamespace(fileno=lambda:77)
+    monkeypatch.setattr(driver.guard,'serial_lock',lease)
+    def supervised(command,environment,limits,output,lock_fd):
+        observed.append((command,limits,lock_fd))
+        return {'returncode':0,'stop_reason':'exited'}  # Inspect owned dispatch; no process or paid request.
+    monkeypatch.setattr(driver.guard,'run_one',supervised)
+    monkeypatch.setattr(driver.sys,'argv',['run_covshift_pilot.py','run','--spec',spec_path])
+    assert driver.main()==0
+    assert observed[0][1]['timeout_seconds']==300+1761 and observed[0][2]==77
+    assert observed[0][1]['observed_tree_rss_stop_bytes']==1500000000
+    assert 'address_space_bytes' not in observed[0][1]
+    assert observed[0][0][observed[0][0].index('--spec')+1]==spec_path
 
 
 def test_failed_role_gate_never_activates_goal_or_sends_scientific_turn(tmp_path,monkeypatch):
