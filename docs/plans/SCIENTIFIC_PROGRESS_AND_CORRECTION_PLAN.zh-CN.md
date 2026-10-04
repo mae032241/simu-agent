@@ -428,19 +428,21 @@ N5 归属交错修复（2026-10-03，基线 `d268a5a`，源码完成、独立审
 | P3b Root 轮换（源码与独立复审完成，未部署） | 2–4 人日 | 轮换沿冻结回合／累计输入阈值、安全终态及既有 owner/generation 接线；旧 writer 撤权，活动原生子任务延期，未知 opening 不重放。loop 预算、迟到用量、通知和消费位置保留，新 Root 接续 P3 记忆与有界外部作业导航。独立评审发现的安全清理计时与已拒绝平台请求阻断均保留修前反例并修复；最终 owning 24 项及相关计时 4 项通过，原邻接 8 批属较早代码证据。模拟启动 9177 B／简报 6202 B，冻结 `/tmp/scid-p3b-source-freeze-v2-20261003.json`；未运行真实 native／模型、部署或长跑，不声称跨线程子任务自动转移 |
 | P4b 止损依据（源码与独立复审完成，未部署） | 3–5 人日 | 实例级连续未核验窗口覆盖新输出、自报 advance、改目标；仅确切先验检验的首次可信解决计进展，同条件重复不清零。公共计算投影与显式独立定性判断已接真实工具／封存／消费／准入链；普通无标准任务仍可交付，到阈值要求方向确认。人工继续不续预算，接受工作继续，shadow→assist 保留历史并产生有效新触发。两项消费窗口阻断已保留真实红绿并修复：任务去重先于限量，实际消费位置独立于交付分页；状态／归档格式 v4 拒绝旧顺序。最终 owning 35 项、相关存储／格式 16 项通过，较早邻接时序单列，冻结 `/tmp/scid-p4b-freeze-v2-20261003.json`。一次先前有效负结果核验失败原因未确证，原红及诊断保留，科学断言未放宽。未部署／运行模型，不代表科研质量或长跑收益；具体支持范围由设计 P4 节拥有 |
 | P5 短场效果 | 1–2 人日准备/分析，评分与运行另计 | 3 场景×基线/候选共 6 场；只证明冻结历史检索与短场决策效果，预算/评分规则见设计。源码候选与准备缺口已列于下表，独立复核通过（准备边界）；尚未准备可运行场次 |
-| 原版 LHTB 效果 pilot（主测） | 环境／分析另计；原题 agent 上限 N-body 3h、covshift 4h，未授权 | 首选 nbody-accel-iterative，第二题 tabular-data-feature-covshift；沿各自公开题／评分／反馈合同，确切候选与题环境仍待冻结。不依赖原合成题 A/B 钩子；单题两模式仅 pilot，不授统计效果或官方全集排名 |
+| 原版 LHTB 效果 pilot（主测） | 环境／分析另计；原题 agent 上限 N-body 3h、covshift 4h，未授权 | 当前首 pilot 为 tabular-data-feature-covshift：Native Goal／SciDiscovery 每模式各一次，各场全角色共用 1800 s deadline 的 custom 链路 smoke；N-body 保留后续，具体边界见本节与[准备记录](../COVSHIFT_PILOT_PREPARATION.zh-CN.md)。正式场次候选／有效反馈仍待冻结。不依赖原合成题 A/B 钩子；单题两模式仅 pilot，不授统计效果或官方全集排名 |
 | P6s 合成机制回归（保留） | 1–2 人日接线/分析，原约 2 小时运行提议未授权 | [题目、数据与评分草案已构造](HOURLY_LOOP_MEMORY_BENCHMARK.zh-CN.md)，[准备边界](HOURLY_LOOP_MEMORY_BENCHMARK.zh-CN.md#运行前准备边界)独立复核通过；`41c3bb4` core 安装及 initial 无模型准备实物已独立复核。分批接线源码与有限无模型回归已有证据；增量补验 failed-Run 停止、原子消息 scope 与真实 project 路径拒绝均通过，独立增量复审通过（源码接线资格，纳入本提交节点，未部署）；新源码未安装／重冻场次，多轮、真实消息消费／轮换及经验用于决策均未运行验证 |
 | P6a 第一阶段 | 1–2 人日准备/分析，另 24 小时运行 | 30 任务容量、跨天恢复及实际安全轮换；真实早期失败跨天跨线程找回、指导下一步且条件变化可合理重试 |
 | P6b 目标规模 | 2–3 人日准备/分析，另 3–7 天分档运行 | P6a 通过后按实测另授预算；100–300 任务容量与实际持续时长分别报告，提前科学完成正常收尾 |
 
 ### 真实效果题与机制回归分工
 
-2026-10-03 选题决定（选题调整独立复审通过）：原版 LHTB 是当前真实效果主测候选，首选 N-body，随后 covshift；本地 `123/lhtb-tasks` 两题已稀疏检出，来源固定 `d78f5eb52ad754c5ee9154741af73130a85a65b8`，不是已准备镜像或已运行场次。主计划拥有这项选题／资格决定；[P6s 文档](HOURLY_LOOP_MEMORY_BENCHMARK.zh-CN.md)继续拥有原合成题机制与其局部评分。
+2026-10-03 原选题决定（选题调整独立复审通过）：原版 LHTB 当时首选 N-body，随后 covshift；本地 `123/lhtb-tasks` 两题已稀疏检出，来源固定 `d78f5eb52ad754c5ee9154741af73130a85a65b8`，不是已准备镜像或已运行场次。主计划拥有这项选题／资格决定；[P6s 文档](HOURLY_LOOP_MEMORY_BENCHMARK.zh-CN.md)继续拥有原合成题机制与其局部评分。
 
 | 原版题与顺序 | 冻结来源的资源／任务声明（非授权或实测） | 验收范围与待冻结项 |
 |---|---|---|
-| 首选 `nbody-accel-iterative` | [原 manifest](https://github.com/zli12321/LHTB/blob/d78f5eb52ad754c5ee9154741af73130a85a65b8/tasks/nbody-accel-iterative/task.toml)：agent 3h、4 CPU、memory_MB=8192、GPU=0、network=false；continue_until_timeout=true，单次 verifier 可 1h | 沿[原 instruction](https://github.com/zli12321/LHTB/blob/d78f5eb52ad754c5ee9154741af73130a85a65b8/tasks/nbody-accel-iterative/instruction.md)核数值正确性与实际加速／原评分；执行前钉定实际 harness 对继续至时限的支持、结束行为及有效反馈，不默认 stock harness 等价 |
-| 第二题 `tabular-data-feature-covshift` | [原 manifest](https://github.com/zli12321/LHTB/blob/d78f5eb52ad754c5ee9154741af73130a85a65b8/tasks/tabular-data-feature-covshift/task.toml)：agent 4h、1 CPU、memory_MB=4096、GPU=0、network=false；未设置 continue_until_timeout，单次 verifier 10min | 沿[原 instruction](https://github.com/zli12321/LHTB/blob/d78f5eb52ad754c5ee9154741af73130a85a65b8/tasks/tabular-data-feature-covshift/instruction.md)保留至少 25 次不同实验与原停滞条件、隐藏泛化评分；冻结有效版本／反馈，不抹掉实验要求或擅自复制第一题的继续策略 |
+| N-body（原首选，工程 smoke 保留） | [原 manifest](https://github.com/zli12321/LHTB/blob/d78f5eb52ad754c5ee9154741af73130a85a65b8/tasks/nbody-accel-iterative/task.toml)：agent 3h、4 CPU、memory_MB=8192、GPU=0、network=false；continue_until_timeout=true，单次 verifier 可 1h | 沿[原 instruction](https://github.com/zli12321/LHTB/blob/d78f5eb52ad754c5ee9154741af73130a85a65b8/tasks/nbody-accel-iterative/instruction.md)核数值正确性与实际加速／原评分；执行前钉定实际 harness 对继续至时限的支持、结束行为及有效反馈，不默认 stock harness 等价 |
+| Covshift（当前首 pilot） | [原 manifest](https://github.com/zli12321/LHTB/blob/d78f5eb52ad754c5ee9154741af73130a85a65b8/tasks/tabular-data-feature-covshift/task.toml)：agent 4h、1 CPU、memory_MB=4096、GPU=0、network=false；未设置 continue_until_timeout，单次 verifier 10min | 沿[原 instruction](https://github.com/zli12321/LHTB/blob/d78f5eb52ad754c5ee9154741af73130a85a65b8/tasks/tabular-data-feature-covshift/instruction.md)保留至少 25 次不同实验与原停滞条件、隐藏泛化评分；冻结有效版本／反馈，不抹掉实验要求或擅自复制第一题的继续策略 |
+
+2026-10-04 用户决定先实施 covshift：Native Goal／SciDiscovery 每模式各一次、各场全部角色共用 1800 s deadline，定位 custom 链路 smoke，不是原题 4 h 成绩；token／费用上限、实际双驱动／全角色隔离／有效反馈与评分仍待冻结。[Covshift 本机准备](../COVSHIFT_PILOT_PREPARATION.zh-CN.md)已完成独立 binary-wheel env、净化公开材料和一次真实 exp run／submit／公开 audit，无模型／隐藏评分，待独立审查。原至少25次不同实验／最后8次停滞条件不改写，不把 internal exp 当 Root task 或长期覆盖；N-body 原实物与工程检查保留。
 
 这些是原题声明。原题数值评分沿原verifier；构建、verifier与实际人工介入分别记账，不新增人工评分要求。MB 字段不冒充实际 RSS 字节或已测峰值。更换题目不授权 3h／4h费用，不继承原 P6s token 或时长提议。若缩预算、改题、增分批材料／工况或改变反馈，须另冻并标 **LHTB-derived／custom pilot**，不能称原版同条件成绩。原题不强迫 `science.experiment.v1`、可选 declaration、A/B 批次或 Operation DAG，不新增 runner。
 
