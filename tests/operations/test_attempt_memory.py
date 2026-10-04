@@ -12,6 +12,140 @@ from tests.operations.test_attempt_history import history_system, add_terminal, 
 from tests.operations.test_local_worker_contracts import _invoke, _worker
 from tests.operations.test_progression import progression, unmanaged_progression, row
 from tests.operations.test_scientific_progress import finish, request, assess, active
+from tests.operations.test_experiment_material_delivery import catalog, staged_experiment
+
+
+@pytest.fixture
+def historical_experiment_memory(staged_experiment):
+    from types import SimpleNamespace
+    from scidiscovery.operations.catalog import CompiledCatalog
+    from scidiscovery.artifact_agent.service.experiment_execution import bind_experiment_services
+    from tests.operations.test_experiment_material_delivery import submit_staged_report
+    from tests.operations.research_loop_fixtures import authorize_loop
+    f = staged_experiment
+    current = f.catalog
+    old = next(compiled for (name, _), compiled in current._historical_operations.items()
+        if name == 'science.experiment.v1')
+    assert current.recorded_contract_status(old.spec.operation_id,
+        version=old.spec.version, digest=old.digest) == 'supported_historical'
+    # Execute the real predecessor capsule, including its validators and tools;
+    # do not relabel a current Run or alias the old digest to a current checker.
+    prior = CompiledCatalog({name:old if name == old.spec.operation_id else current.operation(name)
+        for name in current.operation_ids()}, current._runtime_factories,
+        current._runtime_configuration_digests, current._runtime_identity_digests)
+    runs, bindings, root = f.runtime.runs, f.runtime.scheduler_bindings, f.root
+    runs.operation_catalog = root.facade._operation_catalog = prior
+    user = 'sch_' + 'a'*32
+    bindings.bind_session(session_key=user, instance_id=f.instance.instance_id)
+    root.facade.session_key = user
+    root.facade.instance_management_secret = SECRET
+    root.call_tool('progression_command', dict(command='takeover', mode='interactive'))
+    root.call_tool('progression_command', dict(command='pause'))
+    authorize_loop(f.runtime, f.instance.instance_id, user, 'objective')
+    root.call_tool('progression_command', dict(command='start', mode='interactive', objective_name='objective'))
+    created = root.call_tool('operation_invoke', dict(name='historical-experiment',
+        operation_id=old.spec.operation_id, inputs=[dict(port='subject',artifact_names=['objective']),
+            dict(port='scientific_materials',artifact_names=['condition'])], instruction='Retain an unresolved bounded design.'))
+    assert created['result']['state'] == 'queued'
+    identity = root.facade._resolve('run', 'historical-experiment')
+    runs.worker_connections.attach(run_id=identity, platform_session='historical-author', thread_id='historical-author')
+    class UnusedService:
+        def __getattr__(self, name):
+            raise AttributeError(name)
+    services = {key:UnusedService() for tool in old.worker_tools for key in tool.required_services}
+    services = bind_experiment_services(runs, old, services, coordinator=runs.experiment_executions)
+    worker = LocalWorkerMCPRouter(runs, operation_id=old.spec.operation_id,
+        operation_digest=old.digest, tool_services=services)
+    opened = worker.call_tool('worker_open_assignment', {})
+    stage = worker.call_tool('worker_experiment_stage', dict(stage='design',
+        conclusion='This bounded design still needs a validation observation.', materials=['scientific_materials']))
+    author = SimpleNamespace(worker=worker, workspace=Path(opened['workspace_path']))
+    completed = submit_staged_report(author, [stage['reference']])
+    metrics('historical-experiment-submit', completed)
+    assert completed['state'] == 'completed', completed
+    stored = runs.status(identity)
+    assert stored.operation_digest == old.digest != current.operation(old.spec.operation_id).digest
+    runs.operation_catalog = root.facade._operation_catalog = current
+    assert runs._compiled(stored) is old
+    reader = f.start('current-memory-reader')
+    return SimpleNamespace(f=f, old=old, stored=stored, reader=reader)
+
+
+def test_supported_historical_contract_survives_real_memory_routes(historical_experiment_memory):
+    h = historical_experiment_memory
+    root_page = h.f.root.call_tool('run_list', dict(view='history', limit=8))
+    worker_page = h.reader.worker.call_tool('worker_read_history', dict(limit=8))
+    metrics('historical-memory-routes', dict(root=root_page, worker=worker_page))
+    for page in (root_page, worker_page):
+        item = next(item for item in page['runs'] if item['name'] == 'historical-experiment')
+        assert {source['artifact_name'] for source in item['frozen_inputs']} >= {'objective', 'condition'}
+        assert item['scientific_fields']['/outcome'] == 'inconclusive'
+        assert item['scientific_fields']['/remaining_question'] == 'The observations do not establish a unique mechanism.'
+        assert not any('contract_unavailable' in gap or 'scientific_fields_original_unavailable' == gap
+            for gap in item['omissions'])
+    scope = h.f.runtime.runs._worker_memory_binding(h.reader.run_id)['scope']
+    neutral = h.f.runtime.runs.memory_page(scope, audience='reviewer')
+    item = neutral['runs'][0]
+    assert item['frozen_inputs'] and item['projection'].startswith('neutral_terminal_index')
+    assert not any(key in item for key in ('summary', 'scientific_fields', 'worker_verdict', 'root_judgment'))
+
+
+@pytest.mark.parametrize('operation_id', [
+    'science.evidence.audit.intake.v1', 'science.evidence.audit.v1', 'science.evidence.extract.v1',
+    'science.experiment.v1', 'science.hypothesis.criticize.v1', 'science.hypothesis.propose.v1',
+    'science.object.review.v1'])
+def test_actual_supported_registry_contracts_keep_inputs_and_declared_fields(staged_experiment, operation_id):
+    f = staged_experiment
+    old = next(compiled for (name, _), compiled in f.catalog._historical_operations.items() if name == operation_id)
+    assert f.catalog.recorded_operation(operation_id, version=old.spec.version, digest=old.digest) is old
+    assert f.catalog.recorded_contract_status(operation_id, version=old.spec.version,
+        digest=old.digest) == 'supported_historical'
+    inputs = [dict(port_name=port.name, source_name=port.name, artifact_name='original-'+port.name)
+        for port in old.spec.inputs]
+    # Synthetic projection bytes exercise the exact seven registered capsules;
+    # the route regression above instead seals an actual complete final report.
+    body, expected = {}, {}
+    for field in old.spec.decision_fields:
+        if field == 'summary':continue
+        pointer = field if field.startswith('/') else '/' + field.replace('~','~0').replace('/','~1')
+        keys = [key.replace('~1','/').replace('~0','~') for key in pointer[1:].split('/')]
+        value = 'recorded decision field '+field
+        nested = body
+        for key in keys[:-1]:nested = nested.setdefault(key,{})
+        nested[keys[-1]] = value
+        expected[pointer] = value
+    assert expected
+    original = f.register('recorded-projection', canonical_json(body), old.spec.outputs[0].schema_id)
+    row = dict(operation_id=operation_id, operation_version=old.spec.version, operation_digest=old.digest,
+        inputs_json=canonical_json(inputs), output_ref_json=original.ref.model_dump_json())
+    visible, omission = f.runtime.runs._memory_visible_inputs(row, 16384)
+    assert omission is None
+    assert {item['original_name'] for item in visible} == {
+        port.name for port in old.spec.inputs if port.agent_visible and port.exposure != 'handoff_only'}
+    item = dict(omissions=[])
+    f.runtime.runs._memory_scientific_fields(item, row, 16384, read_bytes=16384)
+    assert item['scientific_fields'] == expected and item['omissions'] == []
+
+
+@pytest.mark.parametrize('invalid', ['unknown_operation', 'wrong_version', 'wrong_digest', 'current_digest_wrong_version'])
+def test_unavailable_recorded_identity_stays_unknown_on_real_memory_routes(historical_experiment_memory, invalid):
+    h = historical_experiment_memory
+    changes = dict(operation_id=h.old.spec.operation_id, operation_version=h.old.spec.version, operation_digest=h.old.digest)
+    if invalid == 'unknown_operation':changes['operation_id'] = 'not.installed.v1'
+    elif invalid in {'wrong_version', 'current_digest_wrong_version'}:changes['operation_version'] = 'not-supported-version'
+    else:changes['operation_digest'] = '0'*64
+    if invalid == 'current_digest_wrong_version':
+        changes['operation_digest'] = h.f.catalog.operation(h.old.spec.operation_id).digest
+    with h.f.runtime.runs._connect() as db:
+        db.execute('UPDATE runs SET operation_id=?,operation_version=?,operation_digest=? WHERE run_id=?',
+            (*changes.values(),h.stored.run_id))
+    pages = (h.f.root.call_tool('run_list', dict(view='history', limit=8)),
+        h.reader.worker.call_tool('worker_read_history', dict(limit=8)))
+    for page in pages:
+        item = next(item for item in page['runs'] if item['name'] == 'historical-experiment')
+        assert item['frozen_inputs'] == [] and 'scientific_fields' not in item
+        assert 'historical_visibility_contract_unavailable' in item['omissions']
+        assert 'scientific_fields_contract_unavailable' in item['omissions']
 
 
 def test_compiled_independent_reviewer_history_is_neutral_but_subject_original_remains_readable(progression):

@@ -49,9 +49,8 @@ class AttemptMemoryMixin:
 
     def _memory_visible_inputs(self, row, budget):
         try:
-            compiled = self.operation_catalog.operation(row['operation_id'])
-            if compiled.digest != row['operation_digest']:
-                return [], 'historical_visibility_contract_unavailable'
+            compiled = self.operation_catalog.recorded_operation(row['operation_id'],
+                version=row['operation_version'], digest=row['operation_digest'])
         except KeyError:
             return [], 'historical_visibility_contract_unavailable'
         visible = {p.name for p in compiled.spec.inputs if p.agent_visible and p.exposure != 'handoff_only'}
@@ -74,7 +73,7 @@ class AttemptMemoryMixin:
         with closing(self._connect()) as db:
             # Exact binding lookup, not a whole-instance Run/material scan.
             identity = self.scheduler_bindings.resolve(instance=scope['instance_id'], namespace='run', name=record['name'])
-            row = db.execute('SELECT run_id,instance_id,operation_id,operation_digest,output_binding_name,output_ref_json,'
+            row = db.execute('SELECT run_id,instance_id,operation_id,operation_version,operation_digest,output_binding_name,output_ref_json,'
                 'CASE WHEN length(signal_json)<=? THEN signal_json END AS signal_json,'
                 'CASE WHEN length(inputs_json)<=? THEN inputs_json END AS inputs_json,'
                 "json_extract(CAST(recovery_policy_json AS TEXT),'$.scientific_intent_ref') AS intent_ref FROM runs WHERE instance_id=? AND run_id=?",
@@ -164,11 +163,12 @@ class AttemptMemoryMixin:
         """Copy complete declared decision fields, never infer from prose/verdict."""
         from .run_read_projection import _pointer_value
         try:
-            compiled=self.operation_catalog.operation(row['operation_id'])
+            compiled=self.operation_catalog.recorded_operation(row['operation_id'],
+                version=row['operation_version'], digest=row['operation_digest'])
         except KeyError:
             item['omissions'].append('scientific_fields_contract_unavailable')
             return
-        if compiled.digest!=row['operation_digest'] or not row['output_ref_json']:
+        if not row['output_ref_json']:
             item['omissions'].append('scientific_fields_original_unavailable')
             return
         try:
