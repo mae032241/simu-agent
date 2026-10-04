@@ -67,4 +67,13 @@ Public 准备沿同一 guard 包装运行 `python scripts/prepare_covshift_local
 
 本轮 source 检查与一次真实 initialize/config/read 证明 named profile 与 legacy network=false 可共存、有效 web_search=disabled；未在当前外层环境创建 thread 或执行 native。`launch_ready=false`：旧 installed candidate 不含该新 flag；真实 Worker／helper 的 native 子代理继承仍未验证。此应用策略只强制框架拥有的启动／声明网络工具路径，不能禁止用户自行 CLI 覆写、任意外部 MCP／第三方 plugin 自开 socket；正式 pilot 必须只加载已审 surface 并另钉部署读／出网边界。文件隔离、全角色计量与停止、账户模型可用性、双驱动及 trusted host-only 评分交接继续待完成，不声称 Agent 已不能看到答案。
 
-用户已确认 **Native Goal 与 SciDiscovery 各一次、每模式全角色共用 1800 s wall deadline** 的 custom 链路 smoke；不是每个角色各获 30 分钟，也不是原题 4 h 同条件成绩。两模式实际 driver、有效 profile／反馈、任务与模型 API 的网络边界、Root／Worker／helper 的真实读隔离、trusted host-only 隐藏评分、全角色 token／费用上限与停止仍待冻结；不沿用 P6s 4M。原全角色6.1-sol/high提案未激活，alias仍未 runtime核实，progression mode未选；不把开发6.1/xhigh当场次条件。本轮未启动 model／Goal／app-server／科研实例／评分，不授权新科研费用；launch_ready=false。
+用户已确认 **Native Goal 与 SciDiscovery 各一次、每模式全角色共用 1800 s wall deadline 和 200000 tokens，任一先到即停止** 的 custom 链路 smoke；不是每个角色各获额度，也不是原题 4 h 同条件成绩。额度覆盖 Root／Worker／helper／全部 native child；用量未知须保守停。实际计量／停止、两模式 driver、有效 profile／反馈、任务与模型 API 的网络边界、全角色真实读隔离与 trusted host-only 隐藏评分仍待接线验证；200k 不换算成固定金额保证，不沿用 P6s 4M。原全角色6.1-sol/high提案未激活，alias仍未 runtime核实，progression mode未选；不把开发6.1/xhigh当场次条件。本轮未启动 model／Goal／app-server／科研实例／评分，不授权新科研费用；launch_ready=false。
+
+
+### 双模式公开输入交接（独立审查通过，限定输入与 MCP 路径边界）
+
+[prepare_covshift_pilot.py](../scripts/prepare_covshift_pilot.py) 消费上述净化工程包与 exact installed candidate identity，通过既有默认 serial_lock／run_one 生成两臂独立输入。当前 `/tmp/scid-covshift-paired-20261004-inputs-001/launch.json` 绑定 candidate `e77c61f`；每臂科学输入只含原 instruction 与 exp_cli.py／runner.py／train.csv／val.csv／净化 meta.json，并附原镜像语义的 `exp` wrapper。不复制 task.toml／Dockerfile／开发源码或计划，workspace／runs／submission 全空，不带旧训练文件／模型／实验日志。launch 与 settings proposal 留在 host，不能作为模型正文或 project 输入；两臂均冻结候选6.1-sol/high，默认 helper 与 lightweight 候选一致，Scid progression 尚未激活。
+
+实际驱动必须消费 launch 中的精确只读／可写绑定：harness→`/opt/exp`（read）、exp wrapper→`/usr/local/bin/exp`（read），workspace→`/workspace`、runs→`/opt/exp/runs`、submission→`/submission`（write）。两臂使用相同 PATH／EXP_*，保留原60 s run、45 s audit、0.10阈值；原题绝对路径不靠修改题面迁就本机。当前只生成绑定输入，`bindings_enforced=false`、`launch_ready=false`；chmod 与路径移动不是 OS 隔离证明。
+
+5 项 source 检查核两臂完整公开集合／空输出、篡改与错误 candidate 拒绝，以及真实三工具 MCP→artifact_ingest_file：公开原件可封存，绝对／..／直接和父目录 symlink 越界均拒绝且无新 Artifact 绑定。该范围不能推出任意 plugin／外部 MCP 已隔离。后续真实 Goal／Sci driver、native Worker/helper canary 和全角色 hard-stop 仍需宿主证据；实例与 loop 必须由既有管理 UI 选择／授权，不能脚本暗建。评分须让不可信 pickle 只在无隐藏 labels／metric／results 权限的推断边界加载，把 features→predictions 交回可信原 grader；尚未证明原 grader 的实际加载入口可被该边界替代，不自造分数或读取评分器／答案源码。
