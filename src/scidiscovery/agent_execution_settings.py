@@ -190,7 +190,14 @@ class ProgressionSettings(SettingsValue):
         return self
 
 
-def root_permission_conflicts(progression: dict, catalog) -> list[str]:
+def task_network_policy(disabled: bool, *, web_search: str = "disabled") -> dict:
+    """Effective managed-task policy; model-provider traffic is outside this gate."""
+    return {"debug_disabled": disabled, "native_network": not disabled,
+            "web_search": "disabled" if disabled else web_search,
+            "host_requests": not disabled}
+
+
+def root_permission_conflicts(progression: dict, catalog, *, debug_disable_task_network=False) -> list[str]:
     """Worker capabilities a frozen background Root policy would silently remove.
 
     Native Workers inherit Root sandbox and network. Hosted web_search is counted
@@ -203,8 +210,13 @@ def root_permission_conflicts(progression: dict, catalog) -> list[str]:
     if progression.get("root_sandbox", default.root_sandbox) != "workspace-write" and writers:
         issues.append("root_sandbox read-only removes workspace writes from Workers that inherit Root "
                       "permissions (inherited native shell): " + ", ".join(writers))
-    network = sorted(spec.operation_id for spec in agents if spec.limits.network.mode != "none"
-                     or spec.executor.native_tools.web_search != "disabled")
+    policy = task_network_policy(debug_disable_task_network)
+    if debug_disable_task_network and progression.get("root_network_access", default.root_network_access):
+        issues.append("debug_disable_task_network requires effective root_network_access false")
+    network = sorted(spec.operation_id for spec in agents if
+                     (policy["host_requests"] and spec.limits.network.mode != "none")
+                     or task_network_policy(debug_disable_task_network,
+                         web_search=spec.executor.native_tools.web_search)["web_search"] != "disabled")
     if not progression.get("root_network_access", default.root_network_access) and network:
         issues.append("root_network_access false removes network from Workers that inherit Root "
                       "permissions (declared network or web_search): " + ", ".join(network))
@@ -258,6 +270,12 @@ class DiagnosticsSettings(SettingsValue):
 
 class AgentSettings(SettingsValue):
     schema_version: Literal[1] = 1
+    debug_disable_task_network: bool = Field(default=False, description=(
+        "Deployment startup-only debug restriction: managed Root/Worker/helper native network, "
+        "web search and declared host network tools are disabled; model API traffic is unchanged. "
+        "Stop all existing hosts and agents before enabling and restart with matching installed roles. "
+        "Old tasks/loops with different frozen policy cannot execute or resume; originals remain readable. "
+        "This is not an OS network boundary for arbitrary plugins or external MCP servers."))
     defaults: DefaultSettings = Field(default_factory=DefaultSettings)
     operations: dict[str, OperationSettings] = Field(default_factory=dict)
     progression: ProgressionSettings = Field(default_factory=ProgressionSettings)
@@ -365,7 +383,11 @@ def effective_settings(global_settings: AgentSettings, instance_settings: dict) 
             else:
                 base[key] = value
         return base
+    if "debug_disable_task_network" in instance_settings:
+        raise ValueError("debug_disable_task_network is deployment-only, not an instance override")
     value = merge(global_settings.model_dump(exclude_none=True), instance_settings)
+    if global_settings.debug_disable_task_network:
+        value["progression"]["root_network_access"] = False
     for key, default in dict(model=packaged_default_model(), reasoning_effort="medium", narrative_language="en").items():
         value["defaults"].setdefault(key, default)
     # Instance preferences cannot enable a deployment-wide background runtime.

@@ -13,7 +13,7 @@ def startup_document(assignment: dict, domain: dict | None = None) -> dict:
     # instructions from the frozen assignment and plugin manifest, once per view.
     result = {key: assignment[key] for key in (
         'operation', 'instruction', 'scientific_intent', 'role_instructions', 'narrative_instruction',
-        'budget', 'inputs', 'reference_access', 'attempt_memory', 'revision', 'recovery_draft', 'tools', 'execution_requirements',
+        'budget', 'inputs', 'reference_access', 'attempt_memory', 'revision', 'recovery_draft', 'tools', 'execution_requirements', 'task_network_policy',
     ) if assignment.get(key) is not None}
     result['output'] = {
         'relative_path': assignment.get('output', {}).get('relative_path', 'output/result.json'),

@@ -128,6 +128,7 @@ class LocalWorkerMCPRouter:
             "Do not read the parent result schema or owner instructions unless the subtask specifically needs them."
         )
         assignment = {"participation": "helper", "name": self.participant['name'], **task,
+            **({"task_network_policy": source['task_network_policy']} if 'task_network_policy' in source else {}),
             "role_instructions": instruction,
             "inputs": [item for item in source.get('inputs', [])
                        if item.get('source_name') in task['materials']
@@ -400,6 +401,8 @@ class LocalWorkerMCPRouter:
             registered = self._registered.get(name)
             if registered is None:
                 raise WorkerToolError(f"unknown local domain tool: {name}")
+            if registered.network_access:
+                self.runs.require_network_request_permission(self._run_id)
             try:
                 if registered.handler is not None:
                     result = registered.handler(parsed)

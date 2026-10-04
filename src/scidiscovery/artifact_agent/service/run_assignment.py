@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ...agent_execution_settings import narrative_instruction
+from ...agent_execution_settings import narrative_instruction, task_network_policy
 
 import json
 from typing import Any
@@ -30,6 +30,7 @@ def assignment_json(
     prior_source_bindings: dict[str, str] | None = None,
     deadline_at: str | None = None,
     attachment_settings: dict | None = None,
+    debug_disable_task_network: bool = False,
 ) -> bytes:
     revision = _revision_assignment(
         bound, inputs, workspace_mode=revision_workspace_mode
@@ -56,6 +57,7 @@ def assignment_json(
                 "digest": bound.compiled.digest,
             },
             "instruction": bound.instruction or "",
+            **({"task_network_policy": task_network_policy(True)} if debug_disable_task_network else {}),
             **({"scientific_intent": bound.scientific_intent} if bound.scientific_intent else {}),
             **({"execution_requirements": {
                 "independent_implementation_review": "required",

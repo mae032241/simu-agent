@@ -262,13 +262,15 @@ class CodexProgressionHost(CodexRootHost):
 
 class CodexProgressionFactory:
     def __init__(self, *, project_root, state_root, socket_path, approval_base_url, command=None, catalog=None,
-                 permissions: RootPermissions | None = None):
+                 permissions: RootPermissions | None = None, agent_settings=None):
         self.project_root, self.state_root = Path(project_root), Path(state_root)
         self.socket_path, self.approval_base_url = str(socket_path), approval_base_url
         self.command, self.catalog = command, catalog
         self.permissions = permissions
+        from ..agent_execution_settings import load_settings
+        self.agent_settings = agent_settings or load_settings(os.environ.get('SCID_AGENT_SETTINGS_FILE'))
 
-    def root_permissions(self, limits, checkpoint, prior):
+    def root_permissions(self, limits, checkpoint, prior, *, debug_disable_task_network=False):
         """Frozen goal policy, checked against inherited Worker needs before any launch."""
         from ..agent_execution_settings import ProgressionSettings, root_permission_conflicts
         default = ProgressionSettings()
@@ -284,7 +286,8 @@ class CodexProgressionFactory:
         if self.catalog is None:
             from ..operations.catalog import compile_installed_catalog
             self.catalog = compile_installed_catalog()
-        conflicts = root_permission_conflicts(limits, self.catalog)
+        conflicts = root_permission_conflicts(limits, self.catalog,
+            debug_disable_task_network=debug_disable_task_network)
         if conflicts:
             raise HostError('root_permissions_incompatible: ' + '; '.join(conflicts))
         # A restored running turn keeps the policy it started with; unproven means stop.
@@ -294,6 +297,9 @@ class CodexProgressionFactory:
 
     def __call__(self, row, on_event):
         settings = json.loads(row['config_json'])['effective']
+        offline = settings.get('debug_disable_task_network', False)
+        if offline is not self.agent_settings.debug_disable_task_network:
+            raise HostError('task_network_policy_changed: stop old hosts/agents; frozen loop cannot resume with a different deployment policy')
         limits = settings['progression']
         config = tomllib.loads((self.project_root / '.codex/config.toml').read_text())
         server = config.get('mcp_servers', {}).get('scidiscovery', {})
@@ -310,13 +316,24 @@ class CodexProgressionFactory:
         previous = json.loads(row['host_json'] or 'null')
         checkpoint = json.loads(row['checkpoint_json'])
         prior = RootIdentity(previous['thread_id'], previous['platform_session']) if previous else None
-        permissions = self.root_permissions(limits, checkpoint, prior)
+        permissions = self.root_permissions(limits, checkpoint, prior, debug_disable_task_network=offline)
+        if offline:
+            from .codex import validate_task_network_profile
+            validate_task_network_profile(self.project_root, self.catalog, debug_disable_task_network=True)
+            # Both Root and child agents receive this same verified launch configuration.
+            config['web_search'] = 'disabled'
         if permissions.permission_profile is not None:
             # The named definition stays in private CODEX_HOME, not project/model inputs.
             permissions.verify_config(personal)
             if any(key in personal for key in ('sandbox_mode', 'sandbox_workspace_write')):
                 raise HostError('root_permissions_conflicting_override')
-            permissions.verify_options({'config': config})
+            thread_config = dict(config)
+            if offline and thread_config.get('sandbox_workspace_write') == {'network_access': False}:
+                # The installed/launch configuration and config/read retain this
+                # exact deny. Only the duplicate legacy thread override is absent
+                # when the same network=false is supplied by the named profile.
+                thread_config.pop('sandbox_workspace_write')
+            permissions.verify_options({'config': thread_config})
         directory = self.state_root / 'progression-logs'
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         log = PrivateLog(directory / 'host.stderr', limits['log_bytes'])
@@ -338,6 +355,8 @@ class CodexProgressionFactory:
             host.initialize(cwd=str(self.project_root), expected_config=config)
             options = {'model': root_settings.root_model,
                 'config': {'model_reasoning_effort': root_settings.root_reasoning_effort}}
+            if offline:
+                options['config']['web_search'] = 'disabled'
             host.root_options,host.root_cwd,host.approval_base_url=options,str(self.project_root),self.approval_base_url
             opening_root = True
             host.open_root(cwd=str(self.project_root), prior=prior, options=options,

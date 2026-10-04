@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ...operation_contract import contract_diagnostic, sanitize_diagnostic_details
+from ...operation_contract import DiagnosticError, contract_diagnostic, sanitize_diagnostic_details
 from ...operations.tooling import operation_worker_tools
 from ...operations.catalog import CompiledCatalog
 from ...operations.invoke import (
@@ -186,6 +186,8 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
 
     def execution_settings(self, compiled, *, instance_id, profile=None, recovery_source=None, max_attempts=None):
         source = self.status(recovery_source) if recovery_source else None
+        if source is not None:
+            self.require_task_network_policy(source)
         if source is not None and source.instance_id != instance_id:
             raise RunStateConflict("recovery source belongs to another instance")
         if profile is not None and (source is not None or max_attempts is not None):
@@ -260,6 +262,9 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
             raise RunStateConflict("resume_from and draft_from are mutually exclusive")
         if draft_digest is not None and draft_from is None:
             raise RunStateConflict("draft digest requires a source Run")
+        for source_id in (resume_from, draft_from):
+            if source_id is not None:
+                self.require_task_network_policy(self.status(source_id))
         self._validate_attempt_limit(max_attempts)
         compiled = bound.compiled
         execution_profile = bound.execution_profile
@@ -567,6 +572,7 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
                     prior_source_bindings=dict(self.prior_source_bindings(self.status(run_id))),
                     deadline_at=deadline_at,
                     attachment_settings=recovery_policy.get("attachments"),
+                    debug_disable_task_network=recovery_policy.get("debug_disable_task_network", False),
                 ),
                 result_schema=result_schema_json(
                     compiled, read_input=lambda alias: self.artifacts.read(frozen_refs[alias]),
@@ -719,6 +725,7 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
             if row is None:
                 connection.execute("ROLLBACK")
                 raise RunStateConflict("no exact queued Run is available")
+            self.require_task_network_policy(self._status_from_row(row))
             if (row["backend_id"] != self.backend.backend_id
                     or row["backend_version"] != self.backend.backend_version
                     or tuple(json.loads(row["backend_capabilities_json"])) != self.backend.capabilities):
@@ -911,6 +918,7 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
             "execution_io": self.agent_settings.execution_io.model_dump(),
             "input_materials": self.agent_settings.input_materials.model_dump(),
             "attachments": self.agent_settings.attachments.model_dump(),
+            "debug_disable_task_network": self.agent_settings.debug_disable_task_network,
             "snapshot_max_files": 132, "snapshot_max_bytes": 32 * 1024 * 1024,
         }
 
@@ -2408,8 +2416,26 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
         enqueue(self, value, output)
         return receipt
 
+    def require_task_network_policy(self, value):
+        """Execution must retain its frozen deployment policy; historical reads are unrestricted."""
+        frozen = (value.recovery_policy or {}).get("debug_disable_task_network", False)
+        if type(frozen) is not bool or frozen is not self.agent_settings.debug_disable_task_network:
+            raise RunStateConflict("task_network_policy_changed: stop old hosts/agents; task cannot execute or resume under a different deployment policy")
+
+    def require_network_request_permission(self, run_id):
+        # Current deployment deny also protects old Run callbacks. This gate does
+        # not revoke an already submitted external request or a running child.
+        if self.agent_settings.debug_disable_task_network:
+            raise DiagnosticError("task network is disabled by deployment debug policy", details=(
+                contract_diagnostic("task_network_disabled", phase="tool_execution", affected_action="tool_call",
+                    message="Deployment debug policy disables network requests. Use sealed/local inputs; model API transport is unchanged."),))
+        value = self._require_running(run_id)
+        if (value.recovery_policy or {}).get("debug_disable_task_network", False):
+            raise DiagnosticError("task network is disabled by frozen debug policy")
+
     def _require_running(self, run_id: str) -> RunStatus:
         value = self.status(run_id)
+        self.require_task_network_policy(value)
         if value.state != "running":
             raise RunStateConflict(f"Run is not running: {value.state}")
         if expired(value.deadline_at):

@@ -269,6 +269,7 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
             labels=tuple(envelope.labels.items()), producer_run_id=record.get("producer_run_id"))
 
     def reserve_network_request(self, run_id, tool, url):
+        self.require_network_request_permission(run_id)
         from urllib.parse import urlsplit
         from .run_records import timestamp
         value = self._require_running(run_id)

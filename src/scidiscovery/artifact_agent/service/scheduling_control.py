@@ -412,6 +412,8 @@ class SchedulingControl:
     def _control_settings_match(self, instance_id, config_json):
         from ...agent_execution_settings import ProgressionSettings
         frozen = json.loads(config_json)
+        # Omission predates this deployment restriction; it granted no debug deny.
+        frozen['effective'].setdefault('debug_disable_task_network', False)
         # A newly introduced IO default does not revise the immutable grant.
         frozen['effective']['progression'].setdefault('sqlite_busy_wait_seconds',
             ProgressionSettings().sqlite_busy_wait_seconds)

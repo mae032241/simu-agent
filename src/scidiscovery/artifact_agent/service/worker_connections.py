@@ -79,6 +79,7 @@ class WorkerConnections:
         return rows[0] if rows else None
 
     def attach(self, *, run_id, platform_session, thread_id):
+        self.runs.require_task_network_policy(self.runs.status(run_id))
         with self.runs._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             if connection.execute(
