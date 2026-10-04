@@ -182,7 +182,32 @@ def test_role_gate_requires_authentic_exact_command_not_agent_completion_chat():
     event(item);assert meter.proofs['actual']['item_id']=='command'
 
 
-def test_role_read_checks_native_inheritance_without_permission_override(tmp_path):
+def test_captured_shell_receipt_matches_only_exact_platform_wrapper():
+    expected='/readonly/python -I /readonly/canary.py'
+    wrapped="/usr/bin/bash -lc '/readonly/python -I /readonly/canary.py'"
+    item={'type':'commandExecution','id':'actual-os-item','source':'unifiedExecStartup',
+        'status':'completed','exitCode':0,'command':wrapped,
+        'aggregatedOutput':json.dumps(dict.fromkeys(driver.CANARY_CHECKS,True))}
+    meter=driver.Meter(lambda:0.);meter.canary_command=expected
+    def event(value,thread='actual'):
+        meter.observe({'method':'item/completed','params':{'threadId':thread,'item':value}})
+    for command in (
+            "/bin/bash -lc '/readonly/python -I /readonly/canary.py'",
+            "/usr/bin/bash -c '/readonly/python -I /readonly/canary.py'",
+            wrapped+' extra', 'env '+wrapped, 'cd /task; '+wrapped,
+            "/usr/bin/bash -lc '/readonly/python -I /readonly/canary.py; true'",
+            "/usr/bin/bash -lc '/readonly/python /readonly/canary.py'",
+            "/usr/bin/bash -lc '/readonly/python -I /readonly/other.py'",
+            "/usr/bin/bash -lc 'unterminated"):
+        event({**item,'command':command});assert not meter.proofs
+    event({**item,'exitCode':1});event({**item,'status':'failed'})
+    event({**item,'type':'agentMessage'});assert not meter.proofs
+    event(item,'other-thread');assert 'actual' not in meter.proofs
+    event(item);assert meter.proofs['actual']['item_id']=='actual-os-item'
+
+
+@pytest.mark.parametrize('wrapped',[False,True])
+def test_role_read_checks_native_inheritance_without_permission_override(tmp_path,wrapped):
     from types import SimpleNamespace
     definition={'filesystem':{':root':'deny','/task':'read'},'network':{'enabled':False}}
     spec={'definition':definition,'root':str(tmp_path)};meter=driver.Meter(lambda:0.)
@@ -192,6 +217,7 @@ def test_role_read_checks_native_inheritance_without_permission_override(tmp_pat
     meter.canary_command='/readonly/python -I /readonly/canary.py'
     item={'type':'commandExecution','id':'native','status':'completed','exitCode':0,
         'command':meter.canary_command,'aggregatedOutput':json.dumps(dict.fromkeys(driver.CANARY_CHECKS,True))}
+    if wrapped:item['command']="/usr/bin/bash -lc '/readonly/python -I /readonly/canary.py'"
     requests=[]
     def rpc(method,params):
         requests.append((method,params))
@@ -212,6 +238,14 @@ def test_role_read_checks_native_inheritance_without_permission_override(tmp_pat
         return reply
     host.connection.rpc=forked
     with pytest.raises(RuntimeError,match='history_unconfirmed'):
+        driver.read_role_proofs(host,meter,spec,{'helper':'real-child'})
+    host.connection.rpc=original
+    def wrong_identity(method,params):
+        reply=original(method,params)
+        if method=='thread/read':reply['thread']['id']='different-thread'
+        return reply
+    host.connection.rpc=wrong_identity
+    with pytest.raises(RuntimeError,match='identity_profile_or_history_unconfirmed'):
         driver.read_role_proofs(host,meter,spec,{'helper':'real-child'})
     host.connection.rpc=original
     path.write_text(path.read_text().replace(driver.MODEL,'gpt-6-astra'))

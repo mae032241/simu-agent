@@ -365,7 +365,7 @@ class Meter:
                         if self.children.get(child,thread)!=thread:raise RuntimeError('native_child_identity_conflict')
                         self.children[child]=thread
                         self.started.setdefault(child,self.clock())
-            if item.get('type')=='commandExecution' and item.get('command')==self.canary_command:
+            if item.get('type')=='commandExecution' and matches_canary_command(item.get('command'),self.canary_command):
                 try:checks=json.loads(item.get('aggregatedOutput',''))
                 except (TypeError,ValueError):checks={}
                 if (item.get('exitCode')==0 and item.get('status')=='completed'
@@ -386,6 +386,14 @@ class Meter:
                 for thread,when in self.completed.items()):
             self.reason='participant_usage_unconfirmed'
         if self.reason: raise RuntimeError(self.reason)
+
+
+def matches_canary_command(actual,expected):
+    """0.159.2 shell-formats its real argv; accept only the observed exact wrapper."""
+    if not isinstance(actual,str) or not isinstance(expected,str):return False
+    if actual==expected:return True
+    try:return shlex.split(actual)==['/usr/bin/bash','-lc',expected]
+    except ValueError:return False
 
 
 def public_call(host,name,arguments):
