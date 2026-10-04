@@ -98,3 +98,11 @@
 ## 13GB内存配置
 
 Native新场实际在909733 observed tokens、933.435秒科学阶段后触发原1GB host resource_limit；已有44模型及公开submitted记录，异常结束，不重放。用户授权放开内存，现以scripts/acceptance/covshift_resources_13gb.json显式配置两臂树RSS/AppServer/后台Root为13000000000 bytes，最小系统可用1000000000，下降止损13000000000；无AS限制。新目录`/tmp/scid-covshift-direct-13gb-20261004-001`已准备，两臂settings/spec核对一致，尚无模型调用。优先运行未执行Sci臂；不自动重跑Native，原成本/异常终态保留。两臂内存条件不同须在比较里说明。
+
+## control_usage_scope_conflict定位结论（2026-10-05，只读复现）
+
+真实失败账本可确定性复现启动器错误，无模型请求。账本两条：root归属实例与loop正确；另一条role=unattributed、owner=null、thread/loop正确。该线程原生session_meta.parent_thread_id精确指向已记账Root，Root原生SubAgentActivity确认started；runs仅1个queued、worker_connections=0。子线程已观察16218输入+59输出=16277 tokens，尚无attach记录。
+
+生产progression_budget.apply_usage_observation明确支持用量先于绑定到达：未归属时暂存当前loop、owner=null，后续通过原绑定reconcile；codex_usage.ROLES也明确含unattributed。启动器run_covshift_pilot.reconcile_control却强制owner==instance且role仅root/worker/helper，并立即抛control_usage_scope_conflict。因此这是启动器把正常spawn→首usage→attach时序的暂态当最终冲突。异常导致外层关闭daemon/host，queued任务无机会完成attach，不是OOM/额度耗尽/科学失败。
+
+修复方向：本loop未归属用量持续计入总额并标pending attribution，保持时长/token止损；绑定出现后精确核对实例/loop/role，不猜角色，不丢成本。真正错loop/错已绑定owner仍拒绝；停机最终仍未归属应保留partial，不报完整覆盖。补spawn usage-before-attach→attach的定向回归及错误归属负例。本次仅定位，代码尚未修改。
