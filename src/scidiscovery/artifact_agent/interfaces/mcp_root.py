@@ -40,7 +40,7 @@ from .mcp_root_approval_routes import RootApprovalRoutes
 from .mcp_root_execution_routes import RootExecutionRoutes
 from .mcp_root_instance_routes import RootInstanceRoutes
 from .mcp_root_operation_routes import RootOperationRoutes
-from .mcp_root_run_routes import RootRunRoutes
+from .mcp_root_run_routes import RootRunRoutes, HISTORY_ATTENTION_REPLY_MAX_BYTES
 from ..service.engineering_diagnostics import EngineeringDiagnostics
 from ..service.execution_collection import COLLECTION_SECONDS
 
@@ -714,13 +714,19 @@ class RootMCPRouter:
                 return response
             notices, delivery = batch
             budget = field = key = None
-            if name in {'run_list', 'scientific_inventory'}:
+            if name == 'run_list' and values.get('view') == 'history':
+                # Only its producer can change members or opaque continuations.
+                # Defer notices that do not fit; never trim this frozen page.
+                budget = HISTORY_ATTENTION_REPLY_MAX_BYTES
+            elif name in {'run_list', 'scientific_inventory'}:
                 from ...agent_execution_settings import MCPReadSettings
                 settings = getattr(getattr(self.facade.runs, 'agent_settings', None), 'mcp_read', None) or MCPReadSettings()
                 budget = settings.detail_max_bytes if values.get('view') == 'detail' else settings.summary_max_bytes
                 field, key = ('runs', 'name') if name == 'run_list' else ('objects', 'artifact_name')
             from .mcp_response_views import append_attention
             result, count = append_attention(response, notices, budget=budget, field=field, key=key)
+            if not count:
+                return response
             claimed = self.facade.acknowledge_attention_notifications(delivery, count)
             if not claimed:
                 return response

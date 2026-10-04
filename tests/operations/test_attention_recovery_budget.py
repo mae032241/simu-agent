@@ -1,11 +1,93 @@
 """Regression boundaries for durable notifications, recovery identity and reply budgets."""
 import json
+from copy import deepcopy
 from dataclasses import replace
 
 import pytest
 
 from tests.operations.test_analysis_claim_scope import generic_worker, submit
 from tests.operations.test_result_analysis_tool import limited_report
+
+
+@pytest.mark.parametrize('count', [30, 3])
+def test_history_attention_preserves_producer_pages_and_opaque_continuations(tmp_path, monkeypatch, count):
+    from tests.operations.test_attempt_history import history_system, SECRET
+    from tests.operations.test_run_list_bounds import metrics
+    from scidiscovery.artifact_agent.service.progression_records import read_history_cursor
+    system = history_system(tmp_path, count)
+    root = system.root
+    expected_notices = [f'task-{index:04d}' for index in range(min(8, count))]
+    for name in expected_notices:
+        system.runs.record_attention(system.ids[name], scope='submission:control',
+            code='submission_intervention_required')
+    original = root.facade.run_list
+    produced = []
+    def capture(**query):
+        value = original(**query)
+        produced.append(deepcopy(value))
+        return value
+    monkeypatch.setattr(root.facade, 'run_list', capture)
+    query, seen, notifications, pages = dict(view='history', limit=20), [], [], []
+    for _ in range(30):
+        reply = root.call_tool('run_list', query)
+        pages.append(reply)
+        metrics(f'history-attention-{count}', dict(produced=produced, delivered=pages, expected=system.expected))
+        if len(pages) == 1 and count == 30:
+            assert len(json.dumps(produced[-1], separators=(',', ':')).encode()) > 4096
+        assert {key:value for key,value in reply.items() if key != 'attention_notifications'} == produced[-1]
+        assert len(json.dumps(reply, ensure_ascii=False, separators=(',', ':')).encode()) <= 16384
+        seen.extend(item['name'] for item in reply['runs'])
+        notifications.extend(reply.get('attention_notifications', {}).get('events', []))
+        if len(pages) == 1 and count == 30:
+            # The real eight-notice burst cannot all fit beside this full page.
+            delivered = {event['name'] for event in notifications}
+            assert 0 < len(delivered) < len(expected_notices)
+            pending, _ = root.facade.prepare_attention_notifications()
+            assert {event['name'] for event in pending['events']} == set(expected_notices) - delivered
+        if not reply['continuation']:
+            assert reply['next_before'] is None
+            break
+        # Both opaque positions remain valid and resume after the same member.
+        positions = [read_history_cursor(token, secret=SECRET, instance_id=system.instance,
+            state=None, limit=20)['after'] for token in (reply['next_before'],reply['continuation']['before'])]
+        assert positions[0] == positions[1]
+        query = dict(reply['continuation']);query.pop('tool')
+    else:
+        pytest.fail('finite history fixture must not repeat or loop')
+    assert seen == system.expected and len(set(seen)) == count
+    assert [event['name'] for event in notifications] == expected_notices
+    assert root.facade.prepare_attention_notifications() is None
+
+
+def test_history_notice_with_no_remaining_bytes_does_not_call_ack(tmp_path, monkeypatch):
+    from scidiscovery.artifact_agent.interfaces import mcp_root
+    from tests.operations.test_attempt_history import history_system
+    system = history_system(tmp_path, 3)
+    root = system.root
+    system.runs.record_attention(system.ids['task-0000'], scope='submission:control',
+        code='submission_intervention_required')
+    # Inject total reply pressure at the real producer/router boundary. Reducing
+    # this allowance does not change the producer's page or its cursor budget.
+    original = root.facade.run_list
+    produced, acknowledgements = [], []
+    def capture(**query):
+        value = original(**query)
+        produced.append(deepcopy(value))
+        monkeypatch.setattr(mcp_root, 'HISTORY_ATTENTION_REPLY_MAX_BYTES',
+            len(json.dumps(value, ensure_ascii=False, separators=(',', ':')).encode()))
+        return value
+    ack = root.facade.acknowledge_attention_notifications
+    def acknowledge(delivery, count):
+        acknowledgements.append(count)
+        return ack(delivery, count)
+    monkeypatch.setattr(root.facade, 'run_list', capture)
+    monkeypatch.setattr(root.facade, 'acknowledge_attention_notifications', acknowledge)
+    reply = root.call_tool('run_list', dict(view='history', limit=20))
+    assert reply == produced[-1] and acknowledgements == []
+    assert root.facade.prepare_attention_notifications() is not None
+    # Another ordinary reply can deliver this exact pending notice.
+    assert root.call_tool('instance_current', {})['attention_notifications']['events'][0]['name'] == 'task-0000'
+    assert acknowledgements == [1] and root.facade.prepare_attention_notifications() is None
 
 
 def test_unchanged_notifications_do_not_take_a_write_lock(tmp_path, monkeypatch):

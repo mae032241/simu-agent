@@ -13,6 +13,13 @@ from ..service.run_read_projection import RunReadProjection, run_is_terminal, _o
 from .mcp_root_shared import RootToolError
 
 
+# History owns complete entries and encrypted continuations. The producer's
+# allowance excludes route metadata. This attention candidate budget is not a
+# hard cap on history: an already larger page is preserved without notices.
+HISTORY_ATTENTION_REPLY_MAX_BYTES = 16384
+HISTORY_PAGE_MAX_BYTES = 15360
+
+
 def _output_index(output, pointer, offset, limit):
     return _read_output_index(output, pointer, offset, limit, error_type=RootToolError)
 
@@ -64,7 +71,7 @@ class RootRunRoutes(RunReadProjection):
             raise RootToolError('Frozen history requires the configured local identity.')
         scope = (read_history_cursor(before, secret=secret, instance_id=instance, state=state, limit=limit)
             if before else self.runs.attempt_history_scope(instance_id=instance, state=state, limit=limit))
-        response = self.runs.memory_page(scope, audience='root', page_bytes=15360,
+        response = self.runs.memory_page(scope, audience='root', page_bytes=HISTORY_PAGE_MAX_BYTES,
             continuation=lambda record: dict(tool='run_list', view='history', state=state, limit=limit,
                 before=history_cursor(dict(scope, after=[record['completed_at'], record['terminal_event']]), secret=secret)))
         response['history_scope'] = dict(kind='exact_goal' if scope['objective_ref'] else 'authorized_recovery_source',
