@@ -225,7 +225,8 @@ def permissions(spec):
 
 def prepare(launch_path, output, native, auth_file=None, provider_config=None, *,
         native_goal_tokens=TOKENS,native_goal_wall_seconds=WALL,
-        scidiscovery_tokens=TOKENS,scidiscovery_wall_seconds=WALL,resource_config=None):
+        scidiscovery_tokens=TOKENS,scidiscovery_wall_seconds=WALL,resource_config=None,human_wait_seconds=1800):
+    if type(human_wait_seconds) is not int or human_wait_seconds<=0:raise ValueError('invalid_human_wait')
     resources=json.loads(regular(resource_config)) if resource_config is not None else {}
     resource_limits({'resources':resources})
     launch = load_launch(launch_path)
@@ -277,7 +278,7 @@ def prepare(launch_path, output, native, auth_file=None, provider_config=None, *
         (base/'evidence/init.log').write_bytes(completed.stdout)
         if completed.returncode:
             raise RuntimeError('installed_initializer_failed:'+arm)
-        spec={'arm':arm,'limits':budget,'resources':resources,'root':str(base),'project':str(project),'python':str(installed),
+        spec={'arm':arm,'limits':budget,'resources':resources,'human_wait_seconds':human_wait_seconds,'root':str(base),'project':str(project),'python':str(installed),
             'task_python':launch['task_python'],'native':str(native),'native_sha256':result['native_sha256'],
             'code_mode_host':code_mode_host,
             'environment':{**launch['arms'][arm]['environment'],
@@ -840,7 +841,7 @@ def arm_action(spec,action):
                     result['stop_reason']='native_goal_'+goal['status'];break
         else:
             print('Select/create an instance only through this management page: '+current['management_url'],flush=True)
-            until=time.monotonic()+300
+            until=time.monotonic()+spec.get('human_wait_seconds',1800)
             while current.get('state')=='unbound' and time.monotonic()<until:
                 host.connection.poll(.2);current=public_call(host,'instance_current',{});time.sleep(.5)
             if current.get('state')!='active': raise RuntimeError('user_instance_not_selected')
@@ -920,6 +921,7 @@ def main():
     parser.add_argument('--scidiscovery-tokens',type=int,default=TOKENS)
     parser.add_argument('--scidiscovery-wall-seconds',type=int,default=WALL)
     parser.add_argument('--resource-config',type=Path)
+    parser.add_argument('--human-wait-seconds',type=int,default=1800)
     parser.add_argument('--ui-url');parser.add_argument('--_lease-fd',type=int,help=argparse.SUPPRESS)
     args=parser.parse_args()
     if args._lease_fd is not None:
@@ -928,7 +930,7 @@ def main():
         if args.action=='prepare':
             prepare(args.launch,args.output,args.native,args.auth_file,args.provider_config,
                 native_goal_tokens=args.native_goal_tokens,native_goal_wall_seconds=args.native_goal_wall_seconds,
-                scidiscovery_tokens=args.scidiscovery_tokens,scidiscovery_wall_seconds=args.scidiscovery_wall_seconds,resource_config=args.resource_config)
+                scidiscovery_tokens=args.scidiscovery_tokens,scidiscovery_wall_seconds=args.scidiscovery_wall_seconds,resource_config=args.resource_config,human_wait_seconds=args.human_wait_seconds)
             return 0
         spec=json.loads(regular(args.spec))
         if args.action=='_daemon': return daemon(spec,args.ui_url)
@@ -947,7 +949,7 @@ def main():
     metadata=json.loads(regular(Path(candidate)/'candidate.json'))
     limits=json.loads(guard.DEFAULT_CONFIG.read_text())['limits']
     if args.action!='prepare': limits=resource_limits(spec)[0]
-    if args.action=='run': limits={**limits,'timeout_seconds':300+arm_limits(spec)['trial_wall_seconds']}
+    if args.action=='run': limits={**limits,'timeout_seconds':300+arm_limits(spec)['trial_wall_seconds']+(spec.get('human_wait_seconds',1800) if spec['arm']=='scidiscovery' else 0)}
     env=dict(os.environ);env.pop('PYTHONPATH',None);env['PYTHONNOUSERSITE']='1'
     env['PYTHONDONTWRITEBYTECODE']='1'
     if args.action!='prepare':
