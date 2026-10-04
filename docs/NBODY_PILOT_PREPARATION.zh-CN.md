@@ -1,16 +1,16 @@
 # N-body 双模式冒烟准备记录
 
-状态（2026-10-04）：**本机公开 starter 工程 smoke 已完成，独立审查通过（仅本机无模型工程 smoke）；`launch_ready=false`，未运行模型或评分，未授权科研费用。** 原 core 离线安装及未激活 profile 准备已独立审查通过，原实物不改写。本文是有限实物交接记录；选题、运行资格与资源决定仍由[主计划](plans/SCIENTIFIC_PROGRESS_AND_CORRECTION_PLAN.zh-CN.md#真实效果题与机制回归分工)拥有。不是 Goal runner 或已激活科学场次；Docker／Harbor 仅为严格复现原 harness 的可选路线，不是本机工程 smoke 前置。
+状态（2026-10-04）：**本机公开 starter 工程 smoke 已完成，独立审查通过（仅本机无模型工程 smoke）；`launch_ready=false`，未运行模型或评分，未授权科研费用。** 原 core 离线安装及未激活 profile 准备已独立审查通过，原实物不改写。本轮从四项已审修复提交另建 core 候选并完成无模型读回；新候选实物与本次状态同步独立审查通过（仅准备交付与状态核对）。本文是有限实物交接记录；选题、运行资格与资源决定仍由[主计划](plans/SCIENTIFIC_PROGRESS_AND_CORRECTION_PLAN.zh-CN.md#真实效果题与机制回归分工)拥有。不是 Goal runner 或已激活科学场次；Docker／Harbor 仅为严格复现原 harness 的可选路线，不是本机工程 smoke 前置。
 
 ## 已准备实物
 
 | 项目 | 实际结果 |
 |---|---|
-| source／installed candidate | 干净提交 `76d1ce52c925ee71c7b368203931d661363b8020` 的独立 detached source `/tmp/scid-nbody-prep-20261004-source`；新 core 安装 `/tmp/scid-nbody-prep-20261004-candidate`。旧 `41c3bb4` candidate／source／suite／case 不改写 |
-| wheel 与读回 | `scidiscovery-0.1.1-py3-none-any.whl` SHA-256 `4a86654e639898d3ad36c88c537017e164cfe05cf6527bbe552e204db66fd676`；清除源码 PYTHONPATH、使用 installed `python -I`，195 个 package 成员的 source／wheel／installed bytes 相等，wheel RECORD 210 个带 hash 项有效。两个 plugin origins 均为新 candidate site-packages；schema 9、core catalog 可编译。仅此字节／接口子集，非完整发布或 task image 资格 |
+| source／installed candidate | 当前准备候选固定干净提交 `b1509837369e7f8f0f7583578219ad930789ac76`，独立 detached source `/tmp/scid-nbody-closure-20261004-source`，core 安装 `/tmp/scid-nbody-closure-20261004-candidate`。旧 `41c3bb4` 与 `76d1ce5` 的 source／candidate／suite／case 和证据均保留 |
+| wheel 与读回 | `scidiscovery-0.1.1-py3-none-any.whl` SHA-256 `eadb7a6c6877e4cc643b95ceb073d9c6cc31b85b219a9bc154b40aa73d830a14`；清除源码 PYTHONPATH、使用 installed `python -I`，195 个 package 成员的 source／wheel／installed bytes 相等，wheel RECORD 210 个带 hash 项有效。两个 plugin origins 均为新 candidate site-packages；schema 9、core catalog 可编译。仅此字节／接口子集，非完整发布或 task image 资格 |
 | 无执行状态 | 原安装 profile 实际 Root `gpt-5.6-sol/high`，Worker defaults `gpt-6-astra/high`，operations={}；保留原快照。instance／session／progression／Run 均 0；未配置 approval 的读回 runtime 中 execution service 为 None，记未配置，不冒充已测空 execution 服务。candidate 自带旧 probe 合成 task，不是 N-body 绑定场次 |
 | 公开任务包 | 来源 `123/lhtb-tasks`，固定 `d78f5eb52ad754c5ee9154741af73130a85a65b8`／`nbody-accel-iterative`。`/tmp/scid-nbody-prep-20261004-evidence/public-task` 仅含下列 8 个允许文件，各 SHA 见 freeze；原稀疏 checkout 保持干净。没有 tests／solutions／oracle／答案或完整 checkout |
-| profile 派生输入 | `/tmp/scid-nbody-prep-20261004-evidence/proposal-agent-settings-v2.json` 经实际 installed AgentSettings／effective_settings 解析：Native Codex Goal 候选及 SciDiscovery Root、Worker defaults、helper 的 inherit／lightweight 选路均为 `gpt-6.1-sol/high`，operations={}、无 instance overrides、progression.enabled=false。当前10个 catalog Operation 的实际 executor defaults 经既有 resolve_settings 后也均为该 profile；helper 原输入／调用限制保留。此同 profile 提案未激活、未改 candidate/settings，不继承开发 subagent xhigh/fast，model alias 仍未 runtime 验证。原混合 v1 提案与证据完整保留 |
+| profile 派生输入 | `/tmp/scid-nbody-prep-20261004-evidence/proposal-agent-settings-v2.json` 经原 `76d1ce5` 实际 installed AgentSettings／effective_settings 解析：Native Codex Goal 候选及 SciDiscovery Root、Worker defaults、helper 的 inherit／lightweight 选路均为 `gpt-6.1-sol/high`，operations={}、无 instance overrides、progression.enabled=false。当前10个 catalog Operation 的实际 executor defaults 经既有 resolve_settings 后也均为该 profile；helper 原输入／调用限制保留。此同 profile 提案未激活、未改 candidate/settings，不继承开发 subagent xhigh/fast，model alias 仍未 runtime 验证。原混合 v1 提案与证据完整保留 |
 | 本机工程 smoke | [任务专用薄入口](../scripts/prepare_nbody_local.py) 只准备、计算和交接，不启动 Agent。`/tmp/scid-nbody-local-20261004-prepared-002` 保留相同 8 个冻结公开文件：实际 public `Simulator` 24 粒子／2 步，粒子数／ID／有限值通过；Python 3.12.13、NumPy 2.4.4，不是原 Dockerfile 的 NumPy 1.24.4 环境，标 custom 工程检查。`submission/simulator.py` 为 1286 B，SHA-256 `a4cb0b6717cf077699eb71a7f80f9e4dac4c091fe44d56d9d5ac175ff7cc64b6`，未评分 |
 
 允许的任务文件为 `task.toml`、`instruction.md`、`environment/Dockerfile`、`environment/workspace/simulator.py`，以及 Dockerfile 对 agent 公开的 `environment/harness/{baseline,bench_cli,generate_particles,world}.py`。初版仅复制／封存；本机增量只 import 公开 Simulator／world 做上述极小计算，没有运行原 bench_cli／verifier／参考解。两模式须使用完全相同公开输入。最终只转交 regular `simulator.py`，原 manifest 最大 2000000 B。
@@ -18,12 +18,12 @@
 实际构建命令（已执行，不重跑到同目录）：
 
 ```sh
-git worktree add --detach /tmp/scid-nbody-prep-20261004-source 76d1ce52c925ee71c7b368203931d661363b8020
+git worktree add --detach /tmp/scid-nbody-closure-20261004-source b1509837369e7f8f0f7583578219ad930789ac76
 # 在上述 source 工作区：
-PYTHONPATH=src /home/da/miniconda3/bin/python scripts/probe_root_host_live.py prepare --candidate /tmp/scid-nbody-prep-20261004-candidate
+PYTHONPATH=/tmp/scid-nbody-closure-20261004-source/src /home/da/miniconda3/bin/python scripts/probe_root_host_live.py prepare --candidate /tmp/scid-nbody-closure-20261004-candidate
 ```
 
-原 prepare 内置全 UID 串行锁和 run_one；build/install 为 no-index／no-deps，未下载。AS 2000000000 B／RSS 止损 1500000000 B／300 s／8388608 B log，prepare 3.412 s、RSS 123691008 B。读回同默认监督；首次诊断脚本误读未配置 execution service 的 None，日志保留，修正诊断范围后通过，未重装／修产品。
+prepare 内置全 UID 串行锁和 run_one；build/install 为 no-index／no-deps，未下载。AS 2000000000 B／RSS 止损 1500000000 B／300 s／8388608 B log，本轮 prepare 3.616 s、RSS 131149824 B；同默认监督的 installed 读回 1.182 s、RSS 68501504 B，通过上述全成员、catalog 与零状态检查。原 `76d1ce5` 安装及其 None 诊断历史不改写；本轮未重跑 CPU／namespace／Goal／profile 检查或已绿源码测试。
 
 本机增量实际命令（已执行，输出目录不可复用）：
 
@@ -62,4 +62,15 @@ bwrap 白名单只暴露该公开输入、可写 workspace／output、只读必�
 codex app-server generate-json-schema --experimental --out /tmp/scid-nbody-prep-20261004-evidence/protocol-schema
 ```
 
-P2 增量审查入口：`/tmp/scid-nbody-prep-20261004-implementation-v2.md`、`/tmp/scid-nbody-prep-20261004-freeze-v2.json`；原安装／输入／隔离检查由未改写的 implementation／freeze v1 保留。各实际 command/resource/log、installed readback／file audit、Goal schemas 与 canary 原件都在本轮 evidence 目录；此记录不把准备成功改写为 launch ready。
+P2 增量审查入口：`/tmp/scid-nbody-prep-20261004-implementation-v2.md`、`/tmp/scid-nbody-prep-20261004-freeze-v2.json`；原安装／输入／隔离检查由未改写的 implementation／freeze v1 保留。各历史 command/resource/log、installed readback／file audit、Goal schemas 与 canary 原件都在原准备 evidence 目录；此记录不把准备成功改写为 launch ready。
+
+## 四项已审修复与当前候选范围
+
+| 本地提交（均已独立审查） | 已修范围与保留边界 |
+|---|---|
+| `d835910` history＋attention | history 生产者独占成员及加密 continuation；通知放不下时延期、不 ack。16384 B 是 attention 候选回复预算，15360 B 是 producer 页预算；旧 route 长 metadata 不受前者硬 cap 保证 |
+| `0d0be23` 历史 attempt_memory | 通过 exact id／version／digest 的 recorded contract 解析现有同 ABI supported historical；未知／错版本／错 digest 仍 unavailable，不新增 ABI23 迁移 |
+| `0381e1f` 跨 owner 轮换 proof | 同 host 合法重连后可读不变成功 receipt，保留 scope／session／generation／retirement／比较 prepare fence；不扩大整场 runner 重启资格 |
+| `b150983` 探索失败与作用域 | autonomous multi_task／P6s 仅纳入本场 exact instance／goal／loop 的 accepted 非 interactive Run；失败尝试保留参与者、成本和诊断，必需成功产物及 P6s 确切事实不放宽。single／helper 原严格失败行为保留；未知／冲突 usage 不视为零成本 |
+
+本轮 source／wheel／installed 核对涵盖两个 history 产品文件与 attempt_memory；B3／B5 是 source-only bench scripts，按上述 source commit 冻结，不进入 core wheel。P6s 已释放因果只在原 runner 同进程保留，post-model 整场重启仍 unknown／unsupported；旧 P6s suite／case 不升级。新候选读回证据 `/tmp/scid-closure-final-20261004-evidence/`，最终报告／冻结 `/tmp/scid-closure-final-20261004-implementation.md`、`/tmp/scid-closure-final-20261004-freeze-v1.json`。修复源码与有限回归不授真实长期科学、完整发布或 N-body 双模式运行资格；`launch_ready=false` 与上述剩余动作不变。
