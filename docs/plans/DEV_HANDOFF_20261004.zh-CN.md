@@ -106,3 +106,7 @@ Native新场实际在909733 observed tokens、933.435秒科学阶段后触发原
 生产progression_budget.apply_usage_observation明确支持用量先于绑定到达：未归属时暂存当前loop、owner=null，后续通过原绑定reconcile；codex_usage.ROLES也明确含unattributed。启动器run_covshift_pilot.reconcile_control却强制owner==instance且role仅root/worker/helper，并立即抛control_usage_scope_conflict。因此这是启动器把正常spawn→首usage→attach时序的暂态当最终冲突。异常导致外层关闭daemon/host，queued任务无机会完成attach，不是OOM/额度耗尽/科学失败。
 
 修复方向：本loop未归属用量持续计入总额并标pending attribution，保持时长/token止损；绑定出现后精确核对实例/loop/role，不猜角色，不丢成本。真正错loop/错已绑定owner仍拒绝；停机最终仍未归属应保留partial，不报完整覆盖。补spawn usage-before-attach→attach的定向回归及错误归属负例。本次仅定位，代码尚未修改。
+
+## 计量待归属修复（2026-10-05）
+
+启动器reconcile_control现接受本loop中role=unattributed且owner=null的暂态，照常累计成本并输出pending_attribution；后续正式绑定仍严格核实例/loop/角色，结束未归属则coverage=partial。用量/墙钟止损保留，未删除归属校验。定向测试通过；真实失败账本只读回放已不再抛control_usage_scope_conflict，无模型/无重跑。测试证据位于项目根archive/temporary-covshift-20261005/covshift-attribution-fix-20261005。此前“尚未修复”描述为历史状态；仍未取得新真实场次通过证据。

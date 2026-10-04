@@ -750,3 +750,39 @@ def test_explicit_memory_budget_overrides_both_supervisors():
                 {'app_server_tree_rss_bytes':True},{'app_server_tree_rss_bytes':2000000000}):
         with pytest.raises(ValueError,match='invalid_resource_budget'):
             driver.resource_limits({'resources':bad})
+
+
+def test_usage_before_attach_counts_cost_then_resolves_without_recounting():
+    from scidiscovery.platforms.codex_usage import observe_usage
+    from copy import deepcopy
+    now=[0.]
+    meter=driver.Meter(lambda:now[0],tokens=2000000);meter.activate()
+    root=observe_usage(usage('root',100,5)['params'],role='root',owner='instance')
+    child=observe_usage(usage('child',16218,59)['params'])
+    snapshot={'instance':'instance','loop':'loop','frontend_unmeasured':False,
+        'participants':{},'records':{'root':dict(root,loop_id='loop'),'child':dict(child,loop_id='loop')}}
+    first=driver.reconcile_control(meter,snapshot)
+    assert first['coverage']=='pending_attribution' and first['pending_attribution_threads']==['child']
+    assert first['known_tokens_lower_bound']==meter.total()==16382
+    now[0]=20
+    assert driver.reconcile_control(meter,snapshot)['coverage']=='pending_attribution'
+    assert meter.total()==16382
+    for change in ({'loop_id':'other'},{'owner':'other'},{'thread_id':'other'}):
+        bad=deepcopy(snapshot);bad['records']['child'].update(change)
+        with pytest.raises(RuntimeError,match='control_usage_scope_conflict'):
+            driver.reconcile_control(meter,bad)
+    attached=deepcopy(snapshot);attached['participants']['child']=('worker','session')
+    attached['records']['child'].update(role='worker',owner='instance')
+    assert driver.reconcile_control(meter,attached)['coverage']=='observed_with_frontend_receipts'
+    assert meter.total()==16382
+    for change in ({'owner':'other'},{'role':'helper'},{'loop_id':'other'}):
+        bad=deepcopy(attached);bad['records']['child'].update(change)
+        with pytest.raises(RuntimeError,match='control_usage_scope_conflict'):
+            driver.reconcile_control(meter,bad)
+    capped=driver.Meter(lambda:0.,tokens=16000);capped.activate()
+    with pytest.raises(RuntimeError,match='observed_token_limit'):
+        driver.reconcile_control(capped,snapshot)
+    assert capped.total()==16382
+    now[0]=1801
+    with pytest.raises(RuntimeError,match='wall_deadline'):
+        driver.reconcile_control(meter,snapshot)

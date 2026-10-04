@@ -550,11 +550,16 @@ def reconcile_control(meter,snapshot):
             if role!='root' and snapshot['participants'].get(thread)!=(role,proof['platform_session']):
                 raise RuntimeError('frontend_role_scope_changed')
             expected[thread]=role
+    pending_attribution=[]
     for thread,record in records.items():
-        if (record.get('thread_id')!=thread or record.get('owner')!=snapshot['instance']
-                or record.get('loop_id')!=snapshot['loop'] or record.get('role') not in {'root','worker','helper'}
-                or (record['role']!='root' and expected.get(thread)!=record['role'])):
+        unattributed=record.get('role')=='unattributed'
+        if (record.get('thread_id')!=thread or record.get('loop_id')!=snapshot['loop']
+                or (record.get('owner') is not None if unattributed else record.get('owner')!=snapshot['instance'])
+                or record.get('role') not in {'root','worker','helper','unattributed'}
+                or (not unattributed and record['role']!='root' and expected.get(thread)!=record['role'])):
             raise RuntimeError('control_usage_scope_conflict')
+        if unattributed:
+            pending_attribution.append(thread)  # Usage can precede worker_attach; do not infer its role.
         expected[thread]=record['role']
     if (set(meter.records)|set(meter.started)|set(meter.children))-set(expected):
         raise RuntimeError('participant_scope_unconfirmed')
@@ -581,8 +586,9 @@ def reconcile_control(meter,snapshot):
         pending.append(thread)
     meter.control_records=records
     meter.check()
-    return {'coverage':'pending_native_usage' if pending else 'observed_with_frontend_receipts',
-        'pending_threads':pending,'known_tokens_lower_bound':meter.total(),'participants':len(expected),
+    return {'coverage':('pending_attribution' if pending_attribution else
+            'pending_native_usage' if pending else 'observed_with_frontend_receipts'),
+        'pending_attribution_threads':pending_attribution,'pending_threads':pending,'known_tokens_lower_bound':meter.total(),'participants':len(expected),
         'control_frontend_partial_retained':snapshot['frontend_unmeasured']}
 
 
@@ -977,6 +983,9 @@ def arm_action(spec,action):
             except subprocess.TimeoutExpired: process.kill();process.wait()
         control_tokens=(result.get('control_budget') or {}).get('observed_tokens')
         observed=max(meter.total(),control_tokens if type(control_tokens) is int else 0)
+        coverage=result.get('combined_usage_coverage')
+        if coverage and coverage.get('pending_attribution_threads'):
+            coverage.update(coverage='partial',attribution='unresolved_at_stop')
         result['observed_thread_tokens']=meter.total()
         result['observed_total_tokens']=observed
         result['observed_token_overrun']=max(0,observed-tokens)
