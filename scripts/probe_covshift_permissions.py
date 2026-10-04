@@ -58,6 +58,35 @@ def installed_identity(candidate):
             'modules': {name: {'origin': str(path), 'sha256': sha(path)} for name, path in origins.items()}}
 
 
+def permission_diagnostic(method, reply):
+    """Only synthetic-profile permission fields; never dump config/auth/providers."""
+    if method == 'config/read':
+        config = reply.get('config', {})
+        selected = config.get('permissions', {}).get(NAME, {})
+        if not isinstance(selected, dict):
+            return {'selected_profile_type': type(selected).__name__}
+        network = selected.get('network', {})
+        # Proxy/domain/socket details can contain credentials. Retain shape and
+        # equality fingerprints, while safe booleans/nulls remain diagnostic.
+        safe_network = {key: value if value is None or type(value) is bool else
+            {'type': type(value).__name__, 'sha256': hashlib.sha256(
+                json.dumps(value, sort_keys=True).encode()).hexdigest()}
+            for key, value in network.items()} if isinstance(network, dict) else None
+        return {'default_permissions': config.get('default_permissions'),
+            'approval_policy': config.get('approval_policy'),
+            'selected_profile': {'keys': sorted(selected), 'extends': selected.get('extends'),
+                'workspace_roots': selected.get('workspace_roots'),
+                'description_present': selected.get('description') is not None,
+                'filesystem': selected.get('filesystem'), 'network': safe_network}}
+    if method in ('thread/start', 'thread/resume'):
+        return {key: reply.get(key) for key in ('activePermissionProfile', 'approvalPolicy', 'sandbox')}
+    if method.startswith('thread/goal/'):
+        goal = reply.get('goal')
+        return {'goal': {key: goal.get(key) for key in ('status', 'tokensUsed', 'timeUsedSeconds')}
+                if isinstance(goal, dict) else None}
+    return None
+
+
 def prepare(root, native, native_sha):
     if root.parent != Path('/tmp') or not root.name.startswith('scid-covshift-'):
         raise ValueError('require a new direct /tmp/scid-covshift-* directory')
@@ -80,8 +109,12 @@ def prepare(root, native, native_sha):
     paths = {':root': 'deny', ':minimal': 'read', str(root / 'public'): 'write',
              str(home / 'tmp/arg0'): 'read', str(native): 'read',
              str(python): 'read', str(python.resolve()): 'read',
-             sysconfig.get_path('stdlib'): 'read',
-             str(Path(sysconfig.get_config_var('LIBDIR')) / sysconfig.get_config_var('LDLIBRARY')): 'read'}
+             sysconfig.get_path('stdlib'): 'read'}
+    if sysconfig.get_config_var('Py_ENABLE_SHARED'):
+        library = Path(sysconfig.get_config_var('LIBDIR')) / sysconfig.get_config_var('INSTSONAME')
+        if not library.is_file():
+            raise ValueError('shared Python runtime library unavailable')
+        paths[str(library)] = 'read'
     definition = {'filesystem': paths, 'network': {'enabled': False}}
     lines = ['default_permissions = ' + json.dumps(NAME), 'approval_policy = "never"',
              '[permissions.' + NAME + '.filesystem]']
@@ -110,6 +143,17 @@ def probe(root):
         if message.get('method') == 'turn/started':
             turn_events.append(message)
             raise RuntimeError('unexpected_native_turn')
+    def observe(connection):
+        rpc = connection.rpc
+        def call(method, params):
+            result['phase'] = method
+            reply = rpc(method, params)
+            snapshot = permission_diagnostic(method, reply)
+            if snapshot is not None:
+                result.setdefault('permission_diagnostics', []).append({'method': method, **snapshot})
+            return reply
+        connection.rpc = call
+        return connection
     try:
         checks['synthetic_private_files_exist_on_host'] = all(p.is_file() and not p.is_symlink() for p in private)
         checks['native_binary_matches_frozen'] = sha(Path(manifest['native'])) == manifest['native_sha256']
@@ -131,6 +175,7 @@ def probe(root):
             connection = AppServer.launch([manifest['native'], 'app-server', '--stdio'], cwd=public,
                 environment=env, stderr=stderr, on_event=event,
                 limits=HostLimits(rpc_timeout_seconds=30, frame_bytes=1_000_000))
+            observe(connection)
             host = adapter.CodexRootHost(connection, permissions)
             host.initialize(cwd=str(public), expected_config={})
             arg0 = home / 'tmp/arg0'
@@ -160,6 +205,7 @@ def probe(root):
             connection = AppServer.launch([manifest['native'], 'app-server', '--stdio'], cwd=public,
                 environment=env, stderr=stderr, on_event=event,
                 limits=HostLimits(rpc_timeout_seconds=30, frame_bytes=1_000_000))
+            observe(connection)
             resumed = adapter.CodexRootHost(connection, permissions)
             resumed.initialize(cwd=str(public), expected_config={})
             resumed.open_root(cwd=str(public), prior=identity)
@@ -179,7 +225,8 @@ def probe(root):
             checks['no_turn_observed'] = not turn_events
             result['status'] = 'pass' if passed and all(checks.values()) else 'fail'
     except Exception as error:
-        result.update(reason=getattr(error, 'code', str(error)), exception=type(error).__name__)
+        result.update(reason=getattr(error, 'code', str(error)), exception=type(error).__name__,
+                      rpc_method=getattr(error, 'method', None), rpc_code=getattr(error, 'rpc_code', None))
     finally:
         if listener:
             listener.close()

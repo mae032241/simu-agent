@@ -7,6 +7,16 @@ from scidiscovery.platforms.codex_progression import CodexProgressionFactory
 
 PROFILE={'filesystem':{':root':'deny',':workspace_roots':'write'},'network':{'enabled':True}}
 
+# Actual 0.159.2 config/read shape captured under the default guard. Runtime
+# path grants are remapped to this synthetic profile; empty optional fields are
+# preserved verbatim. No auth/model/provider configuration belongs in this fixture.
+OBSERVED_PROFILE={**PROFILE,'description':None,'extends':None,'workspace_roots':None,
+    'filesystem':{**PROFILE['filesystem'],'glob_scan_max_depth':None},
+    'network':{'enabled':False,'proxy_url':None,'enable_socks5':None,'socks_url':None,
+        'enable_socks5_udp':None,'allow_upstream_proxy':None,
+        'dangerously_allow_non_loopback_proxy':None,'dangerously_allow_all_unix_sockets':None,
+        'mode':None,'domains':None,'unix_sockets':None,'allow_local_binding':None,'mitm':None}}
+
 class Connection:
     def __init__(self, *, profile='isolated',definition=None,network=True):
         self.on_event=lambda event:None;self.failed=False;self.requests=[]
@@ -157,3 +167,39 @@ def test_host_preflight_rejects_source_overlay_as_installed_candidate(tmp_path):
     (tmp_path/'candidate.json').write_text(json.dumps({'python':sys.executable,'head':'synthetic'}))
     with pytest.raises(ValueError,match='installed_candidate_import_mismatch'):
         installed_identity(tmp_path)
+
+def test_actual_config_read_empty_defaults_preserve_frozen_profile_digest():
+    expected={**PROFILE,'network':{'enabled':False}}
+    policy=RootPermissions(network_access=False,permission_profile='isolated',profile_definition=json.dumps(expected))
+    before=policy.declaration()
+    policy.verify_config({'permissions':{'isolated':OBSERVED_PROFILE}})
+    assert policy.declaration()==before
+    assert json.loads(policy.profile_definition)==expected
+
+@pytest.mark.parametrize('section,key,value',[(None,'unknown_optional',None),
+    (None,'extends',':workspace'),(None,'workspace_roots',['/extra']),
+    ('filesystem','/extra','read'),('filesystem','unknown_optional',None),
+    ('filesystem','glob_scan_max_depth',3),('network','unknown_optional',None),
+    ('network','allow_local_binding',True),('network','proxy_url','http://proxy'),
+    ('network','enabled',True)])
+def test_normalization_rejects_unknown_null_and_nonnull_profile_changes(section,key,value):
+    import copy
+    actual=copy.deepcopy(OBSERVED_PROFILE)
+    (actual if section is None else actual[section])[key]=value
+    with pytest.raises(HostError,match='root_permissions_mismatch'):
+        RootPermissions(network_access=False,permission_profile='isolated',
+            profile_definition=json.dumps({**PROFILE,'network':{'enabled':False}})).verify_config(
+                {'permissions':{'isolated':actual}})
+
+def test_preflight_permission_diagnostic_excludes_unrelated_and_proxy_credentials():
+    from scripts.probe_covshift_permissions import permission_diagnostic,NAME
+    reply={'config':{'auth':'private-auth-value','model_providers':{'credential':'private-provider-value'},
+        'permissions':{NAME:{**OBSERVED_PROFILE,'network':{'enabled':False,'proxy_url':'private-proxy-value'}}}}}
+    snapshot=permission_diagnostic('config/read',reply)
+    rendered=json.dumps(snapshot)
+    assert not any(value in rendered for value in ('private-auth-value','private-provider-value','private-proxy-value'))
+    assert snapshot['selected_profile']['network']['enabled'] is False
+    assert len(snapshot['selected_profile']['network']['proxy_url']['sha256'])==64
+    assert permission_diagnostic('thread/start',{'activePermissionProfile':{'id':NAME},'approvalPolicy':'never',
+        'sandbox':{'type':'workspaceWrite'},'thread':{'turns':['private history']}})=={
+            'activePermissionProfile':{'id':NAME},'approvalPolicy':'never','sandbox':{'type':'workspaceWrite'}}

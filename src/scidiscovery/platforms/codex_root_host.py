@@ -44,6 +44,18 @@ def turn_params(thread: str, prompt: str) -> dict:
 
 _SANDBOX_TYPE = {"read-only": "readOnly", "workspace-write": "workspaceWrite"}
 
+# 0.159.2 config/read serializes omitted optional profile fields as null.
+# Only these observed empty defaults are equivalent to omission: unfamiliar
+# fields and every non-null difference remain part of the exact comparison.
+_PROFILE_NULL_DEFAULTS = {
+    None: ('description', 'extends', 'workspace_roots'),
+    'filesystem': ('glob_scan_max_depth',),
+    'network': ('proxy_url', 'enable_socks5', 'socks_url', 'enable_socks5_udp',
+                'allow_upstream_proxy', 'dangerously_allow_non_loopback_proxy',
+                'dangerously_allow_all_unix_sockets', 'mode', 'domains',
+                'unix_sockets', 'allow_local_binding', 'mitm'),
+}
+
 
 @dataclass(frozen=True)
 class RootPermissions:
@@ -91,8 +103,21 @@ class RootPermissions:
     def verify_config(self, config: dict):
         if self.permission_profile is not None:
             profiles = config.get('permissions', {}) if isinstance(config, dict) else None
-            if (not isinstance(profiles, dict) or profiles.get(self.permission_profile)
-                    != json.loads(self.profile_definition)):
+            actual = profiles.get(self.permission_profile) if isinstance(profiles, dict) else None
+            expected = json.loads(self.profile_definition)
+            if isinstance(actual, dict):
+                actual = dict(actual)
+                for section, keys in _PROFILE_NULL_DEFAULTS.items():
+                    values = actual if section is None else actual.get(section)
+                    declared = expected if section is None else expected.get(section, {})
+                    if not isinstance(values, dict) or not isinstance(declared, dict):
+                        continue
+                    if section is not None:
+                        values = actual[section] = dict(values)
+                    for key in keys:
+                        if key not in declared and values.get(key) is None:
+                            values.pop(key, None)
+            if actual != expected:
                 raise HostError('root_permissions_mismatch')
 
     def verify_options(self, options: dict):
