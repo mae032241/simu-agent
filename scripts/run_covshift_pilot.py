@@ -101,6 +101,12 @@ def runtime_paths(python, candidate):
     return sorted(paths)
 
 
+def native_runtime(native):
+    """Exact sibling used by native exec; never grant the whole binary directory."""
+    path=Path(native).parent/'codex-code-mode-host'
+    return {'path':str(path),'sha256':sha(path)}
+
+
 def outer_command(spec):
     """Host app-server network for model API; native commands use named deny.
 
@@ -120,6 +126,7 @@ def outer_command(spec):
         if Path(path).exists():
             mounts.extend(['--ro-bind', path, path])
     mounts.extend(['--ro-bind', spec['native'], spec['native'],
+        '--ro-bind',spec['code_mode_host']['path'],spec['code_mode_host']['path'],
         '--ro-bind',str(project),str(project), '--bind',str(root/'codex-home'),str(root/'codex-home'),
         '--bind',str(root/'host-tmp'),str(root/'host-tmp'),
         '--ro-bind',str(root/'control'),str(root/'control')])
@@ -196,13 +203,14 @@ def permissions(spec):
 def prepare(launch_path, output, native, auth_file=None, provider_config=None):
     launch = load_launch(launch_path)
     output = Path(output).absolute(); native = Path(native).resolve(strict=True)
+    code_mode_host=native_runtime(native)
     output.mkdir(mode=0o700)
     metadata = json.loads(regular(Path(launch['candidate'])/'candidate.json'))
     installed = Path(metadata['python'])
     result = {'kind':'covshift_pilot_launcher','inputs_sha256':sha(launch_path),
         'candidate':launch['candidate'],'candidate_source':metadata['head'],
         'candidate_metadata_sha256':launch['candidate_metadata_sha256'],
-        'native':str(native),'native_sha256':sha(native),'task_revision':launch['task_revision'],
+        'native':str(native),'native_sha256':sha(native),'code_mode_host':code_mode_host,'task_revision':launch['task_revision'],
         'limits':{'trial_wall_seconds':WALL,'all_role_tokens':TOKENS,'startup_seconds':300,
             'address_space_bytes':2000000000,'tree_rss_bytes':1500000000,
             'app_server_tree_rss_bytes':1000000000,'log_bytes':8388608,'numerical_threads':1,
@@ -237,6 +245,7 @@ def prepare(launch_path, output, native, auth_file=None, provider_config=None):
             raise RuntimeError('installed_initializer_failed:'+arm)
         spec={'arm':arm,'root':str(base),'project':str(project),'python':str(installed),
             'task_python':launch['task_python'],'native':str(native),'native_sha256':result['native_sha256'],
+            'code_mode_host':code_mode_host,
             'environment':{**launch['arms'][arm]['environment'],
                 'PATH':str(project/'bin')+':'+str(Path(launch['task_python']).parent)+':/usr/bin:/bin'},
             'runtime_paths':runtime_paths(launch['task_python'],installed),
@@ -249,7 +258,8 @@ def prepare(launch_path, output, native, auth_file=None, provider_config=None):
             'public_sha256':launch['arms'][arm]['public_files_sha256'],
             'settings_sha256':sha(base/'agent-settings.json')}
         grants={':root':'deny',':minimal':'read',str(project):'read',
-            str(base/'codex-home/tmp/arg0'):'read',str(native):'read','/task-tmp':'write'}
+            str(base/'codex-home/tmp/arg0'):'read',str(native):'read',
+            code_mode_host['path']:'read','/task-tmp':'write'}
         for path in spec['runtime_paths']:
             grants[path]='read'
         for path in ('/usr','/bin','/lib','/lib64'):
@@ -298,12 +308,17 @@ class Meter:
         self.clock=clock; self.records={}; self.started={}; self.deadline=None; self.reason=None
         self.canary_command=None;self.proofs={};self.children={};self.control_records={};self.completed={}
         self.frontend_roles={};self.frontend_loop=None
+        self.turns_requested=0;self.scientific_turns_requested=0;self.observed_turns=set()
     def activate(self):
         if self.deadline is not None: raise RuntimeError('trial_already_submitted')
         self.deadline=self.clock()+WALL
     def observe(self,event):
         from scidiscovery.platforms.codex_usage import observe_usage
         params=event.get('params',{}); thread=params.get('threadId')
+        turn_id=params.get('turnId') or (params.get('turn') or {}).get('id')
+        if isinstance(thread,str) and isinstance(turn_id,str) and turn_id:
+            if event.get('method') in ('turn/started','turn/completed','thread/tokenUsage/updated'):
+                self.observed_turns.add((thread,turn_id))
         if event.get('method')=='turn/started':
             if not isinstance(thread,str) or not thread: raise RuntimeError('unidentified_native_turn')
             self.started.setdefault(thread,self.clock())
@@ -315,9 +330,18 @@ class Meter:
             if record['has_gaps']: self.reason='token_coverage_unknown'
         item=params.get('item',{})
         if event.get('method')=='item/completed' and isinstance(thread,str):
+            if item.get('type')=='subAgentActivity':
+                child=item.get('agentThreadId')
+                if (item.get('kind') not in {'started','interacted','interrupted','completed'}
+                        or not isinstance(item.get('agentPath'),str) or not item['agentPath']
+                        or not isinstance(child,str) or not child or child==thread
+                        or self.children.get(child,thread)!=thread):
+                    raise RuntimeError('native_child_identity_conflict')
+                self.children[child]=thread;self.started.setdefault(child,self.clock())
             if item.get('type')=='collabAgentToolCall' and item.get('senderThreadId')==thread:
                 for child in item.get('receiverThreadIds',[]):
                     if isinstance(child,str) and child!=thread:
+                        if self.children.get(child,thread)!=thread:raise RuntimeError('native_child_identity_conflict')
                         self.children[child]=thread
                         self.started.setdefault(child,self.clock())
             if item.get('type')=='commandExecution' and item.get('command')==self.canary_command:
@@ -352,17 +376,60 @@ def public_call(host,name,arguments):
     return value if isinstance(value,dict) else json.loads(reply['content'][0]['text'])
 
 
+def verify_role_thread(thread,thread_id):
+    # Current configured profile is an early rejection, not per-turn telemetry.
+    if (thread.get('id')!=thread_id or thread.get('forkedFromId') is not None
+            or thread.get('model')!=MODEL or thread.get('reasoningEffort')!='high'):
+        raise RuntimeError('role_platform_identity_profile_or_history_unconfirmed')
+
+
+def role_turn_profiles(thread,spec):
+    """Read only profile metadata from the actual fresh host's own bounded log.
+
+    Thread.model is explicitly not per-turn telemetry in the platform schema.
+    Missing/unsafe logs or incomplete turn_context evidence cannot earn a gate.
+    No chat, instructions, provider or authentication fields are returned.
+    """
+    path=Path(thread.get('path') or '')
+    root=Path(spec['root'])/'codex-home/sessions'
+    if not path.is_absolute() or not path.is_relative_to(root):
+        raise RuntimeError('role_turn_profile_unconfirmed')
+    if any(part.is_symlink() for part in (path,*path.parents)):
+        raise RuntimeError('role_turn_profile_unconfirmed')
+    data=regular(path,8*1024*1024)
+    contexts={};identity=None
+    for line in data.splitlines():
+        if len(line)>1024*1024:raise RuntimeError('role_turn_profile_coverage_exceeded')
+        record=json.loads(line);body=record.get('payload') or {}
+        if record.get('type')=='session_meta':
+            if identity is not None and identity!=body.get('id'):raise RuntimeError('role_turn_profile_unconfirmed')
+            identity=body.get('id')
+        if record.get('type')=='turn_context':
+            turn=body.get('turn_id');profile=(body.get('model'),body.get('effort'))
+            if not isinstance(turn,str) or not turn or profile!=(MODEL,'high'):
+                raise RuntimeError('role_executed_model_drift_or_unconfirmed')
+            if turn in contexts and contexts[turn]!=profile:raise RuntimeError('role_turn_profile_unconfirmed')
+            contexts[turn]=profile
+    turns=thread.get('turns')
+    if (identity!=thread['id'] or not isinstance(turns,list) or not turns
+            or any(t.get('status')!='completed' or not isinstance(t.get('id'),str)
+                or t['id'] not in contexts for t in turns)):
+        raise RuntimeError('role_turn_profile_unconfirmed')
+    return {'turn_ids':sorted(contexts),'model':MODEL,'reasoning_effort':'high',
+        'source':'fresh_host_turn_context','source_sha256':hashlib.sha256(data).hexdigest()}
+
+
 def read_role_proofs(host,meter,spec,roles):
     """Authenticated platform items + exact attachment, never Agent chat."""
     qualification={}
     for role,thread_id in roles.items():
         reply=host.connection.rpc('thread/read',{'threadId':thread_id,'includeTurns':True})
         thread=reply.get('thread',{})
-        if (thread.get('id')!=thread_id or thread.get('forkedFromId') is not None
-                or thread.get('model')!=MODEL or thread.get('reasoningEffort')!='high'
-                or not isinstance(thread.get('sessionId'),str)
+        verify_role_thread(thread,thread_id)
+        if (not isinstance(thread.get('sessionId'),str)
                 or thread.get('status',{}).get('type')!='idle'):
             raise RuntimeError('role_platform_identity_profile_or_history_unconfirmed')
+        executed=role_turn_profiles(thread,spec)
         subscribed=host.connection.rpc('thread/resume',{'threadId':thread_id,'excludeTurns':True})
         if subscribed.get('thread',{}).get('sessionId')!=thread['sessionId']:
             raise RuntimeError('role_native_identity_changed')
@@ -372,7 +439,7 @@ def read_role_proofs(host,meter,spec,roles):
                 meter.observe({'method':'item/completed','params':{'threadId':thread_id,'item':item}})
         if thread_id not in meter.proofs: return None
         qualification[role]={'thread_id':thread_id,'platform_session':thread['sessionId'],
-            'permission_declaration':permissions(spec).declaration(),**meter.proofs[thread_id]}
+            'executed_profile':executed,'permission_declaration':permissions(spec).declaration(),**meter.proofs[thread_id]}
     return qualification
 
 
@@ -510,15 +577,18 @@ def role_canary(host,meter,spec,current=None,loop=None):
         meter.activate();(Path(spec['root'])/'model-submission-started').touch(exist_ok=False)
         prompt='Engineering isolation qualification only; do not read or solve /instruction.md. Execute exactly this read-only synthetic command, without shell wrappers or edits: '+command
         if spec['arm']=='native_goal':
-            prompt+=' Then spawn one fresh native helper with the same model/high effort and permissions, no parent history, to execute exactly the same command. Wait for it. Do not perform scientific work.'
+            prompt+=f' Then spawn exactly one fresh native helper with model={MODEL}, reasoning_effort=high, fork_turns=none and the same permissions, to execute exactly the same command. Do not substitute another model. If this exact profile is unavailable, stop without spawning. Wait for it. Do not perform scientific work.'
         else:
             prompt+=' Through the public contracts dispatch one complete science.evidence.extract.v1 Worker task on only the synthetic text "isolation canary, no scientific observation". The Worker must execute this command, prepare and attach one native helper with the same permissions/profile and fresh context to execute the same command, wait and integrate its result, then deliver through its actual contract. Use actual platform coordinates and exact assignment. This is a synthetic engineering task; no Covshift experiment.'
+        meter.turns_requested+=1
         host.start_turn(prompt)
         while host.completion is None:
             host.connection.poll(.2);meter.check()
-            # A native child is discovered from authenticated collab events;
+            # A native child is discovered from authenticated platform items;
             # subscribing neither starts a turn nor overrides its permissions.
             for thread in list(meter.children):
+                actual=host.connection.rpc('thread/read',{'threadId':thread,'includeTurns':False}).get('thread',{})
+                verify_role_thread(actual,thread)
                 if thread not in meter.records:
                     host.connection.rpc('thread/resume',{'threadId':thread,'excludeTurns':True})
         roles={'root':host.identity.thread_id}
@@ -652,6 +722,8 @@ def arm_action(spec,action):
             raise RuntimeError('installed_launcher_adapter_missing')
         if sha(base/'agent-settings.json')!=spec['settings_sha256']: raise RuntimeError('frozen_agent_settings_changed')
         if sha(Path(spec['native']))!=spec['native_sha256']: raise RuntimeError('native_binary_changed')
+        if native_runtime(spec['native'])!=spec.get('code_mode_host'):
+            raise RuntimeError('code_mode_runtime_changed_or_unfrozen')
         for name,digest in spec['public_sha256'].items():
             if sha(Path(spec['project'])/name)!=digest: raise RuntimeError('public_input_changed')
         if (base/'model-submission-started').exists(): raise RuntimeError('trial_not_replayable')
@@ -698,8 +770,8 @@ def arm_action(spec,action):
             result['scientific_identity']={'thread_id':host.identity.thread_id,'session_id':host.identity.session_id}
             goal='Complete the public task in /instruction.md using exp. Save the audited final submission in /submission. Do not access any private or hidden material.'
             host.connection.rpc('thread/goal/set',{'threadId':host.identity.thread_id,'objective':goal,'status':'paused','tokenBudget':max(1,TOKENS-meter.total())})
+            meter.turns_requested+=1;meter.scientific_turns_requested+=1
             host.start_turn(text+'\nPublic paths: /opt/exp, /workspace, /submission. Use exp; all native network is disabled.')
-            result['turns_requested']=1
             host.connection.rpc('thread/goal/set',{'threadId':host.identity.thread_id,'status':'active'})
             result['active_goal_requested']=True
             while True:
@@ -776,6 +848,9 @@ def arm_action(spec,action):
         result['observed_total_tokens']=observed
         result['observed_token_overrun']=max(0,observed-TOKENS)
         result['usage_records']=list(meter.records.values())
+        result['turns_requested']=meter.turns_requested  # Direct Root turn/start attempts, including canary.
+        result['scientific_turns_requested']=meter.scientific_turns_requested
+        result['observed_all_role_turns']=len(meter.observed_turns)
         result['trial_started']=meter.deadline is not None
         result['phase_wall_seconds']=0 if meter.deadline is None else round(time.monotonic()-(meter.deadline-WALL),3)
         write(base/(action+'-result.json'),result)

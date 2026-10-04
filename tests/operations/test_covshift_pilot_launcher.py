@@ -13,6 +13,13 @@ def pair(tmp_path,monkeypatch):
     return path/'launch.json'
 
 
+def native_bundle(tmp_path):
+    root=tmp_path/'native-bin';root.mkdir()
+    (root/'codex').write_bytes(b'simulated native protocol transport')
+    (root/'codex-code-mode-host').write_bytes(b'simulated code mode runtime')
+    return root/'codex'
+
+
 def test_preparation_rejects_changed_public_bytes_before_create(tmp_path,monkeypatch):
     source=pair(tmp_path,monkeypatch);launch=json.loads(source.read_text())
     target=Path(launch['arms']['native_goal']['project'],'instruction.md');target.chmod(0o644);target.write_text('changed')
@@ -31,7 +38,7 @@ def test_prepare_consumes_exact_candidate_builds_same_aliases_and_fresh_settings
         invoked.append(command)
         return SimpleNamespace(returncode=0,stdout=b'fixture init: no processes')
     monkeypatch.setattr(driver.subprocess,'run',init)
-    result=driver.prepare(source,tmp_path/'new',Path('/bin/true'))
+    result=driver.prepare(source,tmp_path/'new',native_bundle(tmp_path))
     assert len(invoked)==2 and result['launch_ready'] is False
     assert result['limits']['all_role_tokens']==200000 and result['limits']['trial_wall_seconds']==1800
     specs=[json.loads(Path(p).read_text()) for p in result['arms'].values()]
@@ -53,7 +60,12 @@ def test_prepare_consumes_exact_candidate_builds_same_aliases_and_fresh_settings
         assert not list(Path(spec['project'],'harness/runs').iterdir())
         assert spec['definition']['filesystem'][':root']=='deny'
         assert spec['definition']['network']['enabled'] is False
+        runtime=spec['code_mode_host']
+        assert runtime==driver.native_runtime(spec['native'])
+        assert spec['definition']['filesystem'][runtime['path']]=='read'
+        assert str(Path(spec['native']).parent) not in spec['definition']['filesystem']
         command=driver.outer_command(spec)
+        assert ['--ro-bind',runtime['path'],runtime['path']]==command[command.index(runtime['path'])-1:command.index(runtime['path'])+2]
         assert '--unshare-pid' in command and '--unshare-net' not in command
         assert str(Path.home()) not in command and '--clearenv' in command
         compile(driver.canary_code({**spec,'canary_port':12345}),'native_canary','exec')
@@ -163,10 +175,13 @@ def test_role_gate_requires_authentic_exact_command_not_agent_completion_chat():
     event(item);assert meter.proofs['actual']['item_id']=='command'
 
 
-def test_role_read_checks_native_inheritance_without_permission_override():
+def test_role_read_checks_native_inheritance_without_permission_override(tmp_path):
     from types import SimpleNamespace
     definition={'filesystem':{':root':'deny','/task':'read'},'network':{'enabled':False}}
-    spec={'definition':definition};meter=driver.Meter(lambda:0.)
+    spec={'definition':definition,'root':str(tmp_path)};meter=driver.Meter(lambda:0.)
+    path=tmp_path/'codex-home/sessions/role.jsonl';path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({'type':'session_meta','payload':{'id':'real-child'}})+'\n'+
+        json.dumps({'type':'turn_context','payload':{'turn_id':'actual-turn','model':driver.MODEL,'effort':'high'}})+'\n')
     meter.canary_command='/readonly/python -I /readonly/canary.py'
     item={'type':'commandExecution','id':'native','status':'completed','exitCode':0,
         'command':meter.canary_command,'aggregatedOutput':json.dumps(dict.fromkeys(driver.CANARY_CHECKS,True))}
@@ -175,12 +190,13 @@ def test_role_read_checks_native_inheritance_without_permission_override():
         requests.append((method,params))
         if method=='thread/read':return {'thread':{'id':'real-child','sessionId':'real-child',
             'forkedFromId':None,'model':driver.MODEL,'reasoningEffort':'high','cwd':'/task',
-            'status':{'type':'idle'},'turns':[{'items':[item]}]}}
+            'path':str(path),'status':{'type':'idle'},'turns':[{'id':'actual-turn','status':'completed','items':[item]}]}}
         return {'thread':{'sessionId':'real-child'},'activePermissionProfile':{'id':driver.NAME},
             'approvalPolicy':'never','sandbox':{'type':'workspaceWrite','writableRoots':[],'networkAccess':False}}
     host=SimpleNamespace(connection=SimpleNamespace(rpc=rpc))
     result=driver.read_role_proofs(host,meter,spec,{'helper':'real-child'})
     assert result['helper']['platform_session']=='real-child'
+    assert result['helper']['executed_profile']['turn_ids']==['actual-turn']
     assert requests[1]==('thread/resume',{'threadId':'real-child','excludeTurns':True})
     original=host.connection.rpc
     def forked(method,params):
@@ -190,6 +206,64 @@ def test_role_read_checks_native_inheritance_without_permission_override():
     host.connection.rpc=forked
     with pytest.raises(RuntimeError,match='history_unconfirmed'):
         driver.read_role_proofs(host,meter,spec,{'helper':'real-child'})
+    host.connection.rpc=original
+    path.write_text(path.read_text().replace(driver.MODEL,'gpt-6-astra'))
+    with pytest.raises(RuntimeError,match='executed_model_drift'):
+        driver.read_role_proofs(host,meter,spec,{'helper':'real-child'})
+
+
+def test_real_subagent_activity_shape_discovers_exact_parent_and_counts_distinct_turns():
+    meter=driver.Meter(lambda:0.)
+    item={'type':'subAgentActivity','id':'spawn-call','agentPath':'/root/qualification_helper',
+        'agentThreadId':'actual-child','kind':'started'}
+    for kind in ('started','completed'):
+        meter.observe({'method':'item/completed','params':{'threadId':'actual-root','item':{**item,'kind':kind}}})
+    meter.observe({'method':'item/completed','params':{'threadId':'actual-root','item':{
+        'type':'collabAgentToolCall','senderThreadId':'actual-root','receiverThreadIds':[]}}})
+    for thread in ('actual-root','actual-child'):
+        for _ in range(3):meter.observe(usage(thread))
+        meter.observe({'method':'turn/completed','params':{'threadId':thread,'turn':{'id':'turn'}}})
+    assert meter.children=={'actual-child':'actual-root'}
+    assert len(meter.observed_turns)==2 and meter.total()==240
+    with pytest.raises(RuntimeError,match='child_identity_conflict'):
+        meter.observe({'method':'item/completed','params':{'threadId':'other-root','item':item}})
+
+
+def test_actual_canary_request_names_frozen_model_and_stops_on_discovered_child_drift(tmp_path):
+    from types import SimpleNamespace
+    project=tmp_path/'project';project.mkdir()
+    spec={'root':str(tmp_path),'project':str(project),'arm':'native_goal','task_python':'/readonly/python',
+        'public_sha256':{'instruction.md':'synthetic','harness/exp_cli.py':'synthetic'}}
+    meter=driver.Meter(lambda:0.);prompts=[];requests=[]
+    def start(prompt):
+        prompts.append(prompt)
+        meter.observe({'method':'turn/started','params':{'threadId':'root','turn':{'id':'root-turn'}}})
+    def poll(_):
+        meter.observe({'method':'item/completed','params':{'threadId':'root','item':{
+            'type':'subAgentActivity','id':'spawn','agentPath':'/root/helper','agentThreadId':'child','kind':'started'}}})
+    def rpc(method,params):
+        requests.append((method,params));return {'thread':{'id':'child','forkedFromId':None,
+            'model':'gpt-6-astra','reasoningEffort':'high'}}
+    host=SimpleNamespace(identity=SimpleNamespace(thread_id='root'),completion=None,start_turn=start,
+        connection=SimpleNamespace(poll=poll,rpc=rpc))
+    with pytest.raises(RuntimeError,match='profile_or_history_unconfirmed'):
+        driver.role_canary(host,meter,spec)
+    assert 'model=gpt-6.1-sol, reasoning_effort=high, fork_turns=none' in prompts[0]
+    assert requests==[('thread/read',{'threadId':'child','includeTurns':False})]
+    assert meter.turns_requested==1 and meter.scientific_turns_requested==0
+    assert len(meter.observed_turns)==1 and meter.deadline==1800
+
+
+def test_executed_profile_requires_actual_own_log_and_every_completed_turn(tmp_path):
+    spec={'root':str(tmp_path)};path=tmp_path/'codex-home/sessions/role.jsonl';path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({'type':'session_meta','payload':{'id':'actual'}})+'\n'+
+        json.dumps({'type':'turn_context','payload':{'turn_id':'first','model':driver.MODEL,'effort':'high'}})+'\n')
+    thread={'id':'actual','path':str(path),'turns':[{'id':'first','status':'completed'}]}
+    assert driver.role_turn_profiles(thread,spec)['model']==driver.MODEL
+    thread['turns'].append({'id':'missing','status':'completed'})
+    with pytest.raises(RuntimeError,match='profile_unconfirmed'):driver.role_turn_profiles(thread,spec)
+    thread['turns'].pop();path.unlink();path.symlink_to(tmp_path/'outside')
+    with pytest.raises(RuntimeError,match='profile_unconfirmed'):driver.role_turn_profiles(thread,spec)
 
 
 def test_canary_and_control_usage_share_budget_without_reset_or_double_count():
@@ -213,7 +287,7 @@ def test_scientific_native_goal_is_fresh_and_canary_tokens_not_reset(tmp_path,mo
         (project/'.codex/config.toml').write_text('web_search="disabled"\n')
         return SimpleNamespace(returncode=0,stdout=b'fixture')
     monkeypatch.setattr(driver.subprocess,'run',init)
-    prepared=driver.prepare(source,tmp_path/'runtime',Path('/bin/true'))
+    prepared=driver.prepare(source,tmp_path/'runtime',native_bundle(tmp_path))
     spec=json.loads(Path(prepared['arms']['native_goal']).read_text())
     monkeypatch.setattr(installed,'__file__',str(Path(spec['python']).parent.parent/'installed-mcp-daemon.py'))
     requests=[]; hosts=[]
@@ -246,6 +320,8 @@ def test_scientific_native_goal_is_fresh_and_canary_tokens_not_reset(tmp_path,mo
     assert paused['tokenBudget']==200000-120
     assert len([r for r in requests if r[1]=='turn/start'])==1
     assert result['scientific_identity']['thread_id']=='fresh-science-root'
+    assert result['turns_requested']==1 and result['scientific_turns_requested']==1
+    assert result['observed_all_role_turns']==2
     assert result['actual_worker_helper_isolation']=='not_verified'  # simulation never earns live qualification.
 
 
@@ -260,7 +336,7 @@ def test_failed_role_gate_never_activates_goal_or_sends_scientific_turn(tmp_path
         (project/'.codex/config.toml').write_text('web_search="disabled"\n')
         return SimpleNamespace(returncode=0,stdout=b'fixture')
     monkeypatch.setattr(driver.subprocess,'run',init)
-    prepared=driver.prepare(source,tmp_path/'runtime',Path('/bin/true'))
+    prepared=driver.prepare(source,tmp_path/'runtime',native_bundle(tmp_path))
     spec=json.loads(Path(prepared['arms']['native_goal']).read_text())
     monkeypatch.setattr(installed,'__file__',str(Path(spec['python']).parent.parent/'installed-mcp-daemon.py'))
     methods=[]
@@ -279,6 +355,11 @@ def test_failed_role_gate_never_activates_goal_or_sends_scientific_turn(tmp_path
     result=driver.arm_action(spec,'run')
     assert result['status']=='fail' and result['reason']=='actual_worker_helper_attach_missing'
     assert 'turn/start' not in methods and 'thread/goal/set' not in methods
+    assert result['turns_requested']==result['scientific_turns_requested']==0
+    methods.clear()
+    Path(spec['code_mode_host']['path']).write_bytes(b'changed runtime')
+    result=driver.arm_action(spec,'run')
+    assert result['reason']=='code_mode_runtime_changed_or_unfrozen' and not methods
 
 
 def test_exact_loop_profile_rejects_ui_model_override_before_paid_canary(tmp_path):
