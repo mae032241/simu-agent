@@ -98,3 +98,5 @@ Sci interactive canary 所产生的同 loop `unmeasured_frontend_root` 保持不
 
 
 v3 独立增量审查通过（源码边界；真实角色／双臂运行／评分仍未验证）：上述 pending 依据原 `pending_observation`／`native_turn`／`native_terminal`（Root 复用同控制行的 host/phase/turn），不只看 Run.running。原 native producer 先记录合法首 turn、尚无计量时，结果显式 `pending_native_usage`、pending_threads 与 known_tokens_lower_bound，原1800s期限仍运行；首 usage 正常归并。真实 Worker 与 helper 公开 attach／control 原生观测序列已覆盖首 pending、执行中等待、终态缺失拒绝及迟到首 usage，不新增 core 机制／账本，不重跑已通过的实际 mounts，不授 live 角色或科学资格。
+
+2026-10-04 宿主双臂预检已实际触达 thread/start，均在 Root 权限握手拒绝，0 turn／0 tokens。原件的 named profile、approval=never、network=false 正确，legacy writableRoots 为冻结定义中八个精确可写目录；旧适配误套“只允许 cwd”规则。本次最小修复独立审查通过（限定源码握手投影）：named 投影按冻结的绝对 write grants 精确比对，仅已授写 cwd 可沿既有平台行为省略，不做路径归一化、不接受额外或缺失根；完整 config/profile/digest 校验与普通 legacy 行为保留。此为源码修复，须新安装及宿主重验，live 角色／科学运行／可信评分仍 pending、launch_ready=false。

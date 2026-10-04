@@ -153,11 +153,27 @@ class RootPermissions:
                 raise HostError('root_permissions_mismatch')
         sandbox = result.get("sandbox") if isinstance(result, dict) else None
         roots = sandbox.get("writableRoots", []) if isinstance(sandbox, dict) else None
-        # The working directory is writable under workspace-write anyway; any other root widens it.
+        roots_match = isinstance(roots, list) and all(root == cwd for root in roots)
+        if self.permission_profile is not None:
+            filesystem = json.loads(self.profile_definition)['filesystem']
+            # Named profiles project their explicit absolute write grants into
+            # legacy writableRoots. Compare literal paths, not canonical aliases.
+            expected_roots = {path for path, access in filesystem.items()
+                              if path.startswith('/') and access == 'write'}
+            roots_match = (isinstance(roots, list) and all(isinstance(root, str) for root in roots)
+                           and len(roots) == len(set(roots)))
+            if roots_match:
+                actual_roots = set(roots)
+                # 0.159.2 can omit cwd from this projection when the named
+                # definition already grants it; a read-only cwd is never optional.
+                if cwd in expected_roots or filesystem.get(':workspace_roots') == 'write':
+                    expected_roots.discard(cwd)
+                    actual_roots.discard(cwd)
+                roots_match = actual_roots == expected_roots
         if (result.get("approvalPolicy") != self.approval_policy or not isinstance(sandbox, dict)
                 or sandbox.get("type") != _SANDBOX_TYPE[self.sandbox]
                 or sandbox.get("networkAccess", False) is not self.network_access
-                or not isinstance(roots, list) or any(root != cwd for root in roots)):
+                or not roots_match):
             raise HostError("root_permissions_mismatch")
 
 

@@ -203,3 +203,62 @@ def test_preflight_permission_diagnostic_excludes_unrelated_and_proxy_credential
     assert permission_diagnostic('thread/start',{'activePermissionProfile':{'id':NAME},'approvalPolicy':'never',
         'sandbox':{'type':'workspaceWrite'},'thread':{'turns':['private history']}})=={
             'activePermissionProfile':{'id':NAME},'approvalPolicy':'never','sandbox':{'type':'workspaceWrite'}}
+
+
+# Both ordinary-host Covshift preflights returned this 0.159.2 shape. Only
+# private trial path prefixes/profile id are replaced; no auth/config/history.
+MULTI_WRITE_ROOTS=['/opt/exp/runs','/submission','/task-tmp',
+    '/trial/project/.scidiscovery-runs','/trial/project/runs',
+    '/trial/project/submission','/trial/project/workspace','/workspace']
+MULTI_WRITE_PROFILE={'filesystem':{':root':'deny',':minimal':'read',
+    '/trial/project':'read','/opt/exp':'read',
+    **{path:'write' for path in MULTI_WRITE_ROOTS}},'network':{'enabled':False}}
+MULTI_WRITE_REPLY={'approvalPolicy':'never',
+    'activePermissionProfile':{'id':'isolated','extends':None},
+    'sandbox':{'type':'workspaceWrite','writableRoots':MULTI_WRITE_ROOTS,
+        'networkAccess':False,'excludeTmpdirEnvVar':True,'excludeSlashTmp':True}}
+
+
+@pytest.mark.parametrize('prior',[None,RootIdentity('root','root')])
+def test_observed_named_multi_write_projection_matches_frozen_profile_on_start_and_resume(prior):
+    import copy
+    connection=Connection(definition=MULTI_WRITE_PROFILE,network=False)
+    rpc=connection.rpc
+    def reply(method,params):
+        value=rpc(method,params)
+        return {**value,**copy.deepcopy(MULTI_WRITE_REPLY)} if method in {'thread/start','thread/resume'} else value
+    connection.rpc=reply
+    permissions=RootPermissions(network_access=False,permission_profile='isolated',
+        profile_definition=json.dumps(MULTI_WRITE_PROFILE))
+    declaration=permissions.declaration()
+    host=CodexRootHost(connection,permissions)
+    host.initialize(cwd='/trial/project',expected_config={})
+    host.open_root(cwd='/trial/project',prior=prior)
+    assert host.identity==RootIdentity('root','root') and not connection.failed
+    assert permissions.declaration()==declaration
+    assert not any(method=='turn/start' for method,_ in connection.requests)
+
+
+@pytest.mark.parametrize('change',['extra','missing','cwd_read_only','duplicate','network','approval','profile','extends'])
+def test_named_multi_write_projection_rejects_unfrozen_or_incomplete_policy(change):
+    import copy
+    reply=copy.deepcopy(MULTI_WRITE_REPLY)
+    if change=='extra':reply['sandbox']['writableRoots'].append('/host-private')
+    elif change=='missing':reply['sandbox']['writableRoots'].remove('/workspace')
+    elif change=='cwd_read_only':reply['sandbox']['writableRoots'].append('/trial/project')
+    elif change=='duplicate':reply['sandbox']['writableRoots'].append('/workspace')
+    elif change=='network':reply['sandbox']['networkAccess']=True
+    elif change=='approval':reply['approvalPolicy']='on-request'
+    elif change=='profile':reply['activePermissionProfile']['id']='other'
+    elif change=='extends':reply['activePermissionProfile']['extends']=':workspace'
+    with pytest.raises(HostError,match='root_permissions_mismatch'):
+        RootPermissions(network_access=False,permission_profile='isolated',
+            profile_definition=json.dumps(MULTI_WRITE_PROFILE)).verify(reply,cwd='/trial/project')
+
+
+@pytest.mark.parametrize('roots',[[],['/trial/project']])
+def test_named_cwd_write_projection_can_omit_the_declared_cwd(roots):
+    reply={**MULTI_WRITE_REPLY,'sandbox':{**MULTI_WRITE_REPLY['sandbox'],'writableRoots':roots}}
+    RootPermissions(network_access=False,permission_profile='isolated',
+        profile_definition=json.dumps({'filesystem':{':root':'deny','/trial/project':'write'},
+            'network':{'enabled':False}})).verify(reply,cwd='/trial/project')
