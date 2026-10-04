@@ -168,8 +168,7 @@ class NativeCaseJourney(RecoveryJourney):
                 or not isinstance(receipt['terminal_turn'], str) or not receipt['terminal_turn']
                 or old == new or receipt['old_session'] == receipt['new_session']
                 or not receipt['old_session'] or not receipt['new_session']
-                or json.loads(control.get('host_json') or 'null') != new
-                or control.get('owner_session') != receipt['new_session']):
+                or json.loads(control.get('host_json') or 'null') != new):
             return
         records = cp.get('usage_records', {})
         old_record, new_record = (records.get(host['thread_id'], {}) for host in (old,new))
@@ -179,6 +178,14 @@ class NativeCaseJourney(RecoveryJourney):
                 return
         if (old_record.get('retired') is not True or old_record.get('retired_after_turn') != receipt['terminal_turn']
                 or old_record.get('retired_after_activity') != fence):
+            return
+        # Receipt sessions describe the completed rotation, not today's proxy.
+        # The control's exact persisted host may be rebound by reconnect_host;
+        # its current owner must still have the exact instance read binding.
+        owner = control.get('owner_session')
+        if not isinstance(owner, str) or not owner or rows(self.root, 'scheduler-bindings',
+                'SELECT instance_id FROM scheduler_sessions WHERE session_key=?', (owner,)) != [
+                    {'instance_id':self.instance}]:
             return
         self._batch_rotation_proof = receipt
 

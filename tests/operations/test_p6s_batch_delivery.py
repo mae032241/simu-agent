@@ -125,6 +125,60 @@ def test_rotation_completed_between_polls_releases_from_durable_receipt(delivery
     assert messages(d) == saved
 
 
+def test_successful_rotation_proof_survives_exact_host_reconnect_with_new_owner(delivery):
+    d = delivery
+    completed_batch_comparison(d)
+    _, active = safe_fixture_rotation(d, observe_prepared=False)
+    cp = json.loads(active['checkpoint_json'])
+    receipt = cp['root_rotation_receipt']
+    records = cp['usage_records']
+    new_owner = 'sch_'+'e'*32
+    reconnected = d.bindings.reconnect_host(instance_id=d.journey.instance,
+        scheduler_session=new_owner, expected_generation=active['generation'], **receipt['new'])
+    restored = json.loads(reconnected['checkpoint_json'])
+    assert reconnected['owner_session'] == new_owner != receipt['new_session']
+    assert reconnected['generation'] == active['generation']+1
+    assert restored['root_rotation_receipt'] == receipt and restored['usage_records'] == records
+    assert d.bindings.session_instance(session_key=new_owner) == d.journey.instance
+    d.f.root.facade.session_key = new_owner
+    d.journey.deliver_batches(reconnected)
+    assert len(messages(d)) == 3
+    assert d.journey._batch_rotation_proof == receipt
+    saved = messages(d)
+    d.journey.deliver_batches(d.journey.row())
+    assert messages(d) == saved
+    assert json.loads(d.journey.row()['checkpoint_json'])['root_rotation_receipt'] == receipt
+
+
+@pytest.mark.parametrize('damage', ['empty_owner', 'unbound_owner', 'foreign_owner', 'host',
+    'instance', 'old_host', 'old_session', 'new_session'])
+def test_reconnected_rotation_still_requires_exact_host_scope_and_bound_owner(delivery, damage):
+    d = delivery
+    completed_batch_comparison(d)
+    _, active = safe_fixture_rotation(d, observe_prepared=False)
+    new_owner = 'sch_'+'e'*32
+    current = d.bindings.reconnect_host(instance_id=d.journey.instance,
+        scheduler_session=new_owner, expected_generation=active['generation'], **json.loads(active['host_json']))
+    cp = json.loads(current['checkpoint_json'])
+    original = json.loads(current['checkpoint_json'])['root_rotation_receipt']
+    receipt = cp['root_rotation_receipt']
+    if damage == 'empty_owner':current['owner_session'] = None
+    elif damage == 'unbound_owner':current['owner_session'] = 'sch_'+'f'*32
+    elif damage == 'foreign_owner':
+        other = d.bindings.create_instance(name='other', title='Other fixture', objective='Separate instance.')
+        d.bindings.bind_session(session_key=new_owner, instance_id=other.instance_id)
+    elif damage == 'host':current['host_json'] = json.dumps(dict(platform_session='wrong-host', thread_id='wrong-host'))
+    elif damage == 'instance':receipt['scope']['instance'] = 'other-instance'
+    elif damage == 'old_host':receipt['old'] = dict(platform_session='wrong-old', thread_id='wrong-old')
+    elif damage == 'old_session':receipt['old_session'] = 'sch_'+'f'*32
+    else:receipt['new_session'] = new_owner  # current owner is not the rotation-time identity
+    d.journey.deliver_batches(dict(current, checkpoint_json=json.dumps(cp)))
+    observation = json.loads((d.journey.logdir.parent/'batch-delivery-observation.json').read_text())
+    assert observation['reason'] == 'safe_rotation_unknown' and len(messages(d)) == 2
+    assert d.journey._batch_rotation_proof is None
+    assert json.loads(d.journey.row()['checkpoint_json'])['root_rotation_receipt'] == original
+
+
 def test_late_usage_retains_preparation_fence_and_completed_receipt_with_continuous_counts(delivery):
     d = delivery
     completed_batch_comparison(d)
