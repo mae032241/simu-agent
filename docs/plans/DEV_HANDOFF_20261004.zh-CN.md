@@ -1,6 +1,6 @@
 # 2026-10-04 Covshift 当前交接
 
-状态：**002 已在宿主执行并失败：分页历史数据库未复制，冷读取返回空 turns；003 宿主补验失败：外层只读改写阻断冷恢复的目录创建；004已修复，48项本地检查及独审通过，宿主尚未执行。** 本文是当前工作交接／审计记录；运行与资格边界继续归 [Covshift 准备记录](../COVSHIFT_PILOT_PREPARATION.zh-CN.md)，选题与科学效果归 [主计划](SCIENTIFIC_PROGRESS_AND_CORRECTION_PLAN.zh-CN.md)。不替换 20261003 交接或历史失败原件。
+状态：**用户已明确终止旧结果补验与旧线程恢复。001–004诊断全部退役，不再是主任务前置；转向Native Goal与SciDiscovery双臂直接Covshift任务入口。** 本文下方诊断段落仅为历史记录，不授予重跑资格。当前不继续Native旧线程，不创建005补验；原预算消费仍保留。
 
 ## 可直接接手的状态
 
@@ -61,15 +61,17 @@
 
 004已修正为对精确原可写绑定使用私有副本并保留原逻辑目标和`--bind`。原目录不放开写权限，冻结named grants不变；原历史库修复与完整终态／权限门禁保留。48项纯本地回归通过（0.293s、RSS49094656B；0 native／RPC／模型），其中mkdir正例是在私有副本执行Python操作，并非真实sandbox运行。独审已通过，使用下面唯一004入口，不重复003。原费用和科学资格不变。
 
-## 004唯一下一命令
+## 004退役
 
-[004独立审查](/tmp/scid-covshift-canary-permissions-20261004-004/independent-review.md)通过，冻结清单见同目录 `freeze.json`。本节是冻结后的文档入口更新，不改诊断代码。审查核对全部原write挂载映射至私有副本，原逻辑target与named grants保持；尚未真实运行004。
+004已实际执行并失败在helper冷读的`sealed_session_changed`。用户明确表示旧结果无需补齐，已停止诊断执行者和协议调查者；不再发布该命令或修复恢复路径。原件保留。
 
-```sh
-/tmp/scid-covshift-remaining-20261004-candidate/build/core/bin/python -I /tmp/scid-covshift-canary-permissions-20261004-004/check.py
-```
+## 当前推进路线
 
-只认004 `result.json` status=pass且 `supervision/resource.json` exited／returncode0。无AS上限，UID串行锁、tree RSS1.5e9／appserver1e9、CPU1／数值线程1、300s／8MiB日志保持，不外套第二锁。原件只读，写入隔离副本；不请求新turn／active Goal。失败保留原件，先读安全诊断，不盲重跑或启用付费canary。
+- 修改实际新任务入口，取消把付费合成role canary作为本轮科学smoke的必经任务；新任务不引用旧资格证明。
+- 两臂使用相同公开题面和gpt-6.1-sol/high；新场预算待用户确认，旧Native消耗不清零。串行监督、原文件隔离和用量采集保持。
+- 人工在管理页选择实例和授权loop；按实际科学任务评估产出，未观测的角色隔离或隐藏评分如实记为未验证。
+- 用户取消本次测试入口的独审阻塞；入口及定向测试已完成（29 passed，5.021s、RSS131117056B）。两臂不再调用付费role_canary；新鲜任务仍进行现有无模型路径隔离检查，完整角色资格标未验证。Native剩余额度32736不重置。
+- 新目录`/tmp/scid-covshift-direct-20261004-001`已准备（2.058s、RSS93212672B，0模型）。两臂spec暂存200000／1800，尚未获得新Native预算确认，不得直接启动；如选择沿用余额，需另建等额32736的双臂输入。
 
 ## 后续边界
 

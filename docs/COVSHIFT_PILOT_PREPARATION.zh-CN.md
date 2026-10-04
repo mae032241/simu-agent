@@ -2,7 +2,7 @@
 
 状态（2026-10-04）：**独立 Python 环境与一次真实公开 exp CLI 工程 smoke 独立审查通过（环境与公开 CLI 工程 smoke）；launch_ready=false。** 当前首 pilot 选 covshift；原 N-body 24 粒子工程 smoke 和所有旧 candidate 保留。选题／科学资格由[主计划](plans/SCIENTIFIC_PROGRESS_AND_CORRECTION_PLAN.zh-CN.md#真实效果题与机制回归分工)拥有；本文只交接本机环境，不是模型驱动或正式 trial。
 
-当前接手状态／原预算及零模型补验入口见 [2026-10-04 工作交接](plans/DEV_HANDOFF_20261004.zh-CN.md)；该交接／002诊断已独立审查通过，002尚未宿主执行；交接是审计记录，不替代本文运行规则。
+当前路线更新：用户已终止旧结果补验和旧线程恢复，001–004诊断入口退役；不再将补齐旧证据作为运行前置。下一步是Native Goal与SciDiscovery同题同模型的直接科学对比，新一轮等额预算待用户确认；取消付费合成role canary的必经环节，保留运行隔离、模型与计量。入口改动已完成，29项定向模拟测试通过；用户已取消本次入口独审前置。新双臂目录已准备，尚未调用模型。[当前交接](plans/DEV_HANDOFF_20261004.zh-CN.md)拥有接手状态，后文先前canary前置规则为被本决定取代的历史记录。
 
 ## 已准备
 

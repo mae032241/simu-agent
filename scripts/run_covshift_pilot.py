@@ -1,7 +1,7 @@
 """Task-specific paired Covshift launcher. Never reads grader/answers or unpickles.
 
 prepare is no-model. preflight must run on the ordinary host; run additionally
-requires a reviewed activation and the actual account/model + management UI.
+requires an authorized budget and the actual account/model + management UI.
 No recovery/replay of a submitted trial is supported. Results are engineering
 observations, not original LHTB scores. All evidence/configuration is host-only.
 """
@@ -737,13 +737,23 @@ def verify_account(connection):
     return {'authenticated':True,'exact_model_listed':MODEL,'reasoning_effort':'high','runtime_execution':'not_yet_verified'}
 
 
+def science_prompt(spec):
+    return regular(Path(spec['project'])/'instruction.md').decode()+(
+        f'\nFrozen trial profile for Root, Workers and native helpers: {MODEL}/high. '
+        'Use fresh helper context and do not substitute another model or effort; stop if unavailable. '
+        'Complete the public task using exp. Save the audited final submission in /submission. '
+        'Public paths: /instruction.md, /opt/exp, /workspace, /submission. '
+        'All native network is disabled. Do not access any private or hidden material.')
+
+
 def arm_action(spec,action):
     """Paid activation exists only in run; no automatic retries or recovery."""
     budget=arm_limits(spec);tokens=budget['all_role_tokens'];wall=budget['trial_wall_seconds']
     base=Path(spec['root']); meter=Meter(tokens=tokens,wall_seconds=wall); children=[]; host=None;listener=None
     result={'status':'fail','action':action,'arm':spec['arm'],'turns_requested':0,
         'limits':budget,
-        'active_goal_requested':False,'actual_worker_helper_isolation':'not_verified',
+        'active_goal_requested':False,'science_started':False,'actual_worker_helper_isolation':'not_verified',
+        'qualification':'fresh Root and alias precheck only; paid synthetic role qualification not run',
         'scoring':'not_run','launch_ready':False}
     try:
         import scidiscovery.artifact_agent.interfaces.mcp_daemon as installed_daemon
@@ -793,16 +803,17 @@ def arm_action(spec,action):
             result.update(status='pass',qualification='fresh Root + exact aliases; no role spawn or accounting qualification')
             return result
         result['phase']='account_and_model'; result['account']=verify_account(host.connection)
-        text=regular(Path(spec['project'])/'instruction.md').decode()+f'\nFrozen trial profile for Root, Workers and native helpers: {MODEL}/high. Use fresh helper context and do not substitute another model or effort; stop if unavailable.'
+        text=science_prompt(spec)
+        result['science_prompt_sha256']=hashlib.sha256(text.encode()).hexdigest()
         if spec['arm']=='native_goal':
-            result['phase']='paid_synthetic_role_canary'
-            result['role_canary']=role_canary(host,meter,spec)
-            host.close();host=launch_root(spec,meter)  # fresh scientific thread, no canary history
+            result['phase']='scientific_native_goal'
             result['scientific_identity']={'thread_id':host.identity.thread_id,'session_id':host.identity.session_id}
             goal='Complete the public task in /instruction.md using exp. Save the audited final submission in /submission. Do not access any private or hidden material.'
-            host.connection.rpc('thread/goal/set',{'threadId':host.identity.thread_id,'objective':goal,'status':'paused','tokenBudget':max(1,tokens-meter.total())})
+            host.connection.rpc('thread/goal/set',{'threadId':host.identity.thread_id,'objective':goal,'status':'paused','tokenBudget':tokens})
+            meter.activate();(base/'model-submission-started').touch(exist_ok=False)
             meter.turns_requested+=1;meter.scientific_turns_requested+=1
-            host.start_turn(text+'\nPublic paths: /opt/exp, /workspace, /submission. Use exp; all native network is disabled.')
+            host.start_turn(text)
+            result['science_started']=True
             host.connection.rpc('thread/goal/set',{'threadId':host.identity.thread_id,'status':'active'})
             result['active_goal_requested']=True
             while True:
@@ -821,9 +832,8 @@ def arm_action(spec,action):
             existing=public_call(host,'run_list',{'limit':1})
             if existing.get('runs') or existing.get('continuation') or existing.get('next_before'):
                 raise RuntimeError('pilot_requires_fresh_instance; keep_existing_records')
-            canary_objective='covshift.pilot.isolation'
-            public_call(host,'artifact_ingest_text',{'name':canary_objective,'text':'Synthetic engineering isolation qualification only. No Covshift experiment.','on_conflict':'reject'})
-            print(f'In the same management page pause interactive scheduling, then authorize the new loop for covshift.pilot.isolation ({wall}s / {tokens} total tokens).',flush=True)
+            public_call(host,'artifact_ingest_text',{'name':OBJECTIVE,'text':text,'on_conflict':'reject'})
+            print(f'In the same management page pause interactive scheduling, then authorize the new loop for {OBJECTIVE} ({wall}s / {tokens} total tokens).',flush=True)
             scheduling=public_call(host,'progression_status',{})
             while time.monotonic()<until:
                 loop=scheduling.get('loop') or {}
@@ -831,20 +841,16 @@ def arm_action(spec,action):
                 host.connection.poll(.2);time.sleep(.5);scheduling=public_call(host,'progression_status',{})
             loop=scheduling.get('loop') or {}
             if (loop.get('authority')!='explicit_management_ui_budget_confirmation'
-                    or scheduling.get('objective_name')!=canary_objective
+                    or scheduling.get('objective_name')!=OBJECTIVE
                     or loop.get('limits',{}).get('max_tokens')!=tokens
                     or loop['limits'].get('max_elapsed_seconds')!=wall):
                 raise RuntimeError('actual_loop_authorization_mismatch')
-            confirm_loop(spec,current,scheduling,canary_objective)
+            confirm_loop(spec,current,scheduling,OBJECTIVE)
             result['authorized_loop_id']=loop['id']
-            public_call(host,'progression_command',{'command':'start','mode':'interactive','objective_name':canary_objective})
-            result['phase']='paid_synthetic_role_canary'
-            result['role_canary']=role_canary(host,meter,spec,current,loop)
-            # Same already-authorized loop; no new token or time budget. Control
-            # background Factory opens a fresh scientific Root, not this thread.
-            public_call(host,'progression_command',{'command':'pause'})
-            public_call(host,'artifact_ingest_text',{'name':OBJECTIVE,'text':text,'on_conflict':'reject'})
+            result['phase']='scientific_background_loop'
+            meter.activate();(base/'model-submission-started').touch(exist_ok=False)
             public_call(host,'progression_command',{'command':'start','mode':'background','objective_name':OBJECTIVE})
+            result['science_started']=True
             while True:
                 host.connection.poll(.2);meter.check()
                 scheduling=public_call(host,'progression_status',{})
@@ -879,7 +885,7 @@ def arm_action(spec,action):
         result['observed_total_tokens']=observed
         result['observed_token_overrun']=max(0,observed-tokens)
         result['usage_records']=list(meter.records.values())
-        result['turns_requested']=meter.turns_requested  # Direct Root turn/start attempts, including canary.
+        result['turns_requested']=meter.turns_requested  # Direct frontend Root turn/start attempts.
         result['scientific_turns_requested']=meter.scientific_turns_requested
         result['observed_all_role_turns']=len(meter.observed_turns)
         result['trial_started']=meter.deadline is not None

@@ -320,7 +320,7 @@ def test_canary_and_control_usage_share_budget_without_reset_or_double_count():
 
 
 @pytest.mark.parametrize('tokens,wall',[(200000,1800),(112607,1761)])
-def test_scientific_native_goal_is_fresh_and_canary_tokens_not_reset(tmp_path,monkeypatch,tokens,wall):
+def test_scientific_native_goal_starts_directly_with_exact_frozen_budget(tmp_path,monkeypatch,tokens,wall):
     from types import SimpleNamespace
     import scidiscovery.artifact_agent.interfaces.mcp_daemon as installed
     source=pair(tmp_path,monkeypatch)
@@ -335,7 +335,7 @@ def test_scientific_native_goal_is_fresh_and_canary_tokens_not_reset(tmp_path,mo
     monkeypatch.setattr(installed,'__file__',str(Path(spec['python']).parent.parent/'installed-mcp-daemon.py'))
     requests=[]; hosts=[]
     def launch(spec,meter):
-        thread='canary-root' if not hosts else 'fresh-science-root'
+        thread='fresh-science-root'
         def rpc(method,params):
             requests.append((thread,method,params))
             if method=='command/exec':
@@ -352,22 +352,25 @@ def test_scientific_native_goal_is_fresh_and_canary_tokens_not_reset(tmp_path,mo
             connection=connection,start_turn=turn,guard_resources=lambda:None,close=lambda:None)
         hosts.append(host);return host
     monkeypatch.setattr(driver,'launch_root',launch)
-    def qualified(host,meter,spec):
-        meter.activate();Path(spec['root'],'model-submission-started').touch()
-        meter.observe(usage('canary-root',100,20));return {'synthetic_test_adapter':True}
-    monkeypatch.setattr(driver,'role_canary',qualified)
+    def unexpected(*args):raise AssertionError('paid synthetic canary must not run')
+    monkeypatch.setattr(driver,'role_canary',unexpected)
     result=driver.arm_action(spec,'run')
     assert result['status']=='stopped_not_scored'
-    assert result['observed_total_tokens']==135 and len(hosts)==2
+    assert result['observed_total_tokens']==15 and len(hosts)==1
     paused=next(params for thread,method,params in requests if thread=='fresh-science-root' and method=='thread/goal/set' and params['status']=='paused')
-    assert paused['tokenBudget']==tokens-120
+    assert paused['tokenBudget']==tokens
     assert result['limits']==spec['limits']
     science_prompt=next(params['text'] for thread,method,params in requests if method=='turn/start')
     assert 'gpt-6.1-sol/high' in science_prompt
+    assert science_prompt==driver.science_prompt(spec)
+    assert result['science_prompt_sha256']==__import__('hashlib').sha256(science_prompt.encode()).hexdigest()
     assert len([r for r in requests if r[1]=='turn/start'])==1
     assert result['scientific_identity']['thread_id']=='fresh-science-root'
     assert result['turns_requested']==1 and result['scientific_turns_requested']==1
-    assert result['observed_all_role_turns']==2
+    assert result['observed_all_role_turns']==1
+    assert result['science_started'] and Path(spec['root'],'model-submission-started').exists()
+    assert 'role_canary' not in result
+    assert 'paid synthetic role qualification not run' in result['qualification']
     assert result['actual_worker_helper_isolation']=='not_verified'  # simulation never earns live qualification.
 
 
@@ -392,6 +395,81 @@ def test_reduced_arm_limits_stop_invalid_limits_reject_and_legacy_defaults_remai
     meter=driver.Meter(lambda:now[0],tokens=112607,wall_seconds=1761);meter.activate()
     now[0]=1760;meter.check();now[0]=1761
     with pytest.raises(RuntimeError,match='wall_deadline'):meter.check()
+
+
+@pytest.mark.parametrize('failure',[None,'authorization','usage'])
+def test_scidiscovery_starts_actual_objective_with_ui_authority_and_control_meter(tmp_path,monkeypatch,failure,capsys):
+    from types import SimpleNamespace
+    import scidiscovery.artifact_agent.interfaces.mcp_daemon as installed
+    source=pair(tmp_path,monkeypatch)
+    def init(command,**kwargs):
+        project=Path(command[command.index('--project-root')+1]);(project/'.codex').mkdir()
+        (project/'.codex/config.toml').write_text('web_search="disabled"\n')
+        return SimpleNamespace(returncode=0,stdout=b'fixture')
+    monkeypatch.setattr(driver.subprocess,'run',init)
+    prepared=driver.prepare(source,tmp_path/'runtime',native_bundle(tmp_path),
+        native_goal_tokens=32736,scidiscovery_tokens=32736)
+    spec=json.loads(Path(prepared['arms']['scidiscovery']).read_text())
+    native=json.loads(Path(prepared['arms']['native_goal']).read_text())
+    assert driver.science_prompt(spec)==driver.science_prompt(native)
+    monkeypatch.setattr(installed,'__file__',str(Path(spec['python']).parent.parent/'installed-mcp-daemon.py'))
+    monkeypatch.setattr(driver,'start_control',lambda spec:([],'http://management.invalid'))
+    monkeypatch.setattr(driver.time,'sleep',lambda _:None)
+    calls=[];current_calls=[];checks=[]
+    def rpc(method,params):
+        if method=='command/exec':
+            for name in ('workspace','runs','submission'):Path(spec['project'],name,'canary').write_text('synthetic')
+            return {'exitCode':0,'stdout':json.dumps(dict.fromkeys(driver.CANARY_CHECKS,True))}
+        if method=='account/read':return {'account':{'type':'synthetic-fixture'}}
+        if method=='model/list':return {'data':[{'model':driver.MODEL}],'nextCursor':None}
+        raise AssertionError('unexpected RPC '+method)
+    host=SimpleNamespace(identity=SimpleNamespace(thread_id='frontend',session_id='frontend'),
+        connection=SimpleNamespace(rpc=rpc,poll=lambda _:None),close=lambda:None,
+        verify_tools_and_session=lambda **kwargs:None)
+    monkeypatch.setattr(driver,'launch_root',lambda *args:host)
+    def public(host,name,arguments):
+        calls.append((name,arguments))
+        if name=='instance_current':
+            current_calls.append(name)
+            return {'state':'unbound' if len(current_calls)==1 else 'active',
+                'name':'selected','management_url':'http://management.invalid/exact-page'}
+        if name=='run_list':return {'runs':[]}
+        if name=='progression_status':
+            return {'objective_name':'wrong' if failure=='authorization' else driver.OBJECTIVE,
+                'state':'stopped','budget':{'observed_tokens':15},
+                'loop':{'id':'loop','managed':True,'authority':'explicit_management_ui_budget_confirmation',
+                    'limits':{'max_tokens':32736,'max_elapsed_seconds':1800}}}
+        if name in ('artifact_ingest_text','progression_command'):return {}
+        raise AssertionError('unexpected public call '+name)
+    monkeypatch.setattr(driver,'public_call',public)
+    monkeypatch.setattr(driver,'confirm_loop',lambda spec,current,scheduling,objective:checks.append(objective))
+    def unexpected(*args):raise AssertionError('paid synthetic canary must not run')
+    monkeypatch.setattr(driver,'role_canary',unexpected)
+    measured=driver.Meter(lambda:0.);measured.observe(usage('science-root',10,5))
+    record=measured.records['science-root'];record['has_gaps']=failure=='usage'
+    monkeypatch.setattr(driver,'control_usage',lambda *args:{'instance':'selected','loop':'loop',
+        'records':{'science-root':{**record,'owner':'selected','loop_id':'loop','role':'root'}},
+        'participants':{},'frontend_unmeasured':False})
+    result=driver.arm_action(spec,'run')
+    assert result['status']==('stopped_not_scored' if failure is None else 'fail')
+    assert 'http://management.invalid/exact-page' in capsys.readouterr().out
+    ingested=[arguments for name,arguments in calls if name=='artifact_ingest_text']
+    assert ingested==[{'name':driver.OBJECTIVE,'text':driver.science_prompt(native),'on_conflict':'reject'}]
+    starts=[arguments for name,arguments in calls if name=='progression_command']
+    if failure=='authorization':
+        assert not checks and not starts and not result['trial_started']
+        assert result['reason']=='actual_loop_authorization_mismatch'
+        assert not Path(spec['root'],'model-submission-started').exists()
+    else:
+        assert checks==[driver.OBJECTIVE]
+        assert starts==[{'command':'start','mode':'background','objective_name':driver.OBJECTIVE}]
+        assert result['trial_started'] and result['science_started']
+        assert result['limits']=={'all_role_tokens':32736,'trial_wall_seconds':1800}
+        assert Path(spec['root'],'model-submission-started').exists()
+        if failure=='usage':assert result['reason']=='participant_usage_unconfirmed'
+        else:assert result['observed_total_tokens']==15
+    assert result['turns_requested']==0 and 'role_canary' not in result
+    assert result['actual_worker_helper_isolation']=='not_verified'
 
 
 def test_actual_launcher_supervisor_uses_reduced_frozen_arm_cap(tmp_path,monkeypatch):
@@ -421,9 +499,7 @@ def test_actual_launcher_supervisor_uses_reduced_frozen_arm_cap(tmp_path,monkeyp
     assert observed[0][0][observed[0][0].index('--spec')+1]==spec_path
 
 
-def test_failed_role_gate_never_activates_goal_or_sends_scientific_turn(tmp_path,monkeypatch):
-    # The production gate's receipt/identity semantics are covered above; this
-    # exact arm path proves that its rejection prevents science, not just a helper return.
+def test_failed_alias_precheck_never_activates_goal_or_sends_scientific_turn(tmp_path,monkeypatch):
     from types import SimpleNamespace
     import scidiscovery.artifact_agent.interfaces.mcp_daemon as installed
     source=pair(tmp_path,monkeypatch)
@@ -440,18 +516,17 @@ def test_failed_role_gate_never_activates_goal_or_sends_scientific_turn(tmp_path
         methods.append(method)
         if method=='command/exec':
             for name in ('workspace','runs','submission'):Path(spec['project'],name,'canary').write_text('synthetic')
-            return {'exitCode':0,'stdout':json.dumps(dict.fromkeys(driver.CANARY_CHECKS,True))}
+            return {'exitCode':0,'stdout':json.dumps({**dict.fromkeys(driver.CANARY_CHECKS,True),'private_denied':False})}
         if method=='account/read':return {'account':{'type':'synthetic-fixture'}}
         if method=='model/list':return {'data':[{'model':driver.MODEL}],'nextCursor':None}
         return {}
     monkeypatch.setattr(driver,'launch_root',lambda *a:SimpleNamespace(identity=SimpleNamespace(thread_id='actual',session_id='actual'),
         connection=SimpleNamespace(rpc=rpc),close=lambda:None))
-    def reject(*a):raise RuntimeError('actual_worker_helper_attach_missing')
-    monkeypatch.setattr(driver,'role_canary',reject)
     result=driver.arm_action(spec,'run')
-    assert result['status']=='fail' and result['reason']=='actual_worker_helper_attach_missing'
+    assert result['status']=='fail' and result['reason']=='task_alias_canary_failed'
     assert 'turn/start' not in methods and 'thread/goal/set' not in methods
     assert result['turns_requested']==result['scientific_turns_requested']==0
+    assert not result['trial_started'] and not Path(spec['root'],'model-submission-started').exists()
     methods.clear()
     Path(spec['code_mode_host']['path']).write_bytes(b'changed runtime')
     result=driver.arm_action(spec,'run')
