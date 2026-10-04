@@ -1,5 +1,17 @@
 # 2026-10-04 Covshift 当前交接
 
+## 2026-10-05重启交接（当前入口）
+
+- 本轮/tmp下245项Covshift数据已迁至项目根`archive/temporary-covshift-20261005`，约1.21GB，逐文件SHA256/权限/链接校验通过；原/tmp路径现在是链接。归档含认证副本，仅用户可访问且忽略Git。
+- 重启后先运行：`python /home/da/project/ai4s/tcad/git_release/scidiscovery-agent/archive/temporary-covshift-20261005/restore_paths.py`。恢复链接、冲突拒绝、0模型；已实测删除一个别名再恢复，安装Python导入成功，两套spec各15关键路径无缺失。
+- 真实Native场目录`scid-covshift-direct-2m-20261004-001/native_goal`：909733 tokens、科学阶段933.435s后旧1GB host限制退出；44模型，run44公开val0.9582/audit0.9522、leakage=false，有submitted.json；不标正常完成，不重跑。
+- 真实Sci场目录`scid-covshift-auto-13gb-20261004-001/scidiscovery`：自动创建/绑定/预算确认成功，275977 tokens、科学阶段102.223s后因`control_usage_scope_conflict`退出，峰值1.092GB，无模型产物。这个启动器计量归属问题尚未修复，不能宣称重启后科学链路已正常。
+- 下一步仅查明并修复`run_covshift_pilot.py`中的control_usage_scope_conflict真实触发项，然后准备新Sci场次。禁止旧结果补验、旧线程恢复与付费合成canary；不重放已提交场次。
+- 已授权本任务自动创建绑定实例，2m tokens/1800秒/13GB；默认全角色6.1-sol/high，不fast，运行串行。每次真实费用均保留。用户已取消本次测试入口独审阻塞。
+
+下面2026-10-04记录仅保留当时状态，以本节为准。
+
+
 状态：**用户已明确终止旧结果补验与旧线程恢复。001–004诊断全部退役，不再是主任务前置；转向Native Goal与SciDiscovery双臂直接Covshift任务入口。** 本文下方诊断段落仅为历史记录，不授予重跑资格。当前不继续Native旧线程，不创建005补验；原预算消费仍保留。
 
 ## 可直接接手的状态
