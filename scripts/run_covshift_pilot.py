@@ -8,10 +8,13 @@ observations, not original LHTB scores. All evidence/configuration is host-only.
 from __future__ import annotations
 import argparse
 import hashlib
+import html
+import http.client
 import inspect
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import shutil
 import signal
@@ -22,6 +25,7 @@ import subprocess
 import sys
 import time
 import tomllib
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -225,7 +229,8 @@ def permissions(spec):
 
 def prepare(launch_path, output, native, auth_file=None, provider_config=None, *,
         native_goal_tokens=TOKENS,native_goal_wall_seconds=WALL,
-        scidiscovery_tokens=TOKENS,scidiscovery_wall_seconds=WALL,resource_config=None,human_wait_seconds=1800):
+        scidiscovery_tokens=TOKENS,scidiscovery_wall_seconds=WALL,resource_config=None,human_wait_seconds=1800,
+        auto_manage_instance=False,management_authorization_file=None):
     if type(human_wait_seconds) is not int or human_wait_seconds<=0:raise ValueError('invalid_human_wait')
     resources=json.loads(regular(resource_config)) if resource_config is not None else {}
     resource_limits({'resources':resources})
@@ -233,6 +238,14 @@ def prepare(launch_path, output, native, auth_file=None, provider_config=None, *
     budgets={arm:arm_limits({'limits':{'all_role_tokens':tokens,'trial_wall_seconds':wall}})
         for arm,tokens,wall in (('native_goal',native_goal_tokens,native_goal_wall_seconds),
             ('scidiscovery',scidiscovery_tokens,scidiscovery_wall_seconds))}
+    authorization=None
+    if auto_manage_instance:
+        if management_authorization_file is None:raise ValueError('explicit_management_authorization_required')
+        original=regular(management_authorization_file).decode().strip()
+        if not original:raise ValueError('explicit_management_authorization_required')
+        authorization={'source':'explicit_user_instruction','text':original,
+            'scope':'create and bind one fresh Covshift instance and confirm its frozen loop budget',
+            'limits':budgets['scidiscovery']}
     output = Path(output).absolute(); native = Path(native).resolve(strict=True)
     code_mode_host=native_runtime(native)
     output.mkdir(mode=0o700)
@@ -278,7 +291,9 @@ def prepare(launch_path, output, native, auth_file=None, provider_config=None, *
         (base/'evidence/init.log').write_bytes(completed.stdout)
         if completed.returncode:
             raise RuntimeError('installed_initializer_failed:'+arm)
-        spec={'arm':arm,'limits':budget,'resources':resources,'human_wait_seconds':human_wait_seconds,'root':str(base),'project':str(project),'python':str(installed),
+        spec={'arm':arm,'limits':budget,'resources':resources,'human_wait_seconds':human_wait_seconds,
+            'management_authorization':authorization if arm=='scidiscovery' else None,
+            'root':str(base),'project':str(project),'python':str(installed),
             'task_python':launch['task_python'],'native':str(native),'native_sha256':result['native_sha256'],
             'code_mode_host':code_mode_host,
             'environment':{**launch['arms'][arm]['environment'],
@@ -762,6 +777,53 @@ def science_prompt(spec):
         'All native network is disabled. Do not access any private or hidden material.')
 
 
+class PilotManagement:
+    """Task opt-in uses the same local forms, CSRF and frozen UI confirmation."""
+    def __init__(self,url):
+        self.url=urlsplit(url)
+        if (self.url.scheme!='http' or self.url.hostname not in {'127.0.0.1','localhost','::1'}
+                or self.url.username or self.url.password or not self.url.path.startswith('/sessions/')):
+            raise RuntimeError('local_session_management_url_required')
+        self.capability=parse_qs(self.url.query).get('capability',[None])[0]
+        if not self.capability:raise RuntimeError('management_capability_missing')
+        self.origin='http://'+self.url.netloc
+        self.path=self.url.path+'?'+self.url.query
+    def request(self,path,form=None):
+        connection=http.client.HTTPConnection(self.url.hostname,self.url.port,timeout=10)
+        try:
+            headers={'Origin':self.origin} if form is not None else {}
+            if form is not None:headers['Content-Type']='application/x-www-form-urlencoded'
+            connection.request('POST' if form is not None else 'GET',path,
+                body=urlencode(form) if form is not None else None,headers=headers)
+            response=connection.getresponse();body=response.read(2*1024*1024+1)
+            if response.status!=(303 if form is not None else 200) or len(body)>2*1024*1024:
+                raise RuntimeError('management_form_rejected_or_unconfirmed')
+            return body.decode()
+        finally:connection.close()
+    def fields(self,command=None):
+        page=self.request(self.path)
+        if command:
+            forms=re.findall(r'<form\b[^>]*>(.*?)</form>',page,re.S)
+            forms=[form for form in forms if f"name='command' value='{command}'" in form]
+            if len(forms)!=1:raise RuntimeError('exact_management_confirmation_form_missing')
+            page=forms[0]
+        fields={name:html.unescape(value) for name,value in
+            re.findall(r"<input\b[^>]*name='([^']+)'[^>]*value='([^']*)'",page)}
+        if not fields.get('csrf'):raise RuntimeError('management_csrf_missing')
+        return fields
+    def create(self,name):
+        fields=self.fields()
+        self.request('/instances/create',{'csrf':fields['csrf'],'capability':self.capability,
+            'name':name,'title':'Covshift paired comparison','objective':OBJECTIVE})
+    def authorize(self):
+        fields=self.fields('pause')
+        self.request('/instances/progression',{'csrf':fields['csrf'],'capability':self.capability,'command':'pause'})
+        fields=self.fields('authorize_loop')
+        self.request('/instances/progression',{'csrf':fields['csrf'],'capability':self.capability,
+            'command':'authorize_loop','instance_id':fields['instance_id'],
+            'confirmation_binding':fields['confirmation_binding'],'confirm_loop_budget':'yes','objective_name':OBJECTIVE})
+
+
 def arm_action(spec,action):
     """Paid activation exists only in run; no automatic retries or recovery."""
     budget=arm_limits(spec);tokens=budget['all_role_tokens'];wall=budget['trial_wall_seconds']
@@ -840,16 +902,34 @@ def arm_action(spec,action):
                 if goal['status'] in ('complete','usageLimited','budgetLimited','blocked','paused'):
                     result['stop_reason']='native_goal_'+goal['status'];break
         else:
-            print('Select/create an instance only through this management page: '+current['management_url'],flush=True)
+            management=None
+            authorization=spec.get('management_authorization')
+            if authorization is not None:
+                if (authorization.get('source')!='explicit_user_instruction' or not authorization.get('text')
+                        or authorization.get('limits')!=budget):
+                    raise RuntimeError('explicit_management_authorization_mismatch')
+                management=PilotManagement(current['management_url'])
+                name='covshift.pilot.'+os.urandom(8).hex()
+                result['management_authorization']=authorization
+                result['created_instance_name']=name
+                management.create(name)
+            else:
+                print('Select/create an instance only through this management page: '+current['management_url'],flush=True)
             until=time.monotonic()+spec.get('human_wait_seconds',1800)
             while current.get('state')=='unbound' and time.monotonic()<until:
                 host.connection.poll(.2);current=public_call(host,'instance_current',{});time.sleep(.5)
             if current.get('state')!='active': raise RuntimeError('user_instance_not_selected')
+            if management and current.get('name')!=name:raise RuntimeError('created_instance_binding_mismatch')
             existing=public_call(host,'run_list',{'limit':1})
             if existing.get('runs') or existing.get('continuation') or existing.get('next_before'):
                 raise RuntimeError('pilot_requires_fresh_instance; keep_existing_records')
             public_call(host,'artifact_ingest_text',{'name':OBJECTIVE,'text':text,'on_conflict':'reject'})
-            print(f'In the same management page pause interactive scheduling, then authorize the new loop for {OBJECTIVE} ({wall}s / {tokens} total tokens).',flush=True)
+            if management:
+                public_call(host,'artifact_ingest_text',{'name':'covshift.pilot.management.authorization',
+                    'text':authorization['text'],'on_conflict':'reject'})
+                management.authorize()
+            else:
+                print(f'In the same management page pause interactive scheduling, then authorize the new loop for {OBJECTIVE} ({wall}s / {tokens} total tokens).',flush=True)
             scheduling=public_call(host,'progression_status',{})
             while time.monotonic()<until:
                 loop=scheduling.get('loop') or {}
@@ -922,6 +1002,8 @@ def main():
     parser.add_argument('--scidiscovery-wall-seconds',type=int,default=WALL)
     parser.add_argument('--resource-config',type=Path)
     parser.add_argument('--human-wait-seconds',type=int,default=1800)
+    parser.add_argument('--auto-manage-instance',action='store_true')
+    parser.add_argument('--management-authorization-file',type=Path)
     parser.add_argument('--ui-url');parser.add_argument('--_lease-fd',type=int,help=argparse.SUPPRESS)
     args=parser.parse_args()
     if args._lease_fd is not None:
@@ -930,7 +1012,8 @@ def main():
         if args.action=='prepare':
             prepare(args.launch,args.output,args.native,args.auth_file,args.provider_config,
                 native_goal_tokens=args.native_goal_tokens,native_goal_wall_seconds=args.native_goal_wall_seconds,
-                scidiscovery_tokens=args.scidiscovery_tokens,scidiscovery_wall_seconds=args.scidiscovery_wall_seconds,resource_config=args.resource_config,human_wait_seconds=args.human_wait_seconds)
+                scidiscovery_tokens=args.scidiscovery_tokens,scidiscovery_wall_seconds=args.scidiscovery_wall_seconds,resource_config=args.resource_config,human_wait_seconds=args.human_wait_seconds,
+                auto_manage_instance=args.auto_manage_instance,management_authorization_file=args.management_authorization_file)
             return 0
         spec=json.loads(regular(args.spec))
         if args.action=='_daemon': return daemon(spec,args.ui_url)

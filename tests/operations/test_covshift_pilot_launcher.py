@@ -398,24 +398,33 @@ def test_reduced_arm_limits_stop_invalid_limits_reject_and_legacy_defaults_remai
 
 
 @pytest.mark.parametrize('failure',[None,'authorization','usage'])
-def test_scidiscovery_starts_actual_objective_with_ui_authority_and_control_meter(tmp_path,monkeypatch,failure,capsys):
+@pytest.mark.parametrize('automated',[False,True])
+def test_scidiscovery_starts_actual_objective_with_ui_authority_and_control_meter(tmp_path,monkeypatch,failure,automated,capsys):
     from types import SimpleNamespace
     import scidiscovery.artifact_agent.interfaces.mcp_daemon as installed
     source=pair(tmp_path,monkeypatch)
+    authorization=tmp_path/'authorization.txt'
+    authorization.write_text('For this Covshift comparison, create and bind a fresh instance and confirm the exact authorized arm budget.')
     def init(command,**kwargs):
         project=Path(command[command.index('--project-root')+1]);(project/'.codex').mkdir()
         (project/'.codex/config.toml').write_text('web_search="disabled"\n')
         return SimpleNamespace(returncode=0,stdout=b'fixture')
     monkeypatch.setattr(driver.subprocess,'run',init)
     prepared=driver.prepare(source,tmp_path/'runtime',native_bundle(tmp_path),
-        native_goal_tokens=32736,scidiscovery_tokens=32736)
+        native_goal_tokens=32736,scidiscovery_tokens=32736,
+        auto_manage_instance=automated,management_authorization_file=authorization if automated else None)
     spec=json.loads(Path(prepared['arms']['scidiscovery']).read_text())
     native=json.loads(Path(prepared['arms']['native_goal']).read_text())
     assert driver.science_prompt(spec)==driver.science_prompt(native)
     monkeypatch.setattr(installed,'__file__',str(Path(spec['python']).parent.parent/'installed-mcp-daemon.py'))
     monkeypatch.setattr(driver,'start_control',lambda spec:([],'http://management.invalid'))
     monkeypatch.setattr(driver.time,'sleep',lambda _:None)
-    calls=[];current_calls=[];checks=[]
+    calls=[];current_calls=[];checks=[];management=[]
+    class Management:
+        def __init__(self,url):management.append(('url',url))
+        def create(self,name):management.append(('create',name))
+        def authorize(self):management.append(('authorize',driver.OBJECTIVE))
+    monkeypatch.setattr(driver,'PilotManagement',Management)
     def rpc(method,params):
         if method=='command/exec':
             for name in ('workspace','runs','submission'):Path(spec['project'],name,'canary').write_text('synthetic')
@@ -432,7 +441,8 @@ def test_scidiscovery_starts_actual_objective_with_ui_authority_and_control_mete
         if name=='instance_current':
             current_calls.append(name)
             return {'state':'unbound' if len(current_calls)==1 else 'active',
-                'name':'selected','management_url':'http://management.invalid/exact-page'}
+                'name':management[1][1] if automated and len(management)>1 else 'selected',
+                'management_url':'http://management.invalid/exact-page'}
         if name=='run_list':return {'runs':[]}
         if name=='progression_status':
             return {'objective_name':'wrong' if failure=='authorization' else driver.OBJECTIVE,
@@ -452,9 +462,17 @@ def test_scidiscovery_starts_actual_objective_with_ui_authority_and_control_mete
         'participants':{},'frontend_unmeasured':False})
     result=driver.arm_action(spec,'run')
     assert result['status']==('stopped_not_scored' if failure is None else 'fail')
-    assert 'http://management.invalid/exact-page' in capsys.readouterr().out
+    output=capsys.readouterr().out
+    assert ('http://management.invalid/exact-page' in output) is not automated
     ingested=[arguments for name,arguments in calls if name=='artifact_ingest_text']
-    assert ingested==[{'name':driver.OBJECTIVE,'text':driver.science_prompt(native),'on_conflict':'reject'}]
+    assert ingested[0]=={'name':driver.OBJECTIVE,'text':driver.science_prompt(native),'on_conflict':'reject'}
+    if automated:
+        assert ingested[1]=={'name':'covshift.pilot.management.authorization','text':authorization.read_text(),'on_conflict':'reject'}
+        assert management[-1]==('authorize',driver.OBJECTIVE)
+        assert result['management_authorization']['source']=='explicit_user_instruction'
+        assert result['created_instance_name'].startswith('covshift.pilot.')
+    else:
+        assert len(ingested)==1 and not management
     starts=[arguments for name,arguments in calls if name=='progression_command']
     if failure=='authorization':
         assert not checks and not starts and not result['trial_started']
@@ -470,6 +488,53 @@ def test_scidiscovery_starts_actual_objective_with_ui_authority_and_control_mete
         else:assert result['observed_total_tokens']==15
     assert result['turns_requested']==0 and 'role_canary' not in result
     assert result['actual_worker_helper_isolation']=='not_verified'
+
+
+def test_auto_management_requires_authorization_before_preparation(tmp_path,monkeypatch):
+    source=pair(tmp_path,monkeypatch)
+    with pytest.raises(ValueError,match='explicit_management_authorization_required'):
+        driver.prepare(source,tmp_path/'runtime',native_bundle(tmp_path),auto_manage_instance=True)
+    assert not (tmp_path/'runtime').exists()
+
+
+def test_auto_management_uses_real_http_csrf_capability_and_loop_confirmation(tmp_path,monkeypatch):
+    from scidiscovery.agent_execution_settings import AgentSettings,effective_settings
+    from scidiscovery.artifact_agent.approval_ui.read_model import InstanceReadModel
+    from tests.operations.test_m6a_direct_instance_management import _setup,_root
+    settings=AgentSettings().model_dump(exclude_none=True)
+    settings['progression'].update(enabled=True,max_tokens=2000000,max_elapsed_seconds=1800,max_calendar_seconds=1800,
+        root_model=driver.MODEL,root_reasoning_effort='high',token_policy='bounded_fallback')
+    settings_path=tmp_path/'agent-settings.json';driver.write(settings_path,settings)
+    monkeypatch.setenv('SCID_AGENT_SETTINGS_FILE',str(settings_path))
+    runtime,state,secret,ui,base=_setup(tmp_path)
+    ui.read_model=InstanceReadModel(artifacts=runtime.artifacts,bindings=runtime.scheduler_bindings,
+        runs=runtime.runs,approvals=runtime.approvals,executions=runtime.executions,
+        operation_catalog=runtime.operation_catalog)
+    root=_root(runtime,session_key='sch_'+'1'*32,secret=secret,base=base)
+    try:
+        current=root.call_tool('instance_current',{})
+        assert current['state']=='unbound'
+        management=driver.PilotManagement(current['management_url'])
+        management.create('covshift.pilot.http-fixture')
+        current=root.call_tool('instance_current',{})
+        assert current['name']=='covshift.pilot.http-fixture'
+        root.call_tool('artifact_ingest_text',{'name':driver.OBJECTIVE,'text':'Original public Covshift task fixture.','on_conflict':'reject'})
+        management.authorize()
+        scheduling=root.call_tool('progression_status',{})
+        assert scheduling['objective_name']==driver.OBJECTIVE
+        assert scheduling['loop']['authority']=='explicit_management_ui_budget_confirmation'
+        assert scheduling['loop']['limits']['max_tokens']==2000000
+        assert scheduling['loop']['limits']['max_elapsed_seconds']==1800
+        assert scheduling['state']=='paused'
+        assert root.call_tool('run_list',{'limit':1})['runs']==[]
+        # The capability and real CSRF/confirmation remain enforced by the existing UI.
+        with pytest.raises(RuntimeError,match='management_form_rejected'):
+            management.request('/instances/progression',{'capability':management.capability,
+                'csrf':'wrong','command':'pause'})
+    finally:ui.stop()
+    for url in ('http://example.invalid/sessions/test?capability=x',
+            'http://127.0.0.1/instances?capability=x','http://127.0.0.1/sessions/test'):
+        with pytest.raises(RuntimeError):driver.PilotManagement(url)
 
 
 def test_actual_launcher_supervisor_uses_reduced_frozen_arm_cap(tmp_path,monkeypatch):
