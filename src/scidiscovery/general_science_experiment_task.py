@@ -171,27 +171,19 @@ def validate_report(raw):
 
 def validate_goal_inputs(sources):
     """Validate the goal at its exact source; no fabricated standalone artifact."""
-    from pydantic import ValidationError
-    from .artifact_agent.schema.research_objective import ResearchObjectiveContract, declared_objective
+    from .artifact_agent.schema.research_objective import ObjectiveSourceError, validate_objective_source
     from .operations.invoke import OperationInvocationError
+    descriptor = sources.binding_descriptors["objective_source"]
     try:
-        source = json.loads(sources["objective_source"])
-    except (json.JSONDecodeError, UnicodeDecodeError) as error:
-        raise OperationInvocationError("input_objective_invalid", port="subject",
-            message="The selected goal source is not a readable scientific record; repair its original content.") from error
-    foundation, objective = declared_objective(source)
-    if objective is None:
-        raise OperationInvocationError("input_objective_missing", port="subject",
-            message="The selected scientific material does not declare the research intent and completion criteria. "
-                    "Ask its scientific author to complete or clarify the goal; do not construct internal bindings or search framework source.")
-    try:
-        goal = ResearchObjectiveContract.model_validate_json(canonical_json(objective), strict=True)
-    except ValidationError as error:
-        raise OperationInvocationError("input_objective_invalid", port="subject",
-            message="The selected material has an incomplete scientific goal; its author must repair its intent, targets or completion criteria.") from error
-    if "objective" in foundation and goal.statement != foundation["objective"]:
-        raise OperationInvocationError("input_objective_conflict", port="subject",
-            message="The selected material's goal statement conflicts with its declared objective; resolve the scientific conflict at its source.")
+        validate_objective_source(sources["objective_source"], ref=descriptor.artifact_ref,
+            media_type=descriptor.media_type, labels=descriptor.labels)
+    except ObjectiveSourceError as error:
+        message = {
+            "input_objective_invalid": "The selected goal source is unreadable, has incompatible original-text metadata, or declares an invalid structured goal; repair its original content or type.",
+            "input_objective_missing": "The selected structured scientific material does not declare the research intent and completion criteria; repair that original structured goal rather than downgrading its type.",
+            "input_objective_conflict": "The selected material's goal statement conflicts with its declared objective; resolve the scientific conflict at its source.",
+        }[error.reason_code]
+        raise OperationInvocationError(error.reason_code, port="subject", message=message) from error
 
 
 def validate_completion(payload, sources, handoff):
@@ -341,6 +333,9 @@ Read subject for the current scientific question, stage objective and available
 conclusions. Read the global goal and completion criteria in objective_source:
 the original research objective, the foundation's objective_contract, or the intake's
 scientific_foundation.objective_contract. Reuse these declared goals in place.
+objective_source may instead be the exact frozen original user task text; interpret
+its scientific requirements here and retain missing information without inventing
+a structured control goal or scientific criteria.
 Use the exact supplied scientific materials. Explain
 limitations instead of inventing missing evidence or claiming unavailable execution.
 Keep normal corrections in this task. Ask for a scientific decision only when
@@ -443,20 +438,20 @@ COMPONENTS = (
 )
 OPERATION = scientific_agent_operation(
     "science.experiment.v1", "Complete a bounded experiment from scientific design through execution and validity judgment.",
-    "A selected scientific subject declares a research goal and completion criteria, directly or in its sealed source history. Control binds that goal automatically.",
+    "Original user task text or a selected structured scientific subject retains an exact goal source, directly or in its sealed history. Control binds that source automatically; the Worker judges scientific sufficiency.",
     "Unbounded research, claims without retained observations, or pure evidence analysis with no implementation/execution requirement. Use a source-based scientific task to clarify an incomplete goal.",
     decision_fields=("outcome", "summary", "remaining_question", "limitations"),
     agent=_REF("experiment_task_agent"), prompt=_REF("experiment_task_prompt"),
     workspace=_REF("experiment_task_workspace"),
     input_validation=InputValidationSpec(_REF("experiment_goal_inputs"), "science.experiment.v1.goal",
-        "The selected scientific subject must declare an explicit goal and completion criteria. Control resolves its exact source; Root does not bind internal goal objects."),
+        "Select original UTF-8 user task text or a scientific subject with an exact valid structured goal source. Control binds the original; scientific sufficiency belongs to the Worker. Root does not bind internal goal objects."),
     tools=(_REF("experiment_stage_tool"),),
     inputs=(
-        _input("subject", "The exact hypothesis, scientific intake, foundation, existing goal or prior experiment to investigate. Select its instance name; control retrieves the goal from its sealed sources. Do not create an internal goal object.", "*",
+        _input("subject", "The exact original user task text, hypothesis, scientific intake, foundation, existing goal or prior experiment to investigate. Select its instance name; control retrieves the goal from its sealed sources. Do not create an internal goal object.", "*",
             media_types=("*/*",), exposure="on_demand", usage="evidence_inventory"),
         _input("objective_source", "Control-bound exact scientific source of the global goal and completion criteria.", "*",
             media_types=("*/*",), exposure="on_demand", usage="evidence_inventory").model_copy(update={
-            "derivation": InputDerivationSpec(anchor_port="subject",
+            "derivation": InputDerivationSpec(anchor_port="subject", source_original_text=True,
                 source_paths=((), ("scientific_foundation",), ("hypothesis_portfolio", "scientific_foundation"),
                               ("objective_source",), ("research_objective",)),
                 source_schemas=("scidiscovery.research-objective.v1", "scidiscovery.scientific-foundation.v1",

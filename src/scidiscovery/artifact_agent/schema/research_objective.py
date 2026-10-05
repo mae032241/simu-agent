@@ -2,11 +2,25 @@
 
 from __future__ import annotations
 
+import json
 from typing import Annotated, Literal
 
 from pydantic import ConfigDict, Field, model_validator
 
-from .common import Identifier, SchemaModel
+from .common import Identifier, SchemaModel, canonical_json
+
+
+class ObjectiveSourceError(ValueError):
+    def __init__(self, reason_code):
+        self.reason_code = reason_code
+        super().__init__(reason_code)
+
+
+def is_original_text_objective(ref, media_type, labels):
+    """Typed original user text, not an arbitrary opaque file or scientific result."""
+    return (ref.kind == "source_text" and ref.schema_id == "opaque"
+        and media_type in {"text/plain", "text/plain; charset=utf-8"}
+        and dict(labels).get("source_origin") == "user_via_scheduler")
 
 
 ObjectiveIntent = Literal[
@@ -184,9 +198,45 @@ def declared_objective(document: object) -> tuple[dict | None, dict | None]:
     return carrier, goal if isinstance(goal, dict) else None
 
 
+def validate_objective_source(raw, *, ref, media_type, labels):
+    """Validate frozen source bytes without inventing a goal or scientific criteria.
+
+    Original text returns no structured contract. Its scientific sufficiency belongs
+    to the Worker; both admission and execution budgets retain its exact identity.
+    """
+    if is_original_text_objective(ref, media_type, labels):
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeError as error:
+            raise ObjectiveSourceError("input_objective_invalid") from error
+        if not text.strip() or any(ord(char) < 32 and char not in "\t\r\n" for char in text):
+            raise ObjectiveSourceError("input_objective_invalid")
+        return None
+    if ref.schema_id not in {"scidiscovery.research-objective.v1",
+            "scidiscovery.scientific-foundation.v1", "scidiscovery.scientific-intake.v1"}:
+        raise ObjectiveSourceError("input_objective_invalid")
+    try:
+        document = json.loads(raw)
+    except (ValueError, UnicodeError) as error:
+        raise ObjectiveSourceError("input_objective_invalid") from error
+    carrier, objective = declared_objective(document)
+    if objective is None:
+        raise ObjectiveSourceError("input_objective_missing")
+    try:
+        goal = ResearchObjectiveContract.model_validate_json(canonical_json(objective), strict=True)
+    except ValueError as error:
+        raise ObjectiveSourceError("input_objective_invalid") from error
+    if "objective" in carrier and goal.statement != carrier["objective"]:
+        raise ObjectiveSourceError("input_objective_conflict")
+    return goal
+
+
 __all__ = [
     "ComparisonPurpose",
     "declared_objective",
+    "is_original_text_objective",
+    "validate_objective_source",
+    "ObjectiveSourceError",
     "ObjectiveClosureRequirement",
     "ObjectiveIntent",
     "ObjectiveTarget",

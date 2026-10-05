@@ -79,10 +79,8 @@ class ExperimentExecution:
         belongs to the research instance (a control identity); Agent-authored
         objective_key, carrier and revision never select a pool. A single valid
         control-bound goal is still required before any execution."""
-        import json
-        from pydantic import ValidationError
         from ..schema.common import canonical_sha256
-        from ..schema.research_objective import ResearchObjectiveContract, declared_objective
+        from ..schema.research_objective import ObjectiveSourceError, validate_objective_source
         from .sealed_materials import material_error
         refs = {item.artifact_ref for item in run.inputs if item.port_name in {"objective_source", "research_objective"}}
         if len(refs) != 1:
@@ -90,9 +88,11 @@ class ExperimentExecution:
                 "This task has no single control-bound research goal, so no execution budget applies. "
                 "Ask the scheduler to repair the task's scientific subject; no execution was submitted.", path="$.name")
         try:
-            goal = declared_objective(json.loads(self.executions.artifacts.read(next(iter(refs)))))[1]
-            ResearchObjectiveContract.model_validate_json(canonical_json(goal), strict=True)
-        except (ValueError, ValidationError) as error:
+            ref = next(iter(refs))
+            envelope = self.executions.artifacts.catalog(ref)
+            validate_objective_source(self.executions.artifacts.read(ref), ref=ref,
+                media_type=envelope.media_type, labels=envelope.labels)
+        except ObjectiveSourceError as error:
             raise material_error("experiment_goal_budget_invalid",
                 "The task's bound goal source does not declare a valid research goal; no execution was submitted.",
                 path="$.name") from error

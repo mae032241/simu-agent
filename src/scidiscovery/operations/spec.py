@@ -115,6 +115,8 @@ class InputDerivationSpec(FrozenSpec):
     # alternative producer paths. Types never search unrelated instance artifacts.
     source_paths: tuple[tuple[str, ...], ...] = ()
     source_schemas: tuple[str, ...] = ()
+    # Admit typed original user text alongside structured goal sources.
+    source_original_text: bool = False
 
 
 class InputPortSpec(PortSpec):
@@ -544,11 +546,15 @@ def input_source_requirement(port: InputPortSpec) -> str:
         raise ValueError("source requirement needs a derived input")
     if rule.source_schemas:
         source = "one unambiguous source of type " + " or ".join(rule.source_schemas)
+        if rule.source_original_text:
+            source += " or original UTF-8 user task text (source_text / opaque, text/plain)"
         requirement = f"The selected object or its declared exact producer history must supply {source}."
     elif rule.producer_input_path or rule.source_paths or rule.producer_output_port or rule.select != "subject":
         requirement = "The selected object must retain the exact original materials or related evidence required by this action in its declared producer history."
     else:
         return "Control reuses the exact selected object; its format and cardinality must satisfy this action. No separate caller binding is needed."
+    if rule.source_original_text:
+        return requirement + " Original task text may be selected directly; control binds its exact identity without creating a structured goal. Scientific sufficiency belongs to the Worker. Copying or renaming originals does not establish provenance."
     return requirement + " Reuse compatible sealed science; if only originals exist, choose a source-based task that answers the question. Copying or renaming originals does not establish provenance. Control resolves bindings."
 
 
@@ -619,13 +625,15 @@ def scheduler_operation_view(spec: OperationSpec) -> SchedulerOperationView:
     )
 def json_projection(value: Any) -> Any:
     if isinstance(value, BaseModel):
-        # Preserve every pre-existing null field; omit only the new default.
+        # Preserve existing projections while omitting new inactive defaults.
         # Walk model objects so nested PluginDefinition operations retain this rule.
         return {
             (field.alias or name): json_projection(getattr(value, name))
             for name, field in type(value).model_fields.items()
             if not (isinstance(value, OperationSpec) and name == "input_validation"
                     and getattr(value, name) is None)
+            and not (isinstance(value, InputDerivationSpec) and name == "source_original_text"
+                     and not value.source_original_text)
         }
     if is_dataclass(value) and not isinstance(value, type):
         return {field.name: json_projection(getattr(value, field.name)) for field in fields(value)}

@@ -9,6 +9,7 @@ from scidiscovery.general_science_plugin import PLUGIN as GENERAL
 from scidiscovery.operations.catalog import compile_catalog
 from scidiscovery.artifact_agent.interfaces.mcp_root_shared import RootToolError
 from scidiscovery.operations.spec import scheduler_operation_view
+from scidiscovery.artifact_agent.service.intake import USER_TEXT_SOURCE_ORIGIN
 from curve_score.plugin import PLUGIN as CURVE
 from tcad_artifact.plugin import PLUGIN as TCAD
 from tests.operations.test_general_transform_operations import _root, _register, _intake
@@ -16,8 +17,9 @@ from tests.operations.test_historical_compatibility_paths import _complete, _art
 from tests.operations.test_hypothesis_objective_boundary import _foundation, _proposal
 
 
-def _setup(tmp_path):
-    catalog = compile_catalog((CORE_PLUGIN, GENERAL, CURVE, TCAD))
+def _setup(tmp_path, *, native_only=False):
+    catalog = compile_catalog((CORE_PLUGIN, GENERAL, CURVE, TCAD),
+        capability_selections={'general_science:experiment_task_protocol': 'none'} if native_only else None)
     runtime, instance, root = _root(tmp_path, catalog=catalog)
     runtime.runs.operation_catalog = catalog
     return runtime, instance, root
@@ -119,15 +121,72 @@ def test_root_cannot_supply_internal_goal_binding(tmp_path):
         root.call_tool('operation_invoke', request)
 
 
+def test_original_task_reaches_worker_with_exact_frozen_binding(tmp_path):
+    from pathlib import Path
+    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+    from scidiscovery.artifact_agent.service.worker_connections import WorkerConnections
+    runtime, instance, root = _setup(tmp_path, native_only=True)
+    original = '计算 2+2，保留程序和结果。\nReport any missing environment.'
+    root.call_tool('artifact_ingest_text', {'name': 'task', 'text': original})
+    expected = _artifact(runtime, instance, 'task').ref
+    assert root.call_tool('operation_preflight', _request('task'))['admissible']
+    assert root.call_tool('operation_invoke', _request('task'))['result']['state'] == 'queued'
+    # A later task never substitutes the selected original.
+    root.call_tool('artifact_ingest_text', {'name': 'newer_task', 'text': 'Compute a different result.'})
+    run_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace='run', name='experiment')
+    bindings = {item.port_name: item for item in runtime.runs.status(run_id).inputs}
+    assert bindings['subject'].artifact_ref == bindings['objective_source'].artifact_ref == expected
+    assert runtime.artifacts.read(expected) == original.encode('utf-8')
+    compiled = runtime.runs.operation_catalog.operation('science.experiment.v1')
+    WorkerConnections(runtime.runs).attach(run_id=run_id, platform_session='fixture', thread_id='raw-task-author')
+    worker = LocalWorkerMCPRouter(runtime.runs, operation_id=compiled.spec.operation_id,
+        operation_digest=compiled.digest)
+    opened = worker.call_tool('worker_open_assignment', {})
+    assignment = json.loads(Path(opened['assignment_path']).read_bytes())
+    goal = next(item for item in assignment['inputs'] if item['source_name'] == 'objective_source')
+    assert goal['media_type'] == 'text/plain; charset=utf-8'
+    assert 'objective_source' not in {port.name for port in scheduler_operation_view(compiled.spec).inputs}
+    assert any('Original task text may be selected directly' in requirement
+        for requirements in scheduler_operation_view(compiled.spec).source_requirements.values()
+        for requirement in requirements)
+
+
+@pytest.mark.parametrize('raw,kind,schema,media,labels,reason', [
+    (b'Text in an arbitrary file', 'source_file', 'opaque', 'text/plain', {}, 'input_origin_missing'),
+    (b'\x00\xff', 'source_text', 'opaque', 'application/octet-stream', {'source_origin': USER_TEXT_SOURCE_ORIGIN}, 'input_origin_missing'),
+    (b'\xff', 'source_text', 'opaque', 'text/plain; charset=utf-8', {'source_origin': USER_TEXT_SOURCE_ORIGIN}, 'input_objective_invalid'),
+    (b'Task\x00binary', 'source_text', 'opaque', 'text/plain; charset=utf-8', {'source_origin': USER_TEXT_SOURCE_ORIGIN}, 'input_objective_invalid'),
+    (b'   \n', 'source_text', 'opaque', 'text/plain; charset=utf-8', {'source_origin': USER_TEXT_SOURCE_ORIGIN}, 'input_objective_invalid'),
+    (b'{broken json', 'objective', 'scidiscovery.research-objective.v1', 'application/json', {}, 'input_objective_invalid'),
+    (b'{broken json', 'source_text', 'scidiscovery.research-objective.v1', 'text/plain; charset=utf-8', {'source_origin': USER_TEXT_SOURCE_ORIGIN}, 'input_objective_invalid'),
+    (b'{"objective_key":"x","statement":NaN}', 'objective', 'scidiscovery.research-objective.v1', 'application/json', {}, 'input_objective_invalid'),
+])
+def test_nontext_and_broken_structured_sources_never_become_raw_goals(tmp_path, raw, kind, schema, media, labels, reason):
+    from scidiscovery.artifact_agent.schema.artifact import ArtifactRegistration
+    runtime, instance, root = _setup(tmp_path)
+    envelope = runtime.artifacts.register(raw, ArtifactRegistration(kind=kind, schema_id=schema,
+        payload_schema_version=1, media_type=media, labels=labels, creator=runtime.actor), idempotency_key='bad-source')
+    runtime.scheduler_bindings.bind(instance=instance.instance_id, namespace='artifact', name='selected', object_id=envelope.artifact_id)
+    result = root.call_tool('operation_preflight', _request('selected'))
+    assert not result['admissible'] and result['reason_code'] == reason
+    with pytest.raises(RootToolError, match=reason):
+        root.call_tool('operation_invoke', _request('selected'))
+
+
 @pytest.mark.parametrize('ambiguous', [False, True])
-def test_alternative_origins_deduplicate_refs_but_reject_distinct_goals(tmp_path, monkeypatch, ambiguous):
+@pytest.mark.parametrize('original_text', [False, True])
+def test_alternative_origins_deduplicate_refs_but_reject_distinct_goals(tmp_path, monkeypatch, ambiguous, original_text):
     from types import SimpleNamespace
     from scidiscovery.artifact_agent.service.operation_origins import OperationOrigins
     from scidiscovery.operations.invoke import InvocationArtifact, OperationInvocationError
     runtime, instance, root = _setup(tmp_path)
     _put(runtime, instance, 'selected', {'summary': 'Fixture result'}, 'opaque')
-    _put(runtime, instance, 'one', json.loads(_foundation()), 'scidiscovery.scientific-foundation.v1')
-    _put(runtime, instance, 'two', json.loads(_foundation('other')), 'scidiscovery.scientific-foundation.v1')
+    if original_text:
+        root.call_tool('artifact_ingest_text', {'name': 'one', 'text': 'First exact task.'})
+        root.call_tool('artifact_ingest_text', {'name': 'two', 'text': 'Second exact task.'})
+    else:
+        _put(runtime, instance, 'one', json.loads(_foundation()), 'scidiscovery.scientific-foundation.v1')
+        _put(runtime, instance, 'two', json.loads(_foundation('other')), 'scidiscovery.scientific-foundation.v1')
     first, second = (_artifact(runtime, instance, name).ref for name in ('one', 'two'))
     origin = OperationOrigins(artifacts=runtime.artifacts, bindings=runtime.scheduler_bindings,
         runs=runtime.runs, catalog=runtime.runs.operation_catalog, instance_id=instance.instance_id)
@@ -142,8 +201,9 @@ def test_alternative_origins_deduplicate_refs_but_reject_distinct_goals(tmp_path
                                               selected.media_type, selected.size_bytes),)}
     compiled = runtime.runs.operation_catalog.operation('science.experiment.v1')
     if ambiguous:
-        with pytest.raises(OperationInvocationError, match='input_origin_ambiguous'):
+        with pytest.raises(OperationInvocationError, match='input_origin_ambiguous') as error:
             origin._derive_operation_inputs(compiled, resolved)
+        assert 'Select original user task text' in error.value.details[0]['message']
     else:
         origin._derive_operation_inputs(compiled, resolved)
         assert [item.ref for item in resolved['objective_source']] == [first]

@@ -796,6 +796,7 @@ def test_reviewer_cycles_are_closed() -> None:
 
 @pytest.mark.parametrize('changes', [
     {'source_schemas': ()}, {'source_paths': ()},
+    {'source_schemas': (), 'source_paths': (), 'source_original_text': True},
     {'source_paths': (('source',), ('source',))},
     {'source_paths': (('source',)*9,)},
     {'source_schemas': ('*',)}, {'select': 'siblings'},

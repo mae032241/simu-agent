@@ -541,7 +541,9 @@ class OperationOrigins:
                 requirement = input_source_requirement(port)
                 message_limit = ContractDiagnostic.model_json_schema()['properties']['message']['maxLength']
                 if len(message + requirement) > message_limit:
-                    requirement = "Read this action's source_requirements for the selected input. If only originals exist, choose a source-based task that accepts them. Copying or renaming originals does not establish provenance. Control resolves bindings."
+                    requirement = ("Select original user task text or an exact structured goal source. Read this action's source_requirements for the selected input. Control resolves bindings; copying or renaming does not establish provenance."
+                        if rule.source_original_text else
+                        "Read this action's source_requirements for the selected input. If only originals exist, choose a source-based task that accepts them. Copying or renaming originals does not establish provenance. Control resolves bindings.")
                 raise OperationInvocationError(reason, port=anchor.name if anchor.agent_visible else None,
                     message=message + requirement)
             if len(anchors) != 1:
@@ -554,7 +556,15 @@ class OperationOrigins:
                 self.artifacts.verify(ref)
                 return self._producer_output_family_from_envelope(name, self.artifacts.catalog(ref))
             refs = [anchors[0].ref]
-            if rule.source_paths and anchors[0].schema_id not in rule.source_schemas:
+            def matches_source(ref):
+                envelope = self.artifacts.catalog(ref)
+                if envelope.schema_id in rule.source_schemas:
+                    return True
+                if rule.source_original_text:
+                    from ..schema.research_objective import is_original_text_objective
+                    return is_original_text_objective(ref, envelope.media_type, envelope.labels)
+                return False
+            if rule.source_paths and not matches_source(anchors[0].ref):
                 candidates = []
                 for path in rule.source_paths:
                     selected = [anchors[0].ref]
@@ -566,7 +576,7 @@ class OperationOrigins:
                                 following.extend(item.ref for item in family.producer_inputs if item.port_name == edge)
                         selected = list(dict.fromkeys(following))
                     candidates.extend(ref for ref in selected
-                        if self.artifacts.catalog(ref).schema_id in rule.source_schemas)
+                        if matches_source(ref))
                 refs = list(dict.fromkeys(candidates))
                 if len(refs) != 1:
                     reject("input_origin_ambiguous" if refs else "input_origin_missing")

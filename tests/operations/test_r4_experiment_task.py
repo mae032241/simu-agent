@@ -142,13 +142,18 @@ def _real_experiment(tmp_path, monkeypatch, solver="sprocess", before_submit=Non
         approval_receipt_secret=b"a"*32, execution_adapters={"tcad_artifact:tcad":adapter},
         execution_collection=SimpleNamespace(collect=collect))
     instance = runtime.scheduler_bindings.create_instance(name="experiment", title="Bounded experiment", objective="Observe a fixture.")
-    objective = runtime.artifacts.register(_goal_carrier(goal), ArtifactRegistration(kind="objective",
-        schema_id=f"scidiscovery.{goal}.v1", payload_schema_version=1,
-        media_type="application/json", creator=runtime.actor), idempotency_key="objective")
-    runtime.scheduler_bindings.bind(instance=instance.instance_id, namespace="artifact", name="objective", object_id=objective.artifact_id)
     root = RootMCPRouter(RootToolFacade(runtime.artifacts, runtime.intake, runs=runtime.runs,
         approvals=runtime.approvals, executions=runtime.executions, bindings=runtime.scheduler_bindings,
         instance=instance.instance_id, operation_catalog=catalog))
+    if goal == "source-text":
+        root.call_tool("artifact_ingest_text", {"name":"objective", "text":"Observe a fixture and retain its output; report any missing environment."})
+        objective_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace="artifact", name="objective")
+        objective = runtime.artifacts.get_by_id(objective_id)
+    else:
+        objective = runtime.artifacts.register(_goal_carrier(goal), ArtifactRegistration(kind="objective",
+            schema_id=f"scidiscovery.{goal}.v1", payload_schema_version=1,
+            media_type="application/json", creator=runtime.actor), idempotency_key="objective")
+        runtime.scheduler_bindings.bind(instance=instance.instance_id, namespace="artifact", name="objective", object_id=objective.artifact_id)
     inputs = [{"port":"subject", "artifact_names":["objective"]}]
     if solver == "sdevice":
         grid = runtime.artifacts.register(b"exact-grid", ArtifactRegistration(kind="grid", schema_id="opaque",
@@ -321,9 +326,21 @@ def _real_experiment(tmp_path, monkeypatch, solver="sprocess", before_submit=Non
 import pytest
 
 
-@pytest.mark.parametrize("goal", ["research-objective", "scientific-foundation", "scientific-intake"])
+@pytest.mark.parametrize("goal", ["research-objective", "scientific-foundation", "scientific-intake", "source-text"])
 def test_each_goal_carrier_reaches_policy_start_and_over_budget_rejection(tmp_path, monkeypatch, goal):
-    _real_experiment(tmp_path, monkeypatch, goal=goal)
+    runtime, root, _, _, instance = _real_experiment(tmp_path, monkeypatch, goal=goal)
+    if goal == "source-text":
+        original_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace="artifact", name="objective")
+        subject = root.call_tool("run_status", {"name":"observe"})["output_artifact_name"]
+        request = {"name":"follow_up", "operation_id":"science.experiment.v1",
+            "inputs":[{"port":"subject", "artifact_names":[subject]}],
+            "instruction":"Investigate the retained observation using its exact original task."}
+        preflight = root.call_tool("operation_preflight", request)
+        assert preflight["admissible"], preflight
+        assert root.call_tool("operation_invoke", request)["result"]["state"] == "queued"
+        follow_up = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace="run", name="follow_up")
+        retained = next(item.artifact_ref for item in runtime.runs.status(follow_up).inputs if item.port_name == "objective_source")
+        assert retained == runtime.artifacts.get_by_id(original_id).ref
 
 
 def test_instance_owns_cumulative_allowance_independent_of_agent_goal_keys(tmp_path, monkeypatch):

@@ -370,7 +370,7 @@ def _validate_operation_contracts(plugin_map: dict[str, PluginDefinition], compo
                 current, seen = port, set()
                 while current.derivation is not None:
                     rule = current.derivation
-                    if rule.source_paths or rule.source_schemas:
+                    if rule.source_paths or rule.source_schemas or rule.source_original_text:
                         if (not rule.source_paths or not rule.source_schemas
                                 or rule.producer_input_path or rule.producer_output_port is not None
                                 or rule.select != "subject"
