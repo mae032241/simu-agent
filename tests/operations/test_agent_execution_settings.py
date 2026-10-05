@@ -236,7 +236,7 @@ def test_direct_invoke_bad_inputs_do_not_create_run(tmp_path):
     assert root.call_tool("run_list", {})["runs"] == []
 
 
-@pytest.mark.parametrize('helper_state', ['missing', 'legacy', 'explicit_selection'])
+@pytest.mark.parametrize('helper_state', ['missing', 'legacy', 'explicit_selection', 'implicit_selection'])
 def test_local_open_directs_legacy_reader_without_rewriting_workspace(tmp_path, helper_state):
     from tests.operations.test_local_worker_contracts import _system, _invoke
     from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
@@ -251,11 +251,18 @@ def test_local_open_directs_legacy_reader_without_rewriting_workspace(tmp_path, 
     helper.unlink()
     if helper_state == 'explicit_selection':
         helper.write_text('\nREAD_INPUT_NAVIGATION = 1\n')
+    if helper_state == 'implicit_selection':
+        helper.write_text('\nREAD_INPUT_NAVIGATION = 2\n')
     if helper_state == 'legacy':
         helper.write_text('"""Legacy helper: --offset and --version."""\n')
     reopened=worker.call_tool('worker_open_assignment', {})
-    assert ('bare navigation is unavailable' if helper_state == 'explicit_selection' else
-            'targeted standard-library reads') in reopened['input_reading']
+    if helper_state in {'explicit_selection', 'implicit_selection'}:
+        assert 'all --pointer and --directory flags and page --budget' in reopened['input_reading']
+        assert ('bare navigation is unavailable' if helper_state == 'explicit_selection' else
+                'Do not use bare navigation after parallel or interleaved reads') in reopened['input_reading']
+        assert helper.read_text() == f'\nREAD_INPUT_NAVIGATION = {1 if helper_state == "explicit_selection" else 2}\n'
+    else:
+        assert 'targeted standard-library reads' in reopened['input_reading']
     assert 'role_instructions_sha256' not in reopened
     assert assignment.read_bytes() == original
     assert helper.exists() is (helper_state != 'missing')

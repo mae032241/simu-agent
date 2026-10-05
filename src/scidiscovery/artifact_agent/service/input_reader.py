@@ -16,7 +16,7 @@ import sys
 import tempfile
 
 
-READ_INPUT_NAVIGATION = 2
+READ_INPUT_NAVIGATION = 4
 CACHE_DIRECTORY = ".read-input"
 
 
@@ -198,24 +198,38 @@ def _selected_text(raw, pointers, directory):
     return '\n'.join(parts)
 
 
-def _display(text, start, end):
-    marker = 'more; --next' if end < len(text) else 'end'
-    return text[start:end] + f'\n[read_input: {marker}]\n'
+def _navigation(total, start, end, handle, budget):
+    # One short, shell-safe command replays this page; next_offset is a character
+    # position in the selected text, while the whole reply is bounded in bytes.
+    marker = 'more' if end < total else 'end'
+    command = f'--selection {handle} --offset {start} --budget {budget}'
+    following = f'; next_offset {end}' if end < total else ''
+    return f'[read_input: {marker}; {command}{following}]\n'
 
 
-def _end(text, start, budget):
-    if len(_display(text, start, len(text)).encode('utf-8')) <= budget:
+def _display(text, start, end, handle, budget):
+    return text[start:end] + '\n' + _navigation(len(text), start, end, handle, budget)
+
+
+def _end(text, start, budget, handle):
+    if len(_display(text, start, len(text), handle, budget).encode('utf-8')) <= budget:
         return len(text)
     low, high = start, len(text) - 1
     while low < high:
         middle = (low + high + 1) // 2
-        if len(_display(text, start, middle).encode('utf-8')) <= budget:
+        if len(_display(text, start, middle, handle, budget).encode('utf-8')) <= budget:
             low = middle
         else:
             high = middle - 1
     if low == start:
         raise ValueError('reply budget cannot fit the next character')
     return low
+
+
+def _handle(key, fingerprint):
+    # Disposable 128-bit navigation name, not an integrity or permission token.
+    # Full source fingerprints are retained and checked separately.
+    return hashlib.sha256((key + fingerprint).encode()).hexdigest()[:32]
 
 
 def _startup_budget(root, source):
@@ -231,19 +245,25 @@ def _startup_budget(root, source):
 
 
 def read(workspace, name=None, *, pointers=None, directory=False, file=False,
-         action='read', budget=None):
+         action='read', budget=None, selection_id=None, offset=None):
     """Exact model view; navigation is disposable, never a sealed-input attestation.
 
-    Consume a selection sequentially. After an uncertain reply use repeat, not next;
-    if a later next already advanced it, restart. No delivery acknowledgement exists.
+    Explicit character offsets replay the same page regardless of other reads.
+    Legacy next/repeat/restart remain cursor navigation, not delivery acknowledgement.
     """
     if budget is not None and (type(budget) is not int or not 512 <= budget <= 262144):
         raise ValueError('budget must be 512..262144 bytes; scientific inputs remain limited to 8192')
     if action not in {'read', 'next', 'repeat', 'restart'}:
         raise ValueError('unknown reading action')
+    if offset is not None and (type(offset) is not int or offset < 0 or action != 'read'):
+        raise ValueError('--offset must be a nonnegative character position, without legacy navigation flags')
     root = Path(workspace).resolve()
+    if selection_id is not None:
+        if (not isinstance(selection_id, str) or not re.fullmatch(r'[0-9a-f]{32}', selection_id)
+                or (name is None and (pointers is not None or file or directory))):
+            raise ValueError('--selection requires a returned handle; field flags require a complete source')
     implicit = name is None
-    if implicit and (action == 'read' or pointers is not None or file or directory):
+    if implicit and selection_id is None and (action == 'read' or pointers is not None or file or directory):
         raise ValueError('specify a complete source selection, or use bare --next/--repeat/--restart')
     cache = root / CACHE_DIRECTORY
     if cache.is_symlink():
@@ -261,18 +281,26 @@ def read(workspace, name=None, *, pointers=None, directory=False, file=False,
             if not isinstance(state, dict):
                 raise ValueError('invalid navigation cache')
         except (ValueError, UnicodeError):
-            if action not in {'read', 'restart'}:
-                raise ValueError('navigation cache damaged; use --restart') from None
+            if (selection_id is not None and name is None) or action not in {'read', 'restart'}:
+                raise ValueError('navigation cache damaged; specify complete source and fields to recover') from None
             state = {}
         if implicit:
-            selection = state.get('current_selection')
+            if selection_id is None:
+                selection = state.get('current_selection')
+            else:
+                entries = [entry for key, entry in state.items()
+                    if re.fullmatch(r'[0-9a-f]{64}', key) and isinstance(entry, dict)
+                    and isinstance(entry.get('fingerprint'), str)
+                    and _handle(key, entry['fingerprint']) == selection_id]
+                selection = entries[0].get('selection') if len(entries) == 1 else None
             if (not isinstance(selection, dict) or not isinstance(selection.get('path'), str)
                     or not isinstance(selection.get('pointers'), list)
                     or not all(isinstance(x, str) for x in selection['pointers'])
                     or type(selection.get('directory')) is not bool
                     or type(selection.get('budget')) is not int
                     or not 512 <= selection['budget'] <= 262144):
-                raise ValueError('no current selection; specify the source and fields once')
+                raise ValueError('navigation selection missing; specify the complete source and fields once'
+                    if selection_id is not None else 'no current selection; specify the source and fields once')
             source = _within(root, selection['path'])
             source_alias = selection.get('source_alias')
             pointers, directory = selection['pointers'], selection['directory']
@@ -291,7 +319,13 @@ def read(workspace, name=None, *, pointers=None, directory=False, file=False,
         raw = source.read_bytes()
         fingerprint = hashlib.sha256(raw).hexdigest()
         previous = state.get(key)
-        start = 0
+        handle = _handle(key, fingerprint)
+        if selection_id is not None and (selection_id != handle or
+                (implicit and (not isinstance(previous, dict) or previous.get('fingerprint') != fingerprint))):
+            raise ValueError('material changed during reading; select the complete source and fields again')
+        start = offset or 0
+        if offset and selection_id is None and isinstance(previous, dict) and previous.get('fingerprint') != fingerprint:
+            raise ValueError('material changed during reading; reselect the source at offset 0')
         if action in {'next', 'repeat'}:
             if (not isinstance(previous, dict) or
                 any(type(previous.get(k)) is not int for k in ('start', 'end')) or
@@ -303,34 +337,50 @@ def read(workspace, name=None, *, pointers=None, directory=False, file=False,
             text = '[read_input: plain text; no field directory. Read the same source without --directory.]'
         else:
             text = _selected_text(raw, pointers, directory)
+        if start > len(text):
+            raise ValueError('offset outside selected text')
         reply = None
-        if (action == 'read' and source_alias is not None and isinstance(previous, dict)
+        if (action == 'read' and offset is None and source_alias is not None and isinstance(previous, dict)
                 and previous.get('source_alias') not in {None, source_alias}
                 and previous.get('fingerprint') == fingerprint
                 and all(type(previous.get(k)) is int for k in ('start', 'end'))
                 and 0 <= previous['start'] <= previous['end'] <= len(text)):
             start, end = previous['start'], previous['end']
             remaining = len(text) - end
+            # A cross-alias hint offers an exact replay even after another source
+            # becomes current. It never claims the retained page was delivered/read.
+            retained = previous.get('selection')
+            retained_budget = retained.get('budget', budget) if isinstance(retained, dict) else budget
+            if type(retained_budget) is not int or not 512 <= retained_budget <= max(startup_budget or 0, 8192):
+                raise ValueError('navigation cache damaged; recover with explicit source and --offset')
             reply = ('[read_input: same original selection; cached navigation is not proof of reading. '
-                '--repeat recovers the last page; --restart rereads from the beginning. '
-                f'{remaining} characters remain after that page; --next continues.]\n'
-                + ('[read_input: more; --next]\n' if remaining else '[read_input: end]\n'))
+                f'{remaining} characters remain after the retained page. '
+                'Replay its command below; offset 0 rereads this selection.]\n'
+                + _navigation(len(text), start, end, handle, retained_budget))
+            if len(reply.encode('utf-8')) > budget:
+                raise ValueError('reply budget cannot fit navigation; read with explicit --offset 0')
+            selection['budget'] = retained_budget
         if action in {'next', 'repeat'}:
             if previous['end'] > len(text):
                 raise ValueError('navigation cache damaged; use --restart')
             start = previous['start'] if action == 'repeat' else previous['end']
             if action == 'repeat':
                 end = previous['end']
-                reply = _display(text, start, end)
+                retained = previous.get('selection')
+                retained_budget = retained.get('budget', budget) if isinstance(retained, dict) else budget
+                if type(retained_budget) is not int or not 512 <= retained_budget <= max(startup_budget or 0, 8192):
+                    raise ValueError('navigation cache damaged; recover with explicit source and --offset')
+                reply = _display(text, start, end, handle, retained_budget)
+                selection['budget'] = retained_budget
                 if len(reply.encode('utf-8')) > budget:
                     raise ValueError('repeat needs the previous display budget; or use --restart')
             elif start == len(text):
                 start, end = previous['start'], previous['end']
-                reply = '[read_input: end]\n'
+                reply = _display(text, len(text), len(text), handle, budget)
         if reply is None:
-            end = _end(text, start, budget)
-            reply = _display(text, start, end)
-        state[key] = dict(fingerprint=fingerprint, start=start, end=end,
+            end = _end(text, start, budget, handle)
+            reply = _display(text, start, end, handle, budget)
+        state[key] = dict(fingerprint=fingerprint, start=start, end=end, selection=selection,
             **({'source_alias': source_alias} if source_alias is not None else {}))
         state['current_selection'] = selection
         fd, temporary = tempfile.mkstemp(dir=cache, prefix='.navigation-')
@@ -346,14 +396,16 @@ def read(workspace, name=None, *, pointers=None, directory=False, file=False,
 def main():
     parser = argparse.ArgumentParser(prog="read_input.py", description=__doc__)
     parser.add_argument('name', nargs='?', help='source_name, unique port, registered relative_path or assignment.json; omit for current-selection navigation')
+    parser.add_argument('--selection', dest='selection_id', help='returned content-bound navigation handle; use with --offset. After cache loss also supply the complete source and field selection to verify/recover it.')
     parser.add_argument('--file', action='store_true', help='explicit task-local file instead of input alias')
     parser.add_argument('--pointer', dest='pointers', action='append', help='JSON Pointer; repeat for ordered fields')
+    parser.add_argument('--offset', type=int, help='character position in selected text (not UTF-8 bytes); replay the same command for the same page, or use next_offset')
     parser.add_argument('--directory', action='store_true', help='list only direct keys')
     actions = parser.add_mutually_exclusive_group()
     for action in ('next', 'repeat', 'restart'):
         actions.add_argument('--' + action, dest='action', action='store_const', const=action)
     parser.set_defaults(action='read')
-    parser.add_argument('--budget', type=int, help='Scientific inputs: 512..8192 bytes, default 4096. Controlled startup uses its configured page size. Use --next for remaining text; bare navigation retains the budget.')
+    parser.add_argument('--budget', type=int, help='Scientific inputs: 512..8192 bytes, default 4096. Controlled startup uses its configured page size. Use --selection with --offset to replay a page; next_offset selects the next page. Legacy bare navigation uses the last selection.')
     args = parser.parse_args()
     try:
         result = read(Path(__file__).resolve().parents[1], **vars(args))

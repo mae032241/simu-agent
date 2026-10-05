@@ -606,10 +606,15 @@ class LocalWorkerMCPRouter:
         try:
             helper = read_control_workspace_file(self._workspace.root,
                 Path("tools/read_input.py"), max_bytes=64 * 1024)
-            if b"\nREAD_INPUT_NAVIGATION = 2\n" in helper:
+            if b"\nREAD_INPUT_NAVIGATION = 4\n" in helper:
                 return {}
+            if b"\nREAD_INPUT_NAVIGATION = 3\n" in helper:
+                return {"input_reading": "Version 3 reader: returned --selection handles support --next/--repeat/--restart, not --offset. For alias recovery or end pages without a handle, repeat the exact SOURCE, --file, all --pointer/--directory flags and page --budget; never bare navigation after interleaved reads."}
+            explicit = "Older reader: repeat the same source, --file, all --pointer and --directory flags and page --budget with --next/--repeat/--restart."
             if b"\nREAD_INPUT_NAVIGATION = 1\n" in helper:
-                return {"input_reading": "Older reader: repeat the same source, --file and --pointer selection with --next/--repeat/--restart; bare navigation is unavailable."}
+                return {"input_reading": explicit + " bare navigation is unavailable."}
+            if b"\nREAD_INPUT_NAVIGATION = 2\n" in helper:
+                return {"input_reading": explicit + " Do not use bare navigation after parallel or interleaved reads."}
         except (OSError, ValueError, WorkspaceError):
             pass
         return {"input_reading": "Legacy workspace: use targeted standard-library reads of assignment and input files; do not use reader offsets or hashes."}

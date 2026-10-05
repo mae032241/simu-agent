@@ -371,7 +371,7 @@ def _local_native_tool_instruction(compiled: Any, *, debug_disable_task_network=
         "Read start_here_path once: it contains the task, role, input index, output form navigation and workspace rules. "
         "Do not separately dump assignment.json, domain-workspace.json or all tool contracts. "
         "Use python tools/read_input.py --file worker-start.json when bounded reading is needed; "
-        "--next continues the last selection and --repeat repeats it. Follow all remaining pages. "
+        "replay pages with returned --selection/--offset arguments and continue using next_offset for needed text. "
         "If start_here_path is absent, read the returned assignment's task/role, input, language, budget, "
         "output and recovery fields. On continuation, reading_guidance identifies unchanged contracts; "
         "reuse them only while retained, rereading after loss/change. Always read the new task and input changes. "

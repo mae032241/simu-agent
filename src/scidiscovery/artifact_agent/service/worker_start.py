@@ -5,16 +5,16 @@ import json
 from pathlib import Path
 
 from ..schema.common import canonical_json
-from .local_workspace import read_control_workspace_file, write_control_workspace_file
+from .local_workspace import WorkspaceError, read_control_workspace_file, write_control_workspace_file
 from .input_reader import shared_input
 
 
-def startup_document(assignment: dict, domain: dict | None = None) -> dict:
+def startup_document(assignment: dict, domain: dict | None = None, *, reader_navigation=4) -> dict:
     # No independent contract registry or scientific summarization. Copy complete
     # instructions from the frozen assignment and plugin manifest, once per view.
     result = {key: assignment[key] for key in (
         'operation', 'instruction', 'scientific_intent', 'role_instructions', 'narrative_instruction',
-        'budget', 'inputs', 'reference_access', 'attempt_memory', 'revision', 'recovery_draft', 'tools', 'execution_requirements', 'task_network_policy',
+        'execution_requirements', 'task_network_policy',
     ) if assignment.get(key) is not None}
     inputs = assignment.get('inputs', ())
     result['inputs'] = []
@@ -46,20 +46,45 @@ def startup_document(assignment: dict, domain: dict | None = None) -> dict:
     result['reading'] = {
         'inputs': 'Use source_name with python tools/read_input.py SOURCE. --directory lists JSON keys; '
             '--pointer /FIELD selects a known field (repeat for multiple fields). Omit --pointer to read the root; / is an empty-key member. '
-            'Continue with bare --next; --repeat recovers a lost reply and --restart rereads the selection. '
-            'Follow remaining pages; originals, not excerpts, support conclusions. Use source_name in tools and citations; artifact_name is navigation only.',
+            + ('Every page, including end, returns --selection HANDLE --offset START --budget BYTES and optional next_offset. '
+                'The command replays that exact page after any other reads; change START to next_offset for the next page. '
+                'Offsets count characters in the selected text; page limits count UTF-8 bytes including the marker. '
+                'Read only the source fields needed for your claims; there is no requirement to traverse unrelated fields. '
+                'If navigation is lost, add the complete SOURCE/file/pointer/directory selection to the retained --selection/--offset command; '
+                'a changed source requires reselecting it at offset 0. '
+                if reader_navigation == 4 else
+                'This frozen reader uses explicit continuation: repeat the same SOURCE, --file, all --pointer and '
+                '--directory flags and the page --budget with --next/--repeat/--restart. '
+                'After parallel or interleaved reads, do not use bare navigation or change field flags. '
+                'Version 3 also accepts its returned --selection handle with those navigation flags; '
+                'use explicit selection for alias recovery notices and end pages that lack a handle. '
+                if reader_navigation == 3 else
+                'This frozen reader uses explicit continuation: repeat the same SOURCE, --file, all --pointer and '
+                '--directory flags and the page --budget with --next/--repeat/--restart. '
+                'After parallel or interleaved reads, do not use bare navigation or change field flags. ')
+            + 'Complete the selected content needed for your claims; originals support conclusions. Use source_name in tools and citations; artifact_name is navigation only.',
         'tools': 'Read only the selected complete contract with python tools/read_tool_contract.py TOOL '
             'or scid_describe, including inputSchema, definitions, defaults, limits and descriptions. '
             'JSON Patch responses reference the last full response, never a prior delta. '
             'Retain unchanged contracts; --full restores lost context.',
     }
+    if 'worker_experiment_execute' in assignment.get('tools', ()):
+        result['reading']['execution'] = ('Before remote work read the complete worker_experiment_execute contract, '
+            'including required review, authorization, uncertain submission and recovery rules. '
+            'Native local work retains its declared permissions.')
     if 'worker_read_history' in assignment.get('tools', ()):
-        result['reading']['history'] = ('attempt_memory gives a bounded goal/experience overview. Use worker_read_history and next_before for older tasks; unchanged reopen retains the same terminal, judgment and explicit supersedes revision range. revision_scope states coverage and missing ancestors; names, schema or common parents never imply a revision. Independent review Operations receive neutral indexes without author conclusions or Root judgments; their exact bound subjects remain readable. Summaries and scientific_fields are attributed Worker conclusions, not consumed originals or controlled verification. Follow an exact item’s worker_reference_read history_task entry when this Operation has that capability; otherwise bind needed originals as scientific inputs. Conditions may have changed, so history does not prohibit a justified retry.')
+        result['reading']['history'] = ('attempt_memory is a bounded attributed overview, not consumed originals or verification. '
+            'For older tasks read the complete worker_read_history contract, then follow next_before; '
+            'preserve missing ancestry and exact revision_scope. Use declared reference tools for allowed originals '
+            'or bind them as scientific inputs. Changed conditions may justify retry.')
     if any('same_source_as' in item for item in assignment.get('inputs', ())):
         result['reading']['inputs'] += (
             ' same_source_as identifies one frozen original under multiple visible aliases: use its representative reading entry once. '
-            'Cross-alias selection reuses navigation only, not proof of reading; follow remaining pages or use --repeat/--restart to recover content. '
+            'Cross-alias selection reuses navigation only, not proof of reading; replay retained pages using the complete selection guidance above. '
             'Each alias retains its own purpose and citation permissions; equivalence grants no review or qualification.')
+    for key in ('tools', 'reference_access', 'attempt_memory', 'revision', 'recovery_draft', 'budget'):
+        if assignment.get(key) is not None:
+            result[key] = assignment[key]
     if domain:
         result['workspace'] = {key: domain[key] for key in ('manifest', 'paths', 'read_paths', 'patch_contract') if key in domain}
     if 'worker_materialize_input' in assignment.get('tools', ()):
@@ -78,5 +103,14 @@ def write_worker_start(workspace, assignment: dict, *, startup_page_bytes=16384)
             Path('domain-workspace.json'), max_bytes=1024 * 1024))
     write_control_workspace_file(workspace.root, Path('tools/input-reader-settings.json'),
         canonical_json(dict(startup_page_bytes=startup_page_bytes)), replace=True, mode=0o400)
+    # Existing workspaces retain their frozen helper bytes and compatible guidance.
+    try:
+        helper = read_control_workspace_file(workspace.root, Path('tools/read_input.py'), max_bytes=64 * 1024)
+        reader_navigation = next((version for version in (4, 3, 2, 1)
+            if f'\nREAD_INPUT_NAVIGATION = {version}\n'.encode() in helper), 0)
+    except (OSError, ValueError, WorkspaceError):
+        reader_navigation = 0
+    # Keep task/input/form order in this derived entry, ahead of historical attempts.
     return write_control_workspace_file(workspace.root, Path('worker-start.json'),
-        canonical_json(startup_document(assignment, domain)), replace=True, mode=0o400)
+        json.dumps(startup_document(assignment, domain, reader_navigation=reader_navigation), ensure_ascii=False, allow_nan=False,
+            separators=(',', ':')).encode('utf-8'), replace=True, mode=0o400)

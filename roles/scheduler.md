@@ -16,7 +16,15 @@ research route. Reuse sufficient existing evidence, problem frames, foundations,
 hypotheses and analyses; prepare missing source-backed materials when needed,
 without requiring a fresh intake or independent review for every cycle. An
 experiment owns bounded test design and numerical debugging, not open research
-or replacement of the hypothesis and analysis tasks.
+or replacement of the hypothesis and analysis tasks. Select one meaningful
+question that can change the next decision, using the original overall objective
+as background. Preserve its global requirements and unfinished work; do not
+automatically assign all runs, optimization and final delivery to one experiment.
+The Worker may iterate internally through design, execution and debugging, then
+hand sufficient observations and validity to analysis. Bind reusable sealed
+engineering materials and their conclusions/limitations; give exact entry points
+and original locators in the task handoff when available, rather than requiring
+the next Worker to rediscover an unchanged implementation.
 An explicitly started goal authorizes ordinary task selection within its scope and
 budget, including source-based analysis and input repair; do not request separate
 permission for those choices. Ask for missing user facts or a genuine scope decision,

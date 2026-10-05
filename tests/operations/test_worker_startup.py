@@ -57,6 +57,9 @@ def test_analysis_start_is_complete_without_reading_other_owner_instructions(tmp
     for key in ('instruction', 'role_instructions', 'inputs', 'tools'):
         assert start[key] == assignment[key]
     assert 'tool_contracts' not in start
+    assert list(start).index('instruction') < list(start).index('inputs') < list(start).index('output')
+    if 'attempt_memory' in start:
+        assert list(start).index('output') < list(start).index('attempt_memory')
     assert start['workspace']['patch_contract'] == domain['patch_contract']
     assert start['workspace']['manifest'] == domain['manifest']
     navigation = json.loads((root / start['workspace']['paths']['analysis_navigation']).read_bytes())
@@ -205,3 +208,57 @@ def test_start_compacts_only_shared_metadata_and_keeps_alias_permissions():
             'alias_count':len(aliases), 'default_reading_entries':sum('relative_path' in item for item in start['inputs'])}))
     aliases[-1]['reference_availability'] = 'unresolved'
     assert startup_document(dict(inputs=aliases))['inputs'][-1]['reference_availability'] == 'unresolved'
+
+
+def test_compiled_experiment_start_delivers_remote_rules_only_with_remote_tool():
+    from scidiscovery.artifact_agent.service.worker_start import startup_document
+    from scidiscovery.operations.tooling import operation_role_instructions, operation_tool_contracts, operation_worker_tool_names
+    local = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN)).operation('science.experiment.v1')
+    remote = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN)).operation('science.experiment.v1')
+    for compiled, has_remote in ((local, False), (remote, True)):
+        names = operation_worker_tool_names(compiled)
+        role = operation_role_instructions(compiled)
+        start = startup_document(dict(operation=compiled.spec.operation_id, role_instructions=role,
+            inputs=[], tools=names))
+        assert start['role_instructions'] == role
+        assert 'submission.state=pending' not in role
+        assert ('execution' in start['reading']) is has_remote
+        assert 'one bounded experiment' in role and 'original requirements' in role
+        contracts = operation_tool_contracts(compiled, names)
+        assert ('worker_experiment_execute' in contracts) is has_remote
+        if has_remote:
+            description = contracts['worker_experiment_execute']['description']
+            assert 'submission.state=pending' in description
+            assert 'obtain a sealed pass before remote execution' in description
+            assert 'unknown submission is reconciled by read-only lookup' in description
+        assert '--selection HANDLE' in start['reading']['inputs']
+        assert 'Offsets count characters' in start['reading']['inputs']
+        assert 'replays that exact page after any other reads' in start['reading']['inputs']
+
+
+@pytest.mark.parametrize('version', [1, 2, 3])
+def test_reopening_frozen_older_reader_keeps_compatible_selection_guidance(tmp_path, monkeypatch, version):
+    from scidiscovery.artifact_agent.service import input_reader
+    from tests.operations.test_analysis_claim_scope import generic_worker
+    # Install an older helper header in the fixture to exercise actual open/reopen
+    # version negotiation, rather than silently rewriting a frozen workspace.
+    previous = tmp_path/'older-reader.py'
+    previous.write_text(f'"""Frozen reader fixture."""\nREAD_INPUT_NAVIGATION = {version}\n')
+    monkeypatch.setattr(input_reader, '__file__', str(previous))
+    worker, opened = generic_worker(tmp_path)
+    root = Path(opened['workspace_path'])
+    frozen_helper = (root/'tools/read_input.py').read_bytes()
+    frozen_assignment = (root/'assignment.json').read_bytes()
+    assert frozen_helper == previous.read_bytes()
+    for response in (opened, worker.call_tool('worker_open_assignment', {})):
+        start = json.loads(Path(response['start_here_path']).read_bytes())
+        assert '--selection HANDLE' not in start['reading']['inputs']
+        assert 'frozen reader uses explicit continuation' in start['reading']['inputs']
+        assert 'all --pointer' in response['input_reading']
+        if version == 3:
+            assert 'not --offset' in response['input_reading']
+            assert 'Version 3 also accepts' in start['reading']['inputs']
+        assert '--directory' in response['input_reading']
+        assert 'page --budget' in response['input_reading']
+    assert (root/'tools/read_input.py').read_bytes() == frozen_helper
+    assert (root/'assignment.json').read_bytes() == frozen_assignment

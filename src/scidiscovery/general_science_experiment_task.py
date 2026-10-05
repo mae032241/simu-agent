@@ -343,7 +343,8 @@ def finalize(request):
     return finalize_result(request, project)
 
 
-PROMPT = """Own this complete experiment: design, implement, debug when useful,
+PROMPT = """Own one bounded experiment answering a meaningful question that can change the
+next research decision: design, implement, debug when useful,
 execute with the native shell for local scientific computation or the available
 remote experiment tools for remote work, retain results, and judge validity.
 Test the exact sealed hypotheses in hypothesis_portfolio. Own feasibility,
@@ -362,7 +363,17 @@ objective_source may instead be the exact frozen original user task text; interp
 its scientific requirements here. Distinguish supplied completion requirements
 from your working assumptions and experimental criteria; control does not create
 a structured goal or scientific criteria from the text.
-Use the exact supplied scientific materials. Explain
+The overall goal is background for this test. State the question and current scope
+in the existing report/stage fields. Do not assume this task must perform every
+original run, optimize every candidate or deliver the final global result. Preserve
+the original requirements and identify those this test leaves unmet. You may
+iterate design, implementation, execution and debugging within this scope without
+returning each command to the scheduler. Once sufficient observations and validity
+are available to answer this question, seal the report for result analysis.
+Use the exact supplied scientific materials. Start from their sealed conclusions,
+limitations and reusable engineering handoff. Read the entry points, parameters,
+input/output formats and original locations needed for this test; expand inspection
+when missing information, changed interfaces or risks require it. Explain
 limitations instead of inventing missing evidence or claiming unavailable execution.
 Keep normal corrections in this task. Ask for the missing user fact or scientific
 decision when needed, or deliver blocked/inconclusive with the missing information,
@@ -382,13 +393,11 @@ Include execution interpretation when useful: executor facts do not supply your
 scientific conclusion. Rework seals a new version; retain the exact versions you
 adopt in the final report. Stage sealing is neither review nor final completion.
 Sealed public materials return artifact_name for exact handoff before this Run ends.
-For remote work, if its policy requires independent implementation review, send prepare's review.request
-to the scheduler, or obtain it with worker_experiment_execute(action="review",
-implementation=<sealed reference>). The request suspends controlled experimental work while review is pending.
-Wait for the scheduler notification; read the sealed outcome with that same review action, then continue
-this same task; a negative review calls for scientific correction, not execution.
-When that review is required, obtain a sealed pass before remote execution;
-never finish merely to make the subject addressable.
+When reusable engineering work exists, use existing narrative/handoff fields to
+locate its exact published source aliases, runnable entry and parameters, input/output
+formats, checked constraints, unchecked risks and relevant original locations.
+Keep scripts and data in published attachments. This handoff supports reuse and
+necessary verification; it does not attest execution or replace original contracts.
 Choose local or remote execution independently at each step; the same task may
 move from local to remote and back to local. Local computation uses your declared
 native shell permissions and installed environment. Publish source files with
@@ -400,6 +409,17 @@ and provenance; never author hashes or internal bindings. Native execution claim
 and optional process observations remain Worker reports, without independent
 execution attestation; carry that limitation into the report. No special wrapper
 is required. A missing local environment supports blocked/inconclusive.
+Independent review is optional unless an applicable declared policy requires it.
+When worker_experiment_execute is available, read its complete contract before
+remote work; it owns the applicable review, authorization and recovery rules.
+"""
+REMOTE_EXECUTION_GUIDANCE = """For remote work, if its policy requires independent implementation review, send prepare's review.request
+to the scheduler, or obtain it with worker_experiment_execute(action="review",
+implementation=<sealed reference>). The request suspends controlled experimental work while review is pending.
+Wait for the scheduler notification; read the sealed outcome with that same review action, then continue
+this same task; a negative review calls for scientific correction, not execution.
+When that review is required, obtain a sealed pass before remote execution;
+never finish merely to make the subject addressable.
 worker_experiment_execute is present only for the configured remote provider.
 Use the following submission/review guidance only for that remote tool.
 Submission runs in the control background. submission.state=pending acknowledges
@@ -441,7 +461,7 @@ STAGE_TOOL = WorkerToolDefinition(name="worker_experiment_stage",
     input_model=StageSubmission, capability="experiment.stage", contextual_handler=submit_stage, owner_only=True,
     evidence_ports=("tool_evidence", "recovery_manifest_output"))
 EXECUTE_TOOL = WorkerToolDefinition(name="worker_experiment_execute",
-    description="Request, advance, collect or cancel this experiment's formal execution. start may return submission.state=pending while control submits in the background; query status with the same name. unknown is not proof of non-submission; never create a replacement. Async failures are readable in submission.error. review returns an exact public subject and operation_invoke request for independent review; it starts neither a reviewer nor execution. status refreshes remote state and bounded progress of a submitted execution without submitting, cancelling or collecting. advance can continue an authorized execution; collect transfers result files. Confirmed terminal states require no remote query. Status returns timing, log metadata and refresh failure only, never log text. Use logs for the newest cached page, direction=before with its before cursor for older text, or direction=after with its after cursor for new text. No change returns empty text; gap=snapshot_replaced explicitly marks lost continuity and returns a fresh newest page. It performs no remote query. After successful collection read/export the collected log outputs. Read text or export exact collected scientific files into scratch for local analysis. Uses configured authorization and the original scientific budget.",
+    description="Request, advance, collect or cancel this experiment's formal execution. start may return submission.state=pending while control submits in the background; query status with the same name. unknown is not proof of non-submission; never create a replacement. Async failures are readable in submission.error. review returns an exact public subject and operation_invoke request for independent review; it starts neither a reviewer nor execution. status refreshes remote state and bounded progress of a submitted execution without submitting, cancelling or collecting. advance can continue an authorized execution; collect transfers result files. Confirmed terminal states require no remote query. Status returns timing, log metadata and refresh failure only, never log text. Use logs for the newest cached page, direction=before with its before cursor for older text, or direction=after with its after cursor for new text. No change returns empty text; gap=snapshot_replaced explicitly marks lost continuity and returns a fresh newest page. It performs no remote query. After successful collection read/export the collected log outputs. Read text or export exact collected scientific files into scratch for local analysis. Uses configured authorization and the original scientific budget.\n" + REMOTE_EXECUTION_GUIDANCE,
     input_model=ExecuteExperiment, capability="experiment.execute", contextual_handler=execute,
     required_services=("experiment.execution",), evidence_ports=("tool_evidence", "recovery_manifest_output"))
 

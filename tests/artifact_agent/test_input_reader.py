@@ -75,12 +75,17 @@ def test_installed_helper_without_framework_imports(tmp_path):
     (workspace.root/'inputs/data.json').write_text('{"n":1e-999}')
     result=subprocess.run([sys.executable,'-I',str(script),'inputs/data.json','--file','--pointer','/n'],cwd=tmp_path,capture_output=True,timeout=5)
     assert result.returncode == 0
-    assert result.stdout.decode() == '1e-999\n[read_input: end]\n'
+    assert body(result.stdout.decode()) == '1e-999'
+    assert finished(result.stdout.decode())
     assert not script.stat().st_mode & 0o222
 
 
 def body(reply):
     return reply.rsplit('\n[read_input: ', 1)[0]
+
+
+def finished(reply):
+    return reply.rsplit('[read_input: ', 1)[1].startswith('end;')
 
 
 def collect_view(root, name, **kwargs):
@@ -90,7 +95,7 @@ def collect_view(root, name, **kwargs):
     while True:
         assert len(reply.encode()) <= kwargs.get('budget', 4096)
         parts.append(body(reply))
-        if reply.endswith('[read_input: end]\n'):
+        if finished(reply):
             return ''.join(parts)
         reply = read(root, name, action='next', **kwargs)
 
@@ -206,7 +211,8 @@ def test_interleaved_repeat_lost_reply_and_end(tmp_path):
     assert read(tmp_path, 'experiment_plan', action='restart', **a) == first
     (tmp_path/'empty').write_text('')
     assert body(read(tmp_path, 'empty', file=True)) == ''
-    assert read(tmp_path, 'empty', file=True, action='next') == '[read_input: end]\n'
+    terminal = read(tmp_path, 'empty', file=True, action='next')
+    assert finished(terminal) and body(terminal) == ''
     assert body(read(tmp_path, 'empty', file=True, action='repeat')) == ''
 
 
@@ -312,9 +318,10 @@ def test_bare_navigation_retains_file_field_mode_and_budget(tmp_path):
     parts=[body(first)]
     while True:
         reply=read(tmp_path,action='next');parts.append(body(reply))
-        if reply.endswith('[read_input: end]\n'):break
+        if finished(reply):break
     assert ''.join(parts)==json.dumps(text,ensure_ascii=False)
-    assert read(tmp_path,action='next')=='[read_input: end]\n'
+    terminal = read(tmp_path, action='next')
+    assert finished(terminal) and body(terminal) == ''
     assert read(tmp_path,action='repeat')==reply
     # Explicitly selecting another field and back updates the current selection.
     read(tmp_path,'assignment.json',file=True,pointers=['/other'])
@@ -372,23 +379,23 @@ def test_equivalent_aliases_share_navigation_without_claiming_read_or_losing_pag
     entries[1].pop('same_source_as')
     (tmp_path/'assignment.json').write_text(json.dumps({'inputs':entries}))
     before = [read(tmp_path, name, budget=512) for name in ('task', 'context')]
-    assert before[0] == before[1]
+    assert body(before[0]) == body(before[1])
     entries[1]['same_source_as'] = 'task'
     (tmp_path/'assignment.json').write_text(json.dumps({'inputs':entries}))
     first = read(tmp_path, 'task', budget=512)
     reused = read(tmp_path, 'context', budget=512)
     assert 'cached navigation is not proof of reading' in reused and 'characters remain' in reused
-    assert '[read_input: more; --next]' in reused and len(reused.encode()) < len(first.encode())
+    assert '[read_input: more; --selection ' in reused and len(reused.encode()) < len(first.encode())
     assert read(tmp_path, action='repeat') == first
     second = read(tmp_path, action='next')
-    assert body(second) != body(first)
+    assert second != first
     assert read(tmp_path, 'task', budget=512, action='repeat') == second
     assert read(tmp_path, 'context', budget=512, action='restart') == first
     parts = [body(first)]
     while True:
         reply = read(tmp_path, action='next')
         parts.append(body(reply))
-        if reply.endswith('[read_input: end]\n'):
+        if finished(reply):
             break
     assert ''.join(parts) == text
     complete_notice = read(tmp_path, 'task', budget=512)
@@ -449,3 +456,207 @@ def test_stream_only_alias_is_denied_before_following_equivalence(tmp_path):
     for name, file in (('context', False), ('inputs/context.txt', True)):
         with pytest.raises(ValueError, match='metadata only'):
             read(tmp_path, name, file=file)
+
+
+def replay_arguments(reply):
+    import re
+    import shlex
+    match = re.search(r'\[read_input: (?:more|end); (.+?)(?:; next_offset ([0-9]+))?\]\n$', reply)
+    assert match, reply[-200:]
+    return shlex.split(match[1])
+
+
+def next_arguments(reply):
+    import re
+    command = replay_arguments(reply)
+    match = re.search(r'; next_offset ([0-9]+)\]\n$', reply)
+    assert match
+    command[command.index('--offset')+1] = match[1]
+    return command
+
+
+def test_installed_parallel_replay_pages_keep_source_fields_directory_and_alias(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    name = 'source $(touch forbidden); "quoted"'
+    path = 'inputs/odd name;$(touch forbidden).json'
+    values = {'a': '甲'*800, 'b': '乙'*900, 'small':'原文🌍'}
+    directory = {f'key_{i:04d}': i for i in range(400)}
+    text = json.dumps(values, ensure_ascii=False)
+    metadata = dict(exposure='on_demand', media_type='application/json', schema_id='opaque',
+        size_bytes=len(text.encode()))
+    inputs = [dict(metadata, source_name=name, relative_path=path),
+        dict(metadata, source_name='alias', relative_path=path, same_source_as=name),
+        dict(source_name='keys', relative_path='inputs/keys.json', exposure='on_demand')]
+    workspace = LocalTrustedBackend(tmp_path/'backend').prepare(run_id='run_selectedpages',
+        inputs=(), assignment=json.dumps({'inputs': inputs}).encode(), result_schema=b'{}')
+    root = workspace.root
+    (root/path).write_text(text)
+    (root/'inputs/keys.json').write_text(json.dumps(directory))
+    cmd = [sys.executable, '-I', str(root/'tools/read_input.py')]
+    def call(*args):
+        return subprocess.check_output(cmd+list(args), cwd=tmp_path, timeout=5).decode()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        a = pool.submit(call, name, '--pointer', '/a', '--pointer', '/b', '--budget', '512')
+        b = pool.submit(call, 'keys', '--directory', '--budget', '768')
+        replies = [a.result(), b.result()]
+    commands = [replay_arguments(reply) for reply in replies]
+    assert commands[0][1] != commands[1][1] and len(commands[0][1]) == 32
+    assert not any(value in ' '.join(commands[0]) for value in ('quoted', 'touch', 'inputs/'))
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        copies = list(pool.map(lambda _: call(*commands[0]), range(2)))
+    assert copies == [replies[0], replies[0]]
+    reused = call('alias', '--pointer', '/a', '--pointer', '/b', '--budget', '512')
+    assert 'cached navigation is not proof of reading' in reused
+    assert replay_arguments(reused) == commands[0]
+    call('keys', '--directory', '--offset', '0', '--budget', '768')
+    assert call(*replay_arguments(reused)) == replies[0]
+    parts = [[body(reply)] for reply in replies]
+    active = [True, True]
+    while any(active):
+        for index in range(2):
+            if active[index]:
+                reply = call(*next_arguments(replies[index]))
+                assert len(reply.encode()) <= (512 if index == 0 else 768)
+                assert call(*replay_arguments(reply)) == reply
+                parts[index].append(body(reply))
+                active[index] = not finished(reply)
+                replies[index] = reply
+    expected = '[field 1]\n'+json.dumps(values['a'], ensure_ascii=False)+'\n[field 2]\n'+json.dumps(values['b'], ensure_ascii=False)
+    assert ''.join(parts[0]) == expected
+    assert json.loads(''.join(parts[1])) == list(directory)
+    assert not (tmp_path/'forbidden').exists() and not (root/'forbidden').exists()
+    # Old pages and terminal alias notices remain replayable after other reads.
+    assert body(call(*commands[0])).startswith('[field 1]')
+    terminal_offset = replay_arguments(replies[0])[3]
+    terminal = call(name, '--pointer', '/a', '--pointer', '/b', '--offset', terminal_offset, '--budget', '512')
+    alias_end = call('alias', '--pointer', '/a', '--pointer', '/b', '--budget', '512')
+    assert finished(alias_end) and '0 characters remain' in alias_end
+    call('keys', '--directory', '--offset', '0')
+    assert call(*replay_arguments(alias_end)) == terminal
+    # Arbitrary-file selections also return shell-safe replay commands.
+    file_page = call(path, '--file', '--pointer', '/b', '--budget', '512')
+    call('keys', '--directory', '--offset', '0')
+    assert call(*replay_arguments(file_page)) == file_page
+    # Empty terminal pages retain the source selection, too.
+    empty = call(*replay_arguments(terminal)[:2], '--offset', str(len(expected)), '--budget', '512')
+    assert finished(empty) and body(empty) == ''
+    assert call(*replay_arguments(empty)) == empty
+    # A complete single field and a directory also expose replay at terminal aliases.
+    for flags in (('--pointer', '/small'), ('--directory',)):
+        page = call(name, *flags, '--budget', '512')
+        notice = call('alias', *flags, '--budget', '512')
+        assert finished(page) and finished(notice)
+        assert 'cached navigation is not proof of reading' in notice
+        call('keys', '--directory', '--offset', '0')
+        assert call(*replay_arguments(notice)) == page
+
+
+def test_replay_page_changes_cache_loss_unicode_positions_and_limits(tmp_path):
+    from scidiscovery.artifact_agent.service.input_reader import read, CACHE_DIRECTORY
+    text = '甲乙🌍\n'*2000
+    bind_reader_input(tmp_path, text)
+    first = read(tmp_path, 'experiment_plan', budget=512)
+    handle = replay_arguments(first)[1]
+    next_start = int(next_arguments(first)[3])
+    second = read(tmp_path, selection_id=handle, offset=next_start, budget=512)
+    assert body(first)+body(second) == text[:len(body(first))+len(body(second))]
+    assert body(read(tmp_path, selection_id=handle, offset=1, budget=512)).startswith('乙🌍')
+    assert read(tmp_path, selection_id=handle, offset=0, budget=512) == first
+    larger = read(tmp_path, selection_id=handle, offset=0, budget=1024)
+    assert len(larger.encode()) <= 1024 and len(body(larger)) > len(body(first))
+    for kwargs, message in (({'budget':8193}, '8192'), ({'offset':-1}, 'nonnegative'),
+            ({'offset':True}, 'nonnegative'), ({'offset':len(text)+1}, 'outside'),
+            ({'offset':0, 'action':'next'}, 'without legacy')):
+        with pytest.raises(ValueError, match=message):
+            read(tmp_path, selection_id=handle, **kwargs)
+    assert read(tmp_path, 'experiment_plan', selection_id=handle, offset=0, budget=512) == first
+    with pytest.raises(ValueError, match='field flags require'):
+        read(tmp_path, selection_id=handle, pointers=['/a'], offset=0)
+    with pytest.raises(ValueError, match='selection missing'):
+        read(tmp_path, selection_id='f'*32, offset=0)
+    cache = tmp_path/CACHE_DIRECTORY/'navigation.json'
+    cache.unlink()
+    with pytest.raises(ValueError, match='selection missing'):
+        read(tmp_path, selection_id=handle, offset=next_start)
+    assert read(tmp_path, 'experiment_plan', selection_id=handle, offset=next_start, budget=512) == second
+    cache.write_text('damaged')
+    with pytest.raises(ValueError, match='damaged'):
+        read(tmp_path, selection_id=handle, offset=0)
+    assert read(tmp_path, 'experiment_plan', selection_id=handle, offset=0, budget=512) == first
+    cache.unlink()
+    (tmp_path/'inputs/opaque.json').write_text('changed')
+    with pytest.raises(ValueError, match='changed'):
+        read(tmp_path, 'experiment_plan', selection_id=handle, offset=0, budget=512)
+    assert read(tmp_path, 'experiment_plan', offset=0, budget=512) != first
+    (tmp_path/'inputs/opaque.json').write_text(text)
+    assert read(tmp_path, 'experiment_plan', offset=0, budget=512) == first
+    (tmp_path/'inputs/opaque.json').write_text('changed')
+    with pytest.raises(ValueError, match='changed'):
+        read(tmp_path, selection_id=handle, offset=0)
+    with pytest.raises(ValueError, match='changed'):
+        read(tmp_path, 'experiment_plan', offset=next_start, budget=512)
+    current = read(tmp_path, 'experiment_plan', offset=0, budget=512)
+    assert body(current) == 'changed' and replay_arguments(current)[1] != handle
+    current_handle = replay_arguments(current)[1]
+    (tmp_path/'inputs/opaque.json').unlink()
+    (tmp_path/'inputs/opaque.json').symlink_to('/etc/passwd')
+    with pytest.raises(ValueError, match='within'):
+        read(tmp_path, selection_id=current_handle, offset=0)
+
+
+def test_complete_single_page_alias_replays_its_source_after_other_reads(tmp_path):
+    from scidiscovery.artifact_agent.service.input_reader import read
+    equivalent_inputs(tmp_path, '原文🌍')
+    (tmp_path/'other.txt').write_text('Other source')
+    first = read(tmp_path, 'task', budget=512)
+    alias = read(tmp_path, 'context', budget=512)
+    assert finished(first) and finished(alias)
+    assert 'cached navigation is not proof of reading' in alias
+    assert replay_arguments(alias) == replay_arguments(first)
+    read(tmp_path, 'other.txt', file=True)
+    handle = replay_arguments(alias)[1]
+    assert read(tmp_path, selection_id=handle, offset=0, budget=512) == first
+    assert '--repeat' not in alias and '--restart' not in alias and '--next' not in alias
+
+
+def test_source_field_and_directory_offset_recovery_without_cache(tmp_path):
+    from scidiscovery.artifact_agent.service.input_reader import read, CACHE_DIRECTORY
+    values = {'a': '甲'*900, 'b': '乙'*900, 'keys': {f'字段{i}': i for i in range(200)}}
+    bind_reader_input(tmp_path, json.dumps(values, ensure_ascii=False))
+    for flags in (dict(pointers=['/a','/b']), dict(pointers=['/keys'], directory=True)):
+        first = read(tmp_path, 'experiment_plan', budget=512, **flags)
+        offset = int(next_arguments(first)[3])
+        second = read(tmp_path, selection_id=replay_arguments(first)[1], offset=offset, budget=512)
+        (tmp_path/CACHE_DIRECTORY/'navigation.json').unlink()
+        assert read(tmp_path, 'plan_original', selection_id=replay_arguments(first)[1], offset=offset, budget=512, **flags) == second
+
+
+def test_installed_complete_selection_recovers_stale_cache_fingerprint(tmp_path):
+    workspace = LocalTrustedBackend(tmp_path/'backend').prepare(run_id='run_stalefingerprint',
+        inputs=(), assignment=json.dumps({'inputs': [dict(source_name='original',
+            relative_path='inputs/text.txt')]}).encode(), result_schema=b'{}')
+    source = workspace.root/'inputs/text.txt'
+    source.write_text('原文🌍\n'*2000)
+    cmd = [sys.executable, '-I', str(workspace.root/'tools/read_input.py')]
+    def call(*args):
+        return subprocess.run(cmd+list(args), cwd=tmp_path, capture_output=True, timeout=5)
+    first = call('original', '--budget', '512')
+    assert first.returncode == 0
+    second = call(*next_arguments(first.stdout.decode()))
+    assert second.returncode == 0
+    replay = replay_arguments(second.stdout.decode())
+    cache = workspace.root/'.read-input/navigation.json'
+    state = json.loads(cache.read_text())
+    for entry in state.values():
+        if isinstance(entry, dict) and 'fingerprint' in entry:
+            entry['fingerprint'] = '0'*64
+    cache.write_text(json.dumps(state))
+    # Without a retained version, a nonzero offset must fail closed on a stale
+    # fingerprint. With the exact handle, current source bytes establish identity.
+    versionless = call('original', '--offset', replay[3], '--budget', '512')
+    assert versionless.returncode == 1 and b'material changed' in versionless.stdout
+    recovered = call('original', *replay)
+    assert recovered.returncode == 0 and recovered.stdout == second.stdout
+    source.write_text('changed source\n'*2000)
+    changed = call('original', *replay)
+    assert changed.returncode == 1 and b'material changed' in changed.stdout

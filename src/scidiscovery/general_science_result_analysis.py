@@ -40,7 +40,9 @@ def validate_context(payload, sources, handoff):
 PROMPT = """Analyze the exact sealed experiment_results against its original
 hypothesis_portfolio and objective_source. Read the adopted stages and original
 materials, distinguish observations, numerical validity and scientific
-interpretation, and assess the hypotheses and remaining contradiction. Reuse
+interpretation, and assess the hypotheses and remaining contradiction. Assess
+what the current bounded test answers separately from overall goal completion;
+retain unmet original requirements and conditions for later work. Reuse
 sufficient existing evidence. Native shell data processing and analysis
 calculations are allowed; preserve their sources and limitations. Do not launch
 new experiments or replace hypothesis formulation with exploratory execution.

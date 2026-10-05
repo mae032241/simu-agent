@@ -74,6 +74,11 @@ Control binds the immutable global objective. Write only
 the bounded goal of this hypothesis stage in stage_objective; never copy,
 paraphrase, or replace the global research objective as if it were role-owned.
 Hypotheses own competing explanations and the research route; do not freeze every numerical initialization or discretization choice for later authors.
+When engineering calculations or diagnostics can be reused, publish their files
+and use existing narrative/handoff fields to locate the exact aliases, runnable
+entry and parameters, input/output formats, checked constraints, unchecked risks
+and relevant original locations. Distinguish these diagnostics from an executed
+experiment; downstream Workers can verify the parts needed for their test.
 Each hypothesis must state its mechanism, bounded parameters, observable
 predictions, explicit falsifiers, competitors, scope, and only the exact source
 keys that support it. Creative hypotheses are allowed but are not established
