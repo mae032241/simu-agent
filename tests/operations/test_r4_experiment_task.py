@@ -33,12 +33,13 @@ def test_completed_experiment_requires_linked_control_observations():
     from scidiscovery.operation_contract import SemanticRuleViolation
     payload = dict(summary="Result", outcome="completed", limitations=[], remaining_question="", adopted_stages=[])
     def sources(records):
-        return ValidationSources({}, {}, tool_snapshot=json.dumps({"records": records}).encode())
+        return ValidationSources({"execution": b'{"state":"collected","terminal_state":"succeeded"}'}, {},
+            tool_snapshot=json.dumps({"records": records}).encode())
     with pytest.raises(SemanticRuleViolation, match="collected execution"):
         validate_completion(payload, sources([]), {})
     records = [
         {"alias": "implementation", "metadata": {"kind": "experiment_implementation"}},
-        {"alias": "execution", "metadata": {"kind": "experiment_execution", "implementation": "implementation"}},
+        {"alias": "execution", "tool_name": "worker_experiment_execute", "metadata": {"kind": "experiment_execution", "implementation": "implementation"}},
         {"alias": "validity", "metadata": {"kind": "experiment_stage", "stage": "validity", "derived_from": ["execution"]}},
     ]
     payload["adopted_stages"] = [r["alias"] for r in records]
@@ -79,7 +80,7 @@ def _goal_carrier(carrier, objective_key="objective", statement="Observe a fixtu
         {**_intake().model_dump(mode="json"), "scientific_foundation":foundation})
 
 
-def _real_experiment(tmp_path, monkeypatch, solver="sprocess", before_submit=None, goal="research-objective"):
+def _real_experiment(tmp_path, monkeypatch, solver="sprocess", before_submit=None, goal="research-objective", before_execute=None):
     import hashlib
     import json
     from pathlib import Path
@@ -98,7 +99,7 @@ def _real_experiment(tmp_path, monkeypatch, solver="sprocess", before_submit=Non
     from scidiscovery.artifact_agent.service.experiment_execution import bind_experiment_services
     from tests.operations.tcad_policy_fixtures import policy_snapshot
     catalog = compile_catalog((CORE_PLUGIN, science, curve, tcad))
-    monkeypatch.setattr(runtime_module, "compile_installed_catalog", lambda: catalog)
+    monkeypatch.setattr(runtime_module, "compile_installed_catalog", lambda **kwargs: catalog)
     project = tmp_path / "project"
     project.mkdir()
     capability = canonical_json(dict(profile_id=solver, solver_kind=solver, launch_name=solver,
@@ -196,6 +197,7 @@ def _real_experiment(tmp_path, monkeypatch, solver="sprocess", before_submit=Non
     assert "objective_source" in {item["source_name"] for item in assignment["inputs"]}
     assert "digest" not in assignment["operation"]
     assert "prior_source_bindings" not in assignment
+    native_stages = before_execute(runtime, root, worker, instance, workspace, catalog) if before_execute else []
     design = worker.call_tool("worker_experiment_stage", {"stage":"design", "conclusion":"Observe one fixture."})
     document = dict(solver_kind=solver, files=[{"relative_path":"main.cmd", "content":"# fixture"}],
         entrypoint="main.cmd", resource_limits=dict(wall_time_seconds=1, cpu_time_seconds=1,
@@ -268,13 +270,24 @@ def _real_experiment(tmp_path, monkeypatch, solver="sprocess", before_submit=Non
     with pytest.raises(WorkerToolError):
         worker.call_tool("worker_experiment_execute", {"action":"export", "output_name":"tcad_manifest"})
     adapter.wall_seconds = 4000
-    with pytest.raises(WorkerToolError):
+    try:
         worker.call_tool("worker_experiment_execute", {"action":"start", "name":"over_allowance", "implementation":prepared["implementation"]})
+    except WorkerToolError:
+        pass  # A rejection may be returned within the initial response wait.
+    import time
+    deadline = time.monotonic() + 5
+    while True:
+        # Reconcile the original submission only; never send another start.
+        rejected = worker.call_tool("worker_experiment_execute", {"action":"status", "name":"over_allowance"})
+        if rejected["submission"]["state"] != "pending" or time.monotonic() >= deadline:
+            break
+        time.sleep(.01)
+    assert rejected["submission"]["state"] == "failed" and rejected["submission"].get("error"), rejected
     assert adapter.submits == 1
     assert worker.call_tool("worker_experiment_execute", {"action":"cancel", "name":"over_allowance"})["state"] == "abandoned"
     adapter.wall_seconds = 1
     validity = worker.call_tool("worker_experiment_stage", {"stage":"validity", "conclusion":"The fixture observation is present.", "materials":[collected["reference"]]})
-    additional_stages = before_submit(runtime, root, worker, instance, workspace, catalog, collected) if before_submit else []
+    additional_stages = native_stages + (before_submit(runtime, root, worker, instance, workspace, catalog, collected) if before_submit else [])
     (workspace / "output/result.json").write_bytes(canonical_json({"schema_version":1,
         "payload":dict(summary="Observed fixture.", outcome="completed", remaining_question="",
             adopted_stages=[design["reference"], prepared["implementation"], collected["reference"], validity["reference"], *additional_stages])}))

@@ -447,6 +447,17 @@ sudo deploy/cleanup_legacy_services.sh clean
 安装器首次创建 `${SCID_CONFIG_ROOT}/agent-settings.json`（默认 `/etc/scidiscovery/agent-settings.json`），默认使用简体中文新报告、`gpt-6-sol`、`medium`。已有文件若与上一版安装器生成的默认内容完全相同，会在安装事务中升级为新默认值；自定义文件保持不变。控制服务与审批/管理页面通过相同的 `SCID_AGENT_SETTINGS_FILE` 读取它；修改公共文件后重启两个服务生效。缺文件沿用兼容默认；文件存在但内容错误时显示具体字段错误，不静默回退。
 初始模型值来自随包提供的 `scidiscovery/default_agent_settings.json`；Agent Operation 声明不再固定模型。
 
+同一文件中的 `experiment_provider` 是部署级设置，选择完整实验任务的远端贡献。
+默认 `"auto"` 在零候选时支持原生本地实验，单候选时自动采用，多候选时拒绝启动。
+`"none"` 显式禁用远端实验工具；`"tcad_artifact:experiment_capability"` 选择该已安装 provider。
+允许安装多个 provider，但这类任务一次只启用一个。此选择不禁用独立 Effect 接口，
+也不免除已安装 runtime 插件的现有配置要求。控制、独立 Worker、健康检查和生成的
+Codex 配置读取相同的 `SCID_AGENT_SETTINGS_FILE`。改变选择后运行 `scid init codex`
+重新生成配置并重启宿主；旧 Run 不能以不同编译身份重新启动。已有远端执行的恢复与收集
+仍使用原 executor，不支持热切换或自动迁移。Worker 每一步可选择原生本地计算或实际
+可用的远端工具。本地源码、日志和结果沿用文件发布与阶段封存；不可变文件身份保留
+Worker 来源，不构成执行证明。
+
 当前 M7 配置与上一版生成的默认文件完全一致，重装时会自动把其中的 `defaults.model` 升级为 `gpt-6-sol`。其他安装若自定义文件仍使用旧模型，需要单独修改并重启控制服务与审批 UI 服务。实例级模型覆盖仍优先；已创建 Run 的执行 profile 保持冻结值。
 
 ```json

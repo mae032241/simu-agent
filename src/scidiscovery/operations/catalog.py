@@ -979,7 +979,7 @@ def compile_catalog(plugins: Iterable[PluginDefinition], *, capability_selection
                     and component.spec.extends is not None
                     and _qualified(component.plugin_id, component.spec.extends) == protocol_key}
                 choice = selections.get(protocol_key)
-                if not candidates and choice is None:
+                if choice == "none" or not candidates and choice is None:
                     operation = operation.model_copy(update={"executor": operation.executor.model_copy(update={"capability": None})})
                     operations.append(operation)
                     continue
@@ -999,6 +999,12 @@ def compile_catalog(plugins: Iterable[PluginDefinition], *, capability_selection
             operations.append(operation)
         plugin_map[owner] = plugin.model_copy(update={"operations": tuple(operations)})
     compiled_parts, runtime_factories, runtime_configuration_digests, runtime_identity_digests, used = _validate_operation_contracts(plugin_map, components)
+    # Installed but unselected provider declarations remain valid resources.
+    # Validate their dependency graphs without granting their tools to any Run.
+    for component in components.values():
+        if component.spec.kind == "experiment_capability":
+            _resolve_component(plugin_map, components, used, component.plugin_id,
+                ComponentRef(component.spec.component_id), "experiment_capability")
     approval_provider_ids = _validate_review_graph(plugin_map, components, compiled_parts, used)
     current = _build_compiled_catalog(plugin_map, components, compiled_parts, approval_provider_ids, runtime_factories, runtime_configuration_digests, runtime_identity_digests, used)
     # The only supported predecessor differs in the control proof's aggregate
@@ -1026,8 +1032,17 @@ def compile_catalog(plugins: Iterable[PluginDefinition], *, capability_selection
         if current.operation(key).digest != previous.operation(key).digest}
     return CompiledCatalog(current._operations, runtime_factories, runtime_configuration_digests,
         runtime_identity_digests, historical)
+def compile_installed_catalog(*, capability_selections: Mapping[str, str] | None = None) -> CompiledCatalog:
+    """Use one startup deployment selection on every control/Worker entry point."""
+    if capability_selections is None:
+        import os
+        from ..agent_execution_settings import load_settings
+        capability_selections = load_settings(os.environ.get("SCID_AGENT_SETTINGS_FILE")).experiment_capability_selections()
+    return _compile_installed_catalog(tuple(sorted(capability_selections.items())))
+
+
 @lru_cache(maxsize=1)
-def compile_installed_catalog() -> CompiledCatalog:
+def _compile_installed_catalog(selections: tuple[tuple[str, str], ...]) -> CompiledCatalog:
     selected = tuple(entry_points().select(group=PLUGIN_ENTRY_POINT_GROUP))
     names: set[str] = set()
     plugins: list[PluginDefinition] = []
@@ -1041,4 +1056,7 @@ def compile_installed_catalog() -> CompiledCatalog:
         if not isinstance(plugin, PluginDefinition): _fail("plugin_definition_invalid", entry_point.name)
         if plugin.plugin_id != entry_point.name: _fail("plugin_entry_point_mismatch", plugin.plugin_id)
         plugins.append(plugin)
-    return compile_catalog(plugins)
+    return compile_catalog(plugins, capability_selections=dict(selections))
+
+
+compile_installed_catalog.cache_clear = _compile_installed_catalog.cache_clear

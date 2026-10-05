@@ -26,7 +26,7 @@ def test_material_files_stream_through_real_root_and_worker(tmp_path, monkeypatc
     from scidiscovery.artifact_agent.interfaces.mcp_root import RootMCPRouter, RootToolFacade
     from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
     from scidiscovery.artifact_agent.service.worker_connections import WorkerConnections
-    monkeypatch.setattr(runtime_module, 'compile_installed_catalog', lambda: catalog)
+    monkeypatch.setattr(runtime_module, 'compile_installed_catalog', lambda **kwargs: catalog)
     project = tmp_path / 'project'
     project.mkdir()
     settings = AgentSettings(input_materials=MaterialInputSettings(
@@ -229,7 +229,7 @@ def staged_experiment(tmp_path, monkeypatch, catalog):
     from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
     from scidiscovery.artifact_agent.service.worker_connections import WorkerConnections
     from scidiscovery.artifact_agent.service.experiment_execution import ExperimentExecution, bind_experiment_services
-    monkeypatch.setattr(runtime_module, 'compile_installed_catalog', lambda: catalog)
+    monkeypatch.setattr(runtime_module, 'compile_installed_catalog', lambda **kwargs: catalog)
     project = tmp_path / 'project'
     project.mkdir()
     runtime = runtime_module.open_runtime(project_root=project, state_root=tmp_path / 'state',

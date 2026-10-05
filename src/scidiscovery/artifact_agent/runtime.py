@@ -79,8 +79,8 @@ def open_runtime(
     validate_worker_backend(worker_backend)
     from .state_format import ensure_state_format
     ensure_state_format(state, shared_group=shared_group)
-    operation_catalog = compile_installed_catalog()
     agent_settings = agent_settings or load_settings(agent_settings_file or os.environ.get("SCID_AGENT_SETTINGS_FILE"))
+    operation_catalog = compile_installed_catalog(capability_selections=agent_settings.experiment_capability_selections())
     scheduler_database_path = state / "database" / "scheduler-bindings.sqlite3"
     actor = ActorRef(actor_id=actor_id, actor_type="service")
     maintenance = StateMaintenanceLock(

@@ -39,6 +39,11 @@ def _content(runs, run, record):
     if kind == "experiment_stage":
         from ...general_science_experiment_task import StageSubmission
         body["materials"] = [current(alias) for alias in body.get("materials", ())]
+        if body.get("native_execution") is not None:
+            native = body["native_execution"]
+            native["implementation"] = current(native["implementation"])
+            for field in ("logs", "results"):
+                native[field] = [current(alias) for alias in native.get(field, ())]
         return {key: body[key] for key in StageSubmission.model_fields if key in body}
     if kind == "experiment_implementation":
         body["scientific_files"] = {name: current(alias) for name, alias in body.get("scientific_files", {}).items()}
@@ -84,6 +89,8 @@ def read_stage_deliveries(runs, run, *, instance_id, **arguments):
                 "scientific_material" if kind == "experiment_implementation" else "executor_observation"),
             "adopted": record["alias"] in selected if result["final_selection"] == "sealed" else None,
             "origin": "reused" if record["producer_run_id"] != run.run_id else "created_here",
+            **({"execution_origin": "worker_native", "execution_attestation": "unavailable"}
+               if metadata.get("origin") == "worker_native" else {}),
             **({"source_artifact_name": public_name} if public_name else {}),
             "unavailable_materials": derived.count(None),
             "materials": [{"reference": alias, "source_kind": "sealed_material" if alias in sealed else "input",

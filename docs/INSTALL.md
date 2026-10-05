@@ -518,6 +518,23 @@ The instance directory has separate Agent Settings and archive-management entrie
 The installer creates `${SCID_CONFIG_ROOT}/agent-settings.json` (default `/etc/scidiscovery/agent-settings.json`) only when absent, with `zh-CN`, `gpt-6-sol`, and `medium` defaults. An existing file that exactly matches the previous generated default is upgraded transactionally to the new default; customized files are preserved. Control and UI services use the same `SCID_AGENT_SETTINGS_FILE`; global-file edits require restarting both services. Missing files retain compatibility defaults; malformed existing files report their path and fields.
 The initial model value comes from the packaged `scidiscovery/default_agent_settings.json`; Agent Operation declarations do not pin a model.
 
+The deployment-only `experiment_provider` field in that same file selects the
+remote contribution to complete experiment tasks. `"auto"` (the default) permits
+zero installed candidates for native local experiments, selects a sole candidate,
+and rejects multiple candidates. `"none"` explicitly disables remote experiment
+tools; `"tcad_artifact:experiment_capability"` selects that installed provider.
+Multiple providers may be installed, but only one is enabled for these tasks.
+This selection does not disable standalone Effect interfaces or remove existing
+configuration requirements for installed runtime plugins.
+Control, standalone Workers, health checks and generated Codex profiles read the
+same `SCID_AGENT_SETTINGS_FILE`. After changing selection, regenerate profiles
+with `scid init codex` and restart hosts; old Runs cannot restart under a different
+compiled identity. Existing remote executions retain their original executor for
+recovery and collection. There is no hot switching or automatic migration.
+Workers choose native local computation or available remote tools at each step.
+Local source files, logs and results use ordinary publication and stage sealing;
+their immutable file identities retain Worker provenance and do not attest execution.
+
 The current M7 configuration matches the previous generated default, so reinstalling upgrades its `defaults.model` to `gpt-6-sol`. If a customized installation keeps an older model, edit that file separately and restart the control and approval UI services. Instance-level model overrides still take precedence; already created Runs retain their frozen execution profiles.
 
 ```json

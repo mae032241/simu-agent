@@ -81,7 +81,7 @@ def test_root_and_standalone_worker_construct_their_coordinator_once(tmp_path, m
     from tests.operations.test_agent_contract_alignment import CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN
     from scidiscovery.operations.catalog import compile_catalog
     catalog = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN))
-    monkeypatch.setattr(runtime_module, "compile_installed_catalog", lambda: catalog)
+    monkeypatch.setattr(runtime_module, "compile_installed_catalog", lambda **kwargs: catalog)
     secret = tmp_path / "secret"
     secret.write_bytes(b"s" * 32)
     secret.chmod(0o600)

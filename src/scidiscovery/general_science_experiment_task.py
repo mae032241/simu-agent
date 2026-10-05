@@ -64,6 +64,15 @@ class PredictionComparison(BaseModel):
         return self
 
 
+class NativeExecution(BaseModel):
+    """Worker-reported native execution; sealed bytes are not an attestation."""
+    model_config = ConfigDict(extra="forbid", strict=True)
+    implementation: MaterialAlias
+    state: Literal["succeeded", "failed", "running", "not_started"]
+    logs: Annotated[tuple[MaterialAlias, ...], Field(min_length=1, max_length=16)]
+    results: tuple[MaterialAlias, ...] = Field(default=(), max_length=16)
+
+
 class StageSubmission(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     stage: Literal["design", "implementation", "debug", "execution", "validity"]
@@ -77,6 +86,8 @@ class StageSubmission(BaseModel):
         description="Optional design-stage scientific precommitment: prediction, criterion and actual conditions. Sealing fixes bytes and references, not scientific correctness or final task completion.")
     comparison: PredictionComparison | None = Field(default=None,
         description="Optional validity-stage comparison against that exact declaration. Handler reads/binds originals; final adoption validation checks the declaration's unique original tool receipt. A preview is not a completed validation; not_run means no test.")
+    native_execution: NativeExecution | None = Field(default=None,
+        description="Execution stage only: Worker-reported native shell execution, exact sealed implementation and published logs/results. Control binds file identities, not execution truth. Observation wrappers are optional; retain provenance limitations.")
 
     @model_validator(mode="after")
     def scientific_roles(self):
@@ -84,6 +95,8 @@ class StageSubmission(BaseModel):
             raise ValueError("prediction_declaration belongs to design")
         if self.comparison is not None and self.stage != "validity":
             raise ValueError("comparison belongs to validity")
+        if self.native_execution is not None and self.stage != "execution":
+            raise ValueError("native_execution belongs to execution")
         return self
 
 
@@ -107,6 +120,12 @@ def _read_stage_source(context, alias):
 
 def submit_stage(request, context):
     aliases = list(request.materials)
+    metadata = {"kind": "experiment_stage", "stage": request.stage}
+    if request.native_execution is not None:
+        native = request.native_execution
+        aliases.extend((native.implementation, *native.logs, *native.results))
+        metadata.update(origin="worker_native", execution_attestation="unavailable",
+            implementation=native.implementation)
     if request.prediction_declaration is not None:
         aliases.extend(request.prediction_declaration.conditions)
         for alias in request.prediction_declaration.conditions:
@@ -122,7 +141,7 @@ def submit_stage(request, context):
         aliases.extend((comparison.prediction, *comparison.observations))
     record = context.accept_evidence(raw=canonical_json(request.model_dump(mode="json")),
         media_type="application/json", derived_from=tuple(dict.fromkeys(("objective_source", *aliases))),
-        metadata={"kind": "experiment_stage", "stage": request.stage})
+        metadata=metadata)
     return {"stage": request.stage, "reference": record["alias"], "state": "sealed",
         "artifact_name": record["artifact_name"]}
 
@@ -193,14 +212,14 @@ def validate_completion(payload, sources, handoff):
             metadata = item.get('metadata', {})
             kind = metadata.get('kind')
             label = {'experiment_implementation': 'implementation', 'experiment_execution': 'collected_execution'}.get(kind)
-            if kind == 'experiment_stage' and metadata.get('stage') == 'validity':
-                label = 'validity'
+            if kind == 'experiment_stage' and metadata.get('stage') in {'implementation', 'execution', 'validity'}:
+                label = metadata['stage']
             if label:
                 groups.setdefault(label, []).append(alias)
         candidates = '; '.join(f'{key}={values[:6]}' + (f' ({len(values)-6} more)' if len(values)>6 else '')
             for key, values in groups.items())
         raise SemanticRuleViolation(message + ' Available exact material aliases: ' + (candidates or 'none')
-            + '. Adopt materials from the same execution chain; an author-written execution stage or review is not a collected-execution receipt.')
+            + '. Adopt each exact implementation, its collected execution or native execution materials, and validity citing that execution. Native materials retain Worker provenance; they are not a collected execution receipt.')
     unknown = [alias for alias in report.adopted_stages if alias not in records]
     if unknown:
         repair('Unknown adopted_stages: ' + repr(unknown[:6]) + '.')
@@ -240,9 +259,53 @@ def validate_completion(payload, sources, handoff):
             ref = item["source_refs"].get(alias)
             return canonical_json(ref) if ref is not None else None
         return identity(records[alias]) if alias in records else alias
-    implementations = {identity(item) for item in selected if item["metadata"].get("kind") == "experiment_implementation"}
-    executions = {identity(item) for item in selected if item["metadata"].get("kind") == "experiment_execution"
-        and source_identity(item, item["metadata"].get("implementation")) in implementations}
+    def stage_is(item, stage):
+        return (item.get("tool_name") == "worker_experiment_stage"
+            and item["metadata"].get("kind") == "experiment_stage"
+            and item["metadata"].get("stage") == stage)
+    def published_file(item, alias):
+        target = source_identity(item, alias)
+        for name, descriptor in sources.binding_descriptors.items():
+            if canonical_json(descriptor.artifact_ref.model_dump(mode="json")) == target and name not in records:
+                resolved = sources.sealed_material_record(name)
+                if resolved is not None:
+                    records[name] = resolved
+        return any(identity(record) == target and record.get("tool_name") == "worker_publish_files"
+            and record["metadata"].get("kind") == "scientific_attachment" for record in records.values())
+    implementations = {}
+    for item in selected:
+        if item["metadata"].get("kind") == "experiment_implementation":
+            implementations[identity(item)] = "remote"
+        elif stage_is(item, "implementation"):
+            materials = StageSubmission.model_validate_json(sources[item["alias"]], strict=True).materials
+            if not any(published_file(item, alias) for alias in materials):
+                repair("Native implementation requires its exact published source files.")
+            implementations[identity(item)] = "native"
+    executions = set()
+    for item in selected:
+        remote = item["metadata"].get("kind") == "experiment_execution"
+        native = stage_is(item, "execution")
+        if not remote and not native:
+            continue
+        implementation = source_identity(item, item["metadata"].get("implementation"))
+        if implementation not in implementations:
+            repair("Adopted execution is not linked to a selected implementation.")
+        if remote:
+            if item.get("tool_name") != "worker_experiment_execute" or implementations[implementation] != "remote":
+                repair("Remote execution requires its original collected-execution receipt and implementation.")
+            receipt = json.loads(sources[item["alias"]])
+            if receipt.get("state") != "collected" or receipt.get("terminal_state") != "succeeded":
+                repair("Completed requires successful collected execution; retain failed or unfinished work as blocked/inconclusive.")
+        else:
+            declaration = StageSubmission.model_validate_json(sources[item["alias"]], strict=True).native_execution
+            if (declaration is None or implementations[implementation] != "native"
+                    or declaration.state != "succeeded" or not declaration.results
+                    or item["metadata"].get("origin") != "worker_native"
+                    or item["metadata"].get("execution_attestation") != "unavailable"
+                    or source_identity(item, declaration.implementation) != implementation
+                    or not all(published_file(item, alias) for alias in (*declaration.logs, *declaration.results))):
+                repair("Completed native execution requires its exact implementation, published logs/results and Worker-reported succeeded state; this is not execution attestation.")
+        executions.add(identity(item))
     validity = [item for item in selected if item["metadata"].get("kind") == "experiment_stage"
         and item["metadata"].get("stage") == "validity"
         and executions.intersection(source_identity(item, alias) for alias in item["metadata"].get("derived_from", ()))]
@@ -250,6 +313,10 @@ def validate_completion(payload, sources, handoff):
         missing = ('implementation' if not implementations else 'execution linked to selected implementation' if not executions
             else 'validity citing selected execution')
         repair('Completed experiment is missing ' + missing + '.')
+    covered = {source_identity(item, alias) for item in validity
+        for alias in item["metadata"].get("derived_from", ())}
+    if executions - covered:
+        repair("Every adopted execution requires validity citing that exact execution.")
 
 
 def finalize(request):
@@ -268,7 +335,8 @@ def finalize(request):
 
 
 PROMPT = """Own this complete experiment: design, implement, debug when useful,
-execute through the controlled experiment tools, collect, and judge validity.
+execute with the native shell for local scientific computation or the available
+remote experiment tools for remote work, retain results, and judge validity.
 Read subject for the current scientific question, stage objective and available
 conclusions. Read the global goal and completion criteria in objective_source:
 the original research objective, the foundation's objective_contract, or the intake's
@@ -291,13 +359,26 @@ Include execution interpretation when useful: executor facts do not supply your
 scientific conclusion. Rework seals a new version; retain the exact versions you
 adopt in the final report. Stage sealing is neither review nor final completion.
 Sealed public materials return artifact_name for exact handoff before this Run ends.
-If independent implementation review is required, send prepare's review.request
+For remote work, if its policy requires independent implementation review, send prepare's review.request
 to the scheduler, or obtain it with worker_experiment_execute(action="review",
 implementation=<sealed reference>). The request suspends controlled experimental work while review is pending.
 Wait for the scheduler notification; read the sealed outcome with that same review action, then continue
 this same task; a negative review calls for scientific correction, not execution.
-Obtain a sealed pass before formal execution; never finish merely to make the subject addressable.
-Formal execution is available only through worker_experiment_execute.
+When that review is required, obtain a sealed pass before remote execution;
+never finish merely to make the subject addressable.
+Choose local or remote execution independently at each step; the same task may
+move from local to remote and back to local. Local computation uses your declared
+native shell permissions and installed environment. Publish source files with
+worker_publish_files, seal an implementation stage citing those references, run
+the exact source locally, then publish logs and results. Seal an execution stage
+with native_execution naming that implementation, its state and exact published
+logs/results. Seal validity citing that execution. Control computes file identity
+and provenance; never author hashes or internal bindings. Native execution claims
+and optional process observations remain Worker reports, without independent
+execution attestation; carry that limitation into the report. No special wrapper
+is required. A missing local environment supports blocked/inconclusive.
+worker_experiment_execute is present only for the configured remote provider.
+Use the following submission/review guidance only for that remote tool.
 Submission runs in the control background. submission.state=pending acknowledges
 the original request, not solver success. Poll status with the same name. An
 unknown submission is reconciled by read-only lookup, never by creating another
@@ -321,7 +402,7 @@ no fixed preflight, initialization or reviewer checklist is a submission conditi
 """
 SCHEMA = schema_resource(ExperimentReport, "scidiscovery.experiment-report.v1")
 CONTRACT = semantic_contract(SemanticRuleSpec("experiment.sealed_material",
-    "Adopted stages must identify sealed materials created in or explicitly bound to this task; original receipts and authorship are retained. Completed requires an implementation, its collected execution, and a validity assessment citing that exact execution. Finish or cancel outstanding execution and diagnostics before final delivery. Design and debug stage submissions are optional. Otherwise report blocked or inconclusive; scientific validity belongs to the author."))
+    "Adopted stages must identify sealed materials created in or explicitly bound to this task; original receipts and authorship are retained. Completed requires every adopted execution to cite its selected exact implementation and a validity assessment citing that execution. Remote work requires successful collected receipts. Native work requires published implementation files, Worker-reported successful execution and published logs/results; file identities do not attest execution. Finish or cancel outstanding execution and diagnostics before final delivery. Design and debug stages are optional. Otherwise report blocked or inconclusive; scientific validity belongs to the author."))
 PROTOCOL = "scidiscovery.complete-experiment.v1"
 WORKSPACE = WorkspaceContract()
 AGENT = CallableComponent("agent", lambda: None)
@@ -339,7 +420,7 @@ STAGE_TOOL = WorkerToolDefinition(name="worker_experiment_stage",
 EXECUTE_TOOL = WorkerToolDefinition(name="worker_experiment_execute",
     description="Request, advance, collect or cancel this experiment's formal execution. start may return submission.state=pending while control submits in the background; query status with the same name. unknown is not proof of non-submission; never create a replacement. Async failures are readable in submission.error. review returns an exact public subject and operation_invoke request for independent review; it starts neither a reviewer nor execution. status refreshes remote state and bounded progress of a submitted execution without submitting, cancelling or collecting. advance can continue an authorized execution; collect transfers result files. Confirmed terminal states require no remote query. Status returns timing, log metadata and refresh failure only, never log text. Use logs for the newest cached page, direction=before with its before cursor for older text, or direction=after with its after cursor for new text. No change returns empty text; gap=snapshot_replaced explicitly marks lost continuity and returns a fresh newest page. It performs no remote query. After successful collection read/export the collected log outputs. Read text or export exact collected scientific files into scratch for local analysis. Uses configured authorization and the original scientific budget.",
     input_model=ExecuteExperiment, capability="experiment.execute", contextual_handler=execute,
-    optional_services=("experiment.execution",), evidence_ports=("tool_evidence", "recovery_manifest_output"))
+    required_services=("experiment.execution",), evidence_ports=("tool_evidence", "recovery_manifest_output"))
 
 
 _REF = ComponentRef
@@ -358,7 +439,7 @@ COMPONENTS = (
     ComponentSpec("experiment_task_workspace", "workspace", __name__ + ":WORKSPACE",
         resources=(_REF("experiment_task_finalizer"),)),
     ComponentSpec("experiment_stage_tool", "worker_tool", __name__ + ":STAGE_TOOL"),
-    ComponentSpec("experiment_execute_tool", "worker_tool", __name__ + ":EXECUTE_TOOL"),
+    ComponentSpec("experiment_execute_tool", "worker_tool", __name__ + ":EXECUTE_TOOL", public=True),
 )
 OPERATION = scientific_agent_operation(
     "science.experiment.v1", "Complete a bounded experiment from scientific design through execution and validity judgment.",
@@ -369,7 +450,7 @@ OPERATION = scientific_agent_operation(
     workspace=_REF("experiment_task_workspace"),
     input_validation=InputValidationSpec(_REF("experiment_goal_inputs"), "science.experiment.v1.goal",
         "The selected scientific subject must declare an explicit goal and completion criteria. Control resolves its exact source; Root does not bind internal goal objects."),
-    tools=(_REF("experiment_stage_tool"), _REF("experiment_execute_tool")),
+    tools=(_REF("experiment_stage_tool"),),
     inputs=(
         _input("subject", "The exact hypothesis, scientific intake, foundation, existing goal or prior experiment to investigate. Select its instance name; control retrieves the goal from its sealed sources. Do not create an internal goal object.", "*",
             media_types=("*/*",), exposure="on_demand", usage="evidence_inventory"),

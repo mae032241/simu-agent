@@ -270,6 +270,9 @@ class DiagnosticsSettings(SettingsValue):
 
 class AgentSettings(SettingsValue):
     schema_version: Literal[1] = 1
+    experiment_provider: str = Field(default="auto",
+        pattern=r"^(auto|none|[a-z][a-z0-9_.-]{0,127}:[a-z][a-z0-9_.-]{0,127})$",
+        description="Deployment startup-only remote provider: auto uses zero or one installed candidate and rejects ambiguity; none disables remote experiment tools; plugin:component selects one. Regenerate Worker profiles and restart hosts after changes; existing Run identities cannot resume under a different selection. Existing executions retain their original executor for recovery and collection.")
     debug_disable_task_network: bool = Field(default=False, description=(
         "Deployment startup-only debug restriction: managed Root/Worker/helper native network, "
         "web search and declared host network tools are disabled; model API traffic is unchanged. "
@@ -291,6 +294,10 @@ class AgentSettings(SettingsValue):
 
     def sparse(self) -> dict:
         return self.model_dump(exclude_none=True, exclude_unset=True)
+
+    def experiment_capability_selections(self) -> dict[str, str]:
+        return ({} if self.experiment_provider == "auto" else
+            {"general_science:experiment_task_protocol": self.experiment_provider})
 
 
 class ExecutionProfile(SettingsValue):
@@ -383,8 +390,9 @@ def effective_settings(global_settings: AgentSettings, instance_settings: dict) 
             else:
                 base[key] = value
         return base
-    if "debug_disable_task_network" in instance_settings:
-        raise ValueError("debug_disable_task_network is deployment-only, not an instance override")
+    for field in ("debug_disable_task_network", "experiment_provider"):
+        if field in instance_settings:
+            raise ValueError(f"{field} is deployment-only, not an instance override")
     value = merge(global_settings.model_dump(exclude_none=True), instance_settings)
     if global_settings.debug_disable_task_network:
         value["progression"]["root_network_access"] = False

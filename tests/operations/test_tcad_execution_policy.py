@@ -56,6 +56,10 @@ def test_revision_reservations_share_remaining_subject_allowance():
     connection.executescript('''
         CREATE TABLE execution_budget_pools (executor TEXT, budget_key TEXT, allowance_json BLOB, PRIMARY KEY(executor,budget_key));
         CREATE TABLE execution_budget_reservations (execution_id TEXT PRIMARY KEY, executor TEXT, budget_key TEXT, reserved_json BLOB, consumed_json BLOB);
+        CREATE TABLE execution_budget_extensions (decision_id TEXT PRIMARY KEY, execution_id TEXT NOT NULL,
+            executor TEXT NOT NULL, budget_key TEXT NOT NULL,
+            additional_seconds INTEGER NOT NULL CHECK(additional_seconds > 0),
+            decision_ref_json BLOB NOT NULL, created_at TEXT NOT NULL);
     ''')
     fields = policy_fields()
     fields["agent_execution_policy"]["max_total_wall_time_seconds"] = 3600
