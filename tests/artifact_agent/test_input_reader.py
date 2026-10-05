@@ -348,3 +348,104 @@ def test_installed_bare_continuation_cli(tmp_path):
     assert call('--repeat')==first
     second=call('--next');assert len(second)<=512 and second!=first
     assert call('--restart')==first
+
+
+def equivalent_inputs(root, text):
+    (root/'inputs').mkdir(exist_ok=True)
+    entries = []
+    for name in ('task', 'context'):
+        path = 'inputs/' + name + '.txt'
+        (root/path).write_text(text)
+        entries.append(dict(source_name=name, relative_path=path, exposure='on_demand',
+            media_type='text/plain', schema_id='opaque', size_bytes=len(text.encode())))
+    entries[1]['same_source_as'] = 'task'
+    (root/'assignment.json').write_text(json.dumps({'inputs':entries}))
+    return entries
+
+
+def test_equivalent_aliases_share_navigation_without_claiming_read_or_losing_pages(tmp_path):
+    from pathlib import Path
+    from scidiscovery.artifact_agent.service.input_reader import read
+    text = '精确任务\n' * 1500
+    entries = equivalent_inputs(tmp_path, text)
+    # Measure the previous independent-alias entry behavior on the same originals.
+    entries[1].pop('same_source_as')
+    (tmp_path/'assignment.json').write_text(json.dumps({'inputs':entries}))
+    before = [read(tmp_path, name, budget=512) for name in ('task', 'context')]
+    assert before[0] == before[1]
+    entries[1]['same_source_as'] = 'task'
+    (tmp_path/'assignment.json').write_text(json.dumps({'inputs':entries}))
+    first = read(tmp_path, 'task', budget=512)
+    reused = read(tmp_path, 'context', budget=512)
+    assert 'cached navigation is not proof of reading' in reused and 'characters remain' in reused
+    assert '[read_input: more; --next]' in reused and len(reused.encode()) < len(first.encode())
+    assert read(tmp_path, action='repeat') == first
+    second = read(tmp_path, action='next')
+    assert body(second) != body(first)
+    assert read(tmp_path, 'task', budget=512, action='repeat') == second
+    assert read(tmp_path, 'context', budget=512, action='restart') == first
+    parts = [body(first)]
+    while True:
+        reply = read(tmp_path, action='next')
+        parts.append(body(reply))
+        if reply.endswith('[read_input: end]\n'):
+            break
+    assert ''.join(parts) == text
+    complete_notice = read(tmp_path, 'task', budget=512)
+    assert '0 characters remain' in complete_notice
+    assert read(tmp_path, action='repeat') == reply
+    assert read(tmp_path, action='restart') == first
+    import os
+    if directory := os.environ.get('SCID_TEST_LOG_DIR'):
+        Path(directory).mkdir(exist_ok=True)
+        Path(directory, 'd3-reader-metrics.json').write_text(json.dumps({
+            'before_reply_bytes':sum(len(value.encode()) for value in before),
+            'after_reply_bytes':len(first.encode())+len(reused.encode()),
+            'before_content_pages':2, 'after_content_pages':1,
+            'repeat_reply_bytes':len(first.encode()), 'all_characters_recovered':len(text)}))
+
+
+@pytest.mark.parametrize('changes', [
+    {'exposure':'file_reference'}, {'exposure':'handoff_only'}, {'exposure':'metadata_only'},
+    {'agent_visible':False}, {'materialization':'controlled_tool_stream_only'},
+    {'materialization':'metadata_only'},
+    {'same_source_as':'context'}, {'relative_path':'../outside'}, {'schema_id':'different'},
+])
+def test_equivalence_hint_cannot_jump_through_unreadable_or_incompatible_alias(tmp_path, changes):
+    from scidiscovery.artifact_agent.service.input_reader import read
+    entries = equivalent_inputs(tmp_path, 'context bytes')
+    entries[0].update(changes)
+    (tmp_path/'inputs/task.txt').write_text('other bytes!!')
+    (tmp_path/'assignment.json').write_text(json.dumps({'inputs':entries}))
+    assert body(read(tmp_path, 'context')) == 'context bytes'
+
+
+def test_alias_reuse_is_field_specific_and_recovers_damaged_navigation(tmp_path):
+    from scidiscovery.artifact_agent.service.input_reader import read, CACHE_DIRECTORY
+    entries = equivalent_inputs(tmp_path, json.dumps({'a':'a'*2000, 'b':'b'*2000}))
+    for item in entries:
+        item['media_type'] = 'application/json'
+    (tmp_path/'assignment.json').write_text(json.dumps({'inputs':entries}))
+    first = read(tmp_path, 'task', pointers=['/a'], budget=512)
+    other = read(tmp_path, 'context', pointers=['/b'], budget=512)
+    assert body(other).startswith('"bbb')
+    assert 'same original' in read(tmp_path, 'context', pointers=['/a'], budget=512)
+    assert read(tmp_path, action='repeat') == first
+    cache = tmp_path/CACHE_DIRECTORY/'navigation.json'
+    cache.write_text('damaged')
+    with pytest.raises(ValueError, match='damaged'):
+        read(tmp_path, 'context', pointers=['/a'], action='next', budget=512)
+    assert read(tmp_path, 'context', pointers=['/a'], action='restart', budget=512) == first
+    (tmp_path/'inputs/task.txt').write_text('{broken')
+    with pytest.raises(ValueError, match='material changed'):
+        read(tmp_path, 'context', pointers=['/a'], action='repeat', budget=512)
+
+
+def test_stream_only_alias_is_denied_before_following_equivalence(tmp_path):
+    from scidiscovery.artifact_agent.service.input_reader import read
+    entries = equivalent_inputs(tmp_path, 'large original')
+    entries[1]['exposure'] = 'file_reference'
+    (tmp_path/'assignment.json').write_text(json.dumps({'inputs':entries}))
+    for name, file in (('context', False), ('inputs/context.txt', True)):
+        with pytest.raises(ValueError, match='metadata only'):
+            read(tmp_path, name, file=file)

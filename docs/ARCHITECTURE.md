@@ -319,11 +319,19 @@ input reader; instructions are never silently truncated. The entry is a disposab
 projection, not another task record, permission source or submission gate.
 
 When visible input aliases bind the same exact immutable ArtifactRef, later entries
-carry `same_source_as` pointing to the first visible alias. Workers can reuse bytes
-already read while retaining each alias's purpose and citation permissions. Equal
-names or hashes alone do not establish equivalence; hidden and handoff-only inputs
-cannot supply this navigation hint. No bindings, qualifications or parent identities
-are merged by the projection.
+carry `same_source_as` pointing to a safely shared readable representative. The
+default startup index expands shared paths, types and sizes only on that entry,
+retaining each alias's purpose, provenance and citation permissions. The reader
+shares pagination for the same field selection; selecting another alias returns
+a short notice and remaining character count without advancing the page. Cache
+does not prove that the Agent read the material: `--repeat` restores the last page
+and `--restart` rereads from the beginning. Different fields stay independent;
+explicit restart recovers damaged navigation. Equal names or hashes do not
+establish equivalence. Hidden, handoff-only, metadata-only and file_reference
+inputs cannot become shared reading bridges; file_reference still uses controlled
+streaming tools. Without a safe representative, reads stay independent. This
+navigation projection merges no bindings, qualification or source identity and
+does not truncate scientific originals.
 
 `analysis-start.json` is optional navigation for input size/purpose, original field
 pointers, verbatim excerpts and recovery coverage. It no longer repeats task,

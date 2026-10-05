@@ -6,6 +6,7 @@ from pathlib import Path
 
 from ..schema.common import canonical_json
 from .local_workspace import read_control_workspace_file, write_control_workspace_file
+from .input_reader import shared_input
 
 
 def startup_document(assignment: dict, domain: dict | None = None) -> dict:
@@ -15,6 +16,18 @@ def startup_document(assignment: dict, domain: dict | None = None) -> dict:
         'operation', 'instruction', 'scientific_intent', 'role_instructions', 'narrative_instruction',
         'budget', 'inputs', 'reference_access', 'attempt_memory', 'revision', 'recovery_draft', 'tools', 'execution_requirements', 'task_network_policy',
     ) if assignment.get(key) is not None}
+    inputs = assignment.get('inputs', ())
+    result['inputs'] = []
+    for item in inputs:
+        representative = shared_input(inputs, item)
+        if representative is not None and representative is not item:
+            # Preserve each alias's purpose, provenance and citation permissions.
+            # Only repeated readable metadata moves to the single representative.
+            shared = {'relative_path', 'media_type', 'schema_id', 'size_bytes'}
+            if item.get('reference_availability') == representative.get('reference_availability'):
+                shared.add('reference_availability')
+            item = {key: value for key, value in item.items() if key not in shared}
+        result['inputs'].append(item)
     result['output'] = {
         'relative_path': assignment.get('output', {}).get('relative_path', 'output/result.json'),
         'form': assignment.get('output', {}).get('schema_path', 'schema/result.schema.json'),
@@ -44,7 +57,8 @@ def startup_document(assignment: dict, domain: dict | None = None) -> dict:
         result['reading']['history'] = ('attempt_memory gives a bounded goal/experience overview. Use worker_read_history and next_before for older tasks; unchanged reopen retains the same terminal, judgment and explicit supersedes revision range. revision_scope states coverage and missing ancestors; names, schema or common parents never imply a revision. Independent review Operations receive neutral indexes without author conclusions or Root judgments; their exact bound subjects remain readable. Summaries and scientific_fields are attributed Worker conclusions, not consumed originals or controlled verification. Follow an exact item’s worker_reference_read history_task entry when this Operation has that capability; otherwise bind needed originals as scientific inputs. Conditions may have changed, so history does not prohibit a justified retry.')
     if any('same_source_as' in item for item in assignment.get('inputs', ())):
         result['reading']['inputs'] += (
-            ' same_source_as identifies the same frozen original under another visible alias: reuse bytes already read. '
+            ' same_source_as identifies one frozen original under multiple visible aliases: use its representative reading entry once. '
+            'Cross-alias selection reuses navigation only, not proof of reading; follow remaining pages or use --repeat/--restart to recover content. '
             'Each alias retains its own purpose and citation permissions; equivalence grants no review or qualification.')
     if domain:
         result['workspace'] = {key: domain[key] for key in ('manifest', 'paths', 'read_paths', 'patch_contract') if key in domain}

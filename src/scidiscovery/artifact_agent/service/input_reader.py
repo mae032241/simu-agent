@@ -101,9 +101,41 @@ def page(workspace, path, *, pointer=None, directory=False, offset=0, version=No
     return response(low)
 
 
+def readable_input(item):
+    return (item.get('exposure') in {'full', 'on_demand', 'material'}
+        and item.get('agent_visible') is not False
+        and item.get('materialization') is None)
+
+
+def shared_input(inputs, item):
+    """A control-declared equivalent with the same directly readable metadata.
+
+    same_source_as is generated from complete ArtifactRefs, never content hashes.
+    This presentation/navigation hint grants no additional input permissions.
+    """
+    if not readable_input(item):
+        return None
+    name = item.get('same_source_as', item.get('source_name'))
+    representatives = [value for value in inputs if value.get('source_name') == name]
+    if len(representatives) != 1:
+        return None
+    representative = representatives[0]
+    fields = ('media_type', 'schema_id', 'size_bytes')
+    def compatible(value):
+        return (readable_input(value)
+            and all(field in value and value[field] == representative.get(field) for field in fields))
+    if (representative.get('same_source_as') or not compatible(representative)
+            or not compatible(item)):
+        return None
+    if representative is item and not any(value.get('same_source_as') == name and compatible(value)
+            for value in inputs if value is not item):
+        return None
+    return representative
+
+
 def _source(root, name, file):
     if file or name == 'assignment.json':
-        relative = name
+        return _within(root, name), None
     else:
         assignment = _within(root, 'assignment.json')
         inputs = json.loads(assignment.read_text(encoding='utf-8')).get('inputs', [])
@@ -114,8 +146,15 @@ def _source(root, name, file):
             matches = [item for item in inputs if item.get('relative_path') == name]
         if len(matches) != 1:
             raise ValueError('input missing or ambiguous; select one source_name from assignment.inputs')
-        relative = matches[0]['relative_path']
-    return _within(root, relative)
+        item = matches[0]
+        source = _within(root, item['relative_path'])
+        representative = shared_input(inputs, item)
+        if representative is not None:
+            try:
+                return _within(root, representative['relative_path']), item['source_name']
+            except (KeyError, ValueError):
+                pass  # A missing or unsafe representative cannot widen this read.
+        return source, None
 
 
 def _within(root, relative):
@@ -235,17 +274,19 @@ def read(workspace, name=None, *, pointers=None, directory=False, file=False,
                     or not 512 <= selection['budget'] <= 262144):
                 raise ValueError('no current selection; specify the source and fields once')
             source = _within(root, selection['path'])
+            source_alias = selection.get('source_alias')
             pointers, directory = selection['pointers'], selection['directory']
             budget = selection['budget'] if budget is None else budget
         else:
-            source = _source(root, name, file)
+            source, source_alias = _source(root, name, file)
             pointers = list(pointers or [])
         startup_budget = _startup_budget(root, source)
         budget = (startup_budget or 4096) if budget is None else budget
         if budget > max(startup_budget or 0, 8192):
             raise ValueError('budget exceeds configured startup limit or scientific-input limit of 8192 bytes')
         selection = dict(path=source.relative_to(root).as_posix(), pointers=pointers,
-                         directory=directory, budget=budget)
+                         directory=directory, budget=budget,
+                         **({'source_alias': source_alias} if source_alias is not None else {}))
         key = hashlib.sha256(encode([selection['path'], pointers, directory]).encode()).hexdigest()
         raw = source.read_bytes()
         fingerprint = hashlib.sha256(raw).hexdigest()
@@ -263,6 +304,17 @@ def read(workspace, name=None, *, pointers=None, directory=False, file=False,
         else:
             text = _selected_text(raw, pointers, directory)
         reply = None
+        if (action == 'read' and source_alias is not None and isinstance(previous, dict)
+                and previous.get('source_alias') not in {None, source_alias}
+                and previous.get('fingerprint') == fingerprint
+                and all(type(previous.get(k)) is int for k in ('start', 'end'))
+                and 0 <= previous['start'] <= previous['end'] <= len(text)):
+            start, end = previous['start'], previous['end']
+            remaining = len(text) - end
+            reply = ('[read_input: same original selection; cached navigation is not proof of reading. '
+                '--repeat recovers the last page; --restart rereads from the beginning. '
+                f'{remaining} characters remain after that page; --next continues.]\n'
+                + ('[read_input: more; --next]\n' if remaining else '[read_input: end]\n'))
         if action in {'next', 'repeat'}:
             if previous['end'] > len(text):
                 raise ValueError('navigation cache damaged; use --restart')
@@ -278,7 +330,8 @@ def read(workspace, name=None, *, pointers=None, directory=False, file=False,
         if reply is None:
             end = _end(text, start, budget)
             reply = _display(text, start, end)
-        state[key] = dict(fingerprint=fingerprint, start=start, end=end)
+        state[key] = dict(fingerprint=fingerprint, start=start, end=end,
+            **({'source_alias': source_alias} if source_alias is not None else {}))
         state['current_selection'] = selection
         fd, temporary = tempfile.mkstemp(dir=cache, prefix='.navigation-')
         try:

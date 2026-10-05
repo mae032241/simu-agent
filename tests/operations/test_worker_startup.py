@@ -135,6 +135,7 @@ def test_input_pointer_errors_offer_navigation_without_changing_rfc_semantics():
     ('different', True, 'on_demand', False),
     ('same', False, 'on_demand', False),
     ('same', True, 'handoff_only', False),
+    ('same', True, 'file_reference', False),
 ])
 def test_original_reuse_requires_exact_identity_and_visible_alias(
     identity, first_visible, first_exposure, expected,
@@ -169,5 +170,38 @@ def test_original_reuse_requires_exact_identity_and_visible_alias(
     assert context.get('same_source_as') == ('evidence' if expected else None)
     assert context['usage'] == 'prior_signal'
     assert ('same_source_as' in start['reading']['inputs']) == expected
+    if expected:
+        assert 'relative_path' not in context and 'media_type' not in context
+        assert next(item for item in start['inputs'] if item['source_name'] == 'evidence')['relative_path']
+    else:
+        assert context['relative_path']
     if not first_visible or first_exposure == 'handoff_only':
         assert [item['source_name'] for item in start['inputs']] == ['context']
+
+
+def test_start_compacts_only_shared_metadata_and_keeps_alias_permissions():
+    from scidiscovery.artifact_agent.service.worker_start import startup_document
+    original = dict(source_name='subject', relative_path='inputs/subject.txt', description='Original task',
+        media_type='text/plain; charset=utf-8', schema_id='opaque', size_bytes=9000,
+        artifact_name='task', artifact_name_usage='navigation_only', reference_availability='unknown',
+        usage='evidence_inventory', exposure='on_demand', source_origin='user_via_scheduler', historical=False)
+    aliases = [original, {**original, 'source_name':'objective_source', 'relative_path':'inputs/goal.txt',
+        'description':'Overall goal', 'same_source_as':'subject'},
+        {**original, 'source_name':'user_context', 'relative_path':'inputs/context.txt',
+        'description':'User background', 'usage':'prior_signal', 'same_source_as':'subject'}]
+    before = canonical_json(aliases)
+    start = startup_document(dict(inputs=aliases))
+    assert start['inputs'][0] == original
+    for actual, expected in zip(start['inputs'][1:], aliases[1:]):
+        assert {key: actual[key] for key in actual} == {key: expected[key] for key in actual}
+        assert all(key in actual for key in ('source_name', 'description', 'usage', 'exposure', 'source_origin', 'historical', 'same_source_as'))
+    assert len(canonical_json(start['inputs'])) < len(before)
+    assert canonical_json(aliases) == before
+    import os
+    if directory := os.environ.get('SCID_TEST_LOG_DIR'):
+        Path(directory).mkdir(exist_ok=True)
+        Path(directory, 'd3-startup-metrics.json').write_text(json.dumps({
+            'before_input_index_bytes':len(before), 'after_input_index_bytes':len(canonical_json(start['inputs'])),
+            'alias_count':len(aliases), 'default_reading_entries':sum('relative_path' in item for item in start['inputs'])}))
+    aliases[-1]['reference_availability'] = 'unresolved'
+    assert startup_document(dict(inputs=aliases))['inputs'][-1]['reference_availability'] == 'unresolved'
