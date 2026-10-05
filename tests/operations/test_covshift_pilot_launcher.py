@@ -28,8 +28,9 @@ def test_preparation_rejects_changed_public_bytes_before_create(tmp_path,monkeyp
     assert not (tmp_path/'new').exists()
 
 
-@pytest.mark.parametrize('tokens,wall',[(200000,1800),(112607,1761),(2000000,1800)])
-def test_prepare_consumes_exact_candidate_builds_same_aliases_and_fresh_settings(tmp_path,monkeypatch,tokens,wall):
+@pytest.mark.parametrize('tokens,wall,scidiscovery_tokens',[(200000,1800,None),(112607,1761,None),
+    (2000000,1800,None),(6000000,1800,None),(200000,1800,6000000)])
+def test_prepare_consumes_exact_candidate_builds_same_aliases_and_fresh_settings(tmp_path,monkeypatch,tokens,wall,scidiscovery_tokens):
     source=pair(tmp_path,monkeypatch)
     invoked=[]
     def init(command,**kwargs):
@@ -40,13 +41,14 @@ def test_prepare_consumes_exact_candidate_builds_same_aliases_and_fresh_settings
         return SimpleNamespace(returncode=0,stdout=b'fixture init: no processes')
     monkeypatch.setattr(driver.subprocess,'run',init)
     result=driver.prepare(source,tmp_path/'new',native_bundle(tmp_path),
-        native_goal_tokens=tokens,native_goal_wall_seconds=wall)
+        native_goal_tokens=tokens,native_goal_wall_seconds=wall,
+        **({'scidiscovery_tokens':scidiscovery_tokens} if scidiscovery_tokens is not None else {}))
     assert len(invoked)==2 and result['launch_ready'] is False
-    assert result['limits']['all_role_tokens']==2000000 and result['limits']['trial_wall_seconds']==1800
+    assert result['limits']['all_role_tokens']==6000000 and result['limits']['trial_wall_seconds']==1800
     specs=[json.loads(Path(p).read_text()) for p in result['arms'].values()]
     assert specs[0]['public_sha256']==specs[1]['public_sha256']
     for spec in specs:
-        expected={'all_role_tokens':tokens if spec['arm']=='native_goal' else 200000,
+        expected={'all_role_tokens':tokens if spec['arm']=='native_goal' else (scidiscovery_tokens or 200000),
             'trial_wall_seconds':wall if spec['arm']=='native_goal' else 1800}
         assert spec['limits']==expected==result['arm_limits'][spec['arm']]
         settings=json.loads(Path(spec['root'],'agent-settings.json').read_text())
@@ -378,7 +380,9 @@ def test_reduced_arm_limits_stop_invalid_limits_reject_and_legacy_defaults_remai
     budget={'all_role_tokens':112607,'trial_wall_seconds':1761}
     assert driver.arm_limits({'limits':budget})==budget
     assert driver.arm_limits({})=={'all_role_tokens':200000,'trial_wall_seconds':1800}
-    for key,values in {'all_role_tokens':(0,-1,True,2000001,'112607'),
+    assert driver.arm_limits({'limits':{**budget,'all_role_tokens':6000000}})=={
+        **budget,'all_role_tokens':6000000}
+    for key,values in {'all_role_tokens':(0,-1,True,6000001,'112607'),
             'trial_wall_seconds':(0,-1,True,1801,1761.0)}.items():
         for value in values:
             with pytest.raises(ValueError,match='arm_budget'):
