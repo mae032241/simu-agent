@@ -74,6 +74,15 @@ SciDiscovery control plane
 Dependencies describe readiness, not a fixed workflow graph. The scheduler
 selects the shortest defensible role topology for the current contradiction.
 
+A complete experiment can start directly from frozen original user task text.
+Its Worker owns necessary understanding, design, implementation, execution and
+validity assessment, and can reuse an existing intake. Choose separate intake,
+analysis or review when its scientific result can change the next decision.
+Missing critical information or an unavailable environment can yield an explicit
+blocked or inconclusive report. Control preserves exact sources and existing
+permissions and budgets; admitting original text does not grant scientific
+qualification or execution authorization.
+
 See [Architecture](docs/ARCHITECTURE.md) for ownership and data-flow details.
 
 ## Quick Start

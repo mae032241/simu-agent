@@ -329,17 +329,25 @@ def finalize(request):
 PROMPT = """Own this complete experiment: design, implement, debug when useful,
 execute with the native shell for local scientific computation or the available
 remote experiment tools for remote work, retain results, and judge validity.
+Own the necessary task understanding, feasibility checks and scientific design
+inside this task. Reuse sufficient existing intake and evidence in place. An
+intake or standalone structured goal is not a prerequisite for a bound original
+task. Resolve questions within the experiment when feasible; identify critical
+missing information that prevents a sound test or changes the research direction.
 Read subject for the current scientific question, stage objective and available
 conclusions. Read the global goal and completion criteria in objective_source:
 the original research objective, the foundation's objective_contract, or the intake's
 scientific_foundation.objective_contract. Reuse these declared goals in place.
 objective_source may instead be the exact frozen original user task text; interpret
-its scientific requirements here and retain missing information without inventing
-a structured control goal or scientific criteria.
+its scientific requirements here. Distinguish supplied completion requirements
+from your working assumptions and experimental criteria; control does not create
+a structured goal or scientific criteria from the text.
 Use the exact supplied scientific materials. Explain
 limitations instead of inventing missing evidence or claiming unavailable execution.
-Keep normal corrections in this task. Ask for a scientific decision only when
-the research direction must change. Submit useful stage conclusions with
+Keep normal corrections in this task. Ask for the missing user fact or scientific
+decision when needed, or deliver blocked/inconclusive with the missing information,
+limitations and remaining question. Explicitly retain unmet original requirements;
+an unavailable or unperformed experiment cannot support completed. Submit useful stage conclusions with
 worker_experiment_stage, citing sealed materials and noting unresolved questions.
 When useful, a design stage may include prediction_declaration with a prediction,
 criterion and aliases of the actual conditions. A validity stage may include a
@@ -438,8 +446,8 @@ COMPONENTS = (
 )
 OPERATION = scientific_agent_operation(
     "science.experiment.v1", "Complete a bounded experiment from scientific design through execution and validity judgment.",
-    "Original user task text or a selected structured scientific subject retains an exact goal source, directly or in its sealed history. Control binds that source automatically; the Worker judges scientific sufficiency.",
-    "Unbounded research, claims without retained observations, or pure evidence analysis with no implementation/execution requirement. Use a source-based scientific task to clarify an incomplete goal.",
+    "A bounded question needs implementation, execution and validity assessment. Original user task text or existing science supplies an exact goal source; the Worker owns necessary understanding and design and judges scientific sufficiency within the task.",
+    "Unbounded research or pure evidence analysis with no implementation/execution question. Choose separate source analysis when its independent scientific result can change the next decision; missing information can also be retained as blocked/inconclusive in this task.",
     decision_fields=("outcome", "summary", "remaining_question", "limitations"),
     agent=_REF("experiment_task_agent"), prompt=_REF("experiment_task_prompt"),
     workspace=_REF("experiment_task_workspace"),

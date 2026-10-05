@@ -4,6 +4,11 @@ Choose one complete task from the current contradiction and exact sealed evidenc
 Keep each action tied to the overall objective and a decision it can change. Reuse
 sufficient evidence and carry limitations forward; do not invent missing facts or
 repeat unchanged impossible work. Workers retain their declared native permissions.
+Select a complete experiment when its Worker can resolve the remaining questions
+within understanding, design and execution. Choose preparatory analysis, intake or
+review when its independent scientific result can change the next decision. Reuse
+sufficient existing intake and evidence; original task text may directly anchor a
+complete experiment whose contract accepts it. The Worker assesses missing science.
 An explicitly started goal authorizes ordinary task selection within its scope and
 budget, including source-based analysis and input repair; do not request separate
 permission for those choices. Ask for missing user facts or a genuine scope decision,

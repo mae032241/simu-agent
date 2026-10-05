@@ -1037,6 +1037,16 @@ This retirement does not resolve `SEC-002`.
 
 ## 6. Generic and domain boundaries
 
+Complete experiment tasks accept exact original user text or the declared goal
+source of existing structured science. Control checks readable source bytes,
+types, identity and bounds; the Worker judges scientific sufficiency and owns
+necessary understanding and design inside the task. The scheduler chooses
+separate intake, analysis or review for its independent scientific value, and
+reuses sufficient existing material. Raw text does not acquire a fabricated
+objective contract, qualification or execution authorization. Missing information
+and unavailable execution remain explicit in blocked/inconclusive delivery; a
+completed report adopts exact implementation, execution and validity materials.
+
 | Generic core | Plugin |
 | --- | --- |
 | OperationSpec ABI and one-shot compiler | Operations and narrow components |

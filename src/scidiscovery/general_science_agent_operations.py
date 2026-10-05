@@ -373,7 +373,7 @@ OPERATIONS = (
     _agent(
         "science.evidence.extract.v1",
         "Analyze a bounded scientific question from original text, files or data; deliver a source-backed ScientificIntake.",
-        "Original materials need scientific interpretation, evidence analysis or deterministic calculation, with or without a prior scientific result. This task can answer the assigned question directly.",
+        "Original materials need scientific interpretation, evidence analysis or deterministic calculation, with or without a prior scientific result. This task can answer the question directly or provide an independent scientific result that changes a later decision; it is optional preparation for a complete experiment.",
         "Granting qualification. Use a domain evidence task when quantitative extraction tools are needed.",
         decision_fields=("/scientific_foundation/objective", "/scientific_foundation/objective_contract/intent",
             "/scientific_foundation/objective_contract/mandatory_targets",

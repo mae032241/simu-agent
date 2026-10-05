@@ -35,7 +35,7 @@ def installed(monkeypatch):
     compile_installed_catalog.cache_clear()
 
 
-def _start_native(tmp_path, settings=None, scientific_material=False):
+def _start_native(tmp_path, settings=None, scientific_material=False, goal_source="research-objective", task_text="Compute 2+2 and retain the program and result."):
     from scidiscovery.artifact_agent.runtime import open_runtime
     from scidiscovery.artifact_agent.interfaces.mcp_root import RootMCPRouter, RootToolFacade
     from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
@@ -50,13 +50,20 @@ def _start_native(tmp_path, settings=None, scientific_material=False):
     goal = {"objective_key": "sum", "intent": "engineering", "statement": "Compute 2+2.",
         "closure_requirements": [{"requirement_key": "result", "description": "Retain the computed result.",
             "requirement_type": "comparison_present", "comparison_purposes": ["exploratory_diagnostic"]}]}
-    envelope = runtime.artifacts.register(json.dumps(goal).encode(), ArtifactRegistration(kind="objective",
-        schema_id="scidiscovery.research-objective.v1", payload_schema_version=1,
-        media_type="application/json", creator=runtime.actor), idempotency_key="goal")
-    runtime.scheduler_bindings.bind(instance=instance.instance_id, namespace="artifact", name="goal", object_id=envelope.artifact_id)
     root = RootMCPRouter(RootToolFacade(runtime.artifacts, runtime.intake, runs=runtime.runs,
         approvals=runtime.approvals, executions=runtime.executions,
         bindings=runtime.scheduler_bindings, instance=instance.instance_id, operation_catalog=catalog))
+    if goal_source == "source-text":
+        root.call_tool("artifact_ingest_text", {"name": "goal", "text": task_text})
+    else:
+        raw = json.dumps(goal).encode()
+        if goal_source == "scientific-intake":
+            from tests.operations.test_r4_experiment_task import _goal_carrier
+            raw = _goal_carrier(goal_source, objective_key="sum", statement=goal["statement"])
+        envelope = runtime.artifacts.register(raw, ArtifactRegistration(kind="objective",
+            schema_id=f"scidiscovery.{goal_source}.v1", payload_schema_version=1,
+            media_type="application/json", creator=runtime.actor), idempotency_key="goal")
+        runtime.scheduler_bindings.bind(instance=instance.instance_id, namespace="artifact", name="goal", object_id=envelope.artifact_id)
     inputs = [{"port": "subject", "artifact_names": ["goal"]}]
     if scientific_material:
         parameters = runtime.artifacts.register(b'{"offset":0}', ArtifactRegistration(kind="parameters",
@@ -86,8 +93,9 @@ def _publish(f, name, raw, sources):
 
 
 @pytest.mark.parametrize("missing_environment", (False, True))
-def test_no_provider_native_shell_delivery_and_environment_blocker(tmp_path, installed, missing_environment):
-    f = _start_native(tmp_path)
+@pytest.mark.parametrize("goal_source", ("research-objective", "source-text", "scientific-intake"))
+def test_no_provider_native_shell_delivery_and_environment_blocker(tmp_path, installed, missing_environment, goal_source):
+    f = _start_native(tmp_path, goal_source=goal_source)
     assert f.compiled.spec.executor.capability is None
     assert {tool.name for tool in f.compiled.worker_tools if tool.name.startswith("worker_experiment_")} == {"worker_experiment_stage"}
     code = (b"import scid_missing_environment_fixture_673891\n" if missing_environment else
@@ -123,6 +131,38 @@ def test_no_provider_native_shell_delivery_and_environment_blocker(tmp_path, ins
     assert view["execution_attestation"] == "unavailable"
     native = json.loads(view["text"])["native_execution"]
     assert native["implementation"] == impl and native["logs"] == [log]
+    status = f.root.call_tool("run_status", {"name": "compute"})
+    assert status["selected_output"]["items"][0]["value"] == outcome
+    run = f.runtime.runs.status(f.run_id)
+    expected = f.runtime.artifacts.get_by_id(f.runtime.scheduler_bindings.resolve(
+        instance=run.instance_id, namespace="artifact", name="goal")).ref
+    assert next(item.artifact_ref for item in run.inputs if item.port_name == "objective_source") == expected
+    if goal_source == "source-text":
+        from scidiscovery.artifact_agent.approval_ui.read_model import InstanceReadModel
+        model = InstanceReadModel(artifacts=f.runtime.artifacts, bindings=f.runtime.scheduler_bindings,
+            runs=f.runtime.runs, approvals=f.runtime.approvals, executions=f.runtime.executions,
+            operation_catalog=f.runtime.operation_catalog)
+        detail = model.node(run.instance_id, "run:compute")
+        assert detail["objective_refs"][0]["artifact_id"] == expected.artifact_id
+        original = f.root.call_tool("artifact_catalog", {"name": "goal", "view": "content"})
+        assert original["complete"] and model.artifact(run.instance_id, expected.artifact_id)["payload"] == original["text"]
+
+
+@pytest.mark.parametrize("outcome", ("blocked", "inconclusive"))
+def test_original_task_missing_science_can_finish_with_an_explicit_limit(tmp_path, installed, outcome):
+    f = _start_native(tmp_path, goal_source="source-text", task_text="Compare the candidate models; the data and target metric are not provided.")
+    design = f.worker.call_tool("worker_experiment_stage", {"stage": "design",
+        "conclusion": "Cannot choose a defensible comparison without the data and target metric.",
+        "remaining_question": "Which data and target metric should be used?", "materials": ["objective_source"]})["reference"]
+    (f.workspace / "output/result.json").write_text(json.dumps({"schema_version": 1, "payload": {
+        "summary": "The comparison requirements remain unresolved.", "outcome": outcome,
+        "limitations": ["No implementation or experiment was performed."],
+        "remaining_question": "Provide the data and target metric.", "adopted_stages": [design]}}))
+    assert f.worker.call_tool("worker_submit_result", {})["state"] == "completed"
+    assert {item["metadata"].get("stage") for item in f.runtime.runs.tool_evidence(f.run_id)} == {"design"}
+    result = f.root.call_tool("run_status", {"name": "compute"})
+    selected = {item["pointer"]: item["value"] for item in result["selected_output"]["items"]}
+    assert selected["/outcome"] == outcome and selected["/remaining_question"] == "Provide the data and target metric."
 
 
 @pytest.mark.parametrize("include_code", (False, True))
