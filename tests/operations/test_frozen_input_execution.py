@@ -20,7 +20,7 @@ def _port(name, description, schema, **kwargs):
     return base.model_copy(update={'schema_id': schema, 'schema_resource': ComponentRef('tool_evidence_schema')}) if schema == 'scidiscovery.tool-evidence-manifest.v1' else base
 
 
-def _system(tmp_path, monkeypatch, *, hidden_transform=False, consumer=None, restricted_source=False):
+def _system(tmp_path, monkeypatch, *, hidden_transform=False, consumer=None, restricted_source=False, native_only=False):
     operations = []
     for op in GENERAL.operations:
         if op.operation_id == 'science.intake.split.v1' and hidden_transform:
@@ -53,7 +53,8 @@ def _system(tmp_path, monkeypatch, *, hidden_transform=False, consumer=None, res
             result['scientific_foundation'] += (json.dumps(second).encode(),)
         return result
     monkeypatch.setattr(Components, 'intake_split', CallableComponent('transform', split))
-    catalog = compile_catalog((CORE_PLUGIN, GENERAL.model_copy(update={'operations': tuple(operations)}), CURVE, TCAD))
+    catalog = compile_catalog((CORE_PLUGIN, GENERAL.model_copy(update={'operations': tuple(operations)}), CURVE, TCAD),
+        capability_selections={'general_science:experiment_task_protocol': 'none'} if native_only else None)
     runtime, instance, root = _root(tmp_path, catalog=catalog)
     runtime.runs.operation_catalog = catalog
     _register(runtime, instance, name='source', raw=b'Exact source.', kind='source', schema='opaque', media_type='text/plain', provisional=restricted_source)

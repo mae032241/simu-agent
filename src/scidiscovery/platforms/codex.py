@@ -386,7 +386,7 @@ def _local_native_tool_instruction(compiled: Any, *, debug_disable_task_network=
         "write scratch files/caches under workspace/scratch. Set TMPDIR and XDG_CACHE_HOME to that scratch "
         "directory and PYTHONDONTWRITEBYTECODE=1 on each script call. Only installed readers manage .read-input. "
         "Local scientific computation, including installed solvers, uses the declared native shell permissions. "
-        "Choose native computation or an available remote experiment tool for each step; preserve exact source files, logs and results. "
+        "Use computation within the assigned scientific role: hypothesis and analysis tasks may process data, but new experiment requests belong to an experiment task with its sealed upstream hypotheses. Experiment tasks choose native computation or their available remote experiment tool; preserve exact source files, logs and results. "
         "Remote tools follow their declared authorization policies. Network, installation and service changes require their existing permissions and authorization. "
         "Optional prepared helpers retain native permissions and fresh context. Spawn with the exact model and reasoning effort returned by worker_helper; inherit and lightweight are configuration choices, not permission roles. The owner waits and integrates "
         "findings/files, checking their method and evidence without automatically repeating the entire calculation. "

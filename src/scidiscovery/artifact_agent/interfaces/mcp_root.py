@@ -89,7 +89,7 @@ class ProgressionReportInput(RootToolInput):
         description="Optional task-level goal judgments. Control freezes evidence and appends corrections; this is not a scientific result or qualification. Ordinary tasks require no assessment. In configured assist mode, persistent missing or unsupported assessments can trigger observation-gap protection and directly pause further dispatch. Cited new bytes plus a Root advance judgment do not independently establish scientific progress.")
     summary: str = Field(min_length=1, max_length=4096,
         description="Current goal outcome or specific waiting condition; retain scientific limitations.")
-    completed: bool = Field(default=False, description="Root judges the whole frozen goal complete, after reading sealed results.")
+    completed: bool = Field(default=False, description="Root judges the whole frozen goal complete, after reading sealed results. Accepted experiments must be terminal and each sealed experiment report must have a completed analysis bound to that exact report. Inconclusive analyses are valid; report completed=false while results or interpretation remain outstanding. Evidence-only goals need no experiment or analysis.")
     question: str | None = Field(default=None, min_length=1, max_length=2048,
         description="Specific missing user information, when needed to continue.")
 

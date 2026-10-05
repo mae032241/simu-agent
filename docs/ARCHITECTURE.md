@@ -1045,15 +1045,31 @@ This retirement does not resolve `SEC-002`.
 
 ## 6. Generic and domain boundaries
 
-Complete experiment tasks accept exact original user text or the declared goal
-source of existing structured science. Control checks readable source bytes,
-types, identity and bounds; the Worker judges scientific sufficiency and owns
-necessary understanding and design inside the task. The scheduler chooses
-separate intake, analysis or review for its independent scientific value, and
-reuses sufficient existing material. Raw text does not acquire a fabricated
-objective contract, qualification or execution authorization. Missing information
-and unavailable execution remain explicit in blocked/inconclusive delivery; a
-completed report adopts exact implementation, execution and validity materials.
+The hypothesis task accepts exact original user text without mandatory intake,
+retrieval or scientific-foundation qualification. Its Worker owns scientific
+understanding and testable hypotheses, preserving unsupported claims and missing
+information. Control freezes the original goal identity and creates no foundation
+or objective key. The alternative structured frame/foundation branch retains
+existing qualification and requires its exact objective key. Optional hypothesis
+review inherits the original goal and source materials, with large files streamed.
+
+Experiment tasks require an exact sealed nonempty hypothesis portfolio, selected
+directly or inherited from an exact prior experiment. Control follows immutable
+producer inputs to bind that hypothesis and its original global goal; original
+text, intake, foundation or a goal alone cannot start an experiment. Evidence
+preparation may be omitted when existing materials suffice. Hypothesis formulation,
+bounded experiment and result analysis retain their scientific responsibilities;
+new research routes return to hypothesis formulation. The generic result-analysis
+Operation is available without domain plugins and binds the exact experiment,
+its original hypotheses, goal and scientific materials. No new stage approval or
+mandatory independent review is introduced. New remote execution requires the
+task hypothesis; status, collection and cancellation retain existing recovery
+semantics. Native shell remains a soft permission boundary, permits role-appropriate
+analysis calculations, and does not technically prevent arbitrary native programs.
+Original-goal readability, immutable identity and instance budget ownership remain
+control responsibilities; raw text never receives a fabricated objective key.
+Missing information and unavailable execution remain explicit in blocked/inconclusive
+delivery; completed reports adopt exact implementation, execution and validity materials.
 
 | Generic core | Plugin |
 | --- | --- |

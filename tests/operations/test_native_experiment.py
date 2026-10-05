@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import pytest
 
 from scidiscovery.agent_execution_settings import AgentSettings, effective_settings
+from scidiscovery.artifact_agent.schema.common import canonical_json
 from scidiscovery.builtin_plugin import CORE_PLUGIN
 from scidiscovery.general_science_plugin import PLUGIN as SCIENCE_PLUGIN
 from scidiscovery.operations.catalog import compile_catalog, compile_installed_catalog
@@ -35,7 +36,7 @@ def installed(monkeypatch):
     compile_installed_catalog.cache_clear()
 
 
-def _start_native(tmp_path, settings=None, scientific_material=False, goal_source="research-objective", task_text="Compute 2+2 and retain the program and result."):
+def _start_native(tmp_path, settings=None, scientific_material=False, scientific_file=False, goal_source="research-objective", task_text="Compute 2+2 and retain the program and result."):
     from scidiscovery.artifact_agent.runtime import open_runtime
     from scidiscovery.artifact_agent.interfaces.mcp_root import RootMCPRouter, RootToolFacade
     from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
@@ -43,7 +44,8 @@ def _start_native(tmp_path, settings=None, scientific_material=False, goal_sourc
     from scidiscovery.artifact_agent.service.worker_connections import WorkerConnections
     project = tmp_path / "project"
     project.mkdir()
-    runtime = open_runtime(project_root=project, state_root=tmp_path / "state", agent_settings=settings)
+    runtime = open_runtime(project_root=project, state_root=tmp_path / "state", agent_settings=settings,
+        approval_receipt_secret=b'a'*32)
     catalog = runtime.operation_catalog
     compiled = catalog.operation("science.experiment.v1")
     instance = runtime.scheduler_bindings.create_instance(name="native", title="Native experiment", objective="Compute 2+2.")
@@ -64,12 +66,21 @@ def _start_native(tmp_path, settings=None, scientific_material=False, goal_sourc
             schema_id=f"scidiscovery.{goal_source}.v1", payload_schema_version=1,
             media_type="application/json", creator=runtime.actor), idempotency_key="goal")
         runtime.scheduler_bindings.bind(instance=instance.instance_id, namespace="artifact", name="goal", object_id=envelope.artifact_id)
-    inputs = [{"port": "subject", "artifact_names": ["goal"]}]
+    from tests.operations.scientific_chain_fixtures import sealed_hypothesis
+    subject, foundation_name = sealed_hypothesis(runtime, root, instance, 'goal')
+    inputs = [{"port": "subject", "artifact_names": [subject]}]
+    if goal_source == "source-text":
+        inputs.append({"port": "user_context", "artifact_names": ["goal"]})
     if scientific_material:
         parameters = runtime.artifacts.register(b'{"offset":0}', ArtifactRegistration(kind="parameters",
             schema_id="opaque", payload_schema_version=1, media_type="application/json", creator=runtime.actor), idempotency_key="parameters")
         runtime.scheduler_bindings.bind(instance=instance.instance_id, namespace="artifact", name="parameters", object_id=parameters.artifact_id)
         inputs.append({"port": "scientific_materials", "artifact_names": ["parameters"]})
+    if scientific_file:
+        grid = runtime.artifacts.register(b'exact-grid', ArtifactRegistration(kind='grid', schema_id='opaque',
+            payload_schema_version=1, media_type='application/octet-stream', creator=runtime.actor), idempotency_key='grid')
+        runtime.scheduler_bindings.bind(instance=instance.instance_id, namespace='artifact', name='grid', object_id=grid.artifact_id)
+        inputs.append({'port': 'scientific_files', 'artifact_names': ['grid']})
     invoked = root.call_tool("operation_invoke", {"name": "compute", "operation_id": "science.experiment.v1",
         "inputs": inputs, "instruction": "Compute using the installed local environment."})
     assert invoked["result"]["state"] == "queued", invoked
@@ -82,7 +93,7 @@ def _start_native(tmp_path, settings=None, scientific_material=False, goal_sourc
     assert "worker_experiment_execute" not in assignment["tool_contracts"]
     workspace = Path(opened["workspace_path"])
     return SimpleNamespace(runtime=runtime, worker=worker, workspace=workspace, run_id=run_id,
-        root=root, compiled=compiled)
+        root=root, compiled=compiled, foundation_name=foundation_name)
 
 
 def _publish(f, name, raw, sources):
@@ -95,7 +106,7 @@ def _publish(f, name, raw, sources):
 @pytest.mark.parametrize("missing_environment", (False, True))
 @pytest.mark.parametrize("goal_source", ("research-objective", "source-text", "scientific-intake"))
 def test_no_provider_native_shell_delivery_and_environment_blocker(tmp_path, installed, missing_environment, goal_source):
-    f = _start_native(tmp_path, goal_source=goal_source)
+    f = _start_native(tmp_path, goal_source=goal_source, scientific_file=goal_source == 'source-text' and not missing_environment)
     assert f.compiled.spec.executor.capability is None
     assert {tool.name for tool in f.compiled.worker_tools if tool.name.startswith("worker_experiment_")} == {"worker_experiment_stage"}
     code = (b"import scid_missing_environment_fixture_673891\n" if missing_environment else
@@ -135,7 +146,7 @@ def test_no_provider_native_shell_delivery_and_environment_blocker(tmp_path, ins
     assert status["selected_output"]["items"][0]["value"] == outcome
     run = f.runtime.runs.status(f.run_id)
     expected = f.runtime.artifacts.get_by_id(f.runtime.scheduler_bindings.resolve(
-        instance=run.instance_id, namespace="artifact", name="goal")).ref
+        instance=run.instance_id, namespace="artifact", name=f.foundation_name)).ref
     assert next(item.artifact_ref for item in run.inputs if item.port_name == "objective_source") == expected
     if goal_source == "source-text":
         from scidiscovery.artifact_agent.approval_ui.read_model import InstanceReadModel
@@ -143,9 +154,50 @@ def test_no_provider_native_shell_delivery_and_environment_blocker(tmp_path, ins
             runs=f.runtime.runs, approvals=f.runtime.approvals, executions=f.runtime.executions,
             operation_catalog=f.runtime.operation_catalog)
         detail = model.node(run.instance_id, "run:compute")
-        assert detail["objective_refs"][0]["artifact_id"] == expected.artifact_id
+        assert any(item["artifact_id"] == expected.artifact_id for item in detail["objective_refs"])
         original = f.root.call_tool("artifact_catalog", {"name": "goal", "view": "content"})
-        assert original["complete"] and model.artifact(run.instance_id, expected.artifact_id)["payload"] == original["text"]
+        original_id = f.runtime.scheduler_bindings.resolve(instance=run.instance_id, namespace='artifact', name='goal')
+        assert original["complete"] and model.artifact(run.instance_id, original_id)["payload"] == original["text"]
+    if not missing_environment:
+        from tests.operations.worker_fixtures import attached_worker
+        from scidiscovery.artifact_agent.schema.refs import ArtifactRef
+        subject = status['output_artifact_name']
+        assert f.root.call_tool('operation_invoke', {'name': 'analysis', 'operation_id': 'science.result.analyze.v1',
+            'inputs': [{'port': 'subject', 'artifact_names': [subject]}],
+            'instruction': 'Interpret the exact retained experiment.'})['result']['state'] == 'queued'
+        analyst = attached_worker(f.runtime, f.root, 'analysis')
+        opened = analyst.call_tool('worker_open_assignment', {})
+        assignment = json.loads(Path(opened['assignment_path']).read_bytes())
+        assert 'worker_experiment_execute' not in assignment['tools']
+        assert all(item.get('materialization') == 'controlled_tool_stream_only'
+            and not (Path(opened['workspace_path']) / item['relative_path']).exists()
+            for item in assignment['inputs'] if item['source_name'].startswith(('experiment_sources', 'experiment_files')))
+        if goal_source == 'source-text':
+            grid_input = next(item for item in assignment['inputs'] if item['artifact_name'] == 'grid')
+            materialized = analyst.call_tool('worker_materialize_input', {'source_name': grid_input['source_name']})
+            assert (Path(opened['workspace_path']) / materialized['relative_path']).read_bytes() == b'exact-grid'
+        Path(opened['output_directory'], 'result.json').write_bytes(canonical_json({'schema_version': 1,
+            'payload': {'summary': 'The exact retained result is available for interpretation.',
+                'overall_verdict': 'inconclusive', 'claim_allowed': False,
+                'limitations': ['Native execution has Worker provenance.']}}))
+        assert analyst.call_tool('worker_submit_result', {})['state'] == 'completed'
+        analysis_id = f.runtime.scheduler_bindings.resolve(instance=run.instance_id, namespace='run', name='analysis')
+        material_refs = {item.artifact_ref for item in f.runtime.runs.status(analysis_id).inputs
+                        if item.port_name in {'experiment_materials', 'experiment_files'}}
+        assert {ArtifactRef.model_validate(item['artifact_ref']) for item in records} <= material_refs
+        if goal_source == 'source-text':
+            from scidiscovery.artifact_agent.runtime import open_runtime
+            from scidiscovery.artifact_agent.interfaces.mcp_root import RootMCPRouter, RootToolFacade
+            recovered = open_runtime(project_root=f.runtime.project_root, state_root=f.runtime.state_root,
+                approval_receipt_secret=b'a'*32)
+            fresh_root = RootMCPRouter(RootToolFacade(recovered.artifacts, recovered.intake, runs=recovered.runs,
+                approvals=recovered.approvals, executions=recovered.executions, bindings=recovered.scheduler_bindings,
+                instance=run.instance_id, operation_catalog=recovered.operation_catalog))
+            assert fresh_root.call_tool('run_status', {'name': 'analysis'})['state'] == 'completed'
+            recovered_analysis = recovered.runs.status(analysis_id)
+            assert recovered_analysis.inputs == f.runtime.runs.status(analysis_id).inputs
+            assert next(item.artifact_ref for item in recovered_analysis.inputs if item.port_name == 'objective_source') == expected
+            assert recovered.artifacts.read(expected) == f.runtime.artifacts.read(expected)
 
 
 @pytest.mark.parametrize("outcome", ("blocked", "inconclusive"))
@@ -206,7 +258,7 @@ def test_reused_native_execution_preserves_exact_files_and_consumer_aliases(tmp_
     names = [f.runtime.runs.material_artifact_name(old, records[alias])
         for alias in (code, impl, execution, validity, result, *([log] if retain_log else []))]
     invoked = f.root.call_tool("operation_invoke", {"name": "reuse", "operation_id": "science.experiment.v1",
-        "inputs": [{"port": "subject", "artifact_names": ["goal"]}, {"port": "scientific_materials", "artifact_names": names}],
+        "inputs": [{"port": "subject", "artifact_names": [f.root.call_tool('run_status', {'name': 'compute'})['output_artifact_name']]}, {"port": "scientific_materials", "artifact_names": names}],
         "instruction": "Assess the exact retained native materials."})
     assert invoked["result"]["state"] == "queued", invoked
     new_id = f.runtime.scheduler_bindings.resolve(instance=old.instance_id, namespace="run", name="reuse")

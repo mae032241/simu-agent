@@ -285,6 +285,44 @@ def goal_bound_runs(checkpoint, objective):
     return related
 
 
+def require_experiment_analysis(*, db, row, checkpoint, artifacts, runs, navigation_limit):
+    """A final goal disposition consumes analyses of its exact accepted experiments."""
+    from ..schema.layered_diagnosis import LayeredDiagnosisReport
+    if not row['objective_ref_json']:
+        return
+    objective = json.loads(row['objective_ref_json'])
+    related = goal_bound_runs(checkpoint, objective)
+    if artifacts is None or runs is None:
+        raise ValueError('Goal completion requires the bound scientific result services.')
+    experiments, omitted = runs.goal_experiment_runs(instance_id=row['instance_id'], objective=objective,
+        related_run_ids=set(related.values()), limit=navigation_limit)
+    if omitted:
+        raise ValueError('Goal experiment scope is incomplete; repair its exact bindings or report completed=false.')
+    for run_id in experiments:
+        experiment = runs.status(run_id)
+        if experiment.state in {'queued', 'running'}:
+            raise ValueError('An accepted experiment is still in flight or its scientific contract is unavailable. '
+                'Report completed=false while its result and analysis remain outstanding.')
+        if experiment.state != 'completed':
+            continue
+        covered = False
+        analyses = runs.related_runs(instance_id=row['instance_id'], artifact_ref=experiment.output_ref, limit=101)
+        for analysis in analyses:
+            if (analysis.state != 'completed' or analysis.output_ref is None
+                    or analysis.output_ref.schema_id != 'scidiscovery.layered-diagnosis.v1'):
+                continue
+            if not any(item.artifact_ref == experiment.output_ref and item.usage in {'claim_evidence', 'evidence_inventory'}
+                       for item in analysis.inputs):
+                continue
+            LayeredDiagnosisReport.model_validate_json(artifacts.read(analysis.output_ref), strict=True)
+            covered = True
+            break
+        if not covered:
+            raise ValueError('An accepted experiment lacks a completed analysis of its exact report'
+                + ('; analysis navigation is incomplete' if len(analyses) == 101 else '')
+                + '. Dispatch its analysis, or report completed=false with the remaining limitation.')
+
+
 def record_assessments(*, db, row, assessments, bindings, artifacts, runs):
     """Called inside the same scheduling guard/transaction as the goal report."""
     if not assessments:

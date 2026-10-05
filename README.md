@@ -74,14 +74,19 @@ SciDiscovery control plane
 Dependencies describe readiness, not a fixed workflow graph. The scheduler
 selects the shortest defensible role topology for the current contradiction.
 
-A complete experiment can start directly from frozen original user task text.
-Its Worker owns necessary understanding, design, implementation, execution and
-validity assessment, and can reuse an existing intake. Choose separate intake,
-analysis or review when its scientific result can change the next decision.
-Missing critical information or an unavailable environment can yield an explicit
-blocked or inconclusive report. Control preserves exact sources and existing
-permissions and budgets; admitting original text does not grant scientific
-qualification or execution authorization.
+Research preserves hypothesis formulation, experiment and result analysis.
+Original task text can go directly to the hypothesis Worker, who owns scientific
+understanding and testable hypotheses. Root chooses evidence extraction or
+retrieval only when useful; neither intake nor external search is mandatory.
+An experiment requires an exact sealed, nonempty hypothesis portfolio and tests
+that bounded scientific question through design, implementation, execution and
+validity assessment. Analyze its observations in a separate result-analysis task.
+Reuse sufficient existing evidence and scientific objects; prepare missing
+materials when needed without requiring a fresh intake or independent review
+for every cycle. Control rejects experiment admission and new remote execution
+without the bound hypothesis. Native shell remains a soft permission boundary;
+ordinary analysis calculations are allowed. Missing information or an unavailable
+environment can yield an explicit blocked or inconclusive report.
 
 See [Architecture](docs/ARCHITECTURE.md) for ownership and data-flow details.
 

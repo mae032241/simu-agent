@@ -603,7 +603,15 @@ class OperationOrigins:
                 if len(refs) != 1:
                     reject("input_origin_ambiguous")
                 family = family_for(refs[0])
-                if family is None or family.producer_instance_id != self._instance_id() or family.contract_availability != "current":
+                historical_hypothesis_sources = (family is not None
+                    and compiled.spec.operation_id == "science.hypothesis.criticize.v1"
+                    and rule.anchor_port == "hypothesis_portfolio" and rule.select == "sources"
+                    and family.operation_id == "science.hypothesis.propose.v1"
+                    and family.producer_run_id is not None
+                    and any(item.ref == refs[0] and item.port_name == "hypothesis_portfolio"
+                            for item in family.members))
+                if (family is None or family.producer_instance_id != self._instance_id()
+                        or (family.contract_availability != "current" and not historical_hypothesis_sources)):
                     reject("input_origin_unavailable")
                 refs = ([item.ref for item in family.members if item.ref != family.primary_ref]
                         if rule.select == "siblings" else [item.ref for item in family.evidence_sources])

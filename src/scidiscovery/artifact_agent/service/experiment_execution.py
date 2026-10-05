@@ -464,6 +464,19 @@ class ExperimentExecution:
 
     def command(self, context, request):
         run = self.runs.running_task(context.run_id)
+        if request.action in {"start", "advance"}:
+            from ..schema.cognitive import HypothesisProposal
+            from .sealed_materials import material_error
+            refs = {item.artifact_ref for item in run.inputs if item.port_name == "hypothesis_portfolio"}
+            if len(refs) != 1:
+                raise material_error("experiment_hypothesis_missing",
+                    "New execution requires this task's exact sealed hypothesis portfolio. Ask the scheduler to repair the scientific task; no execution was submitted.")
+            ref = next(iter(refs))
+            envelope = self.executions.artifacts.catalog(ref)
+            if envelope.schema_id != "scidiscovery.hypothesis-proposal.v2" or not HypothesisProposal.model_validate_json(
+                    self.executions.artifacts.read(ref), strict=True).hypotheses:
+                raise material_error("experiment_hypothesis_invalid",
+                    "New execution requires a nonempty hypothesis portfolio; no execution was submitted.")
         execution_id = "exe_" + hashlib.sha256(canonical_json({
             "task": self.task_origin(run), "name": request.name})).hexdigest()
         if request.action in {"status", "cancel"}:

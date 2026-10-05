@@ -52,6 +52,25 @@ def _critic_inputs(sources: dict[str, bytes]) -> None:
 
 
 def _hypothesis_inputs(sources: dict[str, bytes]) -> None:
+    if "subject" in sources:
+        if "scientific_foundation" in sources or "problem_frame" in sources:
+            raise OperationInvocationError("input_scientific_source_conflict", port="subject",
+                message="Select original task text or the structured frame/foundation branch; bind additional user text as user_context.")
+        from .artifact_agent.schema.research_objective import (
+            ObjectiveSourceError, is_original_text_objective, validate_objective_source)
+        descriptor = sources.binding_descriptors["subject"]
+        if not is_original_text_objective(descriptor.artifact_ref, descriptor.media_type, descriptor.labels):
+            raise OperationInvocationError("input_objective_invalid", port="subject",
+                message="This hypothesis branch requires exact original user task text, not an arbitrary file or a downgraded structured object.")
+        try:
+            validate_objective_source(sources["subject"], ref=descriptor.artifact_ref,
+                media_type=descriptor.media_type, labels=descriptor.labels)
+        except ObjectiveSourceError as error:
+            raise OperationInvocationError(error.reason_code, port="subject") from error
+        return
+    if "scientific_foundation" not in sources or "problem_frame" not in sources:
+        raise OperationInvocationError("input_scientific_source_missing", port="subject",
+            message="Select original task text, or both an existing problem frame and its qualified scientific foundation. Evidence extraction is optional when the task can be understood from the originals.")
     foundation = parse_bound_json(ScientificFoundation, sources["scientific_foundation"],
                                   admission_port="scientific_foundation")
     if foundation.objective_contract is None:
@@ -60,8 +79,12 @@ def _hypothesis_inputs(sources: dict[str, bytes]) -> None:
 
 def _hypothesis_source_keys(sources):
     """Bound aliases and the exact foundation's existing provenance; no copied ledger."""
-    allowed = set(sources)
+    allowed = set(sources) | set(getattr(sources, "binding_descriptors", {}))
     raw = sources.get("scientific_foundation")
+    if raw is None and "objective_source" in sources:
+        descriptor = sources.binding_descriptors["objective_source"]
+        if descriptor.artifact_ref.schema_id == "scidiscovery.scientific-foundation.v1":
+            raw = sources["objective_source"]
     if raw is not None:
         foundation = parse_bound_json(ScientificFoundation, raw)
         allowed.update(item.source_key for item in foundation.evidence)
@@ -112,6 +135,12 @@ def _hypothesis_objective_context(
     proposal = HypothesisProposal.model_validate_json(
         canonical_json(payload), strict=True
     )
+    if "scientific_foundation" not in sources:
+        _hypothesis_inputs(sources)
+        validate_evidence_source_aliases(payload, _hypothesis_source_keys(sources))
+        if proposal.research_objective_key is not None:
+            raise SemanticRuleViolation("An original-text hypothesis must not invent a structured research_objective_key.")
+        return
     foundation = parse_bound_json(ScientificFoundation, sources["scientific_foundation"])
     # Qualified foundation provenance remains usable without copying its source
     # registry into every hypothesis. The exact frozen foundation owns those keys.

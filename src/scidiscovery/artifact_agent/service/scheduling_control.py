@@ -1286,6 +1286,11 @@ class SchedulingControl:
                     pass
             row = read_control_row(db, instance_id)
             checkpoint = json.loads(row['checkpoint_json'])
+            if completed:
+                from .scientific_progress import require_experiment_analysis
+                navigation = json.loads(row['config_json']).get('effective') or self.control_settings(instance_id)['effective']
+                require_experiment_analysis(db=db, row=row, checkpoint=checkpoint, artifacts=artifacts, runs=runs,
+                    navigation_limit=navigation['progression']['related_source_limit'])
             from .scientific_progress import record_assessments
             receipts = record_assessments(db=db, row=row, assessments=assessments, bindings=self, artifacts=artifacts, runs=runs)
             if row['state'] == 'paused':

@@ -171,11 +171,25 @@ def validate_report(raw):
 
 def validate_goal_inputs(sources):
     """Validate the goal at its exact source; no fabricated standalone artifact."""
+    from .artifact_agent.schema.cognitive import HypothesisProposal
+    from .operations.input_validation import parse_bound_json
     from .artifact_agent.schema.research_objective import ObjectiveSourceError, validate_objective_source
     from .operations.invoke import OperationInvocationError
+    hypothesis = sources.binding_descriptors["hypothesis_portfolio"]
+    labels = dict(hypothesis.labels)
+    if (hypothesis.producer_run_id is None
+            or labels.get("operation_id") != "science.hypothesis.propose.v1"
+            or labels.get("operation_output_port") != "hypothesis_portfolio"):
+        raise OperationInvocationError("input_origin_unavailable", port="subject",
+            message="Select an exact completed hypothesis task output, not an uploaded portfolio or copied JSON.")
+    proposal = parse_bound_json(HypothesisProposal, sources["hypothesis_portfolio"],
+        admission_port="subject")
+    if not proposal.hypotheses:
+        raise OperationInvocationError("input_portfolio_empty", port="subject",
+            message="An experiment requires a nonempty sealed hypothesis portfolio. Return to hypothesis formulation when no testable hypothesis is available.")
     descriptor = sources.binding_descriptors["objective_source"]
     try:
-        validate_objective_source(sources["objective_source"], ref=descriptor.artifact_ref,
+        goal = validate_objective_source(sources["objective_source"], ref=descriptor.artifact_ref,
             media_type=descriptor.media_type, labels=descriptor.labels)
     except ObjectiveSourceError as error:
         message = {
@@ -184,6 +198,9 @@ def validate_goal_inputs(sources):
             "input_objective_conflict": "The selected material's goal statement conflicts with its declared objective; resolve the scientific conflict at its source.",
         }[error.reason_code]
         raise OperationInvocationError(error.reason_code, port="subject", message=message) from error
+    if proposal.research_objective_key != (goal.objective_key if goal is not None else None):
+        raise OperationInvocationError("input_objective_conflict", port="subject",
+            message="The hypothesis objective must match its exact original goal; original text has no structured objective key.")
 
 
 def validate_completion(payload, sources, handoff):
@@ -329,11 +346,14 @@ def finalize(request):
 PROMPT = """Own this complete experiment: design, implement, debug when useful,
 execute with the native shell for local scientific computation or the available
 remote experiment tools for remote work, retain results, and judge validity.
-Own the necessary task understanding, feasibility checks and scientific design
-inside this task. Reuse sufficient existing intake and evidence in place. An
-intake or standalone structured goal is not a prerequisite for a bound original
-task. Resolve questions within the experiment when feasible; identify critical
-missing information that prevents a sound test or changes the research direction.
+Test the exact sealed hypotheses in hypothesis_portfolio. Own feasibility,
+scientific test design and numerical debugging within that bounded test. Reuse
+sufficient existing evidence; do not formulate a new research route or turn this
+task into open exploration. A missing testable hypothesis or a changed scientific
+direction requires a hypothesis task. Deliver observations and execution validity
+for a separate result-analysis task; numerical success alone does not settle the
+research objective. Identify missing information and retain blocked/inconclusive
+outcomes when a sound test cannot be made.
 Read subject for the current scientific question, stage objective and available
 conclusions. Read the global goal and completion criteria in objective_source:
 the original research objective, the foundation's objective_contract, or the intake's
@@ -446,20 +466,25 @@ COMPONENTS = (
 )
 OPERATION = scientific_agent_operation(
     "science.experiment.v1", "Complete a bounded experiment from scientific design through execution and validity judgment.",
-    "A bounded question needs implementation, execution and validity assessment. Original user task text or existing science supplies an exact goal source; the Worker owns necessary understanding and design and judges scientific sufficiency within the task.",
-    "Unbounded research or pure evidence analysis with no implementation/execution question. Choose separate source analysis when its independent scientific result can change the next decision; missing information can also be retained as blocked/inconclusive in this task.",
+    "A sealed hypothesis needs a bounded test through implementation, execution and validity assessment. Reuse its exact scientific sources and any relevant prior experiment.",
+    "Open research without a sealed hypothesis, hypothesis formulation, or independent interpretation of experiment results. Prepare missing scientific materials when needed; reuse sufficient materials instead of repeating intake.",
     decision_fields=("outcome", "summary", "remaining_question", "limitations"),
     agent=_REF("experiment_task_agent"), prompt=_REF("experiment_task_prompt"),
     workspace=_REF("experiment_task_workspace"),
     input_validation=InputValidationSpec(_REF("experiment_goal_inputs"), "science.experiment.v1.goal",
-        "Select original UTF-8 user task text or a scientific subject with an exact valid structured goal source. Control binds the original; scientific sufficiency belongs to the Worker. Root does not bind internal goal objects."),
+        "Select a sealed nonempty hypothesis portfolio or an exact prior experiment carrying one. Control resolves the original hypothesis and global goal from immutable producer inputs; original task text or intake alone cannot start an experiment. Root does not bind internal goal objects."),
     tools=(_REF("experiment_stage_tool"),),
     inputs=(
-        _input("subject", "The exact original user task text, hypothesis, scientific intake, foundation, existing goal or prior experiment to investigate. Select its instance name; control retrieves the goal from its sealed sources. Do not create an internal goal object.", "*",
+        _input("subject", "Exact sealed hypothesis portfolio or prior experiment carrying that hypothesis. Select its instance name; control retrieves its original scientific sources. Original task text, intake, foundation or a goal alone is insufficient.", "*",
             media_types=("*/*",), exposure="on_demand", usage="evidence_inventory"),
+        _input("hypothesis_portfolio", "Control-bound exact sealed hypotheses tested by this experiment.",
+            "scidiscovery.hypothesis-proposal.v2", exposure="on_demand", usage="evidence_inventory").model_copy(update={
+            "derivation": InputDerivationSpec(anchor_port="subject",
+                source_paths=((), ("hypothesis_portfolio",), ("subject",)),
+                source_schemas=("scidiscovery.hypothesis-proposal.v2",))}),
         _input("objective_source", "Control-bound exact scientific source of the global goal and completion criteria.", "*",
             media_types=("*/*",), exposure="on_demand", usage="evidence_inventory").model_copy(update={
-            "derivation": InputDerivationSpec(anchor_port="subject", source_original_text=True,
+            "derivation": InputDerivationSpec(anchor_port="hypothesis_portfolio", source_original_text=True,
                 source_paths=((), ("scientific_foundation",), ("hypothesis_portfolio", "scientific_foundation"),
                               ("objective_source",), ("research_objective",)),
                 source_schemas=("scidiscovery.research-objective.v1", "scidiscovery.scientific-foundation.v1",

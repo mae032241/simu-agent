@@ -12,14 +12,15 @@ from .general_science_experiment_operations import (
 from .operations.spec import PLUGIN_PROTOCOL_VERSION, PluginDefinition, PluginDependency
 from .general_science_experiment_task import COMPONENTS as TASK_COMPONENTS, OPERATION as EXPERIMENT_TASK
 from .general_science_experiment_review import COMPONENTS as REVIEW_COMPONENTS, OPERATION as EXPERIMENT_REVIEW
+from .general_science_result_analysis import COMPONENTS as ANALYSIS_COMPONENTS, OPERATION as RESULT_ANALYSIS
 
 
 PLUGIN = PluginDefinition(
     plugin_id="general_science",
     version="0.1.0",
     protocol_version=PLUGIN_PROTOCOL_VERSION,
-    components=COMPONENTS + EXPERIMENT_COMPONENTS + TASK_COMPONENTS + REVIEW_COMPONENTS,
-    operations=AGENT_OPERATIONS + CONTROL_OPERATIONS + EXPERIMENT_OPERATIONS + (EXPERIMENT_TASK, EXPERIMENT_REVIEW),
+    components=COMPONENTS + EXPERIMENT_COMPONENTS + TASK_COMPONENTS + REVIEW_COMPONENTS + ANALYSIS_COMPONENTS,
+    operations=AGENT_OPERATIONS + CONTROL_OPERATIONS + EXPERIMENT_OPERATIONS + (EXPERIMENT_TASK, EXPERIMENT_REVIEW, RESULT_ANALYSIS),
     dependencies=(PluginDependency(plugin_id="builtin", version="0.1.0"),),
 )
 

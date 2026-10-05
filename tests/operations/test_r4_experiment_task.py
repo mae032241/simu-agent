@@ -21,7 +21,7 @@ def test_complete_experiment_compiles_with_one_domain_provider(monkeypatch):
         "worker_experiment_stage", "worker_experiment_prepare", "worker_experiment_execute"}
     assert experiment.spec.review is None
     assert {port.name for port in experiment.spec.inputs} == {
-        "subject", "objective_source", "scientific_materials", "prior_experiment", "scientific_files", "user_context"}
+        "subject", "hypothesis_portfolio", "objective_source", "scientific_materials", "prior_experiment", "scientific_files", "user_context"}
     assert next(p for p in experiment.spec.inputs if p.name == "objective_source").derivation is not None
 
 
@@ -154,7 +154,13 @@ def _real_experiment(tmp_path, monkeypatch, solver="sprocess", before_submit=Non
             schema_id=f"scidiscovery.{goal}.v1", payload_schema_version=1,
             media_type="application/json", creator=runtime.actor), idempotency_key="objective")
         runtime.scheduler_bindings.bind(instance=instance.instance_id, namespace="artifact", name="objective", object_id=objective.artifact_id)
-    inputs = [{"port":"subject", "artifact_names":["objective"]}]
+    from tests.operations.scientific_chain_fixtures import sealed_hypothesis
+    subject, foundation_name = sealed_hypothesis(runtime, root, instance, 'objective')
+    objective = runtime.artifacts.get_by_id(runtime.scheduler_bindings.resolve(
+        instance=instance.instance_id, namespace='artifact', name=foundation_name))
+    inputs = [{"port":"subject", "artifact_names":[subject]}]
+    if goal == "source-text":
+        inputs.append({"port":"user_context", "artifact_names":["objective"]})
     if solver == "sdevice":
         grid = runtime.artifacts.register(b"exact-grid", ArtifactRegistration(kind="grid", schema_id="opaque",
             payload_schema_version=1, media_type="application/octet-stream", creator=runtime.actor), idempotency_key="grid")

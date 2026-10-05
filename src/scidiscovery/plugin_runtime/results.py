@@ -281,12 +281,22 @@ def finalize_general_result(request: WorkspaceFinalizationRequest) -> bytes:
         if request.output_schema_id == 'scidiscovery.hypothesis-proposal.v2':
             originals = [request.input_contents[alias] for alias, descriptor in request.binding_descriptors.items()
                 if descriptor.port_name == 'scientific_foundation' and alias in request.input_contents]
-            if len(originals) != 1:
-                raise WorkspaceProtocolError('The exact scientific foundation binding is unavailable; repair the task inputs.')
-            contract = json.loads(originals[0]).get('objective_contract')
-            if not isinstance(contract, dict) or not contract.get('objective_key'):
-                raise WorkspaceProtocolError('The bound foundation has no objective contract; repair the task inputs.')
-            value['payload']['research_objective_key'] = contract['objective_key']
+            if len(originals) == 1:
+                contract = json.loads(originals[0]).get('objective_contract')
+                if not isinstance(contract, dict) or not contract.get('objective_key'):
+                    raise WorkspaceProtocolError('The bound foundation has no objective contract; repair the task inputs.')
+                value['payload']['research_objective_key'] = contract['objective_key']
+            elif not originals:
+                from ..artifact_agent.schema.research_objective import is_original_text_objective, validate_objective_source
+                subjects = [(descriptor, request.input_contents[alias]) for alias, descriptor in request.binding_descriptors.items()
+                    if descriptor.port_name == 'subject' and alias in request.input_contents]
+                if len(subjects) != 1 or not is_original_text_objective(subjects[0][0].artifact_ref,
+                        subjects[0][0].media_type, subjects[0][0].labels):
+                    raise WorkspaceProtocolError('The original task or exact scientific foundation binding is unavailable; repair the task inputs.')
+                descriptor, raw = subjects[0]
+                validate_objective_source(raw, ref=descriptor.artifact_ref, media_type=descriptor.media_type, labels=descriptor.labels)
+            else:
+                raise WorkspaceProtocolError('The exact scientific foundation binding is ambiguous; repair the task inputs.')
         if request.output_schema_id == 'scidiscovery.layered-diagnosis.v1':
             ports = {descriptor.port_name for descriptor in request.binding_descriptors.values()}
             if not {'experiment_plan', 'curve_analysis_package'} & ports:

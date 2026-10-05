@@ -1,0 +1,104 @@
+"""Independent interpretation of one exact experiment, without domain tools."""
+from .artifact_agent.schema.cognitive import HypothesisProposal
+from .artifact_agent.schema.common import canonical_json
+from .artifact_agent.schema.layered_diagnosis import LayeredDiagnosisReport
+from .general_science_agent_operations import _input, WORKSPACE_REF
+from .general_science_experiment_task import ExperimentReport, validate_goal_inputs
+from .operation_contract import SemanticRuleViolation, validate_evidence_source_aliases
+from .operation_declaration import schema_resource, scientific_agent_operation, semantic_contract
+from .operations.input_validation import parse_bound_json
+from .plugin_runtime.calculations import analysis_evidence_aliases
+from .operations.spec import (CallableComponent, ComponentRef, ComponentSpec,
+    InputDerivationSpec, InputValidationSpec, OutputPortSpec, SemanticRuleSpec)
+
+
+def validate_inputs(sources):
+    parse_bound_json(ExperimentReport, sources["experiment_results"], admission_port="subject")
+    validate_goal_inputs(sources)
+
+
+def validate_context(payload, sources, handoff):
+    report = LayeredDiagnosisReport.model_validate_json(canonical_json(payload), strict=True)
+    proposal = parse_bound_json(HypothesisProposal, sources["hypothesis_portfolio"])
+    known = set(sources) | set(sources.binding_descriptors)
+    if any(item.input_alias not in known for item in report.source_references):
+        raise SemanticRuleViolation("Analysis references must identify exact bound inputs.")
+    aliases = analysis_evidence_aliases(report.evidence, report.source_references, known)
+    if any(alias not in known for alias in aliases.values()):
+        raise SemanticRuleViolation("Analysis evidence must resolve to an exact bound input.")
+    validate_evidence_source_aliases(payload, known | set(aliases))
+    if report.experiment_key is not None or report.plan_key is not None or any(
+            item.experiment_key is not None or item.case_key is not None for item in report.source_references):
+        raise SemanticRuleViolation("This generic analysis has no bound experiment plan or case identity; omit those keys.")
+    keys = {item.hypothesis_key for item in proposal.hypotheses}
+    if any(item.hypothesis_key not in keys for item in report.hypothesis_assessments):
+        raise SemanticRuleViolation("Analysis may assess only hypotheses in the exact experiment's portfolio.")
+    if report.objective_assessment is not None and report.objective_assessment.objective_key != proposal.research_objective_key:
+        raise SemanticRuleViolation("Analysis objective must identify the exact hypothesis objective.")
+
+
+PROMPT = """Analyze the exact sealed experiment_results against its original
+hypothesis_portfolio and objective_source. Read the adopted stages and original
+materials, distinguish observations, numerical validity and scientific
+interpretation, and assess the hypotheses and remaining contradiction. Reuse
+sufficient existing evidence. Native shell data processing and analysis
+calculations are allowed; preserve their sources and limitations. Do not launch
+new experiments or replace hypothesis formulation with exploratory execution.
+Recommend a separate hypothesis task when the research direction changes, or
+another bounded experiment when an existing hypothesis needs a further test.
+Return LayeredDiagnosisReport. Do not invent experiment/plan/objective keys when
+their corresponding source is absent. Blocked or incomplete experiments can
+support an inconclusive analysis, never fabricated successful observations.
+Control binds exact sources; the Worker owns scientific judgments. This task
+adds no execution authorization or mandatory review.
+"""
+SCHEMA = schema_resource(LayeredDiagnosisReport, "scidiscovery.layered-diagnosis.v1")
+CONTRACT = semantic_contract(SemanticRuleSpec("analysis.experiment_binding",
+    "Interpret an exact sealed experiment using its original hypotheses and goal. References and assessed hypothesis identities must be bound; scientific validity belongs to the author."))
+COMPONENTS = (
+    ComponentSpec("result_analysis_prompt", "resource", __name__ + ":PROMPT"),
+    ComponentSpec("result_analysis_schema", "resource", __name__ + ":SCHEMA"),
+    ComponentSpec("result_analysis_contract", "resource", __name__ + ":CONTRACT"),
+    ComponentSpec("result_analysis_inputs", "validator", __name__ + ":INPUTS"),
+    ComponentSpec("result_analysis_validator", "validator", __name__ + ":VALIDATOR",
+        resources=(ComponentRef("result_analysis_contract"),)),
+    ComponentSpec("result_analysis_context", "validator", __name__ + ":CONTEXT",
+        resources=(ComponentRef("result_analysis_contract"),)),
+)
+INPUTS = CallableComponent("validator", validate_inputs)
+VALIDATOR = CallableComponent("validator", lambda raw: LayeredDiagnosisReport.model_validate_json(raw, strict=True))
+CONTEXT = CallableComponent("validator", validate_context)
+
+OPERATION = scientific_agent_operation("science.result.analyze.v1",
+    "Interpret one exact experiment and its tested hypotheses independently of execution.",
+    "A sealed experiment has observations, failures or limitations needing scientific interpretation.",
+    "Launching experiments, inventing unsupported evidence, or formulating a new hypothesis portfolio.",
+    agent=ComponentRef("critic_agent"), workspace=WORKSPACE_REF,
+    prompt=ComponentRef("result_analysis_prompt"), tools=(), native_view_image=True,
+    decision_fields=("overall_verdict", "claim_allowed", "summary", "hypothesis_assessments", "limitations", "remaining_contradiction", "next_action"),
+    input_validation=InputValidationSpec(ComponentRef("result_analysis_inputs"), "analysis.experiment_binding",
+        "Select an exact sealed experiment. Control retrieves its original hypothesis portfolio, global goal and scientific materials; unrelated sources never substitute."),
+    inputs=(
+        _input("subject", "Exact sealed experiment report to interpret.", "*", media_types=("*/*",), exposure="on_demand", usage="evidence_inventory"),
+        _input("experiment_results", "Control-bound original experiment report.", "*", media_types=("*/*",), exposure="on_demand", usage="evidence_inventory").model_copy(update={
+            "derivation": InputDerivationSpec(anchor_port="subject", producer_output_port="experiment")}),
+        _input("hypothesis_portfolio", "The exact experiment's original hypotheses.", "scidiscovery.hypothesis-proposal.v2", exposure="on_demand", usage="evidence_inventory").model_copy(update={
+            "derivation": InputDerivationSpec(anchor_port="experiment_results", producer_input_path=("hypothesis_portfolio",))}),
+        _input("objective_source", "The exact experiment's original global goal.", "*", media_types=("*/*",), exposure="on_demand", usage="evidence_inventory").model_copy(update={
+            "derivation": InputDerivationSpec(anchor_port="experiment_results", producer_input_path=("objective_source",))}),
+        _input("experiment_materials", "Control-bound scientific source inventory of the exact experiment, including adopted stage materials.", "*", media_types=("*/*",), min_items=0, max_items=128, max_item_bytes=None, exposure="material", usage="evidence_inventory").model_copy(update={
+            "derivation": InputDerivationSpec(anchor_port="experiment_results", producer_output_port="tool_evidence")}),
+        _input("experiment_sources", "Exact original source inputs of the experiment; streamed without expanding large files.", "*", media_types=("*/*",), min_items=0, max_items=128, max_item_bytes=None, exposure="file_reference", usage="evidence_inventory").model_copy(update={
+            "derivation": InputDerivationSpec(anchor_port="experiment_results", select="sources")}),
+        _input("experiment_files", "Exact published experiment files, including implementation, logs and results; streamed on demand.", "*", media_types=("*/*",), min_items=0, max_items=128, max_item_bytes=None, exposure="file_reference", usage="evidence_inventory").model_copy(update={
+            "derivation": InputDerivationSpec(anchor_port="experiment_results", producer_output_port="attachments")}),
+        _input("scientific_materials", "Optional exact additional reference evidence for this interpretation.", "*", media_types=("*/*",), min_items=0, max_items=16, exposure="on_demand", usage="evidence_inventory"),
+    ),
+    outputs=(OutputPortSpec(name="analysis", description="Scientific interpretation of exact results and hypotheses.",
+        schema="scidiscovery.layered-diagnosis.v1", media_types=("application/json",), codec=ComponentRef("json_codec"),
+        schema_resource=ComponentRef("result_analysis_schema"), kind="layered_diagnosis", max_item_bytes=128*1024,
+        validator=ComponentRef("result_analysis_validator"), validator_rule_id="analysis.experiment_binding",
+        context_validator=ComponentRef("result_analysis_context"), context_rule_id="analysis.experiment_binding",
+        context_sources=("experiment_results", "hypothesis_portfolio", "objective_source", "experiment_materials", "experiment_sources", "experiment_files", "scientific_materials"),
+        semantic_contract=ComponentRef("result_analysis_contract")),),
+    timeout=900, max_input_bytes=48*1024*1024, max_output_bytes=128*1024, max_files=1)

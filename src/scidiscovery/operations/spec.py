@@ -554,7 +554,7 @@ def input_source_requirement(port: InputPortSpec) -> str:
     else:
         return "Control reuses the exact selected object; its format and cardinality must satisfy this action. No separate caller binding is needed."
     if rule.source_original_text:
-        return requirement + " Original task text may be selected directly; control binds its exact identity without creating a structured goal. Scientific sufficiency belongs to the Worker. Copying or renaming originals does not establish provenance."
+        return requirement + " Original task text is valid only along these declared source paths; all other input requirements still apply. Control binds its exact identity without creating a structured goal. Scientific sufficiency belongs to the Worker. Copying or renaming originals does not establish provenance."
     return requirement + " Reuse compatible sealed science; if only originals exist, choose a source-based task that answers the question. Copying or renaming originals does not establish provenance. Control resolves bindings."
 
 

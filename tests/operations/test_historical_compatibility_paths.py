@@ -31,7 +31,7 @@ def _historical(runtime, instance, name, original, producer_id, port):
     return artifact
 
 
-def _complete(runtime, root, name, operation, inputs, payload, verdict="pass", historical_ports=()):
+def _complete(runtime, root, name, operation, inputs, payload, verdict="pass", historical_ports=(), measure_usage=False):
     request = {"name": name, "operation_id": operation,
                "inputs": [{"port": key, "artifact_names": [value]} for key, value in inputs.items()],
                "instruction": "Use only these exact immutable inputs."}
@@ -50,6 +50,9 @@ def _complete(runtime, root, name, operation, inputs, payload, verdict="pass", h
         "schema_version": 1, "payload": payload,
         "handoff": {"verdict": verdict, "summary": "Exact continuation fixture."},
     }))
+    if measure_usage:
+        from tests.operations.research_loop_fixtures import measured_fixture_usage
+        measured_fixture_usage(worker)
     result = worker.call_tool("worker_submit_result", {})
     assert result["state"] == "completed", result
     return root.call_tool("run_status", {"name": name})["output_artifact_name"]

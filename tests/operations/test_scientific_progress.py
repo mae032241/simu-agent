@@ -7,7 +7,7 @@ import pytest
 from scidiscovery.artifact_agent.approval_ui.progression_render import render_progression
 from scidiscovery.artifact_agent.schema.refs import ArtifactRef
 from scidiscovery.artifact_agent.service.scheduler_bindings import SchedulerBindingService
-from tests.operations.test_progression import progression, checkpoint, row
+from tests.operations.test_progression import progression, unmanaged_progression, checkpoint, row
 from tests.operations.test_local_worker_contracts import _worker, _write_result
 
 
@@ -39,6 +39,78 @@ def assess(root, name, outcome='advance', evidence=True, reason='The mean is kno
     return root.call_tool('progression_report', dict(summary='Consume the sealed result, retaining limitations.',
         assessments=[dict(task_name=name, outcome=outcome, reason=reason,
             evidence_names=[name+'.output'] if evidence else [], limitations='Only two observations.')]))
+
+
+def test_goal_completion_requires_exact_analysis_of_each_accepted_experiment(progression):
+    from functools import partial
+    from tests.operations.test_historical_compatibility_paths import _complete as complete, _artifact
+    from tests.operations.test_hypothesis_objective_boundary import _proposal
+    from scidiscovery.artifact_agent.service.scientific_progress import require_experiment_analysis
+    p = progression
+    _complete = partial(complete, measure_usage=True)
+    root = active(p)
+    instance = p.runtime.scheduler_bindings.get_instance(instance_id=p.instance)
+    proposal = _proposal(hypothesis_keys=('mechanism',))
+    proposal.pop('research_objective_key')
+    subject = _complete(p.runtime, root, 'hypothesis', 'science.hypothesis.propose.v1', {'subject': 'goal'}, proposal)
+    pending = dict(name='experiment', operation_id='science.experiment.v1',
+        inputs=[dict(port='subject', artifact_names=[subject])], instruction='Use only these exact immutable inputs.')
+    root.call_tool('operation_invoke', pending)
+    with pytest.raises(Exception, match='still in flight'):
+        root.call_tool('progression_report', dict(summary='Premature completion.', completed=True))
+    root.call_tool('progression_report', dict(summary='Waiting for the experiment and analysis.', completed=False))
+    blocked = dict(summary='Environment unavailable.', outcome='blocked', remaining_question='Provide it.',
+        limitations=['No observations.'], adopted_stages=[])
+    experiment = _complete(p.runtime, root, 'experiment', 'science.experiment.v1', {'subject': subject}, blocked)
+    with pytest.raises(Exception, match='lacks a completed analysis'):
+        root.call_tool('progression_report', dict(summary='Bypassing interpretation.', completed=True))
+    # The original accepted experiment remains an obligation after the active
+    # checkpoint/loop view no longer contains its admission.
+    with p.runtime.scheduler_bindings._connect() as db:
+        with pytest.raises(ValueError, match='lacks a completed analysis'):
+            require_experiment_analysis(db=db, row=row(p), checkpoint={}, artifacts=p.runtime.artifacts,
+                runs=p.runtime.runs, navigation_limit=128)
+        other = _artifact(p.runtime, instance, 'source_csv').ref.model_dump(mode='json')
+        require_experiment_analysis(db=db, row=dict(row(p), objective_ref_json=json.dumps(other)), checkpoint={},
+            artifacts=p.runtime.artifacts, runs=p.runtime.runs, navigation_limit=128)
+    second = _complete(p.runtime, root, 'second_experiment', 'science.experiment.v1', {'subject': subject}, blocked)
+    with p.runtime.scheduler_bindings._connect() as db:
+        with pytest.raises(ValueError, match='experiment scope is incomplete'):
+            require_experiment_analysis(db=db, row=row(p), checkpoint={}, artifacts=p.runtime.artifacts,
+                runs=p.runtime.runs, navigation_limit=1)
+    analysis_payload = dict(summary='An inconclusive interpretation.', overall_verdict='inconclusive',
+        claim_allowed=False, limitations=['No observations.'])
+    _complete(p.runtime, root, 'second_analysis', 'science.result.analyze.v1', {'subject': second}, analysis_payload,
+        verdict='inconclusive')
+    with pytest.raises(Exception, match='lacks a completed analysis'):
+        root.call_tool('progression_report', dict(summary='One analysis cannot cover another report.', completed=True))
+    _complete(p.runtime, root, 'analysis', 'science.result.analyze.v1', {'subject': experiment}, analysis_payload,
+        verdict='inconclusive')
+    root.call_tool('progression_report', dict(summary='Both reports have explicit inconclusive analyses.', completed=True))
+    assert json.loads(row(p)['checkpoint_json'])['report']['completed'] is True
+
+
+def test_evidence_only_completion_ignores_ordinary_navigation_omissions(progression):
+    from scidiscovery.artifact_agent.service.scientific_progress import require_experiment_analysis
+    p = progression
+    root = active(p)
+    finish(p, root, 'evidence')
+    finish(p, root, 'more_evidence')
+    cp = checkpoint(p)
+    cp['relevant_omitted'] = True
+    cp['relevant_runs_objective_ref'] = json.loads(row(p)['objective_ref_json'])
+    with p.runtime.scheduler_bindings._connect() as db:
+        require_experiment_analysis(db=db, row=row(p), checkpoint=cp, artifacts=p.runtime.artifacts,
+            runs=p.runtime.runs, navigation_limit=1)
+    root.call_tool('progression_report', dict(summary='Evidence-only work is complete.', completed=True))
+
+
+def test_independent_interactive_completion_uses_existing_navigation_settings(unmanaged_progression):
+    p = unmanaged_progression
+    assert json.loads(row(p)['config_json']) == {}
+    p.root.call_tool('progression_command', dict(command='start', mode='interactive', objective_name='goal'))
+    p.root.call_tool('progression_report', dict(summary='The independent evidence goal is complete.', completed=True))
+    assert json.loads(row(p)['checkpoint_json'])['report']['completed'] is True
 
 
 def test_intent_survives_preflight_run_identity_and_real_worker_start(progression):

@@ -61,6 +61,15 @@ Prior review or qualification is not inherited.
 IDEATOR_PROMPT = """Return exactly one RoleResultEnvelope whose payload is the
 HypothesisProposal required by the schema identified by assignment.output.schema_path. Propose a small ordered
 portfolio of distinct, testable mechanisms for the supplied contradiction.
+When subject contains the original task, own its scientific understanding and
+formulate a bounded question using those exact originals and any supplied
+materials. Evidence extraction and external retrieval are optional when they
+can change the science; no network search or intake is required merely for
+formatting or because a tool is available. Retain missing information honestly;
+an empty portfolio may report an unresolved gap and cannot start an experiment.
+An original-text task has no structured research_objective_key; never invent one
+or manufacture a qualified foundation. Existing structured frames and qualified
+foundations remain reusable and retain their exact objective key.
 Control binds the immutable global objective. Write only
 the bounded goal of this hypothesis stage in stage_objective; never copy,
 paraphrase, or replace the global research objective as if it were role-owned.
@@ -96,7 +105,7 @@ principle. Do not require numerical thresholds, extraction algorithms,
 interpolation rules, or uncertainty propagation here; those belong to
 experiment design. Record an issue once and give the smallest resolving action
 only for an unresolved dimension. Also enforce the boundary of the qualified
-scientific foundation and exact bound experimental feedback: factual premises
+original task or qualified scientific foundation and exact bound experimental feedback: factual premises
 must have a supplied source, inferences must remain explicit, and simulated
 observations are not independent measurements. Read the relevant originals as
 needed; an author's analysis alone is not independent verification. Distinguish

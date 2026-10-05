@@ -1600,6 +1600,29 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
             rows = connection.execute(query, values).fetchall()
         return self._statuses_from_rows(rows)
 
+    def goal_experiment_runs(self, *, instance_id, objective, related_run_ids, limit):
+        """Bounded experiment obligations from exact goal bindings and durable admissions."""
+        if not 1 <= limit <= 4096:
+            raise ValueError('invalid goal experiment limit')
+        match = ' AND '.join("json_extract(d.record_json,'$.objective_ref." + key + "')=json_extract(?,'$." + key + "')"
+            for key in ('artifact_id', 'kind', 'schema_id', 'sha256'))
+        experiment_operations = [identity for identity in self.operation_catalog.operation_ids()
+            if any(port.schema_id == 'scidiscovery.experiment-report.v1'
+                   for port in self.operation_catalog.operation(identity).spec.outputs)]
+        with self._connect() as connection:
+            self._attach_scheduler(connection)
+            rows = connection.execute("SELECT r.run_id FROM runs r WHERE r.instance_id=? AND ("
+                "(r.state='completed' AND json_extract(r.output_ref_json,'$.schema_id')='scidiscovery.experiment-report.v1') "
+                "OR (r.state IN ('queued','running') AND (r.operation_id IN (SELECT value FROM json_each(?)) "
+                "OR r.operation_id NOT IN (SELECT value FROM json_each(?))))) "
+                "AND (r.run_id IN (SELECT value FROM json_each(?)) OR EXISTS (SELECT 1 FROM "
+                "scheduler_control.scheduler_progression_details d WHERE d.instance_id=r.instance_id "
+                "AND d.collection='admissions' AND json_extract(d.record_json,'$.state')='accepted' "
+                "AND json_extract(d.record_json,'$.run_id')=r.run_id AND " + match + ")) ORDER BY r.run_id LIMIT ?",
+                (instance_id, json.dumps(experiment_operations), json.dumps(self.operation_catalog.operation_ids()),
+                 json.dumps(list(related_run_ids)), *[json.dumps(objective)] * 4, limit + 1)).fetchall()
+        return tuple(item['run_id'] for item in rows[:limit]), len(rows) > limit
+
     def goal_related_runs(self, *, instance_id, artifact_ref, limit=17, source_limit=128, identities_only=False):
         """Bounded exact parent lineage; unrelated goals and instances stay separate.
 

@@ -95,7 +95,8 @@ class HypothesisForm(FormModel):
 
 class HypothesisProposal(VersionedPayload):
     schema_version: Literal[2] = 2
-    research_objective_key: Identifier
+    research_objective_key: Identifier | None = Field(default=None,
+        description="Control preserves the structured foundation's objective key. Omit for an original-text task without a structured objective; its identity is the frozen source binding.")
     stage_objective: Annotated[str, Field(min_length=1, max_length=2048)]
     contradiction: Annotated[str, Field(min_length=1, max_length=2048)]
     evidence: Annotated[tuple[SourceReference, ...], Field(max_length=32)] = ()

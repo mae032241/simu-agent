@@ -35,7 +35,7 @@ def _request(subject):
 
 
 @pytest.mark.parametrize('carrier', ['objective', 'foundation', 'intake'])
-def test_existing_goal_carriers_need_no_root_projection(tmp_path, carrier):
+def test_goal_carriers_alone_cannot_replace_a_hypothesis(tmp_path, carrier):
     runtime, instance, root = _setup(tmp_path)
     foundation = json.loads(_foundation())
     payload = {'objective': foundation['objective_contract'], 'foundation': foundation,
@@ -46,12 +46,10 @@ def test_existing_goal_carriers_need_no_root_projection(tmp_path, carrier):
     assert 'objective_source' not in {port.name for port in contract.inputs}
     assert 'research_objective' not in {port.name for port in contract.inputs}
     request = _request('selected')
-    assert root.call_tool('operation_preflight', request)['admissible']
-    assert root.call_tool('operation_invoke', request)['result']['state'] == 'queued'
-    run_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace='run', name='experiment')
-    inputs = runtime.runs.status(run_id).inputs
-    expected = _artifact(runtime, instance, 'selected').ref
-    assert {item.artifact_ref for item in inputs if item.port_name in {'subject', 'objective_source'}} == {expected}
+    rejected = root.call_tool('operation_preflight', request)
+    assert not rejected['admissible'] and rejected['reason_code'] == 'input_origin_missing'
+    with pytest.raises(RootToolError, match='input_origin_missing'):
+        root.call_tool('operation_invoke', request)
 
 
 
@@ -64,7 +62,7 @@ def test_hypothesis_stage_and_global_goal_follow_original_not_newer_foundation(t
     intake['scientific_foundation'] = json.loads(_foundation().replace(b'"source"', b'"paper"').replace(b'"target_item"', b'"target"'))
     intake['problem_frame']['objective'] = intake['scientific_foundation']['objective']
     monkeypatch.setattr(fixture, '_intake', lambda: ScientificIntake.model_validate_json(canonical_json(intake)))
-    runtime, instance, root, split = fixture._system(tmp_path, monkeypatch)
+    runtime, instance, root, split = fixture._system(tmp_path, monkeypatch, native_only=True)
     # Root receives the science automatically in the ordinary result read.
     root_read = root.call_tool('run_status', {'name': 'author'})
     values = {item['pointer']: item.get('value') for item in root_read['selected_output']['items']}
@@ -97,7 +95,198 @@ def test_hypothesis_stage_and_global_goal_follow_original_not_newer_foundation(t
     run_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace='run', name='experiment')
     inputs = {item.port_name: item.artifact_ref for item in runtime.runs.status(run_id).inputs}
     assert inputs['objective_source'] == _artifact(runtime, instance, 'split.scientific_foundation').ref
+    assert inputs['hypothesis_portfolio'] == _artifact(runtime, instance, subject).ref
     assert json.loads(runtime.artifacts.read(inputs['subject']))['stage_objective'] == proposal['stage_objective']
+    # The generic successor binds the exact experiment and the same upstream science.
+    from pathlib import Path
+    from tests.operations.worker_fixtures import attached_worker
+    worker = attached_worker(runtime, root, 'experiment')
+    opened = worker.call_tool('worker_open_assignment', {})
+    Path(opened['output_directory'], 'result.json').write_bytes(canonical_json({
+        'schema_version': 1, 'payload': {'summary': 'Missing environment.', 'outcome': 'blocked',
+            'remaining_question': 'Provide the environment.', 'limitations': ['No execution.'], 'adopted_stages': []}}))
+    completed = worker.call_tool('worker_submit_result', {})
+    assert completed['state'] == 'completed', completed
+    experiment = root.call_tool('run_status', {'name': 'experiment'})['output_artifact_name']
+    analysis = _complete(runtime, root, 'analysis', 'science.result.analyze.v1', {'subject': experiment},
+        {'summary': 'The experiment was blocked, so the hypothesis remains untested.',
+         'overall_verdict': 'inconclusive', 'claim_allowed': False,
+         'limitations': ['No execution observations.']}, verdict='inconclusive')
+    assert _artifact(runtime, instance, analysis).schema_id == 'scidiscovery.layered-diagnosis.v1'
+    analysis_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace='run', name='analysis')
+    inherited = {item.port_name: item.artifact_ref for item in runtime.runs.status(analysis_id).inputs}
+    assert inherited['hypothesis_portfolio'] == inputs['hypothesis_portfolio']
+    assert inherited['objective_source'] == inputs['objective_source']
+    successor = {**_request(experiment), 'name': 'successor'}
+    assert root.call_tool('operation_preflight', successor)['admissible']
+    assert root.call_tool('operation_invoke', successor)['result']['state'] == 'queued'
+    successor_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace='run', name='successor')
+    assert next(item.artifact_ref for item in runtime.runs.status(successor_id).inputs
+                if item.port_name == 'hypothesis_portfolio') == inputs['hypothesis_portfolio']
+    _put(runtime, instance, 'copied_proposal', proposal, 'scidiscovery.hypothesis-proposal.v2')
+    rejected = root.call_tool('operation_preflight', {**_request('copied_proposal'), 'name': 'unsealed'})
+    assert not rejected['admissible'] and rejected['reason_code'] in {'input_origin_unavailable', 'input_origin_missing'}
+    empty = _complete(runtime, root, 'empty', 'science.hypothesis.propose.v1',
+        {'scientific_foundation': 'split.scientific_foundation', 'problem_frame': 'split'}, _proposal())
+    rejected = root.call_tool('operation_preflight', {**_request(empty), 'name': 'empty_test'})
+    assert not rejected['admissible'] and rejected['reason_code'] == 'input_portfolio_empty'
+
+
+def test_generic_analysis_is_available_without_domain_plugins():
+    catalog = compile_catalog((CORE_PLUGIN, GENERAL))
+    analysis = catalog.operation('science.result.analyze.v1')
+    assert not any(tool.name.startswith('worker_experiment') for tool in analysis.worker_tools)
+    assert not any(tool.name.startswith('worker_experiment') for tool in
+        catalog.operation('science.hypothesis.propose.v1').worker_tools)
+    assert {port.name for port in scheduler_operation_view(analysis.spec).inputs} == {
+        'subject', 'scientific_materials', 'user_context'}
+
+
+def test_original_task_enters_hypothesis_without_intake_search_or_synthetic_key(tmp_path):
+    runtime, instance, root = _setup(tmp_path, native_only=True)
+    root.call_tool('artifact_ingest_text', {'name': 'task', 'text': 'Compute 2+2 and retain the program and result.'})
+    expected = _artifact(runtime, instance, 'task').ref
+    proposal = _proposal(hypothesis_keys=('mechanism',))
+    proposal.pop('research_objective_key')
+    subject = _complete(runtime, root, 'hypothesis', 'science.hypothesis.propose.v1', {'subject': 'task'}, proposal)
+    sealed = json.loads(runtime.artifacts.read(_artifact(runtime, instance, subject).ref))
+    assert sealed.get('research_objective_key') is None
+    hypotheses = runtime.runs.operation_catalog.operation('science.hypothesis.propose.v1')
+    assert not any(tool.name == 'worker_source_capture' for tool in hypotheses.worker_tools)
+    assert hypotheses.spec.executor.native_tools.web_search == 'disabled'
+    # Optional review consumes the same original, with no foundation qualification.
+    _complete(runtime, root, 'critic', 'science.hypothesis.criticize.v1', {'hypothesis_portfolio': subject},
+        {'schema_version': 2, 'disposition': 'ready_for_experiment', 'reviews': [{
+            'hypothesis_key': 'mechanism', 'physical_plausibility': 'pass',
+            'falsifiability': 'pass', 'finite_discriminability': 'pass'}]})
+    assert root.call_tool('operation_invoke', _request(subject))['result']['state'] == 'queued'
+    run_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace='run', name='experiment')
+    assert next(item.artifact_ref for item in runtime.runs.status(run_id).inputs
+                if item.port_name == 'objective_source') == expected
+    assert {run.operation_id for run in runtime.runs.list(instance_id=instance.instance_id)} == {
+        'science.hypothesis.propose.v1', 'science.hypothesis.criticize.v1', 'science.experiment.v1'}
+
+
+def test_structured_hypothesis_cannot_omit_its_objective_key():
+    from scidiscovery.general_science_components import _hypothesis_objective_context
+    from scidiscovery.operation_contract import SemanticRuleViolation
+    proposal = _proposal(hypothesis_keys=('mechanism',))
+    proposal.pop('research_objective_key')
+    with pytest.raises(SemanticRuleViolation, match='research_objective_key differs'):
+        _hypothesis_objective_context(proposal, {'scientific_foundation': _foundation()}, {})
+
+
+def test_completed_hypothesis_remains_reusable_after_its_contract_changes(tmp_path):
+    runtime, instance, root = _setup(tmp_path, native_only=True)
+    root.call_tool('artifact_ingest_text', {'name': 'task', 'text': 'Test the mechanism against the original task.'})
+    proposal = _proposal(hypothesis_keys=('mechanism',))
+    proposal.pop('research_objective_key')
+    subject = _complete(runtime, root, 'hypothesis', 'science.hypothesis.propose.v1', {'subject': 'task'}, proposal)
+    original = _artifact(runtime, instance, subject)
+    changed = GENERAL.model_copy(update={'operations': tuple(
+        op.model_copy(update={'version': 'next-generation'}) if op.operation_id == 'science.hypothesis.propose.v1' else op
+        for op in GENERAL.operations)})
+    current = compile_catalog((CORE_PLUGIN, changed, CURVE, TCAD),
+        capability_selections={'general_science:experiment_task_protocol': 'none'})
+    runtime.runs.operation_catalog = current
+    root.facade._operation_catalog = current
+    assert root.facade._run_output_family(original).contract_availability == 'historical'
+    experiment = _complete(runtime, root, 'experiment', 'science.experiment.v1', {'subject': subject},
+        {'summary': 'Environment unavailable.', 'outcome': 'blocked', 'remaining_question': 'Provide it.',
+         'limitations': ['No execution.'], 'adopted_stages': []}, historical_ports=('hypothesis_portfolio',))
+    analysis = _complete(runtime, root, 'analysis', 'science.result.analyze.v1', {'subject': experiment},
+        {'summary': 'Original hypothesis remains untested.', 'overall_verdict': 'inconclusive',
+         'claim_allowed': False, 'limitations': ['No observations.']},
+        verdict='inconclusive', historical_ports=('hypothesis_portfolio',))
+    assert _artifact(runtime, instance, analysis).schema_id == 'scidiscovery.layered-diagnosis.v1'
+    feedback = _proposal(hypothesis_keys=('mechanism',))
+    feedback.pop('research_objective_key')
+    feedback['evidence'] = [{'source_key': 'result_analysis', 'source_type': 'frozen_input',
+                             'locator': 'remaining_contradiction'}]
+    next_hypothesis = _complete(runtime, root, 'next_hypothesis', 'science.hypothesis.propose.v1',
+        {'subject': 'task', 'previous_hypotheses': subject, 'result_analysis': analysis}, feedback)
+    next_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace='run', name='next_hypothesis')
+    next_inputs = {item.port_name: item.artifact_ref for item in runtime.runs.status(next_id).inputs}
+    assert next_inputs['objective_source'] == _artifact(runtime, instance, 'task').ref
+    assert next_inputs['result_analysis'] == _artifact(runtime, instance, analysis).ref
+    assert _artifact(runtime, instance, next_hypothesis).schema_id == 'scidiscovery.hypothesis-proposal.v2'
+
+
+def test_original_text_hypothesis_cannot_invent_a_structured_objective_key(tmp_path):
+    from scidiscovery.general_science_components import _hypothesis_objective_context
+    from scidiscovery.operations.input_validation import InputBindingDescriptor, ValidationSources
+    from scidiscovery.operation_contract import SemanticRuleViolation
+    runtime, instance, root = _setup(tmp_path, native_only=True)
+    root.call_tool('artifact_ingest_text', {'name': 'task', 'text': 'Test a bounded mechanism.'})
+    envelope = _artifact(runtime, instance, 'task')
+    raw = runtime.artifacts.read(envelope.ref)
+    descriptor = InputBindingDescriptor(source_name='subject', port_name='subject', artifact_ref=envelope.ref,
+        media_type=envelope.media_type, size_bytes=envelope.size_bytes, sha256=envelope.sha256,
+        labels=tuple(envelope.labels.items()))
+    with pytest.raises(SemanticRuleViolation, match='must not invent'):
+        _hypothesis_objective_context(_proposal(hypothesis_keys=('mechanism',)),
+            ValidationSources({'subject': raw}, {'subject': descriptor}), {})
+
+
+@pytest.mark.parametrize('historical', [False, True])
+def test_raw_hypothesis_material_reaches_critic_as_an_exact_streamed_original(tmp_path, historical):
+    from pathlib import Path
+    from tests.operations.worker_fixtures import attached_worker
+    runtime, instance, root = _setup(tmp_path, native_only=True)
+    root.call_tool('artifact_ingest_text', {'name': 'task', 'text': 'Compare mechanisms using the supplied table.'})
+    _register(runtime, instance, name='table', raw=b'x,y\n1,4\n', kind='source_file', schema='opaque', media_type='text/csv')
+    proposal = _proposal(hypothesis_keys=('mechanism',))
+    proposal.pop('research_objective_key')
+    proposal['evidence'] = [{'source_key': 'scientific_materials', 'source_type': 'frozen_input', 'locator': 'row 1'}]
+    subject = _complete(runtime, root, 'hypothesis', 'science.hypothesis.propose.v1',
+        {'subject': 'task', 'scientific_materials': 'table'}, proposal)
+    if historical:
+        changed = GENERAL.model_copy(update={'operations': tuple(
+            op.model_copy(update={'version': 'next-generation'}) if op.operation_id == 'science.hypothesis.propose.v1' else op
+            for op in GENERAL.operations)})
+        current = compile_catalog((CORE_PLUGIN, changed, CURVE, TCAD),
+            capability_selections={'general_science:experiment_task_protocol': 'none'})
+        runtime.runs.operation_catalog = current
+        root.facade._operation_catalog = current
+        assert root.facade._run_output_family(_artifact(runtime, instance, subject)).contract_availability == 'historical'
+        from tests.operations.test_historical_compatibility_paths import _historical
+        forged = _historical(runtime, instance, 'forged', _artifact(runtime, instance, subject),
+            'science.hypothesis.propose.v1', 'hypothesis_portfolio')
+        rejected = root.call_tool('operation_preflight', {'name': 'forged_critic',
+            'operation_id': 'science.hypothesis.criticize.v1',
+            'inputs': [{'port': 'hypothesis_portfolio', 'artifact_names': ['forged']}]})
+        assert not rejected['admissible']
+    assert root.call_tool('operation_invoke', {'name': 'critic', 'operation_id': 'science.hypothesis.criticize.v1',
+        'inputs': [{'port': 'hypothesis_portfolio', 'artifact_names': [subject]}],
+        'instruction': 'Review the exact hypotheses using their originals.'})['result']['state'] == 'queued'
+    worker = attached_worker(runtime, root, 'critic')
+    opened = worker.call_tool('worker_open_assignment', {})
+    assignment = json.loads(Path(opened['assignment_path']).read_bytes())
+    material = next(item for item in assignment['inputs'] if item['artifact_name'] == 'table')
+    assert material['materialization'] == 'controlled_tool_stream_only'
+    assert not (Path(opened['workspace_path']) / material['relative_path']).exists()
+    exported = worker.call_tool('worker_materialize_input', {'source_name': material['source_name']})
+    assert (Path(opened['workspace_path']) / exported['relative_path']).read_bytes() == b'x,y\n1,4\n'
+    Path(opened['output_directory'], 'result.json').write_bytes(canonical_json({'schema_version': 1,
+        'payload': {'schema_version': 2, 'disposition': 'ready_for_experiment', 'reviews': [{
+            'hypothesis_key': 'mechanism', 'physical_plausibility': 'pass', 'falsifiability': 'pass',
+            'finite_discriminability': 'pass'}], 'evidence': [{'source_key': material['source_name'],
+                'source_type': 'frozen_input', 'locator': 'row 1'}]},
+        'handoff': {'summary': 'Reviewed the exact source table.'}}))
+    completed = worker.call_tool('worker_submit_result', {})
+    assert completed['state'] == 'completed', json.dumps(completed)
+
+
+@pytest.mark.parametrize('action', ['start', 'advance'])
+def test_remote_execution_without_hypothesis_is_rejected_before_submission(action):
+    from types import SimpleNamespace
+    from scidiscovery.artifact_agent.service.experiment_execution import ExperimentExecution
+    from scidiscovery.operation_contract import DiagnosticError
+    coordinator = object.__new__(ExperimentExecution)
+    coordinator.runs = SimpleNamespace(running_task=lambda run_id: SimpleNamespace(inputs=()))
+    with pytest.raises(DiagnosticError) as rejected:
+        coordinator.command(SimpleNamespace(run_id='without_science'), SimpleNamespace(action=action))
+    assert rejected.value.details[0]['code'] == 'experiment_hypothesis_missing'
 
 
 @pytest.mark.parametrize('payload,reason', [(None, 'input_objective_missing'), ({}, 'input_objective_missing'),
@@ -108,7 +297,7 @@ def test_missing_science_is_reported_without_falling_back_to_other_goal(tmp_path
     _put(runtime, instance, 'unrelated', json.loads(_foundation()), 'scidiscovery.scientific-foundation.v1')
     result = root.call_tool('operation_preflight', _request('selected'))
     assert not result['admissible']
-    assert result['reason_code'] == reason
+    assert result['reason_code'] == 'input_origin_missing'
     assert result['port'] == 'subject'
 
 
@@ -121,34 +310,24 @@ def test_root_cannot_supply_internal_goal_binding(tmp_path):
         root.call_tool('operation_invoke', request)
 
 
-def test_original_task_reaches_worker_with_exact_frozen_binding(tmp_path):
-    from pathlib import Path
-    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
-    from scidiscovery.artifact_agent.service.worker_connections import WorkerConnections
+def test_original_task_cannot_replace_hypothesis_but_remains_a_valid_budget_source(tmp_path):
+    from types import SimpleNamespace
+    from scidiscovery.artifact_agent.service.experiment_execution import ExperimentExecution
+    from scidiscovery.artifact_agent.schema.common import canonical_sha256
     runtime, instance, root = _setup(tmp_path, native_only=True)
     original = '计算 2+2，保留程序和结果。\nReport any missing environment.'
     root.call_tool('artifact_ingest_text', {'name': 'task', 'text': original})
     expected = _artifact(runtime, instance, 'task').ref
-    assert root.call_tool('operation_preflight', _request('task'))['admissible']
-    assert root.call_tool('operation_invoke', _request('task'))['result']['state'] == 'queued'
-    # A later task never substitutes the selected original.
-    root.call_tool('artifact_ingest_text', {'name': 'newer_task', 'text': 'Compute a different result.'})
-    run_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace='run', name='experiment')
-    bindings = {item.port_name: item for item in runtime.runs.status(run_id).inputs}
-    assert bindings['subject'].artifact_ref == bindings['objective_source'].artifact_ref == expected
+    rejected = root.call_tool('operation_preflight', _request('task'))
+    assert not rejected['admissible'] and rejected['reason_code'] == 'input_origin_missing'
+    with pytest.raises(RootToolError, match='input_origin_missing'):
+        root.call_tool('operation_invoke', _request('task'))
     assert runtime.artifacts.read(expected) == original.encode('utf-8')
-    compiled = runtime.runs.operation_catalog.operation('science.experiment.v1')
-    WorkerConnections(runtime.runs).attach(run_id=run_id, platform_session='fixture', thread_id='raw-task-author')
-    worker = LocalWorkerMCPRouter(runtime.runs, operation_id=compiled.spec.operation_id,
-        operation_digest=compiled.digest)
-    opened = worker.call_tool('worker_open_assignment', {})
-    assignment = json.loads(Path(opened['assignment_path']).read_bytes())
-    goal = next(item for item in assignment['inputs'] if item['source_name'] == 'objective_source')
-    assert goal['media_type'] == 'text/plain; charset=utf-8'
-    assert 'objective_source' not in {port.name for port in scheduler_operation_view(compiled.spec).inputs}
-    assert any('Original task text may be selected directly' in requirement
-        for requirements in scheduler_operation_view(compiled.spec).source_requirements.values()
-        for requirement in requirements)
+    coordinator = object.__new__(ExperimentExecution)
+    coordinator.executions = SimpleNamespace(artifacts=runtime.artifacts)
+    run = SimpleNamespace(instance_id=instance.instance_id, inputs=(
+        SimpleNamespace(port_name='objective_source', artifact_ref=expected),))
+    assert coordinator.budget_subject(run) == canonical_sha256({'instance': instance.instance_id})
 
 
 @pytest.mark.parametrize('raw,kind,schema,media,labels,reason', [
@@ -168,9 +347,13 @@ def test_nontext_and_broken_structured_sources_never_become_raw_goals(tmp_path, 
         payload_schema_version=1, media_type=media, labels=labels, creator=runtime.actor), idempotency_key='bad-source')
     runtime.scheduler_bindings.bind(instance=instance.instance_id, namespace='artifact', name='selected', object_id=envelope.artifact_id)
     result = root.call_tool('operation_preflight', _request('selected'))
-    assert not result['admissible'] and result['reason_code'] == reason
-    with pytest.raises(RootToolError, match=reason):
+    assert not result['admissible'] and result['reason_code'] == 'input_origin_missing'
+    with pytest.raises(RootToolError, match='input_origin_missing'):
         root.call_tool('operation_invoke', _request('selected'))
+    hypothesis_request = {'name': 'hypothesis', 'operation_id': 'science.hypothesis.propose.v1',
+        'inputs': [{'port': 'subject', 'artifact_names': ['selected']}], 'instruction': 'Understand the selected original.'}
+    hypothesis = root.call_tool('operation_preflight', hypothesis_request)
+    assert not hypothesis['admissible'] and hypothesis['reason_code'] == 'input_objective_invalid'
 
 
 @pytest.mark.parametrize('ambiguous', [False, True])
@@ -200,10 +383,15 @@ def test_alternative_origins_deduplicate_refs_but_reject_distinct_goals(tmp_path
     resolved = {'subject': (InvocationArtifact('selected', selected.ref, selected.schema_id,
                                               selected.media_type, selected.size_bytes),)}
     compiled = runtime.runs.operation_catalog.operation('science.experiment.v1')
+    # Test the retained goal resolver separately from experiment hypothesis admission.
+    from dataclasses import replace
+    goal = next(port for port in compiled.spec.inputs if port.name == 'objective_source')
+    goal = goal.model_copy(update={'derivation': goal.derivation.model_copy(update={'anchor_port': 'subject'})})
+    compiled = replace(compiled, spec=compiled.spec.model_copy(update={'inputs': (compiled.spec.inputs[0], goal)}))
     if ambiguous:
         with pytest.raises(OperationInvocationError, match='input_origin_ambiguous') as error:
             origin._derive_operation_inputs(compiled, resolved)
-        assert 'Select original user task text' in error.value.details[0]['message']
+        assert 'task text' in error.value.details[0]['message']
     else:
         origin._derive_operation_inputs(compiled, resolved)
         assert [item.ref for item in resolved['objective_source']] == [first]

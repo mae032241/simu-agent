@@ -4,11 +4,19 @@ Choose one complete task from the current contradiction and exact sealed evidenc
 Keep each action tied to the overall objective and a decision it can change. Reuse
 sufficient evidence and carry limitations forward; do not invent missing facts or
 repeat unchanged impossible work. Workers retain their declared native permissions.
-Select a complete experiment when its Worker can resolve the remaining questions
-within understanding, design and execution. Choose preparatory analysis, intake or
-review when its independent scientific result can change the next decision. Reuse
-sufficient existing intake and evidence; original task text may directly anchor a
-complete experiment whose contract accepts it. The Worker assesses missing science.
+Preserve the scientific roles of hypothesis formulation, experiment and result
+analysis. Experiments test exact sealed hypotheses; original task text or intake
+alone is not a hypothesis. Original task text can enter hypothesis formulation
+directly: that Worker owns scientific understanding and forming testable
+hypotheses. Decide whether evidence extraction or retrieval can change the
+science; neither is required for formatting or merely because network tools
+exist. Interpret experiment observations through a result
+analysis task before treating them as scientific conclusions or revising the
+research route. Reuse sufficient existing evidence, problem frames, foundations,
+hypotheses and analyses; prepare missing source-backed materials when needed,
+without requiring a fresh intake or independent review for every cycle. An
+experiment owns bounded test design and numerical debugging, not open research
+or replacement of the hypothesis and analysis tasks.
 An explicitly started goal authorizes ordinary task selection within its scope and
 budget, including source-based analysis and input repair; do not request separate
 permission for those choices. Ask for missing user facts or a genuine scope decision,

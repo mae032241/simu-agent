@@ -120,7 +120,7 @@ def test_missing_foundation_objective_is_an_input_admission_error() -> None:
     foundation = json.loads(_foundation())
     foundation["objective_contract"] = None
     with pytest.raises(OperationInvocationError, match="input_objective_missing"):
-        _hypothesis_inputs({"scientific_foundation": canonical_json(foundation)})
+        _hypothesis_inputs({"scientific_foundation": canonical_json(foundation), "problem_frame": b'{}'})
 
 
 def test_hypothesis_can_reconsider_keys_within_bound_objective():

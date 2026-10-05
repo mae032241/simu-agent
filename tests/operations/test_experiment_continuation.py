@@ -29,7 +29,7 @@ def continuation(tmp_path, monkeypatch, solver="sprocess", *, all_stages=False, 
     if solver == "sdevice" and include_grid:
         names.append("grid")  # A different port produces a different alias from the author's.
     invocation = {"name":"continuation", "operation_id":"science.experiment.v1",
-        "inputs":[{"port":"subject", "artifact_names":["objective"]},
+        "inputs":[{"port":"subject", "artifact_names":["observe.output"]},
                   {"port":"prior_experiment", "artifact_names":["observe.output"]},
                   {"port":"scientific_materials", "artifact_names":names}], "instruction":"Reuse exact sealed materials."}
     if require_execution_review:
