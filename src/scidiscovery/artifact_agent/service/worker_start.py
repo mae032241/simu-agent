@@ -9,6 +9,40 @@ from .local_workspace import WorkspaceError, read_control_workspace_file, write_
 from .input_reader import shared_input
 
 
+def _with_input_templates(document: dict) -> dict:
+    inputs = document['inputs']
+    groups = {}
+    for index, item in enumerate(inputs):
+        if isinstance(item.get('description'), str):
+            groups.setdefault(item['description'], []).append(index)
+    projected, templates = list(inputs), []
+    fields = ('description', 'artifact_name_usage', 'materialization', 'materialize_tool', 'usage', 'exposure', 'historical')
+    for positions in groups.values():
+        if len(positions) < 2:
+            continue
+        items = [inputs[index] for index in positions]
+        first = items[0]
+        common = {key: first[key] for key in fields if key in first and isinstance(first[key], (str, bool))
+            and all(key in item and type(item[key]) is type(first[key]) and item[key] == first[key] for item in items)}
+        compact = [{**{key: value for key, value in item.items() if key not in common}, 'template': len(templates)}
+            for item in items]
+        if len(canonical_json(compact)) + len(canonical_json(common)) >= len(canonical_json(items)):
+            continue
+        templates.append(common)
+        for index, item in zip(positions, compact):
+            projected[index] = item
+    if templates:
+        candidate = dict(document, inputs=projected, input_templates=templates, reading={**document['reading'],
+            'inputs': document['reading']['inputs'] + ' Each input with template INDEX inherits the omitted fields from '
+            'input_templates[INDEX]; explicit item fields take precedence. These shared display rules do not imply '
+            'a common source, port, permission or validation. Use each exact source_name.'})
+        # Include template references and their one-time explanation in the net
+        # size check; small indexes keep the original flat display.
+        if len(canonical_json(candidate)) < len(canonical_json(document)):
+            return candidate
+    return document
+
+
 def startup_document(assignment: dict, domain: dict | None = None, *, reader_navigation=4) -> dict:
     # No independent contract registry or scientific summarization. Copy complete
     # instructions from the frozen assignment and plugin manifest, once per view.
@@ -93,7 +127,7 @@ def startup_document(assignment: dict, domain: dict | None = None, *, reader_nav
             'Call worker_materialize_input with their source_name to obtain a local path. '
             'Read PDF/image/table/archive files with the appropriate native tool or a streaming script; '
             'do not print whole large files. The input JSON reader handles the small text inputs.')
-    return result
+    return _with_input_templates(result)
 
 
 def write_worker_start(workspace, assignment: dict, *, startup_page_bytes=16384) -> Path:
