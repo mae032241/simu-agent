@@ -111,8 +111,7 @@ def _read_stage_source(context, alias):
     if source.size_bytes > 65536:
         raise ToolInputError("experiment_scientific_source_too_large",
             "This optional prediction/comparison binding reads each original up to 65536 bytes; use ordinary stage materials for larger data.")
-    raw = (context.read_evidence(alias) if source.port_name in {"tool_evidence", "reference_access"}
-        else context.read_input(alias))
+    raw = context.read_evidence(alias)
     if hashlib.sha256(raw).hexdigest() != source.artifact_ref.sha256:
         raise SemanticRuleViolation("Scientific source differs from its frozen original.")
     return raw

@@ -103,6 +103,139 @@ def _publish(f, name, raw, sources):
     return reply["files"][0]["reference"]
 
 
+def _declared_prediction(conditions):
+    return {"stage": "design", "conclusion": "Predeclare the exact observation check.",
+        "prediction_declaration": {"prediction": {"hypothesis_key": "sum", "prediction_key": "four",
+            "observable": "Retained sum", "expected_result": "The sum is 4.", "falsifying_result": "The sum differs from 4."},
+            "criterion": {"check_key": "sum", "observable": "Retained sum", "metric": "sum",
+                "evaluation_mode": "deterministic_threshold", "threshold": {"operator": "equal", "value": 4.0, "unit": "dimensionless"},
+                "acceptance_condition": "The sum equals 4.", "failure_action": "Retain the failed comparison.", "basis": "Exact arithmetic."},
+            "conditions": conditions}}
+
+
+def _observation_comparison(declaration, observation):
+    return {"stage": "validity", "conclusion": "Compare the exact published observation.",
+        "comparison": {"prediction": declaration, "observations": [observation], "result": {
+            "check_key": "sum", "status": "pass", "evaluation_mode": "deterministic_threshold",
+            "observed_value": 4.0, "observed_text": "The retained sum is 4.", "unit": "dimensionless",
+            "evidence_keys": [observation], "rationale": "Compared the retained original with the prior criterion."}}}
+
+
+def test_published_comparison_sources_and_rebound_inputs_keep_original_receipts(tmp_path, installed):
+    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+    from scidiscovery.artifact_agent.service.worker_connections import WorkerConnections
+    f = _start_native(tmp_path, scientific_material=True)
+    parameter = next(i.source_name for i in f.runtime.runs.status(f.run_id).inputs if i.port_name == "scientific_materials")
+    declaration = f.worker.call_tool("worker_experiment_stage", _declared_prediction([parameter]))["reference"]
+    code = _publish(f, "exact_sum.py", b"print(4)\n", [parameter])
+    implementation = f.worker.call_tool("worker_experiment_stage", {"stage": "implementation",
+        "conclusion": "Retain the exact sum program.", "materials": [code]})["reference"]
+    log = _publish(f, "exact_sum.log", b"4\n", [implementation])
+    observation = _publish(f, "observations.json", b'{"sum":4}', [implementation])
+    execution = f.worker.call_tool("worker_experiment_stage", {"stage": "execution", "conclusion": "Worker reported 4.",
+        "native_execution": {"implementation": implementation, "state": "succeeded", "logs": [log], "results": [observation]}})["reference"]
+    # This is a real worker_publish_files receipt on port attachments, not a Run input.
+    comparison = _observation_comparison(declaration, observation)
+    comparison["materials"] = [execution]
+    validity = f.worker.call_tool("worker_experiment_stage", comparison)["reference"]
+    f.worker.call_tool("worker_experiment_stage", _declared_prediction([observation]))
+    (f.workspace / "output/result.json").write_bytes(canonical_json({"payload": {
+        "summary": "Retained the native observation and exact comparison.", "outcome": "completed",
+        "remaining_question": "", "limitations": ["Worker-reported execution, without independent attestation."],
+        "adopted_stages": [declaration, implementation, execution, validity]}}))
+    completed = f.worker.call_tool("worker_submit_result", {})
+    assert completed["state"] == "completed", completed
+    old = f.runtime.runs.status(f.run_id)
+    records = {r["alias"]: r for r in f.runtime.runs.available_material_records(old)}
+    assert records[observation]["output_port"] == "attachments"
+    bound = f.runtime.runs.sealed_material_record(old, validity)
+    assert bound["source_refs"][observation].model_dump(mode="json") == records[observation]["artifact_ref"]
+    names = ["parameters", *[f.runtime.runs.material_artifact_name(old, records[a]) for a in (declaration, observation, validity)]]
+    result_name = f.root.call_tool("run_status", {"name": "compute"})["output_artifact_name"]
+    reply = f.root.call_tool("operation_invoke", {"name": "recompare", "operation_id": "science.experiment.v1",
+        "inputs": [{"port": "subject", "artifact_names": [result_name]}, {"port": "scientific_materials", "artifact_names": names}],
+        "instruction": "Compare the exact bound originals, preserving prior receipts."})
+    assert reply["result"]["state"] == "queued", reply
+    new_id = f.runtime.scheduler_bindings.resolve(instance=old.instance_id, namespace="run", name="recompare")
+    WorkerConnections(f.runtime.runs).attach(run_id=new_id, platform_session="recompare", thread_id="recompare-author")
+    worker = LocalWorkerMCPRouter(f.runtime.runs, operation_id=f.compiled.spec.operation_id, operation_digest=f.compiled.digest)
+    opened = worker.call_tool("worker_open_assignment", {})
+    new = f.runtime.runs.status(new_id)
+    def alias_for(alias):
+        return next(i.source_name for i in new.inputs if i.artifact_ref.model_dump(mode="json") == records[alias]["artifact_ref"])
+    rebound = worker.call_tool("worker_experiment_stage", _observation_comparison(alias_for(declaration), alias_for(observation)))["reference"]
+    Path(opened["output_directory"], "result.json").write_bytes(canonical_json({"payload": {
+        "summary": "Reused exact declaration, comparison and observation originals.", "outcome": "inconclusive",
+        "remaining_question": "Independent scientific assessment remains open.",
+        "adopted_stages": [alias_for(declaration), alias_for(validity), rebound]}}))
+    assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
+
+
+@pytest.mark.parametrize("source", ("unknown", "oversized"))
+def test_comparison_source_rejects_unknown_and_oversized_originals(tmp_path, installed, source):
+    from scidiscovery.artifact_agent.interfaces.mcp_worker_protocol import WorkerToolError
+    from scidiscovery.operation_contract import ToolInputError
+    f = _start_native(tmp_path)
+    declaration = f.worker.call_tool("worker_experiment_stage", _declared_prediction(["objective_source"]))["reference"]
+    observation = "unpublished_alias" if source == "unknown" else _publish(f, "large.txt", b"x" * 65537, ["objective_source"])
+    with pytest.raises((ValueError, ToolInputError, WorkerToolError)) as caught:
+        f.worker.call_tool("worker_experiment_stage", _observation_comparison(declaration, observation))
+    assert ("bound input alias" if source == "unknown" else "65536") in str(caught.value)
+    assert not any(r["metadata"].get("stage") == "validity" for r in f.runtime.runs.tool_evidence(f.run_id))
+
+
+def test_stage_source_rejects_bytes_that_differ_from_frozen_identity():
+    import hashlib
+    from scidiscovery.general_science_experiment_task import _read_stage_source
+    context = SimpleNamespace(source_descriptor=lambda alias: SimpleNamespace(size_bytes=2, port_name="attachments",
+        artifact_ref=SimpleNamespace(sha256=hashlib.sha256(b"{}").hexdigest())),
+        read_evidence=lambda alias: b"[]", read_input=lambda alias: b"[]")
+    with pytest.raises(SemanticRuleViolation, match="frozen original"):
+        _read_stage_source(context, "attachment")
+
+
+def test_actual_stage_contract_expresses_validation_check_conditions(tmp_path, installed):
+    from copy import deepcopy
+    from jsonschema import Draft202012Validator
+    from scidiscovery.artifact_agent.interfaces.mcp_gateway import UnifiedMCPRouter
+    from scidiscovery.artifact_agent.interfaces.mcp_worker_protocol import WorkerToolError
+    f = _start_native(tmp_path)
+    gateway = UnifiedMCPRouter(f.root)
+    profile = f.root.call_tool("run_status", {"name": "compute"})["execution_profile"]["profile"]
+    request = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": "scid_describe", "arguments": {"name": "worker_experiment_stage"},
+            "_meta": {"x-codex-turn-metadata": {"session_id": "fixture", "thread_id": "native-author",
+                "model": profile["model"], "reasoning_effort": profile["reasoning_effort"]}}}}
+    response = gateway.handle(request)
+    assert "error" not in response, response
+    contract = response["result"]["structuredContent"]
+    validator = Draft202012Validator(contract["inputSchema"])
+    fields = contract["inputSchema"]["$defs"]["ValidationCheck"]["properties"]
+    assert "non-null" in fields["threshold"]["description"]
+    assert all("together" in fields[name]["description"] for name in ("evaluator_profile", "evaluator_metric"))
+    legal = _declared_prediction(["objective_source"])
+    qualitative = deepcopy(legal)
+    qualitative["prediction_declaration"]["criterion"].update(evaluation_mode="reviewed_qualitative", threshold=None)
+    paired = deepcopy(legal)
+    paired["prediction_declaration"]["criterion"].update(evaluator_profile="sum", evaluator_metric="sum")
+    omitted_qualitative = deepcopy(qualitative)
+    del omitted_qualitative["prediction_declaration"]["criterion"]["threshold"]
+    for value in (legal, qualitative, omitted_qualitative, paired):
+        validator.validate(value)
+        assert f.worker.call_tool("worker_experiment_stage", value)["state"] == "sealed"
+    invalid = []
+    for field, value in (("threshold", None), ("evaluator_profile", "sum"), ("evaluator_metric", "sum")):
+        candidate = deepcopy(legal); candidate["prediction_declaration"]["criterion"][field] = value; invalid.append(candidate)
+    omitted = deepcopy(legal); del omitted["prediction_declaration"]["criterion"]["threshold"]; invalid.append(omitted)
+    for fields in ({"threshold": legal["prediction_declaration"]["criterion"]["threshold"]},
+                   {"evaluator_profile": "sum", "evaluator_metric": "sum"}):
+        candidate = deepcopy(qualitative); candidate["prediction_declaration"]["criterion"].update(fields); invalid.append(candidate)
+    for value in invalid:
+        assert list(validator.iter_errors(value)), value
+        with pytest.raises(WorkerToolError):
+            f.worker.call_tool("worker_experiment_stage", value)
+
+
 @pytest.mark.parametrize("missing_environment", (False, True))
 @pytest.mark.parametrize("goal_source", ("research-objective", "source-text", "scientific-intake"))
 def test_no_provider_native_shell_delivery_and_environment_blocker(tmp_path, installed, missing_environment, goal_source):

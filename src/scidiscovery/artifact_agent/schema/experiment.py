@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from .common import Identifier, SchemaModel, canonical_json, canonical_sha256
 from .scientific_foundation import ScalarValue
@@ -318,13 +318,31 @@ class ExperimentProposal(SchemaModel):
 
 
 class ValidationCheck(SchemaModel):
+    model_config = ConfigDict(json_schema_extra={"allOf": [
+        {"if": {"properties": {"evaluation_mode": {"const": "deterministic_threshold"}},
+                "required": ["evaluation_mode"]},
+         "then": {"required": ["threshold"], "properties": {"threshold": {"type": "object"}}}},
+        {"if": {"properties": {"evaluation_mode": {"const": "reviewed_qualitative"}},
+                "required": ["evaluation_mode"]},
+         "then": {"properties": {"threshold": {"type": "null"},
+                                 "evaluator_profile": {"type": "null"}, "evaluator_metric": {"type": "null"}}}},
+        {"anyOf": [
+            {"properties": {"evaluator_profile": {"type": "null"}, "evaluator_metric": {"type": "null"}}},
+            {"required": ["evaluator_profile", "evaluator_metric"],
+             "properties": {"evaluator_profile": {"type": "string"}, "evaluator_metric": {"type": "string"}}},
+        ]},
+    ]})
     check_key: Identifier
     observable: Annotated[str, Field(min_length=1, max_length=4096)]
     metric: Annotated[str, Field(min_length=1, max_length=4096)]
-    evaluation_mode: Literal["deterministic_threshold", "reviewed_qualitative"]
-    evaluator_profile: Identifier | None = None
-    evaluator_metric: Identifier | None = None
-    threshold: MetricThreshold | None = None
+    evaluation_mode: Literal["deterministic_threshold", "reviewed_qualitative"] = Field(
+        description="deterministic_threshold requires a non-null threshold; reviewed_qualitative cannot declare a threshold or deterministic evaluator.")
+    evaluator_profile: Identifier | None = Field(default=None,
+        description="Optional deterministic evaluator profile; supply together with a non-null evaluator_metric. For reviewed_qualitative, omit or use null.")
+    evaluator_metric: Identifier | None = Field(default=None,
+        description="Optional deterministic evaluator metric; supply together with a non-null evaluator_profile. For reviewed_qualitative, omit or use null.")
+    threshold: MetricThreshold | None = Field(default=None,
+        description="Required and non-null for deterministic_threshold. For reviewed_qualitative, omit or use null; a numeric threshold is not allowed.")
     acceptance_condition: Annotated[str, Field(min_length=1, max_length=4096)]
     failure_action: Annotated[str, Field(min_length=1, max_length=4096)]
     basis: Annotated[str, Field(min_length=1, max_length=4096)]
