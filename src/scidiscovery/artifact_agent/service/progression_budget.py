@@ -149,7 +149,8 @@ def apply_usage_observation(db, row, checkpoint, observation):
     if previous_record and role == 'root':
         records[thread].update({key: previous_record[key] for key in
             ('root_started_round', 'scheduler_session', 'retired', 'retired_after_round',
-             'retired_after_turn', 'retired_after_activity', 'context_delivered') if key in previous_record})
+             'retired_after_turn', 'retired_after_activity', 'context_delivered',
+             'progress_explanation_fingerprint') if key in previous_record})
     if previous_record:
         records[thread].update({key: previous_record[key] for key in ('native_turn', 'native_terminal') if key in previous_record})
     if loop_id:
@@ -180,6 +181,12 @@ def apply_native_observation(db, row, checkpoint, observation):
         if not same_turn:
             record.pop('native_terminal', None)
         if identity['role'] == 'root':
+            # Only the successful start reply supplies this derived display proof.
+            if 'progress_explanation_fingerprint' in observation:
+                if observation['progress_explanation_fingerprint']:
+                    record['progress_explanation_fingerprint'] = observation['progress_explanation_fingerprint']
+                else:
+                    record.pop('progress_explanation_fingerprint', None)
             if observation.get('state') in {'completed','failed','interrupted'}:
                 record['native_terminal'] = dict(turn,state=observation['state'],event_version=observation.get('event_version'))
             terminal = record.get('native_terminal') or {}

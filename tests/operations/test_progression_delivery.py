@@ -55,6 +55,118 @@ def _next_poll(p):
     p.coordinator.tick()
 
 
+def _progress_native_host(p):
+    from tests.operations.test_progression import Host
+    def factory(saved,event):
+        host=Host(saved,event)
+        host.native_connection_id='progress-context-connection'
+        return host
+    p.coordinator.host_factory=factory
+
+
+def test_progress_explanation_reuse_keeps_dynamic_status_and_usage_identity(progression):
+    p=progression
+    _progress_native_host(p)
+    p.coordinator.tick()
+    host=p.coordinator.host
+    first=json.loads(host.prompts[-1].split('\n')[-1])['progress_shadow']
+    assert isinstance(first['limitations'],list)
+    fingerprint=checkpoint(p)['usage_records'][host.identity.thread_id]['progress_explanation_fingerprint']
+    host.event(dict(method='thread/tokenUsage/updated',params=dict(threadId=host.identity.thread_id,
+        tokenUsage=dict(total=dict(inputTokens=100,cachedInputTokens=50,outputTokens=20)))))
+    assert checkpoint(p)['usage_records'][host.identity.thread_id]['progress_explanation_fingerprint']==fingerprint
+    p.root.call_tool('progression_message',dict(name='progress-direction',text='Retain the exact scientific limits.'))
+    host.finish();_next_poll(p)
+    brief=json.loads(host.prompts[-1].split('\n')[-1])
+    shadow=brief['progress_shadow']
+    assert 'limitations' not in shadow
+    guide=shadow['limitations_reused']['read']
+    # Exercise the advertised parameters through the actual strict Root entry.
+    arguments=guide.get('arguments',{k:v for k,v in guide.items() if k!='tool'})
+    public=p.root.call_tool(guide['tool'],arguments)['progress_shadow']
+    assert guide==dict(tool='progression_status',arguments={})
+    assert public['limitations']==first['limitations']
+    assert {k:v for k,v in shadow.items() if k!='limitations_reused'}=={k:v for k,v in public.items() if k!='limitations'}
+    record=checkpoint(p)['usage_records'][host.identity.thread_id]
+    assert record['progress_explanation_fingerprint']==fingerprint
+    assert record['high_water']['input_tokens']==100 and record['native_turn']['turn_id']==host.turn_id
+    assert brief['budget']==checkpoint(p)['budget']
+
+
+@pytest.mark.parametrize('change',['context','thread','configuration','explanation'])
+def test_progress_explanation_restores_full_at_changed_context(progression,monkeypatch,change):
+    from scidiscovery.artifact_agent.service import scientific_progress
+    p=progression
+    _progress_native_host(p);p.coordinator.tick()
+    saved=row(p);cp=json.loads(saved['checkpoint_json']);host=json.loads(saved['host_json'])
+    if change=='context':
+        cp['usage_records'][host['thread_id']]['context_delivered']=False
+        saved['checkpoint_json']=json.dumps(cp)
+    elif change=='thread':
+        saved['host_json']=json.dumps(dict(host,thread_id='fresh-root'))
+    elif change=='configuration':
+        config=json.loads(saved['config_json']);config['effective']['progression']['poll_seconds']+=1
+        saved['config_json']=json.dumps(config)
+    else:
+        original=scientific_progress.shadow_projection
+        monkeypatch.setattr(scientific_progress,'shadow_projection',lambda **kw:
+            dict(original(**kw),limitations=['Changed fixed explanation.']))
+    snapshot=dict(goal=saved['objective_ref_json'],runs=[],approvals=[])
+    brief=json.loads(p.coordinator._brief(saved,snapshot,45000).split('\n')[-1])
+    assert isinstance(brief['progress_shadow']['limitations'],list)
+    assert 'limitations_reused' not in brief['progress_shadow']
+
+
+@pytest.mark.parametrize('boundary',['context_limit','unknown_reply'])
+def test_unconfirmed_progress_explanation_never_establishes_seen_evidence(progression,monkeypatch,boundary):
+    from scidiscovery.artifact_agent.service import scientific_progress
+    p=progression
+    _progress_native_host(p)
+    if boundary=='context_limit':
+        original=scientific_progress.shadow_projection
+        monkeypatch.setattr(scientific_progress,'shadow_projection',lambda **kw:
+            dict(original(**kw),limitations=['Fixed explanation '+('界'*30000)]))
+        p.coordinator.tick()
+        assert json.loads(p.coordinator.host.prompts[-1].split('\n')[-1])['progress_shadow']['brief_omitted']
+    else:
+        factory=p.coordinator.host_factory
+        def unknown(saved,event):
+            host=factory(saved,event);start=host.start_turn
+            def submit(prompt):
+                start(prompt)  # accepted started notification precedes the unknown reply.
+                raise sqlite3.OperationalError('uncertain progress submission')
+            host.start_turn=submit
+            return host
+        p.coordinator.host_factory=unknown
+        with pytest.raises(sqlite3.OperationalError,match='uncertain progress submission'):p.coordinator.tick()
+    assert not checkpoint(p)['usage_records']['native-root'].get('progress_explanation_fingerprint')
+    saved=row(p);snapshot=dict(goal=saved['objective_ref_json'],runs=[],approvals=[])
+    restored=json.loads(p.coordinator._brief(saved,snapshot,200000).split('\n')[-1])
+    assert isinstance(restored['progress_shadow']['limitations'],list)
+
+
+def test_progress_confirmation_fingerprints_sent_explanation_not_later_projection(progression,monkeypatch):
+    from scidiscovery.artifact_agent.service import scientific_progress
+    from scidiscovery.artifact_agent.service.progression import _progress_explanation_fingerprint
+    p=progression
+    changed=[False];original=scientific_progress.shadow_projection
+    monkeypatch.setattr(scientific_progress,'shadow_projection',lambda **kw:
+        dict(original(**kw),limitations=['New fixed explanation.']) if changed[0] else original(**kw))
+    _progress_native_host(p);factory=p.coordinator.host_factory
+    def after_send(saved,event):
+        host=factory(saved,event);start=host.start_turn
+        def submit(prompt):
+            turn=start(prompt);changed[0]=True
+            return turn
+        host.start_turn=submit
+        return host
+    p.coordinator.host_factory=after_send;p.coordinator.tick()
+    saved=row(p);sent=json.loads(p.coordinator.host.prompts[-1].split('\n')[-1])['progress_shadow']
+    assert checkpoint(p)['usage_records']['native-root']['progress_explanation_fingerprint']==_progress_explanation_fingerprint(saved,sent)
+    snapshot=dict(goal=saved['objective_ref_json'],runs=[],approvals=[])
+    assert json.loads(p.coordinator._brief(saved,snapshot,45000).split('\n')[-1])['progress_shadow']['limitations']==['New fixed explanation.']
+
+
 def _select_objective(p, original):
     p.root.call_tool('progression_command', dict(command='pause'))
     p.root.call_tool('progression_message', dict(name='exact.goal', text=original))

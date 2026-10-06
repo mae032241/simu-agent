@@ -90,6 +90,13 @@ class ObservationRetriesExhausted(ProgressionFault):
         super().__init__('observation_retry_exhausted')
 
 
+def _progress_explanation_fingerprint(row, shadow):
+    if not isinstance(shadow.get('limitations'), list):
+        return None
+    return hashlib.sha256(json.dumps(dict(configuration=row['config_json'],limitations=shadow['limitations']),
+        ensure_ascii=False,sort_keys=True,separators=(',', ':')).encode()).hexdigest()
+
+
 def fault_diagnostic(error, phase):
     """Persist bounded code coordinates, never messages, SQL, paths or locals."""
     result=dict(phase=phase if phase in {'idle','prepared','running'} else 'unprepared',stage='unknown',frames=[])
@@ -470,7 +477,8 @@ class ProgressionCoordinator:
         facade = self.facade_factory(row['owner_session'])
         checkpoint = json.loads(row['checkpoint_json'])
         host = json.loads(row['host_json'] or '{}')
-        restore_context = not checkpoint.get('usage_records', {}).get(host.get('thread_id'), {}).get('context_delivered')
+        context = checkpoint.get('usage_records', {}).get(host.get('thread_id'), {})
+        restore_context = not context.get('context_delivered')
         notified = checkpoint.get('notified_snapshot')
         same_objective = isinstance(notified, dict) and notified.get('goal') == row['objective_ref_json']
         ref = ArtifactRef.model_validate_json(row['objective_ref_json'])
@@ -493,6 +501,12 @@ class ProgressionCoordinator:
             brief['scheduling_authority'] = 'Science is paused. Dispatch only the exact review_requests needed by accepted tasks; retain reads and settlement. New research and standalone execution remain forbidden.'
         from .scientific_progress import progress_page, shadow_projection
         brief['progress_shadow'] = shadow_projection(bindings=self.bindings, row=row)
+        fingerprint = _progress_explanation_fingerprint(row,brief['progress_shadow'])
+        if not restore_context and fingerprint and context.get('progress_explanation_fingerprint') == fingerprint:
+            brief['progress_shadow'].pop('limitations')
+            brief['progress_shadow']['limitations_reused'] = dict(
+                instruction='Reuse the unchanged explanation from this thread if retained; otherwise read progress_shadow.limitations from the returned status.',
+                read=dict(tool='progression_status',arguments={}))
         brief['progress'] = progress_page(bindings=self.bindings, artifacts=self.runtime.artifacts, row=row, limit=1)
         def compact_progress():
             return dict(mode=brief['progress_shadow']['mode'], brief_omitted=True,
@@ -1204,8 +1218,17 @@ class ProgressionCoordinator:
             snapshot['accepted_work_only'] = True
         if snapshot == checkpoint.get('processed_snapshot'):
             return
-        prompt = self._observation(lambda: self._brief(self._decision_row(), snapshot, limits['context_bytes']-len(INSTRUCTION.encode())-1))
+        def prepare_brief():
+            brief_row = self._decision_row()
+            return brief_row, self._brief(brief_row, snapshot, limits['context_bytes']-len(INSTRUCTION.encode())-1)
+        brief_row, prompt = self._observation(prepare_brief)
         delivered = json.loads(prompt.split('\n')[-1])
+        shadow = delivered.get('progress_shadow', {})
+        progress_fingerprint = _progress_explanation_fingerprint(brief_row,shadow)
+        if shadow.get('limitations_reused'):
+            # Reuse preserves an earlier confirmation; it cannot establish one.
+            progress_fingerprint = json.loads(brief_row['checkpoint_json']).get('usage_records', {}).get(
+                self.host.identity.thread_id, {}).get('progress_explanation_fingerprint')
         shown = {value['name']: value for value in delivered['changes']}
         # An acknowledged notice does not consume its omitted results. Rebuild
         # against the consumed position so a newly fitting batch still wakes Root.
@@ -1241,12 +1264,18 @@ class ProgressionCoordinator:
         record = records.get(self.host.identity.thread_id)
         if record is not None:
             record['context_delivered'] = True
+            if progress_fingerprint:
+                record['progress_explanation_fingerprint'] = progress_fingerprint
+            else:
+                record.pop('progress_explanation_fingerprint', None)
         # The authenticated terminal notification may precede the RPC reply.
         # Only a completion for this accepted turn can survive that boundary.
         completion=self.host.completion
         state=(completion['status'] if completion and completion.get('id')==turn
             and completion.get('status') in {'completed','failed','interrupted'} else 'running')
         observation=self._root_native_observation(checkpoint,turn,'turn_started',state)
+        if observation:
+            observation['progress_explanation_fingerprint'] = progress_fingerprint
         self._save(dict(phase='running', turn_id=turn, notified_snapshot=notification_snapshot,
             native_completion=None if state=='running' else state,
             **({} if observation else dict(usage_records=records))),native_observation=observation)
