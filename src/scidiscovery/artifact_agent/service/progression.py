@@ -535,6 +535,19 @@ class ProgressionCoordinator:
             if prior.get(run['name']) == run:
                 continue
             result = facade.run_status(name=run['name'], intent='decision')
+            signal = result.get('scheduler_signal')
+            if (result.get('state') == 'completed' and result.get('sealed_output_status') == 'available'
+                    and result.get('operation_contract_status') == 'current'
+                    and result.get('scheduler_signal_status') == 'available' and isinstance(signal, dict)):
+                for index, item in enumerate((result.get('selected_output') or {}).get('items', [])):
+                    if (item.get('pointer') == '/summary' and item.get('status') == 'selected'
+                            and isinstance(item.get('value'), str) and item['value'] == signal.get('summary')):
+                        # A reference stays inside this complete change. Capacity
+                        # fallback removes whole changes, never their selected values.
+                        signal = {key: value for key, value in signal.items() if key != 'summary'}
+                        signal['summary_ref'] = dict(within='this_change', pointer=f'/selected_output/items/{index}/value')
+                        result = dict(result, scheduler_signal=signal)
+                        break
             brief['changes'].append(result)
             if len(encode(brief).encode()) > limit:
                 candidate = dict(brief, progress_shadow=compact_progress())
