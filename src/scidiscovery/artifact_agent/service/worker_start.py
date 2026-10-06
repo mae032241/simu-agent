@@ -10,13 +10,17 @@ from .input_reader import shared_input, MATERIAL_FILE_READING
 
 
 def _with_input_templates(document: dict) -> dict:
-    inputs = document['inputs']
+    inputs = [{key: value for key, value in item.items()
+        if key != 'artifact_name' or item.get('artifact_name_usage') != 'navigation_only'}
+        for item in document['inputs']]
+    omitted_names = inputs != document['inputs']
     groups = {}
     for index, item in enumerate(inputs):
         if isinstance(item.get('description'), str):
             groups.setdefault(item['description'], []).append(index)
     projected, templates = list(inputs), []
-    fields = ('description', 'artifact_name_usage', 'materialization', 'materialize_tool', 'usage', 'exposure', 'historical')
+    fields = ('description', 'artifact_name_usage', 'materialization', 'materialize_tool', 'usage', 'exposure', 'historical',
+        'reference_availability')
     for positions in groups.values():
         if len(positions) < 2:
             continue
@@ -31,11 +35,17 @@ def _with_input_templates(document: dict) -> dict:
         templates.append(common)
         for index, item in zip(positions, compact):
             projected[index] = item
-    if templates:
-        candidate = dict(document, inputs=projected, input_templates=templates, reading={**document['reading'],
-            'inputs': document['reading']['inputs'] + ' Each input with template INDEX inherits the omitted fields from '
-            'input_templates[INDEX]; explicit item fields take precedence. These shared display rules do not imply '
-            'a common source, port, permission or validation. Use each exact source_name.'})
+    if templates or omitted_names:
+        reading = dict(document['reading'])
+        if omitted_names:
+            reading['inputs'] += (' Navigation-only artifact_name values remain in assignment.json; '
+                'read a selected entry with python tools/read_input.py assignment.json --file --pointer /inputs/INDEX/artifact_name.')
+        candidate = dict(document, inputs=projected, reading=reading)
+        if templates:
+            candidate['input_templates'] = templates
+            reading['inputs'] += (' Each input with template INDEX inherits the omitted fields from '
+                'input_templates[INDEX]; explicit item fields take precedence. These shared display rules do not imply '
+                'a common source, port, permission or validation. Use each exact source_name.')
         # Include template references and their one-time explanation in the net
         # size check; small indexes keep the original flat display.
         if len(canonical_json(candidate)) < len(canonical_json(document)):

@@ -63,6 +63,11 @@ def expand(start):
         **{key: value for key, value in item.items() if key != 'template'}} for item in start['inputs']]
 
 
+def without_navigation_names(inputs):
+    return [{key: value for key, value in item.items()
+        if key != 'artifact_name' or item.get('artifact_name_usage') != 'navigation_only'} for item in inputs]
+
+
 def test_32_compiled_inputs_expand_to_identical_display_and_shrink_net_bytes(analysis_inputs, monkeypatch):
     _, bound, _ = analysis_inputs
     original = assignment(bound)
@@ -72,7 +77,9 @@ def test_32_compiled_inputs_expand_to_identical_display_and_shrink_net_bytes(ana
         before = worker_start.startup_document(original)
     after = worker_start.startup_document(original)
     assert len(after['inputs']) == 32
-    assert expand(after) == before['inputs'] == original['inputs']
+    assert expand(after) == without_navigation_names(before['inputs'])
+    assert before['inputs'] == original['inputs']
+    assert any('reference_availability' in template for template in after['input_templates'])
     assert [item['source_name'] for item in after['inputs']] == [item['source_name'] for item in original['inputs']]
     assert canonical_json(original) == frozen
     assert 'input_templates[INDEX]' in after['reading']['inputs']
@@ -103,7 +110,7 @@ def test_templates_preserve_mixed_permission_history_and_unavailable_exceptions(
     original['inputs'][-3]['historical'] = 0  # Equality alone must not conflate bool and integer.
     before = deepcopy(original)
     start = worker_start.startup_document(original)
-    assert expand(start) == original['inputs']
+    assert expand(start) == without_navigation_names(original['inputs'])
     assert original == before
     rendered = start['inputs'][-1]
     for key in ('source_name', 'usage', 'exposure', 'historical', 'reference_availability', 'source_origin', 'same_source_as'):
@@ -122,7 +129,7 @@ def test_small_index_keeps_flat_display_when_template_explanation_costs_more():
 def test_changed_startup_layout_requires_new_selection_and_pages_every_input(analysis_inputs, monkeypatch, tmp_path):
     from scidiscovery.artifact_agent.service.input_reader import read
     from tests.artifact_agent.test_input_reader import body, replay_arguments, next_arguments, finished
-    _, bound, _ = analysis_inputs
+    _, bound, contents = analysis_inputs
     original = assignment(bound)
     (tmp_path/'assignment.json').write_bytes(canonical_json(original))
     with monkeypatch.context() as baseline:
@@ -145,5 +152,32 @@ def test_changed_startup_layout_requires_new_selection_and_pages_every_input(ana
             break
         reply = read(tmp_path, selection_id=replay_arguments(reply)[1], offset=int(next_arguments(reply)[3]), budget=1024)
     restored = json.loads(''.join(parts))
-    assert pages > 1 and expand(restored) == original['inputs']
+    assert pages > 1 and expand(restored) == without_navigation_names(original['inputs'])
     assert (tmp_path/'assignment.json').read_bytes() == canonical_json(original)
+    assert json.loads(body(read(tmp_path,'assignment.json',file=True,pointers=['/inputs/0/artifact_name']))) == original['inputs'][0]['artifact_name']
+    source=original['inputs'][0]['source_name']
+    (tmp_path/'inputs').mkdir()
+    (tmp_path/original['inputs'][0]['relative_path']).write_bytes(contents[source])
+    assert body(read(tmp_path,source)) == contents[source].decode()
+
+
+def test_navigation_omission_preserves_other_names_and_typed_scalar_differences(analysis_inputs):
+    _, bound, _ = analysis_inputs
+    original = assignment(bound)
+    original['inputs'][-1]['artifact_name_usage'] = 'claim'
+    original['inputs'][-2]['reference_availability'] = False
+    original['inputs'][-3]['reference_availability'] = 0
+    before = deepcopy(original)
+    start = worker_start.startup_document(original)
+    restored = expand(start)
+    assert restored == without_navigation_names(original['inputs'])
+    assert restored[-1]['artifact_name'] == original['inputs'][-1]['artifact_name']
+    assert restored[-2]['reference_availability'] is False
+    assert type(restored[-3]['reference_availability']) is int
+    assert original == before
+
+
+def test_navigation_only_small_index_keeps_flat_display_when_guidance_costs_more():
+    inputs = [dict(source_name='one',artifact_name='tiny',artifact_name_usage='navigation_only')]
+    start = worker_start.startup_document(dict(inputs=inputs))
+    assert start['inputs'] == inputs
