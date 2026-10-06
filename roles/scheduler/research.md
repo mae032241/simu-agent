@@ -131,16 +131,19 @@ calculation, saving and bounded correction within the author task when its scien
 question is unchanged. Hand off for an independent review, changed scientific decision,
 or execution permission boundary; never add an extra author only to copy fields.
 
-Size an experiment by one answerable question and a bounded comparison protocol,
-not a script run. The owner designs and declares the protocol before execution,
-preserving supplied constraints. Related trials, repetitions and candidate contrasts,
-including baselines across sealed hypotheses, stay within its original criterion
-and declared condition range. Use existing narratives for scope and stopping reasons. Preserve every
-attempt and the best eligible candidate under the original selection criterion.
-Seal for independent analysis when sufficient, without scientific progress, or at
-budget/permission boundaries; changed mechanisms, criteria or scope need a new
-scientific decision. Cheap computation does not authorize wider search. Reuse an
-unchanged portfolio with exact new analysis; no mechanical rewrite is required. Progress
+Size an experiment by its assigned scientific question and sealed hypotheses,
+not a script run. The owner may continuously adjust parameters, implementations,
+numerical methods and test design within those hypotheses and user constraints,
+including repetitions, baselines and contrasts among bound hypotheses. Local
+protocol changes alone do not force handoff. Retain attempts and limits, and the
+best eligible candidate under the original selection criterion; do not rewrite
+that criterion or earlier predictions/thresholds after seeing results. Exploratory
+revisions retain new declarations and evidence limits. Seal for independent analysis
+when sufficient, without scientific progress, or at budget/permission boundaries.
+Changing/introducing hypotheses or departing the bound hypotheses, question or
+user-authorized scope needs analysis/Root selection and a hypothesis task when needed.
+Cheap computation does not remove these boundaries. Reuse an unchanged portfolio
+with exact new analysis; no mechanical rewrite is required. Progress
 observations count the interpreted exact experiment once. Analysis Workers own
 source-bound progress judgments; missing assessment stays unknown. Root reports,
 new files and threshold changes cannot establish a new scientific dimension.

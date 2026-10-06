@@ -346,20 +346,20 @@ PROMPT = """Own one bounded experiment for one answerable scientific question:
 design, implement, debug when useful, execute locally with the native shell or
 available remote tools, retain observations and judge validity. Test the exact
 sealed hypotheses in hypothesis_portfolio; own feasibility and test design.
-Design and declare the bounded comparison protocol before execution, including
-criteria and condition range when not supplied; preserve supplied constraints.
-Related parameter trials, repetitions and candidate implementations, including
-baselines and contrasts among sealed hypotheses, may continue within that protocol.
-A script run or single observation is not a separate scientific stage. Continue while another allowed attempt can answer that question;
-cheap computation does not authorize wider search or an open optimization campaign.
-State the comparison scope and stopping basis in existing stage/report narratives.
-Retain every attempt's results and limitations, including the best eligible candidate
-under the original selection criterion, rather than just the last attempt.
-Seal observations and validity for a separate result-analysis task when the question
-is sufficiently answered, further work offers no scientific progress, or budget or
-permissions stop it. Changing mechanisms, criteria or scope needs a new scientific
-decision; a missing hypothesis or changed research direction needs hypothesis
-formulation. Numerical success alone does not settle the overall objective.
+Within those hypotheses, the assigned scientific question and user constraints,
+continuously try related parameters, implementations, numerical methods and test
+designs, including repetitions, baselines and contrasts among bound hypotheses.
+Local protocol, parameter-range or exploratory criterion changes alone do not
+require a new task. A script run or single observation need not end the experiment.
+State scope and stopping reasons in existing stage/report narratives; retain each
+attempt's results and limitations, and the best eligible candidate under the original
+selection criterion. Do not rewrite that criterion after seeing a better score.
+Seal observations and validity for a separate result-analysis task when sufficiently
+answered, without further scientific progress, or at budget/permission boundaries.
+Changing or introducing hypotheses, or departing the bound hypotheses, question or
+user-authorized research scope, requires analysis/Root selection and a hypothesis
+task when needed. Cheap computation does not remove these boundaries. Numerical
+success alone does not settle the overall objective.
 Read subject for the current question, stage objective and conclusions, and
 objective_source for the frozen global goal and completion criteria: original user
 text, research objective, the foundation's objective_contract, or the intake's
@@ -382,8 +382,10 @@ evidence_keys name those observation aliases. These optional bounded declaration
 fix references, not scientific truth. Sealing reads/binds the available originals;
 final adoption additionally verifies the declaration's original stage receipt.
 Bind a previous declaration as scientific_materials for that validation. Retain
-the original prediction/criterion when comparing held-out observations; a revised
-fit is a new declaration, not the original independent test. not_run is no test.
+the original prediction, criterion and threshold when comparing held-out observations;
+never overwrite them to turn observed results into prior validation. Exploratory
+revisions seal a new declaration/version with evidence limits, without forcing a
+new task within the bound hypotheses. not_run is no test.
 Include execution interpretation when useful: executor facts do not supply your
 scientific conclusion. Rework seals a new version; retain the exact versions you
 adopt in the final report. Stage sealing is neither review nor final completion.
@@ -481,9 +483,9 @@ COMPONENTS = (
     ComponentSpec("experiment_execute_tool", "worker_tool", __name__ + ":EXECUTE_TOOL", public=True),
 )
 OPERATION = scientific_agent_operation(
-    "science.experiment.v1", "Answer one scientific question with a bounded comparison protocol through execution and validity judgment.",
-    "A question about sealed hypotheses needs comparison design, related trials and validity assessment. The owner declares criteria and condition range before execution, retaining attempts and the best eligible candidate for independent analysis.",
-    "Open research without a sealed hypothesis, changing mechanisms, criteria or scope, hypothesis formulation, or independent result interpretation. Reuse sufficient materials; prepare missing originals when needed.",
+    "science.experiment.v1", "Test an assigned scientific question within sealed hypotheses through related trials, execution and validity judgment.",
+    "Sealed hypotheses need test design and related parameter, implementation or numerical trials within the assigned question and user constraints. Local design changes may continue; retain attempts and the original-criterion best for independent analysis.",
+    "Open research without sealed hypotheses, changing or introducing hypotheses, departing the bound hypotheses/question or user-authorized scope, or independent result interpretation. Reuse sufficient materials; prepare missing originals when needed.",
     decision_fields=("outcome", "summary", "remaining_question", "limitations"),
     scientific_progress=ScientificProgressSpec(stage="experiment", subject_port="hypothesis_portfolio", objective_port="objective_source"),
     agent=_REF("experiment_task_agent"), prompt=_REF("experiment_task_prompt"),

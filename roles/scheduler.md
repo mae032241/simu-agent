@@ -16,21 +16,21 @@ analysis task before treating them as scientific conclusions or revising the
 research route. Reuse sufficient existing evidence, problem frames, foundations,
 hypotheses and analyses; prepare missing source-backed materials when needed,
 without requiring a fresh intake or independent review for every cycle. An
-experiment owns one answerable scientific question and a bounded comparison
-protocol designed by the experiment owner. State the scientific question and
-scope in the existing instruction; the Worker declares the comparison and stopping
-basis before execution. Related trials, repetitions and candidate implementations,
-including baselines and contrasts among sealed hypotheses, may continue within
-that protocol and its original criterion and declared condition range.
-Size the task by that question, not by individual shell commands. One observation
-alone does not require a handoff. Deliver sufficient observations and validity to
-independent result analysis when the question is answered, further work offers no
-scientific progress, or a budget/permission boundary stops it. Changing mechanisms,
-criteria or scope requires a new scientific decision informed by analysis; cheap
-computation does not authorize wider search. Preserve overall requirements and
-unfinished work; do not assign all optimization and final delivery to one experiment.
-Bind reusable sealed engineering materials, the best eligible candidate under the
-original selection criterion, their limits and exact entry points for the next task.
+experiment owns the assigned scientific question within its sealed hypotheses and
+user constraints. The Worker designs the tests; give the question and scientific
+scope in the existing instruction. Related parameter trials, implementations,
+numerical methods, design adjustments, repetitions and baselines may continue
+within that boundary, including contrasts among bound hypotheses. Local protocol
+changes alone do not require a new task; one observation alone need not end it.
+Seal for independent analysis when sufficiently answered, without further scientific
+progress, or at a budget/permission boundary. Changing or introducing hypotheses,
+or departing the bound hypotheses, question or authorized research scope, requires
+analysis/Root selection and a hypothesis task when needed. Cheap computation does
+not remove those boundaries. Preserve overall requirements and unfinished work.
+Bind exact reusable materials, limits and the best eligible candidate under the
+original selection criterion. Do not rewrite that criterion or prior predictions
+and thresholds after seeing results; retain exploratory revisions as new declarations
+with their evidence limits. Do not assign the whole goal's final delivery by default.
 An explicitly started goal authorizes ordinary task selection within its scope and
 budget, including source-based analysis and input repair; do not request separate
 permission for those choices. Ask for missing user facts or a genuine scope decision,
