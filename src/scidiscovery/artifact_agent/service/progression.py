@@ -452,17 +452,22 @@ class ProgressionCoordinator:
             return json.dumps(value, ensure_ascii=False, separators=(',', ':'))
 
         facade = self.facade_factory(row['owner_session'])
-        ref = ArtifactRef.model_validate_json(row['objective_ref_json'])
-        artifact = self.runtime.artifacts.catalog(ref)
-        goal = dict(name=row['objective_name'], kind=artifact.kind, schema=artifact.schema_id,
-            status='omitted', read='artifact_catalog', view='content')
-        # Check stored size before reading the exact immutable goal.
-        if artifact.size_bytes <= limit // 3:
-            raw = self.runtime.artifacts.read(ref)
-            goal.update(status='available', original=raw.decode('utf-8'))
         checkpoint = json.loads(row['checkpoint_json'])
         host = json.loads(row['host_json'] or '{}')
         restore_context = not checkpoint.get('usage_records', {}).get(host.get('thread_id'), {}).get('context_delivered')
+        notified = checkpoint.get('notified_snapshot')
+        same_objective = isinstance(notified, dict) and notified.get('goal') == row['objective_ref_json']
+        ref = ArtifactRef.model_validate_json(row['objective_ref_json'])
+        artifact = self.runtime.artifacts.catalog(ref)
+        goal = dict(name=row['objective_name'], kind=artifact.kind, schema=artifact.schema_id,
+            status='omitted', read='artifact_catalog', view='content',
+            continuation='Use returned next_cursor as content_cursor.')
+        # Check stored size before reading the exact immutable goal.
+        if not restore_context and same_objective:
+            goal.update(status='unchanged', guidance='The exact objective is unchanged. Reuse its original only if retained in context; read it by name when context is missing or the next decision needs it. Prior delivery does not prove retained context.')
+        elif artifact.size_bytes <= limit // 3:
+            raw = self.runtime.artifacts.read(ref)
+            goal.update(status='available', original=raw.decode('utf-8'))
         brief = dict(objective=goal, changes=[], omissions=[], budget=checkpoint.get('budget'),
             previous_report=checkpoint.get('report') or checkpoint.get('last_report'), material_names=[row['objective_name']],
             related_results_omitted=checkpoint.get('relevant_omitted', False),

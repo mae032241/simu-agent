@@ -544,6 +544,9 @@ def test_instance_selection_and_goal_revision_do_not_reuse_completed_report(prog
     p.coordinator.tick()
     assert row(p)['state'] == 'active' and len(host.prompts) == 2
     assert 'A changed objective.' in host.prompts[-1]
+    goal = json.loads(host.prompts[-1].split('\n')[-1])['objective']
+    assert goal['name'] == 'new.goal' and goal['status'] == 'available'
+    assert goal['original'] == 'A changed objective.'
 
 
 def test_unchanged_failed_request_cannot_evade_attempt_limit_by_new_name(progression):

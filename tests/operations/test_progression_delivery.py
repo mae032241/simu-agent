@@ -55,6 +55,115 @@ def _next_poll(p):
     p.coordinator.tick()
 
 
+def _select_objective(p, original):
+    p.root.call_tool('progression_command', dict(command='pause'))
+    p.root.call_tool('progression_message', dict(name='exact.goal', text=original))
+    p.root.call_tool('progression_command', dict(command='start', mode='background', objective_name='exact.goal'))
+
+
+def test_same_thread_objective_is_delivered_once_and_remains_readable(progression):
+    p = progression
+    original = '比较精确数据，保留负结果与原始限制。' * 100
+    _select_objective(p, original)
+    p.coordinator.tick()
+    host = p.coordinator.host
+    first = json.loads(host.prompts[0].split('\n')[-1])['objective']
+    assert first['original'] == original
+    assert checkpoint(p)['usage_records'][host.identity.thread_id]['context_delivered']
+    for index in range(3):
+        p.root.call_tool('progression_message', dict(name=f'direction-{index}', text=f'Consider exact condition {index}.'))
+        host.finish()
+        _next_poll(p)
+        brief = json.loads(host.prompts[-1].split('\n')[-1])
+        goal = brief['objective']
+        assert goal['status'] == 'unchanged' and 'original' not in goal
+        assert (goal['name'], goal['kind'], goal['schema']) == ('exact.goal', first['kind'], first['schema'])
+        assert brief['user_messages'] == [dict(name=f'direction-{index}', original=f'Consider exact condition {index}.')]
+        assert len(host.prompts[-1].encode()) < len(host.prompts[0].encode()) - len(original.encode()) // 2
+    fresh = p.root.__class__(p.facade(host.scheduler_session))
+    assert fresh.call_tool(goal['read'], dict(name=goal['name'], view=goal['view']))['text'] == original
+    assert 'Prior delivery does not prove retained context' in goal['guidance']
+
+
+@pytest.mark.parametrize('missing', ['delivery', 'thread', 'snapshot', 'malformed_snapshot'])
+def test_objective_restore_uses_full_original_when_delivery_context_is_missing(progression, missing):
+    p = progression
+    p.coordinator.tick()
+    saved = row(p)
+    cp = json.loads(saved['checkpoint_json'])
+    host = json.loads(saved['host_json'])
+    if missing == 'delivery':
+        cp['usage_records'][host['thread_id']].pop('context_delivered')
+    elif missing == 'thread':
+        saved['host_json'] = json.dumps(dict(host, thread_id='new-root-thread'))
+    elif missing == 'snapshot':
+        cp.pop('notified_snapshot')
+    else:
+        cp['notified_snapshot'] = []
+    saved['checkpoint_json'] = json.dumps(cp)
+    snapshot = dict(goal=saved['objective_ref_json'], runs=[], approvals=[])
+    restored = json.loads(p.coordinator._brief(saved, snapshot, 12000).split('\n')[-1])['objective']
+    assert restored['status'] == 'available'
+    assert restored['original'] == 'Compare exact data and retain limitations.'
+
+
+def test_oversized_chinese_objective_keeps_exact_paged_entrance(progression):
+    p = progression
+    _bounded_context(p, context_bytes=12000)
+    original = '保留中文原题的全部限制与完成条件。' * 800
+    _select_objective(p, original)
+    p.coordinator.tick()
+    host = p.coordinator.host
+    goal = json.loads(host.prompts[-1].split('\n')[-1])['objective']
+    assert goal['status'] == 'omitted' and 'original' not in goal
+    assert len(host.prompts[-1].encode()) <= 12000
+    fresh = p.root.__class__(p.facade(host.scheduler_session))
+    parts, cursor = [], None
+    while True:
+        page = fresh.call_tool(goal['read'], dict(name=goal['name'], view=goal['view'], content_cursor=cursor))
+        parts.append(page['text'])
+        cursor = page['next_cursor']
+        if cursor is None:
+            break
+    assert len(parts) > 1 and ''.join(parts) == original
+    p.root.call_tool('progression_message', dict(name='after-omission', text='Keep this new condition.'))
+    host.finish()
+    _next_poll(p)
+    continued = json.loads(host.prompts[-1].split('\n')[-1])['objective']
+    assert continued['status'] == 'unchanged'
+    assert (continued['name'], continued['read'], continued['view'], continued['continuation']) == (
+        goal['name'], goal['read'], goal['view'], goal['continuation'])
+    assert len(host.prompts[-1].encode()) <= 12000
+
+
+@pytest.mark.parametrize('late_start', [False, True])
+def test_unknown_initial_start_does_not_mark_objective_delivered(progression, late_start):
+    from tests.operations.test_progression import Host
+    p = progression
+    submissions = []
+    def factory(saved, event):
+        host = Host(saved, event)
+        def unknown(prompt):
+            submissions.append(prompt)
+            if late_start:
+                host.event(dict(method='turn/started', params=dict(threadId=host.identity.thread_id,
+                    turn=dict(id='uncertain-turn'))))
+            raise sqlite3.OperationalError('uncertain initial submission')
+        host.start_turn = unknown
+        return host
+    p.coordinator.host_factory = factory
+    with pytest.raises(sqlite3.OperationalError, match='uncertain initial submission'):
+        p.coordinator.tick()
+    cp = checkpoint(p)
+    assert cp['fault_class'] == 'outcome_unknown'
+    assert not cp['usage_records']['native-root'].get('context_delivered')
+    assert not cp.get('notified_snapshot')
+    assert json.loads(submissions[0].split('\n')[-1])['objective']['original'] == 'Compare exact data and retain limitations.'
+    for _ in range(3):
+        _next_poll(p)
+    assert len(submissions) == 1
+
+
 def test_same_oversized_result_notifies_once_without_consumption(progression):
     p = progression
     _bounded_context(p)

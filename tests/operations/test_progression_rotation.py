@@ -177,6 +177,7 @@ def test_factory_rotates_exact_writer_and_preserves_loop_positions(progression,t
     prompt=calls(native,'turn/start')[-1]['input'][0]['text']
     brief=json.loads(prompt.split('\n')[-1])
     assert brief['objective']['original']=='Compare exact data and retain limitations.'
+    assert brief['objective']['name']=='goal' and brief['objective']['status']=='available'
     assert brief['user_messages']==[
         dict(name='prior-direction',original='Retain the original direction and its unresolved limit.'),
         dict(name='new-context',original='Retain this exact new condition.')]
