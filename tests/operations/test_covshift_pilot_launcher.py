@@ -29,7 +29,7 @@ def test_preparation_rejects_changed_public_bytes_before_create(tmp_path,monkeyp
 
 
 @pytest.mark.parametrize('tokens,wall,scidiscovery_tokens',[(200000,1800,None),(112607,1761,None),
-    (2000000,1800,None),(6000000,1800,None),(200000,1800,6000000)])
+    (2000000,1800,None),(6000000,1800,None),(200000,1800,6000000),(8000000,1800,8000000)])
 def test_prepare_consumes_exact_candidate_builds_same_aliases_and_fresh_settings(tmp_path,monkeypatch,tokens,wall,scidiscovery_tokens):
     source=pair(tmp_path,monkeypatch)
     invoked=[]
@@ -44,7 +44,7 @@ def test_prepare_consumes_exact_candidate_builds_same_aliases_and_fresh_settings
         native_goal_tokens=tokens,native_goal_wall_seconds=wall,
         **({'scidiscovery_tokens':scidiscovery_tokens} if scidiscovery_tokens is not None else {}))
     assert len(invoked)==2 and result['launch_ready'] is False
-    assert result['limits']['all_role_tokens']==6000000 and result['limits']['trial_wall_seconds']==1800
+    assert result['limits']['all_role_tokens']==8000000 and result['limits']['trial_wall_seconds']==1800
     specs=[json.loads(Path(p).read_text()) for p in result['arms'].values()]
     assert specs[0]['public_sha256']==specs[1]['public_sha256']
     for spec in specs:
@@ -321,7 +321,7 @@ def test_canary_and_control_usage_share_budget_without_reset_or_double_count():
     with pytest.raises(RuntimeError,match='already_submitted'):meter.activate()
 
 
-@pytest.mark.parametrize('tokens,wall',[(200000,1800),(112607,1761),(2000000,1800)])
+@pytest.mark.parametrize('tokens,wall',[(200000,1800),(112607,1761),(2000000,1800),(8000000,1800)])
 def test_scientific_native_goal_starts_directly_with_exact_frozen_budget(tmp_path,monkeypatch,tokens,wall):
     from types import SimpleNamespace
     import scidiscovery.artifact_agent.interfaces.mcp_daemon as installed
@@ -380,9 +380,10 @@ def test_reduced_arm_limits_stop_invalid_limits_reject_and_legacy_defaults_remai
     budget={'all_role_tokens':112607,'trial_wall_seconds':1761}
     assert driver.arm_limits({'limits':budget})==budget
     assert driver.arm_limits({})=={'all_role_tokens':200000,'trial_wall_seconds':1800}
-    assert driver.arm_limits({'limits':{**budget,'all_role_tokens':6000000}})=={
-        **budget,'all_role_tokens':6000000}
-    for key,values in {'all_role_tokens':(0,-1,True,6000001,'112607'),
+    for tokens in (6000000,8000000):
+        assert driver.arm_limits({'limits':{**budget,'all_role_tokens':tokens}})=={
+            **budget,'all_role_tokens':tokens}
+    for key,values in {'all_role_tokens':(0,-1,True,8000001,'112607'),
             'trial_wall_seconds':(0,-1,True,1801,1761.0)}.items():
         for value in values:
             with pytest.raises(ValueError,match='arm_budget'):

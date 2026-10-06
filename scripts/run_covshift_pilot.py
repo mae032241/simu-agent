@@ -40,7 +40,7 @@ NAME = 'covshift-pilot'
 MODEL = 'gpt-6.1-sol'
 WALL = 1800
 TOKENS = 200000
-MAX_TOKENS = 6000000
+MAX_TOKENS = 8000000
 OBJECTIVE = 'covshift.pilot.objective'
 
 
