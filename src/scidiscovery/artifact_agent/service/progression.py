@@ -288,13 +288,18 @@ class ProgressionCoordinator:
             turn = params.get('turn', {})
             if event['method'] == 'turn/started':
                 if checkpoint.get('phase') == 'prepared':
-                    self._save(dict(turn_id=turn.get('id'), phase='running'))
-            elif turn.get('id') == checkpoint.get('turn_id'):
+                    self._save(dict(turn_id=turn.get('id'), phase='running'),
+                        native_observation=self._root_native_observation(checkpoint,turn.get('id'),'turn_started'))
+            elif (turn.get('id') == checkpoint.get('turn_id')
+                    and turn.get('status') in {'completed','failed','interrupted'}):
                 records = checkpoint.get('usage_records', {})
                 if thread in records:
                     records[thread]['outcome'] = 'completed' if turn.get('status') == 'completed' else 'failed'
-                self._save(dict(native_completion=turn.get('status'), usage_records=records,
-                    usage_summary=usage_summary(list(loop_usage(dict(checkpoint, usage_records=records)).values()))))
+                observation=self._root_native_observation(checkpoint,turn['id'],'turn_completed',turn['status'])
+                self._save(dict(native_completion=turn.get('status'),
+                    **({} if observation else dict(usage_records=records)),
+                    usage_summary=usage_summary(list(loop_usage(dict(checkpoint, usage_records=records)).values()))),
+                    native_observation=observation)
         elif event['method'] in {'turn/started', 'turn/completed'}:
             identity = self._identities().get(thread)
             turn = params.get('turn', {})
@@ -308,6 +313,17 @@ class ProgressionCoordinator:
                 observation.update(connection_id=getattr(self.host,'native_connection_id',None),
                     event_version=getattr(self.host,'native_event_versions',{}).get(thread,0))
                 self._save({}, native_observation=observation)
+
+    def _root_native_observation(self, checkpoint, turn_id, source, state='running'):
+        connection = getattr(self.host,'native_connection_id',None)
+        if not connection:
+            return None
+        from .research_loops import current_loop
+        thread = self.host.identity.thread_id
+        return dict(identity=dict(thread_id=thread,role='root',loop_id=current_loop(checkpoint),
+            binding_key='root:'+thread),source=source,turn_id=turn_id,
+            connection_id=connection,state=state,
+            event_version=getattr(self.host,'native_event_versions',{}).get(thread,0))
 
     @observed
     def _terminal_tool_delivery(self, row, checkpoint, params):
@@ -1225,7 +1241,15 @@ class ProgressionCoordinator:
         record = records.get(self.host.identity.thread_id)
         if record is not None:
             record['context_delivered'] = True
-        self._save(dict(phase='running', turn_id=turn, notified_snapshot=notification_snapshot, usage_records=records))
+        # The authenticated terminal notification may precede the RPC reply.
+        # Only a completion for this accepted turn can survive that boundary.
+        completion=self.host.completion
+        state=(completion['status'] if completion and completion.get('id')==turn
+            and completion.get('status') in {'completed','failed','interrupted'} else 'running')
+        observation=self._root_native_observation(checkpoint,turn,'turn_started',state)
+        self._save(dict(phase='running', turn_id=turn, notified_snapshot=notification_snapshot,
+            native_completion=None if state=='running' else state,
+            **({} if observation else dict(usage_records=records))),native_observation=observation)
         self._submitting = False
 
     @observed

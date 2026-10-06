@@ -73,8 +73,15 @@ for line in sys.stdin:
         thread=p['threadId']
         turn=thread+'-turn-'+str(len(state['threads'][thread])+1)
         state['threads'][thread].append({'id':turn,'status':'completed'});save()
-        emit({'method':'turn/started','params':{'threadId':thread,'turn':{'id':turn}}})
         mode=(base/'mode').read_text()
+        if not mode.startswith('early-only-'):
+            emit({'method':'turn/started','params':{'threadId':thread,'turn':{'id':turn}}})
+        if mode.startswith('early-'):
+            status=mode.rsplit('-',1)[1]
+            state['threads'][thread][-1]['status']=status;save()
+            emit({'method':'turn/completed','params':{'threadId':thread,'turn':{'id':turn,'status':status}}})
+            emit({'id':msg['id'],'result':{'turn':{'id':turn}}})
+            continue
         if mode in {'denial','user-input'}:
             request_method='item/commandExecution/requestApproval' if mode=='denial' else 'item/tool/requestUserInput'
             emit({'id':901,'method':request_method,'params':{'threadId':thread,'turnId':turn,'itemId':'request-1',
@@ -83,6 +90,9 @@ for line in sys.stdin:
                 reply=json.loads(sys.stdin.readline())
                 with (base/'requests.jsonl').open('a') as log: log.write(json.dumps(reply)+'\n')
         emit({'id':msg['id'],'result':{'turn':{'id':turn}}})
+        if mode=='pending-usage':
+            state['threads'][thread][-1]['status']='inProgress';save()
+            continue
         emit({'method':'thread/tokenUsage/updated','params':{'threadId':thread,'tokenUsage':{'total':{
           'inputTokens':100*len(state['threads'][thread]),'cachedInputTokens':50*len(state['threads'][thread]),'outputTokens':20*len(state['threads'][thread])}}}})
         emit({'method':'turn/completed','params':{'threadId':thread,'turn':{'id':turn,'status':'completed'}}})
@@ -134,6 +144,92 @@ def wake(p, name='new-context'):
     p.coordinator.tick()
 
 
+@pytest.mark.parametrize('status',['completed','failed','interrupted'])
+@pytest.mark.parametrize('started_notification',[True,False])
+def test_root_terminal_before_start_reply_retains_exact_gap_guard(progression,tmp_path,status,started_notification):
+    from scripts import run_covshift_pilot as driver
+    p=progression
+    native,_=setup(p,tmp_path)
+    p.coordinator.tick();completed(p)
+    wake(p)
+    loop=checkpoint(p)['current_loop_id']
+    (native/'mode').write_text(('early-' if started_notification else 'early-only-')+status)
+    p.now[0]+=6;p.coordinator.tick()
+    cp=checkpoint(p);turn=cp['turn_id'];record=cp['usage_records']['root-2']
+    assert p.coordinator.host.completion==dict(id=turn,status=status)
+    assert record['native_terminal']['turn_id']==turn
+    assert record['native_terminal']['state']==status
+    assert record['native_terminal']['connection_id']==p.coordinator.host.native_connection_id
+    assert record['native_turn']['turn_id']==turn and record['pending_observation']
+    assert record['outcome']==('completed' if status=='completed' else 'failed')
+    now=[0.];meter=driver.Meter(lambda:now[0]);meter.activate()
+    snapshot=driver.control_usage({'root':str(p.runtime.state_root.parent)},loop,{'name':'local_worker'})
+    assert driver.reconcile_control(meter,snapshot)['pending_threads']==['root-2']
+    now[0]=6
+    with pytest.raises(RuntimeError,match='participant_usage_unconfirmed'):meter.check()
+
+
+@pytest.mark.parametrize('status',['completed','failed','interrupted'])
+def test_rotated_root_exact_native_proof_and_usage_merge(progression,tmp_path,status):
+    from scripts import run_covshift_pilot as driver
+    p=progression
+    native,_=setup(p,tmp_path)
+    p.coordinator.tick();completed(p)
+    old_turn=p.coordinator.host.completion['id']
+    wake(p)
+    rotated=checkpoint(p)
+    assert rotated['native_completion'] is None
+    loop=rotated['current_loop_id']
+    spec={'root':str(p.runtime.state_root.parent)};current={'name':'local_worker'}
+    now=[0.];meter=driver.Meter(lambda:now[0],tokens=8000000);meter.activate()
+    snapshot=driver.control_usage(spec,loop,current)
+    assert driver.reconcile_control(meter,snapshot)['pending_threads']==['root-2']
+    assert 'root-2' not in meter.completed
+    (native/'mode').write_text('pending-usage')
+    p.now[0]+=6;p.coordinator.tick()
+    running=checkpoint(p);turn=running['turn_id']
+    proof=running['usage_records']['root-2']['native_turn']
+    assert proof['turn_id']==turn and proof['connection_id']==p.coordinator.host.native_connection_id
+    assert running['usage_records']['root-2']['context_delivered']
+    now[0]=7
+    assert driver.reconcile_control(meter,driver.control_usage(spec,loop,current))['coverage']=='pending_native_usage'
+    assert meter.total()==120
+    def notify(*events):
+        (native/'native-events.json').write_text(json.dumps(events))
+        p.coordinator.host.connection.rpc('mcpServerStatus/list',dict(threadId='root-2'))
+    def terminal(thread,turn,status):
+        return dict(method='turn/completed',params=dict(threadId=thread,turn=dict(id=turn,status=status)))
+    notify(terminal('root-1',old_turn,'completed'),terminal('root-2',old_turn,'completed'),
+        terminal('root-2',old_turn,'completed'))
+    assert checkpoint(p)['native_completion'] is None
+    assert 'native_terminal' not in checkpoint(p)['usage_records']['root-2']
+    notify(terminal('root-2',turn,status))
+    settled=checkpoint(p)['usage_records']['root-2']
+    assert settled['native_terminal']['turn_id']==turn and settled['native_terminal']['state']==status
+    assert settled['native_turn']==proof and settled['pending_observation']
+    driver.reconcile_control(meter,driver.control_usage(spec,loop,current))
+    now[0]+=6
+    with pytest.raises(RuntimeError,match='participant_usage_unconfirmed'):meter.check()
+    notify(dict(method='thread/tokenUsage/updated',params=dict(threadId='root-2',turnId=turn,
+        tokenUsage=dict(total=dict(inputTokens=200,cachedInputTokens=100,outputTokens=20)))))
+    merged=checkpoint(p)['usage_records']['root-2']
+    assert merged['native_turn']==proof and merged['native_terminal']==settled['native_terminal']
+    assert merged['context_delivered'] and merged['high_water']['input_tokens']==200
+    assert merged['counted_tokens']['input_tokens']==200 and not merged['has_gaps']
+    # Duplicate usage and a retired thread's late usage keep cumulative identity.
+    notify(dict(method='thread/tokenUsage/updated',params=dict(threadId='root-2',turnId=turn,
+        tokenUsage=dict(total=dict(inputTokens=200,cachedInputTokens=100,outputTokens=20)))),
+        dict(method='thread/tokenUsage/updated',params=dict(threadId='root-1',
+        tokenUsage=dict(total=dict(inputTokens=175,cachedInputTokens=75,outputTokens=25)))))
+    final=driver.control_usage(spec,loop,current)
+    assert final['records']['root-1']['retired_after_turn']==old_turn
+    assert final['records']['root-2']['native_turn']==proof
+    assert final['records']['root-2']['native_terminal']==settled['native_terminal']
+    fresh=driver.Meter(lambda:now[0],tokens=8000000);fresh.activate()
+    assert driver.reconcile_control(fresh,final)['coverage']=='observed_with_frontend_receipts'
+    assert fresh.total()==420
+
+
 def test_factory_rotates_exact_writer_and_preserves_loop_positions(progression,tmp_path):
     p=progression
     native,_=setup(p,tmp_path)
@@ -145,6 +241,8 @@ def test_factory_rotates_exact_writer_and_preserves_loop_positions(progression,t
     original_generation=row(p)['generation']
     wake(p)
     rotated=checkpoint(p)
+    assert rotated['native_completion'] is None
+    assert rotated['turn_id'] is None and rotated['phase']=='idle'
     receipt=rotated['root_rotation_receipt']
     assert receipt['old']==dict(platform_session='root-1',thread_id='root-1')
     assert receipt['new']==dict(platform_session='root-2',thread_id='root-2')

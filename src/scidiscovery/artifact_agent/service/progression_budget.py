@@ -175,8 +175,18 @@ def apply_native_observation(db, row, checkpoint, observation):
     turn_id = observation.get('turn_id')
     turn = dict(binding_key=binding,turn_id=turn_id,connection_id=observation.get('connection_id'))
     if observation['source'] == 'turn_started':
+        same_turn = record.get('native_turn') == turn
         record['native_turn'] = turn
-        record.pop('native_terminal', None)
+        if not same_turn:
+            record.pop('native_terminal', None)
+        if identity['role'] == 'root':
+            if observation.get('state') in {'completed','failed','interrupted'}:
+                record['native_terminal'] = dict(turn,state=observation['state'],event_version=observation.get('event_version'))
+            terminal = record.get('native_terminal') or {}
+            record.update(context_delivered=True,outcome='completed' if terminal.get('state')=='completed'
+                else 'failed' if terminal else 'running')
     elif observation['source'] == 'thread_read' or record.get('native_turn') == turn:
         record['native_terminal'] = dict(turn,state=observation['state'],event_version=observation.get('event_version'))
+        if identity['role'] == 'root':
+            record['outcome'] = 'completed' if observation['state']=='completed' else 'failed'
     checkpoint.setdefault('usage_records', {})[thread] = record

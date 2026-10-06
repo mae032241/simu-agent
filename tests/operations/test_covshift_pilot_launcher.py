@@ -102,9 +102,9 @@ def test_existing_usage_reducer_counts_all_threads_without_cached_double_count_a
 
 def test_deadline_unknown_participant_and_regression_fail_closed():
     now=[0.];meter=driver.Meter(lambda:now[0]);meter.activate()
-    meter.observe({'method':'turn/started','params':{'threadId':'child'}})
+    meter.observe({'method':'turn/started','params':{'threadId':'child','turn':{'id':'child-turn'}}})
     now[0]=6;meter.check()  # in-flight usage is pending, not a measured zero.
-    meter.observe({'method':'turn/completed','params':{'threadId':'child','turn':{'status':'completed'}}})
+    meter.observe({'method':'turn/completed','params':{'threadId':'child','turn':{'id':'child-turn','status':'completed'}}})
     now[0]=12
     with pytest.raises(RuntimeError,match='participant_usage_unconfirmed'):meter.check()
     meter=driver.Meter(lambda:now[0]);meter.activate();meter.observe(usage('root'))
@@ -112,6 +112,67 @@ def test_deadline_unknown_participant_and_regression_fail_closed():
     meter=driver.Meter(lambda:now[0]);meter.activate();now[0]+=1800
     with pytest.raises(RuntimeError,match='wall_deadline'):meter.check()
     with pytest.raises(RuntimeError,match='already_submitted'):meter.activate()
+
+
+def test_root_rotation_placeholder_does_not_inherit_old_completion():
+    from scidiscovery.platforms.codex_usage import observe_usage
+    now=[0.];meter=driver.Meter(lambda:now[0],tokens=8000000);meter.activate()
+    old=observe_usage(usage('old',100,20)['params'],role='root',owner='instance')
+    old.update(loop_id='loop',retired_after_turn='old-turn')
+    pending=observe_usage({'threadId':'new'},role='root',owner='instance')
+    pending.update(loop_id='loop',pending_observation=True)
+    snapshot={'instance':'instance','loop':'loop','records':{'old':old,'new':pending},
+        'participants':{},'frontend_unmeasured':False,
+        # The old candidate's transient projection is not an exact terminal proof.
+        'root_native':{'thread':'new','turn_id':None,'inflight':False,'terminal':True}}
+    assert driver.reconcile_control(meter,snapshot)['pending_threads']==['new']
+    assert 'new' not in meter.completed
+    native=dict(binding_key='root:new',turn_id='new-turn',connection_id='connection')
+    pending['native_turn']=native
+    snapshot['root_native'].update(turn_id='new-turn',inflight=True,terminal=False)
+    now[0]=7
+    assert driver.reconcile_control(meter,snapshot)['coverage']=='pending_native_usage'
+    assert meter.total()==120 and meter.token_limit==8000000
+    measured=observe_usage(usage('new',200,30,150)['params'],role='root',owner='instance')
+    measured.update(loop_id='loop',native_turn=native)
+    snapshot['records']['new']=measured
+    assert driver.reconcile_control(meter,snapshot)['coverage']=='observed_with_frontend_receipts'
+    assert meter.total()==350 and snapshot['records']['old']==old
+
+
+@pytest.mark.parametrize('status',['completed','failed','interrupted'])
+def test_meter_new_turn_rejects_late_old_completion_and_keeps_terminal_gap_guard(status):
+    now=[0.];meter=driver.Meter(lambda:now[0]);meter.activate()
+    def event(method,turn,status=None):
+        return {'method':method,'params':{'threadId':'root','turn':{'id':turn,'status':status}}}
+    meter.observe(event('turn/started','old'))
+    meter.observe(event('turn/completed','old','completed'))
+    now[0]=1;meter.observe(event('turn/started','new'))
+    meter.observe(event('turn/completed','old','completed'))
+    meter.observe(event('turn/completed','old','completed'))
+    now[0]=7;meter.check()  # first request is still in flight, not completed at t=1.
+    meter.observe(event('turn/completed','new',status))
+    now[0]=13
+    with pytest.raises(RuntimeError,match='participant_usage_unconfirmed'):meter.check()
+
+
+@pytest.mark.parametrize('stop',['wall','tokens'])
+def test_pending_root_usage_keeps_original_budget_stops(stop):
+    from scidiscovery.platforms.codex_usage import observe_usage
+    now=[0.];meter=driver.Meter(lambda:now[0],tokens=8000000);meter.activate()
+    pending=observe_usage({'threadId':'root'},role='root',owner='instance')
+    pending.update(loop_id='loop',pending_observation=True,
+        native_turn=dict(binding_key='root:root',turn_id='turn',connection_id='connection'))
+    snapshot={'instance':'instance','loop':'loop','records':{'root':pending},
+        'participants':{},'frontend_unmeasured':False,
+        'root_native':{'thread':'root','turn_id':'turn','inflight':True}}
+    now[0]=7;driver.reconcile_control(meter,snapshot)
+    if stop=='wall':
+        now[0]=1800
+    else:
+        meter.control_records['retired']=observe_usage(usage('retired',7999999,1)['params'])
+    with pytest.raises(RuntimeError,match='wall_deadline' if stop=='wall' else 'observed_token_limit'):
+        meter.check()
 
 
 def test_public_calls_use_only_actual_thread_coordinates_and_typed_errors():

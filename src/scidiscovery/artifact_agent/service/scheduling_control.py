@@ -1112,7 +1112,10 @@ class SchedulingControl:
                     run_activity_fence=old_record.get('retired_after_activity'),
                     boundary={key:boundary.get(key) for key in ('checked','unchecked','unknown','reasons')})
                 cp['root_rotation_receipt'] = receipt if len(json.dumps(receipt).encode()) <= ROOT_ROTATION_RECEIPT_BYTES else None
-                cp.update(phase='idle',native_action=None,runtime_status='root_rotated')
+                # The retired thread owns its terminal receipt. A fresh writer
+                # has no completed, failed or interrupted turn yet.
+                cp.update(phase='idle',turn_id=None,native_completion=None,
+                    native_action=None,runtime_status='root_rotated')
                 db.execute("UPDATE scheduler_progression SET state='active',owner_session=?,generation=generation+1,host_json=?,checkpoint_json=? WHERE instance_id=?",
                     (scheduler_session,json.dumps(dict(platform_session=platform_session,thread_id=thread_id)),
                      store_checkpoint(db,instance_id,cp),instance_id))

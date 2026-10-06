@@ -364,6 +364,20 @@ class Meter:
     def activate(self):
         if self.deadline is not None: raise RuntimeError('trial_already_submitted')
         self.deadline=self.clock()+self.wall_seconds
+    def start_native_turn(self,thread,turn,*,native=False):
+        previous=self.started.get(thread)
+        # A lagging control snapshot cannot replace a directly observed turn.
+        if previous and previous.get('native') and not native and previous['turn_id']!=turn:
+            return False
+        if previous is None or previous['turn_id']!=turn:
+            self.started[thread]=dict(turn_id=turn,at=self.clock(),native=native)
+            self.completed.pop(thread,None)
+        elif native:
+            previous['native']=True
+        return True
+    def complete_native_turn(self,thread,turn):
+        if self.started.get(thread,{}).get('turn_id')==turn and turn:
+            self.completed.setdefault(thread,dict(turn_id=turn,at=self.clock()))
     def observe(self,event):
         from scidiscovery.platforms.codex_usage import observe_usage
         params=event.get('params',{}); thread=params.get('threadId')
@@ -372,10 +386,14 @@ class Meter:
             if event.get('method') in ('turn/started','turn/completed','thread/tokenUsage/updated'):
                 self.observed_turns.add((thread,turn_id))
         if event.get('method')=='turn/started':
-            if not isinstance(thread,str) or not thread: raise RuntimeError('unidentified_native_turn')
-            self.started.setdefault(thread,self.clock())
+            if not isinstance(thread,str) or not thread or not isinstance(turn_id,str) or not turn_id:
+                raise RuntimeError('unidentified_native_turn')
+            self.start_native_turn(thread,turn_id,native=True)
         if event.get('method')=='turn/completed' and isinstance(thread,str):
-            self.completed[thread]=self.clock()
+            if (params.get('turn') or {}).get('status') in {'completed','failed','interrupted'}:
+                if turn_id and self.started.get(thread,{}).get('turn_id') is None:
+                    self.start_native_turn(thread,turn_id,native=True)
+                self.complete_native_turn(thread,turn_id)
         if event.get('method')=='thread/tokenUsage/updated':
             record=observe_usage(params,previous=self.records.get(thread))
             self.records[thread]=record
@@ -389,13 +407,13 @@ class Meter:
                         or not isinstance(child,str) or not child or child==thread
                         or self.children.get(child,thread)!=thread):
                     raise RuntimeError('native_child_identity_conflict')
-                self.children[child]=thread;self.started.setdefault(child,self.clock())
+                self.children[child]=thread;self.started.setdefault(child,dict(turn_id=None,at=self.clock()))
             if item.get('type')=='collabAgentToolCall' and item.get('senderThreadId')==thread:
                 for child in item.get('receiverThreadIds',[]):
                     if isinstance(child,str) and child!=thread:
                         if self.children.get(child,thread)!=thread:raise RuntimeError('native_child_identity_conflict')
                         self.children[child]=thread
-                        self.started.setdefault(child,self.clock())
+                        self.started.setdefault(child,dict(turn_id=None,at=self.clock()))
             if item.get('type')=='commandExecution' and matches_canary_command(item.get('command'),self.canary_command):
                 try:checks=json.loads(item.get('aggregatedOutput',''))
                 except (TypeError,ValueError):checks={}
@@ -413,8 +431,8 @@ class Meter:
         if self.clock()>=self.deadline: self.reason='wall_deadline'
         if self.total()>=self.token_limit: self.reason='observed_token_limit'
         if any(not any(source.get(thread,{}).get('coverage')=='observed' and not source[thread].get('has_gaps')
-                for source in (self.records,self.control_records)) and self.clock()-when>5
-                for thread,when in self.completed.items()):
+                for source in (self.records,self.control_records)) and self.clock()-terminal['at']>5
+                for thread,terminal in self.completed.items()):
             self.reason='participant_usage_unconfirmed'
         if self.reason: raise RuntimeError(self.reason)
 
@@ -536,7 +554,7 @@ def control_usage(spec,loop_id,current):
         'participants':participants,'frontend_unmeasured':bool(authorization.get('unmeasured_frontend_root')),
         'root_native':{'thread':(json.loads(row['host_json'] or '{}') or {}).get('thread_id'),
             'inflight':cp.get('phase')=='running' and bool(cp.get('turn_id')),
-            'terminal':cp.get('native_completion') in {'completed','failed','interrupted'}}}
+            'turn_id':cp.get('turn_id')}}
 
 
 def reconcile_control(meter,snapshot):
@@ -578,10 +596,23 @@ def reconcile_control(meter,snapshot):
         actual_turn=all(isinstance(native.get(key),str) and native[key] for key in ('binding_key','turn_id','connection_id'))
         terminal=initial.get('native_terminal') or {}
         root=snapshot.get('root_native',{}) if expected[thread]=='root' else {}
-        finished=bool(terminal) or bool(initial.get('retired_after_turn')) or (root.get('thread')==thread and root.get('terminal'))
-        inflight=(actual_turn and not terminal) or (root.get('thread')==thread and root.get('inflight'))
-        if finished: meter.completed.setdefault(thread,meter.clock())
-        elif not inflight and meter.clock()-meter.started.setdefault(thread,meter.clock())>5:
+        exact_terminal=(all(isinstance(terminal.get(key),str) and terminal[key]
+            for key in ('binding_key','turn_id','connection_id'))
+            and terminal.get('state') in {'terminal','completed','failed','interrupted'}
+            and (not actual_turn or all(terminal.get(key)==native[key]
+                for key in ('binding_key','turn_id','connection_id'))))
+        root_running=(root.get('thread')==thread and root.get('inflight')
+            and isinstance(root.get('turn_id'),str) and bool(root['turn_id']))
+        turn=native['turn_id'] if actual_turn else root['turn_id'] if root_running else None
+        if turn:
+            meter.start_native_turn(thread,turn)
+        retired=initial.get('retired_after_turn')
+        finished=terminal['turn_id'] if exact_terminal else retired if isinstance(retired,str) and retired else None
+        inflight=(actual_turn and not exact_terminal) or root_running
+        if finished:
+            if meter.started.get(thread,{}).get('turn_id') is None:meter.start_native_turn(thread,finished)
+            meter.complete_native_turn(thread,finished)
+        elif not inflight and meter.clock()-meter.started.setdefault(thread,dict(turn_id=None,at=meter.clock()))['at']>5:
             raise RuntimeError('participant_native_activity_unconfirmed')
         pending.append(thread)
     meter.control_records=records
