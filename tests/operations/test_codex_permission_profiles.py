@@ -100,8 +100,9 @@ def test_factory_applies_named_profile_at_real_open_path(tmp_path,monkeypatch):
     from scidiscovery.platforms.codex_app_server import AppServer
     from scidiscovery.operations.catalog import compile_installed_catalog
     project=tmp_path/'project';(project/'.codex').mkdir(parents=True)
-    config={'mcp_servers':{'scidiscovery':{'command':'scidiscovery-mcp-proxy','args':['--socket','socket']}}}
-    (project/'.codex/config.toml').write_text('[mcp_servers.scidiscovery]\ncommand="scidiscovery-mcp-proxy"\nargs=["--socket","socket"]\n')
+    root_instructions='Root scheduler instructions from the project configuration.'
+    config={'developer_instructions':root_instructions,'mcp_servers':{'scidiscovery':{'command':'scidiscovery-mcp-proxy','args':['--socket','socket']}}}
+    (project/'.codex/config.toml').write_text('developer_instructions='+json.dumps(root_instructions)+'\n[mcp_servers.scidiscovery]\ncommand="scidiscovery-mcp-proxy"\nargs=["--socket","socket"]\n')
     home=tmp_path/'home';home.mkdir()
     (home/'config.toml').write_text('default_permissions="isolated"\n[permissions.isolated.filesystem]\n":root"="deny"\n":workspace_roots"="write"\n[permissions.isolated.network]\nenabled=true\n')
     monkeypatch.setenv('CODEX_HOME',str(home))
@@ -117,7 +118,11 @@ def test_factory_applies_named_profile_at_real_open_path(tmp_path,monkeypatch):
             'http://127.0.0.1:8765/sessions/sch_'+'0'*32+'?capability=synthetic'}}
         return rpc(method,params)
     connection.rpc=reply
-    monkeypatch.setattr(AppServer,'launch',lambda *args,**kwargs:connection)
+    launches=[]
+    def launch(command,**kwargs):
+        launches.append(command)
+        return connection
+    monkeypatch.setattr(AppServer,'launch',launch)
     factory=CodexProgressionFactory(project_root=project,state_root=tmp_path/'state',socket_path='socket',
         approval_base_url='http://127.0.0.1:8765',command=['synthetic-peer'],permissions=named(),
         catalog=compile_installed_catalog())
@@ -128,7 +133,13 @@ def test_factory_applies_named_profile_at_real_open_path(tmp_path,monkeypatch):
         assert host.permissions==named() and host.identity==RootIdentity('root','root')
         assert dict(connection.requests)['thread/start']['permissions']=='isolated'
         assert not any(method=='turn/start' for method,_ in connection.requests)
+        assert 'developer_instructions='+json.dumps(root_instructions) in launches[0]
     finally:host.close()
+    config.pop('developer_instructions')
+    starts=sum(method=='thread/start' for method,_ in connection.requests)
+    with pytest.raises(HostError,match='effective_config_missing'):factory(row,lambda event:None)
+    assert sum(method=='thread/start' for method,_ in connection.requests)==starts
+    config['developer_instructions']=root_instructions
     # A project cannot replace the host-only definition or reintroduce legacy overrides.
     with (project/'.codex/config.toml').open('a') as file:file.write('\n[permissions.isolated.network]\nenabled=true\n')
     with pytest.raises(HostError,match='conflicting_override'):factory(row,lambda event:None)

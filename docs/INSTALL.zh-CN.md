@@ -113,12 +113,25 @@ WSL 下不要从 `/mnt/c` 运行 systemd 服务。应把工程放在 WSL 文件�
 ## 3. 选择 AI 平台
 
 `SCID_PLATFORM` 目前只支持 `codex`。它在框架源码根目录生成
-`.codex/config.toml`、角色 TOML，并在根目录 `AGENTS.md` 中写入受管理的通用
-调度规范；其下的 workspace 自动继承。
+`.codex/config.toml` 顶层独立托管块中的 Root `developer_instructions`、受控角色
+TOML，并将 `roles/common.md` 的共同规则写入项目 `AGENTS.md` 托管块。
+交互 CLI 与后台 Root 使用同一项目配置；受控 Worker/helper 仍使用原有角色
+developer 指令和冻结 assignment。
 
 生成文件包含当前设备的绝对路径，因此每台机器都必须重新生成，不能提交到 Git。
 workspace 的 `AGENTS.md` 只保留该论文或用户任务的专用约束，安装器会迁移并移除
 旧版本重复写入其中的通用 scheduler 块。
+
+重新生成会迁移可识别的旧 scheduler 块，并逐字保留托管块外的用户内容及空白。
+项目或发现的上游配置已有用户 developer 值时，安装器在写入前报告适用范围冲突；
+它不能推断这些规则属于 Root、Worker 还是共同约束。应明确解决所有权，安装器
+不会复制、提升或静默覆盖用户规则。中途写入失败时逐项尽力恢复原文件字节和模式；
+持续文件系统错误可能妨碍恢复，此时错误会列出恢复失败路径并保留原始安装失败。
+信任实际项目配置并在重新生成后重载 Codex；已有线程历史仍保留旧指令，需要新
+线程核查分离。未托管的 Agent、IDE 入口及任意 CLI/profile override 不属于受控角色承诺。
+
+本指令分离节点已完成源码及定向验证，包括持续写入拒绝和恢复拒绝负例，待独立复审；
+完整 live 角色覆盖和重建后已安装 wheel 验证仍属发布资格工作，尚未部署。
 
 ## 4. 本地部署冒烟测试
 

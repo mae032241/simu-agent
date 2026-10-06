@@ -30,13 +30,17 @@ from .common import (
     managed_block,
     obsolete_managed_files,
 )
-from .scheduler_prompt import load_scheduler_prompt, load_scheduler_guides
+from .scheduler_prompt import load_common_prompt, load_scheduler_prompt, load_scheduler_guides
 
 
 CONFIG_BEGIN = "# BEGIN SCIDISCOVERY MANAGED MCP"
 CONFIG_END = "# END SCIDISCOVERY MANAGED MCP"
 PROMPT_BEGIN = "<!-- BEGIN SCIDISCOVERY SCHEDULER -->"
 PROMPT_END = "<!-- END SCIDISCOVERY SCHEDULER -->"
+COMMON_BEGIN = "<!-- BEGIN SCIDISCOVERY COMMON -->"
+COMMON_END = "<!-- END SCIDISCOVERY COMMON -->"
+ROOT_BEGIN = "# BEGIN SCIDISCOVERY ROOT INSTRUCTIONS"
+ROOT_END = "# END SCIDISCOVERY ROOT INSTRUCTIONS"
 SCHEDULER_TOOLS = GATEWAY_TOOLS
 OPERATION_COMPLETION_INSTRUCTIONS = """
 
@@ -129,9 +133,11 @@ def initialize(
 
     config_path = config_root / "config.toml"
     current_config = _read(config_path)
+    _reject_user_developer_instructions(root, config_path)
+    root_config = _root_instruction_config(current_config, config_root / "scidiscovery-guides")
     _reject_unmanaged_server(current_config)
     runtime_config = _runtime_config_toml(
-        current_config,
+        root_config,
         agent_registrations=agent_registrations,
         debug_disable_task_network=debug_offline,
     )
@@ -139,7 +145,7 @@ def initialize(
         python=python, socket_path=socket_path, python_path=module_path
     )
     desired[config_path] = managed_block(
-        current_config,
+        root_config,
         begin=CONFIG_BEGIN,
         end=CONFIG_END,
         body="\n\n".join(
@@ -161,11 +167,9 @@ def initialize(
         markers[path] = "<!-- SCIDISCOVERY MANAGED SCHEDULER GUIDE -->"
 
     prompt_path = root / "AGENTS.md"
-    desired[prompt_path] = managed_block(
+    desired[prompt_path] = _common_instruction_block(
         _read(prompt_path),
-        begin=PROMPT_BEGIN,
-        end=PROMPT_END,
-        body=load_scheduler_prompt().replace("{{SCHEDULER_GUIDE_ROOT}}", str(guide_root))
+        body=load_common_prompt()
         + ("\nDeployment debug_disable_task_network=true: task native network and web search are disabled "
            "for Root, Workers and helpers. Declared host network tools reject requests; model API transport "
            "is unchanged. Select Operations using sealed/local inputs; an allowed-network Operation is not "
@@ -268,8 +272,7 @@ def validate_installation_profile(
             raise PlatformConflictError(
                 f"installed Codex Agent profile is invalid: {agent_type}"
             )
-    if PROMPT_BEGIN not in root.joinpath("AGENTS.md").read_text(encoding="utf-8"):
-        raise PlatformConflictError("installed scheduler prompt is missing")
+    _validate_instruction_profile(root, config)
     _validate_scheduler_guides(root)
     try:
         workspace_path.resolve().relative_to(root.resolve())
@@ -279,8 +282,8 @@ def validate_installation_profile(
     if nested:
         if workspace_path.joinpath(".codex").exists() or (
             workspace_path.joinpath("AGENTS.md").exists()
-            and PROMPT_BEGIN
-            in workspace_path.joinpath("AGENTS.md").read_text(encoding="utf-8")
+            and any(marker in _read(workspace_path / "AGENTS.md")
+                    for marker in (PROMPT_BEGIN, COMMON_BEGIN))
         ):
             raise PlatformConflictError("nested workspace shadows framework profile")
     else:
@@ -291,14 +294,13 @@ def validate_installation_profile(
         external_config = tomllib.loads(
             external_config_path.read_text(encoding="utf-8")
         )
+        _validate_instruction_profile(workspace_path, external_config)
         copied_agents = {
             item.stem for item in workspace_path.joinpath(".codex/agents").glob("*.toml")
         }
         if (
             copied_agents != expected_agents
             or external_config.get("mcp_servers", {}) != servers
-            or PROMPT_BEGIN
-            not in workspace_path.joinpath("AGENTS.md").read_text(encoding="utf-8")
         ):
             raise PlatformConflictError("external workspace profile is incomplete")
         for agent_type in expected_agents:
@@ -615,16 +617,93 @@ def _runtime_config_toml(
 
 
 def _without_managed_block(current: str) -> str:
-    if CONFIG_BEGIN not in current:
+    return _without_block(current, CONFIG_BEGIN, CONFIG_END)
+
+
+def _without_block(current: str, begin: str, end: str) -> str:
+    if current.count(begin) != current.count(end) or current.count(begin) > 1:
+        raise PlatformConflictError("managed block markers are malformed")
+    if begin not in current:
         return current
-    start = current.index(CONFIG_BEGIN)
+    prefix, remainder = current.split(begin, 1)
+    if end not in remainder:
+        raise PlatformConflictError("managed block markers are malformed")
+    _, suffix = remainder.split(end, 1)
+    return prefix + suffix
+
+
+def _root_instruction_config(current: str, guide_root: Path) -> str:
+    unmanaged = _without_block(current, ROOT_BEGIN, ROOT_END)
     try:
-        end = current.index(CONFIG_END, start) + len(CONFIG_END)
-    except ValueError as error:
-        raise PlatformConflictError(
-            "existing Codex managed MCP block is unterminated"
-        ) from error
-    return (current[:start] + current[end:]).strip()
+        parsed = tomllib.loads(_without_managed_block(unmanaged))
+    except tomllib.TOMLDecodeError as error:
+        raise PlatformConflictError("existing Codex config is invalid") from error
+    if _has_user_developer_instructions(parsed):
+        raise PlatformConflictError("project developer_instructions is user-owned; its Root/Worker scope cannot be inferred; preserve it and resolve the configuration conflict before installing")
+    prompt = load_scheduler_prompt().replace("{{SCHEDULER_GUIDE_ROOT}}", str(guide_root))
+    block = f"{ROOT_BEGIN}\ndeveloper_instructions = {_quote(prompt)}\n{ROOT_END}\n"
+    if ROOT_BEGIN in current:
+        # Replacing at the same position preserves all user bytes outside it.
+        result = managed_block(current, begin=ROOT_BEGIN, end=ROOT_END,
+                               body=f"developer_instructions = {_quote(prompt)}")
+    else:
+        # Root scalar must precede every user or managed TOML table.
+        result = block + current
+    parsed = tomllib.loads(result)
+    if parsed.get("developer_instructions") != prompt:
+        raise PlatformConflictError("managed Root developer_instructions must be a top-level TOML value")
+    return result
+
+
+def _reject_user_developer_instructions(root: Path, config_path: Path) -> None:
+    personal = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "config.toml"
+    paths = [personal]
+    for directory in (root, *root.parents):
+        paths.append(directory / ".codex/config.toml")
+        if (directory / ".git").exists():
+            break
+    for path in dict.fromkeys(paths):
+        if path.absolute() == config_path.absolute() or not path.is_file():
+            continue
+        text = _read(path)
+        try:
+            parsed = tomllib.loads(_without_block(text, ROOT_BEGIN, ROOT_END))
+        except tomllib.TOMLDecodeError as error:
+            raise PlatformConflictError(f"upstream Codex config is invalid at {path}") from error
+        if _has_user_developer_instructions(parsed):
+            raise PlatformConflictError(f"upstream Codex developer_instructions at {path} would be shadowed by Root/Worker configuration; its scope cannot be inferred; no user instructions were changed")
+
+
+def _has_user_developer_instructions(config: dict) -> bool:
+    profiles = config.get("profiles", {})
+    return "developer_instructions" in config or (isinstance(profiles, dict) and
+        any("developer_instructions" in profile for profile in profiles.values() if isinstance(profile, dict)))
+
+
+def _common_instruction_block(current: str, *, body: str) -> str:
+    legacy = PROMPT_BEGIN in current or PROMPT_END in current
+    common = COMMON_BEGIN in current or COMMON_END in current
+    if legacy and common:
+        raise PlatformConflictError("both legacy scheduler and common instruction blocks exist; resolve the managed-block conflict")
+    if legacy:
+        _without_block(current, PROMPT_BEGIN, PROMPT_END)
+        current = current.replace(PROMPT_BEGIN, COMMON_BEGIN).replace(PROMPT_END, COMMON_END)
+    return managed_block(current, begin=COMMON_BEGIN, end=COMMON_END, body=body)
+
+
+def _validate_instruction_profile(root: Path, config: dict) -> None:
+    expected = load_scheduler_prompt().replace("{{SCHEDULER_GUIDE_ROOT}}", str(root / ".codex/scidiscovery-guides"))
+    if config.get("developer_instructions") != expected:
+        raise PlatformConflictError("installed Root developer instructions are missing or stale; regenerate the Codex project profile")
+    text = _read(root / "AGENTS.md")
+    if PROMPT_BEGIN in text or PROMPT_END in text:
+        raise PlatformConflictError("legacy scheduler block remains in shared AGENTS; regenerate the Codex project profile")
+    if COMMON_BEGIN not in text or COMMON_END not in text:
+        raise PlatformConflictError("installed common instructions are missing")
+    _without_block(text, COMMON_BEGIN, COMMON_END)
+    body = text.split(COMMON_BEGIN, 1)[1].split(COMMON_END, 1)[0]
+    if load_common_prompt().strip() not in body:
+        raise PlatformConflictError("installed common instructions are stale")
 
 
 def _quote(value: str) -> str:
@@ -632,7 +711,10 @@ def _quote(value: str) -> str:
 
 
 def _read(path: Path) -> str:
-    return path.read_text(encoding="utf-8") if path.exists() else ""
+    if not path.exists():
+        return ""
+    with path.open(encoding="utf-8", newline="") as stream:
+        return stream.read()
 
 
 def _absolute_python_executable(value: Path | str) -> Path:

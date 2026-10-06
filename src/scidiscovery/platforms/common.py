@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
@@ -8,6 +9,23 @@ from typing import Mapping
 
 class PlatformConflictError(RuntimeError):
     """Raised when generation would overwrite user-owned content."""
+
+
+class PlatformRollbackError(RuntimeError):
+    """Keep the installation failure and every failed recovery visible."""
+
+    def __init__(self, original_error: BaseException,
+                 rollback_errors: tuple[tuple[Path, str, BaseException], ...]):
+        self.original_error = original_error
+        self.rollback_errors = rollback_errors
+        failures = "; ".join(
+            f"{operation} {path}: {type(error).__name__}: {error}"
+            for path, operation, error in rollback_errors
+        )
+        super().__init__(
+            f"platform installation failed: {type(original_error).__name__}: "
+            f"{original_error}; rollback incomplete: {failures}"
+        )
 
 
 @dataclass(frozen=True)
@@ -27,6 +45,8 @@ def atomic_write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.scidiscovery.tmp")
     temporary.write_text(content, encoding="utf-8")
+    if path.exists():
+        temporary.chmod(stat.S_IMODE(path.stat().st_mode))
     os.replace(temporary, path)
 
 
@@ -48,8 +68,11 @@ def commit_text_files(
     if set(desired).intersection(obsolete):
         raise ValueError("desired and obsolete platform files must be disjoint")
     for path, content in desired.items():
+        if path.is_symlink():
+            raise PlatformConflictError(f"refusing to replace symlink: {path}")
         if path.exists():
-            current = path.read_text(encoding="utf-8")
+            with path.open(encoding="utf-8", newline="") as stream:
+                current = stream.read()
             if current == content:
                 unchanged.append(path)
                 continue
@@ -76,11 +99,41 @@ def commit_text_files(
         changed.append(path)
 
     if not dry_run:
-        for path in changed:
-            if path in desired:
-                atomic_write(path, desired[path])
-            else:
-                path.unlink()
+        previous = {path: (path.read_bytes(), stat.S_IMODE(path.stat().st_mode))
+                    if path.exists() else None for path in changed}
+        written: list[Path] = []
+        try:
+            for path in changed:
+                written.append(path)
+                if path in desired:
+                    atomic_write(path, desired[path])
+                else:
+                    path.unlink()
+        except BaseException as original_error:
+            rollback_errors: list[tuple[Path, str, BaseException]] = []
+            for path in reversed(written):
+                saved = previous[path]
+                temporary = path.with_name(f".{path.name}.scidiscovery.tmp")
+                try:
+                    current = (path.read_bytes(), stat.S_IMODE(path.stat().st_mode)) \
+                        if path.exists() else None
+                    if current != saved:
+                        if saved is None:
+                            path.unlink(missing_ok=True)
+                        else:
+                            temporary.write_bytes(saved[0])
+                            temporary.chmod(saved[1])
+                            os.replace(temporary, path)
+                except BaseException as error:
+                    rollback_errors.append((path, "restore", error))
+                try:
+                    if temporary.exists() or temporary.is_symlink():
+                        temporary.unlink()
+                except BaseException as error:
+                    rollback_errors.append((temporary, "cleanup", error))
+            if rollback_errors:
+                raise PlatformRollbackError(original_error, tuple(rollback_errors)) from original_error
+            raise
 
     return GenerationReport(
         platform=platform,
@@ -134,14 +187,10 @@ def managed_block(
     block = f"{begin}\n{body.rstrip()}\n{end}"
     if begin_count == 1:
         prefix, remainder = current.split(begin, 1)
+        if end not in remainder:
+            raise PlatformConflictError("managed block markers are malformed")
         _, suffix = remainder.split(end, 1)
-        result = prefix.rstrip()
-        if result:
-            result += "\n\n"
-        result += block
-        if suffix.strip():
-            result += "\n\n" + suffix.lstrip()
-        return result.rstrip() + "\n"
-    if current.strip():
-        return current.rstrip() + "\n\n" + block + "\n"
+        return prefix + block + suffix
+    if current:
+        return current + ("\n" if current.endswith("\n") else "\n\n") + block + "\n"
     return block + "\n"

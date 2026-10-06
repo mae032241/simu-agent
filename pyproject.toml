@@ -42,7 +42,7 @@ where = ["src"]
 "scidiscovery.artifact_agent.approval_ui" = ["static/*.css", "static/*.js"]
 
 [tool.setuptools.data-files]
-"share/scidiscovery/roles" = ["roles/scheduler.md"]
+"share/scidiscovery/roles" = ["roles/scheduler.md", "roles/common.md"]
 "share/scidiscovery/roles/scheduler" = ["roles/scheduler/*.md"]
 "share/scidiscovery/deploy/systemd" = ["deploy/systemd/*.in"]
 

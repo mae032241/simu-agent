@@ -932,7 +932,8 @@ workspace = Path(work)
 workspace_is_nested = bool(int(nested))
 prompt = workspace / 'AGENTS.md'
 if prompt.exists():
-    text = prompt.read_text(encoding='utf-8')
+    with prompt.open(encoding='utf-8', newline='') as stream:
+        original_text = text = stream.read()
     managed_blocks = [
         ('<!-- BEGIN TCAD CONTROL -->', '<!-- END TCAD CONTROL -->'),
         ('<!-- LEGACY EXECUTION ENTRY BEGIN:', '<!-- LEGACY EXECUTION ENTRY END -->'),
@@ -942,6 +943,10 @@ if prompt.exists():
             '<!-- BEGIN SCIDISCOVERY SCHEDULER -->',
             '<!-- END SCIDISCOVERY SCHEDULER -->',
         ))
+        managed_blocks.append((
+            '<!-- BEGIN SCIDISCOVERY COMMON -->',
+            '<!-- END SCIDISCOVERY COMMON -->',
+        ))
     for begin, end in managed_blocks:
         if begin not in text and end not in text:
             continue
@@ -949,8 +954,9 @@ if prompt.exists():
             raise RuntimeError(f'malformed managed block in {prompt}: {begin}')
         before, remainder = text.split(begin, 1)
         _, after = remainder.split(end, 1)
-        text = before.rstrip() + '\n' + after.lstrip()
-    prompt.write_text(text, encoding='utf-8')
+        text = before + after
+    if text != original_text:
+        prompt.write_text(text, encoding='utf-8')
 common = {
     'python_executable': Path(python),
     'python_path': Path(site_root),

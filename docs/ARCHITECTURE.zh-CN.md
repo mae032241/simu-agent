@@ -774,7 +774,12 @@ Operation 和工具合同保持不变；归档定向事务恢复原 append-only 
 
 ## 原生权限角色与外部证据
 
-Root 启动指令来自 `roles/scheduler.md` 及项目 `AGENTS.md` 的受管 scheduler 区块。正常操作读取
+Root 启动指令来自 `roles/scheduler.md`，安装为项目 Codex 配置顶层的托管
+`developer_instructions`；交互 CLI 与后台宿主共用该来源。项目 `AGENTS.md` 只生成
+`roles/common.md` 共同规则并保留用户原文；受控 Worker/helper 角色沿已有能力接缝
+替换 Root developer 字段，科学角色仍由冻结 assignment 定义。用户已有 developer
+的适用范围不明时，安装在迁移前报配置冲突。已有线程历史保留，磁盘更新不能撤回。
+正常操作读取
 自足的 catalog 与所选可调用合同，不要求打开指南。`roles/scheduler/` 仍随安装提供，限异常维护
 按需使用，不是正常阅读 gate 或第二套路由权威。安装保留非受管项目说明。
 

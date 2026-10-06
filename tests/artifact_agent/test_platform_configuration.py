@@ -176,7 +176,7 @@ def test_codex_profile_contains_root_and_compiled_operation_boundaries(
         assert "scid_call" in role["developer_instructions"]
         assert "tools/read_input.py" in role["developer_instructions"]
         assert "role_instructions_sha256" not in role["developer_instructions"]
-        assert "--repeat" in role["developer_instructions"]
+        assert "--selection/--offset" in role["developer_instructions"]
         assert "workspace/.read-input" in role["developer_instructions"]
         assert "task and input changes" in role["developer_instructions"]
         assert "Project scheduler instructions apply to the parent, not you" in role[
@@ -195,7 +195,10 @@ def test_codex_profile_contains_root_and_compiled_operation_boundaries(
         assert "skills" not in role
         assert "the only permitted chat" in role["developer_instructions"]
         assert "已完成受控提交。" in role["developer_instructions"]
-    scheduler_prompt = (project / "AGENTS.md").read_text(encoding="utf-8")
+    common_prompt = (project / "AGENTS.md").read_text(encoding="utf-8")
+    assert "SCIDISCOVERY COMMON" in common_prompt
+    assert "interactive research scheduler" not in common_prompt
+    scheduler_prompt = config["developer_instructions"]
     assert "normal work requires no guide files" in scheduler_prompt
     assert 'surface="execution"' in scheduler_prompt
     assert "{{SCHEDULER_GUIDE_ROOT}}" not in scheduler_prompt
@@ -264,7 +267,7 @@ def test_codex_framework_profile_is_available_above_nested_workspace(
         if catalog.operation(operation_id).spec.executor.kind == "agent"
         and LocalTrustedBackend.supports_operation(catalog.operation(operation_id))})
     assert len(tuple((framework / ".codex/agents").glob("*.toml"))) == operation_count
-    assert "<!-- BEGIN SCIDISCOVERY SCHEDULER -->" in (
+    assert "<!-- BEGIN SCIDISCOVERY COMMON -->" in (
         framework / "AGENTS.md"
     ).read_text(encoding="utf-8")
     assert not (workspace / ".codex").exists()

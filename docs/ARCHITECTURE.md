@@ -1227,8 +1227,14 @@ append-only triggers; the maintenance journal is not disposable UI cache. See [r
 
 ## Native capability profiles and external evidence
 
-Root startup instructions come from `roles/scheduler.md` and the managed scheduler
-section of project `AGENTS.md`. Normal operation uses the self-contained catalog and
+Root startup instructions come from `roles/scheduler.md`, installed as managed
+top-level `developer_instructions` in the project Codex configuration. Interactive
+CLI and background hosts share that source. Project `AGENTS.md` contains the
+managed `roles/common.md` rules and preserved user prose; controlled Worker/helper
+role files replace the Root developer field through the existing capability seam.
+Frozen assignments still own scientific roles. Ordinary user developer settings
+whose scope is unknown cause an installation conflict before migration. Existing
+thread history is retained; disk updates cannot retract it. Normal operation uses the self-contained catalog and
 selected callable contract; it requires no guide files. Guides under
 `roles/scheduler/` are installed for exceptional maintenance, not as a normal reading
 gate or a second routing authority. Installation preserves unmanaged project prose.

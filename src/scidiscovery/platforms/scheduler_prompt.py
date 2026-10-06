@@ -1,4 +1,4 @@
-"""Load the compact scheduler prompt and its separately installed reading guides."""
+"""Load shared project rules, Root instructions and maintenance guides."""
 
 from __future__ import annotations
 
@@ -11,6 +11,14 @@ def load_scheduler_prompt() -> str:
     text = path.read_text(encoding="utf-8")
     if not text.strip():
         raise ValueError(f"scheduler prompt is empty: {path}")
+    return text.strip() + "\n"
+
+
+def load_common_prompt() -> str:
+    path = _scheduler_prompt_path().with_name("common.md")
+    text = path.read_text(encoding="utf-8")
+    if not text.strip():
+        raise ValueError(f"common prompt is empty: {path}")
     return text.strip() + "\n"
 
 
@@ -42,4 +50,4 @@ def _scheduler_prompt_path() -> Path:
     raise FileNotFoundError("installed scheduler prompt is unavailable")
 
 
-__all__ = ["load_scheduler_prompt", "load_scheduler_guides"]
+__all__ = ["load_scheduler_prompt", "load_common_prompt", "load_scheduler_guides"]

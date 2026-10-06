@@ -128,14 +128,35 @@ example `~/src/scidiscovery-agent`.
 
 ## 3. Select the AI Platform
 
-`SCID_PLATFORM` accepts only `codex`. It generates `.codex/config.toml`, role
-TOMLs, and the managed generic scheduler block at the framework source root;
-nested workspaces inherit that configuration.
+`SCID_PLATFORM` accepts only `codex`. It generates Root scheduler
+`developer_instructions` in a separate managed top-level block of
+`.codex/config.toml`, controlled role TOMLs, and shared rules from
+`roles/common.md` in the managed project `AGENTS.md` block. Interactive CLI and
+background Root hosts consume the same project configuration. Controlled Workers
+and helpers use their existing role developer instructions and frozen assignments.
 
 Generated files contain absolute local paths. Regenerate them on every machine
 and do not commit them. A workspace `AGENTS.md` contains project-specific
 constraints only; installation migrates the old layout by removing its
 duplicate managed scheduler block.
+
+Regeneration migrates the recognized old scheduler block while preserving user
+text outside managed blocks, including whitespace. A user-owned developer value
+in the project or discovered upstream configuration produces a scope conflict
+before files change; the installer cannot infer whether those rules belong to
+Root, Workers or both. Resolve that ownership explicitly; no user rules are
+copied, promoted or silently overwritten. On installation write failure, recovery
+attempts each previous file's bytes and mode independently. Persistent filesystem
+errors can prevent restoration; the error lists failed recovery paths and retains
+the original installation failure. Trust the intended project configuration and
+reload Codex after regeneration. Existing thread history keeps old instructions;
+use a new thread to inspect the new separation. Unmanaged Agent files, IDE entry
+and arbitrary CLI/profile overrides are not covered by the controlled-role claim.
+
+This instruction separation node has source and focused checks, including
+persistent write and recovery denial cases. Independent re-review is pending;
+complete live role coverage and a rebuilt installed wheel remain release
+qualification work. It has not been deployed.
 
 ## 4. Local Deployment Smoke
 
