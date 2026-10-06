@@ -153,10 +153,13 @@ reload Codex after regeneration. Existing thread history keeps old instructions;
 use a new thread to inspect the new separation. Unmanaged Agent files, IDE entry
 and arbitrary CLI/profile overrides are not covered by the controlled-role claim.
 
-This instruction separation node has source and focused checks, including
-persistent write and recovery denial cases. Independent re-review is pending;
-complete live role coverage and a rebuilt installed wheel remain release
-qualification work. It has not been deployed.
+The instruction separation source and focused checks passed independent review,
+including persistent write and recovery denial cases. Candidate `1958a33` passed
+isolated rebuilt-wheel loading, install, legacy migration, idempotence and profile
+validation, plus real interactive/background Root and fresh text_disabled/image_live
+startup instruction delivery. The background Root and image_live natural finals
+were not verified before the token observation stop. Scientific assignment workflows,
+resume/rotation on this candidate and production deployment remain unverified.
 
 ## 4. Local Deployment Smoke
 

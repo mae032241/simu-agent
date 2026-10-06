@@ -4,7 +4,7 @@
 
 ## 优先处理
 
-上下文局部修订：[Root 与 Worker 指令分离](ROOT_WORKER_INSTRUCTION_SEPARATION.zh-CN.md)。状态：I1 源码、定向验证及独立复审通过，持续拒写回滚缺陷已修复，未部署。Root 调度规则迁入项目 managed developer 配置，共同 AGENTS 与用户原文保留；交互/后台共用配置及外部 workspace/能力角色纳入本节点。I0 image_live 与后台完成缺测保留为发布资格缺口，不阻断已授权源码，不追加模型。已完成的续轮原题去重、同包摘要去重与 Worker 索引压缩保持有效。
+上下文局部修订：[Root 与 Worker 指令分离](ROOT_WORKER_INSTRUCTION_SEPARATION.zh-CN.md)。状态：I1 源码、定向验证及独立复审通过；I2 候选 `1958a33` 的隔离 rebuilt wheel 安装、迁移、幂等和校验，以及真实交互/后台 Root、fresh text_disabled/image_live 启动投递通过，未部署。Root 调度规则迁入项目 managed developer 配置，共同 AGENTS 与用户原文保留；交互/后台共用配置及外部 workspace/能力角色纳入本节点。I0 原失败保持，I2 补上对应角色启动覆盖；后台/image_live 自然终态、科学流程与本候选恢复/轮换未验证，不追加模型。已完成的续轮原题去重、同包摘要去重与 Worker 索引压缩保持有效。
 
 局部修订：[原始任务准入修订与科学节点恢复](AGENT_DIRECT_TASK_ADMISSION_PLAN.zh-CN.md)。D1–D3 已提交；D4 完整交付失败，用户已否决开放研究直达实验的放宽，恢复假设、实验、分析节点约束的源码和定向验证已完成，独立复审通过，准备真实重跑。已有材料时证据收集可省略，本地执行与输入去重保留。实际运行见[验收记录](AGENT_DIRECT_TASK_ADMISSION_ACCEPTANCE.zh-CN.md)。
 
