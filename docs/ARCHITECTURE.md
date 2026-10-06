@@ -97,6 +97,21 @@ Result analysis may invoke domain scoring and parsing in the same task. Calculat
 retain exact input and tool-evidence identity; unavailable scoring limits the
 quantitative conclusion rather than forcing an author/reviewer dispatch chain.
 
+Scientific progress uses the same terminal-consumption ledger. Optional compiled
+Operation declarations project source-bound Worker judgments into a common
+contract, preserving stage report types and exact original inputs. A generic
+research cycle counts its interpreted exact experiment once; completed hypotheses
+and experiments await interpretation, and waiting creates no attempt. Missing
+assessment, repeated interpretation and explicit no progress remain distinct.
+First scientific dimension changes can advance the observation window without
+claiming independent scientific verification; deterministic/review test proofs
+remain stronger evidence. New files, report identities and changed thresholds
+alone cannot reset it. The automatic confirmation pause, immutable trigger history,
+user continuation and exact accepted-work/review authority retain their budgets.
+Experiments own the smallest sufficient contrast for one concrete question;
+observations that change the next scientific choice are sealed for analysis before
+another test. An unchanged hypothesis portfolio may be reused with the new analysis.
+
 ## 2. Registration, compilation, and catalog views
 
 Scientific actions have one entry-point group, `scidiscovery.plugins`. Each entry returns

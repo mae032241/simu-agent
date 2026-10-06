@@ -86,7 +86,7 @@ def render_progression(status, *, instance_id):
         if status.get(key):
             body += '<h3>' + title + '</h3>' + render_json_value(status[key], max_bytes=16384)
             if key == 'progress_shadow' and status[key].get('policy', {}).get('unverified_progress_threshold') is not None:
-                body += '<p>连续未核验窗口计入本实例已消费的完整科研任务，跨目标修订和研究 loop 保留；等待与独立审查不占科研次数。达到阈值表示需要确认方向，不表示已证明科学停滞。Root 判断、新文件或重复验证不清零；确认继续保留旧触发与全部资源额度。</p>'
+                body += '<p>进展窗口按已解释的精确实验/问题计数，假设与实验阶段保留待分析责任；等待与独立审查不占科研次数。分析 Worker 拥有科学判断，控制只核对来源、去重与计数。没有评估、不支持的投影和明确没有进展分别保留；达到观察不足阈值表示需要确认方向，不表示已证明科学停滞。Root 自报、新文件、阈值改变或重复判断不清零；精确既有实验的必要分析、已接受工作和独立审查依赖保留原权限及资源限制。确认继续保留旧触发与全部额度。</p>'
     continuation = (status.get('terminal_deliveries') or {}).get('continuation')
     if continuation:
         query = urlencode({key: continuation[key] for key in ('delivery_cursor', 'delivery_limit')})

@@ -271,7 +271,9 @@ class RootOperationRoutes:
                 bound, values = self._configured_operation_call(values)
                 review_owner = (self.runs.requested_review_owner(bound, instance_id=instance_id)
                     if bound.compiled.spec.executor.kind == 'agent' and self.runs is not None else None)
-                continuation = ('run', review_owner) if review_owner else None
+                analysis_owner = (self.runs.requested_analysis_owner(bound, instance_id=instance_id)
+                    if bound.compiled.spec.executor.kind == 'agent' and self.runs is not None else None)
+                continuation = ('run', review_owner or analysis_owner) if review_owner or analysis_owner else None
                 control = self.bindings.progression_status(instance_id=instance_id, internal=True)
                 if (continuation is None and bound.compiled.spec.executor.kind == 'agent'
                         and (control['state'], control['reason']) == ('paused', 'scientific_progress_persistent_gap')):

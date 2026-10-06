@@ -8,7 +8,7 @@ from typing import Any, Literal, Mapping
 from types import MappingProxyType
 from pydantic import BaseModel, ConfigDict, Field
 PLUGIN_PROTOCOL_VERSION = "1"
-OPERATION_ABI_VERSION = "25"
+OPERATION_ABI_VERSION = "26"
 _ID = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
 _JSON_POINTER = re.compile(r"^/(?:[^~/]|~[01])*(?:/(?:[^~/]|~[01])*)*$")
 _DOMAIN = re.compile(r"^(?:\*\.)?[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
@@ -390,6 +390,35 @@ def input_validation_projection(spec: OperationSpec) -> dict[str, Any] | None:
     }
 
 
+class ScientificProgressSpec(FrozenSpec):
+    """Optional scientific projection, independent of output schema and plugin name.
+
+    Preparation and experiment outputs await interpretation; analysis closes its
+    exact subject. A projector copies Worker judgments into the common contract.
+    This declaration neither dispatches dependencies nor requires a pipeline.
+    """
+    stage: Literal["preparation", "experiment", "analysis"]
+    subject_port: str | None = None
+    objective_port: str | None = None
+    projector: ComponentRef | None = None
+    source_ports: tuple[str, ...] = ()
+
+    def issue(self, inputs):
+        ports = {port.name: port for port in inputs}
+        if any(name is not None and (name not in ports or ports[name].max_items != 1)
+               for name in (self.subject_port, self.objective_port)):
+            return "scientific_progress_port_invalid"
+        if self.stage == "analysis" and self.subject_port is None:
+            return "scientific_progress_subject_missing"
+        if self.stage == "analysis" and self.projector is None:
+            return "scientific_progress_projector_missing"
+        if self.stage != "analysis" and self.projector is not None:
+            return "scientific_progress_projector_invalid"
+        if len(set(self.source_ports)) != len(self.source_ports) or not set(self.source_ports) <= set(ports):
+            return "scientific_progress_source_invalid"
+        return None
+
+
 class OperationSpec(FrozenSpec):
     operation_id: str
     version: str
@@ -400,6 +429,7 @@ class OperationSpec(FrozenSpec):
     outputs: tuple[OutputPortSpec, ...]
     consequence: str
     decision_fields: tuple[str, ...] = ("summary", "conclusion", "limitations", "remaining_question", "remaining_contradiction")
+    scientific_progress: ScientificProgressSpec | None = None
     independent_review_ports: tuple[str, ...] = ()
     # Explicit scientific contributors retained by deterministic projection.
     authorship_source_ports: tuple[str, ...] = ()

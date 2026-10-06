@@ -8,7 +8,7 @@ import json
 
 from ...operations.invoke import OperationInvocationError
 from ..schema.common import canonical_json
-from .run_records import RunStateConflict, timestamp
+from .run_records import RunContractUnavailable, RunStateConflict, timestamp
 
 
 class RunAdmissionMixin:
@@ -80,6 +80,7 @@ class RunAdmissionMixin:
         active = connection.execute("SELECT run_id,review_wait_json FROM runs WHERE instance_id=? AND state IN ('queued','running')",
                                     (instance_id,)).fetchall()
         review_owner = self.requested_review_owner(bound, instance_id=instance_id, connection=connection)
+        analysis_owner = self.requested_analysis_owner(bound, instance_id=instance_id, connection=connection)
         from .progression_records import read_control_row
         row = read_control_row(connection, instance_id, schema='scheduler_control.')
         if row is None:
@@ -91,7 +92,7 @@ class RunAdmissionMixin:
                 message='The research loop retains its frozen configuration; direct creation and recovery cannot replace it.')
         from .scheduling_control import require_control_admission
         require_control_admission(connection, row, checkpoint, session_key=session_key,
-            continuation=('run', review_owner) if review_owner else None,
+            continuation=('run', review_owner or analysis_owner) if review_owner or analysis_owner else None,
             reservation=(reserved_output_fingerprint, scientific_signature) if reserved_output_fingerprint else None,
             now=self.scheduler_bindings.control_now(), schema='scheduler_control.',
             background_busy=bool(active and (len(active) != 1 or review_owner is None)),
@@ -123,6 +124,55 @@ class RunAdmissionMixin:
                 raise OperationInvocationError('loop_usage_unavailable',
                     message='Accepted loop work has incomplete native usage; reconcile its original observations before creating more work.')
         return review_owner
+
+    def requested_analysis_owner(self, bound, *, instance_id, connection=None):
+        """An observation pause still permits interpreting its exact unclosed work.
+
+        This is source-bound closeout, not a new experiment or a general pause
+        exemption. Accepted-work authority and all budget checks still apply.
+        """
+        declaration = bound.compiled.spec.scientific_progress
+        if declaration is None or declaration.stage != 'analysis' or declaration.subject_port is None:
+            return None
+        subjects = [item.artifact.ref for item in bound.inputs if item.port_name == declaration.subject_port]
+        if len(subjects) != 1:
+            return None
+        producer = self.completed_for_output(subjects[0])
+        if producer is None or producer.instance_id != instance_id:
+            return None
+        try:
+            producer_progress = self.compiled_operation(producer).spec.scientific_progress
+        except RunContractUnavailable:
+            return None  # Unavailable historical contracts grant no new closeout permission.
+        if producer_progress is None or producer_progress.stage != 'experiment':
+            return None
+        # A completed interpretation already discharges the scientific closeout
+        # permission, even if its delivery has not reached a native boundary.
+        consumers = self.related_runs(instance_id=instance_id, artifact_ref=subjects[0], limit=101)
+        if len(consumers) == 101:
+            return None
+        for consumer in consumers:
+            if consumer.state != 'completed':
+                continue
+            try:
+                progress = self.compiled_operation(consumer).spec.scientific_progress
+            except RunContractUnavailable:
+                return None
+            if progress and progress.stage == 'analysis' and any(item.port_name == progress.subject_port
+                    and item.artifact_ref == subjects[0] for item in consumer.inputs):
+                return None
+        if connection is None:
+            with self._connect() as db:
+                self._attach_scheduler(db)
+                return self.requested_analysis_owner(bound, instance_id=instance_id, connection=db)
+        # Its delivery may be consumed by this very admission. The subsequent
+        # guard proves exact accepted-work authority, even before that boundary.
+        from ..schema.common import canonical_sha256
+        key = canonical_sha256(subjects[0])
+        closed = connection.execute("SELECT 1 FROM scheduler_control.scheduler_progress_facts f, "
+            "json_each(f.fact_json,'$.terminal.scientific_progress.closes') c WHERE f.instance_id=? "
+            "AND c.value=? AND json_extract(f.fact_json,'$.consumption_sequence') IS NOT NULL LIMIT 1", (instance_id, key)).fetchone()
+        return producer.run_id if not closed else None
 
     def request_implementation_review(self, run_id, subject_ref, request):
         """Persist a control-generated request; repeats do not reset its outcome."""

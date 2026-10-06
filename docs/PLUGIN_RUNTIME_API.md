@@ -10,9 +10,46 @@ visibility and versioned schema IDs remain necessary platform contracts.
 Support is attached to the values and callbacks below, at their existing import
 paths. It does not cover every symbol in their containing packages. Source type
 annotations and compiled schemas are authoritative; this reference does not define
-parallel types. Current plugin protocol is `1`, Operation ABI is `25`, and component
+parallel types. Current plugin protocol is `1`, Operation ABI is `26`, and component
 protocol versions are declared independently. Changing an implementation or resource
 still changes compiled identity.
+
+`OperationSpec.scientific_progress` optionally declares `ScientificProgressSpec`:
+preparation/experiment outputs await interpretation; analysis closes the exact
+declared `subject_port`. The declaration imposes no task DAG. Analysis may be a
+standalone evidence task. Its existing `projector` component receives the sealed
+payload and `ValidationSources` (all exact descriptors, bytes only for declared
+`source_ports`, at most 128 KiB). It returns
+`artifact_agent.schema.scientific_progress.ScientificProgressProjection`, copying
+Worker judgments, the answered question, answer, remaining question, evidence
+aliases and stable scientific changes from the report and frozen inputs. Control
+binds the `objective_port`, exact subject/cycle and source identities; plugin names
+and schema families grant no progress authority. An advance requires bound evidence
+and a new objective/dimension/outcome family. Each change must cite the exact
+interpreted subject or its published output materials; original goals, hypotheses
+and conditions can be co-cited but cannot be the sole progress anchor. Analysis
+attachments and reference accesses are resolved from the exact completed output's
+paired sealed manifest, without reading attachment bytes for progress. This
+projection conservatively requires an original subject/output alias as well as
+any analysis attachment: a valid attachment-only scientific citation remains
+unknown progress, without rejecting the scientific report. Objective content
+identity (kind/schema/digest), rather than a new artifact ID, defines the family.
+New report/file identities or threshold
+changes alone cannot renew it. Source-bound Worker assessments remain distinct from
+the stronger deterministic/review test proofs and confer no qualification.
+
+The generic analysis projection reuses hypothesis assessments and remaining
+contradiction. Optional `progress_assessment` describes the increment to the
+research decision: repeated support/refutation can explicitly be `no_progress`,
+and `unknown` remains uncertainty. No extra Root form is required. Unsupported or
+missing projections remain unknown and can require observation confirmation.
+Each exact interpreted subject counts once, across delivery/restart/goal revisions;
+repeated analyses and completed work left uninterpreted have separate bounded
+observation signals. Waiting for accepted work/approval/external execution creates
+no consumption. Exact pending experiment interpretation and requested independent
+review retain accepted-work authority and the existing budget limits during a
+scientific pause. Stable keys do not prove semantic novelty across renamed
+hypotheses or independent native execution truth.
 
 `OperationSpec.independent_review_ports` declares exact subjects whose authors
 must be verified by control before preflight/invoke can admit independent review.

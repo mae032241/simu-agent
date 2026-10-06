@@ -303,7 +303,14 @@ def require_control_admission(db, row, checkpoint, *, session_key=None, continua
     managed = bool(current_loop(checkpoint))
     completing = bool(continuation and accepted_work_authority(db, row, checkpoint,
         target=continuation, session_key=session_key, reservation=reservation, schema=schema))
-    if scientific_pause(db, row, checkpoint) and not completing:
+    pause = scientific_pause(db, row, checkpoint)
+    if pause and continuation and row['state'] == 'active' and not completing:
+        # Consumption at this same admission can first trigger the pause. Exact
+        # accepted closeout/review authority must survive that causal boundary.
+        completing = accepted_work_authority(db, dict(row, state='paused', reason='scientific_progress_persistent_gap'),
+            dict(checkpoint, scientific_pause=dict(pause, source_session=row['owner_session'])),
+            target=continuation, session_key=session_key, reservation=reservation, schema=schema)
+    if pause and not completing:
         raise OperationInvocationError('scientific_progress_persistent_gap',
             message='Scientific observation is paused; confirm a new consumed observation window in the management UI.')
     assist = shadow_policy(row)['progress_mode'] == 'assist'
@@ -874,8 +881,12 @@ class SchedulingControl:
                 conflict('Configuration changed; the current research loop retains its frozen snapshot. Restore it or explicitly authorize another loop in the management UI.')
             if expected_generation is not None and row['generation'] != expected_generation:
                 conflict('Stale scheduling generation; reconciliation is required.')
+            # Preserve the selected exact target while active too: consuming a
+            # terminal result during creation may first trigger a science pause.
+            # Every nested guard still proves accepted authority; this carries
+            # the request and its exact prepared reservation, not an exemption.
             _LOCAL.continuation = (inherited if inherited and inherited[:2] == [instance_id, continuation]
-                else [instance_id, continuation, None]) if completing else inherited
+                else [instance_id, continuation, None]) if continuation is not None else inherited
             try:
                 yield row['generation']
             finally:

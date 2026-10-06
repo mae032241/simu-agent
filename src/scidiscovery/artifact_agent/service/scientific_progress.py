@@ -7,6 +7,7 @@ from .artifacts import is_scientific_original
 from ..schema.common import canonical_json, canonical_sha256
 from ..schema.refs import ActorRef, ArtifactRef
 from ..schema.scientific_progress import ScientificIntent, ProgressAssessment
+from .research_progress import cycle_facts, progress_families
 
 EXPLORATION_KEY = 'consumed_exploration_window'
 
@@ -125,6 +126,8 @@ def terminal_fact(runs, value):
         reason=value.reason, task_classification=(value.recovery_policy or {}).get('task_classification'))
     from .verified_progress import verified_progress
     terminal['verified_progress'] = verified_progress(runs, value)
+    from .research_progress import research_progress
+    terminal['scientific_progress'] = research_progress(runs, value)
     terminal['terminal_event'] = terminal_position(runs, instance_id=value.instance_id, run_id=value.run_id)
     if value.state in {'failed', 'timed_out'}:
         failure = runs.diagnostic_summary(value).get('failure') or {}
@@ -151,25 +154,30 @@ def background_snapshot(runs, *, instance_id, observed=()):
     with runs._connect() as db:
         query = ("FROM runs r JOIN run_activity a ON a.run_id=r.run_id "
             "WHERE r.instance_id=? AND r.state='completed' AND a.activity='completion_committed' "
-            "AND a.recorded_at=r.completed_at AND a.rowid<=? AND json_extract(r.output_ref_json,'$.schema_id') "
-            "IN ('scidiscovery.layered-diagnosis.v1','scidiscovery.experiment-review.v1','scidiscovery.scientific-review.v1') "
+            "AND a.recorded_at=r.completed_at AND a.rowid<=? "
             'AND r.run_id NOT IN (SELECT value FROM json_each(?)) ')
         args = (instance_id, upper, json.dumps(sorted(observed)))
         candidate_count = db.execute('SELECT count(*) '+query, args).fetchone()[0]
         records = db.execute('SELECT r.run_id '+query+'ORDER BY a.rowid LIMIT 16', args).fetchall()
-    keys, checked, unavailable = set(), [], []
+    keys, cycles, checked, unavailable = set(), set(), [], []
     for item in records:
         try:
-            proof = verified_progress(runs, runs.status(item['run_id']))
+            terminal = terminal_fact(runs, runs.status(item['run_id']))
+            proof = terminal['verified_progress']
         except _proof_errors() as error:
             proof = dict(status='unknown', reason='background_proof_unavailable', error=type(error).__name__)
-        if any(part in proof.get('reason', '') for part in ('unavailable', 'inconsistent', 'missing', 'ambiguous', 'invalid')):
+            terminal = dict(verified_progress=proof)
+        progress = terminal.get('scientific_progress') or {}
+        if (any(part in proof.get('reason', '') for part in ('unavailable', 'inconsistent', 'missing', 'ambiguous', 'invalid'))
+                or any(part in progress.get('reason', '') for part in
+                    ('unavailable', 'inconsistent', 'missing_or_ambiguous', 'invalid', 'omitted', 'projector_failed'))):
             unavailable.append(item['run_id'])
         else:
             checked.append(item['run_id'])
-        if proof['status'] == 'verified_test_resolution':
-            keys.update(item['key'] for item in proof['resolutions'])
-    return dict(terminal_upper=upper, known_resolutions=sorted(keys)[:128], checked_runs=checked,
+        keys.update(part['key'] for part in progress_families(dict(terminal=terminal)))
+        if progress.get('stage') == 'analysis' and progress.get('cycle_key'):
+            cycles.add(progress['cycle_key'])
+    return dict(terminal_upper=upper, known_resolutions=sorted(keys)[:128], known_cycles=sorted(cycles)[:128], checked_runs=checked,
         unavailable_runs=unavailable, candidate_count=candidate_count, proof_omitted=candidate_count > 16 or len(keys) > 128,
         family_omitted=len(keys) > 128,
         proof_coverage='bounded_unknown' if candidate_count > 16 or unavailable or len(keys) > 128 else 'complete')
@@ -586,31 +594,41 @@ def observation_facts(db, row, goal_key, policy, state):
     return [_consumed_fact(item) for item in records[:limit]], len(records) > limit
 
 
-def reduce_shadow(facts, *, advances=None, known_evidence=(), known_resolutions=(), allow_root_advance=False,
+def reduce_shadow(facts, *, advances=None, known_evidence=(), known_resolutions=(), known_cycles=(), allow_root_advance=False,
                   allow_new_resolution=True):
     """Content identity detects reuse, never scientific truth or semantic equivalence."""
     counts = dict(consumed=0, no_progress=0, refinement=0, coverage_gap=0, unchanged_evidence=0,
         repeated_failure=0)
+    duplicates = []
+    facts, awaiting = cycle_facts(facts, known_cycles=known_cycles, duplicates=duplicates)
+    counts['awaiting_analysis'] = awaiting
+    counts['repeated_analysis'] = len(duplicates)
     refs = {canonical_sha256(ref) for ref in known_evidence}
     digests = {ref['sha256'] for ref in known_evidence}
     failure = None
     resolved_checks = set(known_resolutions)
     for fact in facts:
-        proof = fact['terminal'].get('verified_progress') or {}
-        verified = proof.get('resolutions', []) if proof.get('status') == 'verified_test_resolution' else []
+        verified = progress_families(fact)
         new_resolution = allow_new_resolution and any(item['key'] not in resolved_checks for item in verified)
         resolved_checks.update(item['key'] for item in verified)
         if (fact.get('task_classification') or {}).get('kind') == 'independent_review':
             if new_resolution:
                 for key in counts:
-                    if key != 'consumed':
+                    if key not in {'consumed', 'awaiting_analysis', 'repeated_analysis'}:
                         counts[key] = 0
                 if advances is not None:
                     advances.append(fact['sequence'])
             continue  # Delivery and assessment history remain; review is not a new exploration.
         counts['consumed'] += 1
-        assessment = fact.get('assessment') or {}
+        scientific = fact['terminal'].get('scientific_progress') or {}
+        assessment = (dict(classification=scientific.get('outcome', 'unknown'), supported=scientific.get('status') == 'worker_assessed',
+            evidence=scientific.get('evidence', [])) if scientific.get('stage') == 'analysis' else fact.get('assessment') or {})
         classification = assessment.get('classification', 'unknown')
+        if scientific.get('stage') == 'analysis' and classification == 'advance' and not new_resolution:
+            # A supported directional judgment may repeat a known family. Its
+            # science remains intact, but it supplies no new decision increment
+            # even when the legacy policy has no exploration-window reducer.
+            classification = 'unknown'
         supported = assessment.get('supported', False)
         evidence = assessment.get('evidence', []) if supported else []
         novel = any(canonical_sha256(item['ref']) not in refs and item['ref']['sha256'] not in digests
@@ -618,13 +636,15 @@ def reduce_shadow(facts, *, advances=None, known_evidence=(), known_resolutions=
         refs.update(canonical_sha256(item['ref']) for item in evidence)
         digests.update(item['ref']['sha256'] for item in evidence)
         counts['unchanged_evidence'] = 0 if novel else counts['unchanged_evidence'] + 1
-        gap = not fact.get('intent') or not supported or classification == 'unknown'
+        gap = (not fact.get('intent') and scientific.get('stage') != 'analysis') or not supported or classification == 'unknown'
         counts['coverage_gap'] = counts['coverage_gap'] + 1 if gap else 0
         if classification == 'no_progress' and supported:
             counts['no_progress'] += 1
-        if new_resolution or (allow_root_advance and classification == 'advance' and supported and novel):
+        if new_resolution or (allow_root_advance and scientific.get('stage') != 'analysis'
+                and classification == 'advance' and supported and novel):
             counts['no_progress'] = 0
             counts['refinement'] = counts['coverage_gap'] = counts['unchanged_evidence'] = 0
+            counts['repeated_analysis'] = sum(item['sequence'] > fact['sequence'] for item in duplicates)
             if advances is not None:
                 advances.append(fact['sequence'])
         counts['refinement'] = counts['refinement'] + 1 if (fact.get('intent') or {}).get('intent') == 'refine' else 0
@@ -656,8 +676,10 @@ def refresh_shadow(db, row, goal_key):
     background_keys, background_complete = _background_knowledge(db, row)
     counts = reduce_shadow(facts, advances=advances, allow_root_advance=policy['unverified_progress_threshold'] is None,
         allow_new_resolution=background_complete,
+        known_cycles=[*_background_cycles(db, row), *((fact['terminal'].get('scientific_progress') or {}).get('cycle_key')
+            for fact in prior_facts if (fact['terminal'].get('scientific_progress') or {}).get('stage') == 'analysis')],
         known_resolutions=[*background_keys, *[resolution['key'] for fact in prior_facts
-            for resolution in (fact['terminal'].get('verified_progress') or {}).get('resolutions', [])]], known_evidence=[item['output']
+            for resolution in progress_families(fact)]], known_evidence=[item['output']
         for item in prior.get('observation_scope', {}).get('background', {}).values() if item['output']] +
         [item['ref'] for fact in prior_facts if (fact.get('assessment') or {}).get('supported')
             for item in fact['assessment'].get('evidence', [])])
@@ -667,6 +689,8 @@ def refresh_shadow(db, row, goal_key):
     thresholds = dict(no_progress=policy['no_progress_threshold'], refinement=policy['refinement_threshold'],
         coverage_gap=policy['observation_gap_threshold'], unchanged_evidence=policy['observation_gap_threshold'],
         repeated_failure=policy['observation_gap_threshold'])
+    thresholds['awaiting_analysis'] = policy['observation_gap_threshold']
+    thresholds['repeated_analysis'] = policy['observation_gap_threshold']
     for reason, threshold in thresholds.items():
         active = next((item for item in reversed(notices) if item['reason'] == reason and item['id'] not in resolved
             and item['policy']['progress_mode'] == policy['progress_mode']), None)
@@ -742,17 +766,25 @@ def _background_knowledge(db, row):
         "AND json_extract(f.fact_json,'$.terminal.verified_progress.status')='verified_test_resolution' LIMIT 129",
         (row['instance_id'],)):
         keys.add(item['family'])
+    for item in db.execute("SELECT DISTINCT json_extract(value.value,'$.key') AS family FROM scheduler_progress_facts f, "
+        "json_each(f.fact_json,'$.terminal.scientific_progress.families') value WHERE f.instance_id=? "
+        "AND json_extract(f.fact_json,'$.observation_role')='background' "
+        "AND json_extract(f.fact_json,'$.terminal.scientific_progress.status')='worker_assessed' LIMIT 129",
+        (row['instance_id'],)):
+        keys.add(item['family'])
     # Omitted or corrupt background proof is explicit uncertainty about novelty,
     # not an execution gate or evidence of scientific failure.
     checked = history.get('checked_runs', [])
     additional = db.execute("SELECT count(DISTINCT run_id) FROM scheduler_progress_facts WHERE instance_id=? "
         "AND json_extract(fact_json,'$.observation_role')='background' "
-        "AND json_extract(fact_json,'$.terminal.output.schema_id') IN "
-        "('scidiscovery.layered-diagnosis.v1','scidiscovery.experiment-review.v1','scidiscovery.scientific-review.v1') "
         "AND json_extract(fact_json,'$.terminal.verified_progress.reason') NOT LIKE '%unavailable%' "
         "AND json_extract(fact_json,'$.terminal.verified_progress.reason') NOT LIKE '%inconsistent%' "
         "AND json_extract(fact_json,'$.terminal.verified_progress.reason') NOT LIKE '%missing%' "
         "AND json_extract(fact_json,'$.terminal.verified_progress.reason') NOT LIKE '%ambiguous%' "
+        "AND coalesce(json_extract(fact_json,'$.terminal.scientific_progress.reason'),'') NOT LIKE '%unavailable%' "
+        "AND coalesce(json_extract(fact_json,'$.terminal.scientific_progress.reason'),'') NOT LIKE '%inconsistent%' "
+        "AND coalesce(json_extract(fact_json,'$.terminal.scientific_progress.reason'),'') NOT LIKE '%omitted%' "
+        "AND coalesce(json_extract(fact_json,'$.terminal.scientific_progress.reason'),'') NOT LIKE '%projector_failed%' "
         "AND run_id NOT IN (SELECT value FROM json_each(?))", (row['instance_id'], json.dumps(checked))).fetchone()[0]
     # Checking every Run cannot recover families discarded from its proof.
     # Preserve that uncertainty even when a later bounded read has 128 keys.
@@ -761,6 +793,18 @@ def _background_knowledge(db, row):
     family_omitted = history.get('family_omitted', history.get('proof_omitted', False))
     complete = not family_omitted and len(checked) + additional >= history.get('candidate_count', 0) and len(keys) <= 128
     return keys, complete
+
+
+def _background_cycles(db, row):
+    record = db.execute('SELECT state_json FROM scheduler_progress_shadow WHERE instance_id=? AND goal_key=?',
+        (row['instance_id'], EXPLORATION_KEY)).fetchone()
+    history = json.loads(record['state_json']).get('background_history', {}) if record else {}
+    cycles = set(history.get('known_cycles', []))
+    cycles.update(item['cycle'] for item in db.execute(
+        "SELECT DISTINCT json_extract(fact_json,'$.terminal.scientific_progress.cycle_key') AS cycle "
+        "FROM scheduler_progress_facts WHERE instance_id=? AND json_extract(fact_json,'$.observation_role')='background' "
+        "AND json_extract(fact_json,'$.terminal.scientific_progress.stage')='analysis' LIMIT 129", (row['instance_id'],)))
+    return cycles
 
 
 def refresh_exploration(db, row, goal_key):
@@ -775,11 +819,17 @@ def refresh_exploration(db, row, goal_key):
     start = prior.get('window_start_sequence', initial)
     background_keys, background_complete = _background_knowledge(db, row)
     resolved_checks, advances, unverified, research = set(background_keys), [], 0, 0
+    through = max([start, *(f['sequence'] for f in facts)])
+    duplicates = []
+    facts, awaiting = cycle_facts(facts, start=start, known_cycles=_background_cycles(db, row), duplicates=duplicates)
+    worker_changes, strong_changes = set(), set()
     for fact in facts:
-        proof = fact['terminal'].get('verified_progress') or {}
-        resolutions = proof.get('resolutions', []) if proof.get('status') == 'verified_test_resolution' else []
+        resolutions = progress_families(fact)
         fresh = background_complete and any(item['key'] not in resolved_checks for item in resolutions)
         resolved_checks.update(item['key'] for item in resolutions)
+        proof = fact['terminal'].get('verified_progress') or {}
+        strong_changes.update(item['key'] for item in proof.get('resolutions', []) if proof.get('status') == 'verified_test_resolution')
+        worker_changes.update(item['key'] for item in (fact['terminal'].get('scientific_progress') or {}).get('families', []))
         if fact['sequence'] <= start:
             continue
         review = (fact.get('task_classification') or {}).get('kind') == 'independent_review'
@@ -789,23 +839,27 @@ def refresh_exploration(db, row, goal_key):
         if fresh:
             unverified = 0
             advances.append(fact['sequence'])
-    through = max([start, *(f['sequence'] for f in facts)])
     counts = dict(unverified_progress=unverified, consumed_research_tasks=research,
-        verified_test_resolutions=len(resolved_checks - background_keys))
+        verified_test_resolutions=len(strong_changes - background_keys),
+        assessed_scientific_changes=len(worker_changes - background_keys), awaiting_analysis=awaiting,
+        repeated_analysis=sum(item['sequence'] > max([start, *advances]) for item in duplicates))
     notices, dispositions = list(prior.get('notices', [])), list(prior.get('dispositions', []))
     resolved = {item['notice_id'] for item in dispositions}
     for notice in notices:
         if notice['id'] not in resolved and any(sequence > max(notice['through_sequence'], prior.get('through_sequence', 0))
                 for sequence in advances):
-            dispositions.append(dict(notice_id=notice['id'], state='new_verified_result_after_trigger', through_sequence=through))
+            dispositions.append(dict(notice_id=notice['id'], state='new_supported_result_after_trigger', through_sequence=through))
             resolved.add(notice['id'])
-    active = next((item for item in reversed(notices) if item['id'] not in resolved
-        and item['policy']['progress_mode'] == policy['progress_mode']), None)
-    if unverified >= policy['unverified_progress_threshold'] and not active:
-        notices.append(dict(id=canonical_sha256(dict(instance=row['instance_id'], reason='unverified_progress',
-                sequence=through, mode=policy['progress_mode'])),
-            goal_key=goal_key, reason='unverified_progress', trigger_counts=counts.copy(), policy=policy,
-            through_sequence=through, would_act='pause_dispatch', state='shadow_recorded', dispatch_changed=False))
+    thresholds = dict(unverified_progress=policy['unverified_progress_threshold'],
+        awaiting_analysis=policy['observation_gap_threshold'], repeated_analysis=policy['observation_gap_threshold'])
+    for reason, threshold in thresholds.items():
+        active = next((item for item in reversed(notices) if item['reason'] == reason and item['id'] not in resolved
+            and item['policy']['progress_mode'] == policy['progress_mode']), None)
+        if counts[reason] >= threshold and not active:
+            notices.append(dict(id=canonical_sha256(dict(instance=row['instance_id'], reason=reason,
+                    sequence=through, mode=policy['progress_mode'])),
+                goal_key=goal_key, reason=reason, trigger_counts=counts.copy(), policy=policy,
+                through_sequence=through, would_act='pause_dispatch', state='shadow_recorded', dispatch_changed=False))
     state = dict(initial_sequence=initial, window_start_sequence=start, through_sequence=through,
         counts=counts, notices=notices, dispositions=dispositions, omitted=omitted,
         scope='instance_consumed_research_across_goals_and_loops')
@@ -896,7 +950,7 @@ def shadow_projection(*, bindings, row):
     scope = state.get('observation_scope', {})
     # Notice snapshots stay in the DB; the common public projection is bounded.
     return dict(mode=policy['progress_mode'], policy=policy, counts=state.get('counts', reduce_shadow([])),
-        position_basis='first_confirmed_consumption',
+        position_basis='first_confirmed_consumption', counting_basis='one_exact_interpreted_question',
         background_proof_coverage=state.get('background_proof_coverage', 'complete'),
         window_start_sequence=state.get('window_start_sequence', 0),
         notices=[{key: item[key] for key in ('id', 'reason', 'trigger_counts', 'through_sequence', 'would_act', 'state',
@@ -916,7 +970,10 @@ def shadow_projection(*, bindings, row):
         limitations=['Exact references and payload digests detect identical evidence, not semantic paraphrases.',
             'Assist observes process, citation coverage and repeated failures; Root judgments are not independently '
             'verified for scientific stagnation. The unverified window requires direction confirmation, not a stagnation verdict.',
-            'Only first resolution of a predeclared supported test clears the unverified window. Prior sealing requires '
+            'First source-bound Worker assessments of a scientific dimension can clear the observation window; '
+            'this is not independent scientific verification. Stable objective/dimension/outcome identities detect '
+            'reuse, not semantic novelty across renamed questions. Repeated local optimization and new files alone do not clear it. '
+            'Stronger predeclared test proofs remain supported. Their prior sealing requires '
             'exact plan and quantitative conditions (plan alone for independent qualitative review) as immutable ancestors '
             'of every observed input. Each proof checks at most 64 distinct original envelopes; absent, damaged or '
             'incompletely covered lineage remains unknown. Registration timestamps are not order proof. Sealing and '

@@ -2,6 +2,7 @@
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+from .common import Identifier, SchemaModel
 
 
 class ScientificIntent(BaseModel):
@@ -19,3 +20,30 @@ class ProgressAssessment(BaseModel):
     evidence_names: list[Annotated[str, Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,255}$")]] = Field(default_factory=list, max_length=8,
         description='Exact visible scientific artifact names, including the sealed task output. Missing output support projects as unknown, never success.')
     limitations: str = Field(default='', max_length=1024)
+
+
+class AnalysisProgressAssessment(SchemaModel):
+    """Optional Worker judgment when the existing hypothesis outcomes are insufficient."""
+    model_config = ConfigDict(extra='forbid', frozen=True)
+    outcome: Literal['advance', 'no_progress', 'unknown']
+    reason: str = Field(min_length=1, max_length=4096)
+    evidence_keys: tuple[Identifier, ...] = Field(default=(), max_length=64)
+
+
+class ScientificProgressChange(BaseModel):
+    model_config = ConfigDict(extra='forbid', frozen=True)
+    # Stable scientific dimension from the frozen inputs, never an output digest.
+    dimension: str = Field(min_length=1, max_length=512)
+    outcome: str = Field(min_length=1, max_length=128)
+    evidence_keys: tuple[Identifier, ...] = Field(min_length=1, max_length=64)
+
+
+class ScientificProgressProjection(BaseModel):
+    """Public plugin projection; control binds aliases and supplies all identities."""
+    model_config = ConfigDict(extra='forbid', frozen=True)
+    outcome: Literal['advance', 'no_progress', 'unknown']
+    question: str = Field(min_length=1, max_length=2048)
+    answer: str = Field(min_length=1, max_length=8192)
+    remaining_question: str = Field(default='', max_length=8192)
+    evidence_keys: tuple[Identifier, ...] = Field(default=(), max_length=64)
+    changes: tuple[ScientificProgressChange, ...] = Field(default=(), max_length=32)

@@ -51,11 +51,18 @@ At complete-task selection, scientific_intent may state intent, target and expec
 Use progression_report when recording a goal conclusion, specific question, waiting
 condition or task assessment is useful. Its optional assessments cite exact sealed
 output names and distinguish advance, no_progress and unknown; no extra report gate.
-Root advance and fresh files are judgments, not verified progress. The consumed
-unverified window requires direction confirmation after its frozen threshold.
-Only first resolution of a predeclared supported scientific test can clear it;
-repeated checks, summaries and renamed targets cannot. No relative optimization
-score or automatic review-for-unlocking workflow is provided.
+The analysis Worker assesses what an exact bounded experiment changes using its
+sealed hypothesis judgments and evidence. Control binds sources and counts each
+interpreted experiment once; preparation and experiments await that analysis.
+First source-bound scientific dimension changes or stronger predeclared test
+resolutions can clear the observation window. Repeated judgments, Root advance,
+fresh files and changed thresholds cannot. Missing or unsupported assessment
+remains unknown and can require direction confirmation, not a stagnation verdict.
+Choose the smallest sufficient contrast for one concrete hypothesis/contradiction;
+when its evidence changes the next choice, seal and analyze before another test.
+Reuse an unchanged hypothesis portfolio with the new analysis and an explicit
+scientific choice. Do not hide multiple research decisions inside one experiment
+or mechanically rewrite the same portfolio. Waiting creates no new observation.
 Consider remaining tokens, the closeout reserve
 and observed Worker-thread costs before selecting more work; these are not exact
 predictions of a new task. When budget.new_task_allowed is false, consume

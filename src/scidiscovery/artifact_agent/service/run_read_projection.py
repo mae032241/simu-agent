@@ -35,7 +35,7 @@ def run_intent_projection(value, *, intent):
     if isinstance(result.get("execution_profile"), dict):
         result["execution_profile"] = pick(result["execution_profile"], "profile")
     if intent == "full" and value.get("state") == "completed":
-        result.update(pick(value, "output_delivery", "sealed_output", "scheduler_signal", "scheduler_signal_status"))
+        result.update(pick(value, "output_delivery", "sealed_output", "scheduler_signal", "scheduler_signal_status", "scientific_progress"))
     elif intent == "navigation" and value.get("state") == "completed":
         result.update(pick(value, "output_delivery", "output_index", "output_metadata"))
     elif intent == "decision" and value.get("state") == "completed":
@@ -50,6 +50,7 @@ def run_intent_projection(value, *, intent):
                 "scheduler_signal",
                 "scheduler_signal_status",
                 "scheduler_signal_omissions",
+                "scientific_progress",
             )
         )
     return result
@@ -207,6 +208,9 @@ class RunReadProjection:
             task_intent = read_intent(self.artifacts, value)
             if task_intent is not None:
                 result["scientific_intent"] = task_intent
+            if value.state == 'completed':
+                from .research_progress import research_progress, public_progress
+                result['scientific_progress'] = public_progress(research_progress(self.runs, value))
         attention = self.runs.submission_attention(value)
         if attention is not None:
             result["attention_required"] = attention
@@ -288,7 +292,7 @@ class RunReadProjection:
                 "integrity_failure": "The sealed materials failed integrity checks. Restore the exact originals before retrying.",
                 "admission_defect": "The selected materials did not satisfy the declared input requirements. Inspect the saved diagnostics.",
             }.get(failure.get("category"), "The Run failed. Read the saved diagnostic page to identify a repair or choose another scientific action.")
-        allowed = {"scientific_intent", "name", "operation_id", "operation_contract_status", "state", "agent_type", "execution_profile",
+        allowed = {"scientific_intent", "scientific_progress", "name", "operation_id", "operation_contract_status", "state", "agent_type", "execution_profile",
             "created_at", "started_at", "completed_at", "deadline_at", "last_activity_at", "output_artifact_name",
             "recovery_available", "draft_from", "diagnostics_available", "attention_required", "reason", "diagnostic_events", "sealed_output_status", "sealed_output",
             "scheduler_signal_status", "scheduler_signal", "scheduler_signal_omissions", "output_delivery", "output_metadata", "selected_output",

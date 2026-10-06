@@ -14,7 +14,7 @@ from .plugin_runtime.results import materialize_summary_handoff, finalize_result
 from .general_science_agent_operations import _input
 from .operation_declaration import schema_resource, scientific_agent_operation, semantic_contract
 from .operations.spec import (CallableComponent, CollectionSpec, ComponentRef,
-    ComponentSpec, InputDerivationSpec, InputPortSpec, InputValidationSpec, OutputPortSpec, SemanticRuleSpec, WorkspaceContract)
+    ComponentSpec, InputDerivationSpec, InputPortSpec, InputValidationSpec, OutputPortSpec, SemanticRuleSpec, WorkspaceContract, ScientificProgressSpec)
 from .operations.tooling import WorkerToolDefinition
 from .agent_execution_settings import MaterialInputSettings
 from .operations.workspace import WorkspaceProtocolError
@@ -355,6 +355,13 @@ direction requires a hypothesis task. Deliver observations and execution validit
 for a separate result-analysis task; numerical success alone does not settle the
 research objective. Identify missing information and retain blocked/inconclusive
 outcomes when a sound test cannot be made.
+Choose one concrete hypothesis or contradiction and the smallest sufficient
+discriminating contrast. Necessary baselines, repetitions and numerical debugging
+belong inside this test; no fixed command count defines a research cycle. Do not
+bundle a search across competing mechanisms or an optimization campaign into one
+experiment. When an observation can change which hypothesis or experiment should
+come next, seal this question's report and hand it to result analysis before
+starting that new scientific question.
 Read subject for the current scientific question, stage objective and available
 conclusions. Read the global goal and completion criteria in objective_source:
 the original research objective, the foundation's objective_contract, or the intake's
@@ -489,6 +496,7 @@ OPERATION = scientific_agent_operation(
     "A sealed hypothesis needs a bounded test through implementation, execution and validity assessment. Reuse its exact scientific sources and any relevant prior experiment.",
     "Open research without a sealed hypothesis, hypothesis formulation, or independent interpretation of experiment results. Prepare missing scientific materials when needed; reuse sufficient materials instead of repeating intake.",
     decision_fields=("outcome", "summary", "remaining_question", "limitations"),
+    scientific_progress=ScientificProgressSpec(stage="experiment", subject_port="hypothesis_portfolio", objective_port="objective_source"),
     agent=_REF("experiment_task_agent"), prompt=_REF("experiment_task_prompt"),
     workspace=_REF("experiment_task_workspace"),
     input_validation=InputValidationSpec(_REF("experiment_goal_inputs"), "science.experiment.v1.goal",

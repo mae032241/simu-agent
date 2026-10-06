@@ -66,3 +66,20 @@ def test_analysis_cannot_assess_a_different_hypothesis():
         validate_context(payload(hypothesis_assessments=[{'hypothesis_key': 'other',
             'outcome': 'not_tested', 'evidence_keys': ['experiment_results'],
             'rationale': 'No test.'}]), sources(), {})
+
+
+def test_optional_worker_progress_reuses_bound_evidence():
+    validate_context(payload(progress_assessment=dict(outcome='no_progress', reason='The decision did not change.',
+        evidence_keys=['experiment_results'])), sources(), {})
+    with pytest.raises(SemanticRuleViolation):
+        validate_context(payload(progress_assessment=dict(outcome='advance', reason='Unbound claim.',
+            evidence_keys=['fabricated'])), sources(), {})
+
+
+def test_progress_increment_is_separate_from_hypothesis_direction_but_checks_are_bound():
+    assessed = dict(hypothesis_key='mechanism', outcome='contradicts', evidence_keys=['experiment_results'],
+        rationale='A bounded negative observation.')
+    validate_context(payload(hypothesis_assessments=[assessed], progress_assessment=dict(
+        outcome='no_progress', reason='The same refutation was already known.', evidence_keys=['experiment_results'])), sources(), {})
+    with pytest.raises(SemanticRuleViolation, match='exact hypothesis'):
+        validate_context(payload(hypothesis_assessments=[dict(assessed, predictions_checked=['invented'])]), sources(), {})

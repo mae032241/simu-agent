@@ -2,6 +2,7 @@
 from .artifact_agent.schema.cognitive import HypothesisProposal
 from .artifact_agent.schema.common import canonical_json
 from .artifact_agent.schema.layered_diagnosis import LayeredDiagnosisReport
+from .artifact_agent.schema.scientific_progress import ScientificProgressProjection, ScientificProgressChange
 from .general_science_agent_operations import _input, WORKSPACE_REF
 from .general_science_experiment_task import ExperimentReport, validate_goal_inputs
 from .operation_contract import SemanticRuleViolation, validate_evidence_source_aliases
@@ -9,7 +10,7 @@ from .operation_declaration import schema_resource, scientific_agent_operation, 
 from .operations.input_validation import parse_bound_json
 from .plugin_runtime.calculations import analysis_evidence_aliases
 from .operations.spec import (CallableComponent, ComponentRef, ComponentSpec,
-    InputDerivationSpec, InputValidationSpec, OutputPortSpec, SemanticRuleSpec)
+    InputDerivationSpec, InputValidationSpec, OutputPortSpec, SemanticRuleSpec, ScientificProgressSpec)
 
 
 def validate_inputs(sources):
@@ -33,8 +34,34 @@ def validate_context(payload, sources, handoff):
     keys = {item.hypothesis_key for item in proposal.hypotheses}
     if any(item.hypothesis_key not in keys for item in report.hypothesis_assessments):
         raise SemanticRuleViolation("Analysis may assess only hypotheses in the exact experiment's portfolio.")
+    hypotheses = {item.hypothesis_key: item for item in proposal.hypotheses}
+    for assessment in report.hypothesis_assessments:
+        hypothesis = hypotheses[assessment.hypothesis_key]
+        if not set(assessment.predictions_checked) <= {item.prediction_key for item in hypothesis.predictions} or not set(
+                assessment.falsifiers_triggered) <= {item.falsifier_key for item in hypothesis.falsifiers}:
+            raise SemanticRuleViolation("Analysis checks must name predictions or falsifiers in the exact hypothesis.")
     if report.objective_assessment is not None and report.objective_assessment.objective_key != proposal.research_objective_key:
         raise SemanticRuleViolation("Analysis objective must identify the exact hypothesis objective.")
+
+
+def project_progress(payload, sources):
+    """Copy the author's scientific outcomes; do not derive physical truth."""
+    report = LayeredDiagnosisReport.model_validate_json(canonical_json(payload), strict=True)
+    proposal = parse_bound_json(HypothesisProposal, sources['hypothesis_portfolio'])
+    known = set(sources.binding_descriptors)
+    aliases = analysis_evidence_aliases(report.evidence, report.source_references, known)
+    def resolve(keys):
+        return tuple(dict.fromkeys(aliases.get(key, key) for key in keys))
+    changes = tuple(ScientificProgressChange(dimension=item.hypothesis_key, outcome=item.outcome,
+        evidence_keys=resolve(item.evidence_keys)) for item in report.hypothesis_assessments
+        if item.outcome in {'supports', 'contradicts'} and report.overall_verdict != 'invalid_study')
+    assessment = report.progress_assessment
+    outcome = assessment.outcome if assessment is not None else ('advance' if changes else 'unknown')
+    evidence = resolve(assessment.evidence_keys) if assessment is not None else tuple(dict.fromkeys(
+        key for change in changes for key in change.evidence_keys))
+    return ScientificProgressProjection(outcome=outcome, question=proposal.stage_objective,
+        answer=assessment.reason if assessment else report.summary,
+        remaining_question=report.remaining_contradiction or '', evidence_keys=evidence, changes=changes)
 
 
 PROMPT = """Analyze the exact sealed experiment_results against its original
@@ -53,10 +80,17 @@ their corresponding source is absent. Blocked or incomplete experiments can
 support an inconclusive analysis, never fabricated successful observations.
 Control binds exact sources; the Worker owns scientific judgments. This task
 adds no execution authorization or mandatory review.
+State what this bounded experiment answers in hypothesis_assessments, with exact
+evidence_keys, and retain the remaining question. Valid negative evidence can
+advance understanding. When the scientific decision did not change, use optional
+progress_assessment.outcome=no_progress with its reason and exact evidence_keys;
+use unknown for unavailable assessment. New files, parameter improvements and a
+passing overall verdict alone do not establish progress. This is your scientific
+assessment, not independent verification by control.
 """
 SCHEMA = schema_resource(LayeredDiagnosisReport, "scidiscovery.layered-diagnosis.v1")
 CONTRACT = semantic_contract(SemanticRuleSpec("analysis.experiment_binding",
-    "Interpret an exact sealed experiment using its original hypotheses and goal. References and assessed hypothesis identities must be bound; scientific validity belongs to the author."))
+    "Interpret an exact sealed experiment using its original hypotheses and goal. References, assessed hypothesis identities and any declared prediction/falsifier keys must be bound. Optional progress_assessment judges the increment to the research decision, separately from whether evidence supports or contradicts a hypothesis. It cannot alter scientific validity or qualification, which belong to their existing authorities."))
 COMPONENTS = (
     ComponentSpec("result_analysis_prompt", "resource", __name__ + ":PROMPT"),
     ComponentSpec("result_analysis_schema", "resource", __name__ + ":SCHEMA"),
@@ -66,10 +100,12 @@ COMPONENTS = (
         resources=(ComponentRef("result_analysis_contract"),)),
     ComponentSpec("result_analysis_context", "validator", __name__ + ":CONTEXT",
         resources=(ComponentRef("result_analysis_contract"),)),
+    ComponentSpec("result_analysis_progress", "projector", __name__ + ":PROGRESS"),
 )
 INPUTS = CallableComponent("validator", validate_inputs)
 VALIDATOR = CallableComponent("validator", lambda raw: LayeredDiagnosisReport.model_validate_json(raw, strict=True))
 CONTEXT = CallableComponent("validator", validate_context)
+PROGRESS = CallableComponent("projector", project_progress)
 
 OPERATION = scientific_agent_operation("science.result.analyze.v1",
     "Interpret one exact experiment and its tested hypotheses independently of execution.",
@@ -77,7 +113,9 @@ OPERATION = scientific_agent_operation("science.result.analyze.v1",
     "Launching experiments, inventing unsupported evidence, or formulating a new hypothesis portfolio.",
     agent=ComponentRef("critic_agent"), workspace=WORKSPACE_REF,
     prompt=ComponentRef("result_analysis_prompt"), tools=(), native_view_image=True,
-    decision_fields=("overall_verdict", "claim_allowed", "summary", "hypothesis_assessments", "limitations", "remaining_contradiction", "next_action"),
+    decision_fields=("overall_verdict", "claim_allowed", "summary", "hypothesis_assessments", "limitations", "remaining_contradiction", "next_action", "progress_assessment"),
+    scientific_progress=ScientificProgressSpec(stage="analysis", subject_port="experiment_results", objective_port="objective_source",
+        projector=ComponentRef("result_analysis_progress"), source_ports=("hypothesis_portfolio",)),
     input_validation=InputValidationSpec(ComponentRef("result_analysis_inputs"), "analysis.experiment_binding",
         "Select an exact sealed experiment. Control retrieves its original hypothesis portfolio, global goal and scientific materials; unrelated sources never substitute."),
     inputs=(

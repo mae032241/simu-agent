@@ -11,6 +11,7 @@ from .validation import (
     HypothesisAssessment,
     ValidationEvidence,
 )
+from .scientific_progress import AnalysisProgressAssessment
 
 
 GateStatus = Literal[
@@ -169,6 +170,8 @@ class LayeredDiagnosisReport(SchemaModel):
     next_action: Annotated[str, Field(min_length=1, max_length=4096)] | None = None
     analysis_method: Annotated[str, Field(min_length=1, max_length=4096)] | None = None
     method_changes: Annotated[tuple[str, ...], Field(max_length=16)] = ()
+    progress_assessment: AnalysisProgressAssessment | None = Field(default=None,
+        description="Optional judgment of the increment to the research decision, separate from hypothesis support/refutation and scientific validity. A repeated supports/contradicts outcome can have no_progress. Explicit no_progress/unknown suppress ordinary automatic advance candidates; advance alone or new files do not establish a new scientific dimension. Omit or use unknown when assessment is unavailable.")
 
     @model_validator(mode="after")
     def _references_and_bounds_are_consistent(self) -> LayeredDiagnosisReport:

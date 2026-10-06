@@ -366,6 +366,13 @@ def _validate_operation_contracts(plugin_map: dict[str, PluginDefinition], compo
             if any(not port.agent_visible and port.derivation is None for port in operation.inputs):
                 _fail("hidden_input_requires_control_derivation", plugin.plugin_id, op_id)
             input_ports = {port.name: port for port in operation.inputs}
+            if operation.scientific_progress is not None:
+                issue = operation.scientific_progress.issue(operation.inputs)
+                if issue or operation.executor.kind != "agent":
+                    _fail(issue or "scientific_progress_executor_invalid", plugin.plugin_id, op_id)
+                if operation.scientific_progress.projector is not None:
+                    _resolve_component(plugin_map, components, used, plugin.plugin_id,
+                        operation.scientific_progress.projector, "projector", reachable)
             for port in operation.inputs:
                 current, seen = port, set()
                 while current.derivation is not None:

@@ -453,10 +453,11 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
                 fingerprint=request_digest)
             if control:
                 binding_session = binding.pop('session_key', control['owner_session'])
+                analysis_owner = self.requested_analysis_owner(bound, instance_id=instance_id, connection=connection)
                 self.scheduler_bindings.prepare_admission(instance_id=instance_id, session_key=binding_session,
                     **binding, output_fingerprint=output_binding_fingerprint,
                     scientific_signature=scientific_signature, task_classification=classification, connection=connection,
-                    continuation=('run', review_owner) if review_owner else None)
+                    continuation=('run', review_owner or analysis_owner) if review_owner or analysis_owner else None)
                 control = read_control_row(connection, instance_id, schema='scheduler_control.')
                 checkpoint = json.loads(control['checkpoint_json'])
             try:

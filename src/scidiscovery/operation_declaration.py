@@ -24,6 +24,7 @@ from .operations.spec import (
     OutputPortSpec,
     ReviewSpec,
     SemanticRuleSpec,
+    ScientificProgressSpec,
     ExecutorRef,
 )
 
@@ -228,6 +229,7 @@ def scientific_agent_operation(
     guards: tuple[ComponentRef, ...] = (),
     consequence: str = "scientific",
     decision_fields: tuple[str, ...] = ("summary", "conclusion", "limitations", "remaining_question", "remaining_contradiction"),
+    scientific_progress: ScientificProgressSpec | None = None,
 ) -> OperationSpec:
     """Build one bounded Agent declaration without registration side effects."""
 
@@ -252,6 +254,7 @@ def scientific_agent_operation(
         outputs=outputs,
         consequence=consequence,
         decision_fields=decision_fields,
+        scientific_progress=scientific_progress,
         input_admission=input_admission,
         input_validation=input_validation,
         complete_transform_family=complete_transform_family,

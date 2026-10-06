@@ -17,7 +17,23 @@ from scidiscovery.operations.spec import (
     NetworkPolicy,
     ReviewSpec,
     WorkspaceContract,
+    ScientificProgressSpec,
 )
+
+
+@pytest.mark.parametrize('declaration,reason', [
+    (ScientificProgressSpec(stage='analysis', subject_port='absent', projector=ComponentRef('test_agent')), 'scientific_progress_port_invalid'),
+    (ScientificProgressSpec(stage='analysis'), 'scientific_progress_subject_missing'),
+    (ScientificProgressSpec(stage='analysis', subject_port='agent_input'), 'scientific_progress_projector_missing'),
+    (ScientificProgressSpec(stage='preparation', projector=ComponentRef('test_agent')), 'scientific_progress_projector_invalid'),
+    (ScientificProgressSpec(stage='analysis', subject_port='agent_input', projector=ComponentRef('test_agent'), source_ports=('absent',)), 'scientific_progress_source_invalid'),
+])
+def test_scientific_progress_declaration_has_one_compiled_source_authority(declaration, reason):
+    operation = PLUGIN.operations[0].model_copy(update=dict(scientific_progress=declaration))
+    plugin = PLUGIN.model_copy(update=dict(operations=(operation, *PLUGIN.operations[1:])))
+    with pytest.raises(CatalogCompileError) as caught:
+        compile_catalog((plugin,))
+    assert caught.value.reason_code == reason
 
 
 def replace(instance, **changes):

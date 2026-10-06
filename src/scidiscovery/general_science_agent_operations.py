@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from .operation_declaration import scientific_agent_operation
-from .operations.spec import CollectionSpec, ComponentRef, NetworkPolicy, InputAdmissionSpec, InputValidationSpec, InputDerivationSpec, InputPortSpec, OperationSpec, OutputPortSpec, ReviewSpec
+from .operations.spec import CollectionSpec, ComponentRef, NetworkPolicy, InputAdmissionSpec, InputValidationSpec, InputDerivationSpec, InputPortSpec, OperationSpec, OutputPortSpec, ReviewSpec, ScientificProgressSpec
 
 JSON_CODEC = ComponentRef("json_codec")
 OPAQUE_CODEC = ComponentRef("opaque_codec")
@@ -505,7 +505,7 @@ OPERATIONS = (
             reviewer_input_port="hypothesis_portfolio",
             subject_outputs=("hypothesis_portfolio",),
         ),
-    ).model_copy(update={"version": "2"}),
+    ).model_copy(update={"version": "2", "scientific_progress": ScientificProgressSpec(stage="preparation", objective_port="objective_source")}),
 )
 
 

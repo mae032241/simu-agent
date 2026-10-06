@@ -36,6 +36,19 @@ def test_unknown_missing_support_and_renames_never_clear_no_progress():
     assert reduce_shadow([fact(1, 'advance', supported=False)])['coverage_gap'] == 1
 
 
+def test_legacy_root_fallback_cannot_renew_worker_family_with_new_experiment_bytes():
+    previous, repeated = fact(1, 'no_progress', 'previous'), fact(2, 'advance', 'new-experiment')
+    for item in (previous, repeated):
+        item['terminal']['scientific_progress'] = dict(status='worker_assessed', stage='analysis',
+            cycle_key=f"cycle-{item['sequence']}", outcome=item['assessment']['classification'],
+            evidence=item['assessment']['evidence'], families=[dict(key='already-assessed-dimension')]
+                if item is repeated else [])
+    advances = []
+    counts = reduce_shadow([previous, repeated], allow_root_advance=True,
+        known_resolutions=['already-assessed-dimension'], advances=advances)
+    assert counts['no_progress'] == 1 and advances == []
+
+
 def test_negative_scientific_result_and_new_analysis_can_advance_but_file_change_alone_cannot():
     base = [fact(1, 'no_progress')]
     assert reduce_shadow(base + [fact(2, 'unknown', 'new-file')])['no_progress'] == 1
