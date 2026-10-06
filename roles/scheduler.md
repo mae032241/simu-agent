@@ -16,16 +16,21 @@ analysis task before treating them as scientific conclusions or revising the
 research route. Reuse sufficient existing evidence, problem frames, foundations,
 hypotheses and analyses; prepare missing source-backed materials when needed,
 without requiring a fresh intake or independent review for every cycle. An
-experiment owns bounded test design and numerical debugging, not open research
-or replacement of the hypothesis and analysis tasks. Select one meaningful
-question that can change the next decision, using the original overall objective
-as background. Preserve its global requirements and unfinished work; do not
-automatically assign all runs, optimization and final delivery to one experiment.
-The Worker may iterate internally through design, execution and debugging, then
-hand sufficient observations and validity to analysis. Bind reusable sealed
-engineering materials and their conclusions/limitations; give exact entry points
-and original locators in the task handoff when available, rather than requiring
-the next Worker to rediscover an unchanged implementation.
+experiment owns one answerable scientific question and a bounded comparison
+protocol designed by the experiment owner. State the scientific question and
+scope in the existing instruction; the Worker declares the comparison and stopping
+basis before execution. Related trials, repetitions and candidate implementations,
+including baselines and contrasts among sealed hypotheses, may continue within
+that protocol and its original criterion and declared condition range.
+Size the task by that question, not by individual shell commands. One observation
+alone does not require a handoff. Deliver sufficient observations and validity to
+independent result analysis when the question is answered, further work offers no
+scientific progress, or a budget/permission boundary stops it. Changing mechanisms,
+criteria or scope requires a new scientific decision informed by analysis; cheap
+computation does not authorize wider search. Preserve overall requirements and
+unfinished work; do not assign all optimization and final delivery to one experiment.
+Bind reusable sealed engineering materials, the best eligible candidate under the
+original selection criterion, their limits and exact entry points for the next task.
 An explicitly started goal authorizes ordinary task selection within its scope and
 budget, including source-based analysis and input repair; do not request separate
 permission for those choices. Ask for missing user facts or a genuine scope decision,

@@ -108,9 +108,20 @@ claiming independent scientific verification; deterministic/review test proofs
 remain stronger evidence. New files, report identities and changed thresholds
 alone cannot reset it. The automatic confirmation pause, immutable trigger history,
 user continuation and exact accepted-work/review authority retain their budgets.
-Experiments own the smallest sufficient contrast for one concrete question;
-observations that change the next scientific choice are sealed for analysis before
-another test. An unchanged hypothesis portfolio may be reused with the new analysis.
+Experiments own one answerable question and a bounded comparison protocol, with
+scope and stopping reasons in existing task/stage narratives. The experiment owner
+designs and declares the protocol before execution, preserving supplied constraints;
+criteria and condition range need not be pre-existing admission inputs. Related
+trials, repetitions and candidate contrasts, including baselines across sealed
+hypotheses, can continue within that protocol and its original criterion/range. Keep each
+attempt's results/limits and the best eligible candidate under the original
+selection criterion. Seal for independent analysis when sufficient, without further
+scientific progress, or at budget/permission boundaries; changed mechanisms, criteria
+or scope need a new scientific decision. Cheap computation does not authorize wider
+search. Preserve unmet overall requirements. Reuse an unchanged portfolio and exact
+engineering materials; check a minimal saved-model/code loading chain early when
+delivery needs it. These instructions add no fields, gates or budget extensions;
+their throughput benefit requires live qualification.
 
 ## 2. Registration, compilation, and catalog views
 

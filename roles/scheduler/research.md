@@ -131,13 +131,16 @@ calculation, saving and bounded correction within the author task when its scien
 question is unchanged. Hand off for an independent review, changed scientific decision,
 or execution permission boundary; never add an extra author only to copy fields.
 
-Each experiment should address one concrete hypothesis or contradiction with the
-smallest sufficient discriminating contrast. Necessary baselines, repetitions and
-numerical debugging stay inside that experiment. When evidence can change the
-next scientific choice, seal the bounded result and interpret it before choosing
-the next test; do not bundle a mechanism search into one experiment. Reuse an
-unchanged hypothesis portfolio with the exact new analysis and an explicit
-scientific selection; no mechanical portfolio rewrite is required. Progress
+Size an experiment by one answerable question and a bounded comparison protocol,
+not a script run. The owner designs and declares the protocol before execution,
+preserving supplied constraints. Related trials, repetitions and candidate contrasts,
+including baselines across sealed hypotheses, stay within its original criterion
+and declared condition range. Use existing narratives for scope and stopping reasons. Preserve every
+attempt and the best eligible candidate under the original selection criterion.
+Seal for independent analysis when sufficient, without scientific progress, or at
+budget/permission boundaries; changed mechanisms, criteria or scope need a new
+scientific decision. Cheap computation does not authorize wider search. Reuse an
+unchanged portfolio with exact new analysis; no mechanical rewrite is required. Progress
 observations count the interpreted exact experiment once. Analysis Workers own
 source-bound progress judgments; missing assessment stays unknown. Root reports,
 new files and threshold changes cannot establish a new scientific dimension.

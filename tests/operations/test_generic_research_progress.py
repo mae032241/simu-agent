@@ -380,8 +380,9 @@ def test_experiment_prompt_exposes_minimal_question_handoff_in_real_assignment(p
     worker = attached_worker(p.runtime, root, 'bounded')
     opened = worker.call_tool('worker_open_assignment', {})
     prompt = json.loads(Path(opened['assignment_path']).read_bytes())['role_instructions']
-    assert 'smallest sufficient' in prompt and 'no fixed command count' in prompt
-    assert 'seal this question' in prompt
+    from scidiscovery.general_science_experiment_task import PROMPT
+    assert PROMPT in prompt  # The compiled assignment delivers the current owner guidance.
+    assert 'separate result-analysis task' in prompt
 
 
 @pytest.mark.parametrize('keys, expected', [(['experiment_results', 'recalculation'], 'worker_assessed'),
