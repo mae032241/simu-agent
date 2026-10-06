@@ -553,3 +553,87 @@ def test_one_worker_moves_native_remote_native(tmp_path, monkeypatch):
         return [implementation, execution, validity]
     _real_experiment(tmp_path, monkeypatch, before_execute=native_step, before_submit=native_step)
     assert sequence == ["before", "remote-collected", "after"]
+
+
+def test_published_json_file_materialization_uses_bounded_reader_and_exact_handoff(tmp_path, installed):
+    from scidiscovery.artifact_agent.service.input_reader import read
+    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+    from scidiscovery.artifact_agent.service.worker_connections import WorkerConnections
+    from tests.artifact_agent.test_input_reader import body, collect_view
+    import re
+    f = _start_native(tmp_path)
+    raw = b'{"metric":1e-999,"missing":null,"runs":' + json.dumps([{'index': i, 'value': i+1} for i in range(600)]).encode() + b'}'
+    original = _publish(f, 'records.json', raw, ['hypothesis_portfolio'])
+    stage = f.worker.call_tool('worker_experiment_stage', {'stage': 'validity', 'conclusion': 'Retain synthetic records, not a scientific finding.', 'materials': [original]})['reference']
+    (f.workspace/'output/result.json').write_bytes(canonical_json({'payload': {
+        'summary': 'Exact synthetic records are available.', 'outcome': 'inconclusive',
+        'remaining_question': 'Independent analysis remains open.', 'adopted_stages': [stage]}}))
+    assert f.worker.call_tool('worker_submit_result', {})['state']=='completed'
+    old = f.runtime.runs.status(f.run_id)
+    records = {r['alias']: r for r in f.runtime.runs.available_material_records(old)}
+    name = f.runtime.runs.material_artifact_name(old, records[original])
+    result_name = f.root.call_tool('run_status', {'name': 'compute'})['output_artifact_name']
+    def consumer(label):
+        invoked = f.root.call_tool('operation_invoke', {'name': label, 'operation_id': 'science.experiment.v1',
+            'inputs': [{'port': 'subject', 'artifact_names': [result_name]}, {'port': 'scientific_files', 'artifact_names': [name]}],
+            'instruction': 'Read selected original JSON fields.'})
+        assert invoked['result']['state']=='queued'
+        run_id=f.runtime.scheduler_bindings.resolve(instance=old.instance_id,namespace='run',name=label)
+        WorkerConnections(f.runtime.runs).attach(run_id=run_id,platform_session=label,thread_id=label+'-author')
+        worker=LocalWorkerMCPRouter(f.runtime.runs,operation_id=f.compiled.spec.operation_id,operation_digest=f.compiled.digest,
+            run_id=run_id,trusted_caller=(label,label+'-author'))
+        opened=worker.call_tool('worker_open_assignment',{});workspace=Path(opened['workspace_path'])
+        bound=next(i for i in f.runtime.runs.status(run_id).inputs if i.port_name=='scientific_files')
+        item=next(i for i in json.loads(Path(opened['assignment_path']).read_bytes())['inputs'] if i['source_name']==bound.source_name)
+        return worker,workspace,item,run_id
+    worker,workspace,item,run_id=consumer('read-json')
+    assert item['exposure']=='file_reference'
+    with pytest.raises(ValueError,match='metadata only'):read(workspace,item['source_name'],pointers=['/metric'])
+    delivered=worker.call_tool('worker_materialize_input',{'source_name':item['source_name']})
+    relative=delivered['relative_path'];path=workspace/relative
+    # This actual entry fails before P1: its returned inputs/ path is metadata-only.
+    selected=read(workspace,relative,file=True,pointers=['/metric'],budget=512)
+    assert body(selected)=='1e-999' and len(selected.encode())<=512
+    observed=subprocess.run([sys.executable,'-I',str(workspace/'tools/read_input.py'),relative,
+        '--file','--pointer','/metric','--budget','512'],cwd=tmp_path,capture_output=True,timeout=5)
+    assert observed.returncode==0 and body(observed.stdout.decode())=='1e-999'
+    assert body(read(workspace,relative,file=True,directory=True))=='["metric","missing","runs"]'
+    assert body(read(workspace,relative,file=True,pointers=['/missing']))=='null'
+    assert body(read(workspace,relative,file=True,pointers=['/runs/5/value']))=='6'
+    full=collect_view(workspace,relative,file=True,budget=1024)
+    assert full.encode()==raw and path.read_bytes()==raw and path.stat().st_mode&0o777==0o400
+    assert json.loads(collect_view(workspace,relative,file=True,pointers=['/runs'],budget=512))==json.loads(raw)['runs']
+    with pytest.raises(ValueError,match='absent'):read(workspace,relative,file=True,pointers=['/unknown'])
+    with pytest.raises(ValueError,match='8192'):read(workspace,relative,file=True,budget=8193)
+    with pytest.raises(Exception,match='exact input|undeclared'):worker.call_tool('worker_materialize_input',{'source_name':'unknown'})
+    # A same-named foreign file does not unlock the protected metadata route.
+    protected=workspace/item['relative_path'];protected.write_text('{"metric":999}')
+    with pytest.raises(ValueError,match='metadata only'):read(workspace,item['relative_path'],file=True)
+    with pytest.raises(ValueError,match='metadata only'):read(workspace,str(protected),file=True)
+    first=read(workspace,relative,file=True,pointers=['/runs'],budget=512)
+    handle=re.search(r'--selection ([0-9a-f]{32})',first).group(1)
+    offset=int(re.search(r'next_offset (\d+)',first).group(1))
+    path.chmod(0o600);path.write_bytes(raw.replace(b'1e-999',b'2e-999'))
+    with pytest.raises(ValueError,match='changed'):read(workspace,selection_id=handle,offset=offset,budget=512)
+    fresh=worker.call_tool('worker_materialize_input',{'source_name':item['source_name']})
+    assert (workspace/fresh['relative_path']).read_bytes()==raw
+    assert next(i for i in f.runtime.runs.status(run_id).inputs if i.source_name==item['source_name']).artifact_ref.sha256==records[original]['artifact_ref']['sha256']
+    path.unlink();path.symlink_to(tmp_path/'outside')
+    (tmp_path/'outside').write_bytes(b'foreign')
+    with pytest.raises(ValueError,match='within'):read(workspace,relative,file=True)
+    assert worker.call_tool('worker_materialize_input',{'source_name':item['source_name']})['state']=='rejected'
+    assert (tmp_path/'outside').read_bytes()==b'foreign'
+    path.unlink()
+    # Close this consumer before requesting the next task under serial admission.
+    worker.call_tool('worker_materialize_input',{'source_name':item['source_name']})
+    adopted=worker.call_tool('worker_experiment_stage',{'stage':'validity','conclusion':'Original JSON fields remain available.',
+        'materials':[item['source_name']]})['reference']
+    (workspace/'output/result.json').write_bytes(canonical_json({'payload':{
+        'summary':'Read exact synthetic fields.','outcome':'inconclusive',
+        'remaining_question':'Scientific interpretation remains open.','adopted_stages':[adopted]}}))
+    completion=worker.call_tool('worker_submit_result',{})
+    assert completion['state']=='completed',completion
+    other,other_root,other_item,_=consumer('next-json')
+    next_delivery=other.call_tool('worker_materialize_input',{'source_name':other_item['source_name']})
+    assert (other_root/next_delivery['relative_path']).read_bytes()==raw
+    assert body(read(other_root,next_delivery['relative_path'],file=True,pointers=['/metric']))=='1e-999'

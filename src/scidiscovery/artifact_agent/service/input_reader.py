@@ -18,6 +18,9 @@ import tempfile
 
 READ_INPUT_NAVIGATION = 4
 CACHE_DIRECTORY = ".read-input"
+MATERIAL_FILE_READING = (
+    'JSON/text: python tools/read_input.py RETURNED_PATH --file; select --directory or --pointer fields, '
+    'bound --budget and follow the returned page continuation. Native tools can inspect complete originals.')
 
 
 class Number(str):
@@ -158,12 +161,13 @@ def _source(root, name, file):
 
 
 def _within(root, relative):
+    source = (root / relative).resolve()
     assignment = root / 'assignment.json'
     if relative != 'assignment.json' and assignment.is_file():
         inputs = json.loads(assignment.read_text(encoding='utf-8')).get('inputs', [])
-        if any(item.get('exposure') == 'file_reference' and item.get('relative_path') == str(relative) for item in inputs):
+        if any(item.get('exposure') == 'file_reference'
+               and (root / item['relative_path']).resolve() == source for item in inputs):
             raise ValueError('file_reference input is metadata only; a declared control tool streams its exact bytes')
-    source = (root / relative).resolve()
     if not source.is_relative_to(root) or not source.is_file():
         raise ValueError('source must be a file within this workspace')
     return source

@@ -839,6 +839,8 @@ class ReferenceAccessMixin:
                 workspace = self.backend.open(run_id)
                 response.update(file_path=str(workspace.root / '.reference-access' / (alias + '.bin')))
                 response['provided']['kind'] = 'file_access'
+                from .input_reader import MATERIAL_FILE_READING
+                response['reading'] = MATERIAL_FILE_READING
             if current_material is not None:
                 self._reference_deadline(call)
                 with self._connect() as connection:

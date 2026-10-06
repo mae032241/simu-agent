@@ -6,7 +6,7 @@ from pathlib import Path
 
 from ..schema.common import canonical_json
 from .local_workspace import WorkspaceError, read_control_workspace_file, write_control_workspace_file
-from .input_reader import shared_input
+from .input_reader import shared_input, MATERIAL_FILE_READING
 
 
 def _with_input_templates(document: dict) -> dict:
@@ -124,9 +124,9 @@ def startup_document(assignment: dict, domain: dict | None = None, *, reader_nav
     if 'worker_materialize_input' in assignment.get('tools', ()):
         result['reading']['files'] = (
             'Inputs marked controlled_tool_stream_only are bound files, not missing evidence. '
-            'Call worker_materialize_input with their source_name to obtain a local path. '
-            'Read PDF/image/table/archive files with the appropriate native tool or a streaming script; '
-            'do not print whole large files. The input JSON reader handles the small text inputs.')
+            'Call worker_materialize_input with source_name and use its returned relative_path, not the metadata path. '
+            + MATERIAL_FILE_READING + ' Keep combined displays bounded to avoid batch truncation; '
+            'use native tools for PDFs/images/tables or necessary code/log review.')
     return _with_input_templates(result)
 
 

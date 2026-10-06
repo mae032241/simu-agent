@@ -480,6 +480,9 @@ def test_text_original_can_be_requested_as_exact_native_file(harness):
     assert 'fragment' not in response
     assert response['provided']['kind'] == 'file_access'
     assert Path(response['file_path']).read_bytes() == harness.contents[target]
+    from scidiscovery.artifact_agent.service.input_reader import read
+    from tests.artifact_agent.test_input_reader import body
+    assert body(read(harness.root/'reader/workspace', response['file_path'], file=True)) == harness.contents[target].decode()
     record = harness.reference_access_records('reader')[0]
     assert record['selector']['delivery'] == 'file'
     assert record['artifact_ref'] == target.model_dump(mode='json')

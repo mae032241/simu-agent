@@ -695,6 +695,9 @@ class LocalWorkerMCPRouter:
                 source_name, item.media_type
             )
             if item.exposure == "file_reference":
+                # inputs/ remains metadata-only. Reuse the authorized material
+                # location so the existing bounded reader can consume the returned file.
+                path = self._workspace.root / ".operation-tools/sources" / workspace_input_filename(source_name, item.media_type)
                 from ...plugin_runtime.workspace import write_control_workspace_stream
                 from ...agent_execution_settings import MaterialInputSettings
                 policy = MaterialInputSettings.model_validate((status.recovery_policy or {}).get("input_materials", {}))

@@ -48,12 +48,13 @@ def materialize_input(request, context):
         context.input_ref(request.source_name)  # Reject paths and undeclared sources.
     except ValueError as error:
         raise ToolInputError("material_source_unknown", "Choose an exact input source_name from the assignment or a tool-returned material reference.", path="$.source_name") from error
+    from .artifact_agent.service.input_reader import MATERIAL_FILE_READING
     path = context.input_path(request.source_name)
     return {"source_name": request.source_name, "relative_path": str(path.relative_to(context.workspace)),
             "size_bytes": path.stat().st_size, "state": "available",
-            "reading": "Use native file tools for PDFs, images or large tables; read bounded sections. This call returns no file contents."}
+            "reading": MATERIAL_FILE_READING}
 
 
 INPUT_TOOL = WorkerToolDefinition(name="worker_materialize_input",
-    description="Make an exact bound input or authorized evidence reference available as a native file using streamed copying. Returns its local path, never bulk contents.",
+    description="Make an exact bound input or authorized evidence reference available as a native file using streamed copying. Returns its actual local path and bounded JSON/text reader guidance, never bulk contents.",
     input_model=InputFileRequest, capability="material.input", contextual_handler=materialize_input)
