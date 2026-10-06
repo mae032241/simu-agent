@@ -463,7 +463,7 @@ def test_reduced_arm_limits_stop_invalid_limits_reject_and_legacy_defaults_remai
     with pytest.raises(RuntimeError,match='wall_deadline'):meter.check()
 
 
-@pytest.mark.parametrize('failure',[None,'authorization','usage'])
+@pytest.mark.parametrize('failure',[None,'authorization','usage','rpc'])
 @pytest.mark.parametrize('automated',[False,True])
 def test_scidiscovery_starts_actual_objective_with_ui_authority_and_control_meter(tmp_path,monkeypatch,failure,automated,capsys):
     from types import SimpleNamespace
@@ -485,7 +485,7 @@ def test_scidiscovery_starts_actual_objective_with_ui_authority_and_control_mete
     monkeypatch.setattr(installed,'__file__',str(Path(spec['python']).parent.parent/'installed-mcp-daemon.py'))
     monkeypatch.setattr(driver,'start_control',lambda spec:([],'http://management.invalid'))
     monkeypatch.setattr(driver.time,'sleep',lambda _:None)
-    calls=[];current_calls=[];checks=[];management=[]
+    calls=[];current_calls=[];checks=[];management=[];status_errors=[];meters=[]
     class Management:
         def __init__(self,url):management.append(('url',url))
         def create(self,name):management.append(('create',name))
@@ -499,9 +499,13 @@ def test_scidiscovery_starts_actual_objective_with_ui_authority_and_control_mete
         if method=='model/list':return {'data':[{'model':driver.MODEL}],'nextCursor':None}
         raise AssertionError('unexpected RPC '+method)
     host=SimpleNamespace(identity=SimpleNamespace(thread_id='frontend',session_id='frontend'),
-        connection=SimpleNamespace(rpc=rpc,poll=lambda _:None),close=lambda:None,
+        connection=SimpleNamespace(rpc=rpc,poll=lambda _:None,failed=False,closed=False),close=lambda:None,
         verify_tools_and_session=lambda **kwargs:None)
-    monkeypatch.setattr(driver,'launch_root',lambda *args:host)
+    def launch(spec,meter):
+        from scidiscovery.platforms.codex_progression import PrivateLog
+        meter.rpc_log=PrivateLog(Path(spec['root'])/'evidence/rpc-errors.log',4096)
+        meters.append(meter);return host
+    monkeypatch.setattr(driver,'launch_root',launch)
     def public(host,name,arguments):
         calls.append((name,arguments))
         if name=='instance_current':
@@ -511,6 +515,12 @@ def test_scidiscovery_starts_actual_objective_with_ui_authority_and_control_mete
                 'management_url':'http://management.invalid/exact-page'}
         if name=='run_list':return {'runs':[]}
         if name=='progression_status':
+            if failure=='rpc' and any(n=='progression_command' for n,_ in calls) and not status_errors:
+                from scidiscovery.platforms.codex_app_server import HostError
+                status_errors.append(True)
+                meters[0].observe({'method':'scid/rpcError','params':{'method':'mcpServer/tool/call',
+                    'error':{'code':-32603,'message':'Unclassified internal response'}}})
+                raise HostError('rpc_failure',method='mcpServer/tool/call',rpc_code=-32603)
             return {'objective_name':'wrong' if failure=='authorization' else driver.OBJECTIVE,
                 'state':'stopped','budget':{'observed_tokens':15},
                 'loop':{'id':'loop','managed':True,'authority':'explicit_management_ui_budget_confirmation',
@@ -527,7 +537,7 @@ def test_scidiscovery_starts_actual_objective_with_ui_authority_and_control_mete
         'records':{'science-root':{**record,'owner':'selected','loop_id':'loop','role':'root'}},
         'participants':{},'frontend_unmeasured':False})
     result=driver.arm_action(spec,'run')
-    assert result['status']==('stopped_not_scored' if failure is None else 'fail')
+    assert result['status']==('stopped_not_scored' if failure in (None,'rpc') else 'fail')
     output=capsys.readouterr().out
     assert ('http://management.invalid/exact-page' in output) is not automated
     ingested=[arguments for name,arguments in calls if name=='artifact_ingest_text']
@@ -552,6 +562,10 @@ def test_scidiscovery_starts_actual_objective_with_ui_authority_and_control_mete
         assert Path(spec['root'],'model-submission-started').exists()
         if failure=='usage':assert result['reason']=='participant_usage_unconfirmed'
         else:assert result['observed_total_tokens']==15
+    if failure=='rpc':
+        assert result['status_read_error']['recovered'] and result['status_read_retries']==1
+        assert result['last_rpc_error']['diagnostic_reference']['retained_at_close']
+        assert 'failed_operation' not in result
     assert result['turns_requested']==0 and 'role_canary' not in result
     assert result['actual_worker_helper_isolation']=='not_verified'
 
@@ -852,3 +866,84 @@ def test_usage_before_attach_counts_cost_then_resolves_without_recounting():
     now[0]=1801
     with pytest.raises(RuntimeError,match='wall_deadline'):
         driver.reconcile_control(meter,snapshot)
+
+
+@pytest.mark.process_e2e
+@pytest.mark.parametrize('case',['transient','exhausted','fatal','timeout','wall','tokens','stale','sink'])
+def test_scientific_loop_real_status_rpc_errors_are_bounded_and_private(tmp_path,monkeypatch,case):
+    """The actual arm loop, real stdio AppServer and PrivateLog; no native model."""
+    import os,sys,subprocess
+    from types import SimpleNamespace
+    from scidiscovery.platforms.codex_app_server import AppServer,HostError,HostLimits
+    from scidiscovery.platforms.codex_progression import PrivateLog
+    script=tmp_path/'peer.py';requests=tmp_path/'requests'
+    script.write_text(r'''
+import json,sys,time
+from pathlib import Path
+case,path=sys.argv[1:];n=0
+for line in sys.stdin:
+    m=json.loads(line)
+    if 'id' not in m:continue
+    name=m['params']['arguments']['name'];n+=1
+    with Path(path).open('a') as f:f.write(name+'\n')
+    if case=='timeout':time.sleep(10);continue
+    failed=name=='progression_command' or case in ('exhausted','fatal','wall','tokens','stale','sink') or n==1
+    if failed:
+        error={'code':-32603,'message':('permission denied' if case=='fatal' else 'unclassified internal error')+': synthetic-private-error',
+            'data':{'opaque':'synthetic-opaque','details':'x'*6000}}
+        reply={'id':m['id'],'error':error}
+    else:reply={'id':m['id'],'result':{'structuredContent':{'loop':{'id':'loop'},'state':'stopped','budget':{'observed_tokens':15}}}}
+    print(json.dumps(reply),flush=True)
+''')
+    meter=driver.Meter(tokens=1000,wall_seconds=30);meter.activate();meter.observe(usage('root',10,5))
+    directory=tmp_path/'evidence';directory.mkdir(mode=0o700)
+    meter.rpc_log=PrivateLog(directory/'rpc-errors.log',8192)
+    if case=='stale':meter.observe({'method':'scid/rpcError','params':{'method':'mcpServer/tool/call','error':{'code':-32603,'message':'previous request'}}})
+    if case=='sink':os.close(meter.rpc_log.writer);meter.rpc_log.writer=None
+    snapshot={'instance':'selected','loop':'loop','records':{'root':{**meter.records['root'],'owner':'selected','loop_id':'loop','role':'root'}},
+        'participants':{},'frontend_unmeasured':False}
+    monkeypatch.setattr(driver,'control_usage',lambda *args:snapshot)
+    def guard():
+        if meter.rpc_errors:
+            if case=='wall':meter.clock=lambda:meter.deadline+1
+            if case=='tokens':meter.observe(usage('root',1000,5))
+    # A dropped/stale sink cannot authorize another read even for the same method/code.
+    connection=AppServer.launch([sys.executable,str(script),case,str(requests)],cwd=tmp_path,
+        environment=dict(os.environ),stderr=subprocess.DEVNULL,on_event=(lambda e:None) if case=='stale' else meter.observe,
+        limits=HostLimits(rpc_timeout_seconds=.2,termination_grace_seconds=1,frame_bytes=16384),checkpoint=meter.check)
+    host=SimpleNamespace(connection=connection,identity=SimpleNamespace(thread_id='root',session_id='root'),guard_resources=guard)
+    spec={'status_read_retry':{'attempts':3,'initial_backoff_seconds':.01,'maximum_backoff_seconds':.02}}
+    result={};error=None
+    try:
+        try:driver.monitor_scientific_loop(host,meter,spec,{'id':'loop'},{},result)
+        except (HostError,RuntimeError) as exc:error=exc
+        names=requests.read_text().splitlines()
+        if case=='transient':
+            assert error is None and names==['progression_status']*2
+            assert result['status_read_error']['recovered'] and result['stop_reason']=='progression_stopped'
+            assert 'failed_operation' not in result
+            before=len(names)
+            with pytest.raises(HostError):driver.public_call(host,'progression_command',{'command':'start'})
+            assert len(requests.read_text().splitlines())==before+1  # No write replay.
+        elif case=='exhausted':
+            assert isinstance(error,HostError) and error.code=='rpc_failure'
+            assert len(names)==3 and result['status_read_stop']=='retry_exhausted'
+        else:
+            assert error is not None and names==['progression_status']
+            if case=='wall':assert str(error)=='wall_deadline'
+            if case=='tokens':assert str(error)=='observed_token_limit' and meter.total()==1005
+            if case=='timeout':assert connection.failed and error.code=='rpc_timeout'
+        assert meter.deadline is not None and meter.total()>=15
+    finally:
+        connection.close();meter.close_rpc_evidence()
+    assert connection.child.poll() is not None
+    public=json.dumps({'result':result,'rpc_error':meter.last_rpc_error})
+    assert 'synthetic-private-error' not in public and 'synthetic-opaque' not in public
+    logs=list(directory.iterdir());assert sum(p.stat().st_size for p in logs)<=16384
+    assert all(p.stat().st_mode&0o777==0o600 for p in logs)
+    if case not in ('timeout','sink'):
+        assert meter.last_rpc_error['diagnostic_reference']['retained_at_close']
+        raw=b''.join(p.read_bytes() for p in (directory/'rpc-errors.previous',directory/'rpc-errors.log') if p.exists())
+        assert meter.last_rpc_bytes in raw
+        if case!='stale':assert json.loads(meter.last_rpc_bytes)['params']['error']['data']['details']=='x'*6000
+    if case=='sink':assert not meter.last_rpc_error['private_sink_accepted']

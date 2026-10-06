@@ -12,6 +12,7 @@ import html
 import http.client
 import inspect
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -42,6 +43,7 @@ WALL = 1800
 TOKENS = 200000
 MAX_TOKENS = 8000000
 OBJECTIVE = 'covshift.pilot.objective'
+STATUS_READ_RETRY = {'attempts':3,'initial_backoff_seconds':.5,'maximum_backoff_seconds':2.}
 
 
 def arm_limits(spec):
@@ -51,6 +53,18 @@ def arm_limits(spec):
             or any(type(value[key]) is not int or not 0<value[key]<=maximum
                 for key,maximum in (('trial_wall_seconds',WALL),('all_role_tokens',MAX_TOKENS)))):
         raise ValueError('invalid_arm_budget')
+    return dict(value)
+
+
+def status_read_retry(spec):
+    """Frozen per-arm policy for only the scientific progression_status read."""
+    value=spec.get('status_read_retry',STATUS_READ_RETRY)
+    if (not isinstance(value,dict) or set(value)!=set(STATUS_READ_RETRY)
+            or type(value['attempts']) is not int or value['attempts']<1
+            or any(type(value[k]) not in (int,float) or not math.isfinite(value[k]) or value[k]<=0
+                for k in ('initial_backoff_seconds','maximum_backoff_seconds'))
+            or value['initial_backoff_seconds']>value['maximum_backoff_seconds']):
+        raise ValueError('invalid_status_read_retry')
     return dict(value)
 
 
@@ -292,6 +306,7 @@ def prepare(launch_path, output, native, auth_file=None, provider_config=None, *
         if completed.returncode:
             raise RuntimeError('installed_initializer_failed:'+arm)
         spec={'arm':arm,'limits':budget,'resources':resources,'human_wait_seconds':human_wait_seconds,
+            'status_read_retry':status_read_retry({}),
             'management_authorization':authorization if arm=='scidiscovery' else None,
             'root':str(base),'project':str(project),'python':str(installed),
             'task_python':launch['task_python'],'native':str(native),'native_sha256':result['native_sha256'],
@@ -361,6 +376,7 @@ class Meter:
         self.canary_command=None;self.proofs={};self.children={};self.control_records={};self.completed={}
         self.frontend_roles={};self.frontend_loop=None
         self.turns_requested=0;self.scientific_turns_requested=0;self.observed_turns=set()
+        self.rpc_log=None;self.last_rpc_error=None;self.rpc_errors=0;self.last_rpc_bytes=None
     def activate(self):
         if self.deadline is not None: raise RuntimeError('trial_already_submitted')
         self.deadline=self.clock()+self.wall_seconds
@@ -381,6 +397,31 @@ class Meter:
     def observe(self,event):
         from scidiscovery.platforms.codex_usage import observe_usage
         params=event.get('params',{}); thread=params.get('threadId')
+        if event.get('method')=='scid/rpcError':
+            self.rpc_errors+=1
+            error=params.get('error',{})
+            raw=json.dumps(event,ensure_ascii=False,separators=(',',':')).encode()+b'\n'
+            # Full error objects stay private. Never put messages/data in results.
+            text=json.dumps(error).lower()
+            fatal=bool(re.search(r'authenticat|authoriz|unauth|forbidden|permission|access denied|credential|identity|metadata|budget|coverage|protocol|corrupt',text))
+            method=params.get('method')
+            code=error.get('code') if isinstance(error,dict) else None
+            self.last_rpc_error={'rpc_method':method if isinstance(method,str) and re.fullmatch(r'[A-Za-z0-9_/.-]{1,96}',method) else None,
+                'rpc_code':code if type(code) is int else None,'retry_safe':not fatal,
+                'diagnostic_reference':{'files':['evidence/rpc-errors.previous','evidence/rpc-errors.log'],
+                    'record_sha256':hashlib.sha256(raw).hexdigest(),'sequence':self.rpc_errors,
+                    'retention':'bounded_rotating','retained_at_close':False},'private_sink_accepted':False}
+            if self.rpc_log:
+                try:
+                    if len(raw)>self.rpc_log.maximum:raise ValueError('rpc_error_evidence_limit')
+                    self.last_rpc_bytes=raw
+                    view=memoryview(raw)
+                    while view:view=view[os.write(self.rpc_log.writer,view):]
+                    self.last_rpc_error['private_sink_accepted']=True
+                except Exception as exc:
+                    self.last_rpc_error['evidence_error']=type(exc).__name__
+                    self.last_rpc_error['retry_safe']=False
+
         turn_id=params.get('turnId') or (params.get('turn') or {}).get('id')
         if isinstance(thread,str) and isinstance(turn_id,str) and turn_id:
             if event.get('method') in ('turn/started','turn/completed','thread/tokenUsage/updated'):
@@ -421,6 +462,15 @@ class Meter:
                         and set(checks)==set(CANARY_CHECKS) and all(v is True for v in checks.values())):
                     self.proofs[thread]={'item_id':item.get('id'),'command':item['command'],'checks':checks}
         self.check()
+    def close_rpc_evidence(self):
+        if self.rpc_log is None:return
+        self.rpc_log.close()
+        if self.last_rpc_error and not self.rpc_log.thread.is_alive():
+            # The last record may straddle the existing 4096-byte rotation chunks.
+            paths=(self.rpc_log.path.with_suffix('.previous'),self.rpc_log.path)
+            retained=b''.join(regular(path,self.rpc_log.maximum) for path in paths if path.exists())
+            self.last_rpc_error['diagnostic_reference']['retained_at_close']=bool(
+                self.last_rpc_bytes and self.last_rpc_bytes in retained)
     def total(self):
         threads=set(self.records)|set(self.control_records)
         return sum(sum(max(self.records.get(thread,{}).get('counted_tokens',{}).get(key,0),
@@ -446,9 +496,14 @@ def matches_canary_command(actual,expected):
 
 
 def public_call(host,name,arguments):
-    reply=host.connection.rpc('mcpServer/tool/call',{'threadId':host.identity.thread_id,
-        'server':'scidiscovery','tool':'scid_call','arguments':{'name':name,'arguments':arguments},
-        '_meta':{'x-codex-turn-metadata':{'thread_id':host.identity.thread_id,'session_id':host.identity.session_id}}})
+    from scidiscovery.platforms.codex_app_server import HostError
+    try:
+        reply=host.connection.rpc('mcpServer/tool/call',{'threadId':host.identity.thread_id,
+            'server':'scidiscovery','tool':'scid_call','arguments':{'name':name,'arguments':arguments},
+            '_meta':{'x-codex-turn-metadata':{'thread_id':host.identity.thread_id,'session_id':host.identity.session_id}}})
+    except HostError as exc:
+        exc.method=exc.method or 'mcpServer/tool/call';exc.operation=name
+        raise
     if reply.get('isError'): raise RuntimeError('public_call_failed:'+name)
     value=reply.get('structuredContent')
     return value if isinstance(value,dict) else json.loads(reply['content'][0]['text'])
@@ -723,6 +778,8 @@ def launch_root(spec,meter):
         config.pop('mcp_servers',None);config['mcp_servers']={}
         config['features']=spec['native_features']
     log=PrivateLog(Path(spec['root'])/'evidence/app-server.log',8388608)
+    # PrivateLog retains current + previous: the RPC sink totals at most 8MiB.
+    meter.rpc_log=PrivateLog(Path(spec['root'])/'evidence/rpc-errors.log',8388608//2)
     connection=AppServer.launch(outer_command(spec)+config_flags(config),cwd=project,
         environment=dict(os.environ),stderr=log.writer,on_event=meter.observe,
         limits=HostLimits(frame_bytes=1048576))
@@ -861,9 +918,61 @@ class PilotManagement:
             'confirmation_binding':fields['confirmation_binding'],'confirm_loop_budget':'yes','objective_name':OBJECTIVE})
 
 
+def monitor_scientific_loop(host,meter,spec,loop,current,result):
+    """Observe only; a rejected read never replays start/submit/management writes."""
+    from scidiscovery.platforms.codex_app_server import HostError
+    policy=status_read_retry(spec)
+    def checkpoint():
+        meter.check();getattr(host,'guard_resources',lambda:None)()
+        result['combined_usage_coverage']=reconcile_control(meter,control_usage(spec,loop['id'],current))
+    while True:
+        host.connection.poll(.2);checkpoint()
+        delay=policy['initial_backoff_seconds']
+        for attempt in range(policy['attempts']):
+            prior_errors=meter.rpc_errors
+            try:
+                scheduling=public_call(host,'progression_status',{})
+                if result.get('status_read_error'):result['status_read_error']['recovered']=True
+                break
+            except HostError as exc:
+                result['status_read_error']={'operation':'progression_status','rpc_method':exc.method,
+                    'rpc_code':exc.rpc_code if type(exc.rpc_code) is int else None,'recovered':False}
+                diagnostic=meter.last_rpc_error or {}
+                # Only explicit server error replies on a healthy connection qualify.
+                # Unknown internal replies get the same finite bound, not infinite retries.
+                safe=(exc.code=='rpc_failure' and type(exc.rpc_code) is int
+                    and (exc.rpc_code==-32603 or -32099<=exc.rpc_code<=-32000)
+                    and meter.rpc_errors==prior_errors+1
+                    and diagnostic.get('rpc_method')==exc.method=='mcpServer/tool/call'
+                    and diagnostic.get('rpc_code')==exc.rpc_code
+                    and diagnostic.get('private_sink_accepted') is True
+                    and diagnostic.get('retry_safe') is True
+                    and getattr(host.connection,'failed',None) is False
+                    and getattr(host.connection,'closed',None) is False)
+                if not safe:raise
+                if attempt+1==policy['attempts']:
+                    result['status_read_stop']='retry_exhausted';raise
+                result['status_read_retries']=result.get('status_read_retries',0)+1
+                until=meter.clock()+delay
+                while meter.clock()<until:
+                    checkpoint()
+                    host.connection.poll(min(.2,max(0,until-meter.clock())))
+                    time.sleep(min(.5,max(0,until-meter.clock())))
+                checkpoint();delay=min(delay*2,policy['maximum_backoff_seconds'])
+        if (scheduling.get('loop') or {}).get('id')!=loop['id']:raise RuntimeError('authorized_loop_changed')
+        checkpoint()
+        budget=scheduling.get('budget',{});result['control_budget']=budget
+        if type(budget.get('observed_tokens')) is int and budget['observed_tokens']>=meter.token_limit:
+            raise RuntimeError('observed_control_token_limit')
+        if scheduling.get('state') in ('stopped','paused','intervention_required'):
+            result['stop_reason']='progression_'+scheduling['state'];return
+        time.sleep(.5)
+
+
 def arm_action(spec,action):
-    """Paid activation exists only in run; no automatic retries or recovery."""
+    """Paid activation exists only in run; no automatic submission replay."""
     budget=arm_limits(spec);tokens=budget['all_role_tokens'];wall=budget['trial_wall_seconds']
+    status_read_retry(spec)  # Reject malformed retry policy before any host/model.
     base=Path(spec['root']); meter=Meter(tokens=tokens,wall_seconds=wall); children=[]; host=None;listener=None
     result={'status':'fail','action':action,'arm':spec['arm'],'turns_requested':0,
         'limits':budget,
@@ -984,22 +1093,13 @@ def arm_action(spec,action):
             meter.activate();(base/'model-submission-started').touch(exist_ok=False)
             public_call(host,'progression_command',{'command':'start','mode':'background','objective_name':OBJECTIVE})
             result['science_started']=True
-            while True:
-                host.connection.poll(.2);meter.check()
-                scheduling=public_call(host,'progression_status',{})
-                current_loop=scheduling.get('loop') or {}
-                if current_loop.get('id')!=loop['id']: raise RuntimeError('authorized_loop_changed')
-                result['combined_usage_coverage']=reconcile_control(meter,control_usage(spec,loop['id'],current))
-                budget=scheduling.get('budget',{})
-                result['control_budget']=budget
-                if type(budget.get('observed_tokens')) is int and budget['observed_tokens']>=tokens:
-                    raise RuntimeError('observed_control_token_limit')
-                if scheduling.get('state') in ('stopped','paused','intervention_required'):
-                    result['stop_reason']='progression_'+scheduling['state'];break
-                time.sleep(.5)
+            monitor_scientific_loop(host,meter,spec,loop,current,result)
         result['status']='stopped_not_scored'
     except Exception as exc:
         result['reason']=getattr(exc,'code',str(exc));result['exception']=type(exc).__name__
+        if getattr(exc,'method',None):result['failed_method']=exc.method
+        if getattr(exc,'operation',None):result['failed_operation']=exc.operation
+        if type(getattr(exc,'rpc_code',None)) is int:result['rpc_code']=exc.rpc_code
     finally:
         # Close each PID namespace before submission handoff. The outer supervisor
         # also terminates observed descendants; no detached command is trusted.
@@ -1012,6 +1112,13 @@ def arm_action(spec,action):
         for process in children:
             try: process.wait(timeout=5)
             except subprocess.TimeoutExpired: process.kill();process.wait()
+        try:meter.close_rpc_evidence()
+        except Exception as exc:result['rpc_evidence_close_error']=type(exc).__name__
+        if meter.last_rpc_error:
+            result['last_rpc_error']=meter.last_rpc_error
+            if not meter.last_rpc_error['diagnostic_reference']['retained_at_close'] and result['status']!='fail':
+                result.update(status='fail',reason='rpc_error_evidence_unretained')
+        result['rpc_error_count']=meter.rpc_errors
         control_tokens=(result.get('control_budget') or {}).get('observed_tokens')
         observed=max(meter.total(),control_tokens if type(control_tokens) is int else 0)
         coverage=result.get('combined_usage_coverage')
