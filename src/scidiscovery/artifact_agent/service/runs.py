@@ -921,6 +921,7 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
         identity = policy.get('loop_id')
         now = self.scheduler_bindings.control_now()
         loop = None
+        checkpoint_interval = 0
         if identity:
             with self.scheduler_bindings._connect() as db:
                 db.execute('BEGIN')
@@ -931,6 +932,9 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
             record = checkpoint.get('loop_authorizations', {}).get(identity)
             if record is None:
                 raise RunStateConflict('Accepted task research loop authorization is missing; do not reset its budget.')
+            # Legacy accepted loops did not authorize this reminder. Never
+            # backfill from current global settings or a new model default.
+            checkpoint_interval = record['config']['effective']['progression'].get('worker_checkpoint_seconds', 0)
             now = max(now, checkpoint['time_high_water'],
                 datetime.fromisoformat(record['authorized_at']).timestamp())
             sync_loop_balances(checkpoint, now)
@@ -956,7 +960,7 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
             remaining = min(remaining, loop['calendar_remaining_seconds'])
             if loop['enabled_remaining_seconds'] is not None:
                 remaining = min(remaining, loop['enabled_remaining_seconds'])
-        return dict(deadline_at=deadline, run_deadline_at=value.deadline_at, source='control',
+        budget = dict(deadline_at=deadline, run_deadline_at=value.deadline_at, source='control',
             observed_at=datetime.fromtimestamp(now, timezone.utc).isoformat(),
             remaining_seconds=max(0, int(remaining)), loop=loop,
             external_host_deadline='unknown', attachments=policy.get('attachments'),
@@ -965,6 +969,15 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
                 'closeout reserve is inside the total, not extra time or tokens. '
                 'Reopen worker_open_assignment for current budget; assignment.json is the initial snapshot. '
                 'Accepted work retains its execution authority; this projection does not cancel or extend it.')
+        if (value.operation_id == 'science.experiment.v1' and value.state == 'running'
+                and value.started_at and checkpoint_interval):
+            started = datetime.fromisoformat(value.started_at.replace('Z', '+00:00')).timestamp()
+            index = int(max(0, now - started) // checkpoint_interval)
+            at = lambda seconds: datetime.fromtimestamp(seconds, timezone.utc).isoformat()
+            budget['checkpoint'] = dict(index=index, due=index > 0, interval_seconds=checkpoint_interval,
+                check_at=at(started + max(1, index) * checkpoint_interval),
+                next_check_at=at(started + (index + 1) * checkpoint_interval))
+        return budget
 
     def _recovery_policy(self, compiled: Any) -> dict[str, Any]:
         limits = compiled.spec.limits

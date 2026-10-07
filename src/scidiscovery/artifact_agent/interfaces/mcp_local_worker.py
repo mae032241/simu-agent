@@ -128,6 +128,7 @@ class LocalWorkerMCPRouter:
             "Do not read the parent result schema or owner instructions unless the subtask specifically needs them."
         )
         budget = self.runs.worker_budget(status)
+        budget.pop('checkpoint', None)  # This reminder belongs to the task owner.
         assignment = {"participation": "helper", "name": self.participant['name'], **task, "budget": budget,
             **({"task_network_policy": source['task_network_policy']} if 'task_network_policy' in source else {}),
             "role_instructions": instruction,
@@ -155,7 +156,22 @@ class LocalWorkerMCPRouter:
         self._check_participation()
         self._validate_open_call(name, arguments)
         with self._maintenance_call(name):
-            return self._observed_call_tool(name, arguments)
+            result = self._observed_call_tool(name, arguments)
+        # The effect and attempt/timing receipts are already finished. Optional
+        # reminder reads must never become a failed tool or invite effect replay.
+        return self._checkpoint_reply(name, result)
+
+    def _checkpoint_reply(self, name, result):
+        if (self.is_helper or self.operation_id != 'science.experiment.v1'
+                or name not in {'worker_experiment_stage', 'worker_experiment_prepare',
+                    'worker_experiment_debug', 'worker_experiment_execute'}
+                or not isinstance(result, dict) or result.get('state') in {'failed', 'rejected'}):
+            return result
+        try:
+            reminder = self.runs.worker_budget(self.runs.status(self._run_id)).get('checkpoint')
+        except Exception:
+            reminder = dict(availability='unavailable', repair='Reopen worker_open_assignment for current budget.')
+        return {**result, 'checkpoint': reminder} if reminder is not None else result
 
     def _validate_open_call(self, name, arguments):
         if name != "worker_open_assignment":
@@ -388,6 +404,8 @@ class LocalWorkerMCPRouter:
             if name == "worker_heartbeat":
                 status = self.runs.heartbeat(self._run_id)
                 budget = self.runs.worker_budget(status)
+                if self.is_helper:
+                    budget.pop('checkpoint', None)
                 return {"state": status.state, "remaining_seconds": budget['remaining_seconds'], "budget": budget}
             if name == "worker_submit_result":
                 state, diagnostics = self.runs.submit(self._run_id, trusted_tool_records={

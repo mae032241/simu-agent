@@ -29,7 +29,7 @@ AGENT_LIFECYCLE_PROTOCOL = AgentLifecycleProtocol(
             name="worker_open_assignment",
             description=(
                 "Open the exact Run assignment and materialize its private "
-                "read-only inputs."
+                "read-only inputs. Returns the current original budget; an enabled experiment-owner checkpoint is a safe-boundary reminder, not a new deadline."
             ),
             input_schema_sha256=_INPUT_SCHEMA_DIGEST,
             capability="run.open_assignment",
@@ -42,7 +42,7 @@ AGENT_LIFECYCLE_PROTOCOL = AgentLifecycleProtocol(
         ),
         AgentLifecycleTool(
             name="worker_heartbeat",
-            description="Record bounded liveness without extending the absolute budget.",
+            description="Record bounded liveness without extending the absolute budget. Returns the current original budget and, when enabled for the experiment owner, a calendar-fragment checkpoint index/due flag. Repeated indexes are one safe-boundary reminder, not scientific progress or permission to cancel, extend or replay work; follow the assignment's checkpoint instructions.",
             input_schema_sha256=_INPUT_SCHEMA_DIGEST,
             capability="run.heartbeat",
         ),

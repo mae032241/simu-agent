@@ -166,6 +166,17 @@ def startup_document(assignment: dict, domain: dict | None = None, *, reader_nav
     for key in ('tools', 'reference_access', 'attempt_memory', 'revision', 'recovery_draft', 'budget'):
         if assignment.get(key) is not None:
             result[key] = assignment[key]
+    if (assignment.get('budget') or {}).get('checkpoint') is not None:
+        result['reading']['checkpoint'] = (
+            'budget.checkpoint and experiment tool replies carry the same calendar-fragment index and due flag; '
+            'repeated indexes are one reminder, not new requests or scientific progress. At the next safe boundary, '
+            'reassess your exact sealed stages and this task decision. If answered or evidence requires changing the '
+            'hypothesis, mechanism, question, route or original criterion, safely seal a bounded final and explicitly '
+            'submit for analysis. An affordable discriminating test within the original hypothesis and criteria may '
+            'continue; ordinary score reordering alone does not require handoff. Preserve original criteria, failures '
+            'and cumulative global history. The reminder grants no time, cancellation or replay authority; finish or '
+            'reconcile accepted execution through existing controls, retaining unknown outcomes. It cannot interrupt '
+            'a long native command. Final analysis requires completed output; a stage preview is not that output.')
     if domain:
         result['workspace'] = {key: domain[key] for key in ('manifest', 'paths', 'read_paths', 'patch_contract') if key in domain}
     if 'worker_materialize_input' in assignment.get('tools', ()):

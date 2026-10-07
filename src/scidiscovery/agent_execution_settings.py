@@ -146,6 +146,8 @@ class ProgressionSettings(SettingsValue):
     event_wait_seconds: float = Field(default=.2, gt=0, le=1)
     resource_sample_seconds: float = Field(default=1., gt=0, le=5)
     budget_snapshot_seconds: float = Field(default=30., gt=0, le=300)
+    worker_checkpoint_seconds: int = Field(default=300, ge=0, le=86400,
+        description="Experiment Worker direction-check interval in calendar seconds; 0 disables. A reminder at a safe tool boundary, not a handoff deadline or experiment count.")
     observation_retries: int = Field(default=3, ge=0, le=10)
     observation_backoff_seconds: float = Field(default=.1, gt=0, le=1)
     observation_retry_seconds: float = Field(default=2., gt=0, le=5)
@@ -184,6 +186,8 @@ class ProgressionSettings(SettingsValue):
 
     @model_validator(mode="after")
     def _declarable_root_network(self):
+        if 0 < self.worker_checkpoint_seconds < 30:
+            raise ValueError("worker_checkpoint_seconds must be 0 or at least 30")
         if self.root_sandbox == "read-only" and self.root_network_access:
             raise ValueError("root_network_access requires root_sandbox workspace-write: Codex declares "
                              "thread network only through sandbox_workspace_write.network_access")
