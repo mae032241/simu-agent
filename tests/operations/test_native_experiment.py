@@ -563,6 +563,13 @@ def test_published_json_file_materialization_uses_bounded_reader_and_exact_hando
     import re
     f = _start_native(tmp_path)
     raw = b'{"metric":1e-999,"missing":null,"runs":' + json.dumps([{'index': i, 'value': i+1} for i in range(600)]).encode() + b'}'
+    import os
+    frozen = os.environ.get('SCID_DIAGNOSTIC_JSON_FIXTURE')
+    if frozen:
+        # Ordinary frozen JSON only; exact bytes remain in the published fixture.
+        raw = raw[:-1] + b',"diagnostics":{' + b','.join(
+            json.dumps(name).encode()+b':'+Path(frozen,name+'.json').read_bytes()
+            for name in ('pilot_summary','calibration')) + b'}}'
     original = _publish(f, 'records.json', raw, ['hypothesis_portfolio'])
     stage = f.worker.call_tool('worker_experiment_stage', {'stage': 'validity', 'conclusion': 'Retain synthetic records, not a scientific finding.', 'materials': [original]})['reference']
     (f.workspace/'output/result.json').write_bytes(canonical_json({'payload': {
@@ -597,11 +604,40 @@ def test_published_json_file_materialization_uses_bounded_reader_and_exact_hando
     observed=subprocess.run([sys.executable,'-I',str(workspace/'tools/read_input.py'),relative,
         '--file','--pointer','/metric','--budget','512'],cwd=tmp_path,capture_output=True,timeout=5)
     assert observed.returncode==0 and body(observed.stdout.decode())=='1e-999'
-    assert body(read(workspace,relative,file=True,directory=True))=='["metric","missing","runs"]'
+    directory = json.loads(body(read(workspace,relative,file=True,directory=True)))
+    assert [item['key'] for item in directory['fields']] == ['metric','missing','runs'] + (['diagnostics'] if frozen else [])
+    assert directory['fields'][2]['type']=='array' and directory['fields'][2]['count']==600
+    cli_directory = subprocess.run([sys.executable,'-I',str(workspace/'tools/read_input.py'),relative,
+        '--file','--directory'],cwd=tmp_path,capture_output=True,timeout=5)
+    assert cli_directory.returncode==0 and json.loads(body(cli_directory.stdout.decode()))==directory
     assert body(read(workspace,relative,file=True,pointers=['/missing']))=='null'
     assert body(read(workspace,relative,file=True,pointers=['/runs/5/value']))=='6'
     full=collect_view(workspace,relative,file=True,budget=1024)
     assert full.encode()==raw and path.read_bytes()==raw and path.stat().st_mode&0o777==0o400
+    if frozen:
+        from decimal import Decimal
+        from scidiscovery.artifact_agent.service.input_reader import select
+        expected = json.loads(raw,parse_int=Decimal,parse_float=Decimal)
+        root = '/diagnostics/'
+        pointers = [root+'pilot_summary/'+key for key in ('choices','contrasts','joint_margins','minimum_joint_margin','strong_joint_pass')]
+        for index in range(len(expected['diagnostics']['calibration'])):
+            base = root+f'calibration/{index}'
+            fields = json.loads(body(read(workspace,relative,file=True,pointers=[base],directory=True)))['fields']
+            assert any(item['key']=='fit' and item['type']=='object' for item in fields)
+            pointers += [base+'/'+key for key in ('arm','parameter','inner_score','predict_seconds','predict_warnings')]
+            pointers.append(base+'/fit/warnings')
+        replies = [read(workspace,relative,file=True,pointers=[pointer],budget=8192) for pointer in pointers]
+        from tests.artifact_agent.test_input_reader import finished
+        for pointer,reply in zip(pointers,replies):
+            assert finished(reply) and len(reply.encode())<=8192
+            assert json.loads(body(reply),parse_int=Decimal,parse_float=Decimal)==select(expected,pointer)
+        if log := os.environ.get('SCID_TEST_LOG_DIR'):
+            Path(log).mkdir(exist_ok=True)
+            Path(log,'diagnostic-selection-bytes.json').write_text(json.dumps({
+                'fixture_names':['pilot_summary','calibration'],'selected_pointer_count':len(pointers),
+                'published_fixture_utf8_bytes':len(raw),'selected_reply_utf8_bytes':sum(len(reply.encode()) for reply in replies),
+                'max_selected_reply_utf8_bytes':max(len(reply.encode()) for reply in replies),
+                'selected_fields_complete':True,'full_published_original_reconstructed':True}))
     assert json.loads(collect_view(workspace,relative,file=True,pointers=['/runs'],budget=512))==json.loads(raw)['runs']
     with pytest.raises(ValueError,match='absent'):read(workspace,relative,file=True,pointers=['/unknown'])
     with pytest.raises(ValueError,match='8192'):read(workspace,relative,file=True,budget=8193)

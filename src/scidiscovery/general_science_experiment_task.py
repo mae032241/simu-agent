@@ -373,7 +373,9 @@ expand inspection for missing information, changed interfaces or risks. Keep nor
 corrections in this task. Request missing user facts or a scientific decision when
 needed, or deliver blocked/inconclusive with limitations and the remaining question.
 Unavailable or unperformed execution cannot support completed. Keep stage conclusions
-concise; publish original records and logs as attachments instead of copying them
+concise; cite already-published exact materials when their provenance still applies.
+Publish new records/logs as attachments; new execution observations retain their
+own provenance even when bytes match. Reference originals instead of copying them
 into each narrative. Cite exact sealed materials with worker_experiment_stage.
 When useful, a design stage may include prediction_declaration with a prediction,
 criterion and aliases of the actual conditions. A validity stage may include a
@@ -398,9 +400,10 @@ for the best eligible candidate. Reuse an unchanged verified chain when sufficie
 handoff does not attest execution or replace original contracts.
 Choose local or remote execution independently at each step; the same task may
 move from local to remote and back to local. Local computation uses your declared
-native shell permissions and installed environment. Publish source files with
-worker_publish_files, seal an implementation stage citing those references, run
-the exact source locally, then publish logs and results. Seal an execution stage
+native shell permissions and installed environment. Reuse exact bound published
+source references or publish new/changed source files with worker_publish_files.
+Seal an implementation stage citing them, run the exact source locally, then publish
+this execution's logs and results. Seal an execution stage
 with native_execution naming that implementation, its state and exact published
 logs/results. Seal validity citing that execution. Control computes file identity
 and provenance; never author hashes or internal bindings. Native execution claims

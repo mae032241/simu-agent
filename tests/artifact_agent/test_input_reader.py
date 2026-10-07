@@ -32,6 +32,30 @@ def test_exact_paging_numbers_and_utf8(tmp_path):
     assert collect(tmp_path, 'plan.json', pointer='/a~1b~0c/3') == 'null'
 
 
+def test_directory_structure_keeps_exact_pointers_without_expanding_arrays(tmp_path):
+    from scidiscovery.artifact_agent.service.input_reader import read
+    raw = ('{"a/b~c":[' + ','.join(['1e-999'] * 2000) +
+        '],"":[],"flag":false,"n":123456789012345678901234567890,"nil":null,"text":"中文"}')
+    (tmp_path/'data.json').write_text(raw)
+    listing = json.loads(body(read(tmp_path, 'data.json', file=True, directory=True)))
+    fields = {entry['key']: entry for entry in listing['fields']}
+    assert listing['type'] == 'object' and listing['count'] == 6
+    assert fields['a/b~c']['pointer'] == '/a~1b~0c'
+    assert fields['a/b~c']['type'] == 'array' and fields['a/b~c']['count'] == 2000
+    assert fields['']['pointer'] == '/' and fields['']['count'] == 0
+    assert [fields[key]['type'] for key in ('flag','n','nil','text')] == ['boolean','number','null','string']
+    assert fields['text']['characters'] == 2
+    for pointer, count, index_range in [('/a~1b~0c', 2000, [0,1999]), ('/', 0, [])]:
+        reply = read(tmp_path, 'data.json', file=True, pointers=[pointer], directory=True, budget=512)
+        assert len(reply.encode()) <= 512 and finished(reply)
+        structure = json.loads(body(reply))
+        assert structure['count'] == count and structure['index_range'] == index_range
+        assert 'fields' not in structure  # Element values/types are not scanned or expanded.
+    assert body(read(tmp_path,'data.json',file=True,pointers=['/a~1b~0c/1999'])) == '1e-999'
+    assert body(read(tmp_path,'data.json',file=True,pointers=['/n'])) == '123456789012345678901234567890'
+    assert collect_view(tmp_path,'data.json',file=True,budget=512) == raw
+
+
 def test_version_selection_and_boundaries(tmp_path):
     path=tmp_path/'data';path.write_text('x'*9000)
     first=page(tmp_path,'data')
@@ -120,7 +144,8 @@ def test_semantic_multifield_navigation_exactness(tmp_path):
     assert body(first) == '[field 1]\n"scientific hash"\n[field 2]\n"scientific path"\n[field 3]\n1'
     assert not any(marker in first for marker in ('sha256', 'next_offset', str(tmp_path)))
     assert collect_view(tmp_path, 'assignment.json', file=True, pointers=['/inputs/0/port']) == '"experiment_plan"'
-    assert json.loads(collect_view(tmp_path, 'experiment_plan', directory=True)) == list(json.loads(text))
+    directory = json.loads(collect_view(tmp_path, 'experiment_plan', directory=True))
+    assert [item['key'] for item in directory['fields']] == list(json.loads(text))
 
 
 def test_registered_path_cli_and_shared_navigation(tmp_path):
@@ -523,7 +548,7 @@ def test_installed_parallel_replay_pages_keep_source_fields_directory_and_alias(
                 replies[index] = reply
     expected = '[field 1]\n'+json.dumps(values['a'], ensure_ascii=False)+'\n[field 2]\n'+json.dumps(values['b'], ensure_ascii=False)
     assert ''.join(parts[0]) == expected
-    assert json.loads(''.join(parts[1])) == list(directory)
+    assert [item['key'] for item in json.loads(''.join(parts[1]))['fields']] == list(directory)
     assert not (tmp_path/'forbidden').exists() and not (root/'forbidden').exists()
     # Old pages and terminal alias notices remain replayable after other reads.
     assert body(call(*commands[0])).startswith('[field 1]')

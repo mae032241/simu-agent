@@ -254,6 +254,8 @@ def test_reopening_frozen_older_reader_keeps_compatible_selection_guidance(tmp_p
         start = json.loads(Path(response['start_here_path']).read_bytes())
         assert '--selection HANDLE' not in start['reading']['inputs']
         assert 'frozen reader uses explicit continuation' in start['reading']['inputs']
+        assert '--directory lists JSON keys;' in start['reading']['inputs']
+        assert 'field pointers, types and counts' not in start['reading']['inputs']
         assert 'all --pointer' in response['input_reading']
         if version == 3:
             assert 'not --offset' in response['input_reading']

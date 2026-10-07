@@ -76,7 +76,7 @@ def page(workspace, path, *, pointer=None, directory=False, offset=0, version=No
     token = hashlib.sha256((identity + '\0' + mode + '\0' + (pointer or '')).encode()).hexdigest()
     if (offset and version is None) or (version is not None and version != token):
         raise ValueError('source or selection changed, or continuation version missing; restart at offset 0')
-    text = _selected_text(raw, [pointer] if pointer is not None else [], directory)
+    text = _selected_text(raw, [pointer] if pointer is not None else [], directory, directory_details=False)
     if offset < 0 or offset > len(text):
         raise ValueError('offset outside selected text')
     base = dict(source=source.relative_to(root).as_posix(), sha256=identity, version=token,
@@ -186,7 +186,31 @@ def _plain_text_input(root, source):
                for item in inputs)
 
 
-def _selected_text(raw, pointers, directory):
+def _structure(value, pointer):
+    kind = ('null' if value is None else 'boolean' if isinstance(value, bool) else
+        'number' if isinstance(value, (Number, int, float)) else 'string' if isinstance(value, str) else
+        'object' if isinstance(value, dict) else 'array')
+    result = dict(pointer=pointer, type=kind)
+    if isinstance(value, (dict, list)):
+        result['count'] = len(value)
+    elif kind == 'string':
+        result['characters'] = len(value)
+    return result
+
+
+def directory_view(value, pointer):
+    """Current-layer structure only; no values, subtree serialization or statistics."""
+    result = _structure(value, pointer)
+    if isinstance(value, dict):
+        result['fields'] = [dict(key=key, **_structure(child,
+            pointer + '/' + key.replace('~', '~0').replace('/', '~1'))) for key, child in value.items()]
+    elif isinstance(value, list):
+        result['index_range'] = [0, len(value) - 1] if value else []
+        result['element_pointer_prefix'] = pointer + '/'
+    return result
+
+
+def _selected_text(raw, pointers, directory, *, directory_details=True):
     text = raw.decode('utf-8')
     if not pointers and not directory:
         return text
@@ -198,8 +222,9 @@ def _selected_text(raw, pointers, directory):
     for index, pointer in enumerate(choices, 1):
         selected = select(value, pointer)
         if directory:
-            selected = (list(selected) if isinstance(selected, dict) else
-                        list(range(len(selected))) if isinstance(selected, list) else [])
+            selected = directory_view(selected, pointer) if directory_details else (
+                list(selected) if isinstance(selected, dict) else
+                list(range(len(selected))) if isinstance(selected, list) else [])
         # Ordered fields are individually labelled, never presented as one JSON value.
         parts.append((f'[field {index}]\n' if len(choices) > 1 else '') + encode(selected))
     return '\n'.join(parts)
@@ -407,7 +432,7 @@ def main():
     parser.add_argument('--file', action='store_true', help='explicit task-local file instead of input alias')
     parser.add_argument('--pointer', dest='pointers', action='append', help='JSON Pointer; repeat for ordered fields')
     parser.add_argument('--offset', type=int, help='character position in selected text (not UTF-8 bytes); replay the same command for the same page, or use next_offset')
-    parser.add_argument('--directory', action='store_true', help='list only direct keys')
+    parser.add_argument('--directory', action='store_true', help='current-layer field pointers, types and counts; arrays show index ranges without expanding elements. Exact byte sizes are not computed.')
     actions = parser.add_mutually_exclusive_group()
     for action in ('next', 'repeat', 'restart'):
         actions.add_argument('--' + action, dest='action', action='store_const', const=action)

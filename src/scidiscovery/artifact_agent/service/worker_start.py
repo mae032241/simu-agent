@@ -47,7 +47,7 @@ def _with_input_templates(document: dict) -> dict:
     return document
 
 
-def startup_document(assignment: dict, domain: dict | None = None, *, reader_navigation=4) -> dict:
+def startup_document(assignment: dict, domain: dict | None = None, *, reader_navigation=4, reader_directory_details=True) -> dict:
     # No independent contract registry or scientific summarization. Copy complete
     # instructions from the frozen assignment and plugin manifest, once per view.
     result = {key: assignment[key] for key in (
@@ -82,8 +82,11 @@ def startup_document(assignment: dict, domain: dict | None = None, *, reader_nav
             'Write only the form to output/result.json; do not put attachments in output/ or embed files in narrative fields. '
             'Publication retains bytes and provenance, not scientific validation. Returned references are reusable evidence.')
     result['reading'] = {
-        'inputs': 'Use source_name with python tools/read_input.py SOURCE. --directory lists JSON keys; '
-            f'Scientific pages accept --budget {SCIENTIFIC_PAGE_MIN_BYTES}..{SCIENTIFIC_PAGE_MAX_BYTES} bytes '
+        'inputs': 'Use source_name with python tools/read_input.py SOURCE. '
+            + ('--directory lists current-layer field pointers, types and counts; arrays show index ranges, not elements. '
+                'Exact byte sizes are not computed. Inspect actual fields before combining displays; do not filter by guessed names. '
+                if reader_directory_details else '--directory lists JSON keys; ')
+            + f'Scientific pages accept --budget {SCIENTIFIC_PAGE_MIN_BYTES}..{SCIENTIFIC_PAGE_MAX_BYTES} bytes '
             f'(default {SCIENTIFIC_PAGE_DEFAULT_BYTES}); worker-start.json uses its separately configured startup page size. '
             '--pointer /FIELD selects a known field (repeat for multiple fields). Omit --pointer to read the root; / is an empty-key member. '
             + ('Every page, including end, returns --selection HANDLE --offset START --budget BYTES and optional next_offset. '
@@ -148,9 +151,12 @@ def write_worker_start(workspace, assignment: dict, *, startup_page_bytes=16384)
         helper = read_control_workspace_file(workspace.root, Path('tools/read_input.py'), max_bytes=64 * 1024)
         reader_navigation = next((version for version in (4, 3, 2, 1)
             if f'\nREAD_INPUT_NAVIGATION = {version}\n'.encode() in helper), 0)
+        reader_directory_details = b'\ndef directory_view(' in helper
     except (OSError, ValueError, WorkspaceError):
         reader_navigation = 0
+        reader_directory_details = False
     # Keep task/input/form order in this derived entry, ahead of historical attempts.
     return write_control_workspace_file(workspace.root, Path('worker-start.json'),
-        json.dumps(startup_document(assignment, domain, reader_navigation=reader_navigation), ensure_ascii=False, allow_nan=False,
+        json.dumps(startup_document(assignment, domain, reader_navigation=reader_navigation,
+            reader_directory_details=reader_directory_details), ensure_ascii=False, allow_nan=False,
             separators=(',', ':')).encode('utf-8'), replace=True, mode=0o400)
