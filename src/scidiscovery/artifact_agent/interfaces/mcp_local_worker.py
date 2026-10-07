@@ -127,7 +127,8 @@ class LocalWorkerMCPRouter:
             "Use scid_describe for a selected tool's complete contract and retain it while unchanged and in context. "
             "Do not read the parent result schema or owner instructions unless the subtask specifically needs them."
         )
-        assignment = {"participation": "helper", "name": self.participant['name'], **task,
+        budget = self.runs.worker_budget(status)
+        assignment = {"participation": "helper", "name": self.participant['name'], **task, "budget": budget,
             **({"task_network_policy": source['task_network_policy']} if 'task_network_policy' in source else {}),
             "role_instructions": instruction,
             "inputs": [item for item in source.get('inputs', [])
@@ -140,7 +141,7 @@ class LocalWorkerMCPRouter:
         return {"state": "opened", "participation": "helper", "name": self.participant['name'],
             "workspace_path": str(self._workspace.root), "assignment_path": str(path),
             "instruction": "Read this task-specific assignment; select complete tool contracts with scid_describe as needed.",
-            "remaining_seconds": _remaining(status.deadline_at),
+            "remaining_seconds": budget['remaining_seconds'], "budget": budget,
             "native_usage": "unknown", "native_lifecycle": "platform_owned",
             "narrative_instruction": narrative_instruction(status.execution_profile['profile'] if status.execution_profile else None)}
 
@@ -386,7 +387,8 @@ class LocalWorkerMCPRouter:
                 return self.runs.worker_history(self._run_id, before=parsed.before, limit=parsed.limit)
             if name == "worker_heartbeat":
                 status = self.runs.heartbeat(self._run_id)
-                return {"state": status.state, "remaining_seconds": _remaining(status.deadline_at)}
+                budget = self.runs.worker_budget(status)
+                return {"state": status.state, "remaining_seconds": budget['remaining_seconds'], "budget": budget}
             if name == "worker_submit_result":
                 state, diagnostics = self.runs.submit(self._run_id, trusted_tool_records={
                     name: tuple(records.values())
@@ -508,6 +510,8 @@ class LocalWorkerMCPRouter:
             return self._helper_open_reply(status)
         assignment = json.loads(read_control_workspace_file(self._workspace.root,
             Path("assignment.json"), max_bytes=self._workspace.assignment_path.stat().st_size))
+        budget = self.runs.worker_budget(status)
+        assignment['budget'] = budget
         assignment['attempt_memory'] = self.runs.worker_memory(self._run_id)
         contracts = self._tool_contract_location(assignment)
         from ..service.worker_start import write_worker_start
@@ -530,7 +534,7 @@ class LocalWorkerMCPRouter:
                 if self._workspace.domain_workspace_path is None
                 else str(self._workspace.domain_workspace_path)
             ),
-            "remaining_seconds": _remaining(status.deadline_at),
+            "remaining_seconds": budget['remaining_seconds'], "budget": budget,
             **({"recovery_evidence": evidence} if (evidence := self.runs.recovery_evidence_status(status)) is not None else {}),
         }
 

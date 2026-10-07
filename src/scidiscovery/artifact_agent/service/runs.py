@@ -572,6 +572,7 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
                     revision_workspace_mode=revision_workspace_mode,
                     prior_source_bindings=dict(self.prior_source_bindings(self.status(run_id))),
                     deadline_at=deadline_at,
+                    budget=self.worker_budget(self.status(run_id)),
                     attachment_settings=recovery_policy.get("attachments"),
                     debug_disable_task_network=recovery_policy.get("debug_disable_task_network", False),
                 ),
@@ -905,6 +906,65 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
                 raise RunCheckerError("Candidate validation stopped; inspect the retained submission diagnostic.") from error
             raise RunOutputError("Candidate validation interrupted.", details=details, recorded=True) from error
         return validated
+
+    def worker_budget(self, value: RunStatus) -> dict:
+        """Read the accepted task's original authority; never change its Run TTL.
+
+        Calendar and enabled time are distinct. Old scopes retain their settled
+        enabled balance, while their absolute calendar deadline keeps advancing.
+        This advisory projection neither cancels accepted work nor grants time.
+        """
+        from .progression_records import read_control_row
+        from .progression_budget import time_budget
+        from .research_loops import current_loop, sync_loop_balances
+        policy = value.recovery_policy or {}
+        identity = policy.get('loop_id')
+        now = self.scheduler_bindings.control_now()
+        loop = None
+        if identity:
+            with self.scheduler_bindings._connect() as db:
+                db.execute('BEGIN')
+                row = read_control_row(db, value.instance_id, extra_loop=identity)
+            if row is None:
+                raise RunStateConflict('Accepted task research loop is missing; do not reset its budget.')
+            checkpoint = json.loads(row['checkpoint_json'])
+            record = checkpoint.get('loop_authorizations', {}).get(identity)
+            if record is None:
+                raise RunStateConflict('Accepted task research loop authorization is missing; do not reset its budget.')
+            now = max(now, checkpoint['time_high_water'],
+                datetime.fromisoformat(record['authorized_at']).timestamp())
+            sync_loop_balances(checkpoint, now)
+            balance = record.get('budget_snapshot', {})
+            timing = (time_budget(checkpoint, record['config']['effective']['progression'], now)
+                if current_loop(checkpoint) == identity else balance)
+            loop = dict(id=identity, authority='explicit_management_ui_budget_confirmation',
+                authorized_at=record['authorized_at'], calendar_deadline_at=record['deadline_at'],
+                calendar_remaining_seconds=max(0, datetime.fromisoformat(record['deadline_at']).timestamp() - now),
+                enabled_remaining_seconds=timing.get('remaining_seconds'),
+                enabled_time_coverage=(timing.get('time_coverage') if current_loop(checkpoint) == identity
+                    else 'last_settled_original_loop_balance'),
+                remaining_tokens=balance.get('remaining_tokens'),
+                closeout_reserve_tokens=balance.get('closeout_reserve_tokens'),
+                usage_coverage=balance.get('usage', {}).get('coverage', 'missing'),
+                token_limitation=balance.get('limitation'))
+        run_deadline = datetime.fromisoformat(value.deadline_at.replace('Z', '+00:00')).timestamp()
+        remaining = max(0, run_deadline - now)
+        deadline = value.deadline_at
+        if loop:
+            if datetime.fromisoformat(loop['calendar_deadline_at']).timestamp() < run_deadline:
+                deadline = loop['calendar_deadline_at']
+            remaining = min(remaining, loop['calendar_remaining_seconds'])
+            if loop['enabled_remaining_seconds'] is not None:
+                remaining = min(remaining, loop['enabled_remaining_seconds'])
+        return dict(deadline_at=deadline, run_deadline_at=value.deadline_at, source='control',
+            observed_at=datetime.fromtimestamp(now, timezone.utc).isoformat(),
+            remaining_seconds=max(0, int(remaining)), loop=loop,
+            external_host_deadline='unknown', attachments=policy.get('attachments'),
+            instruction='Use the earliest known task/calendar deadline and enabled-time balance. '
+                'A separate host cutoff is unknown unless supplied through control. Token usage may lag; '
+                'closeout reserve is inside the total, not extra time or tokens. '
+                'Reopen worker_open_assignment for current budget; assignment.json is the initial snapshot. '
+                'Accepted work retains its execution authority; this projection does not cancel or extend it.')
 
     def _recovery_policy(self, compiled: Any) -> dict[str, Any]:
         limits = compiled.spec.limits

@@ -29,6 +29,7 @@ def assignment_json(
     revision_workspace_mode: str | None = None,
     prior_source_bindings: dict[str, str] | None = None,
     deadline_at: str | None = None,
+    budget: dict | None = None,
     attachment_settings: dict | None = None,
     debug_disable_task_network: bool = False,
 ) -> bytes:
@@ -66,7 +67,8 @@ def assignment_json(
             "role_instructions": operation_role_instructions(bound.compiled),
             "narrative_instruction": narrative_instruction(
                 bound.execution_profile["profile"] if bound.execution_profile else None),
-            "budget": {"deadline_at": deadline_at, "source": "control", "attachments": attachment_settings} if deadline_at else None,
+            "budget": budget if budget is not None else (
+                {"deadline_at": deadline_at, "source": "control", "attachments": attachment_settings} if deadline_at else None),
             "inputs": [
                 {
                     "source_name": item.source_name,
