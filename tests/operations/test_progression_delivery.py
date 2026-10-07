@@ -90,7 +90,13 @@ def test_progress_explanation_reuse_keeps_dynamic_status_and_usage_identity(prog
     record=checkpoint(p)['usage_records'][host.identity.thread_id]
     assert record['progress_explanation_fingerprint']==fingerprint
     assert record['high_water']['input_tokens']==100 and record['native_turn']['turn_id']==host.turn_id
-    assert brief['budget']==checkpoint(p)['budget']
+    complete_budget=checkpoint(p)['budget']
+    assert {k:v for k,v in brief['budget'].items() if k not in {'limits','limits_omitted'}} == {
+        k:v for k,v in complete_budget.items() if k!='limits'}
+    limits_read=brief['budget']['limits_omitted']['read']
+    expanded=p.root.call_tool(limits_read['tool'],limits_read['arguments'])
+    assert expanded['budget']['limits']==complete_budget['limits']
+    assert all(complete_budget['limits'][key]==value for key,value in brief['budget']['limits'].items())
 
 
 @pytest.mark.parametrize('change',['context','thread','configuration','explanation'])

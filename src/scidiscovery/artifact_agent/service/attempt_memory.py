@@ -11,6 +11,25 @@ from ..storage.cas import CASIntegrityError
 from ..storage.sqlite import ArtifactNotFoundError
 
 
+def memory_navigation(memory, *, read):
+    """Keep exceptional history visible; ordinary report bodies stay on demand."""
+    if not isinstance(memory, dict):
+        return memory
+    collections = ('recent', 'exact_source_related')
+    result = dict(memory)
+    for key in collections:
+        if isinstance(memory.get(key), list):
+            result[key] = [{**{field: value for field, value in item.items() if field in (
+                'name', 'state', 'result_nature', 'original_read', 'original', 'read', 'navigation',
+                'omissions', 'content_coverage')},
+                'details_omitted': True} for item in memory[key]]
+    omitted = {key: len(memory[key]) for key in collections if isinstance(memory.get(key), list) and memory[key]}
+    if omitted:
+        result['omitted_overviews'] = omitted
+        result['overview_read'] = read
+    return result
+
+
 class AttemptMemoryMixin:
     def _freeze_memory(self, db, row):
         if row['memory_scope_json'] is not None:

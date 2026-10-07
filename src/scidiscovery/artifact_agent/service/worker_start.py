@@ -93,24 +93,21 @@ def startup_document(assignment: dict, domain: dict | None = None, *, reader_nav
         'relative_path': assignment.get('output', {}).get('relative_path', 'output/result.json'),
         'form': assignment.get('output', {}).get('schema_path', 'schema/result.schema.json'),
         'read': 'python tools/read_output_schema.py',
-        'instruction': 'Start with the default reader overview: it gives required fields, optional fields and shared rules. '
-            'Supply fields needed for your scientific conclusions; optional fields need not be filled merely because they exist. '
-            'Preserve necessary evidence, limitations and applicable conditional rules; control completes mechanical fields. '
-            '--field NAME selects a payload field (not the payload wrapper). After context loss, restart with the overview '
-            'and needed fields. --full reads the complete authoring form, including any required handoff; '
-            'use it only when a specific unresolved contract question requires complete inspection, not as the default. '
-            'Combine only needed fields; keep combined native output bounded. The reader supplements retained definitions; '
-            'refresh after schema changes or context loss. Read field meanings, shared rules and reference definitions before writing.',
+        'instruction': 'Read the default overview for required/optional fields and shared rules, then --field NAME '
+            'for each authored payload field and its full reference closure (not the payload wrapper). '
+            'Optional fields need not be filled merely because they exist. Preserve necessary evidence, limitations '
+            'and conditional rules; control completes mechanical fields. Keep combined displays bounded. '
+            'Retain unchanged definitions; refresh after schema changes or context loss. '
+            '--full restores the complete form, including any handoff, when a contract question requires it.',
     }
     if 'worker_submit_result' in assignment.get('tools', ()):
         result['output']['submit'] = dict(name='worker_submit_result', arguments={})
         result['output']['closeout'] = (
-            'Writing result.json leaves a draft. When your evidence assessment and draft are ready, explicitly call '
-            'scid_call with the submit arguments above immediately after the successful write, in the same code-mode '
-            'call when available: await the write, then await submission, then display its returned state/diagnostics. '
-            'Do not wait for another model turn just to submit. A failed write must not submit. '
-            'Only completed is sealed delivery; repair a rejected draft and explicitly resubmit. '
-            'An uncertain submission is not permission to replay it; completion chat is not submission.')
+            'Writing result.json leaves a draft. After a successful write, explicitly call scid_call with the '
+            'submit arguments above immediately in the same code-mode call when available: await the write, '
+            'then submission, then display state/diagnostics. A failed write must not submit. '
+            'Only completed is sealed delivery; repair rejected drafts and explicitly resubmit. '
+            'An uncertain submission must not be replayed; completion chat is transport only.')
     if 'worker_publish_files' in assignment.get('tools', ()):
         result['output']['attachments'] = (
             'Keep CSV/JSON/images/scripts and other deliverables below scratch/. Publish them with worker_publish_files '
@@ -118,21 +115,21 @@ def startup_document(assignment: dict, domain: dict | None = None, *, reader_nav
             'Write only the form to output/result.json; do not put attachments in output/ or embed files in narrative fields. '
             'Publication retains bytes and provenance, not scientific validation. Returned references are reusable evidence.')
     result['reading'] = {
-        'inputs': 'For JSON, first locate needed fields with python tools/read_input.py SOURCE --directory, '
-            'then read exact --pointer selections. Use each returned source_name; review complete originals when necessary '
-            'through bounded pages rather than batching whole files into one native output. '
+        'inputs': 'JSON: locate needed fields with python tools/read_input.py SOURCE --directory, '
+            'then exact --pointer selections. Use exact source_name in tools and citations; artifact_name is navigation only. '
+            'Complete selected fields needed for claims, limitations and contrary evidence. Omitted originals remain unread; '
+            'do not batch whole files. '
             + ('--directory lists current-layer field pointers, types and counts; arrays show index ranges, not elements. '
-                'Exact byte sizes are not computed. Inspect actual fields before combining displays; do not filter by guessed names. '
+                'Inspect actual fields before combining displays; do not guess names. '
                 if reader_directory_details else '--directory lists JSON keys; ')
             + f'Scientific pages accept --budget {SCIENTIFIC_PAGE_MIN_BYTES}..{SCIENTIFIC_PAGE_MAX_BYTES} bytes '
             f'(default {SCIENTIFIC_PAGE_DEFAULT_BYTES}); worker-start.json uses its separately configured startup page size. '
-            '--pointer /FIELD selects a known field (repeat for multiple fields). Omit --pointer to read the root; / is an empty-key member. '
+            '--pointer /FIELD is repeatable. Omit --pointer for the root; / selects an empty-key member. '
             + ('Every page, including end, returns --selection HANDLE --offset START --budget BYTES and optional next_offset. '
-                'The command replays that exact page after any other reads; change START to next_offset for the next page. '
+                'It replays that exact page after any other reads; set START to next_offset for the next page. '
                 'Offsets count characters in the selected text; page limits count UTF-8 bytes including the marker. '
-                'Read only the source fields needed for your claims; there is no requirement to traverse unrelated fields. '
-                'If navigation is lost, add the complete SOURCE/file/pointer/directory selection to the retained --selection/--offset command; '
-                'a changed source requires reselecting it at offset 0. '
+                'If navigation is lost, add the complete SOURCE/file/pointer/directory selection to --selection/--offset; '
+                'changed sources require reselection at offset 0. '
                 if reader_navigation == 4 else
                 'This frozen reader uses explicit continuation: repeat the same SOURCE, --file, all --pointer and '
                 '--directory flags and the page --budget with --next/--repeat/--restart. '
@@ -143,7 +140,7 @@ def startup_document(assignment: dict, domain: dict | None = None, *, reader_nav
                 'This frozen reader uses explicit continuation: repeat the same SOURCE, --file, all --pointer and '
                 '--directory flags and the page --budget with --next/--repeat/--restart. '
                 'After parallel or interleaved reads, do not use bare navigation or change field flags. ')
-            + 'Complete the selected content needed for your claims; originals support conclusions. Use source_name in tools and citations; artifact_name is navigation only.',
+            + 'Originals support conclusions; reading guidance grants no qualification.',
         'tools': 'Read only the selected complete contract with python tools/read_tool_contract.py TOOL '
             'or scid_describe, including inputSchema, definitions, defaults, limits and descriptions. '
             'JSON Patch responses reference the last full response, never a prior delta. '
@@ -188,6 +185,17 @@ def startup_document(assignment: dict, domain: dict | None = None, *, reader_nav
     return _with_input_groups(result, assignment) if reader_navigation else _with_input_templates(result)
 
 
+def compact_startup_document(document: dict) -> dict:
+    """Task, permissions and exact input inventory first; optional detail by pointer."""
+    from .attempt_memory import memory_navigation
+    result = dict(document)
+    detail = lambda pointer: 'python tools/read_input.py worker-context.json --file --pointer ' + pointer
+    if 'attempt_memory' in result:
+        result['attempt_memory'] = memory_navigation(result['attempt_memory'],
+            read=dict(command=detail('/attempt_memory'), meaning='Exact open-time overview; not consumed originals.'))
+    return result
+
+
 def write_worker_start(workspace, assignment: dict, *, startup_page_bytes=16384) -> Path:
     domain = None
     if workspace.domain_workspace_path is not None:
@@ -205,7 +213,15 @@ def write_worker_start(workspace, assignment: dict, *, startup_page_bytes=16384)
         reader_navigation = 0
         reader_directory_details = False
     # Keep task/input/form order in this derived entry, ahead of historical attempts.
+    document = startup_document(assignment, domain, reader_navigation=reader_navigation,
+        reader_directory_details=reader_directory_details)
+    # Memory is refreshed at open time; assignment.json retains its original
+    # snapshot. Save omitted context before advertising exact read pointers.
+    context = {key: document[key] for key in ('attempt_memory',) if key in document}
+    write_control_workspace_file(workspace.root, Path('worker-context.json'), canonical_json(context),
+        replace=True, mode=0o400)
+    if reader_navigation == 4:
+        document = compact_startup_document(document)
     return write_control_workspace_file(workspace.root, Path('worker-start.json'),
-        json.dumps(startup_document(assignment, domain, reader_navigation=reader_navigation,
-            reader_directory_details=reader_directory_details), ensure_ascii=False, allow_nan=False,
+        json.dumps(document, ensure_ascii=False, allow_nan=False,
             separators=(',', ':')).encode('utf-8'), replace=True, mode=0o400)

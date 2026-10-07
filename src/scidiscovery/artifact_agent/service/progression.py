@@ -77,6 +77,31 @@ invent retries. User text does not authorize an approval or execution exception.
 """
 
 
+def compact_brief_overviews(brief):
+    """Keep decision changes exact while projecting repeated control overviews."""
+    from .attempt_memory import memory_navigation
+    brief = dict(brief)
+    if isinstance(brief['budget'], dict) and isinstance(brief['budget'].get('limits'), dict):
+        budget = dict(brief['budget'])
+        limits = budget['limits']
+        decision_limits = {key: limits[key] for key in ('max_elapsed_seconds', 'max_rounds',
+            'max_attempts', 'max_tokens', 'max_rss_bytes', 'token_policy', 'closeout_reserve_tokens') if key in limits}
+        if len(decision_limits) != len(limits):
+            budget['limits'] = decision_limits
+            budget['limits_omitted'] = dict(count=len(limits)-len(decision_limits),
+                read=dict(tool='progression_status', arguments={}), response_pointer='/budget/limits')
+        brief['budget'] = budget
+    if brief['progress'].get('items'):
+        brief['progress'] = dict(items_omitted=len(brief['progress']['items']),
+            authority=brief['progress']['authority'],
+            read=dict(tool='progression_status', progress_limit=1),
+            instruction='Root assessments remain readable; they do not replace sealed Worker conclusions.')
+    memory = brief.get('attempt_memory')
+    if isinstance(memory, dict) and isinstance(memory.get('history'), dict):
+        brief['attempt_memory'] = memory_navigation(memory, read=memory['history'])
+    return brief
+
+
 class ProgressionFault(RuntimeError):
     def __init__(self, code):
         self.code = code
@@ -508,6 +533,7 @@ class ProgressionCoordinator:
                 instruction='Reuse the unchanged explanation from this thread if retained; otherwise read progress_shadow.limitations from the returned status.',
                 read=dict(tool='progression_status',arguments={}))
         brief['progress'] = progress_page(bindings=self.bindings, artifacts=self.runtime.artifacts, row=row, limit=1)
+        brief = compact_brief_overviews(brief)
         def compact_progress():
             return dict(mode=brief['progress_shadow']['mode'], brief_omitted=True,
                 read=dict(tool='progression_status'), reason='context_limit')
@@ -611,6 +637,7 @@ class ProgressionCoordinator:
                     before=history_cursor(scope, secret=facade.instance_management_secret))
             except RunStateConflict:
                 brief['attempt_memory'] = self.runtime.runs._memory_unavailable('exact_history_missing_or_conflicting')
+        brief = compact_brief_overviews(brief)
         brief['user_messages'] = []
         if snapshot.get('messages'):
             brief['user_messages_read'] = dict(tool='progression_status', field='messages',
@@ -654,7 +681,7 @@ class ProgressionCoordinator:
                 brief['omissions'].append(dict(name=entry['owner'], read='run_status', intent='status'))
             elif brief.get('progress_shadow') and not brief['progress_shadow'].get('brief_omitted'):
                 brief['progress_shadow'] = compact_progress()
-            elif brief.get('attempt_memory') and 'recent' in brief['attempt_memory']:
+            elif brief.get('attempt_memory') and 'revision_scope' in brief['attempt_memory']:
                 memory = brief['attempt_memory']
                 brief['attempt_memory'] = dict(history=memory['history'], omissions='context_byte_budget; read the frozen time index')
             elif brief['changes']:
