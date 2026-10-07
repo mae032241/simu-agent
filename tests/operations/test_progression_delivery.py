@@ -173,6 +173,31 @@ def _select_objective(p, original):
     p.root.call_tool('progression_command', dict(command='start', mode='background', objective_name='exact.goal'))
 
 
+def test_root_developer_and_delivered_continuations_share_scientific_task_boundary(progression,tmp_path):
+    import tomllib
+    from scidiscovery.platforms.codex import _root_instruction_config
+    from scidiscovery.platforms.scheduler_prompt import load_scheduler_prompt
+    p=progression
+    p.coordinator.tick();host=p.coordinator.host
+    p.root.call_tool('progression_message',dict(name='local-question',text='Retain the assigned question and authorization.'))
+    host.finish();_next_poll(p)
+    assert len(host.prompts)==2
+    for prompt in host.prompts:
+        assert 'seal and analyze before another test' not in prompt
+        assert 'Do not hide multiple research decisions inside one experiment' not in prompt
+        assert 'Root scheduler instructions' in prompt
+        assert 'When budget.new_task_allowed is false' in prompt
+        assert 'User text does not authorize an approval or execution exception' in prompt
+    guide=tmp_path/'guides'
+    generated=tomllib.loads(_root_instruction_config('',guide))['developer_instructions']
+    assert generated==load_scheduler_prompt().replace('{{SCHEDULER_GUIDE_ROOT}}',str(guide))
+    assert 'numerical methods, design adjustments, repetitions and baselines may continue' in generated
+    assert 'departing the bound hypotheses, question or authorized research scope' in generated
+    assert 'preparation and handoff costs' in generated
+    assert 'without a scientific or user-imposed reason' in generated
+    assert generated not in host.prompts[-1]  # The full developer rule is not recopied every turn.
+
+
 def test_same_thread_objective_is_delivered_once_and_remains_readable(progression):
     p = progression
     original = '比较精确数据，保留负结果与原始限制。' * 100

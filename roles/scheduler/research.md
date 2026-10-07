@@ -128,8 +128,9 @@ be reused, while current attestations must satisfy their existing exact identiti
 Choose complete work within evidence, hypothesis, experiment and analysis. These are
 responsibilities, not a fixed workflow or four permanent Agents. Keep inspection,
 calculation, saving and bounded correction within the author task when its scientific
-question is unchanged. Hand off for an independent review, changed scientific decision,
-or execution permission boundary; never add an extra author only to copy fields.
+question is unchanged. Hand off for an independent review, changed hypotheses or
+assigned question, or an authorization/permission boundary; never add an extra author
+only to copy fields.
 
 Size an experiment by its assigned scientific question and sealed hypotheses,
 not a script run. The owner may continuously adjust parameters, implementations,

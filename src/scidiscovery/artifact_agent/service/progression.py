@@ -58,11 +58,10 @@ First source-bound scientific dimension changes or stronger predeclared test
 resolutions can clear the observation window. Repeated judgments, Root advance,
 fresh files and changed thresholds cannot. Missing or unsupported assessment
 remains unknown and can require direction confirmation, not a stagnation verdict.
-Choose the smallest sufficient contrast for one concrete hypothesis/contradiction;
-when its evidence changes the next choice, seal and analyze before another test.
-Reuse an unchanged hypothesis portfolio with the new analysis and an explicit
-scientific choice. Do not hide multiple research decisions inside one experiment
-or mechanically rewrite the same portfolio. Waiting creates no new observation.
+Follow the scientific task boundaries in your Root scheduler instructions; this
+continuation adds no experiment handoff conditions. Reuse retained portfolios and
+exact analyses rather than mechanically rewriting them. Waiting creates no new
+observation.
 Consider remaining tokens, the closeout reserve
 and observed Worker-thread costs before selecting more work; these are not exact
 predictions of a new task. When budget.new_task_allowed is false, consume

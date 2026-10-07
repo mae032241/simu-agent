@@ -109,7 +109,11 @@ remain stronger evidence. New files, report identities and changed thresholds
 alone cannot reset it. The automatic confirmation pause, immutable trigger history,
 user continuation and exact accepted-work/review authority retain their budgets.
 Experiments own an assigned scientific question within sealed hypotheses and user
-constraints. The owner designs tests and may continuously adjust related parameters,
+constraints. [Root scheduler instructions](../roles/scheduler.md) maintain these
+task boundaries; background continuations refer to them without adding handoff
+conditions. Selection considers task preparation and handoff costs; one candidate
+per arm is not a default without a scientific or user-imposed reason. The owner
+designs tests and may continuously adjust related parameters,
 implementations, numerical methods and experimental designs, including repetitions,
 baselines and contrasts among bound hypotheses. Local protocol/range/criterion
 changes alone do not require a new task. Retain each attempt's results/limits and the

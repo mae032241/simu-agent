@@ -18,7 +18,9 @@ hypotheses and analyses; prepare missing source-backed materials when needed,
 without requiring a fresh intake or independent review for every cycle. An
 experiment owns the assigned scientific question within its sealed hypotheses and
 user constraints. The Worker designs the tests; give the question and scientific
-scope in the existing instruction. Related parameter trials, implementations,
+scope in the existing instruction. Consider task preparation and handoff costs;
+do not default to one candidate per arm without a scientific or user-imposed reason.
+Related parameter trials, implementations,
 numerical methods, design adjustments, repetitions and baselines may continue
 within that boundary, including contrasts among bound hypotheses. Local protocol
 changes alone do not require a new task; one observation alone need not end it.
