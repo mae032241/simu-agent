@@ -367,6 +367,12 @@ scientific_foundation.objective_contract. Reuse them in place; distinguish suppl
 requirements from working assumptions and criteria. Control does not invent these
 from text. Retain unmet original requirements; this task need not optimize every
 candidate or deliver the entire research goal. Do not expand budgets or retries.
+Use the assigned handoff target to plan within the current controlled time budget,
+leaving independent analysis and Root closeout time. Retain and check deliverable
+materials during the trials, rather than postponing all publication and validation
+to the end. Reassess remaining time before further work; when the bounded answer
+or a stopping boundary is reached, deliver the evidence and limitations promptly.
+Planning targets do not cancel accepted executions or extend their authority.
 Reuse exact supplied materials, sealed conclusions, limitations and engineering
 handoff. Read needed entry points, parameters, formats and original locations;
 expand inspection for missing information, changed interfaces or risks. Keep normal

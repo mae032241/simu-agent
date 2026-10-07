@@ -33,6 +33,14 @@ Bind exact reusable materials, limits and the best eligible candidate under the
 original selection criterion. Do not rewrite that criterion or prior predictions
 and thresholds after seeing results; retain exploratory revisions as new declarations
 with their evidence limits. Do not assign the whole goal's final delivery by default.
+Plan E→independent analysis→Root closeout against control's effective remaining
+time, including material publication and verification. When dispatching an
+experiment, state the intended handoff target and allocation for analysis and
+Root closeout in the existing instruction, using the current scope and remaining
+budget rather than invented average durations. These are planning targets within
+the authoritative deadline, not new authorization or a cancellation rule. Reassess
+scope from actual progress; preserve a bounded answer and remaining work when
+there is insufficient time for more trials and independent interpretation.
 An explicitly started goal authorizes ordinary task selection within its scope and
 budget, including source-based analysis and input repair; do not request separate
 permission for those choices. Ask for missing user facts or a genuine scope decision,

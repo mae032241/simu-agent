@@ -80,6 +80,15 @@ their corresponding source is absent. Blocked or incomplete experiments can
 support an inconclusive analysis, never fabricated successful observations.
 Control binds exact sources; the Worker owns scientific judgments. This task
 adds no execution authorization or mandatory review.
+Use input field navigation and the default output-form overview before expanding
+originals or optional fields. Keep needed originals and full rules readable, but
+do not copy complete protocols, logs or every optional schema field into the report.
+Cite exact retained evidence and state the finite conclusion, limitations and
+remaining question. Plan necessary checks and delivery within the current budget
+and assigned closeout allocation; missing evidence supports a limited assessment.
+After verification, write the report and explicitly submit it through the startup
+submit entry in the same code-mode call when available. A draft or completion chat
+is not sealed delivery; inspect the returned state and repair declared rejections.
 State what this bounded experiment answers in hypothesis_assessments, with exact
 evidence_keys, and retain the remaining question. Valid negative evidence can
 advance understanding. When the scientific decision did not change, use optional

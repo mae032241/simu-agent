@@ -93,11 +93,23 @@ def startup_document(assignment: dict, domain: dict | None = None, *, reader_nav
         'relative_path': assignment.get('output', {}).get('relative_path', 'output/result.json'),
         'form': assignment.get('output', {}).get('schema_path', 'schema/result.schema.json'),
         'read': 'python tools/read_output_schema.py',
-        'instruction': 'This is the authoring form. Supply only its fields; control completes mechanical fields. '
+        'instruction': 'Start with the default reader overview: it gives required fields, optional fields and shared rules. '
+            'Supply fields needed for your scientific conclusions; optional fields need not be filled merely because they exist. '
+            'Preserve necessary evidence, limitations and applicable conditional rules; control completes mechanical fields. '
             '--field NAME selects a payload field (not the payload wrapper). --full reads the complete authoring form, '
-            'including any required handoff. Combine needed fields in one call. The reader supplements retained definitions; '
+            'including any required handoff, when needed after context loss or for complete inspection. '
+            'Combine only needed fields; keep combined native output bounded. The reader supplements retained definitions; '
             'refresh after schema changes or context loss. Read field meanings, shared rules and reference definitions before writing.',
     }
+    if 'worker_submit_result' in assignment.get('tools', ()):
+        result['output']['submit'] = dict(name='worker_submit_result', arguments={})
+        result['output']['closeout'] = (
+            'Writing result.json leaves a draft. When your evidence assessment and draft are ready, explicitly call '
+            'scid_call with the submit arguments above immediately after the successful write, in the same code-mode '
+            'call when available: await the write, then await submission, then display its returned state/diagnostics. '
+            'Do not wait for another model turn just to submit. A failed write must not submit. '
+            'Only completed is sealed delivery; repair a rejected draft and explicitly resubmit. '
+            'An uncertain submission is not permission to replay it; completion chat is not submission.')
     if 'worker_publish_files' in assignment.get('tools', ()):
         result['output']['attachments'] = (
             'Keep CSV/JSON/images/scripts and other deliverables below scratch/. Publish them with worker_publish_files '
@@ -105,7 +117,9 @@ def startup_document(assignment: dict, domain: dict | None = None, *, reader_nav
             'Write only the form to output/result.json; do not put attachments in output/ or embed files in narrative fields. '
             'Publication retains bytes and provenance, not scientific validation. Returned references are reusable evidence.')
     result['reading'] = {
-        'inputs': 'Use source_name with python tools/read_input.py SOURCE. '
+        'inputs': 'For JSON, first locate needed fields with python tools/read_input.py SOURCE --directory, '
+            'then read exact --pointer selections. Use each returned source_name; review complete originals when necessary '
+            'through bounded pages rather than batching whole files into one native output. '
             + ('--directory lists current-layer field pointers, types and counts; arrays show index ranges, not elements. '
                 'Exact byte sizes are not computed. Inspect actual fields before combining displays; do not filter by guessed names. '
                 if reader_directory_details else '--directory lists JSON keys; ')
