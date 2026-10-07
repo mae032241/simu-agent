@@ -88,7 +88,8 @@ def checkpoint(p):
     return json.loads(row(p)['checkpoint_json'])
 
 
-def test_two_decisions_use_sealed_result_and_no_stage_or_idle_wake(progression):
+@pytest.mark.parametrize('failed', [False, True])
+def test_two_decisions_use_sealed_result_and_no_stage_or_idle_wake(progression, failed):
     p = progression
     p.coordinator.tick()
     host = p.coordinator.host
@@ -108,11 +109,26 @@ def test_two_decisions_use_sealed_result_and_no_stage_or_idle_wake(progression):
         p.now[0] += 6
         p.coordinator.tick()
     assert len(host.prompts) == 1  # running/heartbeat/stages do not request decisions
-    _write_result(worker)
-    worker.call_tool('worker_submit_result', {})
+    if failed:
+        value = p.runtime.runs.status(worker._run_id)
+        p.runtime.runs.record_failure(value.run_id, reason='Finite source-fixture failure.',
+            expected_state='running', expected_last_activity_at=value.last_activity_at)
+    else:
+        _write_result(worker)
+        worker.call_tool('worker_submit_result', {})
     p.now[0] += 6
     p.coordinator.tick()
     assert len(host.prompts) == 2
+    if failed:
+        changes = json.loads(host.prompts[1].split('\n')[-1])['changes']
+        assert changes[0]['name'] == 'first' and changes[0]['state'] == 'failed'
+        host.finish()
+        for _ in range(3):
+            p.now[0] += 6
+            p.coordinator.tick()
+        assert len(host.prompts) == 2  # Identical failed snapshot cannot re-wake.
+        assert row(p)['state'] == 'active'
+        return
     assert 'selected_output' in host.prompts[1]
     assert 'first.output' in host.prompts[1]
     assert row(p)['state'] == 'active'  # one sealed Run does not complete the goal
