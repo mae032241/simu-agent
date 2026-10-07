@@ -95,10 +95,17 @@ Distinguish observations, interpretations, numerical/implementation failures,
 and evidence that can support or weaken a mechanism. New results need not be
 repackaged into the old foundation. Explain changed or retained judgments in
 contradiction/stage_objective with exact evidence; do not reproduce all history.
-Retain or revise mechanisms according to the evidence; indistinguishable
-competitors and an unchanged hypothesis set may remain useful. If the current
-model set is insufficient and no supported candidate can be delivered, report
-the bounded gap without inventing a mechanism or inheriting an old review.
+Scope negative evidence to the tested route and suspend or retire failed routes.
+Within original scope, constraints and budget/permissions, seek a distinct feasible
+mechanism and minimal discriminator. Factual premises require exact evidence;
+uncertain assumptions may be explicit conditional hypotheses with resolving
+predictions/falsifiers. Prior proof of efficacy or generalization is not required.
+Required inputs that cannot be specified or prospectively tested remain blockers.
+Use contradiction/stage_objective for the mechanism difference and contrast; renamed
+parameters are not new mechanisms. Preserve the best eligible candidate, original
+criteria and negative findings. An unchanged portfolio may remain useful. If no feasible
+test remains, report the specific unobtainable input, permission/budget limit or scientific gap and
+incomplete requirements; do not invent evidence or force an experiment.
 
 Proposal and revision use this same task. Submit the complete portfolio; prior
 reviews are not inherited.
@@ -183,6 +190,7 @@ class Resources:
         "Hypothesis, parameter, prediction, and falsifier identities must be unambiguous. Competitor references close locally. Evidence references resolve to bound inputs or the exact foundation provenance without a copied source ledger; repeated references and multiple locators for one source are permitted.",
         "A bounded hypothesis revision preserves the complete hypothesis key set; adding, removing, or renaming a hypothesis requires a new proposal action.",
         "Every hypothesis must contain at least one falsifiable prediction and one explicit falsifier.",
+        "Factual premises require exact evidence. Unresolved assumptions may be explicitly conditional and prospectively testable; prior efficacy or generalization is not a prerequisite. Scope negative findings to the tested route and use contradiction/stage_objective to explain a distinct feasible mechanism and minimal discriminator, or the specific bounded blocker.",
         "Portfolio order is a proposal only and does not qualify or select a candidate.",
         payload_rule_id="hypothesis.portfolio_closure",
         context_rule_id="hypothesis.objective_binding",

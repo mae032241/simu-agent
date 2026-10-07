@@ -73,10 +73,17 @@ separately from global completion. Retain original requirements and cumulative
 trial/stopping history from exact evidence; missing history limits completion claims.
 Use remaining_contradiction and next_action to explain how evidence changes the
 decision: continue tests within existing hypotheses and original criteria, revise
-hypotheses if mechanisms, questions, criteria or research routes must change, or
-closeout only when global conditions are supported. Negative evidence need not
-force a new hypothesis; a better proxy alone does not settle the decision. Reuse sufficient
-evidence. Native data processing and analysis calculations are allowed with their
+hypotheses if mechanisms, questions, criteria or research routes must change.
+Scope negative findings to the tested route; local exhaustion does not establish
+global exhaustion. When feasible within scope, constraints, budget and permissions,
+recommend a distinct mechanism question and minimal discriminating contrast for
+hypothesis formulation. Distinguish testable assumptions from required unobtainable
+inputs. Unknown generalization limits claims. Retain the best eligible candidate under
+original criteria and negative evidence; reject retries that cannot change the decision
+and run-count filler. Recommend successful closeout only with supported global conditions,
+or honest incomplete closeout with specific blockers or budget limits. Do not force
+a new hypothesis or experiment; a better proxy alone does not settle the decision.
+Reuse sufficient evidence. Native data processing and analysis calculations are allowed with their
 sources and limitations. Do not launch experiments or formulate a new portfolio.
 Return LayeredDiagnosisReport. Do not invent experiment/plan/objective keys when
 their corresponding source is absent. Blocked or incomplete experiments can

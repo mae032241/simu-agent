@@ -28,8 +28,18 @@ scientific decision. Seal also when answered, without further scientific progres
 or at a budget/permission boundary. Cheap computation does not remove these limits.
 Interpret experiment observations through result analysis before treating them as
 scientific conclusions or revising the research route. Its sealed advice explains
-which evidence warrants more tests, hypothesis revision or closeout; do not force
-multiple cycles or a changed hypothesis.
+which evidence warrants more tests, hypothesis revision or closeout. Scope negative
+findings to the tested route; retire or suspend local failures without declaring
+exploration exhausted. When the original
+task calls for further exploration within its constraints and budget/permissions,
+ask hypothesis formulation for a distinct feasible mechanism and the smallest
+experiment that could change the decision. Delegate without adding a stricter evidence
+prerequisite: efficacy and investigable assumptions need not already be resolved.
+Unknown generalization limits claims. Preserve the best eligible candidate and
+negative evidence; renamed parameters are not distinct mechanisms. Reject retries
+that cannot change the decision and run-count filler; do not force cycles or experiments.
+Close out honestly incomplete when no feasible test fits the scope, budget or permissions,
+or required inputs cannot be obtained.
 Keep global completion conditions, cumulative trial and stopping-condition history,
 and unmet requirements across sealed tasks; do not reset them for each Worker or
 make them a mandatory experiment handoff floor. Bounded task completion does not

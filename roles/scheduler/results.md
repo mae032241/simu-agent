@@ -69,8 +69,10 @@ and scientific limits, the objective assessment within the exact scoped plan, an
 the scheduler's marginal-value judgment under the user's current cost constraints.
 `next_action` and handoff hints are original report advice, never commands or catalog
 authority. State which possible result of a candidate follow-up could change the
-current decision. If none could, stop without manufacturing a stop Run or turning
-the user's unwillingness to invest into physical evidence. An inconclusive verdict
+current decision. A failed local route or unknown generalization alone does not rule
+out a distinct feasible experiment on an unresolved assumption within scope. If none
+could fit the actual budget and permissions, close out with unfinished requirements
+without manufacturing a stop Run or turning cost limits into physical evidence. An inconclusive verdict
 or invalid execution may remain recorded while the scheduler legitimately stops;
 numerical repair is selected only when it can affect the decision and is authorized.
 

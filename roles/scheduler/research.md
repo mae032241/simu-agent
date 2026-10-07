@@ -3,8 +3,8 @@
 For evidence-driven hypothesis evolution, choose a new proposal from the catalog
 and bind the exact original foundation/problem frame, previous_hypotheses, actual
 experiment_results, sealed result_analysis and relevant current_progress within
-the declared bounds. Rebind the same relevant originals to its independent critic
-and any bounded revision; a prior proposal alone does not carry its feedback.
+the declared bounds. When independent review or bounded revision is selected, rebind
+the same relevant originals; a prior proposal alone does not carry its feedback.
 Workers decide whether evidence supports, weakens, preserves competing explanations,
 or leaves the model set insufficient. Numerical or implementation failure is not
 physical refutation. No new hypothesis is required merely because a result exists.
