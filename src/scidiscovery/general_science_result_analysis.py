@@ -80,9 +80,16 @@ their corresponding source is absent. Blocked or incomplete experiments can
 support an inconclusive analysis, never fabricated successful observations.
 Control binds exact sources; the Worker owns scientific judgments. This task
 adds no execution authorization or mandatory review.
-Use input field navigation and the default output-form overview before expanding
-originals or optional fields. Keep needed originals and full rules readable, but
-do not copy complete protocols, logs or every optional schema field into the report.
+Start with the default output-form overview and input directories. Do not use
+--full or batch cat/print complete schemas, hypotheses, reports, logs or arrays
+as routine discovery. Select the exact fields needed for each claim, its original
+criterion, contrary evidence and limitations; read their reference definitions.
+For numerical verification, process complete data locally and return compact
+checks, discrepancies and exact source references instead of printing raw arrays.
+Expand only to resolve a specific missing fact or inconsistency, using bounded
+pages and retaining omissions. Full inspection may be necessary for a claim;
+avoid irrelevant traversal and do not omit failures or negative evidence to save context.
+Keep the final report concise, without copying complete protocols or logs.
 Cite exact retained evidence and state the finite conclusion, limitations and
 remaining question. Plan necessary checks and delivery within the current budget
 and assigned closeout allocation; missing evidence supports a limited assessment.

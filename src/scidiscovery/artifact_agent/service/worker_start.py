@@ -96,8 +96,9 @@ def startup_document(assignment: dict, domain: dict | None = None, *, reader_nav
         'instruction': 'Start with the default reader overview: it gives required fields, optional fields and shared rules. '
             'Supply fields needed for your scientific conclusions; optional fields need not be filled merely because they exist. '
             'Preserve necessary evidence, limitations and applicable conditional rules; control completes mechanical fields. '
-            '--field NAME selects a payload field (not the payload wrapper). --full reads the complete authoring form, '
-            'including any required handoff, when needed after context loss or for complete inspection. '
+            '--field NAME selects a payload field (not the payload wrapper). After context loss, restart with the overview '
+            'and needed fields. --full reads the complete authoring form, including any required handoff; '
+            'use it only when a specific unresolved contract question requires complete inspection, not as the default. '
             'Combine only needed fields; keep combined native output bounded. The reader supplements retained definitions; '
             'refresh after schema changes or context loss. Read field meanings, shared rules and reference definitions before writing.',
     }
