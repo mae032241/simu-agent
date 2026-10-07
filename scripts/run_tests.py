@@ -7,7 +7,7 @@ hard limit or an OOM guarantee. Inherited OS limits are not raised.
 from __future__ import annotations
 
 import argparse
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 import fcntl
 import json
 import math
@@ -62,88 +62,224 @@ class MemoryPressure:
         ) if triggered]
 
 
-def run_one(command, environment, limits, output, lock_fd):
-    """Stream output to a capped log; always clean the child group and observed tree."""
-    baseline = current = memory()
-    admission_started = time.monotonic()
-    pressure = MemoryPressure(baseline, limits)
-    triggers = pressure.sample(current)
-    if triggers:
-        return {"returncode": None, "stop_reason": "system_memory_admission",
-                "memory": current, "elapsed_seconds": round(time.monotonic() - admission_started, 3),
-                "observed_tree_rss_high_water_bytes": 0, "memory_stop_triggers": triggers}
+class SupervisorInterrupted(KeyboardInterrupt):
+    def __init__(self, signum):
+        self.signum = signum
+        super().__init__(f"received signal {signum}")
 
-    def restrict():
-        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
-    started = time.monotonic()
-    process = subprocess.Popen(command, cwd=ROOT, env=environment, stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT, start_new_session=True, preexec_fn=restrict, pass_fds=(lock_fd,))
-    observed, peak, reason, written = set(), 0, "exited", 0
-    current = baseline
-    memory_triggers = []
-    selector = selectors.DefaultSelector()
-    selector.register(process.stdout, selectors.EVENT_READ)
-    os.set_blocking(process.stdout.fileno(), False)
-    # Live callers relay this file while the child waits for user input. Buffering
-    # hides short prompts (including the instance URL) until the child exits.
-    log = (output / "pytest.log").open("wb", buffering=0)
+@contextmanager
+def termination_signals():
+    """Reusable main-thread cancellation; ignore repeated signals during cleanup."""
+    state = {"received": [], "interrupt": True}
+    previous = {}
+    def interrupted(signum, _frame):
+        state["received"].append(signum)
+        if state["interrupt"]:
+            raise SupervisorInterrupted(signum)
     try:
-        while True:
-            descendants, rss = _descendant_rss_kib(process.pid)
-            observed.update(descendants)
-            peak = max(peak, rss * 1024)
-            current = memory()
-            memory_triggers = pressure.sample(current)
-            if memory_triggers:
-                reason = "system_memory_stop"
-                break
-            if peak > limits["observed_tree_rss_stop_bytes"]:
-                reason = "observed_tree_rss_limit"
-                break
-            if time.monotonic() - started >= limits["timeout_seconds"]:
-                reason = "timeout"
-                break
-            fixture_bytes = sum(p.stat().st_size for p in (output / "fixture-logs").glob("*.log"))
-            if fixture_bytes > limits["log_bytes"]:
-                reason = "fixture_log_limit"
-                break
-            for key, _ in selector.select(limits["sample_interval_seconds"]):
-                chunk = os.read(key.fd, 65536)
-                if not chunk:
-                    selector.unregister(key.fileobj)
-                    continue
-                remaining = max(0, limits["log_bytes"] - written)
-                log.write(chunk[:remaining])
-                written += len(chunk)
-                if written > limits["log_bytes"]:
-                    reason = "log_limit"
-                    break
-            if reason != "exited" or (process.poll() is not None and not selector.get_map()):
-                break
-    except BaseException:
-        reason = "interrupted"
-        raise
+        for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            previous[signum] = signal.signal(signum, interrupted)
+        yield state
     finally:
-        descendants, _ = _descendant_rss_kib(process.pid)
-        observed.update(descendants)
-        _signal_processes(process.pid, observed, signal.SIGTERM)
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+
+
+def save_resource(path, value):
+    """Replace a complete snapshot, including on imported supervisor paths."""
+    temporary = path.with_name(path.name + ".tmp")
+    with temporary.open("w") as stream:
+        json.dump(value, stream, indent=2)
+        stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    temporary.replace(path)
+
+
+def supervision_status(path, *, now=None):
+    """Read evidence only. Lost heartbeat never proves death or permits replay."""
+    unknown = {"state": "unknown", "replay_safe": False}
+    try:
+        with Path(path).open() as stream:
+            text = stream.read(65537)
+        if len(text) > 65536:
+            raise ValueError("oversized")
+        record = json.loads(text)
+        if not isinstance(record, dict):
+            raise ValueError("invalid")
+    except (OSError, ValueError):
+        return {**unknown, "reason": "supervision_evidence_unavailable"}
+    state = record.get("state")
+    heartbeat = record.get("heartbeat_at_unix")
+    stale_after = record.get("heartbeat_stale_after_seconds")
+    if (state not in ("running", "stopping", "terminal")
+            or type(heartbeat) not in (int, float) or not math.isfinite(heartbeat)
+            or type(stale_after) not in (int, float) or not math.isfinite(stale_after) or stale_after <= 0):
+        return {**unknown, "reason": "supervision_heartbeat_unrecorded"}
+    age = (time.time() if now is None else now) - heartbeat
+    result = {"state": state, "recorded_state": state, "heartbeat_age_seconds": round(age, 3),
+              "stop_reason": record.get("stop_reason"), "returncode": record.get("returncode"),
+              "cleanup_complete": record.get("cleanup_complete", False), "replay_safe": False}
+    if state != "terminal" and (age < 0 or age > stale_after):
+        result.update(state="unknown", reason="supervision_heartbeat_stale")
+    return result
+
+
+def run_one(command, environment, limits, output, lock_fd):
+    """Persist bounded samples and final evidence, then propagate original errors.
+
+    SIGKILL cannot run cleanup: observers must treat its stale record as unknown.
+    RSS is sampled; cleanup covers the child group and observed descendants.
+    """
+    started = time.monotonic()
+    interval = min(1., limits["sample_interval_seconds"])
+    heartbeat_interval = 1.
+    result = {"state": "running", "phase": "admission", "supervisor_pid": os.getpid(),
+              "child_pid": None, "returncode": None, "stop_reason": "exited",
+              "cleanup_complete": False, "observed_tree_rss_high_water_bytes": 0,
+              "memory_stop_triggers": [], "address_space_limit_enabled": False,
+              "heartbeat_stale_after_seconds": max(5., interval * 3)}
+    path = output / "resource.json"
+    def save():
+        result.update(heartbeat_at_unix=time.time(), elapsed_seconds=round(time.monotonic() - started, 3))
+        save_resource(path, result)
+    save()  # Before admission, spawn, log or selector initialization can fail.
+    process = selector = log = None
+    observed, written, next_heartbeat = set(), 0, 0.
+    failure = None
+    cleanup_errors = []
+    with termination_signals() as signals:
         try:
-            process.wait(timeout=limits["termination_grace_seconds"])
-        except subprocess.TimeoutExpired:
-            pass
-        # A successful/failed pytest can also leave a daemon or a new-session child.
-        _signal_processes(process.pid, observed, signal.SIGKILL)
-        process.wait()
-        process.stdout.close()
-        selector.close()
-        log.close()
-    return {"returncode": process.returncode, "stop_reason": reason,
-            "elapsed_seconds": round(time.monotonic() - started, 3),
-            "observed_tree_rss_high_water_bytes": peak,
-            "system_memory_baseline": baseline, "system_memory_final": current,
-            "memory_stop_triggers": memory_triggers,
-            "address_space_limit_enabled": False}
+            baseline = current = memory()
+            result.update(system_memory_baseline=baseline, system_memory_final=current)
+            pressure = MemoryPressure(baseline, limits)
+            result["memory_stop_triggers"] = pressure.sample(current)
+            if result["memory_stop_triggers"]:
+                result["stop_reason"] = "system_memory_admission"
+            else:
+                def restrict():
+                    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+                # Defer cancellation until Popen returns the owned PID.
+                signals["interrupt"] = False
+                try:
+                    process = subprocess.Popen(command, cwd=ROOT, env=environment, stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT, start_new_session=True, preexec_fn=restrict, pass_fds=(lock_fd,))
+                finally:
+                    signals["interrupt"] = True
+                if signals["received"]:
+                    raise SupervisorInterrupted(signals["received"][0])
+                result.update(child_pid=process.pid, phase="sampling")
+                save()
+                selector = selectors.DefaultSelector()
+                selector.register(process.stdout, selectors.EVENT_READ)
+                os.set_blocking(process.stdout.fileno(), False)
+                log = (output / "pytest.log").open("wb", buffering=0)
+                def drain(timeout):
+                    nonlocal written
+                    for key, _ in selector.select(timeout):
+                        while True:
+                            try:
+                                chunk = os.read(key.fd, 65536)
+                            except BlockingIOError:
+                                break
+                            if not chunk:
+                                selector.unregister(key.fileobj)
+                                break
+                            log.write(chunk[:max(0, limits["log_bytes"] - written)])
+                            written += len(chunk)
+                            if written > limits["log_bytes"]:
+                                result["stop_reason"] = "log_limit"
+                                break
+                while True:
+                    descendants, rss = _descendant_rss_kib(process.pid)
+                    observed.update(descendants)
+                    result["observed_tree_rss_high_water_bytes"] = max(result["observed_tree_rss_high_water_bytes"], rss * 1024)
+                    current = memory()
+                    result["system_memory_final"] = current
+                    result["memory_stop_triggers"] = pressure.sample(current)
+                    if time.monotonic() >= next_heartbeat:
+                        save()
+                        next_heartbeat = time.monotonic() + heartbeat_interval
+                    if result["memory_stop_triggers"]:
+                        result["stop_reason"] = "system_memory_stop"
+                        break
+                    if result["observed_tree_rss_high_water_bytes"] > limits["observed_tree_rss_stop_bytes"]:
+                        result["stop_reason"] = "observed_tree_rss_limit"
+                        break
+                    if time.monotonic() - started >= limits["timeout_seconds"]:
+                        result["stop_reason"] = "timeout"
+                        break
+                    fixture_bytes = sum(p.stat().st_size for p in (output / "fixture-logs").glob("*.log"))
+                    if fixture_bytes > limits["log_bytes"]:
+                        result["stop_reason"] = "fixture_log_limit"
+                        break
+                    drain(interval)
+                    if result["stop_reason"] != "exited":
+                        break
+                    if process.poll() is not None:
+                        # Drain bytes written between select and poll. Descendants
+                        # holding the pipe open do not delay owned-tree cleanup.
+                        drain(0)
+                        break
+        except BaseException as exc:
+            failure = exc
+            result["exception"] = {"type": type(exc).__name__, "message": str(exc)[:1024]}
+            if result["stop_reason"] == "exited":
+                result["stop_reason"] = "interrupted" if isinstance(exc, KeyboardInterrupt) else "supervisor_error"
+            raise
+        finally:
+            signals["interrupt"] = False
+            result.update(state="stopping", phase="cleanup", received_signals=signals["received"])
+            # Each cleanup step is independent; none may replace the first fault.
+            def cleanup(step):
+                try:
+                    step()
+                except BaseException as exc:
+                    cleanup_errors.append(exc)
+            cleanup(save)
+            if process is not None:
+                def wait_child():
+                    deadline = time.monotonic() + limits["termination_grace_seconds"]
+                    while True:
+                        try:
+                            return process.wait(timeout=min(heartbeat_interval, max(0., deadline - time.monotonic())))
+                        except subprocess.TimeoutExpired:
+                            cleanup(save)
+                            if time.monotonic() >= deadline:
+                                raise
+                def observe():
+                    descendants, _ = _descendant_rss_kib(process.pid)
+                    observed.update(descendants)
+                cleanup(observe)
+                cleanup(lambda: _signal_processes(process.pid, observed, signal.SIGTERM))
+                try:
+                    wait_child()
+                except subprocess.TimeoutExpired:
+                    pass
+                except BaseException as exc:
+                    cleanup_errors.append(exc)
+                cleanup(lambda: _signal_processes(process.pid, observed, signal.SIGKILL))
+                cleanup(wait_child)
+                result["returncode"] = process.returncode
+                cleanup(process.stdout.close)
+            if selector is not None:
+                cleanup(selector.close)
+            if log is not None:
+                cleanup(log.close)
+            result.update(state="terminal", phase="finished", cleanup_complete=not cleanup_errors,
+                          received_signals=signals["received"])
+            if cleanup_errors:
+                result["cleanup_errors"] = [{"type": type(e).__name__, "message": str(e)[:1024]} for e in cleanup_errors]
+                if failure is None and result["stop_reason"] == "exited":
+                    result["stop_reason"] = "cleanup_error"
+            cleanup(save)
+            if cleanup_errors:
+                if failure is not None:
+                    failure.add_note("supervisor cleanup/persistence errors: " + ", ".join(type(e).__name__ for e in cleanup_errors))
+                else:
+                    raise cleanup_errors[0]
+    return result
 
 
 def main():
@@ -188,10 +324,10 @@ def main():
             else:
                 expanded.append(target)
         batches = [[target] for target in dict.fromkeys(expanded)]
-    lock_path = Path("/tmp") / f"scid-tests-{os.getuid()}.lock"
-    with lock_path.open("a") as lock:
+    with ExitStack() as stack:
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            inherited = os.environ.get("SCID_TEST_LOCK_FD")
+            lock = stack.enter_context(serial_lock(None if inherited is None else int(inherited)))
         except BlockingIOError:
             parser.error("another pytest/runner owns this repository's serial lock")
         output = args.output.resolve()
@@ -203,13 +339,10 @@ def main():
             MPLBACKEND="Agg", SCID_TEST_LOCK_FD=str(lock.fileno()), SCID_TEST_GUARD="1")
         for key in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS", "BLIS_NUM_THREADS"):
             environment[key] = "1"
-        def interrupted(signum, _frame):
-            raise KeyboardInterrupt(f"received signal {signum}")
-        for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
-            signal.signal(signum, interrupted)
+        stack.enter_context(termination_signals())
         results = {"lane": args.lane, "config": config, "status": "running", "batches": []}
         def save():
-            (output / "result.json").write_text(json.dumps(results, indent=2) + "\n")
+            save_resource(output / "result.json", results)
         save()
         try:
             for index, batch in enumerate(batches, 1):
@@ -239,12 +372,15 @@ def main():
                 print(json.dumps(result), flush=True)
                 if not passed:
                     return 1
-        except BaseException:
-            results["status"] = "interrupted"
+            results["status"] = "passed"
             save()
+        except BaseException as exc:
+            results["status"] = "interrupted"
+            try:
+                save()
+            except BaseException as error:
+                exc.add_note("runner final persistence error: " + type(error).__name__)
             raise
-        results["status"] = "passed"
-        save()
     return 0
 
 

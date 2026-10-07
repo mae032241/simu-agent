@@ -822,32 +822,49 @@ def daemon(spec,ui):
 
 def start_control(spec):
     base=Path(spec['root']); project=Path(spec['project']); children=[]
-    (base/'control/approval-secret').write_text(os.urandom(32).hex());(base/'control/approval-secret').chmod(0o600)
-    env=dict(os.environ,SCID_AGENT_SETTINGS_FILE=str(base/'agent-settings.json'),CODEX_HOME=str(base/'codex-home'))
-    env.pop('PYTHONPATH',None)
-    ui_log=(base/'evidence/ui.log').open('wb',buffering=0)
-    children.append(subprocess.Popen([spec['python'],'-I','-m','scidiscovery.artifact_agent.interfaces.cli',
-        '--project-root',str(project),'--state-root',str(base/'state'),
-        '--approval-secret-file',str(base/'control/approval-secret'),'serve-approval-ui',
-        '--port','0','--worker-backend','local','--local-workspace-root',str(project/'.scidiscovery-runs')],env=env,stdout=ui_log,stderr=ui_log))
-    url=None; until=time.monotonic()+20
-    while not url and time.monotonic()<until:
-        if children[0].poll() is not None: raise RuntimeError('management_ui_exited')
-        for line in (base/'evidence/ui.log').read_text().splitlines():
-            try: url=json.loads(line).get('approval_ui') or url
-            except ValueError: pass
-        time.sleep(.1)
-    if not url: raise RuntimeError('management_ui_start_timeout')
-    log=(base/'evidence/daemon.log').open('wb',buffering=0)
-    children.append(subprocess.Popen([spec['python'],'-I',str(Path(__file__).resolve()),'_daemon',
-        '--spec',str(base/'spec.json'),'--ui-url',url],env=env,stdout=log,stderr=log))
-    until=time.monotonic()+20
-    while not (base/'control/control.sock').exists():
-        if any(p.poll() is not None for p in children) or time.monotonic()>until:
-            raise RuntimeError('control_start_timeout')
-        time.sleep(.1)
-    ui_log.close();log.close()
-    return children,url
+    logs=[];failure=None
+    try:
+        (base/'control/approval-secret').write_text(os.urandom(32).hex());(base/'control/approval-secret').chmod(0o600)
+        env=dict(os.environ,SCID_AGENT_SETTINGS_FILE=str(base/'agent-settings.json'),CODEX_HOME=str(base/'codex-home'))
+        env.pop('PYTHONPATH',None)
+        ui_log=(base/'evidence/ui.log').open('wb',buffering=0);logs.append(ui_log)
+        children.append(subprocess.Popen([spec['python'],'-I','-m','scidiscovery.artifact_agent.interfaces.cli',
+            '--project-root',str(project),'--state-root',str(base/'state'),
+            '--approval-secret-file',str(base/'control/approval-secret'),'serve-approval-ui',
+            '--port','0','--worker-backend','local','--local-workspace-root',str(project/'.scidiscovery-runs')],env=env,stdout=ui_log,stderr=ui_log))
+        url=None; until=time.monotonic()+20
+        while not url and time.monotonic()<until:
+            if children[0].poll() is not None: raise RuntimeError('management_ui_exited')
+            for line in (base/'evidence/ui.log').read_text().splitlines():
+                try: url=json.loads(line).get('approval_ui') or url
+                except ValueError: pass
+            time.sleep(.1)
+        if not url: raise RuntimeError('management_ui_start_timeout')
+        log=(base/'evidence/daemon.log').open('wb',buffering=0);logs.append(log)
+        children.append(subprocess.Popen([spec['python'],'-I',str(Path(__file__).resolve()),'_daemon',
+            '--spec',str(base/'spec.json'),'--ui-url',url],env=env,stdout=log,stderr=log))
+        until=time.monotonic()+20
+        while not (base/'control/control.sock').exists():
+            if any(p.poll() is not None for p in children) or time.monotonic()>until:
+                raise RuntimeError('control_start_timeout')
+            time.sleep(.1)
+        return children,url
+    except BaseException as exc:
+        failure=exc
+        for process in children:
+            try:
+                if process.poll() is None:process.terminate()
+                try:process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill();process.wait(timeout=5)
+            except BaseException as error:exc.add_note('control startup cleanup: '+type(error).__name__)
+        raise
+    finally:
+        for log in logs:
+            try:log.close()
+            except BaseException as error:
+                if failure is None:raise
+                failure.add_note('control startup log close: '+type(error).__name__)
 
 
 def verify_account(connection):
@@ -972,6 +989,11 @@ def monitor_scientific_loop(host,meter,spec,loop,current,result):
 
 def arm_action(spec,action):
     """Paid activation exists only in run; no automatic submission replay."""
+    with guard.termination_signals() as signals:
+        return _arm_action(spec,action,signals)
+
+
+def _arm_action(spec,action,signals):
     budget=arm_limits(spec);tokens=budget['all_role_tokens'];wall=budget['trial_wall_seconds']
     status_read_retry(spec)  # Reject malformed retry policy before any host/model.
     base=Path(spec['root']); meter=Meter(tokens=tokens,wall_seconds=wall); children=[]; host=None;listener=None
@@ -979,7 +1001,14 @@ def arm_action(spec,action):
         'limits':budget,
         'active_goal_requested':False,'science_started':False,'actual_worker_helper_isolation':'not_verified',
         'qualification':'fresh Root and alias precheck only; paid synthetic role qualification not run',
-        'scoring':'not_run','launch_ready':False}
+        'scoring':'not_run','launch_ready':False,
+        'state':'running','cleanup_complete':False}
+    result_path=base/(action+'-result.json')
+    guard.save_resource(result_path,result)
+    failure=None;cleanup_errors=[]
+    def cleanup(step):
+        try:step()
+        except BaseException as exc:cleanup_errors.append(exc)
     try:
         import scidiscovery.artifact_agent.interfaces.mcp_daemon as installed_daemon
         prefix=Path(spec['python']).parent.parent.resolve()
@@ -1096,45 +1125,68 @@ def arm_action(spec,action):
             result['science_started']=True
             monitor_scientific_loop(host,meter,spec,loop,current,result)
         result['status']='stopped_not_scored'
-    except Exception as exc:
-        result['reason']=getattr(exc,'code',str(exc));result['exception']=type(exc).__name__
+    except BaseException as exc:
+        failure=exc
+        result['reason']=str(getattr(exc,'code',None) or str(exc))[:1024];result['exception']=type(exc).__name__
         if getattr(exc,'method',None):result['failed_method']=exc.method
         if getattr(exc,'operation',None):result['failed_operation']=exc.operation
         if type(getattr(exc,'rpc_code',None)) is int:result['rpc_code']=exc.rpc_code
+        # Persist the first fault before any host/UI/daemon cleanup can fail.
+        cleanup(lambda:guard.save_resource(result_path,result))
+        if not isinstance(exc,Exception):raise
     finally:
+        signals['interrupt']=False
+        result.update(state='stopping',cleanup_phase='closing_host',received_signals=signals['received'])
+        cleanup(lambda:guard.save_resource(result_path,result))
         # Close each PID namespace before submission handoff. The outer supervisor
         # also terminates observed descendants; no detached command is trusted.
-        if listener:listener.close()
-        if host:
-            try: host.close()
-            except Exception as exc: result['close_error']=type(exc).__name__;result['status']='fail'
+        if listener:cleanup(listener.close)
+        if host:cleanup(host.close)
+        result['cleanup_phase']='stopping_control'
+        cleanup(lambda:guard.save_resource(result_path,result))
         for process in children:
-            if process.poll() is None: process.terminate()
+            def stop(process=process):
+                if process.poll() is None:process.terminate()
+            cleanup(stop)
         for process in children:
-            try: process.wait(timeout=5)
-            except subprocess.TimeoutExpired: process.kill();process.wait()
-        try:meter.close_rpc_evidence()
-        except Exception as exc:result['rpc_evidence_close_error']=type(exc).__name__
-        if meter.last_rpc_error:
-            result['last_rpc_error']=meter.last_rpc_error
-            if not meter.last_rpc_error['diagnostic_reference']['retained_at_close'] and result['status']!='fail':
-                result.update(status='fail',reason='rpc_error_evidence_unretained')
-        result['rpc_error_count']=meter.rpc_errors
-        control_tokens=(result.get('control_budget') or {}).get('observed_tokens')
-        observed=max(meter.total(),control_tokens if type(control_tokens) is int else 0)
-        coverage=result.get('combined_usage_coverage')
-        if coverage and coverage.get('pending_attribution_threads'):
-            coverage.update(coverage='partial',attribution='unresolved_at_stop')
-        result['observed_thread_tokens']=meter.total()
-        result['observed_total_tokens']=observed
-        result['observed_token_overrun']=max(0,observed-tokens)
-        result['usage_records']=list(meter.records.values())
-        result['turns_requested']=meter.turns_requested  # Direct frontend Root turn/start attempts.
-        result['scientific_turns_requested']=meter.scientific_turns_requested
-        result['observed_all_role_turns']=len(meter.observed_turns)
-        result['trial_started']=meter.deadline is not None
-        result['phase_wall_seconds']=0 if meter.deadline is None else round(time.monotonic()-(meter.deadline-wall),3)
-        write(base/(action+'-result.json'),result)
+            def wait(process=process):
+                try:process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill();process.wait(timeout=5)
+            cleanup(wait)
+        cleanup(meter.close_rpc_evidence)
+        def summarize():
+            if meter.last_rpc_error:
+                result['last_rpc_error']=meter.last_rpc_error
+                if not meter.last_rpc_error['diagnostic_reference']['retained_at_close'] and result['status']!='fail':
+                    result.update(status='fail',reason='rpc_error_evidence_unretained')
+            result['rpc_error_count']=meter.rpc_errors
+            control_tokens=(result.get('control_budget') or {}).get('observed_tokens')
+            observed=max(meter.total(),control_tokens if type(control_tokens) is int else 0)
+            coverage=result.get('combined_usage_coverage')
+            if coverage and coverage.get('pending_attribution_threads'):
+                coverage.update(coverage='partial',attribution='unresolved_at_stop')
+            result['observed_thread_tokens']=meter.total()
+            result['observed_total_tokens']=observed
+            result['observed_token_overrun']=max(0,observed-tokens)
+            result['usage_records']=list(meter.records.values())
+            result['turns_requested']=meter.turns_requested  # Direct frontend Root turn/start attempts.
+            result['scientific_turns_requested']=meter.scientific_turns_requested
+            result['observed_all_role_turns']=len(meter.observed_turns)
+            result['trial_started']=meter.deadline is not None
+            result['phase_wall_seconds']=0 if meter.deadline is None else round(time.monotonic()-(meter.deadline-wall),3)
+        cleanup(summarize)
+        result.update(state='terminal',cleanup_phase='finished',cleanup_complete=not cleanup_errors,
+            received_signals=signals['received'])
+        if cleanup_errors:
+            result['cleanup_errors']=[{'type':type(e).__name__,'message':str(e)[:1024]} for e in cleanup_errors]
+            result['status']='fail'
+            if failure is None:result.setdefault('reason','cleanup_error')
+        cleanup(lambda:guard.save_resource(result_path,result))
+        if cleanup_errors and failure is not None:
+            failure.add_note('pilot cleanup/persistence errors: '+', '.join(type(e).__name__ for e in cleanup_errors))
+        elif cleanup_errors:
+            raise cleanup_errors[0]
     return result
 
 
@@ -1181,6 +1233,8 @@ def main():
     limits=json.loads(guard.DEFAULT_CONFIG.read_text())['limits']
     if args.action!='prepare': limits=resource_limits(spec)[0]
     if args.action=='run': limits={**limits,'timeout_seconds':300+arm_limits(spec)['trial_wall_seconds']+(spec.get('human_wait_seconds',1800) if spec['arm']=='scidiscovery' else 0)}
+    # Host close and the two control children each allow up to five seconds.
+    limits={**limits,'termination_grace_seconds':max(20,limits['termination_grace_seconds'])}
     env=dict(os.environ);env.pop('PYTHONPATH',None);env['PYTHONNOUSERSITE']='1'
     env['PYTHONDONTWRITEBYTECODE']='1'
     if args.action!='prepare':
@@ -1190,7 +1244,7 @@ def main():
         evidence.mkdir(mode=0o700)
         command=[metadata['python'],'-I',str(Path(__file__).resolve()),*sys.argv[1:],'--_lease-fd',str(lease.fileno())]
         write(evidence/'command.json',{'command':command,'limits':limits,'paid_activation_requested':args.action=='run'})
-        resource=guard.run_one(command,env,limits,evidence,lease.fileno());write(evidence/'resource.json',resource)
+        resource=guard.run_one(command,env,limits,evidence,lease.fileno())
     if args.action=='run':
         # run_one has killed its observed owned tree before this host-only read.
         files={}
