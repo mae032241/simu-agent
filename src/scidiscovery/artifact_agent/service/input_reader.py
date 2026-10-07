@@ -17,6 +17,9 @@ import tempfile
 
 
 READ_INPUT_NAVIGATION = 4
+SCIENTIFIC_PAGE_MIN_BYTES = 512
+SCIENTIFIC_PAGE_MAX_BYTES = 8192
+SCIENTIFIC_PAGE_DEFAULT_BYTES = 4096
 CACHE_DIRECTORY = ".read-input"
 MATERIAL_FILE_READING = (
     'JSON/text: python tools/read_input.py RETURNED_PATH --file; select --directory or --pointer fields, '
@@ -59,9 +62,9 @@ def select(value, pointer):
     return value
 
 
-def page(workspace, path, *, pointer=None, directory=False, offset=0, version=None, budget=4096):
-    if not 512 <= budget <= 8192:
-        raise ValueError('budget must be 512..8192 bytes')
+def page(workspace, path, *, pointer=None, directory=False, offset=0, version=None, budget=SCIENTIFIC_PAGE_DEFAULT_BYTES):
+    if not SCIENTIFIC_PAGE_MIN_BYTES <= budget <= SCIENTIFIC_PAGE_MAX_BYTES:
+        raise ValueError(f'budget must be {SCIENTIFIC_PAGE_MIN_BYTES}..{SCIENTIFIC_PAGE_MAX_BYTES} bytes')
     if offset < 0:
         raise ValueError('offset outside selected text')
     root = Path(workspace).resolve()
@@ -243,7 +246,7 @@ def _startup_budget(root, source):
     if not config.exists():
         return None
     value = json.loads(_within(root, 'tools/input-reader-settings.json').read_text())['startup_page_bytes']
-    if type(value) is not int or not 512 <= value <= 262144:
+    if type(value) is not int or not SCIENTIFIC_PAGE_MIN_BYTES <= value <= 262144:
         raise ValueError('invalid configured startup page budget')
     return value
 
@@ -255,8 +258,8 @@ def read(workspace, name=None, *, pointers=None, directory=False, file=False,
     Explicit character offsets replay the same page regardless of other reads.
     Legacy next/repeat/restart remain cursor navigation, not delivery acknowledgement.
     """
-    if budget is not None and (type(budget) is not int or not 512 <= budget <= 262144):
-        raise ValueError('budget must be 512..262144 bytes; scientific inputs remain limited to 8192')
+    if budget is not None and (type(budget) is not int or not SCIENTIFIC_PAGE_MIN_BYTES <= budget <= 262144):
+        raise ValueError(f'budget must be {SCIENTIFIC_PAGE_MIN_BYTES}..262144 bytes; scientific inputs remain limited to {SCIENTIFIC_PAGE_MAX_BYTES}')
     if action not in {'read', 'next', 'repeat', 'restart'}:
         raise ValueError('unknown reading action')
     if offset is not None and (type(offset) is not int or offset < 0 or action != 'read'):
@@ -302,7 +305,7 @@ def read(workspace, name=None, *, pointers=None, directory=False, file=False,
                     or not all(isinstance(x, str) for x in selection['pointers'])
                     or type(selection.get('directory')) is not bool
                     or type(selection.get('budget')) is not int
-                    or not 512 <= selection['budget'] <= 262144):
+                    or not SCIENTIFIC_PAGE_MIN_BYTES <= selection['budget'] <= 262144):
                 raise ValueError('navigation selection missing; specify the complete source and fields once'
                     if selection_id is not None else 'no current selection; specify the source and fields once')
             source = _within(root, selection['path'])
@@ -313,9 +316,9 @@ def read(workspace, name=None, *, pointers=None, directory=False, file=False,
             source, source_alias = _source(root, name, file)
             pointers = list(pointers or [])
         startup_budget = _startup_budget(root, source)
-        budget = (startup_budget or 4096) if budget is None else budget
-        if budget > max(startup_budget or 0, 8192):
-            raise ValueError('budget exceeds configured startup limit or scientific-input limit of 8192 bytes')
+        budget = (startup_budget or SCIENTIFIC_PAGE_DEFAULT_BYTES) if budget is None else budget
+        if budget > max(startup_budget or 0, SCIENTIFIC_PAGE_MAX_BYTES):
+            raise ValueError(f'budget exceeds configured startup limit or scientific-input limit of {SCIENTIFIC_PAGE_MAX_BYTES} bytes')
         selection = dict(path=source.relative_to(root).as_posix(), pointers=pointers,
                          directory=directory, budget=budget,
                          **({'source_alias': source_alias} if source_alias is not None else {}))
@@ -355,7 +358,7 @@ def read(workspace, name=None, *, pointers=None, directory=False, file=False,
             # becomes current. It never claims the retained page was delivered/read.
             retained = previous.get('selection')
             retained_budget = retained.get('budget', budget) if isinstance(retained, dict) else budget
-            if type(retained_budget) is not int or not 512 <= retained_budget <= max(startup_budget or 0, 8192):
+            if type(retained_budget) is not int or not SCIENTIFIC_PAGE_MIN_BYTES <= retained_budget <= max(startup_budget or 0, SCIENTIFIC_PAGE_MAX_BYTES):
                 raise ValueError('navigation cache damaged; recover with explicit source and --offset')
             reply = ('[read_input: same original selection; cached navigation is not proof of reading. '
                 f'{remaining} characters remain after the retained page. '
@@ -372,7 +375,7 @@ def read(workspace, name=None, *, pointers=None, directory=False, file=False,
                 end = previous['end']
                 retained = previous.get('selection')
                 retained_budget = retained.get('budget', budget) if isinstance(retained, dict) else budget
-                if type(retained_budget) is not int or not 512 <= retained_budget <= max(startup_budget or 0, 8192):
+                if type(retained_budget) is not int or not SCIENTIFIC_PAGE_MIN_BYTES <= retained_budget <= max(startup_budget or 0, SCIENTIFIC_PAGE_MAX_BYTES):
                     raise ValueError('navigation cache damaged; recover with explicit source and --offset')
                 reply = _display(text, start, end, handle, retained_budget)
                 selection['budget'] = retained_budget
@@ -409,7 +412,7 @@ def main():
     for action in ('next', 'repeat', 'restart'):
         actions.add_argument('--' + action, dest='action', action='store_const', const=action)
     parser.set_defaults(action='read')
-    parser.add_argument('--budget', type=int, help='Scientific inputs: 512..8192 bytes, default 4096. Controlled startup uses its configured page size. Use --selection with --offset to replay a page; next_offset selects the next page. Legacy bare navigation uses the last selection.')
+    parser.add_argument('--budget', type=int, help=f'Scientific inputs: {SCIENTIFIC_PAGE_MIN_BYTES}..{SCIENTIFIC_PAGE_MAX_BYTES} bytes, default {SCIENTIFIC_PAGE_DEFAULT_BYTES}. Controlled startup uses its configured page size. Use --selection with --offset to replay a page; next_offset selects the next page. Legacy bare navigation uses the last selection.')
     args = parser.parse_args()
     try:
         result = read(Path(__file__).resolve().parents[1], **vars(args))

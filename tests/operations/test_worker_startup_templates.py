@@ -4,6 +4,8 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
@@ -63,11 +65,6 @@ def expand(start):
         **{key: value for key, value in item.items() if key != 'template'}} for item in start['inputs']]
 
 
-def without_navigation_names(inputs):
-    return [{key: value for key, value in item.items()
-        if key != 'artifact_name' or item.get('artifact_name_usage') != 'navigation_only'} for item in inputs]
-
-
 def test_32_compiled_inputs_expand_to_identical_display_and_shrink_net_bytes(analysis_inputs, monkeypatch):
     _, bound, _ = analysis_inputs
     original = assignment(bound)
@@ -77,12 +74,12 @@ def test_32_compiled_inputs_expand_to_identical_display_and_shrink_net_bytes(ana
         before = worker_start.startup_document(original)
     after = worker_start.startup_document(original)
     assert len(after['inputs']) == 32
-    assert expand(after) == without_navigation_names(before['inputs'])
+    assert expand(after) == before['inputs']
     assert before['inputs'] == original['inputs']
     assert any('reference_availability' in template for template in after['input_templates'])
     assert [item['source_name'] for item in after['inputs']] == [item['source_name'] for item in original['inputs']]
     assert canonical_json(original) == frozen
-    assert 'input_templates[INDEX]' in after['reading']['inputs']
+    assert 'its own template value (zero-based, not its inputs position)' in after['reading']['inputs']
     assert 'do not imply a common source, port, permission or validation' in after['reading']['inputs']
     before_index = len(canonical_json(before['inputs']))
     after_index = len(canonical_json(dict(inputs=after['inputs'], input_templates=after['input_templates'])))
@@ -110,7 +107,7 @@ def test_templates_preserve_mixed_permission_history_and_unavailable_exceptions(
     original['inputs'][-3]['historical'] = 0  # Equality alone must not conflate bool and integer.
     before = deepcopy(original)
     start = worker_start.startup_document(original)
-    assert expand(start) == without_navigation_names(original['inputs'])
+    assert expand(start) == original['inputs']
     assert original == before
     rendered = start['inputs'][-1]
     for key in ('source_name', 'usage', 'exposure', 'historical', 'reference_availability', 'source_origin', 'same_source_as'):
@@ -152,7 +149,7 @@ def test_changed_startup_layout_requires_new_selection_and_pages_every_input(ana
             break
         reply = read(tmp_path, selection_id=replay_arguments(reply)[1], offset=int(next_arguments(reply)[3]), budget=1024)
     restored = json.loads(''.join(parts))
-    assert pages > 1 and expand(restored) == without_navigation_names(original['inputs'])
+    assert pages > 1 and expand(restored) == original['inputs']
     assert (tmp_path/'assignment.json').read_bytes() == canonical_json(original)
     assert json.loads(body(read(tmp_path,'assignment.json',file=True,pointers=['/inputs/0/artifact_name']))) == original['inputs'][0]['artifact_name']
     source=original['inputs'][0]['source_name']
@@ -161,7 +158,7 @@ def test_changed_startup_layout_requires_new_selection_and_pages_every_input(ana
     assert body(read(tmp_path,source)) == contents[source].decode()
 
 
-def test_navigation_omission_preserves_other_names_and_typed_scalar_differences(analysis_inputs):
+def test_templates_preserve_navigation_names_and_typed_scalar_differences(analysis_inputs):
     _, bound, _ = analysis_inputs
     original = assignment(bound)
     original['inputs'][-1]['artifact_name_usage'] = 'claim'
@@ -170,7 +167,7 @@ def test_navigation_omission_preserves_other_names_and_typed_scalar_differences(
     before = deepcopy(original)
     start = worker_start.startup_document(original)
     restored = expand(start)
-    assert restored == without_navigation_names(original['inputs'])
+    assert restored == original['inputs']
     assert restored[-1]['artifact_name'] == original['inputs'][-1]['artifact_name']
     assert restored[-2]['reference_availability'] is False
     assert type(restored[-3]['reference_availability']) is int
@@ -181,3 +178,35 @@ def test_navigation_only_small_index_keeps_flat_display_when_guidance_costs_more
     inputs = [dict(source_name='one',artifact_name='tiny',artifact_name_usage='navigation_only')]
     start = worker_start.startup_document(dict(inputs=inputs))
     assert start['inputs'] == inputs
+
+
+def test_startup_navigation_and_page_limits_work_with_frozen_cli(analysis_inputs, tmp_path):
+    from scidiscovery.artifact_agent.service.local_workspace import LocalTrustedBackend
+    from tests.artifact_agent.test_input_reader import body
+    _, bound, contents = analysis_inputs
+    original = assignment(bound)
+    item = original['inputs'][0]
+    item['artifact_name'] = 'navigation-name-not-source-alias'
+    workspace = LocalTrustedBackend(tmp_path/'backend').prepare(run_id='run_startupreader',
+        inputs=(), assignment=canonical_json(original), result_schema=b'{}')
+    (workspace.root/item['relative_path']).write_bytes(contents[item['source_name']])
+    start_path = worker_start.write_worker_start(workspace, original, startup_page_bytes=16384)
+    start = json.loads(start_path.read_bytes())
+    assert '512..8192 bytes' in start['reading']['inputs']
+    assert '/inputs/INDEX/' not in start['reading']['inputs']
+    assert 'input_templates[INDEX]' not in start['reading']['inputs']
+    selected = next(value for value in expand(start) if value['source_name'] == item['source_name'])
+    assert selected['artifact_name'] == item['artifact_name']
+    assert (workspace.root/'assignment.json').read_bytes() == canonical_json(original)
+    def cli(*args):
+        return subprocess.run([sys.executable, '-I', str(workspace.root/'tools/read_input.py'), *args],
+            cwd=tmp_path, capture_output=True, text=True, timeout=5)
+    for budget in (512, 8192):
+        reply = cli(selected['source_name'], '--budget', str(budget))
+        assert reply.returncode == 0, reply.stdout
+        assert len(reply.stdout.encode()) <= budget
+        assert json.loads(body(reply.stdout)) == json.loads(contents[item['source_name']])
+    rejected = cli(selected['source_name'], '--budget', '8193')
+    assert rejected.returncode == 1 and 'scientific-input limit of 8192' in rejected.stdout
+    assert cli(selected['artifact_name']).returncode == 1  # Navigation is not source identity.
+    assert cli('worker-start.json', '--file', '--budget', '16384').returncode == 0

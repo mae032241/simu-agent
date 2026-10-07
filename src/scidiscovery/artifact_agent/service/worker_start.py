@@ -6,14 +6,12 @@ from pathlib import Path
 
 from ..schema.common import canonical_json
 from .local_workspace import WorkspaceError, read_control_workspace_file, write_control_workspace_file
-from .input_reader import shared_input, MATERIAL_FILE_READING
+from .input_reader import (shared_input, MATERIAL_FILE_READING, SCIENTIFIC_PAGE_MIN_BYTES,
+    SCIENTIFIC_PAGE_MAX_BYTES, SCIENTIFIC_PAGE_DEFAULT_BYTES)
 
 
 def _with_input_templates(document: dict) -> dict:
-    inputs = [{key: value for key, value in item.items()
-        if key != 'artifact_name' or item.get('artifact_name_usage') != 'navigation_only'}
-        for item in document['inputs']]
-    omitted_names = inputs != document['inputs']
+    inputs = document['inputs']
     groups = {}
     for index, item in enumerate(inputs):
         if isinstance(item.get('description'), str):
@@ -35,17 +33,13 @@ def _with_input_templates(document: dict) -> dict:
         templates.append(common)
         for index, item in zip(positions, compact):
             projected[index] = item
-    if templates or omitted_names:
+    if templates:
         reading = dict(document['reading'])
-        if omitted_names:
-            reading['inputs'] += (' Navigation-only artifact_name values remain in assignment.json; '
-                'read a selected entry with python tools/read_input.py assignment.json --file --pointer /inputs/INDEX/artifact_name.')
         candidate = dict(document, inputs=projected, reading=reading)
-        if templates:
-            candidate['input_templates'] = templates
-            reading['inputs'] += (' Each input with template INDEX inherits the omitted fields from '
-                'input_templates[INDEX]; explicit item fields take precedence. These shared display rules do not imply '
-                'a common source, port, permission or validation. Use each exact source_name.')
+        candidate['input_templates'] = templates
+        reading['inputs'] += (' Each input inherits omitted fields from input_templates at its own template value '
+            '(zero-based, not its inputs position); explicit item fields take precedence. Shared display rules do not imply '
+            'a common source, port, permission or validation. Use each exact source_name; artifact_name stays in that entry.')
         # Include template references and their one-time explanation in the net
         # size check; small indexes keep the original flat display.
         if len(canonical_json(candidate)) < len(canonical_json(document)):
@@ -89,6 +83,8 @@ def startup_document(assignment: dict, domain: dict | None = None, *, reader_nav
             'Publication retains bytes and provenance, not scientific validation. Returned references are reusable evidence.')
     result['reading'] = {
         'inputs': 'Use source_name with python tools/read_input.py SOURCE. --directory lists JSON keys; '
+            f'Scientific pages accept --budget {SCIENTIFIC_PAGE_MIN_BYTES}..{SCIENTIFIC_PAGE_MAX_BYTES} bytes '
+            f'(default {SCIENTIFIC_PAGE_DEFAULT_BYTES}); worker-start.json uses its separately configured startup page size. '
             '--pointer /FIELD selects a known field (repeat for multiple fields). Omit --pointer to read the root; / is an empty-key member. '
             + ('Every page, including end, returns --selection HANDLE --offset START --budget BYTES and optional next_offset. '
                 'The command replays that exact page after any other reads; change START to next_offset for the next page. '
