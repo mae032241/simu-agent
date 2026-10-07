@@ -41,7 +41,8 @@ NAME = 'covshift-pilot'
 MODEL = 'gpt-6.1-sol'
 WALL = 1800
 TOKENS = 200000
-MAX_TOKENS = 8000000
+MAX_TOKENS = 20000000
+MAX_WALL = 5400
 OBJECTIVE = 'covshift.pilot.objective'
 STATUS_READ_RETRY = {'attempts':3,'initial_backoff_seconds':.5,'maximum_backoff_seconds':2.}
 
@@ -51,7 +52,7 @@ def arm_limits(spec):
     value=spec.get('limits',{'trial_wall_seconds':WALL,'all_role_tokens':TOKENS})
     if (not isinstance(value,dict) or set(value)!={'trial_wall_seconds','all_role_tokens'}
             or any(type(value[key]) is not int or not 0<value[key]<=maximum
-                for key,maximum in (('trial_wall_seconds',WALL),('all_role_tokens',MAX_TOKENS)))):
+                for key,maximum in (('trial_wall_seconds',MAX_WALL),('all_role_tokens',MAX_TOKENS)))):
         raise ValueError('invalid_arm_budget')
     return dict(value)
 
@@ -269,7 +270,7 @@ def prepare(launch_path, output, native, auth_file=None, provider_config=None, *
         'candidate':launch['candidate'],'candidate_source':metadata['head'],
         'candidate_metadata_sha256':launch['candidate_metadata_sha256'],
         'native':str(native),'native_sha256':sha(native),'code_mode_host':code_mode_host,'task_revision':launch['task_revision'],
-        'limits':{'trial_wall_seconds':WALL,'all_role_tokens':MAX_TOKENS,'startup_seconds':300,
+        'limits':{'trial_wall_seconds':MAX_WALL,'all_role_tokens':MAX_TOKENS,'startup_seconds':300,
             'virtual_address_space':'not_capped_by_supervisor','tree_rss_bytes':resource_limits({'resources':resources})[0]['observed_tree_rss_stop_bytes'],
             'app_server_tree_rss_bytes':resource_limits({'resources':resources})[1],'log_bytes':8388608,'numerical_threads':1,
             'cpu_affinity':'one CPU chosen from supervisor allowed set',

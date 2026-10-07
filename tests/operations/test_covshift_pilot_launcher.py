@@ -29,7 +29,7 @@ def test_preparation_rejects_changed_public_bytes_before_create(tmp_path,monkeyp
 
 
 @pytest.mark.parametrize('tokens,wall,scidiscovery_tokens',[(200000,1800,None),(112607,1761,None),
-    (2000000,1800,None),(6000000,1800,None),(200000,1800,6000000),(8000000,1800,8000000)])
+    (2000000,1800,None),(6000000,1800,None),(200000,1800,6000000),(8000000,1800,8000000),(20000000,5400,20000000)])
 def test_prepare_consumes_exact_candidate_builds_same_aliases_and_fresh_settings(tmp_path,monkeypatch,tokens,wall,scidiscovery_tokens):
     source=pair(tmp_path,monkeypatch)
     invoked=[]
@@ -44,7 +44,7 @@ def test_prepare_consumes_exact_candidate_builds_same_aliases_and_fresh_settings
         native_goal_tokens=tokens,native_goal_wall_seconds=wall,
         **({'scidiscovery_tokens':scidiscovery_tokens} if scidiscovery_tokens is not None else {}))
     assert len(invoked)==2 and result['launch_ready'] is False
-    assert result['limits']['all_role_tokens']==8000000 and result['limits']['trial_wall_seconds']==1800
+    assert result['limits']['all_role_tokens']==20000000 and result['limits']['trial_wall_seconds']==5400
     specs=[json.loads(Path(p).read_text()) for p in result['arms'].values()]
     assert specs[0]['public_sha256']==specs[1]['public_sha256']
     for spec in specs:
@@ -441,16 +441,21 @@ def test_reduced_arm_limits_stop_invalid_limits_reject_and_legacy_defaults_remai
     budget={'all_role_tokens':112607,'trial_wall_seconds':1761}
     assert driver.arm_limits({'limits':budget})==budget
     assert driver.arm_limits({})=={'all_role_tokens':200000,'trial_wall_seconds':1800}
-    for tokens in (6000000,8000000):
+    for tokens in (6000000,8000000,20000000):
         assert driver.arm_limits({'limits':{**budget,'all_role_tokens':tokens}})=={
             **budget,'all_role_tokens':tokens}
-    for key,values in {'all_role_tokens':(0,-1,True,8000001,'112607'),
-            'trial_wall_seconds':(0,-1,True,1801,1761.0)}.items():
+    for key,values in {'all_role_tokens':(0,-1,True,20000001,'112607'),
+            'trial_wall_seconds':(0,-1,True,5401,1761.0)}.items():
         for value in values:
             with pytest.raises(ValueError,match='arm_budget'):
                 driver.arm_limits({'limits':{**budget,key:value}})
     with pytest.raises(ValueError,match='arm_budget'):
         driver.arm_limits({'limits':{**budget,'unknown':1}})
+    long_budget={'all_role_tokens':20000000,'trial_wall_seconds':5400}
+    assert driver.arm_limits({'limits':long_budget})==long_budget
+    clock=[0.];long_meter=driver.Meter(lambda:clock[0],tokens=20000000,wall_seconds=5400)
+    long_meter.activate();clock[0]=5399;long_meter.check();clock[0]=5400
+    with pytest.raises(RuntimeError,match='wall_deadline'):long_meter.check()
     now=[0.];meter=driver.Meter(lambda:now[0],tokens=112607,wall_seconds=1761)
     meter.activate();meter.observe(usage('canary',100,20))
     meter.observe(usage('science',112480,1))
