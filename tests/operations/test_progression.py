@@ -310,7 +310,10 @@ def test_restart_interrupted_root_reconciles_existing_work_without_reset(progres
     assert after['attempts'] == before['attempts'] + 1
     assert after['rounds'] == before['rounds'] + 1
     assert after['started_at'] == before['started_at']
-    assert after['admissions'] == before['admissions']
+    continued = after['admissions']['accepted'].copy()
+    proof = continued.pop('dispatch_continuation')
+    assert proof['owner'] == host.scheduler_session and proof['generation'] == row(p)['generation']
+    assert continued == before['admissions']['accepted']
     assert after['recovered_interruption'] == old_turn
     assert len(p.runtime.runs.list(instance_id=p.instance)) == 1
     prompt = p.coordinator.host.prompts[-1]

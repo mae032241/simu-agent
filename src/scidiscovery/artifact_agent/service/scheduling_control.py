@@ -222,8 +222,26 @@ def pure_time_stop(row, checkpoint, *, now):
             + (resources.get('control_daemon_rss_bytes') or 0)) < limits['max_rss_bytes'])
 
 
+def recovered_dispatch_authority(row, checkpoint, intent, *, run_id, session_key):
+    """Trusted same-host restoration carries one immutable intent, never a new start."""
+    loop = current_loop(checkpoint)
+    if (not intent or intent['instance_id'] != row['instance_id'] or not loop
+            or row['state'] != 'active' or row['mode'] != 'background'
+            or session_key != row['owner_session'] or not row['host_json']
+            or checkpoint.get('fault_class') == 'outcome_unknown'
+            or (checkpoint.get('phase') == 'prepared' and not checkpoint.get('turn_id'))
+            or any(item['state'] == 'prepared' for item in checkpoint.get('admissions', {}).values())):
+        return False
+    expected = dict(run_id=run_id, intent_owner=intent['owner_session'], intent_generation=intent['generation'],
+        owner=row['owner_session'], generation=row['generation'], loop_id=loop,
+        host=json.loads(row['host_json']))
+    return any(item.get('run_id') == run_id and item.get('loop_id') == loop
+        and item['state'] == 'accepted' and item.get('dispatch_continuation') == expected
+        for item in checkpoint.get('admissions', {}).values())
+
+
 def accepted_work_authority(db, row, checkpoint, *, target, session_key=None, schema='', execution_reader=None, reservation=None):
-    """Exact accepted work survives automatic science or confirmed time stops."""
+    """Exact accepted work survives trusted restoration or automatic stops."""
     time_stop = (row['reason'] == 'budget_exhausted' and checkpoint.get('time_closeout_source_session')
         and pure_time_stop(row, checkpoint, now=checkpoint['time_high_water']))
     source = (checkpoint.get('time_closeout_source_session') if time_stop else
@@ -232,6 +250,9 @@ def accepted_work_authority(db, row, checkpoint, *, target, session_key=None, sc
     namespace, object_id = target
     intent = (db.execute('SELECT * FROM ' + schema + 'scheduler_dispatch_intents WHERE run_id=?', (object_id,)).fetchone()
         if namespace == 'run' else None)
+    if namespace == 'run' and recovered_dispatch_authority(row, checkpoint, intent,
+            run_id=object_id, session_key=session_key):
+        return True
     if (time_stop and intent and intent['instance_id'] == row['instance_id']
             and any(item.get('run_id') == object_id and item.get('loop_id') == current_loop(checkpoint)
                 and item['state'] == 'accepted' for item in checkpoint.get('admissions', {}).values())):
@@ -994,7 +1015,8 @@ class SchedulingControl:
             if (control and control['generation'] == generation and accepted_work_authority(connection, control,
                     json.loads(control['checkpoint_json']), target=('run', run_id), session_key=session_key or 'administrative')):
                 return
-        if row is None or (row['instance_id'], row['owner_session'], row['generation']) != (instance_id, session_key or "administrative", generation):
+        if (row is None or control is None or control['generation'] != generation
+                or (row['instance_id'], row['owner_session'], row['generation']) != (instance_id, session_key or "administrative", generation)):
             conflict('Dispatch intent is absent or stale; reconcile the actual Worker before attaching. Native start state is unknown.')
 
     def activate_host(self, *, instance_id, source_session, scheduler_session, platform_session, thread_id, expected_generation):
@@ -1156,7 +1178,25 @@ class SchedulingControl:
                 conflict('Effective configuration changed; restoring a host cannot replace the research loop snapshot.')
             self.bind_session(session_key=scheduler_session, instance_id=instance_id)
             with self._connect() as db:
-                db.execute("UPDATE scheduler_progression SET owner_session=?,state='active',generation=generation+1 WHERE instance_id=?", (scheduler_session, instance_id))
+                cp = json.loads(row['checkpoint_json'])
+                # Only this trusted native restoration can carry an accepted Run's
+                # original dispatch authority. Keep the intent immutable, so an
+                # uncertain native start is never represented as a fresh dispatch.
+                if (row['state'] == 'active' and current_loop(cp) and cp.get('fault_class') != 'outcome_unknown'
+                        and not (cp.get('phase') == 'prepared' and not cp.get('turn_id'))
+                        and not any(item['state'] == 'prepared' for item in cp.get('admissions', {}).values())):
+                    for item in cp.get('admissions', {}).values():
+                        if item['state'] != 'accepted' or item.get('loop_id') != current_loop(cp) or not item.get('run_id'):
+                            continue
+                        intent = db.execute('SELECT * FROM scheduler_dispatch_intents WHERE run_id=?', (item['run_id'],)).fetchone()
+                        if intent and intent['instance_id'] == instance_id and (
+                                (intent['owner_session'], intent['generation']) == (row['owner_session'], row['generation'])
+                                or recovered_dispatch_authority(row, cp, intent, run_id=item['run_id'], session_key=row['owner_session'])):
+                            item['dispatch_continuation'] = dict(run_id=item['run_id'], intent_owner=intent['owner_session'],
+                                intent_generation=intent['generation'], owner=scheduler_session,
+                                generation=row['generation'] + 1, loop_id=current_loop(cp), host=expected)
+                db.execute("UPDATE scheduler_progression SET owner_session=?,state='active',generation=generation+1,checkpoint_json=? WHERE instance_id=?",
+                    (scheduler_session, store_checkpoint(db, instance_id, cp), instance_id))
             return self.progression_status(instance_id=instance_id, internal=True)
 
     def release_host(self, *, instance_id, platform_session, thread_id):
