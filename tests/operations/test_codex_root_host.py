@@ -45,6 +45,7 @@ for line in sys.stdin:
         if mode=='oversized':print('x'*8193,flush=True);continue
         if mode=='server-request':emit({'id':42,'method':'item/commandExecution/requestApproval','params':{}});continue
         if mode=='error':emit({'id':msg['id'],'error':{'code':-32603,'message':'failed to load workspace requirements: secret'}});continue
+        if mode=='event-before-reply':emit({'method':'turn/completed','params':{'threadId':'root','turn':{'id':'t'+str(turn),'status':'completed'}}})
     elif m=='turn/interrupt':
         if mode in ('terminal-no-ack','foreign-terminal-no-ack','no-terminal-no-ack'):
             if mode != 'no-terminal-no-ack':
@@ -196,13 +197,57 @@ def test_failed_turn_not_reported_as_success(peer,tmp_path):
     assert host.wait_turn(2)['status']=='failed'
 
 
-def test_persistence_failure_poison_connection_before_more_work(peer,tmp_path):
+def test_idle_permanent_persistence_failure_preserves_original_error_without_transport_failure(peer,tmp_path):
     def broken(event):
         if event['method']=='turn/completed':raise OSError('store unavailable')
-    host,_=peer(sink=broken);host.open_root(cwd=str(tmp_path))
+    host,_=peer('interrupt',sink=broken);host.open_root(cwd=str(tmp_path))
+    host.start_turn('work');host.interrupt()
     with pytest.raises(OSError,match='store unavailable'):
-        host.start_turn('work');host.wait_turn(2)
-    assert host.completion is None and host.connection.failed
+        host.poll(1)
+    assert host.completion is None and not host.connection.failed
+
+
+def test_idle_retryable_event_persistence_keeps_connection_and_retries_exact_terminal(peer,tmp_path):
+    from scidiscovery.artifact_agent.service.progression import ObservationRetriesExhausted
+    attempts = []
+    def busy_once(event):
+        if event['method'] == 'turn/completed':
+            attempts.append(event['params']['turn'].copy())
+            if len(attempts) <= 2:
+                raise ObservationRetriesExhausted()
+    host, _ = peer('interrupt', sink=busy_once)
+    host.open_root(cwd=str(tmp_path))
+    host.start_turn('work')
+    host.interrupt()
+    with pytest.raises(ObservationRetriesExhausted):
+        host.poll(1)
+    assert host.completion is None and not host.connection.failed
+    buffered = bytes(host.connection.buffer)
+    assert 0 < len(buffered) <= host.connection.limits.frame_bytes + 65536
+    with pytest.raises(ObservationRetriesExhausted):
+        host.poll(0)
+    assert bytes(host.connection.buffer) == buffered  # No duplicate queue or new read while delivery is blocked.
+    host.poll(0)  # Retry buffered notification even without another readable frame.
+    assert attempts == [dict(id='t1', status='interrupted')] * 3
+    assert host.completion == dict(id='t1', status='interrupted') and not host.connection.failed
+    calls = [json.loads(line)['method'] for line in (tmp_path/'requests').read_text().splitlines()]
+    assert calls.count('turn/start') == calls.count('turn/interrupt') == 1
+
+
+def test_retryable_event_inside_unresolved_rpc_still_forbids_request_replay(peer,tmp_path):
+    from scidiscovery.artifact_agent.service.progression import ObservationRetriesExhausted
+    def busy(event):
+        if event['method'] == 'turn/completed':
+            raise ObservationRetriesExhausted()
+    host, _ = peer('event-before-reply', sink=busy)
+    host.open_root(cwd=str(tmp_path))
+    with pytest.raises(ObservationRetriesExhausted):
+        host.start_turn('work')
+    assert host.connection.failed and host.completion is None
+    with pytest.raises(HostError):
+        host.start_turn('must not replay')
+    calls = [json.loads(line)['method'] for line in (tmp_path/'requests').read_text().splitlines()]
+    assert calls.count('turn/start') == 1
 
 
 def test_disconnect_does_not_signal_other_process(peer,tmp_path):

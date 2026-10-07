@@ -85,6 +85,7 @@ class ProgressionFault(RuntimeError):
 
 class ObservationRetriesExhausted(ProgressionFault):
     """Only the bounded local BUSY/LOCKED or maintenance observation boundary."""
+    retryable_event_delivery = True
     def __init__(self):
         super().__init__('observation_retry_exhausted')
 
@@ -879,9 +880,9 @@ class ProgressionCoordinator:
                 initial['relevant_runs'][name] = run.run_id
         return initial
 
-    def _persist_fault(self):
+    def _persist_fault(self, *, terminal=True):
         fault = self._pending_fault
-        checkpoint = self._observation(lambda: self.bindings.observe_progression(**fault), terminal=True)
+        checkpoint = self._observation(lambda: self.bindings.observe_progression(**fault), terminal=terminal)
         self._pending_fault = None
         return checkpoint
 
@@ -893,7 +894,33 @@ class ProgressionCoordinator:
         if self._pending_fault is not None:
             # Maintenance can temporarily prevent recording a connection fault.
             # Retry only that observation; never reconnect the failed host first.
-            self._persist_fault()
+            try:
+                if self.host is not None:
+                    if self.closed.is_set():
+                        raise ProgressionFault('coordinator_closed')
+                    if self._goal_deadline is not None and self.clock() >= self._goal_deadline:
+                        raise ProgressionFault('budget_deadline')
+                    if hasattr(self.host, 'guard_resources'):
+                        self.host.guard_resources()
+                self._persist_fault(terminal=self.host is None)
+            except ObservationRetriesExhausted:
+                raise  # Bounded local contention alone retains the healthy client.
+            except Exception as error:
+                host, self.host = self.host, None
+                if host is not None:
+                    code = getattr(error, 'code', type(error).__name__)
+                    # Keep the original fault/diagnostic, but a retired client
+                    # cannot later obtain a local-observation recovery grant.
+                    self._pending_fault['changes'].update(fault_class='outcome_unknown', runtime_status=code)
+                    self._pending_fault.pop('recoverable_fault', None)
+                    self._pending_fault.update(stop=True, reason='budget_exhausted'
+                        if code in {'budget_deadline', 'observation_budget_expired'} else
+                        'resource_limit' if code == 'resource_limit' else 'host_fault')
+                    try:
+                        host.close()
+                    except Exception as cleanup_error:
+                        error.add_note('pending fault client cleanup error: ' + type(cleanup_error).__name__)
+                raise
             return
         try:
             self._selecting = False
@@ -903,6 +930,7 @@ class ProgressionCoordinator:
                 self._save({}, recovery_health='observation')
         except Exception as error:
             recovered = False
+            deferred = False
             try:
                 if self.instance is not None and not self._selecting:
                     try:
@@ -936,12 +964,19 @@ class ProgressionCoordinator:
                         import uuid
                         self._pending_fault['recoverable_fault'] = dict(id=uuid.uuid4().hex, kind='observation',
                             generation=row['generation'], loop_id=checkpoint.get('current_loop_id'))
-                    saved = self._persist_fault()
+                    try:
+                        saved = self._persist_fault()
+                    except ObservationRetriesExhausted:
+                        # The same local contention can also defer the fault
+                        # write. Freeze at _pending_fault, retaining a healthy
+                        # native connection until recovery is durably decided.
+                        deferred = safe
+                        raise
                     recovered = safe and saved.get('recovery', {}).get('pending_kind') == 'observation'
             finally:
                 # Closing a client does not prove native quiescence. Keep the
                 # persisted writer marker, even if maintenance denied fault IO.
-                if not recovered:
+                if not recovered and not deferred:
                     host, self.host = self.host, None
                     if host is not None:
                         host.close()

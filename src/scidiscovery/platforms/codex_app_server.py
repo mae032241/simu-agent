@@ -219,6 +219,9 @@ class AppServer:
         if not data:
             raise HostError("app_server_closed")
         self.buffer.extend(data)
+        self._drain_messages()
+
+    def _drain_messages(self):
         while True:
             end = self.buffer.find(b"\n")
             if end < 0:
@@ -244,7 +247,15 @@ class AppServer:
                     raise HostError("protocol_unexpected_response")
                 self.reply = message
             elif isinstance(message.get("method"), str) and isinstance(message.get("params", {}), dict):
-                self.on_event(message)
+                try:
+                    self.on_event(message)
+                except Exception as error:
+                    self._event_delivery_failed = True
+                    if getattr(error, 'retryable_event_delivery', False):
+                        # An absolute local observation can be retried before
+                        # consuming subsequent frames. This is no native call.
+                        self.buffer[:0] = line + b'\n'
+                    raise
             else:
                 raise HostError("protocol_invalid_message")
 
@@ -287,13 +298,18 @@ class AppServer:
         """Drain notifications while idle; never starts a model turn."""
         if type(timeout) not in (int, float) or not math.isfinite(timeout) or timeout < 0:
             raise ValueError("poll timeout must be finite and nonnegative")
+        self._event_delivery_failed = False
         try:
             self._available()
+            self._drain_messages()
             if self.selector.select(timeout):
                 self._read()
         except BaseException:
-            self.failed = True
+            if not self._event_delivery_failed:
+                self.failed = True
             raise
+        finally:
+            self._event_delivery_failed = False
 
     def notify(self, method: str, params: dict):
         try:

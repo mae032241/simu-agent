@@ -2,6 +2,8 @@
 import json
 import os
 import sqlite3
+import subprocess
+import sys
 import threading
 import time
 from types import SimpleNamespace
@@ -302,12 +304,144 @@ def test_busy_fault_not_approved_until_durable_write_and_pause_wins(progression,
         blocked.setattr(bindings, 'observe_progression', lambda **_: (_ for _ in ()).throw(busy()))
         with pytest.raises(ProgressionFault, match='observation_retry_exhausted'):
             p.coordinator.tick()
-        assert p.coordinator._pending_fault and p.coordinator.host is None and host.closed
+        assert p.coordinator._pending_fault and p.coordinator.host is host and not host.closed
     assert checkpoint(p)['recovery'] == {}
     p.root.call_tool('progression_command', dict(command='pause'))
     p.coordinator.tick()
     assert row(p)['reason'] == 'user_paused' and checkpoint(p)['recovery'].get('used', 0) == 0
     assert p.coordinator._pending_fault is None
+
+
+@pytest.mark.parametrize('stop', [None, 'pause', 'stop', 'time'])
+def test_root_workspace_lock_defers_fault_write_without_closing_or_restarting_native_host(progression, monkeypatch, stop):
+    p = progression
+    host = start(p, observation_retries=1, observation_retry_seconds=.06,
+        observation_backoff_seconds=.01, event_wait_seconds=.01)
+    root = type(p.root)(p.facade(host.scheduler_session))
+    entered, release = threading.Event(), threading.Event()
+    prepare = p.runtime.runs.backend.prepare
+    errors = []
+    def slow_workspace(**kwargs):
+        entered.set()
+        assert release.wait(3)
+        return prepare(**kwargs)
+    def invoke():
+        try:
+            _invoke(root, 'accepted')
+        except BaseException as error:
+            errors.append(error)
+    monkeypatch.setattr(p.runtime.runs.backend, 'prepare', slow_workspace)
+    worker = threading.Thread(target=invoke)
+    worker.start()
+    try:
+        assert entered.wait(2)
+        p.coordinator._budget_saved_at = None
+        with pytest.raises(ProgressionFault, match='observation_retry_exhausted'):
+            p.coordinator.tick()
+        assert p.coordinator._pending_fault is not None
+        assert p.coordinator.host is host and not host.closed and not host.interrupted
+        assert host.completion is None and len(host.prompts) == 1
+    finally:
+        release.set()
+        worker.join(3)
+    assert not worker.is_alive() and errors == []
+    if stop in {'pause', 'stop'}:
+        p.root.call_tool('progression_command', dict(command=stop))
+    elif stop == 'time':
+        p.now[0] += 1e6
+        with pytest.raises(ProgressionFault, match='budget_deadline'):
+            p.coordinator.tick()
+        assert host.closed and p.coordinator.host is None
+    p.coordinator.tick()  # Only persist the deferred exact fault, not a native action.
+    cp = checkpoint(p)
+    assert cp['fault_diagnostic']['stage'] == '_save' and cp['fault_diagnostic']['phase'] == 'running'
+    assert cp['admissions']['accepted']['state'] == 'accepted'
+    if stop:
+        assert cp['recovery'].get('used', 0) == 0 and row(p)['state'] in {'paused', 'stopped'}
+        p.coordinator.tick()
+        assert p.coordinator.host in {None, host} and len(host.prompts) == 1
+        assert checkpoint(p)['attempts'] == 0 and len(p.runtime.runs.list(instance_id=p.instance)) == 1
+        return
+    assert cp['recovery']['by_kind'] == {'observation': 1}
+    ready(p)
+    p.coordinator.tick()
+    assert p.coordinator.host is host and not host.closed and not host.interrupted
+    assert len(host.prompts) == 1 and host.completion is None
+    assert checkpoint(p)['recovery']['pending_kind'] is None and checkpoint(p)['attempts'] == 0
+    assert len(p.runtime.runs.list(instance_id=p.instance)) == 1
+
+
+@pytest.mark.parametrize('boundary', ['deadline', 'deadline_during_retry', 'resource', 'closed'])
+def test_pending_fault_stops_exact_client_while_real_scheduling_lock_remains_held(progression, boundary):
+    from scidiscovery.platforms.codex_progression import CodexProgressionHost
+    from scidiscovery.platforms.process_observation import OwnedProcessTree
+    p = progression
+    host = start(p, observation_retries=1, observation_retry_seconds=.06,
+        observation_backoff_seconds=.01, event_wait_seconds=.01)
+    bindings = p.runtime.scheduler_bindings
+    entered, release = threading.Event(), threading.Event()
+    def hold_lock():
+        with bindings.scheduling_lock():
+            entered.set()
+            assert release.wait(4)
+    owner = threading.Thread(target=hold_lock)
+    owner.start()
+    child = None
+    try:
+        assert entered.wait(2)
+        p.coordinator._budget_saved_at = None
+        with pytest.raises(ProgressionFault, match='observation_retry_exhausted'):
+            p.coordinator.tick()
+        assert p.coordinator.host is host and not host.closed
+        original = json.loads(json.dumps(p.coordinator._pending_fault))
+        if boundary == 'deadline':
+            p.now[0] = p.coordinator._goal_deadline
+        elif boundary == 'deadline_during_retry':
+            samples = []
+            def deadline_after_first_busy():
+                samples.append(1)
+                if len(samples) == 2:
+                    p.now[0] = p.coordinator._goal_deadline
+            host.guard_resources = deadline_after_first_busy
+        elif boundary == 'closed':
+            p.coordinator.closed.set()
+        else:
+            child = subprocess.Popen([sys.executable, '-c',
+                "import time; print('ready', flush=True); time.sleep(20)"],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+            assert child.stdout.readline().strip() == 'ready'
+            host.resources = OwnedProcessTree(child.pid)
+            host.resource_limit = 1048576
+            host.guard_resources = lambda: CodexProgressionHost.guard_resources(host)
+        expected = ('observation_budget_expired' if boundary == 'deadline_during_retry' else
+            'budget_deadline' if boundary == 'deadline' else
+            'resource_limit' if boundary == 'resource' else 'coordinator_closed')
+        with pytest.raises((ProgressionFault, HostError), match=expected):
+            p.coordinator.tick()
+        assert not release.is_set() and owner.is_alive()  # The stop did not depend on lock release.
+        assert host.closed and p.coordinator.host is None and len(host.prompts) == 1
+        pending = p.coordinator._pending_fault
+        assert pending['changes']['fault_code'] == original['changes']['fault_code']
+        assert pending['changes']['fault_diagnostic'] == original['changes']['fault_diagnostic']
+        assert pending['changes']['fault_class'] == 'outcome_unknown' and 'recoverable_fault' not in pending
+        assert row(p)['host_json'] and checkpoint(p)['phase'] == 'running'
+        if child is not None:
+            child.wait(timeout=3)
+    finally:
+        release.set()
+        owner.join(3)
+        if child is not None:
+            if child.poll() is None:
+                child.terminate()
+            child.wait(timeout=3)
+            child.stdout.close()
+    assert not owner.is_alive()
+    p.coordinator.tick()  # Retired client: terminal fault IO is still allowed after the bound.
+    cp = checkpoint(p)
+    assert p.coordinator._pending_fault is None and p.coordinator.host is None
+    assert cp['fault_class'] == 'outcome_unknown' and cp['fault_code'] == 'observation_retry_exhausted'
+    assert cp.get('recovery', {}).get('used', 0) == 0 and row(p)['state'] == 'paused'
+    assert row(p)['host_json'] and cp['phase'] == 'running'  # Client retirement is not writer quiescence.
 
 
 def test_first_post_activation_observation_retry_uses_new_host_binding(progression, monkeypatch):
