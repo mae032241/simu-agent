@@ -135,6 +135,20 @@ def assignment_json(
     assignment.pop("prior_source_bindings", None)
     visible = {port.name: port for port in bound.compiled.spec.inputs if port.agent_visible}
     assignment["inputs"] = [item for item in assignment["inputs"] if item["port"] in visible]
+    progress = bound.compiled.spec.scientific_progress
+    if progress is not None and progress.stage == 'analysis':
+        # Contract-declared collection navigation does not classify importance.
+        # Keep every visible original in inputs, including primary evidence.
+        groups = []
+        for port in visible.values():
+            if port.derivation is None or port.max_items <= 1:
+                continue
+            pointers = [f'/inputs/{index}' for index, item in enumerate(assignment['inputs'])
+                if item['port'] == port.name]
+            if pointers:
+                groups.append(dict(description=port.description, pointers=pointers))
+        if groups:
+            assignment['input_groups'] = groups
     refs = {item.source_name: item.artifact_ref for item in inputs}
     first_visible_source = {}
     from .input_reader import readable_input

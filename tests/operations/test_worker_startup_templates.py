@@ -56,7 +56,12 @@ def assignment(bound):
     from scidiscovery.artifact_agent.service.run_records import RunInputBinding
     bindings = tuple(RunInputBinding(item.port_name, item.source_name, item.artifact_name, item.artifact.ref,
         item.artifact.media_type, item.exposure, item.usage, False) for item in bound.inputs)
-    return json.loads(assignment_json(bound, bindings, tool_names=operation_worker_tool_names(bound.compiled)))
+    result = json.loads(assignment_json(bound, bindings, tool_names=operation_worker_tool_names(bound.compiled)))
+    # These template/old-reader regressions retain the earlier frozen assignment
+    # format. Derived collection grouping is exercised through the real producer
+    # and current assignment path in test_analysis_startup_groups.py.
+    result.pop('input_groups', None)
+    return result
 
 
 def expand(start):

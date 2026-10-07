@@ -47,6 +47,29 @@ def _with_input_templates(document: dict) -> dict:
     return document
 
 
+def _with_input_groups(document: dict, assignment: dict) -> dict:
+    groups = assignment.get('input_groups', [])
+    if not groups:
+        return _with_input_templates(document)
+    grouped = {pointer for group in groups for pointer in group['pointers']}
+    candidate = dict(document, inputs=[item for index, item in enumerate(document['inputs'])
+        if f'/inputs/{index}' not in grouped], reading=dict(document['reading']))
+    candidate['input_groups'] = [dict(group, count=len(group['pointers']),
+        read='python tools/read_input.py assignment.json --pointer ' + group['pointers'][0]) for group in groups]
+    candidate['reading']['inputs'] += (
+        ' input_groups retain every member of each derived collection, including failures, negative results and historical limitations. '
+        'Collections may be primary evidence required for the conclusion; grouping implies no relevance or priority judgment. '
+        'Inspect the groups needed for your claims and contrary evidence. '
+        'Each exact pointer selects complete input metadata from frozen assignment.json; use a returned pointer with '
+        'python tools/read_input.py assignment.json --pointer, then its source_name or controlled materialize tool. '
+        'Repeat --pointer for selected entries; preserve pagination. Ungrouped inputs alone do not prove complete evidence coverage.')
+    candidate = _with_input_templates(candidate)
+    original = _with_input_templates(document)
+    # Count complete UTF-8 views, including navigation and templates. Small
+    # inventories keep the existing display rather than paying group overhead.
+    return candidate if len(canonical_json(candidate)) < len(canonical_json(original)) else original
+
+
 def startup_document(assignment: dict, domain: dict | None = None, *, reader_navigation=4, reader_directory_details=True) -> dict:
     # No independent contract registry or scientific summarization. Copy complete
     # instructions from the frozen assignment and plugin manifest, once per view.
@@ -136,7 +159,7 @@ def startup_document(assignment: dict, domain: dict | None = None, *, reader_nav
             'Call worker_materialize_input with source_name and use its returned relative_path, not the metadata path. '
             + MATERIAL_FILE_READING + ' Keep combined displays bounded to avoid batch truncation; '
             'use native tools for PDFs/images/tables or necessary code/log review.')
-    return _with_input_templates(result)
+    return _with_input_groups(result, assignment) if reader_navigation else _with_input_templates(result)
 
 
 def write_worker_start(workspace, assignment: dict, *, startup_page_bytes=16384) -> Path:
