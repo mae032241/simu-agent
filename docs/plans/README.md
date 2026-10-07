@@ -4,6 +4,8 @@
 
 ## 优先处理
 
+当前吞吐修订入口：[科研任务粒度与交接吞吐](RESEARCH_TASK_THROUGHPUT_PLAN.zh-CN.md)。基线 `0201cb7`；T1–T3 已分别提交 `ab4842f`、`a833fd7`、`7b3b2eb`，定向验证及独立审查通过，T4 真实机制与全链对照待执行。已统一交互/后台的假设范围内连续探索规则、修复读取导航、完善结构目录与精确材料复用指导。s16 未确认新的执行故障；三次运行主要来自三臂任务选择，已有上下文修复生效但吞吐收益未证实。该计划不替代下列长期路线，也不把历史通过项视为本轮性能资格。
+
 上下文局部修订：[Root 与 Worker 指令分离](ROOT_WORKER_INSTRUCTION_SEPARATION.zh-CN.md)。状态：I1 源码、定向验证及独立复审通过；I2 候选 `1958a33` 的隔离 rebuilt wheel 安装、迁移、幂等和校验，以及真实交互/后台 Root、fresh text_disabled/image_live 启动投递通过，未部署。Root 调度规则迁入项目 managed developer 配置，共同 AGENTS 与用户原文保留；交互/后台共用配置及外部 workspace/能力角色纳入本节点。I0 原失败保持，I2 补上对应角色启动覆盖；后台/image_live 自然终态、科学流程与本候选恢复/轮换未验证，不追加模型。已完成的续轮原题去重、同包摘要去重与 Worker 索引压缩保持有效。
 
 局部修订：[原始任务准入修订与科学节点恢复](AGENT_DIRECT_TASK_ADMISSION_PLAN.zh-CN.md)。D1–D3 已提交；D4 完整交付失败，用户已否决开放研究直达实验的放宽，恢复假设、实验、分析节点约束的源码和定向验证已完成，独立复审通过，准备真实重跑。已有材料时证据收集可省略，本地执行与输入去重保留。实际运行见[验收记录](AGENT_DIRECT_TASK_ADMISSION_ACCEPTANCE.zh-CN.md)。
