@@ -211,10 +211,16 @@ def _delivery_role(db, row, run_id, terminal):
 
 
 def delivery_coverage(projection):
-    return dict(coverage=projection.get('output_delivery', 'terminal_status') if projection else 'omitted',
+    result = dict(coverage=projection.get('output_delivery', 'terminal_status') if projection else 'omitted',
         original_read='not_confirmed', omissions={key: projection[key] for key in (
             'scheduler_signal_omissions', 'content_unavailable', 'default_output_unavailable') if key in projection}
             if projection else {'reason': 'brief_capacity'})
+    if projection and isinstance(projection.get('selected_output'), dict):
+        def coverage(item):
+            return {key: item[key] for key in ('pointer', 'status', 'total_children', 'omitted_children') if key in item} | (
+                {'items': [coverage(child) for child in item['items']]} if 'items' in item else {})
+        result['fields'] = [coverage(item) for item in projection['selected_output'].get('items', [])]
+    return result
 
 
 def terminal_delivery_page(*, bindings, row, cursor=None, limit=8):

@@ -104,6 +104,66 @@ def test_installed_helper_without_framework_imports(tmp_path):
     assert not script.stat().st_mode & 0o222
 
 
+def test_declared_scientific_default_keeps_negative_decision_and_exact_expansion(tmp_path):
+    from scidiscovery.artifact_agent.service.input_reader import read
+    raw = '{"data":[' + ','.join(['1e-999'] * 2000) + '],"verdict":false,"summary":"Bounded contradiction.","limits":["Missing control."],"next":"Test the missing control."}'
+    bind_reader_input(tmp_path, raw)
+    assignment = json.loads((tmp_path/'assignment.json').read_text())
+    assignment['inputs'][0].update(exposure='on_demand', media_type='application/json',
+        scientific_view=dict(pointers=['/data', '/verdict', '/summary', '/limits', '/next'],
+            handoff=dict(verdict='inconclusive', summary='Bounded contradiction.', assumptions=[],
+                missing_inputs=['Missing control.'], next_actions=['Test the missing control.'])))
+    (tmp_path/'assignment.json').write_text(json.dumps(assignment))
+    original = (tmp_path/'inputs/opaque.json').read_bytes()
+    overview_reply = read(tmp_path, 'plan_original', budget=8192)
+    overview = json.loads(body(overview_reply))
+    exact = {item['pointer']: item['value'] for item in overview['items'] if item['status']=='selected'}
+    assert exact == {'/verdict':False, '/summary':'Bounded contradiction.', '/limits':['Missing control.'], '/next':'Test the missing control.'}
+    assert overview['items'][0]['status']=='projected'
+    assert overview['items'][0]['omitted_children'] > 0
+    assert overview['sealed_handoff']['missing_inputs'] == ['Missing control.']
+    assert overview['original_read']=='not_confirmed'
+    full_reply = read(tmp_path, 'plan_original', full=True, budget=8192)
+    assert full_reply != overview_reply
+    assert collect_view(tmp_path, 'plan_original', full=True, budget=8192) == raw
+    assert collect_view(tmp_path, 'plan_original', pointers=['/data'], budget=8192) == raw[len('{"data":'):raw.index(',"verdict"')]
+    assert (tmp_path/'inputs/opaque.json').read_bytes() == original
+    # Default and full continuations select independent content; replay survives
+    # an interleaved full read and a changed declaration invalidates the handle.
+    import re
+    handle = re.search(r'--selection ([0-9a-f]{32})', overview_reply).group(1)
+    assert read(tmp_path, selection_id=handle, offset=0, budget=8192) == overview_reply
+    assignment['inputs'][0]['scientific_view']['pointers'] = ['/next']
+    (tmp_path/'assignment.json').write_text(json.dumps(assignment))
+    with pytest.raises(ValueError, match='changed'):
+        read(tmp_path, selection_id=handle, offset=0, budget=8192)
+
+
+def test_long_sealed_handoff_is_omitted_with_exact_assignment_pointer(tmp_path):
+    from scidiscovery.artifact_agent.service.input_reader import read
+    bind_reader_input(tmp_path, '{"summary":"Small payload summary."}')
+    assignment=json.loads((tmp_path/'assignment.json').read_text())
+    handoff=dict(verdict='inconclusive', summary='文'*2000, assumptions=[], missing_inputs=[], next_actions=[])
+    assignment['inputs'][0].update(exposure='on_demand', scientific_view=dict(pointers=['/summary'], handoff=handoff))
+    (tmp_path/'assignment.json').write_text(json.dumps(assignment))
+    overview=json.loads(collect_view(tmp_path, 'plan_original'))
+    assert 'summary' not in overview['sealed_handoff']
+    assert 'summary' in overview['handoff_omissions']
+    assert json.loads(collect_view(tmp_path, 'assignment.json', pointers=[overview['handoff_original']['pointer']])) == handoff
+
+
+def test_numeric_lexeme_never_replaces_handoff_prose(tmp_path):
+    from scidiscovery.artifact_agent.service.input_reader import read
+    bind_reader_input(tmp_path, '{"number":123}')
+    assignment=json.loads((tmp_path/'assignment.json').read_text())
+    assignment['inputs'][0].update(exposure='on_demand', scientific_view=dict(pointers=['/number'],
+        handoff=dict(verdict='pass', summary='123', assumptions=[], missing_inputs=[], next_actions=[])))
+    (tmp_path/'assignment.json').write_text(json.dumps(assignment))
+    view=json.loads(collect_view(tmp_path,'plan_original'))
+    assert view['items'][0]['value']==123
+    assert view['sealed_handoff']['summary']=='123' and 'summary_ref' not in view['sealed_handoff']
+
+
 def body(reply):
     return reply.rsplit('\n[read_input: ', 1)[0]
 

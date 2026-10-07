@@ -37,7 +37,7 @@ def _bounded_context(p, context_bytes=10000):
     p.root.call_tool('progression_command', dict(command='start', mode='background', objective_name='goal'))
 
 
-def _sealed_result(p, root, name, *, interpretation_chars=0):
+def _sealed_result(p, root, name, *, interpretation_chars=0, capacity_handoff=True):
     _invoke(root, name)
     worker = _worker(p.catalog, p.runtime)
     worker.call_tool('worker_open_assignment', {})
@@ -46,6 +46,15 @@ def _sealed_result(p, root, name, *, interpretation_chars=0):
         path = worker._workspace.output_directory / 'result.json'
         result = json.loads(path.read_text())
         result['payload']['interpretation'] = '界' * interpretation_chars
+        # Compact defaults no longer copy a long raw interpretation. Exercise
+        # actual brief capacity with complete, valid sealed handoff statements.
+        if capacity_handoff:
+            result['handoff']['summary'] = '界' * 1000
+            entries = 4 if interpretation_chars >= 4000 else 1
+            result['handoff']['assumptions'] = ['A' * 1024] * entries
+            if interpretation_chars >= 4000:
+                result['handoff']['missing_inputs'] = ['M' * 1024] * entries
+                result['handoff']['next_actions'] = ['N' * 1024] * entries
         path.write_text(json.dumps(result, ensure_ascii=False))
     assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
 
@@ -338,6 +347,35 @@ def test_same_oversized_result_notifies_once_without_consumption(progression):
     assert status['progress_shadow']['counts']['consumed'] == 0
     assert root.call_tool('run_list', dict(view='summary', limit=8))['runs'][0]['name'] == 'oversized'
     assert root.call_tool('run_status', dict(name='oversized', intent='full'))['state'] == 'completed'
+
+
+def test_compact_delivery_records_omitted_science_without_claiming_original_read(progression):
+    p=progression
+    _bounded_context(p)
+    p.coordinator.tick()
+    host=p.coordinator.host
+    root=p.root.__class__(p.facade(host.scheduler_session))
+    _sealed_result(p, root, 'compact', interpretation_chars=4000, capacity_handoff=False)
+    host.finish()
+    _next_poll(p)
+    brief=json.loads(host.prompts[-1].split('\n')[-1])
+    assert [item['name'] for item in brief['changes']]==['compact']
+    change=brief['changes'][0]
+    assert change['output_delivery']=='compact'
+    assert next(item for item in change['selected_output']['items'] if item['pointer']=='/interpretation')['status']=='omitted'
+    host.finish()
+    _next_poll(p)
+    assert root.call_tool('progression_status', {})['progress_shadow']['counts']['consumed']==1
+    from scidiscovery.artifact_agent.schema.refs import ArtifactRef
+    deliveries=p.runtime.scheduler_bindings.terminal_deliveries(instance_id=p.instance,
+        objective_ref=ArtifactRef.model_validate_json(row(p)['objective_ref_json']), after=0, limit=8)
+    coverage=json.loads(deliveries[0]['delivery_json'])
+    assert coverage['coverage']=='compact' and coverage['original_read']=='not_confirmed'
+    assert next(item for item in coverage['fields'] if item['pointer']=='/interpretation')['status']=='omitted'
+    assert root.call_tool('run_status',dict(name='compact',intent='full'))['sealed_output']['payload']['interpretation']=='界'*4000
+    for _ in range(3):
+        _next_poll(p)
+    assert len(host.prompts)==2
 
 
 def test_new_result_and_user_message_wake_with_old_omission_retained(progression):

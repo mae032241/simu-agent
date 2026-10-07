@@ -70,7 +70,8 @@ def _with_input_groups(document: dict, assignment: dict) -> dict:
     return candidate if len(canonical_json(candidate)) < len(canonical_json(original)) else original
 
 
-def startup_document(assignment: dict, domain: dict | None = None, *, reader_navigation=4, reader_directory_details=True) -> dict:
+def startup_document(assignment: dict, domain: dict | None = None, *, reader_navigation=4, reader_directory_details=True,
+                     reader_scientific_view=False) -> dict:
     # No independent contract registry or scientific summarization. Copy complete
     # instructions from the frozen assignment and plugin manifest, once per view.
     result = {key: assignment[key] for key in (
@@ -88,6 +89,9 @@ def startup_document(assignment: dict, domain: dict | None = None, *, reader_nav
             if item.get('reference_availability') == representative.get('reference_availability'):
                 shared.add('reference_availability')
             item = {key: value for key, value in item.items() if key not in shared}
+        if reader_scientific_view and 'scientific_view' in item:
+            item = {key: value for key, value in item.items() if key != 'scientific_view'}
+            item['scientific_overview_available'] = True
         result['inputs'].append(item)
     result['output'] = {
         'relative_path': assignment.get('output', {}).get('relative_path', 'output/result.json'),
@@ -146,6 +150,14 @@ def startup_document(assignment: dict, domain: dict | None = None, *, reader_nav
             'JSON Patch responses reference the last full response, never a prior delta. '
             'Retain unchanged contracts; --full restores lost context.',
     }
+    if reader_scientific_view:
+        result['reading']['inputs'] = (
+            'Read SOURCE once for its sealed scientific overview when scientific_overview_available is true: '
+            'the producer handoff and declared exact fields support task orientation. Projected structures are partial; '
+            'omitted originals remain unread. --full reads the original with pagination; explicit --pointer and '
+            '--directory always select original content. Expand the fields needed for this task, including limitations '
+            'and contrary evidence. Sources without a declared overview retain exact paged reading. '
+            + result['reading']['inputs'])
     if 'worker_experiment_execute' in assignment.get('tools', ()):
         result['reading']['execution'] = ('Before remote work read the complete worker_experiment_execute contract, '
             'including required review, authorization, uncertain submission and recovery rules. '
@@ -209,12 +221,14 @@ def write_worker_start(workspace, assignment: dict, *, startup_page_bytes=16384)
         reader_navigation = next((version for version in (4, 3, 2, 1)
             if f'\nREAD_INPUT_NAVIGATION = {version}\n'.encode() in helper), 0)
         reader_directory_details = b'\ndef directory_view(' in helper
+        reader_scientific_view = b'\nSCIENTIFIC_COMPACT_VIEW = 1\n' in helper
     except (OSError, ValueError, WorkspaceError):
         reader_navigation = 0
         reader_directory_details = False
+        reader_scientific_view = False
     # Keep task/input/form order in this derived entry, ahead of historical attempts.
     document = startup_document(assignment, domain, reader_navigation=reader_navigation,
-        reader_directory_details=reader_directory_details)
+        reader_directory_details=reader_directory_details, reader_scientific_view=reader_scientific_view)
     # Memory is refreshed at open time; assignment.json retains its original
     # snapshot. Save omitted context before advertising exact read pointers.
     context = {key: document[key] for key in ('attempt_memory',) if key in document}

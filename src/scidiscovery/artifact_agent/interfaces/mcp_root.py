@@ -242,9 +242,9 @@ class ArtifactCatalogInput(NamedReadInput):
 
 class RunStatusInput(NamedInput, StageReadQuery):
     intent: Literal["decision", "status", "navigation", "full"] = Field(default="decision",
-        description="decision reads bounded sealed conclusions and scheduler signal after completion, using frozen decision fields for historical Runs; older records without those fields return an explicit unavailable default and bounded field index. status reads lifecycle and optional saved diagnostics; navigation lists exact fields, scientific input names and a page of already sealed public evidence names even while running or after failure; full explicitly reads the complete sealed scientific output. Sealed materials are not final conclusions. Active or failed Runs never expose draft science.")
+        description="decision defaults to sealed handoff and compact frozen decision fields: complete bounded statements and explicitly partial structures with exact original pointers. This overview does not establish inspection of omitted originals. Historical Runs use frozen fields; older records without them return an explicit unavailable default and bounded field index. status reads lifecycle and optional saved diagnostics; navigation lists exact fields, scientific input names and a page of already sealed public evidence names even while running or after failure; full explicitly reads the complete sealed scientific output. Sealed materials are not final conclusions. Active or failed Runs never expose draft science.")
     output_fields: list[str] | None = Field(default=None, max_length=8,
-        description="decision only: named top-level fields; omit for declared decision fields. Mutually exclusive with output_paths.")
+        description="decision only: exact named top-level field selections; omit for compact declared decision fields. Mutually exclusive with output_paths.")
     output_paths: list[Annotated[str, Field(pattern=r"^(?:/(?:[^~]|~[01])*)?$")]] | None = Field(
         default=None, max_length=8,
         description="decision: exact non-root JSON Pointers, up to 32 KiB selected values; oversized values carry explicit omissions. navigation: one pointer, omitted for root. Use full for complete output, including oversized scalars. '/' selects an empty key.")

@@ -32,6 +32,7 @@ def assignment_json(
     budget: dict | None = None,
     attachment_settings: dict | None = None,
     debug_disable_task_network: bool = False,
+    scientific_views: dict[str, dict] | None = None,
 ) -> bytes:
     revision = _revision_assignment(
         bound, inputs, workspace_mode=revision_workspace_mode
@@ -96,6 +97,8 @@ def assignment_json(
                         value.artifact.historical for value in bound.inputs
                         if value.source_name == item.source_name
                     ),
+                    **({'scientific_view': scientific_views[item.source_name]}
+                       if scientific_views and item.source_name in scientific_views else {}),
                 }
                 for item in inputs
                 if item.exposure != "handoff_only"

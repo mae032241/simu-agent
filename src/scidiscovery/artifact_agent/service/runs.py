@@ -574,6 +574,8 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
                     deadline_at=deadline_at,
                     budget=self.worker_budget(self.status(run_id)),
                     attachment_settings=recovery_policy.get("attachments"),
+                    scientific_views=self._input_scientific_views(frozen_inputs, instance_id=instance_id,
+                        visible_ports={port.name for port in compiled.spec.inputs if port.agent_visible}),
                     debug_disable_task_network=recovery_policy.get("debug_disable_task_network", False),
                 ),
                 result_schema=result_schema_json(
@@ -1817,6 +1819,27 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
                 if latest is None:
                     latest = review
         return latest
+
+    def _input_scientific_views(self, inputs, *, instance_id, visible_ports):
+        """Frozen primary-output projections; no schema/name guessing or new truth."""
+        views = {}
+        for item in inputs:
+            if item.port_name not in visible_ports or item.exposure in {'handoff_only', 'file_reference'}:
+                continue
+            producer = self.completed_for_output(item.artifact_ref)
+            if producer is None or producer.instance_id != instance_id or producer.output_ref != item.artifact_ref:
+                continue
+            fields = producer.decision_fields
+            if fields is None and self.operation_catalog.recorded_contract_status(producer.operation_id,
+                    version=producer.operation_version, digest=producer.operation_digest) == 'current':
+                fields = self.operation_catalog.recorded_operation(producer.operation_id,
+                    version=producer.operation_version, digest=producer.operation_digest).spec.decision_fields
+            if fields is None:
+                continue
+            views[item.source_name] = dict(pointers=[field if field.startswith('/') else
+                '/' + field.replace('~', '~0').replace('/', '~1') for field in fields],
+                **({'handoff': producer.signal.model_dump(mode='json')} if producer.signal is not None else {}))
+        return views
 
     def completed_for_output(self, artifact_ref: ArtifactRef) -> RunStatus | None:
         """Return the unique completed Run that registered this exact output."""

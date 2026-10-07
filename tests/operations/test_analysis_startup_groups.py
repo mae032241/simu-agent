@@ -46,7 +46,9 @@ def test_published_failure_materials_remain_discoverable_and_readable_from_group
     restored = []
     for entry in core:
         full = next(item for item in assignment['inputs'] if item['source_name'] == entry['source_name'])
-        assert all(full[key] == value for key, value in entry.items())
+        assert all(full[key] == value for key, value in entry.items() if key != 'scientific_overview_available')
+        if entry.get('scientific_overview_available'):
+            assert 'scientific_view' in full and 'scientific_view' not in entry
         restored.append(full)  # Existing same_source_as may omit repeated readable metadata.
     # Every returned exact pointer is an existing reader selection, not an
     # invented INDEX, port name or template-relative number.
@@ -78,6 +80,33 @@ def test_published_failure_materials_remain_discoverable_and_readable_from_group
     assert {item['artifact_ref']['artifact_id'] for item in published if item['alias'] in originals} <= file_refs
     assert Path(opened['assignment_path']).read_bytes() == frozen
     assert len(canonical_json(start)) < len(canonical_json({**start, 'inputs':assignment['inputs']}))
+    # The actual copied reader defaults to sealed science, rather than expanding
+    # the complete evidence-bearing experiment. Aliases keep original reads exact.
+    experiment = next(item for item in assignment['inputs'] if item.get('scientific_view')
+        and any(pointer == '/outcome' for pointer in item['scientific_view']['pointers']))
+    response = subprocess.run([sys.executable, 'tools/read_input.py', experiment['source_name']],
+        cwd=workspace, text=True, capture_output=True, timeout=10, check=True)
+    overview = json.loads(body(response.stdout))
+    values = {item['pointer']: item['value'] for item in overview['items'] if item['status'] == 'selected'}
+    assert values['/outcome'] == 'inconclusive'
+    assert values['/remaining_question'] == 'Independent interpretation is needed.'
+    from scidiscovery.artifact_agent.service.input_reader import select
+    assert select(overview, overview['sealed_handoff']['summary_ref']['pointer']) == 'The bounded question remains unresolved.'
+    assert overview['original_read'] == 'not_confirmed'
+    assert '/adopted_stages' not in values
+    complete = read(workspace, experiment['source_name'], full=True, budget=8192)
+    assert json.loads(body(complete))['adopted_stages'] == [stage]
+    assert json.loads(body(read(workspace, experiment['source_name'], pointers=['/adopted_stages']))) == [stage]
+    producer=f.runtime.runs.status(f.run_id)
+    assert experiment['scientific_view']['pointers'] == ['/'+field for field in producer.decision_fields]
+    root_default=f.root.call_tool('run_status', dict(name='compute'))
+    assert root_default['output_delivery']=='compact'
+    assert {item['pointer']:item['value'] for item in root_default['selected_output']['items']
+        if item['status']=='selected'}['/outcome']=='inconclusive'
+    explicit=f.root.call_tool('run_status', dict(name='compute', output_paths=['/adopted_stages']))
+    assert explicit['output_delivery']=='selected' and explicit['selected_output']['items'][0]['value']==[stage]
+    full=f.root.call_tool('run_status', dict(name='compute', intent='full'))
+    assert full['sealed_output']['payload']['adopted_stages']==[stage]
 
 
 def test_contract_groups_exclude_hidden_inputs_and_keep_exact_permissions(analysis_inputs):

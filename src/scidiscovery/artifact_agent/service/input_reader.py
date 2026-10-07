@@ -17,6 +17,7 @@ import tempfile
 
 
 READ_INPUT_NAVIGATION = 4
+SCIENTIFIC_COMPACT_VIEW = 1
 SCIENTIFIC_PAGE_MIN_BYTES = 512
 SCIENTIFIC_PAGE_MAX_BYTES = 8192
 SCIENTIFIC_PAGE_DEFAULT_BYTES = 4096
@@ -60,6 +61,65 @@ def select(value, pointer):
         else:
             raise ValueError('pointer does not identify a value')
     return value
+
+
+def compact_scientific_fields(value, pointers):
+    """Exact declared fields, with equal budgets and explicit partial structures.
+
+    This is a mechanical selection, never a scientific conclusion or an original
+    read attestation. Each field has its own allowance so a large early field
+    cannot hide a later verdict, limitation or next action.
+    """
+    def size(item):
+        return len(encode(item).encode('utf-8'))
+    def projection(pointer, selected, budget, depth=0):
+        count = size(selected)
+        item = dict(pointer=pointer, size_bytes=count)
+        if size(dict(item, status='selected', value=selected)) <= budget:
+            return dict(item, status='selected', value=selected)
+        item['status'] = 'omitted'
+        if isinstance(selected, (dict, list)):
+            item.update(status='projected', items=[], total_children=len(selected), omitted_children=len(selected))
+            children = selected.items() if isinstance(selected, dict) else enumerate(selected)
+            if depth < 2:
+                for position, (key, child) in enumerate(children):
+                    if position == 32:
+                        break
+                    child_pointer = pointer + '/' + str(key).replace('~', '~0').replace('/', '~1')
+                    entry = projection(child_pointer, child, min(768, budget), depth + 1)
+                    candidate = dict(item, items=[*item['items'], entry], omitted_children=item['omitted_children'] - 1)
+                    if size(candidate) <= budget:
+                        item = candidate
+                    if len(item['items']) == 8:
+                        break
+        return item
+    items = []
+    for pointer in pointers:
+        try:
+            selected = select(value, pointer)
+        except (ValueError, KeyError, IndexError):
+            items.append(dict(pointer=pointer, status='missing'))
+        else:
+            # Complete prose answers are useful science. Large collections use
+            # structure projections; scalar statements retain a separate bound.
+            items.append(projection(pointer, selected, 4096 if not isinstance(selected, (dict, list)) else 1024))
+    return dict(items=items, coverage='declared_fields', original_read='not_confirmed',
+        instruction='Selected values are exact at their pointers. Projected structures are partial; omitted children and originals remain unread. Expand the original pointer or read the full source for evidence needed by the task.')
+
+
+def compact_handoff(handoff):
+    """Keep complete sealed statements only; never shorten scientific prose."""
+    result, omissions = dict(handoff), {}
+    if isinstance(result.get('summary'), str) and len(result['summary'].encode('utf-8')) > 4096:
+        result.pop('summary')
+        omissions['summary'] = 'complete_statement_exceeds_4096_bytes'
+    for field in ('assumptions', 'missing_inputs', 'next_actions'):
+        entries = result.get(field, [])
+        shown = [entry for entry in entries[:4] if len(entry.encode('utf-8')) <= 1024]
+        result[field] = shown
+        if len(shown) != len(entries):
+            omissions[field] = len(entries) - len(shown)
+    return result, omissions
 
 
 def page(workspace, path, *, pointer=None, directory=False, offset=0, version=None, budget=SCIENTIFIC_PAGE_DEFAULT_BYTES):
@@ -126,10 +186,11 @@ def shared_input(inputs, item):
     if len(representatives) != 1:
         return None
     representative = representatives[0]
-    fields = ('media_type', 'schema_id', 'size_bytes')
+    fields = ('media_type', 'schema_id', 'size_bytes', 'scientific_view')
     def compatible(value):
         return (readable_input(value)
-            and all(field in value and value[field] == representative.get(field) for field in fields))
+            and all(value.get(field) == representative.get(field) for field in fields)
+            and all(field in value for field in ('media_type', 'schema_id', 'size_bytes')))
     if (representative.get('same_source_as') or not compatible(representative)
             or not compatible(item)):
         return None
@@ -276,8 +337,20 @@ def _startup_budget(root, source):
     return value
 
 
+def _scientific_descriptor(root, source):
+    assignment = root / 'assignment.json'
+    if not assignment.is_file():
+        return None
+    inputs = json.loads(_within(root, 'assignment.json').read_text(encoding='utf-8')).get('inputs', [])
+    matches = [item for item in inputs if item.get('relative_path') == source.relative_to(root).as_posix()]
+    if len(matches) != 1 or not readable_input(matches[0]):
+        return None
+    descriptor = matches[0].get('scientific_view')
+    return dict(descriptor, handoff_pointer=f'/inputs/{inputs.index(matches[0])}/scientific_view/handoff') if descriptor else None
+
+
 def read(workspace, name=None, *, pointers=None, directory=False, file=False,
-         action='read', budget=None, selection_id=None, offset=None):
+         action='read', budget=None, selection_id=None, offset=None, full=False):
     """Exact model view; navigation is disposable, never a sealed-input attestation.
 
     Explicit character offsets replay the same page regardless of other reads.
@@ -292,10 +365,10 @@ def read(workspace, name=None, *, pointers=None, directory=False, file=False,
     root = Path(workspace).resolve()
     if selection_id is not None:
         if (not isinstance(selection_id, str) or not re.fullmatch(r'[0-9a-f]{32}', selection_id)
-                or (name is None and (pointers is not None or file or directory))):
+                or (name is None and (pointers is not None or file or directory or full))):
             raise ValueError('--selection requires a returned handle; field flags require a complete source')
     implicit = name is None
-    if implicit and selection_id is None and (action == 'read' or pointers is not None or file or directory):
+    if implicit and selection_id is None and (action == 'read' or pointers is not None or file or directory or full):
         raise ValueError('specify a complete source selection, or use bare --next/--repeat/--restart')
     cache = root / CACHE_DIRECTORY
     if cache.is_symlink():
@@ -336,20 +409,24 @@ def read(workspace, name=None, *, pointers=None, directory=False, file=False,
             source = _within(root, selection['path'])
             source_alias = selection.get('source_alias')
             pointers, directory = selection['pointers'], selection['directory']
+            overview = selection.get('scientific_overview', False)
             budget = selection['budget'] if budget is None else budget
         else:
             source, source_alias = _source(root, name, file)
+            overview = not full and pointers is None and not directory and not file
             pointers = list(pointers or [])
+        descriptor = _scientific_descriptor(root, source) if overview else None
+        overview = bool(descriptor)
         startup_budget = _startup_budget(root, source)
         budget = (startup_budget or SCIENTIFIC_PAGE_DEFAULT_BYTES) if budget is None else budget
         if budget > max(startup_budget or 0, SCIENTIFIC_PAGE_MAX_BYTES):
             raise ValueError(f'budget exceeds configured startup limit or scientific-input limit of {SCIENTIFIC_PAGE_MAX_BYTES} bytes')
         selection = dict(path=source.relative_to(root).as_posix(), pointers=pointers,
-                         directory=directory, budget=budget,
+                         directory=directory, budget=budget, scientific_overview=overview,
                          **({'source_alias': source_alias} if source_alias is not None else {}))
-        key = hashlib.sha256(encode([selection['path'], pointers, directory]).encode()).hexdigest()
+        key = hashlib.sha256(encode([selection['path'], pointers, directory, descriptor]).encode()).hexdigest()
         raw = source.read_bytes()
-        fingerprint = hashlib.sha256(raw).hexdigest()
+        fingerprint = hashlib.sha256(raw + (encode(descriptor).encode() if descriptor else b'')).hexdigest()
         previous = state.get(key)
         handle = _handle(key, fingerprint)
         if selection_id is not None and (selection_id != handle or
@@ -365,7 +442,24 @@ def read(workspace, name=None, *, pointers=None, directory=False, file=False,
                 raise ValueError('navigation cache missing or damaged; use --restart')
             if previous.get('fingerprint') != fingerprint:
                 raise ValueError('material changed during reading; use --restart')
-        if directory and not pointers and _plain_text_input(root, source):
+        if overview:
+            payload = json.loads(raw.decode('utf-8'), parse_int=Number, parse_float=Number)
+            view = compact_scientific_fields(payload, descriptor['pointers'])
+            if descriptor.get('handoff') is not None:
+                handoff, omissions = compact_handoff(descriptor['handoff'])
+                for index, item in enumerate(view['items']):
+                    if item.get('status') == 'selected' and type(item.get('value')) is str and item['value'] == handoff.get('summary'):
+                        handoff.pop('summary')
+                        handoff['summary_ref'] = dict(within='this_view', pointer=f'/items/{index}/value')
+                        break
+                view['sealed_handoff'] = handoff
+                if omissions:
+                    view['handoff_omissions'] = omissions
+                    view['handoff_original'] = dict(source='assignment.json', pointer=descriptor['handoff_pointer'],
+                        read='python tools/read_input.py assignment.json --pointer ' + descriptor['handoff_pointer'])
+            view['original'] = dict(source=selection['path'], read='Use the source alias with --full or explicit --pointer; --directory navigates original fields.')
+            text = encode(view)
+        elif directory and not pointers and _plain_text_input(root, source):
             text = '[read_input: plain text; no field directory. Read the same source without --directory.]'
         else:
             text = _selected_text(raw, pointers, directory)
@@ -430,6 +524,7 @@ def main():
     parser.add_argument('name', nargs='?', help='source_name, unique port, registered relative_path or assignment.json; omit for current-selection navigation')
     parser.add_argument('--selection', dest='selection_id', help='returned content-bound navigation handle; use with --offset. After cache loss also supply the complete source and field selection to verify/recover it.')
     parser.add_argument('--file', action='store_true', help='explicit task-local file instead of input alias')
+    parser.add_argument('--full', action='store_true', help='read the exact complete source instead of its declared scientific overview; preserve pagination')
     parser.add_argument('--pointer', dest='pointers', action='append', help='JSON Pointer; repeat for ordered fields')
     parser.add_argument('--offset', type=int, help='character position in selected text (not UTF-8 bytes); replay the same command for the same page, or use next_offset')
     parser.add_argument('--directory', action='store_true', help='current-layer field pointers, types and counts; arrays show index ranges without expanding elements. Exact byte sizes are not computed.')

@@ -22,3 +22,27 @@ def test_pointer_values_and_navigation_remain_exact_and_bounded():
     assert len(canonical_json(items[6]['children'])) <= 8192
     assert all('x' * 10000 not in child['pointer'] for child in items[6]['children'])
     assert sum(item.get('size_bytes', 0) for item in items if item['status'] == 'selected') <= 32768
+
+
+def test_compact_fields_balance_exact_science_and_delivery_coverage():
+    from scidiscovery.artifact_agent.service.input_reader import compact_scientific_fields
+    from scidiscovery.artifact_agent.service.scientific_progress import delivery_coverage
+    payload = dict(assessments=[dict(identity='negative', outcome='contradicts',
+        reason='Evidence conflicts with the proposed mechanism.', evidence=list(range(3000))) for _ in range(30)],
+        conclusion='Original criterion failed.', limitations=['No independent control.'],
+        remaining_question='Does the mechanism survive a control?', next_action='Measure the control.')
+    projection = compact_scientific_fields(payload, ['/assessments', '/conclusion', '/limitations', '/remaining_question', '/next_action'])
+    assert len(canonical_json(projection)) < 8192
+    items=projection['items']
+    assert items[0]['status']=='projected' and items[0]['omitted_children'] > 0
+    def selected(items):
+        return {item['pointer']: item['value'] for item in items if item['status']=='selected'}
+    assert selected(items)['/conclusion']==payload['conclusion']
+    assert selected(items)['/next_action']==payload['next_action']
+    nested=items[0]['items'][0]['items']
+    assert selected(nested)['/assessments/0/outcome']=='contradicts'
+    coverage=delivery_coverage(dict(output_delivery='compact', selected_output=projection))
+    assert coverage['coverage']=='compact' and coverage['original_read']=='not_confirmed'
+    assert coverage['fields'][0]['status']=='projected'
+    assert coverage['fields'][0]['omitted_children']==items[0]['omitted_children']
+    assert 'value' not in str(coverage)

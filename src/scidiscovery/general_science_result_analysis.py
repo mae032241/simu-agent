@@ -83,7 +83,9 @@ their corresponding source is absent. Blocked or incomplete experiments can
 support an inconclusive analysis, never fabricated successful observations.
 Control binds exact sources; the Worker owns scientific judgments. This task
 adds no execution authorization or mandatory review.
-Start with the default output-form overview and input directories. Do not use
+Start with the default output-form and sealed input overviews; use original input
+directories for fields needed by a claim. An overview is partial and does not
+establish inspection of omitted originals. Do not use
 --full or batch cat/print complete schemas, hypotheses, reports, logs or arrays
 as routine discovery. Select the exact fields needed for each claim, its original
 criterion, contrary evidence and limitations; read their reference definitions.

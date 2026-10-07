@@ -8,6 +8,7 @@ from typing import Any
 from ..schema.approval import parse_json_pointer
 from ..schema.common import canonical_json
 from ...operation_contract import DiagnosticError
+from .input_reader import compact_scientific_fields, compact_handoff
 
 def run_intent_projection(value, *, intent):
     """Pure compact projection; the route avoids assembling excluded details."""
@@ -236,6 +237,7 @@ class RunReadProjection:
                 else None
             )
         elif intent == "decision" and value.state == "completed":
+            default_view = not output_paths
             if not output_paths:
                 # The frozen read projection remains useful after its authoring contract
                 # retires; it never establishes current scientific qualification.
@@ -256,10 +258,19 @@ class RunReadProjection:
                 else None
             )
             result["selected_output"] = (
-                _output_selection(output, output_paths or [])
+                ({key: output[key] for key in ("artifact_name", "kind", "schema")}
+                    | compact_scientific_fields(output['payload'], output_paths)
+                    if default_view else _output_selection(output, output_paths or []))
                 if output is not None and output_paths
                 else None
             )
+            if default_view and output_paths:
+                result['output_delivery'] = 'compact'
+                if result['selected_output'] is not None:
+                    result['selected_output']['read'] = dict(tool='run_status', name=name, intent='decision',
+                        output_paths=[output_paths[0]])
+                    result['selected_output']['reading'] = 'Replace output_paths with selected exact returned pointers; navigation intent indexes omitted children.'
+                    result['selected_output']['original'] = dict(tool='run_status', name=name, intent='full')
             result["scheduler_signal"] = (
                 value.signal.model_dump(mode="json")
                 if output_status in {"available", "historical"}
@@ -267,14 +278,10 @@ class RunReadProjection:
                 else None
             )
         if intent == "decision" and isinstance(result.get("scheduler_signal"), dict):
-            signal = dict(result["scheduler_signal"])
-            omissions = {}
-            for field in ("assumptions", "missing_inputs", "next_actions"):
-                entries = signal.get(field, [])
-                shown = [entry for entry in entries[:4] if len(entry.encode("utf-8")) <= 1024]
-                signal[field] = shown
-                if len(shown) != len(entries):
-                    omissions[field] = len(entries) - len(shown)
+            signal, omissions = compact_handoff(result['scheduler_signal'])
+            if output_paths and not default_view and 'summary' in result['scheduler_signal']:
+                signal['summary'] = result['scheduler_signal']['summary']
+                omissions.pop('summary', None)
             result["scheduler_signal"] = signal
             if omissions:
                 result["scheduler_signal_omissions"] = {"omitted_items": omissions,

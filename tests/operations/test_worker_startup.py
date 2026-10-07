@@ -236,7 +236,7 @@ def test_compiled_experiment_start_delivers_remote_rules_only_with_remote_tool()
         assert 'replays that exact page after any other reads' in start['reading']['inputs']
 
 
-@pytest.mark.parametrize('version', [1, 2, 3])
+@pytest.mark.parametrize('version', [1, 2, 3, 4])
 def test_reopening_frozen_older_reader_keeps_compatible_selection_guidance(tmp_path, monkeypatch, version):
     from scidiscovery.artifact_agent.service import input_reader
     from tests.operations.test_analysis_claim_scope import generic_worker
@@ -252,15 +252,19 @@ def test_reopening_frozen_older_reader_keeps_compatible_selection_guidance(tmp_p
     assert frozen_helper == previous.read_bytes()
     for response in (opened, worker.call_tool('worker_open_assignment', {})):
         start = json.loads(Path(response['start_here_path']).read_bytes())
-        assert '--selection HANDLE' not in start['reading']['inputs']
-        assert 'frozen reader uses explicit continuation' in start['reading']['inputs']
+        assert ('--selection HANDLE' in start['reading']['inputs']) == (version == 4)
+        assert ('frozen reader uses explicit continuation' in start['reading']['inputs']) == (version < 4)
         assert '--directory lists JSON keys;' in start['reading']['inputs']
         assert 'field pointers, types and counts' not in start['reading']['inputs']
-        assert 'all --pointer' in response['input_reading']
+        if version < 4:
+            assert 'all --pointer' in response['input_reading']
         if version == 3:
             assert 'not --offset' in response['input_reading']
             assert 'Version 3 also accepts' in start['reading']['inputs']
-        assert '--directory' in response['input_reading']
-        assert 'page --budget' in response['input_reading']
+        if version < 4:
+            assert '--directory' in response['input_reading']
+            assert 'page --budget' in response['input_reading']
+        assert '--full' not in start['reading']['inputs']
+        assert not any(item.get('scientific_overview_available') for item in start['inputs'])
     assert (root/'tools/read_input.py').read_bytes() == frozen_helper
     assert (root/'assignment.json').read_bytes() == frozen_assignment
