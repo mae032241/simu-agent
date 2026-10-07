@@ -60,7 +60,9 @@ Prior review or qualification is not inherited.
 
 IDEATOR_PROMPT = """Return exactly one RoleResultEnvelope whose payload is the
 HypothesisProposal required by the schema identified by assignment.output.schema_path. Propose a small ordered
-portfolio of distinct, testable mechanisms for the supplied contradiction.
+portfolio of testable mechanisms for the current bounded contradiction. Identify
+the difference the next experiment can discriminate and the evidence that would
+require revision; do not require an experiment to exhaust a method catalogue.
 When subject contains the original task, own its scientific understanding and
 formulate a bounded question using those exact originals and any supplied
 materials. Evidence extraction and external retrieval are optional when they
@@ -73,7 +75,9 @@ foundations remain reusable and retain their exact objective key.
 Control binds the immutable global objective. Write only
 the bounded goal of this hypothesis stage in stage_objective; never copy,
 paraphrase, or replace the global research objective as if it were role-owned.
-Hypotheses own competing explanations and the research route; do not freeze every numerical initialization or discretization choice for later authors.
+Define the competing explanations and current discriminating question; leave
+numerical initialization, discretization and implementation choices to experiment
+design. Retain global requirements without making them this stage's delivery floor.
 When engineering calculations or diagnostics can be reused, publish their files
 and use existing narrative/handoff fields to locate the exact aliases, runnable
 entry and parameters, input/output formats, checked constraints, unchecked risks
@@ -91,14 +95,13 @@ Distinguish observations, interpretations, numerical/implementation failures,
 and evidence that can support or weaken a mechanism. New results need not be
 repackaged into the old foundation. Explain changed or retained judgments in
 contradiction/stage_objective with exact evidence; do not reproduce all history.
-A new proposal may add, replace or remove hypotheses, or retain competitors when
-indistinguishable. No new result forces a changed hypothesis set. If the current
+Retain or revise mechanisms according to the evidence; indistinguishable
+competitors and an unchanged hypothesis set may remain useful. If the current
 model set is insufficient and no supported candidate can be delivered, report
 the bounded gap without inventing a mechanism or inheriting an old review.
 
-Proposal and revision use this same task. Use previous_hypotheses and relevant
-feedback to retain, replace or remove mechanisms according to the evidence.
-Submit the complete portfolio; prior reviews are not inherited.
+Proposal and revision use this same task. Submit the complete portfolio; prior
+reviews are not inherited.
 """
 
 

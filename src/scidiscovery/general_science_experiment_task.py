@@ -346,27 +346,30 @@ PROMPT = """Own one bounded experiment for one answerable scientific question:
 design, implement, debug when useful, execute locally with the native shell or
 available remote tools, retain observations and judge validity. Test the exact
 sealed hypotheses in hypothesis_portfolio; own feasibility and test design.
-Within those hypotheses, the assigned scientific question and user constraints,
-continuously try related parameters, implementations, numerical methods and test
-designs, including repetitions, baselines and contrasts among bound hypotheses.
-Local protocol, parameter-range or exploratory criterion changes alone do not
-require a new task. A script run or single observation need not end the experiment.
-State scope and stopping reasons in existing stage/report narratives; retain each
-attempt's results and limitations, and the best eligible candidate under the original
-selection criterion. Do not rewrite that criterion after seeing a better score.
-Seal observations and validity for a separate result-analysis task when sufficiently
-answered, without further scientific progress, or at budget/permission boundaries.
-Changing or introducing hypotheses, or departing the bound hypotheses, question or
-user-authorized research scope, requires analysis/Root selection and a hypothesis
-task when needed. Cheap computation does not remove these boundaries. Numerical
-success alone does not settle the overall objective.
+Within those hypotheses, the assigned question, original criteria and user
+constraints, continuously try related parameters, implementations, numerical
+methods, repetitions, robustness checks and baselines. A script run or fixed trial
+count does not force a new task. Retain each attempt's results and limitations and
+the best eligible candidate under the original selection criterion.
+If observations challenge a key assumption or proxy metrics conflict with robust
+evidence, an affordable discriminating test may continue within those boundaries.
+When resolving the conflict or choosing a route requires changing the mechanism,
+question or original criteria, seal the bounded observations and validity for
+independent result analysis and hypothesis revision when needed. Do not make that
+global scientific decision yourself. Seal also when sufficiently answered, without
+further scientific progress, or at budget/permission boundaries. Cheap computation
+does not remove these limits. New exploratory criteria may be declared with their
+evidence limits; they cannot replace the original criteria or support a changed
+research decision without analysis and hypothesis revision when needed.
 Read subject for the current question, stage objective and conclusions, and
 objective_source for the frozen global goal and completion criteria: original user
 text, research objective, the foundation's objective_contract, or the intake's
 scientific_foundation.objective_contract. Reuse them in place; distinguish supplied
 requirements from working assumptions and criteria. Control does not invent these
-from text. Retain unmet original requirements; this task need not optimize every
-candidate or deliver the entire research goal. Do not expand budgets or retries.
+from text. Global completion conditions and trial/stopping history accumulate
+across sealed tasks, not as this Worker's delivery floor. Carry original requirements,
+unmet conditions and exact history; bounded delivery need not finish the overall
+goal. Do not expand budgets or retries.
 Use the assigned handoff target to plan within the current controlled time budget,
 leaving independent analysis and Root closeout time. Retain and check deliverable
 materials during the trials, rather than postponing all publication and validation
@@ -392,8 +395,8 @@ final adoption additionally verifies the declaration's original stage receipt.
 Bind a previous declaration as scientific_materials for that validation. Retain
 the original prediction, criterion and threshold when comparing held-out observations;
 never overwrite them to turn observed results into prior validation. Exploratory
-revisions seal a new declaration/version with evidence limits, without forcing a
-new task within the bound hypotheses. not_run is no test.
+revisions seal a new declaration/version with evidence limits as above. not_run
+is no test.
 Include execution interpretation when useful: executor facts do not supply your
 scientific conclusion. Rework seals a new version; retain the exact versions you
 adopt in the final report. Stage sealing is neither review nor final completion.

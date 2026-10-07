@@ -200,6 +200,12 @@ def test_codex_profile_contains_root_and_compiled_operation_boundaries(
     assert "interactive research scheduler" not in common_prompt
     scheduler_prompt = config["developer_instructions"]
     assert "normal work requires no guide files" in scheduler_prompt
+    projected = ' '.join(scheduler_prompt.split())
+    assert 'Dispatch one question that can change a research decision.' in projected
+    assert 'Interpret experiment observations through result analysis before treating them as scientific conclusions' in projected
+    assert 'do not reset them for each Worker or make them a mandatory experiment handoff floor' in projected
+    assert 'Neither a script run nor a fixed trial count forces handoff.' in projected
+    assert 'Dispatch one question' not in common_prompt  # Root policy stays out of Worker project rules.
     assert 'surface="execution"' in scheduler_prompt
     assert "{{SCHEDULER_GUIDE_ROOT}}" not in scheduler_prompt
     guide_root = config_root / "scidiscovery-guides"

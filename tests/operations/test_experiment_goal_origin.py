@@ -1,5 +1,6 @@
 """Goals follow exact scientific lineage without a Root-owned projection task."""
 import json
+from pathlib import Path
 
 import pytest
 
@@ -108,12 +109,23 @@ def test_hypothesis_stage_and_global_goal_follow_original_not_newer_foundation(t
     completed = worker.call_tool('worker_submit_result', {})
     assert completed['state'] == 'completed', completed
     experiment = root.call_tool('run_status', {'name': 'experiment'})['output_artifact_name']
+    next_action = 'Test the existing hypothesis after repairing the missing environment; retain unmet global requirements.'
+    remaining = 'There are no observations resolving the original hypothesis.'
     analysis = _complete(runtime, root, 'analysis', 'science.result.analyze.v1', {'subject': experiment},
         {'summary': 'The experiment was blocked, so the hypothesis remains untested.',
          'overall_verdict': 'inconclusive', 'claim_allowed': False,
+         'next_action': next_action, 'remaining_contradiction': remaining,
          'limitations': ['No execution observations.']}, verdict='inconclusive')
     assert _artifact(runtime, instance, analysis).schema_id == 'scidiscovery.layered-diagnosis.v1'
     analysis_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace='run', name='analysis')
+    start = json.loads((runtime.runs.backend.open(analysis_id).root/'worker-start.json').read_bytes())
+    role = ' '.join(start['role_instructions'].split())
+    assert 'Use remaining_contradiction and next_action to explain how evidence changes the decision' in role
+    assert 'continue tests within existing hypotheses and original criteria' in role
+    assert 'closeout only when global conditions are supported' in role
+    assert 'parameter improvements or a passing verdict alone do not establish scientific progress' in role
+    retained = json.loads(runtime.artifacts.read(_artifact(runtime, instance, analysis).ref))
+    assert retained['next_action'] == next_action and retained['remaining_contradiction'] == remaining
     inherited = {item.port_name: item.artifact_ref for item in runtime.runs.status(analysis_id).inputs}
     assert inherited['hypothesis_portfolio'] == inputs['hypothesis_portfolio']
     assert inherited['objective_source'] == inputs['objective_source']
@@ -144,11 +156,20 @@ def test_generic_analysis_is_available_without_domain_plugins():
 
 def test_original_task_enters_hypothesis_without_intake_search_or_synthetic_key(tmp_path):
     runtime, instance, root = _setup(tmp_path, native_only=True)
-    root.call_tool('artifact_ingest_text', {'name': 'task', 'text': 'Compute 2+2 and retain the program and result.'})
+    task_text = ('Compute 2+2 and retain the program and result. Global completion requires '
+                 '11 valid trials and no improvement in the last 4 eligible trials, across sealed tasks.')
+    root.call_tool('artifact_ingest_text', {'name': 'task', 'text': task_text})
     expected = _artifact(runtime, instance, 'task').ref
     proposal = _proposal(hypothesis_keys=('mechanism',))
     proposal.pop('research_objective_key')
     subject = _complete(runtime, root, 'hypothesis', 'science.hypothesis.propose.v1', {'subject': 'task'}, proposal)
+    hypothesis_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace='run', name='hypothesis')
+    hypothesis_start = json.loads((runtime.runs.backend.open(hypothesis_id).root/'worker-start.json').read_bytes())
+    hypothesis_role = ' '.join(hypothesis_start['role_instructions'].split())
+    assert 'difference the next experiment can discriminate' in hypothesis_role
+    assert 'do not require an experiment to exhaust a method catalogue' in hypothesis_role
+    assert 'stage_objective' in hypothesis_role
+    assert runtime.artifacts.read(expected).decode() == task_text
     sealed = json.loads(runtime.artifacts.read(_artifact(runtime, instance, subject).ref))
     assert sealed.get('research_objective_key') is None
     hypotheses = runtime.runs.operation_catalog.operation('science.hypothesis.propose.v1')
@@ -161,6 +182,18 @@ def test_original_task_enters_hypothesis_without_intake_search_or_synthetic_key(
             'falsifiability': 'pass', 'finite_discriminability': 'pass'}]})
     assert root.call_tool('operation_invoke', _request(subject))['result']['state'] == 'queued'
     run_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace='run', name='experiment')
+    assert next(item.artifact_ref for item in runtime.runs.status(run_id).inputs
+                if item.port_name == 'objective_source') == expected
+    from tests.operations.worker_fixtures import attached_worker
+    worker = attached_worker(runtime, root, 'experiment')
+    opened = worker.call_tool('worker_open_assignment', {})
+    start = json.loads(Path(opened['start_here_path']).read_bytes())
+    role = ' '.join(start['role_instructions'].split())
+    assert 'an affordable discriminating test may continue within those boundaries' in role
+    assert "Global completion conditions and trial/stopping history accumulate across sealed tasks, not as this Worker's delivery floor" in role
+    assert 'Do not make that global scientific decision yourself.' in role
+    assert start['instruction'] == _request(subject)['instruction']
+    assert '11 valid trials' not in role and 'last 4 eligible trials' not in role
     assert next(item.artifact_ref for item in runtime.runs.status(run_id).inputs
                 if item.port_name == 'objective_source') == expected
     assert {run.operation_id for run in runtime.runs.list(instance_id=instance.instance_id)} == {

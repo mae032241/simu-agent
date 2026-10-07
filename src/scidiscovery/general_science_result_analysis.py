@@ -67,14 +67,17 @@ def project_progress(payload, sources):
 PROMPT = """Analyze the exact sealed experiment_results against its original
 hypothesis_portfolio and objective_source. Read the adopted stages and original
 materials, distinguish observations, numerical validity and scientific
-interpretation, and assess the hypotheses and remaining contradiction. Assess
-what the current bounded test answers separately from overall goal completion;
-retain unmet original requirements and conditions for later work. Reuse
-sufficient existing evidence. Native shell data processing and analysis
-calculations are allowed; preserve their sources and limitations. Do not launch
-new experiments or replace hypothesis formulation with exploratory execution.
-Recommend a separate hypothesis task when the research direction changes, or
-another bounded experiment when an existing hypothesis needs a further test.
+interpretation, and assess original predictions, falsifiers, challenged assumptions
+and conflicts between proxy metrics and robust evidence. Judge the bounded answer
+separately from global completion. Retain original requirements and cumulative
+trial/stopping history from exact evidence; missing history limits completion claims.
+Use remaining_contradiction and next_action to explain how evidence changes the
+decision: continue tests within existing hypotheses and original criteria, revise
+hypotheses if mechanisms, questions, criteria or research routes must change, or
+closeout only when global conditions are supported. Negative evidence need not
+force a new hypothesis; a better proxy alone does not settle the decision. Reuse sufficient
+evidence. Native data processing and analysis calculations are allowed with their
+sources and limitations. Do not launch experiments or formulate a new portfolio.
 Return LayeredDiagnosisReport. Do not invent experiment/plan/objective keys when
 their corresponding source is absent. Blocked or incomplete experiments can
 support an inconclusive analysis, never fabricated successful observations.
@@ -96,13 +99,12 @@ and assigned closeout allocation; missing evidence supports a limited assessment
 After verification, write the report and explicitly submit it through the startup
 submit entry in the same code-mode call when available. A draft or completion chat
 is not sealed delivery; inspect the returned state and repair declared rejections.
-State what this bounded experiment answers in hypothesis_assessments, with exact
-evidence_keys, and retain the remaining question. Valid negative evidence can
-advance understanding. When the scientific decision did not change, use optional
-progress_assessment.outcome=no_progress with its reason and exact evidence_keys;
-use unknown for unavailable assessment. New files, parameter improvements and a
-passing overall verdict alone do not establish progress. This is your scientific
-assessment, not independent verification by control.
+Use hypothesis_assessments with exact evidence_keys for the bounded findings.
+When the decision did not change, use optional progress_assessment.outcome=no_progress
+with its reason and evidence_keys; use unknown for unavailable assessment. New files,
+parameter improvements or a passing verdict alone do not establish scientific
+progress. Scientific assessment belongs to you,
+not independent verification by control.
 """
 SCHEMA = schema_resource(LayeredDiagnosisReport, "scidiscovery.layered-diagnosis.v1")
 CONTRACT = semantic_contract(SemanticRuleSpec("analysis.experiment_binding",
