@@ -2484,6 +2484,13 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
         output: ArtifactRef,
         signal: SchedulerSignal,
     ) -> RunCompletionReceipt:
+        from .scientific_usage import output_sources, retain_source_edges
+        value = self.status(run_id)
+        sources = ()
+        if value.state != 'completed':
+            compiled = self._compiled(value)
+            port_name = self.artifacts.catalog(output).labels['operation_output_port']
+            sources = output_sources(self, value, compiled, port_name, self.artifacts.read(output))
         completed_at = timestamp()
         with self._connect() as connection:
             self._attach_scheduler(connection)
@@ -2553,6 +2560,7 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
             if cursor.rowcount != 1:
                 connection.execute("ROLLBACK")
                 raise RunStateConflict("Run completion compare-and-set failed")
+            retain_source_edges(self, value, output, sources, connection=connection)
             self._append_activity(connection, run_id, 'completion_committed', completed_at, None)
             from .run_attention import record, issues
             for _, issue in issues(connection, run_id=run_id):

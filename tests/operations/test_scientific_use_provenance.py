@@ -126,7 +126,7 @@ def test_unavailable_historical_provenance_returns_explicit_admission_error(tmp_
         from dataclasses import replace
         from scidiscovery.operations import tooling
         original = tooling.reference_policy
-        monkeypatch.setattr(tooling, 'reference_policy', lambda compiled: replace(original(compiled), max_calls=1))
+        monkeypatch.setattr(tooling, 'reference_policy', lambda compiled: replace(original(compiled), max_unique_bytes=0))
     else:
         from scidiscovery.artifact_agent.service.run_records import RunContractUnavailable
         def unavailable(value):

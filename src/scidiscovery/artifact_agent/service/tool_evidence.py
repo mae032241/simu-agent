@@ -451,7 +451,7 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
         for ref in derived_refs:
             if ref not in parent_refs:
                 parent_refs.append(ref)
-        from .scientific_usage import scientific_use_restricted
+        from .scientific_usage import scientific_use_restricted, retain_source_edges
         restricted = scientific_use_restricted(self, (*derived_refs, *((source_ref,) if source_ref else ()), *trusted_parent_refs),
             policy=reference_policy(compiled))
         port = ports['tool_evidence']
@@ -526,6 +526,8 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
             # pass through the same repair path. CAS registration is idempotent.
             self.reference_manifest(value, subject_ref=artifact, stored_records=all_records,
                 connection=connection, recovery=recovery)
+            retain_source_edges(self, value, artifact, derived_refs or ((source_ref,) if source_ref else ()),
+                record=record, connection=connection)
             if port.agent_visible:
                 binding = self._bind_evidence_output(connection, value, record['alias'], artifact)
                 record = {**record, 'artifact_name': binding.name}

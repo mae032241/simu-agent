@@ -13,6 +13,7 @@ from ...agent_execution_settings import AttachmentSettings
 from ...operation_contract import ToolInputError
 from ...plugin_runtime.workspace import _open_workspace_parent
 from ..schema.artifact import ArtifactRegistration
+from ..schema.refs import ArtifactRef
 from ..schema.common import canonical_json
 from .run_records import RunStateConflict
 
@@ -49,8 +50,11 @@ def publish_attachments(runs, run_id, request, *, workspace):
     settings = AttachmentSettings.model_validate((run.recovery_policy or {}).get('attachments', {}))
     aliases = tuple(dict.fromkeys(request.source_aliases))
     sources = tuple(runs.source_descriptor(run, alias).artifact_ref for alias in aliases)
-    from .scientific_usage import scientific_use_restricted
-    restricted = scientific_use_restricted(runs, sources, policy=reference_policy(runs._compiled(run)))
+    from .scientific_usage import scientific_use_restricted, retain_source_edges, _context_identity
+    source_policy = reference_policy(runs._compiled(run))
+    restricted = scientific_use_restricted(runs, sources, policy=source_policy)
+    from ...reference_tools import ReferencePolicy
+    edge_context = _context_identity(runs, source_policy or ReferencePolicy())
     parents = tuple(dict.fromkeys((*[item.artifact_ref for item in run.inputs], *sources)))
     if len({item.path for item in request.files}) != len(request.files):
         raise ToolInputError("attachment_publication_invalid", 'Duplicate attachment paths in one request')
@@ -149,6 +153,8 @@ def publish_attachments(runs, run_id, request, *, workspace):
                     connection.execute('INSERT INTO run_tool_evidence VALUES (?,?,?,?,?)',
                         (run_id, ordinal, key, canonical_json(record), alias))
                     records.append(record); existing[key] = record
+                retain_source_edges(runs, run, ArtifactRef.model_validate(record['artifact_ref']), sources,
+                    record=record, connection=connection, context=edge_context)
                 result.append({'reference':record['alias'], 'file_name':metadata['file_name'],
                     'purpose':metadata['purpose'], 'media_type':media, 'size_bytes':size})
             runs._encode_evidence_snapshot(run,

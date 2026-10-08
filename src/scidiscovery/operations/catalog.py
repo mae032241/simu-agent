@@ -109,6 +109,12 @@ class CompiledCatalog:
     def runtime_configuration_digest(self, plugin_id: str) -> str:
         try: return self._runtime_configuration_digests[plugin_id]
         except KeyError as error: raise ValueError("plugin has no compiled runtime configuration") from error
+    def scientific_provenance_digest(self) -> str:
+        """Restriction checks also depend on installed historical contracts."""
+        return canonical_digest({"current": self.digest(), "historical": sorted(
+            (operation_id, digest, compiled.digest)
+            for (operation_id, digest), compiled in self._historical_operations.items())})
+
     def digest(self) -> str:
         payload = {
             "operations": [

@@ -208,3 +208,43 @@ def test_attention_snapshot_and_delivery_cursor_survive_archive_restore(tmp_path
     assert result['attention_notifications']['events'][0]['name'] == 'failed_source'
     assert root.facade.prepare_attention_notifications() is None
     assert runtime.runs.submission_attention(source) is not None
+
+
+@pytest.mark.parametrize('retain_checks', [False, True])
+@pytest.mark.parametrize('restricted', [False, True])
+def test_scientific_direct_edges_archive_restore_and_event_isolation(tmp_path, retain_checks, restricted):
+    from tests.operations.test_scientific_use_provenance_edges import system, setup, experiment, edges
+    from scidiscovery.artifact_agent.schema.refs import ArtifactRef
+    from scidiscovery.artifact_agent.service.scientific_usage import EDGE_ACTIVITY, scientific_use_restricted
+    runtime, instance, root = system(tmp_path)
+    runtime.runs._synchronous_archive_fixture = True
+    setup(runtime, instance, root)
+    ref = experiment(runtime, instance, root, 'archivable', restricted=restricted)
+    producer = runtime.runs.completed_for_output(ref)
+    ignored = tuple(ArtifactRef.model_validate(json.loads(row[2])['artifact_ref']) for row in edges(runtime.runs))
+    assert scientific_use_restricted(runtime.runs, (ref,), ignore_labels=ignored) is restricted
+    if not retain_checks:
+        # Same archive schema, representing a pre-acceleration control history.
+        with runtime.runs._connect() as connection:
+            connection.execute('DELETE FROM run_activity WHERE activity=?', (EDGE_ACTIVITY,))
+    control = edges(runtime.runs)
+    visible = [root.call_tool('run_status', {'name': 'archivable', 'intent': 'navigation'}),
+               runtime.runs.tool_timing(producer.run_id), runtime.runs.diagnostic_events(producer),
+               _live_model(runtime).node(instance.instance_id, 'run:archivable')]
+    assert EDGE_ACTIVITY not in json.dumps(visible)
+    before_activity = producer.last_activity_at
+    before_notification = root.facade.prepare_attention_notifications()
+    # Internal records alone must not change public events, notification/heartbeat
+    # state, or stage projections. Existing business events are left intact.
+    assert runtime.runs.status(producer.run_id).last_activity_at == before_activity
+    assert root.facade.prepare_attention_notifications() == before_notification
+    root.call_tool('progression_command', {'command': 'pause'})
+    service = InstanceArchive(runtime)
+    assert save_archive(service, instance.instance_id)['storage_state'] == 'archived'
+    assert not edges(runtime.runs)
+    archived_node = service.archived_model(instance.instance_id).node(instance.instance_id, 'run:archivable')
+    assert EDGE_ACTIVITY not in json.dumps(archived_node)
+    assert restore_archive(service, instance.instance_id)['storage_state'] == 'restored'
+    assert edges(runtime.runs) == control
+    assert scientific_use_restricted(runtime.runs, (ref,), ignore_labels=ignored) is restricted
+    assert edges(runtime.runs) == control  # Restored cold reads never persist rows.
