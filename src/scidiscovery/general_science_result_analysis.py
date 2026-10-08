@@ -94,7 +94,41 @@ Use remaining_contradiction and next_action to explain how evidence changes the
 decision: continue tests within existing hypotheses and original criteria, revise
 hypotheses if mechanisms, questions, criteria or research routes must change.
 Scope negative findings to the tested route; local exhaustion does not establish
-global exhaustion. When feasible within scope, constraints, budget and permissions,
+global exhaustion. A fixed weak-control tail or proxy plateau does not establish
+that promising routes are exhausted. A bears the burden of supporting successful
+closeout, especially early closeout. When the original requires continued exploration
+and control confirms sufficient global budget, list known reasonable uncovered
+directions in existing assessments/limitations/remaining_contradiction and explain
+for each, with original requirements and sealed evidence, why it should continue,
+is ruled out, is infeasible or is not worth continuing. Do not enumerate every
+possible solution. Without sufficient grounds to exclude the remaining directions,
+default to continued research: send a complete question to W within current H;
+send new mechanisms, key assumptions or data/validation boundaries to H for explicit
+revision; request evidence extraction for missing materials; wait for missing
+authorization. This recommendation grants no permission. Supported success or a
+specific limited stop remains possible; preserve unmet exploration, run-count and
+delivery requirements even if the bounded target passes. Never promote local success
+or process completion to completion of the whole original task.
+Read current control budget through worker_open_assignment; assignment.json is an
+initial snapshot. Distinguish the Worker task deadline/allocation from global loop
+time and tokens. Use only supplied control balances and coverage; missing or partial
+global usage makes sufficiency/exhaustion unknown. Do not estimate global balances,
+compute sufficiency ratios or fill a mechanical budget table. Unknown budget alone
+does not justify stopping or waive original exploration and delivery requirements;
+retain the uncertainty and recommend the evidence-based next question within known
+permissions, while Root/control apply mechanical resource limits.
+A self-built proxy without independent evidence of target representativeness may
+rank candidates, diagnose problems or support/refute predictions only within its
+covered scope. It cannot alone establish target achievement or reasonable results
+under target conditions; keep those conclusions unknown in existing report fields
+when representative evidence is missing. Explain covered and uncovered changes;
+self-selected perturbation strengths, thresholds and proxy plateaus do not become
+user success criteria. Evaluate simulation metrics explicitly accepted by the
+original task under that original contract; independently supported validation
+contributes evidence only within its justified scope. If target validation cannot
+be obtained lawfully, deliver a limited conclusion or specific limited stop without
+accessing hidden tests or inventing success.
+When feasible within scope, constraints, budget and permissions,
 recommend a distinct mechanism question and minimal discriminating contrast for
 hypothesis formulation. Distinguish testable assumptions from required unobtainable
 inputs. Unknown generalization limits claims. Retain the best eligible candidate under
@@ -156,7 +190,7 @@ remain in force until the explicit revised H portfolio is assigned.
 """
 SCHEMA = schema_resource(LayeredDiagnosisReport, "scidiscovery.layered-diagnosis.v1")
 CONTRACT = semantic_contract(SemanticRuleSpec("analysis.experiment_binding",
-    "Interpret an exact sealed experiment using its original hypotheses and goal. References, assessed hypothesis identities and any declared prediction/falsifier keys must be bound. Optional progress_assessment judges the increment to the research decision, separately from whether evidence supports or contradicts a hypothesis. A owns evaluating outcomes, challenging derived proxies/selection rules against original user constraints, and recommending scientific followup or closeout through existing narrative/handoff fields. This does not change the user goal or qualification, which belongs to its existing authority."))
+    "Interpret an exact sealed experiment using its original hypotheses and goal. References, assessed hypothesis identities and any declared prediction/falsifier keys must be bound. Optional progress_assessment judges the increment to the research decision, separately from whether evidence supports or contradicts a hypothesis. A owns evaluating outcomes, challenging derived proxies/selection rules against original user constraints, and recommending scientific followup or closeout through existing narrative/handoff fields. A supports successful/early closeout with original requirements and sealed evidence, including per-direction reasons for known reasonable uncovered directions when continued exploration and sufficient control budget apply; otherwise recommend continued work, H revision, extraction or authorization waiting as appropriate. Local success, weak-control tails and process completion do not establish global completion; preserve unmet exploration/count/delivery requirements. Self-built proxies lacking independent target-representativeness evidence cannot alone establish target achievement or reasonable target results; those conclusions remain unknown, with covered scope and gaps retained. Original-task-accepted simulation metrics retain their original criteria. Read live control budget, distinguish task allocation from global balances, and keep missing/partial global budget unknown without treating it as a stopping justification. These are owner judgments in existing fields, not a new control gate, budget threshold, form or approval. This does not change the user goal or qualification, which belongs to its existing authority."))
 COMPONENTS = (
     ComponentSpec("result_analysis_prompt", "resource", __name__ + ":PROMPT"),
     ComponentSpec("result_analysis_schema", "resource", __name__ + ":SCHEMA"),

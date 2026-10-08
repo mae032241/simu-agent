@@ -17,6 +17,7 @@ from scidiscovery.platforms.scheduler_prompt import load_scheduler_prompt, load_
 from tests.operations.test_general_transform_operations import _root
 from tests.operations.test_historical_compatibility_paths import _complete
 from tests.operations.test_hypothesis_objective_boundary import _proposal
+from tests.operations.test_progression import progression, row, checkpoint
 from tests.operations.worker_fixtures import attached_worker
 
 
@@ -81,8 +82,8 @@ def test_root_and_analysis_keep_route_scope_and_incomplete_closeout(catalog):
     assert "When independent review or bounded revision is selected" in guides["research.md"]
 
 
-def _values(root, name, paths=None):
-    status = root.call_tool("run_status", {"name": name, **({"output_paths": paths} if paths else {})})
+def _values(root, name):
+    status = root.call_tool("run_status", {"name": name})
     return {item["pointer"]: item["value"] for item in status["selected_output"]["items"]
             if item["status"] == "selected"}
 
@@ -127,10 +128,13 @@ def test_sealed_local_negative_can_feed_distinct_conditional_hypothesis_without_
             "rejection_condition": "Gain <0.03 in either fixed perturbation direction."}], evidence_keys=["result_analysis"])
     h2 = _complete(runtime, root, "h2", "science.hypothesis.propose.v1",
         {"subject": "goal", "previous_hypotheses": h1, "result_analysis": a1}, second, verdict="inconclusive")
-    # Read exact children when the complete portfolio exceeds the bounded default.
+    # Inspect retained scientific originals inside the fixture; Root only reads
+    # compact scheduling statements, never raw portfolio children.
     fields = ("mechanism", "predictions", "falsifiers")
-    selected = _values(root, "h2", [f"/hypotheses/0/{field}" for field in fields])
-    assert selected == {f"/hypotheses/0/{field}": mechanism[field] for field in fields}
+    with pytest.raises(Exception, match="tool arguments do not satisfy the declared model"):
+        root.call_tool("run_status", {"name": "h2", "output_paths": ["/hypotheses/0/mechanism"]})
+    retained = root.facade.run_status(name="h2", intent="full")["sealed_output"]["payload"]["hypotheses"][0]
+    assert {field: retained[field] for field in fields} == {field: mechanism[field] for field in fields}
     # No automatic review/approval is needed to queue a feasible scientific test.
     queued = root.call_tool("operation_invoke", {"name": "w2", "operation_id": "science.experiment.v1",
         "instruction": "Test only the specified conditional contrast within the original criteria and remaining budget.",
@@ -314,3 +318,148 @@ def test_feedback_policy_and_existing_stage_evidence_reach_independent_analysis(
     sealed = root.facade.run_status(name="A", intent="full")["sealed_output"]["payload"]
     assert sealed["next_action"] == analysis["next_action"]
     assert runtime.scheduler_bindings.list(instance=instance.instance_id, namespace="approval") == ()
+
+
+def _assert_closeout_policy(role):
+    role = " ".join(role.split())
+    for clause in (
+        "A bears the burden of supporting successful closeout, especially early closeout",
+        "list known reasonable uncovered directions",
+        "for each, with original requirements and sealed evidence",
+        "Do not enumerate every possible solution",
+        "default to continued research", "send a complete question to W within current H",
+        "to H for explicit revision", "request evidence extraction for missing materials",
+        "wait for missing authorization", "preserve unmet exploration, run-count and delivery requirements",
+        "A fixed weak-control tail or proxy plateau", "Read current control budget through worker_open_assignment",
+        "assignment.json is an initial snapshot", "Worker task deadline/allocation from global loop",
+        "missing or partial global usage makes sufficiency/exhaustion unknown",
+        "Unknown budget alone does not justify stopping",
+        "without independent evidence of target representativeness",
+        "It cannot alone establish target achievement or reasonable results under target conditions",
+        "keep those conclusions unknown", "simulation metrics explicitly accepted by the original task",
+        "without accessing hidden tests or inventing success",
+    ):
+        assert clause in role
+
+
+def test_closeout_policy_reaches_compiled_analysis_and_neutral_consumers(catalog):
+    from scidiscovery.artifact_agent.service.progression import INSTRUCTION
+    _assert_closeout_policy(_assignment(catalog, "science.result.analyze.v1")["role_instructions"])
+    schema = json.loads(result_schema_json(catalog.operation("science.result.analyze.v1")))
+    payload = schema["properties"]["payload"]
+    semantic = json.dumps(payload["x-scidiscovery-semantic-constraints"])
+    assert "per-direction reasons for known reasonable uncovered directions" in semantic
+    assert "those conclusions remain unknown" in semantic
+    assert "Original-task-accepted simulation metrics retain their original criteria" in semantic
+    assert "not a new control gate, budget threshold, form or approval" in semantic
+    assert "budget" not in payload["properties"]
+    assert catalog.operation("science.result.analyze.v1").spec.review is None
+    for text in (load_scheduler_prompt(), INSTRUCTION):
+        text = " ".join(text.split())
+        assert "A local pass" in text and "whole-task success" in text
+        assert "Root does not decide" in text
+        assert "global" in text and "unknown" in text
+    root_policy = " ".join(load_scheduler_prompt().split())
+    assert "Use current control-provided budget for scheduling" in root_policy
+    assert "Workers receive control-provided balances through their own tools" in root_policy
+    assert "50%" not in semantic
+
+
+@pytest.mark.parametrize("decision", ["continue", "revise", "success", "proxy", "extract", "wait", "limited"])
+def test_exact_analysis_delivers_closeout_gap_and_owner_direction_without_new_gate(tmp_path, catalog, decision):
+    from scidiscovery.artifact_agent.schema.common import canonical_json
+    runtime, instance, root = _root(tmp_path, catalog=catalog)
+    runtime.runs.operation_catalog = catalog
+    original = ("Evaluate the explicitly accepted simulation metric and deliver its result." if decision == "success" else
+        "Continue useful exploration within permissions and deliver the final candidate; a local pass does not finish this task.")
+    root.call_tool("artifact_ingest_text", {"name": "goal", "text": original})
+    proposal = _proposal(hypothesis_keys=("current_route",))
+    proposal.pop("research_objective_key")
+    h = _complete(runtime, root, "H", "science.hypothesis.propose.v1", {"subject": "goal"}, proposal)
+    w = _complete(runtime, root, "W", "science.experiment.v1", {"subject": h}, {
+        "summary": "Synthetic local pass after a weak-control tail; target representativeness is not independently supported.",
+        "outcome": "inconclusive", "limitations": ["Synthetic evidence exercises transport only."],
+        "remaining_question": "Assess original completion requirements and target coverage independently.",
+    }, verdict="inconclusive")
+    directions = {
+        "continue": f"W: continue the bounded current-route contrast using {h}; the weak tail does not exclude this useful direction.",
+        "revise": "H: revise from goal and A.analysis for a distinct target mechanism; current-route scope is too narrow.",
+        "success": "Close out successfully: the original accepts this simulation metric, its condition and delivery are supported.",
+        "proxy": "H: clarify target validation from goal and A.analysis; self-built proxy ranks candidates only, target achievement and reasonableness remain unknown.",
+        "extract": "Evidence extraction: obtain the missing target observation from goal within the existing permissions.",
+        "wait": "Wait for authorization for the specified external observation; the current proxy cannot settle the target.",
+        "limited": "Stop with a limited conclusion: required target observations cannot be obtained lawfully; exploration and final delivery remain unfinished.",
+    }
+    request = {"name": "A", "operation_id": "science.result.analyze.v1",
+        "inputs": [{"port": "subject", "artifact_names": [w]}],
+        "instruction": "Independently assess the exact result and original requirements within current permissions."}
+    assert root.call_tool("operation_invoke", request)["result"]["state"] == "queued"
+    worker = attached_worker(runtime, root, "A")
+    opened = worker.call_tool("worker_open_assignment", {})
+    assignment = json.loads(Path(opened["assignment_path"]).read_bytes())
+    _assert_closeout_policy(assignment["role_instructions"])
+    source = next(item for item in assignment["inputs"] if item["source_name"] == "objective_source")
+    assert (Path(opened["workspace_path"]) / source["relative_path"]).read_text() == original
+    assert opened["budget"]["source"] == "control" and opened["budget"]["loop"] is None
+    assert "remaining_tokens" not in opened["budget"]  # Local TTL cannot invent global sufficiency.
+    successful = decision == "success"
+    report = {"summary": "Original accepted metric and delivery supported." if successful else "Local pass; global requirements remain open.",
+        "overall_verdict": "pass" if decision in {"success", "continue"} else "inconclusive",
+        "claim_allowed": successful,
+        "limitations": [] if successful else ["Global budget unknown; proxy covers only its self-selected perturbations; original exploration/delivery remain open."],
+        "remaining_contradiction": "No remaining original requirement in this bounded fixture." if successful else
+            "Known reasonable current-route refinement remains untested; weak-control tail does not exclude it. Target achievement and reasonableness are unknown.",
+        "next_action": directions[decision]}
+    Path(opened["output_directory"], "result.json").write_bytes(canonical_json({"payload": report}))
+    assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
+    compact = root.call_tool("run_status", {"name": "A"})
+    assert compact["scheduler_signal"]["summary"] == report["summary"]
+    assert compact["scheduler_signal"]["next_actions"] == [report["next_action"]]
+    assert _values(root, "A")["/claim_allowed"] is successful
+    sealed = root.facade.run_status(name="A", intent="full")["sealed_output"]["payload"]
+    assert sealed.get("objective_assessment") is None
+    if decision == "continue":
+        following = {"name": "W2", "operation_id": "science.experiment.v1",
+            "inputs": [{"port": "subject", "artifact_names": [h]}], "instruction": report["next_action"]}
+        assert root.call_tool("operation_invoke", following)["result"]["state"] == "queued"
+    elif decision == "revise":
+        revised = _proposal(hypothesis_keys=("new_mechanism",))
+        revised.pop("research_objective_key")
+        revised.update(contradiction=report["remaining_contradiction"])
+        _complete(runtime, root, "H2", "science.hypothesis.propose.v1",
+            {"subject": "goal", "previous_hypotheses": h, "result_analysis": compact["output_artifact_name"]}, revised,
+            verdict="inconclusive")
+    assert runtime.scheduler_bindings.list(instance=instance.instance_id, namespace="approval") == ()
+
+
+def test_progression_preserves_local_pass_continuation_without_completing_goal(progression):
+    from functools import partial
+    from tests.operations.test_scientific_progress import active
+    p = progression
+    root = active(p)
+    complete = partial(_complete, measure_usage=True)
+    proposal = _proposal(hypothesis_keys=("current_route",))
+    proposal.pop("research_objective_key")
+    h = complete(p.runtime, root, "H", "science.hypothesis.propose.v1", {"subject": "goal"}, proposal)
+    w = complete(p.runtime, root, "W", "science.experiment.v1", {"subject": h}, {
+        "summary": "Local contrast passed; coverage remains limited.", "outcome": "inconclusive",
+        "remaining_question": "Assess the original goal and current-route refinement.",
+        "limitations": ["Synthetic pipeline evidence; target coverage is unknown."]})
+    report = {"summary": "Local pass; the original goal remains unresolved.", "overall_verdict": "pass", "claim_allowed": False,
+        "limitations": ["Self-built proxy lacks independent target-representativeness evidence."],
+        "remaining_contradiction": "Known reasonable current-route refinement remains uncovered.",
+        "next_action": f"W: refine the bounded current route using {h}; retain original criteria and uncertainty."}
+    complete(p.runtime, root, "A", "science.result.analyze.v1", {"subject": w}, report)
+    status = root.call_tool("progression_status", {})
+    saved = row(p)
+    snapshot = {"goal": saved["objective_ref_json"], "runs": [{"name": "A", "state": "completed"}], "approvals": []}
+    brief = json.loads(p.coordinator._brief(saved, snapshot, 30000).split("\n")[-1])
+    change = next(item for item in brief["changes"] if item["name"] == "A")
+    assert change["scheduler_signal"]["next_actions"] == [report["next_action"]]
+    assert report["limitations"][0] in json.dumps(status["closeout"])
+    assert saved["state"] == "active" and not (checkpoint(p).get("report") or {}).get("completed")
+    assert "remaining_tokens" in brief["budget"] and "token_coverage" in brief["budget"]
+    # Control relays a direction; the fixture's science is not a model verdict.
+    following = root.call_tool("operation_invoke", {"name": "W2", "operation_id": "science.experiment.v1",
+        "inputs": [{"port": "subject", "artifact_names": [h]}], "instruction": report["next_action"]})
+    assert following["result"]["state"] == "queued"

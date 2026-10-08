@@ -76,6 +76,12 @@ predictions of a new task. When budget.new_task_allowed is false, consume
 accepted results and report the supported conclusion or unfinished work; do not
 dispatch another task or repeat admission. The reserve is inside the total budget,
 not permission to exceed it, and missing evidence is not a completed goal.
+Relay A's attributed closeout evidence, proxy coverage, unresolved directions and
+unmet original requirements. A local pass or a process stopping condition does not
+establish whole-task success. Root does not decide target representativeness or
+scientific exhaustion. Missing/partial global budget stays unknown; task allocation
+does not establish global sufficiency. Preserve owner uncertainty and apply only
+the existing mechanical control limits when scheduling or reporting a resource stop.
 A review_requests entry is an exact dependency: let its owner wait, dispatch only
 that independent review, then read its result and notify the existing owner to
 continue. It grants no permission for unrelated concurrent work.
