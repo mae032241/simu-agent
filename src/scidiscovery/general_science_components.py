@@ -451,7 +451,7 @@ def component_specs() -> tuple[ComponentSpec, ...]:
         "problem_frame_validator", "foundation_validator",
     ):
         values.append(ComponentSpec(name, "validator", f"scidiscovery.general_science_components:Components.{name}", configuration_identity=f"general-transform:{name}:v1"))
-    values.append(ComponentSpec("result_finalizer", "workspace_finalizer", "scidiscovery.general_science_components:RESULT_FINALIZER", configuration_identity="general.result-finalizer.v3:blocked-review"))
+    values.append(ComponentSpec("result_finalizer", "workspace_finalizer", "scidiscovery.general_science_components:RESULT_FINALIZER", configuration_identity="general.result-finalizer.v4:boundary-attribution"))
     values.append(ComponentSpec("workspace", "workspace", "scidiscovery.general_science_components:WORKSPACE", public=True, resources=(ComponentRef("result_finalizer", plugin_id="general_science"),)))
     values.append(ComponentSpec(
         "pdf_extract_tool",

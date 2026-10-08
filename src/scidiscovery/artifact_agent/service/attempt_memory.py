@@ -133,6 +133,10 @@ class AttemptMemoryMixin:
                     item['summary'] = signal.get('summary', 'Sealed delivery; complete owner summary omitted.')
                     item['handoff_omissions'] = omissions
                     item['next_actions'] = signal.get('next_actions', [])
+                for field in ('boundary_declarations', 'boundary_references'):
+                    if signal.get(field):
+                        from .input_reader import public_boundary_signal
+                        item[field] = public_boundary_signal(signal)[field]
                 item['worker_verdict'] = signal['verdict']
                 limits={key:signal[key] for key in ('assumptions','missing_inputs') if signal.get(key)}
                 if limits:

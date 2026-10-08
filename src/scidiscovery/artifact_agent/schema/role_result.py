@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Generic, Literal, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .common import canonical_json
+from .common import Identifier, canonical_json
 
 
 class FormModel(BaseModel):
@@ -18,12 +18,41 @@ class FormModel(BaseModel):
     )
 
 
+class SourceReference(FormModel):
+    source_key: Identifier
+    source_type: Literal["frozen_input", "web_snapshot", "user_statement", "runtime_output", "inference"]
+    locator: Annotated[str, Field(min_length=1, max_length=2048)]
+
+
+class BoundaryReference(FormModel):
+    source_key: Identifier | None = Field(default=None,
+        description="Exact frozen input source_name; omit for a declaration in this result. Never supply an Artifact ID or hash.")
+    boundary_key: Identifier
+
+
+class BoundaryCitation(FormModel):
+    source: SourceReference
+    quote: Annotated[str, Field(min_length=1, max_length=2048)] | None = Field(default=None,
+        description="Exact necessary source text, when useful. Matching proves location only, never interpretation or user authorization.")
+
+
+class BoundaryDeclaration(FormModel):
+    boundary_key: Identifier
+    statement: Annotated[str, Field(min_length=1, max_length=2048)]
+    evidence: Annotated[tuple[BoundaryCitation, ...], Field(max_length=8)] = ()
+    interpretation: Annotated[str, Field(min_length=1, max_length=2048)]
+    hypothesis_key: Identifier | None = None
+    parameter_name: Annotated[str, Field(min_length=1, max_length=256)] | None = None
+    revises: Annotated[tuple[BoundaryReference, ...], Field(max_length=8)] = ()
+
+
 class RoleHandoff(FormModel):
     verdict: Literal["pass", "revise", "blocked", "inconclusive"]
     summary: Annotated[str, Field(min_length=1, max_length=8192)]
     assumptions: Annotated[tuple[str, ...], Field(max_length=128)] = ()
     missing_inputs: Annotated[tuple[str, ...], Field(max_length=128)] = ()
     next_actions: Annotated[tuple[str, ...], Field(max_length=32)] = ()
+    boundary_references: Annotated[tuple[BoundaryReference, ...], Field(max_length=32)] = ()
 
 
 PayloadT = TypeVar("PayloadT")
@@ -33,6 +62,14 @@ class RoleResultEnvelope(FormModel, Generic[PayloadT]):
     schema_version: Literal[1]
     handoff: RoleHandoff
     payload: PayloadT
+    boundary_declarations: Annotated[tuple[BoundaryDeclaration, ...], Field(max_length=128)] = ()
+
+    @model_validator(mode="after")
+    def _unique_boundary_keys(self):
+        keys = [item.boundary_key for item in self.boundary_declarations]
+        if len(keys) != len(set(keys)):
+            raise ValueError("boundary_key values must be unique within this result")
+        return self
 
     def canonical_json(self) -> bytes:
         return canonical_json(self.model_dump(mode="json"))
@@ -47,6 +84,24 @@ def parse_role_result(value: Any) -> RoleResultEnvelope[Any]:
 def role_result_json_schema(payload_model: type[BaseModel]) -> dict[str, Any]:
     return RoleResultEnvelope[payload_model].model_json_schema(mode="validation")
 
+
+BOUNDARY_GUIDANCE = """
+Boundary declarations separate claim origin from applicability. Use optional
+boundary_declarations for your statement, exact SourceReference with a necessary
+quote, and your interpretation; associate existing hypothesis_key/parameter.name
+when relevant. Use handoff.boundary_references to cite declaration keys in this
+result or an exact frozen input source_name, without repeating the declaration list.
+Control supplies producer identity, exact frozen references and location checks.
+A matched locator/quote establishes only source location, never the interpretation's
+truth or user authorization. A stronger interpretation remains the owner's claim,
+including when the source is original user text. Scientific material repeating user
+words does not become original user text. Unverified citations or unresolved
+references cannot weaken existing assigned H boundaries or grant permissions.
+Read complete sealed declarations through input scientific_view or
+worker_reference_read(view="boundaries"); follow returned continuation. This is
+separate from original payload pointers. Keep assumptions/missing_inputs as strings.
+Unassociated or omitted original scope/basis stays attributed to its producer and source-unverified; this directory does not exhaust all boundary prose.
+"""
 
 __all__ = [
     "FormModel",

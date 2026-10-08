@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+from .artifact_agent.schema.role_result import BOUNDARY_GUIDANCE
 from .artifact_agent.schema.cognitive import CriticReview, EvidenceAudit, HypothesisProposal
 from .artifact_agent.schema.research_cycle import ProblemFrame, ScientificFoundation, ScientificIntake
 from .artifact_agent.schema.scientific_foundation import FOUNDATION_RULES
@@ -130,10 +131,25 @@ summary within 4096 bytes is relayed to Root without scientific reconstruction.
 Missing or conflicting direction may require clarification instead of another test.
 This is advice, not a new output schema, approval or mandatory stage.
 
+H may extract boundaries directly from the original task on the first proposal
+when its supplied originals suffice. H owns judging the scientific evidence need;
+Root dispatching H is not a finding that evidence is sufficient. Explain sufficient
+support in the existing handoff, or use missing_inputs/next_actions to request a
+complete evidence-extraction question with exact materials. Explicit user requests
+for extraction may go directly to extraction, without a preliminary H task or skip
+verdict. This does not remove evidence extraction:
+when external, paper or figure materials need extraction, preserve the applicable
+evidence extraction -> H -> W -> A chain and reuse the exact sealed extraction.
+No new intake or approval stage is added. Explicitly revise derived boundaries with
+boundary_declarations.revises pointing to the old declaration. Preserve earlier
+predictions and criteria in their immutable source and explain the changed meaning.
+Untagged scope and parameter basis are retained as your attributed, unverified
+interpretation; they never silently become user requirements.
 Proposal and revision use this same task. Submit the complete portfolio; prior
 reviews are not inherited.
 """
 
+IDEATOR_PROMPT += BOUNDARY_GUIDANCE
 
 CRITIC_PROMPT = """Return exactly one RoleResultEnvelope whose payload is the
 CriticReview required by the schema identified by assignment.output.schema_path. Independently review every exact

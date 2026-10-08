@@ -710,6 +710,73 @@ class ReferenceAccessMixin:
             Path('.reference-access') / (response['source'] + '.bin'),
             raw, replace=True, mode=0o400, create_parents=True)
 
+    def _boundary_read_response(self, value, request, policy, call):
+        from .input_reader import public_boundary_record
+        if request.history_task is not None:
+            producer, _ = self._history_reference_targets(value, request.history_task)
+            source = producer.output_ref
+        else:
+            source, _, _ = self._reference_source(value, request.source, policy)
+            producer = self.completed_for_output(source)
+        if (source is None or producer is None or producer.state != 'completed'
+                or producer.output_ref != source or producer.instance_id != value.instance_id
+                or producer.signal is None):
+            raise ReferenceAccessError('boundary_original_unavailable',
+                'No exact completed primary declaration is paired with this source. Preserve current H boundaries; this does not authorize relaxation.')
+        records = [(field, index, record) for field in ('boundary_declarations', 'boundary_references')
+            for index, record in enumerate(getattr(producer.signal, field))]
+        entries = [("ref_" + _digest({'primary': source.model_dump(mode='json'), 'field': field, 'index': index}),
+            record) for field, index, record in records]
+        response = dict(view='boundaries', source=request.source, history_task=request.history_task,
+            producer_output=producer.output_binding_name, authority='owner_interpretation')
+        if request.action == 'list':
+            response.update(action='list', references=[], next_cursor=None, omitted=0)
+            for handle, record in entries[request.cursor:request.cursor + 8]:
+                authored = record.get('reference') or record.get('declaration', {})
+                item = dict(reference=handle, boundary_key=authored.get('boundary_key'),
+                    effect=record['effect'], verification=record.get('verification', 'unverified'),
+                    authority='owner_interpretation')
+                response['references'].append(item)
+                if len(canonical_json(response)) > request.limit:
+                    response['references'].pop()
+                    break
+            if entries[request.cursor:] and not response['references']:
+                raise ReferenceAccessError('reference_response_limit', 'Boundary directory entry needs a larger response limit.')
+            end = request.cursor + len(response['references'])
+            response.update(next_cursor=end if end < len(entries) else None, omitted=max(0, len(entries)-end))
+        else:
+            matches = [record for handle, record in entries if handle == request.reference]
+            if len(matches) != 1:
+                raise ReferenceAccessError('reference_handle_invalid', 'Boundary handle is not paired with this exact primary.')
+            record = public_boundary_record(matches[0])
+            text = canonical_json(_pointer(record, request.pointer) if request.pointer else record).decode('utf-8')
+            if request.offset > len(text):
+                raise ReferenceAccessError('reference_selector_missing', 'Character offset exceeds the selected declaration.')
+            remaining = text[request.offset:]
+            response.update(action='read', provided={'pointer': request.pointer,
+                'offset': request.offset, 'characters': 0}, next_offset=None, omitted=False)
+            lo, hi = 0, min(len(remaining), request.limit)
+            while lo < hi:
+                count = (lo + hi + 1) // 2
+                response['provided']['characters'] = count
+                response.update(fragment=remaining[:count], next_offset=request.offset + count if count < len(remaining) else None,
+                    omitted=count < len(remaining))
+                if len(canonical_json(response)) <= request.limit:
+                    lo = count
+                else:
+                    hi = count - 1
+            response.update(fragment=remaining[:lo], next_offset=request.offset + lo if lo < len(remaining) else None,
+                omitted=lo < len(remaining))
+            response['provided']['characters'] = lo
+            if remaining and not lo:
+                raise ReferenceAccessError('reference_response_limit', 'Response budget cannot hold the selected declaration range.')
+        with self._connect() as connection:
+            connection.execute('BEGIN IMMEDIATE')
+            self._reference_running(connection, value.run_id)
+            self._reference_deadline(call)
+            self._reference_settle(connection, value, call, response)
+        return response
+
     def reference_read(self, run_id, request, policy):
         value = self._require_running(run_id)
         policy = self._reference_policy(value, policy)
@@ -723,6 +790,10 @@ class ReferenceAccessMixin:
         source_authorized = False
         history_authorization = None
         try:
+            if request.view == 'boundaries':
+                response = self._boundary_read_response(value, request, policy, call)
+                committed = True
+                return response
             if request.history_task is not None:
                 edges, history_authorization = self._history_reference_edges(value, request.history_task)
                 selected = next((edge for edge in edges if edge['reference'] == request.reference), None) if request.action == 'read' else (edges[0] if edges else None)

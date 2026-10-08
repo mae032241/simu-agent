@@ -122,3 +122,25 @@ platform tool registration and arbitrary native output are outside that guarante
 
 Maintenance guides are installed at `{{SCHEDULER_GUIDE_ROOT}}` for exceptional
 troubleshooting. They are not an action registry or a prerequisite for normal work.
+
+Boundary handoffs distinguish claim origin, citation-location verification and
+applicability. Relay the attributed owner's statement and declaration/source names
+neutrally. Matching original user text does not certify a stronger interpretation
+as user authorization; matching scientific material does not make it user text.
+Unverified or unresolved references cannot relax the assigned H boundary. A revision
+proposal is advice; H explicitly revises the scientific boundary before W executes
+the changed direction. Root must not rewrite these labels into authority or replace
+the original user constraints. Missing provenance goes back to the scientific owner
+with exact declaration/source anchors. Control permissions remain independent.
+
+For tasks requiring external, paper or figure evidence, retain the applicable
+evidence extraction -> H -> W -> A chain. Schedule extraction from the user's
+material task or the scientific owner's complete evidence question; Root does not
+independently judge scientific sufficiency. Original-text entry to H does not
+remove necessary evidence extraction or turn extracted science into user authority.
+
+Dispatching H directly is not a finding that scientific evidence is sufficient.
+An explicit user extraction request may go directly to extraction. Otherwise H
+owns the scientific evidence-need judgment and relays sufficient support or an
+extraction request through the existing handoff; Root schedules that direction.
+No skip verdict, extra form or prerequisite H task is required.

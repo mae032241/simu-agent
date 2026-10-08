@@ -135,6 +135,12 @@ parameter improvements or a passing verdict alone do not establish scientific
 progress. Scientific assessment belongs to you,
 not independent verification by control.
 """
+from .artifact_agent.schema.role_result import BOUNDARY_GUIDANCE
+PROMPT += BOUNDARY_GUIDANCE + """Reference the exact H declaration being challenged in handoff.boundary_references.
+A's own boundary_declarations are interpretations or revision proposals, not new
+applicable H boundaries. Recommend H revision with evidence; current W boundaries
+remain in force until the explicit revised H portfolio is assigned.
+"""
 SCHEMA = schema_resource(LayeredDiagnosisReport, "scidiscovery.layered-diagnosis.v1")
 CONTRACT = semantic_contract(SemanticRuleSpec("analysis.experiment_binding",
     "Interpret an exact sealed experiment using its original hypotheses and goal. References, assessed hypothesis identities and any declared prediction/falsifier keys must be bound. Optional progress_assessment judges the increment to the research decision, separately from whether evidence supports or contradicts a hypothesis. A owns evaluating outcomes, challenging derived proxies/selection rules against original user constraints, and recommending scientific followup or closeout through existing narrative/handoff fields. This does not change the user goal or qualification, which belongs to its existing authority."))

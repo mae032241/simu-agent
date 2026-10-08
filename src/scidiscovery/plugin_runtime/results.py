@@ -33,7 +33,7 @@ RESULT_COPIES = {
     'scidiscovery.experiment-report.v1': {'/handoff/summary': '/payload/summary'},
     'scidiscovery.experiment-review.v1': {'/handoff/summary': '/payload/summary'},
 }
-RESULT_PROJECTION_VERSION = '2'
+RESULT_PROJECTION_VERSION = '3'
 
 VERDICT_PROJECTIONS = {
     'scidiscovery.layered-diagnosis.v1', 'scidiscovery.scientific-review.v1',
@@ -126,6 +126,8 @@ def result_draft_schema(envelope: dict, schema_id: str, input_source_ports=None)
 
     if schema_id == 'scidiscovery.hypothesis-proposal.v2':
         remove('/payload/research_objective_key')
+        envelope['properties']['boundary_declarations']['maxItems'] = 32
+        envelope['properties']['boundary_declarations']['description'] = 'At most 32 authored declarations. Control retains unassociated hypothesis scope/parameter basis as attributed unverified prose within the shared sealed limit.'
     if schema_id == 'scidiscovery.layered-diagnosis.v1' and input_source_ports is not None and not {'experiment_plan', 'curve_analysis_package'} & set(input_source_ports.values()):
         remove('/payload/plan_key')
         remove('/payload/experiment_key')
@@ -276,9 +278,52 @@ def materialize_general_result(value: dict, schema_id: str) -> None:
     project_result_copies(value, schema_id)
 
 
+def materialize_hypothesis_boundaries(value):
+    """Associate existing scientific identities; untagged prose stays attributed."""
+    hypotheses = value['payload'].get('hypotheses', ())
+    declarations = value.setdefault('boundary_declarations', [])
+    if not isinstance(declarations, list) or not all(isinstance(item, dict) for item in declarations):
+        return  # The common envelope validator owns malformed declarations.
+    subjects = {item.get('hypothesis_key'): item for item in hypotheses if isinstance(item, dict)}
+    for index, declaration in enumerate(declarations):
+        key, parameter = declaration.get('hypothesis_key'), declaration.get('parameter_name')
+        if key is None:
+            continue
+        if key not in subjects or parameter is not None and parameter not in {
+                item.get('name') for item in subjects[key].get('parameters', ()) if isinstance(item, dict)}:
+            _projection_error('/boundary_declarations/' + str(index),
+                'Associate a declared boundary with an existing hypothesis_key and, if supplied, its parameter.name.')
+    if len(declarations) > 128:
+        return  # The common envelope validator reports the existing shared bound.
+    keys = {item.get('boundary_key') for item in declarations}
+    for hypothesis in subjects.values():
+        key = hypothesis['hypothesis_key']
+        fields = [(None, hypothesis.get('scope'))] + [(item.get('name'), item.get('basis'))
+            for item in hypothesis.get('parameters', ()) if isinstance(item, dict)]
+        for parameter, text in fields:
+            if not isinstance(text, str) or not text:
+                continue
+            if any(item.get('hypothesis_key') == key and item.get('parameter_name') == parameter
+                    for item in declarations):
+                continue
+            counter = len(declarations)
+            boundary_key = 'attributed.' + str(counter)
+            while boundary_key in keys:
+                counter += 1
+                boundary_key = 'attributed.' + str(counter)
+            keys.add(boundary_key)
+            # Copy the author's exact scope/basis without interpreting it as a
+            # user restriction or making source absence a permission to relax.
+            if len(declarations) == 128:
+                continue  # Remaining original prose retains producer attribution; source proof is absent.
+            declarations.append(dict(boundary_key=boundary_key, statement=text,
+                interpretation=text, hypothesis_key=key, parameter_name=parameter))
+
+
 def finalize_general_result(request: WorkspaceFinalizationRequest) -> bytes:
     def project(value):
         if request.output_schema_id == 'scidiscovery.hypothesis-proposal.v2':
+            materialize_hypothesis_boundaries(value)
             originals = [request.input_contents[alias] for alias, descriptor in request.binding_descriptors.items()
                 if descriptor.port_name == 'scientific_foundation' and alias in request.input_contents]
             if len(originals) == 1:

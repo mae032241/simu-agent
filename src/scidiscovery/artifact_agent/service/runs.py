@@ -575,7 +575,8 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
                     budget=self.worker_budget(self.status(run_id)),
                     attachment_settings=recovery_policy.get("attachments"),
                     scientific_views=self._input_scientific_views(frozen_inputs, instance_id=instance_id,
-                        visible_ports={port.name for port in compiled.spec.inputs if port.agent_visible}),
+                        visible_ports={port.name for port in compiled.spec.inputs if port.agent_visible},
+                        progress=compiled.spec.scientific_progress),
                     debug_disable_task_network=recovery_policy.get("debug_disable_task_network", False),
                 ),
                 result_schema=result_schema_json(
@@ -1820,7 +1821,7 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
                     latest = review
         return latest
 
-    def _input_scientific_views(self, inputs, *, instance_id, visible_ports):
+    def _input_scientific_views(self, inputs, *, instance_id, visible_ports, progress=None):
         """Frozen primary-output projections; no schema/name guessing or new truth."""
         views = {}
         for item in inputs:
@@ -1838,8 +1839,15 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
                 continue
             views[item.source_name] = dict(pointers=[field if field.startswith('/') else
                 '/' + field.replace('~', '~0').replace('/', '~1') for field in fields],
-                **({'handoff': producer.signal.model_dump(mode='json')} if producer.signal is not None else {}))
+                **({'handoff': self._public_boundary_signal(producer.signal)} if producer.signal is not None else {}),
+                boundary_application=('assigned_subject_boundary' if progress is not None
+                    and progress.stage == 'experiment' and item.port_name == progress.subject_port else 'owner_statements'))
         return views
+
+    @staticmethod
+    def _public_boundary_signal(signal):
+        from .boundary_provenance import public_boundary_signal
+        return public_boundary_signal(signal.model_dump(mode='json'))
 
     def completed_for_output(self, artifact_ref: ArtifactRef) -> RunStatus | None:
         """Return the unique completed Run that registered this exact output."""
@@ -2221,6 +2229,9 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
                 tool_snapshot=self._evidence_snapshot(value.run_id) if tool_evidence_ports(compiled) else None,
                 reference_calculation_resolver=lambda alias: self.reference_calculation_sources(value, alias, validation_deadline=validation_deadline, validation_budget=reference_validation_budget),
                 sealed_material_resolver=lambda alias: self.sealed_material_record(value, alias),
+                boundary_producer=dict(run_id=value.run_id, operation_id=value.operation_id,
+                    output_name=value.output_binding_name),
+                boundary_resolver=lambda alias, key: self._bound_boundary(value, alias, key, descriptors),
             )
             if incomplete_collections:
                 coordinator.validate_incomplete_delivery(validated.content, incomplete_collections)
@@ -2232,6 +2243,24 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
             error.candidate_digest = sealed.digest
             raise
         return sealed, validated
+
+    def _bound_boundary(self, value, alias, key, descriptors):
+        from .boundary_provenance import boundary_original
+        descriptor = descriptors.get(alias)
+        if descriptor is None:
+            return None
+        producer = self.completed_for_output(descriptor.artifact_ref)
+        if producer is None or producer.instance_id != value.instance_id:
+            return None
+        record = boundary_original(self, descriptor.artifact_ref, key)
+        if record is not None:
+            record.setdefault('artifact_ref', descriptor.artifact_ref.model_dump(mode='json'))
+            progress = self._compiled(value).spec.scientific_progress
+            if progress is not None and progress.stage == 'experiment' and descriptor.port_name == progress.subject_port:
+                record['application'] = 'assigned_subject_boundary'
+            else:
+                record.pop('application', None)
+        return record
 
     def _input_sources(
         self, value: RunStatus

@@ -115,7 +115,7 @@ def assignment_json(
             },
             "revision": revision,
             "prior_source_bindings": prior_source_bindings or {},
-            **({"reference_access": "Text inputs are readable at their relative_path; file_reference inputs expose metadata only; use worker_materialize_input for their streamed native files; reference availability is unknown until checked, not absent. Use worker_reference_read to list one selected bound report’s direct citations and published attachments; read selected originals (delivery=file streams large files). Select a calculation before its inputs. Do not expand all history; unresolved references remain explicit gaps."}
+            **({"reference_access": "Text inputs are readable at their relative_path; file_reference inputs expose metadata only; use worker_materialize_input for their streamed native files; reference availability is unknown until checked, not absent. Use worker_reference_read(view='boundaries') to list/read complete owner boundary declarations paired with an exact report or frozen history task; citation checks do not authorize interpretations or relax current H boundaries. Use its default originals view to list one selected bound report’s direct citations and published attachments; read selected originals (delivery=file streams large files). Select a calculation before its inputs. Do not expand all history; unresolved references remain explicit gaps."}
                if "worker_reference_read" in tool_names else {}),
             "tools": list(tool_names),
             "tool_contracts": operation_tool_contracts(bound.compiled, tool_names),

@@ -436,6 +436,13 @@ Independent review is optional unless an applicable declared policy requires it.
 When worker_experiment_execute is available, read its complete contract before
 remote work; it owns the applicable review, authorization and recovery rules.
 """
+from .artifact_agent.schema.role_result import BOUNDARY_GUIDANCE
+PROMPT += BOUNDARY_GUIDANCE + """All current boundaries in the exact assigned H portfolio remain applicable to W,
+including derived or source-unverified ones. Choose methods inside them. Report
+ideas or source doubts through A; a proposed change requires H's explicit sealed
+revision before executing the changed direction. Your declarations describe your
+findings or proposals, not a replacement H boundary or control policy.
+"""
 REMOTE_EXECUTION_GUIDANCE = """For remote work, if its policy requires independent implementation review, send prepare's review.request
 to the scheduler, or obtain it with worker_experiment_execute(action="review",
 implementation=<sealed reference>). The request suspends controlled experimental work while review is pending.

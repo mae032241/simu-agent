@@ -107,9 +107,35 @@ def compact_scientific_fields(value, pointers):
         instruction='Selected values are exact at their pointers. Projected structures are partial; omitted children and originals remain unread. Expand the original pointer or read the full source for evidence needed by the task.')
 
 
+def public_boundary_record(record):
+    """Retain owner provenance while excluding private control bindings."""
+    result = dict(record)
+    result.pop('artifact_ref', None)
+    result.pop('producer_run_id', None)
+    if 'producer' in result:
+        producer = result['producer']
+        result['producer'] = {key: producer[key] for key in ('output_name', 'operation_id') if producer.get(key)}
+    for field in ('source_checks', 'revision_checks'):
+        if field in result:
+            result[field] = [public_boundary_record(item) for item in result[field]]
+    if isinstance(result.get('resolved_source'), dict):
+        result['resolved_source'] = public_boundary_record(result['resolved_source'])
+    if isinstance(result.get('declaration'), dict) and 'producer' in result['declaration']:
+        result['declaration'] = public_boundary_record(result['declaration'])
+    return result
+
+
+def public_boundary_signal(signal):
+    result = dict(signal)
+    for field in ('boundary_declarations', 'boundary_references'):
+        if field in result:
+            result[field] = [public_boundary_record(item) for item in result[field]]
+    return result
+
+
 def compact_handoff(handoff):
     """Keep complete sealed statements only; never shorten scientific prose."""
-    result, omissions = dict(handoff), {}
+    result, omissions = public_boundary_signal(handoff), {}
     if isinstance(result.get('summary'), str) and len(result['summary'].encode('utf-8')) > 4096:
         result.pop('summary')
         omissions['summary'] = 'complete_statement_exceeds_4096_bytes'
@@ -117,6 +143,39 @@ def compact_handoff(handoff):
         entries = result.get(field, [])
         shown = [entry for entry in entries[:4] if len(entry.encode('utf-8')) <= 1024]
         result[field] = shown
+        if len(shown) != len(entries):
+            omissions[field] = len(entries) - len(shown)
+    for field in ('boundary_declarations', 'boundary_references'):
+        entries = result.get(field, [])
+        shown = []
+        for entry in entries[:4]:
+            if len(encode(entry).encode('utf-8')) <= 4096:
+                shown.append(entry)
+            else:
+                # Preserve provenance/effect even if complete scientific text
+                # exceeds the statement budget. Never clip or reconstruct it.
+                owner = entry.get('declaration', entry)
+                if isinstance(owner.get('declaration'), dict):
+                    owner = owner['declaration']
+                metadata = {key: entry[key] for key in
+                    ('reference', 'verification', 'effect', 'authority', 'instruction', 'producer') if key in entry}
+                metadata['boundary_key'] = owner.get('boundary_key')
+                record = entry.get('declaration', {}) if 'reference' in entry else entry
+                metadata['source_checks'] = []
+                if record.get('producer'):
+                    metadata['producer'] = record['producer']
+                for check in record.get('source_checks', ())[:4]:
+                    check = dict(check)
+                    if len(check.get('locator', '').encode('utf-8')) > 768:
+                        check.pop('locator', None)
+                        check['locator_omitted'] = 'exact_locator_exceeds_compact_budget'
+                    if len(encode(metadata | {'source_checks': [*metadata['source_checks'], check]}).encode('utf-8')) > 3072:
+                        break
+                    metadata['source_checks'].append(check)
+                metadata['source_checks_omitted'] = len(record.get('source_checks', ()))-len(metadata['source_checks'])
+                shown.append(metadata | {'omission': 'complete_boundary_statement_exceeds_4096_bytes'})
+        if entries:
+            result[field] = shown
         if len(shown) != len(entries):
             omissions[field] = len(entries) - len(shown)
     return result, omissions

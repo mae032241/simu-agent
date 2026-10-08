@@ -17,6 +17,8 @@ class SchedulerSignal(SchemaModel):
     assumptions: Annotated[tuple[str, ...], Field(max_length=128)] = ()
     missing_inputs: Annotated[tuple[str, ...], Field(max_length=128)] = ()
     next_actions: Annotated[tuple[str, ...], Field(max_length=32)] = ()
+    boundary_declarations: Annotated[tuple[dict, ...], Field(max_length=128)] = ()
+    boundary_references: Annotated[tuple[dict, ...], Field(max_length=32)] = ()
 
 
 __all__ = ["SchedulerSignal"]

@@ -8,7 +8,7 @@ from typing import Annotated, Literal
 from pydantic import Field, model_validator
 
 from .common import Identifier, canonical_json
-from .role_result import FormModel
+from .role_result import FormModel, SourceReference
 
 
 ReviewStatus = Literal["pass", "fail", "unknown", "not_applicable"]
@@ -20,18 +20,6 @@ CriticDisposition = Literal[
     "inconclusive",
     "reject",
 ]
-
-class SourceReference(FormModel):
-    source_key: Identifier
-    source_type: Literal[
-        "frozen_input",
-        "web_snapshot",
-        "user_statement",
-        "runtime_output",
-        "inference",
-    ]
-    locator: Annotated[str, Field(min_length=1, max_length=2048)]
-
 
 class VersionedPayload(FormModel):
     schema_version: Literal[1] = 1

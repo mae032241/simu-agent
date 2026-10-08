@@ -49,6 +49,8 @@ def validate_run_output(
     tool_snapshot: bytes | None = None,
     reference_calculation_resolver=None,
     sealed_material_resolver=None,
+    boundary_resolver=None,
+    boundary_producer=None,
 ) -> ValidatedRunOutput:
     """Validate the one primary result without changing control state."""
 
@@ -248,15 +250,28 @@ def validate_run_output(
         except Exception as error:
             raise RunCheckerError("context checker failed") from error
     handoff = result.handoff
-    return ValidatedRunOutput(
-        content=encoded,
-        signal=SchedulerSignal(
+    from .boundary_provenance import seal_boundaries
+    boundaries, boundary_references = seal_boundaries(result.boundary_declarations,
+        handoff.boundary_references, input_bytes=input_bytes,
+        descriptors=input_binding_descriptors or {},
+        producer=boundary_producer or dict(run_id=sealed.run_id, operation_id=compiled.spec.operation_id),
+        resolve=boundary_resolver or (lambda source, key: None))
+    signal = SchedulerSignal(
             verdict=handoff.verdict,
             summary=handoff.summary,
             assumptions=handoff.assumptions,
             missing_inputs=handoff.missing_inputs,
             next_actions=handoff.next_actions,
-        ),
+            boundary_declarations=tuple(boundaries),
+            boundary_references=tuple(boundary_references),
+        )
+    if len(signal.canonical_json()) > compiled.spec.limits.max_output_bytes:
+        raise RunOutputError("boundary provenance exceeds the existing output byte limit", details=_with_rule(
+            ({"path": "$.handoff.boundary_references", "message": "Select fewer necessary declaration references within the existing output byte budget; original declarations remain retained.", "type": "too_long"},),
+            "runtime.size", declared_rule_ids))
+    return ValidatedRunOutput(
+        content=encoded,
+        signal=signal,
         media_type=port.media_types[0],
         kind=port.kind,
         schema_id=port.schema_id,
