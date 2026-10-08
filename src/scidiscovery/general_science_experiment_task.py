@@ -352,6 +352,19 @@ continuously try related parameters, implementations, numerical
 methods, repetitions, robustness checks and baselines. A script run or fixed trial
 count does not force a new task. Retain each attempt's results and limitations and
 the best eligible candidate under the original selection criterion.
+Use a fixed grid or preplanned comparison for initial screening when useful.
+After observations, choose the next trial from the remaining scientific question:
+refine a promising route inside current H, stop a weak route, or seal evidence for
+A when the answer or a boundary calls for independent analysis. Explain how exact
+observations support that choice; do not continue an unchanged list just to fill
+run counts. Weak controls can still answer a useful contrast after strong/weak
+separation, but a preplanned weak-control tail with no improvement does not show
+that the promising route is exhausted or that global exploration should stop.
+Reuse design/result narratives, logs and existing stage conclusion,
+remaining_question and materials to retain the question, change, observation and
+its effect on the next choice. This adds no per-run form, approval or fixed trial
+limit; design stages remain optional. A judges global exploration and closeout;
+W does not own global run-count completion or the overall delivery floor.
 If observations challenge a key assumption or proxy metrics conflict with robust
 evidence, an affordable discriminating test may continue within those boundaries.
 Changing a mechanism, key assumption, allowed data or validation boundary requires
@@ -474,7 +487,7 @@ no fixed preflight, initialization or reviewer checklist is a submission conditi
 """
 SCHEMA = schema_resource(ExperimentReport, "scidiscovery.experiment-report.v1")
 CONTRACT = semantic_contract(SemanticRuleSpec("experiment.sealed_material",
-    "Adopted stages must identify sealed materials created in or explicitly bound to this task; original receipts and authorship are retained. Completed requires every adopted execution to cite its selected exact implementation and a validity assessment citing that execution. Remote work requires successful collected receipts. Native work requires published implementation files, Worker-reported successful execution and published logs/results; file identities do not attest execution. Finish or cancel outstanding execution and diagnostics before final delivery. Design and debug stages are optional. Otherwise report blocked or inconclusive; scientific validity belongs to the author."))
+    "Adopted stages must identify sealed materials created in or explicitly bound to this task; original receipts and authorship are retained. Completed requires every adopted execution to cite its selected exact implementation and a validity assessment citing that execution. Remote work requires successful collected receipts. Native work requires published implementation files, Worker-reported successful execution and published logs/results; file identities do not attest execution. Finish or cancel outstanding execution and diagnostics before final delivery. Design and debug stages are optional. Otherwise report blocked or inconclusive; scientific validity belongs to the author. A fixed grid may screen initially; subsequent choices use observed evidence to continue within current H, stop a weak route or hand off to A. A preplanned weak-control tail does not establish exhaustion of a promising route. Reuse existing stage/result narratives and exact materials for the question, change, observation and next choice; no per-run form, approval or fixed trial limit is added. Mechanism, key-assumption, allowed-data or validation-boundary changes require A then H revision before execution; actual constraints and permissions remain binding. W does not own global run-count completion or overall closeout."))
 PROTOCOL = "scidiscovery.complete-experiment.v1"
 WORKSPACE = WorkspaceContract()
 AGENT = CallableComponent("agent", lambda: None)
@@ -486,7 +499,7 @@ from .plugin_runtime.results import result_draft_schema, RESULT_PROJECTION_VERSI
 FINALIZER = CallableComponent("workspace_finalizer", WorkspaceFinalizer(
     finalize, result_draft_schema, RESULT_PROJECTION_VERSION))
 STAGE_TOOL = WorkerToolDefinition(name="worker_experiment_stage",
-    description="Seal a stage conclusion and exact scientific materials. Optional design prediction_declaration freezes a prediction/criterion/conditions; optional validity comparison reads that exact declaration and actual observations. Handler checks structure and exact bindings; original declaration receipt is additionally checked when the final report adopts the comparison (bind the declaration as scientific_materials). Sealing alone is a preview, not scientific correctness or final validation; not_run does not test a prediction. Returns a local reference and immutable artifact_name; continue working after sealing.",
+    description="Seal a stage conclusion and exact scientific materials. Reuse conclusion, remaining_question and materials to explain the question, change, observation and its effect on the next trial or handoff; no submission is required for each exp run. Optional design prediction_declaration freezes a prediction/criterion/conditions; optional validity comparison reads that exact declaration and actual observations. Handler checks structure and exact bindings; original declaration receipt is additionally checked when the final report adopts the comparison (bind the declaration as scientific_materials). Sealing alone is a preview, not scientific correctness or final validation; not_run does not test a prediction. Returns a local reference and immutable artifact_name; continue working after sealing.",
     input_model=StageSubmission, capability="experiment.stage", contextual_handler=submit_stage, owner_only=True,
     evidence_ports=("tool_evidence", "recovery_manifest_output"))
 EXECUTE_TOOL = WorkerToolDefinition(name="worker_experiment_execute",

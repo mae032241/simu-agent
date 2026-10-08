@@ -253,3 +253,64 @@ def test_existing_h_fields_deliver_target_mechanism_or_honest_gap_without_new_ga
     else:
         assert not admissible  # Existing empty-portfolio behavior; no forced experiment.
     assert runtime.scheduler_bindings.list(instance=instance.instance_id, namespace="approval") == ()
+
+
+def test_feedback_policy_and_existing_stage_evidence_reach_independent_analysis(tmp_path, catalog):
+    from scidiscovery.artifact_agent.schema.common import canonical_json
+    runtime, instance, root = _root(tmp_path, catalog=catalog)
+    runtime.runs.operation_catalog = catalog
+    root.call_tool("artifact_ingest_text", {"name": "goal",
+        "text": "Explore useful routes within the original permissions; retain the best candidate and unfinished requirements."})
+    proposal = _proposal(hypothesis_keys=("promising", "weak_control"))
+    proposal.pop("research_objective_key")
+    h = _complete(runtime, root, "H", "science.hypothesis.propose.v1", {"subject": "goal"}, proposal)
+    queued = root.call_tool("operation_invoke", {"name": "W", "operation_id": "science.experiment.v1",
+        "inputs": [{"port": "subject", "artifact_names": [h]}],
+        "instruction": "Test the exact current H question within its original constraints."})
+    assert queued["result"]["state"] == "queued"
+    worker = attached_worker(runtime, root, "W")
+    opened = worker.call_tool("worker_open_assignment", {})
+    assignment = json.loads(Path(opened["assignment_path"]).read_bytes())
+    role = " ".join(assignment["role_instructions"].split())
+    assert "fixed grid or preplanned comparison for initial screening" in role
+    assert "After observations, choose the next trial" in role
+    assert "refine a promising route inside current H, stop a weak route" in role
+    assert "weak-control tail with no improvement does not show" in role
+    assert "W does not own global run-count completion" in role
+    assert "H revision before executing the new direction" in role
+    assert "original user constraints and control permissions remain binding" in role
+    assert "native shell permissions and installed environment" in role
+    assert "no submission is required for each exp run" in json.dumps(assignment["tool_contracts"])
+    schema = json.loads((Path(opened["workspace_path"]) / "schema/result.schema.json").read_bytes())
+    semantic = json.dumps(schema["properties"]["payload"]["x-scidiscovery-semantic-constraints"])
+    assert "subsequent choices use observed evidence" in semantic
+    assert "weak-control tail does not establish exhaustion of a promising route" in semantic
+    assert "no per-run form, approval or fixed trial limit" in semantic
+    assert catalog.operation("science.experiment.v1").spec.review is None
+    # Synthetic stage evidence exercises the real tool and sealed handoff, not a
+    # claim that a model chose or actually executed this scientific trajectory.
+    screening = worker.call_tool("worker_experiment_stage", {"stage": "design",
+        "conclusion": "Synthetic initial grid compares the two current H routes."})["reference"]
+    observed = worker.call_tool("worker_experiment_stage", {"stage": "validity", "materials": [screening],
+        "conclusion": "Synthetic observation: promising route separates from the weak control; a preset weak tail adds no gain.",
+        "remaining_question": "The promising route is not exhausted; refine its intervention within current H."})["reference"]
+    revised = worker.call_tool("worker_experiment_stage", {"stage": "design", "materials": [observed],
+        "conclusion": "Stop the uninformative weak tail and narrow the next contrast on the promising route using the observed separation.",
+        "remaining_question": "If this contrast challenges the mechanism, seal it for A then H revision; global completion remains open."})["reference"]
+    report = {"summary": "Synthetic feedback trajectory retained; independent analysis is needed.",
+        "outcome": "inconclusive", "remaining_question": "Assess the promising route and unfinished original requirements.",
+        "limitations": ["Synthetic stage evidence; no live trial or global success is claimed."],
+        "adopted_stages": [screening, observed, revised]}
+    Path(opened["output_directory"], "result.json").write_bytes(canonical_json({"payload": report}))
+    assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
+    stage = root.facade.run_status(name="W", stage_reference=revised)["sealed_stages"]["material"]
+    assert "observed separation" in json.loads(stage["text"])["conclusion"]
+    output = root.call_tool("run_status", {"name": "W"})["output_artifact_name"]
+    analysis = {"summary": "The weak tail does not establish exhaustion; original requirements remain open.",
+        "overall_verdict": "inconclusive", "claim_allowed": False,
+        "limitations": report["limitations"], "remaining_contradiction": report["remaining_question"],
+        "next_action": "Continue the promising contrast within current H; a mechanism change requires H revision after A."}
+    _complete(runtime, root, "A", "science.result.analyze.v1", {"subject": output}, analysis, verdict="inconclusive")
+    sealed = root.facade.run_status(name="A", intent="full")["sealed_output"]["payload"]
+    assert sealed["next_action"] == analysis["next_action"]
+    assert runtime.scheduler_bindings.list(instance=instance.instance_id, namespace="approval") == ()
