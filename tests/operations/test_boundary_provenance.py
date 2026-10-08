@@ -9,7 +9,7 @@ from scidiscovery.artifact_agent.interfaces.mcp_gateway import UnifiedMCPRouter
 from scidiscovery.artifact_agent.interfaces.mcp_worker_protocol import WorkerToolError
 from scidiscovery.artifact_agent.schema.artifact import ArtifactRegistration
 from scidiscovery.artifact_agent.schema.common import canonical_json
-from scidiscovery.artifact_agent.service.input_reader import compact_handoff
+from scidiscovery.artifact_agent.service.input_reader import compact_handoff, public_boundary_record, COMPACT_BOUNDARY_BYTES
 from tests.operations.test_l2_run_invariants import _system, _invoke, _worker, _envelope
 from tests.operations.test_hypothesis_objective_boundary import _proposal
 from tests.operations.test_unified_mcp import call, result
@@ -199,8 +199,116 @@ def test_generic_plugin_envelope_and_compact_oversize_preserve_source_checks(tmp
     assert projected['producer']['output_name'] == 'plugin.output'
     assert projected['source_checks'][0]['verification'] == 'matched'
     assert 'omission' in projected and '界' not in json.dumps(projected)
+    assert projected['omission'] == 'complete_quote_and_interpretation_omitted_together'
+    assert not {'interpretation', 'evidence', 'statement'} & projected.keys()
+    assert projected['owner_read']['output_name'] == 'plugin.output'
+    assert projected['owner_read']['boundary_key'] == 'plugin-boundary'
+    assert projected['owner_read']['view'] == 'boundaries'
     assert not any(token in json.dumps(compact) for token in ('artifact_ref', 'run_id', 'sha256'))
     assert record['source_checks'][0]['artifact_ref']
+
+
+@pytest.mark.parametrize('quote', [None, '不得', QUOTE], ids=['absent', 'short-bytes', 'complete-bytes'])
+def test_real_source_location_and_quote_never_verify_stronger_interpretation(tmp_path, quote):
+    _, runtime, _, _, root = _system(tmp_path)
+    gateway = UnifiedMCPRouter(root, worker_backend='local')
+    result(call(gateway, 'artifact_ingest_text', dict(name='goal', text=USER)))
+    invoke(gateway, 'H', 'science.hypothesis.propose.v1', {'subject': 'goal'})
+    payload = _proposal(hypothesis_keys=('mechanism',)); payload.pop('research_objective_key')
+    stronger = 'The owner extends this to every operator, without semantic verification.'
+    payload['hypotheses'][0]['scope'] = stronger
+    authored = declaration('stronger', stronger, quote=quote, interpretation=stronger, hypothesis_key='mechanism')
+    _, _, sealed = submit(runtime, root, 'H', payload, [authored], [dict(boundary_key='stronger')])
+    record = sealed.signal.boundary_declarations[0]
+    check = record['source_checks'][0]
+    assert check['source_location_verification'] == 'matched'
+    assert check['quote_verification'] == ('absent' if quote is None else 'matched')
+    assert check['verification'] == ('unverified' if quote is None else 'matched')
+    assert check['verification_scope'] == 'quoted_bytes_only'
+    assert record['verification'] == record['interpretation_verification'] == 'unverified'
+    compact = result(call(gateway, 'run_status', dict(name='H')))['scheduler_signal']
+    public = compact['boundary_declarations'][0]
+    assert public['declaration']['evidence'][0]['quote'] == quote
+    assert public['declaration']['interpretation'] == stronger
+    assert public['authority'] == 'owner_interpretation' and 'user_required' not in json.dumps(compact)
+    assert compact['boundary_references'][0]['verification_scope'] == 'declaration_identity_only'
+    invoke(gateway, 'W', 'science.experiment.v1', {'subject': 'H.output'})
+    worker = attached_worker(runtime, root, 'W'); opened = worker.call_tool('worker_open_assignment', {})
+    recovered, _ = full_boundary(worker, source='hypothesis_portfolio', key='stronger')
+    assert recovered['declaration'] == public['declaration']
+    assert recovered['interpretation_verification'] == 'unverified'
+    assignment = json.loads(Path(opened['assignment_path']).read_bytes())
+    hypothesis = next(item for item in assignment['inputs'] if item['source_name'] == 'hypothesis_portfolio')
+    assert hypothesis['scientific_view']['boundary_application'] == 'assigned_subject_boundary'
+
+
+def test_historical_aggregate_match_does_not_promote_absent_quote():
+    original = dict(producer=dict(output_name='old-H.output', operation_id='thirdparty.H', run_id='PRIVATE'),
+        declaration=declaration('old', 'Owner interpretation.', quote=None),
+        source_checks=[dict(source_key='subject', locator='text', verification='matched')],
+        verification='matched', authority='owner_interpretation', effect='owner_statement')
+    frozen = deepcopy(original)
+    public = public_boundary_record(original)
+    assert public['source_checks'][0]['quote_verification'] == 'absent'
+    assert public['source_checks'][0]['verification'] == 'unverified'
+    assert public['source_checks'][0]['source_location_verification'] == 'unverified'
+    assert public['interpretation_verification'] == public['verification'] == 'unverified'
+    assert original == frozen
+
+
+def test_real_root_boundary_collections_share_budget_and_keep_quote_interpretation_pairs(tmp_path, record_property):
+    _, runtime, _, _, root = _system(tmp_path)
+    gateway = UnifiedMCPRouter(root, worker_backend='local')
+    result(call(gateway, 'artifact_ingest_text', dict(name='goal', text=USER)))
+    invoke(gateway, 'large-H', 'science.hypothesis.propose.v1', {'subject': 'goal'})
+    payload = _proposal(hypothesis_keys=('mechanism',)); payload.pop('research_objective_key')
+    declarations = [declaration('h.'+str(index), 'Owner statement. '*70,
+        interpretation='Owner interpretation. '*60, hypothesis_key='mechanism') for index in range(4)]
+    submit(runtime, root, 'large-H', payload, declarations)
+    invoke(gateway, 'large-W', 'science.experiment.v1', {'subject': 'large-H.output'})
+    own = [declaration('w.'+str(index), 'Worker statement. '*70,
+        interpretation='Worker interpretation. '*60, source=None) for index in range(4)]
+    references = [dict(source_key='hypothesis_portfolio', boundary_key=item['boundary_key']) for item in declarations]
+    _, _, run = submit(runtime, root, 'large-W', dict(summary='Scoped result.', outcome='inconclusive',
+        remaining_question='Analyze the existing boundaries.', adopted_stages=[]), own, references)
+    signal = run.signal.model_dump(mode='json')
+    without = {key: value for key, value in signal.items() if not key.startswith('boundary_')}
+    baseline, _ = compact_handoff(without)
+    compact, omissions = compact_handoff(signal)
+    fields = ('boundary_declarations', 'boundary_references')
+    block = {field: compact.get(field, []) for field in fields}
+    block['omitted_items'] = {field: len(signal[field])-len(compact.get(field, [])) for field in fields}
+    assert len(canonical_json(block)) <= COMPACT_BOUNDARY_BYTES
+    assert omissions or any('omission' in entry for field in fields for entry in compact.get(field, []))
+    for field in fields:
+        for entry in compact.get(field, []):
+            if 'omission' in entry:
+                assert 'declaration' not in entry
+                assert entry['omission'] == 'complete_quote_and_interpretation_omitted_together'
+                assert entry['owner_read']['boundary_key']
+            else:
+                owner = entry['declaration']
+                authored = owner['declaration'] if 'producer' in owner else owner
+                assert authored['interpretation']
+                assert all('quote' in citation for citation in authored['evidence'])
+    response = result(call(gateway, 'run_status', dict(name='large-W')))
+    assert response['scheduler_signal'] == compact
+    public_block = {field: response['scheduler_signal'].get(field, []) for field in fields}
+    public_block['scheduler_signal_omissions'] = response.get('scheduler_signal_omissions', {})
+    assert len(canonical_json(public_block)) <= COMPACT_BOUNDARY_BYTES
+    assert response['name'] == 'large-W' and response['output_metadata']['artifact_name'] == 'large-W.output'
+    assert not any(token in json.dumps(compact) for token in ('artifact_ref', 'run_id', 'sha256'))
+    measurements = dict(boundary_block_bytes=len(canonical_json(block)),
+        root_boundary_wrapper_bytes=len(canonical_json(public_block)),
+        compact_handoff_bytes=len(canonical_json(compact)),
+        compact_increment_bytes=len(canonical_json(compact))-len(canonical_json(baseline)),
+        root_response_bytes=len(canonical_json(response)),
+        declarations_preserved=len(compact.get('boundary_declarations', [])),
+        references_preserved=len(compact.get('boundary_references', [])),
+        references_omitted=omissions.get('boundary_references', 0))
+    for key, value in measurements.items():
+        record_property(key, value)
+    print('BOUNDARY_BYTE_MEASUREMENTS', json.dumps(measurements, sort_keys=True))
 
 
 def test_actual_authoring_schema_and_prompts_define_science_only_fields(tmp_path):

@@ -73,9 +73,9 @@ evaluation proxies, candidate-selection strategies and evidence prerequisites
 against the exact original user goal and constraints. They are scientific proposals,
 not additional user requirements. Recommend explicit revision when unsupported;
 preserve provenance and earlier declarations without silently changing user constraints.
-Distinguish derived scientific rules from true authorization, allowed-data and
-validation constraints. A train-only or no-leakage requirement may be binding;
-challenging a derived proxy does not relax it. When a proposed direction changes
+Distinguish derived scientific rules from genuine original user constraints and
+control permissions. Preserve those constraints and permissions; challenging a
+derived proxy does not relax them. When a proposed direction changes
 H's mechanisms, key assumptions, allowed data or validation boundaries, return it
 to H for explicit revision before W executes that direction. Scope-exceeding ideas
 and existing anomalous observations may be assessed without authorizing new tests.
@@ -129,6 +129,12 @@ After verification, write the report and explicitly submit it through the startu
 submit entry in the same code-mode call when available. A draft or completion chat
 is not sealed delivery; inspect the returned state and repair declared rejections.
 Use hypothesis_assessments with exact evidence_keys for the bounded findings.
+When an outcome does not meet the goal or shows no_progress, check whether relevant
+H-derived or source-unverified boundaries limit improvement. Use the retained
+evidence to explain a recommendation to preserve the boundary or have H explicitly
+revise it, through the existing report and next_action fields. This is not a required
+review of every declaration. Current assigned H boundaries remain in force until
+explicit revision; citation matches do not verify interpretation or grant authority.
 When the decision did not change, use optional progress_assessment.outcome=no_progress
 with its reason and evidence_keys; use unknown for unavailable assessment. New files,
 parameter improvements or a passing verdict alone do not establish scientific

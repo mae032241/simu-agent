@@ -188,8 +188,9 @@ def test_compiled_worker_method_freedom_does_not_authorize_changed_hypotheses_or
     assert "H's declared mechanisms, key assumptions, allowed data and validation" in prompt
     assert 'then H revision before executing the new' in prompt
     assert 'must not execute a new direction on that basis' in prompt
-    assert 'held-out observations to choose a method' in prompt
-    assert 'training data only' in prompt and 'train-only, remain binding' in prompt
+    assert 'Genuine original user constraints and control permissions remain' in prompt
+    assert 'until H explicitly revises them' in prompt
+    assert 'train-only' not in prompt and 'training data only' not in prompt
     assert 'this adds no schema, gate or permission' in prompt
 
 
@@ -199,14 +200,20 @@ def test_compiled_hypothesis_improvement_and_diagnosis_have_distinct_scientific_
     assert 'falsifiable mechanisms that' in prompt
     assert 'pure diagnosis goal has no required number of solution mechanisms' in prompt
     assert 'do not invent candidates to satisfy a count' in prompt
-    assert 'real user authorization or no-leakage requirements' in prompt
+    assert 'Preserve genuine original user constraints' in prompt
+    assert 'train-only' not in prompt
     assert 'no exploratory execution outside its declared native permissions' in prompt
 
 
 def test_compiled_analysis_and_root_preserve_real_constraints_and_neutral_closeout():
     from scidiscovery.platforms.scheduler_prompt import load_scheduler_prompt
     prompt = compiled_role('science.result.analyze.v1')
-    assert 'train-only or no-leakage requirement may be binding' in prompt
+    assert 'genuine original user constraints and\ncontrol permissions' in prompt
+    assert 'When an outcome does not meet the goal or shows no_progress' in prompt
+    assert 'H-derived or source-unverified boundaries limit improvement' in prompt
+    assert 'not a required\nreview of every declaration' in prompt
+    assert 'Current assigned H boundaries remain in force' in prompt
+    assert 'train-only' not in prompt
     assert 'return it\nto H for explicit revision before W executes' in prompt
     root = load_scheduler_prompt()
     assert 'Relay owner direction neutrally' in root

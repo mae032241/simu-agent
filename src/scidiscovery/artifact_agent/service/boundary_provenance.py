@@ -17,7 +17,9 @@ def seal_boundaries(declarations, references, *, input_bytes, descriptors, produ
             source = citation.source
             descriptor = descriptors.get(source.source_key)
             check = dict(source_key=source.source_key, locator=source.locator,
-                verification='unverified', origin='unknown', authority='owner_interpretation')
+                verification='unverified', source_location_verification='unverified',
+                quote_verification='absent' if citation.quote is None else 'unverified',
+                verification_scope='quoted_bytes_only', origin='unknown', authority='owner_interpretation')
             if descriptor is not None:
                 check['artifact_ref'] = descriptor.artifact_ref.model_dump(mode='json')
                 check['producer_run_id'] = descriptor.producer_run_id
@@ -27,8 +29,10 @@ def seal_boundaries(declarations, references, *, input_bytes, descriptors, produ
                 try:
                     raw = input_bytes[source.source_key].decode('utf-8')
                     located = raw if source.locator == 'text' else select(json.loads(raw), source.locator)
-                    if citation.quote is None or isinstance(located, str) and citation.quote in located:
+                    check['source_location_verification'] = 'matched'
+                    if citation.quote and isinstance(located, str) and citation.quote in located:
                         check['verification'] = 'matched'
+                        check['quote_verification'] = 'matched'
                 except (KeyError, ValueError, UnicodeError, TypeError):
                     pass
             checks.append(check)
@@ -40,7 +44,7 @@ def seal_boundaries(declarations, references, *, input_bytes, descriptors, produ
                     producer=original['producer'], boundary_key=original['declaration']['boundary_key'])
                 revision['history'] = 'retained_in_exact_original_declaration'
         records.append(dict(declaration=authored, producer=producer, source_checks=checks,
-            revision_checks=revisions, verification='matched' if checks and all(check['verification'] == 'matched' for check in checks) else 'unverified',
+            revision_checks=revisions, verification='unverified', interpretation_verification='unverified',
             authority='owner_interpretation', effect='owner_statement'))
     by_key = {record['declaration']['boundary_key']: record for record in records}
     resolved = [resolve_reference(reference, resolve=resolve, local=by_key) for reference in references]

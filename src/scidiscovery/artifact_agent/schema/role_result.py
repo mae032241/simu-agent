@@ -33,7 +33,7 @@ class BoundaryReference(FormModel):
 class BoundaryCitation(FormModel):
     source: SourceReference
     quote: Annotated[str, Field(min_length=1, max_length=2048)] | None = Field(default=None,
-        description="Exact necessary source text, when useful. Matching proves location only, never interpretation or user authorization.")
+        description="Exact necessary source text, when useful. Without a quote no quoted-byte match is established. Matching proves bytes at the location only, never interpretation or user authorization.")
 
 
 class BoundaryDeclaration(FormModel):
@@ -92,7 +92,8 @@ quote, and your interpretation; associate existing hypothesis_key/parameter.name
 when relevant. Use handoff.boundary_references to cite declaration keys in this
 result or an exact frozen input source_name, without repeating the declaration list.
 Control supplies producer identity, exact frozen references and location checks.
-A matched locator/quote establishes only source location, never the interpretation's
+Source-location and quoted-byte checks are separate. An absent quote is not matched;
+a short or complete matched quote proves only those bytes at the location, never the interpretation's
 truth or user authorization. A stronger interpretation remains the owner's claim,
 including when the source is original user text. Scientific material repeating user
 words does not become original user text. Unverified citations or unresolved

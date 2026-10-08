@@ -115,6 +115,24 @@ def public_boundary_record(record):
     if 'producer' in result:
         producer = result['producer']
         result['producer'] = {key: producer[key] for key in ('output_name', 'operation_id') if producer.get(key)}
+        if isinstance(result.get('declaration'), dict) and 'boundary_key' in result['declaration']:
+            result['verification'] = 'unverified'
+            result['interpretation_verification'] = 'unverified'
+            checks = []
+            for index, check in enumerate(result.get('source_checks', ())):
+                check = dict(check)
+                evidence = result['declaration'].get('evidence', ())
+                quote = evidence[index].get('quote') if index < len(evidence) else None
+                # Historical aggregate "matched" never certifies an absent
+                # quote or the owner's interpretation. Keep sealed bytes intact.
+                check.setdefault('source_location_verification', 'unverified')
+                check.setdefault('quote_verification', 'absent' if quote is None else 'unverified')
+                check['verification'] = 'matched' if check['quote_verification'] == 'matched' else 'unverified'
+                check['verification_scope'] = 'quoted_bytes_only'
+                checks.append(check)
+            result['source_checks'] = checks
+    if 'reference' in result or 'resolved_source' in result:
+        result['verification_scope'] = 'declaration_identity_only'
     for field in ('source_checks', 'revision_checks'):
         if field in result:
             result[field] = [public_boundary_record(item) for item in result[field]]
@@ -133,6 +151,40 @@ def public_boundary_signal(signal):
     return result
 
 
+COMPACT_BOUNDARY_BYTES = 8192
+
+
+def _boundary_metadata(entry):
+    """Omit complete quote/interpretation together, retaining owner navigation."""
+    record = entry.get('declaration', {}) if 'reference' in entry else entry
+    authored = record.get('declaration', {})
+    metadata = {key: entry[key] for key in
+        ('reference', 'verification', 'verification_scope', 'interpretation_verification', 'effect', 'authority', 'instruction', 'producer') if key in entry}
+    if record.get('interpretation_verification'):
+        metadata['interpretation_verification'] = record['interpretation_verification']
+    metadata['boundary_key'] = authored.get('boundary_key') or entry.get('reference', {}).get('boundary_key')
+    if record.get('producer'):
+        metadata['producer'] = record['producer']
+    metadata['source_checks'] = []
+    for check in record.get('source_checks', ())[:4]:
+        check = dict(check)
+        if len(check.get('locator', '').encode('utf-8')) > 768:
+            check.pop('locator', None)
+            check['locator_omitted'] = 'exact_locator_exceeds_compact_budget'
+        if len(encode(metadata | {'source_checks': [*metadata['source_checks'], check]}).encode('utf-8')) > 2048:
+            break
+        metadata['source_checks'].append(check)
+    metadata['source_checks_omitted'] = len(record.get('source_checks', ()))-len(metadata['source_checks'])
+    metadata['omission'] = 'complete_quote_and_interpretation_omitted_together'
+    metadata['owner_read'] = dict(view='boundaries', boundary_key=metadata['boundary_key'],
+        **({'output_name': metadata['producer']['output_name']} if metadata.get('producer', {}).get('output_name') else {}),
+        **({'source_key': entry['reference']['source_key']} if entry.get('reference', {}).get('source_key') else {}),
+        instruction='Delegate clarification to the scientific owner with these exact source/declaration names. '
+            'Use worker_reference_read(view="boundaries") on the bound source; list then read its returned reference. '
+            'Citation bytes do not verify interpretation or authorize relaxation.')
+    return metadata
+
+
 def compact_handoff(handoff):
     """Keep complete sealed statements only; never shorten scientific prose."""
     result, omissions = public_boundary_signal(handoff), {}
@@ -145,39 +197,29 @@ def compact_handoff(handoff):
         result[field] = shown
         if len(shown) != len(entries):
             omissions[field] = len(entries) - len(shown)
-    for field in ('boundary_declarations', 'boundary_references'):
-        entries = result.get(field, [])
-        shown = []
-        for entry in entries[:4]:
-            if len(encode(entry).encode('utf-8')) <= 4096:
-                shown.append(entry)
-            else:
-                # Preserve provenance/effect even if complete scientific text
-                # exceeds the statement budget. Never clip or reconstruct it.
-                owner = entry.get('declaration', entry)
-                if isinstance(owner.get('declaration'), dict):
-                    owner = owner['declaration']
-                metadata = {key: entry[key] for key in
-                    ('reference', 'verification', 'effect', 'authority', 'instruction', 'producer') if key in entry}
-                metadata['boundary_key'] = owner.get('boundary_key')
-                record = entry.get('declaration', {}) if 'reference' in entry else entry
-                metadata['source_checks'] = []
-                if record.get('producer'):
-                    metadata['producer'] = record['producer']
-                for check in record.get('source_checks', ())[:4]:
-                    check = dict(check)
-                    if len(check.get('locator', '').encode('utf-8')) > 768:
-                        check.pop('locator', None)
-                        check['locator_omitted'] = 'exact_locator_exceeds_compact_budget'
-                    if len(encode(metadata | {'source_checks': [*metadata['source_checks'], check]}).encode('utf-8')) > 3072:
-                        break
-                    metadata['source_checks'].append(check)
-                metadata['source_checks_omitted'] = len(record.get('source_checks', ()))-len(metadata['source_checks'])
-                shown.append(metadata | {'omission': 'complete_boundary_statement_exceeds_4096_bytes'})
-        if entries:
-            result[field] = shown
-        if len(shown) != len(entries):
-            omissions[field] = len(entries) - len(shown)
+    fields = ('boundary_declarations', 'boundary_references')
+    entries = {field: result.pop(field, []) for field in fields}
+    projected = {field: [] for field in fields}
+
+    def fits(candidate):
+        omitted = {field: len(entries[field])-len(candidate[field]) for field in fields}
+        # Reserve the Root omission wrapper and its bounded delegation guidance;
+        # ordinary handoff prose continues to have its separate existing budgets.
+        return len(encode(candidate | {'omitted_items': omitted}).encode('utf-8')) + 512 <= COMPACT_BOUNDARY_BYTES
+
+    for field in fields:
+        for entry in entries[field][:4]:
+            # Quote and interpretation stay in the same exact declaration. A
+            # shared budget bounds both collections, including omission metadata.
+            candidate = dict(projected, **{field: [*projected[field], entry]})
+            if len(encode(entry).encode('utf-8')) > 4096 or not fits(candidate):
+                candidate[field] = [*projected[field], _boundary_metadata(entry)]
+            if fits(candidate):
+                projected = candidate
+        if entries[field]:
+            result[field] = projected[field]
+        if len(projected[field]) != len(entries[field]):
+            omissions[field] = len(entries[field])-len(projected[field])
     return result, omissions
 
 

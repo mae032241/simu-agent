@@ -79,9 +79,9 @@ A pure diagnosis goal has no required number of solution mechanisms. If no feasi
 solution or test can be justified, retain the evidence-based unknown or supported
 closeout recommendation; do not invent candidates to satisfy a count.
 Declare mechanism, key-assumption, allowed-data and validation boundaries in the
-existing hypotheses and narratives. Method constraints such as train-only may be
-real user authorization or no-leakage requirements. Preserve those constraints;
-revising a derived proxy does not grant permission to use forbidden data or methods.
+existing hypotheses and narratives. Preserve genuine original user constraints
+and control permissions. Explicitly revising an H-derived scientific restriction
+does not grant permission to use forbidden data or methods.
 This task grants no exploratory execution outside its declared native permissions.
 Control binds the immutable global objective. Write only
 the bounded goal of this hypothesis stage in stage_objective; never copy,

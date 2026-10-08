@@ -13,7 +13,8 @@ mechanisms, evaluation proxies and candidate-selection strategies. Experiment wo
 H-declared mechanisms, key assumptions, allowed data and validation boundaries,
 assignment and declared native permissions. Changes to those scientific boundaries
 return through A to H before W executes the revised direction. Method freedom
-retains true user constraints such as train-only and no-leakage requirements.
+retains genuine original user constraints and control permissions; H-derived
+scientific restrictions may be explicitly revised by H.
 Analysis (A) owns interpreting evidence,
 evaluating outcomes, challenging upstream derived rules against original user
 constraints, recommending follow-up direction and supported scientific closeout.

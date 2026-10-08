@@ -356,10 +356,9 @@ If observations challenge a key assumption or proxy metrics conflict with robust
 evidence, an affordable discriminating test may continue within those boundaries.
 Changing a mechanism, key assumption, allowed data or validation boundary requires
 sealing the bounded observations for A, then H revision before executing the new
-direction. This includes using held-out observations to choose a method when the
-assignment permits training data only. True user authorization and no-leakage
-constraints, including train-only, remain binding; method freedom does not relax
-them. You may report an idea outside scope or already-observed anomalous evidence,
+direction. Genuine original user constraints and control permissions remain
+binding; method freedom does not relax them. H-derived scientific restrictions
+also govern the current assignment until H explicitly revises them. You may report an idea outside scope or already-observed anomalous evidence,
 with its limits, but must not execute a new direction on that basis.
 When resolving a conflict requires changing the assigned question or original
 criteria, likewise return it through A to H; do not make the global scientific

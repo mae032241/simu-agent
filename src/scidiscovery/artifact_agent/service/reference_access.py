@@ -732,9 +732,11 @@ class ReferenceAccessMixin:
         if request.action == 'list':
             response.update(action='list', references=[], next_cursor=None, omitted=0)
             for handle, record in entries[request.cursor:request.cursor + 8]:
+                record = public_boundary_record(record)
                 authored = record.get('reference') or record.get('declaration', {})
                 item = dict(reference=handle, boundary_key=authored.get('boundary_key'),
                     effect=record['effect'], verification=record.get('verification', 'unverified'),
+                    verification_scope='declaration_identity_only' if 'reference' in record else 'interpretation_unverified',
                     authority='owner_interpretation')
                 response['references'].append(item)
                 if len(canonical_json(response)) > request.limit:

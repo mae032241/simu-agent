@@ -122,7 +122,8 @@ protocol changes alone do not force handoff. Retain attempts and limits, and the
 owner's allowed-data, key-assumption and validation boundaries. Changing those
 boundaries returns through A to H before W executes the revised direction; existing
 out-of-scope ideas or anomalies may be reported without executing new work.
-True user train-only/no-leakage constraints retain their authority. Retain the
+Genuine original user constraints and control permissions remain binding; H may
+explicitly revise its derived scientific restrictions. Retain the
 best eligible candidate under the original selection criterion; do not rewrite
 that criterion or earlier predictions/thresholds after seeing results. Exploratory
 revisions retain new declarations and evidence limits. Seal for independent analysis
