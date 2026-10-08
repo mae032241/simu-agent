@@ -122,6 +122,38 @@ def compact_handoff(handoff):
     return result, omissions
 
 
+def compact_scheduler_fields(value, pointers):
+    """Relay declared statements without opening structured scientific reports.
+
+    Field identities belong to the frozen plugin contract. This projection only
+    bounds their shape and bytes; it neither interprets nor rewrites their science.
+    """
+    items = []
+    for pointer in pointers:
+        try:
+            selected = select(value, pointer)
+        except (ValueError, KeyError, IndexError):
+            items.append(dict(pointer=pointer, status='missing'))
+            continue
+        item = dict(pointer=pointer, size_bytes=len(encode(selected).encode('utf-8')))
+        if isinstance(selected, list) and all(isinstance(entry, str) for entry in selected):
+            shown = [entry for entry in selected[:4] if len(entry.encode('utf-8')) <= 1024]
+            item.update(status='selected' if shown == selected else 'projected', value=shown,
+                total_children=len(selected), omitted_children=len(selected)-len(shown))
+        elif isinstance(selected, (dict, list)):
+            item.update(status='omitted', total_children=len(selected),
+                reason='structured_scientific_content_owned_by_worker')
+        elif item['size_bytes'] <= 4096:
+            item.update(status='selected', value=selected)
+        else:
+            item.update(status='omitted', reason='complete_statement_exceeds_4096_bytes')
+        items.append(item)
+    return dict(items=items, coverage='declared_scheduler_statements', original_read='not_confirmed',
+        authority='sealed_owner_statements_not_scheduler_scientific_judgment',
+        instruction='Omitted scientific content remains with its owner. Use the sealed handoff direction; '
+            'delegate missing or conflicting direction with exact source names to a scientific Worker.')
+
+
 def page(workspace, path, *, pointer=None, directory=False, offset=0, version=None, budget=SCIENTIFIC_PAGE_DEFAULT_BYTES):
     if not SCIENTIFIC_PAGE_MIN_BYTES <= budget <= SCIENTIFIC_PAGE_MAX_BYTES:
         raise ValueError(f'budget must be {SCIENTIFIC_PAGE_MIN_BYTES}..{SCIENTIFIC_PAGE_MAX_BYTES} bytes')

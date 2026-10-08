@@ -246,7 +246,7 @@ def operation_invoke_contract(value, *, revision_policy):
     result["binding_policy"] = "Choose scientific materials by their instance names. Control resolves declared exact original materials; missing or ambiguous origins require repair of the selected subject. Internal bindings are not caller inputs."
     result["review_policy"] = "Independent review is optional unless this action explicitly requests qualification or authorization. A review applies only to its exact immutable subject."
     result["invocation"] = {"tool": "operation_invoke", "required": ["name", "operation_id", "inputs"],
-        "instruction": "Required for Agent tasks: state the scientific question and intended deliverable.",
+        "instruction": "Required for Agent tasks: relay the scientific owner's question and intended deliverable, or the initial original user request. Root does not invent scientific direction or selection criteria.",
         "inputs": "One entry per chosen visible port: {port, artifact_names: [exact semantic names]}. Omit optional ports when irrelevant.",
         "idempotency": "Reuse a name only for an identical request. An intentional changed request uses on_conflict=create_revision.",
         "dispatch": "For a queued Agent, use its returned dispatch instructions and frozen execution_profile. Transform and Approval actions complete through their returned result or review_url."}

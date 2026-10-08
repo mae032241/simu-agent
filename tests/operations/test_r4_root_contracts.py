@@ -59,7 +59,9 @@ def test_root_default_decision_and_exact_origin_binding(tmp_path, monkeypatch):
     assert selected['/limitations']['status'] == 'missing'  # No invented limitations.
     assert root.call_tool('run_status', {'name': 'observe', "intent": 'status'})['state'] == 'completed'
     assert 'selected_output' not in root.call_tool('run_status', {'name': 'observe', "intent": 'status'})
-    requested = root.call_tool('run_status', {'name':'observe', 'output_fields':['outcome']})
+    with pytest.raises(RootToolError):
+        root.call_tool('run_status', {'name':'observe', 'output_fields':['outcome']})
+    requested = root.facade.run_status(name='observe', output_fields=['outcome'])
     assert requested['selected_output']['items'][0]['value'] == 'completed'
     operations = []
     for operation in science.operations:

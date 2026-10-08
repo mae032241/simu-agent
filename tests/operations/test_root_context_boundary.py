@@ -73,7 +73,7 @@ def test_combined_status_and_values_waits_for_sealing(tmp_path):
     catalog, runtime, _, _, root = _system(tmp_path)
     _invoke(root, 'observation')
     gateway = UnifiedMCPRouter(root, worker_backend='local')
-    request = {'name': 'observation', 'intent': 'decision', 'output_paths': ['/limitations']}
+    request = {'name': 'observation', 'intent': 'decision'}
     queued = result(call(gateway, 'run_status', request))
     assert queued['state'] == 'queued' and not queued.get('selected_output') and not queued.get('scheduler_signal')
     assert "operation_version" not in queued and "operation_digest" not in queued
@@ -89,7 +89,7 @@ def test_combined_status_and_values_waits_for_sealing(tmp_path):
     worker.call_tool('worker_submit_result', {})
     completed = result(call(gateway, 'run_status', request))
     assert completed['state'] == 'completed' and completed['scheduler_signal']
-    assert completed['selected_output']['items'][0]['value'] == ['Two rows do not establish causality.']
+    assert next(item for item in completed['selected_output']['items'] if item['pointer'] == '/limitations')['value'] == ['Two rows do not establish causality.']
     navigation = result(call(gateway, 'run_status', {
         'name': 'observation', 'intent': 'navigation'}))
     assert navigation['output_index']['pointer'] == '' and 'scheduler_signal' not in navigation
@@ -113,12 +113,13 @@ def test_gateway_index_does_not_read_summary_or_leak_full_output(tmp_path):
     assert not page.get("sealed_output") and not page.get("selected_output")
     assert page["output_index"]["pointer"] == ""
     assert "/limitations" in [i["pointer"] for i in page["output_index"]["children"]]
-    exact = result(call(gateway, "run_status", {"name":"observation", "output_paths":["/limitations"]}))
-    assert exact["selected_output"]["items"][0]["value"] == ["Two rows do not establish causality."]
+    exact = result(call(gateway, "run_status", {"name":"observation"}))
+    assert next(item for item in exact['selected_output']['items'] if item['pointer'] == '/limitations')['value'] == ['Two rows do not establish causality.']
     for paths in ([], ["/limitations", "/structure"]):
         error = call(gateway, "run_status", {"name":"observation", "intent":"navigation", "output_paths":paths})
-        assert "navigation accepts one output path" in error["error"]["message"]
-    full = result(call(gateway, "run_status", {"name":"observation", "intent":"full"}))
+        assert "error" in error and "Delegate" in error["error"]["message"]
+    assert "error" in call(gateway, "run_status", {"name":"observation", "intent":"full"})
+    full = root.facade.run_status(name="observation", intent="full")
     assert full["sealed_output"]["payload"]["limitations"] == ["Two rows do not establish causality."]
 
 

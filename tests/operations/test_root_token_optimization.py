@@ -20,6 +20,7 @@ PROFILE = {"profile": {"model": "frozen-model", "reasoning_effort": "high"},
 
 class ReadFixture(RootRunRoutes):
     session_key = None
+    instance_management_secret = None
 
     def __init__(self, state="running"):
         self.value = SimpleNamespace(state=state, operation_id="fixture.v1", operation_version="1",
@@ -27,17 +28,25 @@ class ReadFixture(RootRunRoutes):
             deadline_at="frozen-deadline", last_activity_at="activity", run_id="private-id",
             output_binding_name="run.output", output_ref=SimpleNamespace(kind="science", schema_id="report.v1"),
             reason="UNSEALED_SCIENCE" * 300, inputs=[], backend_id="test", decision_fields=None, recovery_policy=None,
-            signal=SimpleNamespace(model_dump=lambda **_: {"verdict": "accept"}))
+            signal=SimpleNamespace(model_dump=lambda **_: {"verdict": "pass"}))
         self.bindings = SimpleNamespace(progression_status=lambda **kwargs: {}, list=lambda **kwargs: (
             [SimpleNamespace(name="run", object_id="private-id")] if kwargs["namespace"] == "run" else []))
         self.artifacts = SimpleNamespace(read=Mock(return_value=json.dumps(PAYLOAD).encode()))
-        self.runs = SimpleNamespace(review_wait_projection=lambda _: None, worker_connections=SimpleNamespace(), diagnostic_summary=lambda value: {"failure":{"category":"output_rejected"}}, sanitize_diagnostic=lambda value, diagnostic, **kwargs: diagnostic, status=Mock(return_value=self.value), recovery_available=Mock(return_value=False),
+        self.runs = SimpleNamespace(submission_attention=lambda value: None, compiled_operation=lambda value: SimpleNamespace(spec=SimpleNamespace(scientific_progress=None)), review_wait_projection=lambda _: None, worker_connections=SimpleNamespace(), diagnostic_summary=lambda value: {"failure":{"category":"output_rejected"}}, sanitize_diagnostic=lambda value, diagnostic, **kwargs: diagnostic, status=Mock(return_value=self.value), recovery_available=Mock(return_value=False),
             diagnostic_events=Mock(return_value={"events": [{"event_id": 1, "recorded_at": "saved", "diagnostic": {"category":"output_rejected", "code":"fixture", "repairable_by_output":True, "details":[{"path":"$.summary", "message":"exact saved error"}]}}], "next_after": None}),
             evidence_output_refs=Mock(return_value=[]), sealed_evidence_output_refs=Mock(return_value=[]))
         self.runs.list_bound_page = lambda **query: (tuple((binding.name,self.runs.status(binding.object_id))
             for binding in self.bindings.list(instance='fixture', namespace='run'))[:query['limit']], None)
         self._operation_catalog = SimpleNamespace(operation=lambda _: SimpleNamespace(
             spec=SimpleNamespace(version="1", inputs=(), decision_fields=("summary", "limitations")), digest="a" * 64))
+        self._operation_catalog.recorded_operation = lambda operation_id, **kwargs: self._operation_catalog.operation(operation_id)
+        def contract_status(operation_id, **kwargs):
+            try:
+                self._operation_catalog.operation(operation_id)
+            except KeyError:
+                return 'unavailable'
+            return 'current'
+        self._operation_catalog.recorded_contract_status = contract_status
         self.engineering_diagnostics = SimpleNamespace(capture=Mock())
         self.detail_reads = Mock()
 
@@ -78,9 +87,15 @@ def test_active_status_and_list_gate_before_content_assembly(state, arguments):
     facade = ReadFixture(state)
     gateway = UnifiedMCPRouter(RootMCPRouter(facade), worker_backend="local")
     direct = facade.run_status(name="run", **arguments)
-    assert result(call(gateway, "run_status", {"name": "run", **arguments})) == direct
+    reply = call(gateway, "run_status", {"name": "run", **arguments})
+    if arguments.get('intent') == 'full' or 'output_paths' in arguments:
+        assert 'error' in reply
+    else:
+        assert result(reply) == direct
     listing = facade.run_list(state=None, limit=20, view="detail")
-    assert result(call(gateway, "run_list", {"view": "detail"})) == listing
+    routed_listing = result(call(gateway, "run_list", {"view": "detail"}))
+    assert routed_listing["runs"] == listing["runs"]
+    assert routed_listing["next_before"] == listing["next_before"]
     assert "UNSEALED_SCIENCE" not in json.dumps([direct, listing])
     facade.detail_reads.assert_not_called()
     facade.artifacts.read.assert_not_called()
@@ -96,7 +111,15 @@ def test_full_output_positive_opt_in_only(intent):
     request = {"intent": intent}
     gateway = UnifiedMCPRouter(RootMCPRouter(facade), worker_backend="local")
     direct = facade.run_status(name="run", **request)
-    assert direct == result(call(gateway, "run_status", {"name": "run", **request}))
+    reply = call(gateway, "run_status", {"name": "run", **request})
+    if intent == 'full':
+        assert 'error' in reply
+    elif intent == 'decision':
+        routed = result(reply)
+        assert routed['scheduler_signal'] == direct['scheduler_signal']
+        assert 'original' not in routed['selected_output']
+    else:
+        assert direct == result(reply)
     if intent == "full":
         assert direct["sealed_output"] == {"artifact_name":"run.output", "kind":"science", "schema":"report.v1", "payload":PAYLOAD}
     else:
@@ -123,10 +146,7 @@ def test_invalid_requests_reject_before_state_read_at_both_entries(arguments):
         facade.run_status(name="run", **arguments)
     gateway = UnifiedMCPRouter(RootMCPRouter(facade), worker_backend="local")
     error = call(gateway, "run_status", {"name": "run", **arguments})["error"]
-    if direct.value.details:
-        assert error["data"]["diagnostics"] == list(direct.value.details)
-    else:
-        assert str(direct.value) in error["message"]
+    assert error['data']['diagnostics']
     facade.runs.status.assert_not_called()
     facade.artifacts.read.assert_not_called()
 

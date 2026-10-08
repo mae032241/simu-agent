@@ -95,7 +95,7 @@ def test_running_and_final_deliveries_share_readonly_scientific_projection(tmp_p
         for private in ('artifact_ref', 'source_ref', 'operation_digest', 'budget_owner', 'private_outputs', 'tcad_manifest', 'DRAFT_MUST_NOT_APPEAR', str(workspace)):
             assert private not in visible
         debug = next(item for item in rows if item['delivery_kind'] == 'executor_observation' and item['stage'] == 'debug')
-        detail = root.call_tool('run_status', {'name': 'observe', 'stage_reference': debug['reference']})['sealed_stages']['material']
+        detail = root.facade.run_status(name='observe', stage_reference=debug['reference'])['sealed_stages']['material']
         assert 'scratch/debug' not in detail['text'] and 'log' not in json.loads(detail['text'])
         ui._handle_instance_api(SimpleNamespace(headers={}),
             ['api', 'instances', instance.instance_id, 'nodes', 'run:observe'], {})
@@ -127,11 +127,14 @@ def test_large_material_pagination_and_instance_boundaries(tmp_path, monkeypatch
         conclusion = '測' * 16384
         sealed = worker.call_tool('worker_experiment_stage', {'stage': 'design', 'conclusion': conclusion})
         rows = _pages(root)
+        from scidiscovery.artifact_agent.interfaces.mcp_root import RootToolError
+        with pytest.raises(RootToolError):
+            root.call_tool('run_status', {'name': 'observe', 'stage_reference': sealed['reference']})
         assert 'conclusion' in rows[-1]['omitted_fields']
         text, offset = '', 0
         while True:
-            material = root.call_tool('run_status', {'name': 'observe', 'stage_reference': sealed['reference'],
-                'stage_text_offset': offset})['sealed_stages']['material']
+            material = root.facade.run_status(name='observe', stage_reference=sealed['reference'],
+                stage_text_offset=offset)['sealed_stages']['material']
             assert len(material['text']) <= 8192
             text += material['text']
             if material['next_text_offset'] is None:
@@ -181,8 +184,7 @@ def test_initialization_missing_outputs_are_visible_or_explicitly_omitted(tmp_pa
             html = render_node(node, instance_id=instance.instance_id).decode()
             assert preview['missing_outputs'][0] in html
             assert ('预览有省略，请按引用读取分段原文。' in html) == (index == 1)
-            material = root.call_tool('run_status', {'name': 'observe',
-                'stage_reference': receipt['reference']})['sealed_stages']['material']
+            material = root.facade.run_status(name='observe', stage_reference=receipt['reference'])['sealed_stages']['material']
             assert material['next_text_offset'] is None
             assert json.loads(material['text'])['missing_outputs'] == missing
         return []

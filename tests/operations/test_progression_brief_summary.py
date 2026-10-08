@@ -5,6 +5,7 @@ import json
 import pytest
 
 from scidiscovery.artifact_agent.service.run_read_projection import _output_selection
+from scidiscovery.artifact_agent.interfaces.mcp_root import RootToolError
 from tests.operations.test_progression import progression, row
 
 
@@ -27,7 +28,7 @@ def brief(p, monkeypatch, results, limit=20000):
     p.coordinator.tick()
     saved = row(p)
     facade = p.facade(saved['owner_session'])
-    monkeypatch.setattr(facade, 'run_status', lambda name, intent: results[name])
+    monkeypatch.setattr(facade, 'run_status', lambda name, intent, scheduler_view: results[name])
     monkeypatch.setattr(p.coordinator, 'facade_factory', lambda _: facade)
     snapshot = dict(goal=saved['objective_ref_json'], runs=[dict(name=name, state='completed') for name in results], approvals=[])
     raw = p.coordinator._brief(saved, snapshot, limit)
@@ -100,9 +101,16 @@ def test_public_analysis_summary_reads_and_sealed_bytes_remain_complete(tmp_path
     saved = runtime.runs.status(worker._run_id)
     original = runtime.artifacts.read(saved.output_ref)
     default = root.call_tool('run_status', dict(name='generic_analysis'))
-    explicit = root.call_tool('run_status', dict(name='generic_analysis', output_fields=['summary']))
-    full = root.call_tool('run_status', dict(name='generic_analysis', intent='full'))
-    for view in (default, explicit):
+    with pytest.raises(RootToolError):
+        root.call_tool('run_status', dict(name='generic_analysis', output_fields=['summary']))
+    explicit = root.facade.run_status(name='generic_analysis', output_fields=['summary'])
+    with pytest.raises(RootToolError):
+        root.call_tool('run_status', dict(name='generic_analysis', intent='full'))
+    full = root.facade.run_status(name='generic_analysis', intent='full')
+    summary = next(item for item in default['selected_output']['items'] if item['pointer'] == '/summary')
+    assert summary['status'] == 'omitted' and 'value' not in summary
+    assert default['scheduler_signal_omissions']['omitted_items']['summary']
+    for view in (explicit,):
         summary = next(item for item in view['selected_output']['items'] if item['pointer'] == '/summary')
         assert summary['status'] == 'selected' and summary['value'] == report['summary']
         assert view['scheduler_signal']['summary'] == report['summary']

@@ -323,10 +323,13 @@ class RootInstanceRoutes:
 
     def artifact_catalog(self, *, name: str, view: str = "detail",
                          parent_offset: int = 0, parent_limit: int = 16,
-                         content_cursor: str | None = None) -> dict[str, Any]:
+                         content_cursor: str | None = None, scheduler_view: bool = False) -> dict[str, Any]:
         binding = self._binding("artifact", name)
         envelope = self.artifacts.get_by_id(binding.object_id)
         if view == "content":
+            from ..service.scheduling_control import is_goal_anchor
+            if scheduler_view and not is_goal_anchor(envelope):
+                raise RootToolError(f"{name}: scientific original content belongs to Workers. Bind this exact source name to a task accepting originals, or ask its scientific owner to clarify the missing direction; Root retains metadata and original user goal/context text.")
             from .scientific_originals import read_original_page
             return read_original_page(self.artifacts, envelope, name=name, instance=self._instance_id(),
                 cursor=content_cursor, page_bytes=self.runs.material_input_settings(self._instance_id()).original_read_page_bytes)

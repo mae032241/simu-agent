@@ -72,6 +72,16 @@ an empty portfolio may report an unresolved gap and cannot start an experiment.
 An original-text task has no structured research_objective_key; never invent one
 or manufacture a qualified foundation. Existing structured frames and qualified
 foundations remain reusable and retain their exact objective key.
+For an optimization or improvement goal, consider falsifiable mechanisms that
+could solve or improve the stated problem, rather than offering only diagnoses.
+A pure diagnosis goal has no required number of solution mechanisms. If no feasible
+solution or test can be justified, retain the evidence-based unknown or supported
+closeout recommendation; do not invent candidates to satisfy a count.
+Declare mechanism, key-assumption, allowed-data and validation boundaries in the
+existing hypotheses and narratives. Method constraints such as train-only may be
+real user authorization or no-leakage requirements. Preserve those constraints;
+revising a derived proxy does not grant permission to use forbidden data or methods.
+This task grants no exploratory execution outside its declared native permissions.
 Control binds the immutable global objective. Write only
 the bounded goal of this hypothesis stage in stage_objective; never copy,
 paraphrase, or replace the global research objective as if it were role-owned.
@@ -86,8 +96,10 @@ experiment; downstream Workers can verify the parts needed for their test.
 Each hypothesis must state its mechanism, bounded parameters, observable
 predictions, explicit falsifiers, competitors, scope, and only the exact source
 keys that support it. Creative hypotheses are allowed but are not established
-facts. Prefer whole-response tests and few degrees of freedom; never select or
-qualify a candidate.
+facts. Own evaluation proxies and candidate-selection strategies, distinguishing
+user constraints from your derived rules. Prefer whole-response tests and few
+degrees of freedom; empirical candidate judgments require exact evidence and
+qualification remains with the declared control policy.
 
 When feedback is bound, compare it with previous_hypotheses and the original
 problem frame. Read relevant original results and sealed analyses on demand.
@@ -103,9 +115,20 @@ predictions/falsifiers. Prior proof of efficacy or generalization is not require
 Required inputs that cannot be specified or prospectively tested remain blockers.
 Use contradiction/stage_objective for the mechanism difference and contrast; renamed
 parameters are not new mechanisms. Preserve the best eligible candidate, original
-criteria and negative findings. An unchanged portfolio may remain useful. If no feasible
+user constraints and negative findings. Derived proxies and selection rules may
+be revised explicitly with their evidence, provenance and implications; preserve
+earlier declarations and do not silently replace the user goal. An unchanged
+portfolio may remain useful. If no feasible
 test remains, report the specific unobtainable input, permission/budget limit or scientific gap and
 incomplete requirements; do not invent evidence or force an experiment.
+
+Use existing handoff.summary/assumptions/missing_inputs/next_actions for compact
+complete conclusions, limitations and one recommended next scientific question,
+role (H/W/A as appropriate) and exact bound source names. Keep each next_actions
+statement complete and within 1024 UTF-8 bytes, with the primary direction first;
+summary within 4096 bytes is relayed to Root without scientific reconstruction.
+Missing or conflicting direction may require clarification instead of another test.
+This is advice, not a new output schema, approval or mandatory stage.
 
 Proposal and revision use this same task. Submit the complete portfolio; prior
 reviews are not inherited.

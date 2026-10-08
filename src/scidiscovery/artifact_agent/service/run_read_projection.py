@@ -8,7 +8,7 @@ from typing import Any
 from ..schema.approval import parse_json_pointer
 from ..schema.common import canonical_json
 from ...operation_contract import DiagnosticError
-from .input_reader import compact_scientific_fields, compact_handoff
+from .input_reader import compact_scientific_fields, compact_scheduler_fields, compact_handoff
 
 def run_intent_projection(value, *, intent):
     """Pure compact projection; the route avoids assembling excluded details."""
@@ -162,12 +162,14 @@ def _output_selection(output: dict[str, Any], pointers: list[str]) -> dict[str, 
 class RunReadProjection:
     _output_index = staticmethod(_output_index)
 
-    def __init__(self, *, runs, artifacts, operation_catalog):
+    def __init__(self, *, runs, artifacts, operation_catalog, scheduler_view=False):
         self.runs, self.artifacts, self._operation_catalog = runs, artifacts, operation_catalog
+        self.scheduler_view = scheduler_view
 
     def decision(self, *, name, value):
         return self._compact_run_status(name=name, value=value, intent="decision",
-            output_paths=[], index_offset=0, index_limit=16)
+            output_paths=[], index_offset=0, index_limit=16,
+            scheduler_view=getattr(self, 'scheduler_view', False))
 
     def _compact_run_status(
         self,
@@ -178,6 +180,7 @@ class RunReadProjection:
         output_paths: list[str] | None,
         index_offset: int,
         index_limit: int,
+        scheduler_view: bool = False,
     ) -> dict[str, Any]:
         include_payload = intent in {"navigation", "decision", "full"}
         output_status, output = self._sealed_output(value, include_payload=include_payload)
@@ -259,14 +262,14 @@ class RunReadProjection:
             )
             result["selected_output"] = (
                 ({key: output[key] for key in ("artifact_name", "kind", "schema")}
-                    | compact_scientific_fields(output['payload'], output_paths)
+                    | (compact_scheduler_fields if scheduler_view else compact_scientific_fields)(output['payload'], output_paths)
                     if default_view else _output_selection(output, output_paths or []))
                 if output is not None and output_paths
                 else None
             )
             if default_view and output_paths:
                 result['output_delivery'] = 'compact'
-                if result['selected_output'] is not None:
+                if result['selected_output'] is not None and not scheduler_view:
                     result['selected_output']['read'] = dict(tool='run_status', name=name, intent='decision',
                         output_paths=[output_paths[0]])
                     result['selected_output']['reading'] = 'Replace output_paths with selected exact returned pointers; navigation intent indexes omitted children.'
@@ -285,7 +288,8 @@ class RunReadProjection:
             result["scheduler_signal"] = signal
             if omissions:
                 result["scheduler_signal_omissions"] = {"omitted_items": omissions,
-                    "read": {"tool": "run_status", "name": name, "intent": "full"}}
+                    **({"instruction": "Delegate clarification to the scientific owner with this exact task and output name."}
+                       if scheduler_view else {"read": {"tool": "run_status", "name": name, "intent": "full"}})}
         return run_intent_projection(self._scientific_run_view(value, result), intent=intent)
 
     def _scientific_run_view(self, value, result):

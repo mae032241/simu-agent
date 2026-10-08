@@ -127,6 +127,12 @@ class AttemptMemoryMixin:
                 item['omissions'].append('sealed_report_missing')
             item['summary'] = signal['summary'] if signal else 'Sealed delivery; handoff omitted or unavailable.'
             if signal:
+                if audience == 'root':
+                    from .input_reader import compact_handoff
+                    signal, omissions = compact_handoff(signal)
+                    item['summary'] = signal.get('summary', 'Sealed delivery; complete owner summary omitted.')
+                    item['handoff_omissions'] = omissions
+                    item['next_actions'] = signal.get('next_actions', [])
                 item['worker_verdict'] = signal['verdict']
                 limits={key:signal[key] for key in ('assumptions','missing_inputs') if signal.get(key)}
                 if limits:
@@ -134,7 +140,8 @@ class AttemptMemoryMixin:
             else:
                 item['omissions'].append('worker_handoff_invalid' if row['signal_json'] is not None else 'worker_handoff_missing_or_byte_budget')
             item['omissions'].append('full_report_conditions_and_limitations_require_original')
-            self._memory_scientific_fields(item, row, budget//3, read_bytes=budget*4)
+            self._memory_scientific_fields(item, row, budget//3, read_bytes=budget*4,
+                scheduler_view=audience == 'root')
         if row['intent_ref']:
             try:
                 intent=ArtifactRef.model_validate_json(row['intent_ref'])
@@ -178,7 +185,7 @@ class AttemptMemoryMixin:
                     item.pop('scientific_negative',None)
         return item
 
-    def _memory_scientific_fields(self, item, row, budget, *, read_bytes):
+    def _memory_scientific_fields(self, item, row, budget, *, read_bytes, scheduler_view=False):
         """Copy complete declared decision fields, never infer from prose/verdict."""
         from .run_read_projection import _pointer_value
         try:
@@ -209,7 +216,14 @@ class AttemptMemoryMixin:
                     continue
                 if value is not None and value not in ([],{}):
                     fields[pointer]=value
-            if ref.schema_id=='scidiscovery.layered-diagnosis.v1':
+            if scheduler_view:
+                from .input_reader import compact_scheduler_fields
+                projection = compact_scheduler_fields(body, list(fields))
+                fields = {entry['pointer']: entry['value'] for entry in projection['items']
+                    if entry.get('status') in {'selected', 'projected'} and 'value' in entry}
+                item['scientific_field_omissions'] = [entry for entry in projection['items']
+                    if entry['status'] != 'selected']
+            elif ref.schema_id=='scidiscovery.layered-diagnosis.v1':
                 from ..schema.layered_diagnosis import LayeredDiagnosisReport
                 report=LayeredDiagnosisReport.model_validate_json(canonical_json(body),strict=True)
                 for key in ('experiment_key','plan_key','objective_assessment','hypothesis_assessments'):

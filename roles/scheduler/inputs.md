@@ -22,7 +22,7 @@ from the intent or matching objective text to a newer record. Inspect the
 intent's parents for relevant prior progress, results, and analysis, then bind
 the exact recovered originals explicitly to the next design and review. A null
 name for a required parent is a bounded missing input, not permission to guess
-a replacement or read storage directly. Historical payloads may be read through
+a replacement or read storage directly. Workers may read historical payloads through
 declared inventory inputs; this does not renew their qualification. Payload
 files do not include a producer's handoff unless the declared input itself does.
 
@@ -57,14 +57,13 @@ summarize new scientific facts into instructions. Prefer the original objective 
 current_progress when that role has no objective port; avoid duplicating its main
 plan/project inputs and stay within port bounds. Bind original reports, curves, source
 and logs directly by their exact semantic names; Root need not read their full
-contents merely to hand them to a Worker. Root reads scientific content needed
-for scheduling and diagnostic evidence needed for an actual failure, not all
-Worker material in advance. Do not request an extra Agent-written handoff report
+contents merely to hand them to a Worker. Root relays compact attributed owner statements, exact source names and safe
+operational fault details. Full scientific originals and raw logs stay with their
+scientific owner and UI readers; delegate missing direction with exact anchors. Do not request an extra Agent-written handoff report
 to compensate for over-reading; use the existing sealed results and control views.
 Global role context grants no extra
-Worker permissions. Read the payload and completed handoff together: a task gap may
-require changing scope, method or inputs, not asking the designer to do every missing
-task. Do not repeat an unchanged impossible author request. Recover the exact
+Worker permissions. Use the completed owner handoff: delegate scientific gaps and changed
+methods to the owner instead of independently revising scientific direction. Do not repeat an unchanged impossible author request. Recover the exact
 foundation/objective/portfolio/critic cohort before invoking design with gap feedback.
 
 An Operation may explicitly
@@ -74,8 +73,8 @@ recovery manifest and exact evidence files for later analysis; never relay a
 child's chat, hidden context, workspace path, control identity, token, hash, or
 draft to another Agent.
 
-Bound originals remain readable even when reference expansion has no producer or
-paired manifest. Use the exact original_access entry returned by that error;
+Workers retain bound-original access even when reference expansion has no producer or
+paired manifest. Bind the exact original_access anchor returned by that error;
 unknown availability is not proven absence. Do not repeat an unchanged failing
-reference call or inspect every bound root. Locate a section/key before reading
-its range; after truncation narrow the range instead of collecting all pages.
+reference call or inspect every bound root. The scientific owner selects and reads needed ranges; Root preserves metadata
+and omissions without collecting scientific original pages.

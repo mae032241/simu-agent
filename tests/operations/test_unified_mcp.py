@@ -267,7 +267,7 @@ def test_gateway_scopes_actual_worker_lifecycle_and_sealed_result(tmp_path, back
                     "interpretation": "The mean is two.", "limitations": ["Two rows do not establish causality."]}})
     Path(opened["output_directory"], "result.json").write_text(content)
     assert result(call(gateway, "worker_submit_result", **child))["state"] == "completed"
-    assert result(call(gateway, "run_status", {"name": "observation", "output_paths": []}))["state"] == "completed"
+    assert result(call(gateway, "run_status", {"name": "observation"}))["state"] == "completed"
     assert "error" in call(gateway, "worker_csv_summarize", **child)
     # Reuse is a new exact Run, not reopening or modifying the sealed output.
     _invoke(root, name="second")
@@ -307,7 +307,7 @@ def test_gateway_scopes_actual_worker_lifecycle_and_sealed_result(tmp_path, back
         assert len(unavailable['reading_guidance']['read'])==3
         assert all(item['status'] == 'unknown' for item in unavailable['reading_guidance']['inputs'])
     second_run = gateway.connections.resolve(platform_session="parent", thread_id="child-1")
-    last = result(call(gateway, "run_status", {"name": "second", "output_paths": []}))
+    last = result(call(gateway, "run_status", {"name": "second"}))
     result(call(gateway, "run_record_failure", {"name": "second", "reason": "End fixture task",
         "expected_state": "running", "expected_last_activity_at": last["last_activity_at"]}))
     assert UnifiedMCPRouter(root).connections.resolve(
@@ -340,7 +340,7 @@ def test_legacy_binding_migration_preserves_identity_and_rejects_ambiguous_order
         ids.append(gateway.connections.resolve(platform_session="parent", thread_id="child-1").run_id)
         result(call(gateway, "worker_open_assignment", **child))
         if name == "observation":
-            last = result(call(gateway, "run_status", {"name": name, "output_paths": []}))
+            last = result(call(gateway, "run_status", {"name": name}))
             result(call(gateway, "run_record_failure", {"name": name, "reason": "End fixture task",
                 "expected_state": "running", "expected_last_activity_at": last["last_activity_at"]}))
     with runtime.runs._connect() as connection:
@@ -352,7 +352,7 @@ def test_legacy_binding_migration_preserves_identity_and_rejects_ambiguous_order
     with runtime.runs._connect() as connection:
         assert {row[0] for row in connection.execute("SELECT attachment_sequence FROM worker_connections")} == {0}
     assert connections.previous_run(run_id=ids[1], platform_session="parent", thread_id="child-1") is None
-    last = result(call(gateway, "run_status", {"name": "second", "output_paths": []}))
+    last = result(call(gateway, "run_status", {"name": "second"}))
     result(call(gateway, "run_record_failure", {"name": "second", "reason": "End fixture task",
         "expected_state": "running", "expected_last_activity_at": last["last_activity_at"]}))
     with pytest.raises(RunStateConflict, match="ambiguous"):
@@ -368,7 +368,7 @@ def test_archive_restores_nonempty_worker_binding_order(tmp_path, legacy):
     result(call(gateway, "worker_attach", {"name": "observation", "thread_id": "child-1"}))
     bound = gateway.connections.resolve(platform_session="parent", thread_id="child-1")
     result(call(gateway, "worker_open_assignment", child="child-1", profile=bound.execution_profile['profile']))
-    last = result(call(gateway, "run_status", {"name": "observation", "output_paths": []}))
+    last = result(call(gateway, "run_status", {"name": "observation"}))
     result(call(gateway, "run_record_failure", {"name": "observation", "reason": "End fixture task",
         "expected_state": "running", "expected_last_activity_at": last["last_activity_at"]}))
     if legacy:

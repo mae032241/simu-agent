@@ -20,7 +20,8 @@ def progression_read_view(*, bindings, runs, artifacts, operation_catalog, insta
         if delivery_cursor is not None:
             raise ValueError('Delivery cursor requires its frozen goal.')
         return status
-    projection = RunReadProjection(runs=runs, artifacts=artifacts, operation_catalog=operation_catalog)
+    projection = RunReadProjection(runs=runs, artifacts=artifacts, operation_catalog=operation_catalog,
+        scheduler_view=True)
     closeout = dict(kind='sealed_task_handoff', goal_assessment='not_inferred',
         stop_reason=status.get('reason'), tasks=[], in_flight=[], unresolved=[], omissions=[])
     closeout['history_read'] = dict(tool='run_list', view='history', limit=8)

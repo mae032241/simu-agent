@@ -86,17 +86,17 @@ class ProgressionStatusInput(RootToolInput):
 
 class ProgressionReportInput(RootToolInput):
     assessments: list[ProgressAssessment] = Field(default_factory=list, max_length=8,
-        description="Optional task-level goal judgments. Control freezes evidence and appends corrections; this is not a scientific result or qualification. Ordinary tasks require no assessment. In configured assist mode, persistent missing or unsupported assessments can trigger observation-gap protection and directly pause further dispatch. Cited new bytes plus a Root advance judgment do not independently establish scientific progress.")
+        description="Optional relay of exact sealed scientific-owner judgments with attribution and limitations. Control freezes evidence and appends corrections; Root does not independently score science. Ordinary tasks require no assessment. In configured assist mode, missing or unsupported assessments retain existing observation-gap protection. New bytes and historical Root judgments do not independently establish scientific progress.")
     summary: str = Field(min_length=1, max_length=4096,
         description="Current goal outcome or specific waiting condition; retain scientific limitations.")
-    completed: bool = Field(default=False, description="Root judges the whole frozen goal complete, after reading sealed results. Accepted experiments must be terminal and each sealed experiment report must have a completed analysis bound to that exact report. Inconclusive analyses are valid; report completed=false while results or interpretation remain outstanding. Evidence-only goals need no experiment or analysis.")
+    completed: bool = Field(default=False, description="Relay the scientific owner's supported whole-goal conclusion within the existing goal-completion policy. Accepted experiments must be terminal and each sealed experiment report must have a completed analysis bound to that exact report. Inconclusive analyses are valid; report completed=false while results or interpretation remain outstanding. Evidence-only goals need no experiment or analysis.")
     question: str | None = Field(default=None, min_length=1, max_length=2048,
         description="Specific missing user information, when needed to continue.")
 
 
 class ReadInput(RootToolInput):
     view: Literal["summary", "detail"] = Field(default="summary",
-        description="Default compact view with explicit omission and original-detail navigation. Detail preserves exact bindings, original logs and full metadata.")
+        description="Default compact view with explicit omissions and exact-name navigation. Detail preserves supported control metadata and safe fault details; scientific originals and raw logs remain with Workers and UI readers.")
 
 
 class PageInput(ReadInput):
@@ -139,6 +139,11 @@ class DiagnosticReadInput(RootToolInput):
     offset: int = Field(default=0, ge=0)
     max_bytes: int = Field(default=16384, ge=1, le=65536)
     section: Literal["summary", "traceback", "stdout", "stderr"] = "summary"
+
+
+class SchedulerDiagnosticReadInput(DiagnosticReadInput):
+    section: Literal["summary", "traceback"] = Field(default="summary",
+        description="Safe engineering fault details only. Raw stdout/stderr belongs to the scientific owner and remains available in the control UI.")
 
 
 class ExecutionLogsInput(NamedInput):
@@ -191,9 +196,10 @@ class OperationInputSelection(RootToolInput):
 class OperationCallInput(NamedInput, RevisionInput):
     operation_id: str = Field(min_length=1, max_length=128)
     inputs: tuple[OperationInputSelection, ...] = Field(max_length=64)
-    instruction: str | None = Field(default=None, max_length=65536)
+    instruction: str | None = Field(default=None, max_length=65536,
+        description="Relay the sealed scientific owner's complete question, deliverable, direction and exact source anchors. For initial work use the original user request; Root must not invent hypotheses, proxies or scientific selection criteria.")
     scientific_intent: ScientificIntent | None = Field(default=None,
-        description="Optional complete Agent task purpose, recommended for background research. Read-only to the Worker; control supplies all bindings. Ordinary tasks remain valid without it. In configured assist mode, persistent missing intent can trigger observation-gap protection and directly pause further dispatch.")
+        description="Optional relay of the scientific owner's complete task purpose, target and expected observation; Root must not invent scientific direction. Read-only to the Worker; control supplies all bindings. Ordinary tasks remain valid without it. In configured assist mode, persistent missing intent retains existing observation-gap protection.")
     parameters: EmptyOperationParameters = Field(default_factory=dict)
     require_execution_review: bool | None = Field(default=None,
         description="Experiment tasks only. Set true when the user/task explicitly requires independent implementation review before formal execution. Control requires a pass on the exact sealed implementation and resolves the review automatically; no Worker binding fields. Omission defaults to false for new tasks and inherits the requirement on recovery. Recovery cannot remove an existing requirement.")
@@ -233,7 +239,7 @@ class RunListInput(PageInput):
 
 class ArtifactCatalogInput(NamedReadInput):
     view: Literal["summary", "detail", "parents", "producer_inputs", "content"] = Field(default="summary",
-        description="content reads a bounded UTF-8 page of the exact named scientific original; continue using next_cursor as content_cursor. Binary or private control objects are unavailable. summary gives metadata; parents gives one page of direct parents and, for a recovery manifest, mechanically joins sealed source aliases/records to those exact parents; producer_inputs gives one page of the exact immediate producer's frozen input ports without recursive traversal; detail is the legacy full metadata view. parents and producer_inputs share parent_offset/parent_limit. Direct-parent limit remains 4096.")
+        description="content reads bounded original user goal/context text; continue using next_cursor as content_cursor. Scientific original bytes belong to Workers; bind exact names for delegated interpretation or clarification. summary gives metadata; parents gives direct original names; producer_inputs gives exact immediate producer input names without recursive traversal; detail gives metadata. parents and producer_inputs share parent_offset/parent_limit. Direct-parent limit remains 4096.")
     parent_offset: int = Field(default=0, ge=0,
         description="parents or producer_inputs view: continue at next_offset for the same artifact.")
     parent_limit: int = Field(default=16, ge=1, le=32)
@@ -255,15 +261,34 @@ class RunStatusInput(NamedInput, StageReadQuery):
     diagnostic_limit: int = Field(default=20, ge=1, le=100)
 
 
-def parse_run_status_arguments(arguments):
+class SchedulerRunStatusInput(NamedInput):
+    intent: Literal["decision", "status", "navigation"] = Field(default="decision",
+        description="decision relays compact exact owner handoff and declared statements with explicit omissions; structured scientific reports remain with Workers. status reads lifecycle and safe fault details. navigation lists exact source names and metadata. Delegate missing or conflicting scientific direction with these exact anchors.")
+    index_offset: int = Field(default=0, ge=0,
+        description="navigation only: continue exact field or sealed-evidence metadata at the returned next_offset.")
+    index_limit: int = Field(default=16, ge=1, le=32,
+        description="navigation only: bounded direct metadata entries; no scientific values.")
+    diagnostic_after: int | None = Field(default=None, ge=0,
+        description="status only: explicit 0 starts saved safe fault events; continue at diagnostic_events.next_after.")
+    diagnostic_limit: int = Field(default=20, ge=1, le=100,
+        description="status only: maximum safe diagnostic events on this page.")
+    stage_offset: int | None = Field(default=None, ge=0,
+        description="Explicit 0 reads bounded sealed stage previews and exact material names, including running tasks. Previews never establish final completion or qualification.")
+    stage_limit: int = Field(default=4, ge=1, le=8)
+
+
+def parse_run_status_arguments(arguments, *, scheduler_view=False):
     """One intent contract shared by direct facade and MCP callers."""
+    model = SchedulerRunStatusInput if scheduler_view else RunStatusInput
     try:
-        parsed = parse_tool_arguments(RunStatusInput, arguments)
+        parsed = parse_tool_arguments(model, arguments)
     except ValidationError as error:
-        raise RootToolError("tool arguments do not satisfy the declared model",
-            details=validation_diagnostics(error, schema=RunStatusInput.model_json_schema())) from error
+        raise RootToolError("tool arguments do not satisfy the declared model; delegate scientific detail or direction clarification to its owner using the exact task and source names",
+            details=validation_diagnostics(error, schema=model.model_json_schema())) from error
     values = parsed.model_dump()
-    fields = values.pop("output_fields")
+    fields = values.pop("output_fields", None)
+    if scheduler_view:
+        values.update(output_paths=None, stage_reference=None, stage_text_offset=0)
     paths, intent = values["output_paths"], values["intent"]
     if fields is not None:
         if intent != "decision" or paths is not None:
@@ -343,25 +368,25 @@ SCHEDULING_WRITES = frozenset({
 
 ROOT_TOOLS = (
     RootTool("progression_message", "Save original user context for the started goal from an authorized reading session, without taking over the background writer. Optional expected_scope atomically constrains saving and old acknowledgements to the exact active/background goal and authorized loop with available total budget. Does not grant approvals, resume a paused goal or judge science.", ProgressionMessageInput),
-    RootTool("progression_report", "Optionally record a goal outcome, waiting condition, user question or evidence-based task assessment. Corrections append immutable history. Ordinary tasks and stages require no extra report. Root supported advance and new bytes are not verified progress. The configured consumed unverified window requires direction confirmation in assist; only a first predeclared controlled test resolution or qualified independent exact test judgment can clear it. Waiting does not count, repeated checks and target revisions do not renew the window, and human continuation does not renew resource budgets. No research is triggered by this report.", ProgressionReportInput),
+    RootTool("progression_report", "Optionally relay an attributed sealed scientific-owner outcome or assessment, scheduling waiting condition, user question or budget limitation. Root does not independently judge scientific progress or completion. Corrections append immutable history; historical Root judgments remain attributed nonvalidation. Ordinary tasks and stages require no extra report. The configured consumed unverified window requires direction confirmation in assist; only a first predeclared controlled test resolution or qualified independent exact test judgment can clear it. Waiting does not count, repeated checks and target revisions do not renew the window, and human continuation does not renew resource budgets. No research is triggered by this report.", ProgressionReportInput),
     RootTool("progression_status", "Read scheduling ownership, frozen objective, sealed task handoff and recent Root assessment history; continue assessment history with progress_cursor and terminal delivery history with delivery_cursor. Accepted work has independent Run state.", ProgressionStatusInput),
     RootTool("progression_command", "Start, pause, resume, stop or explicitly take over scheduling for the selected instance. Background work requires a research loop budget explicitly authorized in the management UI; this command cannot create or replenish it. All later interactive and background work retains that loop across goal changes and recovery. Background start remains pending until its host is available. Pause/stop do not cancel accepted work or clear scientific pauses. The management UI confirms a new consumed observation window without refunding limits.", ProgressionCommandInput),
-    RootTool("diagnostic_read", "Read bounded engineering error details visible to the current instance or session.", DiagnosticReadInput),
+    RootTool("diagnostic_read", "Read bounded safe engineering fault details in the current instance or session. Delegate raw scientific logs to their owner with exact task/source anchors.", SchedulerDiagnosticReadInput),
     RootTool("instance_current", "Read the bound research instance or return its direct local management URL.", ReadInput),
     RootTool("instance_list", "List research instances without exposing internal identity.", InstanceListInput),
     RootTool("instance_close", "Close the current research instance against further writes.", EmptyInput),
     RootTool("scientific_inventory", "List scientific-object metadata within the configured page byte budget. Summary retains qualification flags; use artifact_catalog for one object's details. limit is a maximum; continue with next_before.", PageInput),
     RootTool("scientific_current", "Read explicit current scientific-object selections for this research instance.", PageInput),
-    RootTool("scientific_current_select", "Compare-and-set one immutable scientific object as the explicit current selection.", ScientificCurrentSelectInput),
+    RootTool("scientific_current_select", "Compare-and-set the scientific owner's selected exact immutable object as the explicit current selection. Root does not independently choose a best scientific candidate.", ScientificCurrentSelectInput),
     RootTool("lifecycle_events", "Return persistent semantic task, approval, execution and attention changes for this scheduler process. Attention notices are also included automatically in ordinary Root tool replies; reading a notice does not resolve it.", LifecycleEventsInput),
     RootTool("artifact_ingest_file", "Freeze and bind one project file under a semantic name.", IngestFileInput),
     RootTool("artifact_ingest_text", "Freeze original user text and bind it under a semantic name in the current instance; does not create a Run.", IngestTextInput),
-    RootTool("artifact_catalog", "Read metadata, paged originals (view=content), or direct parents for one exact named scientific material.", ArtifactCatalogInput),
+    RootTool("artifact_catalog", "Read metadata and exact original names, or bounded original user goal/context text with view=content. Scientific original bytes belong to Workers; delegate their interpretation or direction clarification with the exact names.", ArtifactCatalogInput),
     RootTool("operation_catalog", "List bounded operation summaries; select operation_id with view=detail for its full compiled contract.", OperationCatalogInput),
     RootTool("operation_preflight", "Optional check without creating. Invoke independently checks admission; this does not reserve resources or authorize execution.", OperationCallInput),
     RootTool("operation_invoke", "Validate and create one Agent, Transform, Effect or Approval from the compiled catalog; no prior preflight required. Success preserves dispatch configuration, exact outputs or approval URLs by executor kind; use the returned detail entry for Run context.", OperationCallInput),
     RootTool("run_list", "List minimal Runs in this research instance. Summary/detail pages obey the configured byte budget; limit is a maximum and next_before continues the page. Read run_status for dispatch or conclusions. current_goal_tasks identifies exact frozen-goal members on this page. view=history freezes terminal and judgment upper bounds for the exact goal and bounded immutable supersedes ancestors authorized in this instance; revision_scope reports missing ancestry and the 2048-character cursor capacity. Names, schema and common parents do not imply revisions; existing frozen scopes never expand. Use an older task's run_status navigation attempt_history.read for its exact old goal or recorded recovery source. Pass the returned continuation unchanged; later tasks/completion/judgments stay out. Missing content remains unknown; attributed Worker conclusions and Root judgments are not controlled verification, consumption or qualification.", RunListInput),
-    RootTool("run_status", "Read a Run with one intent: decision (default), status, navigation or full. Explicit stage_offset=0 lists sealed stages even while running; stage_reference reads an exact material. Stages never establish final completion or qualification.", RunStatusInput),
+    RootTool("run_status", "Read a task's compact sealed owner handoff (decision), lifecycle/fault details (status), or exact source names/metadata (navigation). Root schedules attributed scientific directions; Workers read and judge full scientific originals. Explicit stage_offset=0 lists bounded sealed stage previews, never final completion or qualification.", SchedulerRunStatusInput),
     RootTool("run_record_failure", "Record failure of one running minimal Run.", RunFailureInput),
     RootTool("approval_list", "List named reviews in this scheduler instance.", ApprovalListInput),
     RootTool("approval_status", "Read one named human-review state.", NamedReadInput),
@@ -371,7 +396,7 @@ ROOT_TOOLS = (
     RootTool("execution_cancel", "Cancel the exact existing job, or retire an uncertain new-protocol submission before abandoning it and releasing its reservation. Never infer permanent absence from lookup found=false.", NamedInput, surface="execution"),
     RootTool("execution_list", "List standalone executions and recoverable executions whose task lineage has failed.", ExecutionListInput, surface="execution"),
     RootTool("execution_status", "Refresh remote state and bounded progress for one submitted execution; never submit, cancel or collect. Pending submissions read durable control state; uncertain submissions trigger only exact read-only lookup, never submit. Confirmed terminal executions read control state directly. Query failures retain the last observation with an explicit error. Status returns timing and log metadata without log text; execution_logs pages the saved cache without querying the remote.", NamedReadInput, surface="execution"),
-    RootTool("execution_logs", "Read one bounded page of this execution's cached diagnostic log; never query the remote, submit or collect. Default tail reads the newest page; before reads earlier pages, after reads new text. Pass the matching returned cursor unchanged. No new text returns empty text. A replaced/rotated snapshot that cannot prove continuity returns gap=snapshot_replaced with the newest page and fresh cursors. Cursors belong to this exact execution/log. Select 0 <= log_index < status log_count. After collection use execution_outputs for retained files.", ExecutionLogsInput, surface="execution"),
+    RootTool("execution_logs", "Read cached diagnostic log metadata and continuity for this exact execution; raw text belongs to the scientific owner and remains in the control UI. No remote query, submission or collection. Pass returned cursors unchanged; select 0 <= log_index < status log_count. Use safe execution status diagnostics for operational repair and exact execution/output names for delegated diagnosis.", ExecutionLogsInput, surface="execution"),
     RootTool("execution_outputs", "Bind and list logical outputs and the exact result_artifact_name from this execution; null means not yet bindable. Bind that result before creating analysis; every page preserves the same identity.", NamedPageInput, surface="execution"),
     RootTool("execution_start", "Start a bounded background submission of one named execution after its exact review and execution policy authorize it. submission.state=pending is an acknowledgement, not solver success. Poll execution_status with the same name; unknown means read-only lookup is needed, never create a replacement. Async errors remain in submission.error; awaiting_authorization exposes the approval. After a task lineage fails, this can start or recover its original unsubmitted request without creating a Run or consuming a scientific retry; the original implementation, review and authorization remain mandatory.", NamedInput, surface="execution"),
     RootTool("execution_sync", "Refresh bounded solver status and logs, including failed-task recovery; never submit or collect artifacts.", NamedReadInput, surface="execution"),
@@ -761,17 +786,24 @@ class RootMCPRouter:
             else:
                 parsed = parse_tool_arguments(tool.input_model, arguments)
         except ValidationError as error:
-            raise RootToolError("tool arguments do not satisfy the declared model",
-                    details=validation_diagnostics(error, schema=tool.schema()["inputSchema"])) from error
+            message = "tool arguments do not satisfy the declared model"
+            details = validation_diagnostics(error, schema=tool.schema()["inputSchema"])
+            if name in {'run_status', 'diagnostic_read'}:
+                guidance = "Delegate scientific detail or direction clarification to its owner using exact task/source names; full originals and raw logs remain in the control UI."
+                message += "; " + guidance
+                details = tuple({**detail, 'message': detail['message'] + ' ' + guidance} for detail in details)
+            raise RootToolError(message,
+                    details=details) from error
         values = {field: getattr(parsed, field) for field in type(parsed).model_fields}
         try:
             if name == "run_status":
-                return self._with_attention(self.facade.run_status(**parsed.model_dump(exclude_unset=True)))
+                return self._with_attention(self.facade.run_status(**parsed.model_dump(exclude_unset=True), scheduler_view=True))
             # Presentation options are never part of an immutable operation request.
             query = dict(values)
             query.pop("view", None)
             if name in {"artifact_catalog", "run_list"}:
                 query["view"] = values["view"]
+                query["scheduler_view"] = True
             if name in {"operation_catalog", "scientific_inventory", "scientific_current", "instance_list", "execution_outputs", "execution_capabilities"}:
                 query.pop("limit", None)
                 query.pop("before", None)
@@ -787,6 +819,13 @@ class RootMCPRouter:
             from .mcp_response_views import root_response
             settings = getattr(getattr(self.facade.runs, "agent_settings", None), "mcp_read", None)
             response = root_response(name, getattr(self.facade, name)(**query), values, read_settings=settings)
+            if name == "execution_logs":
+                response = {key: value for key, value in response.items() if key not in {"text", "log_text", "fragment"}}
+                response.update(content_unavailable="raw_logs_owned_by_scientific_worker",
+                    instruction="Use safe execution status faults for operational repair. Delegate diagnosis with this exact execution name and retained output names; raw logs remain in the control UI.")
+            if name == "diagnostic_read" and "available_sections" in response:
+                response = {**response, "available_sections": [section for section in response["available_sections"]
+                    if section in {"summary", "traceback"}]}
             return response if name == "lifecycle_events" else self._with_attention(response, name=name, values=values)
         except Exception as error:
             from ..service.instance_maintenance import InstanceMaintenanceBusy, InstanceMaintenanceUnavailable

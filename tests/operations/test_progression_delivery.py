@@ -206,10 +206,10 @@ def test_root_developer_and_delivered_continuations_share_scientific_task_bounda
     guide=tmp_path/'guides'
     generated=tomllib.loads(_root_instruction_config('',guide))['developer_instructions']
     assert generated==load_scheduler_prompt().replace('{{SCHEDULER_GUIDE_ROOT}}',str(guide))
-    assert 'numerical methods, design adjustments, repetitions and baselines may continue' in generated
-    assert 'departing the bound hypotheses, question or authorized research scope' in generated
-    assert 'preparation and handoff costs' in generated
-    assert 'without a scientific or user-imposed reason' in generated
+    assert 'Related trials and bounded correction belong to their Worker' in generated
+    assert 'H/W/A experiment contracts' in generated
+    assert 'remaining time, token, execution and retry' in generated
+    assert 'Root must not invent hypotheses' in generated
     assert generated not in host.prompts[-1]  # The full developer rule is not recopied every turn.
 
 
@@ -346,7 +346,10 @@ def test_same_oversized_result_notifies_once_without_consumption(progression):
     status = root.call_tool('progression_status', {})
     assert status['progress_shadow']['counts']['consumed'] == 0
     assert root.call_tool('run_list', dict(view='summary', limit=8))['runs'][0]['name'] == 'oversized'
-    assert root.call_tool('run_status', dict(name='oversized', intent='full'))['state'] == 'completed'
+    from scidiscovery.artifact_agent.interfaces.mcp_root import RootToolError
+    with pytest.raises(RootToolError):
+        root.call_tool('run_status', dict(name='oversized', intent='full'))
+    assert root.facade.run_status(name='oversized', intent='full')['state'] == 'completed'
 
 
 def test_compact_delivery_records_omitted_science_without_claiming_original_read(progression):
@@ -372,7 +375,7 @@ def test_compact_delivery_records_omitted_science_without_claiming_original_read
     coverage=json.loads(deliveries[0]['delivery_json'])
     assert coverage['coverage']=='compact' and coverage['original_read']=='not_confirmed'
     assert next(item for item in coverage['fields'] if item['pointer']=='/interpretation')['status']=='omitted'
-    assert root.call_tool('run_status',dict(name='compact',intent='full'))['sealed_output']['payload']['interpretation']=='界'*4000
+    assert root.facade.run_status(name='compact',intent='full')['sealed_output']['payload']['interpretation']=='界'*4000
     for _ in range(3):
         _next_poll(p)
     assert len(host.prompts)==2
@@ -466,7 +469,7 @@ def test_notification_position_survives_new_coordinator_and_store(progression):
     assert checkpoint(p)['notified_snapshot'] == before['notified_snapshot']
     assert checkpoint(p)['rounds'] == before['rounds']
     assert not checkpoint(p)['processed_snapshot']['runs']
-    assert p.root.call_tool('run_status', dict(name='oversized', intent='full'))['state'] == 'completed'
+    assert p.root.facade.run_status(name='oversized', intent='full')['state'] == 'completed'
     # Explicit continuation is a new control event, even with unchanged unread science.
     p.root.call_tool('progression_command', dict(command='pause'))
     p.root.call_tool('progression_command', dict(command='resume'))

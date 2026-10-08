@@ -463,7 +463,7 @@ OPERATIONS = (
         "science.hypothesis.propose.v1",
         "Understand the original scientific task and propose or evolve testable mechanisms using exact evidence and explicitly conditional assumptions. A failed local route may motivate a distinct feasible discriminator; prior efficacy is not required.",
         "Original user task text, or an existing problem frame and qualified foundation, exposes an unresolved question. Use the originals directly when sufficient; evidence extraction and external search are optional scientific choices.",
-        "Executing experiments, reviewing, selecting, or qualifying hypotheses.",
+        "Executing experiments, independently reviewing, or controlling hypothesis qualification.",
         input_validation=InputValidationSpec(ComponentRef("hypothesis_inputs"), "science.hypothesis.propose.v1.inputs", "Select exact original user task text through subject, or both the existing frame and qualified foundation. The structured branch requires its explicit original objective; the text branch never fabricates an objective key."),
         decision_fields=("stage_objective", "contradiction", "hypotheses"),
         agent="ideator_agent",

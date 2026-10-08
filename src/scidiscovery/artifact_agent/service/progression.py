@@ -1,4 +1,4 @@
-"""One event-coalescing background scheduler; scientific choices stay with Root.
+"""One event-coalescing background scheduler; scientific choices stay with Workers.
 
 Injected native host and existing public read projections keep this service free
 of interface dependencies. The durable checkpoint is part of instance archives.
@@ -26,8 +26,8 @@ from ...agent_execution_settings import ProgressionSettings
 
 
 INSTRUCTION = """Continue the explicitly started frozen research goal from this bounded brief.
-Choose the next complete task using public Operations and sealed evidence, or wait,
-ask a specific question, or conclude the whole goal. A completed Run does not mean
+Schedule the scientific owner's complete next-task direction through public Operations,
+or wait, ask a specific user question, or relay its supported goal conclusion. A completed Run does not mean
 the goal is complete. Starting this goal authorizes ordinary task selection within
 its scope and budget, including source-based analysis. Do not ask permission to
 choose such a task or repair an input selection. Ask only for missing user facts,
@@ -35,11 +35,13 @@ an actual scope decision, or an explicitly required authorization; policy gates
 still apply. An original text/file is not yet a Worker-authored scientific object.
 Use a task accepting that original when no suitable scientific result exists;
 do not force an experiment or a preparatory workflow for pure evidence analysis.
-Keep limitations and negative results. Read exact materials
-and contracts as needed; omitted content is not evidence. Reuse the decision
-fields in this brief and contracts already read in this native thread. Request
-specific output_fields/output_paths when more evidence is needed; do not default
-to full outputs or repeat unchanged contract discovery. Native tool discovery
+Keep attributed limitations and negative results. Read compact sealed owner
+statements and the selected contract; bind full originals for Workers. Omitted
+content is not evidence and Root must not independently interpret it. Reuse the decision
+fields in this brief and contracts already read in this native thread. Delegate missing scientific direction to H/A/W with exact source names and the
+original user goal. Root does not invent hypotheses, proxies, criteria, best-model
+judgments or scientific closeout; it does not acquire full reports or arrays.
+Do not repeat unchanged contract discovery. Native tool discovery
 returns matching names first, never arrays of full descriptions. Dispatch native Workers
 with the returned agent_type and frozen model/reasoning profile, fresh context and
 actual platform identities. If spawn omits a thread ID, ask that child for its
@@ -47,10 +49,16 @@ platform-provided identity while it waits for attachment; do not search the tool
 registry for identity. Ordinary task stages belong to that Worker; do not
 turn them into separate Root approvals. At most one complete Agent task may be
 queued/running. Helpers belong to its owner and retain native permissions.
-At complete-task selection, scientific_intent may state intent, target and expected observation.
+At complete-task selection, scientific_intent may relay the owner's intent, target
+and expected observation; do not manufacture an expected scientific outcome.
 Use progression_report when recording a goal conclusion, specific question, waiting
-condition or task assessment is useful. Its optional assessments cite exact sealed
-output names and distinguish advance, no_progress and unknown; no extra report gate.
+condition or attributed owner assessment is useful. Its optional assessments relay
+the sealed owner judgment with exact output names; absent judgment remains unknown.
+Do not independently score science or add a report gate.
+Scientific owners supply complete next questions, recommended roles and exact
+source names through the existing handoff. A may challenge H-derived rules against
+original user constraints or ask H to clarify missing/conflicting direction. Respect declared H/W/A experiment contracts and reuse sufficient owner outputs.
+Nonexperiment tasks use their own entries; no per-stage review is added.
 The analysis Worker assesses what an exact bounded experiment changes using its
 sealed hypothesis judgments and evidence. Control binds sources and counts each
 interpreted experiment once; preparation and experiments await that analysis.
@@ -520,7 +528,7 @@ class ProgressionCoordinator:
         brief = dict(objective=goal, changes=[], omissions=[], budget=checkpoint.get('budget'),
             previous_report=checkpoint.get('report') or checkpoint.get('last_report'), material_names=[row['objective_name']],
             related_results_omitted=checkpoint.get('relevant_omitted', False),
-            limitations=['Originals and full contracts are available through public tools.',
+            limitations=['Original goal/context text and full contracts remain available to Root; scientific originals belong to Workers and UI readers.',
                 'Stages are previews; only final sealed outputs establish task conclusions.'])
         if snapshot.get('accepted_work_only'):
             brief['scheduling_authority'] = 'Science is paused. Dispatch only the exact review_requests needed by accepted tasks; retain reads and settlement. New research and standalone execution remain forbidden.'
@@ -590,7 +598,7 @@ class ProgressionCoordinator:
         for run in snapshot['runs']:
             if prior.get(run['name']) == run:
                 continue
-            result = facade.run_status(name=run['name'], intent='decision')
+            result = facade.run_status(name=run['name'], intent='decision', scheduler_view=True)
             signal = result.get('scheduler_signal')
             if (result.get('state') == 'completed' and result.get('sealed_output_status') == 'available'
                     and result.get('operation_contract_status') == 'current'

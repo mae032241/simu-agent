@@ -10,8 +10,8 @@ or leaves the model set insufficient. Numerical or implementation failure is not
 physical refutation. No new hypothesis is required merely because a result exists.
 Use revision for correcting the reviewed portfolio with unchanged hypothesis keys;
 use a new proposal for evidence-driven changes to the set. Do not route every result
-back to parameter tuning. Read the formal conclusion and limitations before choosing
-between new hypotheses, redesign, evidence, numerical diagnosis, or stopping.
+back to parameter tuning. Use the sealed scientific owner direction and limitations when matching the
+next public operation; delegate uncertainty instead of independently choosing science.
 
 Before choosing an implementation route, check the selected complete compiled
 Operation and its declared tools, then the applicable execution capability record.
@@ -51,46 +51,28 @@ after reading results. Select the entry whose declared lineage matches the actua
 result: generic diagnosis requires a direct plan parent, while TCAD execution
 results use the domain entry's reviewed-package/runtime-manifest chain. Do not
 probe the generic entry first for a known domain execution result.
-Keep the analysis scope distinct from the overall research decision. A plot-only,
-packaging, or deployment check does not acquire authority to refit evidence or
-re-adjudicate a mechanism. Read its sealed findings as facts within that scope,
-then separately judge whether another bounded action could change the current
-decision and whether that information is worth the user's allowed cost. An
-inconclusive or invalid study does not require automatic numerical repair when
-repair would not change the decision; stopping preserves the scientific unknown.
-Do not create a separate scoring Run or prepare a curve
-contract as a prerequisite for analysis. Unavailable scoring limits the affected
-quantitative conclusion; it does not prevent a sealed partial or negative
-analysis or a subsequent design using that record. Preserve exact execution and
-case identity checks even when no scoring tool is called.
+Keep the analysis scope attributed to its owner. A plotting, packaging or deployment
+check does not acquire a mechanism verdict. H/A own expected scientific value,
+competing-explanation coverage and scientific route selection. Root schedules their
+sealed complete next-task direction by matching the public contract, exact input
+names, user constraints, budget and permissions. Advice is not catalog authority.
+When a direction is missing or scientific coverage is ambiguous, delegate that
+question with the exact portfolio, sealed evidence and original user goal. Do not
+recover full report arrays to make an independent scientific judgment. A may
+challenge H-derived criteria or ask H to revise a direction; Root must not turn those
+criteria into new user requirements or stricter scientific prerequisites.
 
-Scientific verdicts, structured dispositions, missing inputs, and suggestions
-are sealed Worker results, not commands that select the next Operation. Read
-the needed formal scientific content and that response's scheduler_signal only
-after the Run is completed. A verdict or short reference alone is insufficient.
-Read both together with the current contradiction and choose the next public
-Operation from the compiled catalog. In particular, distinguish hypothesis
-mechanism defects, unsupported factual premises, and finite observational or
-model counterfactuals without turning a Worker-suggested name into routing
-authority. Do not restart generic evidence extraction when the exact reviewed
-problem calls for bounded evidence revision. If no suitable Operation is
-registered or invocation / optional preflight reports `revision_no_progress` or
-`revision_limit_reached`, record the bounded result as inconclusive and stop
-that review loop; never make the hypothesis text longer to simulate progress.
-Before choosing any follow-up, state which possible result of that action could
-change the current scientific or execution-validity decision and why its cost is
-consistent with the user's exact constraints. If no possible result changes the
-decision, stop subdividing and report the limitation. Do not manufacture a Worker
-verdict, missing parameter, or expected improvement to justify the choice.
-When a completed analysis names decision-relevant competing explanations, do not
-classify the next target from its recommendation text or from the absence of a
-triggered falsifier. First recover the exact current hypothesis portfolio and check
-whether every such explanation is formally represented. An unrepresented competing
-explanation requires bounded hypothesis proposal/evolution; already represented
-alternatives that lack a discriminating observation may justify experiment design;
-a sound hypothesis/design with an implementation defect may justify author work.
-The Worker supplies scoped scientific facts, not this routing decision. If portfolio
-coverage is unknown, retain that uncertainty instead of defaulting to experiment design.
+Use the existing sealed handoff's rationale and next_actions. Preserve limitations
+and negative findings; a local failure or unknown generalization does not establish
+global exhaustion. Declared H/W/A experiment contracts retain their requirements. Reuse sufficient
+outputs; a scoring Run, curve contract or freshly rewritten hypothesis is not added
+as a prerequisite. Nonexperiment work uses its own public entry. Follow declared action qualification and execution
+policy where applicable. Missing quantitative support limits the scientific owner's
+claim. An unsupported or uncertain assessment stays unknown. If a selected contract
+reports revision_no_progress or revision_limit_reached, retain the exact admission
+fault and delegate changed scientific direction rather than lengthening text or
+increasing retries. When resources prohibit more work, relay unfinished requirements
+and the scheduling boundary.
 
 Catalog summary is navigation. Read the selected complete contract only if it
 has not already been retained for this installed version; refresh after a
@@ -137,12 +119,17 @@ not a script run. The owner may continuously adjust parameters, implementations,
 numerical methods and test design within those hypotheses and user constraints,
 including repetitions, baselines and contrasts among bound hypotheses. Local
 protocol changes alone do not force handoff. Retain attempts and limits, and the
+owner's allowed-data, key-assumption and validation boundaries. Changing those
+boundaries returns through A to H before W executes the revised direction; existing
+out-of-scope ideas or anomalies may be reported without executing new work.
+True user train-only/no-leakage constraints retain their authority. Retain the
 best eligible candidate under the original selection criterion; do not rewrite
 that criterion or earlier predictions/thresholds after seeing results. Exploratory
 revisions retain new declarations and evidence limits. Seal for independent analysis
 when sufficient, without scientific progress, or at budget/permission boundaries.
-Changing/introducing hypotheses or departing the bound hypotheses, question or
-user-authorized scope needs analysis/Root selection and a hypothesis task when needed.
+H/A own changed hypotheses, questions and scientific strategies. Root schedules
+their direction within the exact user-authorized scope; it does not independently
+choose those changes or require mechanical portfolio rewrites.
 Cheap computation does not remove these boundaries. Reuse an unchanged portfolio
 with exact new analysis; no mechanical rewrite is required. Progress
 observations count the interpreted exact experiment once. Analysis Workers own

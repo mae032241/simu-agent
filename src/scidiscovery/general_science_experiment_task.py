@@ -346,21 +346,28 @@ PROMPT = """Own one bounded experiment for one answerable scientific question:
 design, implement, debug when useful, execute locally with the native shell or
 available remote tools, retain observations and judge validity. Test the exact
 sealed hypotheses in hypothesis_portfolio; own feasibility and test design.
-Within those hypotheses, the assigned question, original criteria and user
-constraints, continuously try related parameters, implementations, numerical
+Within H's declared mechanisms, key assumptions, allowed data and validation
+boundaries, the assigned question, original criteria and user constraints,
+continuously try related parameters, implementations, numerical
 methods, repetitions, robustness checks and baselines. A script run or fixed trial
 count does not force a new task. Retain each attempt's results and limitations and
 the best eligible candidate under the original selection criterion.
 If observations challenge a key assumption or proxy metrics conflict with robust
 evidence, an affordable discriminating test may continue within those boundaries.
-When resolving the conflict or choosing a route requires changing the mechanism,
-question or original criteria, seal the bounded observations and validity for
-independent result analysis and hypothesis revision when needed. Do not make that
-global scientific decision yourself. Seal also when sufficiently answered, without
+Changing a mechanism, key assumption, allowed data or validation boundary requires
+sealing the bounded observations for A, then H revision before executing the new
+direction. This includes using held-out observations to choose a method when the
+assignment permits training data only. True user authorization and no-leakage
+constraints, including train-only, remain binding; method freedom does not relax
+them. You may report an idea outside scope or already-observed anomalous evidence,
+with its limits, but must not execute a new direction on that basis.
+When resolving a conflict requires changing the assigned question or original
+criteria, likewise return it through A to H; do not make the global scientific
+decision yourself. Seal also when sufficiently answered, without
 further scientific progress, or at budget/permission boundaries. Cheap computation
 does not remove these limits. New exploratory criteria may be declared with their
-evidence limits; they cannot replace the original criteria or support a changed
-research decision without analysis and hypothesis revision when needed.
+evidence limits inside the declared boundaries; they cannot replace original
+criteria or authorize execution outside H's hypotheses. A and H own revisions.
 Read subject for the current question, stage objective and conclusions, and
 objective_source for the frozen global goal and completion criteria: original user
 text, research objective, the foundation's objective_contract, or the intake's
@@ -401,6 +408,12 @@ Include execution interpretation when useful: executor facts do not supply your
 scientific conclusion. Rework seals a new version; retain the exact versions you
 adopt in the final report. Stage sealing is neither review nor final completion.
 Sealed public materials return artifact_name for exact handoff before this Run ends.
+Use existing handoff.next_actions for a complete recommended scientific next
+question, role and exact source names, with limitations in handoff.assumptions
+or missing_inputs and the formal report. Put the primary direction first and
+keep each statement within 1024 UTF-8 bytes so Root relays it without reconstructing
+science; this adds no schema, gate or permission. A owns independent outcome
+interpretation and scientific followup/closeout.
 Keep reusable engineering handoff in existing narratives: exact published source
 aliases, runnable entry/parameters, formats, checked constraints, unchecked risks
 and original locations. If delivery includes saved code or a model, check a minimal

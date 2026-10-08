@@ -316,7 +316,7 @@ def _real_experiment(tmp_path, monkeypatch, solver="sprocess", before_submit=Non
     formal = next(item.object_id for item in runtime.scheduler_bindings.list(instance=instance.instance_id, namespace="execution")
         if runtime.executions.status(item.object_id).state == "collected")
     assert runtime.executions.budget_owner(formal) == coordinator.budget_subject(runtime.runs.status(worker._run_id))
-    detail = root.call_tool("run_status", {'name': "observe", "intent": 'full'})
+    detail = root.facade.run_status(name="observe", intent="full")
     assert "artifact_ref" not in json.dumps(detail) and "operation_digest" not in json.dumps(detail)
     schema = (workspace / "schema/result.schema.json").read_text()
     assert "recovery_manifest_output" not in schema and "tool_recovery_manifest" not in schema

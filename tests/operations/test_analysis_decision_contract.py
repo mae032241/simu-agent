@@ -108,10 +108,15 @@ def test_real_keyed_producer_rejects_then_seals_complete_decision_contract(
         )
     default = root.call_tool("run_status", {"name":name})
     default_values = {item["pointer"]:item.get("value") for item in default["selected_output"]["items"]}
-    assert default_values["/objective_assessment"] == report["objective_assessment"]
-    assert default_values["/hypothesis_assessments"] == report["hypothesis_assessments"]
+    assert default_values["/objective_assessment"] is None
+    assert default_values["/hypothesis_assessments"] is None
+    assert all(item["status"] == "omitted" for item in default["selected_output"]["items"]
+        if item["pointer"] in {"/objective_assessment", "/hypothesis_assessments"})
     before = control_state()
-    decision = root.call_tool("run_status", {'name': name, 'output_paths': DECISION_PATHS, "intent": 'decision'})
+    from scidiscovery.artifact_agent.interfaces.mcp_root import RootToolError
+    with pytest.raises(RootToolError):
+        root.call_tool("run_status", {'name': name, 'output_paths': DECISION_PATHS, "intent": 'decision'})
+    decision = root.facade.run_status(name=name, output_paths=DECISION_PATHS, intent="decision")
     assert control_state() == before
     assert decision["state"] == "completed"
     assert decision["scheduler_signal_status"] == "available"

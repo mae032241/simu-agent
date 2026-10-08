@@ -101,13 +101,14 @@ def test_execution_poll_is_short_but_exact_logs_and_failure_remain_readable():
         assert detail["collection"] == full["collection"]
 
 
-def test_run_router_preserves_omission_and_named_selection():
+def test_run_router_selects_scheduler_audience_and_rejects_expansion():
     call = Mock(return_value={"name":"run", "state":"completed"})
     root = router(run_status=call)
     root.call_tool("run_status", {"name":"run"})
-    assert call.call_args.kwargs == {"name":"run"}
-    root.call_tool("run_status", {"name":"run", "intent":"decision", "output_fields":["summary"]})
-    assert call.call_args.kwargs == {"name":"run", "intent":"decision", "output_fields":["summary"]}
+    assert call.call_args.kwargs == {"name":"run", "scheduler_view":True}
+    with pytest.raises(RootToolError):
+        root.call_tool("run_status", {"name":"run", "intent":"decision", "output_fields":["summary"]})
+    assert call.call_count == 1
 
 
 @pytest.mark.parametrize("arguments", [
@@ -585,8 +586,9 @@ def test_log_summary_indexes_metadata_and_navigates_to_explicit_cache_read():
     assert 'unique error' not in json.dumps(result)
     request = result['logs']['arguments']
     assert request == {'name':'execution_logs', 'surface':'execution', 'arguments':{'name':'execution'}}
-    assert root.call_tool(request['name'], request['arguments'], surface=request['surface'])['text'] == 'unique error A'
-    assert root.call_tool('execution_logs', {'name':'execution', 'log_index':2}, surface='execution')['text'] == 'unique error B'
+    assert 'text' not in root.call_tool(request['name'], request['arguments'], surface=request['surface'])
+    assert 'text' not in root.call_tool('execution_logs', {'name':'execution', 'log_index':2}, surface='execution')
+    assert root.facade.execution_logs(name='execution', log_index=2)['text'] == 'unique error B'
 
 
 @pytest.mark.parametrize('kind', ['agent','transform','effect','approval'])

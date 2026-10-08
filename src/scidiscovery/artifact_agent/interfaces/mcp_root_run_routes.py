@@ -28,7 +28,7 @@ class RootRunRoutes(RunReadProjection):
     _output_index = staticmethod(_output_index)
 
     def run_list(self, *, state: str | None, limit: int, before: str | None = None,
-                 view: str = "summary") -> dict[str, Any]:
+                 view: str = "summary", scheduler_view: bool = False) -> dict[str, Any]:
         if view == 'history':
             return self._attempt_history(state=state, limit=limit, before=before)
         if view not in {"summary", "detail"}:
@@ -58,7 +58,7 @@ class RootRunRoutes(RunReadProjection):
             state=state, limit=limit, before=before)
         for name, value in page:
             items.append(self._scientific_run_view(value, self._run_status_value(name, value))
-                if view == "detail" and run_is_terminal(value.state)
+                if view == "detail" and run_is_terminal(value.state) and not scheduler_view
                 else self._compact_run_status(name=name, value=value,
                     intent="status", output_paths=[], index_offset=0, index_limit=16))
         return result(next_before)
@@ -95,14 +95,15 @@ class RootRunRoutes(RunReadProjection):
         return dict(available=True, read=dict(tool='run_list', view='history', state=None, limit=20,
             before=history_cursor(scope, secret=self.instance_management_secret)))
 
-    def run_status(self, *, name: str, **arguments) -> dict[str, Any]:
+    def run_status(self, *, name: str, scheduler_view: bool = False, **arguments) -> dict[str, Any]:
         from .mcp_root import parse_run_status_arguments
-        request = parse_run_status_arguments({"name": name, **arguments})
+        request = parse_run_status_arguments({"name": name, **arguments}, scheduler_view=scheduler_view)
         if self.runs is None:
             raise RuntimeError("minimal Run service is unavailable")
         value = self.runs.status(self._resolve("run", name))
         result = self._compact_run_status(name=name, value=value, **{
-            key: request[key] for key in ("intent", "output_paths", "index_offset", "index_limit")})
+            key: request[key] for key in ("intent", "output_paths", "index_offset", "index_limit")},
+            scheduler_view=scheduler_view)
         if request["intent"] == "status" and request["diagnostic_after"] is not None:
             page = self.runs.diagnostic_events(value, after=request["diagnostic_after"],
                 limit=request["diagnostic_limit"])
@@ -155,6 +156,9 @@ class RootRunRoutes(RunReadProjection):
         # crosses this boundary; diagnostic_read separately enforces instance scope.
         from ..service.engineering_diagnostics import diagnostic_locator
         locator = diagnostic_locator(safe.get("engineering"))
+        if locator:
+            locator['available_sections'] = [section for section in locator['available_sections']
+                if section in {'summary', 'traceback'}]
         return {**({"engineering": locator} if locator else {}),**{key: safe[key] for key in ("category", "code", "repairable_by_output", "tool_name") if key in safe},
             "details": [{key: item[key] for key in
                 ("code", "path", "message", "phase", "affected_action", "repairable", "rule_id") if key in item}

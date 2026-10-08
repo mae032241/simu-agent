@@ -68,7 +68,19 @@ PROMPT = """Analyze the exact sealed experiment_results against its original
 hypothesis_portfolio and objective_source. Read the adopted stages and original
 materials, distinguish observations, numerical validity and scientific
 interpretation, and assess original predictions, falsifiers, challenged assumptions
-and conflicts between proxy metrics and robust evidence. Judge the bounded answer
+and conflicts between proxy metrics and robust evidence. Challenge H-derived
+evaluation proxies, candidate-selection strategies and evidence prerequisites
+against the exact original user goal and constraints. They are scientific proposals,
+not additional user requirements. Recommend explicit revision when unsupported;
+preserve provenance and earlier declarations without silently changing user constraints.
+Distinguish derived scientific rules from true authorization, allowed-data and
+validation constraints. A train-only or no-leakage requirement may be binding;
+challenging a derived proxy does not relax it. When a proposed direction changes
+H's mechanisms, key assumptions, allowed data or validation boundaries, return it
+to H for explicit revision before W executes that direction. Scope-exceeding ideas
+and existing anomalous observations may be assessed without authorizing new tests.
+Ask H to clarify missing or conflicting direction instead of making Root reconstruct it.
+Judge the bounded answer
 separately from global completion. Retain original requirements and cumulative
 trial/stopping history from exact evidence; missing history limits completion claims.
 Use remaining_contradiction and next_action to explain how evidence changes the
@@ -88,6 +100,14 @@ sources and limitations. Do not launch experiments or formulate a new portfolio.
 Return LayeredDiagnosisReport. Do not invent experiment/plan/objective keys when
 their corresponding source is absent. Blocked or incomplete experiments can
 support an inconclusive analysis, never fabricated successful observations.
+Use payload.summary and payload.next_action to relay your finite outcome and
+recommended complete next question, scientific role and exact source names, or
+supported scientific closeout. Control copies those fields into the existing
+compact handoff; do not author their duplicate handoff fields. Include limitations
+in the formal report and optional handoff assumptions/missing_inputs. Keep
+next_action complete within 1024 UTF-8 bytes and summary within 4096 bytes so Root
+can schedule without reconstructing science. Respect declared experiment
+contracts; no additional next stage or review is added.
 Control binds exact sources; the Worker owns scientific judgments. This task
 adds no execution authorization or mandatory review.
 Start with the default output-form and sealed input overviews; use original input
@@ -117,7 +137,7 @@ not independent verification by control.
 """
 SCHEMA = schema_resource(LayeredDiagnosisReport, "scidiscovery.layered-diagnosis.v1")
 CONTRACT = semantic_contract(SemanticRuleSpec("analysis.experiment_binding",
-    "Interpret an exact sealed experiment using its original hypotheses and goal. References, assessed hypothesis identities and any declared prediction/falsifier keys must be bound. Optional progress_assessment judges the increment to the research decision, separately from whether evidence supports or contradicts a hypothesis. It cannot alter scientific validity or qualification, which belong to their existing authorities."))
+    "Interpret an exact sealed experiment using its original hypotheses and goal. References, assessed hypothesis identities and any declared prediction/falsifier keys must be bound. Optional progress_assessment judges the increment to the research decision, separately from whether evidence supports or contradicts a hypothesis. A owns evaluating outcomes, challenging derived proxies/selection rules against original user constraints, and recommending scientific followup or closeout through existing narrative/handoff fields. This does not change the user goal or qualification, which belongs to its existing authority."))
 COMPONENTS = (
     ComponentSpec("result_analysis_prompt", "resource", __name__ + ":PROMPT"),
     ComponentSpec("result_analysis_schema", "resource", __name__ + ":SCHEMA"),

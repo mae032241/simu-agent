@@ -1,5 +1,7 @@
 """Sealed producer -> analysis navigation -> exact controlled originals."""
 import json
+
+import pytest
 from pathlib import Path
 import shlex
 import subprocess
@@ -103,9 +105,12 @@ def test_published_failure_materials_remain_discoverable_and_readable_from_group
     assert root_default['output_delivery']=='compact'
     assert {item['pointer']:item['value'] for item in root_default['selected_output']['items']
         if item['status']=='selected'}['/outcome']=='inconclusive'
-    explicit=f.root.call_tool('run_status', dict(name='compute', output_paths=['/adopted_stages']))
+    from scidiscovery.artifact_agent.interfaces.mcp_root import RootToolError
+    with pytest.raises(RootToolError):
+        f.root.call_tool('run_status', dict(name='compute', output_paths=['/adopted_stages']))
+    explicit=f.root.facade.run_status(name='compute', output_paths=['/adopted_stages'])
     assert explicit['output_delivery']=='selected' and explicit['selected_output']['items'][0]['value']==[stage]
-    full=f.root.call_tool('run_status', dict(name='compute', intent='full'))
+    full=f.root.facade.run_status(name='compute', intent='full')
     assert full['sealed_output']['payload']['adopted_stages']==[stage]
 
 
