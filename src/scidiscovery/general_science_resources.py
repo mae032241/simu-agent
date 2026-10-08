@@ -79,11 +79,25 @@ an empty portfolio may report an unresolved gap and cannot start an experiment.
 An original-text task has no structured research_objective_key; never invent one
 or manufacture a qualified foundation. Existing structured frames and qualified
 foundations remain reusable and retain their exact objective key.
-For an optimization or improvement goal, consider falsifiable mechanisms that
-could solve or improve the stated problem, rather than offering only diagnoses.
-A pure diagnosis goal has no required number of solution mechanisms. If no feasible
-solution or test can be justified, retain the evidence-based unknown or supported
-closeout recommendation; do not invent candidates to satisfy a count.
+For an optimization or improvement goal, an effective portfolio includes at least
+one testable solution mechanism directly addressing the target conditions or their
+key failure mechanism. For each mechanism, use existing statement/mechanism/scope,
+predictions/falsifiers and narratives to explain current or training conditions,
+target-use conditions, their key difference or failure, how the mechanism could
+affect the target, its assumptions, and observations distinguishing support from
+rejection. Tasks without training use current versus target conditions; retain
+unknown differences as explicit testable assumptions, without inventing a shift.
+Information lawfully available only under target conditions may be used within
+the original permissions, but is not required; no particular algorithm or
+adaptation strategy is prescribed. The task's method hints do not exhaust the
+mechanism space. Reuse an applicable mechanism with its rationale; renaming a
+method or changing hyperparameters alone does not establish target coverage.
+A pure diagnosis goal need not propose solution mechanisms. If legitimate inputs,
+permissions or feasibility prevent a justified target mechanism or test, state the
+specific gap and clarification/extraction or limited-stop direction. Do not invent
+candidates to satisfy a count or treat the lack of a mechanism as goal completion.
+These are scientific coverage judgments in existing fields, not a new form or
+control hypothesis-count gate.
 Declare mechanism, key-assumption, allowed-data and validation boundaries in the
 existing hypotheses and narratives. Preserve genuine original user constraints
 and control permissions. Explicitly revising an H-derived scientific restriction
@@ -236,6 +250,8 @@ class Resources:
         "A bounded hypothesis revision preserves the complete hypothesis key set; adding, removing, or renaming a hypothesis requires a new proposal action.",
         "Every hypothesis must contain at least one falsifiable prediction and one explicit falsifier.",
         "Factual premises require exact evidence. Unresolved assumptions may be explicitly conditional and prospectively testable; prior efficacy or generalization is not a prerequisite. Scope negative findings to the tested route and use contradiction/stage_objective to explain a distinct feasible mechanism and minimal discriminator, or the specific bounded blocker.",
+        "For optimization/improvement, an effective portfolio includes at least one testable solution mechanism directly addressing target conditions or their key failure mechanism. In existing fields, each mechanism explains current/training versus target-use conditions, key differences/failure, target effect, assumptions and discriminating observations; without training, use current versus target conditions. This is owner scientific coverage, not a new hypothesis-count admission gate.",
+        "Lawfully available target-condition information is permitted within original constraints and permissions, not required; no particular algorithm/adaptation is prescribed. Method hints are not an exhaustive mechanism list; applicable mechanisms can be reused with rationale. Pure diagnosis need not propose solutions. Genuine input/permission/feasibility gaps support explicit unknown, clarification/extraction or limited-stop directions, never fabricated candidates or unsupported goal completion.",
         "Portfolio order is a proposal only and does not qualify or select a candidate.",
         payload_rule_id="hypothesis.portfolio_closure",
         context_rule_id="hypothesis.objective_binding",

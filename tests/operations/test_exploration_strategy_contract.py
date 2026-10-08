@@ -158,3 +158,98 @@ def test_existing_fields_accept_specific_incomplete_closeout(catalog, blocker):
         "limitations": [blocker], "remaining_contradiction": "Unfinished original requirements remain.",
         "next_action": "Close out honestly incomplete and retain the best eligible candidate."}
     validate_context(report, ValidationSources({"hypothesis_portfolio": canonical_json(proposal)}, {}), {})
+
+
+def _assert_target_coverage_policy(role):
+    role = " ".join(role.split())
+    assert "one testable solution mechanism directly addressing the target conditions" in role
+    assert "For each mechanism, use existing statement/mechanism/scope" in role
+    assert "current or training conditions, target-use conditions" in role
+    assert "observations distinguishing support from rejection" in role
+    assert "Tasks without training use current versus target conditions" in role
+    assert "Information lawfully available only under target conditions may be used" in role
+    assert "no particular algorithm or adaptation strategy is prescribed" in role
+    assert "method hints do not exhaust the mechanism space" in role
+    assert "Reuse an applicable mechanism with its rationale" in role
+    assert "A pure diagnosis goal need not propose solution mechanisms" in role
+    assert "specific gap and clarification/extraction or limited-stop direction" in role
+    assert "not a new form or control hypothesis-count gate" in role
+    _assert_conditional_proposal_policy(role)
+
+
+@pytest.mark.parametrize("entry", ["original", "extracted"])
+def test_target_mechanism_policy_reaches_real_original_and_extracted_assignments(tmp_path, catalog, entry):
+    from tests.operations.test_general_transform_operations import _intake
+    runtime, _, root = _root(tmp_path, catalog=catalog)
+    runtime.runs.operation_catalog = catalog
+    root.call_tool("artifact_ingest_text", {"name": "goal",
+        "text": "Improve the target-use response within the original constraints. Method examples are starting points."})
+    inputs = [{"port": "subject", "artifact_names": ["goal"]}]
+    if entry == "extracted":
+        payload = json.loads(_intake().canonical_json().replace(b'"paper"', b'"source_material"'))
+        extracted = _complete(runtime, root, "extracted", "science.evidence.extract.v1", {"source_material": "goal"}, payload)
+        # An extraction is scientific material, never replacement user text.
+        invalid = {"name": "wrong-origin", "operation_id": "science.hypothesis.propose.v1",
+            "inputs": [{"port": "subject", "artifact_names": [extracted]}]}
+        assert not root.call_tool("operation_preflight", invalid)["admissible"]
+        inputs.append({"port": "scientific_materials", "artifact_names": [extracted]})
+    request = {"name": "target-H", "operation_id": "science.hypothesis.propose.v1",
+        "inputs": inputs,
+        "instruction": "Formulate the next bounded mechanism question from these exact sources."}
+    assert root.call_tool("operation_preflight", request)["admissible"]
+    assert root.call_tool("operation_invoke", request)["result"]["state"] == "queued"
+    worker = attached_worker(runtime, root, "target-H")
+    opened = worker.call_tool("worker_open_assignment", {})
+    assignment = json.loads(Path(opened["assignment_path"]).read_bytes())
+    _assert_target_coverage_policy(assignment["role_instructions"])
+    schema = json.loads((Path(opened["workspace_path"]) / "schema/result.schema.json").read_bytes())
+    semantic = json.dumps(schema["properties"]["payload"]["x-scidiscovery-semantic-constraints"])
+    assert "each mechanism explains current/training versus target-use conditions" in semantic
+    assert "not a new hypothesis-count admission gate" in semantic
+    assert "Method hints are not an exhaustive mechanism list" in semantic
+    assert "Pure diagnosis need not propose solutions" in semantic
+    assert "prior efficacy or generalization is not a prerequisite" in semantic
+    assert not schema["properties"]["payload"]["properties"]["hypotheses"].get("minItems")
+    if entry == "extracted":
+        material = next(item for item in assignment["inputs"] if item["artifact_name"] == extracted)
+        assert material["source_name"] and material["relative_path"]
+    assert "execution_requirements" not in assignment
+
+
+@pytest.mark.parametrize("case", ["target-mechanism", "diagnosis", "unavailable"])
+def test_existing_h_fields_deliver_target_mechanism_or_honest_gap_without_new_gate(tmp_path, catalog, case):
+    runtime, instance, root = _root(tmp_path, catalog=catalog)
+    runtime.runs.operation_catalog = catalog
+    task = ("Diagnose the bounded response; a solution is not requested." if case == "diagnosis" else
+        "Improve the response under target-use conditions. Preserve original data restrictions and permissions.")
+    root.call_tool("artifact_ingest_text", {"name": "goal", "text": task})
+    proposal = _proposal(hypothesis_keys=("target_mechanism",) if case == "target-mechanism" else ())
+    proposal.pop("research_objective_key")
+    if case == "target-mechanism":
+        proposal.update(stage_objective="Discriminate a conditional target-use mechanism.",
+            contradiction="A different target condition may expose a finite response failure; this remains an assumption.")
+        mechanism = proposal["hypotheses"][0]
+        mechanism.update(statement="If the target-condition sensitivity is relevant, a bounded intervention can reduce the response failure.",
+            mechanism="Compare an unchanged baseline with one bounded intervention under the target condition.",
+            scope="No training stage: compare current and target-use conditions; causal sensitivity remains conditional.",
+            predictions=[{"prediction_key": "target_response", "observable": "Paired response under the target condition.",
+                "expected_outcome": "The intervention reduces the specified response failure relative to baseline."}],
+            falsifiers=[{"falsifier_key": "target_failure", "observable": "The same paired target-condition response.",
+                "rejection_condition": "The intervention does not reduce the failure."}])
+    else:
+        proposal.update(stage_objective="Characterize the bounded unresolved gap.",
+            contradiction="Required target observations are unavailable within permissions; original improvement remains incomplete."
+            if case == "unavailable" else "The diagnosis remains unresolved; no solution mechanism is justified yet.")
+    output = _complete(runtime, root, "H", "science.hypothesis.propose.v1", {"subject": "goal"}, proposal, verdict="inconclusive")
+    sealed = root.facade.run_status(name="H", intent="full")["sealed_output"]["payload"]
+    assert sealed["hypotheses"] == proposal["hypotheses"]
+    assert sealed["contradiction"] == proposal["contradiction"]
+    request = {"name": "test-target", "operation_id": "science.experiment.v1",
+        "inputs": [{"port": "subject", "artifact_names": [output]}], "instruction": "Test the exact H question if it has a mechanism."}
+    admissible = root.call_tool("operation_preflight", request)["admissible"]
+    if case == "target-mechanism":
+        assert admissible
+        assert root.call_tool("operation_invoke", request)["result"]["state"] == "queued"
+    else:
+        assert not admissible  # Existing empty-portfolio behavior; no forced experiment.
+    assert runtime.scheduler_bindings.list(instance=instance.instance_id, namespace="approval") == ()
