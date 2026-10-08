@@ -90,7 +90,10 @@ BOUNDARY_GUIDANCE = """
 Boundary declarations separate claim origin from applicability. Use optional
 boundary_declarations for your statement, exact SourceReference with a necessary
 quote, and your interpretation; associate existing hypothesis_key/parameter.name
-when relevant. Use handoff.boundary_references to cite declaration keys in this
+when relevant. A verbatim original excerpt may be the statement; put inferred
+meaning and applicability in interpretation. Even statement == quote can repeat
+an example or a reported view rather than a hard constraint: read the original context.
+Use handoff.boundary_references to cite declaration keys in this
 result or an exact frozen input source_name, without repeating the declaration list.
 Control supplies producer identity, exact frozen references and location checks.
 Source-location and quoted-byte checks are separate. An absent quote is not matched;
