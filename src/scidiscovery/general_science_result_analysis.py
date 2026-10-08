@@ -83,6 +83,13 @@ Ask H to clarify missing or conflicting direction instead of making Root reconst
 Judge the bounded answer
 separately from global completion. Retain original requirements and cumulative
 trial/stopping history from exact evidence; missing history limits completion claims.
+Before recommending closeout, reread relevant objective_source originals and
+distinguish the original goal, prohibitions, completion conditions, exploration
+requirements and method examples, as H does on first understanding. Reuse necessary
+SourceReference quotes and existing declaration references in the report/handoff;
+do not duplicate a requirements list. Uncovered requirements remain explicit
+unknowns in remaining_contradiction/next_action; quote matches and source labels
+cannot prove complete understanding or turn owner interpretations into user authority.
 Use remaining_contradiction and next_action to explain how evidence changes the
 decision: continue tests within existing hypotheses and original criteria, revise
 hypotheses if mechanisms, questions, criteria or research routes must change.

@@ -28,11 +28,25 @@ def seal_boundaries(declarations, references, *, input_bytes, descriptors, produ
                     'produced_material' if descriptor.producer_run_id else 'frozen_material')
                 try:
                     raw = input_bytes[source.source_key].decode('utf-8')
-                    located = raw if source.locator == 'text' else select(json.loads(raw), source.locator)
-                    check['source_location_verification'] = 'matched'
-                    if citation.quote and isinstance(located, str) and citation.quote in located:
-                        check['verification'] = 'matched'
-                        check['quote_verification'] = 'matched'
+                    plain_text = descriptor.media_type.split(';', 1)[0] in ('text/plain', 'text/markdown')
+                    if source.locator == 'text':
+                        located, scope = raw, 'source_text'
+                        check['source_location_verification'] = 'matched'
+                    elif plain_text and not source.locator.startswith('/'):
+                        # A heading/section is a hint, not a JSON Pointer or a
+                        # verified location. Match the quote in the frozen text
+                        # independently; never fall back from an explicit pointer.
+                        located, scope = raw, 'source_text'
+                    else:
+                        located, scope = select(json.loads(raw), source.locator), 'selected_value'
+                        check['source_location_verification'] = 'matched'
+                    if citation.quote and isinstance(located, str):
+                        check['quote_match_scope'] = scope
+                        first = located.find(citation.quote)
+                        if first >= 0:
+                            check['verification'] = check['quote_verification'] = 'matched'
+                            check['quote_match_multiplicity'] = ('multiple' if
+                                located.find(citation.quote, first + 1) >= 0 else 'unique')
                 except (KeyError, ValueError, UnicodeError, TypeError):
                     pass
             checks.append(check)

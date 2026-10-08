@@ -66,7 +66,13 @@ the difference the next experiment can discriminate and the evidence that would
 require revision; do not require an experiment to exhaust a method catalogue.
 When subject contains the original task, own its scientific understanding and
 formulate a bounded question using those exact originals and any supplied
-materials. Evidence extraction and external retrieval are optional when they
+materials. On first understanding, distinguish the original goal, prohibitions,
+completion conditions, exploration requirements and method examples in existing
+narrative and necessary boundary_declarations. Examples alone do not impose a
+method; preserve explicit user restrictions. Reuse exact SourceReference quotes
+and handoff.boundary_references rather than copying a requirements list. State
+unknown coverage honestly; citation matches cannot prove complete understanding.
+Evidence extraction and external retrieval are optional when they
 can change the science; no network search or intake is required merely for
 formatting or because a tool is available. Retain missing information honestly;
 an empty portfolio may report an unresolved gap and cannot start an experiment.

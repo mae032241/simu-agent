@@ -21,7 +21,8 @@ class FormModel(BaseModel):
 class SourceReference(FormModel):
     source_key: Identifier
     source_type: Literal["frozen_input", "web_snapshot", "user_statement", "runtime_output", "inference"]
-    locator: Annotated[str, Field(min_length=1, max_length=2048)]
+    locator: Annotated[str, Field(min_length=1, max_length=2048,
+        description="Exact input locator. Boundary citations use 'text' for full text or a heading/section hint for plain text; hints remain unlocated even when the quote matches elsewhere. An explicit / JSON Pointer selects only that value and never falls back to whole-source search.")]
 
 
 class BoundaryReference(FormModel):
@@ -33,7 +34,7 @@ class BoundaryReference(FormModel):
 class BoundaryCitation(FormModel):
     source: SourceReference
     quote: Annotated[str, Field(min_length=1, max_length=2048)] | None = Field(default=None,
-        description="Exact necessary source text, when useful. Without a quote no quoted-byte match is established. Matching proves bytes at the location only, never interpretation or user authorization.")
+        description="Exact necessary source text, when useful. Without a quote no quoted-byte match is established. Matching proves bytes in the reported search scope only, never interpretation or user authorization, nor a unique location unless multiplicity is checked.")
 
 
 class BoundaryDeclaration(FormModel):
@@ -93,11 +94,17 @@ when relevant. Use handoff.boundary_references to cite declaration keys in this
 result or an exact frozen input source_name, without repeating the declaration list.
 Control supplies producer identity, exact frozen references and location checks.
 Source-location and quoted-byte checks are separate. An absent quote is not matched;
-a short or complete matched quote proves only those bytes at the location, never the interpretation's
+a short or complete matched quote proves only those bytes in the reported search scope, never the interpretation's
 truth or user authorization. A stronger interpretation remains the owner's claim,
 including when the source is original user text. Scientific material repeating user
 words does not become original user text. Unverified citations or unresolved
 references cannot weaken existing assigned H boundaries or grant permissions.
+For frozen plain/Markdown text, a heading is only a hint: its location may remain
+unverified while the exact quote matches the full source_text. quote_match_scope
+describes the searched text or selected JSON value; quote_match_multiplicity marks
+unique/multiple occurrences within that space, not semantic authority or a new locator.
+An explicit / JSON Pointer never falls back to full-text search. Read relevant
+original context for an ambiguous quote; a matched quote alone does not prove coverage.
 Read complete sealed declarations through input scientific_view or
 worker_reference_read(view="boundaries"); follow returned continuation. This is
 separate from original payload pointers. Keep assumptions/missing_inputs as strings.
