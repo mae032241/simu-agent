@@ -1123,7 +1123,7 @@ try:
     assert describe["inputSchema"]["properties"]["view"]["enum"] == ["full", "invoke"]
     run_status = call("describe_run_status", "scid_describe", {"name": "run_status"})
     assert run_status["inputSchema"]["properties"]["intent"]["enum"] == [
-        "decision", "status", "navigation", "full"
+        "decision", "status", "navigation"
     ]
     assert run_status["inputSchema"]["properties"]["intent"]["default"] == "decision"
     assert "view" not in run_status["inputSchema"]["properties"]
@@ -1139,7 +1139,7 @@ try:
     assert operation["operation_id"] == operation_id
     assert "operation_digest" not in operation
     assert "inputs" in operation and "revision_policy" in operation
-    assert operation["contract_view_version"] == "invoke.scientific.v2"
+    assert operation["contract_view_version"] == "invoke.scientific.v3"
     assert all(set(item) == {"operation_id", "purpose"} for item in catalog["operations"])
     assert catalog["complete"] == (catalog["next_before"] is None)
     print(f"Root context contract probe: pass ({operation_id})")

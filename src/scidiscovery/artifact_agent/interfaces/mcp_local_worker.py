@@ -130,11 +130,12 @@ class LocalWorkerMCPRouter:
             "Read the selected originals and use permitted reading/check tools; this reading subtask requests no edits. "
             "Return bounded findings with supporting and contrary evidence, failed or inconclusive observations, "
             "exact aliases and narrow pointers/line locators with short quotes, inspected scope, omissions/unread ranges and uncertainties. "
-            "Separate claim-changing findings from background navigation. For each claim-changing finding give its smallest "
-            "sufficient original selection and why it affects the assigned question; do not label every relevant section decisive. "
-            "Background citations are optional navigation, not a rereading checklist. Preserve necessary surrounding context "
-            "and counterevidence. Distinguish observations, producer interpretations and your inference; missing coverage stays unknown. "
-            "Your report is attributed reading support, not original evidence, scientific verification or permission."
+            "Report checked findings directly with short sufficient excerpts and exact locators, including counterevidence. "
+            "State what you checked versus inferred, and unresolved conflicts or missing coverage. "
+            "Do not return a mandatory rereading list for checks already completed; request a targeted follow-up only "
+            "for an unresolved issue and explain what decision it changes. "
+            "Your parent may use these findings directly with their limitations. "
+            "Your report does not grant formal independent review, qualification or permission."
         )
         budget = self.runs.worker_budget(status)
         budget.pop('checkpoint', None)  # This reminder belongs to the task owner.

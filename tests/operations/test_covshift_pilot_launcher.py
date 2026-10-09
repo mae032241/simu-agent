@@ -7,6 +7,11 @@ from scripts import prepare_covshift_pilot as inputs
 from tests.operations.test_covshift_pilot_preparation import inputs as fixture_inputs
 
 
+def profile_spec(arm='scidiscovery'):
+    return {'arm':arm,'role_profile_version':inputs.ROLE_PROFILE_VERSION,
+        'role_profiles':inputs.role_profiles(arm)}
+
+
 def pair(tmp_path,monkeypatch):
     old,candidate,python,revision=fixture_inputs(tmp_path,monkeypatch)
     path=tmp_path/'pair';inputs.prepare(path,old,candidate,python,revision)
@@ -55,6 +60,8 @@ def test_prepare_consumes_exact_candidate_builds_same_aliases_and_fresh_settings
         from scidiscovery.agent_execution_settings import parse_settings
         effective=parse_settings(settings)
         assert effective.debug_disable_task_network and effective.defaults.model==driver.MODEL
+        assert effective.progression.root_model==driver.role_model(spec,'root')
+        assert spec['role_profiles']==inputs.role_profiles(spec['arm'])
         assert effective.progression.enabled==(spec['arm']=='scidiscovery')
         assert effective.progression.root_network_access is False
         assert effective.progression.max_tokens==expected['all_role_tokens']
@@ -83,6 +90,12 @@ def test_prepare_consumes_exact_candidate_builds_same_aliases_and_fresh_settings
         assert config['shell_environment_policy']['inherit']=='none'
         assert config['permissions'][driver.NAME]['network']['enabled'] is False
         assert config['web_search']=='disabled'
+        assert config['model']==driver.role_model(spec,'root')
+        assert config['model_reasoning_effort']=='high' and config['service_tier']=='default'
+        assert config['features']['fast_mode'] is False
+        assert config['features']['apps'] is False and spec['native_features']['apps'] is False
+        assert Path(spec['root'],'codex-home/config.toml').stat().st_mode & 0o777==0o600
+        driver.verify_frozen_configuration(spec)
 
 
 def usage(thread,inputs=100,outputs=20,cached=0):
@@ -273,7 +286,7 @@ def test_captured_shell_receipt_matches_only_exact_platform_wrapper():
 def test_role_read_checks_native_inheritance_without_permission_override(tmp_path,wrapped):
     from types import SimpleNamespace
     definition={'filesystem':{':root':'deny','/task':'read'},'network':{'enabled':False}}
-    spec={'definition':definition,'root':str(tmp_path)};meter=driver.Meter(lambda:0.)
+    spec={**profile_spec(),'definition':definition,'root':str(tmp_path)};meter=driver.Meter(lambda:0.)
     path=tmp_path/'codex-home/sessions/role.jsonl';path.parent.mkdir(parents=True)
     path.write_text(json.dumps({'type':'session_meta','payload':{'id':'real-child'}})+'\n'+
         json.dumps({'type':'turn_context','payload':{'turn_id':'actual-turn','model':driver.MODEL,'effort':'high'}})+'\n')
@@ -422,7 +435,7 @@ def test_meter_explicit_spawn_conflict_is_not_hidden_by_interactions():
 def test_actual_canary_request_names_frozen_model_and_stops_on_discovered_child_drift(tmp_path):
     from types import SimpleNamespace
     project=tmp_path/'project';project.mkdir()
-    spec={'root':str(tmp_path),'project':str(project),'arm':'native_goal','task_python':'/readonly/python',
+    spec={**profile_spec('native_goal'),'root':str(tmp_path),'project':str(project),'task_python':'/readonly/python',
         'public_sha256':{'instruction.md':'synthetic','harness/exp_cli.py':'synthetic'}}
     meter=driver.Meter(lambda:0.);prompts=[];requests=[]
     def start(prompt):
@@ -445,7 +458,7 @@ def test_actual_canary_request_names_frozen_model_and_stops_on_discovered_child_
 
 
 def test_executed_profile_requires_actual_own_log_and_every_completed_turn(tmp_path):
-    spec={'root':str(tmp_path)};path=tmp_path/'codex-home/sessions/role.jsonl';path.parent.mkdir(parents=True)
+    spec={**profile_spec(),'root':str(tmp_path)};path=tmp_path/'codex-home/sessions/role.jsonl';path.parent.mkdir(parents=True)
     path.write_text(json.dumps({'type':'session_meta','payload':{'id':'actual'}})+'\n'+
         json.dumps({'type':'turn_context','payload':{'turn_id':'first','model':driver.MODEL,'effort':'high'}})+'\n')
     thread={'id':'actual','path':str(path),'turns':[{'id':'first','status':'completed'}]}
@@ -454,6 +467,137 @@ def test_executed_profile_requires_actual_own_log_and_every_completed_turn(tmp_p
     with pytest.raises(RuntimeError,match='profile_unconfirmed'):driver.role_turn_profiles(thread,spec)
     thread['turns'].pop();path.unlink();path.symlink_to(tmp_path/'outside')
     with pytest.raises(RuntimeError,match='profile_unconfirmed'):driver.role_turn_profiles(thread,spec)
+
+
+@pytest.mark.parametrize('arm,role,model',[
+    ('scidiscovery','root','gpt-5.6-sol'),
+    ('scidiscovery','worker','gpt-6.1-sol'),
+    ('scidiscovery','helper','gpt-6.1-sol'),
+    ('native_goal','root','gpt-6.1-sol'),
+])
+def test_actual_profile_proof_uses_each_roles_frozen_model(tmp_path,arm,role,model):
+    spec={**profile_spec(arm),'root':str(tmp_path)}
+    path=tmp_path/'codex-home/sessions/actual.jsonl';path.parent.mkdir(parents=True)
+    def recorded(executed):
+        path.write_text(json.dumps({'type':'session_meta','payload':{'id':'actual'}})+'\n'+
+            json.dumps({'type':'turn_context','payload':{'turn_id':'turn','model':executed,'effort':'high'}})+'\n')
+    thread={'id':'actual','path':str(path),'turns':[{'id':'turn','status':'completed'}],
+        'model':model,'reasoningEffort':'high','forkedFromId':None}
+    recorded(model)
+    driver.verify_role_thread(thread,'actual',model=driver.role_model(spec,role))
+    assert driver.role_turn_profiles(thread,spec,role)['model']==model
+    other='gpt-6.1-sol' if model=='gpt-5.6-sol' else 'gpt-5.6-sol'
+    recorded(other)
+    with pytest.raises(RuntimeError,match='executed_model_drift'):
+        driver.role_turn_profiles(thread,spec,role)
+    with pytest.raises(RuntimeError,match='profile_or_history_unconfirmed'):
+        driver.verify_role_thread({**thread,'model':other},'actual',model=driver.role_model(spec,role))
+
+
+def test_account_requires_both_scid_models_but_native_goal_only_its_original_model():
+    from types import SimpleNamespace
+    listed=[driver.MODEL]
+    def rpc(method,params):
+        if method=='account/read':return {'account':{'type':'synthetic'}}
+        assert method=='model/list'
+        return {'data':[{'model':model} for model in listed],'nextCursor':None}
+    connection=SimpleNamespace(rpc=rpc)
+    assert driver.verify_account(connection,profile_spec('native_goal'))['exact_models_listed']==[driver.MODEL]
+    with pytest.raises(RuntimeError,match='exact_trial_model_unavailable'):
+        driver.verify_account(connection,profile_spec())
+    listed.append(driver.ROOT_MODEL)
+    assert driver.verify_account(connection,profile_spec())['exact_models_listed']==sorted(listed)
+
+
+@pytest.mark.parametrize('change',['legacy','wrong_root','wrong_helper'])
+def test_old_or_mismatched_profile_manifests_are_rejected_before_prepare(tmp_path,monkeypatch,change):
+    source=pair(tmp_path,monkeypatch);launch=json.loads(source.read_text())
+    if change=='legacy':
+        launch.pop('role_profile_version');launch.pop('role_profiles')
+    else:
+        role='root' if change=='wrong_root' else 'helper'
+        launch['role_profiles']['scidiscovery'][role]['model']=driver.MODEL if role=='root' else driver.ROOT_MODEL
+    source.write_text(json.dumps(launch))
+    output=tmp_path/'not-created'
+    with pytest.raises(ValueError,match='frozen_role_profiles_mismatch'):
+        driver.prepare(source,output,native_bundle(tmp_path))
+    assert not output.exists()
+    with pytest.raises(ValueError,match='frozen_role_profiles_mismatch'):
+        driver.role_model({'arm':'scidiscovery'},'root')
+
+
+@pytest.mark.parametrize('configuration',['home','project'])
+def test_configuration_drift_is_rejected_before_starting_any_host(tmp_path,monkeypatch,configuration):
+    from types import SimpleNamespace
+    source=pair(tmp_path,monkeypatch)
+    def init(command,**kwargs):
+        project=Path(command[command.index('--project-root')+1]);(project/'.codex').mkdir()
+        (project/'.codex/config.toml').write_text('web_search="disabled"\n')
+        return SimpleNamespace(returncode=0,stdout=b'fixture')
+    monkeypatch.setattr(driver.subprocess,'run',init)
+    prepared=driver.prepare(source,tmp_path/'runtime',native_bundle(tmp_path))
+    spec=json.loads(Path(prepared['arms']['scidiscovery']).read_text())
+    path=Path(spec['root'])/'codex-home/config.toml' if configuration=='home' else Path(spec['project'])/'.codex/config.toml'
+    path.write_text(path.read_text()+'\n# drift\n')
+    def unexpected(*args):raise AssertionError('configuration must reject before host or control startup')
+    monkeypatch.setattr(driver,'start_control',unexpected);monkeypatch.setattr(driver,'launch_root',unexpected)
+    result=driver.arm_action(spec,'run')
+    assert result['status']=='fail' and result['reason']==('frozen_native_configuration_changed' if configuration=='home' else 'frozen_project_configuration_changed')
+    assert not result['trial_started'] and not Path(spec['root'],'model-submission-started').exists()
+
+
+@pytest.mark.parametrize('arm',['native_goal','scidiscovery'])
+@pytest.mark.parametrize('project_apps',[None,True])
+def test_apps_off_preserves_local_mcp_and_native_worker_features(tmp_path,monkeypatch,arm,project_apps):
+    from types import SimpleNamespace
+    source=pair(tmp_path,monkeypatch)
+    features={'code_mode_host':True,'multi_agent':True,'shell_tool':True,'unified_exec':True,
+        'multi_agent_v2':{'enabled':False,'hide_spawn_agent_metadata':False}}
+    def init(command,**kwargs):
+        project=Path(command[command.index('--project-root')+1]);(project/'.codex').mkdir()
+        (project/'.codex/config.toml').write_text('web_search="disabled"\n[features]\n'
+            + ('apps=true\n' if project_apps else '') +
+            'code_mode_host=true\nmulti_agent=true\nshell_tool=true\nunified_exec=true\n'
+            '[features.multi_agent_v2]\nenabled=false\nhide_spawn_agent_metadata=false\n'
+            '[mcp_servers.scidiscovery]\ncommand="fixture-local-proxy"\n')
+        return SimpleNamespace(returncode=0,stdout=b'fixture')
+    monkeypatch.setattr(driver.subprocess,'run',init)
+    if project_apps:
+        with pytest.raises(ValueError,match='apps_conflicts_with_frozen_trial'):
+            driver.prepare(source,tmp_path/'runtime',native_bundle(tmp_path))
+        return
+    prepared=driver.prepare(source,tmp_path/'runtime',native_bundle(tmp_path))
+    spec=json.loads(Path(prepared['arms'][arm]).read_text())
+    home=__import__('tomllib').loads(Path(spec['root'],'codex-home/config.toml').read_text())
+    project=__import__('tomllib').loads(Path(spec['project'],'.codex/config.toml').read_text())
+    assert home['features']['apps'] is False
+    assert spec['native_features']=={**features,'fast_mode':False,'apps':False}
+    if arm=='scidiscovery':
+        assert project['mcp_servers']=={'scidiscovery':{'command':'fixture-local-proxy'}}
+        assert project['features']==features
+    else:
+        assert not project.get('mcp_servers')  # Native Goal still has no Sci MCP.
+    driver.verify_frozen_configuration(spec)
+    if arm=='scidiscovery':
+        project_path=Path(spec['project'],'.codex/config.toml')
+        original=project_path.read_text()
+        project_path.write_text(original.replace('[features]\n','[features]\napps=true\n'))
+        spec['project_config_sha256']=driver.sha(project_path)
+        with pytest.raises(RuntimeError,match='frozen_native_role_profiles_mismatch'):
+            driver.verify_frozen_configuration(spec)
+        project_path.write_text(original)
+        spec['project_config_sha256']=driver.sha(project_path)
+    # A hand-edited config cannot re-enable Apps even if its digest is replaced.
+    path=Path(spec['root'],'codex-home/config.toml')
+    path.write_text(path.read_text().replace('apps=false','apps=true'))
+    spec['home_config_sha256']=driver.sha(path)
+    with pytest.raises(RuntimeError,match='frozen_native_role_profiles_mismatch'):
+        driver.verify_frozen_configuration(spec)
+    path.write_text(path.read_text().replace('apps=true','apps=false'))
+    spec['home_config_sha256']=driver.sha(path)
+    spec['native_features'].pop('apps')
+    with pytest.raises(RuntimeError,match='frozen_native_role_profiles_mismatch'):
+        driver.verify_frozen_configuration(spec)
 
 
 def test_canary_and_control_usage_share_budget_without_reset_or_double_count():
@@ -491,7 +635,7 @@ def test_scientific_native_goal_starts_directly_with_exact_frozen_budget(tmp_pat
                 for name in ('workspace','runs','submission'):Path(spec['project'],name,'canary').write_text('synthetic')
                 return {'exitCode':0,'stdout':json.dumps(dict.fromkeys(driver.CANARY_CHECKS,True))}
             if method=='account/read':return {'account':{'type':'synthetic-fixture'}}
-            if method=='model/list':return {'data':[{'model':driver.MODEL}],'nextCursor':None}
+            if method=='model/list':return {'data':[{'model':driver.MODEL},{'model':driver.ROOT_MODEL}],'nextCursor':None}
             if method=='thread/goal/get':return {'goal':{'status':'complete','tokensUsed':10}}
             return {}
         connection=SimpleNamespace(rpc=rpc,poll=lambda _:None)
@@ -572,7 +716,9 @@ def test_scidiscovery_starts_actual_objective_with_ui_authority_and_control_mete
         auto_manage_instance=automated,management_authorization_file=authorization if automated else None)
     spec=json.loads(Path(prepared['arms']['scidiscovery']).read_text())
     native=json.loads(Path(prepared['arms']['native_goal']).read_text())
-    assert driver.science_prompt(spec)==driver.science_prompt(native)
+    assert 'Root gpt-5.6-sol/high' in driver.science_prompt(spec)
+    assert 'Root gpt-6.1-sol/high' in driver.science_prompt(native)
+    assert driver.science_prompt(spec).split('\nFrozen trial profiles:')[0]==driver.science_prompt(native).split('\nFrozen trial profiles:')[0]
     monkeypatch.setattr(installed,'__file__',str(Path(spec['python']).parent.parent/'installed-mcp-daemon.py'))
     monkeypatch.setattr(driver,'start_control',lambda spec:([],'http://management.invalid'))
     monkeypatch.setattr(driver.time,'sleep',lambda _:None)
@@ -587,7 +733,7 @@ def test_scidiscovery_starts_actual_objective_with_ui_authority_and_control_mete
             for name in ('workspace','runs','submission'):Path(spec['project'],name,'canary').write_text('synthetic')
             return {'exitCode':0,'stdout':json.dumps(dict.fromkeys(driver.CANARY_CHECKS,True))}
         if method=='account/read':return {'account':{'type':'synthetic-fixture'}}
-        if method=='model/list':return {'data':[{'model':driver.MODEL}],'nextCursor':None}
+        if method=='model/list':return {'data':[{'model':driver.MODEL},{'model':driver.ROOT_MODEL}],'nextCursor':None}
         raise AssertionError('unexpected RPC '+method)
     host=SimpleNamespace(identity=SimpleNamespace(thread_id='frontend',session_id='frontend'),
         connection=SimpleNamespace(rpc=rpc,poll=lambda _:None,failed=False,closed=False),close=lambda:None,
@@ -632,7 +778,7 @@ def test_scidiscovery_starts_actual_objective_with_ui_authority_and_control_mete
     output=capsys.readouterr().out
     assert ('http://management.invalid/exact-page' in output) is not automated
     ingested=[arguments for name,arguments in calls if name=='artifact_ingest_text']
-    assert ingested[0]=={'name':driver.OBJECTIVE,'text':driver.science_prompt(native),'on_conflict':'reject'}
+    assert ingested[0]=={'name':driver.OBJECTIVE,'text':driver.science_prompt(spec),'on_conflict':'reject'}
     if automated:
         assert ingested[1]=={'name':'covshift.pilot.management.authorization','text':authorization.read_text(),'on_conflict':'reject'}
         assert management[-1]==('authorize',driver.OBJECTIVE)
@@ -754,7 +900,7 @@ def test_failed_alias_precheck_never_activates_goal_or_sends_scientific_turn(tmp
             for name in ('workspace','runs','submission'):Path(spec['project'],name,'canary').write_text('synthetic')
             return {'exitCode':0,'stdout':json.dumps({**dict.fromkeys(driver.CANARY_CHECKS,True),'private_denied':False})}
         if method=='account/read':return {'account':{'type':'synthetic-fixture'}}
-        if method=='model/list':return {'data':[{'model':driver.MODEL}],'nextCursor':None}
+        if method=='model/list':return {'data':[{'model':driver.MODEL},{'model':driver.ROOT_MODEL}],'nextCursor':None}
         return {}
     monkeypatch.setattr(driver,'launch_root',lambda *a:SimpleNamespace(identity=SimpleNamespace(thread_id='actual',session_id='actual'),
         connection=SimpleNamespace(rpc=rpc),close=lambda:None))

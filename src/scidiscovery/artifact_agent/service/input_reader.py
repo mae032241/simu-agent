@@ -531,7 +531,17 @@ def read(workspace, name=None, *, pointers=None, directory=False, file=False,
                 and isinstance(entry.get('fingerprint'), str)
                 and _handle(key, entry['fingerprint']) == selection_id]
             retained_entry = entries[0] if len(entries) == 1 else None
-        if implicit:
+        restore = implicit
+        if not implicit:
+            source, source_alias = _source(root, name, file)
+            retained = retained_entry.get('selection') if retained_entry is not None else None
+            # A supplied source still goes through current path/input checks.
+            # The handle may restore omitted fields only for that same source;
+            # explicit selection flags continue to be checked against it below.
+            restore = (selection_id is not None and pointers is None and not directory and not full
+                and isinstance(retained, dict)
+                and retained.get('path') == source.relative_to(root).as_posix())
+        if restore:
             if selection_id is None:
                 selection = state.get('current_selection')
             else:
@@ -545,12 +555,12 @@ def read(workspace, name=None, *, pointers=None, directory=False, file=False,
                 raise ValueError('navigation selection missing; specify the complete source and fields once'
                     if selection_id is not None else 'no current selection; specify the source and fields once')
             source = _within(root, selection['path'])
-            source_alias = selection.get('source_alias')
+            if implicit:
+                source_alias = selection.get('source_alias')
             pointers, directory = selection['pointers'], selection['directory']
             overview = selection.get('scientific_overview', False)
             budget = selection['budget'] if budget is None else budget
         else:
-            source, source_alias = _source(root, name, file)
             overview = not full and pointers is None and not directory and not file
             pointers = list(pointers or [])
         descriptor = _scientific_descriptor(root, source) if overview else None
@@ -669,7 +679,7 @@ def read(workspace, name=None, *, pointers=None, directory=False, file=False,
 def main():
     parser = argparse.ArgumentParser(prog="read_input.py", description=__doc__)
     parser.add_argument('name', nargs='?', help='source_name, unique port, registered relative_path or assignment.json; omit for current-selection navigation')
-    parser.add_argument('--selection', dest='selection_id', help='returned content-bound navigation handle; replay it with --offset and no source or field flags. After cache loss supply the complete source and fields to verify/recover it.')
+    parser.add_argument('--selection', dest='selection_id', help='returned content-bound navigation handle; replay it with --offset alone, or repeat the same source/--file without selection flags. After cache loss supply the complete source and fields to verify/recover it.')
     parser.add_argument('--file', action='store_true', help='explicit task-local file instead of input alias')
     parser.add_argument('--full', action='store_true', help='read the exact complete source instead of its declared scientific overview; preserve pagination')
     parser.add_argument('--pointer', dest='pointers', action='append', help='JSON Pointer; repeat for ordered fields')

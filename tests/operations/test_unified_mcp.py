@@ -5,6 +5,7 @@ import tomllib
 import multiprocessing
 import sqlite3
 import os
+import select
 import subprocess
 import sys
 import time
@@ -50,6 +51,19 @@ def queued(tmp_path, backend="local"):
     status = root.facade.run_status(name="observation")
     profile = status["execution_profile"]["profile"]
     return catalog, runtime, root, gateway, profile
+
+
+def separate_proxy_gateway(root, proxy_id):
+    """Same durable services, independent initially unbound proxy facade/router."""
+    from scidiscovery.artifact_agent.interfaces.mcp_root import RootMCPRouter, RootToolFacade
+    source = root.facade
+    return UnifiedMCPRouter(RootMCPRouter(RootToolFacade(
+        source.artifacts, source.intake, runs=source.runs, approvals=source.approvals,
+        executions=source.executions, bindings=source.bindings, instance=None,
+        session_key=proxy_id, operation_catalog=source._operation_catalog,
+        instance_management_secret=source.instance_management_secret,
+        creation_lock=source._create_lock, execution_bridge=source.execution_bridge,
+        approval_base_url=source.approval_base_url)))
 
 
 def test_wrong_worker_handle_can_be_corrected_only_before_assignment_open(tmp_path):
@@ -232,7 +246,7 @@ def test_gateway_scopes_actual_worker_lifecycle_and_sealed_result(tmp_path, back
         assert result(rpc(gateway, "scid_describe", {"name": "operation_invoke", "view": view})) == result(
             rpc(gateway, "scid_describe", {"name": "operation_invoke"}))
     child = {"child": "child-1", "profile": profile}
-    assert [x['name'] for x in result(rpc(gateway, "scid_catalog", **child))['entries']] == ['worker_identity']
+    assert [x['name'] for x in result(rpc(gateway, "scid_catalog", **child))['entries']] == ['worker_identity', 'worker_open_assignment']
     assert "navigation views are available only for Root" in rpc(
         gateway, "scid_catalog", {"view": "index"}, **child)["error"]["message"]
     for view in ("invoke", "full"):
@@ -258,7 +272,7 @@ def test_gateway_scopes_actual_worker_lifecycle_and_sealed_result(tmp_path, back
         assert "error" in call(gateway, name, **child)
         assert "error" in rpc(gateway, "scid_describe", {"name": name}, **child)
     other_session = dict(child="child-1", profile=profile, session="other-parent")
-    assert [x["name"] for x in result(rpc(gateway, "scid_catalog", **other_session))["entries"]] == ["worker_identity"]
+    assert [x["name"] for x in result(rpc(gateway, "scid_catalog", **other_session))["entries"]] == ["worker_identity", "worker_open_assignment"]
     assert "error" in call(gateway, "worker_open_assignment", **other_session)
     opened = result(call(gateway, "worker_open_assignment", **child))
     structure = result(call(gateway, "worker_csv_summarize", **child))
@@ -477,33 +491,66 @@ def test_generated_install_has_one_mcp_and_no_worker_service_copies(tmp_path, ba
 
 
 @pytest.mark.process_e2e
-def test_real_proxy_daemon_preserves_scope_and_worker_does_not_register_client(tmp_path):
+@pytest.mark.parametrize("attachment", ["explicit", "bootstrap"])
+def test_real_proxy_daemon_preserves_scope_and_worker_does_not_register_client(tmp_path, attachment):
     from scidiscovery.plugin_runtime.transport import UnixSocketDaemon
     from scidiscovery.artifact_agent.interfaces.mcp_daemon import RootBrokerRouter
-    _, runtime, root, gateway, profile = queued(tmp_path)
+    _, runtime, instance, root = _system(tmp_path)
+    profile = {"model": "gpt-5.6-sol", "reasoning_effort": "medium"}
+    root.facade.instance_management_secret = hashlib.sha256(b"transport-bootstrap-secret").digest()
+    root.facade.approval_base_url = "http://127.0.0.1:8765"
     socket = tmp_path / "control.sock"
     def serve():
-        UnixSocketDaemon(socket, RootBrokerRouter(lambda _: gateway,
+        UnixSocketDaemon(socket, RootBrokerRouter(lambda proxy_id: separate_proxy_gateway(root, proxy_id),
             client_bindings=runtime.scheduler_bindings,
             instance_maintenance=runtime.instance_maintenance)).serve_forever()
     process = multiprocessing.get_context("fork").Process(target=serve)
     process.start()
+    root_proxy = None
     def request(name, arguments, *, worker=False):
         meta = {"session_id":"transport-parent", "thread_id":"transport-child" if worker else "transport-parent",
                 "thread_source":"subagent" if worker else "user", "model":profile["model"],
                 "reasoning_effort":profile["reasoning_effort"]}
+        if worker:
+            meta["parent_thread_id"] = "transport-parent"
         message = {"jsonrpc":"2.0", "id":1, "method":"tools/call", "params":{
             "name":name, "arguments":arguments, "_meta":{"x-codex-turn-metadata":meta}}}
-        reply = subprocess.run([sys.executable,"-m","scidiscovery.artifact_agent.interfaces.mcp_proxy",
-            "--socket",str(socket)], input=json.dumps(message)+'\n', text=True, capture_output=True,
-            timeout=10, env=dict(os.environ,PYTHONPATH=os.pathsep.join(sys.path)))
-        assert reply.returncode == 0, reply.stderr
-        return json.loads(reply.stdout)
+        if worker:
+            reply = subprocess.run([sys.executable,"-m","scidiscovery.artifact_agent.interfaces.mcp_proxy",
+                "--socket",str(socket)], input=json.dumps(message)+'\n', text=True, capture_output=True,
+                timeout=10, env=dict(os.environ,PYTHONPATH=os.pathsep.join(sys.path)))
+            assert reply.returncode == 0, reply.stderr
+            return json.loads(reply.stdout)
+        root_proxy.stdin.write(json.dumps(message)+'\n')
+        root_proxy.stdin.flush()
+        assert select.select([root_proxy.stdout], [], [], 10)[0], "Root proxy response timed out"
+        return json.loads(root_proxy.stdout.readline())
     try:
         deadline = time.monotonic()+5
         while not socket.exists() and time.monotonic()<deadline:
             time.sleep(.02)
         assert socket.exists()
+        # The real Root stdio process retains one proxy identity across calls.
+        # Every Worker subprocess gets a different unbound facade in the broker.
+        root_proxy = subprocess.Popen([sys.executable, "-m", "scidiscovery.artifact_agent.interfaces.mcp_proxy",
+            "--socket", str(socket)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, bufsize=1, env=dict(os.environ, PYTHONPATH=os.pathsep.join(sys.path)))
+        current = result(request("scid_call", {"name": "instance_current"}))
+        assert current["state"] == "unbound"
+        assert current["management_url"].startswith(root.facade.approval_base_url + "/sessions/")
+        clients = runtime.scheduler_bindings.clients()
+        assert len(clients) == 1
+        scheduler_proxy = clients[0]["session_key"]
+        # Only the test's management action binds Root. The builder never picks
+        # an instance for any proxy or registers a Worker as a scheduler.
+        runtime.scheduler_bindings.bind_session(session_key=scheduler_proxy, instance_id=instance.instance_id)
+        result(request("scid_call", {"name": "operation_invoke", "arguments": {
+            "name": "observation", "operation_id": "blind.csv.observe.v1",
+            "inputs": [{"port": "source_table", "artifact_names": ["source_csv"]}],
+            "instruction": "Make one bounded observation from the exact CSV."}}))
+        queued_reply = result(request("scid_call", {"name": "run_status", "arguments": {
+            "name": "observation", "intent": "status"}}))
+        profile = queued_reply["execution_profile"]["profile"]
         # Run the installer's real shell check against this daemon and stdio proxy.
         project = Path(__file__).resolve().parents[2]
         install_root = tmp_path / "install"
@@ -523,13 +570,21 @@ def test_real_proxy_daemon_preserves_scope_and_worker_does_not_register_client(t
             env=dict(os.environ, SCID_INSTALL_ROOT=str(install_root), SCID_PYTHON=sys.executable))
         assert context_probe.returncode == 0, context_probe.stderr
         assert "Root context contract probe: pass (blind.csv.observe.v1" in context_probe.stdout
-        identity = result(request("scid_call", {"name":"worker_identity"}, worker=True))
-        assert identity['thread_id'] == 'transport-child'
-        result(request("scid_call", {"name":"worker_attach", "arguments":{
-            "name":"observation", "thread_id":identity['thread_id']}}))
+        if attachment == "explicit":
+            identity = result(request("scid_call", {"name":"worker_identity"}, worker=True))
+            assert identity['thread_id'] == 'transport-child'
+            result(request("scid_call", {"name":"worker_attach", "arguments":{
+                "name":"observation", "thread_id":identity['thread_id']}}))
+            first_open = {"name": "worker_open_assignment"}
+        else:
+            queued_reply = result(request("scid_call", {"name": "run_status",
+                "arguments": {"name": "observation", "intent": "navigation"}}))
+            first_open = queued_reply["dispatch"]["bootstrap"]
         with sqlite3.connect(runtime.scheduler_bindings.client_database_path) as db:
             before = db.execute("SELECT COUNT(*) FROM scheduler_clients").fetchone()[0]
-        assert result(request("scid_call", {"name":"worker_open_assignment"},worker=True))["state"] == "opened"
+        assert result(request("scid_call", first_open,worker=True))["state"] == "opened"
+        with sqlite3.connect(runtime.scheduler_bindings.database_path) as db:
+            assert db.execute("SELECT COUNT(*) FROM scheduler_sessions").fetchone()[0] == 1
         run_id=runtime.scheduler_bindings.resolve(instance=root.facade.instance,namespace='run',name='observation')
         opened=runtime.runs.status(run_id)
         process.kill();process.join(5)
@@ -554,6 +609,12 @@ def test_real_proxy_daemon_preserves_scope_and_worker_does_not_register_client(t
         closed = request("scid_call", {"name":"instance_close"})
         assert "active scientific Run" in closed["error"]["message"]
     finally:
+        if root_proxy is not None:
+            root_proxy.terminate()
+            try:
+                root_proxy.communicate(timeout=3)
+            except subprocess.TimeoutExpired:
+                root_proxy.kill(); root_proxy.communicate()
         process.terminate(); process.join(3)
         if process.is_alive():
             process.kill(); process.join()

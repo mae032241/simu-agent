@@ -72,7 +72,8 @@ class ScientificGateSequence(SchemaModel):
 class ObjectiveDiagnosisAssessment(SchemaModel):
     """A diagnosis of the approved objective, separate from numerical checks."""
 
-    objective_key: Identifier
+    objective_key: Identifier | None = Field(default=None,
+        description="Exact bound objective identity; null when the original text has no structured objective key. This does not omit the scientific assessment.")
     status: Literal["pass", "fail", "inconclusive", "not_evaluable"]
     comparison_keys: Annotated[tuple[Identifier, ...], Field(max_length=256,
         description="Existing comparison keys from cited scoring records only. Leave empty for native calculations; cite their published files using evidence_keys.")] = ()

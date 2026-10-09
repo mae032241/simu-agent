@@ -28,6 +28,17 @@ VISIBLE = ('instruction.md', *(f'environment/harness/{n}' for n in
     ('exp_cli.py', 'runner.py', 'train.csv', 'val.csv', 'meta.json')))
 WALL_SECONDS = 1800
 TOTAL_TOKENS = 200000
+WORKER_MODEL = 'gpt-6.1-sol'
+SCID_ROOT_MODEL = 'gpt-5.6-sol'
+ROLE_PROFILE_VERSION = 1
+
+
+def role_profiles(arm):
+    if arm not in ARMS:
+        raise ValueError('unknown_pilot_arm')
+    return {role: {'model': SCID_ROOT_MODEL if arm == 'scidiscovery' and role == 'root' else WORKER_MODEL,
+        'reasoning_effort': 'high', 'service_tier': 'default', 'fast_mode': False}
+        for role in ('root', 'worker', 'helper')}
 
 
 def digest(raw):
@@ -43,6 +54,9 @@ def prepare(output, prepared, candidate, python, source_commit):
     metadata = json.loads(metadata_raw)
     if metadata['head'] != source_commit:
         raise ValueError('exact_candidate_source_commit_required')
+    if (metadata.get('profile') != {'model': SCID_ROOT_MODEL, 'model_reasoning_effort': 'high'}
+            or metadata.get('worker_profile') != {'model': WORKER_MODEL, 'model_reasoning_effort': 'high'}):
+        raise ValueError('candidate_role_profiles_mismatch; prepare a fresh split-profile candidate')
     if not (python.parent.parent/'pyvenv.cfg').is_file() or not python.is_file():
         raise ValueError('independent_task_venv_required')
     wheels = {}
@@ -60,7 +74,7 @@ def prepare(output, prepared, candidate, python, source_commit):
         for name in VISIBLE}
     settings = {'schema_version':1, 'debug_disable_task_network':True,
         'defaults':{'model':'gpt-6.1-sol', 'reasoning_effort':'high'}, 'operations':{},
-        'progression':{'enabled':False, 'root_model':'gpt-6.1-sol', 'root_reasoning_effort':'high'},
+        'progression':{'enabled':False, 'root_model':SCID_ROOT_MODEL, 'root_reasoning_effort':'high'},
         'helpers':{'default_profile':'inherit', 'profiles':{'lightweight':{
             'model':'gpt-6.1-sol', 'reasoning_effort':'high'}}}}
     from scidiscovery.agent_execution_settings import parse_settings
@@ -77,6 +91,8 @@ def prepare(output, prepared, candidate, python, source_commit):
             'enforcement':'not_verified', 'fixed_currency_cap':'not_claimed'},
         'profile':{'model':'gpt-6.1-sol', 'reasoning_effort':'high',
             'account_runtime_availability':'not_verified'},
+        'role_profile_version':ROLE_PROFILE_VERSION,
+        'role_profiles':{arm:role_profiles(arm) for arm in ARMS},
         'launch_ready':False, 'models_started':0, 'instances_created':0, 'scoring':'not_run',
         'remaining':['actual native Goal lifecycle driver', 'actual Sci progression with UI binding/authorization',
             'live Worker/helper profile inheritance and owned MCP deployment boundary',
@@ -97,7 +113,9 @@ def prepare(output, prepared, candidate, python, source_commit):
         wrapper=('#!/bin/sh\nexec '+shlex.quote(str(python))+' /opt/exp/exp_cli.py "$@"\n').encode()
         (project/'bin/exp').write_bytes(wrapper);(project/'bin/exp').chmod(0o555)
         files['bin/exp']=digest(wrapper)
-        local.write(base/'agent-settings.proposal.json',settings)
+        arm_settings = json.loads(json.dumps(settings))
+        arm_settings['progression']['root_model'] = role_profiles(arm)['root']['model']
+        local.write(base/'agent-settings.proposal.json',arm_settings)
         environment={'EXP_HARNESS':'/opt/exp','EXP_RUN_DIR':'/opt/exp/runs',
             'EXP_TRAIN':'/opt/exp/train.csv','EXP_VAL':'/opt/exp/val.csv','EXP_META':'/opt/exp/meta.json',
             'EXP_RUNNER':'/opt/exp/runner.py','EXP_DEFAULT_SCRIPT':'/workspace/train.py',

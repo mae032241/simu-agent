@@ -33,7 +33,7 @@ RESULT_COPIES = {
     'scidiscovery.experiment-report.v1': {'/handoff/summary': '/payload/summary'},
     'scidiscovery.experiment-review.v1': {'/handoff/summary': '/payload/summary'},
 }
-RESULT_PROJECTION_VERSION = '3'
+RESULT_PROJECTION_VERSION = '4'
 
 VERDICT_PROJECTIONS = {
     'scidiscovery.layered-diagnosis.v1', 'scidiscovery.scientific-review.v1',
@@ -131,6 +131,7 @@ def result_draft_schema(envelope: dict, schema_id: str, input_source_ports=None)
     if schema_id == 'scidiscovery.layered-diagnosis.v1' and input_source_ports is not None and not {'experiment_plan', 'curve_analysis_package'} & set(input_source_ports.values()):
         remove('/payload/plan_key')
         remove('/payload/experiment_key')
+        remove('/payload/objective_assessment/objective_key')
     def versions(node):
         if isinstance(node, dict):
             props = node.get('properties', {})
@@ -347,5 +348,14 @@ def finalize_general_result(request: WorkspaceFinalizationRequest) -> bytes:
             if not {'experiment_plan', 'curve_analysis_package'} & ports:
                 value['payload'].pop('plan_key', None)
                 value['payload'].pop('experiment_key', None)
+                assessment = value['payload'].get('objective_assessment')
+                if isinstance(assessment, dict):
+                    from ..artifact_agent.schema.cognitive import HypothesisProposal
+                    portfolios = [request.input_contents[alias] for alias, descriptor in request.binding_descriptors.items()
+                        if descriptor.port_name == 'hypothesis_portfolio' and alias in request.input_contents]
+                    if len(portfolios) != 1:
+                        raise WorkspaceProtocolError('The exact hypothesis portfolio binding is unavailable or ambiguous; repair the task inputs.')
+                    proposal = HypothesisProposal.model_validate_json(portfolios[0], strict=True)
+                    assessment['objective_key'] = proposal.research_objective_key
         materialize_general_result(value, request.output_schema_id)
     return finalize_result(request, project)

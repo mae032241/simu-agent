@@ -78,7 +78,7 @@ class WorkerConnections:
                 raise RunStateConflict("Worker binding order is ambiguous; attach a fresh native thread.")
         return rows[0] if rows else None
 
-    def attach(self, *, run_id, platform_session, thread_id):
+    def attach(self, *, run_id, platform_session, thread_id, allow_rebind=True):
         self.runs.require_task_network_policy(self.runs.status(run_id))
         with self.runs._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -99,6 +99,8 @@ class WorkerConnections:
             self._require_independent(connection, status, platform_session, thread_id)
             previous = self._latest(connection, platform_session, thread_id)
             if previous is not None and previous["run_id"] != run_id:
+                if not allow_rebind:
+                    raise RunStateConflict("Worker bootstrap requires a fresh native thread for a new task")
                 if previous["state"] in {"queued", "running"}:
                     raise RunStateConflict("Worker thread already belongs to an active Run")
                 old_profile = json.loads(previous["execution_profile_json"] or "null")
@@ -116,6 +118,8 @@ class WorkerConnections:
                 "WHERE platform_session=? AND thread_id=?", (platform_session, thread_id)).fetchone()[0]
             if current is not None:
                 if (current["platform_session"], current["thread_id"]) != (platform_session, thread_id):
+                    if not allow_rebind:
+                        raise RunStateConflict("Worker bootstrap already belongs to another native thread")
                     # Nothing scientific has been opened yet. Correct a mistaken
                     # platform handle without consuming/failing the queued Run.
                     connection.execute("UPDATE worker_connections SET platform_session=?,thread_id=?,attached_at=?,attachment_sequence=? WHERE run_id=?",

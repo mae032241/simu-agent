@@ -5,7 +5,7 @@ from .artifact_agent.schema.layered_diagnosis import LayeredDiagnosisReport
 from .artifact_agent.schema.scientific_progress import ScientificProgressProjection, ScientificProgressChange
 from .general_science_agent_operations import _input, WORKSPACE_REF
 from .general_science_experiment_task import ExperimentReport, validate_goal_inputs
-from .operation_contract import SemanticRuleViolation, validate_evidence_source_aliases
+from .operation_contract import SemanticRuleViolation, declared_violation, validate_evidence_source_aliases
 from .operation_declaration import schema_resource, scientific_agent_operation, semantic_contract
 from .operations.input_validation import parse_bound_json
 from .plugin_runtime.calculations import analysis_evidence_aliases
@@ -41,7 +41,8 @@ def validate_context(payload, sources, handoff):
                 assessment.falsifiers_triggered) <= {item.falsifier_key for item in hypothesis.falsifiers}:
             raise SemanticRuleViolation("Analysis checks must name predictions or falsifiers in the exact hypothesis.")
     if report.objective_assessment is not None and report.objective_assessment.objective_key != proposal.research_objective_key:
-        raise SemanticRuleViolation("Analysis objective must identify the exact hypothesis objective.")
+        raise declared_violation("Analysis objective must identify the exact hypothesis objective.",
+            path="$.objective_assessment.objective_key")
 
 
 def project_progress(payload, sources):
@@ -194,7 +195,9 @@ A decision checklist (core contract). Detailed rules: guide role_reference, sect
 1. Analyze the exact sealed experiment_results against its original hypothesis_portfolio and
 objective_source. Use the control observed_results overview to locate bound inventories and
 uncited or failed attempts; its author_reported values are unverified. Author claims are subjects
-of analysis. Read adopted stages and originals for each claim; compare with H predictions and
+of analysis. Your own fresh helper can inspect bulk stages/originals independently of W's
+helper; adopt its checked findings without routine rereading. Read goal/constraints yourself;
+scientific judgments and required independent numerical checks remain yours. Compare with H predictions and
 falsifiers; separate observations, numerical validity and scientific interpretation. Process
 data locally; cite exact evidence, never raw arrays; keep failures and negative evidence. [a_analysis, a_reading]
 2. Classify each metric: leakage/contamination audit, in-distribution performance, proxy
@@ -207,6 +210,7 @@ hypothesis_assessments and limitations: improved target performance, mechanism e
 uncertainty reduced, or proxy-only improvement, each with evidence, scope and the remaining
 target gap. Valid negatives can contribute; local success or W task completion is not global
 progress; use progress_assessment no_progress/unknown when the decision did not change.
+Control copies objective identity from the bound portfolio; author the assessment, not its key.
 4. Assess hypotheses with exact evidence_keys. Untested is not failed. For known reasonable
 uncovered directions, explain existing counter-evidence, a cheap discriminating test, an H
 revision of a derived assumption, or why currently infeasible. [a_boundaries, a_closeout]
@@ -298,6 +302,6 @@ OPERATION = scientific_agent_operation("science.result.analyze.v1",
         schema_resource=ComponentRef("result_analysis_schema"), kind="layered_diagnosis", max_item_bytes=128*1024,
         validator=ComponentRef("result_analysis_validator"), validator_rule_id="analysis.experiment_binding",
         context_validator=ComponentRef("result_analysis_context"), context_rule_id="analysis.experiment_binding",
-        context_sources=("experiment_results", "hypothesis_portfolio", "objective_source", "experiment_materials", "experiment_sources", "experiment_files", "scientific_materials"),
+        context_sources=("subject", "experiment_results", "hypothesis_portfolio", "objective_source", "experiment_materials", "experiment_sources", "experiment_files", "scientific_materials"),
         semantic_contract=ComponentRef("result_analysis_contract")),),
     timeout=900, max_input_bytes=48*1024*1024, max_output_bytes=128*1024, max_files=1)

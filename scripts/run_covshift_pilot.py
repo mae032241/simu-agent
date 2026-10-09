@@ -33,18 +33,56 @@ if not __package__:
 try:
     from scripts import run_tests as guard
     from scripts import prepare_covshift_local as local
+    from scripts import prepare_covshift_pilot as inputs
 except ModuleNotFoundError:
     import run_tests as guard
     import prepare_covshift_local as local
+    import prepare_covshift_pilot as inputs
 
 NAME = 'covshift-pilot'
 MODEL = 'gpt-6.1-sol'
+ROOT_MODEL = inputs.SCID_ROOT_MODEL
 WALL = 1800
 TOKENS = 200000
 MAX_TOKENS = 20000000
 MAX_WALL = 5400
 OBJECTIVE = 'covshift.pilot.objective'
 STATUS_READ_RETRY = {'attempts':3,'initial_backoff_seconds':.5,'maximum_backoff_seconds':2.}
+
+
+def frozen_role_profiles(spec):
+    """Old single-model specs cannot silently acquire new Root semantics."""
+    if (type(spec.get('role_profile_version')) is not int
+            or spec['role_profile_version'] != inputs.ROLE_PROFILE_VERSION
+            or spec.get('arm') not in inputs.ARMS
+            or spec.get('role_profiles') != inputs.role_profiles(spec['arm'])):
+        raise ValueError('frozen_role_profiles_mismatch; prepare a fresh trial, do not reuse old specs')
+    return spec['role_profiles']
+
+
+def role_model(spec, role):
+    if role not in ('root', 'worker', 'helper'):
+        raise ValueError('unknown_pilot_role')
+    return frozen_role_profiles(spec)[role]['model']
+
+
+def verify_frozen_configuration(spec):
+    profiles=frozen_role_profiles(spec)
+    path=Path(spec['root'])/'codex-home/config.toml'
+    if sha(path)!=spec.get('home_config_sha256'):
+        raise RuntimeError('frozen_native_configuration_changed')
+    if sha(Path(spec['project'])/'.codex/config.toml')!=spec.get('project_config_sha256'):
+        raise RuntimeError('frozen_project_configuration_changed')
+    configured=tomllib.loads(regular(path).decode())
+    project=tomllib.loads(regular(Path(spec['project'])/'.codex/config.toml').decode())
+    if (configured.get('model')!=profiles['root']['model']
+            or configured.get('model_reasoning_effort')!='high'
+            or configured.get('service_tier')!='default'
+            or configured.get('features',{}).get('fast_mode') is not False
+            or configured.get('features',{}).get('apps') is not False
+            or project.get('features',{}).get('apps') not in (None, False)
+            or spec.get('native_features',{}).get('apps') is not False):
+        raise RuntimeError('frozen_native_role_profiles_mismatch')
 
 
 def arm_limits(spec):
@@ -107,6 +145,10 @@ def sha(path):
 
 def load_launch(path):
     value = json.loads(regular(path))
+    if (type(value.get('role_profile_version')) is not int
+            or value['role_profile_version'] != inputs.ROLE_PROFILE_VERSION
+            or value.get('role_profiles') != {arm: inputs.role_profiles(arm) for arm in inputs.ARMS}):
+        raise ValueError('frozen_role_profiles_mismatch; prepare fresh inputs, do not reuse old manifests')
     if (value.get('kind') != 'covshift_custom_paired_pilot_inputs'
             or value.get('limits', {}).get('per_mode_wall_seconds') != WALL
             or value['limits'].get('per_mode_total_tokens') != TOKENS
@@ -276,6 +318,7 @@ def prepare(launch_path, output, native, auth_file=None, provider_config=None, *
             'cpu_affinity':'one CPU chosen from supervisor allowed set',
             'token_semantics':'observed cumulative thread counters; asynchronous stop can overshoot; missing coverage stops'},
         'profile':{'model':MODEL,'reasoning_effort':'high'},'arm_limits':budgets,
+        'role_profile_version':inputs.ROLE_PROFILE_VERSION,'role_profiles':launch['role_profiles'],
         'budget_semantics':'limits are original authorization ceilings; arm_limits are new-attempt caps, not resumed state',
         'arms':{},'launch_ready':False}
     for arm in ('native_goal','scidiscovery'):
@@ -292,6 +335,15 @@ def prepare(launch_path, output, native, auth_file=None, provider_config=None, *
             (base/directory).mkdir(mode=0o700)
         (base/'codex-home/tmp/arg0').mkdir(parents=True,mode=0o700)
         settings=json.loads(regular(launch['arms'][arm]['agent_settings_proposal']))
+        profiles=launch['role_profiles'][arm]
+        if (settings.get('defaults') != {'model':MODEL,'reasoning_effort':'high'}
+                or settings.get('operations')
+                or settings.get('progression',{}).get('root_model') != profiles['root']['model']
+                or settings['progression'].get('root_reasoning_effort') != 'high'
+                or settings.get('helpers',{}).get('default_profile') != 'inherit'
+                or any(p.get('model',MODEL) != MODEL or p.get('reasoning_effort','high') != 'high'
+                    for p in settings['helpers'].get('profiles',{}).values())):
+            raise ValueError('frozen_agent_role_profiles_mismatch')
         settings['progression'].update(enabled=arm=='scidiscovery',root_network_access=False,
             max_elapsed_seconds=budget['trial_wall_seconds'],max_calendar_seconds=budget['trial_wall_seconds'],
             max_tokens=budget['all_role_tokens'],max_rss_bytes=resource_limits({'resources':resources})[1],
@@ -307,6 +359,7 @@ def prepare(launch_path, output, native, auth_file=None, provider_config=None, *
         if completed.returncode:
             raise RuntimeError('installed_initializer_failed:'+arm)
         spec={'arm':arm,'limits':budget,'resources':resources,'human_wait_seconds':human_wait_seconds,
+            'role_profile_version':inputs.ROLE_PROFILE_VERSION,'role_profiles':profiles,
             'status_read_retry':status_read_retry({}),
             'management_authorization':authorization if arm=='scidiscovery' else None,
             'root':str(base),'project':str(project),'python':str(installed),
@@ -335,14 +388,21 @@ def prepare(launch_path, output, native, auth_file=None, provider_config=None, *
         for _,target,access in spec['bindings']:
             grants[target]=access
         spec['native_features']=tomllib.loads((project/'.codex/config.toml').read_text()).get('features',{})
+        if spec['native_features'].get('fast_mode') not in (None, False):
+            raise ValueError('fast_mode_conflicts_with_frozen_trial')
+        if spec['native_features'].get('apps') not in (None, False):
+            raise ValueError('apps_conflicts_with_frozen_trial')
+        spec['native_features']={**spec['native_features'],'fast_mode':False,'apps':False}
         if arm=='native_goal':
             # Native has the task and native platform tools, no Sci scheduler prompt/MCP.
             for path in (project/'AGENTS.md',project/'.codex/AGENTS.md'):
                 path.unlink(missing_ok=True)
             shutil.rmtree(project/'.codex/agents',ignore_errors=True)
             (project/'.codex/config.toml').write_text('web_search="disabled"\n')
+        spec['project_config_sha256']=sha(project/'.codex/config.toml')
         spec['definition']={'filesystem':grants,'network':{'enabled':False}}
-        lines=['default_permissions='+json.dumps(NAME),'approval_policy="never"','web_search="disabled"',
+        lines=['model='+json.dumps(profiles['root']['model']),'model_reasoning_effort="high"',
+            'service_tier="default"','default_permissions='+json.dumps(NAME),'approval_policy="never"','web_search="disabled"',
             '[permissions.'+NAME+'.filesystem]']
         lines.extend(json.dumps(k)+'='+json.dumps(v) for k,v in grants.items())
         lines.extend(['[permissions.'+NAME+'.network]','enabled=false',
@@ -355,7 +415,12 @@ def prepare(launch_path, output, native, auth_file=None, provider_config=None, *
             if 'model_provider' in provider:
                 lines.insert(0,'model_provider='+json.dumps(provider['model_provider']))
             lines.extend(provider_tables(provider.get('model_providers',{})))
-        (base/'codex-home/config.toml').write_text('\n'.join(lines)+'\n')
+        # This task uses only its local Sci MCP; unrelated account Apps must not
+        # initialize remote connectors while checking the local tool catalog.
+        lines.extend(['[features]','fast_mode=false','apps=false'])
+        with os.fdopen(os.open(base/'codex-home/config.toml',os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600),'w') as stream:
+            stream.write('\n'.join(lines)+'\n')
+        spec['home_config_sha256']=sha(base/'codex-home/config.toml')
         if auth_file is not None:
             destination=base/'codex-home/auth.json'
             destination.write_bytes(regular(auth_file));destination.chmod(0o600)
@@ -528,20 +593,21 @@ def public_call(host,name,arguments):
     return value if isinstance(value,dict) else json.loads(reply['content'][0]['text'])
 
 
-def verify_role_thread(thread,thread_id):
+def verify_role_thread(thread,thread_id,*,model=MODEL):
     # Current configured profile is an early rejection, not per-turn telemetry.
     if (thread.get('id')!=thread_id or thread.get('forkedFromId') is not None
-            or thread.get('model')!=MODEL or thread.get('reasoningEffort')!='high'):
+            or thread.get('model')!=model or thread.get('reasoningEffort')!='high'):
         raise RuntimeError('role_platform_identity_profile_or_history_unconfirmed')
 
 
-def role_turn_profiles(thread,spec):
+def role_turn_profiles(thread,spec,role='worker'):
     """Read only profile metadata from the actual fresh host's own bounded log.
 
     Thread.model is explicitly not per-turn telemetry in the platform schema.
     Missing/unsafe logs or incomplete turn_context evidence cannot earn a gate.
     No chat, instructions, provider or authentication fields are returned.
     """
+    model=role_model(spec,role)
     path=Path(thread.get('path') or '')
     root=Path(spec['root'])/'codex-home/sessions'
     if not path.is_absolute() or not path.is_relative_to(root):
@@ -558,7 +624,7 @@ def role_turn_profiles(thread,spec):
             identity=body.get('id')
         if record.get('type')=='turn_context':
             turn=body.get('turn_id');profile=(body.get('model'),body.get('effort'))
-            if not isinstance(turn,str) or not turn or profile!=(MODEL,'high'):
+            if not isinstance(turn,str) or not turn or profile!=(model,'high'):
                 raise RuntimeError('role_executed_model_drift_or_unconfirmed')
             if turn in contexts and contexts[turn]!=profile:raise RuntimeError('role_turn_profile_unconfirmed')
             contexts[turn]=profile
@@ -567,7 +633,7 @@ def role_turn_profiles(thread,spec):
             or any(t.get('status')!='completed' or not isinstance(t.get('id'),str)
                 or t['id'] not in contexts for t in turns)):
         raise RuntimeError('role_turn_profile_unconfirmed')
-    return {'turn_ids':sorted(contexts),'model':MODEL,'reasoning_effort':'high',
+    return {'turn_ids':sorted(contexts),'model':model,'reasoning_effort':'high',
         'source':'fresh_host_turn_context','source_sha256':hashlib.sha256(data).hexdigest()}
 
 
@@ -577,11 +643,11 @@ def read_role_proofs(host,meter,spec,roles):
     for role,thread_id in roles.items():
         reply=host.connection.rpc('thread/read',{'threadId':thread_id,'includeTurns':True})
         thread=reply.get('thread',{})
-        verify_role_thread(thread,thread_id)
+        verify_role_thread(thread,thread_id,model=role_model(spec,role))
         if (not isinstance(thread.get('sessionId'),str)
                 or thread.get('status',{}).get('type')!='idle'):
             raise RuntimeError('role_platform_identity_profile_or_history_unconfirmed')
-        executed=role_turn_profiles(thread,spec)
+        executed=role_turn_profiles(thread,spec,role)
         subscribed=host.connection.rpc('thread/resume',{'threadId':thread_id,'excludeTurns':True})
         if subscribed.get('thread',{}).get('sessionId')!=thread['sessionId']:
             raise RuntimeError('role_native_identity_changed')
@@ -759,7 +825,7 @@ def role_canary(host,meter,spec,current=None,loop=None):
             # subscribing neither starts a turn nor overrides its permissions.
             for thread in list(meter.children):
                 actual=host.connection.rpc('thread/read',{'threadId':thread,'includeTurns':False}).get('thread',{})
-                verify_role_thread(actual,thread)
+                verify_role_thread(actual,thread,model=role_model(spec,'helper'))
                 if thread not in meter.records:
                     host.connection.rpc('thread/resume',{'threadId':thread,'excludeTurns':True})
         roles={'root':host.identity.thread_id}
@@ -813,9 +879,10 @@ def launch_root(spec,meter):
     connection.checkpoint=lambda:(meter.check(),host.guard_resources())
     host.initialize(cwd=str(project),expected_config=config)
     # No legacy sandbox override and no parent/fork history.
-    host.open_root(cwd=str(project),options={'model':MODEL,'config':{'model_reasoning_effort':'high','web_search':'disabled'}})
+    model=role_model(spec,'root')
+    host.open_root(cwd=str(project),options={'model':model,'config':{'model_reasoning_effort':'high','web_search':'disabled'}})
     fresh=connection.rpc('thread/read',{'threadId':host.identity.thread_id,'includeTurns':False}).get('thread',{})
-    if fresh.get('id')!=host.identity.thread_id or fresh.get('forkedFromId') is not None or fresh.get('model')!=MODEL or fresh.get('reasoningEffort')!='high':
+    if fresh.get('id')!=host.identity.thread_id or fresh.get('forkedFromId') is not None or fresh.get('model')!=model or fresh.get('reasoningEffort')!='high':
         host.close();raise RuntimeError('fresh_root_profile_or_history_unconfirmed')
     return host
 
@@ -827,6 +894,7 @@ def daemon(spec,ui):
     if 'progression_host_factory' not in inspect.signature(mcp_daemon.main).parameters:
         raise RuntimeError('installed_candidate_missing_reviewed_factory_hook')
     base=Path(spec['root'])
+    verify_frozen_configuration(spec)
     factory=CodexProgressionFactory(project_root=spec['project'],state_root=base/'state',
         socket_path=base/'control/control.sock',approval_base_url=ui,
         command=outer_command(spec),permissions=permissions(spec),
@@ -885,22 +953,24 @@ def start_control(spec):
                 failure.add_note('control startup log close: '+type(error).__name__)
 
 
-def verify_account(connection):
+def verify_account(connection,spec):
     account=connection.rpc('account/read',{'refreshToken':False}).get('account')
     if not isinstance(account,dict): raise RuntimeError('fresh_account_not_authenticated')
-    cursor=None; found=False
+    expected={profile['model'] for profile in frozen_role_profiles(spec).values()}
+    cursor=None; found=set()
     for _ in range(10):
         page=connection.rpc('model/list',{'limit':50,'cursor':cursor})
-        found |= any(row.get('model')==MODEL or row.get('id')==MODEL for row in page['data'])
+        found.update(model for model in expected if any(
+            row.get('model')==model or row.get('id')==model for row in page['data']))
         cursor=page.get('nextCursor')
         if not cursor: break
-    if cursor or not found: raise RuntimeError('exact_trial_model_unavailable')
-    return {'authenticated':True,'exact_model_listed':MODEL,'reasoning_effort':'high','runtime_execution':'not_yet_verified'}
+    if cursor or found!=expected: raise RuntimeError('exact_trial_model_unavailable')
+    return {'authenticated':True,'exact_models_listed':sorted(found),'reasoning_effort':'high','runtime_execution':'not_yet_verified'}
 
 
 def science_prompt(spec):
     return regular(Path(spec['project'])/'instruction.md').decode()+(
-        f'\nFrozen trial profile for Root, Workers and native helpers: {MODEL}/high. '
+        f'\nFrozen trial profiles: Root {role_model(spec,"root")}/high; Workers and native helpers {role_model(spec,"worker")}/high; service tier default, fast mode disabled. '
         'Use fresh helper context and do not substitute another model or effort; stop if unavailable. '
         'Complete the public task using exp. Save the audited final submission in /submission. '
         'Public paths: /instruction.md, /opt/exp, /workspace, /submission. '
@@ -1028,6 +1098,7 @@ def _arm_action(spec,action,signals):
         try:step()
         except BaseException as exc:cleanup_errors.append(exc)
     try:
+        verify_frozen_configuration(spec)
         import scidiscovery.artifact_agent.interfaces.mcp_daemon as installed_daemon
         prefix=Path(spec['python']).parent.parent.resolve()
         if (not Path(installed_daemon.__file__).resolve().is_relative_to(prefix)
@@ -1074,7 +1145,7 @@ def _arm_action(spec,action,signals):
                 host.connection.rpc('thread/goal/clear',{'threadId':host.identity.thread_id})
             result.update(status='pass',qualification='fresh Root + exact aliases; no role spawn or accounting qualification')
             return result
-        result['phase']='account_and_model'; result['account']=verify_account(host.connection)
+        result['phase']='account_and_model'; result['account']=verify_account(host.connection,spec)
         text=science_prompt(spec)
         result['science_prompt_sha256']=hashlib.sha256(text.encode()).hexdigest()
         if spec['arm']=='native_goal':

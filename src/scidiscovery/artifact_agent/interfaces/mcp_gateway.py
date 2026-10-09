@@ -67,6 +67,16 @@ class AttachInput(_Input):
         description="Native child thread ID from platform spawn or worker_identity; never a role or task nickname.")
 
 
+class BootstrapInput(_Input):
+    dispatch_token: str | None = Field(default=None, min_length=1, max_length=4096,
+        description="Control-issued exact task bootstrap from Root; omit for an already attached assignment.")
+
+
+_OPEN = {"name": "worker_open_assignment",
+    "description": "Open an assigned task. With a control-issued dispatch_token, attach using actual native metadata first; never select a Run.",
+    "inputSchema": BootstrapInput.model_json_schema()}
+
+
 _DECLARATIONS = (
     ("scid_catalog", "List authorized names and purposes; no full contracts.", CatalogInput),
     ("scid_describe", "Read a known capability's exact contract directly; use catalog only to discover names. Selected Operation invoke views include their complete caller contract.", DescribeInput),
@@ -160,7 +170,7 @@ class UnifiedMCPRouter:
                 worker = self._worker(context)[0]
                 return [*([] if worker.is_helper else [_IDENTITY]), *worker.list_tools()]
             except WorkerNotAttached:
-                return [_IDENTITY]
+                return [_IDENTITY, _OPEN]
         return [*self.root.list_tools(surface=surface), *([_ATTACH] if surface == "research" else [])]
 
     def catalog(self, context, values):
@@ -190,6 +200,8 @@ class UnifiedMCPRouter:
             raise DiagnosticError("execution surface is available only to Root")
         if context.worker and name == "worker_identity":
             return _IDENTITY
+        if context.worker and name == "worker_open_assignment":
+            return _OPEN
         for tool in self._interfaces(context, values.surface):
             if tool["name"] == name:
                 return tool
@@ -220,6 +232,12 @@ class UnifiedMCPRouter:
         if context.worker and values.surface != "research":
             raise DiagnosticError("execution surface is available only to Root")
         if context.worker:
+            if values.name == "worker_open_assignment" and "dispatch_token" in values.arguments:
+                parsed = _parse(BootstrapInput, values.arguments)
+                if parsed.dispatch_token is not None:
+                    from .worker_bootstrap import attach
+                    attach(self.facade, self.connections, context, parsed.dispatch_token)
+                values = values.model_copy(update={"arguments": {}})
             if values.name == "worker_identity":
                 try:
                     _, participant = self.connections.participant(platform_session=context.session,
@@ -271,7 +289,11 @@ class UnifiedMCPRouter:
                             self.connections.attach(run_id=run_id, platform_session=context.session, thread_id=parsed.thread_id)
             return {"state": "attached", "name": parsed.name}
         # Existing Root handlers remain the sole authority for bindings, approvals and Run lifecycle.
-        return self.root.call_tool(values.name, values.arguments, surface=values.surface)
+        reply = self.root.call_tool(values.name, values.arguments, surface=values.surface)
+        if values.surface == "research" and values.name in {"operation_invoke", "run_status"}:
+            from .worker_bootstrap import offer
+            reply = offer(self.facade, context, reply)
+        return reply
 
 
 def _parse(model, arguments):

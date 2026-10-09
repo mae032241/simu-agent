@@ -21,12 +21,13 @@ def call_helper(request, context):
 
 HELPER_TOOL = WorkerToolDefinition(
     name="worker_helper", capability="run.internal_helper", owner_only=True,
-    description=("Prepare one bounded helper question with exact materials and relevant goal/constraints. "
-        "Then dispatch with the returned frozen model/reasoning_effort and fresh context; no guessed identities or upgrades. "
-        "Omit profile for the configured default; inherit matches the parent, lightweight requires configuration. "
+    description=("Prepare a bounded question with exact materials and goal/constraints. "
+        "Dispatch with returned frozen model/reasoning_effort and fresh context; no guessed identities or upgrades. "
+        "Omit profile for configured default; inherit matches parent, lightweight requires configuration. "
         "The helper reads its own assignment and reporting rules, sharing the parent's workspace and permissions. "
-        "Wait for native completion, verify originals supporting adopted claims and consequential counterevidence, and integrate findings and limitations. "
-        "Reports are navigation, not verified evidence; you remain responsible. Independent analysis uses its own helper. "
+        "One fresh helper per bounded question; integrate, then release/close. Wait natively for 60 seconds when supported; notifications return early. Avoid repeated short waits or sleeps. "
+        "Wait for completion and integrate checked findings, locators and limitations directly; reread only for a specific conflict, gap or explicit independent check. "
+        "Helper checks grant no formal qualification; you own synthesis. Independent analysis uses its own helper. "
         "Group related materials into one question; use deterministic tools for trivial computations. "
         "Release revokes Run tool access, not native execution; use native stop/close to terminate. "
         "This creates no Root task, approval or formal review; no helper-result polling is needed."),

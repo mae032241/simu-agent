@@ -196,9 +196,9 @@ class RootOperationRoutes:
         if intent is not None and bound.compiled.spec.executor.kind != "agent":
             raise OperationInvocationError("scientific_intent_not_applicable", message="scientific_intent applies to complete Agent tasks")
         bound = replace(bound, scientific_intent=intent)
-        if required_review is not None and bound.compiled.spec.executor.capability is None:
+        if required_review is True and bound.compiled.spec.executor.capability is None:
             raise OperationInvocationError("execution_review_not_applicable",
-                message="require_execution_review applies only to complete experiment tasks")
+                message="require_execution_review=true requires a configured experiment execution capability")
         if bound.compiled.spec.executor.kind != "agent":
             if expected_capture is not None:
                 raise OperationInvocationError("capture_configuration_invalid")

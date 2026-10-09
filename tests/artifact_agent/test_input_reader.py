@@ -563,7 +563,6 @@ def next_arguments(reply):
 
 
 @pytest.mark.parametrize('source_flags', [
-    ('worker-guides.json', '--file'),
     ('worker-guides.json', '--file', '--pointer', '/guides/g0'),
     ('other-guides.json', '--file'),
 ])
@@ -604,6 +603,57 @@ def test_installed_source_selection_mismatch_returns_exact_bare_replay(tmp_path,
                          for i, value in enumerate(guides.values(), 1))
     combined = body(first.stdout.decode())+body(recovered.stdout.decode())
     assert combined == expected[:len(combined)]
+
+
+def test_installed_same_file_handle_restores_omitted_fields_after_interleaved_read(tmp_path):
+    workspace = LocalTrustedBackend(tmp_path/'backend').prepare(run_id='run_guidescontinue',
+        inputs=(), assignment=b'{}', result_schema=b'{}')
+    root = workspace.root
+    guides = {f'g{i}': ('原始细则'+str(i))*1000 for i in range(4)}
+    (root/'worker-guides.json').write_text(json.dumps({'guides':guides}, ensure_ascii=False))
+    (root/'other-guides.json').write_text('{"other":"unrelated helper selection"}')
+    cmd = [sys.executable, '-I', str(root/'tools/read_input.py')]
+    def call(*args):
+        return subprocess.run(cmd+list(args), cwd=tmp_path, capture_output=True, timeout=5)
+    pointers = [flag for name in guides for flag in ('--pointer','/guides/'+name)]
+    first = call('worker-guides.json','--file',*pointers,'--budget','512')
+    assert first.returncode == 0
+    continuation = next_arguments(first.stdout.decode())
+    expected = call(*continuation)
+    assert expected.returncode == 0
+    assert call('other-guides.json','--file').returncode == 0
+    # The original source plus handle is sufficient; no pointer list is repeated.
+    recovered = call('worker-guides.json','--file',*continuation)
+    assert recovered.returncode == 0 and recovered.stdout == expected.stdout
+    assert len(recovered.stdout) <= 512
+    source = root/'worker-guides.json'
+    source.write_text('{"changed":"different frozen bytes"}')
+    before = (root/'.read-input/navigation.json').read_bytes()
+    changed = call('worker-guides.json','--file',*continuation)
+    assert changed.returncode == 1 and b'material changed' in changed.stdout
+    assert (root/'.read-input/navigation.json').read_bytes() == before
+
+
+@pytest.mark.parametrize('flags',[dict(pointers=['/a','/b']),dict(pointers=['/keys'],directory=True)])
+def test_same_source_handle_restores_fields_and_rechecks_current_path_permissions(tmp_path, flags):
+    from scidiscovery.artifact_agent.service.input_reader import read, CACHE_DIRECTORY
+    values = {'a':'甲'*900,'b':'乙'*900,'keys':{f'字段{i}':i for i in range(200)}}
+    bind_reader_input(tmp_path,json.dumps(values,ensure_ascii=False))
+    first = read(tmp_path,'experiment_plan',budget=512,**flags)
+    handle = replay_arguments(first)[1]; offset = int(next_arguments(first)[3])
+    expected = read(tmp_path,selection_id=handle,offset=offset)
+    assert read(tmp_path,'plan_original',selection_id=handle,offset=offset) == expected
+    cache = tmp_path/CACHE_DIRECTORY/'navigation.json'; before = cache.read_bytes()
+    with pytest.raises(ValueError,match='selection mismatch'):
+        read(tmp_path,'plan_original',pointers=['/a'],selection_id=handle,offset=offset)
+    assert cache.read_bytes() == before
+    assignment = tmp_path/'assignment.json'
+    document = json.loads(assignment.read_text())
+    for item in document['inputs']:item['exposure'] = 'file_reference'
+    assignment.write_text(json.dumps(document))
+    with pytest.raises(ValueError,match='metadata only'):
+        read(tmp_path,'plan_original',selection_id=handle,offset=offset)
+    assert cache.read_bytes() == before
 
 
 @pytest.mark.parametrize('repeat_pointers', [False, True])

@@ -75,7 +75,9 @@ context loss; use the default invoke view and read only contracts needed for the
 current choice. If native tools need discovery, show matching names first, then
 inspect the selected tool; never print arrays of full tool descriptions.
 The selected Operation's default invoke view includes the complete operation_invoke
-caller schema and action-specific rules. Call it through scid_call without separately
+caller schema and action-specific rules. Use scid_call(name="operation_invoke",
+arguments={operation_id: selected_id, ...caller_inputs}); the Operation ID belongs
+inside arguments, not in scid_call.name. Invoke without separately
 describing operation_invoke or reading the full interface catalog.
 The compiled catalog is the action authority; never invoke internal
 Operations or treat suggestions as commands or dependencies as a fixed workflow.
@@ -104,10 +106,13 @@ decision. Configured execution policy may authorize eligible requests directly.
 
 Dispatch a queued Agent using its returned dispatch instructions, agent_type and
 frozen execution_profile.profile model/reasoning_effort, without parent history.
-Use actual platform thread coordinates for worker_attach; if the spawn reply omits
-them, ask the child for its platform-provided thread identity while it waits for
-attachment. Do not search the whole tool registry or infer identities from names
-or files. Ask the attached child to open its assignment. Completion chat
+When dispatch includes bootstrap, pass it unchanged in the initial child message:
+the child opens its assignment and control attaches the platform identity. No
+identity relay, separate worker_attach or second start message is needed.
+Otherwise use actual platform thread coordinates for worker_attach; if absent,
+ask the child for its platform-provided identity, then attach and open. Never
+infer identities or repeat an uncertain spawn.
+Completion chat
 is transport only: read run_status after completed for the sealed conclusion,
 limitations, remaining question and scheduler_signal. The default response provides
 bounded decision fields; reuse them when supplied in a progression brief. Structured reports and full scientific originals belong to Workers. Delegate
@@ -120,7 +125,17 @@ framework read boundary does not provide an OS sandbox for Root or Workers.
 Workers may prepare optional native helpers for bounded subproblems, with the same
 permissions and fresh context. The owner waits and integrates their results; helpers
 do not become Root tasks or formal reviews. Do not make delegation a required stage.
-Wait for notifications; necessary polling uses run_status(intent="status"). Do not
+While accepted work runs, process other actionable results, user requests or
+independent tasks allowed by the current contract and budget. Batch related
+scheduling decisions within this turn; owner next_actions are recommendations,
+not a fixed workflow. If nothing needs a decision, wait for notifications.
+A service-managed turn should return to its host, which waits without model calls;
+interactive clients use a longer native wait when supported, normally 300 seconds,
+capped by the tool's declared maximum and the remaining execution deadline.
+Notifications or user input can return earlier. Avoid repeated short waits and
+unchanged waiting narration. Do not periodically call list_agents while waiting;
+use agent inventory only to reconcile uncertain dispatch identity or abnormal recovery.
+Necessary polling uses run_status(intent="status"). Do not
 increase retry budgets automatically or repeat an uncertain external submission.
 
 Keep full responses in orchestration storage and show decision-relevant fields.

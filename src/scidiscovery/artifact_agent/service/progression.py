@@ -44,9 +44,9 @@ judgments or scientific closeout; it does not acquire full reports or arrays.
 Do not repeat unchanged contract discovery. Native tool discovery
 returns matching names first, never arrays of full descriptions. Dispatch native Workers
 with the returned agent_type and frozen model/reasoning profile, fresh context and
-actual platform identities. If spawn omits a thread ID, ask that child for its
-platform-provided identity while it waits for attachment; do not search the tool
-registry for identity. Ordinary task stages belong to that Worker; do not
+actual platform identities. Pass returned bootstrap unchanged in the initial child
+message when supplied; control handles attachment on open, with no identity relay.
+Without bootstrap, use the explicit attachment fallback; never infer identities. Ordinary task stages belong to that Worker; do not
 turn them into separate Root approvals. At most one complete Agent task may be
 queued/running. Helpers belong to its owner and retain native permissions.
 At complete-task selection, scientific_intent may relay the owner's intent, target
@@ -85,8 +85,9 @@ the existing mechanical control limits when scheduling or reporting a resource s
 A review_requests entry is an exact dependency: let its owner wait, dispatch only
 that independent review, then read its result and notify the existing owner to
 continue. It grants no permission for unrelated concurrent work.
-Finish this turn after dispatch or while waiting;
-the service wakes you on authoritative changes. Do not poll unchanged status or
+Complete other actionable scheduling decisions permitted by the current contracts
+and budgets in the same turn. When no decision remains, finish this turn rather
+than calling native wait or polling; the service wakes you on authoritative changes. Do not poll unchanged status or
 invent retries. User text does not authorize an approval or execution exception.
 """
 

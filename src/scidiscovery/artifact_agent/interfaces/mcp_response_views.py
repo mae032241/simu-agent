@@ -263,7 +263,7 @@ def operation_invoke_contract(value, *, revision_policy):
         call_schema["properties"]["scientific_intent"]["description"] += (
             " Recommended for background research; no mechanical identifiers.")
     result["invocation"] = {"tool": "operation_invoke", "inputSchema": call_schema,
-        "description": "Complete caller contract for this selected Operation. Call through scid_call; no separate scid_describe(operation_invoke) is needed. Optional preflight creates nothing; reuse its normalized_request unchanged.",
+        "description": "Complete caller contract for this selected Operation. Use scid_call(name='operation_invoke', arguments={operation_id: this Operation ID, ...caller inputs}); the Operation ID is not the tool name; no separate scid_describe(operation_invoke) is needed. Optional preflight creates nothing; reuse its normalized_request unchanged.",
         "idempotency": "Reuse a name only for an identical request. An intentional changed request uses on_conflict=create_revision.",
         "dispatch": "For a queued Agent, use its returned dispatch instructions and frozen execution_profile. Transform and Approval actions complete through their returned result or review_url."}
     result["full"] = {"tool": "scid_describe", "name": value["operation_id"], "view": "full"}

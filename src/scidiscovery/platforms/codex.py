@@ -347,7 +347,7 @@ def _local_native_tool_instruction(compiled: Any, *, debug_disable_task_network=
         web_search=compiled.spec.executor.native_tools.web_search)["web_search"]
     allowed = [
         "only the Operation tools declared in the current assignment",
-        "optional worker_helper prepare/release and native fresh spawn/wait/close when declared; wait, verify and integrate the helper, never treat it as formal review",
+        "optional worker_helper prepare/release and native fresh spawn/wait/close when declared; wait and integrate checked findings and limitations, never treat it as formal review",
         "Codex file and code tools inside the opened Run workspace",
         *(["native view_image for task-local images"] if compiled.spec.executor.native_tools.view_image else []),
         *(["native web search for discovery; preserve cited originals with the declared source capture tool"]
@@ -367,9 +367,11 @@ def _local_native_tool_instruction(compiled: Any, *, debug_disable_task_network=
     return (
         "\n\nYou are the spawned Operation worker. Project scheduler instructions apply to the parent, not you. "
         "Use unified scidiscovery: scid_describe for a selected contract, then scid_call. "
-        "Start with worker_open_assignment. If attachment identity is requested, call worker_identity, "
+        "Start with worker_open_assignment; if your dispatch includes bootstrap, pass its dispatch_token unchanged. "
+        "Control attaches your actual native identity; no separate parent confirmation is needed. "
+        "Without bootstrap, if attachment identity is requested, call worker_identity, "
         "relay only platform thread_id/model/reasoning_effort and wait for attachment; never choose a Run. "
-        "Take workspace_path as the filesystem root and use it as workdir. "
+        "Reuse the returned workspace_path exactly as workdir; do not reconstruct its name. "
         "Read start_here_path once: it contains the task, role, input index, output form navigation and workspace rules. "
         "Do not separately dump assignment.json, domain-workspace.json or all tool contracts. "
         "Use python tools/read_input.py --file worker-start.json when bounded reading is needed; "
@@ -390,7 +392,7 @@ def _local_native_tool_instruction(compiled: Any, *, debug_disable_task_network=
         "Local scientific computation, including installed solvers, uses the declared native shell permissions. "
         "Use computation within the assigned scientific role: hypothesis and analysis tasks may process data, but new experiment requests belong to an experiment task with its sealed upstream hypotheses. Experiment tasks choose native computation or their available remote experiment tool; preserve exact source files, logs and results. "
         "Remote tools follow their declared authorization policies. Network, installation and service changes require their existing permissions and authorization. "
-        "Optional prepared helpers retain native permissions and fresh context. Spawn with the exact model and reasoning effort returned by worker_helper; inherit and lightweight are configuration choices, not permission roles. The owner waits and integrates "
+        "Optional prepared helpers retain native permissions and fresh context. Spawn with the exact model and reasoning effort returned by worker_helper; inherit and lightweight are configuration choices, not permission roles. One fresh helper per bounded question; integrate when finished, then release/close. Wait natively for 60 seconds when supported; notifications return early. Avoid repeated short waits or sleeps. The owner waits and integrates "
         "findings/files, checking their method and evidence without automatically repeating the entire calculation. "
         "If participation=helper, read only your returned task-specific assignment and selected materials; "
         "describe needed tools. Owner startup/schema/submission directions do not apply unless the subtask needs those files. "

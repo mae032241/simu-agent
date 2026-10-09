@@ -36,6 +36,8 @@ def test_selected_h_contract_preserves_caller_defaults_constraints_and_action_ru
     assert schema == generic
     assert 'scientific_intent' not in contract['invocation']  # One definition in inputSchema.
     assert 'no separate scid_describe(operation_invoke)' in contract['invocation']['description']
+    assert "scid_call(name='operation_invoke', arguments=" in contract['invocation']['description']
+    assert 'Operation ID is not the tool name' in contract['invocation']['description']
     assert 'Optional preflight creates nothing' in contract['invocation']['description']
 
 
@@ -62,3 +64,19 @@ def test_root_prompt_limits_discovery_and_keeps_authorization_and_owner_boundari
             'never invoke internal', 'Human decisions occur only in the',
             'Control owns immutable', 'Scientific Workers own all independent scientific decisions'):
         assert retained in prompt
+
+
+def test_scheduler_batches_decisions_without_forcing_a_scientific_workflow():
+    prompt = load_scheduler_prompt()
+    assert "owner next_actions are recommendations" in prompt
+    assert "independent tasks allowed by the current contract and budget" in prompt
+    assert "control attaches the platform identity" in prompt
+    assert "A service-managed turn should return to its host, which waits without model calls" in prompt
+    assert "normally 300 seconds" in prompt
+    assert "capped by the tool's declared maximum and the remaining execution deadline" in prompt
+    assert "Do not periodically call list_agents while waiting" in prompt
+    assert "reconcile uncertain dispatch identity or abnormal recovery" in prompt
+    from scidiscovery.artifact_agent.service import progression
+    source = __import__("inspect").getsource(progression)
+    assert "When no decision remains, finish this turn rather" in source
+    assert "service wakes you on authoritative changes" in source

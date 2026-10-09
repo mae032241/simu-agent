@@ -65,11 +65,11 @@ def test_shared_startup_policy_is_short_and_preserves_default_delegation():
         assert 'Use native file reading/search' in start['reading']['inputs']
         assert 'For JSON, optional' in start['reading']['inputs']
         assert 'fresh context' in policy and 'Independent analysis uses its own helper' in policy
-        assert 'entire material again by default' in policy
-        assert 'Expand verification' in policy
-        assert 'claims you will adopt' in policy
-        assert 'not every helper citation' in policy
-        assert 'unread background remains unread' in policy
+        assert 'checked findings' in policy and 'directly' in policy
+        assert 'do not reread merely' in policy
+        assert 'specific conflict' in policy
+        assert 'explicit independent-check requirement' in policy
+        assert 'not personal reading or formal qualification' in policy
         assert 'inspected scope' not in policy  # Detailed report contract is owned by the tool.
     assert 'inspected scope' not in HELPER_TOOL.description
     assert 'reads its own assignment and reporting rules' in HELPER_TOOL.description
@@ -143,8 +143,99 @@ def test_helper_reporting_rules_go_to_helper_not_owner(tmp_path, monkeypatch):
     assert 'supporting and contrary evidence' in helper['role_instructions']
     assert 'narrow pointers/line locators' in helper['role_instructions']
     assert 'inspected scope, omissions/unread ranges' in helper['role_instructions']
-    assert 'do not label every relevant section decisive' in helper['role_instructions']
-    assert 'not a rereading checklist' in helper['role_instructions']
+    assert 'Report checked findings directly' in helper['role_instructions']
+    assert 'Do not return a mandatory rereading list' in helper['role_instructions']
     assert 'counterevidence' in helper['role_instructions']
     assert 'inspected scope' not in HELPER_TOOL.description
-    assert 'verify originals supporting adopted claims' in HELPER_TOOL.description
+    assert 'integrate checked findings' in HELPER_TOOL.description
+
+
+def test_owner_bulk_reading_uses_fresh_helper_and_long_native_wait_without_reporting_rules():
+    from scidiscovery.artifact_agent.service.worker_start import MATERIAL_READING
+    from scidiscovery.helper_tool import HELPER_TOOL
+    from scidiscovery.platforms.codex import _local_native_tool_instruction
+    from types import SimpleNamespace
+    for text in (MATERIAL_READING, HELPER_TOOL.description):
+        assert 'One fresh helper per bounded question' in text
+        assert 'then release/close' in text
+        assert '60 seconds when supported' in text
+        assert 'Avoid repeated short waits or sleeps' in text
+        assert 'Independent analysis uses its own helper' in text
+        assert 'inspected scope' not in text
+    compiled = SimpleNamespace(spec=SimpleNamespace(executor=SimpleNamespace(
+        native_tools=SimpleNamespace(web_search='disabled',view_image=False))))
+    instructions = _local_native_tool_instruction(compiled)
+    assert 'Reuse the returned workspace_path exactly as workdir' in instructions
+    assert '60 seconds when supported' in instructions
+
+
+def test_compact_inventory_keeps_failure_unknown_qualification_and_omission_states():
+    from copy import deepcopy
+    from scidiscovery.artifact_agent.schema.common import canonical_json
+    from scidiscovery.artifact_agent.service.worker_start import compact_startup_document
+    entries = [dict(path=f'scratch/artifacts/long-original-result-{n}.json',
+        status='failed' if n == 0 else 'unknown' if n == 1 else 'retained',
+        producer_trust='unverified', projection_coverage='incomplete',
+        raw_retained=False, source_name=f'bound_{n}' if n != 1 else None) for n in range(24)]
+    entries.append(dict(path='scratch/artifacts/exact-reuse.json', status='retained', same_entry_as='inventory'))
+    inventory = dict(source_name='inventory', kind='capture_inventory', coverage='incomplete',
+        coverage_changed=True, attempt_inventory='declared_author_reported', reference_namespace='producer_task',
+        roots=['scratch/artifacts'], source_declarations=[{'status':'unverified'}], entries=entries)
+    ledger = dict(source_name='ledger', kind='ledger_view', records=[{'status':'failed', 'values':[-3]}])
+    observed = dict(basis='Author-reported, unverified, incomplete coverage; unknown is not success.',
+        sources=[inventory, ledger], omitted=[dict(source_name='unreadable', reason='material_receipt_unverifiable')],
+        omitted_read='Read the exact bound original.')
+    original = dict(observed_results=observed)
+    frozen = deepcopy(original)
+    result = compact_startup_document(original)
+    compact = result['observed_results']['sources'][0]
+    assert len(canonical_json(result)) < len(canonical_json(original))
+    assert compact['coverage'] == 'incomplete' and compact['coverage_changed'] is True
+    assert compact['attempt_inventory'] == 'declared_author_reported'
+    assert compact['reference_namespace'] == 'producer_task'
+    assert compact['entry_count'] == 25 and compact['exact_reuses'] == 1 and compact['unresolved_sources'] == 1
+    assert compact['entry_states']['status'] == {'failed':1, 'unknown':1, 'retained':23}
+    assert compact['entry_states']['producer_trust'] == {'unverified':24, 'unknown_missing':1}
+    assert compact['entry_states']['projection_coverage'] == {'incomplete':24, 'unknown_missing':1}
+    assert compact['entry_states']['raw_retained'] == {'False':24, 'unknown_missing':1}
+    assert result['observed_results']['sources'][1] == ledger
+    assert result['observed_results']['omitted'] == observed['omitted']
+    assert result['observed_results']['omitted_read'] == observed['omitted_read']
+    assert compact['details_read'].endswith('/observed_results/sources/0')
+    assert 'not scientific coverage or qualification' in result['observed_results']['instruction']
+    assert original == frozen
+
+
+def test_complete_inventory_detail_is_preserved_at_the_advertised_pointer(tmp_path):
+    from scidiscovery.artifact_agent.schema.common import canonical_json
+    from scidiscovery.artifact_agent.service.local_workspace import LocalTrustedBackend
+    from scidiscovery.artifact_agent.service.worker_start import write_worker_start
+    from scidiscovery.artifact_agent.service.input_reader import read
+    from tests.artifact_agent.test_input_reader import body
+    inventory = dict(source_name='inventory', kind='capture_inventory', coverage='incomplete',
+        attempt_inventory='declared_author_reported', roots=['scratch/artifacts'],
+        source_declarations=[dict(statement='Incomplete original capture.', status='unverified')],
+        entries=[dict(path=f'scratch/artifacts/original-attempt-{n}.json', status='failed',
+            source_name=f'bound_{n}', producer_trust='unverified') for n in range(20)])
+    observed = dict(basis='Author reported; failed and unknown remain limited.', sources=[inventory])
+    assignment = dict(inputs=[], tools=[], observed_results=observed)
+    workspace = LocalTrustedBackend(tmp_path/'backend').prepare(run_id='run_inventorynavigation',
+        inputs=(), assignment=canonical_json(assignment), result_schema=b'{}')
+    start = json.loads(write_worker_start(workspace, assignment).read_bytes())
+    compact = start['observed_results']['sources'][0]
+    assert compact['entry_states']['status'] == {'failed':20}
+    assert 'entries' not in compact
+    context = json.loads((workspace.root/'worker-context.json').read_bytes())
+    assert context['observed_results'] == observed
+    pointer = compact['details_read'].split(' --pointer ')[1]
+    restored = read(workspace.root, 'worker-context.json', file=True, pointers=[pointer], budget=8192)
+    assert json.loads(body(restored)) == inventory
+
+
+def test_analysis_own_helper_does_not_replace_owner_judgment_or_numerical_checks():
+    from scidiscovery.general_science_result_analysis import CORE_PROMPT
+    assert "Your own fresh helper" in CORE_PROMPT
+    assert "independently of W's" in CORE_PROMPT
+    assert "without routine rereading" in CORE_PROMPT
+    assert "Read goal/constraints yourself" in CORE_PROMPT
+    assert "scientific judgments and required independent numerical checks remain yours" in CORE_PROMPT

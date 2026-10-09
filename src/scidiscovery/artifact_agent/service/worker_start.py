@@ -21,12 +21,15 @@ READER_CORE = ('Use native file reading/search for text, code and logs at bound 
 TOOLS_CORE = ('Before calling a tool read its complete contract: python tools/read_tool_contract.py TOOL or '
     'scid_describe; retain unchanged contracts.')
 MATERIAL_READING = (
-    'Default: use worker_helper with fresh context for bulk originals, code/logs or history; group one decision question. '
-    'Read task/goal/constraints and contracts yourself. The helper reads its own reporting rules. '
-    'Verify original selections for claims you will adopt and counterevidence that could change them, not every helper citation '
-    'or the entire material again by default. Expand verification for ambiguity, conflict or missing context; '
-    'unread background remains unread. Independent analysis uses its own helper. '
-    'If helpers are unavailable or unaffordable, read only the bounded original selections needed or report the unresolved gap. '
+    'Default: use worker_helper for bulk originals/code/logs/history; group one question. '
+    'Read task/goal/constraints/contracts yourself; helpers read their reporting rules. '
+    'One fresh helper per bounded question with fresh context; integrate, then release/close. '
+    'Wait natively for 60 seconds when supported; notifications return early. '
+    'Avoid repeated short waits or sleeps. '
+    'Use your helper\'s checked findings, locators and limitations directly; do not reread merely '
+    'to adopt a finding. Reopen only a specific conflict, missing support/context or an explicit independent-check requirement. '
+    'Delegated reading is not personal reading or formal qualification. Independent analysis uses its own helper. '
+    'If helpers are unavailable/unaffordable, read only the bounded original selections needed or report the unresolved gap. '
     'This is not a tool admission gate.')
 
 SAME_SOURCE_CORE = (' same_source_as shares original bytes only: read once, retain each alias\'s purpose and citation permissions.')
@@ -525,6 +528,37 @@ def compact_startup_document(document: dict) -> dict:
             result['attempt_memory'] = {key: value for key, value in result['attempt_memory'].items()
                 if key != 'repair'}
             result['attempt_memory']['details_read'] = detail('/attempt_memory')
+    observed = result.get('observed_results')
+    if isinstance(observed, dict):
+        sources = []
+        for index, source in enumerate(observed.get('sources', ())):
+            if source.get('kind') != 'capture_inventory':
+                sources.append(source)  # Keep the bounded ledger's actual results.
+                continue
+            entries = source.get('entries', ())
+            compact = {key: value for key, value in source.items()
+                if key not in ('entries', 'roots', 'source_declarations')}
+            counts = {}
+            for field in ('status', 'producer_trust', 'source_coverage', 'projection_coverage', 'raw_retained'):
+                if field != 'status' and not any(field in entry for entry in entries):
+                    continue
+                tally = {}
+                for entry in entries:
+                    value = entry.get(field)
+                    key = str(value) if value is not None else 'unknown_missing'
+                    tally[key] = tally.get(key, 0) + 1
+                counts[field] = tally
+            compact.update(entry_count=len(entries), entry_states=counts,
+                exact_reuses=sum('same_entry_as' in entry for entry in entries),
+                unresolved_sources=sum(entry.get('source_name') is None and 'same_entry_as' not in entry
+                    for entry in entries),
+                details_read=detail(f'/observed_results/sources/{index}'))
+            sources.append(compact if len(canonical_json(compact)) < len(canonical_json(source)) else source)
+        result['observed_results'] = dict(observed, sources=sources,
+            details_read=detail('/observed_results'),
+            instruction='Mechanical counts include every listed entry, not scientific coverage or qualification. '
+                'Retained files and exact reuse do not make failed, unknown, unverified or incomplete evidence usable. '
+                'Read needed entries and contrary evidence through details_read; preserve omissions and limits.')
     return result
 
 
@@ -552,7 +586,7 @@ def write_worker_start(workspace, assignment: dict, *, startup_page_bytes=16384)
         on_demand=reader_navigation == 4)
     # Memory is refreshed at open time; assignment.json retains its original
     # snapshot. Save omitted context before advertising exact read pointers.
-    context = {key: document[key] for key in ('attempt_memory',) if key in document}
+    context = {key: document[key] for key in ('attempt_memory', 'observed_results') if key in document}
     if '_guide_texts' in document:
         # Keep static guide pagination independent of refreshed memory/budget.
         write_control_workspace_file(workspace.root, Path('worker-guides.json'),

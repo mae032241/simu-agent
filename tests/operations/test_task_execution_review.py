@@ -5,8 +5,47 @@ from pathlib import Path
 import pytest
 
 from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+from scidiscovery.artifact_agent.interfaces.mcp_root_shared import RootToolError
 from scidiscovery.operation_contract import DiagnosticError
 from tests.operations.test_experiment_continuation import continuation
+
+
+@pytest.mark.parametrize("task", ["ordinary_agent", "native_experiment"])
+def test_false_review_requirement_is_noop_without_execution_capability(tmp_path, task):
+    if task == "ordinary_agent":
+        from tests.operations.test_local_worker_contracts import _system
+        _, runtime, instance, root = _system(tmp_path)
+        request = {"name": "observation", "operation_id": "blind.csv.observe.v1",
+            "inputs": [{"port": "source_table", "artifact_names": ["source_csv"]}],
+            "instruction": "Observe the exact CSV."}
+    else:
+        from tests.operations.test_experiment_goal_origin import _setup, _request, _proposal, _complete
+        runtime, instance, root = _setup(tmp_path, native_only=True)
+        root.call_tool("artifact_ingest_text", {"name": "task", "text": "Compute 2+2 and retain the result."})
+        proposal = _proposal(hypothesis_keys=("mechanism",))
+        proposal.pop("research_objective_key")
+        subject = _complete(runtime, root, "hypothesis", "science.hypothesis.propose.v1",
+            {"subject": "task"}, proposal)
+        request = _request(subject)
+    assert runtime.runs.operation_catalog.operation(request["operation_id"]).spec.executor.capability is None
+    omitted = root.call_tool("operation_preflight", request)
+    explicit = root.call_tool("operation_preflight", {**request, "require_execution_review": False})
+    assert omitted["admissible"] is True, omitted
+    assert explicit["admissible"] is True, explicit
+    assert explicit["normalized_request"] == omitted["normalized_request"]
+    required = root.call_tool("operation_preflight", {**request, "require_execution_review": True})
+    assert required["admissible"] is False
+    assert "execution_review_not_applicable" in json.dumps(required)
+    with pytest.raises(RootToolError, match="execution_review_not_applicable"):
+        root.call_tool("operation_invoke", {**request, "require_execution_review": True})
+    created = root.call_tool("operation_invoke", {**request, "require_execution_review": False})
+    assert created["result"]["state"] == "queued"
+    run_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id,
+        namespace="run", name=request["name"])
+    assert not runtime.runs.status(run_id).recovery_policy.get("require_execution_review")
+    assert root.call_tool("operation_invoke", request)["result"]["state"] == "queued"
+    assert runtime.scheduler_bindings.resolve(instance=instance.instance_id,
+        namespace="run", name=request["name"]) == run_id
 
 
 def review(f, name, subject, verdict, *, request=None):
@@ -69,6 +108,8 @@ def test_review_requirement_is_in_normalized_request_and_cannot_be_removed_on_re
     bad = f.root.call_tool("operation_preflight", {**request, "require_execution_review": False})
     assert bad["admissible"] is False
     assert "execution_review_requirement_immutable" in json.dumps(bad)
+    with pytest.raises(RootToolError, match="execution_review_requirement_immutable"):
+        f.root.call_tool("operation_invoke", {**request, "require_execution_review": False})
     reply = f.root.call_tool("operation_invoke", check["normalized_request"])
     assert reply["result"]["state"] == "queued", reply
 

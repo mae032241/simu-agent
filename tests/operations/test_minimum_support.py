@@ -185,12 +185,16 @@ def run_command(workspace, command):
     return copied_pages(workspace, source, pointers=pointers, file='--file' in rest, full='--full' in rest)
 
 
-def observed_overview(start):
-    return {item['source_name']: item for item in start.get('observed_results', {}).get('sources', ())}
+def observed_overview(start, workspace=None):
+    observed = start.get('observed_results', {})
+    if workspace is not None and 'details_read' in observed:
+        _, restored = run_command(workspace, observed['details_read'])
+        observed = json.loads(restored)
+    return {item['source_name']: item for item in observed.get('sources', ())}
 
 
 def verify_overview(raw, overview):
-    """The default results overview must carry every decision field of the original."""
+    """The exact results detail retains every projected decision field of the original."""
     if overview['kind'] == 'capture_inventory':
         original = json.loads(raw)
         assert overview['coverage'] == original['coverage']
@@ -255,7 +259,12 @@ def workset(runtime, worker, opened, case):
             assert entry['text'].encode() == raw
             continue
         if source in overview:
-            verify_overview(raw, overview[source])
+            shown = overview[source]
+            if 'details_read' in shown:
+                pages, restored = run_command(workspace, shown['details_read'])
+                samples += [dict(kind='overview_detail', source=source, content=page) for page in pages]
+                shown = json.loads(restored)
+            verify_overview(raw, shown)
             continue
         if item.exposure == 'file_reference':
             if 'worker_materialize_input' not in read_contracts:
@@ -277,7 +286,7 @@ def workset(runtime, worker, opened, case):
     if 'role_reference' in guides:
         mode = os.environ.get('SCID_M12_SECTIONS', 'frozen')
         sections = {'none': (), 'all': tuple(guides['role_reference']['sections'])}.get(mode, GUIDES[case])
-        context = json.loads((workspace/'worker-context.json').read_bytes())
+        context = json.loads((workspace/'worker-guides.json').read_bytes())
         if sections:
             # One reader call with repeated --pointer selects every needed section.
             prefix = guides['role_reference']['read'].replace(' --pointer /guides/role_reference/SECTION', '')
@@ -299,13 +308,22 @@ def test_fixed_decision_worksets(tmp_path, case):
     assignment = json.loads(assignment_bytes)
     # The frozen contract is complete; startup core plus on-demand sections reconstruct it exactly.
     try:
-        from scidiscovery.artifact_agent.schema.role_result import split_reference
+        from scidiscovery.artifact_agent.schema.role_result import split_reference, with_reference
     except ImportError:  # Revisions before the compact contract (baseline measurement).
         split_reference = None
     context = json.loads((Path(opened['workspace_path'])/'worker-context.json').read_bytes())
     sections = context.get('guides', {}).get('role_reference')
+    guide = next((item for item in start.get('guides', ()) if item['name'] == 'role_reference'), None)
+    if guide:
+        # Gate-only reconstruction, separate from the selected decision workset.
+        _, restored = run_command(Path(opened['workspace_path']), guide['read'].removesuffix('/SECTION'))
+        sections = json.loads(restored)
+        assert guide['sections'] == {name: len(text.encode()) for name, text in sections.items()}
     if sections:
         assert split_reference(assignment['role_instructions']) == (start['role_instructions'], sections)
+        original_sections = split_reference(assignment['role_instructions'])[1]
+        ordered_sections = {name: sections[name] for name in original_sections}
+        assert with_reference(start['role_instructions'], ordered_sections) == assignment['role_instructions']
         assert BOUNDARY_GUIDANCE.strip() == sections['boundary_declarations']
     else:
         assert start['role_instructions'] == assignment['role_instructions']
@@ -355,12 +373,16 @@ def _context(opened):
 
 def test_uncited_failed_attempt_is_visible_in_default_view(tmp_path):
     runtime, root, worker, opened = fixed_case(tmp_path, 'a_results')
-    _, start, entries = _context(opened)
-    overview = observed_overview(start)
+    workspace, start, entries = _context(opened)
+    default = next(item for item in observed_overview(start).values() if item['kind'] == 'capture_inventory')
+    assert default['coverage'] == 'incomplete'
+    assert default['entry_count'] and default['entry_states']['status']
+    assert 'unverified' in start['observed_results']['instruction']
+    overview = observed_overview(start, workspace)
     inventory = next(item for item in overview.values() if item['kind'] == 'capture_inventory')
     by_path = {item['path']: item for item in inventory['entries']}
     failed = by_path['scratch/artifacts/attempt-2.json']
-    # Existence, capture status, citation status and exact readable alias without any read.
+    # Exact inventory detail exposes every captured entry, including uncited failure.
     assert failed['status'] == 'retained' and failed['stage_materials'] == []
     assert [by_path[f'scratch/artifacts/attempt-{n}.json']['stage_materials'] for n in (0, 1)] == [
         ['experiment_materials'], ['experiment_materials']]
@@ -388,7 +410,7 @@ def test_advertised_sources_are_bound_and_readable_and_unbound_entries_say_so(tm
     runtime, root, worker, opened = fixed_case(tmp_path, 'a_results')
     workspace, start, entries = _context(opened)
     bound = {item.source_name for item in runtime.runs.status(worker._run_id).inputs}
-    named = [entry['source_name'] for source in observed_overview(start).values()
+    named = [entry['source_name'] for source in observed_overview(start, workspace).values()
         for entry in [source, *source.get('entries', ())] if entry.get('source_name') is not None]
     assert named and set(named) <= bound
     for name in set(named):
@@ -439,7 +461,7 @@ def test_stage_citations_resolve_in_the_original_producer_namespace(tmp_path, mo
 def test_each_exact_object_is_delivered_once(tmp_path, case):
     """F3: aliases of one exact ArtifactRef share a single delivered copy."""
     runtime, root, worker, opened = fixed_case(tmp_path, case)
-    _, start, entries = _context(opened)
+    workspace, start, entries = _context(opened)
     refs = {item.source_name: item.artifact_ref for item in runtime.runs.status(worker._run_id).inputs}
     carriers = {}
     for name, entry in entries.items():
@@ -449,7 +471,7 @@ def test_each_exact_object_is_delivered_once(tmp_path, case):
         else:
             carriers.setdefault(refs[name], []).append(name)
     assert all(len(names) == 1 for names in carriers.values())
-    for source in observed_overview(start).values():
+    for source in observed_overview(start, workspace).values():
         for entry in source.get('entries', ()):
             if entry.get('source_name') in observed_overview(start):
                 assert 'record_positions' not in entry  # The ledger view carries those records once.
