@@ -356,19 +356,24 @@ def test_fixed_capture_budget_requires_bounded_recovery_not_retry_or_binding_rep
     assert original['path'] == '$.capture_sources' and original['affected_action'] == 'submit'
     assert not original['repairable'] and not recovery['repairable']
     assert recovery['code'] == 'submission_intervention_required'
-    assert 'immutable attachment receipts cannot be deleted' in recovery['message']
-    assert 'Do not retry unchanged' in recovery['message']
-    assert 'capture_sources cannot shrink frozen contract roots' in recovery['message']
-    assert 'new task using selected exact sealed materials' in recovery['message']
+    if message == 'Attachment count or total byte budget exceeded':
+        assert 'cannot establish a legal editable candidate budget' in recovery['message']
+        assert 'Root must inspect this exact task' in recovery['message']
+        assert 'Do not retry unchanged, clear receipts, raise budgets' in recovery['message']
+    else:
+        assert 'immutable attachment receipts cannot be deleted' in recovery['message']
+        assert 'Do not retry unchanged' in recovery['message']
+        assert 'capture_sources cannot shrink frozen contract roots' in recovery['message']
+        assert 'new task using selected exact sealed materials' in recovery['message']
     assert 'repair the exact control binding' not in recovery['message']
     for item in failure.details:
         assert len(item['message']) <= 512
         assert ContractDiagnostic.model_validate(item).model_dump(mode='json', exclude_none=True) == item
 
 
-def test_final_attachment_receipt_budget_preserves_task_for_root_recovery(tmp_path, monkeypatch):
-    # R1 finalization's declared failure: 64 retained attachment identities plus
-    # one new source-qualified receipt. Same file bytes do not remove identity.
+def test_final_attachment_candidate_rejection_with_legal_receipts_needs_no_control_repair(tmp_path, monkeypatch):
+    # Inject the declared candidate overflow; the actual committed snapshot is
+    # legal, so this is a conditional candidate correction, not a binding defect.
     from scidiscovery.operation_contract import ToolInputError
     worker, opened, system = generic_worker(tmp_path, return_system=True)
     runs, root = system[1].runs, system[2]
@@ -378,9 +383,10 @@ def test_final_attachment_receipt_budget_preserves_task_for_root_recovery(tmp_pa
     reply = submit(worker, opened, limited_report())
     assert reply['state'] == 'rejected'
     assert 'attachment_publication_invalid' in str(reply)
-    assert 'immutable attachment receipts cannot be deleted' in str(reply)
-    assert 'new task using selected exact sealed materials' in str(reply)
+    assert 'Immutable receipts cannot be deleted or cleared' in str(reply)
+    assert 'A compliant correction is not guaranteed' in str(reply)
+    assert all(item['repairable'] for item in reply['diagnostics'])
     assert runs.status(worker._run_id).state == 'running'
     assert runs.status(worker._run_id).output_ref is None
     status = root.call_tool('run_status', {'name':'generic_analysis', 'intent':'status'})
-    assert status['attention_required']['code'] == 'submission_intervention_required'
+    assert 'attention_required' not in status

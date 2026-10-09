@@ -40,7 +40,7 @@ class CatalogInput(_Input):
     dimension: Literal["consequence", "executor_kind", "input_schema"] | None = Field(default=None,
         description="facets: omit for P1 structural dimensions/counts; set to page values.")
     where: dict[str, str | list[str]] | None = Field(default=None,
-        description="matches: P1 keys consequence, executor_kind, input_schema; AND keys, OR values.")
+        description="matches: P1 keys consequence, executor_kind, input_schema; AND keys, OR values. Values are exact and case-sensitive: for example executor_kind='agent' (lowercase). Use facets only when the value is unknown; zero filtered matches do not mean the public catalog is empty.")
 
 
 class DescribeInput(_Input):

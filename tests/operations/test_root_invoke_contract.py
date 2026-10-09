@@ -99,3 +99,34 @@ def test_scheduler_keeps_global_stopping_gates_out_of_a_single_workers_delivery_
     assert 'normally 300 seconds' in prompt
     from scidiscovery.general_science_experiment_task import CORE_PROMPT
     assert 'Global completion and run counts are not your delivery floor' in CORE_PROMPT
+
+
+def test_root_discovery_and_control_display_preserve_needed_contracts_and_recovery():
+    prompt = load_scheduler_prompt()
+    for instruction in ('.map(tool => tool.name)', "selected tools' necessary complete contracts",
+            'exact, case-sensitive values', 'executor_kind="agent"',
+            'Use facets when a filter value is unknown', 'Discover unknown actions with a bounded',
+            'Reuse control facts supplied in a current managed brief', 'needed facts are missing or omitted',
+            'authorization changes or abnormal recovery require confirmation',
+            'Retain the full\nresponse in code-mode storage',
+            'relevant state, authority, coverage and omissions', 'state, can_schedule and budget',
+            'Missing budget and recovery facts still require reading',
+            'Contracts remain complete and available'):
+        assert instruction in prompt
+    assert 'Before instance-scoped work call instance_current' in prompt
+    assert 'Do not periodically call list_agents while waiting' in prompt
+    assert 'Human decisions occur only in the' in prompt
+
+
+def test_registered_catalog_teaches_exact_agent_spelling_without_relaxing_match_semantics(tmp_path):
+    _, _, _, gateway, _ = queued(tmp_path)
+    listing = gateway.handle({'jsonrpc':'2.0', 'id':1, 'method':'tools/list', 'params':{}})
+    catalog = next(tool for tool in listing['result']['tools'] if tool['name'] == 'scid_catalog')
+    description = catalog['inputSchema']['properties']['where']['description']
+    assert 'exact and case-sensitive' in description and "executor_kind='agent' (lowercase)" in description
+    assert 'Use facets only when the value is unknown' in description
+    lower = result(rpc(gateway, 'scid_catalog', dict(kind='operations', view='matches', where={'executor_kind':'agent'})))
+    upper = result(rpc(gateway, 'scid_catalog', dict(kind='operations', view='matches', where={'executor_kind':'Agent'})))
+    assert lower['operations'] and all(item['executor_kind'] == 'agent' for item in lower['operations'])
+    assert upper['operations'] == [] and upper['matched_total'] == 0
+    assert upper['visible_total'] == lower['visible_total'] > 0

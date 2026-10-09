@@ -929,7 +929,8 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
             return 'rejected', details
         if value.state in {"completed", "failed"}:
             return value.state, ()
-        failure = classify_submission_error(error, deadline_expired=expired(value.deadline_at))
+        failure = classify_submission_error(error, deadline_expired=expired(value.deadline_at),
+            runs=self, run_id=run_id)
         # Expected form corrections need structured fields, not a traceback file.
         engineering = None
         if failure.disposition != 'reject':

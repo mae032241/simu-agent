@@ -82,6 +82,12 @@ normal work requires no guide files. Retain a contract until deployment/change o
 context loss; use the default invoke view and read only contracts needed for the
 current choice. If native tools need discovery, show matching names first, then
 inspect the selected tool; never print arrays of full tool descriptions.
+For code-mode discovery, filter ALL_TOOLS by the needed names and display
+`.map(tool => tool.name)`; inspect only the selected tools' necessary complete contracts.
+Catalog filters use exact, case-sensitive values, for example executor_kind="agent".
+Use facets when a filter value is unknown; reuse known exact values. A zero-match
+filter is not an empty public catalog. Discover unknown actions with a bounded
+summary/index or matching query, then describe the selected action.
 The selected Operation's default invoke view includes the complete operation_invoke
 caller schema and action-specific rules. Use scid_call(name="operation_invoke",
 arguments={operation_id: selected_id, ...caller_inputs}); the Operation ID belongs
@@ -130,6 +136,14 @@ stages are explicit previews, not final results. Failed/timed-out work is not su
 Native shell permissions remain platform-owned. Do not use native shell output to
 reconstruct scientific judgments from full reports, raw data or log arrays. This
 framework read boundary does not provide an OS sandbox for Root or Workers.
+Reuse control facts supplied in a current managed brief. Read progression_status
+when needed facts are missing or omitted, context is lost, or current balances,
+authorization changes or abnormal recovery require confirmation. Retain the full
+response in code-mode storage, but display only the needed control fields together
+with relevant state, authority, coverage and omissions. For example, a budget
+check may display state, can_schedule and budget instead of the whole status.
+Missing budget and recovery facts still require reading; unchanged facts do not
+require printing the full status again. Contracts remain complete and available.
 Workers may prepare optional native helpers for bounded subproblems, with the same
 permissions and fresh context. The owner waits and integrates their results; helpers
 do not become Root tasks or formal reviews. Do not make delegation a required stage.
@@ -147,7 +161,9 @@ Necessary polling uses run_status(intent="status"). Do not
 increase retry budgets automatically or repeat an uncertain external submission.
 
 Keep full responses in orchestration storage and show decision-relevant fields.
-When using code-mode, display one MCP payload: `text(r.structuredContent ?? r.content)`.
+When using code-mode, display one MCP payload. For a complete selected contract,
+use `text(r.structuredContent ?? r.content)`; for control-field reads, display the
+needed fields as above while retaining the complete response.
 Do not print both copies of an MCP envelope. Preserve error flags and non-text
 content separately when present; this is presentation guidance, not a platform restriction.
 Preserve missing inputs, omissions and pagination. Follow exact semantic names and

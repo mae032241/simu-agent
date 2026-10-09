@@ -147,3 +147,86 @@ def test_finite_unicode_reading_identity_preserves_existing_bytes():
     expected = '{"default":1.5,"title":"温度"}'.encode("utf-8")
     result = read_schema({"default": 1.5, "title": "温度"})
     assert result["sha256"] == hashlib.sha256(expected).hexdigest()
+
+
+def r2_h_schema():
+    # Exact public authoring form from R2 H; contains schema rules, not task text.
+    return json.loads((Path(__file__).parent/'fixtures/r2_h_result_schema.json').read_text())
+
+
+def test_r2_retained_envelope_fields_send_only_missing_complete_definitions():
+    from scidiscovery.artifact_agent.service.output_schema_reader import SchemaReader, canonical
+    original = r2_h_schema()
+    fields = ['payload', 'handoff', 'boundary_declarations']
+    # The unretained details view remains larger than full. Previously this
+    # comparison happened before the retained overview's definitions were removed.
+    assert read_schema(original, fields, definitions_only=True)['format'] == 'full'
+    reader = SchemaReader(original)
+    first = reader.read()
+    assert first['format'] == 'reading_sections'
+    detail = reader.read(fields)
+    assert detail['format'] == 'supplement' and 'overview' not in detail
+    assert not set(first['definitions']) & set(detail['definitions'])
+
+    definitions = {}
+    def collect(node, path=''):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                location = path + '/' + key.replace('~', '~0').replace('/', '~1')
+                if key == '$defs':
+                    definitions.update({location + '/' + name: item for name, item in value.items()})
+                collect(value, location)
+        elif isinstance(node, list):
+            for index, value in enumerate(node):
+                collect(value, path + '/' + str(index))
+    collect(original)
+    assert len(first['definitions']) == 2 and len(detail['definitions']) == 8
+    assert {**first['definitions'], **detail['definitions']} == definitions
+    # Reconstruct every original rule/default/enum/limit and both separately
+    # scoped SourceReference definitions, rather than asserting a smaller view only.
+    restored = copy.deepcopy(first['overview'])
+    for path, value in definitions.items():
+        parts = [part.replace('~1', '/').replace('~0', '~') for part in path[1:].split('/')]
+        node = restored
+        for part in parts[:-1]:
+            node = node.setdefault(part, {})
+        node[parts[-1]] = value
+    assert restored == original
+    assert len(canonical(detail)) < len(canonical({'format':'full', 'schema':original}))
+    assert reader.read(fields)['definitions'] == {}
+    assert reader.read(full=True)['schema'] == original
+    assert reader.read(fields)['format'] == 'retained'
+
+
+def test_r2_materialized_reader_retains_overview_and_full_recovery(tmp_path):
+    original = r2_h_schema()
+    workspace = LocalTrustedBackend(tmp_path/'backend').prepare(run_id='run_r2schema', inputs=(),
+        assignment=b'{}', result_schema=json.dumps(original).encode())
+    path = workspace.root/'schema/result.schema.json'
+    script = workspace.root/'tools/read_output_schema.py'
+    before = path.read_bytes()
+    def read(*args):
+        return json.loads(subprocess.check_output([sys.executable, '-I', str(script), *args], cwd=tmp_path, timeout=10))
+    first = read()
+    detail = read('--field', 'payload', '--field', 'handoff', '--field', 'boundary_declarations')
+    assert first['format'] == 'reading_sections' and detail['format'] == 'supplement'
+    assert len(detail['definitions']) == 8 and path.read_bytes() == before
+    assert read('--field', '/payload')['definitions'] == {}
+    # A typo must stay a precise selection error even after the full form is read.
+    assert read('--full')['schema'] == original
+    bad = subprocess.run([sys.executable, '-I', str(script), '--field', 'unknown'],
+        cwd=tmp_path, capture_output=True, text=True, timeout=10)
+    assert bad.returncode != 0 and 'Unknown field path or short name' in bad.stderr
+    assert 'Use --full' not in bad.stderr
+    assert read('--field', '/payload')['format'] == 'retained'
+
+
+def test_retained_schema_unsupported_references_keep_original_full_fallback():
+    from scidiscovery.artifact_agent.service.output_schema_reader import SchemaReader
+    original = schema()
+    original['properties']['payload']['properties']['evidence']['items']['$ref'] = '#anchor'
+    reader = SchemaReader(original)
+    assert reader.read()['format'] == 'reading_sections'
+    result = reader.read(['evidence'])
+    assert result['format'] == 'full' and result['schema'] == original
+    assert result['fallback']

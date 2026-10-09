@@ -4,6 +4,9 @@ This classifies declared failures, not scientific conclusions. Unknown exception
 require intervention; only explicitly transient failures recommend unchanged retry.
 """
 from dataclasses import dataclass
+from contextlib import closing
+from datetime import datetime, timezone
+import json
 import sqlite3
 import errno
 
@@ -50,6 +53,10 @@ _CAPTURE_BUDGETS = {
     'capture_inventory_limit': {'Capture index exceeds its encoded budget; narrow the declared batch'},
     'capture_ledger_limit': {'Derived ledger exceeds attachment byte budget'},
 }
+_ATTACHMENT_RECOVERY_LIMITS = (
+    'draft_from inherits immutable attachment receipts; it does not free capacity. '
+    'A new bounded task is allowed only if its fixed capture contract can contain required evidence. '
+    'Never reset global budgets, remove old receipts or increase caps.')
 
 
 @dataclass(frozen=True)
@@ -59,7 +66,80 @@ class SubmissionFailure:
     details: tuple
 
 
-def classify_submission_error(error, *, deadline_expired=False):
+def classify_candidate_attachment_error(error, *, runs=None, run_id=None, affected_action='submit'):
+    """One exact candidate overflow; legal old receipts do not prove a repair exists."""
+    if not isinstance(error, ToolInputError) or len(error.details) != 1:
+        return None
+    item = error.details[0]
+    if (item['code'], item['message']) != ('attachment_publication_invalid',
+            'Attachment count or total byte budget exceeded'):
+        return None
+    try:
+        if runs is None or run_id is None or error.__cause__ is not None:
+            raise ValueError('Candidate budget context is unavailable')
+        from ...agent_execution_settings import AttachmentSettings
+        # Read only this exact Run. Policy and committed receipts share one
+        # transaction; this is current state, not the original requested batch.
+        with closing(runs._connect()) as connection:
+            connection.execute('PRAGMA query_only = ON')
+            connection.execute('BEGIN')
+            row = runs._row(connection, run_id)
+            if (row['state'] != 'running' or row['accepted_candidate_digest'] is not None
+                    or datetime.fromisoformat(row['deadline_at'].replace('Z', '+00:00')) <= datetime.now(timezone.utc)):
+                raise ValueError('Candidate is not editable')
+            policy = json.loads(row['recovery_policy_json'])
+            raw_settings = policy['attachments']
+            if not all(key in raw_settings for key in ('max_files', 'max_item_bytes', 'max_total_bytes')):
+                raise ValueError('Frozen attachment settings are unavailable')
+            settings = AttachmentSettings.model_validate(raw_settings, strict=True)
+            rows = connection.execute("SELECT record_json FROM run_tool_evidence WHERE run_id=? "
+                "AND (COALESCE(json_extract(CAST(record_json AS TEXT),'$.record_type'),'')!='reference_access' "
+                "OR json_extract(CAST(record_json AS TEXT),'$.output_port')='attachments') "
+                "ORDER BY ordinal LIMIT 129", (run_id,)).fetchall()
+            records = [json.loads(record[0]) for record in rows]
+            if len(records) > 128 or any(not isinstance(record, dict)
+                    or type(record.get('size_bytes')) is not int or record['size_bytes'] < 0
+                    or (record.get('record_type') == 'reference_access' and record.get('output_port') == 'attachments')
+                    for record in records):
+                raise ValueError('Committed receipt state is invalid')
+            receipt_count = sum(record.get('record_type') != 'reference_access' for record in records)
+            attachments = [record for record in records if record.get('output_port') == 'attachments']
+            sizes = [record['size_bytes'] for record in attachments]
+            if (any(type(size) is not int or size < 0 or size > settings.max_item_bytes for size in sizes)
+                    or len(attachments) > settings.max_files or sum(sizes) > settings.max_total_bytes):
+                raise ValueError('Committed attachments exceed frozen settings')
+    except Exception:
+        details = (contract_diagnostic(item['code'], phase=item['phase'], affected_action=affected_action,
+            path=item['path'], repairable=False, message=item['message']),
+            contract_diagnostic('submission_intervention_required', phase='protocol',
+                affected_action=affected_action, repairable=False,
+                message='Control cannot establish a legal editable candidate budget. Preserve the draft; Root must inspect this exact task. '
+                    'Do not retry unchanged, clear receipts, raise budgets, change sources or rerun execution. ' + _ATTACHMENT_RECOVERY_LIMITS))
+        return SubmissionFailure('intervene', 'runtime_failure', details)
+    usage = (f'Current committed attachments: {len(attachments)}/{settings.max_files} files, '
+        f'{sum(sizes)}/{settings.max_total_bytes} bytes; remaining '
+        f'{settings.max_files-len(attachments)} files, {settings.max_total_bytes-sum(sizes)} bytes. '
+        f'Non-reference receipts: {receipt_count}/128; remaining {128-receipt_count}. '
+        'The rejected batch amounts and exact triggering dimension are unknown. ')
+    if len(usage) > 512:
+        usage = ('Current committed receipts fit the frozen caps. Numeric amounts are omitted because their text exceeds the diagnostic bound. '
+            'Read the frozen budget and retained receipt inventory. Rejected batch amounts and the exact triggering dimension are unknown.')
+    def detail(code, message):
+        return contract_diagnostic(code, phase=item['phase'], affected_action=affected_action,
+            path=item['path'], repairable=True, message=message)
+    return SubmissionFailure('reject', 'output_rejected', (
+        detail(item['code'], item['message']), detail('attachment_candidate_budget', usage),
+        detail('attachment_candidate_correction',
+            'Immutable receipts cannot be deleted or cleared; frozen caps/roots stay binding. Reuse exact retained aliases. '
+            'Correct only the unaccepted candidate if required evidence fits: reduce or move drafts that no longer need capture within task scratch, '
+            'but retain required originals and source associations; do not evade capture of required unretained evidence or substitute summaries. '
+            'Retry after correction, not unchanged; do not raise budgets or rerun execution.'),
+        detail('attachment_candidate_recovery',
+            'Legal existing receipts do not prove required new evidence can fit. A compliant correction is not guaranteed. '
+            'If it cannot fit, preserve the draft and ask Root to inspect this exact task and choose qualified recovery. ' + _ATTACHMENT_RECOVERY_LIMITS)))
+
+
+def classify_submission_error(error, *, deadline_expired=False, runs=None, run_id=None):
     # Some lower-level adapters wrap storage failures. Preserve their causes
     # without making every checker/ValueError automatically retryable.
     causes, seen, cause = [], set(), error
@@ -115,6 +195,9 @@ def classify_submission_error(error, *, deadline_expired=False):
             return SubmissionFailure('reject', 'output_rejected', (contract_diagnostic(
                 item['code'], phase='output_payload', affected_action='submit', path=item['path'],
                 repairable=True, message=item['message'] + ' Correct the current candidate file, capture declaration or citation within the frozen task contract, then resubmit. Do not change sealed evidence or permissions, or rerun execution.'),))
+        candidate = classify_candidate_attachment_error(error, runs=runs, run_id=run_id)
+        if candidate is not None:
+            return candidate
         if item['message'] in _CAPTURE_BUDGETS.get(item['code'], ()):
             # Failure to fit this candidate does not prove that a compliant
             # correction exists. Immutable receipts consume the same fixed cap.

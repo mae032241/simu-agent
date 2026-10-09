@@ -52,7 +52,7 @@ def children(node, path):
                 yield key, None, child, location + '/' + str(index)
 
 
-def read_schema(schema, fields=(), *, full=False, definitions_only=False):
+def read_schema(schema, fields=(), *, full=False, definitions_only=False, _defer_size=False):
     """A reading view, not a replacement JSON Schema. Keep every original rule."""
     origin = {'source': 'schema/result.schema.json',
               'sha256': hashlib.sha256(canonical(schema).encode()).hexdigest()}
@@ -154,7 +154,9 @@ def read_schema(schema, fields=(), *, full=False, definitions_only=False):
     else:
         result['overview'] = outline(schema)
         result['unexpanded_definitions'] = [p for p in definitions if p not in expanded]
-    return result if len(canonical(result)) < len(canonical(complete)) else complete
+    # A retained overview already contains these fields and some definitions.
+    # Its caller compares the actual supplement after removing that repetition.
+    return result if _defer_size or len(canonical(result)) < len(canonical(complete)) else complete
 
 
 class SchemaReader:
@@ -171,7 +173,8 @@ class SchemaReader:
 
     def read(self, fields=(), *, full=False):
         retained = self.receipt is not None and not full
-        view = read_schema(self.schema, fields, full=full, definitions_only=retained)
+        view = read_schema(self.schema, fields, full=full, definitions_only=retained,
+            _defer_size=retained)
         if retained and self.receipt['full']:
             result = {'format': 'retained', 'instruction': 'Use the retained full schema; --full rereads it after loss.'}
         elif retained and view['format'] == 'reading_sections':
@@ -179,7 +182,12 @@ class SchemaReader:
                            if p not in self.receipt['definitions']}
             result = {'format': 'supplement', 'definitions': definitions,
                 'instruction': 'Add these definitions to the retained current overview and earlier definitions; --full restores all rules after loss.'}
-            self.receipt = {**self.receipt, 'definitions': sorted(set(self.receipt['definitions']) | set(definitions))}
+            complete = {'format': 'full', 'schema': self.schema}
+            if len(canonical(result)) < len(canonical(complete)):
+                self.receipt = {**self.receipt, 'definitions': sorted(set(self.receipt['definitions']) | set(definitions))}
+            else:
+                result = complete
+                self.receipt = {**self.receipt, 'full': True, 'definitions': []}
         else:
             result = {k:v for k,v in view.items() if k not in {'sha256', 'source'}}
             self.receipt = {'fingerprint': self.fingerprint, 'overview': True,

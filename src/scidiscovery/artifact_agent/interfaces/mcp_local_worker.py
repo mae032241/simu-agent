@@ -354,6 +354,11 @@ class LocalWorkerMCPRouter:
         from ..service.engineering_diagnostics import diagnostic_locator
         if isinstance(error, DiagnosticError):
             failure = error if isinstance(error, WorkerToolError) else WorkerToolError(str(error), details=error.details)
+            from ..service.submission_errors import classify_candidate_attachment_error
+            candidate = classify_candidate_attachment_error(error, runs=self.runs, run_id=run_id,
+                affected_action='tool_call')
+            if candidate is not None:
+                failure.details = candidate.details
             failure.public_engineering = {}
             if not failure.details:
                 failure.details = (contract_diagnostic("tool_rejected", phase="tool_execution", affected_action="tool_call",
