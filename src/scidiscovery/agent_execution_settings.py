@@ -5,6 +5,9 @@ import json
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+import re
+
+from .operations.spec import LedgerSpec
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -272,6 +275,53 @@ class DiagnosticsSettings(SettingsValue):
     retention_seconds: int = Field(default=604800, ge=1)
 
 
+class HostLedgerSettings(LedgerSpec):
+    path: str = Field(min_length=1, max_length=4096)
+    path_links: dict[str, str] = Field(default_factory=dict, max_length=16)
+
+    @model_validator(mode="after")
+    def _valid(self):
+        from pathlib import PurePosixPath
+        path = PurePosixPath(self.path)
+        if self.issue() or not path.is_absolute() or str(path) != self.path or '..' in path.parts:
+            raise ValueError("Invalid host ledger declaration")
+        for source, target in self.path_links.items():
+            locator = PurePosixPath(target)
+            if (not source or not locator.parts or locator.parts[0] != 'scratch'
+                    or len(locator.parts) < 3 or locator.is_absolute() or '..' in locator.parts
+                    or str(locator) != target):
+                raise ValueError("Ledger links require exact task-local file locations")
+        return self
+
+
+class HostCaptureTask(SettingsValue):
+    operation_id: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,127}$")
+    ledgers: list[HostLedgerSettings] = Field(min_length=1, max_length=4)
+
+    @model_validator(mode="after")
+    def _names(self):
+        if len({ledger.logical_name for ledger in self.ledgers}) != len(self.ledgers):
+            raise ValueError("Host ledger names must be unique")
+        return self
+
+
+class HostCaptureSettings(SettingsValue):
+    max_total_source_bytes: int = Field(default=4194304, ge=1, le=2_000_000_000)
+    allowed_roots: list[str] = Field(min_length=1, max_length=16)
+    tasks: dict[str, HostCaptureTask] = Field(max_length=256)
+
+    @model_validator(mode="after")
+    def _roots(self):
+        from pathlib import PurePosixPath
+        for root in self.allowed_roots:
+            path = PurePosixPath(root)
+            if not path.is_absolute() or root == '/' or str(path) != root or '..' in path.parts:
+                raise ValueError("Host capture roots must be explicit absolute directories")
+        if any(not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}", name) for name in self.tasks):
+            raise ValueError("Host capture requires exact logical task names")
+        return self
+
+
 class AgentSettings(SettingsValue):
     schema_version: Literal[1] = 1
     experiment_provider: str = Field(default="auto",
@@ -293,6 +343,7 @@ class AgentSettings(SettingsValue):
     diagnostics: DiagnosticsSettings = Field(default_factory=DiagnosticsSettings)
     input_materials: MaterialInputSettings = Field(default_factory=MaterialInputSettings)
     attachments: AttachmentSettings = Field(default_factory=AttachmentSettings)
+    capture: HostCaptureSettings | None = None
     presentation: PresentationSettings = Field(default_factory=PresentationSettings)
     mcp_read: MCPReadSettings = Field(default_factory=MCPReadSettings)
 
@@ -394,7 +445,7 @@ def effective_settings(global_settings: AgentSettings, instance_settings: dict) 
             else:
                 base[key] = value
         return base
-    for field in ("debug_disable_task_network", "experiment_provider"):
+    for field in ("debug_disable_task_network", "experiment_provider", "capture"):
         if field in instance_settings:
             raise ValueError(f"{field} is deployment-only, not an instance override")
     value = merge(global_settings.model_dump(exclude_none=True), instance_settings)

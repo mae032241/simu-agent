@@ -68,6 +68,8 @@ class BoundOperationCall:
     execution_profile: dict[str, Any] | None = None
     require_execution_review: bool = False
     scientific_intent: dict[str, str] | None = None
+    resolved_capture_policy: dict[str, Any] | None = None
+    capture_policy_resolved: bool = False
 @dataclass(frozen=True, slots=True)
 class ApprovalSubjectSnapshot:
     subject_index: int

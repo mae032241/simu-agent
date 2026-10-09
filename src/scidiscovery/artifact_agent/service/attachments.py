@@ -10,6 +10,7 @@ import stat
 from tempfile import TemporaryDirectory
 
 from ...agent_execution_settings import AttachmentSettings
+from ...operations.spec import json_projection
 from ...operation_contract import ToolInputError
 from ...plugin_runtime.workspace import _open_workspace_parent
 from ..schema.artifact import ArtifactRegistration
@@ -38,14 +39,28 @@ def _source(workspace, name):
             os.close(fd)
 
 
-def snapshot_file(source, target, settings, check_budget, *, total=0, guard=None):
+def snapshot_file(source, target, settings, check_budget, *, total=0, guard=None, on_read=None):
     """One chunk in memory; observable mutation is a delivery gap, not a retry."""
     before = os.fstat(source.fileno())
     if before.st_size > settings.max_item_bytes or total + before.st_size > settings.max_total_bytes:
         raise ToolInputError("attachment_publication_invalid", 'Attachment byte budget exceeded')
     digest, size = hashlib.sha256(), 0
     with target.open('xb') as output:
-        while chunk := source.read(settings.chunk_bytes):
+        while True:
+            read_bytes = settings.chunk_bytes
+            if on_read is not None:
+                check_budget()
+                # Exact IO allowance: no extra EOF probe at the boundary. The
+                # final fstat below still rejects a truncated or growing source.
+                read_bytes = min(read_bytes, settings.max_item_bytes - size,
+                    settings.max_total_bytes - total - size)
+                if read_bytes <= 0:
+                    break
+            chunk = source.read(read_bytes)
+            if not chunk:
+                break
+            if on_read is not None:
+                on_read(len(chunk))
             check_budget()
             size += len(chunk)
             if size > settings.max_item_bytes or total + size > settings.max_total_bytes:
@@ -70,10 +85,12 @@ def attachment_item(runs, run, path, digest, size, media, metadata, aliases):
     identity = {key: value for key, value in metadata.items() if key != 'derived_from'}
     if metadata.get('capture_mode') == 'auto_captured':
         identity.pop('purpose', None)
+    policy = (run.recovery_policy or {}).get('capture')
     key = hashlib.sha256(canonical_json({'sha256': digest, 'metadata': identity,
+        **({'capture_policy_digest': policy['digest']} if policy and metadata.get('capture_mode') == 'auto_captured' else {}),
         'sources': sorted((ref.model_dump(mode='json') for ref in sources), key=canonical_json),
         'media_type': media, 'output_port': 'attachments',
-        **({'capture_contract': runs._compiled(run).spec.artifact_capture.model_dump(mode='json')}
+        **({'capture_contract': json_projection(runs._compiled(run).spec.artifact_capture)}
            if metadata.get('capture_mode') == 'auto_captured' else {})})).hexdigest()
     return dict(path=path, digest=digest, size=size, media=media, metadata=metadata, sources=sources, key=key)
 
@@ -144,8 +161,15 @@ def retain_attachments(runs, run, staged, settings, check_budget, *, inventory=N
                 entry['reference'] = predicted[key]
         # The immutable control map remains receipt metadata. Original readers
         # see navigation aliases and coverage, never internal Refs or keys.
-        public = {**inventory, 'entries':[{key:value for key,value in entry.items()
-            if key not in {'artifact_ref','publication_key','sha256'}} for entry in inventory['entries']]}
+        def public_entry(entry):
+            # New source observation identity is private, including nested keys.
+            if isinstance(entry, dict):
+                return {key:public_entry(value) for key,value in entry.items()
+                    if key not in {'artifact_ref','publication_key','sha256','private_source'}}
+            if isinstance(entry, list):
+                return [public_entry(value) for value in entry]
+            return entry
+        public = public_entry(inventory)
         raw = canonical_json(public)
         if len(raw) > 1048576:
             raise ToolInputError('capture_inventory_limit', 'Capture index exceeds its encoded budget; narrow the declared batch')

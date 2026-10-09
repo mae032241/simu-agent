@@ -13,6 +13,7 @@ _ID = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
 _JSON_POINTER = re.compile(r"^/(?:[^~/]|~[01])*(?:/(?:[^~/]|~[01])*)*$")
 _DOMAIN = re.compile(r"^(?:\*\.)?[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
                      r"(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$")
+_PRIVATE_LEDGER_FIELD = re.compile(r"credential|password|passwd|secret|token|private[-_]?key|api[-_]?key|authorization|cookie", re.I)
 _DECISIONS = frozenset({"accept", "reject", "revise", "accept_with_exception"})
 class FrozenSpec(BaseModel):
     model_config = ConfigDict(
@@ -427,6 +428,29 @@ class CaptureSources(BaseModel):
         description="Actual exact input or sealed material aliases used to produce this batch. Inventory and new files are not production sources.")
 
 
+class LedgerSpec(FrozenSpec):
+    """Fixed scalar JSONL projection; a declaration grants no external access."""
+    logical_name: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
+    fields: dict[str, Literal["int", "bool", "float", "str"]] = Field(min_length=1, max_length=16)
+    name_field: str
+    status_field: str
+    redacted_fields: list[str] = Field(default_factory=list, max_length=16)
+    max_bytes: int = Field(default=1048576, ge=1)
+    max_rows: int = Field(default=128, ge=1, le=4096)
+    max_record_bytes: int = Field(default=16384, ge=128, le=1048576)
+    max_seconds: int = Field(default=5, ge=1, le=120)
+
+    def issue(self):
+        names = (*self.fields, *self.redacted_fields)
+        if (any(not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", name) for name in names)
+                or any(_PRIVATE_LEDGER_FIELD.search(name) for name in self.fields)
+                or self.name_field not in self.fields or self.status_field not in self.fields
+                or set(self.fields) & set(self.redacted_fields)
+                or len(set(self.redacted_fields)) != len(self.redacted_fields)):
+            return "ledger_declaration_invalid"
+        return None
+
+
 class ArtifactCaptureSpec(FrozenSpec):
     """Fixed task-local scope and safety bounds; no external read permission."""
     roots: tuple[str, ...] = ("scratch/artifacts",)
@@ -434,9 +458,14 @@ class ArtifactCaptureSpec(FrozenSpec):
     max_entries: int = Field(default=256, ge=1, le=4096)
     max_record_bytes: int = Field(default=65536, ge=128, le=1048576)
     max_seconds: int = Field(default=20, ge=1, le=120)
+    ledgers: tuple[LedgerSpec, ...] | None = None
 
     def issue(self):
         from pathlib import PurePosixPath
+        if self.ledgers is not None and (not self.ledgers or len(self.ledgers) > 4
+                or len({ledger.logical_name for ledger in self.ledgers}) != len(self.ledgers)
+                or any(ledger.issue() for ledger in self.ledgers)):
+            return "artifact_capture_invalid"
         if not self.roots or len(self.roots) > 4 or len(set(self.roots)) != len(self.roots):
             return "artifact_capture_invalid"
         for root in self.roots:
@@ -695,6 +724,8 @@ def json_projection(value: Any) -> Any:
             for name, field in type(value).model_fields.items()
             if not (isinstance(value, OperationSpec) and name in {"input_validation", "artifact_capture"}
                     and getattr(value, name) is None)
+            and not (isinstance(value, ArtifactCaptureSpec) and name == "ledgers"
+                     and value.ledgers is None)
             and not (isinstance(value, InputDerivationSpec) and name == "source_original_text"
                      and not value.source_original_text)
         }

@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ...operation_contract import DiagnosticError, contract_diagnostic, sanitize_diagnostic_details
+from ...operation_contract import ToolInputError, DiagnosticError, contract_diagnostic, sanitize_diagnostic_details
 from ...operations.tooling import operation_worker_tools
 from ...operations.catalog import CompiledCatalog
 from ...operations.invoke import (
@@ -136,6 +136,59 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
         from .worker_connections import WorkerConnections
         self.worker_connections = WorkerConnections(self)
         self.experiment_executions = experiment_execution_factory(self) if experiment_execution_factory else None
+
+    def capture_policy(self, compiled, name, *, instance_id, recovery_source=None):
+        """One private host snapshot, before any semantic-name reuse decision."""
+        from pathlib import PurePosixPath
+        import re
+        if recovery_source is not None:
+            source = self.status(recovery_source)
+            if source.instance_id != instance_id or source.operation_id != compiled.spec.operation_id:
+                raise OperationInvocationError('capture_configuration_invalid')
+            return (source.recovery_policy or {}).get('capture')
+        host = self.agent_settings.capture
+        task = host.tasks.get(name) if host else None
+        if task is None:
+            return None
+        contract = compiled.spec.artifact_capture
+        if task.operation_id != compiled.spec.operation_id or contract is None:
+            raise OperationInvocationError('capture_configuration_invalid')
+        declared = {item.logical_name: item for item in contract.ledgers or ()}
+        ledgers = []
+        for ledger in task.ledgers:
+            matching = [root for root in host.allowed_roots
+                if PurePosixPath(ledger.path).is_relative_to(PurePosixPath(root))]
+            if (not matching or ledger.max_record_bytes > contract.max_record_bytes
+                    or ledger.max_seconds > contract.max_seconds
+                    or ledger.logical_name in declared and
+                       ledger.model_dump(include=set(declared[ledger.logical_name].model_fields)) !=
+                       declared[ledger.logical_name].model_dump()):
+                raise OperationInvocationError('capture_configuration_invalid')
+            root = max(matching, key=len)
+            relative = PurePosixPath(ledger.path).relative_to(PurePosixPath(root))
+            if any(part.startswith('.') or re.search(r'credential|password|secret|token|private[-_]key|api[_-]?key', part, re.I) for part in relative.parts):
+                raise OperationInvocationError('capture_configuration_invalid')
+            ledgers.append({**ledger.model_dump(mode='json'),
+                'allowed_root': root, 'representation': 'derived_projection'})
+        value = {'task_name': name, 'operation_digest': compiled.digest, 'ledgers': ledgers,
+            'declaration_source': 'host', 'producer_trust': 'author_reported',
+            'source_max_total_bytes': min(host.max_total_source_bytes, sum(item['max_bytes'] for item in ledgers)),
+            'retained_limits': self.agent_settings.attachments.model_dump()}
+        return {**value, 'digest': canonical_sha256(value)}
+
+    def require_capture_authority(self, run, policy, ledger):
+        """Current permission gates a frozen observation; it never rebinds it."""
+        from pathlib import PurePosixPath
+        host = self.agent_settings.capture
+        task = host.tasks.get(policy['task_name']) if host else None
+        current = next((item for item in task.ledgers if item.logical_name == ledger['logical_name']), None) if task else None
+        if (current is None or task.operation_id != run.operation_id
+                or ledger['allowed_root'] not in host.allowed_roots
+                or not PurePosixPath(ledger['path']).is_relative_to(PurePosixPath(ledger['allowed_root']))
+                or any(ledger[key] > getattr(current, key) for key in
+                       ('max_bytes', 'max_rows', 'max_record_bytes', 'max_seconds'))
+                or policy['source_max_total_bytes'] > host.max_total_source_bytes):
+            raise ToolInputError('capture_authority_unavailable', 'Host capture permission is unavailable; retained views remain readable in their original scope')
 
     def material_input_settings(self, instance_id=None):
         values = self.agent_settings.input_materials.model_dump()
@@ -270,6 +323,8 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
         execution_profile = bound.execution_profile
         required_review = bound.require_execution_review
         scientific_intent = bound.scientific_intent
+        capture_policy = bound.resolved_capture_policy
+        capture_resolved = bound.capture_policy_resolved
         if compiled.spec.executor.kind != "agent":
             raise ValueError("RunService accepts Agent operations only")
         if not self.backend.supports_operation(compiled):
@@ -313,7 +368,13 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
             if max_attempts is None:
                 max_attempts = settings["default_max_attempts"]
         bound = replace(bound, execution_profile=execution_profile, require_execution_review=required_review,
-            scientific_intent=scientific_intent)
+            scientific_intent=scientific_intent, resolved_capture_policy=capture_policy)
+        if not capture_resolved:
+            capture_policy = self.capture_policy(compiled, bound.name, instance_id=instance_id,
+                recovery_source=resume_from or draft_from)
+        # A router-supplied policy is already resolved; direct schedule callers
+        # use this same resolver once, not an independent settings merge.
+        bound = replace(bound, resolved_capture_policy=capture_policy, capture_policy_resolved=True)
         raw_inputs = self._input_bindings(bound)
         for item in raw_inputs:
             self.artifacts.verify(item.artifact_ref)
@@ -322,6 +383,8 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
         deadline_at = future(created_at, compiled.spec.limits.timeout_seconds)
         recovery_digest: str | None = None
         recovery_policy = self._recovery_policy(compiled)
+        if capture_policy is not None:
+            recovery_policy['capture'] = capture_policy
         if bound.scientific_intent is not None:
             from .scientific_progress import freeze_intent
             recovery_policy["scientific_intent_ref"] = freeze_intent(
@@ -416,6 +479,9 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
                 recovery_policy["helpers"] = (source.recovery_policy or {}).get("helpers", {"max_depth": 0})
                 recovery_policy["execution_io"] = (source.recovery_policy or {}).get("execution_io", ExecutionIOSettings().model_dump())
                 recovery_policy["attachments"] = (source.recovery_policy or {}).get("attachments", recovery_policy["attachments"])
+                original_capture = (source.recovery_policy or {}).get('capture')
+                if original_capture != capture_policy:
+                    raise RunStateConflict('Recovery capture configuration differs from its source snapshot')
             if scheduler_budget is None and (resume_from is not None or draft_from is not None):
                 scheduler_budget = (source.recovery_policy or {}).get("scheduler_max_attempts")
             if scheduler_budget is not None:
@@ -436,6 +502,7 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
                         "request_fingerprint": output_binding_fingerprint,
                     },
                     "execution_profile": execution_profile["profile"],
+                    **({'capture_policy_digest': capture_policy['digest']} if capture_policy else {}),
                     "instruction": bound.instruction or "",
                     **({"scientific_intent": bound.scientific_intent} if bound.scientific_intent else {}),
                     **({"require_execution_review": True} if required_review else {}),

@@ -168,6 +168,10 @@ def assignment_json(
         item.pop("port", None)
     if bound.compiled.spec.artifact_capture is not None:
         assignment['artifact_capture'] = {'directories':list(bound.compiled.spec.artifact_capture.roots)}
+        if bound.resolved_capture_policy:
+            assignment['artifact_capture']['ledgers'] = [{'logical_name':item['logical_name'],
+                'representation':'derived_projection', 'raw_retained':False, 'producer_trust':'author_reported'}
+                for item in bound.resolved_capture_policy['ledgers']]
     return canonical_json(assignment)
 
 

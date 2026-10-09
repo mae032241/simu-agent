@@ -351,12 +351,17 @@ class SchedulerBindingService(SchedulingControl):
             ).fetchone()
         if row is None:
             raise SchedulerInstanceNotFound("unknown research instance")
-        return {"settings": parse_settings(json.loads(row[0]) if row[0] else {},
+        settings = json.loads(row[0]) if row[0] else {}
+        if 'capture' in settings:
+            raise ValueError('capture is deployment-only, not an instance grant')
+        return {"settings": parse_settings(settings,
                                           label="instance agent settings").sparse(),
                 "revision": row[1], "updated_at": row[2]}
 
     def save_agent_settings(self, instance_id: str, settings: dict, *,
                             expected_revision: int, maintenance) -> dict:
+        if "capture" in settings:
+            raise ValueError("capture is deployment-only, not an instance grant")
         parsed = parse_settings(settings, label="instance agent settings").sparse()
         if type(expected_revision) is not int or expected_revision < 0:
             raise ValueError("expected_revision must be a nonnegative integer")

@@ -120,13 +120,16 @@ def startup_document(assignment: dict, domain: dict | None = None, *, reader_nav
             'Publication retains bytes and provenance, not scientific validation. Returned references are reusable evidence.')
         if assignment.get('artifact_capture'):
             directories = assignment['artifact_capture']['directories']
-            result['artifact_capture'] = {'directories':list(directories)}
+            result['artifact_capture'] = dict(assignment['artifact_capture'])
             locations = ', '.join(directory + '/' for directory in directories)
             result['output']['attachments'] = (f'Write scientific files to the declared directories: {locations}; '
                 'stages and final submission capture that declared scope. '
                 f'Cite file:{directories[0]}/path, or file@<sealed-stage-reference>:{directories[0]}/path for an older version; '
                 'declare actual batch sources with capture_sources when needed. run: is navigation only; scratch/cache/ and scratch/tmp/ are outside capture. '
                 'worker_publish_files remains available for authorized explicit or early publication.')
+            if assignment['artifact_capture'].get('ledgers'):
+                result['output']['attachments'] += (' Host-declared logical ledgers are captured as safe derived views at these seals; '
+                    'raw originals are unavailable and reported values remain unverified.')
     result['reading'] = {
         'inputs': 'JSON: locate needed fields with python tools/read_input.py SOURCE --directory, '
             'then exact --pointer selections. Use exact source_name in tools and citations; artifact_name is navigation only. '

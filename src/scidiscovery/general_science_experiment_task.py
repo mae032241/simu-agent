@@ -163,7 +163,7 @@ def submit_stage(request, context):
     return {"stage": request.stage, "reference": record["alias"], "state": "sealed",
         "artifact_name": record["artifact_name"],
         **({'capture':{'reference':capture['capture_index'],'coverage':capture['capture_coverage'],
-             'counts':capture['capture_counts'],'attempt_inventory':'not_declared'}} if capture else {})}
+             'counts':capture['capture_counts'],'attempt_inventory':capture['attempt_inventory']}} if capture else {})}
 
 
 class ExecuteExperiment(BaseModel):

@@ -1,5 +1,7 @@
 """Task-local immutable capture maps; inventory is navigation, never science."""
 import codecs
+from contextlib import contextmanager
+import math
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -13,7 +15,7 @@ import time
 
 from ...agent_execution_settings import AttachmentSettings
 from ...operation_contract import ToolInputError
-from ...operations.spec import CaptureSources
+from ...operations.spec import CaptureSources, _PRIVATE_LEDGER_FIELD
 from ...operations.tooling import reference_policy
 from ...plugin_runtime.workspace import _open_workspace_parent, _SECRET, _MACHINE_PATH
 from ..schema.common import canonical_json
@@ -247,6 +249,218 @@ def _resolve(runs, run, reference, index, records):
     return alias
 
 
+
+
+@contextmanager
+def _ledger_source(path):
+    """Host authorization is checked by the caller; reject every symlink hop."""
+    parts = PurePosixPath(path).parts
+    descriptors = []
+    try:
+        fd = os.open('/', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        descriptors.append(fd)
+        for part in parts[1:-1]:
+            fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            descriptors.append(fd)
+        fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+        with os.fdopen(fd, 'rb', buffering=0) as source:
+            if not stat.S_ISREG(os.fstat(source.fileno()).st_mode):
+                raise ToolInputError('capture_ledger_unavailable', 'Declared ledger is not a regular file')
+            yield source
+    finally:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
+
+
+class _LedgerFraming:
+    def __init__(self):
+        self.lines, self.tail = 0, False
+
+    def feed(self, chunk):
+        self.lines += chunk.count(b'\n')
+        self.tail = not chunk.endswith(b'\n')
+
+    def finish(self):
+        pass
+
+
+def _public_scalar(value, kind, limit, field):
+    if _PRIVATE_LEDGER_FIELD.search(field):
+        return False
+    types = {'int':int, 'bool':bool, 'str':str}
+    if kind == 'float':
+        try:
+            valid = type(value) in {int, float} and math.isfinite(value)
+        except OverflowError:
+            valid = False
+    else:
+        valid = type(value) is types[kind]
+    if not valid or isinstance(value, str) and len(value.encode('utf-8')) > min(limit, 1024):
+        return False
+    if isinstance(value, str) and re.search(r"(?:^|[^A-Za-z0-9_])(?:/[^\s]*|[A-Za-z]:[\\/]|\\\\)", value):
+        return False
+    guard = _Guard('application/json', limit)
+    try:
+        guard.feed(canonical_json(value))
+        guard.finish()
+    except (ToolInputError, UnicodeError, ValueError):
+        return False
+    return True
+
+
+def _project_ledger(snapshot, target, ledger, framing, entries, limit, deadline):
+    """One bounded parser; raw bytes never become a retained Artifact."""
+    rows, names, groups = [], {}, []
+    physical = framing.lines + int(framing.tail)
+    parsed, complete = 0, True
+    with snapshot.open('rb') as source, target.open('xb') as output:
+        for number in range(1, physical + 1):
+            if parsed >= ledger['max_rows'] or time.monotonic() >= deadline:
+                rows.append({'locator':f'line:{number}', 'status':'omitted',
+                    'through_line':physical, 'reason':'parse_budget'})
+                complete = False
+                break
+            raw = source.readline(ledger['max_record_bytes'] + 2)
+            row = {'locator':f'line:{number}', 'status':'reported', 'values':{}, 'field_gaps':[]}
+            parsed += 1
+            if len(raw) > ledger['max_record_bytes']:
+                row['status'], row['reason'] = 'incomplete', 'record_limit'
+                while raw and not raw.endswith(b'\n') and time.monotonic() < deadline:
+                    raw = source.readline(ledger['max_record_bytes'] + 2)
+                if raw and not raw.endswith(b'\n'):
+                    rows.append({'locator':f'line:{number}', 'status':'omitted',
+                        'through_line':physical, 'reason':'parse_budget'})
+                    complete = False
+                    break
+            elif not raw.endswith(b'\n'):
+                row['status'], row['reason'] = 'pending_tail', 'pending_tail'
+            else:
+                try:
+                    def invalid_constant(value):
+                        raise ValueError('Nonfinite JSON scalar')
+                    def unique_fields(pairs):
+                        value = {}
+                        for key, item in pairs:
+                            if key in value:
+                                raise ValueError('Duplicate JSON field')
+                            value[key] = item
+                        return value
+                    value = json.loads(raw, parse_constant=invalid_constant, object_pairs_hook=unique_fields)
+                    if not isinstance(value, dict):
+                        raise ValueError('Object required')
+                    for field, kind in ledger['fields'].items():
+                        if field not in value:
+                            row['field_gaps'].append({'field':field, 'reason':'missing'})
+                        elif _public_scalar(value[field], kind, limit, field):
+                            row['values'][field] = value[field]
+                        else:
+                            row['field_gaps'].append({'field':field, 'reason':'unsafe_or_type'})
+                    row['omitted_fields'] = [field for field in ledger['redacted_fields'] if field in value]
+                    row['unconfigured_fields'] = sum(field not in ledger['fields'] and
+                        field not in ledger['redacted_fields'] for field in value)
+                    # Exact configured path match is navigation only, and only
+                    # to a real file retained in this same immutable capture.
+                    links = []
+                    for field in ledger['redacted_fields']:
+                        locator = ledger['path_links'].get(value.get(field)) if isinstance(value.get(field), str) else None
+                        matches = [entry for entry in entries if entry.get('path') == locator
+                            and entry.get('status') == 'retained'] if locator else []
+                        if len(matches) == 1:
+                            links.append({'field':field, 'file':'file:' + locator})
+                    if links:
+                        row['file_links'] = links
+                    key = row['values'].get(ledger['name_field'])
+                    if key is not None:
+                        identity = canonical_json(key)
+                        names.setdefault(identity, []).append(number)
+                    if row['field_gaps']:
+                        row['status'] = 'incomplete'
+                except (ValueError, UnicodeError, RecursionError):
+                    row['status'], row['reason'] = 'incomplete', 'invalid_record'
+            if row['status'] != 'reported':
+                complete = False
+            rows.append(row)
+        # Each locator or omitted range is preserved in the readable view.
+        for row in rows:
+            output.write(canonical_json({'representation':'derived_projection', 'raw_retained':False,
+                'producer_trust':'author_reported', **row}) + b'\n')
+    for locators in names.values():
+        if len(locators) > 1:
+            groups.append({'status':'ambiguous', 'locators':[f'line:{n}' for n in locators]})
+            complete = False
+    return {'physical_records':physical, 'physical_count_complete':True, 'parsed_records':parsed, 'attempt_total':'unknown',
+        'source_coverage':'incomplete' if framing.tail or any(row.get('reason') for row in rows) else 'complete',
+        'projection_coverage':'complete' if complete else 'incomplete', 'duplicate_groups':groups,
+        'record_positions':[{key:value for key,value in row.items() if key != 'values'} for row in rows],
+        'raw_retained':False, 'representation':'derived_projection', 'producer_trust':'author_reported'}
+
+
+def _capture_ledgers(runs, run, entries, staged, settings, check, temporary, total, contract):
+    policy = (run.recovery_policy or {}).get('capture')
+    if not policy:
+        return total, True
+    complete = True
+    observed = 0
+    def charge_read(size):
+        nonlocal observed
+        observed += size
+    for ordinal, ledger in enumerate(policy['ledgers']):
+        entry = {'path':'ledger:' + ledger['logical_name'], 'status':'incomplete',
+            'representation':'derived_projection', 'raw_retained':False, 'attempt_total':'unknown',
+            'name_field':ledger['name_field'], 'status_field':ledger['status_field'],
+            'exported_fields':list(ledger['fields']), 'declared_redactions':ledger['redacted_fields']}
+        entries.append(entry)
+        try:
+            runs.require_capture_authority(run, policy, ledger)
+            check()
+            ledger_deadline = time.monotonic() + ledger['max_seconds']
+            def source_check():
+                check()
+                if time.monotonic() >= ledger_deadline:
+                    raise ToolInputError('capture_ledger_deadline', 'Declared ledger exceeded its bounded observation time')
+            framing = _LedgerFraming()
+            snapshot, target = Path(temporary) / f'ledger-raw-{ordinal}', Path(temporary) / f'ledger-view-{ordinal}'
+            bounds = settings.model_copy(update={'max_item_bytes':ledger['max_bytes'],
+                'max_total_bytes':policy['source_max_total_bytes']})
+            with _ledger_source(ledger['path']) as source:
+                digest, size = snapshot_file(source, snapshot, bounds, source_check,
+                    total=observed, guard=framing, on_read=charge_read)
+            projection = _project_ledger(snapshot, target, ledger, framing, entries,
+                contract.max_record_bytes, ledger_deadline)
+            check()
+            guard = _Guard('text/plain', contract.max_record_bytes)
+            with target.open('rb') as source:
+                while chunk := source.read(settings.chunk_bytes):
+                    check()
+                    guard.feed(chunk)
+            guard.finish()
+            view_size = target.stat().st_size
+            if view_size > settings.max_item_bytes or total + view_size > settings.max_total_bytes:
+                raise ToolInputError('capture_ledger_limit', 'Derived ledger exceeds attachment byte budget')
+            view_digest = hashlib.sha256()
+            with target.open('rb') as source:
+                while chunk := source.read(settings.chunk_bytes):
+                    check()
+                    view_digest.update(chunk)
+            source_identity = {'sha256':digest, 'size_bytes':size, 'projection_policy_digest':policy['digest']}
+            item = attachment_item(runs, run, target, view_digest.hexdigest(), view_size, 'text/plain',
+                {'kind':'scientific_attachment', 'file_name':ledger['logical_name'] + '.derived.jsonl',
+                 'locator':entry['path'], 'purpose':'Derived ledger view; raw original unavailable',
+                 'origin':'agent_authored', 'capture_mode':'auto_captured',
+                 'execution_attestation':'unavailable', 'provenance_status':'unknown',
+                 'scientific_claim_admissible':False, 'representation':'derived_projection',
+                 'raw_retained':False, 'producer_trust':'author_reported', 'private_source':source_identity}, ())
+            staged.append(item)
+            total += view_size
+            entry.update(projection, status='retained', publication_key=item['key'], private_source=source_identity)
+            if projection['projection_coverage'] != 'complete':
+                complete = False
+        except (OSError, RuntimeError, ToolInputError) as error:
+            entry['reason'] = error.details[0]['code'] if isinstance(error, ToolInputError) else 'capture_ledger_unavailable'
+            complete = False
+    return total, complete
+
+
 def capture_science(runs, run_id, document, paths, declarations=(), *, workspace, capture_new=True):
     run = runs._require_running(run_id)
     if run.accepted_candidate_digest is not None:
@@ -297,8 +511,16 @@ def capture_science(runs, run_id, document, paths, declarations=(), *, workspace
         entries, initial, complete = _listing(workspace, roots, contract, check)
         entries.sort(key=lambda entry:(entry.get('path', ''), entry['status']))
         # Empty unchanged directories do not manufacture index receipts.
-        if entries or not complete:
+        if entries or not complete or (run.recovery_policy or {}).get('capture'):
             settings = AttachmentSettings.model_validate((run.recovery_policy or {}).get('attachments', {}))
+            policy = (run.recovery_policy or {}).get('capture')
+            if policy:
+                # Storage allowances count existing receipts and the whole staged
+                # capture, including index. Transient source IO is separate.
+                current = runs.agent_settings.attachments.model_dump()
+                frozen = policy['retained_limits']
+                settings = AttachmentSettings.model_validate({key:min(value, current[key], frozen[key])
+                    for key,value in settings.model_dump().items()})
             with TemporaryDirectory(prefix='scid-capture-') as temporary:
                 staged, total = [], 0
                 for number, entry in enumerate(entries):
@@ -364,12 +586,15 @@ def capture_science(runs, run_id, document, paths, declarations=(), *, workspace
                         entry['status'] = 'incomplete'
                         entry['reason'] = error.details[0]['code'] if isinstance(error, ToolInputError) else 'capture_gap'
                         complete = False
+                total, ledger_complete = _capture_ledgers(runs, run, entries, staged, settings, check, temporary, total, contract)
+                complete = complete and ledger_complete
                 _, final, final_complete = _listing(workspace, roots, contract, check)
                 index = {'roots':list(roots),'entries':entries,'coverage':'complete' if complete and final_complete and initial == final else 'incomplete',
-                    'coverage_changed':initial != final,'attempt_inventory':'not_declared','source_declarations':[batch.model_dump(mode='json') for batch in batches]}
+                    'coverage_changed':initial != final,'attempt_inventory':'declared_author_reported' if (run.recovery_policy or {}).get('capture') else 'not_declared','source_declarations':[batch.model_dump(mode='json') for batch in batches]}
                 _, retained, index_key = retain_attachments(runs, run, staged, settings, check, inventory=index, temporary=temporary)
                 records = runs.tool_evidence(run_id)
-                metadata = {'capture_index':retained[index_key]['alias'], 'capture_coverage':index['coverage']}
+                metadata = {'capture_index':retained[index_key]['alias'], 'capture_coverage':index['coverage'],
+                    'attempt_inventory':index['attempt_inventory']}
                 metadata['capture_counts'] = {status:sum(entry['status'] == status for entry in entries)
                     for status in sorted({entry['status'] for entry in entries})}
     cited = []

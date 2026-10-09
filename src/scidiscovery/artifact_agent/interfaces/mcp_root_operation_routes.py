@@ -163,6 +163,7 @@ class RootOperationRoutes:
         self._require_scheduling_enabled()
         values = dict(values)
         profile = values.pop("execution_profile", None)
+        expected_capture = values.pop("capture_policy_digest", None)
         intent = values.pop("scientific_intent", None)
         if intent is not None:
             from ..schema.scientific_progress import ScientificIntent
@@ -199,6 +200,8 @@ class RootOperationRoutes:
             raise OperationInvocationError("execution_review_not_applicable",
                 message="require_execution_review applies only to complete experiment tasks")
         if bound.compiled.spec.executor.kind != "agent":
+            if expected_capture is not None:
+                raise OperationInvocationError("capture_configuration_invalid")
             if profile is not None:
                 raise OperationInvocationError("execution_profile_not_applicable",
                     message="execution_profile applies only to Agent Runs")
@@ -224,6 +227,15 @@ class RootOperationRoutes:
             values["max_attempts"] = settings["default_max_attempts"]
         bound = replace(bound, execution_profile={key: settings[key] for key in ("profile", "sources")})
         values["execution_profile"] = settings["profile"]
+        policy = self.runs.capture_policy(bound.compiled, bound.name, instance_id=self._instance_id(),
+            recovery_source=self._resolve("run", source_name) if source_name else None)
+        digest = policy["digest"] if policy else None
+        if expected_capture is not None and expected_capture != digest:
+            raise OperationInvocationError("capture_configuration_changed",
+                message="Host capture configuration changed; preflight again before delivery")
+        if digest is not None:
+            values["capture_policy_digest"] = digest
+        bound = replace(bound, resolved_capture_policy=policy, capture_policy_resolved=True)
         return bound, values
 
     def operation_preflight(self, **values: Any) -> dict[str, Any]:
@@ -400,6 +412,8 @@ class RootOperationRoutes:
                 "operation_version": bound.compiled.spec.version,
                 "operation_digest": bound.compiled.digest,
                 "execution_profile": bound.execution_profile["profile"],
+                **({"capture_policy_digest": bound.resolved_capture_policy["digest"]}
+                   if bound.resolved_capture_policy else {}),
                 "instruction": bound.instruction,
                 **({"scientific_intent": bound.scientific_intent} if bound.scientific_intent else {}),
                 **({"require_execution_review": True} if bound.require_execution_review else {}),

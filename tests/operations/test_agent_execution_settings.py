@@ -138,7 +138,7 @@ def test_preflight_snapshot_survives_settings_change_and_submission(tmp_path, ba
         "payload": {"schema_probe": CSV_SCHEMA_PROBE, "structure": structure,
                     "interpretation": "Mean is two.", "limitations": ["Two rows."]}}))
     assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
-    saved = root.call_tool("run_status", {"name": "snapshot", "output_paths": []})
+    saved = root.call_tool("run_status", {"name": "snapshot", "intent": "status"})
     assert saved["execution_profile"]["profile"] == normalized["execution_profile"]
     next_checked = root.call_tool("operation_preflight", {**request, "name": "next"})
     assert next_checked["normalized_request"]["execution_profile"]["model"] == "gpt-5.6-sol"
@@ -158,7 +158,7 @@ def test_recovery_inherits_source_budget_and_profile_not_current_defaults(tmp_pa
     worker.call_tool("worker_open_assignment", {})
     _write_result(worker)
     old_id = worker._run_id
-    old = root.call_tool("run_status", {"name": "source", "output_paths": []})
+    old = root.call_tool("run_status", {"name": "source", "intent": "status"})
     root.call_tool("run_record_failure", {"name": "source", "reason": "fixture interruption",
         "expected_state": "running", "expected_last_activity_at": old["last_activity_at"]})
     if legacy:

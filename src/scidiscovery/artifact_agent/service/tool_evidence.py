@@ -40,7 +40,8 @@ def scientific_evidence_projection(raw):
         **{key: value for key, value in item.get("metadata", {}).items()
            if key in {"kind", "stage", "name", "derived_from", "file_name", "purpose",
                       "locator", "capture_mode", "provenance_status", "scientific_claim_admissible",
-                      "capture_index", "capture_coverage", "capture_counts", "author_cited"}}}
+                      "capture_index", "capture_coverage", "capture_counts", "author_cited",
+                      "representation", "raw_retained", "producer_trust", "execution_attestation"}}}
         for item in manifest.get("records", ())]})
 
 

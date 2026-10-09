@@ -16,7 +16,7 @@ _MACHINE_PATH = re.compile(
     rb"(?<![A-Za-z0-9_])(?:/(?:home|tmp|var|etc|Users)/[^\s\"']+|[A-Za-z]:\\(?:Users|Temp)\\[^\s\"']+)"
 )
 _SECRET = re.compile(
-    rb"(?:-----BEGIN [A-Z ]*PRIVATE KEY-----|\bAKIA[0-9A-Z]{16}\b|\bsk-[A-Za-z0-9_-]{20,}\b|(?:api[_-]?key|password|secret)\s*[:=]\s*[\"']?[A-Za-z0-9_./+=-]{12,})",
+    rb"(?:-----BEGIN [A-Z ]*PRIVATE KEY-----|\bAKIA[0-9A-Z]{16}\b|\bsk-[A-Za-z0-9_-]{20,}\b|(?:api[_-]?key|password|secret)[\"']?\s*[:=]\s*[\"']?[A-Za-z0-9_./+=-]{12,})",
     re.IGNORECASE,
 )
 
