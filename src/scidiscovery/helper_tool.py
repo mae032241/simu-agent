@@ -21,16 +21,16 @@ def call_helper(request, context):
 
 HELPER_TOOL = WorkerToolDefinition(
     name="worker_helper", capability="run.internal_helper", owner_only=True,
-    description=("Prepare a bounded question with exact materials and goal/constraints. "
+    description=("Before bulk reading, prepare one bounded question with exact materials, goal/constraints and distinct read/check scopes. "
         "Dispatch with returned frozen model/reasoning_effort and fresh context; no guessed identities or upgrades. "
         "Omit profile for configured default; inherit matches parent, lightweight requires configuration. "
-        "The helper reads its own assignment and reporting rules, sharing the parent's workspace and permissions. "
+        "The helper reads its own assignment and reporting rules, sharing workspace and permissions. "
         "One fresh helper per bounded question; integrate, then release/close. Wait natively for 60 seconds when supported; notifications return early. Avoid repeated short waits or sleeps. "
-        "Wait for completion and integrate checked findings, locators and limitations directly; reread only for a specific conflict, gap or explicit independent check. "
-        "Helper checks grant no formal qualification; you own synthesis. Independent analysis uses its own helper. "
-        "Group related materials into one question; use deterministic tools for trivial computations. "
-        "Release revokes Run tool access, not native execution; use native stop/close to terminate. "
-        "This creates no Root task, approval or formal review; no helper-result polling is needed."),
+        "Do nonoverlapping work, then integrate checked findings, locators and limitations; reread only a specific conflict, gap or independent check. "
+        "You own synthesis; checks grant no qualification. Independent analysis uses its own helper. "
+        "Group related materials; use deterministic tools for trivial computations. "
+        "Release revokes Run access, not native execution; use native stop/close to terminate. "
+        "No Root task, approval, formal review or helper-result polling is created."),
     input_model=HelperRequest, contextual_handler=call_helper,
     required_services=("worker.connections",),
 )

@@ -426,15 +426,20 @@ to the end. Reassess remaining time before further work; when the bounded answer
 or a stopping boundary is reached, deliver the evidence and limitations promptly.
 Planning targets do not cancel accepted executions or extend their authority.
 Reuse exact supplied materials, sealed conclusions, limitations and engineering
-handoff. Read needed entry points, parameters, formats and original locations;
-expand inspection for missing information, changed interfaces or risks. Keep normal
-corrections in this task. Request missing user facts or a scientific decision when
-needed, or deliver blocked/inconclusive with limitations and the remaining question.
+handoff. Start with documented entry points/help, data schema/shape and selected
+statistics, not whole datasets or CLI implementations. Delegate bulk code/log
+inspection when helpers are available; otherwise read needed ranges or report the
+gap. Inspect specific ranges for interface gaps, failures or risks. Keep corrections
+here; request missing facts or deliver blocked/inconclusive with the remaining question.
 Unavailable or unperformed execution cannot support completed. Keep stage conclusions
 concise; cite already-published exact materials when their provenance still applies.
 Publish new records/logs as attachments; new execution observations retain their
 own provenance even when bytes match. Reference originals instead of copying them
-into each narrative. Cite exact sealed materials with worker_experiment_stage.
+into each narrative. Keep complete logs on disk; show counts, key measurements,
+failures and exact locators. Batch deterministic preparation/collection until the
+next scientific decision or required seal; preserve all failed attempts and stop
+on a boundary. Do not batch past observations that should change the next trial.
+Cite exact sealed materials with worker_experiment_stage.
 When useful, a design stage may include prediction_declaration with a prediction,
 criterion and aliases of the actual conditions. A validity stage may include a
 comparison naming that exact sealed declaration and observation aliases; result
@@ -514,8 +519,10 @@ Report out-of-scope ideas or anomalies without executing them. Seal when answere
 progress, or at a budget/permission boundary; user constraints and control permissions stay
 binding; never expand budgets or retries. [w_revision_route]
 6. Plan within the controlled time budget, leaving analysis and closeout time; check deliverables
-during trials; deliver evidence and limitations promptly. Request missing facts or deliver
-blocked/inconclusive; unperformed execution cannot support completed. [w_budget, w_materials]
+during trials. Use help/schema/selected statistics before bulk data or CLI source; delegate bulk
+inspection when available, otherwise read needed ranges. Keep full logs on disk and return
+bounded results/failures; batch only until the next scientific decision or required seal.
+Unperformed execution cannot support completed. [w_budget, w_materials]
 7. Execution chain: seal implementation, run the exact source, publish logs/results, seal
 execution with native_execution, seal validity. Native claims stay unattested Worker reports; a
 missing environment supports blocked/inconclusive. Optional design prediction_declaration and

@@ -21,13 +21,13 @@ READER_CORE = ('Use native file reading/search for text, code and logs at bound 
 TOOLS_CORE = ('Before calling a tool read its complete contract: python tools/read_tool_contract.py TOOL or '
     'scid_describe; retain unchanged contracts.')
 MATERIAL_READING = (
-    'Default: use worker_helper for bulk originals/code/logs/history; group one question. '
-    'Read task/goal/constraints/contracts yourself; helpers read their reporting rules. '
+    'Default: before bulk originals/code/logs/history, use worker_helper; assign distinct read/check scopes. '
+    'Read task/goal/constraints/contracts yourself; do nonoverlapping work while it reads. '
     'One fresh helper per bounded question with fresh context; integrate, then release/close. '
     'Wait natively for 60 seconds when supported; notifications return early. '
     'Avoid repeated short waits or sleeps. '
-    'Use your helper\'s checked findings, locators and limitations directly; do not reread merely '
-    'to adopt a finding. Reopen only a specific conflict, missing support/context or an explicit independent-check requirement. '
+    'Use checked findings, locators and limitations directly; do not reread merely to adopt them. '
+    'Reopen a specific conflict/gap or explicit independent-check requirement. '
     'Delegated reading is not personal reading or formal qualification. Independent analysis uses its own helper. '
     'If helpers are unavailable/unaffordable, read only the bounded original selections needed or report the unresolved gap. '
     'This is not a tool admission gate.')

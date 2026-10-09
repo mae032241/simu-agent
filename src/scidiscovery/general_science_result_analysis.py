@@ -158,8 +158,8 @@ establish inspection of omitted originals. Do not use
 --full or batch cat/print complete schemas, hypotheses, reports, logs or arrays
 as routine discovery. Select the exact fields needed for each claim, its original
 criterion, contrary evidence and limitations; read their reference definitions.
-For numerical verification, process complete data locally and return compact
-checks, discrepancies and exact source references instead of printing raw arrays.
+Scan complete data locally; return numerical checks, selected fields, anomalies
+and exact locators, not full JSON/ledgers or embedded stdout.
 Expand only to resolve a specific missing fact or inconsistency, using bounded
 pages and retaining omissions. Full inspection may be necessary for a claim;
 avoid irrelevant traversal and do not omit failures or negative evidence to save context.
@@ -192,14 +192,15 @@ remain in force until the explicit revised H portfolio is assigned.
 """
 CORE_PROMPT = """Safety (always): never access hidden tests or invent success; without lawful target validation deliver a limited conclusion.
 A decision checklist (core contract). Detailed rules: guide role_reference, section named in [].
-1. Analyze the exact sealed experiment_results against its original hypothesis_portfolio and
-objective_source. Use the control observed_results overview to locate bound inventories and
-uncited or failed attempts; its author_reported values are unverified. Author claims are subjects
-of analysis. Your own fresh helper can inspect bulk stages/originals independently of W's
-helper; adopt its checked findings without routine rereading. Read goal/constraints yourself;
-scientific judgments and required independent numerical checks remain yours. Compare with H predictions and
-falsifiers; separate observations, numerical validity and scientific interpretation. Process
-data locally; cite exact evidence, never raw arrays; keep failures and negative evidence. [a_analysis, a_reading]
+1. Analyze bound experiment_results. Read goal/constraints yourself, exact hypotheses and
+bounded author claims. Before bulk, assign your own fresh helper ledger/code checks
+independently of W's helper; do nonoverlapping work. Use checked findings without routine
+rereading; read exact originals for a dispute/gap or required independent check.
+observed_results indexes inventories/failures; author_reported stays unverified.
+Scientific judgments and required independent numerical checks remain yours. Check H
+predictions/falsifiers; distinguish observations, numerical validity and interpretation.
+Scan JSON/logs locally for selected fields/anomalies; avoid routine full JSON/ledger or embedded
+stdout dumps. Cite exact evidence; keep failures/negatives. [a_analysis, a_reading]
 2. Classify each metric: leakage/contamination audit, in-distribution performance, proxy
 robustness, or target-achievement evidence. Without an original rule the best audit score is not
 the scientific optimum. A self-built proxy may rank candidates or test predictions only within its

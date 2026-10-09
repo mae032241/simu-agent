@@ -8,6 +8,9 @@ from pydantic import Field, model_validator
 
 from .artifact_agent.schema.common import SchemaModel
 
+REFERENCE_RESPONSE_DEFAULT_BYTES = 4096
+REFERENCE_RESPONSE_MAX_BYTES = 8192
+
 
 @dataclass(frozen=True, slots=True)
 class ReferenceRule:
@@ -57,7 +60,8 @@ class ReferenceReadRequest(SchemaModel):
     reference: str | None = Field(default=None, max_length=256, description='Exact reference handle returned by list; required for read.')
     pointer: str | None = Field(default=None, max_length=1024, description='JSON Pointer selecting a field or one inline calculation; omitted means text.')
     offset: int = Field(default=0, ge=0)
-    limit: int = Field(default=4096, ge=512, le=8192, description='Maximum encoded response bytes, including navigation.')
+    limit: int = Field(default=REFERENCE_RESPONSE_DEFAULT_BYTES, ge=512, le=REFERENCE_RESPONSE_MAX_BYTES,
+        description='Maximum encoded response bytes, including navigation and file-delivery metadata. Keep the default 4096 unless a measured response supports less; 512 may not hold one entry or file receipt. A reference_response_budget diagnostic gives an explicit limit-only retry patch for this same selection when feasible. Verify one item before batching the same budget; limits are never increased automatically.')
     cursor: int = Field(default=0, ge=0)
 
     @model_validator(mode='after')
@@ -80,10 +84,16 @@ class ReferenceReadRequest(SchemaModel):
 def reference_handler(request, context):
     response = context.read_reference(request)
     if response.get('state') == 'rejected':
+        import json
         from .operation_contract import DiagnosticError, contract_diagnostic
-        raise DiagnosticError(response['message'], details=(contract_diagnostic(
+        details = (contract_diagnostic(
             response['code'], phase='tool_execution', affected_action='tool_call',
-            path='$.reference', message=response['message'], repairable=True),))
+            path='$.reference', message=response['message'], repairable=True),)
+        if response.get('code') == 'reference_response_limit' and 'response_budget' in response:
+            details += (contract_diagnostic('reference_response_budget', phase='tool_execution',
+                affected_action='tool_call', path='$.limit', repairable=response['response_budget']['retry'] is not None,
+                message=json.dumps(response['response_budget'], separators=(',', ':'))),)
+        raise DiagnosticError(response['message'], details=details)
     return response
 
 

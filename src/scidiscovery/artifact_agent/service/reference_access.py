@@ -17,9 +17,24 @@ from ..storage.cas import CASIntegrityError
 
 
 class ReferenceAccessError(ValueError):
-    def __init__(self, code, message):
+    def __init__(self, code, message, *, response_budget=None):
         self.code = code
+        self.response_budget = response_budget
         super().__init__(message)
+
+
+def _response_limit_error(limit, response, message):
+    """Measure only an already-authorized response; never change the caller limit."""
+    from ...reference_tools import REFERENCE_RESPONSE_DEFAULT_BYTES, REFERENCE_RESPONSE_MAX_BYTES
+    minimum = len(canonical_json(response))
+    suggested = max(REFERENCE_RESPONSE_DEFAULT_BYTES, minimum) if minimum <= REFERENCE_RESPONSE_MAX_BYTES else None
+    return ReferenceAccessError('reference_response_limit', message, response_budget={
+        'requested_limit': limit, 'minimum_limit': minimum,
+        'suggested_limit': suggested, 'maximum_limit': REFERENCE_RESPONSE_MAX_BYTES,
+        'retry': {'limit': suggested} if suggested is not None else None,
+        'instruction': 'Apply retry only to this failed request; keep all other selectors unchanged. '
+            'Check one response before batching. Frozen cumulative budgets still apply.' if suggested is not None else
+            'No limit-only retry fits. Select a smaller authorized range or entry; preserve authority and omissions.'})
 
 
 def _digest(value):
@@ -667,7 +682,10 @@ class ReferenceAccessMixin:
     def _reference_settle(self, connection, value, call, response, *, request_key=None):
         encoded = canonical_json(response)
         if len(encoded) > call['response_bytes']:
-            raise ReferenceAccessError('reference_response_limit', 'Encoded reference response exceeds the requested byte budget.')
+            if response.get('state') == 'rejected':
+                raise ReferenceAccessError('reference_response_limit', 'Encoded rejection exceeds the requested byte budget.')
+            raise _response_limit_error(call['response_bytes'], response,
+                'Encoded reference response exceeds the requested byte budget.')
         self._reference_event(connection, value.run_id, 'reference_read_settled', {
             'budget_scope': call['budget_scope'], 'reservation_id': call['reservation_id'],
             'response_bytes': len(encoded), 'seconds': max(0, time.monotonic() - call['started']),
@@ -739,8 +757,13 @@ class ReferenceAccessMixin:
                     verification_scope='declaration_identity_only' if 'reference' in record else 'interpretation_unverified',
                     authority='owner_interpretation')
                 response['references'].append(item)
+                end = request.cursor + len(response['references'])
+                response.update(next_cursor=end if end < len(entries) else None, omitted=max(0, len(entries)-end))
                 if len(canonical_json(response)) > request.limit:
                     response['references'].pop()
+                    if not response['references']:
+                        raise _response_limit_error(request.limit, {**response, 'references': [item]},
+                            'Boundary directory entry needs a larger response limit.')
                     break
             if entries[request.cursor:] and not response['references']:
                 raise ReferenceAccessError('reference_response_limit', 'Boundary directory entry needs a larger response limit.')
@@ -771,7 +794,11 @@ class ReferenceAccessMixin:
                 omitted=lo < len(remaining))
             response['provided']['characters'] = lo
             if remaining and not lo:
-                raise ReferenceAccessError('reference_response_limit', 'Response budget cannot hold the selected declaration range.')
+                response.update(fragment=remaining[:1], next_offset=request.offset + 1 if len(remaining) > 1 else None,
+                    omitted=len(remaining) > 1)
+                response['provided']['characters'] = 1
+                raise _response_limit_error(request.limit, response,
+                    'Response budget cannot hold the selected declaration range.')
         with self._connect() as connection:
             connection.execute('BEGIN IMMEDIATE')
             self._reference_running(connection, value.run_id)
@@ -843,9 +870,13 @@ class ReferenceAccessMixin:
                 response = {'source': request.source, 'action': 'list', 'references': page, 'next_cursor': None, 'omitted': 0}
                 for item in items[request.cursor:request.cursor + 8]:
                     page.append(item)
-                    response.update(next_cursor=request.cursor + len(page), omitted=max(0, len(items) - request.cursor - len(page)))
+                    end = request.cursor + len(page)
+                    response.update(next_cursor=end if end < len(items) else None, omitted=max(0, len(items) - end))
                     if len(canonical_json(response)) > request.limit:
                         page.pop()
+                        if not page:
+                            raise _response_limit_error(request.limit, {**response, 'references': [item]},
+                                'This directory entry needs a larger response limit.')
                         break
                 if request.cursor < len(items) and not page:
                     raise ReferenceAccessError('reference_response_limit', 'This directory entry needs a larger response limit.')
@@ -901,7 +932,11 @@ class ReferenceAccessMixin:
                         hi = count - 1
                 response.update(fragment=remaining[:lo], next_offset=request.offset + lo if lo < len(remaining) else None, omitted=lo < len(remaining))
                 if remaining and not lo:
-                    raise ReferenceAccessError('reference_response_limit', 'Response budget cannot hold the selected range.')
+                    response.update(fragment=remaining[:1], next_offset=request.offset + 1 if len(remaining) > 1 else None,
+                        omitted=len(remaining) > 1)
+                    response['provided']['characters'] = 1
+                    raise _response_limit_error(request.limit, response,
+                        'Response budget cannot hold the selected range.')
                 response['provided']['characters'] = lo
             else:
                 if 'native_workspace' not in getattr(self.backend, 'capabilities', ()):
@@ -967,6 +1002,8 @@ class ReferenceAccessMixin:
             return response
         except (ReferenceAccessError, RunStateConflict, ValueError, KeyError, OSError, WorkspaceError, CASIntegrityError, ReferenceProofError) as error:
             response = {'state': 'rejected', 'code': getattr(error, 'code', 'reference_run_closed' if isinstance(error, RunStateConflict) else 'reference_unavailable'), 'message': str(error)}
+            if isinstance(error, ReferenceAccessError) and error.response_budget is not None:
+                response['response_budget'] = error.response_budget
             if isinstance(error, ReferenceProofError):
                 response.update(code=error.details[0]['code'], diagnostics=list(error.details))
             if source_authorized and response['code'] in {'reference_producer_missing', 'reference_manifest_unpaired'}:

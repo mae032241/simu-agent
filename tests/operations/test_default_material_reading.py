@@ -234,8 +234,9 @@ def test_complete_inventory_detail_is_preserved_at_the_advertised_pointer(tmp_pa
 
 def test_analysis_own_helper_does_not_replace_owner_judgment_or_numerical_checks():
     from scidiscovery.general_science_result_analysis import CORE_PROMPT
-    assert "Your own fresh helper" in CORE_PROMPT
-    assert "independently of W's" in CORE_PROMPT
-    assert "without routine rereading" in CORE_PROMPT
-    assert "Read goal/constraints yourself" in CORE_PROMPT
-    assert "scientific judgments and required independent numerical checks remain yours" in CORE_PROMPT
+    core = CORE_PROMPT.replace('\n', ' ')
+    assert "your own fresh helper" in core
+    assert "independently of W's" in core
+    assert "without routine rereading" in core
+    assert "Read goal/constraints yourself" in core
+    assert "Scientific judgments and required independent numerical checks remain yours" in core
