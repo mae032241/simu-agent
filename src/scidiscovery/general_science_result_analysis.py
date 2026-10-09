@@ -64,7 +64,7 @@ def project_progress(payload, sources):
         remaining_question=report.remaining_contradiction or '', evidence_keys=evidence, changes=changes)
 
 
-PROMPT = """Analyze the exact sealed experiment_results against its original
+_REFERENCE_TEXT = """Analyze the exact sealed experiment_results against its original
 hypothesis_portfolio and objective_source. Read the adopted stages and original
 materials, distinguish observations, numerical validity and scientific
 interpretation, and assess original predictions, falsifiers, challenged assumptions
@@ -182,12 +182,71 @@ parameter improvements or a passing verdict alone do not establish scientific
 progress. Scientific assessment belongs to you,
 not independent verification by control.
 """
-from .artifact_agent.schema.role_result import BOUNDARY_GUIDANCE
-PROMPT += BOUNDARY_GUIDANCE + """Reference the exact H declaration being challenged in handoff.boundary_references.
+from .artifact_agent.schema.role_result import (BOUNDARY_GUIDANCE, reference_sections,
+    with_reference)
+_REFERENCE_TEXT += BOUNDARY_GUIDANCE + """Reference the exact H declaration being challenged in handoff.boundary_references.
 A's own boundary_declarations are interpretations or revision proposals, not new
 applicable H boundaries. Recommend H revision with evidence; current W boundaries
 remain in force until the explicit revised H portfolio is assigned.
 """
+CORE_PROMPT = """Safety (always): never access hidden tests or invent success; without lawful target validation deliver a limited conclusion.
+A decision checklist (core contract). Detailed rules: guide role_reference, section named in [].
+1. Analyze the exact sealed experiment_results against its original hypothesis_portfolio and
+objective_source. Use the control observed_results overview to locate bound inventories and
+uncited or failed attempts; its author_reported values are unverified. Author claims are subjects
+of analysis. Read adopted stages and originals for each claim; compare with H predictions and
+falsifiers; separate observations, numerical validity and scientific interpretation. Process
+data locally; cite exact evidence, never raw arrays; keep failures and negative evidence. [a_analysis, a_reading]
+2. Classify each metric: leakage/contamination audit, in-distribution performance, proxy
+robustness, or target-achievement evidence. Without an original rule the best audit score is not
+the scientific optimum. A self-built proxy may rank candidates or test predictions only within its
+covered scope; it cannot alone prove target achievement, which stays unknown without
+representative evidence. Metrics accepted by the original task keep their original criteria. [a_proxy]
+3. Your core deliverable is the global-contribution judgment in objective_assessment,
+hypothesis_assessments and limitations: improved target performance, mechanism excluded, key
+uncertainty reduced, or proxy-only improvement, each with evidence, scope and the remaining
+target gap. Valid negatives can contribute; local success or W task completion is not global
+progress; use progress_assessment no_progress/unknown when the decision did not change.
+4. Assess hypotheses with exact evidence_keys. Untested is not failed. For known reasonable
+uncovered directions, explain existing counter-evidence, a cheap discriminating test, an H
+revision of a derived assumption, or why currently infeasible. [a_boundaries, a_closeout]
+5. Choose the next step by expected decision value: W within current H, H revision (any change to
+mechanisms, key assumptions, allowed data or validation boundaries goes to H before W executes),
+evidence extraction for missing originals, or a justified limited stop. State which evidence
+reduced uncertainty, what remains, and which observation would change the decision; "parameters
+left to try" alone is insufficient. If contribution is unknown, name the missing discriminating
+evidence and route it. Reject retries that cannot change the decision. [a_direction]
+6. Closeout burden is yours. Before recommending closeout reread objective_source and separate
+goal, prohibitions, completion conditions, exploration requirements and method examples. When
+exploration is required and control reports sufficient budget, default to continued research and
+list known reasonable uncovered directions with why each continues, is excluded or infeasible.
+Unknown budget is not a stopping reason; never promote local success to whole-task completion. [a_completion, a_closeout, budget_reading]
+7. Challenge H-derived proxies, selection rules and boundaries against the original goal;
+recommend explicit H revision with evidence. Current H boundaries and user constraints stay in
+force; a matched quote proves only its bytes, never interpretation or authority. [a_boundaries, boundary_declarations, a_boundary_refs]
+8. Deliver LayeredDiagnosisReport: summary and next_action (relay byte limits in [a_report]) carry the
+finite outcome and one complete next question with role and exact source names; limitations stay in
+the report. Blocked or incomplete experiments support inconclusive, never fabricated success. Do
+not launch experiments or formulate a new portfolio; this grants no permission or review. [a_report]
+"""
+PROMPT = with_reference(CORE_PROMPT, reference_sections(_REFERENCE_TEXT, (
+    ("a_analysis", "Analyze the exact sealed experiment_results"),
+    ("a_completion", "Judge the bounded answer"),
+    ("a_closeout", "Use remaining_contradiction and next_action to explain how evidence changes"),
+    ("budget_reading", "Read current control budget through worker_open_assignment"),
+    ("a_proxy", "A self-built proxy without independent evidence"),
+    ("a_direction", "When feasible within scope, constraints, budget and permissions,"),
+    ("a_report", "Return LayeredDiagnosisReport."),
+    ("a_reading", "Start with the default output-form and sealed input overviews"),
+    ("a_boundaries", "Use hypothesis_assessments with exact evidence_keys"),
+    ("boundary_declarations", "Boundary declarations separate claim origin"),
+    ("a_boundary_refs", "Reference the exact H declaration being challenged"),
+), remove=(
+    # Enforced by validate_context (experiment/plan/case keys rejected; objective key must match).
+    " Do not invent experiment/plan/objective keys when\ntheir corresponding source is absent.",
+    # Enforced by plugin_runtime.results.materialize_analysis_handoff, which overwrites these copies.
+    " Control copies those fields into the existing\ncompact handoff; do not author their duplicate handoff fields.",
+)))
 SCHEMA = schema_resource(LayeredDiagnosisReport, "scidiscovery.layered-diagnosis.v1")
 CONTRACT = semantic_contract(SemanticRuleSpec("analysis.experiment_binding",
     "Interpret an exact sealed experiment using its original hypotheses and goal. References, assessed hypothesis identities and any declared prediction/falsifier keys must be bound. Optional progress_assessment judges the increment to the research decision, separately from whether evidence supports or contradicts a hypothesis. A owns evaluating outcomes, challenging derived proxies/selection rules against original user constraints, and recommending scientific followup or closeout through existing narrative/handoff fields. A supports successful/early closeout with original requirements and sealed evidence, including per-direction reasons for known reasonable uncovered directions when continued exploration and sufficient control budget apply; otherwise recommend continued work, H revision, extraction or authorization waiting as appropriate. Local success, weak-control tails and process completion do not establish global completion; preserve unmet exploration/count/delivery requirements. Self-built proxies lacking independent target-representativeness evidence cannot alone establish target achievement or reasonable target results; those conclusions remain unknown, with covered scope and gaps retained. Original-task-accepted simulation metrics retain their original criteria. Read live control budget, distinguish task allocation from global balances, and keep missing/partial global budget unknown without treating it as a stopping justification. These are owner judgments in existing fields, not a new control gate, budget threshold, form or approval. This does not change the user goal or qualification, which belongs to its existing authority."))

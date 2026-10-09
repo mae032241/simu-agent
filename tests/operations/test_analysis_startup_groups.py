@@ -48,19 +48,32 @@ def test_published_failure_materials_remain_discoverable_and_readable_from_group
     restored = []
     for entry in core:
         full = next(item for item in assignment['inputs'] if item['source_name'] == entry['source_name'])
-        assert all(full[key] == value for key, value in entry.items() if key != 'scientific_overview_available')
+        assert all(full[key] == value for key, value in entry.items() if key not in ('scientific_overview_available', 'text'))
+        if 'text' in entry:  # A tiny input's complete exact original.
+            assert entry['text'].encode() == f.runtime.artifacts.read(next(item.artifact_ref for item in
+                f.runtime.runs.status(analyst._run_id).inputs if item.source_name == entry['source_name']))
         if entry.get('scientific_overview_available'):
             assert 'scientific_view' in full and 'scientific_view' not in entry
         restored.append(full)  # Existing same_source_as may omit repeated readable metadata.
     # Every returned exact pointer is an existing reader selection, not an
     # invented INDEX, port name or template-relative number.
     for group in groups:
-        assert group['count'] == len(group['pointers'])
-        command = shlex.split(group['read'])
-        reply = subprocess.run([sys.executable, *command[1:]], cwd=workspace,
-            text=True, capture_output=True, timeout=10, check=True)
-        assert json.loads(body(reply.stdout)) == json.loads(body(read(workspace,
-            'assignment.json', pointers=[group['pointers'][0]])))
+        if 'members' in group:
+            # Every member once by exact source_name, in pointer order; shared fields once.
+            shared = {key: value for key, value in group.items() if key not in ('pointers', 'members')}
+            assert len(group['members']) == len(group['pointers'])
+            for pointer, member in zip(group['pointers'], group['members']):
+                full = assignment['inputs'][int(pointer.rsplit('/', 1)[1])]
+                assert member['source_name'] == full['source_name']
+                assert all(full[key] == value for key, value in {**shared, **member}.items()
+                    if key not in ('text', 'same_source_as', 'scientific_overview_available'))
+        else:
+            assert group['count'] == len(group['pointers'])
+            command = shlex.split(group['read'])
+            reply = subprocess.run([sys.executable, *command[1:]], cwd=workspace,
+                text=True, capture_output=True, timeout=10, check=True)
+            assert json.loads(body(reply.stdout)) == json.loads(body(read(workspace,
+                'assignment.json', pointers=[group['pointers'][0]])))
         for pointer in group['pointers']:
             entry = json.loads(body(read(workspace, 'assignment.json', pointers=[pointer], budget=8192)))
             assert entry == assignment['inputs'][int(pointer.rsplit('/', 1)[1])]

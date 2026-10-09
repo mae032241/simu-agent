@@ -54,8 +54,13 @@ def test_analysis_start_is_complete_without_reading_other_owner_instructions(tmp
     reader_settings = root / 'tools/input-reader-settings.json'
     assert json.loads(reader_settings.read_text())['startup_page_bytes'] == MaterialInputSettings().startup_read_page_bytes
     assert not reader_settings.stat().st_mode & 0o222
-    for key in ('instruction', 'role_instructions', 'inputs', 'tools'):
+    for key in ('instruction', 'role_instructions', 'tools'):
         assert start[key] == assignment[key]
+    # A tiny input may carry its complete exact original inline; metadata is unchanged.
+    assert [{k: v for k, v in item.items() if k != 'text'} for item in start['inputs']] == assignment['inputs']
+    for item in start['inputs']:
+        if 'text' in item:
+            assert item['text'].encode() == (root / item['relative_path']).read_bytes()
     assert 'tool_contracts' not in start
     assert list(start).index('instruction') < list(start).index('inputs') < list(start).index('output')
     if 'attempt_memory' in start:

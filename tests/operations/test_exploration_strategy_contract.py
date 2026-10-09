@@ -321,6 +321,7 @@ def test_feedback_policy_and_existing_stage_evidence_reach_independent_analysis(
 
 
 def _assert_closeout_policy(role):
+    raw = role
     role = " ".join(role.split())
     for clause in (
         "A bears the burden of supporting successful closeout, especially early closeout",
@@ -340,6 +341,9 @@ def _assert_closeout_policy(role):
         "without accessing hidden tests or inventing success",
     ):
         assert clause in role
+        # Structure: each clause is in the compact core or a core-tagged on-demand section.
+        from tests.operations.test_minimum_support import reachable
+        reachable(raw, clause)
 
 
 def test_closeout_policy_reaches_compiled_analysis_and_neutral_consumers(catalog):
@@ -400,8 +404,9 @@ def test_exact_analysis_delivers_closeout_gap_and_owner_direction_without_new_ga
     _assert_closeout_policy(assignment["role_instructions"])
     source = next(item for item in assignment["inputs"] if item["source_name"] == "objective_source")
     assert (Path(opened["workspace_path"]) / source["relative_path"]).read_text() == original
-    assert opened["budget"]["source"] == "control" and opened["budget"]["loop"] is None
-    assert "remaining_tokens" not in opened["budget"]  # Local TTL cannot invent global sufficiency.
+    budget = json.loads(Path(opened["start_here_path"]).read_bytes())["budget"]
+    assert budget["source"] == "control" and budget["loop"] is None
+    assert "remaining_tokens" not in budget  # Local TTL cannot invent global sufficiency.
     successful = decision == "success"
     report = {"summary": "Original accepted metric and delivery supported." if successful else "Local pass; global requirements remain open.",
         "overall_verdict": "pass" if decision in {"success", "continue"} else "inconclusive",

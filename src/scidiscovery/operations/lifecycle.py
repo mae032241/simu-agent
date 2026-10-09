@@ -29,7 +29,7 @@ AGENT_LIFECYCLE_PROTOCOL = AgentLifecycleProtocol(
             name="worker_open_assignment",
             description=(
                 "Open the exact Run assignment and materialize its private "
-                "read-only inputs. Returns the current original budget; an enabled experiment-owner checkpoint is a safe-boundary reminder, not a new deadline."
+                "read-only inputs. Read the returned start_here_path as the canonical task entry, including the refreshed complete original budget and narrative instruction. The reply carries current remaining_seconds and deadline_at; an enabled experiment-owner checkpoint is a safe-boundary reminder, not a new deadline."
             ),
             input_schema_sha256=_INPUT_SCHEMA_DIGEST,
             capability="run.open_assignment",

@@ -127,9 +127,10 @@ def test_preflight_snapshot_survives_settings_change_and_submission(tmp_path, ba
     worker = LocalWorkerMCPRouter(runtime.runs,
         operation_id=compiled.spec.operation_id, operation_digest=compiled.digest)
     opened = worker.call_tool("worker_open_assignment", {})
-    assert "简体中文" in opened["narrative_instruction"]
+    start = json.loads(Path(opened["start_here_path"]).read_text())
+    assert "简体中文" in start["narrative_instruction"] and "narrative_instruction" not in opened
     assignment = json.loads(Path(opened["assignment_path"]).read_text())
-    assert assignment["narrative_instruction"] == opened["narrative_instruction"]
+    assert assignment["narrative_instruction"] == start["narrative_instruction"]
     assert "role_instructions_sha256" not in opened
     assert "input_reading" not in opened
     structure = worker.call_tool("worker_csv_summarize", {})

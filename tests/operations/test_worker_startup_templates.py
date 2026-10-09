@@ -197,7 +197,18 @@ def test_startup_navigation_and_page_limits_work_with_frozen_cli(analysis_inputs
     (workspace.root/item['relative_path']).write_bytes(contents[item['source_name']])
     start_path = worker_start.write_worker_start(workspace, original, startup_page_bytes=16384)
     start = json.loads(start_path.read_bytes())
-    assert '512..8192 bytes' in start['reading']['inputs']
+    assert '--budget 512..8192' in start['reading']['inputs']
+    # The complete reader guidance remains one exact read away.
+    context = json.loads((workspace.root/'worker-context.json').read_bytes())
+    assert '512..8192 bytes' in context['guides']['reader']
+    guides = {item['name']: item for item in start['guides']}
+    assert guides['reader'] == dict(name='reader', size_bytes=len(context['guides']['reader'].encode()),
+        read='python tools/read_input.py worker-context.json --file --pointer /guides/reader')
+    # Every advertised guide is one exact read of the frozen context, sized as stated.
+    for name, guide in guides.items():
+        assert guide['read'].endswith('/guides/' + name) or name == 'role_reference'
+        if isinstance(context['guides'][name], str):
+            assert guide['size_bytes'] == len(context['guides'][name].encode())
     assert '/inputs/INDEX/' not in start['reading']['inputs']
     assert 'input_templates[INDEX]' not in start['reading']['inputs']
     selected = next(value for value in expand(start) if value['source_name'] == item['source_name'])

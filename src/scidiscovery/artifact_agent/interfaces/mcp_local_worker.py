@@ -532,15 +532,24 @@ class LocalWorkerMCPRouter:
         assignment['budget'] = budget
         assignment['attempt_memory'] = self.runs.worker_memory(self._run_id)
         contracts = self._tool_contract_location(assignment)
-        from ..service.worker_start import write_worker_start
+        from ..service.worker_start import write_worker_start, open_support
+        try:
+            assignment.update(open_support(self.runs, status, assignment))
+        except Exception as error:  # noqa: BLE001 - orientation never blocks open
+            # The frozen inputs remain complete and readable; owners see an explicit
+            # unavailable marker instead of mistaking absence for nothing to report.
+            assignment['support_status'] = {key: 'unavailable:generation_error:' + type(error).__name__
+                for key in ('exact_duplicates', 'inline_inputs', 'observed_results')}
+            assignment['support_status']['basis'] = ('Listed startup aids were not generated; their content is '
+                'unknown, not empty. Every bound original remains readable.')
         from ...agent_execution_settings import MaterialInputSettings
         reading = MaterialInputSettings.model_validate((status.recovery_policy or {}).get('input_materials', {}))
         contracts['start_here_path'] = str(write_worker_start(self._workspace, assignment,
             startup_page_bytes=reading.startup_read_page_bytes))
+        # worker-start.json is the canonical entry: it carries the refreshed complete
+        # budget and narrative instruction once; the reply keeps current scalars.
         return {
             "state": "opened",
-            "narrative_instruction": narrative_instruction(
-                status.execution_profile["profile"] if status.execution_profile else None),
             "workspace_path": str(self._workspace.root),
             "assignment_path": str(self._workspace.assignment_path),
             **self._input_reading_hint(),
@@ -552,7 +561,7 @@ class LocalWorkerMCPRouter:
                 if self._workspace.domain_workspace_path is None
                 else str(self._workspace.domain_workspace_path)
             ),
-            "remaining_seconds": budget['remaining_seconds'], "budget": budget,
+            "remaining_seconds": budget['remaining_seconds'], "deadline_at": budget['deadline_at'],
             **({"recovery_evidence": evidence} if (evidence := self.runs.recovery_evidence_status(status)) is not None else {}),
         }
 

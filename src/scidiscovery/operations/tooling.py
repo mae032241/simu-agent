@@ -124,6 +124,11 @@ def operation_role_instructions(compiled: CompiledOperation) -> str:
     capability = compiled.spec.executor.capability
     if capability is not None:
         selected = compiled.implementations[f"{capability.plugin_id or compiled.plugin_id}:{capability.component_id}"]
+        from ..artifact_agent.schema.role_result import REFERENCE_MARKER
+        if prompt.count(REFERENCE_MARKER) == 1:
+            # Capability rules belong to the core contract, ahead of on-demand reference sections.
+            core, reference = prompt.split(REFERENCE_MARKER)
+            return core.rstrip() + "\n" + selected.instructions + "\n" + REFERENCE_MARKER + reference
         prompt += "\n" + selected.instructions
     return prompt
 

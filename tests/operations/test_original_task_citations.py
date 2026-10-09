@@ -75,6 +75,9 @@ def test_plain_heading_quote_and_original_exploration_survive_h_w_a(tmp_path, oc
     assert 'original goal, prohibitions,' in h_assignment['role_instructions']
     assert 'completion conditions, exploration requirements and method examples' in h_assignment['role_instructions']
     assert 'State\nunknown coverage honestly' in h_assignment['role_instructions']
+    from tests.operations.test_minimum_support import reachable
+    for clause in ('original goal, prohibitions,', 'State unknown coverage honestly'):
+        reachable(h_assignment['role_instructions'], clause)
     schema = json.loads((Path(h_opened['workspace_path']) / 'schema/result.schema.json').read_text())
     assert 'never falls back' in schema['$defs']['SourceReference']['properties']['locator']['description']
     public = result(call(gateway, 'run_status', dict(name='H')))['scheduler_signal']['boundary_declarations'][0]
@@ -103,6 +106,8 @@ def test_plain_heading_quote_and_original_exploration_survive_h_w_a(tmp_path, oc
     assert (Path(a_opened['workspace_path']) / original['relative_path']).read_text() == text
     assert 'Before recommending closeout, reread relevant objective_source originals' in a_assignment['role_instructions']
     assert 'exploration\nrequirements and method examples' in a_assignment['role_instructions']
+    from tests.operations.test_minimum_support import reachable
+    reachable(a_assignment['role_instructions'], 'Before recommending closeout, reread relevant objective_source originals')
     a_boundary, _ = full_boundary(a_worker, source='hypothesis_portfolio', key='exploration')
     assert a_boundary['source_checks'] == public['source_checks']
     deliver(a_worker, a_opened, dict(summary='Original exploration coverage remains unknown.',

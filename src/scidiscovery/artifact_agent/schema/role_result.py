@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from typing import Annotated, Any, Generic, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -113,6 +115,46 @@ worker_reference_read(view="boundaries"); follow returned continuation. This is
 separate from original payload pointers. Keep assumptions/missing_inputs as strings.
 Unassociated or omitted original scope/basis stays attributed to its producer and source-unverified; this directory does not exhaust all boundary prose.
 """
+
+# A compiled role prompt may carry its complete detailed rules after this
+# marker. The frozen assignment keeps every byte; a current startup delivers
+# the core checklist and serves each named section on demand, once.
+REFERENCE_MARKER = "\n[[on-demand reference]]\n"
+_SECTION = re.compile(r"^## ([a-z][a-z0-9_]*)\n", re.MULTILINE)
+
+
+def reference_sections(text: str, anchors: tuple[tuple[str, str], ...], *, remove: tuple[str, ...] = ()) -> dict[str, str]:
+    """Split one existing prompt at exact anchor phrases; every byte is assigned once."""
+    for sentence in remove:
+        if text.count(sentence) != 1:
+            raise ValueError(f"reference removal is not unique: {sentence[:40]!r}")
+        text = text.replace(sentence, "")
+    positions = []
+    for name, anchor in anchors:
+        if text.count(anchor) != 1:
+            raise ValueError(f"reference anchor is not unique: {name}")
+        positions.append(text.index(anchor))
+    if positions != sorted(positions) or text[:positions[0]].strip():
+        raise ValueError("reference anchors must cover the text in order")
+    bounds = positions + [len(text)]
+    return {name: text[bounds[i]:bounds[i + 1]].strip() for i, (name, _) in enumerate(anchors)}
+
+
+def with_reference(core: str, sections: dict[str, str]) -> str:
+    return core.rstrip() + "\n" + REFERENCE_MARKER + "".join(
+        f"## {name}\n{body.strip()}\n\n" for name, body in sections.items())
+
+
+def split_reference(text: str) -> tuple[str, dict[str, str] | None]:
+    if text.count(REFERENCE_MARKER) != 1:
+        return text, None
+    core, reference = text.split(REFERENCE_MARKER)
+    parts = _SECTION.split(reference)
+    if parts[0].strip() or len(parts) < 3:
+        return text, None
+    sections = {parts[i]: parts[i + 1].strip() for i in range(1, len(parts), 2)}
+    return core.rstrip() + "\n", sections
+
 
 __all__ = [
     "FormModel",

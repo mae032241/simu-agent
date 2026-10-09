@@ -48,13 +48,15 @@ def test_analysis_sees_earliest_authorized_deadline_and_live_remaining(loop_ui):
     deadline = p.root.call_tool('progression_status', {})['budget']['deadline_at']
     assert frozen['budget']['deadline_at'] == deadline
     assert datetime.fromisoformat(frozen['budget']['run_deadline_at'].replace('Z', '+00:00')) > datetime.fromisoformat(deadline)
-    assert opened['budget']['deadline_at'] == deadline
+    assert opened['deadline_at'] == deadline
     assert opened['remaining_seconds'] <= 100
-    assert json.loads(Path(opened['start_here_path']).read_text())['budget'] == opened['budget']
+    budget = json.loads(Path(opened['start_here_path']).read_text())['budget']
+    assert budget['deadline_at'] == deadline
+    assert budget['remaining_seconds'] == opened['remaining_seconds']
     p.now[0] += 30
     later = worker.call_tool('worker_open_assignment', {})
     assert later['remaining_seconds'] <= 70
-    assert later['budget']['loop']['enabled_remaining_seconds'] == 170
+    assert json.loads(Path(later['start_here_path']).read_text())['budget']['loop']['enabled_remaining_seconds'] == 170
     assert json.loads(Path(opened['assignment_path']).read_text()) == frozen
     pulse = worker.call_tool('worker_heartbeat', {})
     assert pulse['remaining_seconds'] == later['remaining_seconds']
@@ -69,7 +71,7 @@ def test_reopen_pause_new_authorization_cannot_refill_existing_worker(loop_ui):
     start(p, mode='interactive')
     worker, opened = analysis(p)
     identity = checkpoint(p)['current_loop_id']
-    deadline = opened['budget']['deadline_at']
+    deadline = opened['deadline_at']
     p.now[0] += 20
     p.root.call_tool('progression_command', dict(command='pause'))
     reopened = SchedulerBindingService(p.runtime.scheduler_bindings.database_path)
@@ -97,9 +99,9 @@ def test_ordinary_worker_keeps_run_deadline_and_reports_unknown_outer(loop_ui):
     p.now[0] = time.time()
     p.root.call_tool('progression_command', dict(command='resume'))
     worker, opened = analysis(p)
-    budget = opened['budget']
+    budget = json.loads(Path(opened['start_here_path']).read_text())['budget']
     assert budget['deadline_at'] == budget['run_deadline_at']
     assert budget['loop'] is None
     assert budget['external_host_deadline'] == 'unknown'
     assert opened['remaining_seconds'] > 100
-    assert worker.call_tool('worker_open_assignment', {})['budget']['deadline_at'] == budget['deadline_at']
+    assert worker.call_tool('worker_open_assignment', {})['deadline_at'] == budget['deadline_at']

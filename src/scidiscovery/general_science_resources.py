@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from .artifact_agent.schema.role_result import BOUNDARY_GUIDANCE
+from .artifact_agent.schema.role_result import BOUNDARY_GUIDANCE, reference_sections, with_reference
 from .artifact_agent.schema.cognitive import CriticReview, EvidenceAudit, HypothesisProposal
 from .artifact_agent.schema.research_cycle import ProblemFrame, ScientificFoundation, ScientificIntake
 from .artifact_agent.schema.scientific_foundation import FOUNDATION_RULES
@@ -171,6 +171,76 @@ reviews are not inherited.
 
 IDEATOR_PROMPT += BOUNDARY_GUIDANCE
 
+H_CORE_PROMPT = """Own this task's scientific conclusion from the exact objective, progress and bound
+user_context; user claims, old verdicts and producer handoffs are not verified evidence, review or
+approval. Preserve gaps; separate missing evidence from infeasible work; extra checks must be able
+to change a conclusion; deliver bounded findings, never invented success. Only the scheduler selects
+tasks; declared qualification and execution policies apply. Follow the startup entry and the
+authoring form; read originals for claims; repair declared errors from their field paths and rule
+IDs, never from framework source. [work_context]
+Safety (always): do not infer shared chat or missing facts; global context grants no additional
+authority; backend instructions own filesystem, tool and lifecycle permissions; preserve new external
+factual support with the declared source tool before citing; revising an H-derived restriction never
+permits forbidden data or methods.
+H decision checklist (core contract). Detailed rules: guide role_reference, section named in [].
+1. Understand the exact original goal: on first understanding separate goal, prohibitions,
+completion conditions, exploration requirements and method examples; examples impose no method;
+preserve explicit user restrictions and control permissions. Cite exact quotes through
+boundary_declarations and handoff.boundary_references instead of copying a requirements list;
+unknown coverage stays unknown. Reuse existing structured frames and qualified foundations with
+their exact objective key. [h_understanding, boundary_declarations]
+2. Propose a small ordered portfolio of testable mechanisms for the current contradiction; each
+states mechanism, bounded parameters, observable predictions, explicit falsifiers, competitors,
+scope and only exact supporting source keys. Name what the next experiment can discriminate and
+what evidence would force revision; no method catalogue needs exhausting. [h_portfolio, h_hypothesis_content]
+3. Optimization goals need at least one mechanism addressing the target conditions or their key
+failure: explain current versus target conditions, the key difference, assumptions and observations
+separating support from rejection; unknown differences stay explicit testable assumptions. Renamed
+methods or new hyperparameters are not new mechanisms; never invent candidates to fill counts; a
+pure diagnosis needs no solution mechanism. [h_target_coverage]
+4. Own portfolio exploration: priority order, deferred branches and why, and when to invest or hand
+back. Explain deferred branches from the exact supplied evidence. Own evaluation proxies and
+selection rules, separate from user constraints. [h_portfolio]
+5. Declare mechanism, key-assumption, allowed-data and validation boundaries in hypotheses and
+narratives; stage_objective is only this stage's goal (control binds the global objective); leave
+numerics and implementation to design; no exploratory execution beyond declared native
+permissions. [h_boundaries, h_stage_goal]
+6. With feedback bound, compare it with previous_hypotheses and the original frame; separate
+observations, interpretations, implementation failures and mechanism evidence; scope negatives to
+the tested route; suspend or retire failed routes; seek a distinct feasible mechanism and minimal
+discriminator; keep the best eligible candidate, user constraints and negatives; revise derived
+proxies or boundaries explicitly (boundary_declarations.revises), never the user goal. [h_revision]
+7. Evidence need is yours: explain sufficiency, or request a complete extraction question with exact
+materials (preserve extraction, H, W, A). Factual premises need exact evidence; uncertain ones are
+conditional hypotheses. If no justified mechanism or test is feasible, report the specific missing
+input, permission/budget limit or gap; an empty portfolio cannot start an experiment. [h_evidence]
+8. Handoff: summary and next_actions (primary first; relay byte limits in [h_handoff]) give
+conclusions, limitations, one next question, role and exact source names. Reusable diagnostics:
+publish files and locate entry, formats and risks; they are not executed experiments. [h_handoff, h_engineering]
+9. A matched quote proves only its bytes, never interpretation or authority; untagged scope stays
+your attributed interpretation. [boundary_declarations]
+"""
+IDEATOR_PROMPT = with_reference(H_CORE_PROMPT, reference_sections(OPERATION_AGENT_PREAMBLE + IDEATOR_PROMPT, (
+    ("work_context", "Own the scientific conclusion of this complete task."),
+    ("h_portfolio", "Return exactly one RoleResultEnvelope"),
+    ("h_understanding", "When subject contains the original task, own"),
+    ("h_target_coverage", "For an optimization or improvement goal"),
+    ("h_boundaries", "Declare mechanism, key-assumption, allowed-data"),
+    ("h_stage_goal", "Control binds the immutable global objective."),
+    ("h_engineering", "When engineering calculations or diagnostics can be reused"),
+    ("h_hypothesis_content", "Each hypothesis must state its mechanism"),
+    ("h_revision", "When feedback is bound, compare it with previous_hypotheses"),
+    ("h_handoff", "Use existing handoff.summary/assumptions"),
+    ("h_evidence", "H may extract boundaries directly"),
+    ("boundary_declarations", "Boundary declarations separate claim origin"),
+), remove=(
+    # Enforced by general_science_components._hypothesis_objective_context (original-text keys rejected)
+    # and by control-owned foundation qualification.
+    "An original-text task has no structured research_objective_key; never invent one\nor manufacture a qualified foundation. ",
+    # Enforced by exact-subject review matching (runs.latest review requires subjects == [exact ref]).
+    "; prior\nreviews are not inherited",
+)))
+
 CRITIC_PROMPT = """Return exactly one RoleResultEnvelope whose payload is the
 CriticReview required by the schema identified by assignment.output.schema_path. Independently review every exact
 hypothesis only for physical plausibility, logical falsifiability, and whether
@@ -293,7 +363,7 @@ class Resources:
     evidence_audit_schema = schema_resource(EvidenceAudit, "scidiscovery.evidence-audit.v1")
 
     evidence_prompt = OPERATION_AGENT_PREAMBLE + EVIDENCE_PROMPT
-    ideator_prompt = OPERATION_AGENT_PREAMBLE + IDEATOR_PROMPT
+    ideator_prompt = IDEATOR_PROMPT  # Core includes the compact preamble; full text is its work_context section.
     critic_prompt = OPERATION_AGENT_PREAMBLE + CRITIC_PROMPT
     auditor_prompt = OPERATION_AGENT_PREAMBLE + AUDITOR_PROMPT
 

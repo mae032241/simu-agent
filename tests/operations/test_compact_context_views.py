@@ -71,16 +71,20 @@ def test_real_worker_snapshot_expands_current_memory_without_rewriting_assignmen
     assert json.loads(body(complete.stdout)) == current['failure_boundaries']
     assert '--selection' in reply.stdout and 'next_offset' in reply.stdout
     assert len(reply.stdout.encode()) <= 8192
-    for key in ('instruction', 'scientific_intent', 'role_instructions', 'inputs',
+    for key in ('instruction', 'scientific_intent', 'role_instructions',
                 'execution_requirements', 'task_network_policy', 'revision', 'recovery_draft'):
         assert start.get(key) == assignment.get(key)
-    assert start['budget'] == reopened['budget']
+    assert [{k: v for k, v in item.items() if k != 'text'} for item in start['inputs']] == assignment['inputs']
+    # The canonical startup carries the refreshed complete budget once; open keeps scalars.
+    assert start['budget']['remaining_seconds'] == reopened['remaining_seconds']
+    assert start['budget']['deadline_at'] == reopened['deadline_at']
+    assert 'budget' not in reopened and 'narrative_instruction' not in reopened
     assert (workspace/'assignment.json').read_bytes() == original_assignment
     assert not (workspace/'worker-context.json').stat().st_mode & 0o222
-    complete = startup_document({**assignment, 'budget': reopened['budget'], 'attempt_memory': current},
+    complete = startup_document({**assignment, 'budget': start['budget'], 'attempt_memory': current},
         json.loads((workspace/'domain-workspace.json').read_bytes()))
     assert len(canonical_json(start)) < len(canonical_json(complete)) - 8000
-    assert set(context) == {'attempt_memory'}
+    assert set(context) == {'attempt_memory', 'guides'}
 
 
 def test_root_overviews_preserve_new_decisions_and_retain_exact_status_navigation(progression):

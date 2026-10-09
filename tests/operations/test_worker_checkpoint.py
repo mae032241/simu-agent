@@ -73,7 +73,8 @@ def test_actual_startup_heartbeat_stage_and_safe_boundary(tmp_path, interval):
     assert stage['state'] == 'sealed' and stage['checkpoint'] == due['checkpoint']
     assert worker.call_tool('worker_experiment_stage', {'stage': 'validity',
         'conclusion': 'Cheap discriminator under original criterion remains useful.', 'remaining_question': 'Check the bounded contrast.'}) == stage
-    assert worker.call_tool('worker_open_assignment', {})['budget']['checkpoint'] == due['checkpoint']
+    opened = worker.call_tool('worker_open_assignment', {})
+    assert json.loads(Path(opened['start_here_path']).read_bytes())['budget']['checkpoint'] == due['checkpoint']
     assert runtime.runs.status(worker._run_id).state == 'running'
     assert due['deadline_at'] == before['deadline_at'] and due['remaining_seconds'] <= before['remaining_seconds'] - interval
     private = runtime.runs.status(worker._run_id)
@@ -99,7 +100,8 @@ def test_frozen_original_loop_and_legacy_missing_field(tmp_path):
     with pytest.raises(SchedulerInstanceConflict, match='requires resolved work'):
         authorize_loop(runtime, instance.instance_id, root.facade.session_key, 'goal')
     now[0] += 30
-    budget = worker.call_tool('worker_open_assignment', {})['budget']
+    opened = worker.call_tool('worker_open_assignment', {})
+    budget = json.loads(Path(opened['start_here_path']).read_bytes())['budget']
     assert budget['loop']['id'] == old_loop and budget['checkpoint']['interval_seconds'] == 30
     assert budget['checkpoint']['index'] == 1 and budget['run_deadline_at'] == run.deadline_at
     row = bindings.progression_status(instance_id=instance.instance_id, internal=True)

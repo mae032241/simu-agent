@@ -372,7 +372,7 @@ def finalize(request):
     return finalize_result(request, project)
 
 
-PROMPT = """Own one bounded experiment for one answerable scientific question:
+_REFERENCE_TEXT = """Own one bounded experiment for one answerable scientific question:
 design, implement, debug when useful, execute locally with the native shell or
 available remote tools, retain observations and judge validity. Test the exact
 sealed hypotheses in hypothesis_portfolio; own feasibility and test design.
@@ -478,13 +478,73 @@ Independent review is optional unless an applicable declared policy requires it.
 When worker_experiment_execute is available, read its complete contract before
 remote work; it owns the applicable review, authorization and recovery rules.
 """
-from .artifact_agent.schema.role_result import BOUNDARY_GUIDANCE
-PROMPT += BOUNDARY_GUIDANCE + """All current boundaries in the exact assigned H portfolio remain applicable to W,
+from .artifact_agent.schema.role_result import (BOUNDARY_GUIDANCE, reference_sections,
+    with_reference)
+_REFERENCE_TEXT += BOUNDARY_GUIDANCE + """All current boundaries in the exact assigned H portfolio remain applicable to W,
 including derived or source-unverified ones. Choose methods inside them. Report
 ideas or source doubts through A; a proposed change requires H's explicit sealed
 revision before executing the changed direction. Your declarations describe your
 findings or proposals, not a replacement H boundary or control policy.
 """
+CORE_PROMPT = """Safety (always): use only the data and methods H and the user allow; never use hidden tests or held-out
+targets outside the allowed data, never leak evaluation data into fitting, never invent success;
+user constraints and control permissions stay binding.
+W decision checklist (core contract). Detailed rules: guide role_reference, section named in [].
+1. Own one bounded experiment for the assigned question inside the exact sealed
+hypothesis_portfolio: its mechanisms, key assumptions, allowed data and validation boundaries
+(all current H boundaries apply, including derived or source-unverified ones), the original
+criteria and user constraints. You own feasibility, test design, implementation, debugging,
+local or remote execution, retained observations and validity judgment. [w_scope]
+2. Read subject (current question, stage objective, conclusions) and objective_source (frozen
+global goal and completion criteria); distinguish supplied requirements from working assumptions.
+Global completion and run counts are not your delivery floor; A owns global exploration and
+closeout. [w_inputs]
+3. Before optimizing a metric, state in the design or conclusions what it observes and misses,
+the proxy/target distinction and the assumptions the proxy needs; execution success does not
+establish objective support.
+4. Iterate inside this task: related parameters, implementations, methods, repetitions,
+robustness checks and baselines; a fixed grid may screen. After each observation choose the next
+trial from the remaining question (refine, stop a weak route, or seal for A) and explain why;
+never run an unchanged list to fill counts; a weak-control tail does not prove exhaustion. Retain
+each attempt's results and limitations and the best eligible candidate under the original
+criterion. [w_iteration]
+5. Changing a mechanism, key assumption, allowed data, validation boundary, the assigned question
+or original criteria: seal the bounded observations for A, then H revision before executing.
+Report out-of-scope ideas or anomalies without executing them. Seal when answered, without
+progress, or at a budget/permission boundary; user constraints and control permissions stay
+binding; never expand budgets or retries. [w_revision_route]
+6. Plan within the controlled time budget, leaving analysis and closeout time; check deliverables
+during trials; deliver evidence and limitations promptly. Request missing facts or deliver
+blocked/inconclusive; unperformed execution cannot support completed. [w_budget, w_materials]
+7. Execution chain: seal implementation, run the exact source, publish logs/results, seal
+execution with native_execution, seal validity. Native claims stay unattested Worker reports; a
+missing environment supports blocked/inconclusive. Optional design prediction_declaration and
+validity comparison fix references, not truth; never overwrite a prediction after observing;
+not_run is no test. Before remote work read worker_experiment_execute. [w_execution, w_predictions]
+8. Report: cite exact sealed materials, keep conclusions concise, retain adopted versions,
+failed/inconclusive attempts and limitations; handoff.next_actions gives the next question, role
+and exact sources (primary first; relay byte limits in [w_reporting]); keep reusable engineering handoff in
+narratives. [w_reporting, w_engineering]
+9. Your optional boundary_declarations are findings or proposals, not replacement H boundaries; a
+matched quote proves only its bytes, never interpretation or authority. [boundary_declarations, w_boundaries]
+"""
+PROMPT = with_reference(CORE_PROMPT, reference_sections(_REFERENCE_TEXT, (
+    ("w_scope", "Own one bounded experiment for one answerable"),
+    ("w_iteration", "Use a fixed grid or preplanned comparison"),
+    ("w_revision_route", "If observations challenge a key assumption"),
+    ("w_inputs", "Read subject for the current question"),
+    ("w_budget", "Use the assigned handoff target to plan"),
+    ("w_materials", "Reuse exact supplied materials, sealed conclusions"),
+    ("w_predictions", "When useful, a design stage may include prediction_declaration"),
+    ("w_reporting", "Include execution interpretation when useful"),
+    ("w_engineering", "Keep reusable engineering handoff in existing narratives"),
+    ("w_execution", "Choose local or remote execution independently"),
+    ("boundary_declarations", "Boundary declarations separate claim origin"),
+    ("w_boundaries", "All current boundaries in the exact assigned H portfolio"),
+), remove=(
+    # Enforced by StageSubmission(extra="forbid") and control-side publication, which assigns identities.
+    " Control computes file identity\nand provenance; never author hashes or internal bindings.",
+)))
 REMOTE_EXECUTION_GUIDANCE = """For remote work, if its policy requires independent implementation review, send prepare's review.request
 to the scheduler, or obtain it with worker_experiment_execute(action="review",
 implementation=<sealed reference>). The request suspends controlled experimental work while review is pending.
