@@ -2,6 +2,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 
 def _gateway(tmp_path, monkeypatch, settings=None, instance_settings=None):
     from tests.operations.test_r4_experiment_task import _real_experiment
@@ -183,7 +185,14 @@ def test_helper_startup_selects_material_navigation_and_contracts_on_demand(tmp_
                     [('open_response', normalized), ('assignment', assignment)]}
         Path(log_dir).mkdir(parents=True, exist_ok=True)
         Path(log_dir, 'helper-startup-bytes.json').write_text(json.dumps(measures))
-    assert assignment['inputs'] == [selected]
+    assert len(assignment['inputs']) == 1
+    navigation = assignment['inputs'][0]
+    assert {key: navigation[key] for key in selected if key != 'scientific_view'} == {
+        key: value for key, value in selected.items() if key != 'scientific_view'}
+    assert 'scientific_view' not in navigation
+    if 'scientific_view' in selected:
+        assert navigation['scientific_overview_available'] is True
+        assert navigation['read'].endswith('/inputs/0/scientific_view')
     assert assignment['materials'] == request['materials']
     assert 'tool_contracts' not in assignment
     assert 'output' not in assignment and 'output_schema' not in assignment
@@ -193,7 +202,7 @@ def test_helper_startup_selects_material_navigation_and_contracts_on_demand(tmp_
     # helper report; the owner keeps original-read and finalization authority.
     for clause in ('supporting and contrary evidence', 'failed or inconclusive observations',
                    'pointers/line locators', 'omissions/unread ranges', 'missing coverage',
-                   'this reading subtask requests no edits', 'not original evidence'):
+                   'this reading subtask requests no edits', 'does not grant formal independent review'):
         assert clause in assignment['role_instructions']
     profile = runtime.runs.status(run_id).execution_profile['profile']
     described = _result(gateway.handle({'jsonrpc': '2.0', 'id': 2, 'method': 'tools/call', 'params': {
@@ -206,6 +215,56 @@ def test_helper_startup_selects_material_navigation_and_contracts_on_demand(tmp_
     _result(call('worker_helper', {'name': 'local-files', 'task': 'Investigate scratch output.'}))
     next_open = _result(call('worker_open_assignment', thread='second-helper', parent='owner'))
     assert json.loads(Path(next_open['assignment_path']).read_bytes())['inputs'] == []
+
+
+@pytest.mark.parametrize('legacy_reader', [False, True])
+def test_helper_large_scientific_view_is_navigation_with_exact_original_routes(tmp_path, monkeypatch, legacy_reader):
+    from scidiscovery.artifact_agent.schema.common import canonical_json
+    from scidiscovery.artifact_agent.service.local_workspace import write_control_workspace_file
+    from tests.operations.test_minimum_support import copied_pages, run_command
+    runtime, _, _, call, owner = _gateway(tmp_path, monkeypatch)
+    workspace = Path(owner['workspace_path'])
+    parent = json.loads(Path(owner['assignment_path']).read_bytes())
+    index, selected = next((index, item) for index, item in enumerate(parent['inputs'])
+        if item.get('relative_path') and item.get('exposure') in {'full', 'on_demand', 'material'}
+        and not item.get('materialization') and (workspace/item['relative_path']).is_file())
+    # A qualified control view can be large even though the helper's requested input index is tiny.
+    qualified = dict(pointers=['/summary'], boundary_application='declared_not_authorization',
+        handoff=dict(summary='Bounded source report.', verdict='inconclusive', limitations=['Coverage incomplete.'],
+            boundary_declarations=[dict(declaration=dict(boundary_key=f'bound_{n}',
+                statement='Original scope.' * 40, interpretation='Unverified interpretation.' * 30),
+                source_checks=[dict(status='unknown', locator=f'/omitted/{n}')],
+                authority='author_reported', verification='unverified') for n in range(32)]))
+    selected['scientific_view'] = qualified
+    original = canonical_json(parent)
+    write_control_workspace_file(workspace, Path('assignment.json'), original, replace=True, mode=0o400)
+    source_bytes = (workspace/selected['relative_path']).read_bytes()
+    if legacy_reader:
+        script = workspace/'tools/read_input.py'
+        script.chmod(0o600)
+        script.write_bytes(script.read_bytes().replace(b'SCIENTIFIC_COMPACT_VIEW = 1', b'SCIENTIFIC_COMPACT_VIEW = 0'))
+    request = dict(name='scope-navigation', task='Inspect scope, counterevidence and unresolved qualifications.',
+        materials=[selected['source_name'], 'unknown-material'])
+    _result(call('worker_helper', request))
+    opened = _result(call('worker_open_assignment', thread='helper', parent='owner'))
+    helper = json.loads(Path(opened['assignment_path']).read_bytes())
+    assert len(Path(opened['assignment_path']).read_bytes()) < len(original)
+    assert len(Path(opened['assignment_path']).read_bytes()) < len(canonical_json(qualified))
+    assert helper['materials'] == request['materials'] and len(helper['inputs']) == 1
+    entry = helper['inputs'][0]
+    assert {key: entry[key] for key in selected if key != 'scientific_view'} == {
+        key: value for key, value in selected.items() if key != 'scientific_view'}
+    assert 'scientific_view' not in entry
+    assert entry.get('scientific_overview_available', False) is not legacy_reader
+    assert 'navigation, not complete originals or proof of inspection' in helper['role_instructions']
+    assert 'contrary evidence' in helper['role_instructions'] and 'unresolved material names remain gaps' in helper['role_instructions']
+    _, restored = run_command(workspace, entry['read'])
+    assert json.loads(restored) == qualified  # All source_checks, declarations, omissions and limitations.
+    _, restored_source = copied_pages(workspace, selected['source_name'], full=True)
+    assert restored_source.encode() == source_bytes
+    assert Path(owner['assignment_path']).read_bytes() == original
+    assert (workspace/selected['relative_path']).read_bytes() == source_bytes
+    assert 'worker_submit_result' not in helper['tools'] and 'worker_helper' not in helper['tools']
 
 
 def test_helper_tool_activity_records_observed_access_and_participation(tmp_path, monkeypatch):

@@ -7,12 +7,49 @@ from dataclasses import dataclass
 import sqlite3
 import errno
 
-from ...operation_contract import contract_diagnostic, DiagnosticError
+from ...operation_contract import contract_diagnostic, DiagnosticError, ToolInputError
 from ..storage import CASIntegrityError
 from .local_workspace import WorkspaceError, WorkspaceOutputError
 from .reference_proofs import ReferenceProofError
 from .run_records import RunContractUnavailable
 from .run_outputs import RunCheckerError, RunOutputError
+
+
+# These tool-owned static diagnostics identify editable candidate material, not
+# control bindings. A code alone is insufficient: attachment_publication_invalid
+# also denotes a task with no attachment capability. Unknown variants stay closed.
+_CANDIDATE_CORRECTIONS = {
+    'attachment_publication_invalid': {
+        'Publish files below scratch/. Move extra output files there; output/ holds only result.json and runtime receipts.',
+        'Attachment is not a regular file',
+        'Attachment changed while being published',
+        'Duplicate attachment paths',
+    },
+    'attachment_file_missing': {'Finish writing the attachment below scratch/ before publication.'},
+    'capture_scope_invalid': {
+        'Declare a real task-local subdirectory below scratch/; whole scratch and external paths are unavailable',
+        'Repair the capture_sources batch declaration to match its task-local contract',
+        'At most four declared task-local capture directories',
+        'capture_sources must contain at most four scientific batch declarations',
+    },
+    'capture_reference_invalid': {
+        'run: is navigation only; cite an exact file or original alias and its existing locator',
+        'Use the exact returned sealed stage reference',
+    },
+    'capture_reference_ambiguous': {
+        'Basename conflicts with an alias; use the exact task-relative file path',
+        'File is missing or ambiguous in this exact capture; use its full task-relative path',
+    },
+}
+_CAPTURE_BUDGETS = {
+    'attachment_publication_invalid': {
+        'Attachment byte budget exceeded',
+        'Attachment grew beyond the byte budget',
+        'Attachment count or total byte budget exceeded',
+    },
+    'capture_inventory_limit': {'Capture index exceeds its encoded budget; narrow the declared batch'},
+    'capture_ledger_limit': {'Derived ledger exceeds attachment byte budget'},
+}
 
 
 @dataclass(frozen=True)
@@ -72,10 +109,25 @@ def classify_submission_error(error, *, deadline_expired=False):
             'The task cannot complete under its frozen control contract. Root must inspect the retained diagnostic and recovery details before continuing; do not rewrite scientific conclusions to bypass this failure.')
     if isinstance(error, RunOutputError):
         return SubmissionFailure('reject', error.category, error.details)
+    if isinstance(error, ToolInputError) and len(error.details) == 1:
+        item = error.details[0]
+        if item['message'] in _CANDIDATE_CORRECTIONS.get(item['code'], ()):
+            return SubmissionFailure('reject', 'output_rejected', (contract_diagnostic(
+                item['code'], phase='output_payload', affected_action='submit', path=item['path'],
+                repairable=True, message=item['message'] + ' Correct the current candidate file, capture declaration or citation within the frozen task contract, then resubmit. Do not change sealed evidence or permissions, or rerun execution.'),))
+        if item['message'] in _CAPTURE_BUDGETS.get(item['code'], ()):
+            # Failure to fit this candidate does not prove that a compliant
+            # correction exists. Immutable receipts consume the same fixed cap.
+            details = (contract_diagnostic(item['code'], phase='output_payload',
+                affected_action='submit', path=item['path'], repairable=False,
+                message=item['message']), *_failure('intervene', 'runtime_failure',
+                    'submission_intervention_required',
+                    'Fixed capture budget exceeded. Existing immutable attachment receipts cannot be deleted; capture_sources cannot shrink frozen contract roots. Do not retry unchanged, alter provenance, raise budgets or rerun execution. Correct current files/declarations only if required evidence fits the frozen contract. Otherwise Root must start a new task using selected exact sealed materials, or use run_record_failure to close this task and retain its draft.').details)
+            return SubmissionFailure('intervene', 'runtime_failure', details)
     if isinstance(error, DiagnosticError):
         # repairable does not identify the repair owner or make a frozen binding
-        # editable by this Worker. Only RunOutputError/WorkspaceOutputError promise
-        # a caller-correctable submission; other declared diagnostics need control.
+        # editable by this Worker. Only the explicit candidate allowlist above
+        # and output errors promise a caller-correctable submission.
         return _failure('intervene', 'runtime_failure', 'submission_intervention_required',
             'Submission requires control intervention. Root must inspect the retained diagnostic and repair the exact control binding, or use run_record_failure to close this task and retain its draft. The Worker must not repeatedly resubmit or rerun the solver.')
     if isinstance(error, WorkspaceOutputError):

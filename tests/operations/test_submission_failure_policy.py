@@ -268,3 +268,119 @@ def test_repairable_does_not_imply_worker_can_repair_frozen_control_state(tmp_pa
     reply = submit(worker, opened, limited_report())
     assert reply['state'] == 'rejected' and 'submission_intervention_required' in str(reply)
     assert root.call_tool('run_status', {'name':'generic_analysis', 'intent':'status'})['attention_required']
+
+
+@pytest.mark.parametrize('code,message,path', [
+    ('attachment_file_missing', 'Finish writing the attachment below scratch/ before publication.', '$'),
+    ('capture_scope_invalid', 'Repair the capture_sources batch declaration to match its task-local contract', '$.capture_sources'),
+])
+def test_final_capture_candidate_correction_preserves_draft_and_can_submit(tmp_path, monkeypatch, code, message, path):
+    from scidiscovery.operation_contract import ToolInputError
+    worker, opened, system = generic_worker(tmp_path, return_system=True)
+    runs, root = system[1].runs, system[2]
+    engineering = runs.database_path.parent.parent / 'engineering-diagnostics'
+    before = set(engineering.glob('diag_*.json'))
+    def correct_candidate(*args, **kwargs):
+        raise ToolInputError(code, message, path=path)
+    with monkeypatch.context() as patch:
+        patch.setattr(runs, '_finalize_workspace', correct_candidate)
+        reply = submit(worker, opened, limited_report())
+    assert reply['state'] == 'rejected' and code in str(reply)
+    assert 'submission_intervention_required' not in str(reply)
+    assert runs.status(worker._run_id).state == 'running'
+    assert 'attention_required' not in root.call_tool('run_status', {'name':'generic_analysis', 'intent':'status'})
+    assert set(engineering.glob('diag_*.json')) == before
+    assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
+
+
+@pytest.mark.parametrize('code,message', [
+    ('attachment_publication_invalid', 'Attachment is not a regular file'),
+    ('attachment_publication_invalid', 'Attachment changed while being published'),
+    ('capture_scope_invalid', 'At most four declared task-local capture directories'),
+    ('capture_reference_invalid', 'Use the exact returned sealed stage reference'),
+    ('capture_reference_ambiguous', 'Basename conflicts with an alias; use the exact task-relative file path'),
+])
+def test_declared_capture_candidate_errors_are_submit_corrections(code, message):
+    from scidiscovery.operation_contract import ToolInputError
+    from scidiscovery.artifact_agent.service.submission_errors import classify_submission_error
+    failure = classify_submission_error(ToolInputError(code, message, path='$.capture_sources'))
+    assert failure.disposition == 'reject' and failure.category == 'output_rejected'
+    item, = failure.details
+    assert item['code'] == code and item['path'] == '$.capture_sources'
+    assert item['phase'] == 'output_payload' and item['affected_action'] == 'submit'
+    assert item['repairable'] and message in item['message']
+
+
+@pytest.mark.parametrize('code,message', [
+    ('attachment_publication_invalid', 'This task has no attachment capability'),
+    ('attachment_publication_invalid', 'An unknown publication failure'),
+    ('capture_reference_scope', 'The exact captured file receipt is outside this task available scope'),
+    ('capture_source_unconfirmed', 'Scientific material has no exact original receipt in this task scope'),
+    ('capture_reference_unsealed', 'This exact stage has no control-owned capture map'),
+])
+def test_capture_permission_identity_and_unknown_errors_still_require_control(code, message):
+    from scidiscovery.operation_contract import ToolInputError
+    from scidiscovery.artifact_agent.service.submission_errors import classify_submission_error
+    failure = classify_submission_error(ToolInputError(code, message))
+    assert failure.disposition == 'intervene'
+    assert not any(item['repairable'] for item in failure.details)
+    assert failure.details[0]['code'] == 'submission_intervention_required'
+
+
+def test_capture_correction_requires_tool_owner_type_and_keeps_failure_precedence():
+    from scidiscovery.operation_contract import DiagnosticError, ToolInputError
+    from scidiscovery.artifact_agent.service.submission_errors import classify_submission_error
+    error = ToolInputError('attachment_file_missing', 'Finish writing the attachment below scratch/ before publication.')
+    unowned = DiagnosticError('Same diagnostic without tool ownership', details=error.details)
+    assert classify_submission_error(unowned).disposition == 'intervene'
+    assert classify_submission_error(error, deadline_expired=True).category == 'run_timeout'
+    error.__cause__ = CASIntegrityError('Exact immutable evidence differs')
+    assert classify_submission_error(error).category == 'integrity_failure'
+
+
+@pytest.mark.parametrize('code,message', [
+    ('attachment_publication_invalid', 'Attachment count or total byte budget exceeded'),
+    ('attachment_publication_invalid', 'Attachment byte budget exceeded'),
+    ('attachment_publication_invalid', 'Attachment grew beyond the byte budget'),
+    ('capture_inventory_limit', 'Capture index exceeds its encoded budget; narrow the declared batch'),
+    ('capture_ledger_limit', 'Derived ledger exceeds attachment byte budget'),
+])
+def test_fixed_capture_budget_requires_bounded_recovery_not_retry_or_binding_repair(code, message):
+    from scidiscovery.operation_contract import ToolInputError
+    from scidiscovery.artifact_agent.schema.common import ContractDiagnostic
+    from scidiscovery.artifact_agent.service.submission_errors import classify_submission_error
+    failure = classify_submission_error(ToolInputError(code, message, path='$.capture_sources'))
+    assert failure.disposition == 'intervene' and failure.category == 'runtime_failure'
+    original, recovery = failure.details
+    assert original['code'] == code and original['message'] == message
+    assert original['path'] == '$.capture_sources' and original['affected_action'] == 'submit'
+    assert not original['repairable'] and not recovery['repairable']
+    assert recovery['code'] == 'submission_intervention_required'
+    assert 'immutable attachment receipts cannot be deleted' in recovery['message']
+    assert 'Do not retry unchanged' in recovery['message']
+    assert 'capture_sources cannot shrink frozen contract roots' in recovery['message']
+    assert 'new task using selected exact sealed materials' in recovery['message']
+    assert 'repair the exact control binding' not in recovery['message']
+    for item in failure.details:
+        assert len(item['message']) <= 512
+        assert ContractDiagnostic.model_validate(item).model_dump(mode='json', exclude_none=True) == item
+
+
+def test_final_attachment_receipt_budget_preserves_task_for_root_recovery(tmp_path, monkeypatch):
+    # R1 finalization's declared failure: 64 retained attachment identities plus
+    # one new source-qualified receipt. Same file bytes do not remove identity.
+    from scidiscovery.operation_contract import ToolInputError
+    worker, opened, system = generic_worker(tmp_path, return_system=True)
+    runs, root = system[1].runs, system[2]
+    def receipt_budget(*args, **kwargs):
+        raise ToolInputError('attachment_publication_invalid', 'Attachment count or total byte budget exceeded')
+    monkeypatch.setattr(runs, '_finalize_workspace', receipt_budget)
+    reply = submit(worker, opened, limited_report())
+    assert reply['state'] == 'rejected'
+    assert 'attachment_publication_invalid' in str(reply)
+    assert 'immutable attachment receipts cannot be deleted' in str(reply)
+    assert 'new task using selected exact sealed materials' in str(reply)
+    assert runs.status(worker._run_id).state == 'running'
+    assert runs.status(worker._run_id).output_ref is None
+    status = root.call_tool('run_status', {'name':'generic_analysis', 'intent':'status'})
+    assert status['attention_required']['code'] == 'submission_intervention_required'

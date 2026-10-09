@@ -139,12 +139,33 @@ class LocalWorkerMCPRouter:
         )
         budget = self.runs.worker_budget(status)
         budget.pop('checkpoint', None)  # This reminder belongs to the task owner.
+        try:
+            reader = read_control_workspace_file(self._workspace.root,
+                Path('tools/read_input.py'), max_bytes=64 * 1024)
+            scientific_overview = b'\nSCIENTIFIC_COMPACT_VIEW = 1\n' in reader
+        except (OSError, ValueError, WorkspaceError):
+            scientific_overview = False
+        inputs = []
+        for index, item in enumerate(source.get('inputs', ())):
+            if item.get('source_name') not in task['materials'] and item.get('relative_path') not in task['materials']:
+                continue
+            projected = {key: value for key, value in item.items() if key != 'scientific_view'}
+            if 'scientific_view' in item:
+                # Keep the exact qualified view in the owner assignment, not in the navigation index.
+                projected['read'] = f'python tools/read_input.py assignment.json --pointer /inputs/{index}/scientific_view'
+                if scientific_overview:
+                    projected['scientific_overview_available'] = True
+            inputs.append(projected)
+        instruction += (
+            ' Input entries are navigation, not complete originals or proof of inspection. '
+            'When scientific_overview_available is true, python tools/read_input.py SOURCE gives a bounded overview; '
+            'otherwise use targeted original reading. Explicit --pointer/--directory select originals. '
+            'An input read command opens its complete qualified view, including source checks, limitations and omissions; '
+            'expand what the bounded question and contrary evidence require.')
         assignment = {"participation": "helper", "name": self.participant['name'], **task, "budget": budget,
             **({"task_network_policy": source['task_network_policy']} if 'task_network_policy' in source else {}),
             "role_instructions": instruction,
-            "inputs": [item for item in source.get('inputs', [])
-                       if item.get('source_name') in task['materials']
-                       or item.get('relative_path') in task['materials']],
+            "inputs": inputs,
             "tools": [item["name"] for item in self.list_tools()]}
         relative = Path('.operation-tools/helpers') / self.participant['name'] / 'assignment.json'
         path = write_control_workspace_file(self._workspace.root, relative,

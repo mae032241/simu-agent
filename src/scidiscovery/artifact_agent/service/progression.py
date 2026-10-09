@@ -479,7 +479,7 @@ class ProgressionCoordinator:
         return True
 
     def _snapshot(self, row):
-        """Final results and exact review dependencies wake scientific decisions."""
+        """Final results, review dependencies and versioned control notices wake decisions."""
         facade = self.facade_factory(row['owner_session'])
         checkpoint = json.loads(row['checkpoint_json'])
         runs, review_requests = [], []
@@ -501,6 +501,19 @@ class ProgressionCoordinator:
             if name in related and value.state not in {'queued', 'running'}:
                 runs.append(dict(name=name, state=value.state, output=value.output_ref.model_dump(mode='json') if value.output_ref else None,
                     reason=value.reason))
+        attention = []
+        with self.runtime.runs._connect() as db:
+            self.runtime.runs._attach_scheduler(db)
+            for name, run_id in related.items():
+                # Only this exact goal's currently visible named Run. No instance-wide
+                # notification cursor is consumed, and no diagnostic body is hydrated.
+                notice = db.execute("SELECT a.version,a.diagnostic_json FROM run_attention_notices a "
+                    "JOIN runs r ON r.run_id=a.run_id JOIN scheduler_control.scheduler_bindings b "
+                    "ON b.instance=r.instance_id AND b.namespace='run' AND b.object_id=r.run_id "
+                    "WHERE a.run_id=? AND r.instance_id=? AND b.name=?",
+                    (run_id, self.instance, name)).fetchone()
+                if notice:
+                    attention.append(dict(name=name, version=notice['version'], **json.loads(notice['diagnostic_json'])))
         approvals = []
         for name in checkpoint.get('approval_names', []):
             value = facade.approval_status(name=name)
@@ -508,6 +521,7 @@ class ProgressionCoordinator:
         return dict(goal=row['objective_ref_json'], runs=runs, approvals=approvals, messages=checkpoint.get('messages', []),
             continuation=checkpoint.get('last_command', {}).get('generation'),
             **({'historical_goal_omitted': True} if historical_omitted else {}),
+            **({'attention_notices': attention} if attention else {}),
             **({'review_requests':review_requests} if review_requests else {}))
 
     def _brief(self, row, snapshot, limit):
@@ -601,6 +615,23 @@ class ProgressionCoordinator:
             else:
                 brief['omission_details_omitted'] = brief.get('omission_details_omitted', 0) + 1
         previous = checkpoint.get('processed_snapshot', {})
+        prior_attention = {entry['name']: entry for entry in previous.get('attention_notices', [])}
+        brief['attention_notifications'] = []
+        for notice in snapshot.get('attention_notices', []):
+            if notice == prior_attention.get(notice['name']):
+                continue
+            event = dict(notice, instruction='Control notice, not a terminal result or scientific progress. '
+                'Inspect the exact task before choosing recovery; do not replace it or repeat uncertain execution.')
+            if notice['state'] == 'attention_required':
+                event['read_request'] = dict(name='run_status', arguments=dict(name=notice['name'],
+                    intent='status', diagnostic_after=0, diagnostic_limit=8))
+            if len(brief['attention_notifications']) < 8:
+                brief['attention_notifications'].append(event)
+            else:
+                brief['attention_omissions'] = brief.get('attention_omissions', 0) + 1
+        if brief.get('attention_omissions'):
+            brief['attention_omitted_read'] = dict(tool='run_list', view='summary', limit=8,
+                continuation='Follow next_before unchanged; current_goal_tasks identifies exact goal tasks. Read run_status intent=status by exact name.')
         prior = {v['name']: v for v in previous.get('runs', [])}
         for run in snapshot['runs']:
             if prior.get(run['name']) == run:
@@ -699,6 +730,11 @@ class ProgressionCoordinator:
             elif brief.get('attempt_memory') and 'revision_scope' in brief['attempt_memory']:
                 memory = brief['attempt_memory']
                 brief['attempt_memory'] = dict(history=memory['history'], omissions='context_byte_budget; read the frozen time index')
+            elif brief['attention_notifications']:
+                entry = brief['attention_notifications'].pop()
+                brief['attention_omissions'] = brief.get('attention_omissions', 0) + 1
+                brief['attention_omitted_read'] = dict(tool='run_status', name=entry['name'], intent='status',
+                    diagnostic_after=0, diagnostic_limit=8)
             elif brief['changes']:
                 entry = brief['changes'].pop(0)
                 if entry.get('output_artifact_name') in brief['material_names']:
@@ -1308,7 +1344,7 @@ class ProgressionCoordinator:
         shown = {value['name']: value for value in delivered['changes']}
         # An acknowledged notice does not consume its omitted results. Rebuild
         # against the consumed position so a newly fitting batch still wakes Root.
-        if (snapshot == checkpoint.get('notified_snapshot') and not shown
+        if (snapshot == checkpoint.get('notified_snapshot') and not shown and not delivered.get('attention_notifications')
                 and checkpoint.get('runtime_status') not in {'reconciling_interruption', 'recovering_failed_turn'}):
             return
         prior = {value['name']: value for value in checkpoint.get('processed_snapshot', {}).get('runs', [])}
@@ -1317,9 +1353,15 @@ class ProgressionCoordinator:
         # (or a later confirmed native tool receipt) can advance consumption.
         decision_snapshot = dict(snapshot, runs=[value for value in snapshot['runs']
             if value['name'] in shown or value == prior.get(value['name'])])
+        if 'attention_notices' in snapshot:
+            delivered_attention = {value['name']: value['version'] for value in delivered['attention_notifications']}
+            prior_attention = {value['name']: value for value in checkpoint.get('processed_snapshot', {}).get('attention_notices', [])}
+            decision_snapshot['attention_notices'] = [value for value in snapshot['attention_notices']
+                if delivered_attention.get(value['name']) == value['version'] or value == prior_attention.get(value['name'])]
         # The bounded omission count and run_list/run_status entrance cover the
         # omitted exact versions, even when individual names do not fit the brief.
-        notification_snapshot = snapshot if delivered.get('omitted_results_read') else decision_snapshot
+        notification_snapshot = snapshot if (delivered.get('omitted_results_read')
+            or delivered.get('attention_omitted_read')) else decision_snapshot
         # Intent is durable before the non-idempotent native turn/start.
         decision_row = self._decision_row()
         # The policy a native turn starts with; restoring it later must match.

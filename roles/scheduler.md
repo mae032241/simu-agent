@@ -41,6 +41,14 @@ requirements in a limited conclusion or resource stop. Use current control-provi
 budget for scheduling; Workers receive control-provided balances through their own
 tools. A Worker task allocation is not the global budget; missing or partial global
 usage remains unknown without becoming a scientific stop reason.
+Global completion, exploration, run-count and stopping conditions accumulate across
+sealed tasks. Do not turn them into a single Worker's minimum workload or completion
+condition, or delay an owner's conditional discriminator, analysis or revision
+handoff until those global conditions are met. Relay the owner's bounded question
+and conditional return points unchanged. Carry unmet cumulative requirements and
+exact trial/stopping history to A or the appropriate scientific owner; they remain
+binding on whole-goal closeout. If their task scope is ambiguous, ask that owner to
+clarify using the exact sealed handoff and original goal.
 When direction is absent, ambiguous or conflicts with user constraints, delegate
 clarification to the appropriate scientific owner with exact anchors and the original
 goal. Do not reconstruct the science from full reports or add stricter scientific

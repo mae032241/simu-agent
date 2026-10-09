@@ -80,3 +80,22 @@ def test_scheduler_batches_decisions_without_forcing_a_scientific_workflow():
     source = __import__("inspect").getsource(progression)
     assert "When no decision remains, finish this turn rather" in source
     assert "service wakes you on authoritative changes" in source
+
+
+def test_scheduler_keeps_global_stopping_gates_out_of_a_single_workers_delivery_floor():
+    prompt = load_scheduler_prompt()
+    for rule in ('Global completion, exploration, run-count and stopping conditions accumulate across\nsealed tasks',
+            "Do not turn them into a single Worker's minimum workload or completion\ncondition",
+            "or delay an owner's conditional discriminator, analysis or revision\nhandoff",
+            "Relay the owner's bounded question\nand conditional return points unchanged",
+            'Carry unmet cumulative requirements and\nexact trial/stopping history to A or the appropriate scientific owner',
+            'binding on whole-goal closeout',
+            'clarify using the exact sealed handoff and original goal'):
+        assert rule in prompt
+    # No fixed split replaces Worker judgment, and prior native/managed wait rules remain.
+    assert 'nor a trial count forces handoff' in prompt
+    assert 'owner next_actions are recommendations' in prompt
+    assert 'Do not periodically call list_agents while waiting' in prompt
+    assert 'normally 300 seconds' in prompt
+    from scidiscovery.general_science_experiment_task import CORE_PROMPT
+    assert 'Global completion and run counts are not your delivery floor' in CORE_PROMPT
