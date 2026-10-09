@@ -441,21 +441,39 @@ class Meter:
             self.records[thread]=record
             if record['has_gaps']: self.reason='token_coverage_unknown'
         item=params.get('item',{})
+        if (event.get('method')=='item/completed'
+                and item.get('type') in {'subAgentActivity','collabAgentToolCall'}
+                and (not isinstance(thread,str) or not thread)):
+            raise RuntimeError('native_child_identity_conflict')
         if event.get('method')=='item/completed' and isinstance(thread,str):
             if item.get('type')=='subAgentActivity':
                 child=item.get('agentThreadId')
                 if (item.get('kind') not in {'started','interacted','interrupted','completed'}
                         or not isinstance(item.get('agentPath'),str) or not item['agentPath']
-                        or not isinstance(child,str) or not child or child==thread
-                        or self.children.get(child,thread)!=thread):
+                        or not thread or not isinstance(child,str) or not child):
                     raise RuntimeError('native_child_identity_conflict')
-                self.children[child]=thread;self.started.setdefault(child,dict(turn_id=None,at=self.clock()))
-            if item.get('type')=='collabAgentToolCall' and item.get('senderThreadId')==thread:
-                for child in item.get('receiverThreadIds',[]):
-                    if isinstance(child,str) and child!=thread:
-                        if self.children.get(child,thread)!=thread:raise RuntimeError('native_child_identity_conflict')
-                        self.children[child]=thread
-                        self.started.setdefault(child,dict(turn_id=None,at=self.clock()))
+                # An interaction can point back to a parent or sideways to a
+                # sibling. Discovery covers its usage; only a spawn owns it.
+                if item['kind']=='started':
+                    if child==thread or self.children.get(child,thread)!=thread:
+                        raise RuntimeError('native_child_identity_conflict')
+                    self.children[child]=thread
+                self.started.setdefault(thread,dict(turn_id=None,at=self.clock()))
+                self.started.setdefault(child,dict(turn_id=None,at=self.clock()))
+            if item.get('type')=='collabAgentToolCall':
+                sender=item.get('senderThreadId');receivers=item.get('receiverThreadIds')
+                if (not isinstance(sender,str) or not sender or not isinstance(receivers,list)
+                        or any(not isinstance(child,str) or not child for child in receivers)):
+                    raise RuntimeError('native_child_identity_conflict')
+                self.started.setdefault(thread,dict(turn_id=None,at=self.clock()))
+                self.started.setdefault(sender,dict(turn_id=None,at=self.clock()))
+                for child in receivers:
+                    if item.get('tool') in {'spawn_agent','spawnAgent'}:
+                        if child==sender or self.children.get(child,sender)!=sender:
+                            raise RuntimeError('native_child_identity_conflict')
+                        # The explicit sender survives forwarded notifications.
+                        self.children[child]=sender
+                    self.started.setdefault(child,dict(turn_id=None,at=self.clock()))
             if item.get('type')=='commandExecution' and matches_canary_command(item.get('command'),self.canary_command):
                 try:checks=json.loads(item.get('aggregatedOutput',''))
                 except (TypeError,ValueError):checks={}

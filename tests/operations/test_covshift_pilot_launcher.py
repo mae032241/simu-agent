@@ -333,6 +333,92 @@ def test_real_subagent_activity_shape_discovers_exact_parent_and_counts_distinct
         meter.observe({'method':'item/completed','params':{'threadId':'other-root','item':item}})
 
 
+def c2_meter_activity():
+    # c2 events.log lines 30, 40, 51, 81, 112, 124. Coordinates and
+    # call IDs are deidentified; notification direction and paths are retained.
+    rows=[('root','started','h','/root/h'),('h','interacted','root','/root'),
+        ('root','interacted','h','/root/h'),('h','started','helper','/root/h/reader'),
+        ('h','interacted','helper','/root/h/reader'),('helper','interacted','h','/root/h')]
+    return [{'method':'item/completed','params':{'threadId':sender,'item':{
+        'type':'subAgentActivity','id':f'call-{n}','kind':kind,'agentThreadId':target,
+        'agentPath':path}}} for n,(sender,kind,target,path) in enumerate(rows)]
+
+
+@pytest.mark.parametrize('reordered',[False,True])
+def test_c2_meter_reverse_report_and_forwarded_collaboration_keep_spawn_edges_and_usage(reordered):
+    meter=driver.Meter(lambda:0.,tokens=2000000);meter.activate()
+    activity=c2_meter_activity()
+    for event in (list(reversed(activity)) if reordered else activity)*2:
+        meter.observe(event)
+    # A wait/message receiver is a budget participant, not a new child.
+    # The explicit sender, rather than the observing Root thread, owns a spawn.
+    for tool,sender,receivers in [('send_message','helper',['h']),('wait','h',['helper']),
+            ('send_message','helper',['sibling']),('spawn_agent','h',['helper'])]:
+        meter.observe({'method':'item/completed','params':{'threadId':'root','item':{
+            'type':'collabAgentToolCall','tool':tool,'status':'completed',
+            'senderThreadId':sender,'receiverThreadIds':receivers}}})
+    assert meter.children=={'h':'root','helper':'h'}
+    assert set(meter.started)=={'root','h','helper','sibling'}
+    # Final cumulative counters from c2, including cached inputs once.
+    for thread,inputs,outputs,cached in [('root',337990,1664,316928),
+            ('h',489196,2715,448000),('helper',154268,622,125824)]:
+        for _ in range(2):meter.observe(usage(thread,inputs,outputs,cached))
+    assert meter.total()==986455
+    assert set(meter.records)=={'root','h','helper'}
+
+
+@pytest.mark.parametrize('item',[
+    {'type':'subAgentActivity','kind':'unknown','agentThreadId':'child','agentPath':'/root/child'},
+    {'type':'subAgentActivity','kind':'started','agentThreadId':'root','agentPath':'/root'},
+    {'type':'subAgentActivity','kind':'interacted','agentThreadId':'','agentPath':'/root/child'},
+    {'type':'collabAgentToolCall','tool':'wait','senderThreadId':None,'receiverThreadIds':['child']},
+    {'type':'collabAgentToolCall','tool':'wait','senderThreadId':'root','receiverThreadIds':['']},
+    {'type':'collabAgentToolCall','tool':'spawn_agent','senderThreadId':'root','receiverThreadIds':['root']},
+])
+def test_meter_rejects_malformed_participant_identity(item):
+    meter=driver.Meter(lambda:0.)
+    with pytest.raises(RuntimeError,match='native_child_identity_conflict'):
+        meter.observe({'method':'item/completed','params':{'threadId':'root','item':item}})
+
+
+@pytest.mark.parametrize('kind',['activity','collaboration'])
+def test_meter_interaction_only_unknown_participant_still_requires_scope(kind):
+    from scidiscovery.platforms.codex_usage import observe_usage
+    meter=driver.Meter(lambda:0.)
+    root=observe_usage(usage('root')['params'],role='root',owner='instance')
+    snapshot={'instance':'instance','loop':'loop','frontend_unmeasured':False,
+        'participants':{'root':('root','root-session')},'records':{'root':dict(root,loop_id='loop')}}
+    item=({'type':'subAgentActivity','kind':'interacted','agentThreadId':'unknown',
+        'agentPath':'/root/unknown'} if kind=='activity' else {
+        'type':'collabAgentToolCall','tool':'wait','senderThreadId':'root','receiverThreadIds':['unknown']})
+    meter.observe({'method':'item/completed','params':{'threadId':'root','item':item}})
+    assert meter.children=={} and set(meter.started)=={'root','unknown'}
+    with pytest.raises(RuntimeError,match='participant_scope_unconfirmed'):
+        driver.reconcile_control(meter,snapshot)
+
+
+def test_meter_discovered_unknown_scope_and_terminal_missing_usage_still_stop():
+    now=[0.];meter=driver.Meter(lambda:now[0],tokens=2000000);meter.activate()
+    for event in c2_meter_activity():meter.observe(event)
+    snapshot={'instance':'instance','loop':'loop','frontend_unmeasured':False,
+        'participants':{},'records':{}}
+    with pytest.raises(RuntimeError,match='participant_scope_unconfirmed'):
+        driver.reconcile_control(meter,snapshot)
+    meter.observe({'method':'turn/completed','params':{'threadId':'helper',
+        'turn':{'id':'helper-turn','status':'completed'}}})
+    now[0]=6.
+    with pytest.raises(RuntimeError,match='participant_usage_unconfirmed'):meter.check()
+
+
+def test_meter_explicit_spawn_conflict_is_not_hidden_by_interactions():
+    meter=driver.Meter(lambda:0.)
+    for event in c2_meter_activity():meter.observe(event)
+    with pytest.raises(RuntimeError,match='native_child_identity_conflict'):
+        meter.observe({'method':'item/completed','params':{'threadId':'root','item':{
+            'type':'collabAgentToolCall','tool':'spawn_agent','senderThreadId':'root',
+            'receiverThreadIds':['helper']}}})
+
+
 def test_actual_canary_request_names_frozen_model_and_stops_on_discovered_child_drift(tmp_path):
     from types import SimpleNamespace
     project=tmp_path/'project';project.mkdir()
