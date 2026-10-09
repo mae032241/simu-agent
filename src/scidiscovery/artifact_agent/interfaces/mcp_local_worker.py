@@ -128,10 +128,12 @@ class LocalWorkerMCPRouter:
             "Do not read the parent result schema or owner instructions unless the subtask specifically needs them."
             " For material-reading subtasks, keep bulk logs/code/history in your own context. "
             "Read the selected originals and use permitted reading/check tools; this reading subtask requests no edits. "
-            "Return bounded findings with supporting and contrary evidence, failed or inconclusive observations, exact original source aliases "
-            "and pointers/line locators with short quotes, inspected scope, omissions/unread ranges and uncertainties. "
-            "Distinguish original observations from producer interpretations and your own inference; missing coverage "
-            "stays unknown. Point the owner to decisive original selections rather than copying whole materials. "
+            "Return bounded findings with supporting and contrary evidence, failed or inconclusive observations, "
+            "exact aliases and narrow pointers/line locators with short quotes, inspected scope, omissions/unread ranges and uncertainties. "
+            "Separate claim-changing findings from background navigation. For each claim-changing finding give its smallest "
+            "sufficient original selection and why it affects the assigned question; do not label every relevant section decisive. "
+            "Background citations are optional navigation, not a rereading checklist. Preserve necessary surrounding context "
+            "and counterevidence. Distinguish observations, producer interpretations and your inference; missing coverage stays unknown. "
             "Your report is attributed reading support, not original evidence, scientific verification or permission."
         )
         budget = self.runs.worker_budget(status)

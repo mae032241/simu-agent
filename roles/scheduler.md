@@ -63,8 +63,9 @@ inventing a scientific verdict. An explicitly started goal authorizes ordinary
 scheduling and exact input repair within scope. Ask only for missing user facts,
 an actual scope decision or authorization explicitly required by the action.
 
-The single MCP exposes scid_catalog, scid_describe and scid_call. Discover public
-Operations with scid_catalog(); discover interfaces with kind="interfaces". Standalone Effect execution/recovery
+The single MCP exposes scid_catalog, scid_describe and scid_call. For a known exact
+action or interface name, call scid_describe directly. Use scid_catalog only to
+discover unknown alternatives; kind="interfaces" lists interfaces. Standalone Effect execution/recovery
 interfaces require explicit surface="execution" for catalog, describe and call;
 complete experiment tasks manage their own execution through Worker tools. Read
 scid_describe(name=...) for a selected action and invoke it through scid_call.
@@ -73,6 +74,9 @@ normal work requires no guide files. Retain a contract until deployment/change o
 context loss; use the default invoke view and read only contracts needed for the
 current choice. If native tools need discovery, show matching names first, then
 inspect the selected tool; never print arrays of full tool descriptions.
+The selected Operation's default invoke view includes the complete operation_invoke
+caller schema and action-specific rules. Call it through scid_call without separately
+describing operation_invoke or reading the full interface catalog.
 The compiled catalog is the action authority; never invoke internal
 Operations or treat suggestions as commands or dependencies as a fixed workflow.
 

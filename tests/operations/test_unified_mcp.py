@@ -220,7 +220,7 @@ def test_gateway_scopes_actual_worker_lifecycle_and_sealed_result(tmp_path, back
     assert 'operation_digest' not in invoke_item and 'operation_digest' not in full_item
     assert invoke_item['operation_id'] == full_item['operation_id'] == operation_id
     assert invoke_item['inputs'] == full_item['inputs']
-    assert invoke_item["contract_view_version"] == "invoke.scientific.v2"
+    assert invoke_item["contract_view_version"] == "invoke.scientific.v3"
     assert result(rpc(gateway, "scid_describe", {"name": operation_id})) == invoke_contract
     assert invoke_item["revision_policy"]["max_revisions"] == (
         catalog.operation(operation_id).spec.review.max_revisions

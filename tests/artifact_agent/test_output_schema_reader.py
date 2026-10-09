@@ -67,7 +67,7 @@ def test_unsupported_refs_fall_back_to_full_schema(ref):
 
 
 def test_unknown_fields_and_small_or_unsupported_schemas():
-    with pytest.raises(ValueError, match='Unknown payload field'):
+    with pytest.raises(ValueError, match='Unknown field path or short name'):
         read_schema(schema(), ['typo'])
     for original in (True, {'type':'string'}, {'type':'object','properties':{'payload':True}},
                      {'type':'object','properties':{'payload':{'type':'object'}}}):
@@ -130,7 +130,7 @@ def test_workspace_schema_cache_recovery_and_independent_field_calls(tmp_path):
     assert workspace_view(tmp_path)['overview']==first['overview']
     receipt.unlink();receipt.symlink_to('/etc/passwd')
     assert 'overview' in workspace_view(tmp_path,['evidence'])  # cache failure never blocks reading
-    with pytest.raises(ValueError,match='Unknown payload field'):
+    with pytest.raises(ValueError,match='Unknown field path or short name'):
         workspace_view(tmp_path,['does_not_exist'])
 
 

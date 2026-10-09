@@ -9,42 +9,27 @@ from .local_workspace import WorkspaceError, read_control_workspace_file, write_
 from ..schema.role_result import REFERENCE_MARKER, split_reference
 from .input_reader import (shared_input, MATERIAL_FILE_READING, SCIENTIFIC_PAGE_MIN_BYTES,
     SCIENTIFIC_PAGE_MAX_BYTES, SCIENTIFIC_PAGE_DEFAULT_BYTES)
-GUIDE_READ = 'python tools/read_input.py worker-context.json --file --pointer /guides/'
+GUIDE_READ = 'python tools/read_input.py worker-guides.json --file --pointer /guides/'
 GROUP_MEMBER_LIMIT = 16
 
 
-READER_CORE = ('Read with python tools/read_input.py SOURCE (exact source_name): its sealed overview when '
-    'scientific_overview_available, else page 1; overviews are partial. --directory lists fields; repeatable --pointer /FIELD '
-    'selects exact original content; --full reads the whole original; --budget {low}..{high} (default {default}). Each page '
-    'ends with its continuation (--selection, --offset, next_offset). Expand fields needed for claims, limitations and '
-    'contrary evidence; originals support conclusions and reading grants no qualification; artifact_name is navigation only. '
-    'Recovery and alias details: guide reader.')
+READER_CORE = ('Use native file reading/search for text, code and logs at bound relative_path or materialized paths; '
+    'read ranges relevant to the decision. For JSON, optional python tools/read_input.py SOURCE provides a sealed overview '
+    'when available; --directory lists fields and --pointer /FIELD selects originals. --budget {low}..{high} '
+    '(default {default}); returned --selection/--offset continues that selection. '
+    'Partial views omit originals. Cite source_name, not paths; details: guide reader.')
 TOOLS_CORE = ('Before calling a tool read its complete contract: python tools/read_tool_contract.py TOOL or '
     'scid_describe; retain unchanged contracts.')
 MATERIAL_READING = (
-    'Default reading division: the owner reads the task, original goal, prohibitions, completion conditions, '
-    'current hypothesis boundaries, core overviews and applicable role/form/tool contracts. Small materials '
-    'stay with the owner. Delegate bulk originals larger than large_input_bytes, long code/logs and multi-page '
-    'history to a prepared worker_helper before expanding them in the owner context. Select exact source_name '
-    'aliases or workspace paths and one bounded evidence question; group related materials for that question '
-    'instead of preparing one helper per file. Reuse a sufficient report tied to the same exact originals and '
-    'inspected scope when its context is retained, except when independent analysis requires its own helper. '
-    'Include the original goal and constraints '
-    'needed to assess relevance. Read the complete worker_helper contract, then use its returned frozen profile '
-    'and fresh-context dispatch, wait for completion and integrate the report. This is reading division within '
-    'this task, not another scientific stage. For analysis, prepare your own reading helper against the exact '
-    'originals; a prior experiment owner\'s filtered report is not an independent analysis. Helpers return '
-    'findings, supporting and contrary evidence, exact original aliases and pointers/line locators with short '
-    'quotes, inspected scope, omissions, unread ranges and uncertainties. Their summaries are attributed '
-    'navigation, not original evidence or qualification; read the decisive original selections before citing '
-    'or resolving a conflict. If helpers are unavailable or disabled, admission or an active-slot limit fails, '
-    'the helper allowance is exhausted, or the remaining budget cannot '
-    'support waiting, record that limitation and read only the bounded original selections needed for the '
-    'decision, or report the unresolved gap. Do not expand budgets or retry uncertain native dispatch. '
-    'The size threshold is a default reading rule, not a tool admission gate; this policy does not restrict '
-    'permitted native tools or hide materials from the owner.')
-SAME_SOURCE_CORE = (' same_source_as names the representative of one exact frozen original: read it once. Each alias keeps '
-    'its own purpose and citation permissions; equivalence grants no review or qualification.')
+    'Default: use worker_helper with fresh context for bulk originals, code/logs or history; group one decision question. '
+    'Read task/goal/constraints and contracts yourself. The helper reads its own reporting rules. '
+    'Verify original selections for claims you will adopt and counterevidence that could change them, not every helper citation '
+    'or the entire material again by default. Expand verification for ambiguity, conflict or missing context; '
+    'unread background remains unread. Independent analysis uses its own helper. '
+    'If helpers are unavailable or unaffordable, read only the bounded original selections needed or report the unresolved gap. '
+    'This is not a tool admission gate.')
+
+SAME_SOURCE_CORE = (' same_source_as shares original bytes only: read once, retain each alias\'s purpose and citation permissions.')
 
 
 def _with_input_templates(document: dict) -> dict:
@@ -375,21 +360,16 @@ def startup_document(assignment: dict, domain: dict | None = None, *, reader_nav
         'relative_path': assignment.get('output', {}).get('relative_path', 'output/result.json'),
         'form': assignment.get('output', {}).get('schema_path', 'schema/result.schema.json'),
         'read': 'python tools/read_output_schema.py',
-        'instruction': 'Read the default overview for required/optional fields and shared rules, then --field NAME '
-            'for each authored payload field and its full reference closure (not the payload wrapper). '
-            'Optional fields need not be filled merely because they exist. Preserve necessary evidence, limitations '
-            'and conditional rules; control completes mechanical fields. Keep combined displays bounded. '
-            'Retain unchanged definitions; refresh after schema changes or context loss. '
-            '--full restores the complete form, including any handoff, when a contract question requires it.',
+        'instruction': 'Read the overview once, then --field NAME for authored fields, including handoff, '
+            'boundary_declarations and capture_sources when present. Use /payload/NAME or /NAME for ambiguous names. '
+            'Retain shared rules and returned definitions; optional fields are optional. '
+            'Use --full only for context recovery or an unsupported schema.',
     }
     if 'worker_submit_result' in assignment.get('tools', ()):
         result['output']['submit'] = dict(name='worker_submit_result', arguments={})
         result['output']['closeout'] = (
-            'Writing result.json leaves a draft. After a successful write, explicitly call scid_call with the '
-            'submit arguments above immediately in the same code-mode call when available: await the write, '
-            'then submission, then display state/diagnostics. A failed write must not submit. '
-            'Only completed is sealed delivery; repair rejected drafts and explicitly resubmit. '
-            'An uncertain submission must not be replayed; completion chat is transport only.')
+            'Write output/result.json, then call worker_submit_result immediately after a successful write. '
+            'Only completed is sealed. Repair rejected drafts and resubmit; reconcile uncertain submissions before retrying.')
     if 'worker_publish_files' in assignment.get('tools', ()):
         result['output']['attachments'] = (
             'Keep CSV/JSON/images/scripts and other deliverables below scratch/. Publish them with worker_publish_files '
@@ -400,11 +380,10 @@ def startup_document(assignment: dict, domain: dict | None = None, *, reader_nav
             directories = assignment['artifact_capture']['directories']
             result['artifact_capture'] = dict(assignment['artifact_capture'])
             locations = ', '.join(directory + '/' for directory in directories)
-            result['output']['attachments'] = (f'Write scientific files to the declared directories: {locations}; '
-                'stages and final submission capture that declared scope. '
-                f'Cite file:{directories[0]}/path, or file@<sealed-stage-reference>:{directories[0]}/path for an older version; '
-                'declare actual batch sources with capture_sources when needed. run: is navigation only; scratch/cache/ and scratch/tmp/ are outside capture. '
-                'worker_publish_files remains available for authorized explicit or early publication.')
+            result['output']['attachments'] = (f'Files in {locations} are auto-captured at stage/final seal. '
+                f'Cite file:{directories[0]}/path; older sealed bytes use file@<sealed-stage-reference>:{directories[0]}/path. '
+                'capture_sources declares batch sources. run: is navigation; scratch/cache/ and scratch/tmp/ are excluded. '
+                'worker_publish_files is optional for explicit/early publication.')
             if assignment['artifact_capture'].get('ledgers'):
                 result['output']['attachments'] += (' Host-declared logical ledgers are captured as safe derived views at these seals; '
                     'raw originals are unavailable and reported values remain unverified.')
@@ -542,6 +521,10 @@ def compact_startup_document(document: dict) -> dict:
     if 'attempt_memory' in result:
         result['attempt_memory'] = memory_navigation(result['attempt_memory'],
             read=dict(command=detail('/attempt_memory'), meaning='Exact open-time overview; not consumed originals.'))
+        if isinstance(result['attempt_memory'], dict) and result['attempt_memory'].get('unavailable'):
+            result['attempt_memory'] = {key: value for key, value in result['attempt_memory'].items()
+                if key != 'repair'}
+            result['attempt_memory']['details_read'] = detail('/attempt_memory')
     return result
 
 
@@ -571,11 +554,25 @@ def write_worker_start(workspace, assignment: dict, *, startup_page_bytes=16384)
     # snapshot. Save omitted context before advertising exact read pointers.
     context = {key: document[key] for key in ('attempt_memory',) if key in document}
     if '_guide_texts' in document:
-        context['guides'] = document.pop('_guide_texts')
+        # Keep static guide pagination independent of refreshed memory/budget.
+        write_control_workspace_file(workspace.root, Path('worker-guides.json'),
+            canonical_json(dict(guides=document.pop('_guide_texts'))), replace=True, mode=0o400)
     write_control_workspace_file(workspace.root, Path('worker-context.json'), canonical_json(context),
         replace=True, mode=0o400)
     if reader_navigation == 4:
         document = compact_startup_document(document)
+    # Reopened workspaces keep frozen schema-reader code. Advertise its actual API.
+    try:
+        schema_reader = read_control_workspace_file(workspace.root,
+            Path('tools/read_output_schema.py'), max_bytes=64 * 1024)
+    except WorkspaceError:
+        schema_reader = b''
+    if b'READ_OUTPUT_SCHEMA_FIELDS = 2' not in schema_reader:
+        document['output']['instruction'] = (
+            'This frozen reader accepts --field NAME for payload fields only. '
+            'Read its default overview and retain shared rules. Envelope fields are in the overview; '
+            'if their definitions are missing, this older reader requires --full. '
+            'Optional fields are optional; new workspaces support exact envelope selections.')
     return write_control_workspace_file(workspace.root, Path('worker-start.json'),
         json.dumps(document, ensure_ascii=False, allow_nan=False,
             separators=(',', ':')).encode('utf-8'), replace=True, mode=0o400)

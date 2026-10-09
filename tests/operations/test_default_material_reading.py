@@ -54,3 +54,97 @@ def test_disabled_or_exhausted_helper_allows_original_reading_without_new_stage(
     assert original.is_file() and original.read_bytes()
     assert _result(call('worker_heartbeat'))['state'] == 'running'
     assert runtime.runs.status(run_id).state == 'running'
+
+
+def test_shared_startup_policy_is_short_and_preserves_default_delegation():
+    from scidiscovery.helper_tool import HELPER_TOOL
+    for role in ('H', 'W', 'A'):
+        start = startup_document(dict(instruction=role, inputs=[], tools=['worker_helper']), on_demand=True)
+        policy = start['reading']['material_division']['instruction']
+        assert len(policy.encode()) < 850
+        assert 'Use native file reading/search' in start['reading']['inputs']
+        assert 'For JSON, optional' in start['reading']['inputs']
+        assert 'fresh context' in policy and 'Independent analysis uses its own helper' in policy
+        assert 'entire material again by default' in policy
+        assert 'Expand verification' in policy
+        assert 'claims you will adopt' in policy
+        assert 'not every helper citation' in policy
+        assert 'unread background remains unread' in policy
+        assert 'inspected scope' not in policy  # Detailed report contract is owned by the tool.
+    assert 'inspected scope' not in HELPER_TOOL.description
+    assert 'reads its own assignment and reporting rules' in HELPER_TOOL.description
+    assert len(HELPER_TOOL.description.encode()) < 1100
+
+
+def test_static_guide_page_survives_memory_refresh(tmp_path):
+    from scidiscovery.artifact_agent.schema.common import canonical_json
+    from scidiscovery.artifact_agent.service.local_workspace import LocalTrustedBackend
+    from scidiscovery.artifact_agent.service.worker_start import write_worker_start
+    from scidiscovery.artifact_agent.service.input_reader import read
+    from tests.artifact_agent.test_input_reader import body, replay_arguments, next_arguments
+    assignment = dict(inputs=[], tools=[], attempt_memory={'coverage':'unknown_not_empty'})
+    workspace = LocalTrustedBackend(tmp_path/'backend').prepare(run_id='run_guiderefresh',
+        inputs=(), assignment=canonical_json(assignment), result_schema=b'{}')
+    write_worker_start(workspace, assignment)
+    guide = workspace.root/'worker-guides.json'
+    frozen = guide.read_bytes()
+    first = read(workspace.root, 'worker-guides.json', file=True, pointers=['/guides/reader'], budget=512)
+    assignment['attempt_memory'] = {'coverage':'known', 'recent':[{'name':'new-result'}]}
+    write_worker_start(workspace, assignment)
+    assert guide.read_bytes() == frozen
+    assert json.loads((workspace.root/'worker-context.json').read_bytes())['attempt_memory'] == assignment['attempt_memory']
+    handle = replay_arguments(first)[1]
+    second = read(workspace.root, selection_id=handle, offset=int(next_arguments(first)[3]), budget=512)
+    assert body(second)
+    # Actual guide changes still invalidate a cursor; this is not a relaxed hash check.
+    guide.chmod(0o600)
+    guide.write_bytes(frozen.replace(b'JSON:', b'JSON objects:'))
+    with pytest.raises(ValueError, match='changed'):
+        read(workspace.root, selection_id=handle, offset=int(next_arguments(first)[3]), budget=512)
+
+
+def test_reopened_workspace_advertises_its_frozen_schema_reader(tmp_path):
+    from scidiscovery.artifact_agent.schema.common import canonical_json
+    from scidiscovery.artifact_agent.service.local_workspace import LocalTrustedBackend
+    from scidiscovery.artifact_agent.service.worker_start import write_worker_start
+    assignment = dict(inputs=[], tools=[])
+    workspace = LocalTrustedBackend(tmp_path/'backend').prepare(run_id='run_oldschema',
+        inputs=(), assignment=canonical_json(assignment), result_schema=b'{}')
+    start = json.loads(write_worker_start(workspace, assignment).read_bytes())
+    assert '/payload/NAME' in start['output']['instruction']
+    script = workspace.root/'tools/read_output_schema.py'
+    script.chmod(0o600)
+    script.write_bytes(script.read_bytes().replace(b'READ_OUTPUT_SCHEMA_FIELDS = 2', b'READ_OUTPUT_SCHEMA_FIELDS = 1'))
+    start = json.loads(write_worker_start(workspace, assignment).read_bytes())
+    assert 'frozen reader' in start['output']['instruction']
+    assert '/payload/NAME' not in start['output']['instruction']
+
+
+def test_unavailable_memory_retains_unknown_and_exact_detail_route():
+    from scidiscovery.artifact_agent.service.worker_start import compact_startup_document
+    original = dict(attempt_memory=dict(unavailable='no_exact_goal_or_recorded_recovery_source',
+        coverage='unknown_not_empty', repair='Restore exact historical bindings.'))
+    view = compact_startup_document(original)['attempt_memory']
+    assert view['unavailable'] == original['attempt_memory']['unavailable']
+    assert view['coverage'] == 'unknown_not_empty'
+    assert view['details_read'].endswith('/attempt_memory')
+    assert 'repair' not in view
+    assert 'repair' in original['attempt_memory']
+
+
+def test_helper_reporting_rules_go_to_helper_not_owner(tmp_path, monkeypatch):
+    from scidiscovery.helper_tool import HELPER_TOOL
+    _, _, _, call, owner = _gateway(tmp_path, monkeypatch)
+    parent = json.loads(Path(owner['assignment_path']).read_bytes())
+    alias = parent['inputs'][0]['source_name']
+    _result(call('worker_helper', {'name':'read-scope', 'task':'Find evidence and contrary cases.', 'materials':[alias]}))
+    opened = _result(call('worker_open_assignment', thread='helper', parent='owner'))
+    helper = json.loads(Path(opened['assignment_path']).read_bytes())
+    assert 'supporting and contrary evidence' in helper['role_instructions']
+    assert 'narrow pointers/line locators' in helper['role_instructions']
+    assert 'inspected scope, omissions/unread ranges' in helper['role_instructions']
+    assert 'do not label every relevant section decisive' in helper['role_instructions']
+    assert 'not a rereading checklist' in helper['role_instructions']
+    assert 'counterevidence' in helper['role_instructions']
+    assert 'inspected scope' not in HELPER_TOOL.description
+    assert 'verify originals supporting adopted claims' in HELPER_TOOL.description

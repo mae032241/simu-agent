@@ -538,9 +538,11 @@ def test_stream_only_alias_is_denied_before_following_equivalence(tmp_path):
     entries = equivalent_inputs(tmp_path, 'large original')
     entries[1]['exposure'] = 'file_reference'
     (tmp_path/'assignment.json').write_text(json.dumps({'inputs':entries}))
+    handle = replay_arguments(read(tmp_path, 'task', budget=512))[1]
     for name, file in (('context', False), ('inputs/context.txt', True)):
-        with pytest.raises(ValueError, match='metadata only'):
-            read(tmp_path, name, file=file)
+        for selection_id in (None, handle):
+            with pytest.raises(ValueError, match='metadata only'):
+                read(tmp_path, name, file=file, selection_id=selection_id, offset=0)
 
 
 def replay_arguments(reply):
@@ -558,6 +560,68 @@ def next_arguments(reply):
     assert match
     command[command.index('--offset')+1] = match[1]
     return command
+
+
+@pytest.mark.parametrize('source_flags', [
+    ('worker-guides.json', '--file'),
+    ('worker-guides.json', '--file', '--pointer', '/guides/g0'),
+    ('other-guides.json', '--file'),
+])
+def test_installed_source_selection_mismatch_returns_exact_bare_replay(tmp_path, source_flags):
+    import re
+    import shlex
+    workspace = LocalTrustedBackend(tmp_path/'backend').prepare(run_id='run_guidesreplay',
+        inputs=(), assignment=b'{}', result_schema=b'{}')
+    root = workspace.root
+    guides = {f'g{i}': ('原始细则'+str(i))*1000 for i in range(10)}
+    source = root/'worker-guides.json'
+    source.write_text(json.dumps({'guides': guides}, ensure_ascii=False))
+    (root/'other-guides.json').write_bytes(source.read_bytes())
+    (root/'helper-selection.json').write_text('{"different":"helper navigation"}')
+    cmd = [sys.executable, '-I', str(root/'tools/read_input.py')]
+    def call(*args):
+        return subprocess.run(cmd+list(args), cwd=tmp_path, capture_output=True, timeout=5)
+    pointers = [flag for name in guides for flag in ('--pointer', '/guides/'+name)]
+    first = call('worker-guides.json', '--file', *pointers, '--budget', '8192')
+    assert first.returncode == 0
+    next_page = next_arguments(first.stdout.decode())
+    # Owner and helper share navigation storage; an interleaved selection cannot
+    # replace this handle's original source/field selection.
+    assert call('helper-selection.json', '--file').returncode == 0
+    cache = root/'.read-input/navigation.json'
+    before = cache.read_bytes()
+    mismatch = call(*source_flags, *next_page)
+    assert mismatch.returncode == 1
+    message = mismatch.stdout.decode()
+    assert 'selection mismatch' in message and 'material changed' not in message
+    assert cache.read_bytes() == before
+    recovery = shlex.split(re.search(r'replay: ([^\]]+)', message).group(1))
+    assert recovery[:2] == ['python', 'tools/read_input.py']
+    assert recovery[2:] == next_page
+    recovered = call(*recovery[2:])
+    assert recovered.returncode == 0
+    expected = '\n'.join(f'[field {i}]\n'+json.dumps(value, ensure_ascii=False)
+                         for i, value in enumerate(guides.values(), 1))
+    combined = body(first.stdout.decode())+body(recovered.stdout.decode())
+    assert combined == expected[:len(combined)]
+
+
+@pytest.mark.parametrize('repeat_pointers', [False, True])
+def test_changed_handle_source_never_suggests_old_offset_replay(tmp_path, repeat_pointers):
+    from scidiscovery.artifact_agent.service.input_reader import read, CACHE_DIRECTORY
+    bind_reader_input(tmp_path, json.dumps({'selected': '原文'*3000}))
+    first = read(tmp_path, 'plan_original', pointers=['/selected'], budget=512)
+    handle = replay_arguments(first)[1]
+    offset = int(next_arguments(first)[3])
+    cache = tmp_path/CACHE_DIRECTORY/'navigation.json'
+    before = cache.read_bytes()
+    (tmp_path/'inputs/opaque.json').write_bytes(b'\xff')
+    with pytest.raises(ValueError, match='material changed') as rejected:
+        read(tmp_path, 'plan_original', pointers=['/selected'] if repeat_pointers else None,
+             selection_id=handle, offset=offset, budget=512)
+    assert 'selection mismatch' not in str(rejected.value)
+    assert 'replay:' not in str(rejected.value)
+    assert cache.read_bytes() == before
 
 
 def test_installed_parallel_replay_pages_keep_source_fields_directory_and_alias(tmp_path):

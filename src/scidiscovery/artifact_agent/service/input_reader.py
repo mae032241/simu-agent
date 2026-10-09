@@ -23,8 +23,10 @@ SCIENTIFIC_PAGE_MAX_BYTES = 8192
 SCIENTIFIC_PAGE_DEFAULT_BYTES = 4096
 CACHE_DIRECTORY = ".read-input"
 MATERIAL_FILE_READING = (
-    'JSON/text: python tools/read_input.py RETURNED_PATH --file; select --directory or --pointer fields, '
-    'bound --budget and follow the returned page continuation. Native tools can inspect complete originals.')
+    'For ordinary text, code and logs, use native read/search tools on bounded ranges of RETURNED_PATH. '
+    'JSON may also use native tools; python tools/read_input.py RETURNED_PATH --file with --directory or '
+    '--pointer is optional for exact structured selections. Expand decisive original context when needed '
+    'and keep each display bounded.')
 
 
 class Number(str):
@@ -522,15 +524,18 @@ def read(workspace, name=None, *, pointers=None, directory=False, file=False,
             if (selection_id is not None and name is None) or action not in {'read', 'restart'}:
                 raise ValueError('navigation cache damaged; specify complete source and fields to recover') from None
             state = {}
+        retained_entry = None
+        if selection_id is not None:
+            entries = [entry for key, entry in state.items()
+                if re.fullmatch(r'[0-9a-f]{64}', key) and isinstance(entry, dict)
+                and isinstance(entry.get('fingerprint'), str)
+                and _handle(key, entry['fingerprint']) == selection_id]
+            retained_entry = entries[0] if len(entries) == 1 else None
         if implicit:
             if selection_id is None:
                 selection = state.get('current_selection')
             else:
-                entries = [entry for key, entry in state.items()
-                    if re.fullmatch(r'[0-9a-f]{64}', key) and isinstance(entry, dict)
-                    and isinstance(entry.get('fingerprint'), str)
-                    and _handle(key, entry['fingerprint']) == selection_id]
-                selection = entries[0].get('selection') if len(entries) == 1 else None
+                selection = retained_entry.get('selection') if retained_entry is not None else None
             if (not isinstance(selection, dict) or not isinstance(selection.get('path'), str)
                     or not isinstance(selection.get('pointers'), list)
                     or not all(isinstance(x, str) for x in selection['pointers'])
@@ -564,6 +569,15 @@ def read(workspace, name=None, *, pointers=None, directory=False, file=False,
         handle = _handle(key, fingerprint)
         if selection_id is not None and (selection_id != handle or
                 (implicit and (not isinstance(previous, dict) or previous.get('fingerprint') != fingerprint))):
+            if not implicit and retained_entry is not None:
+                retained = retained_entry.get('selection')
+                if isinstance(retained, dict) and selection['path'] == retained.get('path'):
+                    retained_descriptor = _scientific_descriptor(root, source) if retained.get('scientific_overview') else None
+                    retained_fingerprint = hashlib.sha256(raw + (encode(retained_descriptor).encode() if retained_descriptor else b'')).hexdigest()
+                    if retained_fingerprint != retained_entry['fingerprint']:
+                        raise ValueError('material changed during reading; reselect the source and fields at offset 0')
+                raise ValueError('selection mismatch; replay: python tools/read_input.py '
+                    f'--selection {selection_id} --offset {offset or 0} --budget {budget}')
             raise ValueError('material changed during reading; select the complete source and fields again')
         start = offset or 0
         if offset and selection_id is None and isinstance(previous, dict) and previous.get('fingerprint') != fingerprint:
@@ -655,7 +669,7 @@ def read(workspace, name=None, *, pointers=None, directory=False, file=False,
 def main():
     parser = argparse.ArgumentParser(prog="read_input.py", description=__doc__)
     parser.add_argument('name', nargs='?', help='source_name, unique port, registered relative_path or assignment.json; omit for current-selection navigation')
-    parser.add_argument('--selection', dest='selection_id', help='returned content-bound navigation handle; use with --offset. After cache loss also supply the complete source and field selection to verify/recover it.')
+    parser.add_argument('--selection', dest='selection_id', help='returned content-bound navigation handle; replay it with --offset and no source or field flags. After cache loss supply the complete source and fields to verify/recover it.')
     parser.add_argument('--file', action='store_true', help='explicit task-local file instead of input alias')
     parser.add_argument('--full', action='store_true', help='read the exact complete source instead of its declared scientific overview; preserve pagination')
     parser.add_argument('--pointer', dest='pointers', action='append', help='JSON Pointer; repeat for ordered fields')

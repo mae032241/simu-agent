@@ -1,10 +1,10 @@
 """Read exact sections of the Agent authoring form; never validate or rewrite it.
 
 Default: envelope, payload fields, shared rules and required reference closure.
---field NAME also expands that payload field's complete reference closure.
+--field /NAME or /payload/NAME expands that field's complete reference closure.
+Unambiguous short field names remain supported for both envelope and payload.
 --definitions-only adds field details to an already retained current overview.
 --full returns the complete authoring form, never the sealed artifact schema.
---field names a field inside payload, not an envelope member such as handoff.
 The CLI keeps only
 disposable task-local reading metadata; no scientific state or framework imports.
 """
@@ -19,6 +19,8 @@ import tempfile
 import json
 from pathlib import Path
 from urllib.parse import urldefrag, urljoin, unquote
+
+READ_OUTPUT_SCHEMA_FIELDS = 2
 
 MAPS = {'properties', 'patternProperties', '$defs', 'definitions', 'dependentSchemas', 'dependencies'}
 SINGLE = {'items', 'additionalItems', 'additionalProperties', 'unevaluatedProperties',
@@ -60,12 +62,22 @@ def read_schema(schema, fields=(), *, full=False, definitions_only=False):
     payload = schema.get('properties', {}).get('payload', {}) if isinstance(schema, dict) else {}
     if not isinstance(schema, dict) or schema.get('type') != 'object' or not isinstance(payload, dict) or payload.get('type') != 'object':
         return {**complete, 'fallback': 'unsupported envelope shape'}
-    properties = payload.get('properties', {})
+    choices, aliases = {}, {}
+    for prefix, node, location in (('', schema, ''), ('/payload', payload, '/properties/payload')):
+        for name, field in node.get('properties', {}).items():
+            path = prefix + '/' + pointer(name)
+            choices[path] = (field, location + '/properties/' + pointer(name))
+            aliases.setdefault(name, []).append(path)
+    selected = {}
     for name in fields:
-        if name not in properties:
-            raise ValueError('Unknown payload field: ' + name + '. Choose from: '
-                + ', '.join(properties) + '. Omit --field for the overview; --full includes handoff. '
-                'Do not pass the payload wrapper as a field.')
+        paths = [name] if name in choices else aliases.get(name, [])
+        if not paths:
+            raise ValueError('Unknown field path or short name: ' + name
+                + '. Choose an exact path: ' + ', '.join(choices) + '.')
+        if len(paths) > 1:
+            raise ValueError('Ambiguous field: ' + name + '. Choose an exact path: '
+                + ', '.join(paths) + '.')
+        selected[paths[0]] = choices[paths[0]]
     nodes, resources, bases, definitions = {}, {'': ''}, {}, []
 
     def index(node, path='', base=''):
@@ -129,15 +141,15 @@ def read_schema(schema, fields=(), *, full=False, definitions_only=False):
         index(schema)
         if not definitions_only:
             references(schema, '', required_only=True)
-        for name in fields:
-            references(properties[name], '/properties/payload/properties/' + pointer(name))
+        for node, path in selected.values():
+            references(node, path)
     except ValueError as error:
         return {**complete, 'fallback': str(error)}
     result = {**origin, 'format': 'reading_sections',
         'instruction': 'Reading view, not a validator. Before authoring a field, read its full reference closure with --field. Retain the current overview and shared rules; refresh after schema changes. --full returns all originals.',
         'definitions': expanded}
     if definitions_only:
-        result['fields'] = {name: copy.deepcopy(properties[name]) for name in fields}
+        result['fields'] = {name: copy.deepcopy(node) for name, (node, _) in selected.items()}
         result['requires'] = 'Current overview of this same source; field details do not replace shared constraints.'
     else:
         result['overview'] = outline(schema)
@@ -213,7 +225,8 @@ def workspace_view(root, fields=(), *, full=False, definitions_only=False):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--field', action='append', default=[], help='Payload field to read, repeatable')
+    parser.add_argument('--field', action='append', default=[],
+        help='Exact /NAME or /payload/NAME path (or an unambiguous short name), repeatable')
     parser.add_argument('--definitions-only', action='store_true')
     parser.add_argument('--full', action='store_true')
     args = parser.parse_args()

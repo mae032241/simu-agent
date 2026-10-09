@@ -49,7 +49,7 @@ class DescribeInput(_Input):
     name: str = Field(min_length=1, max_length=256)
     view: Literal["full", "invoke"] = Field(
         default="invoke",
-        description="Operations: invoke is the default; full adds execution diagnostics. Interfaces always return their complete input contract for either view.",
+        description="Operations: invoke is the default self-contained caller contract; no separate operation_invoke description is needed. full adds execution diagnostics. Interfaces always return their complete input contract for either view.",
     )
 
 
@@ -69,7 +69,7 @@ class AttachInput(_Input):
 
 _DECLARATIONS = (
     ("scid_catalog", "List authorized names and purposes; no full contracts.", CatalogInput),
-    ("scid_describe", "Read one capability's exact contract before calling it.", DescribeInput),
+    ("scid_describe", "Read a known capability's exact contract directly; use catalog only to discover names. Selected Operation invoke views include their complete caller contract.", DescribeInput),
     ("scid_call", "Call an authorized capability by its exact contract.", CallInput),
 )
 _ATTACH = {"name": "worker_attach", "description": "Bind the actual spawned child thread to an exact queued Run; Root only. Calling again with a corrected native ID replaces an unopened queued binding. Once assignment is opened, ownership cannot change.",

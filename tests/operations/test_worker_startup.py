@@ -97,7 +97,7 @@ def test_audit_form_preserves_authored_handoff_and_unknown_field_repair(tmp_path
     assert 'summary' in form['$defs']['RoleHandoff']['required']
     assert 'verdict' not in form['$defs']['RoleHandoff']['properties']
     assert 'handoff' in form['required']
-    with pytest.raises(ValueError, match='Choose from:.*checks'):
+    with pytest.raises(ValueError, match='Choose an exact path:.*payload/checks'):
         workspace_view(tmp_path, ['summary'])
 
 

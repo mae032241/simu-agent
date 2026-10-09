@@ -242,19 +242,30 @@ def operation_invoke_contract(value, *, revision_policy):
         "optional_runtime_services", "executor_model_usage"}
     result = {key: item for key, item in value.items() if key not in execution_only}
     result["revision_policy"] = revision_policy
-    result["contract_view_version"] = "invoke.scientific.v2"
+    result["contract_view_version"] = "invoke.scientific.v3"
     result["binding_policy"] = "Choose scientific materials by their instance names. Control resolves declared exact original materials; missing or ambiguous origins require repair of the selected subject. Internal bindings are not caller inputs."
     result["review_policy"] = "Independent review is optional unless this action explicitly requests qualification or authorization. A review applies only to its exact immutable subject."
-    result["invocation"] = {"tool": "operation_invoke", "required": ["name", "operation_id", "inputs"],
-        "instruction": "Required for Agent tasks: relay the scientific owner's question and intended deliverable, or the initial original user request. Root does not invent scientific direction or selection criteria.",
-        "inputs": "One entry per chosen visible port: {port, artifact_names: [exact semantic names]}. Omit optional ports when irrelevant.",
+    # Use the actual caller DTO once, including enum/default/recovery rules.
+    # Scientific port constraints remain above; do not create another schema
+    # for Worker output or duplicate ScientificIntent definitions here.
+    from .mcp_root import OperationCallInput
+    call_schema = OperationCallInput.model_json_schema()
+    call_schema["properties"]["operation_id"]["const"] = value["operation_id"]
+    call_schema["$defs"]["OperationInputSelection"]["properties"]["port"]["enum"] = [
+        port["name"] for port in value.get("inputs", ())]
+    call_schema["properties"]["inputs"]["description"] = (
+        "One entry per chosen visible port listed in this contract's inputs: "
+        "{port, artifact_names: [exact semantic names]}. Obey those ports' cardinality, "
+        "schema, source and qualification constraints; omit irrelevant optional ports.")
+    if value.get("executor_kind") == "agent":
+        call_schema["properties"]["instruction"]["description"] = (
+            "Required for Agent tasks. " + call_schema["properties"]["instruction"]["description"])
+        call_schema["properties"]["scientific_intent"]["description"] += (
+            " Recommended for background research; no mechanical identifiers.")
+    result["invocation"] = {"tool": "operation_invoke", "inputSchema": call_schema,
+        "description": "Complete caller contract for this selected Operation. Call through scid_call; no separate scid_describe(operation_invoke) is needed. Optional preflight creates nothing; reuse its normalized_request unchanged.",
         "idempotency": "Reuse a name only for an identical request. An intentional changed request uses on_conflict=create_revision.",
         "dispatch": "For a queued Agent, use its returned dispatch instructions and frozen execution_profile. Transform and Approval actions complete through their returned result or review_url."}
-    if value.get("executor_kind") == "agent":
-        from ..schema.scientific_progress import ScientificIntent
-        result["invocation"]["scientific_intent"] = {
-            "required": False, "schema": ScientificIntent.model_json_schema(),
-            "meaning": "Optional task purpose, recommended for background research; control freezes it and supplies it to the Worker. No mechanical identifiers."}
     result["full"] = {"tool": "scid_describe", "name": value["operation_id"], "view": "full"}
     return result
 

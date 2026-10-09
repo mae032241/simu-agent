@@ -199,11 +199,11 @@ def test_startup_navigation_and_page_limits_work_with_frozen_cli(analysis_inputs
     start = json.loads(start_path.read_bytes())
     assert '--budget 512..8192' in start['reading']['inputs']
     # The complete reader guidance remains one exact read away.
-    context = json.loads((workspace.root/'worker-context.json').read_bytes())
+    context = json.loads((workspace.root/'worker-guides.json').read_bytes())
     assert '512..8192 bytes' in context['guides']['reader']
     guides = {item['name']: item for item in start['guides']}
     assert guides['reader'] == dict(name='reader', size_bytes=len(context['guides']['reader'].encode()),
-        read='python tools/read_input.py worker-context.json --file --pointer /guides/reader')
+        read='python tools/read_input.py worker-guides.json --file --pointer /guides/reader')
     # Every advertised guide is one exact read of the frozen context, sized as stated.
     for name, guide in guides.items():
         assert guide['read'].endswith('/guides/' + name) or name == 'role_reference'
