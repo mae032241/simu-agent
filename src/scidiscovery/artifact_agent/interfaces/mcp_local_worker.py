@@ -126,6 +126,13 @@ class LocalWorkerMCPRouter:
             "Read the selected material navigation below; unresolved material names remain gaps. "
             "Use scid_describe for a selected tool's complete contract and retain it while unchanged and in context. "
             "Do not read the parent result schema or owner instructions unless the subtask specifically needs them."
+            " For material-reading subtasks, keep bulk logs/code/history in your own context. "
+            "Read the selected originals and use permitted reading/check tools; this reading subtask requests no edits. "
+            "Return bounded findings with supporting and contrary evidence, failed or inconclusive observations, exact original source aliases "
+            "and pointers/line locators with short quotes, inspected scope, omissions/unread ranges and uncertainties. "
+            "Distinguish original observations from producer interpretations and your own inference; missing coverage "
+            "stays unknown. Point the owner to decisive original selections rather than copying whole materials. "
+            "Your report is attributed reading support, not original evidence, scientific verification or permission."
         )
         budget = self.runs.worker_budget(status)
         budget.pop('checkpoint', None)  # This reminder belongs to the task owner.

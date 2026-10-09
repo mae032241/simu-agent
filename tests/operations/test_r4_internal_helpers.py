@@ -189,6 +189,12 @@ def test_helper_startup_selects_material_navigation_and_contracts_on_demand(tmp_
     assert 'output' not in assignment and 'output_schema' not in assignment
     assert not {'task', 'materials', 'role_instructions', 'tool_contracts'} & opened.keys()
     assert assignment['tools'] and 'worker_submit_result' not in assignment['tools']
+    # Default reading division retains observations and omissions in an attributed
+    # helper report; the owner keeps original-read and finalization authority.
+    for clause in ('supporting and contrary evidence', 'failed or inconclusive observations',
+                   'pointers/line locators', 'omissions/unread ranges', 'missing coverage',
+                   'this reading subtask requests no edits', 'not original evidence'):
+        assert clause in assignment['role_instructions']
     profile = runtime.runs.status(run_id).execution_profile['profile']
     described = _result(gateway.handle({'jsonrpc': '2.0', 'id': 2, 'method': 'tools/call', 'params': {
         'name': 'scid_describe', 'arguments': {'name': 'worker_reference_read'},

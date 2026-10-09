@@ -21,6 +21,28 @@ READER_CORE = ('Read with python tools/read_input.py SOURCE (exact source_name):
     'Recovery and alias details: guide reader.')
 TOOLS_CORE = ('Before calling a tool read its complete contract: python tools/read_tool_contract.py TOOL or '
     'scid_describe; retain unchanged contracts.')
+MATERIAL_READING = (
+    'Default reading division: the owner reads the task, original goal, prohibitions, completion conditions, '
+    'current hypothesis boundaries, core overviews and applicable role/form/tool contracts. Small materials '
+    'stay with the owner. Delegate bulk originals larger than large_input_bytes, long code/logs and multi-page '
+    'history to a prepared worker_helper before expanding them in the owner context. Select exact source_name '
+    'aliases or workspace paths and one bounded evidence question; group related materials for that question '
+    'instead of preparing one helper per file. Reuse a sufficient report tied to the same exact originals and '
+    'inspected scope when its context is retained, except when independent analysis requires its own helper. '
+    'Include the original goal and constraints '
+    'needed to assess relevance. Read the complete worker_helper contract, then use its returned frozen profile '
+    'and fresh-context dispatch, wait for completion and integrate the report. This is reading division within '
+    'this task, not another scientific stage. For analysis, prepare your own reading helper against the exact '
+    'originals; a prior experiment owner\'s filtered report is not an independent analysis. Helpers return '
+    'findings, supporting and contrary evidence, exact original aliases and pointers/line locators with short '
+    'quotes, inspected scope, omissions, unread ranges and uncertainties. Their summaries are attributed '
+    'navigation, not original evidence or qualification; read the decisive original selections before citing '
+    'or resolving a conflict. If helpers are unavailable or disabled, admission or an active-slot limit fails, '
+    'the helper allowance is exhausted, or the remaining budget cannot '
+    'support waiting, record that limitation and read only the bounded original selections needed for the '
+    'decision, or report the unresolved gap. Do not expand budgets or retry uncertain native dispatch. '
+    'The size threshold is a default reading rule, not a tool admission gate; this policy does not restrict '
+    'permitted native tools or hide materials from the owner.')
 SAME_SOURCE_CORE = (' same_source_as names the representative of one exact frozen original: read it once. Each alias keeps '
     'its own purpose and citation permissions; equivalence grants no review or qualification.')
 
@@ -487,6 +509,13 @@ def startup_document(assignment: dict, domain: dict | None = None, *, reader_nav
             'verified originals.' if detail['history'] else '') + (' worker_reference_read lists/reads allowed '
             'originals and boundary declarations of bound reports; availability is unknown until checked.'
             if detail['reference_access'] else '') + ' Details: guide tools.'
+    result['reading']['material_division'] = dict(
+        large_input_bytes=SCIENTIFIC_PAGE_MAX_BYTES,
+        helper_tool_available='worker_helper' in assignment.get('tools', ()),
+        large_sources=[item['source_name'] for item in inputs
+            if item.get('size_bytes', 0) > SCIENTIFIC_PAGE_MAX_BYTES
+            and 'same_source_as' not in item],
+        instruction=MATERIAL_READING)
     if frozen_role_note and isinstance(result.get('reading'), dict):
         result['reading']['role'] = frozen_role_note
     for key in ('observed_results', 'support_status'):
