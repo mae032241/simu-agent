@@ -552,6 +552,12 @@ def _validate_operation_contracts(plugin_map: dict[str, PluginDefinition], compo
             issue = operation.bounds_issue()
             if issue: _fail(issue, plugin.plugin_id, op_id, "limits")
             executor = operation.executor
+            capture = operation.artifact_capture
+            if capture is not None:
+                if (capture.issue() or executor.kind != "agent" or executor.native_tools.shell == "none"
+                        or not any(port.name == "attachments" for port in operation.outputs)
+                        or not set(capture.required_source_ports) <= {port.name for port in operation.inputs}):
+                    _fail("artifact_capture_invalid", plugin.plugin_id, op_id, "artifact_capture")
             if executor.kind not in {"agent", "transform", "effect", "approval"}: _fail("executor_invalid", plugin.plugin_id, op_id)
             if operation.catalog_scope == "support" and executor.kind != "transform": _fail("support_executor_invalid", plugin.plugin_id, op_id, "catalog_scope")
             if operation.catalog_scope == "support" and operation.review and operation.review.approval: _fail("support_approval_forbidden", plugin.plugin_id, op_id, "review")

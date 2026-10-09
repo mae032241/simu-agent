@@ -49,6 +49,12 @@ class OperationToolContext:
         return self._input_names_for_port(port) if self._input_names_for_port else ()
 
     _publish_files: Callable[..., dict] | None = None
+    _capture_science: Callable[..., tuple] | None = None
+
+    def capture_science(self, document, paths, declarations=()):
+        if self._capture_science is None:
+            return document, {}
+        return self._capture_science(document, paths, declarations)
 
     def publish_files(self, request):
         if self._publish_files is None:

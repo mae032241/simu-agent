@@ -26,6 +26,7 @@ from .operations.spec import (
     SemanticRuleSpec,
     ScientificProgressSpec,
     ExecutorRef,
+    ArtifactCaptureSpec,
 )
 
 
@@ -230,6 +231,7 @@ def scientific_agent_operation(
     consequence: str = "scientific",
     decision_fields: tuple[str, ...] = ("summary", "conclusion", "limitations", "remaining_question", "remaining_contradiction"),
     scientific_progress: ScientificProgressSpec | None = None,
+    artifact_capture: ArtifactCaptureSpec | None = None,
 ) -> OperationSpec:
     """Build one bounded Agent declaration without registration side effects."""
 
@@ -255,6 +257,7 @@ def scientific_agent_operation(
         consequence=consequence,
         decision_fields=decision_fields,
         scientific_progress=scientific_progress,
+        artifact_capture=artifact_capture,
         input_admission=input_admission,
         input_validation=input_validation,
         complete_transform_family=complete_transform_family,

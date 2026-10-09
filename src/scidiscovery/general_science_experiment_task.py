@@ -13,7 +13,7 @@ from .artifact_agent.schema.validation import ValidationCheckResult
 from .plugin_runtime.results import materialize_summary_handoff, finalize_result, validate_finalizer_payload
 from .general_science_agent_operations import _input
 from .operation_declaration import schema_resource, scientific_agent_operation, semantic_contract
-from .operations.spec import (CallableComponent, CollectionSpec, ComponentRef,
+from .operations.spec import (ArtifactCaptureSpec, CaptureSources, CallableComponent, CollectionSpec, ComponentRef,
     ComponentSpec, InputDerivationSpec, InputPortSpec, InputValidationSpec, OutputPortSpec, SemanticRuleSpec, WorkspaceContract, ScientificProgressSpec)
 from .operations.tooling import WorkerToolDefinition
 from .agent_execution_settings import MaterialInputSettings
@@ -81,7 +81,8 @@ class StageSubmission(BaseModel):
     remaining_question: str = Field(default="", max_length=8192,
         description="Unresolved question or blocker, when there is one.")
     materials: tuple[str, ...] = Field(default=(), max_length=32,
-        description="Exact current input or previously sealed stage aliases.")
+        description="Exact current input or sealed aliases, or file:scratch/artifacts/path for this seal; file@<sealed-stage-reference>:path selects that immutable version. run: is not a scientific source.")
+    capture_sources: tuple[CaptureSources, ...] = Field(default=(), max_length=4)
     prediction_declaration: PredictionDeclaration | None = Field(default=None,
         description="Optional design-stage scientific precommitment: prediction, criterion and actual conditions. Sealing fixes bytes and references, not scientific correctness or final task completion.")
     comparison: PredictionComparison | None = Field(default=None,
@@ -98,6 +99,19 @@ class StageSubmission(BaseModel):
         if self.native_execution is not None and self.stage != "execution":
             raise ValueError("native_execution belongs to execution")
         return self
+
+
+class DraftValidationCheckResult(ValidationCheckResult):
+    evidence_keys: Annotated[tuple[MaterialAlias, ...], Field(max_length=64)] = ()
+
+
+class DraftPredictionComparison(PredictionComparison):
+    result: DraftValidationCheckResult
+
+
+class DraftStageSubmission(StageSubmission):
+    comparison: DraftPredictionComparison | None = Field(default=None,
+        description=StageSubmission.model_fields['comparison'].description)
 
 
 def _same_criterion(declaration, comparison):
@@ -118,8 +132,13 @@ def _read_stage_source(context, alias):
 
 
 def submit_stage(request, context):
+    raw, capture = context.capture_science(request.model_dump(mode="json"),
+        ("materials/*", "prediction_declaration/conditions/*", "comparison/prediction", "comparison/observations/*",
+         "comparison/result/evidence_keys/*", "native_execution/implementation", "native_execution/logs/*", "native_execution/results/*"),
+        [item.model_dump(mode="json") for item in request.capture_sources])
+    request = StageSubmission.model_validate_json(canonical_json(raw), strict=True)
     aliases = list(request.materials)
-    metadata = {"kind": "experiment_stage", "stage": request.stage}
+    metadata = {"kind": "experiment_stage", "stage": request.stage, **capture}
     if request.native_execution is not None:
         native = request.native_execution
         aliases.extend((native.implementation, *native.logs, *native.results))
@@ -142,7 +161,9 @@ def submit_stage(request, context):
         media_type="application/json", derived_from=tuple(dict.fromkeys(("objective_source", *aliases))),
         metadata=metadata)
     return {"stage": request.stage, "reference": record["alias"], "state": "sealed",
-        "artifact_name": record["artifact_name"]}
+        "artifact_name": record["artifact_name"],
+        **({'capture':{'reference':capture['capture_index'],'coverage':capture['capture_coverage'],
+             'counts':capture['capture_counts'],'attempt_inventory':'not_declared'}} if capture else {})}
 
 
 class ExecuteExperiment(BaseModel):
@@ -278,8 +299,17 @@ def validate_completion(payload, sources, handoff):
                 resolved = sources.sealed_material_record(name)
                 if resolved is not None:
                     records[name] = resolved
-        return any(identity(record) == target and record.get("tool_name") == "worker_publish_files"
-            and record["metadata"].get("kind") == "scientific_attachment" for record in records.values())
+        for name, record in tuple(records.items()):
+            if (identity(record) != target or record.get("output_port") != "attachments"
+                    or record["metadata"].get("kind") != "scientific_attachment"
+                    or record["metadata"].get("provenance_status") == "unknown"):
+                continue
+            original = sources.sealed_material_record(name)
+            if (original is not None and identity(original) == target
+                    and original.get("tool_name") == "worker_publish_files"
+                    and original.get("output_port") == "attachments"):
+                return True
+        return False
     implementations = {}
     for item in selected:
         if item["metadata"].get("kind") == "experiment_implementation":
@@ -500,8 +530,8 @@ FINALIZER = CallableComponent("workspace_finalizer", WorkspaceFinalizer(
     finalize, result_draft_schema, RESULT_PROJECTION_VERSION))
 STAGE_TOOL = WorkerToolDefinition(name="worker_experiment_stage",
     description="Seal a stage conclusion and exact scientific materials. Reuse conclusion, remaining_question and materials to explain the question, change, observation and its effect on the next trial or handoff; no submission is required for each exp run. Optional design prediction_declaration freezes a prediction/criterion/conditions; optional validity comparison reads that exact declaration and actual observations. Handler checks structure and exact bindings; original declaration receipt is additionally checked when the final report adopts the comparison (bind the declaration as scientific_materials). Sealing alone is a preview, not scientific correctness or final validation; not_run does not test a prediction. Returns a local reference and immutable artifact_name; continue working after sealing.",
-    input_model=StageSubmission, capability="experiment.stage", contextual_handler=submit_stage, owner_only=True,
-    evidence_ports=("tool_evidence", "recovery_manifest_output"))
+    input_model=DraftStageSubmission, capability="experiment.stage", contextual_handler=submit_stage, owner_only=True,
+    evidence_ports=("tool_evidence", "recovery_manifest_output", "attachments"))
 EXECUTE_TOOL = WorkerToolDefinition(name="worker_experiment_execute",
     description="Request, advance, collect or cancel this experiment's formal execution. start may return submission.state=pending while control submits in the background; query status with the same name. unknown is not proof of non-submission; never create a replacement. Async failures are readable in submission.error. review returns an exact public subject and operation_invoke request for independent review; it starts neither a reviewer nor execution. status refreshes remote state and bounded progress of a submitted execution without submitting, cancelling or collecting. advance can continue an authorized execution; collect transfers result files. Confirmed terminal states require no remote query. Status returns timing, log metadata and refresh failure only, never log text. Use logs for the newest cached page, direction=before with its before cursor for older text, or direction=after with its after cursor for new text. No change returns empty text; gap=snapshot_replaced explicitly marks lost continuity and returns a fresh newest page. It performs no remote query. After successful collection read/export the collected log outputs. Read text or export exact collected scientific files into scratch for local analysis. Uses configured authorization and the original scientific budget.\n" + REMOTE_EXECUTION_GUIDANCE,
     input_model=ExecuteExperiment, capability="experiment.execute", contextual_handler=execute,
@@ -532,6 +562,7 @@ OPERATION = scientific_agent_operation(
     "Open research without sealed hypotheses, changing or introducing hypotheses, departing the bound hypotheses/question or user-authorized scope, or independent result interpretation. Reuse sufficient materials; prepare missing originals when needed.",
     decision_fields=("outcome", "summary", "remaining_question", "limitations"),
     scientific_progress=ScientificProgressSpec(stage="experiment", subject_port="hypothesis_portfolio", objective_port="objective_source"),
+    artifact_capture=ArtifactCaptureSpec(required_source_ports=("objective_source",)),
     agent=_REF("experiment_task_agent"), prompt=_REF("experiment_task_prompt"),
     workspace=_REF("experiment_task_workspace"),
     input_validation=InputValidationSpec(_REF("experiment_goal_inputs"), "science.experiment.v1.goal",

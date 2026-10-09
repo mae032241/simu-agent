@@ -762,6 +762,9 @@ class LocalWorkerMCPRouter:
                 for run in family for item in run.inputs))
 
         return OperationToolContext(
+            _capture_science=(lambda document, paths, declarations: self.runs.capture_science(
+                self._run_id, document, paths, declarations, workspace=self._workspace.root))
+                if 'attachments' in tool.evidence_ports and self.compiled.spec.artifact_capture is not None else None,
             services=scope_experiment_services({
                 key.partition(":")[2]: self.tool_services[key]
                 for key in (*tool.required_services, *tool.optional_services)

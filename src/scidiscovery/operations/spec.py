@@ -419,6 +419,38 @@ class ScientificProgressSpec(FrozenSpec):
         return None
 
 
+class CaptureSources(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+    directories: tuple[str, ...] = Field(default=(), max_length=4,
+        description="Task-local scratch subdirectories explicitly belonging to this scientific batch. Empty means the compiled managed directories; no external paths or whole scratch scope.")
+    source_aliases: tuple[str, ...] = Field(default=(), max_length=32,
+        description="Actual exact input or sealed material aliases used to produce this batch. Inventory and new files are not production sources.")
+
+
+class ArtifactCaptureSpec(FrozenSpec):
+    """Fixed task-local scope and safety bounds; no external read permission."""
+    roots: tuple[str, ...] = ("scratch/artifacts",)
+    required_source_ports: tuple[str, ...] = ()
+    max_entries: int = Field(default=256, ge=1, le=4096)
+    max_record_bytes: int = Field(default=65536, ge=128, le=1048576)
+    max_seconds: int = Field(default=20, ge=1, le=120)
+
+    def issue(self):
+        from pathlib import PurePosixPath
+        if not self.roots or len(self.roots) > 4 or len(set(self.roots)) != len(self.roots):
+            return "artifact_capture_invalid"
+        for root in self.roots:
+            path = PurePosixPath(root)
+            if (path.is_absolute() or len(path.parts) < 2 or path.parts[0] != "scratch"
+                    or any(part.startswith('.') or part in {'cache', 'tmp'}
+                        or re.search(r'credential|password|secret|token|private[-_]key|api[_-]?key', part, re.I) for part in path.parts[1:])
+                    or str(path) != root):
+                return "artifact_capture_invalid"
+        if len(set(self.required_source_ports)) != len(self.required_source_ports):
+            return "artifact_capture_invalid"
+        return None
+
+
 class OperationSpec(FrozenSpec):
     operation_id: str
     version: str
@@ -430,6 +462,7 @@ class OperationSpec(FrozenSpec):
     consequence: str
     decision_fields: tuple[str, ...] = ("summary", "conclusion", "limitations", "remaining_question", "remaining_contradiction")
     scientific_progress: ScientificProgressSpec | None = None
+    artifact_capture: ArtifactCaptureSpec | None = None
     independent_review_ports: tuple[str, ...] = ()
     # Explicit scientific contributors retained by deterministic projection.
     authorship_source_ports: tuple[str, ...] = ()
@@ -660,7 +693,7 @@ def json_projection(value: Any) -> Any:
         return {
             (field.alias or name): json_projection(getattr(value, name))
             for name, field in type(value).model_fields.items()
-            if not (isinstance(value, OperationSpec) and name == "input_validation"
+            if not (isinstance(value, OperationSpec) and name in {"input_validation", "artifact_capture"}
                     and getattr(value, name) is None)
             and not (isinstance(value, InputDerivationSpec) and name == "source_original_text"
                      and not value.source_original_text)

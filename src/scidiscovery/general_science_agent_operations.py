@@ -204,6 +204,7 @@ def _agent(
     consequence: str = "scientific",
     decision_fields: tuple[str, ...] = ("summary", "conclusion", "limitations", "remaining_question", "remaining_contradiction"),
 ) -> OperationSpec:
+    from .operations.spec import ArtifactCaptureSpec
     return scientific_agent_operation(
         operation_id,
         purpose,
@@ -228,6 +229,7 @@ def _agent(
         guards=tuple(ComponentRef(item) for item in guards),
         consequence=consequence,
         decision_fields=decision_fields,
+        artifact_capture=ArtifactCaptureSpec(),
     )
 
 

@@ -118,6 +118,15 @@ def startup_document(assignment: dict, domain: dict | None = None, *, reader_nav
             'using paths, scientific purpose and exact source aliases; control assigns types, hashes and bindings. '
             'Write only the form to output/result.json; do not put attachments in output/ or embed files in narrative fields. '
             'Publication retains bytes and provenance, not scientific validation. Returned references are reusable evidence.')
+        if assignment.get('artifact_capture'):
+            directories = assignment['artifact_capture']['directories']
+            result['artifact_capture'] = {'directories':list(directories)}
+            locations = ', '.join(directory + '/' for directory in directories)
+            result['output']['attachments'] = (f'Write scientific files to the declared directories: {locations}; '
+                'stages and final submission capture that declared scope. '
+                f'Cite file:{directories[0]}/path, or file@<sealed-stage-reference>:{directories[0]}/path for an older version; '
+                'declare actual batch sources with capture_sources when needed. run: is navigation only; scratch/cache/ and scratch/tmp/ are outside capture. '
+                'worker_publish_files remains available for authorized explicit or early publication.')
     result['reading'] = {
         'inputs': 'JSON: locate needed fields with python tools/read_input.py SOURCE --directory, '
             'then exact --pointer selections. Use exact source_name in tools and citations; artifact_name is navigation only. '

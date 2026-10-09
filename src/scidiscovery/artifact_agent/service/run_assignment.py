@@ -166,6 +166,8 @@ def assignment_json(
                 item["same_source_as"] = first
         item.pop("artifact_ref", None)
         item.pop("port", None)
+    if bound.compiled.spec.artifact_capture is not None:
+        assignment['artifact_capture'] = {'directories':list(bound.compiled.spec.artifact_capture.roots)}
     return canonical_json(assignment)
 
 
@@ -279,6 +281,9 @@ def result_schema_json(
                 rule['sources'] = [alias for alias, name in input_source_ports.items() if name in ports]
     for source in payload.get('x-scidiscovery-readable-evidence', ()):
         source.pop('port', None)
+    if compiled.spec.artifact_capture is not None:
+        from .artifact_capture import draft_capture_schema
+        envelope = draft_capture_schema(envelope, compiled)
     return canonical_json(envelope)
 
 

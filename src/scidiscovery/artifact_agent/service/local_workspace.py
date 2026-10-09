@@ -7,6 +7,7 @@ Artifact records, choose reviewers, or decide Run terminal state.
 from __future__ import annotations
 
 import hashlib
+import json
 import mimetypes
 import os
 import re
@@ -21,6 +22,32 @@ from ...plugin_runtime.workspace import (WorkspaceError, WorkspaceOutputError,
     write_control_workspace_file, read_control_workspace_file, remove_control_workspace_file,
     move_control_workspace_file, _open_workspace_parent,
     validate_publication_content as _validate_publication_content, media_type_for_path as _media_type)
+
+
+def _capture_directories(assignment: bytes) -> tuple[str, ...]:
+    from ...operations.spec import ArtifactCaptureSpec
+    capture = json.loads(assignment).get('artifact_capture')
+    roots = tuple(capture['directories']) if capture is not None else ('scratch/artifacts',)
+    if ArtifactCaptureSpec(roots=roots).issue():
+        raise WorkspaceError('declared capture directories are invalid')
+    return roots
+
+
+def _prepare_capture_directory(workspace: Path, relative_path: str) -> None:
+    descriptors, descriptor = _open_workspace_parent(workspace, Path('_capture'))
+    try:
+        for part in Path(relative_path).parts:
+            try:
+                os.mkdir(part, mode=0o700, dir_fd=descriptor)
+            except FileExistsError:
+                pass
+            descriptor = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
+            descriptors.append(descriptor)
+    except OSError as error:
+        raise WorkspaceError('declared capture directory is not a real directory tree') from error
+    finally:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,6 +162,7 @@ class LocalTrustedBackend:
         recovery_digest: str | None = None,
         initial_output: bytes | None = None,
     ) -> OpenWorkspace:
+        capture_directories = _capture_directories(assignment)
         binding = self._binding_path(run_id)
         if binding.exists():
             raise WorkspaceError("Run workspace already exists")
@@ -146,6 +174,8 @@ class LocalTrustedBackend:
         candidate_root = run_root / "candidates"
         for path in (input_root, schema_root, output_root, candidate_root):
             path.mkdir(parents=True, mode=0o700)
+        for directory in capture_directories:
+            _prepare_capture_directory(run_root, directory)
         input_paths: dict[str, Path] = {}
         for item in inputs:
             filename = workspace_input_filename(item.name, item.media_type)
@@ -196,6 +226,9 @@ class LocalTrustedBackend:
             or assignment.is_symlink()
             or not output.is_dir()
             or output.is_symlink()
+            or (root / "scratch").is_symlink()
+            or (root / "scratch" / "artifacts").is_symlink()
+            or ((root / "scratch" / "artifacts").exists() and not (root / "scratch" / "artifacts").is_dir())
         ):
             raise WorkspaceError("Run workspace is unavailable")
         input_paths = {

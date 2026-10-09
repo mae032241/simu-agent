@@ -2193,9 +2193,14 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
                 raise ConnectionError("Experiment reconciliation service unavailable")
             incomplete_collections = coordinator.require_idle(value)
         try:
+            validation_tool_snapshot = None
             if value.accepted_candidate_digest is None:
+                from .artifact_capture import capture_candidate
+                capture_candidate(self, value, final_submission=final_submission)
                 self._finalize_workspace(compiled, value.run_id, final_submission=final_submission, trusted_tool_records=trusted_tool_records)
-                self._prepare_evidence_snapshot(value.run_id)
+                validation_tool_snapshot = self._prepare_evidence_snapshot(value.run_id)
+            elif tool_evidence_ports(compiled):
+                validation_tool_snapshot = self._evidence_snapshot(value.run_id)
             sealed = self.backend.seal(
                 value.run_id,
                 max_files=compiled.spec.limits.max_files,
@@ -2226,7 +2231,7 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
                 input_bytes=input_bytes,
                 input_binding_descriptors=descriptors,
                 validation_deadline=validation_deadline,
-                tool_snapshot=self._evidence_snapshot(value.run_id) if tool_evidence_ports(compiled) else None,
+                tool_snapshot=validation_tool_snapshot,
                 reference_calculation_resolver=lambda alias: self.reference_calculation_sources(value, alias, validation_deadline=validation_deadline, validation_budget=reference_validation_budget),
                 sealed_material_resolver=lambda alias: self.sealed_material_record(value, alias),
                 boundary_producer=dict(run_id=value.run_id, operation_id=value.operation_id,
@@ -2420,7 +2425,9 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
                 from .tool_evidence import scientific_evidence_projection
                 expected = scientific_evidence_projection(expected)
                 if (snapshot.root / 'tool-evidence.json').read_bytes() != expected:
-                    raise RunCheckerError('tool evidence snapshot changed before acceptance', category='integrity_failure')
+                    raise RunOutputError('New evidence arrived before candidate acceptance; resubmit this scientific draft without rerunning execution', details=(
+                        contract_diagnostic('capture_snapshot_changed', phase='output_payload', affected_action='submit',
+                            repairable=True, message='A concurrent successful receipt changed the capture/evidence snapshot. Preserve sealed stages and resubmit the draft.'),))
             accepted = row["accepted_candidate_digest"]
             if accepted is not None and str(accepted) != digest:
                 connection.execute("ROLLBACK")

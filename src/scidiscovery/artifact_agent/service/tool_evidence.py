@@ -38,7 +38,9 @@ def scientific_evidence_projection(raw):
     return canonical_json({"materials": [{"reference": item["alias"],
         "media_type": item["media_type"], "size_bytes": item["size_bytes"],
         **{key: value for key, value in item.get("metadata", {}).items()
-           if key in {"kind", "stage", "name", "derived_from", "file_name", "purpose"}}}
+           if key in {"kind", "stage", "name", "derived_from", "file_name", "purpose",
+                      "locator", "capture_mode", "provenance_status", "scientific_claim_admissible",
+                      "capture_index", "capture_coverage", "capture_counts", "author_cited"}}}
         for item in manifest.get("records", ())]})
 
 
@@ -246,6 +248,10 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
         from .attachments import publish_attachments
         return publish_attachments(self, run_id, request, workspace=workspace)
 
+    def capture_science(self, run_id, document, paths, declarations=(), *, workspace):
+        from .artifact_capture import capture_science
+        return capture_science(self, run_id, document, paths, declarations, workspace=workspace)
+
     def source_descriptor(self, value, alias):
         source = next((item for item in value.inputs if item.source_name == alias), None)
         if source is not None:
@@ -434,6 +440,8 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
         elif derived_from:
             # Only registered tools reach this callback. Derived evidence has
             # exact current input/evidence parents; it is not a solver product.
+            from .artifact_capture import require_scientific_aliases
+            require_scientific_aliases(self, value, derived_from)
             derived_refs = tuple(self.source_descriptor(value, alias).artifact_ref for alias in derived_from)
             source_ref = derived_refs[0]
             metadata = {**metadata, 'derived_from': list(derived_from)}
@@ -695,6 +703,7 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
             if next(validator_for(schema)(schema).iter_errors(json.loads(raw)), None) is not None:
                 raise proof_error('reference_proof_contract_limit',
                     'The proof exceeds this task\'s frozen predecessor contract. Preserve its materials and explicitly recover to the current contract; do not rewrite the original task identity.')
+        full_snapshot = raw
         raw = scientific_evidence_projection(raw)
         if len(raw)>1024*1024:
             raise RunCheckerError('tool evidence manifest exceeds limit')
@@ -707,6 +716,7 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
         from .local_workspace import write_control_workspace_file
         path=Path('output/tool-evidence.json')
         write_control_workspace_file(workspace.root, path, raw, replace=(workspace.root/path).exists(), mode=0o400)
+        return full_snapshot
 
     def _evidence_manifest(self, value):
         records=self.tool_evidence(value.run_id)
@@ -916,6 +926,16 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
                         and envelope.labels.get('source_origin') == 'public_web'
                         and ref.kind == 'retrieved_source')
                     applicable = port.kind == 'retrieved_source' and origin.operation_id == value.operation_id
+                elif (record['metadata'].get('capture_mode') == 'auto_captured' and not derived):
+                    originals = [r for r in self.tool_evidence(origin.run_id) if r['artifact_ref'] == record['artifact_ref']]
+                    origin_matches = (len(originals) == 1 and originals[0] == record
+                        and record['source_ref'] is None and envelope.labels.get('scientific_claim_admissible') == 'false'
+                        and (record['metadata'].get('provenance_status') == 'unknown'
+                             or record['metadata'].get('kind') == 'capture_inventory')
+                        and self._compiled(origin).spec.artifact_capture is not None)
+                    # Inventory has no verified direct-source scope. Preserve its
+                    # read authorization only when the original context remains.
+                    applicable = all(binding.artifact_ref in available_refs for binding in origin.inputs)
                 elif derived:
                     parents = tuple(self.source_descriptor(origin, alias).artifact_ref for alias in derived)
                     origin_matches = record['source_ref'] == parents[0].model_dump(mode='json')
