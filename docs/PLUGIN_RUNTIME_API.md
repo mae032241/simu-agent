@@ -425,12 +425,26 @@ execution recovery select `surface="execution"` on all three gateway methods
 projection; it does not authorize internal Operations or task-managed execution.
 Execution services, exact approval, budgets and idempotency remain control-owned.
 
-`run_status` uses `intent="decision"` by default; `status` waits or pages safe saved
-diagnostics, `navigation` discovers exact scientific fields/input names, and `full`
-explicitly reads complete completed science. The old profile/view/mode/full-output
-flags are removed. `output_fields` and exact `output_paths` remain mutually exclusive;
-index/stage pagination and explicit omission markers retain their bounds. UI and
-control retain private recovery and engineering records.
+Root `run_status` uses `intent="decision"` by default for a compact sealed owner
+handoff. `intent="status"` reads lifecycle and safe saved diagnostics;
+`intent="navigation"` discovers exact scientific source names and metadata.
+Explicit index/stage pagination and omission markers retain their bounds. Root's
+research interface does not accept `intent="full"`, `output_paths` or the retired
+profile/view/mode/full-output flags or legacy `output_fields` selectors. Decision
+responses contain the declared compact fields; they do not grant a full scientific
+payload read. UI and control retain private recovery and engineering records.
+
+Plugin consumers that previously read complete results through Root should bind
+the exact returned `output_artifact_name` to their declared scientific input and
+read the original in that Worker. Workers retain their plugin's native permissions:
+an authorized native Worker uses `tools/read_input.py SOURCE --full` for the complete
+sealed source or explicit `--pointer` selections, preserving page budgets and
+returned continuations. When reference access is declared, `worker_reference_read`
+also reads authorized originals and attachments. Trusted plugin callbacks use their
+injected `read_input`/`input_path` capabilities for declared inputs. A plugin with no
+native shell does not acquire one through this migration. Root's compact view does
+not remove the exact sealed scientific input or authorize another source; retain
+limitations and provenance when interpreting it.
 
 ## Validation status
 

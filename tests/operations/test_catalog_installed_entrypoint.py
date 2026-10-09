@@ -228,6 +228,7 @@ def test_clean_installed_plugin_completes_a_local_run(
         "blind_csv",
         r'''
 import json
+import subprocess
 import sys
 import tempfile
 import tomllib
@@ -336,10 +337,18 @@ assert set(platform_config["mcp_servers"]) == {"scidiscovery"}
 server = platform_config["mcp_servers"]["scidiscovery"]
 assert set(server["enabled_tools"]) == {"scid_catalog", "scid_describe", "scid_call"}
 
+author_run = runtime.scheduler_bindings.resolve(instance=instance.instance_id,
+    namespace="run", name="observation")
+# Distinct declared test coordinates exercise the same attach/identity gate as
+# platform Workers; the fixture is not a live platform execution.
+author_identity = ("installed-author-session", "installed-author-thread")
+runtime.runs.worker_connections.attach(run_id=author_run,
+    platform_session=author_identity[0], thread_id=author_identity[1])
 worker = LocalWorkerMCPRouter(
     runtime.runs,
     operation_id=compiled.spec.operation_id,
     operation_digest=compiled.digest,
+    run_id=author_run, trusted_caller=author_identity,
 )
 opened = worker.call_tool("worker_open_assignment", {})
 assert Path(opened["start_here_path"]).is_file()
@@ -363,10 +372,44 @@ result = canonical_json(
 ).decode("utf-8")
 Path(opened["output_directory"], "result.json").write_text(result)
 assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
-status = root_router.call_tool("run_status", {"name": "observation", "intent": "full"})
+status = root_router.call_tool("run_status", {"name": "observation", "intent": "status"})
 assert status["state"] == "completed"
 assert "backend" not in status  # Control-only identity is not a scientific field.
 assert status["output_artifact_name"] == "observation.output"
+assert "payload" not in status and "numeric_means" not in status
+
+# Complete scientific originals remain readable by the plugin's declared Worker.
+# Root binds the exact sealed output; its status response does not carry that data.
+review = catalog.operation("blind.csv.review.v1")
+consumer = root_router.call_tool("operation_invoke", {
+    "name": "read_observation", "operation_id": review.spec.operation_id,
+    "inputs": [{"port": "source_table", "artifact_names": ["source_csv"]},
+               {"port": "csv_observation", "artifact_names": [status["output_artifact_name"]]}],
+    "instruction": "Read the exact completed observation and retain its limitations.",
+})
+assert consumer["result"]["state"] == "queued"
+reader_run = runtime.scheduler_bindings.resolve(instance=instance.instance_id,
+    namespace="run", name="read_observation")
+reader_identity = ("installed-reader-session", "installed-reader-thread")
+runtime.runs.worker_connections.attach(run_id=reader_run,
+    platform_session=reader_identity[0], thread_id=reader_identity[1])
+reader = LocalWorkerMCPRouter(runtime.runs, operation_id=review.spec.operation_id,
+    operation_digest=review.digest, run_id=reader_run, trusted_caller=reader_identity)
+reader_opened = reader.call_tool("worker_open_assignment", {})
+reader_assignment = json.loads(Path(reader_opened["assignment_path"]).read_bytes())
+source_name = next(item.source_name for item in runtime.runs.status(reader._run_id).inputs
+    if item.port_name == "csv_observation")
+bound = next(item for item in reader_assignment["inputs"] if item["source_name"] == source_name)
+workspace = Path(reader_opened["assignment_path"]).parent
+readback = subprocess.run([sys.executable, "-I", str(workspace / "tools/read_input.py"),
+    bound["source_name"], "--full", "--budget", "8192"],
+    cwd=workspace, capture_output=True, text=True, timeout=5)
+assert readback.returncode == 0, readback.stderr
+assert "\n[read_input: end;" in readback.stdout
+sealed_payload = readback.stdout.rsplit("\n[read_input: ", 1)[0]
+assert sealed_payload.encode() == canonical_json(json.loads(result)["payload"])
+assert json.loads(sealed_payload)["structure"]["numeric_means"] == {"value": 2.0}
+assert json.loads(sealed_payload)["limitations"] == ["Two rows do not establish causality."]
 ''',
     )
 
