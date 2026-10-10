@@ -37,6 +37,79 @@ def finish(worker, opened, alias):
     return worker.call_tool('worker_submit_result', {})
 
 
+def configured_publication(tmp_path, settings):
+    from scidiscovery.agent_execution_settings import AgentSettings
+    catalog, runtime, root, worker, _, request = open_extraction(tmp_path)
+    runtime.runs.fail(worker._run_id, reason='close default fixture before configured admission')
+    runtime.runs.agent_settings = AgentSettings.model_validate(settings)
+    request = {**request, 'name': 'configured'}
+    root.call_tool('operation_invoke', request)
+    worker = attached_worker(runtime, root, request['name'])
+    opened = worker.call_tool('worker_open_assignment', {})
+    alias = runtime.runs.status(worker._run_id).inputs[0].source_name
+    return catalog, runtime, root, worker, opened, request, Path(opened['assignment_path']).parent, alias
+
+
+def test_concurrent_last_new_receipt_slot_has_one_commit_and_accurate_budget(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    from scidiscovery.attachment_tools import PublishFiles
+    _, runtime, _, worker, _, _, workspace, alias = configured_publication(tmp_path,
+        {'attachments': {'max_files': 1}, 'evidence_capacity': {'max_new_records': 1}})
+    gate = Barrier(2)
+    original = runtime.artifacts.register_file
+    def register(*args, **kwargs):
+        value = original(*args, **kwargs)
+        gate.wait(timeout=10)
+        return value
+    monkeypatch.setattr(runtime.artifacts, 'register_file', register)
+    def publish(number):
+        path = f'scratch/concurrent_{number}.csv'
+        (workspace/path).write_bytes(b'x\n1\n')
+        request = PublishFiles.model_validate_json(json.dumps(dict(files=[dict(path=path, purpose='Concurrent file')], source_aliases=[alias])))
+        try:
+            return runtime.runs.publish_attachments(worker._run_id, request, workspace=workspace)
+        except DiagnosticError as error:
+            return error
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        values = list(pool.map(publish, range(2)))
+    assert sum(isinstance(value, DiagnosticError) for value in values) == 1
+    assert len(runtime.runs.tool_evidence(worker._run_id)) == 1
+    budget = runtime.runs.worker_budget(runtime.runs.status(worker._run_id))['evidence_capacity']
+    assert budget['attachments']['remaining'] == budget['records']['remaining'] == 0
+
+
+def test_recovery_reads_old_bytes_without_copying_them_into_new_storage(tmp_path):
+    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+    catalog, runtime, root, worker, _, request, workspace, alias = configured_publication(tmp_path,
+        {'attachments': {'max_item_bytes': 10, 'max_total_bytes': 10}})
+    old = []
+    for number, raw in enumerate([b'x\n123\n', b'x\n1\n']):
+        path = f'scratch/old_{number}.csv'
+        (workspace/path).write_bytes(raw)
+        old.append(dict(path=path, purpose='Exact prior bytes'))
+    worker.call_tool('worker_publish_files', dict(files=old, source_aliases=[alias]))
+    assert runtime.runs.worker_budget(runtime.runs.status(worker._run_id))['evidence_capacity']['attachments']['remaining_bytes'] == 0
+    runtime.runs.fail(worker._run_id, reason='seal full original bytes')
+    root.call_tool('operation_invoke', {**request, 'name': 'new_bytes', 'draft_from': request['name'], 'max_attempts': 2})
+    compiled = catalog.operation(request['operation_id'])
+    following = LocalWorkerMCPRouter(runtime.runs, operation_id=compiled.spec.operation_id, operation_digest=compiled.digest)
+    opened = following.call_tool('worker_open_assignment', {})
+    page = following.call_tool('worker_reference_read', {'history_task': request['name'], 'action': 'list'})
+    for item in page['references']:
+        if item.get('original_name', '').startswith('attachment_'):
+            following.call_tool('worker_reference_read', {'history_task': request['name'], 'action': 'read',
+                'reference': item['reference'], 'delivery': 'file'})
+    assert runtime.runs.tool_evidence(following._run_id) == []
+    workspace = Path(opened['assignment_path']).parent
+    (workspace/'scratch/new.csv').write_bytes(b'x\n2\n')
+    new = dict(files=[dict(path='scratch/new.csv', purpose='New bytes')], source_aliases=[alias])
+    assert following.call_tool('worker_publish_files', new) == following.call_tool('worker_publish_files', new)
+    budget = runtime.runs.worker_budget(runtime.runs.status(following._run_id))['evidence_capacity']['attachments']
+    assert budget['used_bytes'] == 4 and budget['remaining_bytes'] == 6
+    assert len(runtime.runs.reference_access_records(following._run_id)) == 2
+
+
 def test_generated_files_publish_submit_and_reach_downstream_and_ui(tmp_path, monkeypatch):
     catalog, runtime, root, worker, opened, request, workspace, alias, files, args = publish_fixture(tmp_path)
     saved = worker.call_tool('worker_publish_files', args)
@@ -177,14 +250,114 @@ def test_attachment_recovery_reuses_exact_receipts(tmp_path):
     op=catalog.operation(request['operation_id'])
     following=LocalWorkerMCPRouter(runtime.runs,operation_id=op.spec.operation_id,operation_digest=op.digest)
     opened=following.call_tool('worker_open_assignment',{})
-    assert runtime.runs.tool_evidence(following._run_id)==records
-    workspace=Path(opened['assignment_path']).parent
-    for name,data in files.items():(workspace/'scratch'/name).write_bytes(data)
-    # The same original is now bound under another alias. Identity is unchanged.
-    args['source_aliases']=[next(i.source_name for i in runtime.runs.status(following._run_id).inputs if i.port_name=='feedback')]
-    assert following.call_tool('worker_publish_files',args)==saved
-    assert runtime.runs.tool_evidence(following._run_id)==records
-    assert finish(following,opened,saved['files'][0]['reference'])['state']=='completed'
+    assert runtime.runs.tool_evidence(following._run_id) == []
+    page = following.call_tool('worker_reference_read', {'history_task': 'evidence', 'action': 'list'})
+    selected = next(item for item in page['references'] if item.get('original_name') == records[0]['alias'])
+    read = following.call_tool('worker_reference_read', {'history_task': 'evidence', 'action': 'read',
+        'reference': selected['reference'], 'delivery': 'file'})
+    access = runtime.runs.reference_access_records(following._run_id)[0]
+    assert access['artifact_ref'] == records[0]['artifact_ref']
+    assert access['producer_run_id'] == prior.run_id
+    assert runtime.runs.tool_evidence(following._run_id) == []
+    # The child's former alias points at new_material; selected proof retains
+    # the exact original producer namespace without copying its receipts.
+    proof = ArtifactRef.model_validate(access['proof_manifest_ref'])
+    document = json.loads(runtime.artifacts.read(proof))
+    original_alias = prior.inputs[0].source_name
+    assert document['bindings'][original_alias]['artifact_ref'] == prior.inputs[0].artifact_ref.model_dump(mode='json')
+    assert runtime.runs.status(following._run_id).inputs[0].artifact_ref != prior.inputs[0].artifact_ref
+    assert finish(following, opened, read['source'])['state'] == 'completed'
+    assert runtime.runs.tool_evidence(prior.run_id) == records
+
+
+def test_full_64_attachment_history_is_referenced_and_new_storage_has_its_own_budget(tmp_path):
+    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+    catalog, runtime, root, worker, _, request, workspace, alias, _, _ = publish_fixture(tmp_path)
+    files = []
+    for number in range(64):
+        path = f'scratch/retained_{number:03d}.csv'
+        (workspace/path).write_bytes(b'x\n1\n')
+        files.append(dict(path=path, purpose='Exact retained data'))
+    saved = worker.call_tool('worker_publish_files', dict(files=files, source_aliases=[alias]))
+    originals = runtime.runs.tool_evidence(worker._run_id)
+    runtime.runs.fail(worker._run_id, reason='seal full original attachment capacity')
+    root.call_tool('operation_invoke', {**request, 'name': 'continued_capacity', 'draft_from': request['name'], 'max_attempts': 2})
+    compiled = catalog.operation(request['operation_id'])
+    following = LocalWorkerMCPRouter(runtime.runs, operation_id=compiled.spec.operation_id, operation_digest=compiled.digest)
+    opened = following.call_tool('worker_open_assignment', {})
+    run = runtime.runs.status(following._run_id)
+    budget = runtime.runs.worker_budget(run)['evidence_capacity']
+    assert budget['attachments']['used'] == budget['records']['used'] == 0
+    assert budget['attachments']['remaining'] == 64 and 'historical_references' not in budget
+    assert runtime.runs.tool_evidence(run.run_id) == []
+    page = following.call_tool('worker_reference_read', {'history_task': request['name'], 'action': 'list'})
+    selected = next(item for item in page['references'] if item.get('original_name') == originals[0]['alias'])
+    read = following.call_tool('worker_reference_read', {'history_task': request['name'], 'action': 'read',
+        'reference': selected['reference'], 'delivery': 'file'})
+    assert runtime.runs.reference_access_records(run.run_id)[0]['artifact_ref'] == originals[0]['artifact_ref']
+    continued_workspace = Path(opened['assignment_path']).parent
+    (continued_workspace/'scratch/new.csv').write_bytes(b'x\n2\n')
+    added = following.call_tool('worker_publish_files', dict(files=[dict(path='scratch/new.csv', purpose='New observation')], source_aliases=[alias]))
+    snapshot = json.loads(runtime.runs._evidence_snapshot(run.run_id))
+    assert len(snapshot['records']) == len(snapshot['accesses']) == 1
+    assert snapshot['recovery'] is None and 'references' not in snapshot
+    assert runtime.runs.tool_evidence(worker._run_id) == originals
+    assert runtime.runs.worker_budget(run)['evidence_capacity']['attachments']['used'] == 1
+    before = runtime.runs._evidence_snapshot(run.run_id)
+    assert finish(following, opened, added['files'][0]['reference'])['state'] == 'completed'
+    assert runtime.runs._evidence_snapshot(run.run_id) == before
+
+
+def test_recovery_64_actual_attempts_still_allow_file_and_reject_next_handler(tmp_path):
+    from dataclasses import replace
+    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+    from scidiscovery.artifact_agent.interfaces.mcp_worker_protocol import WorkerToolError
+    catalog, runtime, root, worker, _, request, _, alias, _, args = publish_fixture(tmp_path)
+    worker.call_tool('worker_publish_files', {**args, 'files': args['files'][:1]})
+    tool = worker._registered['worker_capture_source']
+    for ordinal in range(64):
+        runtime.runs.begin_tool_attempt(worker._run_id, tool, {'ordinal': ordinal})
+    runtime.runs.fail(worker._run_id, reason='seal spent actual starts')
+    root.call_tool('operation_invoke', {**request, 'name': 'continued_attempts', 'draft_from': request['name'], 'max_attempts': 2})
+    compiled = catalog.operation(request['operation_id'])
+    following = LocalWorkerMCPRouter(runtime.runs, operation_id=compiled.spec.operation_id, operation_digest=compiled.digest)
+    opened = following.call_tool('worker_open_assignment', {})
+    workspace = Path(opened['assignment_path']).parent
+    (workspace/'scratch/new.csv').write_bytes(b'x\n2\n')
+    assert following.call_tool('worker_publish_files', dict(files=[dict(path='scratch/new.csv', purpose='New file')], source_aliases=[alias]))['state'] == 'retained'
+    following._registered['worker_capture_source'] = replace(following._registered['worker_capture_source'],
+        contextual_handler=lambda *a: pytest.fail('Spent attempt reached its handler'))
+    with pytest.raises(WorkerToolError) as caught:
+        following.call_tool('worker_capture_source', {'url': 'https://example.org/next'})
+    assert caught.value.details[0]['code'] == 'tool_attempt_limit'
+    budget = runtime.runs.worker_budget(runtime.runs.status(following._run_id))['evidence_capacity']
+    assert budget['attempts']['remaining'] == 0 and budget['attachments']['used'] == 1
+
+
+@pytest.mark.parametrize('field', ['tool_name', 'media_type', 'size_bytes'])
+def test_history_read_cannot_change_original_receipt_identity(tmp_path, field):
+    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+    from scidiscovery.operation_contract import DiagnosticError
+    catalog, runtime, root, worker, _, request, _, _, _, args = publish_fixture(tmp_path)
+    worker.call_tool('worker_publish_files', {**args, 'files': args['files'][:1]})
+    runtime.runs.fail(worker._run_id, reason='retain original identity')
+    root.call_tool('operation_invoke', {**request, 'name': 'reference_identity', 'draft_from': request['name'], 'max_attempts': 2})
+    compiled = catalog.operation(request['operation_id'])
+    following = LocalWorkerMCPRouter(runtime.runs, operation_id=compiled.spec.operation_id, operation_digest=compiled.digest)
+    following.call_tool('worker_open_assignment', {})
+    page = following.call_tool('worker_reference_read', {'history_task': request['name'], 'action': 'list'})
+    selected = next(item for item in page['references'] if item.get('original_name') == 'attachment_001')
+    with runtime.runs._connect() as db:
+        stored = db.execute('SELECT evidence_key,record_json FROM run_tool_evidence WHERE run_id=? ORDER BY ordinal LIMIT 1', (worker._run_id,)).fetchone()
+        original = json.loads(stored['record_json'])
+        original[field] = original[field] + 1 if field == 'size_bytes' else 'forged'
+        db.execute('UPDATE run_tool_evidence SET record_json=? WHERE run_id=? AND evidence_key=?',
+            (json.dumps(original), worker._run_id, stored['evidence_key']))
+    with pytest.raises(DiagnosticError):
+        following.call_tool('worker_reference_read', {'history_task': request['name'], 'action': 'read',
+            'reference': selected['reference'], 'delivery': 'file'})
+    assert runtime.runs.tool_evidence(following._run_id) == []
+    assert runtime.runs.reference_access_records(following._run_id) == []
 
 
 def test_attachment_publication_and_retry_allow_large_binding_aggregate(tmp_path, monkeypatch):

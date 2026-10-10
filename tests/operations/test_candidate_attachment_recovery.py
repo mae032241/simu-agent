@@ -55,7 +55,7 @@ def assert_bounded(failure):
 
 def assert_recovery_does_not_reset_capacity(failure):
     messages = ' '.join(item['message'] for item in failure.details)
-    assert 'draft_from inherits immutable attachment receipts; it does not free capacity' in messages
+    assert 'draft_from preserves original nodes; it does not reset actual execution budgets' in messages
     assert 'new bounded task is allowed only if its fixed capture contract can contain required evidence' in messages
     assert 'Never reset global budgets, remove old receipts or increase caps' in messages
 

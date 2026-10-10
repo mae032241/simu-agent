@@ -166,6 +166,48 @@ def test_attempt_limit_and_interrupted_calls_preserve_existing_receipts(tmp_path
                for a in json.loads(before)["attempts"])
 
 
+def test_frozen_actual_attempt_limit_covers_recovery_siblings_and_not_independent_tasks(tmp_path):
+    from scidiscovery.agent_execution_settings import AgentSettings
+    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+    system = analysis_system(tmp_path)
+    catalog, runtime, root, request, _, _ = system
+    runtime.runs.agent_settings = AgentSettings(evidence_capacity={'max_controlled_attempts': 3})
+    request['max_attempts'] = 4
+    worker, _ = open_analysis(system)
+    runs = runtime.runs
+    tool = worker._registered['worker_tcad_curve_score']
+    for ordinal in range(2):
+        runs.begin_tool_attempt(worker._run_id, tool, {'ordinal': ordinal})
+    previous = runs.fail(worker._run_id, reason='interrupted original task')
+    # Current preferences cannot expand the original family's three starts.
+    runtime.runs.agent_settings = AgentSettings()
+    compiled = catalog.operation(request['operation_id'])
+    root.call_tool('operation_invoke', {**request, 'name': 'continued_a', 'draft_from': request['name']})
+    first = LocalWorkerMCPRouter(runs, operation_id=compiled.spec.operation_id, operation_digest=compiled.digest)
+    first.call_tool('worker_open_assignment', {})
+    assert runs.status(first._run_id).recovery_policy['evidence_capacity']['max_controlled_attempts'] == 3
+    runs.begin_tool_attempt(first._run_id, tool, {'ordinal': 2})
+    runs.fail(first._run_id, reason='seal first recovery before sibling admission')
+    root.call_tool('operation_invoke', {**request, 'name': 'continued_b', 'draft_from': request['name']})
+    second = LocalWorkerMCPRouter(runs, operation_id=compiled.spec.operation_id, operation_digest=compiled.digest)
+    second.call_tool('worker_open_assignment', {})
+    budget = runs.worker_budget(runs.status(second._run_id))['evidence_capacity']
+    assert budget['attempts'] == dict(limit=3, used=3, remaining=0,
+        scope='task_recovery_family', coverage='complete')
+    assert budget['records']['used'] == 0
+    with pytest.raises(ToolAttemptLimit):
+        runs.begin_tool_attempt(second._run_id, tool, {'ordinal': 3})
+    assert runs.tool_attempts(second._run_id) == []
+    assert len(runs.tool_attempts(previous.run_id)) == 2
+    # A separately admitted task may cite the same inputs; it is not recovery.
+    runs.fail(second._run_id, reason='seal exhausted sibling before independent admission')
+    root.call_tool('operation_invoke', {**request, 'name': 'independent'})
+    fresh = LocalWorkerMCPRouter(runs, operation_id=compiled.spec.operation_id, operation_digest=compiled.digest)
+    fresh.call_tool('worker_open_assignment', {})
+    assert runs.worker_budget(runs.status(fresh._run_id))['evidence_capacity']['attempts']['used'] == 0
+    runs.begin_tool_attempt(fresh._run_id, tool, {'ordinal': 0})
+
+
 def test_unknown_input_checker_error_is_engineering_failure_at_mcp():
     from types import SimpleNamespace
     from scidiscovery.operations.input_validation import validate_operation_inputs, ValidationSources
@@ -194,3 +236,36 @@ def test_protocol_errors_never_reach_a_handler(rpc_request):
             raise AssertionError("protocol error reached a tool")
     response=MCPRouter(Never(),name="probe").handle(rpc_request)
     assert response['error']['data']['diagnostics'][0]['phase']=='protocol'
+
+
+@pytest.mark.parametrize('raw_policy', [None, 'null'])
+@pytest.mark.parametrize('current_limit', [16, 64])
+def test_legacy_null_policy_keeps_original_started_and_fixed_64(tmp_path, raw_policy, current_limit):
+    from scidiscovery.agent_execution_settings import AgentSettings
+    system = analysis_system(tmp_path)
+    worker, _ = open_analysis(system)
+    runs = system[1].runs
+    tool = worker._registered['worker_tcad_curve_score']
+    runs.begin_tool_attempt(worker._run_id, tool, {'ordinal': 0})
+    root_id = worker._run_id
+    if raw_policy == 'null':
+        # JSON null is an invalid current policy in the baseline parser. A
+        # valid current child still must account for raw legacy ancestor starts.
+        from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+        catalog, _, root, request, *_ = system
+        runs.fail(root_id, reason='create a valid current recovery before corrupt legacy metadata')
+        root.call_tool('operation_invoke', {**request, 'name': 'legacy_child', 'draft_from': request['name'], 'max_attempts': 2})
+        compiled = catalog.operation(request['operation_id'])
+        worker = LocalWorkerMCPRouter(runs, operation_id=compiled.spec.operation_id, operation_digest=compiled.digest)
+        worker.call_tool('worker_open_assignment', {})
+        tool = worker._registered['worker_tcad_curve_score']
+    with runs._connect() as db:
+        db.execute('UPDATE runs SET recovery_policy_json=? WHERE run_id=?', (raw_policy, root_id))
+    runs.agent_settings = AgentSettings(evidence_capacity={'max_controlled_attempts': current_limit})
+    budget = runs.worker_budget(runs.status(worker._run_id))['evidence_capacity']['attempts']
+    assert (budget['limit'], budget['used'], budget['remaining']) == (64, 1, 63)
+    for ordinal in range(1, 64):
+        runs.begin_tool_attempt(worker._run_id, tool, {'ordinal': ordinal})
+    with pytest.raises(ToolAttemptLimit):
+        runs.begin_tool_attempt(worker._run_id, tool, {'ordinal': 64})
+    assert len(runs.tool_attempts(worker._run_id)) == (63 if raw_policy == 'null' else 64)

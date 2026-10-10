@@ -49,6 +49,7 @@ def validate_run_output(
     tool_snapshot: bytes | None = None,
     reference_calculation_resolver=None,
     sealed_material_resolver=None,
+    stage_source_resolver=None,
     boundary_resolver=None,
     boundary_producer=None,
 ) -> ValidatedRunOutput:
@@ -223,6 +224,7 @@ def validate_run_output(
             tool_snapshot=tool_snapshot,
             reference_calculation_resolver=reference_calculation_resolver,
             sealed_material_resolver=sealed_material_resolver,
+            stage_source_resolver=stage_source_resolver,
         )
         try:
             compiled.implementations[key](

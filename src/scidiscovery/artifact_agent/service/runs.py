@@ -479,6 +479,8 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
                 recovery_policy["helpers"] = (source.recovery_policy or {}).get("helpers", {"max_depth": 0})
                 recovery_policy["execution_io"] = (source.recovery_policy or {}).get("execution_io", ExecutionIOSettings().model_dump())
                 recovery_policy["attachments"] = (source.recovery_policy or {}).get("attachments", recovery_policy["attachments"])
+                # Missing legacy limits retain their original fixed semantics.
+                recovery_policy["evidence_capacity"] = (source.recovery_policy or {}).get("evidence_capacity", {})
                 original_capture = (source.recovery_policy or {}).get('capture')
                 if original_capture != capture_policy:
                     raise RunStateConflict('Recovery capture configuration differs from its source snapshot')
@@ -862,7 +864,6 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
             )
             raise RunStateConflict("prepared workspace is unavailable", run_id=run_id) from error
         try:
-            self.adopt_tool_evidence(run_id)
             if tool_evidence_ports(self._compiled(self.status(run_id))):
                 self._refresh_evidence_schema(run_id)
         except (RunCheckerError, ReferenceProofError) as error:
@@ -1035,6 +1036,7 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
             observed_at=datetime.fromtimestamp(now, timezone.utc).isoformat(),
             remaining_seconds=max(0, int(remaining)), loop=loop,
             external_host_deadline='unknown', attachments=policy.get('attachments'),
+            evidence_capacity=self.evidence_capacity_budget(value),
             instruction='Use the earliest known task/calendar deadline and enabled-time balance. '
                 'A separate host cutoff is unknown unless supplied through control. Token usage may lag; '
                 'closeout reserve is inside the total, not extra time or tokens. '
@@ -1063,6 +1065,7 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
             "execution_io": self.agent_settings.execution_io.model_dump(),
             "input_materials": self.agent_settings.input_materials.model_dump(),
             "attachments": self.agent_settings.attachments.model_dump(),
+            "evidence_capacity": self.agent_settings.evidence_capacity.model_dump(),
             "debug_disable_task_network": self.agent_settings.debug_disable_task_network,
             "snapshot_max_files": 132, "snapshot_max_bytes": 32 * 1024 * 1024,
         }
@@ -2317,6 +2320,19 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
         try:
             input_bytes, descriptors = self._validation_inputs(value)
             reference_validation_budget = {}
+            reference_calculation_contexts = {}
+            def calculation_context(alias):
+                # This cache lives only inside this candidate validation. Recheck
+                # current access authority and exact identity on every consumer.
+                access = next((r for r in self.reference_access_records(value.run_id) if r['alias'] == alias), None)
+                if access is None:
+                    return None
+                ref, _, _ = self._reference_source(value, alias, self._reference_policy(value))
+                key = (alias, ref, canonical_json(access))
+                if key not in reference_calculation_contexts:
+                    reference_calculation_contexts[key] = self.reference_calculation_sources(value, alias,
+                        validation_deadline=validation_deadline, validation_budget=reference_validation_budget)
+                return reference_calculation_contexts[key]
             validated = validate_run_output(
                 compiled,
                 sealed,
@@ -2325,8 +2341,11 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
                 input_binding_descriptors=descriptors,
                 validation_deadline=validation_deadline,
                 tool_snapshot=validation_tool_snapshot,
-                reference_calculation_resolver=lambda alias: self.reference_calculation_sources(value, alias, validation_deadline=validation_deadline, validation_budget=reference_validation_budget),
-                sealed_material_resolver=lambda alias: self.sealed_material_record(value, alias),
+                reference_calculation_resolver=calculation_context,
+                sealed_material_resolver=lambda alias: self.sealed_material_record(value, alias,
+                    verify_payload=not any(r["alias"] == alias for r in self.reference_access_records(value.run_id))),
+                stage_source_resolver=lambda alias: self.reference_stage_source(value, alias,
+                    validation_deadline=validation_deadline, validation_budget=reference_validation_budget),
                 boundary_producer=dict(run_id=value.run_id, operation_id=value.operation_id,
                     output_name=value.output_binding_name),
                 boundary_resolver=lambda alias, key: self._bound_boundary(value, alias, key, descriptors),

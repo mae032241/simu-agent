@@ -22,13 +22,19 @@ def source_aliases(runs, value):
     return aliases
 
 
-def resolve_material(runs, value, alias):
+def resolve_material(runs, value, alias, *, verify_payload=True):
     """Return a verified receipt view, or None for an ordinary non-tool input."""
     bound = next((i for i in value.inputs if i.source_name == alias), None)
     current = next((r for r in runs.tool_evidence(value.run_id) if r["alias"] == alias), None)
-    if bound is None and current is None:
+    access = next((r for r in runs.reference_access_records(value.run_id) if r['alias'] == alias), None)
+    if bound is None and current is None and access is None:
         return None
-    ref = bound.artifact_ref if bound else ArtifactRef.model_validate(current["artifact_ref"])
+    if access is not None and bound is None and current is None:
+        # Reuse the production access authorizer. No ancestor record is copied.
+        policy = runs._reference_policy(value)
+        ref, _, _ = runs._reference_source(value, alias, policy)
+    else:
+        ref = bound.artifact_ref if bound else ArtifactRef.model_validate(current['artifact_ref'])
     envelope = runs.artifacts.catalog(ref)
     producer_id = envelope.labels.get("tool_producer_run")
     if producer_id is None or envelope.labels.get("tool_name") is None:
@@ -47,7 +53,10 @@ def resolve_material(runs, value, alias):
             or record["size_bytes"] != envelope.size_bytes or record["media_type"] != envelope.media_type
             or (current is not None and current != record)):
         raise material_error("material_receipt_mismatch", "The material differs from its original control receipt.")
-    runs.artifacts.verify(ref)
+    if access is not None and access.get("producer_run_id") != producer.run_id:
+        raise material_error("material_origin_mismatch", "The direct access differs from its exact original producer.")
+    if verify_payload:
+        runs.artifacts.verify(ref)
     # Keep the original alias namespace with its receipt. Consumers compare refs,
     # not text copied from the previous task's metadata or scientific JSON.
     sources = {i.source_name: i.artifact_ref for i in producer.inputs}
@@ -59,5 +68,5 @@ def resolve_material(runs, value, alias):
 
 def available_materials(runs, value):
     names = dict.fromkeys([i.source_name for i in value.inputs] +
-                          [r["alias"] for r in runs.tool_evidence(value.run_id)])
+                          [r["alias"] for r in (*runs.tool_evidence(value.run_id), *runs.reference_access_records(value.run_id))])
     return [record for alias in names if (record := resolve_material(runs, value, alias)) is not None]

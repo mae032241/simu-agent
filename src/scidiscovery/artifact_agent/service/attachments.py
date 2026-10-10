@@ -115,11 +115,11 @@ def retain_attachments(runs, run, staged, settings, check_budget, *, inventory=N
     recovery, attempts = runs.recovery_tool_proof(run), runs.tool_attempts(run.run_id)
     def check_receipt_budget(existing):
         records = list(existing.values())
-        attachments = [r for r in records if r.get('output_port') == 'attachments']
+        attachments = [r for r in runs.new_evidence_records(records) if r.get('output_port') == 'attachments']
         new = [item for item in staged if item['key'] not in existing]
         if (any(item['size'] > settings.max_item_bytes for item in new)
                 or len(attachments) + len(new) > settings.max_files
-                or sum(r.get('record_type') != 'reference_access' for r in records) + len(new) > 128
+                or len(runs.new_evidence_records(records)) + len(new) > runs.evidence_capacity_settings(run).max_new_records
                 or sum(r['size_bytes'] for r in attachments) + sum(item['size'] for item in new) > settings.max_total_bytes):
             raise ToolInputError('attachment_publication_invalid', 'Attachment count or total byte budget exceeded')
     with runs._connect() as connection:
@@ -248,12 +248,12 @@ def publish_attachments(runs, run_id, request, *, workspace):
             raise TimeoutError('Attachment publication exceeded remaining task time')
     with TemporaryDirectory(prefix='scid-attachments-') as temporary:
         staged, total = [], 0
+        known_keys = {record.get('publication_key') for record in runs.tool_evidence(run_id)}
         for index, item in enumerate(request.files):
             check_budget()
             target = Path(temporary) / str(index)
             with _source(workspace, item.path) as source:
-                digest, size = snapshot_file(source, target, settings, check_budget, total=total)
-            total += size
+                digest, size = snapshot_file(source, target, settings, check_budget)
             media = ('text/plain' if Path(item.path).suffix.lower() in {'.py','.cmd','.par','.log','.txt','.md','.sh'}
                 else mimetypes.guess_type(item.path)[0] or 'application/octet-stream')
             from .artifact_capture import explicit_capture_guard
@@ -261,4 +261,10 @@ def publish_attachments(runs, run_id, request, *, workspace):
             staged.append(attachment_item(runs, run, target, digest, size, media,
                 {'kind':'scientific_attachment', 'file_name':Path(item.path).name, 'locator':item.path,
                  'purpose':item.purpose, 'origin':'agent_authored'}, aliases))
+            key = staged[-1]['key']
+            if key not in known_keys:
+                total += size
+                known_keys.add(key)
+            if total > settings.max_total_bytes:
+                raise ToolInputError('attachment_publication_invalid', 'New attachment byte budget exceeded')
         return retain_attachments(runs, run, staged, settings, check_budget)[0]

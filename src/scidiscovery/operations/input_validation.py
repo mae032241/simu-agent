@@ -52,7 +52,7 @@ class InputBindingDescriptor:
 class ValidationSources(dict[str, bytes]):
     """Legacy byte mapping with an immutable projection of exact Run bindings."""
 
-    __slots__ = ("__binding_descriptors", "__validation_deadline", "__tool_snapshot", "__reference_calculation_resolver", "__sealed_material_resolver")
+    __slots__ = ("__binding_descriptors", "__validation_deadline", "__tool_snapshot", "__reference_calculation_resolver", "__sealed_material_resolver", "__stage_source_resolver", "__reference_calculation")
 
     def __init__(
         self,
@@ -62,6 +62,8 @@ class ValidationSources(dict[str, bytes]):
         tool_snapshot: bytes | None = None,
         reference_calculation_resolver: Callable | None = None,
         sealed_material_resolver: Callable | None = None,
+        stage_source_resolver: Callable | None = None,
+        reference_calculation: tuple | None = None,
     ) -> None:
         super().__init__(sources)
         self.__binding_descriptors = MappingProxyType(dict(binding_descriptors))
@@ -69,14 +71,24 @@ class ValidationSources(dict[str, bytes]):
         self.__tool_snapshot = tool_snapshot
         self.__reference_calculation_resolver = reference_calculation_resolver
         self.__sealed_material_resolver = sealed_material_resolver
+        self.__stage_source_resolver = stage_source_resolver
+        self.__reference_calculation = reference_calculation
 
     def sealed_material_record(self, alias):
         return self.__sealed_material_resolver(alias) if self.__sealed_material_resolver else None
+
+    def stage_source(self, alias):
+        raw = self.__stage_source_resolver(alias) if self.__stage_source_resolver else None
+        return self[alias] if raw is None else raw
 
     def verified_calculations(self, report):
         """Read-only calculation view; core retains receipt and origin verification."""
         from ..artifact_agent.service.analysis_artifacts import verified_calculations
         return verified_calculations(report, self)
+
+    def controlled_reference_calculation(self, alias, artifact_ref):
+        identity = self.__reference_calculation
+        return identity[2] if identity is not None and identity[:2] == (alias, artifact_ref) else None
 
     def reference_calculation_sources(self, alias):
         return self.__reference_calculation_resolver(alias) if self.__reference_calculation_resolver else None

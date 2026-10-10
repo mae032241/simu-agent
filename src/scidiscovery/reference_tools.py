@@ -51,8 +51,11 @@ class ReferencePolicy:
     max_depth: int = 16
 
 
+LEGACY_REFERENCE_HISTORY_DESCRIPTION = 'Exact terminal task name from worker_read_history. Authorizes only its allowed sealed report and visible frozen scientific inputs in this assignment frozen range, not arbitrary instance artifacts. Directory listing is navigation; only successful original read registers a citation alias. No review or qualification is inherited.'
+
+
 class ReferenceReadRequest(SchemaModel):
-    history_task: str | None = Field(default=None, min_length=1, max_length=256, description='Exact terminal task name from worker_read_history. Authorizes only its allowed sealed report and visible frozen scientific inputs in this assignment frozen range, not arbitrary instance artifacts. Directory listing is navigation; only successful original read registers a citation alias. No review or qualification is inherited.')
+    history_task: str | None = Field(default=None, min_length=1, max_length=256, description="Exact task name in this assignment frozen history or its immutable recovery parent chain. Authorizes only that node's allowed sealed report, visible inputs and sealed tool originals, never arbitrary instance tasks or artifacts. List pages are navigation; only a successful selected original read registers this call's citation alias. Ancestor receipts and references are not inherited; no review or qualification is inherited.")
     source: str | None = Field(default=None, min_length=1, max_length=256, description='Frozen input, sealed stage, published attachment (including recovered files), or current controlled access alias; not an Artifact ID.')
     view: Literal['originals', 'boundaries'] = Field(default='originals', description='boundaries reads complete immutable owner declarations paired with this exact sealed primary, including provenance checks. It does not certify interpretation or user authorization; unknown references cannot relax current H boundaries. Original JSON Pointer semantics are unchanged.')
     action: Literal['list', 'read'] = 'list'

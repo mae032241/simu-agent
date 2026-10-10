@@ -292,36 +292,58 @@ class ReferenceAccessMixin:
         return _ref(record['artifact_ref']), root, record['chain']
 
     def _history_reference_targets(self, value, task_name):
-        memory = self._worker_memory_binding(value.run_id)
-        if not memory['available']:
-            raise ReferenceAccessError('reference_history_unavailable', 'This assignment has no exact frozen history.')
-        terminal = self._memory_terminal(memory['scope'], task_name)
-        producer = self.status(terminal['run_id'])
+        # Recovery parents are immutable direct authorization edges even when
+        # this standalone assignment has no research-loop memory snapshot.
+        from ...operations.tooling import operation_worker_tools
+        from ...reference_tools import LEGACY_REFERENCE_HISTORY_DESCRIPTION
+        reader = next((tool for tool in operation_worker_tools(self._compiled(value))
+                       if tool.name == 'worker_reference_read'), None)
+        parent_reader = reader is not None and reader.schema()['inputSchema']['properties']['history_task']['description'] != LEGACY_REFERENCE_HISTORY_DESCRIPTION
+        parents = ()
+        if parent_reader:
+            from .scheduler_bindings import SchedulerNameNotFound
+            try:
+                identity = self.scheduler_bindings.resolve(instance=value.instance_id, namespace='run', name=task_name)
+            except SchedulerNameNotFound:
+                identity = None
+            parents = [run for run in self.task_lineage(value.run_id)[1:] if run.run_id == identity]
+        if parents:
+            producer = parents[0]
+        else:
+            memory = self._worker_memory_binding(value.run_id)
+            if not memory['available']:
+                raise ReferenceAccessError('reference_history_unavailable', 'Choose an exact immutable recovery parent or frozen history task.')
+            terminal = self._memory_terminal(memory['scope'], task_name)
+            producer = self.status(terminal['run_id'])
         if producer.instance_id != value.instance_id:
             raise ReferenceAccessError('reference_instance_mismatch', 'History task belongs to another instance.')
         try:
             compiled = self._compiled(producer)
             visible = {p.name for p in compiled.spec.inputs if p.agent_visible and p.exposure != 'handoff_only'}
+            from ...operations.tooling import tool_evidence_ports
+            output_visible = {port.name for port in compiled.spec.outputs
+                              if parent_reader and (port.agent_visible or port.kind == 'scientific_attachment')}
+            output_visible &= set(tool_evidence_ports(compiled)) - {'recovery_manifest_output'}
         except Exception as error:
             from .run_records import RunContractUnavailable
             if not isinstance(error, (RunContractUnavailable, KeyError)):
                 raise
-            visible = set()
+            visible, output_visible = set(), set()
         targets = [(item.source_name, item.artifact_ref) for item in producer.inputs if item.port_name in visible]
         if producer.state == 'completed' and producer.output_ref is not None:
             targets.insert(0, ('report', producer.output_ref))
+        for record in self.tool_evidence(producer.run_id):
+            ref = _ref(record['artifact_ref'])
+            envelope = self.artifacts.catalog(ref)
+            port = record.get('output_port', 'tool_evidence')
+            if (port in output_visible and envelope.labels.get('operation_output_port') == port
+                    and envelope.labels.get('tool_producer_run') == producer.run_id
+                    and envelope.labels.get('tool_name') == record['tool_name']):
+                targets.append((record['alias'], ref))
         return producer, targets
 
     def _history_reference_edges(self, value, task_name):
         authorizer, targets = self._history_reference_targets(value, task_name)
-        manifest_ref = None
-        if authorizer.output_ref:
-            manifests = [ref for ref in self.artifacts.catalog(authorizer.output_ref).parent_refs
-                if ref.schema_id == 'scidiscovery.tool-evidence-manifest.v1' and self.artifacts.catalog(ref).labels.get('tool_producer_run') == authorizer.run_id]
-            if len(manifests) == 1:
-                manifest_ref = manifests[0]
-        if manifest_ref is None:
-            manifest_ref = self.reference_manifest(authorizer)
         edges=[]
         # Each direct original is its own authorized root. A task name is never
         # a fabricated source alias; only a successful read creates an alias.
@@ -330,17 +352,27 @@ class ReferenceAccessMixin:
             edge=dict(source_ref=ref.model_dump(mode='json'), locator='/@history/'+_escape(name), target_ref=ref.model_dump(mode='json'))
             handle='ref_'+_digest(edge)
             edges.append(dict(reference=handle, original_name=name, media_type=envelope.media_type,
-                size_bytes=envelope.size_bytes, _edge=edge, _producer=None,
-                _manifest_run=authorizer.run_id, _manifest_ref=manifest_ref.model_dump(mode='json'),
+                size_bytes=envelope.size_bytes, **self._history_material_metadata(authorizer, name, ref), _edge=edge, _producer=None,
+                _manifest_run=authorizer.run_id, _manifest_ref=None,
                 _proof_run=None, _proof_manifest=None))
         return edges, dict(task_name=task_name)
+
+    def _history_material_metadata(self, owner, alias, ref):
+        record = next((r for r in self.tool_evidence(owner.run_id)
+                       if r['alias'] == alias and _ref(r['artifact_ref']) == ref), None)
+        if record is None:
+            return {}
+        from .tool_evidence import scientific_evidence_projection
+        return {key: item for key, item in json.loads(scientific_evidence_projection(
+            canonical_json({'records': [record]})))['materials'][0].items()
+            if key not in {'reference', 'media_type', 'size_bytes'}}
 
     def _history_reference_proof(self, value, selected, policy, call):
         ref=_ref(selected['_edge']['target_ref'])
         owner=self.completed_for_output(ref)
         if owner is None:
             from .sealed_materials import resolve_material
-            material=resolve_material(self,self.status(selected['_manifest_run']),selected['original_name'])
+            material=resolve_material(self,self.status(selected['_manifest_run']),selected['original_name'], verify_payload=False)
             if material is not None:
                 owner=self.status(material['producer_run_id'])
         if owner is not None:
@@ -355,9 +387,9 @@ class ReferenceAccessMixin:
                 return
             # The historical consumer authorizes this root, while its exact
             # owner supplies the receipt namespace and paired proof.
-            proof=(owner.run_id,self.reference_manifest(owner)) if owner.state!='completed' else None
-            owner, _, _, proof_ref=self._reference_pair(value,ref,policy,call,original_proof=proof)
+            owner, _, _, proof_ref=self._reference_original_pair(value, owner, ref, policy, call)
             selected.update(_producer=owner.run_id,_proof_run=owner.run_id,
+                _manifest_ref=proof_ref.model_dump(mode='json'),
                 _proof_manifest=proof_ref.model_dump(mode='json'))
 
     def _reference_root_authorized(self, value, root, record):
@@ -372,7 +404,19 @@ class ReferenceAccessMixin:
         except (ReferenceAccessError, RunStateConflict, KeyError, ValueError):
             return False
 
-    def _reference_pair(self, value, source_ref, policy, call, root_ref=None, *, original_proof=None):
+    def _reference_original_pair(self, value, owner, source_ref, policy, call, root_ref=None):
+        # An existing proof (including an orphan) is read only after reserving IO.
+        # Reuse that single call's verified bytes when pairing its exact receipt.
+        documents = {}
+        def read_existing(ref):
+            raw = self._reference_read_bytes(value, ref, policy, call)
+            documents[ref] = json.loads(raw)
+            return raw
+        proof = self.reference_manifest(owner, subject_ref=source_ref, read_existing=read_existing)
+        return self._reference_pair(value, source_ref, policy, call, root_ref,
+            original_proof=(owner.run_id, proof), proof_document=documents.get(proof))
+
+    def _reference_pair(self, value, source_ref, policy, call, root_ref=None, *, original_proof=None, proof_document=None):
         producer = self.status(original_proof[0]) if original_proof else self.completed_for_output(source_ref)
         authorized_manifest = _ref(original_proof[1]) if original_proof else None
         legacy_authorization = False
@@ -395,10 +439,10 @@ class ReferenceAccessMixin:
                           if item.artifact_ref == source_ref), None)
             if bound is not None:
                 from .sealed_materials import resolve_material
-                material = resolve_material(self, value, bound.source_name)
+                material = resolve_material(self, value, bound.source_name, verify_payload=False)
                 if material is not None:
                     producer = self.status(material['producer_run_id'])
-                    authorized_manifest = self.reference_manifest(producer, subject_ref=source_ref)
+                    return self._reference_original_pair(value, producer, source_ref, policy, call, root_ref)
         if producer is None or (authorized_manifest is None and
                 (producer.state != 'completed' or producer.output_ref is None)):
             raise ReferenceAccessError('reference_producer_missing', 'Source has no exact completed producer; bind required originals explicitly.')
@@ -415,7 +459,8 @@ class ReferenceAccessMixin:
         if len(candidates) != 1 or (authorized_manifest is not None and candidates[0] != authorized_manifest):
             raise ReferenceAccessError('reference_manifest_unpaired', 'Expected one exact producer-bound manifest.')
         manifest_ref = candidates[0]
-        manifest = json.loads(self._reference_read_bytes(value, manifest_ref, policy, call))
+        manifest = (proof_document if proof_document is not None else
+                    json.loads(self._reference_read_bytes(value, manifest_ref, policy, call)))
         bindings = manifest.get('bindings', {})
         records = manifest.get('records', [])
         if not isinstance(bindings, dict) or not isinstance(records, list):
@@ -434,11 +479,10 @@ class ReferenceAccessMixin:
                     if (item.artifact_ref != source_ref or binding is None
                             or _ref(binding['artifact_ref']) != source_ref):
                         continue
-                    material = resolve_material(self, producer, item.source_name)
+                    material = resolve_material(self, producer, item.source_name, verify_payload=False)
                     if material is not None and material['producer_run_id'] != producer.run_id:
                         owner = self.status(material['producer_run_id'])
-                        return self._reference_pair(value, source_ref, policy, call, root_ref,
-                            original_proof=(owner.run_id, self.reference_manifest(owner, subject_ref=source_ref)))
+                        return self._reference_original_pair(value, owner, source_ref, policy, call, root_ref)
             if len(matches) != 1:
                 raise ReferenceAccessError('reference_record_unpaired', 'Tool original is not uniquely recorded in its producer manifest.')
             selected = matches[0]
@@ -895,6 +939,11 @@ class ReferenceAccessMixin:
                 raise ReferenceAccessError('reference_handle_invalid', 'Reference handle is not uniquely authorized by this exact source.')
             selected = matches[0]
             if request.history_task is not None:
+                if request.delivery == 'file' or not (selected['media_type'].startswith('text/') or 'json' in selected['media_type']):
+                    from ...agent_execution_settings import MaterialInputSettings
+                    settings = MaterialInputSettings.model_validate((value.recovery_policy or {}).get('input_materials', {}))
+                    if self.artifacts.catalog(_ref(selected['_edge']['target_ref'])).size_bytes > settings.max_item_bytes:
+                        raise ReferenceAccessError('reference_file_limit', 'Original exceeds the declared single-file byte limit.')
                 self._history_reference_proof(value,selected,policy,call)
             edge = selected['_edge']
             target = _ref(edge['target_ref'])
@@ -1022,83 +1071,45 @@ class ReferenceAccessMixin:
                     self._reference_settle(connection, value, call, response)
             return response
 
-    def _reference_not_adopted(self, value, record, reason):
-        with self._connect() as connection:
-            connection.execute('BEGIN IMMEDIATE')
-            diagnostic = {'request_key': record['request_key'], 'reason': reason}
-            raw = canonical_json(diagnostic)
-            if not connection.execute("SELECT 1 FROM run_activity WHERE run_id=? AND activity='reference_access_not_adopted' AND diagnostic_json=?",
-                                      (value.run_id, raw)).fetchone():
-                self._reference_event(connection, value.run_id, 'reference_access_not_adopted', diagnostic)
-
-    def adopt_reference_access(self, run_id):
-        from ...reference_tools import ReferenceReadRequest
+    def reference_stage_source(self, value, alias, *, validation_deadline, validation_budget):
+        """Read only an explicitly selected, still-authorized original stage."""
         from .run_outputs import RunCheckerError
-        value = self.status(run_id)
-        links = self.recovery_links(run_id)
-        previous = links['draft_from_run_id'] or links['resume_from_run_id']
-        if not previous:
-            return
-        previous_value = self.status(previous)
-        if previous_value.instance_id != value.instance_id:
-            raise RunCheckerError('reference recovery belongs to another instance', category='integrity_failure')
+        access = next((r for r in self.reference_access_records(value.run_id) if r['alias'] == alias), None)
+        if access is None:
+            return None
+        policy = self._reference_policy(value)
+        target, _, _ = self._reference_source(value, alias, policy)
+        original = self.sealed_material_record(value, alias, verify_payload=False)
+        if (original is None or original.get('tool_name') != 'worker_experiment_stage'
+                or original.get('metadata', {}).get('kind') != 'experiment_stage'):
+            raise RunCheckerError('Selected reference is not an exact original experiment stage', category='integrity_failure')
+        if self.artifacts.catalog(target).size_bytes > 65536:
+            raise RunCheckerError('Selected original stage exceeds the 65536-byte scientific source limit', category='integrity_failure')
+        def read(ref):
+            envelope = self.artifacts.catalog(ref)
+            validation_budget['bytes'] = validation_budget.get('bytes', 0) + envelope.size_bytes
+            if envelope.size_bytes > policy.max_file_bytes or validation_budget['bytes'] > policy.max_io_bytes:
+                raise RunCheckerError('reference stage mechanical IO exceeds limit', category='integrity_failure')
+            if time.monotonic() >= validation_deadline:
+                raise TimeoutError('reference stage validation deadline exceeded')
+            raw = self.artifacts.read(ref)
+            if time.monotonic() >= validation_deadline:
+                raise TimeoutError('reference stage validation deadline exceeded')
+            if len(raw) != envelope.size_bytes or hashlib.sha256(raw).hexdigest() != ref.sha256:
+                raise RunCheckerError('reference stage original changed', category='integrity_failure')
+            return raw
+        producer = self.status(access.get('proof_run_id') or access['authorizing_run_id'])
+        manifest_ref = _ref(access.get('proof_manifest_ref') or access['authorizing_manifest_ref'])
+        document = json.loads(read(manifest_ref))
         try:
-            policy = self._reference_policy(value)
-        except ReferenceAccessError:
-            for record in self.reference_access_records(previous):
-                self._reference_not_adopted(value, record, 'reference_capability_missing')
-            return
-        visible_roots = self._reference_roots(value)
-        recovery = self.recovery_tool_proof(value)
-        for original in self.reference_access_records(previous):
-            root = _ref(original['root_ref'])
-            if not self._reference_root_authorized(value, root, original):
-                self._reference_not_adopted(value, original, 'reference_root_missing')
-                continue
-            if original['policy_digest'] != _digest(asdict(policy)):
-                self._reference_not_adopted(value, original, 'reference_policy_changed_requires_revalidation')
-                continue
-            chain = original['chain']
-            if (not chain or len(chain) > policy.max_depth or _ref(chain[0]['source_ref']) != root
-                    or _ref(chain[-1]['target_ref']) != _ref(original['artifact_ref'])
-                    or any(_ref(left['target_ref']) != _ref(right['source_ref']) for left, right in zip(chain, chain[1:]))
-                    or original['operation_digest'] != previous_value.operation_digest):
-                raise RunCheckerError('preserved reference chain is inconsistent', category='integrity_failure')
-            # The previous immutable control receipt already proved each edge
-            # under this exact extraction policy. Same root Ref preserves that
-            # proof; adoption does not fabricate a new Worker delivery or IO.
-            target = _ref(original['artifact_ref'])
-            self.artifacts.catalog(target)
-            alias = self._reference_alias(value, target)
-            source = _ref(chain[-1]['source_ref'])
-            source_alias = self._reference_alias(value, source)
-            request = ReferenceReadRequest(source=source_alias, action='read',
-                reference='ref_' + _digest(chain[-1]), **original['selector'])
-            key = self._reference_request_key(value, request, policy, root, chain[:-1], source)
-            response = {**_portable_response(original['response']), 'source': alias}
-            if response.get('provided', {}).get('kind') == 'file_access':
-                if 'native_workspace' not in getattr(self.backend, 'capabilities', ()):
-                    self._reference_not_adopted(value, original, 'binary_file_access_unavailable')
-                    continue
-            record = {**original, 'alias': alias, 'access_run_id': run_id, 'operation_digest': value.operation_digest,
-                      'request_key': key, 'request': request.model_dump(mode='json'), 'response': response,
-                      'adopted_from': original.get('adopted_from', original['request_key'])}
-            with self._connect() as connection:
-                connection.execute('BEGIN IMMEDIATE')
-                self._reference_running(connection, run_id)
-                scope = self._reference_scope(connection, run_id)
-                if scope != original['budget_scope']:
-                    raise RunCheckerError('preserved reference budget scope differs', category='integrity_failure')
-                if connection.execute('SELECT 1 FROM run_tool_evidence WHERE run_id=? AND evidence_key=?', (run_id, key)).fetchone():
-                    continue
-                current = [json.loads(row[0]) for row in connection.execute('SELECT record_json FROM run_tool_evidence WHERE run_id=?', (run_id,))]
-                accesses = [r for r in current if r.get('record_type') == 'reference_access']
-                if len(accesses) >= policy.max_records:
-                    raise RunCheckerError('preserved reference records exceed declared limit', category='integrity_failure')
-                self._encode_evidence_snapshot(value, [r for r in current if r.get('record_type') != 'reference_access'],
-                    [*accesses, record], recovery, self.tool_attempts(run_id, connection=connection))
-                connection.execute('INSERT INTO run_tool_evidence VALUES (?,?,?,?,?)',
-                    (run_id, len(current) + 1, key, canonical_json(record), alias))
+            self._verify_reference_manifest(producer, manifest_ref, document)
+            matches = [r for r in document.get('records', ()) if _ref(r['artifact_ref']) == target]
+            if len(matches) != 1 or producer.run_id != original['producer_run_id']:
+                raise ReferenceAccessError('reference_record_unpaired', 'Stage proof is not paired to its exact original producer.')
+            self._verify_reference_record(producer, target, matches[0])
+        except ReferenceAccessError as error:
+            raise RunCheckerError(str(error), category='integrity_failure') from error
+        return read(target)
 
     def reference_calculation_sources(self, value, alias, *, validation_deadline=None, validation_budget=None):
         """Mechanical replay context in the original namespace, never Worker inputs."""
@@ -1167,4 +1178,5 @@ class ReferenceAccessMixin:
             if manifest.recovery is None:
                 raise RunCheckerError('reference calculation recovery proof is missing', category='integrity_failure')
             proof['recovery'] = manifest.recovery
-        return ValidationSources(sources, descriptors, validation_deadline=deadline, tool_snapshot=canonical_json(proof))
+        return ValidationSources(sources, descriptors, validation_deadline=deadline, tool_snapshot=canonical_json(proof),
+            reference_calculation=(alias, target, calculation))

@@ -54,7 +54,7 @@ _CAPTURE_BUDGETS = {
     'capture_ledger_limit': {'Derived ledger exceeds attachment byte budget'},
 }
 _ATTACHMENT_RECOVERY_LIMITS = (
-    'draft_from inherits immutable attachment receipts; it does not free capacity. '
+    'draft_from preserves original nodes; it does not reset actual execution budgets. '
     'A new bounded task is allowed only if its fixed capture contract can contain required evidence. '
     'Never reset global budgets, remove old receipts or increase caps.')
 
@@ -77,7 +77,7 @@ def classify_candidate_attachment_error(error, *, runs=None, run_id=None, affect
     try:
         if runs is None or run_id is None or error.__cause__ is not None:
             raise ValueError('Candidate budget context is unavailable')
-        from ...agent_execution_settings import AttachmentSettings
+        from ...agent_execution_settings import AttachmentSettings, EvidenceCapacitySettings
         # Read only this exact Run. Policy and committed receipts share one
         # transaction; this is current state, not the original requested batch.
         with closing(runs._connect()) as connection:
@@ -92,12 +92,13 @@ def classify_candidate_attachment_error(error, *, runs=None, run_id=None, affect
             if not all(key in raw_settings for key in ('max_files', 'max_item_bytes', 'max_total_bytes')):
                 raise ValueError('Frozen attachment settings are unavailable')
             settings = AttachmentSettings.model_validate(raw_settings, strict=True)
+            capacities = EvidenceCapacitySettings.model_validate(policy.get('evidence_capacity', {}), strict=True)
             rows = connection.execute("SELECT record_json FROM run_tool_evidence WHERE run_id=? "
                 "AND (COALESCE(json_extract(CAST(record_json AS TEXT),'$.record_type'),'')!='reference_access' "
                 "OR json_extract(CAST(record_json AS TEXT),'$.output_port')='attachments') "
                 "ORDER BY ordinal LIMIT 129", (run_id,)).fetchall()
             records = [json.loads(record[0]) for record in rows]
-            if len(records) > 128 or any(not isinstance(record, dict)
+            if len(records) > capacities.max_new_records or any(not isinstance(record, dict)
                     or type(record.get('size_bytes')) is not int or record['size_bytes'] < 0
                     or (record.get('record_type') == 'reference_access' and record.get('output_port') == 'attachments')
                     for record in records):
@@ -119,7 +120,7 @@ def classify_candidate_attachment_error(error, *, runs=None, run_id=None, affect
     usage = (f'Current committed attachments: {len(attachments)}/{settings.max_files} files, '
         f'{sum(sizes)}/{settings.max_total_bytes} bytes; remaining '
         f'{settings.max_files-len(attachments)} files, {settings.max_total_bytes-sum(sizes)} bytes. '
-        f'Non-reference receipts: {receipt_count}/128; remaining {128-receipt_count}. '
+        f'Non-reference receipts: {receipt_count}/{capacities.max_new_records}; remaining {capacities.max_new_records-receipt_count}. '
         'The rejected batch amounts and exact triggering dimension are unknown. ')
     if len(usage) > 512:
         usage = ('Current committed receipts fit the frozen caps. Numeric amounts are omitted because their text exceeds the diagnostic bound. '

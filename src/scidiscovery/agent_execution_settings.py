@@ -121,6 +121,12 @@ class AttachmentSettings(SettingsValue):
     chunk_bytes: int = Field(default=1048576, ge=4096, le=8388608)
 
 
+class EvidenceCapacitySettings(SettingsValue):
+    """Frozen admission limits; wire proof collections have separate bounds."""
+    max_new_records: int = Field(default=128, ge=1, le=128)
+    max_controlled_attempts: int = Field(default=64, ge=1, le=64)
+
+
 class ProgressionSettings(SettingsValue):
     """Administrator opt-in and bounded background Root execution."""
     enabled: bool = True
@@ -343,9 +349,16 @@ class AgentSettings(SettingsValue):
     diagnostics: DiagnosticsSettings = Field(default_factory=DiagnosticsSettings)
     input_materials: MaterialInputSettings = Field(default_factory=MaterialInputSettings)
     attachments: AttachmentSettings = Field(default_factory=AttachmentSettings)
+    evidence_capacity: EvidenceCapacitySettings = Field(default_factory=EvidenceCapacitySettings)
     capture: HostCaptureSettings | None = None
     presentation: PresentationSettings = Field(default_factory=PresentationSettings)
     mcp_read: MCPReadSettings = Field(default_factory=MCPReadSettings)
+
+    @model_validator(mode="after")
+    def compatible_evidence_capacity(self):
+        if self.attachments.max_files > self.evidence_capacity.max_new_records:
+            raise ValueError("attachments.max_files must not exceed evidence_capacity.max_new_records")
+        return self
 
     def sparse(self) -> dict:
         return self.model_dump(exclude_none=True, exclude_unset=True)

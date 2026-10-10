@@ -95,7 +95,7 @@ class CompiledCatalog:
         return "current" if compiled.digest == self.operation(operation_id).digest else "supported_historical"
 
     def can_recover(self, operation_id: str, source_digest: str, target_digest: str) -> bool:
-        # Only the explicitly reconstructed evidence-limit predecessor may
+        # Only the explicitly reconstructed reader/evidence-limit predecessors may
         # advance to today's contract. No arbitrary digest aliases or downgrade.
         return (source_digest == target_digest or
             ((operation_id, source_digest) in self._historical_operations
@@ -1026,12 +1026,26 @@ def compile_catalog(plugins: Iterable[PluginDefinition], *, capability_selection
                 ComponentRef(component.spec.component_id), "experiment_capability")
     approval_provider_ids = _validate_review_graph(plugin_map, components, compiled_parts, used)
     current = _build_compiled_catalog(plugin_map, components, compiled_parts, approval_provider_ids, runtime_factories, runtime_configuration_digests, runtime_identity_digests, used)
-    # The only supported predecessor differs in the control proof's aggregate
-    # binding constraint. Recompile its actual resource and output contracts so
-    # old identities retain their own validators, rather than ignoring digests.
-    previous_components = dict(components)
-    changed = False
+    # Retain the exact pre-parent-reader contract and its already supported
+    # binding-limit predecessor. Reconstruct resources, never alias digests.
+    from ..reference_tools import LEGACY_REFERENCE_HISTORY_DESCRIPTION
+    legacy_components = dict(components)
     for key, component in components.items():
+        tool = component.implementation
+        if component.spec.kind != 'worker_tool' or tool.name != 'worker_reference_read':
+            continue
+        schema = json.loads(json.dumps(tool.schema()['inputSchema']))
+        schema['properties']['history_task']['description'] = LEGACY_REFERENCE_HISTORY_DESCRIPTION
+        legacy_tool = replace(tool, _input_schema=freeze_json(schema))
+        legacy_components[key] = replace(component, implementation=legacy_tool,
+            resource_digest=_resource_digest(component.spec, legacy_tool, component.plugin_id))
+    legacy = _build_compiled_catalog(plugin_map, legacy_components, compiled_parts, approval_provider_ids,
+        runtime_factories, runtime_configuration_digests, runtime_identity_digests, used)
+    historical = {(key, legacy.operation(key).digest): legacy.operation(key) for key in current.operation_ids()
+        if current.operation(key).digest != legacy.operation(key).digest}
+    previous_components = dict(legacy_components)
+    changed = False
+    for key, component in legacy_components.items():
         if component.spec.implementation != 'scidiscovery.artifact_agent.service.tool_evidence:TOOL_EVIDENCE_SCHEMA':
             continue
         schema = json.loads(component.implementation)
@@ -1043,12 +1057,11 @@ def compile_catalog(plugins: Iterable[PluginDefinition], *, capability_selection
         resource = json.dumps(schema, ensure_ascii=False, separators=(',', ':'), sort_keys=True)
         previous_components[key] = replace(component, implementation=resource,
             resource_digest=_resource_digest(component.spec, resource, component.plugin_id))
-    if not changed:
-        return current
-    previous = _build_compiled_catalog(plugin_map, previous_components, compiled_parts, approval_provider_ids,
-        runtime_factories, runtime_configuration_digests, runtime_identity_digests, used)
-    historical = {(key, previous.operation(key).digest): previous.operation(key) for key in current.operation_ids()
-        if current.operation(key).digest != previous.operation(key).digest}
+    if changed:
+        previous = _build_compiled_catalog(plugin_map, previous_components, compiled_parts, approval_provider_ids,
+            runtime_factories, runtime_configuration_digests, runtime_identity_digests, used)
+        historical.update({(key, previous.operation(key).digest): previous.operation(key) for key in current.operation_ids()
+            if current.operation(key).digest != previous.operation(key).digest})
     return CompiledCatalog(current._operations, runtime_factories, runtime_configuration_digests,
         runtime_identity_digests, historical)
 def compile_installed_catalog(*, capability_selections: Mapping[str, str] | None = None) -> CompiledCatalog:

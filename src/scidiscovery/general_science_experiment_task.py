@@ -256,7 +256,7 @@ def validate_completion(payload, sources, handoff):
     for alias, record in zip(report.adopted_stages, selected):
         if record.get("tool_name") != "worker_experiment_stage":
             continue
-        stage = StageSubmission.model_validate_json(sources[alias], strict=True)
+        stage = StageSubmission.model_validate_json(sources.stage_source(alias), strict=True)
         if stage.comparison is None:
             continue
         # Body aliases belong to the original producer, even after another task
@@ -269,7 +269,7 @@ def validate_completion(payload, sources, handoff):
         declaration_record = sources.sealed_material_record(prediction_alias) if prediction_alias else None
         if declaration_record is None or declaration_record.get("tool_name") != "worker_experiment_stage":
             raise SemanticRuleViolation("Adopted comparison requires the declaration's unique original stage receipt; bind that exact material.")
-        declaration = StageSubmission.model_validate_json(sources[prediction_alias], strict=True)
+        declaration = StageSubmission.model_validate_json(sources.stage_source(prediction_alias), strict=True)
         if declaration.prediction_declaration is None:
             raise SemanticRuleViolation("The exact declaration receipt has no scientific prediction.")
         _same_criterion(declaration.prediction_declaration, stage.comparison)
@@ -315,7 +315,7 @@ def validate_completion(payload, sources, handoff):
         if item["metadata"].get("kind") == "experiment_implementation":
             implementations[identity(item)] = "remote"
         elif stage_is(item, "implementation"):
-            materials = StageSubmission.model_validate_json(sources[item["alias"]], strict=True).materials
+            materials = StageSubmission.model_validate_json(sources.stage_source(item["alias"]), strict=True).materials
             if not any(published_file(item, alias) for alias in materials):
                 repair("Native implementation requires its exact published source files.")
             implementations[identity(item)] = "native"
@@ -335,7 +335,7 @@ def validate_completion(payload, sources, handoff):
             if receipt.get("state") != "collected" or receipt.get("terminal_state") != "succeeded":
                 repair("Completed requires successful collected execution; retain failed or unfinished work as blocked/inconclusive.")
         else:
-            declaration = StageSubmission.model_validate_json(sources[item["alias"]], strict=True).native_execution
+            declaration = StageSubmission.model_validate_json(sources.stage_source(item["alias"]), strict=True).native_execution
             if (declaration is None or implementations[implementation] != "native"
                     or declaration.state != "succeeded" or not declaration.results
                     or item["metadata"].get("origin") != "worker_native"

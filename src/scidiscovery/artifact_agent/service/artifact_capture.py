@@ -395,7 +395,7 @@ def _project_ledger(snapshot, target, ledger, framing, entries, limit, deadline)
         'raw_retained':False, 'representation':'derived_projection', 'producer_trust':'author_reported'}
 
 
-def _capture_ledgers(runs, run, entries, staged, settings, check, temporary, total, contract):
+def _capture_ledgers(runs, run, entries, staged, settings, check, temporary, total, contract, known_keys=()):
     policy = (run.recovery_policy or {}).get('capture')
     if not policy:
         return total, True
@@ -435,7 +435,7 @@ def _capture_ledgers(runs, run, entries, staged, settings, check, temporary, tot
                     guard.feed(chunk)
             guard.finish()
             view_size = target.stat().st_size
-            if view_size > settings.max_item_bytes or total + view_size > settings.max_total_bytes:
+            if view_size > settings.max_item_bytes:
                 raise ToolInputError('capture_ledger_limit', 'Derived ledger exceeds attachment byte budget')
             view_digest = hashlib.sha256()
             with target.open('rb') as source:
@@ -451,7 +451,10 @@ def _capture_ledgers(runs, run, entries, staged, settings, check, temporary, tot
                  'scientific_claim_admissible':False, 'representation':'derived_projection',
                  'raw_retained':False, 'producer_trust':'author_reported', 'private_source':source_identity}, ())
             staged.append(item)
-            total += view_size
+            if item['key'] not in known_keys:
+                total += view_size
+            if total > settings.max_total_bytes:
+                raise ToolInputError('capture_ledger_limit', 'New derived ledger exceeds attachment byte budget')
             entry.update(projection, status='retained', publication_key=item['key'], private_source=source_identity)
             if projection['projection_coverage'] != 'complete':
                 complete = False
@@ -509,6 +512,26 @@ def capture_science(runs, run_id, document, paths, declarations=(), *, workspace
             if time.monotonic() >= deadline:
                 raise ToolInputError('capture_deadline', 'Capture exhausted its bounded time; preserve files and repair delivery without rerunning the experiment')
         entries, initial, complete = _listing(workspace, roots, contract, check)
+        if len(cited_files) > 128:
+            raise ToolInputError('capture_reference_limit', 'At most 128 exact file citations can be captured in one seal')
+        # Exact citations do not depend on an enumeration prefix. Basenames
+        # remain subject to the existing uniqueness check; never guess unseen
+        # paths when a directory listing is incomplete.
+        listed = {entry.get('path') for entry in entries}
+        for locator in sorted(cited_files):
+            if '/' not in locator or locator in listed:
+                continue
+            path = _root(locator)
+            if not any(path.is_relative_to(PurePosixPath(root)) and path != PurePosixPath(root) for root in roots):
+                raise ToolInputError('capture_scope_invalid', 'An exact file citation must stay inside its declared capture root')
+            check()
+            try:
+                with _source(workspace, locator) as source:
+                    info = os.fstat(source.fileno())
+                entries.append({'path': locator, 'size_bytes': info.st_size, 'status': 'pending'})
+            except (OSError, RuntimeError, ToolInputError):
+                entries.append({'path': locator, 'status': 'incomplete', 'reason': 'capture_file_unavailable'})
+                complete = False
         entries.sort(key=lambda entry:(entry.get('path', ''), entry['status']))
         # Empty unchanged directories do not manufacture index receipts.
         if entries or not complete or (run.recovery_policy or {}).get('capture'):
@@ -526,8 +549,21 @@ def capture_science(runs, run_id, document, paths, declarations=(), *, workspace
                 frozen = policy['retained_limits']
                 settings = AttachmentSettings.model_validate({key:min(value, current[key], frozen[key])
                     for key,value in settings.model_dump().items()})
+            capacity = runs.evidence_capacity_budget(run)
+            known_locators = {record.get('metadata', {}).get('locator') for record in records}
+            minimum_new = sum(entry['status'] == 'pending' and _media(entry['path']) is not None
+                and entry.get('path') not in known_locators for entry in entries)
+            minimum_receipts = minimum_new + int(minimum_new > 0 or not any(
+                record.get('metadata', {}).get('kind') == 'capture_inventory' for record in records))
+            if (minimum_receipts > min(capacity['attachments']['remaining'], capacity['records']['remaining'], settings.max_files)
+                    or sum(entry.get('size_bytes', 0) for entry in entries
+                        if entry['status'] == 'pending' and _media(entry['path']) is not None
+                            and entry.get('path') not in known_locators) > min(
+                            capacity['attachments']['remaining_bytes'], settings.max_total_bytes)):
+                raise ToolInputError('attachment_publication_invalid', 'Attachment count or total byte budget exceeded')
             with TemporaryDirectory(prefix='scid-capture-') as temporary:
                 staged, total = [], 0
+                known_keys = {record.get('publication_key') for record in records}
                 for number, entry in enumerate(entries):
                     if entry['status'] != 'pending':
                         if entry['status'] != 'excluded':
@@ -555,7 +591,7 @@ def capture_science(runs, run_id, document, paths, declarations=(), *, workspace
                     target = Path(temporary) / str(number)
                     try:
                         with _source(workspace, locator) as source:
-                            digest, size = snapshot_file(source, target, settings, check, total=total,
+                            digest, size = snapshot_file(source, target, settings, check,
                                 guard=_Guard(media, contract.max_record_bytes))
                         if not associated and not adopted and not native_source:
                             # A normalized retry can carry the exact previous
@@ -591,13 +627,17 @@ def capture_science(runs, run_id, document, paths, declarations=(), *, workspace
                              'scientific_claim_admissible':bool(aliases and not conflict)}, aliases if not conflict else (),
                             task_scope_restricted=task_scope_restricted)
                         staged.append(item)
-                        total += size
+                        if item['key'] not in known_keys:
+                            total += size
+                            known_keys.add(item['key'])
+                        if total > settings.max_total_bytes:
+                            raise ToolInputError('attachment_publication_invalid', 'New capture bytes exceed the frozen attachment capacity')
                         entry.update(status='retained', publication_key=item['key'])
                     except (OSError, RuntimeError, ToolInputError) as error:
                         entry['status'] = 'incomplete'
                         entry['reason'] = error.details[0]['code'] if isinstance(error, ToolInputError) else 'capture_gap'
                         complete = False
-                total, ledger_complete = _capture_ledgers(runs, run, entries, staged, settings, check, temporary, total, contract)
+                total, ledger_complete = _capture_ledgers(runs, run, entries, staged, settings, check, temporary, total, contract, known_keys)
                 complete = complete and ledger_complete
                 _, final, final_complete = _listing(workspace, roots, contract, check)
                 index = {'roots':list(roots),'entries':entries,'coverage':'complete' if complete and final_complete and initial == final else 'incomplete',

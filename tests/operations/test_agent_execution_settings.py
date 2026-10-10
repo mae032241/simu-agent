@@ -37,6 +37,26 @@ def test_execution_profile_uses_canonical_platform_model_identity():
     assert profile.model == "gpt-6-astra"
 
 
+@pytest.mark.parametrize('settings', [
+    {'evidence_capacity': {'max_new_records': 129}},
+    {'evidence_capacity': {'max_controlled_attempts': 65}},
+    {'evidence_capacity': {'max_controlled_attempts': 0}},
+    {'evidence_capacity': {'max_new_records': 32}},
+])
+def test_evidence_capacity_rejects_wire_incompatible_or_attachment_combination(settings):
+    with pytest.raises(ValueError):
+        parse_settings(settings)
+
+
+def test_evidence_capacity_can_tighten_admission_without_changing_wire_bounds():
+    settings = parse_settings({'attachments': {'max_files': 16},
+        'evidence_capacity': {'max_new_records': 32, 'max_controlled_attempts': 16}})
+    assert settings.attachments.max_files == 16
+    assert settings.evidence_capacity.max_new_records == 32
+    assert settings.evidence_capacity.max_controlled_attempts == 16
+    assert AgentSettings().evidence_capacity.model_dump() == dict(max_new_records=128, max_controlled_attempts=64)
+
+
 def test_packaged_model_default_is_configured_and_overridable():
     assert packaged_default_model() == "gpt-6-sol"
     baseline = resolve_settings(AgentSettings(), AgentSettings(), operation_id="fixture",

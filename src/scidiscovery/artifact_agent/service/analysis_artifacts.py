@@ -96,9 +96,10 @@ def analysis_calculations(report, sources):
             # control resolver verifies that exact receipt, without binding its
             # internal sources as new Worker inputs or current products.
             original_sources = sources.reference_calculation_sources(alias)
-            receipt = next(item for item in json.loads(original_sources.tool_snapshot)["records"]
-                if item["artifact_ref"] == descriptor.artifact_ref.model_dump(mode="json"))
-            record = controlled_calculation(sources[alias], receipt)
+            record = (original_sources.controlled_reference_calculation(alias, descriptor.artifact_ref)
+                      if original_sources is not None else None)
+            if record is None:
+                raise declared_violation("calculation reference differs from its exact controlled access", path="$.evidence")
             records.append(record.model_copy(update={"calculation_ref": alias}))
             continue
         if not is_current:

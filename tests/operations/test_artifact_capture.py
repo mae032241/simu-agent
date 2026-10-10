@@ -359,6 +359,24 @@ def test_capture_limits_are_explicit_without_partial_receipt_identity(tmp_path, 
         assert captured['coverage'] == 'incomplete' and len(captured['entries']) <= 1
 
 
+def test_exact_cited_file_beyond_listing_limit_is_captured_without_claiming_complete(tmp_path, monkeypatch):
+    import scidiscovery.artifact_agent.service.artifact_capture as capture
+    _, runtime, _, worker, opened, workspace, alias = extraction(tmp_path)
+    for name in ['first.csv', 'last.csv']:
+        (workspace/'scratch/artifacts'/name).write_bytes(b'x\n1\n')
+    # A real bounded listing prefix omits the exact author-cited path.
+    monkeypatch.setattr(capture, '_listing', lambda *a: (
+        [dict(path='scratch/artifacts/first.csv', size_bytes=4, status='pending')], [], False))
+    draft(opened, 'file:scratch/artifacts/last.csv', batch_sources=[alias])
+    assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
+    _, captured = index(runtime, worker)
+    assert captured['coverage'] == 'incomplete'
+    entry = next(item for item in captured['entries'] if item.get('path') == 'scratch/artifacts/last.csv')
+    assert entry['status'] == 'retained'
+    selected = next(r for r in records(runtime, worker) if r.get('metadata', {}).get('locator') == entry['path'])
+    assert runtime.artifacts.read(ArtifactRef.model_validate(selected['artifact_ref'])) == b'x\n1\n'
+
+
 def test_author_cannot_expand_capture_to_external_or_private_roots(tmp_path):
     _, runtime, _, worker, opened, workspace, alias = extraction(tmp_path)
     for scope in ['scratch','/opt/results','scratch/../inputs','scratch/.ssh','scratch/credentials']:
@@ -814,3 +832,78 @@ def test_explicit_binary_publication_cannot_bypass_known_private_content(tmp_pat
         worker.call_tool('worker_publish_files', {'files':[{'path':'scratch/artifacts/model.npz',
             'purpose':'Explicit binary fixture.'}], 'source_aliases':[alias]})
     assert not records(runtime, worker)
+
+
+@pytest.mark.parametrize('fault', [None, 'stage_size', 'producer', 'proof', 'access'])
+def test_recovery_reads_original_stage_without_inheriting_it_then_finalizes(tmp_path, monkeypatch, fault):
+    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
+    runtime, _, root, worker, _, _ = experiment(tmp_path)
+    stage = worker.call_tool('worker_experiment_stage', {'stage': 'design', 'conclusion': 'Exact retained design; no success claim.',
+        'limitations': ['x'*3000]*32 if fault == 'stage_size' else []})
+    runs = runtime.runs
+    original = runs.sealed_material_record(runs.status(worker._run_id), stage['reference'])
+    runs.fail(worker._run_id, reason='retain original design before interrupted work')
+    root.call_tool('operation_invoke', {'name': 'stage_child', 'operation_id': 'science.experiment.v1',
+        'draft_from': 'capture', 'max_attempts': 2, 'instruction': 'Read the original retained design.',
+        'inputs': [{'port': 'subject', 'artifact_names': ['objective.hypothesis.output']}]})
+    compiled = runtime.runs.operation_catalog.operation('science.experiment.v1')
+    child = LocalWorkerMCPRouter(runs, operation_id=compiled.spec.operation_id, operation_digest=compiled.digest)
+    opened = child.call_tool('worker_open_assignment', {})
+    assert runs.tool_evidence(child._run_id) == []
+    page = child.call_tool('worker_reference_read', {'history_task': 'capture', 'action': 'list'})
+    selected = next(item for item in page['references'] if item.get('original_name') == stage['reference'])
+    read = child.call_tool('worker_reference_read', {'history_task': 'capture', 'action': 'read',
+        'reference': selected['reference'], 'delivery': 'file'})
+    adopted = runs.sealed_material_record(runs.status(child._run_id), read['source'])
+    assert adopted['artifact_ref'] == original['artifact_ref']
+    assert adopted['producer_run_id'] == original['producer_run_id']
+    assert adopted['source_refs'] == original['source_refs']
+    assert runs.tool_evidence(child._run_id) == [] and len(runs.reference_access_records(child._run_id)) == 1
+    Path(opened['output_directory'], 'result.json').write_bytes(canonical_json({'payload': {
+        'summary': 'Retained exact design; scientific result remains inconclusive.', 'outcome': 'inconclusive',
+        'limitations': ['No execution or scientific success inferred.'], 'remaining_question': 'Execution remains.',
+        'adopted_stages': [read['source']]}}))
+    if fault in {'producer', 'proof', 'access'}:
+        with runs._connect() as db:
+            row = db.execute('SELECT evidence_key,record_json FROM run_tool_evidence WHERE run_id=?', (child._run_id,)).fetchone()
+            access = json.loads(row['record_json'])
+            field = {'producer': 'producer_run_id', 'proof': 'proof_run_id', 'access': 'policy_digest'}[fault]
+            access[field] = child._run_id if fault in {'producer', 'proof'} else '0'*64
+            db.execute('UPDATE run_tool_evidence SET record_json=? WHERE run_id=? AND evidence_key=?',
+                (canonical_json(access), child._run_id, row['evidence_key']))
+    if fault == 'stage_size':
+        target = ArtifactRef.model_validate(original['artifact_ref'])
+        before_read, before_verify = runs.artifacts.read, runs.artifacts.verify
+        def guarded_read(ref):
+            assert ref != target, 'Oversize stage was read before mechanical admission'
+            return before_read(ref)
+        def guarded_verify(ref):
+            assert ref != target, 'Oversize stage was hashed before mechanical admission'
+            return before_verify(ref)
+        monkeypatch.setattr(runs.artifacts, 'read', guarded_read)
+        monkeypatch.setattr(runs.artifacts, 'verify', guarded_verify)
+    if fault == 'stage_size':
+        from scidiscovery.artifact_agent.service.run_outputs import RunCheckerError
+        import time
+        with pytest.raises(RunCheckerError, match='65536'):
+            runs.reference_stage_source(runs.status(child._run_id), read['source'],
+                validation_deadline=time.monotonic()+2, validation_budget={})
+    elif fault == 'producer':
+        with pytest.raises(DiagnosticError) as error:
+            runs.sealed_material_record(runs.status(child._run_id), read['source'], verify_payload=False)
+        assert error.value.details[0]['code'] == 'material_origin_mismatch'
+    elif fault == 'access':
+        from scidiscovery.artifact_agent.service.reference_access import ReferenceAccessError
+        with pytest.raises(ReferenceAccessError) as error:
+            value = runs.status(child._run_id)
+            runs._reference_source(value, read['source'], runs._reference_policy(value))
+        assert error.value.code == 'reference_source_unknown'
+    result = child.call_tool('worker_submit_result', {})
+    expected = 'completed' if fault is None else ('failed' if fault == 'proof' else 'rejected')
+    assert result['state'] == expected, result
+    if fault is not None:
+        value = runs.status(child._run_id)
+        assert value.output_ref is None and value.accepted_candidate_digest is None
+        assert result['diagnostics'] and all(not item['repairable'] for item in result['diagnostics'])
+        if fault != 'proof':
+            assert result['diagnostics'][0]['code'] == 'submission_intervention_required'
