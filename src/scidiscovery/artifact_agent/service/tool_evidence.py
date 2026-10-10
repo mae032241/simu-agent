@@ -41,7 +41,7 @@ def scientific_evidence_projection(raw):
            if key in {"kind", "stage", "name", "derived_from", "file_name", "purpose",
                       "locator", "capture_mode", "provenance_status", "scientific_claim_admissible",
                       "capture_index", "capture_coverage", "capture_counts", "author_cited",
-                      "representation", "raw_retained", "producer_trust", "execution_attestation"}}}
+                      "representation", "raw_retained", "producer_trust", "execution_attestation", "provenance_basis"}}}
         for item in manifest.get("records", ())]})
 
 
@@ -941,6 +941,13 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
                     parents = tuple(self.source_descriptor(origin, alias).artifact_ref for alias in derived)
                     origin_matches = record['source_ref'] == parents[0].model_dump(mode='json')
                     applicable = all(parent in available_refs for parent in parents)
+                    if (record['metadata'].get('capture_mode') == 'auto_captured'
+                            and record['metadata'].get('kind') == 'scientific_attachment'):
+                        # Scope restriction/permission is broader than the
+                        # author's actual-source declaration, never adoption.
+                        # Legacy files need the same read/reseal context even
+                        # before their scientific scope can be confirmed.
+                        applicable = applicable and all(binding.artifact_ref in available_refs for binding in origin.inputs)
                 else:
                     original = next((i.artifact_ref for i in origin.inputs if i.port_name=='execution_result'),None)
                     origin_matches = original is not None and record['source_ref'] == original.model_dump(mode='json')

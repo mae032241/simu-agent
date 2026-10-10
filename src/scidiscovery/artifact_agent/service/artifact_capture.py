@@ -512,6 +512,11 @@ def capture_science(runs, run_id, document, paths, declarations=(), *, workspace
         entries.sort(key=lambda entry:(entry.get('path', ''), entry['status']))
         # Empty unchanged directories do not manufacture index receipts.
         if entries or not complete or (run.recovery_policy or {}).get('capture'):
+            from .scientific_usage import scientific_use_restricted
+            # This is a conservative task-context restriction, not a declaration
+            # that every input actually produced each retained file.
+            task_scope_restricted = scientific_use_restricted(runs,
+                tuple(binding.artifact_ref for binding in run.inputs))
             settings = AttachmentSettings.model_validate((run.recovery_policy or {}).get('attachments', {}))
             policy = (run.recovery_policy or {}).get('capture')
             if policy:
@@ -546,6 +551,7 @@ def capture_science(runs, run_id, document, paths, declarations=(), *, workspace
                     native_source = (implementation,) if implementation and not implementation.startswith(('file:','file@','run:')) and any(
                         ref == 'file:' + locator or ref == 'file:' + PurePosixPath(locator).name for ref in native_files) else ()
                     aliases = tuple(dict.fromkeys((*base, *adopted, *native_source)))
+                    basis = 'author_declared' if associated or adopted or native_source else 'task_scope'
                     target = Path(temporary) / str(number)
                     try:
                         with _source(workspace, locator) as source:
@@ -568,17 +574,22 @@ def capture_science(runs, run_id, document, paths, declarations=(), *, workspace
                                 original = runs.status(runs.artifacts.catalog(ArtifactRef.model_validate(record['artifact_ref'])).labels['tool_producer_run'])
                                 refs = tuple(runs.source_descriptor(original, alias).artifact_ref for alias in metadata['derived_from'])
                                 if all(ref in available for ref in refs):
-                                    identities.add(tuple(sorted(available[ref] for ref in refs)))
+                                    identities.add((tuple(sorted(available[ref] for ref in refs)),
+                                        metadata.get('provenance_basis', 'task_scope')))
                             if len(identities) == 1:
-                                aliases = tuple(dict.fromkeys((*base, *next(iter(identities)))))
+                                prior_aliases, basis = next(iter(identities))
+                                aliases = tuple(dict.fromkeys((*base, *prior_aliases)))
                             elif len(identities) > 1:
                                 conflict = True
                         item = attachment_item(runs, run, target, digest, size, media,
                             {'kind':'scientific_attachment','file_name':PurePosixPath(locator).name,'locator':locator,
                              'purpose':'Automatically retained scientific file','origin':'agent_authored',
                              'capture_mode':'auto_captured','execution_attestation':'unavailable',
+                             'capture_source_scope':'task_inputs_v1',
+                             'provenance_basis':basis,
                              'provenance_status':'known' if aliases and not conflict else 'unknown',
-                             'scientific_claim_admissible':bool(aliases and not conflict)}, aliases if not conflict else ())
+                             'scientific_claim_admissible':bool(aliases and not conflict)}, aliases if not conflict else (),
+                            task_scope_restricted=task_scope_restricted)
                         staged.append(item)
                         total += size
                         entry.update(status='retained', publication_key=item['key'])
@@ -665,5 +676,5 @@ def draft_capture_schema(envelope, compiled):
         walk(envelope, ['payload', *path.lstrip('/').split('/')], envelope)
     envelope['properties']['capture_sources'] = {'type':'array','maxItems':4,
         'items':CaptureSources.model_json_schema(mode='validation'),
-        'description':'Optional actual sources and task-local scope of a scientific batch; control consumes this declaration before sealing. No per-file publication form.'}
+        'description':'Optional author-declared sources and task-local scope of a scientific batch; control consumes this declaration before sealing. Task association or an author declaration does not verify production sources: known means exact bindings, not verified science. Restrictions conservatively follow all task inputs without declaring them all adopted. No per-file publication form.'}
     return envelope

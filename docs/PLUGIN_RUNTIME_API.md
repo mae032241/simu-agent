@@ -106,6 +106,24 @@ an independent `attachments` collection. No hashes, ports or manifest rows are
 Agent-authored. Publication does not imply execution, qualification or review.
 Domain tool evidence (for example, calibrated figure families) remains separate.
 
+Automatic task-local capture records `provenance_basis="task_scope"` for a task
+association or `"author_declared"` for the author's source declaration. Both describe
+an association; neither verifies that those inputs actually produced the file.
+`provenance_status="known"` means the stated bindings resolve to exact originals,
+not that the file or its scientific claims have been independently verified.
+Capture conservatively propagates restrictions from all exact current task inputs,
+even when the author declares only clean sources. That restriction scope does not
+add every input to the adopted-source graph. `scientific_claim_admissible` reflects
+this restriction gate and unconfirmed provenance; it is not qualification or review.
+Legacy automatic receipts lacking the control scope check remain readable but
+cannot support a new claim directly; resealing requires the authorized original
+input context. Recovery of automatic files also retains that complete context,
+including legacy receipts whose scientific scope has not yet been confirmed.
+Explicit `worker_publish_files` keeps its declared `source_aliases` policy; this
+automatic task-context restriction does not verify the author's declaration or
+cover sources omitted from explicit publication. Such declarations remain subject
+to scientific assessment; publication itself grants no qualification.
+
 `AgentSettings.attachments` configures `max_item_bytes`, `max_total_bytes`, `max_files`
 and `chunk_bytes` (defaults: 2,000,000,000 bytes per file and total, 64 files, 1 MiB
 chunks). Settings are frozen per Run, inherited on recovery and shown in startup

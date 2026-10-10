@@ -342,6 +342,13 @@ def scientific_use_restricted(runs, references, *, ignore_labels=(), policy=None
             if len(records) != 1:
                 raise ScientificProvenanceError('Scientific file has no unique exact producer receipt.')
             record = records[0]
+            metadata = record.get('metadata', {})
+            if (metadata.get('capture_mode') == 'auto_captured'
+                    and metadata.get('kind') == 'scientific_attachment'
+                    and metadata.get('capture_source_scope') != 'task_inputs_v1'):
+                # Legacy sealed bytes remain readable, but cached adopted edges
+                # cannot certify the missing conservative task-scope check.
+                raise ScientificProvenanceError('Automatic file scientific scope is unconfirmed; reseal within its authorized original input scope.')
             cached = check.cached(producer, ref, envelope, record)
             if cached is not None:
                 for source in cached:

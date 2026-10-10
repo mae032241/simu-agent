@@ -414,10 +414,14 @@ def test_declared_scientific_sources_and_unadopted_batches_remain_separate(tmp_p
     assert len(attachments) == 2  # Overlapping roots do not enumerate twice.
     clean_file = next(r for r in attachments if '/clean/' in r['metadata']['locator'])
     private_file = next(r for r in attachments if '/restricted/' in r['metadata']['locator'])
-    assert not scientific_use_restricted(runtime.runs, [ArtifactRef.model_validate(clean_file['artifact_ref'])])
+    # Task-context permissions do not turn omitted inputs into adopted sources.
+    assert clean in clean_file['metadata']['derived_from']
+    assert restricted not in clean_file['metadata']['derived_from']
+    assert scientific_use_restricted(runtime.runs, [ArtifactRef.model_validate(clean_file['artifact_ref'])])
     assert scientific_use_restricted(runtime.runs, [ArtifactRef.model_validate(private_file['artifact_ref'])])
     record = runtime.runs.sealed_material_record(run, stage['reference'])
-    assert not scientific_use_restricted(runtime.runs, [ArtifactRef.model_validate(record['artifact_ref'])])
+    assert private_file['alias'] not in record['metadata']['derived_from']
+    assert scientific_use_restricted(runtime.runs, [ArtifactRef.model_validate(record['artifact_ref'])])
     # Declared existing materials provide sources only for the cited new file.
     (workspace/'scratch/artifacts/adopted.csv').write_bytes(b'x\n2\n')
     stage = worker.call_tool('worker_experiment_stage', {'stage':'validity',

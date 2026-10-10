@@ -77,11 +77,17 @@ def snapshot_file(source, target, settings, check_budget, *, total=0, guard=None
     return digest.hexdigest(), size
 
 
-def attachment_item(runs, run, path, digest, size, media, metadata, aliases):
+def attachment_item(runs, run, path, digest, size, media, metadata, aliases, *, task_scope_restricted=False):
     sources = tuple(dict.fromkeys(runs.source_descriptor(run, alias).artifact_ref for alias in aliases))
     from .artifact_capture import require_scientific_aliases
     require_scientific_aliases(runs, run, aliases)
     metadata = {**metadata, 'derived_from': list(aliases)}
+    if metadata.get('capture_mode') == 'auto_captured' and metadata.get('kind') == 'scientific_attachment':
+        from ...operations.tooling import reference_policy
+        from .scientific_usage import scientific_use_restricted
+        restricted = task_scope_restricted or (bool(sources) and scientific_use_restricted(runs,
+            sources, policy=reference_policy(runs._compiled(run))))
+        metadata['scientific_claim_admissible'] = bool(sources) and metadata.get('provenance_status') != 'unknown' and not restricted
     identity = {key: value for key, value in metadata.items() if key != 'derived_from'}
     if metadata.get('capture_mode') == 'auto_captured':
         identity.pop('purpose', None)
@@ -125,7 +131,8 @@ def retain_attachments(runs, run, staged, settings, check_budget, *, inventory=N
         if item['key'] in known:
             return ArtifactRef.model_validate(known[item['key']]['artifact_ref'])
         unknown = item['metadata'].get('provenance_status') == 'unknown' or item['metadata'].get('kind') == 'capture_inventory'
-        restricted = scientific_use_restricted(runs, item['sources'], policy=source_policy) if item['sources'] and not unknown else False
+        restricted = (item['metadata'].get('scientific_claim_admissible') is False or
+            (scientific_use_restricted(runs, item['sources'], policy=source_policy) if item['sources'] and not unknown else False))
         parents = tuple(dict.fromkeys((*[binding.artifact_ref for binding in run.inputs], *item['sources'])))
         ref = runs.artifacts.register_file(item['path'], ArtifactRegistration(kind=port.kind,
             schema_id=port.schema_id, payload_schema_version=1, media_type=item['media'], creator=runs.service_actor,
