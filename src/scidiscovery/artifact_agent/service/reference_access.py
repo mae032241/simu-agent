@@ -249,10 +249,49 @@ class ReferenceAccessMixin:
             return None
         return record
 
+    def _reference_reading_view(self, value, target):
+        """A label alone is insufficient: require the exact same-node receipt."""
+        envelope = self.artifacts.catalog(target)
+        if envelope.labels.get('capture_representation') != 'reading_view':
+            return None
+        producer_id = envelope.labels.get('tool_producer_run')
+        if not producer_id or self.status(producer_id).instance_id != value.instance_id:
+            raise ReferenceAccessError('reference_view_unconfirmed', 'Reading view has no authorized producer instance.')
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT record_json FROM run_tool_evidence WHERE run_id=? AND json_extract(record_json, '$.artifact_ref.artifact_id')=?",
+                (producer_id, target.artifact_id)).fetchall()
+        matches = [json.loads(row[0]) for row in rows if json.loads(row[0])['artifact_ref'] == target.model_dump(mode='json')]
+        if len(matches) != 1:
+            raise ReferenceAccessError('reference_view_unconfirmed', 'Reading view has no unique control receipt.')
+        metadata = matches[0].get('metadata', {})
+        original = _ref(metadata['view_of']) if metadata.get('view_of') else None
+        with self._connect() as connection:
+            originals = connection.execute(
+                "SELECT record_json FROM run_tool_evidence WHERE run_id=? AND json_extract(record_json, '$.artifact_ref.artifact_id')=?",
+                (producer_id, original.artifact_id if original else '')).fetchall()
+        if (metadata.get('kind') != 'capture_reading_view' or metadata.get('scientific_claim_admissible') is not False
+                or envelope.labels.get('scientific_claim_admissible') != 'false' or original not in envelope.parent_refs
+                or original.sha256 != envelope.labels.get('view_of_sha256')
+                or not any(r['artifact_ref'] == original.model_dump(mode='json')
+                    and r.get('metadata', {}).get('requires_reading_view') is True for row in originals for r in (json.loads(row[0]),))):
+            raise ReferenceAccessError('reference_view_unconfirmed', 'Reading view/original control identity is inconsistent.')
+        return original
+
     def _reference_current_edges(self, value, record):
         edges = [{'reference': 'content', 'alias': record['alias'],
                   'media_type': record['media_type'], 'size_bytes': record['size_bytes'],
                   '_current_alias': record['alias'], '_edge': {'target_ref': record['artifact_ref']}}]
+        original = _ref(record['artifact_ref'])
+        for candidate in self.tool_evidence(value.run_id):
+            if candidate.get('metadata', {}).get('kind') != 'capture_reading_view' or candidate.get('metadata', {}).get('view_of') != record['artifact_ref']:
+                continue
+            target = _ref(candidate['artifact_ref'])
+            if self._reference_reading_view(value, target) != original:
+                raise ReferenceAccessError('reference_view_unconfirmed', 'Reading copy does not match this original.')
+            edges.append({'reference': 'reading_copy', 'alias': candidate['alias'], 'representation': 'reading_view',
+                'media_type': candidate['media_type'], 'size_bytes': candidate['size_bytes'],
+                '_current_alias': candidate['alias'], '_edge': {'target_ref': candidate['artifact_ref']}})
         if record.get('metadata', {}).get('kind') != 'experiment_stage':
             return edges
         from .sealed_materials import resolve_material
@@ -607,6 +646,30 @@ class ReferenceAccessMixin:
                 '_edge': edge, '_producer': producer.run_id, '_manifest_run': producer.run_id,
                 '_manifest_ref': manifest_ref.model_dump(mode='json'), '_proof_run': producer.run_id,
                 '_proof_manifest': manifest_ref.model_dump(mode='json')})
+        if selected and selected.get('metadata', {}).get('requires_reading_view') is True:
+            # V is a reverse derivation, not an inherited forward dependency in
+            # O's proof. Pair only exact same-producer control receipts after O
+            # has been authorized; do not copy a parent snapshot into this Run.
+            with self._connect() as connection:
+                rows = connection.execute(
+                    "SELECT record_json FROM run_tool_evidence WHERE run_id=? AND json_extract(record_json, '$.metadata.kind')='capture_reading_view' AND json_extract(record_json, '$.metadata.view_of.artifact_id')=?",
+                    (producer.run_id, source_ref.artifact_id)).fetchall()
+            for row in rows:
+                candidate = json.loads(row[0])
+                if candidate.get('metadata', {}).get('view_of') != source_ref.model_dump(mode='json'):
+                    continue
+                target = _ref(candidate['artifact_ref'])
+                if self._reference_reading_view(value, target) != source_ref:
+                    raise ReferenceAccessError('reference_view_unconfirmed', 'Reading copy does not match the selected original.')
+                entry = dict(edges[0], reference='reading_copy', alias=candidate['alias'],
+                    media_type=candidate['media_type'], size_bytes=candidate['size_bytes'], representation='reading_view')
+                entry['_edge'] = {'source_ref': source_ref.model_dump(mode='json'), 'locator': '/@reading_copy',
+                    'target_ref': candidate['artifact_ref']}
+                # O remains the authorizing root. A retained V alias must carry
+                # V's own selected proof, not O's forward-dependency proof.
+                owner, _, _, view_proof = self._reference_original_pair(value, producer, target, policy, call, root_ref)
+                entry.update(_proof_run=owner.run_id, _proof_manifest=view_proof.model_dump(mode='json'))
+                edges.append(entry)
         for locator, alias, expected_digest in aliases:
             self._reference_deadline(call)
             bindings, records = alias_scopes.get(locator, (scoped_bindings, scoped_records))
@@ -907,6 +970,13 @@ class ReferenceAccessMixin:
             else:
                 edges, sections = self._reference_edges(value, source, policy, call, request.pointer if request.action == 'list' else None,
                     request.reference if request.action == 'read' else None, root)
+            for entry in edges:
+                if '_edge' not in entry:
+                    continue
+                target_envelope = self.artifacts.catalog(_ref(entry['_edge']['target_ref']))
+                if target_envelope.labels.get('capture_representation') == 'reading_view':
+                    self._reference_reading_view(value, _ref(entry['_edge']['target_ref']))
+                    entry['representation'] = 'reading_view'
             if request.action == 'list':
                 items = [{k: v for k, v in edge.items() if not k.startswith('_')} for edge in edges]
                 items.extend({'section': section, 'action': 'list', 'pointer': section} for section in sections)
@@ -959,6 +1029,10 @@ class ReferenceAccessMixin:
             envelope = self.artifacts.catalog(target)
             textual = envelope.media_type.startswith('text/') or 'json' in envelope.media_type
             if textual and request.delivery == 'fragment':
+                if envelope.labels.get('capture_representation') == 'original_with_reading_view':
+                    raise ReferenceAccessError('reference_reading_view_required',
+                        'Original contains verified task coordinates. List and select its reading_copy, or request exact original file delivery; offsets belong to the selected object.')
+                self._reference_reading_view(value, target)
                 try:
                     text = raw.decode('utf-8')
                     if request.pointer is not None:

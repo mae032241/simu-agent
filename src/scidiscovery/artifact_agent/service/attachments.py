@@ -133,13 +133,24 @@ def retain_attachments(runs, run, staged, settings, check_budget, *, inventory=N
         unknown = item['metadata'].get('provenance_status') == 'unknown' or item['metadata'].get('kind') == 'capture_inventory'
         restricted = (item['metadata'].get('scientific_claim_admissible') is False or
             (scientific_use_restricted(runs, item['sources'], policy=source_policy) if item['sources'] and not unknown else False))
-        parents = tuple(dict.fromkeys((*[binding.artifact_ref for binding in run.inputs], *item['sources'])))
+        view_of = None
+        if item['metadata'].get('kind') == 'capture_reading_view':
+            original_key = item['metadata'].pop('view_of_publication_key')
+            original = known.get(original_key)
+            view_of = (ArtifactRef.model_validate(original['artifact_ref']) if original else prepared.get(original_key))
+            if view_of is None:
+                raise ToolInputError('attachment_publication_invalid', 'Reading view has no exact original in this node')
+            item['metadata']['view_of'] = view_of.model_dump(mode='json')
+        parents = tuple(dict.fromkeys((*[binding.artifact_ref for binding in run.inputs], *item['sources'],
+            *((view_of,) if view_of else ()))))
         ref = runs.artifacts.register_file(item['path'], ArtifactRegistration(kind=port.kind,
             schema_id=port.schema_id, payload_schema_version=1, media_type=item['media'], creator=runs.service_actor,
             parent_refs=parents, labels={'operation_id':run.operation_id, 'operation_version':run.operation_version,
                 'operation_digest':run.operation_digest, 'operation_output_port':'attachments',
                 'tool_name':'worker_publish_files', 'tool_producer_run':run.run_id, 'source_origin':'agent_authored',
-                **({'scientific_claim_admissible':'false'} if restricted or unknown else {})},
+                **({'scientific_claim_admissible':'false'} if restricted or unknown else {}),
+                **({'capture_representation': 'reading_view', 'view_of_sha256': view_of.sha256} if view_of else {}),
+                **({'capture_representation': 'original_with_reading_view'} if item['metadata'].get('requires_reading_view') else {})},
             confidentiality='run_private'), expected_sha256=item['digest'], expected_size=item['size'],
             idempotency_key=f"run:{run.run_id}:attachment:{item['key']}", chunk_bytes=settings.chunk_bytes,
             check_budget=check_budget).ref

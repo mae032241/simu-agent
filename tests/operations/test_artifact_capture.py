@@ -251,7 +251,7 @@ def test_private_unsafe_and_unreadable_files_are_capture_gaps(tmp_path, fault):
     elif fault == 'chunk_secret': target.write_bytes((b'x\n'*524280)+b'api_key='+(b'A'*24)+b'\n')
     elif fault == 'key': target.write_bytes(b'-----BEGIN PRIVATE KEY-----\nabc\n')
     elif fault == 'long_line': target.write_bytes(b'a'*65537)
-    elif fault == 'opaque': target = target.with_suffix('.npz'); target.write_bytes(b'opaque')
+    elif fault == 'opaque': target = target.with_suffix('.unsupported'); target.write_bytes(b'opaque')
     elif fault == 'fifo': os.mkfifo(target)
     elif fault == 'symlink': target.symlink_to(workspace/'assignment.json')
     elif fault == 'excluded': target = workspace/'scratch/artifacts/.credentials'; target.write_bytes(b'private')
@@ -259,7 +259,12 @@ def test_private_unsafe_and_unreadable_files_are_capture_gaps(tmp_path, fault):
         (workspace/'scratch/artifacts/link').symlink_to(workspace/'inputs', target_is_directory=True)
         target = workspace/'scratch/artifacts/link/source.txt'
     draft(opened, 'file:'+str(target.relative_to(workspace)), batch_sources=[alias])
-    assert worker.call_tool('worker_submit_result', {})['state'] == 'rejected'
+    result = worker.call_tool('worker_submit_result', {})
+    assert result['state'] == 'rejected'
+    if fault == 'excluded':
+        assert result['diagnostics'][0]['code'] == 'capture_scope_invalid'
+        assert not records(runtime, worker)
+        return
     assert not any(r['metadata'].get('kind') == 'scientific_attachment' for r in records(runtime, worker))
     _, captured = index(runtime, worker)
     assert all('artifact_ref' not in entry for entry in captured['entries'])
@@ -288,7 +293,9 @@ def test_explicit_authorized_binary_survives_automatic_type_gap(tmp_path):
     draft(opened, published['files'][0]['reference'])
     assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
     _, captured = index(runtime, worker)
-    assert captured['coverage'] == 'incomplete' and captured['entries'][0]['status'] == 'metadata_only'
+    assert captured['coverage'] == 'complete' and captured['entries'][0]['status'] == 'retained'
+    original = next(r for r in records(runtime, worker) if r['alias'] == published['files'][0]['reference'])
+    assert runtime.artifacts.read(ArtifactRef.model_validate(original['artifact_ref'])) == b'opaque model fixture'
 
 
 def test_receipt_index_and_m3a_edges_roll_back_together_then_reuse_orphans(tmp_path, monkeypatch):

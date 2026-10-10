@@ -307,7 +307,7 @@ def test_cited_oversized_or_unsupported_auto_file_fails_closed(tmp_path,fault):
     worker = attached_worker(runtime,root,'capture')
     opened = worker.call_tool('worker_open_assignment',{})
     workspace = Path(opened['assignment_path']).parent
-    name = 'large.csv' if fault == 'actual_byte_cap' else 'data.npz'
+    name = 'large.csv' if fault == 'actual_byte_cap' else 'data.unsupported'
     raw = b'x\n'+b'1\n'*1024 if fault == 'actual_byte_cap' else b'\x00safe binary fixture\x00'
     path = workspace/'scratch/artifacts'/name
     path.write_bytes(raw)

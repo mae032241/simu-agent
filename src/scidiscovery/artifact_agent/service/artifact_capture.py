@@ -47,22 +47,24 @@ def require_scientific_aliases(runs, run, aliases):
                     raise ToolInputError('capture_source_unconfirmed', 'Scientific material has no exact original receipt in this task scope')
                 record = originals[0]
         if record is not None and (record.get('metadata', {}).get('provenance_status') == 'unknown'
-                or record.get('metadata', {}).get('kind') == 'capture_inventory'):
+                or record.get('metadata', {}).get('kind') in {'capture_inventory', 'capture_reading_view'}):
             raise ToolInputError('capture_source_unconfirmed', 'Capture inventory or a file with unconfirmed scientific sources is readable navigation, not scientific evidence; declare its actual batch sources and seal a new receipt')
 
 
 class _Guard:
-    def __init__(self, media, limit, *, record_limit=True):
+    def __init__(self, media, limit, *, record_limit=True, paths=None):
         self.limit, self.tail, self.line, self.whitespace = limit, b'', 0, 0
         self.record_limit = record_limit
         self.media, self.header, self.marker = media, b'', 0
+        self.paths, self.replacements = paths, {}
         self.decoder = codecs.getincrementaldecoder('utf-8')() if media.startswith('text/') or media in {'application/json','application/xml','application/javascript'} else None
 
     def feed(self, chunk):
         self.header = (self.header + chunk)[:16]
         value = self.tail + chunk
-        if _SECRET.search(value) or _MACHINE_PATH.search(value):
+        if _SECRET.search(value):
             raise ToolInputError('capture_private_content', 'File contains apparent private content')
+        self._paths(value)
         # Whitespace can connect a sensitive prefix across arbitrarily many
         # newlines. Reject an unbounded prefix instead of dropping it from tail.
         for match in re.finditer(rb'\s+|\S+', chunk):
@@ -89,7 +91,23 @@ class _Guard:
             self.line = self.line + len(lines[0]) if len(lines) == 1 else len(lines[-1])
         self.tail = value[-self.limit:]
 
+    def _paths(self, value, *, final=False):
+        for match in _MACHINE_PATH.finditer(value):
+            # A path ending at a chunk boundary is incomplete until the next
+            # chunk/EOF. Never authorize its truncated prefix.
+            if match.end() == len(value) and not final:
+                if len(match.group()) >= self.limit:
+                    raise ToolInputError('capture_safety_unavailable', 'Path exceeds the bounded safety policy')
+                continue
+            locator = self.paths(match.group()) if self.paths is not None and self.decoder is not None else None
+            if locator is None or match.start() and value[match.start()-1:match.start()] in {b':', b'/'}:
+                raise ToolInputError('capture_private_content', 'File contains apparent private content: unauthorized machine path')
+            self.replacements[match.group()] = locator
+            if len(self.replacements) > 128:
+                raise ToolInputError('capture_safety_unavailable', 'Path map exceeds the bounded safety policy')
+
     def finish(self):
+        self._paths(self.tail, final=True)
         signatures = {'image/png':self.header.startswith(b'\x89PNG\r\n\x1a\n'),
             'image/jpeg':self.header.startswith(b'\xff\xd8\xff'),
             'image/gif':self.header.startswith((b'GIF87a',b'GIF89a')),
@@ -105,10 +123,60 @@ class _Guard:
 
 def _media(path):
     suffix = PurePosixPath(path).suffix.lower()
+    if suffix in {'.pkl', '.npz'}:
+        return 'application/octet-stream'
     if suffix in {'.py','.cmd','.par','.log','.txt','.md','.sh','.r','.f','.f90','.c','.h','.yaml','.yml','.jsonl'}:
         return 'text/plain'
     media = mimetypes.guess_type(path)[0]
     return media if media in {'application/json','text/csv','text/plain','image/png','image/jpeg','image/gif','image/webp'} else None
+
+
+
+def _task_path_resolver(workspace, roots):
+    """Only verified regular files below this capture's exact declared roots."""
+    prefix = str(Path(workspace)).encode('utf-8') + b'/'
+    def resolve(raw):
+        if not raw.startswith(prefix):
+            return None
+        try:
+            locator = raw[len(prefix):].decode('utf-8')
+            path = _root(locator)
+            if not any(path != PurePosixPath(root) and path.is_relative_to(PurePosixPath(root)) for root in roots):
+                return None
+            with _source(workspace, locator):
+                pass
+            return locator
+        except (UnicodeError, OSError, RuntimeError, ToolInputError):
+            return None
+    return resolve
+
+
+def _reading_copy(original, target, replacements, limit, check):
+    """UTF-8 was validated on O; offsets here are O bytes, never V characters."""
+    digest, size, offset, spans = hashlib.sha256(), 0, 0, []
+    with original.open('rb') as source, target.open('xb') as output:
+        while line := source.readline(limit + 1):
+            check()
+            if len(line.rstrip(b'\n')) > limit:
+                raise ToolInputError('capture_safety_unavailable', 'Reading copy exceeds the bounded record policy')
+            cursor, parts = 0, []
+            for match in _MACHINE_PATH.finditer(line):
+                locator = replacements.get(match.group())
+                if locator is None:
+                    raise ToolInputError('capture_private_content', 'Reading copy has an unverified path')
+                parts.extend((line[cursor:match.start()], ('file:' + locator).encode('utf-8')))
+                spans.append({'original_byte_start': offset + match.start(), 'original_byte_end': offset + match.end(),
+                    'locator': 'file:' + locator})
+                if len(spans) > 128:
+                    raise ToolInputError('capture_safety_unavailable', 'Reading copy path map exceeds its bounded policy')
+                cursor = match.end()
+            parts.append(line[cursor:])
+            raw = b''.join(parts)
+            output.write(raw)
+            digest.update(raw)
+            size += len(raw)
+            offset += len(line)
+    return digest.hexdigest(), size, spans
 
 
 def explicit_capture_guard(runs, run, locator, snapshot, media):
@@ -590,9 +658,9 @@ def capture_science(runs, run_id, document, paths, declarations=(), *, workspace
                     basis = 'author_declared' if associated or adopted or native_source else 'task_scope'
                     target = Path(temporary) / str(number)
                     try:
+                        guard = _Guard(media, contract.max_record_bytes, paths=_task_path_resolver(workspace, roots))
                         with _source(workspace, locator) as source:
-                            digest, size = snapshot_file(source, target, settings, check,
-                                guard=_Guard(media, contract.max_record_bytes))
+                            digest, size = snapshot_file(source, target, settings, check, guard=guard)
                         if not associated and not adopted and not native_source:
                             # A normalized retry can carry the exact previous
                             # immutable file version without its authoring form.
@@ -623,15 +691,32 @@ def capture_science(runs, run_id, document, paths, declarations=(), *, workspace
                              'capture_mode':'auto_captured','execution_attestation':'unavailable',
                              'capture_source_scope':'task_inputs_v1',
                              'provenance_basis':basis,
+                             **({'requires_reading_view': True} if guard.replacements else {}),
+                             **({'opaque_safety': 'known_markers_only'} if media == 'application/octet-stream' else {}),
                              'provenance_status':'known' if aliases and not conflict else 'unknown',
                              'scientific_claim_admissible':bool(aliases and not conflict)}, aliases if not conflict else (),
                             task_scope_restricted=task_scope_restricted)
-                        staged.append(item)
+                        capture_items = [item]
+                        if guard.replacements:
+                            view_path = Path(temporary) / (str(number) + '-reading-view')
+                            view_digest, view_size, spans = _reading_copy(target, view_path, guard.replacements, contract.max_record_bytes, check)
+                            view = attachment_item(runs, run, view_path, view_digest, view_size, media,
+                                {'kind': 'capture_reading_view', 'capture_mode': 'auto_captured',
+                                 'file_name': PurePosixPath(locator).name + '.reading-view',
+                                 'purpose': 'Reading copy; cite the exact original for scientific evidence',
+                                 'origin': 'control_reading_view', 'view_of_publication_key': item['key'],
+                                 'normalization_rule': 'verified-task-path-v1', 'original_byte_spans': spans,
+                                 'provenance_status': 'known', 'scientific_claim_admissible': False}, ())
+                            capture_items.append(view)
+                            if view['key'] not in known_keys:
+                                total += view_size
+                                known_keys.add(view['key'])
                         if item['key'] not in known_keys:
                             total += size
                             known_keys.add(item['key'])
                         if total > settings.max_total_bytes:
                             raise ToolInputError('attachment_publication_invalid', 'New capture bytes exceed the frozen attachment capacity')
+                        staged.extend(capture_items)
                         entry.update(status='retained', publication_key=item['key'])
                     except (OSError, RuntimeError, ToolInputError) as error:
                         entry['status'] = 'incomplete'

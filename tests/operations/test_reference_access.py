@@ -209,9 +209,10 @@ def test_file_receipts_and_recovery_do_not_persist_delivery_paths(harness, legac
         snapshot = harness._encode_evidence_snapshot(harness.status('reader'), [], [receipt], None, [])
         assert first['file_path'].encode() not in snapshot
     harness.run('continued', [root], parent='reader')
-    harness.adopt_reference_access('continued')
-    assert 'file_path' not in harness.reference_access_records('continued')[0]['response']
+    assert harness.reference_access_records('continued') == [], 'Recovery must not inherit historical access receipts'
     following = harness.call('continued', action='read', reference=handle, delivery='file')
+    accesses = harness.reference_access_records('continued')
+    assert len(accesses) == 1 and 'file_path' not in accesses[0]['response']
     assert following['file_path'] != first['file_path']
     assert Path(following['file_path']).read_bytes() == old_path.read_bytes()
 
