@@ -348,17 +348,53 @@ def test_factory_unknown_opening_never_replays_on_cold_start(progression,tmp_pat
     finally: restored.close()
 
 
-def test_factory_context_recovery_is_bounded_originals_page_and_same_thread_is_incremental(progression,tmp_path):
+def observe_brief_bytes(p, monkeypatch):
+    """Record only byte counts, including the actual capacity-failure payload."""
+    from scidiscovery.artifact_agent.service.progression import INSTRUCTION
+    from tests.operations.test_run_list_bounds import metrics
+    original = p.coordinator._brief
+    observations = []
+    def observed(saved, snapshot, limit):
+        value = None
+        try:
+            prompt = original(saved, snapshot, limit)
+            value = json.loads(prompt.split('\n')[-1])
+            return prompt
+        except Exception as error:
+            frame = error.__traceback__
+            while frame:
+                if frame.tb_frame.f_code == original.__func__.__code__:
+                    value = frame.tb_frame.f_locals.get('brief')
+                frame = frame.tb_next
+            raise
+        finally:
+            if value is not None:
+                size = lambda entry: len(json.dumps(entry, ensure_ascii=False, separators=(',', ':')).encode())
+                observations.append(dict(instruction_bytes=len(INSTRUCTION.encode()), json_limit=limit,
+                    json_bytes=size(value), fields={key:size(entry) for key,entry in value.items()}))
+                metrics('brief-utf8-components', observations)
+    monkeypatch.setattr(p.coordinator, '_brief', observed)
+    return observations
+
+
+def test_factory_context_recovery_is_bounded_originals_page_and_same_thread_is_incremental(progression,tmp_path,monkeypatch):
     p=progression
     native,_=setup(p,tmp_path,root_rotate_after_rounds=2,context_bytes=8192)
+    observe_brief_bytes(p, monkeypatch)
     original='方向界限'*4095
     for name in ('early-direction','early-limit'):
         p.root.call_tool('progression_message',dict(name=name,text=original))
     p.coordinator.tick();completed(p)
     initial=json.loads(calls(native,'turn/start')[-1]['input'][0]['text'].split('\n')[-1])
-    assert initial['budget']==checkpoint(p)['budget']
+    projected = initial['budget']
+    stored = checkpoint(p)['budget']
+    assert {key:value for key,value in projected.items() if key not in {'limits','limits_omitted','details_omitted'}} == {
+        key:value for key,value in stored.items() if key not in {'limits','limitation','token_enforcement','root_running_seconds','waiting_seconds','probes'}}
     assert initial['budget']['token_coverage']=='partial'
-    assert initial['budget']['limits']==json.loads(row(p)['config_json'])['effective']['progression']
+    expanded = p.root.call_tool('progression_status', {})['budget']
+    assert expanded['limits']==json.loads(row(p)['config_json'])['effective']['progression']
+    assert projected['limits']=={key:expanded['limits'][key] for key in projected['limits']}
+    assert sum(item.get('name') in {'early-direction','early-limit'} for item in initial['omissions']) + initial.get('omission_details_omitted',0) == 2
     wake(p,'increment-before-rotation');completed(p)
     wake(p,'new-direction')
     assert len(calls(native,'thread/start'))==2
@@ -382,7 +418,7 @@ def test_factory_context_recovery_is_bounded_originals_page_and_same_thread_is_i
     assert p.coordinator.host.identity.thread_id=='root-2'
     assert len(calls(native,'turn/start'))==4
     latest=json.loads(calls(native,'turn/start')[-1]['input'][0]['text'].split('\n')[-1])
-    assert all(item['name']=='same-thread-increment' for item in latest['user_messages'])
+    assert latest['user_messages']==[dict(name='same-thread-increment',original='Retain this exact new condition.')]
     assert fresh.call_tool(latest['user_messages_read']['tool'],{})['messages'][-1]['name']=='same-thread-increment'
     assert fresh.call_tool('artifact_catalog',dict(name='same-thread-increment',view='content'))['text']=='Retain this exact new condition.'
     assert checkpoint(p)['usage_records']['root-2']['context_delivered']

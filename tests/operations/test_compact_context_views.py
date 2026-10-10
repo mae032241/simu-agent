@@ -5,11 +5,12 @@ from pathlib import Path
 import shlex
 import subprocess
 import sys
+import pytest
 
 from scidiscovery.artifact_agent.schema.common import canonical_json
 from scidiscovery.artifact_agent.service.attempt_memory import memory_navigation
 from scidiscovery.artifact_agent.service.worker_start import startup_document, compact_startup_document
-from scidiscovery.artifact_agent.service.progression import compact_brief_overviews
+from scidiscovery.artifact_agent.service.progression import compact_brief_overviews, compact_capacity_overviews
 from tests.operations.test_progression import progression, row
 from tests.operations.test_progression_brief_summary import decision, brief
 from tests.artifact_agent.test_input_reader import body
@@ -109,6 +110,47 @@ def test_root_overviews_preserve_new_decisions_and_retain_exact_status_navigatio
     assert 'progress' in p.root.call_tool(progress_guide['tool'], arguments)
     assert original == before
     assert compact_brief_overviews(projected) == projected
+
+
+@pytest.mark.parametrize('history', ['empty', 'unavailable', 'negative'])
+def test_capacity_projection_keeps_budget_eligibility_and_history_uncertainty(progression, history):
+    p = progression
+    from tests.operations.test_attempt_history import SECRET
+    p.root.facade.instance_management_secret = SECRET
+    p.coordinator.tick()
+    budget = json.loads(row(p)['checkpoint_json'])['budget']
+    budget.update(token_coverage='partial', new_task_allowed=False, recovery_usage_unconfirmed_threads=1,
+        token_recovery_limitation='Fresh cumulative usage is missing; strict new work remains paused.')
+    historical = memory()
+    if history == 'empty':
+        for key in ('recent', 'exact_source_related', 'failure_boundaries', 'scientific_negative_candidates'):
+            historical[key] = []
+        historical['history']['before'] = 'old-frozen-cursor'
+    elif history == 'unavailable':
+        historical = dict(unavailable='exact_history_missing', coverage='unknown_not_empty', repair='Restore originals.')
+    original = dict(budget=budget, progress=dict(items=[], authority='root_judgment_not_worker_conclusion'),
+        attempt_memory=historical, objective=dict(name='goal', status='unchanged', read='artifact_catalog', view='content'),
+        changes=[decision()], user_messages=[dict(name='direction', original='Exact new condition.')],
+        approval_changes=[dict(name='request', status='pending')],
+        review_requests=[dict(owner='accepted', review='independent-review')], limitations=['Repeated instructions.'])
+    before = deepcopy(original)
+    compact = compact_capacity_overviews(original)
+    omitted = {'limitation', 'token_enforcement', 'root_running_seconds', 'waiting_seconds', 'probes'}
+    assert {key:value for key,value in compact['budget'].items() if key != 'details_omitted'} == {
+        key:value for key,value in budget.items() if key not in omitted}
+    for key in ('changes', 'user_messages', 'approval_changes', 'review_requests'):
+        assert compact[key] == original[key]
+    if history == 'empty':
+        assert compact['attempt_memory']['coverage'] == 'empty_bounded_overview_not_complete_history'
+        assert compact['attempt_memory']['read_scope'] == 'fresh_current_goal_index'
+        assert 'old frozen index omitted' in compact['attempt_memory']['omissions']
+        guide = compact['attempt_memory']['read']
+        assert 'runs' in p.root.call_tool(guide['tool'], {key:value for key,value in guide.items() if key != 'tool'})
+    elif history == 'unavailable':
+        assert compact['attempt_memory'] == dict(unavailable='exact_history_missing', coverage='unknown_not_empty')
+    else:
+        assert compact['attempt_memory'] == historical
+    assert original == before
 
 
 def test_capacity_discards_optional_memory_before_new_exact_decision(progression, monkeypatch):

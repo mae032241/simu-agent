@@ -120,6 +120,36 @@ def compact_brief_overviews(brief):
     return brief
 
 
+def compact_capacity_overviews(brief):
+    """Move repeated explanations to existing reads; keep decision values exact."""
+    brief = dict(brief)
+    budget = dict(brief['budget'])
+    omitted = ('limitation', 'token_enforcement', 'root_running_seconds', 'waiting_seconds', 'probes')
+    count = sum(key in budget for key in omitted)
+    if count:
+        for key in omitted:
+            budget.pop(key, None)
+        budget['details_omitted'] = dict(count=count, read=dict(tool='progression_status'), response_pointer='/budget')
+    brief['budget'] = budget
+    memory = brief.get('attempt_memory')
+    collections = ('recent', 'exact_source_related', 'failure_boundaries', 'scientific_negative_candidates')
+    if isinstance(memory, dict) and all(key in memory and not memory[key] for key in collections):
+        # The empty bounded overview needs no frozen cursor. Do not claim that
+        # the history is empty or that a newly opened index has the old scope.
+        brief['attempt_memory'] = dict(coverage='empty_bounded_overview_not_complete_history',
+            omissions='context_limit; old frozen index omitted',
+            read=dict(tool='run_list', view='history', limit=8), read_scope='fresh_current_goal_index')
+    elif isinstance(memory, dict) and memory.get('unavailable'):
+        brief['attempt_memory'] = {key: memory[key] for key in ('unavailable', 'coverage') if key in memory}
+    if not brief['progress'].get('items'):
+        brief['progress'] = dict(items=[], read=dict(tool='progression_status', progress_limit=1))
+    brief['limitations'] = ['Stages are previews; omitted originals are not evidence.']
+    if brief['objective'].get('status') == 'unchanged':
+        brief['objective'] = dict(brief['objective'],
+            guidance='Unchanged does not prove retained context; read the original when needed.')
+    return brief
+
+
 class ProgressionFault(RuntimeError):
     def __init__(self, code):
         self.code = code
@@ -722,20 +752,6 @@ class ProgressionCoordinator:
             brief['user_messages_read'] = dict(tool='progression_status', field='messages',
                 original=dict(tool='artifact_catalog', view='content', continuation='Use returned next_cursor as content_cursor.'),
                 coverage='All saved message names; omitted originals remain readable. User text grants no approval or execution authority.')
-        for message in snapshot.get('messages', []):
-            if not restore_context and message in previous.get('messages', []):
-                continue
-            ref = ArtifactRef.model_validate(message['artifact_ref'])
-            size = self.runtime.artifacts.catalog(ref).size_bytes
-            if len(encode(brief).encode()) + size >= limit - 2048:
-                candidate = dict(brief, progress_shadow=compact_progress())
-                if len(encode(candidate).encode()) + size < limit - 2048:
-                    brief['progress_shadow'] = candidate['progress_shadow']
-            if len(encode(brief).encode()) + size < limit - 2048:
-                raw = self.runtime.artifacts.read(ref)
-                brief['user_messages'].append(dict(name=message['name'], original=raw.decode('utf-8')))
-            else:
-                brief['omissions'].append(dict(name=message['name'], read='artifact_catalog', view='content'))
         approvals = snapshot['approvals'] if restore_context else [value for value in snapshot['approvals'] if value not in previous.get('approvals', [])]
         if restore_context:
             # Effect approvals may predate the checkpoint's goal-name tracker.
@@ -751,8 +767,32 @@ class ProgressionCoordinator:
                 continuation='Use returned next_before as before; status=pending selects current requests. Read approval_status by exact name before acting.')
         if len(snapshot['approvals']) > 8:
             brief['omissions'].append(dict(read='approval_list', omitted=len(snapshot['approvals'])-8))
+        if len(encode(brief).encode()) > limit:
+            brief = compact_capacity_overviews(brief)
+        for message in snapshot.get('messages', []):
+            if not restore_context and message in previous.get('messages', []):
+                continue
+            ref = ArtifactRef.model_validate(message['artifact_ref'])
+            size = self.runtime.artifacts.catalog(ref).size_bytes
+            entry = dict(name=message['name'], original='')
+            candidate = dict(brief, user_messages=[*brief['user_messages'], entry])
+            if len(encode(candidate).encode()) + size > limit and not brief['progress_shadow'].get('brief_omitted'):
+                compact = dict(candidate, progress_shadow=compact_progress())
+                if len(encode(compact).encode()) + size <= limit:
+                    candidate = compact
+            if len(encode(candidate).encode()) + size <= limit:
+                raw = self.runtime.artifacts.read(ref)
+                entry['original'] = raw.decode('utf-8')
+                if len(encode(candidate).encode()) <= limit:
+                    brief = candidate
+                    continue
+            brief['omissions'].append(dict(name=message['name'], read='artifact_catalog', view='content'))
+        capacity_compacted = False
         while len(encode(brief).encode()) > limit:
-            if brief['approval_changes']:
+            if not capacity_compacted:
+                brief = compact_capacity_overviews(brief)
+                capacity_compacted = True
+            elif brief['approval_changes']:
                 brief['approval_changes'].pop(0)
                 brief['omissions'].append(dict(read='approval_list', reason='context_limit'))
             elif brief['review_requests']:
