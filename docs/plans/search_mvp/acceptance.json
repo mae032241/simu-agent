@@ -1,0 +1,66 @@
+{
+  "status": "frozen_for_design_review_not_tests_passed",
+  "case_count": 30,
+  "case_ids": [
+    "S1_01",
+    "S1_02",
+    "S1_03",
+    "S1_04",
+    "S1_05",
+    "S1_06",
+    "S1_07",
+    "S1_08",
+    "S1_09",
+    "S2_01",
+    "S2_02",
+    "S2_03",
+    "S2_04",
+    "S2_05",
+    "S2_06",
+    "S2_07",
+    "S2_08",
+    "S2_09",
+    "S2_10",
+    "S2_11",
+    "S2_12",
+    "S3_01",
+    "S3_02",
+    "S3_03",
+    "S3_04",
+    "S3_05",
+    "S3_06",
+    "S3_07",
+    "S3_08",
+    "S3_09"
+  ],
+  "before_F4": [
+    "local_JSON_structure",
+    "native_H_A_schema",
+    "source_contract_mapping",
+    "independent_design_review"
+  ],
+  "after_F4_and_implementation": [
+    "actual_Root_invoke_gate_transaction_and_cleanup",
+    "actual_stage_candidate_same_H_parent_namespace",
+    "200_node_bounded_view_original_read",
+    "recovery_without_historical_access_or_index_inheritance",
+    "existing_confirmed_consumption_idempotence_across_restart",
+    "A_exact_original_selection_materialization"
+  ],
+  "requires_live_authorization": [
+    "scientific_exemption_quality",
+    "actual_early_A_H_revision_W_binding",
+    "helper_granularity_cost_cached_input_output_and_peak",
+    "proxy_target_representativeness"
+  ],
+  "not_qualified": [
+    "hard_cap_on_unobserved_native_shell_work",
+    "strict_shared_UID_selection_isolation",
+    "hidden_evaluation_feedback",
+    "scientific_superiority_or_generalization"
+  ],
+  "proposed_repo_test_file": "tests/operations/test_search_mvp_contracts.py",
+  "repo_test_creation": "authorized_present_contract_tests_only",
+  "commands_executed": [],
+  "preexisting_counter_boundary": "Existing reduce_shadow counts some unsupported standalone terminal observations; this is an observation/failure brake, not proof of an A-interpreted scientific cycle. Preserve it; no second ledger or production reducer edits in this preparation."
+}

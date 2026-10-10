@@ -1,0 +1,84 @@
+{
+  "asset_kind": "schema_fixture_not_live_evidence",
+  "hypothesis_schema": "scidiscovery.hypothesis-proposal.v2",
+  "hypothesis": {
+    "schema_version": 2,
+    "stage_objective": "Distinguish a fixture-only mechanism affecting response delay.",
+    "contradiction": "The fixture search proxy measures average delay and cannot identify the marked rare regime.",
+    "hypotheses": [
+      {
+        "hypothesis_key": "h_fast",
+        "statement": "A bounded synthetic contrast can distinguish common regime.",
+        "mechanism": "Fixture-only response pathway for common regime.",
+        "scope": "common regime",
+        "predictions": [
+          {
+            "prediction_key": "h_fast_p",
+            "observable": "synthetic response delay",
+            "expected_outcome": "declared contrast reduces delay in the covered regime"
+          }
+        ],
+        "falsifiers": [
+          {
+            "falsifier_key": "h_fast_f",
+            "observable": "synthetic response delay",
+            "rejection_condition": "a valid declared contrast fails its predeclared discrimination criterion"
+          }
+        ]
+      },
+      {
+        "hypothesis_key": "h_rare",
+        "statement": "A bounded synthetic contrast can distinguish marked rare regime.",
+        "mechanism": "Fixture-only response pathway for marked rare regime.",
+        "scope": "marked rare regime",
+        "predictions": [
+          {
+            "prediction_key": "h_rare_p",
+            "observable": "synthetic response delay",
+            "expected_outcome": "declared contrast reduces delay in the covered regime"
+          }
+        ],
+        "falsifiers": [
+          {
+            "falsifier_key": "h_rare_f",
+            "observable": "synthetic response delay",
+            "rejection_condition": "a valid declared contrast fails its predeclared discrimination criterion"
+          }
+        ]
+      }
+    ]
+  },
+  "analysis_schema": "scidiscovery.layered-diagnosis.v1",
+  "analysis": {
+    "summary": "Fixture-only common-regime improvement leaves the target-relevant rare regime untested. No claim of global success.",
+    "overall_verdict": "inconclusive",
+    "claim_allowed": false,
+    "objective_assessment": {
+      "status": "inconclusive",
+      "summary": "Search proxy has no observed rare-regime coverage."
+    },
+    "hypothesis_assessments": [
+      {
+        "hypothesis_key": "h_rare",
+        "outcome": "not_tested",
+        "evidence_keys": [
+          "hypothesis_portfolio"
+        ],
+        "rationale": "Only a declared hypothesis exists; no observations for this regime."
+      }
+    ],
+    "limitations": [
+      "Synthetic evidence only; this is not a benchmark or hidden answer.",
+      "The common-regime proxy cannot reject the rare-regime mechanism."
+    ],
+    "remaining_contradiction": "No valid minimal rare-regime discriminator has been completed.",
+    "next_action": "W: within the bound H, perform its minimal rare-regime discrimination under the original permissions; bind the exact H and original goal. If the required data or scientific scope must change, return to H for explicit revision.",
+    "progress_assessment": {
+      "outcome": "unknown",
+      "reason": "No target-representative evidence for the untested mechanism.",
+      "evidence_keys": [
+        "hypothesis_portfolio"
+      ]
+    }
+  }
+}
