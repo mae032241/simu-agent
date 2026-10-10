@@ -29,7 +29,10 @@ HELPER_TOOL = WorkerToolDefinition(
         "Do nonoverlapping work, then integrate checked findings, locators and limitations; reread only a specific conflict, gap or independent check. "
         "You own synthesis; checks grant no qualification. Independent analysis uses its own helper. "
         "Group related materials; use deterministic tools for trivial computations. "
-        "Release revokes Run access, not native execution; use native stop/close to terminate. "
+        "Use a fresh helper thread and complete worker_open_assignment admission before work and release; owner and helper thread roles never interchange. "
+        "On the first release, execute a returned required interrupt as your next native action, even if completed; then close if supported. "
+        "Do not cache or replay it. Without a returned action, do not interrupt or close through an old spawn handle; report cleanup blocked or unconfirmed. "
+        "Release confirms neither native interruption nor slot reclamation; its control transaction and the native call are not atomic. "
         "No Root task, approval, formal review or helper-result polling is created."),
     input_model=HelperRequest, contextual_handler=call_helper,
     required_services=("worker.connections",),

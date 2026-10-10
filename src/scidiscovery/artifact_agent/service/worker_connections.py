@@ -82,16 +82,19 @@ class WorkerConnections:
         self.runs.require_task_network_policy(self.runs.status(run_id))
         with self.runs._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            if connection.execute(
-                "SELECT 1 FROM worker_participants WHERE platform_session=? AND thread_id=? "
-                "AND released_at IS NULL", (platform_session, thread_id)).fetchone() is not None:
-                raise RunStateConflict("Worker thread is an active helper; release its task access before owner attachment")
+            existing = connection.execute(
+                "SELECT * FROM worker_connections WHERE run_id=?", (run_id,)).fetchone()
+            same_binding = (existing is not None and
+                (existing['platform_session'], existing['thread_id']) == (platform_session, thread_id))
+            # Preserve exact legacy owner recovery; block only a new role transfer
+            # or correction to a historical helper identity.
+            if not same_binding and connection.execute(
+                "SELECT 1 FROM worker_participants WHERE platform_session=? AND thread_id=?",
+                (platform_session, thread_id)).fetchone() is not None:
+                raise RunStateConflict("Worker thread has helper history; use a fresh owner thread, even after helper release")
             row = connection.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
             if row is None or row["state"] != "queued":
-                existing = connection.execute(
-                    "SELECT * FROM worker_connections WHERE run_id=?", (run_id,)).fetchone()
-                if (row is not None and row["state"] == "running" and existing is not None
-                        and (existing["platform_session"], existing["thread_id"]) == (platform_session, thread_id)):
+                if row is not None and row["state"] == "running" and same_binding:
                     return
                 raise RunStateConflict("attach requires the exact queued Run")
             status = self.runs.status(run_id)
@@ -239,9 +242,39 @@ class WorkerConnections:
             if request.action == "release":
                 if old is None:
                     raise HelperAdmissionError("No helper has this scientific subtask name.")
+                # Historical owner bindings block cleanup regardless of clocks or
+                # terminal state. Read them under the same lock as revocation.
+                rebound = connection.execute(
+                    "SELECT 1 FROM worker_connections WHERE platform_session=? AND thread_id=?",
+                    (old['platform_session'], old['thread_id'])).fetchone() if old['thread_id'] is not None else None
                 connection.execute("UPDATE worker_participants SET released_at=COALESCE(released_at,?) WHERE task_origin=? AND name=?", (timestamp(), origin, request.name))
+                if rebound is not None:
+                    return {"name": request.name, "access": "released", "native_thread_state": "unknown",
+                        "native_action": None,
+                        "instruction": "This historical helper thread has owner binding history. "
+                            "Do not interrupt or close it for this old subtask, including through the original spawn handle. "
+                            "Access to this subtask is revoked; native interruption and slot reclamation are not confirmed."}
+                if old['thread_id'] is None:
+                    return {"name": request.name, "access": "released", "native_thread_state": "unknown",
+                        "native_action": None, "cleanup_status": "blocked",
+                        "instruction": "No trusted helper thread was admitted. Native cleanup is blocked, not confirmed. "
+                            "Do not interrupt or close using an original spawn handle, guess an identity, or respawn. "
+                            "Normal dispatch must complete worker_open_assignment admission before work and release. "
+                            "Report the unresolved spawn/bootstrap outcome for repair; access to this subtask is revoked."}
+                if old['released_at'] is not None:
+                    return {"name": request.name, "access": "released", "native_thread_state": "unknown",
+                        "native_action": None,
+                        "instruction": "Access was already revoked; this repeated release grants no new native action. "
+                            "Do not replay a cached interrupt or close instruction. If the first action or its result was lost, "
+                            "report cleanup unconfirmed; do not claim interruption or slot reclamation."}
                 return {"name": request.name, "access": "released", "native_thread_state": "unknown",
-                    "instruction": "Use native stop/close if work remains active. Permission release does not stop native tools or assert thread termination."}
+                    "native_action": {"action": "interrupt", "thread_id": old["thread_id"],
+                                      "task_name": request.name, "required": True},
+                    "instruction": "As your next action, interrupt the exact bound thread_id through the native collaboration tool, "
+                        "even after completion; then close it if supported. Do not schedule other work, reuse the thread, "
+                        "or cache this instruction for later replay. Report the native result or failure. "
+                        "Access is revoked; native interruption and slot reclamation are not confirmed by this response. "
+                        "The control transaction and external native call are not atomic; arbitrary native reuse is outside this guarantee."}
             if old is not None:
                 previous = json.loads(old['request_json'])
                 previous_work = {"task":previous['task'], "materials":previous['materials'],
@@ -271,7 +304,7 @@ class WorkerConnections:
             "context": "fresh", "task_name": request.name, "profile": selected,
             "model": profile["model"], "reasoning_effort": profile["reasoning_effort"],
             "message": "Open worker_open_assignment for the prepared internal subtask. Follow its helper participation instructions; do not submit the parent task.",
-            "instruction": "Spawn this native role with fork_context=false or fork_turns=none, with exactly the returned model/reasoning_effort and without parent history. If a native spawn response is lost, inspect its existing task by this name; never repeat an uncertain spawn. Wait for native completion and integrate its findings/files. Use worker_helper release afterwards; native close remains a platform action."}}
+            "instruction": "Spawn a fresh native helper thread with fork_context=false or fork_turns=none, with exactly the returned model/reasoning_effort and without parent history. Have it complete worker_open_assignment admission before work and release; never reuse an owner thread for a helper or a helper thread for an owner. If a native spawn response is lost, inspect its existing task by this name; never repeat an uncertain spawn. Wait for native completion and integrate its findings/files. Use worker_helper release afterwards; when its first response returns a required interrupt, execute it as your next native action, even after completion, then close if supported. Do not cache or replay the action. Without a returned action, do not interrupt or close through an old spawn handle; report cleanup blocked or unconfirmed."}}
 
     @staticmethod
     def helper_profile(run, participant):
@@ -287,12 +320,11 @@ class WorkerConnections:
             # Serialize against attach on the same database: either owner attachment
             # or helper admission wins, never both. Historical author records remain.
             if connection.execute(
-                "SELECT 1 FROM worker_connections w JOIN runs r USING(run_id) "
-                "WHERE w.platform_session=? AND w.thread_id=? AND r.state IN ('queued','running')",
+                "SELECT 1 FROM worker_connections WHERE platform_session=? AND thread_id=?",
                 (platform_session, thread_id)).fetchone() is not None:
                 if not admit:
-                    raise WorkerNotAttached("Worker owns an active Run and is not an internal helper")
-                raise RunStateConflict("Worker thread already owns an active Run; it cannot also be a helper")
+                    raise WorkerNotAttached("Worker has owner binding history and is not an internal helper")
+                raise RunStateConflict("Worker thread has owner binding history; use a fresh helper thread")
             row = connection.execute("SELECT * FROM worker_participants WHERE platform_session=? AND thread_id=?", (platform_session, thread_id)).fetchone()
             if row is None:
                 if not admit or not parent_thread:

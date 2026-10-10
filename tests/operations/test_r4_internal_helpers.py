@@ -81,10 +81,31 @@ def test_release_revokes_without_asserting_native_termination(tmp_path, monkeypa
     _result(call('worker_open_assignment', thread='helper', parent='owner'))
     released = _result(call('worker_helper', {'name':'inspect', 'action':'release'}))
     assert released['access'] == 'released' and released['native_thread_state'] == 'unknown'
+    assert released['native_action'] == {'action': 'interrupt', 'thread_id': 'helper',
+                                         'task_name': 'inspect', 'required': True}
+    assert 'even after completion' in released['instruction']
+    assert 'As your next action, interrupt the exact bound thread_id' in released['instruction']
+    assert 'are not atomic' in released['instruction']
+    repeated = _result(call('worker_helper', {'name': 'inspect', 'action': 'release'}))
+    assert repeated['native_action'] is None and repeated['access'] == 'released'
+    assert 'Do not replay a cached interrupt' in repeated['instruction']
+    assert _result(call('worker_helper', {'name': 'inspect', 'action': 'release'})) == repeated
     assert 'error' in call('worker_heartbeat', thread='helper')
     assert 'error' in call('worker_helper', {'name':'another', 'task':'Inspect more data.'})
     assert _result(call('worker_helper', request))['access'] == 'released'
     _result(call('worker_heartbeat'))
+
+
+def test_release_before_binding_does_not_invent_native_identity(tmp_path, monkeypatch):
+    runtime, gateway, run_id, call, owner = _gateway(tmp_path, monkeypatch)
+    _result(call('worker_helper', {'name': 'inspect', 'task': 'Inspect data.'}))
+    released = _result(call('worker_helper', {'name': 'inspect', 'action': 'release'}))
+    assert released['native_action'] is None
+    assert released['cleanup_status'] == 'blocked'
+    assert 'Do not interrupt or close using an original spawn handle' in released['instruction']
+    assert 'No trusted helper thread was admitted' in released['instruction']
+    assert _result(call('worker_helper', {'name': 'inspect', 'action': 'release'})) == released
+    assert released['native_thread_state'] == 'unknown'
 
 
 def test_restart_retains_participant_access_and_parent_revocation(tmp_path, monkeypatch):
@@ -145,25 +166,108 @@ def test_active_helper_and_owner_admission_are_mutually_exclusive(tmp_path, monk
     target = queued('second-owner')
     _result(call('worker_helper', {'name':'inspect', 'task':'Inspect data.'}))
     _result(call('worker_open_assignment', thread='helper', parent='owner'))
-    with pytest.raises(RunStateConflict, match='active helper'):
+    with pytest.raises(RunStateConflict, match='helper history'):
         connections.attach(run_id=target, platform_session='session', thread_id='helper')
     _result(call('worker_helper', {'name':'inspect', 'action':'release'}))
-    connections.attach(run_id=target, platform_session='session', thread_id='helper')
-    assert connections.resolve(platform_session='session', thread_id='helper').run_id == target
-    assert _result(call('worker_identity', thread='helper', parent='owner'))['thread_id'] == 'helper'
-    _result(call('worker_open_assignment', thread='helper', parent='owner'))
-    assert _result(call('worker_identity', thread='helper', parent='owner'))['thread_id'] == 'helper'
+    with pytest.raises(RunStateConflict, match='helper history'):
+        connections.attach(run_id=target, platform_session='session', thread_id='helper')
+    assert runtime.runs.status(target).state == 'queued'
+    connections.attach(run_id=target, platform_session='session', thread_id='fresh-owner')
+    _result(call('worker_open_assignment', thread='fresh-owner'))
     with runtime.runs._connect() as db:
         historical = db.execute("SELECT thread_id,released_at FROM worker_participants WHERE run_id=?", (run_id,)).fetchone()
     assert historical['thread_id'] == 'helper' and historical['released_at'] is not None
     _result(call('worker_helper', {'name':'next', 'task':'Inspect more data.'}))
-    gateway.root.call_tool('operation_invoke', dict(name='attached-first', operation_id='science.experiment.v1',
-        instruction='Complete another experiment.', inputs=[dict(port='subject', artifact_names=['objective'])]))
-    other = runtime.scheduler_bindings.resolve(instance=instance_id, namespace='run', name='attached-first')
-    connections.attach(run_id=other, platform_session='session', thread_id='attached-first')
-    assert _result(call('worker_identity', thread='attached-first'))['thread_id'] == 'attached-first'
-    with pytest.raises(RunStateConflict, match='owns an active Run'):
-        connections.participant(platform_session='session', thread_id='attached-first', parent_thread='owner', admit=True)
+    assert _result(call('worker_identity', thread='owner'))['thread_id'] == 'owner'
+    with pytest.raises(RunStateConflict, match='owner binding history'):
+        connections.participant(platform_session='session', thread_id='owner', parent_thread='owner', admit=True)
+    stale_release = _result(call('worker_helper', {'name': 'inspect', 'action': 'release'}))
+    assert stale_release['access'] == 'released'
+    assert stale_release['native_thread_state'] == 'unknown'
+    assert stale_release['native_action'] is None
+    assert 'Do not replay a cached interrupt' in stale_release['instruction']
+    assert _result(call('worker_helper', {'name': 'inspect', 'action': 'release'})) == stale_release
+    assert connections.resolve(platform_session='session', thread_id='fresh-owner').run_id == target
+    assert runtime.runs.status(target).state == 'running'
+    _result(call('worker_heartbeat', thread='fresh-owner'))
+
+
+@pytest.mark.parametrize('state', ['queued', 'running', 'completed'])
+def test_legacy_owner_helper_overlap_blocks_cleanup_regardless_of_clock(tmp_path, monkeypatch, state):
+    from scidiscovery.artifact_agent.service.run_records import RunStateConflict
+    runtime, gateway, run_id, call, owner = _gateway(tmp_path, monkeypatch)
+    instance_id = runtime.runs.status(run_id).instance_id
+    gateway.root.call_tool('operation_invoke', dict(name='legacy-owner', operation_id='science.object.review.v1',
+        instruction='Assess observations.', inputs=[dict(port='subject', artifact_names=['observe.output'])]))
+    target = runtime.scheduler_bindings.resolve(instance=instance_id, namespace='run', name='legacy-owner')
+    _result(call('worker_helper', {'name': 'inspect', 'task': 'Inspect data.'}))
+    _result(call('worker_open_assignment', thread='helper', parent='owner'))
+    _result(call('worker_helper', {'name': 'inspect', 'action': 'release'}))
+    # Reconstruct an overlap persisted by older versions, with reversed clocks.
+    # Current attach rejects this transition; no production guard is bypassed by
+    # an actual caller. Test legacy data directly rather than permit new overlap.
+    with runtime.runs._connect() as db:
+        db.execute('INSERT INTO worker_connections(run_id,platform_session,thread_id,attached_at,attachment_sequence) '
+            'VALUES(?,?,?,?,?)', (target, 'session', 'helper', '2000-01-01T00:00:00Z', 1))
+        db.execute('UPDATE worker_participants SET admitted_at=? WHERE run_id=?',
+            ('2099-01-01T00:00:00Z', run_id))
+    if state != 'queued':
+        _result(call('worker_open_assignment', thread='helper', parent='owner'))
+    if state == 'completed':
+        with runtime.runs._connect() as db:
+            db.execute("UPDATE runs SET state='completed' WHERE run_id=?", (target,))
+    connections = runtime.runs.worker_connections
+    if state in {'queued', 'running'}:
+        # Existing exact legacy ownership can recover idempotently; no new role
+        # transfer is performed and the original binding remains unchanged.
+        for _ in range(2):
+            connections.attach(run_id=target, platform_session='session', thread_id='helper')
+        with runtime.runs._connect() as db:
+            binding = db.execute('SELECT attached_at,attachment_sequence FROM worker_connections WHERE run_id=?',
+                (target,)).fetchone()
+        assert (binding['attached_at'], binding['attachment_sequence']) == ('2000-01-01T00:00:00Z', 1)
+    else:
+        with pytest.raises(RunStateConflict, match='attach requires the exact queued Run'):
+            connections.attach(run_id=target, platform_session='session', thread_id='helper')
+    with pytest.raises(RunStateConflict, match='helper history'):
+        connections.attach(run_id=run_id, platform_session='session', thread_id='helper')
+    released = _result(call('worker_helper', {'name': 'inspect', 'action': 'release'}))
+    assert released['native_action'] is None
+    assert released['native_thread_state'] == 'unknown'
+    assert 'owner binding history' in released['instruction']
+    assert 'Do not interrupt or close' in released['instruction']
+    assert 'including through the original spawn handle' in released['instruction']
+    assert _result(call('worker_helper', {'name': 'inspect', 'action': 'release'})) == released
+    assert connections.resolve(platform_session='session', thread_id='helper').run_id == target
+    assert connections.resolve(platform_session='session', thread_id='owner').run_id == run_id
+    assert runtime.runs.status(target).state == state
+    if state == 'running':
+        _result(call('worker_heartbeat', thread='helper', parent='owner'))
+
+
+def test_terminal_owner_cannot_be_helper_but_can_reuse_owner_role(tmp_path, monkeypatch):
+    from scidiscovery.artifact_agent.service.run_records import RunStateConflict
+    runtime, gateway, run_id, call, owner = _gateway(tmp_path, monkeypatch)
+    connections = runtime.runs.worker_connections
+    instance_id = runtime.runs.status(run_id).instance_id
+    def queued(name):
+        gateway.root.call_tool('operation_invoke', dict(name=name, operation_id='science.object.review.v1',
+            instruction='Assess observations.', inputs=[dict(port='subject', artifact_names=['observe.output'])]))
+        return runtime.scheduler_bindings.resolve(instance=instance_id, namespace='run', name=name)
+    first = queued('first-owner')
+    connections.attach(run_id=first, platform_session='session', thread_id='former-owner')
+    _result(call('worker_open_assignment', thread='former-owner'))
+    previous = runtime.runs.status(first)
+    runtime.runs.record_failure(first, reason='End fixture task', category='fixture',
+        expected_state=previous.state, expected_last_activity_at=previous.last_activity_at)
+    _result(call('worker_helper', {'name': 'inspect', 'task': 'Inspect data.'}))
+    with pytest.raises(RunStateConflict, match='owner binding history'):
+        connections.participant(platform_session='session', thread_id='former-owner', parent_thread='owner', admit=True)
+    second = queued('second-owner')
+    connections.attach(run_id=second, platform_session='session', thread_id='former-owner')
+    assert connections.resolve(platform_session='session', thread_id='former-owner').run_id == second
+    _result(call('worker_open_assignment', thread='former-owner'))
+    _result(call('worker_heartbeat', thread='former-owner'))
 
 
 def test_helper_startup_selects_material_navigation_and_contracts_on_demand(tmp_path, monkeypatch):
@@ -200,9 +304,10 @@ def test_helper_startup_selects_material_navigation_and_contracts_on_demand(tmp_
     assert assignment['tools'] and 'worker_submit_result' not in assignment['tools']
     # Default reading division retains observations and omissions in an attributed
     # helper report; the owner keeps original-read and finalization authority.
-    for clause in ('supporting and contrary evidence', 'failed or inconclusive observations',
+    for clause in ('supporting and contrary evidence', 'failed/inconclusive observations',
                    'pointers/line locators', 'omissions/unread ranges', 'missing coverage',
-                   'this reading subtask requests no edits', 'does not grant formal independent review'):
+                   'For material-reading subtasks', 'permitted reading/check tools, no edits',
+                   'grant no formal independent review'):
         assert clause in assignment['role_instructions']
     profile = runtime.runs.status(run_id).execution_profile['profile']
     described = _result(gateway.handle({'jsonrpc': '2.0', 'id': 2, 'method': 'tools/call', 'params': {
