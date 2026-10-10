@@ -1,6 +1,7 @@
 """Native experiment delivery through real source entry points, without a solver."""
 from dataclasses import replace
 import json
+import hashlib
 from pathlib import Path
 import subprocess
 import sys
@@ -17,6 +18,8 @@ from scidiscovery.operations.spec import ComponentRef, ComponentSpec, PluginDefi
 from scidiscovery.general_science_experiment_task import validate_completion
 from scidiscovery.operations.input_validation import ValidationSources
 from scidiscovery.operation_contract import SemanticRuleViolation
+from scidiscovery.artifact_agent.interfaces.mcp_root import RootToolError
+from scidiscovery.artifact_agent.schema.refs import ArtifactRef
 
 
 @pytest.fixture
@@ -255,6 +258,10 @@ def test_no_provider_native_shell_delivery_and_environment_blocker(tmp_path, ins
         "native_execution": {"implementation": impl, "state": "failed" if observed.returncode else "succeeded", "logs": [log], "results": outputs}})["reference"]
     validity = f.worker.call_tool("worker_experiment_stage", {"stage": "validity", "conclusion": "Environment unavailable." if missing_environment else "The retained sum is 4.",
         "materials": [execution]})["reference"]
+    # The active scientific owner reads its own exact immutable original.
+    delivered = f.worker.call_tool("worker_reference_read", {"source": execution, "action": "read",
+        "reference": "content", "delivery": "file"})
+    original_bytes = Path(delivered["file_path"]).read_bytes()
     outcome = "blocked" if missing_environment else "completed"
     (f.workspace / "output/result.json").write_text(json.dumps({"schema_version": 1, "payload": {
         "summary": "Environment unavailable." if missing_environment else "Computed 4.", "outcome": outcome,
@@ -270,10 +277,19 @@ def test_no_provider_native_shell_delivery_and_environment_blocker(tmp_path, ins
     assert receipt["metadata"]["execution_attestation"] == "unavailable"
     resolved = f.runtime.runs.sealed_material_record(f.runtime.runs.status(f.run_id), execution)
     assert set(resolved["source_refs"]) >= {impl, log, *outputs}
-    view = f.root.call_tool("run_status", {"name": "compute", "stage_reference": execution})["sealed_stages"]["material"]
+    for forbidden in ({"stage_reference": execution}, {"intent": "full"}):
+        with pytest.raises(RootToolError, match="tool arguments"):
+            f.root.call_tool("run_status", {"name": "compute", **forbidden})
+    stages = f.root.call_tool("run_status", {"name": "compute", "intent": "navigation",
+        "stage_offset": 0, "stage_limit": 8})["sealed_stages"]
+    view = next(item for item in stages["items"] if item["reference"] == execution)
     assert view["execution_origin"] == "worker_native"
     assert view["execution_attestation"] == "unavailable"
-    native = json.loads(view["text"])["native_execution"]
+    assert "text" not in view and "artifact_ref" not in json.dumps(view)
+    original_ref = ArtifactRef.model_validate(receipt["artifact_ref"])
+    assert original_bytes == f.runtime.artifacts.read(original_ref)
+    assert hashlib.sha256(original_bytes).hexdigest() == original_ref.sha256
+    native = json.loads(original_bytes)["native_execution"]
     assert native["implementation"] == impl and native["logs"] == [log]
     status = f.root.call_tool("run_status", {"name": "compute"})
     assert status["selected_output"]["items"][0]["value"] == outcome
@@ -293,7 +309,6 @@ def test_no_provider_native_shell_delivery_and_environment_blocker(tmp_path, ins
         assert original["complete"] and model.artifact(run.instance_id, original_id)["payload"] == original["text"]
     if not missing_environment:
         from tests.operations.worker_fixtures import attached_worker
-        from scidiscovery.artifact_agent.schema.refs import ArtifactRef
         subject = status['output_artifact_name']
         assert f.root.call_tool('operation_invoke', {'name': 'analysis', 'operation_id': 'science.result.analyze.v1',
             'inputs': [{'port': 'subject', 'artifact_names': [subject]}],
@@ -401,11 +416,32 @@ def test_reused_native_execution_preserves_exact_files_and_consumer_aliases(tmp_
     new = f.runtime.runs.status(new_id)
     def alias_for(reference):
         return next(i.source_name for i in new.inputs if i.artifact_ref.model_dump(mode="json") == records[reference]["artifact_ref"])
-    view = f.root.call_tool("run_status", {"name": "reuse", "stage_reference": alias_for(execution)})["sealed_stages"]["material"]
-    native = json.loads(view["text"])["native_execution"]
+    for forbidden in ({"stage_reference": alias_for(execution)}, {"intent": "full"}):
+        with pytest.raises(RootToolError, match="tool arguments"):
+            f.root.call_tool("run_status", {"name": "reuse", **forbidden})
+    stages = f.root.call_tool("run_status", {"name": "reuse", "intent": "navigation",
+        "stage_offset": 0, "stage_limit": 8})["sealed_stages"]
+    view = next(item for item in stages["items"] if item["reference"] == alias_for(execution))
     assert view["origin"] == "reused" and view["execution_attestation"] == "unavailable"
-    assert native["implementation"] == alias_for(impl)
-    assert native["logs"] == ([alias_for(log)] if retain_log else [None])
+    assert "text" not in view and "artifact_ref" not in json.dumps(view)
+    delivered = worker.call_tool("worker_reference_read", {"source": alias_for(execution), "action": "read",
+        "reference": "content", "delivery": "file"})
+    original_bytes = Path(delivered["file_path"]).read_bytes()
+    original_ref = ArtifactRef.model_validate(records[execution]["artifact_ref"])
+    assert original_bytes == f.runtime.artifacts.read(original_ref)
+    assert hashlib.sha256(original_bytes).hexdigest() == original_ref.sha256
+    native = json.loads(original_bytes)["native_execution"]
+    # O retains the producer namespace; consumer aliases identify the same Refs.
+    assert native["implementation"] == impl and native["logs"] == [log] and native["results"] == [result]
+    resolved = f.runtime.runs.sealed_material_record(new, alias_for(execution))
+    assert resolved["producer_run_id"] == old.run_id
+    assert resolved["metadata"]["origin"] == "worker_native"
+    assert resolved["metadata"]["execution_attestation"] == "unavailable"
+    aliases = f.runtime.runs.material_source_aliases(new)
+    assert aliases[resolved["source_refs"][impl]] == alias_for(impl)
+    assert [aliases.get(resolved["source_refs"][a]) for a in native["logs"]] == ([alias_for(log)] if retain_log else [None])
+    assert aliases[resolved["source_refs"][result]] == alias_for(result)
+    assert view["unavailable_materials"] == (0 if retain_log else 1)
     (Path(opened["workspace_path"]) / "output/result.json").write_text(json.dumps({"schema_version": 1, "payload": {
         "summary": "Reused exact reported observations.", "outcome": "completed", "remaining_question": "",
         "limitations": ["Worker-reported execution without independent attestation."],

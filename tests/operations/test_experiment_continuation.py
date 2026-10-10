@@ -1,5 +1,6 @@
 """Cross-task handoff through real Root/Worker routes, with bounded fake adapters."""
 import json
+import hashlib
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -11,6 +12,7 @@ from scidiscovery.artifact_agent.schema.refs import ArtifactRef
 from scidiscovery.artifact_agent.schema.common import canonical_json
 from scidiscovery.artifact_agent.service.experiment_execution import bind_experiment_services
 from scidiscovery.operation_contract import DiagnosticError
+from scidiscovery.artifact_agent.interfaces.mcp_root import RootToolError
 from tcad_artifact.local_debug_service import _record_key
 
 
@@ -112,15 +114,33 @@ def test_bound_implementation_runs_collects_and_delivers_without_prepare(tmp_pat
     exported = f.worker.call_tool("worker_experiment_execute", {"action":"export", "output_name":"binary"})
     assert (f.workspace / exported["path"]).read_bytes() == b"observed fixture\n"
     validity = f.worker.call_tool("worker_experiment_stage", {"stage":"validity", "conclusion":"Retained fixture observation.", "materials":[collected["reference"]]})
+    # The attached active owner reads the frozen producer original, not a Root
+    # projection that rewrites its source namespace into consumer aliases.
+    delivered = f.worker.call_tool("worker_reference_read", {"source": f.alias, "action": "read",
+        "reference": "content", "delivery": "file"})
+    original_bytes = Path(delivered["file_path"]).read_bytes()
+    assert original_bytes == f.runtime.artifacts.read(original_ref)
+    assert hashlib.sha256(original_bytes).hexdigest() == original_ref.sha256
+    original = f.runs.sealed_material_record(f.runs.status(f.run_id), f.alias)
+    assert original["producer_run_id"] == f.old_id
     completed = submit(f, [f.alias, collected["reference"], validity["reference"]])
     assert completed["state"] == "completed", completed
     assert not any(r["metadata"].get("kind") == "experiment_implementation" for r in f.runs.tool_evidence(f.run_id))
     assert f.runs.sealed_material_record(f.runs.status(f.run_id), f.alias)["artifact_ref"] == original_ref.model_dump(mode="json")
-    stage = f.root.call_tool("run_status", {"name":"continuation", "stage_reference":f.alias})["sealed_stages"]["material"]
+    for forbidden in ({"stage_reference": f.alias}, {"intent": "full"}):
+        with pytest.raises(RootToolError, match="tool arguments"):
+            f.root.call_tool("run_status", {"name": "continuation", **forbidden})
+    stages = f.root.call_tool("run_status", {"name": "continuation", "intent": "navigation",
+        "stage_offset": 0, "stage_limit": 8})["sealed_stages"]
+    stage = next(item for item in stages["items"] if item["reference"] == f.alias)
     assert stage["origin"] == "reused" and stage["adopted"] is True
-    assert "artifact_ref" not in json.dumps(stage)
+    assert "artifact_ref" not in json.dumps(stage) and "text" not in stage
     if solver == "sdevice":
-        assert json.loads(stage["text"])["scientific_files"]["device_grid"].startswith("scientific_materials")
+        original_grid = json.loads(original_bytes)["scientific_files"]["device_grid"]
+        grid_ref = original["source_refs"][original_grid]
+        aliases = f.runs.material_source_aliases(f.runs.status(f.run_id))
+        assert aliases[grid_ref].startswith("scientific_materials")
+        assert f.runs.source_descriptor(f.runs.status(f.run_id), aliases[grid_ref]).artifact_ref == grid_ref
     from scidiscovery.artifact_agent.approval_ui.workbench_render import _sealed_stages
     html = _sealed_stages({"sealed_stages":{"items":[stage]}, "key":"run:continuation"}, f.instance.instance_id)
     assert "复用已有封存材料" in html
