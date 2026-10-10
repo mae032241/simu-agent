@@ -322,6 +322,101 @@ def test_helper_startup_selects_material_navigation_and_contracts_on_demand(tmp_
     assert json.loads(Path(next_open['assignment_path']).read_bytes())['inputs'] == []
 
 
+def test_helper_checked_findings_retain_counterevidence_and_owner_reads_only_unresolved_gap(tmp_path):
+    """Real gateway/reader transport; canned completion is not model qualification."""
+    from scidiscovery.artifact_agent.interfaces.mcp_gateway import UnifiedMCPRouter
+    from scidiscovery.artifact_agent.schema.common import canonical_json
+    from tests.operations.test_minimum_support import (fixed_case, support_observations, _context,
+        observed_overview, copied_pages)
+    from tests.operations.test_run_list_bounds import metrics
+    originals = support_observations()
+    runtime, root, worker, owner = fixed_case(tmp_path, 'a_results', attempt_payloads=originals)
+    workspace, start, entries = _context(owner)
+    frozen_assignment = Path(owner['assignment_path']).read_bytes()
+    inventory = next(item for item in observed_overview(start, workspace).values() if item['kind'] == 'capture_inventory')
+    paths = {item['path']:item for item in inventory['entries']}
+    aliases = [paths[f'scratch/artifacts/attempt-{n}.json']['source_name'] for n in range(3)]
+    bindings = {item.source_name:item for item in runtime.runs.status(worker._run_id).inputs}
+    gateway = UnifiedMCPRouter(root)
+    session, owner_thread = worker._trusted_caller
+    profile = runtime.runs.status(worker._run_id).execution_profile['profile']
+    reads, tool_calls = [], []
+    def call(name, arguments=None, *, helper=False):
+        tool_calls.append(dict(name=name, helper=helper))
+        return gateway.handle({'jsonrpc':'2.0', 'id':1, 'method':'tools/call', 'params': {
+            'name':'scid_call', 'arguments':{'name':name, 'arguments':arguments or {}},
+            '_meta':{'x-codex-turn-metadata':{'session_id':session,
+                'thread_id':'f3-helper' if helper else owner_thread, **profile,
+                **({'parent_thread_id':owner_thread, 'subagent_kind':'thread_spawn'} if helper else {})}}}})
+    request = dict(name='counterevidence', task='Check rankings, failures and version restrictions; retain gaps.',
+        materials=[*aliases, 'missing-original'])
+    prepared = _result(call('worker_helper', request))
+    assert prepared['dispatch']['context'] == 'fresh'
+    opened = _result(call('worker_open_assignment', helper=True))
+    helper_assignment = json.loads(Path(opened['assignment_path']).read_bytes())
+    assert [item['source_name'] for item in helper_assignment['inputs']] == aliases
+    assert helper_assignment['materials'] == request['materials']
+    assert 'missing-original' not in {item['source_name'] for item in helper_assignment['inputs']}
+    assert not {'tool_contracts','output_schema','output'} & helper_assignment.keys()
+    assert all('text' not in item and 'scientific_view' not in item for item in helper_assignment['inputs'])
+    assert Path(owner['assignment_path']).read_bytes() == frozen_assignment
+    assert len(canonical_json(helper_assignment)) < len(frozen_assignment)
+
+    def selected_read(alias, pointer, *, helper):
+        if bindings[alias].exposure == 'file_reference':
+            delivered = _result(call('worker_materialize_input', dict(source_name=alias), helper=helper))
+            source, file = delivered['relative_path'], True
+        else:
+            source, file = alias, False
+        replies, text = copied_pages(workspace, source, pointers=[pointer], file=file)
+        reads.append(dict(role='helper' if helper else 'owner', source=alias, pointer=pointer,
+            pages=len(replies), response_bytes=sum(len(page.encode()) for page in replies)))
+        return json.loads(text)
+
+    checked = [dict(source=alias, pointer='/checks', finding=selected_read(alias, '/checks', helper=True))
+        for alias in aliases]
+    assert [item['finding'] for item in checked] == [item['checks'] for item in originals]
+    # A native-completion fixture carries only attributed checked values and
+    # locators. No control conclusion, result receipt or mandatory reread list.
+    completion = json.loads(canonical_json(dict(checked=checked,
+        contrary=dict(average_first=aliases[0], worst_first=aliases[1]), failed=[aliases[2]],
+        limitations=[item['finding']['limitation'] for item in checked],
+        omissions=[dict(source=aliases[0], pointer='/appendix', reason='unread'),
+            dict(source='missing-original', reason='unbound')],
+        unresolved='Does the appendix change the target condition?', verification='fixture_checked_not_formal_review')))
+    assert completion['checked'][2]['finding']['version'] == 'v2'
+    assert completion['checked'][2]['finding']['outcome'] == 'failed'
+    assert completion['checked'][0]['finding']['average'] > completion['checked'][1]['finding']['average']
+    assert completion['checked'][0]['finding']['worst'] < completion['checked'][1]['finding']['worst']
+    assert completion['omissions'][1]['source'] == 'missing-original'
+    # The scripted owner consumes checked facts and follows only the unresolved
+    # gap. This proves the route can avoid routine rereads, not model behavior.
+    follow_up = selected_read(completion['omissions'][0]['source'], '/appendix/changed_condition', helper=False)
+    assert follow_up == originals[0]['appendix']['changed_condition']
+    assert [(item['source'],item['pointer']) for item in reads if item['role'] == 'owner'] == [
+        (aliases[0],'/appendix/changed_condition')]
+    assert all(item['pages'] == 1 for item in reads)
+    assert originals[0]['appendix']['unread_tail'] not in json.dumps(completion)
+    released = _result(call('worker_helper', dict(name='counterevidence', action='release')))
+    assert released['access'] == 'released' and released['native_thread_state'] == 'unknown'
+    assert released['native_action']['thread_id'] == 'f3-helper'
+    assert 'error' in call('worker_heartbeat', helper=True)
+    reopened = _result(call('worker_open_assignment'))
+    after = json.loads(Path(reopened['start_here_path']).read_bytes())
+    # Only the live budget reminder may change. Helper findings are native
+    # transport, never automatically inserted into the default owner context.
+    before_default = {key:value for key,value in start.items() if key != 'budget'}
+    after_default = {key:value for key,value in after.items() if key != 'budget'}
+    assert after_default == before_default
+    assert len(canonical_json(after_default)) == len(canonical_json(before_default))
+    assert Path(owner['assignment_path']).read_bytes() == frozen_assignment
+    assert not any(item['name'] in {'worker_submit_result','worker_experiment_stage'} for item in tool_calls)
+    metrics('f3-helper-support', dict(reads=reads, checked_originals=3, owner_gap_reads=1,
+        default_bytes=len(canonical_json(before_default)), after_default_bytes=len(canonical_json(after_default)),
+        helper_assignment_bytes=len(canonical_json(helper_assignment)),
+        completion_bytes=len(canonical_json(completion)), qualification='fixture_transport_only'))
+
+
 @pytest.mark.parametrize('legacy_reader', [False, True])
 def test_helper_large_scientific_view_is_navigation_with_exact_original_routes(tmp_path, monkeypatch, legacy_reader):
     from scidiscovery.artifact_agent.schema.common import canonical_json

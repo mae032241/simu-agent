@@ -104,7 +104,21 @@ def analysis_payload():
 
 
 
-def fixed_case(tmp_path, case):
+def support_observations():
+    """Private fixture truth; control must retain its author-reported uncertainty."""
+    return [
+        dict(checks=dict(candidate='a', version='v1', outcome='inconclusive', average=.9, worst=.2,
+            limitation='Proxy conditions only; target contribution unknown.'),
+            appendix=dict(changed_condition='Target condition changed; keep the ranking unresolved.',
+                unread_tail='Uninspected observation. ' * 1500)),
+        dict(checks=dict(candidate='b', version='v1', outcome='inconclusive', average=.8, worst=.7,
+            limitation='Proxy conditions only; target contribution unknown.')),
+        dict(checks=dict(candidate='a', version='v2', outcome='failed', average=None, worst=None,
+            limitation='Changed target condition failed; v1 does not validate this version.')),
+    ]
+
+
+def fixed_case(tmp_path, case, *, attempt_payloads=None):
     if case == 'h_revision':
         _, runtime, _, root, foundation = _qualified_foundation(tmp_path)
         prior = _complete(runtime, root, 'prior', 'science.hypothesis.propose.v1',
@@ -132,9 +146,10 @@ def fixed_case(tmp_path, case):
             opened = worker.call_tool('worker_open_assignment', {})
             workspace = Path(opened['workspace_path'])
             for n in range(3):
-                (workspace/'scratch/artifacts'/f'attempt-{n}.json').write_bytes(canonical_json(dict(
+                payload = attempt_payloads[n] if attempt_payloads is not None else dict(
                     candidate=n, outcome='failed' if n == 2 else 'inconclusive',
-                    proxy_score=2-n, target_support='unknown', limitation='Target conditions unobserved.')))
+                    proxy_score=2-n, target_support='unknown', limitation='Target conditions unobserved.')
+                (workspace/'scratch/artifacts'/f'attempt-{n}.json').write_bytes(canonical_json(payload))
             stage = worker.call_tool('worker_experiment_stage', dict(stage='validity',
                 conclusion='Proxy ranking is available, target contribution unknown.',
                 materials=['file:scratch/artifacts/attempt-0.json','file:scratch/artifacts/attempt-1.json']))['reference']
@@ -401,6 +416,46 @@ def test_uncited_failed_attempt_is_visible_in_default_view(tmp_path):
     # Root's public status remains compact: no capture arrays or attempt contents.
     status = json.dumps(root.call_tool('run_status', {'name': 'selected'}))
     assert 'observed_results' not in status and 'proxy_score' not in status
+
+
+def test_default_support_keeps_conflicting_versions_failures_and_unread_originals(tmp_path):
+    originals = support_observations()
+    runtime, _, worker, opened = fixed_case(tmp_path, 'a_results', attempt_payloads=originals)
+    workspace, start, entries = _context(opened)
+    inventory = next(item for item in observed_overview(start, workspace).values() if item['kind'] == 'capture_inventory')
+    by_path = {item['path']:item for item in inventory['entries']}
+    sources = [by_path[f'scratch/artifacts/attempt-{n}.json']['source_name'] for n in range(3)]
+    bound = {item.source_name:item.artifact_ref for item in runtime.runs.status(worker._run_id).inputs}
+    assert len({bound[name] for name in sources}) == 3
+    assert all('same_source_as' not in entries[name] for name in sources)
+    assert inventory['coverage'] == 'incomplete'
+    assert by_path['ledger:covshift_results']['duplicate_groups'] == [{'locators':['line:1','line:4'], 'status':'ambiguous'}]
+    assert by_path['scratch/artifacts/attempt-2.json']['stage_materials'] == []
+    assert 'unverified' in start['observed_results']['basis'] and 'unknown' in start['observed_results']['basis']
+    # The large original is navigation, while the new failure/limit remains a
+    # distinct small original. Average and worst-case rankings must not merge.
+    assert 'text' not in entries[sources[0]]
+    values, readers = [], {}
+    for name, original in zip(sources, originals):
+        if entries[name].get('exposure') == 'file_reference':
+            delivered = worker.call_tool('worker_materialize_input', dict(source_name=name))
+            readers[name] = (delivered['relative_path'], True)
+        else:
+            readers[name] = (name, False)
+        source, file = readers[name]
+        _, selected = copied_pages(workspace, source, pointers=['/checks'], file=file)
+        values.append(json.loads(selected))
+        assert values[-1] == original['checks']
+    assert values[0]['average'] > values[1]['average'] and values[0]['worst'] < values[1]['worst']
+    assert values[2]['candidate'] == values[0]['candidate'] and values[2]['version'] != values[0]['version']
+    assert values[2]['outcome'] == 'failed' and 'does not validate' in values[2]['limitation']
+    assert json.loads(entries[sources[2]]['text']) == originals[2]
+    # Exact reader continuation exposes the unread appendix without adding it
+    # to the default context or pretending it was inspected.
+    source, file = readers[sources[0]]
+    replies, restored = copied_pages(workspace, source, pointers=['/appendix'], file=file)
+    assert len(replies) > 1 and json.loads(restored) == originals[0]['appendix']
+    assert originals[0]['appendix']['unread_tail'] not in Path(opened['start_here_path']).read_text()
 
 
 def test_advertised_sources_are_bound_and_readable_and_unbound_entries_say_so(tmp_path):
