@@ -696,7 +696,7 @@ def test_omitted_inventory_never_becomes_a_duplicate_display_representative(monk
 
 def test_installed_m1_open_and_copied_input_and_reference_readers(installed_probe):
     installed_probe('all_domains', r'''
-import json, tempfile, subprocess, sys
+import json, tempfile, subprocess, sys, shlex
 from pathlib import Path
 from scidiscovery.artifact_agent.runtime import open_runtime
 from scidiscovery.artifact_agent.interfaces.mcp_root import RootMCPRouter, RootToolFacade
@@ -727,15 +727,26 @@ start = json.loads(Path(opened['start_here_path']).read_bytes())
 assert 'budget' not in opened and 'narrative_instruction' not in opened
 assert start['budget']['deadline_at'] == opened['deadline_at']
 context = json.loads((workspace/'worker-context.json').read_bytes())
+role_guide = next(item for item in start['guides'] if item['name'] == 'role_reference')
+guide_command = shlex.split(role_guide['read'])
+assert guide_command[:2] == ['python', 'tools/read_input.py']
+assert guide_command[-1].endswith('/SECTION')
+guides = json.loads((workspace/guide_command[2]).read_bytes())['guides']
 assignment = json.loads(frozen)
-assert split_reference(assignment['role_instructions']) == (start['role_instructions'], context['guides']['role_reference'])
+assert 'guides' not in context
+assert split_reference(assignment['role_instructions']) == (start['role_instructions'], guides['role_reference'])
 def read(*args):
     response = subprocess.check_output([sys.executable, '-I', 'tools/read_input.py', *args],
         cwd=workspace, text=True, timeout=10)
     return response.rsplit('\n[read_input: ', 1)[0]
 assert read('subject', '--full').strip() == original
-section = json.loads(read('worker-context.json', '--file', '--pointer', '/guides/role_reference/h_understanding'))
-assert section == context['guides']['role_reference']['h_understanding']
+section = json.loads(read(*guide_command[2:-1], guide_command[-1].replace('/SECTION', '/h_understanding')))
+assert section == guides['role_reference']['h_understanding']
+outside = root/'outside.txt'; outside.write_text('not an assignment material')
+denied = subprocess.run([sys.executable, '-I', 'tools/read_input.py', str(outside), '--file'],
+    cwd=workspace, capture_output=True, text=True, timeout=10)
+assert denied.returncode != 0 and 'source must be a file within this workspace' in denied.stdout
+assert 'not an assignment material' not in denied.stdout
 worker.call_tool('worker_open_assignment', {})
 assert Path(opened['assignment_path']).read_bytes() == frozen
 impostor = LocalWorkerMCPRouter(runtime.runs, operation_id=compiled.spec.operation_id,
