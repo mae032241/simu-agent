@@ -12,11 +12,12 @@ from tests.operations.research_loop_fixtures import authorize_loop
 
 
 PEER = r'''
-import hashlib,json,sys
+import hashlib,json,sys,sqlite3
 from pathlib import Path
 base=Path(sys.argv[1])
 config=json.loads((base/'config.json').read_text())
 state=json.loads((base/'state.json').read_text()) if (base/'state.json').exists() else {'threads':{},'next':0}
+subscriptions=set()
 def emit(v): print(json.dumps(v),flush=True)
 def save(): (base/'state.json').write_text(json.dumps(state))
 for line in sys.stdin:
@@ -29,9 +30,24 @@ for line in sys.stdin:
         events=json.loads(notifications.read_text())
         if isinstance(events,list) or (events['method']==method and events['threadId']==p.get('threadId')):
             notifications.unlink()
-            for event in events if isinstance(events,list) else events['events']:emit(event)
+            for event in events if isinstance(events,list) else events['events']:
+                if not (base/'subscription-events').exists() or event.get('params',{}).get('threadId') in subscriptions:
+                    emit(event)
     if method=='initialize': result={}
     elif method=='config/read': result={'config':config}
+    elif method=='thread/loaded/list':
+        if (base/'loaded-pages.json').exists():
+            pages=json.loads((base/'loaded-pages.json').read_text())
+            result=pages[p.get('cursor') or 'first']
+        else:
+            if (base/'loaded-threads.json').exists():
+                loaded=json.loads((base/'loaded-threads.json').read_text())
+            else:
+                with sqlite3.connect(config['test_run_database']) as db:
+                    loaded=[row[0] for row in db.execute('SELECT thread_id FROM worker_connections UNION SELECT thread_id FROM worker_participants WHERE thread_id IS NOT NULL')]
+            loaded=sorted(set(loaded)|subscriptions)
+            cursor=int(p.get('cursor') or 0);end=cursor+p['limit']
+            result={'data':loaded[cursor:end],'nextCursor':str(end) if end<len(loaded) else None}
     elif method in ('thread/start','thread/resume'):
         if method=='thread/start':
             state['next']+=1
@@ -49,7 +65,12 @@ for line in sys.stdin:
             if thread in unavailable:
                 emit({'id':msg['id'],'error':{'code':-32000,'message':'Subscription unavailable'}})
                 continue
+            if (base/'finish-on-resume.json').exists() and thread in json.loads((base/'finish-on-resume.json').read_text()):
+                statuses=json.loads((base/'read-statuses.json').read_text()) if (base/'read-statuses.json').exists() else {}
+                statuses[thread]='completed'
+                (base/'read-statuses.json').write_text(json.dumps(statuses))
         sessions=json.loads((base/'thread-sessions.json').read_text()) if (base/'thread-sessions.json').exists() else {}
+        subscriptions.add(thread)
         result={'thread':{'id':thread,'sessionId':sessions.get(thread,thread if thread.startswith('root-') else 'source-test-session')}}
         if 'approvalPolicy' in p:
             result.update(approvalPolicy=p['approvalPolicy'],sandbox={
@@ -61,10 +82,17 @@ for line in sys.stdin:
             emit({'id':msg['id'],'error':{'code':-32000,'message':'Historical native thread unavailable'}})
             continue
         child_status=(base/'child-status').read_text() if (base/'child-status').exists() else 'completed'
+        if (base/'read-statuses.json').exists():
+            child_status=json.loads((base/'read-statuses.json').read_text()).get(p['threadId'],child_status)
+        runtime_status={'type':'active','activeFlags':[]} if child_status=='inProgress' else {'type':'idle'} if child_status in {'completed','failed','interrupted'} else {'type':'unknown'}
+        if (base/'runtime-statuses.json').exists():
+            runtime_status=json.loads((base/'runtime-statuses.json').read_text()).get(p['threadId'],runtime_status)
         sessions=json.loads((base/'thread-sessions.json').read_text()) if (base/'thread-sessions.json').exists() else {}
         if (base/'read-sessions.json').exists(): sessions.update(json.loads((base/'read-sessions.json').read_text()))
-        result={'thread':{'id':p['threadId'],'sessionId':sessions.get(p['threadId'],p['threadId'] if p['threadId'].startswith('root-') else 'source-test-session'),'turns':state['threads'].get(p['threadId'],
+        result={'thread':{'id':p['threadId'],'status':runtime_status,'sessionId':sessions.get(p['threadId'],p['threadId'] if p['threadId'].startswith('root-') else 'source-test-session'),'turns':state['threads'].get(p['threadId'],
           [] if child_status=='missing' else [{'id':'worker-turn','status':child_status}])}}
+        if (base/'loaded-after-read.json').exists():
+            (base/'loaded-after-read.json').replace(base/'loaded-threads.json')
     elif method=='mcpServerStatus/list': result={'data':[{'name':'scidiscovery','tools':{'scid_catalog':{},'scid_describe':{},'scid_call':{}}}]}
     elif method=='mcpServer/tool/call':
         session='sch_'+hashlib.sha256(p['threadId'].encode()).hexdigest()[:32]
@@ -93,8 +121,9 @@ for line in sys.stdin:
         if mode=='pending-usage':
             state['threads'][thread][-1]['status']='inProgress';save()
             continue
-        emit({'method':'thread/tokenUsage/updated','params':{'threadId':thread,'tokenUsage':{'total':{
-          'inputTokens':100*len(state['threads'][thread]),'cachedInputTokens':50*len(state['threads'][thread]),'outputTokens':20*len(state['threads'][thread])}}}})
+        emit({'method':'thread/tokenUsage/updated','params':{'threadId':thread,'turnId':turn,'tokenUsage':{'total':{
+          'inputTokens':100*len(state['threads'][thread]),'cachedInputTokens':50*len(state['threads'][thread]),'outputTokens':20*len(state['threads'][thread])},'last':{
+          'inputTokens':100,'cachedInputTokens':50,'outputTokens':20}}}})
         emit({'method':'turn/completed','params':{'threadId':thread,'turn':{'id':turn,'status':'completed'}}})
         continue
     elif method=='turn/interrupt': result={}
@@ -114,9 +143,11 @@ def setup(p, tmp_path, **limits):
     authorize_loop(p.runtime,p.instance,p.user,'goal')
     p.root.call_tool('progression_command',dict(command='start',mode='background',objective_name='goal'))
     native=tmp_path/'rotation-peer';native.mkdir()
+    p.rotation_native=native
     socket_path=tmp_path/'control.sock'
     directory=p.runtime.project_root/'.codex';directory.mkdir(exist_ok=True)
-    config={'mcp_servers':{'scidiscovery':{'command':'scidiscovery-mcp-proxy','args':['--socket',str(socket_path)]}}}
+    config={'mcp_servers':{'scidiscovery':{'command':'scidiscovery-mcp-proxy','args':['--socket',str(socket_path)]}},
+        'test_run_database':str(p.runtime.runs.database_path)}
     (directory/'config.toml').write_text('[mcp_servers.scidiscovery]\ncommand="scidiscovery-mcp-proxy"\nargs=["--socket",'+json.dumps(str(socket_path))+']\n')
     (native/'config.json').write_text(json.dumps(config))
     (native/'mode').write_text('normal')
@@ -130,6 +161,13 @@ def setup(p, tmp_path, **limits):
 def calls(native, method):
     return [json.loads(line)['params'] for line in (native/'requests.jsonl').read_text().splitlines()
         if json.loads(line).get('method')==method]
+
+
+def terminal_events(p,native,thread,status='completed'):
+    (native/'native-events.json').write_text(json.dumps([
+        dict(method='turn/started',params=dict(threadId=thread,turn=dict(id='worker-turn'))),
+        dict(method='turn/completed',params=dict(threadId=thread,turn=dict(id='worker-turn',status=status)))]))
+    p.coordinator.host.connection.rpc('mcpServerStatus/list',dict(threadId=p.coordinator.host.identity.thread_id))
 
 
 def completed(p):
@@ -639,8 +677,10 @@ def test_active_worker_defers_rotation_and_can_finish_under_original_binding(pro
     from tests.operations.test_local_worker_contracts import _invoke,_worker,_write_result
     _invoke(root,'accepted-work')
     worker=_worker(p.catalog,p.runtime);worker.call_tool('worker_open_assignment',{})
+    before_reads=calls(native,'thread/read');before_resumes=calls(native,'thread/resume')
     wake(p)
     assert len(calls(native,'thread/start'))==1
+    assert calls(native,'thread/read')==before_reads and calls(native,'thread/resume')==before_resumes
     completed(p)
     _write_result(worker,observe_tokens=False)
     thread=worker._trusted_caller[1]
@@ -704,8 +744,9 @@ def test_terminal_cache_binding_expires_when_actual_worker_thread_is_reused(prog
     p.coordinator._event(dict(method='thread/tokenUsage/updated',params=dict(threadId=old._trusted_caller[1],
         tokenUsage=dict(total=dict(inputTokens=10,cachedInputTokens=0,outputTokens=1)))))
     old.call_tool('worker_submit_result',{})
+    terminal_events(p,native,old._trusted_caller[1])
     identities=p.coordinator._identities()
-    observed=p.coordinator.host.rotation_boundary(identities,known={},limit=2)
+    observed=p.coordinator.host.rotation_boundary(identities,known={},limit=16)
     assert observed['safe']
     for observation in observed['observations']:p.coordinator._save({},native_observation=observation)
     thread=old._trusted_caller[1]
@@ -732,16 +773,17 @@ def test_terminal_cache_binding_expires_when_actual_worker_thread_is_reused(prog
     (native/'child-status').write_text('inProgress')
     before=len(calls(native,'thread/read'))
     boundary=p.coordinator.host.rotation_boundary(identities,
-        known={thread:checkpoint(p)['usage_records'][thread]['native_terminal']},limit=1)
+        known={thread:checkpoint(p)['usage_records'][thread]['native_terminal']},limit=16)
     assert not boundary['safe'] and boundary['unknown']==1
     assert len(calls(native,'thread/read'))==before+1
     notify(dict(method='turn/started',params=dict(threadId=thread,turn=dict(id='new-worker-turn'))),
         dict(method='turn/completed',params=dict(threadId=thread,turn=dict(id='new-worker-turn',status='completed'))))
     latest=checkpoint(p)['usage_records'][thread]['native_terminal']
     assert latest['binding_key']==identities[thread]['binding_key'] and latest['turn_id']=='new-worker-turn'
+    (native/'child-status').write_text('completed')
     before=len(calls(native,'thread/read'))
-    assert p.coordinator.host.rotation_boundary(identities,known={thread:latest},limit=1)['safe']
-    assert len(calls(native,'thread/read'))==before
+    assert p.coordinator.host.rotation_boundary(identities,known={thread:latest},limit=16)['safe']
+    assert len(calls(native,'thread/read'))==before+1
 
 
 def _terminal_native_worker(p,root,name):
@@ -752,6 +794,7 @@ def _terminal_native_worker(p,root,name):
     p.coordinator._event(dict(method='thread/tokenUsage/updated',params=dict(threadId=worker._trusted_caller[1],
         tokenUsage=dict(total=dict(inputTokens=10,cachedInputTokens=0,outputTokens=1)))))
     worker.call_tool('worker_submit_result',{})
+    terminal_events(p,p.rotation_native,worker._trusted_caller[1])
     return worker._trusted_caller[1]
 
 
@@ -762,20 +805,22 @@ def test_production_started_notification_during_other_read_invalidates_rotation_
     p.coordinator.tick();completed(p)
     root=p.root.__class__(p.facade(p.coordinator.host.scheduler_session))
     thread=_terminal_native_worker(p,root,'previously-terminal')
-    proof=p.coordinator.host.rotation_boundary(p.coordinator._identities(),known={},limit=2)
+    proof=p.coordinator.host.rotation_boundary(p.coordinator._identities(),known={},limit=16)
     assert proof['safe']
     for observation in proof['observations']:p.coordinator._save({},native_observation=observation)
     other=_terminal_native_worker(p,root,'newly-terminal')
-    affected=thread if changed=='cached' else other
+    ordered=sorted(p.coordinator._identities().values(),key=lambda identity:identity['binding_key'])
+    first,last=[identity['thread_id'] for identity in ordered]
+    affected=first if changed=='cached' else last
     p.coordinator._settle_turn(checkpoint(p))
-    (native/'native-events.json').write_text(json.dumps(dict(method='thread/read',threadId=other,
+    (native/'native-events.json').write_text(json.dumps(dict(method='thread/read',threadId=last,
         events=[dict(method='turn/started',params=dict(threadId=affected,turn=dict(id='late-new-native-turn')))])))
     before=len(calls(native,'thread/read'))
     assert not p.coordinator._rotate_if_due(row(p),json.loads(row(p)['config_json'])['effective']['progression'])
-    assert calls(native,'thread/read')[before:]==[dict(threadId=other,includeTurns=True)]
+    assert {call['threadId'] for call in calls(native,'thread/read')[before:]}=={thread,other}
     assert 'native_terminal' not in checkpoint(p)['usage_records'][affected]
     assert checkpoint(p)['rotation_boundary']['reasons']==[
-        'native_terminal_proof_invalidated' if changed=='cached' else 'native_turn_changed_during_read']
+        'native_turn_changed_during_census' if changed=='cached' else 'native_turn_changed_during_read']
     assert len(calls(native,'thread/start'))==1 and row(p)['state']=='active'
 
 
@@ -861,8 +906,8 @@ def test_native_attribution_interleaving_uses_public_binding_and_preserves_count
 
 @pytest.mark.parametrize('run_state',['completed','failed'])
 @pytest.mark.parametrize('helper',[False,True])
-@pytest.mark.parametrize('limit',[1,2])
-def test_rebuilt_coordinator_resubscribes_terminal_cohort_and_rotates_without_new_turn(progression,tmp_path,run_state,helper,limit):
+@pytest.mark.parametrize('limit',[4,8])
+def test_rebuilt_coordinator_reads_terminal_cohort_and_rotates_without_loading_threads(progression,tmp_path,run_state,helper,limit):
     from scidiscovery.artifact_agent.service.progression import ProgressionCoordinator
     from scidiscovery.helper_tool import HelperRequest
     from tests.operations.test_local_worker_contracts import _invoke,_worker,_write_result
@@ -883,6 +928,7 @@ def test_rebuilt_coordinator_resubscribes_terminal_cohort_and_rotates_without_ne
     for identity in p.coordinator._identities().values():
         p.coordinator._event(dict(method='thread/tokenUsage/updated',params=dict(threadId=identity['thread_id'],
             tokenUsage=dict(total=dict(inputTokens=10,cachedInputTokens=0,outputTokens=1)))))
+        terminal_events(p,native,identity['thread_id'],run_state)
     if run_state=='completed':
         _write_result(worker,observe_tokens=False)
         assert worker.call_tool('worker_submit_result',{})['state']=='completed'
@@ -892,7 +938,7 @@ def test_rebuilt_coordinator_resubscribes_terminal_cohort_and_rotates_without_ne
             expected_last_activity_at=run.last_activity_at)
     (native/'child-status').write_text(run_state)
     identities=p.coordinator._identities()
-    proof=p.coordinator.host.rotation_boundary(identities,known={},limit=4)
+    proof=p.coordinator.host.rotation_boundary(identities,known={},limit=16)
     assert proof['safe']
     for observation in proof['observations']:p.coordinator._save({},native_observation=observation)
     before=checkpoint(p)
@@ -910,17 +956,16 @@ def test_rebuilt_coordinator_resubscribes_terminal_cohort_and_rotates_without_ne
         rotated=fresh._rotate_if_due(row(p),limits)
         assert len(calls(native,'thread/resume'))+len(calls(native,'thread/read'))-prior<=limit
         if rotated:break
-    else:pytest.fail('A finite terminal cohort never acquired fresh subscribed proof on reconnect.')
+    else:pytest.fail('A finite terminal cohort never acquired fresh read proof on reconnect.')
     participant_resumes=[c for c in calls(native,'thread/resume')[resumes:] if c['threadId'] in identities]
-    assert participant_resumes==[dict(threadId=i['thread_id'],cwd=str(p.runtime.project_root),excludeTurns=True)
-        for i in sorted(identities.values(),key=lambda i:i['binding_key'])]
+    assert participant_resumes==[]
     assert len(calls(native,'thread/read'))-reads==len(identities)
     after=checkpoint(p)
     for thread,identity in identities.items():
         old=before['usage_records'][thread];new=after['usage_records'][thread]
         assert new['high_water']==old['high_water'] and new['counted_tokens']==old['counted_tokens']
         assert new['native_terminal']['binding_key']==identity['binding_key']
-        assert new['native_terminal']['connection_id']!=old['native_terminal']['connection_id']
+        assert new['native_terminal']==old['native_terminal']
     assert after['current_loop_id']==before['current_loop_id'] and after['attempts']==before['attempts']
     assert p.runtime.runs.status(run.run_id)==original
     assert len(calls(native,'thread/start'))==2 and len(calls(native,'turn/start'))==1
@@ -928,21 +973,21 @@ def test_rebuilt_coordinator_resubscribes_terminal_cohort_and_rotates_without_ne
 
 @pytest.mark.parametrize('failure,reason',[
     ('inProgress','native_turn_not_terminal'),('unknown','native_turn_not_terminal'),
-    ('unavailable','native_subscription_unconfirmed'),('identity','native_subscription_unconfirmed'),
+    ('unavailable','native_thread_unavailable'),('identity','native_identity_unconfirmed'),
     ('read_identity','native_identity_unconfirmed'),('event','native_turn_changed_during_read')])
 def test_rebuilt_terminal_cohort_keeps_unknown_native_state_unsafe(progression,tmp_path,failure,reason):
     from scidiscovery.artifact_agent.service.progression import ProgressionCoordinator
     p=progression
-    native,factory=setup(p,tmp_path,root_rotation_check_limit=2)
+    native,factory=setup(p,tmp_path,root_rotation_check_limit=16)
     p.coordinator.tick();completed(p)
     root=p.root.__class__(p.facade(p.coordinator.host.scheduler_session))
     thread=_terminal_native_worker(p,root,'cold-unknown')
-    proof=p.coordinator.host.rotation_boundary(p.coordinator._identities(),known={},limit=2)
+    proof=p.coordinator.host.rotation_boundary(p.coordinator._identities(),known={},limit=16)
     assert proof['safe']
     for observation in proof['observations']:p.coordinator._save({},native_observation=observation)
     p.coordinator.close()
     if failure in {'inProgress','unknown'}:(native/'child-status').write_text(failure)
-    if failure=='unavailable':(native/'resume-unavailable.json').write_text(json.dumps([thread]))
+    if failure=='unavailable':(native/'unavailable.json').write_text(json.dumps([thread]))
     if failure in {'identity','read_identity'}:
         (native/('thread-sessions.json' if failure=='identity' else 'read-sessions.json')).write_text(json.dumps({thread:'wrong-session'}))
     if failure=='event':
@@ -951,12 +996,14 @@ def test_rebuilt_terminal_cohort_keeps_unknown_native_state_unsafe(progression,t
     fresh=ProgressionCoordinator(runtime=p.runtime,host_factory=factory,facade_factory=p.facade,clock=lambda:p.now[0])
     p.coordinator=fresh
     fresh._connect(row(p));fresh._settle_turn(checkpoint(p))
+    resumes=len(calls(native,'thread/resume'))
     before=len(calls(native,'thread/resume'))+len(calls(native,'thread/read'))
     assert not fresh._rotate_if_due(row(p),json.loads(row(p)['config_json'])['effective']['progression'])
-    assert len(calls(native,'thread/resume'))+len(calls(native,'thread/read'))-before<=2
+    assert len(calls(native,'thread/resume'))+len(calls(native,'thread/read'))-before<=16
     assert checkpoint(p)['rotation_boundary']['reasons']==[reason]
     assert len(calls(native,'thread/start'))==1 and len(calls(native,'turn/start'))==1
     assert row(p)['state']=='active'
+    assert len(calls(native,'thread/resume'))==resumes
 
 
 def test_rebuilt_terminal_cohort_cannot_reconnect_after_loop_budget_exhaustion(progression,tmp_path):
@@ -987,7 +1034,7 @@ def test_new_app_server_rechecks_persisted_terminal_proof_without_loading_old_hi
     p.coordinator.tick();completed(p)
     root=p.root.__class__(p.facade(p.coordinator.host.scheduler_session))
     thread=_terminal_native_worker(p,root,'old-proof')
-    proof=p.coordinator.host.rotation_boundary(p.coordinator._identities(),known={},limit=2)
+    proof=p.coordinator.host.rotation_boundary(p.coordinator._identities(),known={},limit=16)
     assert proof['safe']
     for observation in proof['observations']:p.coordinator._save({},native_observation=observation)
     saved=checkpoint(p)['usage_records'][thread]['native_terminal']
@@ -998,21 +1045,21 @@ def test_new_app_server_rechecks_persisted_terminal_proof_without_loading_old_hi
     fresh._connect(row(p));fresh._settle_turn(checkpoint(p))
     before=len(calls(native,'thread/read'));resumes=len(calls(native,'thread/resume'))
     assert not fresh._rotate_if_due(row(p),json.loads(row(p)['config_json'])['effective']['progression'])
-    assert calls(native,'thread/read')[before:]==[dict(threadId=thread,includeTurns=True)]
-    assert len(calls(native,'thread/resume'))==resumes+1
+    assert calls(native,'thread/read')[before:]==[dict(threadId=thread,includeTurns=False)]
+    assert len(calls(native,'thread/resume'))==resumes
     assert checkpoint(p)['usage_records'][thread]['native_terminal']==saved
     assert len(calls(native,'thread/start'))==1 and row(p)['state']=='active'
-    # The first check subscribed, but inProgress did not establish terminal proof.
+    # A read of inProgress cannot refresh the historical terminal proof.
     (native/'child-status').write_text('completed')
     assert fresh._rotate_if_due(row(p),json.loads(row(p)['config_json'])['effective']['progression'])
-    assert len(calls(native,'thread/resume'))==resumes+1
+    assert len(calls(native,'thread/resume'))==resumes
     current=checkpoint(p)['usage_records'][thread]['native_terminal']
-    assert current['binding_key']==saved['binding_key'] and current['connection_id']!=saved['connection_id']
+    assert current==saved
     assert checkpoint(p)['rotation_boundary']['reasons']==[]
 
 
-@pytest.mark.parametrize('limit',[1,2])
-def test_fast_complete_task_subscribes_on_production_rotation_without_new_turn_or_permission_override(progression,tmp_path,limit):
+@pytest.mark.parametrize('limit',[4,8])
+def test_fast_complete_task_reads_on_production_rotation_without_loading_or_new_turn(progression,tmp_path,limit):
     p=progression
     native,_=setup(p,tmp_path,root_rotation_check_limit=limit)
     p.coordinator.tick();completed(p)
@@ -1021,24 +1068,435 @@ def test_fast_complete_task_subscribes_on_production_rotation_without_new_turn_o
     assert not calls(native,'thread/resume')
     p.coordinator._settle_turn(checkpoint(p))
     limits=json.loads(row(p)['config_json'])['effective']['progression']
-    batches=[]
-    for attempt in range(2 if limit==1 else 1):
-        before=len(calls(native,'thread/resume'))+len(calls(native,'thread/read'))
-        rotated=p.coordinator._rotate_if_due(row(p),limits)
-        batches.append(len(calls(native,'thread/resume'))+len(calls(native,'thread/read'))-before)
-        assert batches[-1]<=limit
-        assert rotated is (limit==2 or attempt==1)
-    assert calls(native,'thread/resume')==[dict(threadId=thread,cwd=str(p.runtime.project_root),excludeTurns=True)]
-    assert calls(native,'thread/read')==[dict(threadId=thread,includeTurns=True)]
+    before=len(calls(native,'thread/read'))
+    assert p.coordinator._rotate_if_due(row(p),limits)
+    batches=[len(calls(native,'thread/read'))-before]
+    assert batches==[1] and batches[0]<=limit
+    assert calls(native,'thread/resume')==[]
+    assert calls(native,'thread/read')==[dict(threadId=thread,includeTurns=False)]
     assert len(calls(native,'turn/start'))==1 and len(calls(native,'thread/start'))==2
     assert row(p)['state']=='active'
     from tests.operations.test_run_list_bounds import metrics
-    metrics('rotation-subscription-'+str(limit),dict(rpc_batches=batches,participant_resume=1,participant_read=1,
+    metrics('rotation-read-'+str(limit),dict(rpc_batches=batches,participant_resume=0,participant_read=1,
         extra_model_turns=0,old_terminal_resumes=0))
 
 
+def test_terminal_proof_requires_current_connection_observation_and_real_events_need_no_resume(progression,tmp_path):
+    p=progression
+    native,_=setup(p,tmp_path)
+    p.coordinator.tick();completed(p)
+    root=p.root.__class__(p.facade(p.coordinator.host.scheduler_session))
+    thread=_terminal_native_worker(p,root,'observed-terminal')
+    identities=p.coordinator._identities()
+    boundary=p.coordinator.host.rotation_boundary(identities,known={},limit=16)
+    for observation in boundary['observations']:p.coordinator._save({},native_observation=observation)
+    known={thread:checkpoint(p)['usage_records'][thread]['native_terminal']}
+    p.coordinator.host.native_terminal_observations.clear()
+    assert not p.coordinator.host.native_terminal_current(identities[thread],known[thread])
+    before=len(calls(native,'thread/read'))
+    assert p.coordinator.host.rotation_boundary(identities,known=known,limit=16)['safe']
+    assert len(calls(native,'thread/read'))==before+1
+    (native/'native-events.json').write_text(json.dumps([
+        dict(method='turn/started',params=dict(threadId=thread,turn=dict(id='current-terminal-turn'))),
+        dict(method='turn/completed',params=dict(threadId=thread,turn=dict(id='current-terminal-turn',status='completed')))]))
+    p.coordinator.host.connection.rpc('mcpServerStatus/list',dict(threadId=p.coordinator.host.identity.thread_id))
+    known={thread:checkpoint(p)['usage_records'][thread]['native_terminal']}
+    before=len(calls(native,'thread/read'))
+    assert p.coordinator.host.rotation_boundary(identities,known=known,limit=16)['safe']
+    assert len(calls(native,'thread/read'))==before+1 and calls(native,'thread/resume')==[]
+
+
+def test_unsubscribed_terminal_read_is_rechecked_after_silent_native_change(progression,tmp_path):
+    p=progression
+    native,_=setup(p,tmp_path)
+    p.coordinator.tick();completed(p)
+    root=p.root.__class__(p.facade(p.coordinator.host.scheduler_session))
+    thread=_terminal_native_worker(p,root,'silent-native-change')
+    identities=p.coordinator._identities()
+    boundary=p.coordinator.host.rotation_boundary(identities,known={},limit=16)
+    for observation in boundary['observations']:p.coordinator._save({},native_observation=observation)
+    known={thread:checkpoint(p)['usage_records'][thread]['native_terminal']}
+    version=p.coordinator.host.native_event_versions.get(thread,0)
+    (native/'child-status').write_text('inProgress')
+    (native/'subscription-events').touch()
+    before=len(calls(native,'thread/read'))
+    result=p.coordinator.host.rotation_boundary(identities,known=known,limit=16)
+    assert not result['safe'] and result['reasons']==['native_turn_not_terminal']
+    assert len(calls(native,'thread/read'))==before+1 and calls(native,'thread/resume')==[]
+    assert p.coordinator.host.native_event_versions.get(thread,0)==version
+
+
+@pytest.mark.parametrize('fault,reason',[
+    ('incomplete','native_loaded_census_incomplete'),('cursor','native_loaded_census_invalid'),
+    ('duplicate','native_loaded_census_invalid'),('unknown','native_loaded_identity_unbound'),
+    ('changed','native_loaded_census_changed'),('active','native_turn_not_terminal'),
+    ('systemError','native_turn_not_terminal'),('missing','native_turn_not_terminal')])
+def test_loaded_census_and_runtime_status_fail_closed_without_loading_history(progression,tmp_path,fault,reason):
+    p=progression
+    native,_=setup(p,tmp_path)
+    p.coordinator.tick();completed(p)
+    root=p.root.__class__(p.facade(p.coordinator.host.scheduler_session))
+    thread=_terminal_native_worker(p,root,'census-subject')
+    identities=p.coordinator._identities()
+    limit=1 if fault=='incomplete' else 16
+    if fault in {'incomplete','cursor','duplicate'}:
+        pages={'first':{'data':['root-1'],'nextCursor':'again'},'again':{'data':[],'nextCursor':'again'}}
+        if fault=='duplicate':pages={'first':{'data':['root-1','root-1'],'nextCursor':None}}
+        if fault=='incomplete':pages={'first':{'data':[],'nextCursor':'again'}}
+        (native/'loaded-pages.json').write_text(json.dumps(pages))
+    if fault=='unknown':(native/'loaded-threads.json').write_text(json.dumps(['unbound-native']))
+    if fault=='changed':(native/'loaded-after-read.json').write_text(json.dumps([]))
+    if fault in {'active','systemError','missing'}:
+        state={} if fault=='missing' else {'type':fault,**({'activeFlags':[]} if fault=='active' else {})}
+        (native/'runtime-statuses.json').write_text(json.dumps({thread:state}))
+    result=p.coordinator.host.rotation_boundary(identities,known={},limit=limit)
+    assert not result['safe'] and result['reasons']==[reason] and result['checked']<=limit
+    assert calls(native,'thread/resume')==[]
+    assert all(call['includeTurns'] is False for call in calls(native,'thread/read'))
+    assert not p.coordinator.host.native_terminal_current(identities[thread],{})
+
+
+def test_active_run_admitted_during_read_still_defers_rotation_under_lock(progression,tmp_path,monkeypatch):
+    from tests.operations.test_local_worker_contracts import _invoke
+    p=progression
+    native,_=setup(p,tmp_path)
+    p.coordinator.tick();completed(p)
+    root=p.root.__class__(p.facade(p.coordinator.host.scheduler_session))
+    _terminal_native_worker(p,root,'closed-before-race')
+    p.coordinator._settle_turn(checkpoint(p))
+    boundary=p.coordinator.host.rotation_boundary
+    def admit_after_read(*args,**kwargs):
+        result=boundary(*args,**kwargs)
+        assert result['safe']
+        _invoke(root,'new-queued-during-read')
+        return result
+    monkeypatch.setattr(p.coordinator.host,'rotation_boundary',admit_after_read)
+    assert not p.coordinator._rotate_if_due(row(p),json.loads(row(p)['config_json'])['effective']['progression'])
+    assert len(calls(native,'thread/start'))==1 and calls(native,'thread/resume')==[]
+
+
+@pytest.mark.parametrize('role,status,error',[
+    ('helper','completed',None),('helper','failed',None),('helper','interrupted',None),
+    ('worker','completed','worker_native_turn_not_running'),
+    ('helper','unknown','worker_native_turn_state_unknown'),
+    ('helper','missing','worker_native_turn_state_unknown'),
+    ('worker','inProgress',None),('helper','inProgress',None)])
+def test_restore_reads_before_loading_and_only_resumes_inprogress(progression,tmp_path,role,status,error):
+    from scidiscovery.platforms.codex_app_server import HostError
+    p=progression
+    native,_=setup(p,tmp_path)
+    p.coordinator.tick();completed(p)
+    (native/'child-status').write_text(status)
+    before=len((native/'requests.jsonl').read_text().splitlines())
+    if error:
+        with pytest.raises(HostError,match=error):
+            p.coordinator.host.restore_worker('restoring-native','source-test-session',str(p.runtime.project_root),role=role)
+    else:
+        p.coordinator.host.restore_worker('restoring-native','source-test-session',str(p.runtime.project_root),role=role)
+    methods=[json.loads(line)['method'] for line in (native/'requests.jsonl').read_text().splitlines()[before:]]
+    assert methods==(['thread/read','thread/resume','thread/read'] if status=='inProgress' else ['thread/read'])
+    assert len(calls(native,'turn/start'))==1
+
+
+@pytest.mark.parametrize('fault,error',[
+    ('identity','worker_platform_identity_changed'),('unavailable','thread/read:rpc_failure'),
+    ('event','worker_native_turn_changed_during_read')])
+def test_restore_cannot_load_unconfirmed_helper_state(progression,tmp_path,fault,error):
+    from scidiscovery.platforms.codex_app_server import HostError
+    p=progression
+    native,_=setup(p,tmp_path)
+    p.coordinator.tick();completed(p)
+    thread='unconfirmed-helper'
+    if fault=='identity':(native/'read-sessions.json').write_text(json.dumps({thread:'wrong-session'}))
+    if fault=='unavailable':(native/'unavailable.json').write_text(json.dumps([thread]))
+    if fault=='event':
+        (native/'native-events.json').write_text(json.dumps(dict(method='thread/read',threadId=thread,
+            events=[dict(method='turn/started',params=dict(threadId=thread,turn=dict(id='late-turn')))])))
+    with pytest.raises(HostError,match=error):
+        p.coordinator.host.restore_worker(thread,'source-test-session',str(p.runtime.project_root),role='helper')
+    assert calls(native,'thread/resume')==[] and len(calls(native,'turn/start'))==1
+
+
+def test_helper_finishing_between_read_and_resume_does_not_prove_usage_complete(progression,tmp_path):
+    p=progression
+    native,_=setup(p,tmp_path)
+    p.coordinator.tick();completed(p)
+    thread='finishing-helper'
+    (native/'subscription-events').touch()
+    (native/'read-statuses.json').write_text(json.dumps({thread:'inProgress'}))
+    (native/'finish-on-resume.json').write_text(json.dumps([thread]))
+    before=len((native/'requests.jsonl').read_text().splitlines())
+    result=p.coordinator.host.restore_worker(thread,'source-test-session',str(p.runtime.project_root),role='helper')
+    assert result==dict(native_state='terminal',usage='unconfirmed')
+    methods=[json.loads(line)['method'] for line in (native/'requests.jsonl').read_text().splitlines()[before:]]
+    assert methods==['thread/read','thread/resume','thread/read']
+    assert len(calls(native,'turn/start'))==1
+
+
+@pytest.mark.parametrize('policy',['strict','bounded_fallback'])
+@pytest.mark.parametrize('sealed_during_disconnect',[False,True])
+def test_reconnect_active_owner_does_not_load_completed_helper_and_marks_usage_gap(progression,tmp_path,policy,sealed_during_disconnect):
+    from scidiscovery.artifact_agent.service.progression import ProgressionCoordinator
+    from scidiscovery.artifact_agent.interfaces.mcp_root import RootToolError
+    from scidiscovery.helper_tool import HelperRequest
+    from tests.operations.test_local_worker_contracts import _invoke,_worker,_write_result
+    p=progression
+    native,factory=setup(p,tmp_path,token_policy=policy)
+    if policy=='strict':
+        # This accepted protocol fixture turn establishes measured pre-recovery
+        # usage. It does not qualify strict mode's first Root admission.
+        p.coordinator._connect(row(p))
+        p.coordinator.host.start_turn('Accepted native turn fixture for recovery metering.')
+        completed(p)
+    p.coordinator.tick();completed(p)
+    root=p.root.__class__(p.facade(p.coordinator.host.scheduler_session))
+    _invoke(root,'active-owner')
+    worker=_worker(p.catalog,p.runtime);worker.call_tool('worker_open_assignment',{})
+    run=p.runtime.runs.status(worker._run_id)
+    connections=p.runtime.runs.worker_connections
+    connections.helper_request(run.run_id,HelperRequest(name='inspection',task='Inspect bounded data.'))
+    connections.participant(platform_session=worker._trusted_caller[0],thread_id='finished-helper',
+        parent_thread=worker._trusted_caller[1],admit=True,model=run.execution_profile['profile']['model'],
+        reasoning_effort=run.execution_profile['profile']['reasoning_effort'])
+    for thread in (worker._trusted_caller[1],'finished-helper'):
+        p.coordinator._event(dict(method='thread/tokenUsage/updated',params=dict(threadId=thread,
+            tokenUsage=dict(total=dict(inputTokens=10,cachedInputTokens=2,outputTokens=1)))))
+    from scidiscovery.artifact_agent.service.research_loops import loop_usage_summary
+    assert loop_usage_summary(checkpoint(p))['coverage']=='observed'
+    before=checkpoint(p)['usage_records']
+    p.coordinator.close()
+    if sealed_during_disconnect:
+        _write_result(worker,observe_tokens=False)
+        assert worker.call_tool('worker_submit_result',{})['state']=='completed'
+    (native/'subscription-events').touch()
+    (native/'read-statuses.json').write_text(json.dumps({worker._trusted_caller[1]:'inProgress','finished-helper':'completed'}))
+    prior_reads=len(calls(native,'thread/read'));prior_resumes=len(calls(native,'thread/resume'))
+    fresh=ProgressionCoordinator(runtime=p.runtime,host_factory=factory,facade_factory=p.facade,clock=lambda:p.now[0])
+    p.coordinator=fresh
+    fresh._connect(row(p))
+    resumed=[call['threadId'] for call in calls(native,'thread/resume')[prior_resumes:]]
+    assert (worker._trusted_caller[1] in resumed) is not sealed_during_disconnect
+    assert 'finished-helper' not in resumed
+    assert any(call['threadId']=='finished-helper' for call in calls(native,'thread/read')[prior_reads:]) is not sealed_during_disconnect
+    after=checkpoint(p)['usage_records']
+    for thread in (worker._trusted_caller[1],'finished-helper'):
+        assert after[thread]['high_water']==before[thread]['high_water']
+        assert after[thread]['counted_tokens']==before[thread]['counted_tokens']
+    assert not after['finished-helper']['has_gaps'] and after['finished-helper']['recovery_usage_unconfirmed']
+    (native/'native-events.json').write_text(json.dumps([dict(method='thread/tokenUsage/updated',
+        params=dict(threadId='finished-helper',tokenUsage=dict(total=dict(inputTokens=15,cachedInputTokens=3,outputTokens=2))))]))
+    fresh.host.connection.rpc('mcpServerStatus/list',dict(threadId=fresh.host.identity.thread_id))
+    # The peer does not deliver an unsubscribed helper's missed final usage.
+    assert checkpoint(p)['usage_records']['finished-helper']['counted_tokens']==before['finished-helper']['counted_tokens']
+    assert loop_usage_summary(checkpoint(p))['coverage']=='partial'
+    # Recovery gaps block new strict admission, but accepted collection and
+    # terminal handling retain the original task authority.
+    if not sealed_during_disconnect:
+        assert worker.call_tool('worker_heartbeat',{})['state']=='running'
+        _write_result(worker,observe_tokens=False)
+        assert worker.call_tool('worker_submit_result',{})['state']=='completed'
+    if policy=='strict':
+        with pytest.raises(RootToolError,match='loop_usage_unavailable'):
+            _invoke(root,'unconfirmed-new-work')
+        assert not fresh._check_budget(row(p),json.loads(row(p)['config_json'])['effective']['progression'])
+        assert row(p)['reason']=='usage_recovery_unconfirmed'
+        assert 'cannot recover final usage' in checkpoint(p)['budget']['token_recovery_limitation']
+    else:
+        _invoke(root,'fallback-new-work')
+    assert p.runtime.runs.status(worker._run_id).state=='completed'
+
+
+@pytest.mark.parametrize('count',[15,17])
+def test_loaded_scan_converges_across_bounded_probes_without_subscription(progression,tmp_path,count):
+    p=progression
+    native,_=setup(p,tmp_path,max_tasks=32)
+    p.coordinator.tick();completed(p)
+    root=p.root.__class__(p.facade(p.coordinator.host.scheduler_session))
+    threads={_terminal_native_worker(p,root,f'loaded-{index}') for index in range(count)}
+    identities=p.coordinator._identities()
+    batches=[]
+    for _ in range(4):
+        before=len((native/'requests.jsonl').read_text().splitlines())
+        result=p.coordinator.host.rotation_boundary(identities,known={},limit=16,fence='same-cohort')
+        batches.append(len((native/'requests.jsonl').read_text().splitlines())-before)
+        assert result['checked']==batches[-1]<=16
+        if result['state']=='safe':break
+        assert result['state']=='pending'
+    assert result['safe'] and len(batches)>1
+    assert {call['threadId'] for call in calls(native,'thread/read')}==threads
+    assert calls(native,'thread/resume')==[]
+
+
+def test_pending_rotation_advances_even_when_snapshot_is_unchanged(progression,tmp_path):
+    p=progression
+    native,_=setup(p,tmp_path,max_tasks=20)
+    p.coordinator.tick();completed(p)
+    root=p.root.__class__(p.facade(p.coordinator.host.scheduler_session))
+    for index in range(15):_terminal_native_worker(p,root,f'pending-{index}')
+    p.coordinator._settle_turn(checkpoint(p))
+    snapshot=p.coordinator._snapshot(row(p))
+    p.coordinator._save(dict(processed_snapshot=snapshot,notified_snapshot=snapshot))
+    limits=json.loads(row(p)['config_json'])['effective']['progression']
+    assert p.coordinator._rotate_if_due(row(p),limits)
+    assert p.coordinator.host.native_rotation_scan is not None
+    before=len(calls(native,'turn/start'))
+    p.now[0]+=6;p.coordinator.tick()
+    assert p.coordinator.host.native_rotation_scan is None
+    assert len(calls(native,'thread/start'))==2
+    assert len(calls(native,'turn/start'))==before
+
+
+@pytest.mark.parametrize('change',['notification','interrupt','connection'])
+def test_empty_cohort_still_requires_fresh_host_rotation_proof(progression,tmp_path,monkeypatch,change):
+    p=progression
+    native,_=setup(p,tmp_path)
+    p.coordinator.tick();completed(p)
+    p.coordinator._settle_turn(checkpoint(p))
+    host=p.coordinator.host
+    boundary=host.rotation_boundary
+    def invalidate_after_census(*args,**kwargs):
+        result=boundary(*args,**kwargs)
+        assert result['safe'] and not args[0]
+        if change=='notification':
+            version=host.native_event_versions.get(host.identity.thread_id,0)
+            (native/'native-events.json').write_text(json.dumps([dict(method='turn/started',params=dict(
+                threadId=host.identity.thread_id,turn=dict(id='late-native-turn')))]))
+            host.connection.rpc('mcpServerStatus/list',dict(threadId=host.identity.thread_id))
+            assert host.native_event_versions[host.identity.thread_id]==version+1
+        elif change=='interrupt':host.interrupt()
+        else:host.native_connection_id+='-changed'
+        return result
+    monkeypatch.setattr(host,'rotation_boundary',invalidate_after_census)
+    assert not p.coordinator._rotate_if_due(row(p),json.loads(row(p)['config_json'])['effective']['progression'])
+    assert len(calls(native,'thread/start'))==1
+    assert checkpoint(p)['rotation_boundary']['reasons']==['native_terminal_proof_invalidated']
+
+
+def test_same_control_values_after_pause_resume_do_not_reuse_old_scan_fence(progression,tmp_path,monkeypatch):
+    p=progression
+    native,_=setup(p,tmp_path)
+    p.coordinator.tick();completed(p)
+    p.coordinator._settle_turn(checkpoint(p))
+    host=p.coordinator.host
+    boundary=host.rotation_boundary
+    before=row(p)
+    def aba_after_census(*args,**kwargs):
+        result=boundary(*args,**kwargs)
+        assert result['safe']
+        p.root.call_tool('progression_command',dict(command='pause'))
+        p.root.call_tool('progression_command',dict(command='resume'))
+        current=row(p)
+        p.runtime.scheduler_bindings.reconnect_host(instance_id=p.instance,scheduler_session=host.scheduler_session,
+            platform_session=host.identity.session_id,thread_id=host.identity.thread_id,
+            expected_generation=current['generation'])
+        current=row(p)
+        assert (current['state'],current['mode'],current['owner_session'],current['host_json'])==(
+            before['state'],before['mode'],before['owner_session'],before['host_json'])
+        assert current['generation']!=before['generation']
+        return result
+    monkeypatch.setattr(host,'rotation_boundary',aba_after_census)
+    assert not p.coordinator._rotate_if_due(row(p),json.loads(row(p)['config_json'])['effective']['progression'])
+    assert len(calls(native,'thread/start'))==1 and host.native_rotation_proof is None
+
+
+def test_unsafe_pending_scan_with_changed_snapshot_is_attempted_once_per_probe(progression,tmp_path):
+    p=progression
+    native,_=setup(p,tmp_path,root_rotation_check_limit=2)
+    p.coordinator.tick();completed(p)
+    root=p.root.__class__(p.facade(p.coordinator.host.scheduler_session))
+    _terminal_native_worker(p,root,'pending-once')
+    p.coordinator._settle_turn(checkpoint(p))
+    # Freeze the new message before beginning the scan so it is part of the
+    # same fence, but leave it unconsumed to exercise the later decision path.
+    p.root.call_tool('progression_message',dict(name='pending-decision',text='Retain the new condition.'))
+    limits=json.loads(row(p)['config_json'])['effective']['progression']
+    assert p.coordinator._rotate_if_due(row(p),limits)
+    assert p.coordinator.host.native_rotation_scan is not None
+    (native/'loaded-pages.json').write_text(json.dumps({
+        'first':dict(data=['root-1'],nextCursor='tail'),'tail':dict(data=[],nextCursor=None)}))
+    before=len(calls(native,'thread/loaded/list'))+len(calls(native,'thread/read'))
+    p.now[0]+=6;p.coordinator.tick();completed(p)
+    metadata=len(calls(native,'thread/loaded/list'))+len(calls(native,'thread/read'))-before
+    assert metadata==limits['root_rotation_check_limit']
+    assert checkpoint(p)['rotation_boundary']['state']=='unsafe'
+    assert checkpoint(p)['rotation_boundary']['reasons']==['native_loaded_census_changed']
+    assert len(calls(native,'thread/start'))==1 and len(calls(native,'turn/start'))==2
+
+
+@pytest.mark.parametrize('mutation',['start','resume','interrupt','binding'])
+def test_pending_scan_cannot_reuse_read_proof_after_controlled_change(progression,tmp_path,mutation):
+    p=progression
+    native,_=setup(p,tmp_path)
+    p.coordinator.tick();completed(p)
+    root=p.root.__class__(p.facade(p.coordinator.host.scheduler_session))
+    thread=_terminal_native_worker(p,root,'pending-change')
+    identities=p.coordinator._identities()
+    host=p.coordinator.host
+    # Initial census plus one terminal read leaves the final census pending.
+    assert host.rotation_boundary(identities,known={},limit=2,fence='before')['state']=='pending'
+    if mutation=='start':
+        host.start_turn('A separate accepted native fixture turn.');completed(p)
+    elif mutation=='resume':host._subscribe_native(thread,'source-test-session',str(p.runtime.project_root))
+    elif mutation=='interrupt':host.interrupt()
+    else:identities={thread:{**identities[thread],'binding_key':identities[thread]['binding_key']+':changed'}}
+    before=len(calls(native,'thread/read'))
+    result=host.rotation_boundary(identities,known={},limit=16,fence='after' if mutation=='binding' else 'before')
+    assert result['safe'] and len(calls(native,'thread/read'))==before+1
+
+
+@pytest.mark.parametrize('sticky',[False,True])
+def test_recovery_usage_summary_does_not_conflate_counter_gaps(sticky):
+    from scidiscovery.platforms.codex_usage import observe_usage,usage_summary
+    params=dict(threadId='measured',turnId='measured-turn',tokenUsage=dict(total=dict(
+        inputTokens=10,cachedInputTokens=2,outputTokens=1)))
+    record=observe_usage(params,role='worker',owner='fixture-owner')
+    record['has_gaps']=sticky
+    record['recovery_usage_unconfirmed']=True
+    summary=usage_summary([record])
+    assert summary['coverage']=='partial' and summary['groups']['worker']['unmeasured_threads']==1
+    record.pop('recovery_usage_unconfirmed')
+    assert usage_summary([record])['coverage']==('partial' if sticky else 'observed')
+    assert record['has_gaps'] is sticky
+
+
+@pytest.mark.parametrize('sticky',[False,True])
+@pytest.mark.parametrize('totals,cleared',[(dict(inputTokens=15,cachedInputTokens=3,outputTokens=2),True),
+    (dict(inputTokens=10,cachedInputTokens=2,outputTokens=1),True),
+    (dict(inputTokens=5,cachedInputTokens=1,outputTokens=0),False),({},False)])
+def test_fresh_cumulative_usage_clears_only_recovery_uncertainty(progression,tmp_path,totals,cleared,sticky):
+    from scidiscovery.artifact_agent.service.progression import ProgressionCoordinator
+    from tests.operations.test_local_worker_contracts import _invoke,_worker
+    p=progression
+    native,factory=setup(p,tmp_path)
+    p.coordinator.tick();completed(p)
+    root=p.root.__class__(p.facade(p.coordinator.host.scheduler_session))
+    _invoke(root,'active-metered-owner')
+    worker=_worker(p.catalog,p.runtime);worker.call_tool('worker_open_assignment',{})
+    thread=worker._trusted_caller[1]
+    p.coordinator._event(dict(method='thread/tokenUsage/updated',params=dict(threadId=thread,turnId='worker-turn',
+        tokenUsage=dict(total=dict(inputTokens=10,cachedInputTokens=2,outputTokens=1)))))
+    if sticky:p.coordinator._event(dict(method='thread/tokenUsage/updated',params=dict(threadId=thread,tokenUsage={})))
+    p.coordinator.close()
+    (native/'subscription-events').touch()
+    (native/'read-statuses.json').write_text(json.dumps({thread:'inProgress'}))
+    fresh=ProgressionCoordinator(runtime=p.runtime,host_factory=factory,facade_factory=p.facade,clock=lambda:p.now[0])
+    p.coordinator=fresh;fresh._connect(row(p))
+    old=checkpoint(p)['usage_records'][thread]
+    assert old['recovery_usage_unconfirmed'] and old['has_gaps'] is sticky
+    assert calls(native,'thread/resume')[-1]['threadId']==thread
+    (native/'native-events.json').write_text(json.dumps([dict(method='thread/tokenUsage/updated',params=dict(
+        threadId=thread,turnId='worker-turn',tokenUsage=dict(total=totals,last=totals)))]))
+    fresh.host.connection.rpc('mcpServerStatus/list',dict(threadId=fresh.host.identity.thread_id))
+    record=checkpoint(p)['usage_records'][thread]
+    assert bool(record.get('recovery_usage_unconfirmed')) is not cleared
+    if cleared:
+        assert record['counted_tokens']['input_tokens']==totals['inputTokens'] and record['has_gaps'] is sticky
+    else:
+        assert record['counted_tokens']==old['counted_tokens'] and record['has_gaps']
+
+
 @pytest.mark.parametrize('opened',[False,True])
-def test_protocol_empty_thread_requires_closed_never_started_task(progression,tmp_path,opened):
+def test_protocol_empty_history_uses_current_native_runtime_state(progression,tmp_path,opened):
     from tests.operations.test_local_worker_contracts import _invoke,_worker
     p=progression
     native,_=setup(p,tmp_path)
@@ -1051,10 +1509,11 @@ def test_protocol_empty_thread_requires_closed_never_started_task(progression,tm
     p.runtime.runs.record_failure(value.run_id,reason='Cancelled before any new native work.',
         expected_state=value.state,expected_last_activity_at=value.last_activity_at)
     (native/'child-status').write_text('missing')
+    (native/'runtime-statuses.json').write_text(json.dumps({worker._trusted_caller[1]:{'type':'idle'}}))
     p.coordinator._settle_turn(checkpoint(p))
     result=p.coordinator._rotate_if_due(row(p),json.loads(row(p)['config_json'])['effective']['progression'])
-    assert result is (not opened)
-    assert len(calls(native,'thread/start'))==(1 if opened else 2)
+    assert result
+    assert len(calls(native,'thread/start'))==2
     assert row(p)['state']=='active'
     from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
     fresh=LocalWorkerMCPRouter(p.runtime.runs,operation_id=value.operation_id,operation_digest=value.operation_digest,
@@ -1063,29 +1522,16 @@ def test_protocol_empty_thread_requires_closed_never_started_task(progression,tm
         fresh.call_tool('worker_open_assignment',{})
 
 
-def test_protocol_1500_cached_terminal_bindings_need_no_rpc_and_unknown_cohort_is_batched(progression,tmp_path):
-    """Capacity fixture clones retained proof; live reconciliation uses the real peer."""
-    from copy import deepcopy
+def test_protocol_1500_historical_bindings_only_loaded_pool_needs_native_reads(progression,tmp_path):
     from tests.operations.test_local_worker_contracts import _invoke,_worker,_write_result
-    from scidiscovery.artifact_agent.service.progression_records import store_checkpoint
     p=progression
-    native,_=setup(p,tmp_path,max_tasks=1510,detail_capacity=16384,root_rotation_check_limit=2)
+    native,_=setup(p,tmp_path,max_tasks=1510,detail_capacity=16384,root_rotation_check_limit=8)
     p.coordinator.tick();completed(p)
     root=p.root.__class__(p.facade(p.coordinator.host.scheduler_session))
-    _invoke(root,'terminal-prototype')
-    prototype=_worker(p.catalog,p.runtime);prototype.call_tool('worker_open_assignment',{})
-    _write_result(prototype,observe_tokens=False)
-    p.coordinator._event(dict(method='thread/tokenUsage/updated',params=dict(threadId=prototype._trusted_caller[1],
-        tokenUsage=dict(total=dict(inputTokens=10,cachedInputTokens=0,outputTokens=1)))))
-    prototype.call_tool('worker_submit_result',{})
-    identities=p.coordinator._identities()
-    proof=p.coordinator.host.rotation_boundary(identities,known={},limit=2)
-    assert proof['safe'] and len(proof['observations'])==1
-    for observation in proof['observations']:p.coordinator._save({},native_observation=observation)
-    prototype_thread=prototype._trusted_caller[1]
-    prototype_record=deepcopy(checkpoint(p)['usage_records'][prototype_thread])
+    thread=_terminal_native_worker(p,root,'terminal-prototype')
+    run_id=p.coordinator._identities()[thread]['run_id']
     with p.runtime.runs._connect() as db:
-        template=dict(db.execute('SELECT * FROM runs WHERE run_id=?',(prototype._run_id,)).fetchone())
+        template=dict(db.execute('SELECT * FROM runs WHERE run_id=?',(run_id,)).fetchone())
         for index in range(1500):
             identity='run_'+f'{index+50000:032x}'
             saved=dict(template,run_id=identity,output_binding_name=f'cache-history-{index}.output',
@@ -1093,57 +1539,30 @@ def test_protocol_1500_cached_terminal_bindings_need_no_rpc_and_unknown_cohort_i
             db.execute('INSERT INTO runs ('+','.join(saved)+') VALUES ('+','.join('?' for _ in saved)+')',list(saved.values()))
             db.execute('INSERT INTO worker_connections VALUES(?,?,?,?,?)',
                 (identity,'source-test-session',f'cache-history-{index}','2026-10-03T00:00:00Z',1))
-    cp=checkpoint(p)
-    identities=p.coordinator._identities()
-    for thread,identity in identities.items():
-        if thread==prototype_thread:continue
-        record=deepcopy(prototype_record)
-        record['thread_id']=thread
-        record['native_terminal']['binding_key']=identity['binding_key']
-        cp['usage_records'][thread]=record
-        # Capacity clone of the same genuinely subscribed prototype connection.
-        p.coordinator.host.native_subscriptions[thread]=identity['platform_session']
-    with p.runtime.scheduler_bindings._connect() as db:
-        db.execute('UPDATE scheduler_progression SET checkpoint_json=? WHERE instance_id=?',
-            (store_checkpoint(db,p.instance,cp),p.instance))
-    old_threads=set(identities)
+    old_threads=set(p.coordinator._identities())
     (native/'unavailable.json').write_text(json.dumps(sorted(old_threads)))
-    unknown=[]
+    loaded=[]
     for index in range(3):
-        _invoke(root,f'late-native-{index}')
-        worker=_worker(p.catalog,p.runtime);worker.call_tool('worker_open_assignment',{})
-        _write_result(worker,observe_tokens=False)
-        p.coordinator._event(dict(method='thread/tokenUsage/updated',params=dict(threadId=worker._trusted_caller[1],
-            tokenUsage=dict(total=dict(inputTokens=10,cachedInputTokens=0,outputTokens=1)))))
-        worker.call_tool('worker_submit_result',{})
-        unknown.append(worker._trusted_caller[1])
+        loaded.append(_terminal_native_worker(p,root,f'late-material-{index}'))
+    (native/'loaded-threads.json').write_text(json.dumps(loaded))
     (native/'child-status').write_text('inProgress')
     p.coordinator._settle_turn(checkpoint(p))
     limits=json.loads(row(p)['config_json'])['effective']['progression']
-    batches=[]
-    for _ in range(3):
-        before=len(calls(native,'thread/read'))
-        prior_resumes=len(calls(native,'thread/resume'))
-        assert not p.coordinator._rotate_if_due(row(p),limits)
-        batch=calls(native,'thread/read')[before:]
-        batches.append(len(batch)+len(calls(native,'thread/resume'))-prior_resumes)
-        assert len(batch)==1 and batches[-1]==2 and {call['threadId'] for call in batch}<=set(unknown)
-        assert row(p)['state']=='active' and checkpoint(p)['rotation_boundary']['unchecked']==2
-        public=p.root.call_tool('progression_status',{})['rotation_boundary']
-        assert public==checkpoint(p)['rotation_boundary']
-        assert public['checked']==2 and public['unknown']==1 and public['reasons']==['native_turn_not_terminal']
-    assert len({call['threadId'] for call in calls(native,'thread/read')[-3:]})==3
-    (native/'child-status').write_text('completed')
     before=len(calls(native,'thread/read'))
     assert not p.coordinator._rotate_if_due(row(p),limits)
+    observed={call['threadId'] for call in calls(native,'thread/read')[before:]}
+    assert observed and observed<=set(loaded)
+    boundary=checkpoint(p)['rotation_boundary']
+    assert boundary['checked']==2 and boundary['unknown']==1 and boundary['unchecked']==3
+    assert boundary['reasons']==['native_turn_not_terminal']
+    (native/'child-status').write_text('completed')
+    before=len(calls(native,'thread/read'))
     assert p.coordinator._rotate_if_due(row(p),limits)
-    final=calls(native,'thread/read')[before:]
-    assert len(final)==3 and {call['threadId'] for call in final}==set(unknown)
-    assert len(calls(native,'thread/start'))==2
-    assert checkpoint(p)['rounds']==1
-    from tests.operations.test_run_list_bounds import metrics
-    metrics('rotation-native-cohort',dict(retained_terminal_bindings=len(old_threads),unknown_bindings=3,
-        rpc_batches=batches,terminal_reconciliation_rpc=len(final),historical_rpc=0))
+    assert {call['threadId'] for call in calls(native,'thread/read')[before:]}==set(loaded)
+    assert checkpoint(p)['rotation_boundary']['checked']==5
+    assert not any(call['threadId'] in old_threads for call in calls(native,'thread/read'))
+    assert calls(native,'thread/resume')==[] and len(calls(native,'thread/start'))==2
+    assert len(p.coordinator._identities())==len(old_threads)+len(loaded)
 
 
 def test_rotation_hands_off_saved_external_job_without_resubmitting_or_refreshing(tmp_path):

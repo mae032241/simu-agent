@@ -97,8 +97,8 @@ def usage_summary(records: list[dict]) -> dict:
         for key in TOKEN_FIELDS:
             group["tokens"][key] += record["counted_tokens"][key]
         group["failed_threads"] += record["outcome"] == "failed"
-        group["unmeasured_threads"] += record["has_gaps"]
+        group["unmeasured_threads"] += bool(record["has_gaps"] or record.get("recovery_usage_unconfirmed"))
     return {"platform": "codex", "groups": groups,
             "coverage": "missing" if not records else "partial" if any(
-                row["has_gaps"] for row in records) else "observed",
+                row["has_gaps"] or row.get("recovery_usage_unconfirmed") for row in records) else "observed",
             "individual_request_usage": "unavailable"}

@@ -56,6 +56,13 @@ class CodexProgressionHost(CodexRootHost):
         self.native_connection_id = uuid4().hex
         self.native_event_versions = {}
         self.native_subscriptions = {}
+        self.native_terminal_observations = {}
+        self.native_loaded_threads = None
+        self.native_rotation_bindings = {}
+        self.native_root_threads = set()
+        self.native_rotation_scan = None
+        self.native_rotation_proof = None
+        self.native_mutation_version = 0
         self.initial_native_bindings = set()
         self._native_connection = connection
         super().__init__(connection, permissions)
@@ -74,20 +81,48 @@ class CodexProgressionHost(CodexRootHost):
             thread = message.get('params', {}).get('threadId')
             if isinstance(thread, str):
                 self.native_event_versions[thread] = self.native_event_versions.get(thread, 0) + 1
+                self.native_terminal_observations.pop(thread, None)
+                self.native_loaded_threads = None
         super()._event(message)
 
+    def invalidate_rotation(self):
+        self.native_mutation_version += 1
+        self.native_rotation_scan = None
+        self.native_terminal_observations.clear()
+        self.native_loaded_threads = None
+        self.native_rotation_bindings = {}
+        self.native_rotation_proof = None
+
+    def open_root(self, **kwargs):
+        self.invalidate_rotation()
+        return super().open_root(**kwargs)
+
+    def start_turn(self, prompt):
+        self.invalidate_rotation()
+        return super().start_turn(prompt)
+
+    def interrupt(self):
+        self.invalidate_rotation()
+        return super().interrupt()
+
     def native_terminal_current(self, identity, proof):
+        return (self.native_rotation_current()
+            and self.native_rotation_bindings.get(identity['thread_id']) == identity['binding_key']
+            and (identity['thread_id'] not in self.native_loaded_threads
+                or self.native_terminal_observations.get(identity['thread_id']) == (
+                    identity['binding_key'], self.native_event_versions.get(identity['thread_id'], 0))))
+
+    def native_rotation_current(self):
+        # The host proof also fences an empty cohort. Per-identity checks alone
+        # have no member to invalidate when a native event arrives after census.
         return (self.connection is self._native_connection and not self.connection.failed and not self.connection.closed
-            and self.native_subscriptions.get(identity['thread_id']) == identity['platform_session']
-            and proof.get('binding_key') == identity['binding_key']
-            and proof.get('connection_id') == self.native_connection_id
-            and proof.get('event_version') == self.native_event_versions.get(identity['thread_id'], 0)
-            and proof.get('state') in {'terminal','never_started_closed'})
+            and self.native_loaded_threads is not None and self.native_rotation_proof == (
+                self.native_connection_id,self.native_mutation_version,self.native_event_versions))
 
     def _subscribe_native(self, thread_id, platform_session, cwd):
-        # Resume loads/subscribes without a turn or a permission override. Only
-        # exact control-bound participants enter here, including terminal ones
-        # whose persisted proof belongs to a previous connection.
+        # Only participants observed to need execution recovery enter here.
+        # Historical terminal observation must never load a native thread.
+        self.invalidate_rotation()
         result = self.connection.rpc('thread/resume',dict(threadId=thread_id,cwd=cwd,excludeTurns=True))
         thread = result.get('thread', {})
         if (thread.get('id'), thread.get('sessionId')) != (thread_id, platform_session):
@@ -166,62 +201,103 @@ class CodexProgressionHost(CodexRootHost):
         elif turn.get('status') != 'inProgress':
             raise HostError('recorded_turn_state_unknown')
 
-    def rotation_boundary(self, identities, *, known, limit, after=None):
-        """Count resume and read against one budget; read never subscribes."""
-        pending = sorted((value for thread, value in identities.items()
-            if not self.native_terminal_current(value,known.get(thread, {}))), key=lambda value: value['binding_key'])
-        if after:
-            pending = [value for value in pending if value['binding_key'] > after] + [value for value in pending if value['binding_key'] <= after]
-        observations, unknown = [], []
-        checked = reconciled = 0
-        last = None
-        for identity in pending:
-            if checked >= limit:
-                break
-            last = identity['binding_key']
-            subscribed = self.native_subscriptions.get(identity['thread_id']) == identity['platform_session']
-            if not subscribed:
+    def rotation_boundary(self, identities, *, known, limit, after=None, fence=None):
+        """Advance one bounded scan of this AppServer's controlled loaded pool.
+
+        Read-only observations survive only while the owner suppresses native
+        mutation for this scan. They are never a connection-lifetime cache or a
+        claim about another AppServer. Ordinary pagination consumes later probes.
+        """
+        self.native_root_threads.add(self.identity.thread_id)
+        bindings = {thread: identity['binding_key'] for thread, identity in identities.items()}
+        scan = self.native_rotation_scan
+        if (scan is None or scan['bindings'] != bindings or scan['fence'] != fence
+                or scan['mutation'] != self.native_mutation_version):
+            self.native_terminal_observations.clear()
+            self.native_loaded_threads = None
+            self.native_rotation_bindings = {}
+            self.native_rotation_proof = None
+            scan = dict(bindings=bindings, fence=fence, mutation=self.native_mutation_version,
+                versions=dict(self.native_event_versions), phase='initial', loaded=set(),
+                final=set(), cursor=None, cursors=set(), pending=[], position=0)
+            self.native_rotation_scan = scan
+        checked, reasons, last = 0, [], None
+        while checked < limit and scan['phase'] != 'done' and not reasons:
+            if scan['phase'] in {'initial', 'final'}:
                 checked += 1
                 try:
-                    self._subscribe_native(identity['thread_id'],identity['platform_session'],self.root_cwd)
+                    page = self.connection.rpc('thread/loaded/list', dict(cursor=scan['cursor'], limit=min(limit,32)))
                 except HostError:
-                    unknown.append('native_subscription_unconfirmed')
-                    reconciled += 1
+                    reasons.append('native_loaded_census_unavailable')
+                    break
+                data, cursor = page.get('data'), page.get('nextCursor')
+                selected = scan['loaded'] if scan['phase'] == 'initial' else scan['final']
+                if (not isinstance(data,list) or len(data)>min(limit,32)
+                        or any(not isinstance(thread,str) or not thread for thread in data)
+                        or len(set(data))!=len(data) or selected.intersection(data)
+                        or (cursor is not None and (not isinstance(cursor,str) or not cursor or cursor in scan['cursors']))):
+                    reasons.append('native_loaded_census_invalid')
+                    break
+                if set(data) - bindings.keys() - self.native_root_threads:
+                    reasons.append('native_loaded_identity_unbound')
+                    break
+                if cursor is not None and not data:
+                    reasons.append('native_loaded_census_incomplete')
+                    break
+                selected.update(data)
+                if cursor is not None:
+                    scan['cursors'].add(cursor)
+                    scan['cursor'] = cursor
                     continue
-                subscribed = True
-                if checked >= limit:
-                    break  # Next attempt reads this now subscribed participant.
-            version = self.native_event_versions.get(identity['thread_id'], 0)
-            checked += 1
-            reconciled += 1
-            try:
-                observed=self.connection.rpc('thread/read',dict(threadId=identity['thread_id'],includeTurns=True)).get('thread',{})
-            except HostError:
-                unknown.append('native_thread_unavailable')
-                continue
-            if (observed.get('id') != identity['thread_id'] or observed.get('sessionId') != identity['platform_session']):
-                unknown.append('native_identity_unconfirmed')
-                continue
-            turns=observed.get('turns')
-            if not isinstance(turns, list) or any(not isinstance(turn, dict) or not turn.get('id')
-                    or turn.get('status') not in {'completed','failed','interrupted'} for turn in turns):
-                unknown.append('native_turn_not_terminal')
-                continue
-            if not turns and not identity['empty_safe']:
-                unknown.append('empty_thread_not_proven_closed')
-                continue
-            if self.native_event_versions.get(identity['thread_id'], 0) != version:
-                unknown.append('native_turn_changed_during_read')
-                continue
-            if not subscribed:
-                unknown.append('native_subscription_unconfirmed')
-                continue  # Keep historical proof, without claiming fresh safety.
-            observations.append(dict(identity=identity, source='thread_read',
-                turn_id=turns[-1]['id'] if turns else None, state='terminal' if turns else 'never_started_closed',
-                connection_id=self.native_connection_id,event_version=version))
-        return dict(safe=not unknown and len(pending)==reconciled, observations=observations,
-            checked=checked, unchecked=len(pending)-reconciled, unknown=len(unknown),
-            reasons=list(dict.fromkeys(unknown))[:4], next_after=last)
+                scan['cursor'], scan['cursors'] = None, set()
+                if scan['phase'] == 'initial':
+                    scan['pending'] = sorted((identities[thread] for thread in scan['loaded'] & bindings.keys()),
+                        key=lambda identity:identity['binding_key'])
+                    scan['phase'] = 'read' if scan['pending'] else 'done'
+                elif scan['final'] != scan['loaded']:
+                    reasons.append('native_loaded_census_changed')
+                else:
+                    scan['phase'] = 'done'
+            else:
+                identity = scan['pending'][scan['position']]
+                thread = identity['thread_id']
+                last = identity['binding_key']
+                version = self.native_event_versions.get(thread,0)
+                checked += 1
+                try:
+                    observed = self.connection.rpc('thread/read',dict(threadId=thread,includeTurns=False)).get('thread',{})
+                except HostError:
+                    reasons.append('native_thread_unavailable')
+                    break
+                if (observed.get('id'),observed.get('sessionId')) != (thread,identity['platform_session']):
+                    reasons.append('native_identity_unconfirmed')
+                elif self.native_event_versions.get(thread,0) != version:
+                    reasons.append('native_turn_changed_during_read')
+                elif not isinstance(observed.get('status'),dict) or observed['status'].get('type') not in {'idle','notLoaded'}:
+                    reasons.append('native_turn_not_terminal')
+                else:
+                    self.native_terminal_observations[thread] = (identity['binding_key'],version)
+                    scan['position'] += 1
+                    if scan['position'] == len(scan['pending']):
+                        scan['phase'] = 'final'
+            if self.native_event_versions != scan['versions'] and not reasons:
+                reasons.append('native_turn_changed_during_census')
+            if self.native_mutation_version != scan['mutation'] and not reasons:
+                reasons.append('native_rotation_mutated')
+        safe = not reasons and scan['phase']=='done'
+        if safe:
+            self.native_loaded_threads = scan['loaded']
+            self.native_rotation_bindings = bindings
+            self.native_rotation_proof = (self.native_connection_id,self.native_mutation_version,
+                dict(self.native_event_versions))
+            self.native_rotation_scan = None
+        elif reasons:
+            self.native_rotation_scan = None
+            self.native_loaded_threads = None
+            self.native_terminal_observations.clear()
+        return dict(state='safe' if safe else 'unsafe' if reasons else 'pending',safe=safe,
+            observations=[],checked=checked,unchecked=len(scan['pending'])-scan['position'],
+            unknown=len(reasons),reasons=list(dict.fromkeys(reasons))[:4],next_after=last)
 
     def rotate_root(self):
         if self.completion is None or self.completion.get('status')!='completed':
@@ -237,23 +313,36 @@ class CodexProgressionHost(CodexRootHost):
     def restore_worker(self, thread_id, platform_session, cwd, *, role="worker"):
         if role not in {"worker", "helper"}:
             raise ValueError("invalid native participant role")
+        def read_state():
+            version = self.native_event_versions.get(thread_id, 0)
+            observed = self.connection.rpc('thread/read', dict(threadId=thread_id, includeTurns=False)).get('thread', {})
+            if (observed.get('id'), observed.get('sessionId')) != (thread_id, platform_session):
+                raise HostError('worker_platform_identity_changed')
+            status = observed.get('status')
+            state = status.get('type') if isinstance(status,dict) else None
+            if state not in {'active','idle','notLoaded'}:
+                raise HostError('worker_native_turn_state_unknown')
+            if self.native_event_versions.get(thread_id, 0) != version:
+                raise HostError('worker_native_turn_changed_during_read')
+            if state != 'active' and role != 'helper':
+                raise HostError('worker_native_turn_not_running')
+            return state
+        state = read_state()
+        if state != 'active':
+            return dict(native_state='terminal', usage='unconfirmed')
         self._subscribe_native(thread_id,platform_session,cwd)
-        observed = self.connection.rpc('thread/read', dict(threadId=thread_id, includeTurns=True)).get('thread', {})
-        if observed.get('id') != thread_id:
-            raise HostError('worker_platform_identity_changed')
-        turns = observed.get('turns', [])
-        statuses = [turn.get('status') for turn in turns]
-        if not statuses or any(status not in {'inProgress', 'completed', 'failed', 'interrupted'} for status in statuses):
-            raise HostError('worker_native_turn_state_unknown')
-        if 'inProgress' not in statuses and role != 'helper':
-            raise HostError('worker_native_turn_not_running')
+        # A turn can finish between the read and subscription. Reconcile its
+        # exact state without starting a replacement turn or losing its events.
+        state = read_state()
         # Helpers can finish while their owner remains active. Native terminal
         # evidence permits keeping their metering identity without waking them;
         # released_at alone never proves this state.
         # Resume subscribes to the original thread; no synthetic message or turn
         # may restart a side effect whose acceptance cannot be established.
+        return dict(native_state='active' if state=='active' else 'terminal', usage='unconfirmed')
 
     def close(self):
+        self.invalidate_rotation()
         try:
             super().close()
         finally:

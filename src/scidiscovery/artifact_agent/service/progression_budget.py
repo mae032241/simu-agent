@@ -142,8 +142,17 @@ def apply_usage_observation(db, row, checkpoint, observation):
     if previous:
         previous = _reconcile_attribution(previous, role=role,
             owner=row['instance_id'] if role != 'unattributed' else None)
-    record = observe_usage(params, previous=previous, role=role,
-        owner=row['instance_id'] if role != 'unattributed' else None, outcome='running')
+    recovery_gap = observation.get('recovery_usage_unconfirmed')
+    # A disconnect is an observation gap, not a malformed native usage event.
+    # Keep the irreversible counter-gap flag independent from this recoverable
+    # uncertainty, and preserve every previously measured counter.
+    if recovery_gap and previous is not None:
+        record = previous
+    else:
+        record = observe_usage(params, previous=previous, role=role,
+            owner=row['instance_id'] if role != 'unattributed' else None, outcome='running')
+        if recovery_gap:
+            record['has_gaps'] = False
     records[thread] = {key: record[key] for key in ('platform', 'thread_id', 'role', 'owner',
         'outcome', 'high_water', 'counted_tokens', 'has_gaps', 'coverage')}
     if previous_record and role == 'root':
@@ -153,6 +162,10 @@ def apply_usage_observation(db, row, checkpoint, observation):
              'progress_explanation_fingerprint') if key in previous_record})
     if previous_record:
         records[thread].update({key: previous_record[key] for key in ('native_turn', 'native_terminal') if key in previous_record})
+        if previous_record.get('recovery_usage_unconfirmed') and record['coverage'] != 'observed':
+            records[thread]['recovery_usage_unconfirmed'] = True
+    if recovery_gap:
+        records[thread]['recovery_usage_unconfirmed'] = True
     if loop_id:
         records[thread]['loop_id'] = loop_id
     if not independent:

@@ -821,6 +821,21 @@ class ProgressionCoordinator:
         self._deadline_running = None
         self._deadline_generation = None
         self._sync_execution_deadline(self._row())
+        if row['host_json'] and checkpoint.get('started_at') is not None:
+            # Previous observed counters do not prove final usage across a
+            # disconnect. Include retired Roots and already sealed owners;
+            # metadata reads have no final cumulative usage channel.
+            from .research_loops import current_loop
+            loop = current_loop(checkpoint)
+            with self.bindings._connect() as db:
+                prior_usage = {value['record_key']:dict(role=value['role'],loop_id=loop)
+                    for value in db.execute("SELECT record_key,json_extract(record_json,'$.role') AS role "
+                        "FROM scheduler_progression_details WHERE instance_id=? AND collection='usage_records' "
+                        "AND json_extract(record_json,'$.loop_id') IS ?", (self.instance,loop))}
+            prior_usage.update(self._identities())
+            for thread, identity in prior_usage.items():
+                self._save({}, usage_observation=dict(params=dict(threadId=thread),identity=identity,
+                    root_thread=host.identity.thread_id,recovery_usage_unconfirmed=True))
         for event in self.events:
             self._event(event)
         self.events = []
@@ -839,16 +854,22 @@ class ProgressionCoordinator:
 
     def _rotate_if_due(self,row,limits):
         cp=json.loads(row['checkpoint_json'])
+        def defer():
+            if getattr(self.host,'native_rotation_scan',None) is not None:
+                self.host.invalidate_rotation()
+            return False
         record=cp.get('usage_records',{}).get(self.host.identity.thread_id,{})
         rounds=limits.get('root_rotate_after_rounds',0)
         tokens=limits.get('root_rotate_after_input_tokens',0)
         if not ((rounds and cp.get('rounds',0)-record.get('root_started_round',cp.get('rounds',0))>=rounds)
                 or (tokens and (record.get('high_water',{}).get('input_tokens') or 0)>=tokens)):
-            return False
+            return defer()
         if (not self._host_terminal(cp) or cp.get('native_completion')!='completed'
                 or cp.get('fault_class')=='outcome_unknown' or has_unresolved_platform_requests(cp)
                 or any(i['state']=='prepared' or i.get('semantic_binding_pending') for i in cp.get('admissions',{}).values())):
-            return False
+            return defer()
+        if self._observation(lambda: self.runtime.runs.active_ids(instance_id=self.instance,limit=1)):
+            return defer()
         # Service completion is not native child quiescence. No cross-thread
         # notification/ownership transfer is assumed, including released helpers.
         identities=self._identities()
@@ -865,13 +886,26 @@ class ProgressionCoordinator:
                     (self.instance,json.dumps(list(identities))))}
         host = self.host
         connection = host.native_connection_id
+        def scan_fence(current):
+            with self.runtime.runs._connect() as db:
+                activity = db.execute('SELECT COALESCE(MAX(a.rowid),0) FROM run_activity a '
+                    'JOIN runs r ON r.run_id=a.run_id WHERE r.instance_id=?', (self.instance,)).fetchone()[0]
+            current_cp = json.loads(current['checkpoint_json'])
+            return (activity,current['state'],current['mode'],current['owner_session'],
+                current['generation'],current['host_json'],current['objective_ref_json'],current['config_json'],current_cp.get('current_loop_id'),
+                json.dumps(current_cp.get('messages',[]),sort_keys=True))
+        fence = self._observation(lambda:scan_fence(self._row()))
         known = self._observation(terminal_proofs)
         boundary = self.host.rotation_boundary(identities, known=known,
-            limit=limits.get('root_rotation_check_limit',16), after=cp.get('rotation_checked_through'))
+            limit=limits.get('root_rotation_check_limit',16), after=cp.get('rotation_checked_through'),fence=fence)
         for observation in boundary['observations']:
             self._save({}, native_observation=observation)
         self._save(dict(rotation_checked_through=boundary['next_after'], rotation_boundary={key: boundary[key]
-            for key in ('checked','unchecked','unknown','reasons')}))
+            for key in ('state','checked','unchecked','unknown','reasons')}))
+        if boundary['state']=='pending':
+            # Consume this tick without opening a new Root turn. The next probe
+            # advances this same controlled scan before snapshot early returns.
+            return True
         if not boundary['safe']:
             return False
         old=self._host_binding()
@@ -880,14 +914,19 @@ class ProgressionCoordinator:
             # an active Run. Revalidate the cohort before fencing its owner.
             with self.bindings.scheduling_lock():
                 self.host.poll(0)
-                if self.runtime.runs.active_ids(instance_id=self.instance,limit=1) or self._identities()!=identities:
+                current = self._row()
+                if (scan_fence(current)!=fence or not self._check_budget(current,limits)
+                        or not limits['enabled'] or not self.bindings.client_enabled(session_key=current['owner_session'])
+                        or self.runtime.runs.active_ids(instance_id=self.instance,limit=1) or self._identities()!=identities):
+                    host.invalidate_rotation()
                     return None
                 proofs = terminal_proofs()
                 invalid = [identity for thread,identity in identities.items()
                     if not host.native_terminal_current(identity,proofs.get(thread,{}))]
-                if self.host is not host or host.native_connection_id != connection or invalid:
+                if (self.host is not host or host.native_connection_id != connection
+                        or not host.native_rotation_current() or invalid):
                     self._save(dict(rotation_boundary=dict(checked=boundary['checked'],unchecked=0,
-                        unknown=len(invalid),reasons=['native_terminal_proof_invalidated'])))
+                        unknown=max(1,len(invalid)),reasons=['native_terminal_proof_invalidated'])))
                     return None
                 with self.runtime.runs._connect() as db:
                     if db.execute('SELECT 1 FROM worker_participants p JOIN runs r USING(run_id) WHERE r.instance_id=? AND p.thread_id IS NULL LIMIT 1',(self.instance,)).fetchone():
@@ -1325,6 +1364,10 @@ class ProgressionCoordinator:
         if self.clock() < checkpoint.get('next_probe_at', 0):
             return
         self._save(dict(probes=checkpoint.get('probes', 0)+1, next_probe_at=self.clock()+limits['poll_seconds']))
+        rotation_attempted = not continuation and getattr(self.host,'native_rotation_scan',None) is not None
+        if rotation_attempted:
+            if self._rotate_if_due(self._row(),limits):
+                return
         snapshot = self._observation(lambda: self._snapshot(self._decision_row()))
         if continuation:
             snapshot['accepted_work_only'] = True
@@ -1365,7 +1408,7 @@ class ProgressionCoordinator:
         # Intent is durable before the non-idempotent native turn/start.
         decision_row = self._decision_row()
         # The policy a native turn starts with; restoring it later must match.
-        if not continuation and self._rotate_if_due(self._row(),limits):
+        if not continuation and not rotation_attempted and self._rotate_if_due(self._row(),limits):
             return
         permissions = getattr(self.host, 'permissions', None)
         self._prepare_turn(row, decision_row, continuation, dict(phase='prepared', turn_id=None,
@@ -1458,6 +1501,12 @@ class ProgressionCoordinator:
             observed_tokens=tokens, limits=limits,
             **token_budget(checkpoint, limits),
             token_coverage=coverage, token_enforcement='asynchronous_observation; time_and_round_limits_apply')
+        recovery_usage = sum(bool(record.get('recovery_usage_unconfirmed')) for record in records.values())
+        if recovery_usage:
+            budget.update(recovery_usage_unconfirmed_threads=recovery_usage,
+                token_recovery_limitation='Disconnected threads lack a fresh cumulative usage observation. '
+                    'Native terminal reads cannot recover final usage; strict mode pauses new work while '
+                    'accepted collection and terminal handling remain allowed.')
         from .research_loops import recovery_budget
         budget['recovery'] = recovery_budget(checkpoint, limits)
         # Counters/coverage/limits are authority; only elapsed/resource display
@@ -1470,8 +1519,11 @@ class ProgressionCoordinator:
         changed = {k:v for k,v in budget.items() if k not in timed} != {k:v for k,v in previous.items() if k not in timed}
         if (force or exhausted or changed or self._budget_saved_at is None
                 or self.clock()-self._budget_saved_at >= self._limits['budget_snapshot_seconds']):
-            self._save(dict(resources=resources, budget=budget),
-                **(dict(reason='resource_limit' if resource_stop else 'budget_exhausted', stop=True) if exhausted else {}))
+            recovery_stop = allow_round and limits['token_policy']=='strict' and recovery_usage
+            self._save(dict(resources=resources, budget=budget,
+                **(dict(runtime_status='usage_recovery_unconfirmed') if recovery_stop and exhausted else {})),
+                **(dict(reason='resource_limit' if resource_stop else
+                    'usage_recovery_unconfirmed' if recovery_stop else 'budget_exhausted', stop=True) if exhausted else {}))
             self._budget_saved_at = self.clock()
         if resource_stop:
             # Resource emergency is distinct from user pause: stop only the
