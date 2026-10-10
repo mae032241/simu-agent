@@ -3,15 +3,20 @@
 Codex dispatch: use only the queued Run's returned agent_type and explicit model
 and reasoning_effort from execution_profile.profile. Disable parent history with
 fork_context=false (or fork_turns="none"). Initially ask the child to wait for
-scheduler attachment; do not send Run metadata or control tokens in chat.
+attached-start; allow at most one bounded native wait, then end the startup turn
+if still pending. Do not loop wait/poll/open or send control tokens in chat.
 If spawn exposes no native thread ID, ask only that child to describe and call
 worker_identity, report the returned thread_id/model/reasoning_effort, and wait.
 These are control-plane attachment coordinates, never scientific evidence. Do not
 substitute its nickname or task path, or ask it to infer an ID from files.
 Bind the actual native thread ID from spawn or this platform-backed query with scid_call(name="worker_attach",
 arguments={"name": <queued Run name>, "thread_id": <actual child ID>}), then
-send the instruction to begin its queued assignment. If awaiting attachment,
-complete this binding and follow up rather than creating another Run.
+use an available native followup_task targeting that same actual child to call
+worker_open_assignment({}). send_message alone does not trigger an idle turn.
+If the start tool is absent from the actual Root tool inventory, retain a blocked
+dispatch; do not assume hidden registration can be queried. Unknown spawn identity
+or acceptance cannot justify another spawn. Prepared helpers open directly through
+their owner admission, without the ordinary Root attached-start gate.
 
 An idle local_trusted child may receive a new task only after attachment to the
 new Run, with identical Operation ID, compiled digest, native agent_type and known matching actual model and

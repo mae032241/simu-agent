@@ -320,7 +320,7 @@ class RunReadProjection:
         if value.state == "queued":
             result["dispatch"] = {
                 "agent_type": value.agent_type,
-                "instruction": "Spawn agent_type with execution_profile.profile model/reasoning_effort and no parent history. Keep child waiting; get its actual thread ID from spawn or ask the child for its platform identity. Use worker_attach, then open assignment. No tool-registry identity search or guessed IDs. Reviewers must differ from subject authors. Read sealed run_status, not completion chat.",
+                "instruction": "Spawn once with the returned agent_type and execution_profile.profile model/reasoning_effort, without parent history. Initially have the ordinary Worker await attached-start for at most one bounded native wait, then end that startup turn if still unattached; never loop wait/poll or open prematurely. Use the actual child ID from this spawn for worker_attach to this exact Run. After attachment succeeds, use an available native followup_task to start that same child with worker_open_assignment({}); send_message does not wake an idle child. If the native tool is unavailable, or spawn identity/acceptance is unknown, report blocked and reconcile; never guess an ID or spawn a replacement. Prepared internal helpers open directly for admission. Reviewers must differ from subject authors. Read sealed run_status, not completion chat.",
                 "attachment": {"tool": "worker_attach", "name": result.get("name")},
                 "after_completion": {"tool": "run_status", "name": result.get("name")}}
         if isinstance(result.get("execution_profile"), dict):

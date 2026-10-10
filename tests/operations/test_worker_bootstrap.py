@@ -1,4 +1,4 @@
-"""Actual unified MCP bootstrap, without Root identity/attach relay."""
+"""Legacy signed bootstrap compatibility; normal dispatch uses explicit attach."""
 import json
 
 import pytest
@@ -17,6 +17,11 @@ def setup(tmp_path):
     _invoke(root)
     profile = root.facade.run_status(name="observation")["execution_profile"]["profile"]
     reply = result(call(gateway, "run_status", {"name": "observation", "intent": "navigation"}))
+    # Explicit legacy issuer fixture; gateway default must retain attachment.
+    from types import SimpleNamespace
+    from scidiscovery.artifact_agent.interfaces.worker_bootstrap import offer
+    assert "bootstrap" not in reply["dispatch"]
+    offer(root.facade, SimpleNamespace(session="parent", thread="parent"), reply)
     return runtime, root, gateway, profile, reply["dispatch"]["bootstrap"]
 
 
@@ -154,8 +159,11 @@ def test_new_bootstrap_requires_fresh_thread_and_old_ticket_cannot_open_new_task
         expected_state=status.state, expected_last_activity_at=status.last_activity_at)
     assert result(open_child(gateway, native_profile(profile), bootstrap))["state"] == "failed"
     _invoke(root, name="second")
-    next_bootstrap = result(call(gateway, "run_status", {"name": "second",
-        "intent": "navigation"}))["dispatch"]["bootstrap"]
+    from types import SimpleNamespace
+    from scidiscovery.artifact_agent.interfaces.worker_bootstrap import offer
+    next_reply = result(call(gateway, "run_status", {"name": "second", "intent": "navigation"}))
+    offer(root.facade, SimpleNamespace(session="parent", thread="parent"), next_reply)
+    next_bootstrap = next_reply["dispatch"]["bootstrap"]
     assert "error" in open_child(gateway, native_profile(profile), next_bootstrap)
     # Explicit legacy reuse remains supported, but an old ticket never opens it.
     result(call(gateway, "worker_attach", {"name": "second", "thread_id": "child"}))

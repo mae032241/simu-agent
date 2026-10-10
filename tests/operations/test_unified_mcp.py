@@ -579,6 +579,11 @@ def test_real_proxy_daemon_preserves_scope_and_worker_does_not_register_client(t
         else:
             queued_reply = result(request("scid_call", {"name": "run_status",
                 "arguments": {"name": "observation", "intent": "navigation"}}))
+            # Exercise legacy compatibility deliberately, not the normal dispatch contract.
+            from types import SimpleNamespace
+            from scidiscovery.artifact_agent.interfaces.worker_bootstrap import offer
+            issuer = separate_proxy_gateway(root, scheduler_proxy).facade
+            offer(issuer, SimpleNamespace(session="transport-parent", thread="transport-parent"), queued_reply)
             first_open = queued_reply["dispatch"]["bootstrap"]
         with sqlite3.connect(runtime.scheduler_bindings.client_database_path) as db:
             before = db.execute("SELECT COUNT(*) FROM scheduler_clients").fetchone()[0]

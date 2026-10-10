@@ -184,6 +184,11 @@ def test_codex_profile_contains_root_and_compiled_operation_boundaries(
         ]
         assert "trusted-local prompt boundary" in role["developer_instructions"]
         instructions = role["developer_instructions"]
+        assert "Ordinary Workers await Root attached-start" in instructions
+        assert "at most one bounded native wait" in instructions
+        assert "Prepared internal helpers instead start directly" in instructions
+        assert "send_message alone does not wake an idle child" in instructions
+        assert "no separate parent confirmation is needed" not in instructions
         assert "exact Codex-discovered Skills relevant to this subtask" in instructions
         assert "Keep Skills read-only" in instructions
         assert "Set TMPDIR and XDG_CACHE_HOME" in instructions
@@ -201,11 +206,11 @@ def test_codex_profile_contains_root_and_compiled_operation_boundaries(
     scheduler_prompt = config["developer_instructions"]
     assert "normal work requires no guide files" in scheduler_prompt
     projected = ' '.join(scheduler_prompt.split())
-    assert 'Dispatch one question that can change a research decision.' in projected
-    assert 'Interpret experiment observations through result analysis before treating them as scientific conclusions' in projected
-    assert 'do not reset them for each Worker or make them a mandatory experiment handoff floor' in projected
-    assert 'Neither a script run nor a fixed trial count forces handoff.' in projected
-    assert 'Dispatch one question' not in common_prompt  # Root policy stays out of Worker project rules.
+    assert "Schedule a complete task from the owner's sealed handoff direction using exact source names and the compiled contract." in projected
+    assert 'Analysis (A) owns interpreting evidence, evaluating outcomes' in projected
+    assert "Global completion, exploration, run-count and stopping conditions accumulate across sealed tasks. Do not turn them into a single Worker's minimum workload or completion condition" in projected
+    assert 'Neither a script run nor a trial count forces handoff.' in projected
+    assert "Schedule a complete task from the owner's sealed handoff" not in common_prompt  # Root policy stays out of Worker project rules.
     assert 'surface="execution"' in scheduler_prompt
     assert "{{SCHEDULER_GUIDE_ROOT}}" not in scheduler_prompt
     guide_root = config_root / "scidiscovery-guides"

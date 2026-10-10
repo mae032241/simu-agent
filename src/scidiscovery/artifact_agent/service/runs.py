@@ -1102,6 +1102,8 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
             if cursor.rowcount != 1:
                 raise RunStateConflict("Run failure compare-and-set failed")
             self._append_activity(connection, run_id, "framework_failure", now, canonical_json(diagnostic))
+            from .run_attention import record, DISPATCH_SCOPE
+            record(self, connection, run_id, scope=DISPATCH_SCOPE, code=None, now=now, resolution="superseded")
         return self._finish_failed_workspace(self.status(run_id))
 
     def _finish_failed_workspace(self, value: RunStatus) -> RunStatus:
@@ -2126,13 +2128,13 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
                   for row in rows[:limit]]
         return {"events": events, "next_after": events[-1]["event_id"] if len(rows) > limit else None}
 
-    def record_attention(self, run_id, *, scope, code):
+    def record_attention(self, run_id, *, scope, code, resolution='resolved'):
         from .run_attention import record
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             value = self._row(connection, run_id)
             now = timestamp()
-            record(self, connection, run_id, scope=scope, code=code, now=now)
+            record(self, connection, run_id, scope=scope, code=code, now=now, resolution=resolution)
             if code is None and scope.startswith('implementation:'):
                 # A successful exact lookup during recovery repairs that same
                 # execution's issue in its earlier owner as well, never another job.
@@ -2142,6 +2144,29 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
                     (value['instance_id'], run_id, scope)).fetchall()
                 for row in rows:
                     record(self, connection, row['run_id'], scope=scope, code=None, now=now)
+
+    def reconcile_dispatch_attention(self, run_id, *, incomplete=False, code=None, opened=False):
+        """Observe a trusted exact dispatch; no token or child-selected Run attribution."""
+        from .run_attention import record, DISPATCH_SCOPE
+        with self._connect() as connection:
+            connection.execute('BEGIN IMMEDIATE')
+            value = self._row(connection, run_id)
+            bound = connection.execute('SELECT 1 FROM worker_connections WHERE run_id=?', (run_id,)).fetchone()
+            now = timestamp()
+            if value['state'] not in {'queued', 'running'}:
+                record(self, connection, run_id, scope=DISPATCH_SCOPE, code=None, now=now, resolution='superseded')
+            elif opened and value['state'] == 'running' and bound is not None and code is None:
+                record(self, connection, run_id, scope=DISPATCH_SCOPE, code=None, now=now)
+            elif code or (value['state'] == 'queued' and incomplete):
+                prior = connection.execute("SELECT diagnostic_json FROM run_activity WHERE run_id=? "
+                    "AND activity='attention_state' AND json_extract(CAST(diagnostic_json AS TEXT),'$.scope')=? "
+                    "ORDER BY rowid DESC LIMIT 1", (run_id, DISPATCH_SCOPE)).fetchone()
+                # An unchanged pending observation never replaces a retained
+                # specific error or creates a new version on every idle tick.
+                if code is None and prior and json.loads(prior['diagnostic_json'])['state'] == 'open':
+                    return
+                record(self, connection, run_id, scope=DISPATCH_SCOPE,
+                    code=code or ('dispatch_open_required' if bound is not None else 'dispatch_attachment_required'), now=now)
 
     def attention_issues(self, *, run_id=None, instance_id=None):
         from .run_attention import issues
@@ -2637,10 +2662,11 @@ class RunService(AttemptMemoryMixin, ToolEvidenceMixin, RunAdmissionMixin):
                 raise RunStateConflict("Run completion compare-and-set failed")
             retain_source_edges(self, value, output, sources, connection=connection)
             self._append_activity(connection, run_id, 'completion_committed', completed_at, None)
-            from .run_attention import record, issues
+            from .run_attention import record, issues, DISPATCH_SCOPE
             for _, issue in issues(connection, run_id=run_id):
                 if issue['scope'].startswith('submission:'):
                     record(self, connection, run_id, scope=issue['scope'], code=None, now=completed_at)
+            record(self, connection, run_id, scope=DISPATCH_SCOPE, code=None, now=completed_at, resolution="superseded")
             from .run_attention import supersede_submission_ancestors
             supersede_submission_ancestors(self, connection, row, now=completed_at)
             connection.execute("COMMIT")

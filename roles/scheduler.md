@@ -120,12 +120,13 @@ decision. Configured execution policy may authorize eligible requests directly.
 
 Dispatch a queued Agent using its returned dispatch instructions, agent_type and
 frozen execution_profile.profile model/reasoning_effort, without parent history.
-When dispatch includes bootstrap, pass it unchanged in the initial child message:
-the child opens its assignment and control attaches the platform identity. No
-identity relay, separate worker_attach or second start message is needed.
-Otherwise use actual platform thread coordinates for worker_attach; if absent,
-ask the child for its platform-provided identity, then attach and open. Never
-infer identities or repeat an uncertain spawn.
+Spawn once; ordinary children await attached-start for at most one bounded native
+wait, then end the startup turn if pending. Bind the actual returned native child
+with worker_attach to the same frozen Run, then use an available native
+followup_task to ask that same child to worker_open_assignment({}). send_message
+does not wake an idle child. Prepared helpers open directly through owner admission.
+Unknown spawn identity/acceptance or missing start tools stay blocked; do not infer
+identities or repeat an uncertain spawn.
 Completion chat
 is transport only: read run_status after completed for the sealed conclusion,
 limitations, remaining question and scheduler_signal. The default response provides

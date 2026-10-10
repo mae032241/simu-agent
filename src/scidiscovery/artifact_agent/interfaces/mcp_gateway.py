@@ -15,6 +15,7 @@ from ...agent_execution_settings import canonical_model_id
 from ...operation_contract import DiagnosticError, validation_diagnostics
 from ...operations.tooling import parse_tool_arguments
 from ..service.worker_connections import WorkerConnections, WorkerNotAttached
+from ..service.run_records import RunStateConflict
 from .mcp import MCPRouter, rpc_error
 from .mcp_local_worker import LocalWorkerMCPRouter
 from ..worker_services import load_operation_services
@@ -73,7 +74,7 @@ class BootstrapInput(_Input):
 
 
 _OPEN = {"name": "worker_open_assignment",
-    "description": "Open an assigned task. With a control-issued dispatch_token, attach using actual native metadata first; never select a Run.",
+    "description": "Open after Root confirms worker_attach for this actual child. Prepared helpers open directly. A legacy dispatch_token remains supported; never select a Run.",
     "inputSchema": BootstrapInput.model_json_schema()}
 
 
@@ -228,6 +229,14 @@ class UnifiedMCPRouter:
             }
         raise DiagnosticError("capability is not available in this Worker assignment")
 
+    def _record_bound_open_failure(self, context):
+        # Attribution comes only from actual native coordinates, never a token claim.
+        try:
+            status = self.connections.resolve(platform_session=context.session, thread_id=context.thread)
+        except (WorkerNotAttached, RunStateConflict):
+            return
+        self.facade.runs.reconcile_dispatch_attention(status.run_id, code="dispatch_open_failed")
+
     def call(self, context, values):
         if context.worker and values.surface != "research":
             raise DiagnosticError("execution surface is available only to Root")
@@ -236,7 +245,11 @@ class UnifiedMCPRouter:
                 parsed = _parse(BootstrapInput, values.arguments)
                 if parsed.dispatch_token is not None:
                     from .worker_bootstrap import attach
-                    attach(self.facade, self.connections, context, parsed.dispatch_token)
+                    try:
+                        attach(self.facade, self.connections, context, parsed.dispatch_token)
+                    except (DiagnosticError, RunStateConflict):
+                        self._record_bound_open_failure(context)
+                        raise
                 values = values.model_copy(update={"arguments": {}})
             if values.name == "worker_identity":
                 try:
@@ -249,14 +262,30 @@ class UnifiedMCPRouter:
                 _parse(_Input, values.arguments)
                 return {"thread_id": context.thread, "model": context.model,
                         "reasoning_effort": context.effort}
-            worker, status = self._worker(context)
+            try:
+                worker, status = self._worker(context)
+            except WorkerNotAttached as error:
+                if values.name == "worker_open_assignment":
+                    raise DiagnosticError("awaiting_attachment: awaiting scheduler attachment; stop this startup turn and wait for Root attached-start via the same child; do not retry open, select a Run or spawn a replacement") from error
+                raise
+            except (DiagnosticError, RunStateConflict):
+                if values.name == "worker_open_assignment":
+                    self._record_bound_open_failure(context)
+                raise
             if values.name not in {x["name"] for x in worker.list_tools()}:
                 raise DiagnosticError("capability is not available in this Worker assignment")
             if status.state in {"failed", "completed"}:
                 if values.name == "worker_open_assignment":
                     return {"state": status.state}
                 raise DiagnosticError("bound Run is terminal; scheduler must attach a new Run before more work")
-            reply = worker.call_tool(values.name, values.arguments)
+            try:
+                reply = worker.call_tool(values.name, values.arguments)
+            except (DiagnosticError, RunStateConflict):
+                if values.name == "worker_open_assignment":
+                    self._record_bound_open_failure(context)
+                raise
+            if values.name == "worker_open_assignment" and not worker.is_helper and reply.get("state") == "opened":
+                self.facade.runs.reconcile_dispatch_attention(status.run_id, opened=True)
             if values.name == "worker_submit_result" and reply.get("state") == "completed":
                 with self._lock:
                     for key in tuple(self._workers):
@@ -286,14 +315,14 @@ class UnifiedMCPRouter:
                         with self.facade.scheduling_guard(continuation=('run', run_id)) as generation:
                             self.facade.bindings.require_dispatch_intent(instance_id=instance_id, run_id=run_id,
                                 session_key=self.facade.session_key, generation=generation)
-                            self.connections.attach(run_id=run_id, platform_session=context.session, thread_id=parsed.thread_id)
+                            try:
+                                self.connections.attach(run_id=run_id, platform_session=context.session, thread_id=parsed.thread_id)
+                            except (DiagnosticError, RunStateConflict):
+                                runs.reconcile_dispatch_attention(run_id, code="dispatch_attach_failed")
+                                raise
             return {"state": "attached", "name": parsed.name}
         # Existing Root handlers remain the sole authority for bindings, approvals and Run lifecycle.
-        reply = self.root.call_tool(values.name, values.arguments, surface=values.surface)
-        if values.surface == "research" and values.name in {"operation_invoke", "run_status"}:
-            from .worker_bootstrap import offer
-            reply = offer(self.facade, context, reply)
-        return reply
+        return self.root.call_tool(values.name, values.arguments, surface=values.surface)
 
 
 def _parse(model, arguments):

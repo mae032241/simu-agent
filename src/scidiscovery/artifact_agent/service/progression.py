@@ -26,7 +26,7 @@ from ...agent_execution_settings import ProgressionSettings
 
 
 INSTRUCTION = """Continue the explicitly started frozen research goal from this bounded brief.
-Schedule the scientific owner's complete next-task direction through public Operations,
+Schedule only H/A's sealed complete next-task direction through public Operations,
 or wait, ask a specific user question, or relay its supported goal conclusion. A completed Run does not mean
 the goal is complete. Starting this goal authorizes ordinary task selection within
 its scope and budget, including source-based analysis. Do not ask permission to
@@ -38,15 +38,18 @@ do not force an experiment or a preparatory workflow for pure evidence analysis.
 Keep attributed limitations and negative results. Read compact sealed owner
 statements and the selected contract; bind full originals for Workers. Omitted
 content is not evidence and Root must not independently interpret it. Reuse the decision
-fields in this brief and contracts already read in this native thread. Delegate missing scientific direction to H/A/W with exact source names and the
+fields in this brief and contracts already read in this native thread. Delegate missing scientific direction to H/A with exact source names and the
 original user goal. Root does not invent hypotheses, proxies, criteria, best-model
 judgments or scientific closeout; it does not acquire full reports or arrays.
 Do not repeat unchanged contract discovery. Native tool discovery
 returns matching names first, never arrays of full descriptions. Dispatch native Workers
 with the returned agent_type and frozen model/reasoning profile, fresh context and
-actual platform identities. Pass returned bootstrap unchanged in the initial child
-message when supplied; control handles attachment on open, with no identity relay.
-Without bootstrap, use the explicit attachment fallback; never infer identities. Ordinary task stages belong to that Worker; do not
+actual platform identities. Ordinary children await attached-start with at most one bounded
+native wait, then end the startup turn if still pending. Spawn once, worker_attach the
+actual returned child to the exact frozen Run, then use available native followup_task
+to start that same child with worker_open_assignment({}). Prepared helpers open directly.
+send_message does not wake idle children. Missing native tools or unknown spawn identity
+or acceptance remain blocked; never infer identities or respawn. Ordinary task stages belong to that Worker; do not
 turn them into separate Root approvals. At most one complete Agent task may be
 queued/running. Helpers belong to its owner and retain native permissions.
 At complete-task selection, scientific_intent may relay the owner's intent, target
@@ -477,6 +480,36 @@ class ProgressionCoordinator:
                     namespace='run', name=name, object_id=run_id)
                 self.bindings.record_dispatch_intent(instance_id=self.instance, session_key=row['owner_session'], run_id=run_id)
         return True
+
+    def _reconcile_dispatch_attention(self, row):
+        """Trusted settled-host observation, restricted to accepted exact-goal dispatches."""
+        checkpoint = json.loads(row['checkpoint_json'])
+        objective = json.loads(row['objective_ref_json'])
+        selected = goal_bound_runs(checkpoint, objective)
+        from .progression_records import goal_admissions
+        with self.bindings._connect() as db:
+            historical, _ = goal_admissions(db, self.instance, objective,
+                json.loads(row['config_json'])['effective']['progression']['related_source_limit'])
+        selected.update(historical)
+        for name, run_id in selected.items():
+            value = self.runtime.runs.status(run_id)
+            if value.instance_id != self.instance:
+                continue
+            with self.bindings._connect() as db:
+                visible = db.execute("SELECT 1 FROM scheduler_bindings WHERE instance=? AND namespace='run' AND name=? AND object_id=?",
+                    (self.instance, name, run_id)).fetchone()
+            if visible is None:
+                continue
+            try:
+                with self.bindings.scheduling_guard(instance_id=self.instance,
+                        session_key=row['owner_session'], expected_generation=row['generation'],
+                        continuation=('run', run_id)) as generation:
+                    self.bindings.require_dispatch_intent(instance_id=self.instance, run_id=run_id,
+                        session_key=row['owner_session'], generation=generation)
+                    self.runtime.runs.reconcile_dispatch_attention(run_id, incomplete=True)
+            except SchedulerInstanceConflict:
+                # Foreign/stale admissions do not acquire dispatch authority by observation.
+                continue
 
     def _snapshot(self, row):
         """Final results, review dependencies and versioned control notices wake decisions."""
@@ -1344,6 +1377,7 @@ class ProgressionCoordinator:
             if self.host.completion['status'] != 'completed' and not recovered:
                 self._save(dict(runtime_status='root_turn_failed', attempts=checkpoint.get('attempts', 0)+1), reason='root_turn_failed', stop=True)
                 return
+        self._reconcile_dispatch_attention(row)
         if self._observation(lambda: self.bindings.progress_boundary(instance_id=self.instance)):
             return
         report = checkpoint.get('report') or {}

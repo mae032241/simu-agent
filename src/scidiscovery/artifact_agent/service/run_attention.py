@@ -28,6 +28,9 @@ SUBMISSION_CODES = frozenset({"submission_intervention_required", "submission_ti
     "submission_state_unavailable"})
 BINDING_CODES = frozenset({"experiment_implementation_ambiguous", "experiment_implementation_unavailable"})
 ACTION = "Inspect this task with intent=status, diagnostic_after=0; preserve retained results and choose recovery. Do not repeat execution."
+DISPATCH_SCOPE = 'dispatch:assignment'
+DISPATCH_ACTION = ("Inspect this exact task with intent=status. Reconcile the original spawn; attach only its verified actual child, "
+    "then use an available native followup_task to start that same child. Unknown identity or acceptance is blocked; do not respawn.")
 
 
 def record(runs, connection, run_id, *, scope, code, now, resolution="resolved"):
@@ -136,7 +139,7 @@ def projection(items):
     if not active:
         return None
     # Never expose execution IDs, scope/bindings or engineering bodies to Root.
-    return {'code':active[0]['code'], 'action':ACTION, 'total':len(active),
+    return {'code':active[0]['code'], 'action':DISPATCH_ACTION if active[0]['scope'] == DISPATCH_SCOPE else ACTION, 'total':len(active),
         'issues':[{'code':item['code'], 'first_seen_at':item['first_seen_at'],
             'last_seen_at':item['last_seen_at']} for item in active[:8]],
         'has_more':len(active)>8}
