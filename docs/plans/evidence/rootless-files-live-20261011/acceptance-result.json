@@ -1,0 +1,72 @@
+{
+  "source_commit": "ff165dc",
+  "all_node_validation": "pass",
+  "elapsed_seconds": 1090.577,
+  "nodes": [
+    {
+      "step": 1,
+      "role": "H",
+      "seconds": 318.287,
+      "total_tokens": 575854,
+      "cached_input_tokens": 515456,
+      "uncached_input_plus_output": 60398,
+      "startup_bytes": 559,
+      "conclusion_bytes": 1198,
+      "delivered_files": 3,
+      "delivered_bytes": 28221,
+      "entry_points": 3,
+      "scratch_files": 14,
+      "scratch_bytes": 2227180
+    },
+    {
+      "step": 2,
+      "role": "W",
+      "seconds": 526.176,
+      "total_tokens": 1496877,
+      "cached_input_tokens": 1392512,
+      "uncached_input_plus_output": 104365,
+      "startup_bytes": 1267,
+      "conclusion_bytes": 1245,
+      "delivered_files": 7,
+      "delivered_bytes": 295114,
+      "entry_points": 4,
+      "scratch_files": 200,
+      "scratch_bytes": 3531942
+    },
+    {
+      "step": 3,
+      "role": "A",
+      "seconds": 245.979,
+      "total_tokens": 567278,
+      "cached_input_tokens": 506752,
+      "uncached_input_plus_output": 60526,
+      "startup_bytes": 1738,
+      "conclusion_bytes": 1277,
+      "delivered_files": 4,
+      "delivered_bytes": 45019,
+      "entry_points": 3,
+      "scratch_files": 4,
+      "scratch_bytes": 332289
+    }
+  ],
+  "totals": {
+    "total_tokens": 2640009,
+    "cached_input_tokens": 2414720,
+    "uncached_input_plus_output": 225289
+  },
+  "controller_status": "bounded_steps_exhausted",
+  "completed_steps": 3,
+  "next_role": "H",
+  "scientific_route": "revise_h",
+  "goal_completion": "not_asserted",
+  "model": "gpt-6.1-sol",
+  "reasoning_effort": "high",
+  "root_model_calls": 0,
+  "formal_experiments": 40,
+  "hidden_score": "not_measured",
+  "limitations": [
+    "single real case, not universal behavior proof",
+    "child experiment directory exercised by tests, not adopted by this native run",
+    "no new-format live reseal fault injection; regression tests cover it"
+  ]
+}
