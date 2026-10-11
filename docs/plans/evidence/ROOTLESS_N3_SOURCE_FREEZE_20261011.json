@@ -1,0 +1,14 @@
+{
+  "src/scidiscovery/research_loop/search.py": "d682016f969bed8902a66a3036681536a15f1e19b80855ac93bed0e99efd09c6",
+  "src/scidiscovery/research_loop/contracts.py": "e002a4410c4108c2ec285a8954a418067d7297a0d3befa7192bb3f7c4a16d666",
+  "src/scidiscovery/research_loop/controller.py": "8b90a37f9441a3165a5efee26ec9f364457fd0cc97e975e39648ba66df49175f",
+  "src/scidiscovery/research_loop/native.py": "a1c8a6eb05370bad25c6455a522acedcbcc1f47b4aaa2e3168bf93e7c28f3b9d",
+  "src/scidiscovery/research_loop/cli.py": "4ff7ac1362ea9f49629509e15d4b5acc63671fc7c8d22a10938deb4d051a4e6e",
+  "tests/research_loop/test_search.py": "f832f161f78e6a6bab5f853d819979a538ae91b644c4fcab60130c732778e390",
+  "tests/research_loop/test_result_schema.py": "1c40faf040f351707149379d90dfaf99d89db6001e05f3eefa030bf5d9f893cc",
+  "tests/research_loop/test_history_handoff.py": "2be3dad1fe14a7943a8ff5a4c5ad15e46c8c69f927386b63909c3ee1bd67243f",
+  "tests/research_loop/test_controller.py": "2a6916f52d01f204757edbc30e2ab6d7657bfba63e183432e6f09e1fe23d917d",
+  "tests/research_loop/test_runtime.py": "31ef5322d2b47d6e2bf8caf609b35d8a4e09596b10903305c2c59e346b7ba5ec",
+  "tests/research_loop/test_native_cli.py": "978af0758aca820c4967c7eb210ced07e3a473bf9072aad7d8c43facf9ebe4b2",
+  "docs/plans/evidence/ROOTLESS_N3_IMPLEMENTATION_DESIGN_20261011.zh-CN.md": "346c511f92901129b46c41283154443a44ceb831346300977705d79de4c27352"
+}

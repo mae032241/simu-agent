@@ -35,7 +35,7 @@ try:child.wait(timeout=.1)
 except subprocess.TimeoutExpired:child.kill();child.wait()
 output=pathlib.Path(args[args.index('--output-last-message')+1])
 output.write_text(json.dumps({'summary':'A finding','scientific_result':'Bounded evidence','limitations':['Fixture only'],
-'next_action':'wait','route_reason':'No external event protocol'}))
+'next_action':'wait','route_reason':'No external event protocol','search_plan':None}))
 print(json.dumps({'type':'thread.started','thread_id':'exact-local-thread'}),flush=True)
 print(json.dumps({'type':'turn.completed','usage':{'input_tokens':10,'output_tokens':2}}),flush=True)
 ''')

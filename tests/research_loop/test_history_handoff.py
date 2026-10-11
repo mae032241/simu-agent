@@ -16,11 +16,12 @@ def scene(tmp_path):
     root = tmp_path / 'instance'
     controller.prepare(root, objective, public, ['fake'], max_tokens=1000,
         max_seconds=60, max_steps=6, model='fake', reasoning_effort='high',
+        search_policy=None,
         max_output_item_bytes=64, max_output_total_bytes=96)
     return root
 
 
-def finish(root, step, role, parents, text='A bounded scientific finding', action='wait', files=None, summary='A contribution', limitations=None, recommendation=None):
+def finish(root, step, role, parents, text='A bounded scientific finding', action='wait', files=None, summary='A contribution', limitations=None, recommendation=None, search_choice=None):
     path = root / 'jobs' / f'{step:03d}.json'
     previous = contracts.read(path) if path.exists() else {}
     job = contracts.build_job(root, step, role, parents, previous.get('instruction', ''),
@@ -28,8 +29,10 @@ def finish(root, step, role, parents, text='A bounded scientific finding', actio
     work = contracts.workspace(root, step)
     record = contracts.host_record(work)
     payload = dict(summary=summary, scientific_result=text, limitations=limitations if limitations is not None else ['Fixture only'])
-    if role == 'A' and job.get('handoff_protocol', 1) >= 4 or recommendation is not None:
+    if (role == 'A' and job.get('handoff_protocol', 1) >= 4) or recommendation is not None:
         payload['candidate_recommendation'] = recommendation
+    if job.get('handoff_protocol', 1) >= 5 and role in {'H', 'A'}:
+        payload['search_plan' if role == 'H' else 'search_review'] = search_choice
     if role in {'H', 'A'}:
         payload.update(next_action=action, route_reason='Exact scientific question')
     for name, contents in (files or {}).items():
@@ -173,6 +176,7 @@ def test_legacy_seal_and_prepared_job_keep_original_packets_on_resume(scene):
     job.pop('history', None)
     contracts.write(scene / 'jobs/001.json', job)
     contracts.write(contracts.workspace(scene, 1) / 'science-task.json', contracts.science_view(job))
+    contracts.write(contracts.host_record(contracts.workspace(scene, 1)) / 'science-result.schema.json', contracts.result_schema('H', 1))
     finish(scene, 1, 'H', [], action='experiment')
     original = {path: path.read_bytes() for path in (
         scene / 'jobs/001.json', contracts.workspace(scene, 1) / 'science-task.json',

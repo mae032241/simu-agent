@@ -36,6 +36,13 @@ if role in {'H','A'}:
     payload.update(next_action='experiment' if role=='H' else 'finish',route_reason='Exact test direction')
 if role == 'A':
     payload['candidate_recommendation'] = None
+    ref=job['search']['commitments'][0]['mechanism_ref']
+    payload['search_review']={'dispositions':[{'mechanism_ref':ref,'status':'screened',
+      'reason':'Fixture screen evidence','evidence':['inputs/parents/002/conclusion.json']}], 'next_focus':None}
+if role == 'H':
+    payload['search_plan']={'scope':'Fixture scope','commitments':[{'label':'Fixture mechanism',
+      'minimal_test':'Fixture measurement','existing_ref':None}],
+      'focus':{'label':'Fixture mechanism','action':'screen','repair_source':None}}
 (work/'artifacts'/'observation.txt').write_text(role+' observation')
 output.write_text(json.dumps(payload))
 print(json.dumps({'type':'thread.started','thread_id':'native-'+role}),flush=True)

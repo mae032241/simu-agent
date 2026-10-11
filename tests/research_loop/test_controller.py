@@ -137,7 +137,7 @@ def scene(tmp_path, monkeypatch):
     public = tmp_path / "public"
     public.mkdir()
     controller.prepare(root, objective, public, ["fake-launcher"], max_tokens=1000,
-        max_seconds=60, max_steps=20, model="fake-model", reasoning_effort="high")
+        max_seconds=60, max_steps=20, model="fake-model", reasoning_effort="high", search_policy=None)
 
     def configure(**values):
         # Test setup only: establish a fresh frozen configuration before launch.
@@ -353,7 +353,7 @@ def test_real_sealing_and_materials_compose_with_controller(tmp_path, monkeypatc
     public = tmp_path / "public"
     public.mkdir()
     controller.prepare(root, objective, public, ["fake-launcher"], max_tokens=1000,
-        max_seconds=60, max_steps=5, model="fake", reasoning_effort="high")
+        max_seconds=60, max_steps=5, model="fake", reasoning_effort="high", search_policy=None)
     plan = [("H", "experiment"), ("W", ""), ("A", "extract"), ("E", ""), ("A", "finish")]
     calls = []
 
@@ -371,6 +371,8 @@ def test_real_sealing_and_materials_compose_with_controller(tmp_path, monkeypatc
             payload.update(next_action=action, route_reason="The direct evidence supports this route")
         if role == 'A':
             payload['candidate_recommendation'] = None
+        if role in {'H', 'A'}:
+            payload['search_plan' if role == 'H' else 'search_review'] = None
         artifacts = work / "artifacts"
         artifacts.mkdir(exist_ok=True)
         (artifacts / f"evidence-{step}.txt").write_text(f"Original {role} observation")
@@ -421,7 +423,7 @@ def real_node(tmp_path, monkeypatch):
         dict(task_sha256=contracts.digest(root / 'jobs/001.json')))
     contracts.write(record / 'science-output.json', dict(summary='Bounded result',
         scientific_result='A scientific observation', limitations=['Scope is bounded'],
-        next_action='wait', route_reason='Await further measurements'))
+        next_action='wait', route_reason='Await further measurements', search_plan=None))
     contracts.write(record / 'usage.json', dict(input_tokens=7, cached_input_tokens=0, output_tokens=3))
     contracts.write(record / 'native-outcome.json',
         dict(returncode=0, stop_reason=None, usage=native.usage(root), raw_sha256=contracts.digest(record / 'science-output.json')))

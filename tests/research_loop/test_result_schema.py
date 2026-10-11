@@ -9,9 +9,20 @@ from test_history_handoff import finish, scene, source
 def test_current_native_schema_requires_every_declared_property(role):
     schema = c.result_schema(role, c.HANDOFF_PROTOCOL)
     # Native strict response_format requires this equality, beyond JSON Schema validity.
-    assert set(schema['required']) == set(schema['properties'])
-    assert schema['additionalProperties'] is False
-    if role != 'A':
+    def strict(value):
+        if not isinstance(value, dict):
+            return
+        if 'properties' in value:
+            assert set(value['required']) == set(value['properties'])
+            assert value['additionalProperties'] is False
+        for nested in value.values():
+            if isinstance(nested, dict):
+                strict(nested)
+            elif isinstance(nested, list):
+                for item in nested:
+                    strict(item)
+    strict(schema)
+    if role not in {'H', 'A'}:
         assert schema == c.result_schema(role, 3)
 
 
@@ -19,7 +30,8 @@ def test_current_native_schema_requires_every_declared_property(role):
 def test_current_a_scientific_recommendation_can_be_null_or_candidate(tmp_path, recommendation):
     raw = tmp_path / 'science-output.json'
     payload = dict(summary='Independent finding', scientific_result='Bounded result', limitations=[],
-                   next_action='wait', route_reason='More evidence needed', candidate_recommendation=recommendation)
+                   next_action='wait', route_reason='More evidence needed', candidate_recommendation=recommendation,
+                   search_review=None)
     c.write(raw, payload)
     assert c.science_payload(raw, 'A', c.HANDOFF_PROTOCOL) == payload
     payload.pop('candidate_recommendation')
@@ -73,3 +85,21 @@ def test_current_a_seals_without_any_scientific_recommendation(scene):
     _, work, record = finish(scene, 3, 'A', [2], action='wait')
     assert c.read(record / 'science-output.json')['candidate_recommendation'] is None
     assert c.validate(work)['next_action'] == 'wait'
+
+
+def test_legacy_protocol4_a_seal_has_no_search_field_on_rebuild(scene):
+    source(scene)
+    job = c.build_job(scene, 3, 'A', [2])
+    job['handoff_protocol'] = 4
+    work = c.workspace(scene, 3);record = c.host_record(work)
+    c.write(scene / 'jobs/003.json', job)
+    c.write(work / 'science-task.json', c.science_view(job))
+    c.write(record / 'science-result.schema.json', c.result_schema('A', 4))
+    finish(scene, 3, 'A', [2], action='revise_h')
+    assert 'search_review' not in c.read(record / 'science-output.json')
+    paths = [scene / 'jobs/003.json', work / 'science-task.json', record / 'science-result.schema.json',
+             record / 'science-output.json', record / 'result-identity.json']
+    original = {path: path.read_bytes() for path in paths}
+    assert c.build_job(scene, 3, 'A', [2]) == job
+    c.validate(work)
+    assert all(path.read_bytes() == data for path, data in original.items())

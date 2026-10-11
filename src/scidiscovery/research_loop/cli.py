@@ -5,7 +5,7 @@ import argparse
 import json
 from pathlib import Path
 
-from . import budget, contracts, controller, native, runtime
+from . import budget, contracts, controller, native, runtime, search
 
 
 def status(root: Path):
@@ -40,6 +40,7 @@ def main(argv=None):
     prepare.add_argument('--public-root', type=Path, required=True)
     prepare.add_argument('--native-launcher-json', required=True, help='An argv JSON array, e.g. ["codex"]')
     prepare.add_argument('--history-observer-config', type=Path, help='Optional trusted host adapter/config JSON; frozen at preparation')
+    prepare.add_argument('--search-policy', type=Path, help='Optional JSON override of the three frozen W-search ceilings')
     prepare.add_argument('--max-tokens', type=int, required=True)
     prepare.add_argument('--max-seconds', type=float, required=True, help='Maximum advancement seconds; explicit pauses do not consume this ceiling')
     prepare.add_argument('--max-steps', type=int, required=True)
@@ -66,6 +67,8 @@ def main(argv=None):
                 json.loads(args.native_launcher_json), max_tokens=args.max_tokens, max_seconds=args.max_seconds,
                 max_steps=args.max_steps, model=args.model, reasoning_effort=args.reasoning_effort,
                 service_tier=args.service_tier, user_updates=args.user_update,
+                search_policy=contracts.read(contracts.regular(args.search_policy, limit=4096))
+                    if args.search_policy is not None else search.DEFAULT_POLICY,
                 history_observer=contracts.read(contracts.regular(args.history_observer_config, limit=64_000))
                     if args.history_observer_config is not None else None)
             result = dict(status='prepared', instance=str(root), goal_id=settings['goal_id'])

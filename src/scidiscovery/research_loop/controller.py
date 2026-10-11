@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import uuid
 
-from . import budget, contracts, history, native, runtime
+from . import budget, contracts, history, native, runtime, search
 
 
 def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str], *,
@@ -16,7 +16,8 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
             max_output_item_bytes: int = 32 * 1024 * 1024,
             max_output_total_bytes: int = 64 * 1024 * 1024,
             user_updates: list[Path] | None = None,
-            history_observer: dict | None = None) -> dict:
+            history_observer: dict | None = None,
+            search_policy: dict | None = search.DEFAULT_POLICY) -> dict:
     """Freeze an explicit goal and finite launch budgets in a fresh directory."""
     root, objective, public_root = map(Path, (root, objective, public_root))
     for name, value in (("max_tokens", max_tokens), ("max_steps", max_steps),
@@ -46,6 +47,7 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
     if any(not update.strip() for update in updates):
         raise ValueError('Global user updates must contain original user text')
     observer = history.observer_config(history_observer) if history_observer is not None else None
+    search_limits = search.policy(search_policy) if search_policy is not None else None
     settings = dict(goal_id="scid-hwa-" + uuid.uuid4().hex[:12], objective=text,
         public_root=str(public_root.resolve()), native_launcher_argv=list(launcher),
         max_tokens=max_tokens, max_seconds=max_seconds, max_steps=max_steps, time_budget_basis="active",
@@ -54,6 +56,8 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
         max_output_total_bytes=max_output_total_bytes)
     if observer is not None:
         settings['history_observer'] = observer
+    if search_limits is not None:
+        settings['search_policy'] = search_limits
     root.mkdir(parents=True)
     globals_ = root / 'project/global'
     (globals_ / 'updates').mkdir(parents=True)
@@ -253,8 +257,12 @@ def _run(root):
             limit = _launch_limit(root, settings)
             if limit:
                 return _finish(root, settings, limit, completed, last, next_role=role)
-            contracts.build_job(root, step, role, parents, instruction=instruction,
-                                evidence_return=evidence_return)
+            job = contracts.build_job(root, step, role, parents, instruction=instruction,
+                                      evidence_return=evidence_return)
+            search_limit = search.launch_reason(root, job)
+            if search_limit:
+                return _finish(root, settings, 'search_pending', completed, last,
+                    reason=search_limit, next_role=role)
             # Job creation is reversible; check again at the actual launch boundary.
             if (root / "pause.request").exists():
                 return _finish(root, settings, "paused", completed, last, next_role=role)

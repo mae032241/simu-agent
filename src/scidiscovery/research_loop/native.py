@@ -13,7 +13,7 @@ import signal
 import subprocess
 import time
 
-from . import budget as control_budget, runtime
+from . import budget as control_budget, runtime, search
 from .contracts import (ACTIONS, ROLE_INSTRUCTIONS, digest, host_record, read,
                         seal_result, workspace, write, settings as frozen_settings)
 
@@ -56,8 +56,11 @@ def execute_native(root: Path, step: int):
     record = host_record(workspace(root, step))
     record.mkdir(parents=True, exist_ok=True)
     job_path = root / "jobs" / f"{step:03d}.json"
+    job = read(job_path)
+    anchor = search.accept(root, job)
     with (record / "native-intent.json").open("x") as stream:
-        json.dump(dict(step=step, task_sha256=digest(job_path), prepared_at=time.time()), stream)
+        json.dump(dict(step=step, task_sha256=digest(job_path), prepared_at=time.time(),
+                       **(dict(search_slice=anchor) if anchor is not None else {})), stream)
         stream.flush()
         os.fsync(stream.fileno())
     runtime.start(root, step)
@@ -148,6 +151,7 @@ def run_native(root: Path, step: int):
             stop = ('wall_limit' if limits['seconds_remaining'] <= 0 else
                     'usage_unknown' if any(item != step for item in latest['unknown_steps']) else
                     'token_limit' if latest['observed_tokens'] >= limits['max_tokens'] else None)
+            stop = stop or search.stop_reason(root, job, intent, limits, meter)
             if stop:
                 write(record / 'usage.json', dict(input_tokens=0, cached_input_tokens=0, output_tokens=0))
                 write(record / 'native-outcome.json', dict(returncode=None, stop_reason=stop,
@@ -197,6 +201,7 @@ def run_native(root: Path, step: int):
                         stop = 'wall_limit'
                     elif usage(root)['observed_tokens'] >= limits['max_tokens']:
                         stop = 'token_limit'
+                    stop = stop or search.stop_reason(root, job, intent, limits, meter)
                     if stop:
                         break
     except BaseException as exc:
@@ -226,6 +231,12 @@ def run_native(root: Path, step: int):
     outcome = dict(returncode=process.returncode if process else None,
           stop_reason=stop, usage=usage(root), thread_id=thread_id, cleanup=cleanup,
           limitation='Terminal native usage observation; in-flight usage may be absent.')
+    if intent.get('search_slice') is not None:
+        try:
+            outcome['search_slice'] = search.report(root, job, intent, meter)
+        except ValueError:
+            stop = outcome['stop_reason'] = 'w_slice_meter_unknown'
+            outcome['search_slice'] = dict(status='unknown')
     if error is not None:
         write(record / 'native-outcome.json', outcome)
         raise error
