@@ -34,6 +34,7 @@ def main(argv=None):
     prepare = commands.add_parser('prepare', help='Create a fresh instance with explicit finite budgets')
     prepare.add_argument('--root', type=Path, required=True)
     prepare.add_argument('--objective', type=Path, required=True)
+    prepare.add_argument('--user-update', type=Path, action='append', default=[], help='Freeze an additional user statement in global inputs; repeat for more')
     prepare.add_argument('--public-root', type=Path, required=True)
     prepare.add_argument('--native-launcher-json', required=True, help='An argv JSON array, e.g. ["codex"]')
     prepare.add_argument('--max-tokens', type=int, required=True)
@@ -56,7 +57,7 @@ def main(argv=None):
             settings = controller.prepare(root, args.objective, args.public_root,
                 json.loads(args.native_launcher_json), max_tokens=args.max_tokens, max_seconds=args.max_seconds,
                 max_steps=args.max_steps, model=args.model, reasoning_effort=args.reasoning_effort,
-                service_tier=args.service_tier)
+                service_tier=args.service_tier, user_updates=args.user_update)
             result = dict(status='prepared', instance=str(root), goal_id=settings['goal_id'])
         elif args.command == 'status':
             result = status(root)

@@ -15,7 +15,8 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
             max_tokens: int, max_seconds: float, max_steps: int,
             model: str, reasoning_effort: str, service_tier: str = "default",
             max_output_item_bytes: int = 32 * 1024 * 1024,
-            max_output_total_bytes: int = 64 * 1024 * 1024) -> dict:
+            max_output_total_bytes: int = 64 * 1024 * 1024,
+            user_updates: list[Path] | None = None) -> dict:
     """Freeze an explicit goal and finite launch budgets in a fresh directory."""
     root, objective, public_root = map(Path, (root, objective, public_root))
     for name, value in (("max_tokens", max_tokens), ("max_steps", max_steps),
@@ -40,6 +41,10 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
     text = objective.read_text(encoding="utf-8")
     if not text.strip():
         raise ValueError("The objective must contain original user text")
+    updates = [contracts.regular(Path(path)).read_text(encoding='utf-8')
+               for path in (user_updates or [])]
+    if any(not update.strip() for update in updates):
+        raise ValueError('Global user updates must contain original user text')
     settings = dict(goal_id="scid-hwa-" + uuid.uuid4().hex[:12], objective=text,
         public_root=str(public_root.resolve()), native_launcher_argv=list(launcher),
         max_tokens=max_tokens, max_seconds=max_seconds, max_steps=max_steps,
@@ -47,7 +52,18 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
         max_output_item_bytes=max_output_item_bytes,
         max_output_total_bytes=max_output_total_bytes)
     root.mkdir(parents=True)
-    (root / "project").mkdir()
+    globals_ = root / 'project/global'
+    (globals_ / 'updates').mkdir(parents=True)
+    sources = [(globals_ / 'objective.md', text), *[
+        (globals_ / 'updates' / f'{index:03d}.md', update)
+        for index, update in enumerate(updates, 1)]]
+    settings['global_materials'] = []
+    for source, contents in sources:
+        source.write_text(contents, encoding='utf-8')
+        source.chmod(0o400)
+        settings['global_materials'].append(dict(source=source.relative_to(root).as_posix(),
+            path='inputs/global/' + source.relative_to(globals_).as_posix(),
+            sha256=contracts.digest(source)))
     contracts.write(root / "settings.json", settings)
     contracts.write(root / "settings-identity.json",
                     dict(sha256=contracts.digest(root / "settings.json")))
@@ -113,7 +129,7 @@ def _finish(root, settings, status, completed, last, *, reason=None, next_role=N
 def _check_job(root, settings, step, role, parents, instruction, evidence_return):
     """A retained node must be the exact job selected by its sealed predecessor."""
     job = contracts.read(root / "jobs" / f"{step:03d}.json")
-    expected_refs = [dict(path=f"inputs/{parent:03d}.json",
+    expected_refs = [dict(path=f"inputs/parents/{parent:03d}/conclusion.json",
         sha256=contracts.digest(_record(root, parent) / "science-output.json"))
         for parent in parents]
     if (job.get("step") != step or job.get("role") != role
@@ -173,6 +189,21 @@ def _route(root, step, role, result, job, current_h, current_w):
     return (*route, current_h, current_w)
 
 
+def _terminal_success(record):
+    try:
+        outcome = contracts.read(record / 'native-outcome.json')
+        raw = contracts.regular(record / 'science-output.json')
+        return (type(outcome.get('returncode')) is int and outcome['returncode'] == 0
+                and not outcome.get('stop_reason') and not outcome['usage']['unknown_steps']
+                and outcome.get('raw_sha256') == contracts.digest(raw))
+    except (KeyError, ValueError, OSError, TypeError):
+        return False
+
+
+def _seal_reason(error):
+    return str(error) if isinstance(error, ValueError) else type(error).__name__
+
+
 def _run(root):
     settings = contracts.settings(root)
     started_path = root / "host-started.json"
@@ -190,11 +221,21 @@ def _run(root):
         work = contracts.workspace(root, step)
         identity = record / "result-identity.json"
         if not identity.exists():
-            if any(path.exists() for path in (record / "native-intent.json",
-                    record / "native-outcome.json", record / "science-output.json", work / "result.json")):
-                return _finish(root, settings, "native_outcome_unsealed", completed, last,
-                    reason="Retain the original native launch; only complete sealed nodes can resume",
-                    next_role=role)
+            retained = any(path.exists() for path in (record / "native-intent.json",
+                record / "native-outcome.json", record / "science-output.json", record / "result.json"))
+            if retained:
+                if not _terminal_success(record):
+                    return _finish(root, settings, "native_outcome_unsealed", completed, last,
+                        reason="Retain the original native work; its terminal scientific output is unverified",
+                        next_role=role)
+                try:
+                    _check_job(root, settings, step, role, parents, instruction, evidence_return)
+                    contracts.seal_result(root, step)
+                except Exception as error:
+                    return _finish(root, settings, "seal_pending", completed, last,
+                        reason=f"Native science succeeded; host sealing requires repair: {_seal_reason(error)}",
+                        next_role=role)
+        if not identity.exists():
             limit = _launch_limit(root, settings, deadline)
             if limit:
                 return _finish(root, settings, limit, completed, last, next_role=role)
@@ -209,6 +250,10 @@ def _run(root):
             try:
                 native.execute_native(root, step)
             except Exception as error:
+                if _terminal_success(record):
+                    return _finish(root, settings, "seal_pending", completed, last,
+                        reason=f"Native science succeeded; host sealing requires repair: {_seal_reason(error)}",
+                        next_role=role)
                 return _finish(root, settings, "native_stopped", completed, last,
                     reason=f"Native work did not seal ({type(error).__name__}); original intent is retained",
                     next_role=role)

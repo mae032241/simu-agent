@@ -13,7 +13,7 @@ import signal
 import subprocess
 import time
 
-from .contracts import (ROLE_INSTRUCTIONS, digest, host_record, read,
+from .contracts import (ACTIONS, ROLE_INSTRUCTIONS, digest, host_record, read,
                         seal_result, workspace, write, settings as frozen_settings)
 
 
@@ -69,21 +69,32 @@ def execute_native(root: Path, step: int):
     # Raw Codex is supported as a local soft-isolation entry. Existing qualified
     # launchers retain their own exact argv/config protocol and MCP settings.
     if len(settings['native_launcher_argv']) == 1 and Path(args[0]).name == 'codex':
-        args[-1:-1] = ['--skip-git-repo-check', '--output-schema', str(work / 'science-result.schema.json'),
+        args[-1:-1] = ['--skip-git-repo-check', '--output-schema', str(record / 'science-result.schema.json'),
                        '-c', 'project_doc_max_bytes=0', '-c', 'mcp_servers.scidiscovery.enabled=false',
                        '-c', 'features.multi_agent=false', '-c', 'features.fast_mode=false',
                        '-c', 'approval_policy="never"',
                        '-c', 'developer_instructions=' + json.dumps(ROLE_INSTRUCTIONS[job['role']]),
                        '-c', f'service_tier={json.dumps(settings["service_tier"])}']
     (work / 'artifacts').mkdir(exist_ok=True)
+    (work / 'work').mkdir(exist_ok=True)
     budget = usage(root)
     deadline = read(root / 'host-started.json')['at_unix'] + settings['max_seconds']
-    prompt = (ROLE_INSTRUCTIONS[job['role']] + '\nRead science-task.json and science-result.schema.json. '
-              'Read direct files as needed using native tools. Put your own deliverables in artifacts/. '
-              'Return ONLY the scientific JSON: no binding IDs, parent references, tool-call envelopes or framework reports. '
-              'next_action, when required, is one exact enum value; put reasons separately in route_reason. '
-              'Do not create other role agents: the controller dispatches your chosen successor. '
-              'Functional tools remain subject to their own permissions.\n' + json.dumps(dict(
+    prompt = (ROLE_INSTRUCTIONS[job['role']] + '\nRead science-task.json, then the global files and direct '
+              'parent conclusions it names. Read particular parent artifacts only as scientifically needed. '
+              'Use work/ for scratch code, logs, diagnostics and intermediate models; artifacts/ contains only '
+              'necessary deliverables for the next role. Experiments may use experiments/<name>/{work,artifacts} '
+              'and an optional brief scientific conclusion.md. Those are directories, not extra role agents. '
+              'Conclude once you have a decision-relevant scientific contribution. Report findings, uncertainties '
+              'and Markdown links to the few needed deliverables, such as [comparison](artifacts/comparison.csv); '
+              'the host resolves these links for the next role. Leave further scientific verification requests to A. '
+              'The controller collects deliverables, records paths and hashes, validates and seals your final response. '
+              'Do not build attachment indexes, manifests, provenance inventories, hash lists, packaging scripts, '
+              'or schema validators. Do not duplicate final responses in files or copy every model for handoff. '
+              'Scientific checks required by the task remain your work. Return the small scientific JSON described '
+              'by final_response, directly as your final answer. Routing, when needed, uses next_action with a '
+              'separate route_reason. The controller dispatches the next role; functional tools retain their permissions.\n'
+              + json.dumps(dict(
+                  next_action_options=ACTIONS.get(job['role'], []),
                   shared_seconds_remaining=max(0, int(deadline-time.time())),
                   shared_observed_tokens_remaining=max(0, settings['max_tokens']-budget['observed_tokens']),
                   metering='Native usage may be delayed; this is not a guaranteed billing cap.'), ensure_ascii=False))
@@ -171,4 +182,7 @@ def execute_native(root: Path, step: int):
     if pending.is_symlink() or not pending.is_file():
         raise ValueError('Native science output is missing or not a regular file')
     os.replace(pending, raw)
+    outcome = read(record / 'native-outcome.json')
+    outcome['raw_sha256'] = digest(raw)
+    write(record / 'native-outcome.json', outcome)
     return seal_result(root, step)

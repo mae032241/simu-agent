@@ -25,7 +25,10 @@ work=pathlib.Path(os.environ['THIN_HWA_WORKSPACE'])
 prompt=sys.stdin.read()
 assert 'MCP' not in prompt
 job=json.loads((work/'science-task.json').read_text())
-assert job['role']==role and 'goal_text' in job
+assert job['role']==role and 'global' in job
+assert not (work/'science-result.schema.json').exists()
+assert 'Do not build attachment indexes' in prompt
+assert 'inputs/global/objective.md' == job['global']['objective']
 output=pathlib.Path(args[args.index('--output-last-message')+1])
 payload={'summary':role+' bounded finding','scientific_result':'Evidence in artifacts/observation.txt',
          'limitations':['Only a deterministic test; no science validation.']}
@@ -85,8 +88,7 @@ def test_role_route_is_exact_enum_not_prose(tmp_path):
     path = tmp_path / 'raw.json'
     path.write_text(json.dumps(dict(summary='A', scientific_result='Observed', limitations=[],
                                    next_action='continue_w: more experiments', route_reason='A reason')))
-    import jsonschema
-    with pytest.raises(jsonschema.ValidationError):
+    with pytest.raises(ValueError):
         contracts.science_payload(path, 'A')
     value = json.loads(path.read_text())
     value['next_action'] = 'continue_w'
@@ -108,14 +110,15 @@ def test_native_without_usage_is_not_replayed(instance):
 def test_tampered_direct_result_never_reaches_next_role(instance):
     controller.run(instance)
     work = contracts.workspace(instance, 3)
-    (work / 'inputs/002.json').write_text('{}')
+    (work / 'inputs/parents/002/conclusion.json').chmod(0o600)
+    (work / 'inputs/parents/002/conclusion.json').write_text('{}')
     assert controller.run(instance)['status'] == 'sealed_node_invalid'
 
 
 def test_actual_material_copy_cannot_change_while_parent_stays_valid(instance):
     controller.run(instance)
     work = contracts.workspace(instance, 3)
-    original = work / 'originals/002/observation.txt'
+    original = work / 'inputs/parents/002/artifacts/observation.txt'
     original.chmod(0o600)
     original.write_text('Fabricated local evidence')
     assert contracts.validate(contracts.workspace(instance, 2))['role'] == 'W'
@@ -127,12 +130,12 @@ def test_actual_material_copy_cannot_change_while_parent_stays_valid(instance):
 def test_next_role_receives_science_without_parent_bindings(instance):
     controller.run(instance)
     work = contracts.workspace(instance, 3)
-    value = contracts.read(work / 'inputs/002.json')
+    value = contracts.read(work / 'inputs/parents/002/conclusion.json')
     assert set(value) == {'summary', 'scientific_result', 'limitations'}
     task = contracts.read(work / 'science-task.json')
-    assert all(set(item) == {'path'} for item in task['direct_results'])
+    assert all(set(item) == {'conclusion', 'artifacts'} for item in task['parents'])
     assert 'sha256' not in json.dumps(task)
-    assert not (work / 'originals/001/originals').exists()
+    assert not (work / 'inputs/parents/001/inputs').exists()
 
 
 def test_native_meter_rejects_impossible_caching():
