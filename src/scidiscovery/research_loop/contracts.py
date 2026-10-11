@@ -16,7 +16,7 @@ from urllib.parse import unquote, urlsplit
 MAX_RESULT_BYTES = 64_000
 MAX_REUSED_INPUTS = 16
 REUSE_FRAGMENT = 'reuse-implementation'
-HANDOFF_PROTOCOL = 2
+HANDOFF_PROTOCOL = 3
 ACTIONS = {
     'H': ('experiment', 'analyze', 'extract', 'wait'),
     'A': ('continue_w', 'revise_h', 'extract', 'wait', 'finish'),
@@ -88,7 +88,7 @@ def regular(path: Path, *, limit=None):
     return path
 
 
-def result_schema(role: str):
+def result_schema(role: str, protocol=1):
     if role not in ROLE_INSTRUCTIONS:
         raise ValueError('Unknown scientific role')
     properties = {
@@ -99,14 +99,18 @@ def result_schema(role: str):
     if role in ACTIONS:
         properties.update(next_action={'type': 'string', 'enum': list(ACTIONS[role])},
                           route_reason={'type': 'string', 'minLength': 1})
-    return dict(type='object', properties=properties, required=list(properties), additionalProperties=False)
+    required = list(properties)
+    if role == 'A' and protocol >= 3:
+        properties['candidate_recommendation'] = dict(type=['string', 'null'], maxLength=80,
+            description='Optional scientific recommendation: one listed candidate ID, or null when unknown.')
+    return dict(type='object', properties=properties, required=required, additionalProperties=False)
 
 
-def science_payload(path: Path, role: str):
+def science_payload(path: Path, role: str, protocol=1):
     import jsonschema
     value = read(regular(path, limit=MAX_RESULT_BYTES))
     try:
-        jsonschema.validate(value, result_schema(role))
+        jsonschema.validate(value, result_schema(role, protocol))
     except jsonschema.ValidationError as error:
         raise ValueError('Invalid scientific result fields') from error
     if any(not value[key].strip() for key in ('summary', 'scientific_result')) or (
@@ -160,7 +164,7 @@ def artifact_entry_points(work, payload, materials):
 
 def selected_inputs(work, payload, job):
     """Resolve explicit reuse intent against this role's already frozen inputs."""
-    if job.get('handoff_protocol', 1) != HANDOFF_PROTOCOL:
+    if job.get('handoff_protocol', 1) < 2:
         return []  # Preserve the meaning and exact packets of historical jobs.
     root = work.parents[2]
     policy = settings(root)
@@ -175,12 +179,17 @@ def selected_inputs(work, payload, job):
         decoded = unquote(url.path)
         path = PurePosixPath(decoded)
         if (url.scheme or url.netloc or url.query or '\\' in decoded or '..' in path.parts
-                or path.is_absolute() or path.as_posix() != decoded or decoded not in bound):
+                or path.is_absolute() or path.as_posix() != decoded):
             raise ValueError('Implementation reuse must name one exact already bound input')
         if decoded in seen:
             continue
         seen.add(decoded)
-        row = bound[decoded]
+        row = bound.get(decoded)
+        if row is None and job.get('handoff_protocol', 1) >= 3 and decoded.startswith('history/nodes/'):
+            from . import history
+            row = history.resolve(root, decoded, job['history']['nodes'])
+        if row is None:
+            raise ValueError('Implementation reuse must name one exact already bound input')
         source = Path(row['source'])
         try:
             origin = source.relative_to(root / 'project/nodes').parts[0]
@@ -219,8 +228,9 @@ def science_view(job):
                  implementation_reuse='To give the next role a needed implementation, link an already '
                  'bound input with #reuse-implementation. Ordinary citations do not forward old inputs. '
                  'The host resolves identities; do not copy or index them.')
-           if job.get('handoff_protocol', 1) == HANDOFF_PROTOCOL else {}),
-        'final_response': list(result_schema(job['role'])['properties']),
+           if job.get('handoff_protocol', 1) >= 2 else {}),
+        **(dict(history=job['history']['view']) if job.get('handoff_protocol', 1) >= 3 else {}),
+        'final_response': list(result_schema(job['role'], job.get('handoff_protocol', 1))['properties']),
         'outputs': 'artifacts/', 'scratch': 'work/',
         'experiments': 'experiments/<id>/{work/,artifacts/,conclusion.json or conclusion.md}; '
                        'child deliverables are collected by the host; scratch is excluded',
@@ -315,7 +325,7 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
     policy = settings(root)
     job_path = root / 'jobs' / f'{step:03d}.json'
     protocol = read(regular(job_path)).get('handoff_protocol', 1) if job_path.exists() else HANDOFF_PROTOCOL
-    if protocol not in (1, HANDOFF_PROTOCOL):
+    if protocol not in (1, 2, HANDOFF_PROTOCOL):
         raise ValueError('Unsupported frozen handoff protocol')
     work = workspace(root, step)
     work.mkdir(parents=True, exist_ok=True)
@@ -340,7 +350,7 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
         entry_points.extend(parent_seal.get('entry_points', []))
         # Reuse is an instruction to the immediate next node, not persistent
         # baggage on a retained H ancestor in every later scientific cycle.
-        if protocol == HANDOFF_PROTOCOL and parent == step - 1:
+        if protocol >= 2 and parent == step - 1:
             selected.extend(parent_seal.get('selected_inputs', []))
     unique = {}
     for item in [*materials, *[row['material'] for row in selected]]:
@@ -348,7 +358,7 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
             raise ValueError('Selected input paths conflict')
         unique[item['path']] = item
     materials = list(unique.values())
-    if protocol == HANDOFF_PROTOCOL and (any(row['size_bytes'] > policy['max_output_item_bytes'] for row in materials)
+    if protocol >= 2 and (any(row['size_bytes'] > policy['max_output_item_bytes'] for row in materials)
             or sum(row['size_bytes'] for row in materials) > policy['max_output_total_bytes']):
         raise ValueError('Combined input materials exceed the frozen handoff bound')
     reused = {}
@@ -364,10 +374,13 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
     job = dict(step=step, role=role, goal_text=policy['objective'], public_root=policy['public_root'],
                instruction=instruction, direct_refs=refs, direct_materials=materials, direct_entry_points=entry_points, global_materials=globals_,
                evidence_return=evidence_return, **(dict(selected_inputs=selected) if selected else {}),
-               **(dict(handoff_protocol=protocol) if protocol == HANDOFF_PROTOCOL else {}))
+               **(dict(handoff_protocol=protocol) if protocol >= 2 else {}))
+    if protocol >= 3:
+        from . import history
+        job['history'] = history.bind(root, step)
     for path, value in ((root / 'jobs' / f'{step:03d}.json', job),
                         (work / 'science-task.json', science_view(job)),
-                        (host_record(work) / 'science-result.schema.json', result_schema(role))):
+                        (host_record(work) / 'science-result.schema.json', result_schema(role, protocol))):
         if path.exists():
             if read(regular(path)) != value:
                 raise ValueError('Frozen scientific task changed')
@@ -392,7 +405,7 @@ def validate(work: Path):
             or seal['raw_sha256'] != digest(conclusion) or outcome.get('raw_sha256') != seal['raw_sha256']
             or read(regular(work / 'science-task.json')) != science_view(job)):
         raise ValueError('Scientific node identity changed')
-    payload = science_payload(raw, job['role'])
+    payload = science_payload(raw, job['role'], job.get('handoff_protocol', 1))
     if read(result) != envelope(job, payload):
         raise ValueError('Result envelope differs from author science')
     if seal.get('entry_points', []) != artifact_entry_points(work, payload, seal['materials']):
@@ -400,6 +413,9 @@ def validate(work: Path):
     if seal.get('selected_inputs', []) != selected_inputs(work, payload, job):
         raise ValueError('Selected implementation receipts changed')
     _validate_inputs(root, work, job)
+    if job.get('handoff_protocol', 1) >= 3:
+        from . import history
+        history.validate_observation(root, job, seal)
     for ref in seal['materials']:
         path = regular(Path(ref['source']))
         if path.stat().st_size != ref['size_bytes'] or digest(path) != ref['sha256']:
@@ -413,7 +429,10 @@ def _validate_inputs(root, work, job):
     if job['global_materials'] != global_materials(root):
         raise ValueError('Bound global context changed')
     policy = settings(root)
-    if job.get('handoff_protocol', 1) == HANDOFF_PROTOCOL and (
+    if job.get('handoff_protocol', 1) >= 3:
+        from . import history
+        history.validate(root, work, job['history'])
+    if job.get('handoff_protocol', 1) >= 2 and (
             any(row['size_bytes'] > policy['max_output_item_bytes'] for row in job['direct_materials'])
             or sum(row['size_bytes'] for row in job['direct_materials']) > policy['max_output_total_bytes']):
         raise ValueError('Combined input materials exceed the frozen handoff bound')
@@ -447,7 +466,11 @@ def seal_result(root: Path, step: int):
     job_path = root / 'jobs' / f'{step:03d}.json'
     job = read(job_path)
     if (record / 'result-identity.json').exists():
-        return validate(work)
+        result = validate(work)
+        if job.get('handoff_protocol', 1) >= 3:
+            from . import history
+            history.refresh(root, step + 1)
+        return result
     intent = read(regular(record / 'native-intent.json'))
     if intent['task_sha256'] != digest(regular(job_path)):
         raise ValueError('Native launch task changed')
@@ -458,14 +481,23 @@ def seal_result(root: Path, step: int):
             or outcome.get('stop_reason') or outcome['usage']['unknown_steps']
             or outcome.get('raw_sha256') != digest(raw)):
         raise ValueError('Terminal scientific output is unverified or changed')
-    value = envelope(job, science_payload(raw, job['role']))
+    value = envelope(job, science_payload(raw, job['role'], job.get('handoff_protocol', 1)))
     materials = collect_materials(root, step)
     entry_points = artifact_entry_points(work, value, materials)
     selected = selected_inputs(work, value, job)
+    observations = None
+    if job.get('handoff_protocol', 1) >= 3:
+        from . import history
+        history.validate_recommendation(job, value)
+        observations = history.capture(root, job, value, materials)
     _copy_bound(raw, work / 'conclusion.json', digest(raw))
     write(record / 'result.json', value)
     write(record / 'result-identity.json', dict(sha256=digest(record / 'result.json'), raw_sha256=digest(raw),
           job_sha256=digest(job_path), materials=materials, entry_points=entry_points,
           scope='Exact bytes and direct lineage; not scientific qualification',
-          **(dict(selected_inputs=selected) if selected else {})))
-    return validate(work)
+          **(dict(selected_inputs=selected) if selected else {}),
+          **(dict(observations=observations) if observations else {})))
+    result = validate(work)
+    if job.get('handoff_protocol', 1) >= 3:
+        history.refresh(root, step + 1)
+    return result

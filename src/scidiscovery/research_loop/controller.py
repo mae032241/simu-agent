@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import uuid
 
-from . import budget, contracts, native, runtime
+from . import budget, contracts, history, native, runtime
 
 
 def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str], *,
@@ -15,7 +15,8 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
             model: str, reasoning_effort: str, service_tier: str = "default",
             max_output_item_bytes: int = 32 * 1024 * 1024,
             max_output_total_bytes: int = 64 * 1024 * 1024,
-            user_updates: list[Path] | None = None) -> dict:
+            user_updates: list[Path] | None = None,
+            history_observer: dict | None = None) -> dict:
     """Freeze an explicit goal and finite launch budgets in a fresh directory."""
     root, objective, public_root = map(Path, (root, objective, public_root))
     for name, value in (("max_tokens", max_tokens), ("max_steps", max_steps),
@@ -44,12 +45,15 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
                for path in (user_updates or [])]
     if any(not update.strip() for update in updates):
         raise ValueError('Global user updates must contain original user text')
+    observer = history.observer_config(history_observer) if history_observer is not None else None
     settings = dict(goal_id="scid-hwa-" + uuid.uuid4().hex[:12], objective=text,
         public_root=str(public_root.resolve()), native_launcher_argv=list(launcher),
         max_tokens=max_tokens, max_seconds=max_seconds, max_steps=max_steps, time_budget_basis="active",
         model=model, reasoning_effort=reasoning_effort, service_tier=service_tier,
         max_output_item_bytes=max_output_item_bytes,
         max_output_total_bytes=max_output_total_bytes)
+    if observer is not None:
+        settings['history_observer'] = observer
     root.mkdir(parents=True)
     globals_ = root / 'project/global'
     (globals_ / 'updates').mkdir(parents=True)

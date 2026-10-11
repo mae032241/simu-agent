@@ -1,0 +1,14 @@
+{
+  "observer_enabled": true,
+  "separate_candidate_slots": true,
+  "passed": true,
+  "module": "/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/.trial/n2b-installed-final-20261011/venv/lib/python3.12/site-packages/scidiscovery/research_loop/budget.py",
+  "models_called": 0,
+  "completed_steps": 6,
+  "history_reuse": true,
+  "no_ancestor_bundle": true,
+  "no_replay": true,
+  "active_budget": true,
+  "audited_amend": true,
+  "wheel_sha256": "d72aa7e3485eff75186147a753c49fbc541ac8d9da1eb0b28defbf178c62a231"
+}

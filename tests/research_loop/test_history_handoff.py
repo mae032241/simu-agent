@@ -20,14 +20,16 @@ def scene(tmp_path):
     return root
 
 
-def finish(root, step, role, parents, text='A bounded scientific finding', action='wait', files=None):
+def finish(root, step, role, parents, text='A bounded scientific finding', action='wait', files=None, summary='A contribution', limitations=None, recommendation=None):
     path = root / 'jobs' / f'{step:03d}.json'
     previous = contracts.read(path) if path.exists() else {}
     job = contracts.build_job(root, step, role, parents, previous.get('instruction', ''),
                               previous.get('evidence_return'))
     work = contracts.workspace(root, step)
     record = contracts.host_record(work)
-    payload = dict(summary='A contribution', scientific_result=text, limitations=['Fixture only'])
+    payload = dict(summary=summary, scientific_result=text, limitations=limitations if limitations is not None else ['Fixture only'])
+    if recommendation is not None:
+        payload['candidate_recommendation'] = recommendation
     if role in {'H', 'A'}:
         payload.update(next_action=action, route_reason='Exact scientific question')
     for name, contents in (files or {}).items():
@@ -168,6 +170,7 @@ def test_legacy_seal_and_prepared_job_keep_original_packets_on_resume(scene):
     # Simulate a job written before this protocol without editing any sealed byte.
     job = contracts.build_job(scene, 1, 'H', [])
     job.pop('handoff_protocol')
+    job.pop('history', None)
     contracts.write(scene / 'jobs/001.json', job)
     contracts.write(contracts.workspace(scene, 1) / 'science-task.json', contracts.science_view(job))
     finish(scene, 1, 'H', [], action='experiment')

@@ -39,6 +39,7 @@ def main(argv=None):
     prepare.add_argument('--user-update', type=Path, action='append', default=[], help='Freeze an additional user statement in global inputs; repeat for more')
     prepare.add_argument('--public-root', type=Path, required=True)
     prepare.add_argument('--native-launcher-json', required=True, help='An argv JSON array, e.g. ["codex"]')
+    prepare.add_argument('--history-observer-config', type=Path, help='Optional trusted host adapter/config JSON; frozen at preparation')
     prepare.add_argument('--max-tokens', type=int, required=True)
     prepare.add_argument('--max-seconds', type=float, required=True, help='Maximum advancement seconds; explicit pauses do not consume this ceiling')
     prepare.add_argument('--max-steps', type=int, required=True)
@@ -64,7 +65,9 @@ def main(argv=None):
             settings = controller.prepare(root, args.objective, args.public_root,
                 json.loads(args.native_launcher_json), max_tokens=args.max_tokens, max_seconds=args.max_seconds,
                 max_steps=args.max_steps, model=args.model, reasoning_effort=args.reasoning_effort,
-                service_tier=args.service_tier, user_updates=args.user_update)
+                service_tier=args.service_tier, user_updates=args.user_update,
+                history_observer=contracts.read(contracts.regular(args.history_observer_config, limit=64_000))
+                    if args.history_observer_config is not None else None)
             result = dict(status='prepared', instance=str(root), goal_id=settings['goal_id'])
         elif args.command == 'status':
             result = status(root)
