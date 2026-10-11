@@ -73,11 +73,25 @@ scid-research continue --root /absolute/path/new-instance
 ```
 
 同实例只有一个运行写者；status 不调用模型。pause 允许当前角色完成并封存，在下一节点前停止。
-墙钟从首次运行计时，暂停目前仍计时；continue 不续额度。原生用量可能滞后，token 上限不是精确账单保证。
+N1a 已增加本地持久 runner：前台控制器退出后，已接受的原生节点继续运行并记录日志、用量和终态。
+再次 `run` 按任务哈希、系统启动标识及进程启动身份核对同一 runner，并等待原完成通知，再封存和路由。
+`status` 区分 `prepared / running / native_not_submitted / native_outcome_unsealed / seal_present_unverified / unknown`；
+封存存在仍需 `run` 验证。原生成功但封存失败只重试封存；执行身份丢失、失败或缺量仍不自动重放。
+实际模型提交前再查预算；已确证未提交时记录 `native_not_submitted` 和零用量。
+N1a 保留该节点及原意图，尚不支持对其再次发起首次模型提交；预算修订或重试不自动删除这些记录。
+暂停只阻止新节点，恢复时也允许原已接受节点完成和封存。
+本地完成通知限定为已启动 runner；科学角色的 `wait` 仍表示停止等待，不提供自动事件续接。
+
+N1a 过渡版本仍使用首次运行起算的墙钟，暂停仍计时，continue 不续额度。
+推进/暂停分账和显式人工预算修订属于 N1b，当前尚未实现。
+原生用量只来自已收到的 `turn.completed`；运行中可能缺量或滞后，token 上限不是精确账单保证。
+runner 收养主进程退出后的普通子进程，并按真实归属和启动身份清理；清理无法确认时停止封存。
+runner 意外退出时，本地 watchdog 仅清理能精确核对的标准进程组成员；无法核对时保留 `cleanup_unknown`。
+启动器应自行保证脱离进程组的后代清理；现有隔离启动器的原权限和配置协议保持原样。
 
 ## 启动边界
 
 launcher 使用 argv，不拼接 shell。可复用经过验证的外部隔离启动器，但须适配上述目录和私有 schema。
 直接 `codex` 是软隔离：关闭项目 AGENTS 自动加载、旧 scidiscovery MCP、native 子 Agent 和 fast。
 其他配置仍可能继承本机环境；涉及隐藏基准资料应使用已经验证的隔离启动器。
-本入口尚未完成统一功能插件、CLI 管理 UI/端口、旧入口退役和原生未知会话恢复。
+本入口尚未完成统一功能插件、CLI 管理 UI/端口、旧入口退役。未知原生结果仍须人工核实，不能自动重放。

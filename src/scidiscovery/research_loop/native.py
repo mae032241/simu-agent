@@ -13,6 +13,7 @@ import signal
 import subprocess
 import time
 
+from . import runtime
 from .contracts import (ACTIONS, ROLE_INSTRUCTIONS, digest, host_record, read,
                         seal_result, workspace, write, settings as frozen_settings)
 
@@ -50,18 +51,45 @@ def _usage_event(event):
 
 
 def execute_native(root: Path, step: int):
+    """Submit once, then wait for the same durable local runner."""
+    frozen_settings(root)
+    record = host_record(workspace(root, step))
+    record.mkdir(parents=True, exist_ok=True)
+    job_path = root / "jobs" / f"{step:03d}.json"
+    with (record / "native-intent.json").open("x") as stream:
+        json.dump(dict(step=step, task_sha256=digest(job_path), prepared_at=time.time()), stream)
+        stream.flush()
+        os.fsync(stream.fileno())
+    runtime.start(root, step)
+    return wait_native(root, step)
+
+
+def wait_native(root: Path, step: int):
+    """Completion polling is transport; only the original outcome can seal."""
+    record = host_record(workspace(root, step))
+    startup_until = time.monotonic() + 5
+    while True:
+        state = runtime.node_state(root, step)
+        if state in {"terminal", "sealed"}:
+            return seal_result(root, step)
+        if state != "running":
+            if not (record / "runner-process.json").exists() and time.monotonic() < startup_until:
+                time.sleep(.05)
+                continue
+            raise RuntimeError("Original native execution is unknown; preserved without replay")
+        time.sleep(.1)
+
+
+def run_native(root: Path, step: int):
     settings = frozen_settings(root)
     work = workspace(root, step)
     job_path = root / 'jobs' / f'{step:03d}.json'
     job = read(job_path)
     record = host_record(work)
     record.mkdir(parents=True, exist_ok=True)
-    # Exclusive intent precedes any external submission. Missing final evidence
-    # is an unknown outcome, never permission to launch the same work again.
-    with (record / 'native-intent.json').open('x') as stream:
-        json.dump(dict(step=step, task_sha256=digest(job_path), prepared_at=time.time()), stream)
-        stream.flush()
-        os.fsync(stream.fileno())
+    intent = read(record / 'native-intent.json')
+    if intent.get('task_sha256') != digest(job_path):
+        raise ValueError('Native execution task changed')
     pending = record / 'result.pending.json'
     args = [*settings['native_launcher_argv'], 'exec', '--json', '--output-last-message', str(pending),
             '--model', settings['model'], '-c', f'model_reasoning_effort={json.dumps(settings["reasoning_effort"])}',
@@ -103,16 +131,32 @@ def execute_native(root: Path, step: int):
     env = {**os.environ, 'THIN_HWA_ROLE': job['role'], 'THIN_HWA_WORKSPACE': str(work),
            'THIN_HWA_NATIVE_HOME': str(home), 'THIN_HWA_JOB_MANIFEST': str(job_path)}
     process = None
+    process_id = None
     stop = None
     error = None
     pending_line = b''
     meter = dict(input_tokens=0, cached_input_tokens=0, output_tokens=0)
     observed = False
+    cleanup = None
     thread_id = None
     try:
         with (record / 'native.jsonl').open('wb') as log, (record / 'native.stderr').open('wb') as err:
+            # Submission happens here, after runner/watchdog startup. Recheck
+            # all shared limits; this fresh intent alone is not missing usage.
+            latest = usage(root)
+            stop = ('wall_limit' if time.time() >= deadline else
+                    'usage_unknown' if any(item != step for item in latest['unknown_steps']) else
+                    'token_limit' if latest['observed_tokens'] >= settings['max_tokens'] else None)
+            if stop:
+                write(record / 'usage.json', dict(input_tokens=0, cached_input_tokens=0, output_tokens=0))
+                write(record / 'native-outcome.json', dict(returncode=None, stop_reason=stop,
+                    native_started=False, usage=usage(root), thread_id=None,
+                    limitation='Budget stopped the original intent before native submission.'))
+                return
             process = subprocess.Popen(args, cwd=work, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                        stderr=err, env=env, start_new_session=True)
+            process_id = runtime.process_identity(process.pid, digest(job_path))
+            write(record / "native-process.json", process_id)
             process.stdin.write(prompt.encode())
             process.stdin.close()
             with selectors.DefaultSelector() as selector:
@@ -159,30 +203,37 @@ def execute_native(root: Path, step: int):
     finally:
         if process is not None:
             try:
-                os.killpg(process.pid, signal.SIGTERM)
+                if process_id is not None and runtime.process_matches(process_id, process_id['task_sha256']):
+                    os.killpg(process_id['pgid'], signal.SIGTERM)
             except ProcessLookupError:
                 pass
             try:
                 process.wait(timeout=5)
             except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
+                if process_id is not None and runtime.process_matches(process_id, process_id['task_sha256']):
+                    os.killpg(process_id['pgid'], signal.SIGKILL)
                 process.wait(timeout=5)
+            if process_id is not None:
+                cleanup = runtime.cleanup_owned_group(process_id)
+                if cleanup == 'cleanup_unknown':
+                    stop = 'cleanup_unknown'
             if process.stdout is not None:
                 process.stdout.close()
             if process.stdin is not None and not process.stdin.closed:
                 process.stdin.close()
-    write(record / 'native-outcome.json', dict(returncode=process.returncode if process else None,
-          stop_reason=stop, usage=usage(root), thread_id=thread_id,
-          limitation='Terminal native usage observation; in-flight usage may be absent.'))
+    outcome = dict(returncode=process.returncode if process else None,
+          stop_reason=stop, usage=usage(root), thread_id=thread_id, cleanup=cleanup,
+          limitation='Terminal native usage observation; in-flight usage may be absent.')
     if error is not None:
+        write(record / 'native-outcome.json', outcome)
         raise error
     if stop or process.returncode != 0 or not observed:
+        write(record / 'native-outcome.json', outcome)
         raise RuntimeError('Native work is not a verified terminal result; preserved without replay')
     raw = record / 'science-output.json'
     if pending.is_symlink() or not pending.is_file():
         raise ValueError('Native science output is missing or not a regular file')
     os.replace(pending, raw)
-    outcome = read(record / 'native-outcome.json')
     outcome['raw_sha256'] = digest(raw)
     write(record / 'native-outcome.json', outcome)
-    return seal_result(root, step)
+    return outcome

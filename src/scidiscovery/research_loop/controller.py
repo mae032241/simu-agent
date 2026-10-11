@@ -8,7 +8,7 @@ from pathlib import Path
 import time
 import uuid
 
-from . import contracts, native
+from . import contracts, native, runtime
 
 
 def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str], *,
@@ -214,9 +214,6 @@ def _run(root):
     current_h = current_w = last = None
     completed = 0
     for step in range(1, settings["max_steps"] + 1):
-        if (root / "pause.request").exists():
-            return _finish(root, settings, "paused", completed, last,
-                reason="User pause.request prevents further native launches", next_role=role)
         record = _record(root, step)
         work = contracts.workspace(root, step)
         identity = record / "result-identity.json"
@@ -224,6 +221,14 @@ def _run(root):
             retained = any(path.exists() for path in (record / "native-intent.json",
                 record / "native-outcome.json", record / "science-output.json", record / "result.json"))
             if retained:
+                if runtime.node_state(root, step) == "running":
+                    try:
+                        native.wait_native(root, step)
+                    except Exception:
+                        if not _terminal_success(record):
+                            return _finish(root, settings, "native_outcome_unsealed", completed, last,
+                                reason="Original execution lost its verified completion; preserved without replay",
+                                next_role=role)
                 if not _terminal_success(record):
                     return _finish(root, settings, "native_outcome_unsealed", completed, last,
                         reason="Retain the original native work; its terminal scientific output is unverified",
@@ -236,6 +241,9 @@ def _run(root):
                         reason=f"Native science succeeded; host sealing requires repair: {_seal_reason(error)}",
                         next_role=role)
         if not identity.exists():
+            if (root / "pause.request").exists():
+                return _finish(root, settings, "paused", completed, last,
+                    reason="User pause.request prevents further native launches", next_role=role)
             limit = _launch_limit(root, settings, deadline)
             if limit:
                 return _finish(root, settings, limit, completed, last, next_role=role)

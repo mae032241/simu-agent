@@ -5,7 +5,7 @@ import argparse
 import json
 from pathlib import Path
 
-from . import contracts, controller, native
+from . import contracts, controller, native, runtime
 
 
 def status(root: Path):
@@ -16,12 +16,14 @@ def status(root: Path):
         job_path = root / 'jobs' / f'{step:03d}.json'
         if not job_path.exists():
             break
-        work = contracts.workspace(root, step)
-        record = contracts.host_record(work)
         job = contracts.read(job_path)
-        state = ('seal_present_unverified' if (record / 'result-identity.json').exists() else
-                 'native_outcome_unsealed' if (record / 'native-outcome.json').exists() else
-                 'submitted_or_unknown' if (record / 'native-intent.json').exists() else 'prepared')
+        state = runtime.node_state(root, step)
+        state = {'sealed': 'seal_present_unverified', 'terminal': 'native_outcome_unsealed',
+                 'unstarted': 'prepared'}.get(state, state)
+        if state == 'native_outcome_unsealed':
+            outcome = contracts.read(contracts.host_record(contracts.workspace(root, step)) / 'native-outcome.json')
+            if outcome.get('native_started') is False:
+                state = 'native_not_submitted'
         nodes.append(dict(step=step, role=job['role'], state=state))
     return dict(instance=str(root), goal_id=settings['goal_id'], objective=settings['objective'],
                 paused=(root / 'pause.request').exists(), nodes=nodes, usage=native.usage(root),

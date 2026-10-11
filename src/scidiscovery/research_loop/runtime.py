@@ -1,0 +1,202 @@
+"""Durable local execution transport; scientific routing stays in controller.
+
+Linux process groups cover ordinary children. Launchers must retain their own
+isolation and cleanup guarantees for descendants which leave that group.
+"""
+from __future__ import annotations
+
+from contextlib import contextmanager
+import ctypes
+import fcntl
+import os
+from pathlib import Path
+import signal
+import subprocess
+import sys
+import time
+
+from . import contracts
+
+
+def process_identity(pid, task_sha256):
+    # comm may contain spaces and parentheses; fields follow its final ')'.
+    fields = Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()
+    return dict(pid=pid, boot_id=Path('/proc/sys/kernel/random/boot_id').read_text().strip(),
+                start_ticks=int(fields[19]), pgid=int(fields[2]), sid=int(fields[3]),
+                ppid=int(fields[1]), state=fields[0],
+                task_sha256=task_sha256)
+
+
+def process_matches(identity, task_sha256):
+    try:
+        current = process_identity(identity['pid'], task_sha256)
+        return (current['state'] != 'Z' and identity['task_sha256'] == task_sha256
+                and all(current[key] == identity[key]
+                        for key in ('pid', 'boot_id', 'start_ticks', 'pgid', 'sid')))
+    except (OSError, ValueError, KeyError, TypeError, IndexError):
+        return False
+
+
+def _subreaper():
+    # Linux-only runtime: orphaned ordinary descendants remain owned by this
+    # runner, so their PIDs cannot be recycled before we signal and reap them.
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.prctl(36, 1, 0, 0, 0) != 0:  # PR_SET_CHILD_SUBREAPER
+        raise OSError(ctypes.get_errno(), 'Cannot establish native descendant ownership')
+
+
+def cleanup_owned_group(child):
+    """Clean surviving children by actual ownership, never a stale PGID."""
+    deadline = time.monotonic() + 3
+    while True:
+        members = []
+        for entry in Path('/proc').iterdir():
+            if not entry.name.isdecimal():
+                continue
+            try:
+                member = process_identity(int(entry.name), child['task_sha256'])
+                if (member['pgid'] == child['pgid'] and member['sid'] == child['sid']
+                        and member['boot_id'] == child['boot_id']
+                        and member['start_ticks'] >= child['start_ticks'] and member['state'] != 'Z'):
+                    members.append(member)
+            except (OSError, ValueError, IndexError):
+                pass
+        if not members:
+            return 'observed_group_cleaned'
+        for member in members:
+            if member['ppid'] == os.getpid() and process_matches(member, child['task_sha256']):
+                try:
+                    os.kill(member['pid'], signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+        # Killed direct children may themselves have ordinary children which
+        # now become owned by this subreaper. Observe again before returning.
+        if time.monotonic() >= deadline:
+            return 'cleanup_unknown'
+        time.sleep(.02)
+
+
+def node_state(root, step):
+    """Read original facts; unknown never permits a replacement submission."""
+    record = contracts.host_record(contracts.workspace(root, step))
+    if (record / 'result-identity.json').exists():
+        return 'sealed'
+    if (record / 'native-outcome.json').exists():
+        return 'terminal'
+    if not (record / 'native-intent.json').exists():
+        return 'unstarted'
+    try:
+        contracts.settings(root)
+        binding = contracts.digest(root / 'jobs' / f'{step:03d}.json')
+        intent = contracts.read(record / 'native-intent.json')
+        if intent['task_sha256'] != binding:
+            return 'unknown'
+        runner = contracts.read(record / 'runner-process.json')
+        if process_matches(runner, binding):
+            return 'running'
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return 'unknown'
+
+
+def _spawn(root, step, mode):
+    record = contracts.host_record(contracts.workspace(root, step))
+    bootstrap = ('import runpy,sys;sys.path.insert(0,sys.argv.pop(1));'
+                 'runpy.run_module("scidiscovery.research_loop.runtime",run_name="__main__")')
+    with (record / f'{mode}.stderr').open('ab') as err:
+        return subprocess.Popen([sys.executable, '-c', bootstrap,
+            str(Path(__file__).resolve().parents[2]), mode, str(root), str(step)],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=err,
+            start_new_session=True, close_fds=True)
+
+
+def start(root, step):
+    return _spawn(root, step, 'runner')
+
+
+def _watch(root, step):
+    record = contracts.host_record(contracts.workspace(root, step))
+    binding = contracts.digest(root / 'jobs' / f'{step:03d}.json')
+    runner = contracts.read(record / 'runner-process.json')
+    contracts.write(record / 'watchdog-process.json', process_identity(os.getpid(), binding))
+    while process_matches(runner, binding):
+        if (record / 'native-outcome.json').exists():
+            return
+        time.sleep(.1)
+    if (record / 'native-outcome.json').exists():
+        return
+    cleanup = 'cleanup_unknown'
+    try:
+        child = contracts.read(record / 'native-process.json')
+        if process_matches(child, binding) and child['pgid'] == child['pid']:
+            # Capture exact current members before TERM. If the leader exits,
+            # never send KILL to its now unverifiable/reusable numeric PGID.
+            members = []
+            for entry in Path('/proc').iterdir():
+                if entry.name.isdecimal():
+                    try:
+                        member = process_identity(int(entry.name), binding)
+                        if member['pgid'] == child['pgid']:
+                            members.append(member)
+                    except (OSError, ValueError, IndexError):
+                        pass
+            if process_matches(child, binding):
+                os.killpg(child['pgid'], signal.SIGTERM)
+                time.sleep(.5)
+                for member in members:
+                    if process_matches(member, binding):
+                        os.kill(member['pid'], signal.SIGKILL)
+                cleanup = 'observed_group_signalled'
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    contracts.write(record / 'runner-cleanup.json', dict(status=cleanup,
+        limitation='Only exactly observed original process-group members; detached descendants are not covered.'))
+
+
+@contextmanager
+def _runner_lease(record):
+    fd = os.open(record / 'runner.lock', os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        yield
+    finally:
+        os.close(fd)
+
+
+def _run(root, step):
+    record = contracts.host_record(contracts.workspace(root, step))
+    with _runner_lease(record):
+        contracts.settings(root)
+        binding = contracts.digest(root / 'jobs' / f'{step:03d}.json')
+        if contracts.read(record / 'native-intent.json').get('task_sha256') != binding:
+            raise ValueError('Runner task binding changed')
+        if any((record / name).exists() for name in
+               ('runner-process.json', 'native-process.json', 'native-outcome.json')):
+            raise RuntimeError('Original runner identity is retained; refusing duplicate execution')
+        _subreaper()
+        contracts.write(record / 'runner-process.json', process_identity(os.getpid(), binding))
+        _spawn(root, step, 'watchdog')
+        ready_until = time.monotonic() + 5
+        while not (record / 'watchdog-process.json').exists():
+            if time.monotonic() >= ready_until:
+                raise RuntimeError('Local cleanup watchdog did not attach; no native launch')
+            time.sleep(.02)
+        if not process_matches(contracts.read(record / 'watchdog-process.json'), binding):
+            raise RuntimeError('Local cleanup watchdog identity is unavailable; no native launch')
+        from .native import run_native
+        run_native(root, step)
+
+
+def _main():
+    mode, root, step = sys.argv[1:]
+    root, step = Path(root), int(step)
+    if mode == 'watchdog':
+        _watch(root, step)
+    elif mode == 'runner':
+        _run(root, step)
+    else:
+        raise ValueError('Unknown local runtime mode')
+
+
+if __name__ == '__main__':
+    _main()
