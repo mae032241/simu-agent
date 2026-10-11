@@ -1,0 +1,389 @@
+{
+  "count": 42,
+  "initial_count": 40,
+  "continuation_run_ids": [
+    41,
+    42
+  ],
+  "records": [
+    {
+      "run_id": 1,
+      "started_at": 1791682860,
+      "metric": "recovery_score",
+      "ok": true,
+      "val_acc": 0.1175,
+      "val_score": 0.1175,
+      "wall_seconds": 1.16
+    },
+    {
+      "run_id": 2,
+      "started_at": 1791682864,
+      "metric": "recovery_score",
+      "ok": true,
+      "val_acc": 0.1207,
+      "val_score": 0.1207,
+      "wall_seconds": 1.15
+    },
+    {
+      "run_id": 3,
+      "started_at": 1791682869,
+      "metric": "recovery_score",
+      "ok": true,
+      "val_acc": 0.1335,
+      "val_score": 0.1335,
+      "wall_seconds": 1.18
+    },
+    {
+      "run_id": 4,
+      "started_at": 1791682873,
+      "metric": "recovery_score",
+      "ok": true,
+      "val_acc": 0.1253,
+      "val_score": 0.1253,
+      "wall_seconds": 1.23
+    },
+    {
+      "run_id": 5,
+      "started_at": 1791682877,
+      "metric": "recovery_score",
+      "ok": true,
+      "val_acc": 0.0411,
+      "val_score": 0.0411,
+      "wall_seconds": 1.21
+    },
+    {
+      "run_id": 6,
+      "started_at": 1791682881,
+      "metric": "recovery_score",
+      "ok": true,
+      "val_acc": 0.1239,
+      "val_score": 0.1239,
+      "wall_seconds": 1.19
+    },
+    {
+      "run_id": 7,
+      "started_at": 1791682886,
+      "metric": "recovery_score",
+      "ok": true,
+      "val_acc": 0.0883,
+      "val_score": 0.0883,
+      "wall_seconds": 1.17
+    },
+    {
+      "run_id": 8,
+      "started_at": 1791682890,
+      "metric": "recovery_score",
+      "ok": true,
+      "val_acc": 0.1191,
+      "val_score": 0.1191,
+      "wall_seconds": 1.24
+    },
+    {
+      "run_id": 9,
+      "started_at": 1791682892,
+      "metric": "recovery_score",
+      "ok": true,
+      "val_acc": 0.1301,
+      "val_score": 0.1301,
+      "wall_seconds": 1.33
+    },
+    {
+      "run_id": 10,
+      "started_at": 1791682897,
+      "metric": "recovery_score",
+      "ok": true,
+      "val_acc": 0.9049,
+      "val_score": 0.9049,
+      "wall_seconds": 1.34
+    },
+    {
+      "run_id": 11,
+      "started_at": 1791682902,
+      "metric": "recovery_score",
+      "ok": true,
+      "val_acc": 0.9024,
+      "val_score": 0.9024,
+      "wall_seconds": 1.37
+    },
+    {
+      "run_id": 12,
+      "started_at": 1791682907,
+      "metric": "recovery_score",
+      "ok": true,
+      "val_acc": 0.8944,
+      "val_score": 0.8944,
+      "wall_seconds": 1.3
+    },
+    {
+      "run_id": 13,
+      "started_at": 1791682911,
+      "metric": "recovery_score",
+      "ok": true,
+      "val_acc": 0.8851,
+      "val_score": 0.8851,
+      "wall_seconds": 1.36
+    },
+    {
+      "run_id": 14,
+      "started_at": 1791682916,
+      "metric": "recovery_score",
+      "ok": true,
+      "val_acc": 0.8776,
+      "val_score": 0.8776,
+      "wall_seconds": 1.34
+    },
+    {
+      "run_id": 15,
+      "started_at": 1791682921,
+      "metric": "recovery_score",
+      "ok": true,
+      "val_acc": 0.9066,
+      "val_score": 0.9066,
+      "wall_seconds": 1.31
+    },
+    {
+      "run_id": 16,
+      "started_at": 1791682924,
+      "metric": "recovery_score",
+      "ok": true,
+      "val_acc": 0.9017,
+      "val_score": 0.9017,
+      "wall_seconds": 1.32
+    },
+    {
+      "run_id": 17,
+      "started_at": 1791682929,
+      "metric": "recovery_score",
+      "ok": true,
+      "val_acc": 0.8568,
+      "val_score": 0.8568,
+      "wall_seconds": 1.3
+    },
+    {
+      "run_id": 18,
+      "started_at": 1791682933,
+      "metric": "recovery_score",
+      "ok": true,
+      "val_acc": 0.9031,
+      "val_score": 0.9031,
+      "wall_seconds": 1.56
+    },
+    {
+      "run_id": 19,
+      "started_at": 1791682939,
+      "metric": "recovery_score",
+      "ok": true,
+      "val_acc": 0.906,
+      "val_score": 0.906,
+      "wall_seconds": 1.39
+    },
+    {
+      "run_id": 20,
+      "started_at": 1791682943,
+      "metric": "recovery_score",
+      "ok": true,
+      "val_acc": 0.9013,
+      "val_score": 0.9013,
+      "wall_seconds": 1.38
+    },
+    {
+      "run_id": 21,
+      "started_at": 1791682948,
+      "metric": "recovery_score",
+      "ok": true,
+      "val_acc": 0.8892,
+      "val_score": 0.8892,
+      "wall_seconds": 1.22
+    },
+    {
+      "run_id": 22,
+      "started_at": 1791682953,
+      "metric": "recovery_score",
+      "ok": true,
+      "val_acc": 0.8675,
+      "val_score": 0.8675,
+      "wall_seconds": -0.72
+    },
+    {
+      "run_id": 23,
+      "started_at": 1791682955,
+      "metric": "recovery_score",
+      "ok": true,
+      "val_acc": 0.8302,
+      "val_score": 0.8302,
+      "wall_seconds": 1.23
+    },
+    {
+      "run_id": 24,
+      "started_at": 1791682959,
+      "metric": "recovery_score",
+      "ok": true,
+      "val_acc": 0.7761,
+      "val_score": 0.7761,
+      "wall_seconds": 1.2
+    },
+    {
+      "run_id": 25,
+      "started_at": 1791682963,
+      "metric": "recovery_score",
+      "ok": true,
+      "val_acc": 0.9036,
+      "val_score": 0.9036,
+      "wall_seconds": 1.22
+    },
+    {
+      "run_id": 26,
+      "started_at": 1791682968,
+      "metric": "recovery_score",
+      "ok": true,
+      "val_acc": 0.8988,
+      "val_score": 0.8988,
+      "wall_seconds": 1.2
+    },
+    {
+      "run_id": 27,
+      "started_at": 1791682972,
+      "metric": "recovery_score",
+      "ok": true,
+      "val_acc": 0.8946,
+      "val_score": 0.8946,
+      "wall_seconds": 1.2
+    },
+    {
+      "run_id": 28,
+      "started_at": 1791682976,
+      "metric": "recovery_score",
+      "ok": true,
+      "val_acc": 0.8822,
+      "val_score": 0.8822,
+      "wall_seconds": 1.21
+    },
+    {
+      "run_id": 29,
+      "started_at": 1791682981,
+      "metric": "recovery_score",
+      "ok": true,
+      "val_acc": 0.8796,
+      "val_score": 0.8796,
+      "wall_seconds": 1.21
+    },
+    {
+      "run_id": 30,
+      "started_at": 1791682983,
+      "metric": "recovery_score",
+      "ok": true,
+      "val_acc": 0.8579,
+      "val_score": 0.8579,
+      "wall_seconds": 1.2
+    },
+    {
+      "run_id": 31,
+      "started_at": 1791682987,
+      "metric": "recovery_score",
+      "ok": true,
+      "val_acc": 0.9023,
+      "val_score": 0.9023,
+      "wall_seconds": 1.21
+    },
+    {
+      "run_id": 32,
+      "started_at": 1791682991,
+      "metric": "recovery_score",
+      "ok": true,
+      "val_acc": 0.9052,
+      "val_score": 0.9052,
+      "wall_seconds": 1.21
+    },
+    {
+      "run_id": 33,
+      "started_at": 1791682996,
+      "metric": "recovery_score",
+      "ok": true,
+      "val_acc": 0.9064,
+      "val_score": 0.9064,
+      "wall_seconds": 1.22
+    },
+    {
+      "run_id": 34,
+      "started_at": 1791683000,
+      "metric": "recovery_score",
+      "ok": true,
+      "val_acc": 0.9021,
+      "val_score": 0.9021,
+      "wall_seconds": 1.23
+    },
+    {
+      "run_id": 35,
+      "started_at": 1791683004,
+      "metric": "recovery_score",
+      "ok": true,
+      "val_acc": 0.9055,
+      "val_score": 0.9055,
+      "wall_seconds": 1.32
+    },
+    {
+      "run_id": 36,
+      "started_at": 1791683009,
+      "metric": "recovery_score",
+      "ok": true,
+      "val_acc": 0.906,
+      "val_score": 0.906,
+      "wall_seconds": 1.22
+    },
+    {
+      "run_id": 37,
+      "started_at": 1791683040,
+      "metric": "recovery_score",
+      "ok": true,
+      "val_acc": 0.9053,
+      "val_score": 0.9053,
+      "wall_seconds": 1.42
+    },
+    {
+      "run_id": 38,
+      "started_at": 1791683045,
+      "metric": "recovery_score",
+      "ok": true,
+      "val_acc": 0.9037,
+      "val_score": 0.9037,
+      "wall_seconds": -0.81
+    },
+    {
+      "run_id": 39,
+      "started_at": 1791683047,
+      "metric": "recovery_score",
+      "ok": true,
+      "val_acc": 0.8978,
+      "val_score": 0.8978,
+      "wall_seconds": 1.34
+    },
+    {
+      "run_id": 40,
+      "started_at": 1791683052,
+      "metric": "recovery_score",
+      "ok": true,
+      "val_acc": 0.8937,
+      "val_score": 0.8937,
+      "wall_seconds": 1.29
+    },
+    {
+      "run_id": 41,
+      "started_at": 1791686112,
+      "metric": "recovery_score",
+      "ok": true,
+      "val_acc": 0.8946,
+      "val_score": 0.8946,
+      "wall_seconds": 1.48
+    },
+    {
+      "run_id": 42,
+      "started_at": 1791686160,
+      "metric": "recovery_score",
+      "ok": true,
+      "val_acc": 0.8946,
+      "val_score": 0.8946,
+      "wall_seconds": 1.43
+    }
+  ],
+  "meaning": "Successful exp run records; scientific mechanism equivalence, effectiveness and independent attempts are not inferred from run IDs."
+}

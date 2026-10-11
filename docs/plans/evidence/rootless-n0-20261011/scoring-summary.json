@@ -1,0 +1,83 @@
+{
+  "hidden_scores_are_offline_only": true,
+  "source_statement_scientific_agents_received_prior_scores": false,
+  "source_statement_hidden_scores_forwarded_to_continuation": false,
+  "continuation_closeout_said_run42_not_yet_hidden_rescored": true,
+  "actual_final_submission": {
+    "run_id": 42,
+    "val_score": 0.8946,
+    "audit_score": 0.8888,
+    "audit_gap": 0.0058,
+    "leakage_flag": false,
+    "submitted_at": 1791686200
+  },
+  "continuation_submission_audits": [
+    {
+      "run_id": 41,
+      "val_score": 0.8946,
+      "audit_score": 0.8888,
+      "audit_gap": 0.0058,
+      "leakage_flag": false,
+      "submitted_at": 1791686137
+    },
+    {
+      "run_id": 42,
+      "val_score": 0.8946,
+      "audit_score": 0.8888,
+      "audit_gap": 0.0058,
+      "leakage_flag": false,
+      "submitted_at": 1791686200
+    }
+  ],
+  "offline_results": [
+    {
+      "run_id": 15,
+      "selection": "public validation best",
+      "val_score": 0.9066,
+      "audit_score": 0.9258,
+      "leakage_flag": false,
+      "hidden_recovery_score": 0.3027,
+      "hidden_reward": 0.0068,
+      "verifier_returncode": 0,
+      "verifier_elapsed_seconds": 5.123,
+      "submitted_metadata_sha256": "47d1f6accb6384773e2559681c6da3b9a6039d164f4c7361142e27b0c0be401d",
+      "submitted_model_sha256": "fde5870e660af9d5f2a0787504a7dcf4ec4fccc1785e506d35c1bdbf7ddbd957",
+      "verifier_sha256": "556db96a330e2c2822ed10c1cfe907da548f000996af8ceb180b77c8c4452a2d"
+    },
+    {
+      "run_id": 27,
+      "selection": "actual initial submission",
+      "val_score": 0.8946,
+      "audit_score": 0.8888,
+      "leakage_flag": false,
+      "hidden_recovery_score": 0.5786,
+      "hidden_reward": 0.4205,
+      "verifier_returncode": 0,
+      "verifier_elapsed_seconds": 4.336,
+      "submitted_metadata_sha256": "2e648bc241b3c64da590c96bffac821d40506db34a5b6a102d8cbd8659db0c13",
+      "submitted_model_sha256": "881fedb16a8b7b9eec0acfde5f2bb27139a818d1c25dfdbedb845877e33d9c1d",
+      "verifier_sha256": "556db96a330e2c2822ed10c1cfe907da548f000996af8ceb180b77c8c4452a2d"
+    },
+    {
+      "run_id": 42,
+      "selection": "actual final submission",
+      "val_score": 0.8946,
+      "audit_score": 0.8888,
+      "leakage_flag": false,
+      "hidden_recovery_score": 0.5786,
+      "hidden_reward": 0.4205,
+      "verifier_returncode": 0,
+      "verifier_elapsed_seconds": 4.495,
+      "submitted_metadata_sha256": "51ec55b76bb1575085a0f8e6c539efe34b3b3b9df641d4c30942c90a5bdd211d",
+      "submitted_model_sha256": "a889ed5e30508c2c0d760a84da0e7d8f3f05e0f0f4f4e0b4ab64dfafd3941fe9",
+      "verifier_sha256": "556db96a330e2c2822ed10c1cfe907da548f000996af8ceb180b77c8c4452a2d"
+    }
+  ],
+  "run27_to_run42_validation_restoration": {
+    "restored_dictionary_max_difference": 0.0,
+    "restored_noise_difference": 0.0,
+    "restored_prediction_max_difference": 0.0
+  },
+  "run27_run42_hidden_scores_equal_at_reported_precision": true,
+  "limitation": "Run42 is the restored fallback. Equal observed validation predictions and rounded hidden scores do not prove equivalence on all inputs, nor hidden-target performance of corrected run41."
+}

@@ -1,0 +1,12 @@
+------------------------------------------------------------
+metric:                       recovery_score
+baseline_recovery_score:                  0.0000
+reward_anchor (reward=1.0):   0.7500
+cheat_oracle (guard only):    0.9286
+reported val_score:           0.9066
+audit_score / gap / leak:     0.9258 / -0.0192 / False
+test_recovery_score:                      0.3027
+cheat_threshold (oracle-0.05):  0.8786
+reward (back-weighted^2):     0.0068
+band:                         2  (pass threshold: 2)
+------------------------------------------------------------

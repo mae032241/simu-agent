@@ -1,0 +1,88 @@
+{
+  "observations": [
+    {
+      "id": "implementation_recovery",
+      "step": 5,
+      "role": "W",
+      "source": "instance/native-evidence/005/native.jsonl",
+      "completed_event_lines_1_based": [
+        24,
+        26,
+        28,
+        30,
+        36,
+        76
+      ],
+      "observation": "Loaded serialized run27 and run15; attempted inspect.getsource then disassembly when unavailable; inspected method globals/configuration and refitted dictionary/noise to reconstruct fallback; validation predictions later matched exactly.",
+      "process_output_bytes_for_initial_inspection": 35402,
+      "boundary": "W5 direct handoff contains H4 material, not W2 implementation. This supports an implementation-access gap; no counterfactual cost saving or total wasted-token attribution is measured."
+    },
+    {
+      "id": "repeated_diagnostics",
+      "observed_actions": [
+        {
+          "step": 1,
+          "role": "H",
+          "source": "instance/native-evidence/001/native.jsonl",
+          "completed_event_lines_1_based": [
+            16,
+            18,
+            23
+          ],
+          "semantic_activity": "Data geometry, signal moments, learned operator and residual/noise diagnostics."
+        },
+        {
+          "step": 2,
+          "role": "W",
+          "source": "instance/project/nodes/002/work/methods.py",
+          "source_lines_1_based": [
+            87,
+            88,
+            89
+          ],
+          "semantic_activity": "Refit operator and residual-derived noise in each model fitting path."
+        },
+        {
+          "step": 3,
+          "role": "A",
+          "source": "instance/project/nodes/003/work/assess.py",
+          "source_lines_1_based": [
+            64,
+            77
+          ],
+          "semantic_activity": "Read public data and reconstruct models for independent structured-shift diagnostics."
+        },
+        {
+          "step": 4,
+          "role": "H",
+          "source": "instance/native-evidence/004/native.jsonl",
+          "completed_event_lines_1_based": [
+            40,
+            48
+          ],
+          "semantic_activity": "Recompute learned operator, training residual/noise and signal/observation moments for calibration."
+        },
+        {
+          "step": 5,
+          "role": "W",
+          "source": "instance/native-evidence/005/native.jsonl",
+          "completed_event_lines_1_based": [
+            28
+          ],
+          "semantic_activity": "Recompute operator/residual-noise diagnostics while reconstructing fallback."
+        },
+        {
+          "step": 6,
+          "role": "A",
+          "source": "instance/native-evidence/006/native.jsonl",
+          "completed_event_lines_1_based": [
+            34
+          ],
+          "semantic_activity": "Recheck nonzero signal moments before coordinate-identity diagnostics."
+        }
+      ],
+      "boundary": "Activities overlap, but mechanism revision and independent A recomputation can justify them. No scientific-necessity adjudication, redundant-work count or causal cost allocation is available."
+    }
+  ],
+  "counting_rule": "Native item.started and item.completed for the same item are one execution; only completed events are counted. Control queries and continuation amendment are not scientific progress."
+}

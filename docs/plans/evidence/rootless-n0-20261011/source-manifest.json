@@ -1,0 +1,867 @@
+{
+  "algorithm": "sha256",
+  "policy": "Hash original consulted evidence without copying native text, credentials, private bindings or absolute paths. source_root identifies a retained offline evidence set. Session locators select one unique file without disclosing thread coordinates.",
+  "source_count": 122,
+  "sources": [
+    {
+      "source_root": "official-score-rootless-live02-run15-run27-20261011",
+      "relative_locator": "run15/snapshot/submitted.json",
+      "sha256": "47d1f6accb6384773e2559681c6da3b9a6039d164f4c7361142e27b0c0be401d",
+      "size_bytes": 383,
+      "purpose": "Scored submission snapshot; private path omitted"
+    },
+    {
+      "source_root": "official-score-rootless-live02-run15-run27-20261011",
+      "relative_locator": "run15/snapshot/submitted_model.pkl",
+      "sha256": "fde5870e660af9d5f2a0787504a7dcf4ec4fccc1785e506d35c1bdbf7ddbd957",
+      "size_bytes": 388988,
+      "purpose": "Scored exact model hash only; model not copied"
+    },
+    {
+      "source_root": "official-score-rootless-live02-run15-run27-20261011",
+      "relative_locator": "run15/verifier/manifest.json",
+      "sha256": "82996ceb104bcb2385a7277be4746999eeda23dc35d650183e96a85afee51708",
+      "size_bytes": 265,
+      "purpose": "Independent offline verifier evidence"
+    },
+    {
+      "source_root": "official-score-rootless-live02-run15-run27-20261011",
+      "relative_locator": "run15/verifier/pytest.log",
+      "sha256": "7cf440b80d272d14799a8f7159d8e7f858e8dfd76c14de8e42be3d00228d2728",
+      "size_bytes": 560,
+      "purpose": "Independent offline verifier evidence"
+    },
+    {
+      "source_root": "official-score-rootless-live02-run15-run27-20261011",
+      "relative_locator": "run15/verifier/resource.json",
+      "sha256": "0a4c82b10d0c58c7451a28334d830d135266d9549c333847b0345e67a75e3516",
+      "size_bytes": 550,
+      "purpose": "Verifier terminal returncode and elapsed seconds; environment/PIDs omitted"
+    },
+    {
+      "source_root": "official-score-rootless-live02-run15-run27-20261011",
+      "relative_locator": "run15/verifier/reward.txt",
+      "sha256": "77191c5d718484ce372e5e2046f58b905d8380a592aee42c33f60bfd063c8300",
+      "size_bytes": 6,
+      "purpose": "Independent offline verifier evidence"
+    },
+    {
+      "source_root": "official-score-rootless-live02-run15-run27-20261011",
+      "relative_locator": "run27/snapshot/submitted.json",
+      "sha256": "2e648bc241b3c64da590c96bffac821d40506db34a5b6a102d8cbd8659db0c13",
+      "size_bytes": 319,
+      "purpose": "Scored submission snapshot; private path omitted"
+    },
+    {
+      "source_root": "official-score-rootless-live02-run15-run27-20261011",
+      "relative_locator": "run27/snapshot/submitted_model.pkl",
+      "sha256": "881fedb16a8b7b9eec0acfde5f2bb27139a818d1c25dfdbedb845877e33d9c1d",
+      "size_bytes": 388994,
+      "purpose": "Scored exact model hash only; model not copied"
+    },
+    {
+      "source_root": "official-score-rootless-live02-run15-run27-20261011",
+      "relative_locator": "run27/verifier/manifest.json",
+      "sha256": "9aa6945ed89db56485302b72fcd86751318de7483527dc8d8befc290e67c9ae9",
+      "size_bytes": 265,
+      "purpose": "Independent offline verifier evidence"
+    },
+    {
+      "source_root": "official-score-rootless-live02-run15-run27-20261011",
+      "relative_locator": "run27/verifier/pytest.log",
+      "sha256": "4c411e93f519748dff92b3fd667b5c3eb67976188764ed864c9d5d2eba6f8405",
+      "size_bytes": 559,
+      "purpose": "Independent offline verifier evidence"
+    },
+    {
+      "source_root": "official-score-rootless-live02-run15-run27-20261011",
+      "relative_locator": "run27/verifier/resource.json",
+      "sha256": "cee59fe359ae1137083d2ec662b19868a289387495fc085626ee55ecaf98e501",
+      "size_bytes": 552,
+      "purpose": "Verifier terminal returncode and elapsed seconds; environment/PIDs omitted"
+    },
+    {
+      "source_root": "official-score-rootless-live02-run15-run27-20261011",
+      "relative_locator": "run27/verifier/reward.txt",
+      "sha256": "31b09fbdd1bef696fee2fecfbb21e0b7ac580a49027909899534e13a36ccb7d1",
+      "size_bytes": 6,
+      "purpose": "Independent offline verifier evidence"
+    },
+    {
+      "source_root": "official-score-rootless-live02-run15-run27-20261011",
+      "relative_locator": "summary.json",
+      "sha256": "e14605f9888d380b723be13e50dba8850bf8c6363ef63bd747c1e425ee3ff709",
+      "size_bytes": 609,
+      "purpose": "Prior scoring summary and scientific-score separation claim"
+    },
+    {
+      "source_root": "official-score-rootless-live02-run42-20261011",
+      "relative_locator": "run42/snapshot/submitted.json",
+      "sha256": "51ec55b76bb1575085a0f8e6c539efe34b3b3b9df641d4c30942c90a5bdd211d",
+      "size_bytes": 319,
+      "purpose": "Scored submission snapshot; private path omitted"
+    },
+    {
+      "source_root": "official-score-rootless-live02-run42-20261011",
+      "relative_locator": "run42/snapshot/submitted_model.pkl",
+      "sha256": "a889ed5e30508c2c0d760a84da0e7d8f3f05e0f0f4f4e0b4ab64dfafd3941fe9",
+      "size_bytes": 388399,
+      "purpose": "Scored exact model hash only; model not copied"
+    },
+    {
+      "source_root": "official-score-rootless-live02-run42-20261011",
+      "relative_locator": "run42/verifier/manifest.json",
+      "sha256": "51926d19412a7fb07a6f6144b8b8645f0725f9d2d087d1d0ec75440b4f8cedda",
+      "size_bytes": 265,
+      "purpose": "Independent offline verifier evidence"
+    },
+    {
+      "source_root": "official-score-rootless-live02-run42-20261011",
+      "relative_locator": "run42/verifier/pytest.log",
+      "sha256": "4c411e93f519748dff92b3fd667b5c3eb67976188764ed864c9d5d2eba6f8405",
+      "size_bytes": 559,
+      "purpose": "Independent offline verifier evidence"
+    },
+    {
+      "source_root": "official-score-rootless-live02-run42-20261011",
+      "relative_locator": "run42/verifier/resource.json",
+      "sha256": "7c6a416ea569a64bcf13064c9dd3d75cce2ac07f560dafd94a49474025c120a6",
+      "size_bytes": 552,
+      "purpose": "Verifier terminal returncode and elapsed seconds; environment/PIDs omitted"
+    },
+    {
+      "source_root": "official-score-rootless-live02-run42-20261011",
+      "relative_locator": "run42/verifier/reward.txt",
+      "sha256": "31b09fbdd1bef696fee2fecfbb21e0b7ac580a49027909899534e13a36ccb7d1",
+      "size_bytes": 6,
+      "purpose": "Independent offline verifier evidence"
+    },
+    {
+      "source_root": "official-score-rootless-live02-run42-20261011",
+      "relative_locator": "source.json",
+      "sha256": "ba224f8ec602c366bbf63df185cb2536e177024c11f504bee02f77c69c8df401",
+      "size_bytes": 345,
+      "purpose": "Exact final original-to-scoring snapshot binding"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "acceptance-result.json",
+      "sha256": "0eb64da52285a2adbab318ab33f8e7cab1e41c007aa98323a8a86c5fad975c3f",
+      "size_bytes": 1953,
+      "purpose": "Initial episode accounting and acceptance result"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "acceptance.json",
+      "sha256": "09c765f42e4ed6925fd3f6953c9091046f379a3855aa2205dd466d284bc6f553",
+      "size_bytes": 722,
+      "purpose": "Initial declared conditions"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "continuation-01/authorization.json",
+      "sha256": "46a25cda4e965453d0f3b104389a5bc8b2097c37e5131adbace7be9b263f6324",
+      "size_bytes": 3872,
+      "purpose": "Explicit cumulative budget amendment and continuation boundary"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "continuation-01/closeout.json",
+      "sha256": "ecf70ed97b22e80baf63fc2ce9dbaa841970f855d6dff72fab2fd8b79e0a9ae9",
+      "size_bytes": 11511,
+      "purpose": "Six-node terminal summary; hidden scoring performed later"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "continuation-01/latest-observation.json",
+      "sha256": "da955abe5db3482b0e42d0d02f81c701e1772e365f42767e7c7245c4826e154e",
+      "size_bytes": 13726,
+      "purpose": "Rounded post-completion observation clocks"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/host-started.json",
+      "sha256": "b3b188572c8f5359585bd1b10d58c138cde42b292cc8ee0fa44e5ea84503ac35",
+      "size_bytes": 36,
+      "purpose": "Original host start timestamp"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/jobs/001.json",
+      "sha256": "c9b6edf212729b4d60d129e0964647ff03e74eee16ec39bd381e1ac4574c5bd6",
+      "size_bytes": 8486,
+      "purpose": "Role and direct handoff evidence; private job fields omitted"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/jobs/002.json",
+      "sha256": "a0f6e6f1c6031bbf4a0dc8f90755502a67af5a91882e555ccbf5c11c5fd77c87",
+      "size_bytes": 10257,
+      "purpose": "Role and direct handoff evidence; private job fields omitted"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/jobs/003.json",
+      "sha256": "9212ec1364bcb5e0ced52062a515cc0b56f78c3669e323f897ac683c62704a22",
+      "size_bytes": 13145,
+      "purpose": "Role and direct handoff evidence; private job fields omitted"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/jobs/004.json",
+      "sha256": "c0db3c1f1331df8142dc11735fca9e4b936f22a39f8fcb2f0e950b38d4a95fba",
+      "size_bytes": 15331,
+      "purpose": "Role and direct handoff evidence; private job fields omitted"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/jobs/005.json",
+      "sha256": "6b5d93026fee3fc4d458f6fe898291b3eb01ea2434c08a0ba447cbd56cbc7677",
+      "size_bytes": 10284,
+      "purpose": "Role and direct handoff evidence; private job fields omitted"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/jobs/006.json",
+      "sha256": "28486cb0c46a495ebb3bd849ce17df5ee7c5e3acfcd2b0029e81d4140a7e3e22",
+      "size_bytes": 13048,
+      "purpose": "Role and direct handoff evidence; private job fields omitted"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/native-evidence/001/native-outcome.json",
+      "sha256": "c8e902c2e95f2d331bd802dea37402b93287f420b733e4d124fe441d6b342cec",
+      "size_bytes": 433,
+      "purpose": "Native exit status and cumulative usage cross-check"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/native-evidence/001/native.jsonl",
+      "sha256": "cd5a4f581b5a1dcf2c5b7c4e18077bc38293e8fde68d61c2e2003ecdb0693e34",
+      "size_bytes": 83276,
+      "purpose": "Completed action locations and process-output byte statistics; raw transcript omitted"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/native-evidence/001/result-identity.json",
+      "sha256": "dfdbdac2bd0564d39c4e81fd0e3dbbd437073c553d2db4a76f63ef27820ed36e",
+      "size_bytes": 1818,
+      "purpose": "Control seal hashes and bounded deliverable accounting"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/native-evidence/001/result.json",
+      "sha256": "b3f553781757f7c9f8a5f38f2eeaeee4c79abf39e8974776e4465266b7ef6b55",
+      "size_bytes": 1235,
+      "purpose": "Exact sealed result hash"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/native-evidence/001/science-output.json",
+      "sha256": "5c128b374e0c7d3cbc9556a3d7893f9059086217fc7e65809e6514bae48c4e2b",
+      "size_bytes": 1198,
+      "purpose": "Exact scientific payload hash; contents not copied"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/native-evidence/001/usage.json",
+      "sha256": "773b9e09a478e6a4abb94d9928fcd7fe3bc2f577947445aac884257210ff5219",
+      "size_bytes": 88,
+      "purpose": "Terminal per-node usage"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/native-evidence/002/native-outcome.json",
+      "sha256": "1a3415ef9ae270942234c703477fb5d9c25a056c6794227c6542b44cf820ea2e",
+      "size_bytes": 436,
+      "purpose": "Native exit status and cumulative usage cross-check"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/native-evidence/002/native.jsonl",
+      "sha256": "80d89acc1e5a6afcbfe91322d4f9c1715dafea27e035f56c06881da02968090c",
+      "size_bytes": 164560,
+      "purpose": "Completed action locations and process-output byte statistics; raw transcript omitted"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/native-evidence/002/result-identity.json",
+      "sha256": "705a2df909770aae2c6e405fada0b646f118bb7dc76459647d504cefd0861fed",
+      "size_bytes": 3281,
+      "purpose": "Control seal hashes and bounded deliverable accounting"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/native-evidence/002/result.json",
+      "sha256": "645e020ac3d25e340218f73ee9b0949e80c87d78a85f93a90bdb4945336cc2dc",
+      "size_bytes": 1475,
+      "purpose": "Exact sealed result hash"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/native-evidence/002/science-output.json",
+      "sha256": "63e743c5b42fbafae9ea4c5cfc67e53c569f0bd97ee4e0bfed9949e2087a152a",
+      "size_bytes": 1245,
+      "purpose": "Exact scientific payload hash; contents not copied"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/native-evidence/002/usage.json",
+      "sha256": "381dbce8ee48a85a850d1db4adbb689c8f85e9fa141ae8be2f3a0b43b22ba94d",
+      "size_bytes": 90,
+      "purpose": "Terminal per-node usage"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/native-evidence/003/native-outcome.json",
+      "sha256": "7b75f0e4225f1a4f80eda89c78c7194bf331d64405e4bee5e0f4c874bbc8ed39",
+      "size_bytes": 436,
+      "purpose": "Native exit status and cumulative usage cross-check"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/native-evidence/003/native.jsonl",
+      "sha256": "2f9cb65f0e95e5f382bf485b281324a863aa77bdb698d3812635e877ade738f3",
+      "size_bytes": 105773,
+      "purpose": "Completed action locations and process-output byte statistics; raw transcript omitted"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/native-evidence/003/result-identity.json",
+      "sha256": "15fd94a20f0ae65d701d80c0242b85422330c41d7c4dae870f12df483f42cf15",
+      "size_bytes": 2162,
+      "purpose": "Control seal hashes and bounded deliverable accounting"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/native-evidence/003/result.json",
+      "sha256": "a63b7cea24fc065420c00db68509b1ef4e3d8081b79e6a9c95c9265eee977099",
+      "size_bytes": 1612,
+      "purpose": "Exact sealed result hash"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/native-evidence/003/science-output.json",
+      "sha256": "16638b7c0aca17f1fc01d268ae3d2b2676a9a58a9d2a4e80661837de85feb110",
+      "size_bytes": 1277,
+      "purpose": "Exact scientific payload hash; contents not copied"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/native-evidence/003/usage.json",
+      "sha256": "142ca13230cf9a26b20e4c42f3521abd4d6448a1e1bfda127b8b8385498fe7b1",
+      "size_bytes": 88,
+      "purpose": "Terminal per-node usage"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/native-evidence/004/native-outcome.json",
+      "sha256": "f14869ed1814190cde97649a53a0a56e38264f6ecf6d33b79ffb4bd425b47ad6",
+      "size_bytes": 436,
+      "purpose": "Native exit status and cumulative usage cross-check"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/native-evidence/004/native.jsonl",
+      "sha256": "609d8e0d1e33e066f51bf61b8fa44563f80c97b7702216e3cbd567fb0e0e011d",
+      "size_bytes": 151533,
+      "purpose": "Completed action locations and process-output byte statistics; raw transcript omitted"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/native-evidence/004/result-identity.json",
+      "sha256": "dae0529ca301680827803a6c2602d8d3ccff0df8c58b1ab504c34e1f26dffc4f",
+      "size_bytes": 1843,
+      "purpose": "Control seal hashes and bounded deliverable accounting"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/native-evidence/004/result.json",
+      "sha256": "6dcb5395848ecf54991a3cc3c679f060670989120a3be107389cc304f5b801bc",
+      "size_bytes": 2047,
+      "purpose": "Exact sealed result hash"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/native-evidence/004/science-output.json",
+      "sha256": "706ae74257ef5310d8187ce0128e52cd16d23a2ca7399501a5b6868dbb636bfd",
+      "size_bytes": 1564,
+      "purpose": "Exact scientific payload hash; contents not copied"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/native-evidence/004/usage.json",
+      "sha256": "0067bbfb8c898d44e4b157a65c4af802561163a883bf6555e20019dd6b276f30",
+      "size_bytes": 88,
+      "purpose": "Terminal per-node usage"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/native-evidence/005/native-outcome.json",
+      "sha256": "a5b1d4ed145d228f2ff39d326bf3febf484c0724a95347028d6081da01e8a2c4",
+      "size_bytes": 436,
+      "purpose": "Native exit status and cumulative usage cross-check"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/native-evidence/005/native.jsonl",
+      "sha256": "1b7fcab8e60f60ea088f231daf063e208de69cd880d09b2550ffef7a49a1c71f",
+      "size_bytes": 174229,
+      "purpose": "Completed action locations and process-output byte statistics; raw transcript omitted"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/native-evidence/005/result-identity.json",
+      "sha256": "2b8ac3c8ed0a57f5188dad5ff868be84dc3ef2114898362384e4fd8864327434",
+      "size_bytes": 3159,
+      "purpose": "Control seal hashes and bounded deliverable accounting"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/native-evidence/005/result.json",
+      "sha256": "5b56765eaba71c02040ab347210bb2ad86c7dc2ce0023f6fbaf420758a8199c0",
+      "size_bytes": 1741,
+      "purpose": "Exact sealed result hash"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/native-evidence/005/science-output.json",
+      "sha256": "cd232ded5610ad33cbe21671f965867ae8f52c8ec1cf3a18c4328c9561805a3b",
+      "size_bytes": 1511,
+      "purpose": "Exact scientific payload hash; contents not copied"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/native-evidence/005/usage.json",
+      "sha256": "358a0e79153406379616802c8cdd79d3b9ed21fef240d7923456ef041ddafecd",
+      "size_bytes": 90,
+      "purpose": "Terminal per-node usage"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/native-evidence/006/native-outcome.json",
+      "sha256": "ac180877a6601a724a9459ca7c86eff99ccfb9a56ea6ca4f667253dc0f6a6c68",
+      "size_bytes": 437,
+      "purpose": "Native exit status and cumulative usage cross-check"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/native-evidence/006/native.jsonl",
+      "sha256": "81c0544975053a05fb8bba7068452362868f6c73006dab2539f20429d1657eb8",
+      "size_bytes": 411478,
+      "purpose": "Completed action locations and process-output byte statistics; raw transcript omitted"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/native-evidence/006/result-identity.json",
+      "sha256": "c782ba944806788f9d7ef4d38c0b30278c28e970180307fcd102829966141b98",
+      "size_bytes": 1338,
+      "purpose": "Control seal hashes and bounded deliverable accounting"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/native-evidence/006/result.json",
+      "sha256": "f81d297b597fe1fef7f4bab87ebf9a6d3c8450cf1b9a231d1500d4295dfe1b63",
+      "size_bytes": 1479,
+      "purpose": "Exact sealed result hash"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/native-evidence/006/science-output.json",
+      "sha256": "8f691bb314d06c9deda06f6ec0326f7d33545c5e92949ef51ea3f994af62307f",
+      "size_bytes": 1144,
+      "purpose": "Exact scientific payload hash; contents not copied"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/native-evidence/006/usage.json",
+      "sha256": "f54d822c3bcbebc69903224dcdb4955c58759a10aeb5a54353ce16a17e0eed0f",
+      "size_bytes": 88,
+      "purpose": "Terminal per-node usage"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/native-homes/001/sessions/**/*.jsonl",
+      "sha256": "0b5b5f8f492c1b9855b022e37e61847499c6a500c88d8310170e48f256553253",
+      "size_bytes": 519419,
+      "purpose": "UTC event interval, model conditions, request usage and retained tool-output statistics",
+      "resolution": "Exactly one matching original file; filename/thread coordinates deliberately omitted."
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/native-homes/002/sessions/**/*.jsonl",
+      "sha256": "afb76c44b8e4f420cf23fcca53c350686e91daeef96cddcba21df087462dad83",
+      "size_bytes": 949082,
+      "purpose": "UTC event interval, model conditions, request usage and retained tool-output statistics",
+      "resolution": "Exactly one matching original file; filename/thread coordinates deliberately omitted."
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/native-homes/003/sessions/**/*.jsonl",
+      "sha256": "903d0964984d3487ca1e7570613f374f495adeb82db56cecc4bd6b64c5718fa2",
+      "size_bytes": 600748,
+      "purpose": "UTC event interval, model conditions, request usage and retained tool-output statistics",
+      "resolution": "Exactly one matching original file; filename/thread coordinates deliberately omitted."
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/native-homes/004/sessions/**/*.jsonl",
+      "sha256": "4cdce4e4f64dbf32698e567b5569c2afbecbdea190c0b1495945d8b893a674e9",
+      "size_bytes": 788582,
+      "purpose": "UTC event interval, model conditions, request usage and retained tool-output statistics",
+      "resolution": "Exactly one matching original file; filename/thread coordinates deliberately omitted."
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/native-homes/005/sessions/**/*.jsonl",
+      "sha256": "4a2c6fa43fcb55921950449b59c00de861e12979b1643230c74cacec3a91075c",
+      "size_bytes": 1007890,
+      "purpose": "UTC event interval, model conditions, request usage and retained tool-output statistics",
+      "resolution": "Exactly one matching original file; filename/thread coordinates deliberately omitted."
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/native-homes/006/sessions/**/*.jsonl",
+      "sha256": "d8c618288052c1bf90b55186628369db2c97699414463a97c6c61fc66ee66bf8",
+      "size_bytes": 1377817,
+      "purpose": "UTC event interval, model conditions, request usage and retained tool-output statistics",
+      "resolution": "Exactly one matching original file; filename/thread coordinates deliberately omitted."
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/001/artifacts/adaptive_lasso_candidate.py",
+      "sha256": "266bb3a59b521a45876bcef44858923857cee6a1fb47b3a868cb0a13eae8c497",
+      "size_bytes": 2121,
+      "purpose": "Sealed delivered material integrity; contents not copied"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/001/artifacts/scientific_direction.md",
+      "sha256": "3841bf1aeceb4a38bf2a24afd943305f7776b040ad1b93b186954d7c304f82c9",
+      "size_bytes": 8760,
+      "purpose": "Sealed delivered material integrity; contents not copied"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/001/artifacts/shift_comparison.csv",
+      "sha256": "647419feff293629bc767e7d5c1152a6e53d5a4484d35594aa6891c2d402e993",
+      "size_bytes": 17340,
+      "purpose": "Sealed delivered material integrity; contents not copied"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/001/conclusion.json",
+      "sha256": "5c128b374e0c7d3cbc9556a3d7893f9059086217fc7e65809e6514bae48c4e2b",
+      "size_bytes": 1198,
+      "purpose": "Conclusion equals sealed payload"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/001/science-task.json",
+      "sha256": "9d08cca2b9207ecea829fb4d57089819fbeebb963d321d68e37d409d71dc887e",
+      "size_bytes": 559,
+      "purpose": "Startup task byte size"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/002/artifacts/candidate.py",
+      "sha256": "4127c393e1750964f1b148f01328493f9e24657f86bf5a87d9921220eb255b32",
+      "size_bytes": 2116,
+      "purpose": "Sealed delivered material integrity; contents not copied"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/002/artifacts/comparison.csv",
+      "sha256": "2d969cf438edbe5f6a36755be467a0f80cbdef19dad9250102afdf59ec5b0611",
+      "size_bytes": 55431,
+      "purpose": "Sealed delivered material integrity; contents not copied"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/002/artifacts/confirmation_evidence.npz",
+      "sha256": "aff7e6404f54917fe394b28b781beaa81c9cc7bfe40653d0ddb23d9459488b2d",
+      "size_bytes": 193121,
+      "purpose": "Sealed delivered material integrity; contents not copied"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/002/artifacts/formal_comparison.csv",
+      "sha256": "c3efdcc83a9818c76a8a72071b92f487f94bdde9548a1e3e4ae9106e919bd23b",
+      "size_bytes": 15555,
+      "purpose": "Sealed delivered material integrity; contents not copied"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/002/artifacts/paired_comparison.csv",
+      "sha256": "75007f8a538fe20204c57a59bd4fb38d32cedb7614c7da27eae6d45078e752df",
+      "size_bytes": 2808,
+      "purpose": "Sealed delivered material integrity; contents not copied"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/002/artifacts/report.md",
+      "sha256": "c77eda54c465f2447fc88d9b8e3ad95858d93298f532f53bfb6ab9379746a1a1",
+      "size_bytes": 11003,
+      "purpose": "Sealed delivered material integrity; contents not copied"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/002/artifacts/reproduce_comparison.py",
+      "sha256": "beba57142e9094476b7d3cd0f14e17edf5b7d35f91bf653ff09bb750da3d1ebd",
+      "size_bytes": 15080,
+      "purpose": "Sealed delivered material integrity; contents not copied"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/002/conclusion.json",
+      "sha256": "63e743c5b42fbafae9ea4c5cfc67e53c569f0bd97ee4e0bfed9949e2087a152a",
+      "size_bytes": 1245,
+      "purpose": "Conclusion equals sealed payload"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/002/science-task.json",
+      "sha256": "dbb86c0390683849b005f45e1da410e00fa06edd1c7d616c4bf7c14e21674847",
+      "size_bytes": 1267,
+      "purpose": "Startup task byte size"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/002/work/methods.py",
+      "sha256": "2246fb8c0903639384ed49cfa7cfa9f9413853f926903a0ee55e60c1d128401d",
+      "size_bytes": 5763,
+      "purpose": "Diagnostic-action semantic anchors; code not copied"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/003/artifacts/assessment.md",
+      "sha256": "d9a1b3673e0c7676f57ddff348df71d7614215384c0e191de2b1c80772277ff7",
+      "size_bytes": 8596,
+      "purpose": "Sealed delivered material integrity; contents not copied"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/003/artifacts/structured_comparison.csv",
+      "sha256": "853986ab1bc9ac4ba3187161e8e0b1ad4611e8b2ebfe01acc7b5ef66146da4e8",
+      "size_bytes": 20159,
+      "purpose": "Sealed delivered material integrity; contents not copied"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/003/artifacts/structured_paired.csv",
+      "sha256": "c36cc6f98e540aef4e3d8d77f1787bc7bebe701f2b00cee0346acef7b3b30738",
+      "size_bytes": 15160,
+      "purpose": "Sealed delivered material integrity; contents not copied"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/003/artifacts/weight_sensitivity.csv",
+      "sha256": "11ff309eb79a1bde2a185958e71c941f570504f364a06aaf9cbb700894ad2dbf",
+      "size_bytes": 1104,
+      "purpose": "Sealed delivered material integrity; contents not copied"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/003/conclusion.json",
+      "sha256": "16638b7c0aca17f1fc01d268ae3d2b2676a9a58a9d2a4e80661837de85feb110",
+      "size_bytes": 1277,
+      "purpose": "Conclusion equals sealed payload"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/003/science-task.json",
+      "sha256": "25d7d9414e6f752286f016abcd660658ec136d9057d5e00b98d3d5a59038b07e",
+      "size_bytes": 1738,
+      "purpose": "Startup task byte size"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/003/work/assess.py",
+      "sha256": "827b6ccac35bb58377e7669233f5f10dc4d2d615a33ecf064d0542597741a079",
+      "size_bytes": 7477,
+      "purpose": "Diagnostic-action semantic anchors; code not copied"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/004/artifacts/calibration_diagnostics.csv",
+      "sha256": "a94af0943de0ac86c043ddfc7425d1db187cb15fe8ca8ebcb886ecd4574d0687",
+      "size_bytes": 14306,
+      "purpose": "Sealed delivered material integrity; contents not copied"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/004/artifacts/calibration_uncertainty.csv",
+      "sha256": "502ae4c7316ee80ee289fd0c0b67d9e46f92f07ecbf035e500a54a943953d4bf",
+      "size_bytes": 496,
+      "purpose": "Sealed delivered material integrity; contents not copied"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/004/artifacts/mechanism_revision.md",
+      "sha256": "98b66a183edd0246c1024ad436aee8074079ddd1a07e58c21b5b0085ed893579",
+      "size_bytes": 15184,
+      "purpose": "Sealed delivered material integrity; contents not copied"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/004/conclusion.json",
+      "sha256": "706ae74257ef5310d8187ce0128e52cd16d23a2ca7399501a5b6868dbb636bfd",
+      "size_bytes": 1564,
+      "purpose": "Conclusion equals sealed payload"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/004/science-task.json",
+      "sha256": "968ec646f2525fcff2d5fed01e963d134b1fa9d3e8af3a1cbb27e9b9f21c5c15",
+      "size_bytes": 2543,
+      "purpose": "Startup task byte size"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/004/work/identify_gain.py",
+      "sha256": "cbcf8e5b165bc12e9dbd5e6691cfa2cc98374ee48e9148175b19a22a6d3e9d5b",
+      "size_bytes": 6357,
+      "purpose": "Diagnostic-action semantic anchors; code not copied"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/005/artifacts/__pycache__/contraction_candidate.cpython-312.pyc",
+      "sha256": "7db87cea493b59f094b7af5718314e16cbd9cc7e4224832a8fefd9009236ccc5",
+      "size_bytes": 9885,
+      "purpose": "Sealed delivered material integrity; contents not copied"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/005/artifacts/assumption_stress.csv",
+      "sha256": "878cf4123e21eb34b59275313730749b6e38d8c2f942bbbfd0a0af3bb081681b",
+      "size_bytes": 38003,
+      "purpose": "Sealed delivered material integrity; contents not copied"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/005/artifacts/comparison.csv",
+      "sha256": "1103de046e24d07bf5dad472c7faf81f05abf725dec2be90a87371bd792e3d21",
+      "size_bytes": 1237576,
+      "purpose": "Sealed delivered material integrity; contents not copied"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/005/artifacts/contraction_candidate.py",
+      "sha256": "a39a8a0b6204c7ce682e92c6ba446719a19361661e94049eaff7882988dfd79a",
+      "size_bytes": 5188,
+      "purpose": "Sealed delivered material integrity; contents not copied"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/005/artifacts/scientific_report.md",
+      "sha256": "9726f12016f2ca0787128b3eb6242c66048d11dd5956905db8b3356fea6f73b3",
+      "size_bytes": 13734,
+      "purpose": "Sealed delivered material integrity; contents not copied"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/005/artifacts/weight_sensitivity.csv",
+      "sha256": "752021b7ba50e46f876c4b06ef767120315c843b3c08b6581e2128d2dc682484",
+      "size_bytes": 238074,
+      "purpose": "Sealed delivered material integrity; contents not copied"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/005/conclusion.json",
+      "sha256": "cd232ded5610ad33cbe21671f965867ae8f52c8ec1cf3a18c4328c9561805a3b",
+      "size_bytes": 1511,
+      "purpose": "Conclusion equals sealed payload"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/005/science-task.json",
+      "sha256": "bf8c6c512fc008f1862d97ba04719fdfc7af4beafb2bea315f7fa7fd21955dc8",
+      "size_bytes": 1284,
+      "purpose": "Startup task byte size"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/005/work/candidate_audit.json",
+      "sha256": "d0381dd26f7e5604eaeaf6740943d0a3db0c322c416aa7ba63bc287843bbf8f6",
+      "size_bytes": 319,
+      "purpose": "Continuation successful submit-time audit"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/005/work/fallback_audit.json",
+      "sha256": "51ec55b76bb1575085a0f8e6c539efe34b3b3b9df641d4c30942c90a5bdd211d",
+      "size_bytes": 319,
+      "purpose": "Continuation successful submit-time audit"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/005/work/restoration_check.json",
+      "sha256": "e3054ce2f13f7571451edb56e4ce99f435335750988c35b5089d2a3167bb185b",
+      "size_bytes": 128,
+      "purpose": "Measured restoration equality against run27 on accessible validation inputs"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/006/artifacts/assessment.md",
+      "sha256": "3e15b75eac1c01d384fb9e75fdc151005f1678330ff5c472c4a3b9e3849b765a",
+      "size_bytes": 8533,
+      "purpose": "Sealed delivered material integrity; contents not copied"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/006/artifacts/coordinate_identity_comparison.csv",
+      "sha256": "0fa998233166917921698b103a454f6c014484d28d7fb9645d9e4729dad0cfe3",
+      "size_bytes": 43007,
+      "purpose": "Sealed delivered material integrity; contents not copied"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/006/conclusion.json",
+      "sha256": "8f691bb314d06c9deda06f6ec0326f7d33545c5e92949ef51ea3f994af62307f",
+      "size_bytes": 1144,
+      "purpose": "Conclusion equals sealed payload"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/006/science-task.json",
+      "sha256": "2a87511be45f6157c34fb8ceeaed15371f8605cea3bc81f53be04e47691e1145",
+      "size_bytes": 1917,
+      "purpose": "Startup task byte size"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/project/nodes/006/work/coordinate_identity_check.py",
+      "sha256": "6dbb755da64a7ea3ccc606bd5a5dbedad1dd5fe59db9a5376b438c26371404c8",
+      "size_bytes": 4235,
+      "purpose": "Diagnostic-action semantic anchors; code not copied"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/runs/results.jsonl",
+      "sha256": "0dffc569086c495052991e70d963d2e46b2567734a1a42d6cb24010c3039c6e3",
+      "size_bytes": 15165,
+      "purpose": "Formal run count and public metrics"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/runs/submitted.json",
+      "sha256": "51ec55b76bb1575085a0f8e6c539efe34b3b3b9df641d4c30942c90a5bdd211d",
+      "size_bytes": 319,
+      "purpose": "Actual final submission metadata; private model path omitted"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/runs/submitted_model.pkl",
+      "sha256": "a889ed5e30508c2c0d760a84da0e7d8f3f05e0f0f4f4e0b4ab64dfafd3941fe9",
+      "size_bytes": 388399,
+      "purpose": "Final original submitted model hash only; model not copied"
+    },
+    {
+      "source_root": "rootless-hwa-live-20261011-02",
+      "relative_locator": "instance/settings.json",
+      "sha256": "91469b13a6cd639d540aae593bf6d48a621df2c56e4f5d519e75c653c9cd4ee8",
+      "size_bytes": 8950,
+      "purpose": "Final runtime settings; only model and effort exported"
+    }
+  ]
+}
