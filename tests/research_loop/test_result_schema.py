@@ -23,7 +23,8 @@ def test_current_native_schema_requires_every_declared_property(role):
                     strict(item)
     strict(schema)
     if role not in {'H', 'A'}:
-        assert schema == c.result_schema(role, 3)
+        legacy = c.result_schema(role, 3)
+        assert set(schema['properties']) == set(legacy['properties']) | {'implementation_selection'}
 
 
 @pytest.mark.parametrize('recommendation', [None, 'run-33'])
@@ -31,7 +32,7 @@ def test_current_a_scientific_recommendation_can_be_null_or_candidate(tmp_path, 
     raw = tmp_path / 'science-output.json'
     payload = dict(summary='Independent finding', scientific_result='Bounded result', limitations=[],
                    next_action='wait', route_reason='More evidence needed', candidate_recommendation=recommendation,
-                   search_review=None, progress_assessment=None)
+                   search_review=None, progress_assessment=None, implementation_selection=None)
     c.write(raw, payload)
     assert c.science_payload(raw, 'A', c.HANDOFF_PROTOCOL) == payload
     payload.pop('candidate_recommendation')

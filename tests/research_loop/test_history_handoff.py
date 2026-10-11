@@ -8,7 +8,8 @@ from scidiscovery.research_loop import contracts, controller, native
 
 
 @pytest.fixture
-def scene(tmp_path):
+def scene(tmp_path, monkeypatch):
+    monkeypatch.setattr(contracts, 'HANDOFF_PROTOCOL', 6)  # Legacy marker semantics are intentionally unchanged.
     public = tmp_path / 'public'
     public.mkdir()
     objective = public / 'objective.md'
@@ -21,7 +22,7 @@ def scene(tmp_path):
     return root
 
 
-def finish(root, step, role, parents, text='A bounded scientific finding', action='wait', files=None, summary='A contribution', limitations=None, recommendation=None, search_choice=None, progress=None):
+def finish(root, step, role, parents, text='A bounded scientific finding', action='wait', files=None, summary='A contribution', limitations=None, recommendation=None, search_choice=None, progress=None, selection=None):
     path = root / 'jobs' / f'{step:03d}.json'
     previous = contracts.read(path) if path.exists() else {}
     job = contracts.build_job(root, step, role, parents, previous.get('instruction', ''),
@@ -29,6 +30,8 @@ def finish(root, step, role, parents, text='A bounded scientific finding', actio
     work = contracts.workspace(root, step)
     record = contracts.host_record(work)
     payload = dict(summary=summary, scientific_result=text, limitations=limitations if limitations is not None else ['Fixture only'])
+    if job.get('handoff_protocol', 1) >= 7:
+        payload['implementation_selection'] = selection
     if (role == 'A' and job.get('handoff_protocol', 1) >= 4) or recommendation is not None:
         payload['candidate_recommendation'] = recommendation
     if job.get('handoff_protocol', 1) >= 5 and role in {'H', 'A'}:

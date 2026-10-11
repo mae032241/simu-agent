@@ -33,9 +33,9 @@ def _text(limit=1024, nullable=False):
     return dict(type=['string', 'null'] if nullable else 'string', maxLength=limit, minLength=1)
 
 
-def schema(role):
+def schema(role, protocol=6):
     focus = lambda key: _object({key: _text(80), 'action': dict(type='string', enum=list(MODES)),
-                                'repair_source': _text(512, nullable=True)}, nullable=True)
+        **({'repair_source': _text(512, nullable=True)} if protocol < 7 else {})}, nullable=True)
     if role == 'H':
         commitment = _object(dict(label=_text(80), minimal_test=_text(), existing_ref=_text(80, nullable=True)))
         value = _object(dict(scope=_text(), commitments=dict(type='array', maxItems=MAX_COMMITMENTS,
@@ -45,10 +45,16 @@ def schema(role):
     if role == 'A':
         disposition = _object(dict(mechanism_ref=_text(80), status=dict(type='string',
             enum=['screened', 'deferred', 'waived', 'pending']), reason=_text(),
-            evidence=dict(type='array', maxItems=4, items=_text(512))))
+            **(dict(evidence=dict(type='array', maxItems=4, items=_text(512))) if protocol < 7 else {})))
         value = _object(dict(dispositions=dict(type='array', maxItems=MAX_COMMITMENTS,
                 items=disposition), next_focus=focus('mechanism_ref')), nullable=True)
         value['description'] = 'Dispose commitments using scientific evidence. Null review or next_focus clears the next W focus; continue_w needs an explicit focus.'
+        if protocol >= 7:
+            value['description'] = ('Report only this round\'s changed dispositions; omitted mechanisms retain their sealed status. '
+                'Same-status restatements are ignored and do not replace prior evidence or reasons. '
+                'Explain scientific judgments in reason and scientific_result. The host binds the exact task lineage; '
+                'screened needs a same-mechanism screen W, not a role-authored evidence path. '
+                'Null review or next_focus clears the next W focus; continue_w needs an explicit focus.')
         return value
     raise ValueError('Only H and A declare scientific search choices')
 
@@ -100,7 +106,7 @@ def _apply(root, job, payload, state):
             focus = plan['focus']
             if focus['label'] not in labels:
                 raise ValueError('H focus must select a declared commitment')
-            state['focus'] = dict(mechanism_ref=labels[focus['label']], action=focus['action'], repair_source=focus['repair_source'])
+            state['focus'] = dict(mechanism_ref=labels[focus['label']], action=focus['action'], repair_source=focus.get('repair_source'))
     elif job['role'] == 'A':
         review = payload.get('search_review')
         state['focus'] = None
@@ -112,16 +118,23 @@ def _apply(root, job, payload, state):
             if ref not in mechanisms or ref in refs or not item['reason'].strip():
                 raise ValueError('A dispositions require distinct known mechanisms and scientific reasons')
             refs.add(ref)
-            sources = [_evidence(root, job, path) for path in item['evidence']]
-            if item['status'] != 'pending' and not sources:
+            # Sealed originals own existing state. Redundant prose is retained
+            # in the author's output, but neither changes nor re-proves it.
+            if item['status'] == mechanisms[ref]['status']:
+                continue
+            if job.get('handoff_protocol', 1) >= 7:
+                sources = [source for source, _, _ in history.direct_sources(root, job)] if item['status'] == 'screened' else []
+            else:
+                sources = [_evidence(root, job, path) for path in item['evidence']]
+            if job.get('handoff_protocol', 1) < 7 and item['status'] != 'pending' and not sources:
                 raise ValueError('A mechanism disposition requires original evidence')
-            if (item['status'] == 'screened' and mechanisms[ref]['status'] != 'screened'
-                    and not any(source['role'] == 'W'
+            screens = [source for source in sources if source['role'] == 'W'
                     and ((source.get('search') or {}).get('focus') or {}).get('mechanism_ref') == ref
-                    and source['search']['focus']['action'] == 'screen' for source in sources)):
+                    and source['search']['focus']['action'] == 'screen']
+            if item['status'] == 'screened' and (not screens or (job.get('handoff_protocol', 1) >= 7 and len(screens) != 1)):
                 raise ValueError('Screened requires same-mechanism W screening evidence')
             mechanisms[ref]['status'] = item['status']
-        state['focus'] = review['next_focus']
+        state['focus'] = dict(review['next_focus'], repair_source=review['next_focus'].get('repair_source')) if review['next_focus'] else None
         if state['focus'] is not None and state['focus']['mechanism_ref'] not in mechanisms:
             raise ValueError('A focus must name an original known mechanism')
 
@@ -149,7 +162,7 @@ def project(root, before_step):
     return state
 
 
-def bind(root, step, role):
+def bind(root, step, role, protocol=6):
     limits = c.settings(root).get('search_policy')
     if limits is None:
         return None
@@ -157,17 +170,25 @@ def bind(root, step, role):
     state = project(root, step)
     focus = state['focus'] if role == 'W' else None
     repair_root = None
+    repair_binding = None
     if focus is not None and focus['action'] == 'repair':
-        if focus['repair_source'] is None:
-            raise ValueError('Repair requests require an exact original W conclusion')
         # The latest scientific chooser owns this path in its original workspace.
         chooser_step = max(index for index in range(1, step)
             if c.read(root / 'jobs' / f'{index:03d}.json')['role'] in {'H', 'A'})
         chooser = c.read(root / 'jobs' / f'{chooser_step:03d}.json')
-        source = _evidence(root, chooser, focus['repair_source'])
-        if source['role'] != 'W' or ((source.get('search') or {}).get('focus') or {}).get('mechanism_ref') != focus['mechanism_ref']:
-            raise ValueError('Repair source must be a same-mechanism W original')
-        repair_root = source['search'].get('repair_root') or source['step']
+        if chooser.get('handoff_protocol', 1) >= 7:
+            sources = [source for source, _, _ in history.direct_sources(root, chooser)
+                       if source['role'] == 'W' and ((source.get('search') or {}).get('focus') or {}).get('mechanism_ref') == focus['mechanism_ref']]
+            repair_binding = 'available' if len(sources) == 1 else 'ambiguous' if sources else 'unavailable'
+            source = sources[0] if len(sources) == 1 else None
+        else:
+            if focus['repair_source'] is None:
+                raise ValueError('Repair requests require an exact original W conclusion')
+            source = _evidence(root, chooser, focus['repair_source'])
+            if source['role'] != 'W' or ((source.get('search') or {}).get('focus') or {}).get('mechanism_ref') != focus['mechanism_ref']:
+                raise ValueError('Repair source must be a same-mechanism W original')
+        if source is not None:
+            repair_root = source['search'].get('repair_root') or source['step']
     elif focus is not None and focus['repair_source'] is not None:
         raise ValueError('Only repair requests may name a repair source')
     pending = [ref for ref, item in state['mechanisms'].items() if item['status'] == 'pending']
@@ -192,12 +213,22 @@ def bind(root, step, role):
             'Before deep improvement screen pending commitments or justify deferral/waiver. W reports ordinary science; '
             'W follows its bound focus and does not invent a new mechanism. '
             'do not maintain a ledger. Soft windows are initial advice, not notifications. Hard overruns retain unsealed failure.')
+    if protocol >= 7:
+        view['instructions'] = ('H declares scientific scope and mechanisms; A reports only changed dispositions. '
+            'Omissions and same-status restatements retain sealed state. Choose mechanisms/actions and explain scientific reasons; '
+            'the host binds screening and repair tasks, not scientific support. Do not write evidence paths or repair sources. '
+            'Enabled experiment needs an H plan/focus; continue_w needs next_focus. Screen pending mechanisms before improvement '
+            'or explain deferral/waiver. W follows its frozen focus and reports science, not a ledger. '
+            'Hard slice overruns retain unsealed failure; soft windows are advice.')
+        view['focus'] = {key: value for key, value in focus.items() if key != 'repair_source'} if focus else None
+        view['repair_binding'] = repair_binding
     while len(json.dumps(view, ensure_ascii=False, indent=2).encode()) > MAX_VIEW_BYTES and len(view['commitments']) > 1:
         view['commitments'].pop()
         view['omitted_count'] += 1
     if len(json.dumps(view, ensure_ascii=False, indent=2).encode()) > MAX_VIEW_BYTES:
         raise ValueError('Default search view exceeds its byte bound')
-    return dict(focus=focus, repair_root=repair_root, limits=limits, view=view)
+    return dict(focus=focus, repair_root=repair_root, limits=limits, view=view,
+                **(dict(repair_binding=repair_binding) if protocol >= 7 else {}))
 
 
 def launch_reason(root, job):
@@ -211,6 +242,8 @@ def launch_reason(root, job):
         return 'search_focus_outside_h_scope'
     if focus['action'] == 'improve' and any(item['status'] == 'pending' for item in state['mechanisms'].values()):
         return 'search_commitments_pending'
+    if focus['action'] == 'repair' and job['search'].get('repair_binding') in {'unavailable', 'ambiguous'}:
+        return 'search_repair_source_' + job['search']['repair_binding']
     if focus['action'] == 'repair' and state['repairs'].get(job['search']['repair_root'], 0) >= job['search']['limits']['max_requested_repairs']:
         return 'search_repair_limit'
     return None

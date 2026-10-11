@@ -11,7 +11,8 @@ from test_search import focus, plan
 
 
 @pytest.fixture
-def scene(tmp_path):
+def scene(tmp_path, monkeypatch):
+    monkeypatch.setattr(c, 'HANDOFF_PROTOCOL', 6)  # Published correction evidence remains byte compatible.
     public = tmp_path / 'public';public.mkdir()
     objective = public / 'objective.md';objective.write_text('Explain the global unresolved mechanism.')
     root = tmp_path / 'instance'
@@ -438,13 +439,12 @@ def test_cross_instance_fact_copy_and_progress_source_tamper_rejected(scene, mon
         correction.project(scene)
 
 
-def test_protocol5_original_job_schema_and_seal_stay_unchanged(scene):
+def test_protocol5_original_job_schema_and_seal_stay_unchanged(scene, monkeypatch):
+    monkeypatch.setattr(c, 'HANDOFF_PROTOCOL', 5)
     finish(scene, 1, 'H', [], action='analyze', search_choice=plan())
-    job = c.build_job(scene, 2, 'A', [1]);job['handoff_protocol'] = 5
+    c.build_job(scene, 2, 'A', [1])
     work = c.workspace(scene, 2);record = c.host_record(work)
-    c.write(scene / 'jobs/002.json', job)
-    c.write(work / 'science-task.json', c.science_view(job))
-    c.write(record / 'science-result.schema.json', c.result_schema('A', 5))
+    monkeypatch.setattr(c, 'HANDOFF_PROTOCOL', 7)
     finish(scene, 2, 'A', [1], action='finish')
     paths = [scene / 'jobs/002.json', work / 'science-task.json', record / 'science-result.schema.json',
              record / 'science-output.json', record / 'result-identity.json']

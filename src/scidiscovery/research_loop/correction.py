@@ -19,7 +19,15 @@ def policy(value):
     return dict(value)
 
 
-def schema():
+def schema(protocol=6):
+    if protocol >= 7:
+        return dict(type=['object', 'null'], properties=dict(
+            verdict=dict(type='string', enum=['progress', 'no_progress', 'unknown'])),
+            required=['verdict'], additionalProperties=False,
+            description='Judge the current assessed work\'s global scientific contribution. Null means unknown. '
+            'Explain applicability, negative results and blind spots in scientific_result/limitations. '
+            'The host binds only the exact assessed task and counts each original once; this is not scientific verification. '
+            'Do not write evidence paths, hashes or inventories; proxy improvement alone is insufficient.')
     return dict(type=['object', 'null'], properties=dict(
         verdict=dict(type='string', enum=['progress', 'no_progress', 'unknown']),
         evidence=dict(type='array', maxItems=4, items=dict(type='string', minLength=1, maxLength=512))),
@@ -30,6 +38,30 @@ def schema():
 
 
 def _proofs(root, job, assessment):
+    if job.get('handoff_protocol', 1) >= 7:
+        if assessment is None:
+            return set()
+        if (not isinstance(assessment, dict) or set(assessment) != {'verdict'}
+                or assessment['verdict'] not in {'progress', 'no_progress', 'unknown'}):
+            raise ValueError('Progress assessment fields are invalid')
+        if assessment['verdict'] != 'progress':
+            return set()
+        sources = history.direct_sources(root, job)
+        current = next((row for row in sources if row[0]['step'] == job['step'] - 1), None)
+        if current is None:
+            return set()
+        source, payload, seal = current
+        if source['role'] == 'W' or (source['role'] == 'H' and payload.get('next_action') == 'analyze'):
+            return {seal['raw_sha256']}
+        if source['role'] == 'E':
+            target = source.get('evidence_return') or {}
+            requester = next((row for row in sources if row[0]['step'] == target.get('step')), None)
+            e_sources = history.direct_sources(root, source)
+            if (target.get('role') == 'A' and requester is not None and requester[0]['role'] == 'A'
+                    and requester[1].get('next_action') == 'extract'
+                    and any(row[0]['step'] == target['step'] for row in e_sources)):
+                return {seal['raw_sha256']}
+        return set()
     if assessment is not None and (not isinstance(assessment, dict) or set(assessment) != {'verdict', 'evidence'}
             or assessment['verdict'] not in {'progress', 'no_progress', 'unknown'}
             or not isinstance(assessment['evidence'], list) or len(assessment['evidence']) > 4

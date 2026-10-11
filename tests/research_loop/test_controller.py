@@ -368,6 +368,8 @@ def test_real_sealing_and_materials_compose_with_controller(tmp_path, monkeypatc
         contracts.write(record / "native-intent.json", dict(task_sha256=contracts.digest(job_path)))
         payload = dict(summary=f"Original contribution {step}", scientific_result="Bounded evidence",
             limitations=["Unobserved goal conditions"])
+        if contracts.read(job_path).get('handoff_protocol', 1) >= 7:
+            payload['implementation_selection'] = None
         if role in {"H", "A"}:
             payload.update(next_action=action, route_reason="The direct evidence supports this route")
         if role == 'A':
@@ -403,11 +405,12 @@ def test_real_sealing_and_materials_compose_with_controller(tmp_path, monkeypatc
 
 
 @pytest.fixture
-def real_node(tmp_path, monkeypatch):
+def real_node(tmp_path, monkeypatch, request):
     controller = importlib.import_module('scidiscovery.research_loop.controller')
     contracts = importlib.import_module('scidiscovery.research_loop.contracts')
     native = importlib.import_module('scidiscovery.research_loop.native')
     monkeypatch.setattr(controller, 'contracts', contracts)
+    monkeypatch.setattr(contracts, 'HANDOFF_PROTOCOL', getattr(request, 'param', 7))
     root = tmp_path / 'research'
     objective = tmp_path / 'objective.md'
     objective.write_text('Resolve the original mechanism')
@@ -425,7 +428,8 @@ def real_node(tmp_path, monkeypatch):
         dict(task_sha256=contracts.digest(root / 'jobs/001.json')))
     contracts.write(record / 'science-output.json', dict(summary='Bounded result',
         scientific_result='A scientific observation', limitations=['Scope is bounded'],
-        next_action='wait', route_reason='Await further measurements', search_plan=None))
+        next_action='wait', route_reason='Await further measurements', search_plan=None,
+        **(dict(implementation_selection=None) if job['handoff_protocol'] >= 7 else {})))
     contracts.write(record / 'usage.json', dict(input_tokens=7, cached_input_tokens=0, output_tokens=3))
     contracts.write(record / 'native-outcome.json',
         dict(returncode=0, stop_reason=None, usage=native.usage(root), raw_sha256=contracts.digest(record / 'science-output.json')))
@@ -463,7 +467,8 @@ def test_nested_experiment_deliverables_exclude_scratch_and_need_no_manifest(rea
     n.contracts.write(child_record / 'native-intent.json',
         dict(task_sha256=n.contracts.digest(n.root / 'jobs/002.json')))
     n.contracts.write(child_record / 'science-output.json', dict(summary='Local W finding',
-        scientific_result='No further selected output', limitations=['One experiment']))
+        scientific_result='No further selected output', limitations=['One experiment'],
+        implementation_selection=None))
     n.contracts.write(child_record / 'native-outcome.json', dict(returncode=0, stop_reason=None,
         usage=dict(unknown_steps=[]), raw_sha256=n.contracts.digest(child_record / 'science-output.json')))
     n.contracts.seal_result(n.root, 2)
@@ -586,15 +591,22 @@ def test_scientific_markdown_links_become_direct_readable_entry_points(real_node
 
 @pytest.mark.parametrize('target', ['artifacts/missing.csv', 'artifacts/../work/model.bin',
     'artifacts/%2e%2e/work/model.bin', 'experiments/sweep/work/raw.csv'])
+@pytest.mark.parametrize('real_node', [6, 7], indirect=True)
 def test_scientific_links_must_name_exact_selected_deliverables(real_node, target):
     n = real_node
     scratch = n.work / 'experiments/sweep/work/raw.csv'
     scratch.parent.mkdir(parents=True)
     scratch.write_text('Intermediate data')
     _set_terminal_science(n, f'The [measurements]({target}) support this finding.')
-    with pytest.raises(ValueError, match='artifact link'):
+    if n.job['handoff_protocol'] < 7:
+        with pytest.raises(ValueError, match='artifact link'):
+            n.contracts.seal_result(n.root, 1)
+        assert not (n.record / 'result-identity.json').exists()
+    else:
         n.contracts.seal_result(n.root, 1)
-    assert not (n.record / 'result-identity.json').exists()
+        identity = n.contracts.read(n.record / 'result-identity.json')
+        assert identity['entry_points'] == []
+        assert len(identity['unresolved_links']['items']) == 1
 
 
 def test_many_scientific_links_validate_all_and_bound_visible_entry_points(real_node):
@@ -611,12 +623,19 @@ def test_many_scientific_links_validate_all_and_bound_visible_entry_points(real_
     assert parent['evidence_omitted_count'] == 4
 
 
+@pytest.mark.parametrize('real_node', [6, 7], indirect=True)
 def test_missing_late_link_is_checked_beyond_visible_entry_point_limit(real_node):
     n = real_node
     for index in range(17):
         (n.work / 'artifacts' / f'{index}.csv').write_text('')
     links = ' '.join(f'[measurement {index}](artifacts/{index}.csv)' for index in range(18))
     _set_terminal_science(n, links)
-    with pytest.raises(ValueError, match='selected deliverable'):
+    if n.job['handoff_protocol'] < 7:
+        with pytest.raises(ValueError, match='selected deliverable'):
+            n.contracts.seal_result(n.root, 1)
+        assert not (n.record / 'result-identity.json').exists()
+    else:
         n.contracts.seal_result(n.root, 1)
-    assert not (n.record / 'result-identity.json').exists()
+        identity = n.contracts.read(n.record / 'result-identity.json')
+        assert len(identity['entry_points']) == 17
+        assert len(identity['unresolved_links']['items']) == 1

@@ -7,7 +7,7 @@ import sys
 
 import pytest
 
-from scidiscovery.research_loop import budget, contracts as c, controller, native, search
+from scidiscovery.research_loop import budget, contracts as c, controller, correction, native, search
 from test_history_handoff import finish
 
 
@@ -29,7 +29,8 @@ def review(ref='h001.m1', status='screened', evidence='inputs/parents/002/conclu
 
 
 @pytest.fixture
-def scene(tmp_path):
+def scene(tmp_path, monkeypatch):
+    monkeypatch.setattr(c, 'HANDOFF_PROTOCOL', 6)  # Preserve coverage of published path-based contracts.
     public = tmp_path / 'public';public.mkdir()
     objective = public / 'objective.md';objective.write_text('Resolve mechanisms without assuming proxy optimality.')
     root = tmp_path / 'instance'
@@ -112,6 +113,36 @@ def test_screened_carries_from_bound_a_history_while_screening_new_mechanism(sce
     assert c.validate(c.workspace(scene, 5))['next_action'] == 'finish'
 
 
+@pytest.mark.parametrize('restate', [True, False])
+def test_a_reports_only_changes_and_restatements_do_not_replace_originals(scene, restate):
+    choice = plan(other=True)
+    choice['commitments'].extend([dict(label=label, minimal_test='Bounded screen', existing_ref=None)
+                                  for label in ('Heavy tail', 'Supervised regression')])
+    finish(scene, 1, 'H', [], action='experiment', search_choice=choice)
+    finish(scene, 2, 'W', [1])
+    finish(scene, 3, 'A', [1, 2], action='continue_w', search_choice=review(next_focus=focus('h001.m2', 'screen')))
+    finish(scene, 4, 'W', [1, 2, 3])
+    finish(scene, 5, 'A', [1, 4], action='continue_w',
+           search_choice=review('h001.m2', evidence='inputs/parents/004/conclusion.json', next_focus=focus('h001.m4', 'screen')))
+    finish(scene, 6, 'W', [1, 4, 5])
+    original = (c.host_record(c.workspace(scene, 3)) / 'science-output.json').read_bytes()
+    choice = review('h001.m4', evidence='inputs/parents/006/conclusion.json', next_focus=focus('h001.m3', 'screen'))
+    if restate:
+        choice['dispositions'] += review(evidence='inputs/history/pages/0001.json')['dispositions']
+        choice['dispositions'] += review('h001.m2', evidence='inputs/history/nodes/005/0001.json')['dispositions']
+        choice['dispositions'] += review('h001.m3', status='pending', evidence='inputs/history/pages/0001.json')['dispositions']
+    finish(scene, 7, 'A', [1, 6], action='continue_w', search_choice=choice)
+    state = search.project(scene, 8)
+    assert [state['mechanisms'][f'h001.m{i}']['status'] for i in range(1, 5)] == ['screened', 'screened', 'pending', 'screened']
+    assert state['focus'] == focus('h001.m3', 'screen')
+    assert (c.host_record(c.workspace(scene, 3)) / 'science-output.json').read_bytes() == original
+    job = c.read(scene / 'jobs/007.json')
+    assert c.read(c.host_record(c.workspace(scene, 7)) / 'science-output.json')['search_review'] == choice
+    with pytest.raises(ValueError, match='bound original'):
+        correction.validate_payload(scene, job, dict(progress_assessment=dict(
+            verdict='progress', evidence=['inputs/history/pages/0001.json'])))
+
+
 @pytest.mark.parametrize('forged_view', [False, True])
 def test_first_screened_cannot_use_a_only_evidence_or_forged_view(scene, forged_view):
     finish(scene, 1, 'H', [], action='analyze', search_choice=plan())
@@ -141,7 +172,7 @@ def test_first_screened_requires_screen_not_improve_w_evidence(scene):
 
 
 @pytest.mark.parametrize('invalid', ['empty', 'tampered_history'])
-def test_existing_screened_still_requires_nonempty_exact_history(scene, invalid):
+def test_restatement_is_noop_but_changes_and_frozen_history_still_validate(scene, invalid):
     start(scene)
     finish(scene, 3, 'A', [1, 2], action='continue_w', search_choice=review(next_focus=focus()))
     finish(scene, 4, 'W', [1, 2, 3])
@@ -149,12 +180,38 @@ def test_existing_screened_still_requires_nonempty_exact_history(scene, invalid)
     choice = review(evidence='inputs/history/nodes/003/0001.json')
     if invalid == 'empty':
         choice['dispositions'][0]['evidence'] = []
+        search.validate_payload(scene, job, dict(search_review=choice))
+        choice['dispositions'][0]['status'] = 'waived'
+        with pytest.raises(ValueError, match='original evidence'):
+            search.validate_payload(scene, job, dict(search_review=choice))
     else:
         page = c.workspace(scene, 5) / 'inputs/history/nodes/003/0001.json'
         page.chmod(0o600);page.write_text('{}')
-    with pytest.raises(ValueError, match='original evidence|exactly bound'):
-        search.validate_payload(scene, job, dict(search_review=choice))
+        with pytest.raises(ValueError, match='history page changed'):
+            c._validate_inputs(scene, c.workspace(scene, 5), job)
+        choice['dispositions'][0]['status'] = 'waived'
+        with pytest.raises(ValueError, match='exactly bound'):
+            search.validate_payload(scene, job, dict(search_review=choice))
     assert not (c.host_record(c.workspace(scene, 5)) / 'result-identity.json').exists()
+
+
+def test_protocol6_task_schema_and_view_survive_protocol7_upgrade(scene, monkeypatch):
+    monkeypatch.setattr(c, 'HANDOFF_PROTOCOL', 6)
+    start(scene)
+    finish(scene, 3, 'A', [1, 2], action='continue_w', search_choice=review(next_focus=focus()))
+    paths = [scene / 'jobs/003.json', c.workspace(scene, 3) / 'science-task.json',
+             c.host_record(c.workspace(scene, 3)) / 'science-result.schema.json']
+    originals = [path.read_bytes() for path in paths]
+    monkeypatch.setattr(c, 'HANDOFF_PROTOCOL', 7)
+    retained = c.build_job(scene, 3, 'A', [1, 2])
+    assert retained['handoff_protocol'] == 6
+    assert [path.read_bytes() for path in paths] == originals
+    c.validate(c.workspace(scene, 3))
+    new = c.build_job(scene, 4, 'W', [1, 2, 3])
+    assert new['handoff_protocol'] == 7
+    assert 'only changed dispositions' in new['search']['view']['instructions']
+    assert 'only this round' in c.result_schema('A', 7)['properties']['search_review']['description']
+    assert 'only this round' not in c.result_schema('A', 6)['properties']['search_review']['description']
 
 
 def test_reopened_pending_rejects_old_a_only_screened_claim(scene):
@@ -198,10 +255,11 @@ def test_exact_requested_repair_chain_is_bounded_and_restart_deduplicated(scene)
     assert search.project(scene, 8)['mechanisms']['h001.m1']['status'] == 'pending'
 
 
-def test_evidence_must_be_an_exact_bound_original(scene):
+@pytest.mark.parametrize('evidence', ['../../foreign/conclusion.json', 'inputs/history/pages/0001.json'])
+def test_evidence_must_be_an_exact_bound_original(scene, evidence):
     start(scene)
     with pytest.raises(ValueError, match='bound original'):
-        finish(scene, 3, 'A', [1, 2], action='continue_w', search_choice=review(evidence='../../foreign/conclusion.json'))
+        finish(scene, 3, 'A', [1, 2], action='continue_w', search_choice=review(evidence=evidence))
 
 
 def test_same_boot_slice_anchor_paused_time_and_cached_tokens(scene, monkeypatch):
@@ -244,6 +302,13 @@ elif role=='A':
  else:
   ref=job['search']['commitments'][0]['mechanism_ref']
   payload.update(next_action='continue_w' if step==3 else 'finish',route_reason='Evidence warrants this scientific route',candidate_recommendation=None,search_review={'dispositions':[{'mechanism_ref':ref,'status':'screened','reason':'Bounded negative result counts as screening','evidence':['inputs/parents/002/conclusion.json']}] if step==3 else [],'next_focus':{'mechanism_ref':ref,'action':'improve','repair_source':None} if step==3 else None})
+if 'implementation_selection' in job['final_response']:
+ payload['implementation_selection']=None
+ if payload.get('search_plan'):
+  payload['search_plan']['focus'].pop('repair_source',None)
+ if payload.get('search_review'):
+  for item in payload['search_review']['dispositions']:item.pop('evidence',None)
+  if payload['search_review']['next_focus']:payload['search_review']['next_focus'].pop('repair_source',None)
 (work/'artifacts'/'observation.txt').write_text('Original observed candidate evidence')
 if role=='W':
  (work/'work'/'launches.txt').write_text('one accepted native process')

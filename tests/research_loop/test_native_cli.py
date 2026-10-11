@@ -44,6 +44,10 @@ if role == 'H':
     payload['search_plan']={'scope':'Fixture scope','commitments':[{'label':'Fixture mechanism',
       'minimal_test':'Fixture measurement','existing_ref':None}],
       'focus':{'label':'Fixture mechanism','action':'screen','repair_source':None}}
+if 'implementation_selection' in job['final_response']:
+    payload['implementation_selection'] = None
+    if role == 'H': payload['search_plan']['focus'].pop('repair_source')
+    if role == 'A': payload['search_review']['dispositions'][0].pop('evidence')
 (work/'artifacts'/'observation.txt').write_text(role+' observation')
 output.write_text(json.dumps(payload))
 print(json.dumps({'type':'thread.started','thread_id':'native-'+role}),flush=True)
@@ -141,7 +145,7 @@ def test_next_role_receives_science_without_parent_bindings(instance):
     controller.run(instance)
     work = contracts.workspace(instance, 3)
     value = contracts.read(work / 'inputs/parents/002/conclusion.json')
-    assert set(value) == {'summary', 'scientific_result', 'limitations'}
+    assert set(value) == {'summary', 'scientific_result', 'limitations', 'implementation_selection'}
     task = contracts.read(work / 'science-task.json')
     assert all(set(item) == {'conclusion', 'artifacts'} for item in task['parents'])
     assert 'sha256' not in json.dumps(task)

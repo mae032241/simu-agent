@@ -110,14 +110,20 @@ def run_native(root: Path, step: int):
     (work / 'work').mkdir(exist_ok=True)
     budget = usage(root)
     limits = control_budget.snapshot(root, settings)
+    links_instruction = ('and limitations. Ordinary scientific citations and useful deliverable links are optional; unresolved links '
+              'do not select files or acquire evidence qualification. Do not write handoff markers or mechanical '
+              'evidence/repair paths. implementation_selection is a scientific choice: null keeps the already '
+              'selected inputs, [] clears them, and listed object IDs replace them; do not restate unchanged choices. '
+              if job.get('handoff_protocol', 1) >= 7 else
+              'and Markdown links to the few needed deliverables, such as [comparison](artifacts/comparison.csv); '
+              'the host resolves these links for the next role. ')
     prompt = (ROLE_INSTRUCTIONS[job['role']] + '\nRead science-task.json, then the global files and direct '
               'parent conclusions it names. Read particular parent artifacts only as scientifically needed. '
               'Use work/ for scratch code, logs, diagnostics and intermediate models; artifacts/ contains only '
               'necessary deliverables for the next role. Experiments may use experiments/<name>/{work,artifacts} '
               'and an optional brief scientific conclusion.md. Those are directories, not extra role agents. '
               'Conclude once you have a decision-relevant scientific contribution. Report findings, uncertainties '
-              'and Markdown links to the few needed deliverables, such as [comparison](artifacts/comparison.csv); '
-              'the host resolves these links for the next role. Leave further scientific verification requests to A. '
+              + links_instruction + 'Leave further scientific verification requests to A. '
               'The controller collects deliverables, records paths and hashes, validates and seals your final response. '
               'Do not build attachment indexes, manifests, provenance inventories, hash lists, packaging scripts, '
               'or schema validators. Do not duplicate final responses in files or copy every model for handoff. '

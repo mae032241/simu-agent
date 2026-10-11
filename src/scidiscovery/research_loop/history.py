@@ -263,6 +263,53 @@ def _source(root, step):
     return job, c.read(raw), seal, c.digest(seal_path)
 
 
+def direct_sources(root, job):
+    """Verify frozen input ownership, without asserting scientific support."""
+    sources, seen = [], set()
+    for ref in job['direct_refs']:
+        match = re.fullmatch(r'inputs/parents/([0-9]{3,})/conclusion\.json', ref['path'])
+        if match is None:
+            raise ValueError('Direct scientific input has no exact node identity')
+        step = int(match[1])
+        if step in seen or match[1] != f'{step:03d}' or not 0 < step < job['step']:
+            raise ValueError('Direct scientific input identity is ambiguous')
+        seen.add(step)
+        source, payload, seal, _ = _source(root, step)
+        record = c.host_record(c.workspace(root, step))
+        outcome = c.read(c.regular(record / 'native-outcome.json'))
+        if (c.digest(c.regular(c.workspace(root, job['step']) / ref['path'])) != ref['sha256']
+                or ref['sha256'] != seal['raw_sha256']
+                or c.read(record / 'native-intent.json')['task_sha256'] != seal['job_sha256']
+                or type(outcome.get('returncode')) is not int or outcome['returncode'] != 0 or outcome.get('stop_reason')
+                or outcome.get('usage', {}).get('unknown_steps') != []
+                or outcome.get('raw_sha256') != seal['raw_sha256']
+                or c.read(record / 'result.json') != c.envelope(source, payload)):
+            raise ValueError('Direct scientific original or terminal identity changed')
+        sources.append((source, payload, seal))
+    return sources
+
+
+def implementation_options(root, step):
+    job, _, seal, _ = _source(root, step)
+    return [dict(id=f'{job["role"]}{step:03d}-I{index:03d}',
+                 label=Path(row['path']).name.encode()[:160].decode('utf-8', errors='ignore'))
+            for index, row in enumerate(sorted(seal['materials'], key=lambda row: row['path']), 1)]
+
+
+def resolve_implementation(root, object_id, receipts):
+    match = re.fullmatch(r'([HWAE])([0-9]{3,})-I([0-9]{3,})', object_id)
+    if match is None:
+        raise ValueError('Implementation selection requires a listed scientific object ID')
+    step, index = int(match[2]), int(match[3])
+    receipt = next((row for row in receipts if row['step'] == step), None)
+    job, _, seal, seal_sha = _source(root, step) if receipt else (None, None, None, None)
+    if (receipt is None or seal_sha != receipt['seal_sha256'] or job['role'] != match[1]
+            or object_id != f'{job["role"]}{step:03d}-I{index:03d}' or index < 1
+            or index > len(seal['materials'])):
+        raise ValueError('Implementation selection is outside its exact frozen source')
+    return sorted(seal['materials'], key=lambda row: row['path'])[index - 1]
+
+
 def rebuild(root, before_step):
     """Recreate small node projections from originals; caches are not authority."""
     records, current_h = [], None
@@ -372,8 +419,13 @@ def candidate_overview(records):
                 limitation='Highest means highest observed metric only; candidate models are not retained unless a sealed artifact or explicit archived snapshot exists. Proxy groups use the frozen adapter evaluation_key and direction; they do not establish target optimality. Read each original scientific conclusion for applicability and blind spots. Null slots mean unknown, not agreement.')
 
 
-def bind(root, step):
+def bind(root, step, protocol=6):
     records = rebuild(root, step)
+    if protocol >= 7:
+        for record in records:
+            options = implementation_options(root, record['step'])
+            record['view']['implementations'] = options[:16]
+            record['view']['implementations_omitted_count'] = max(0, len(options) - 16)
     work = c.workspace(root, step)
     files, total = [], 0
     def add(path, value):
@@ -411,6 +463,11 @@ def bind(root, step):
             next_page = f'{prefix}/{index + 2:04d}.json' if index + 1 < len(groups) else None
             add(path, value(items, next_page, remaining))
         return paths
+    if protocol >= 7:
+        for record in records:
+            paths = paged(implementation_options(root, record['step']), 16, 'implementations',
+                          f'inputs/history/implementations/{record["step"]:03d}', 'sealed-implementation-objects')
+            record['view']['implementation_index'] = paths[0] if paths else None
     pages = paged([row['view'] for row in records], PAGE_ROWS, 'records',
                   'inputs/history/pages', 'sealed-scientific-nodes')
     for record in records:
@@ -440,6 +497,13 @@ def bind(root, step):
         access='Read one index or conclusion page as needed; these are original scientific fields, not new host conclusions. '
         'Implementation handles are not mounted files. To give the next role an exact old implementation, link its history/nodes/.../artifacts/... handle with #reuse-implementation. '
         'Historical text may cite unavailable attachments; citations never mount them. Ordinary citations only cite evidence. A may optionally report candidate_recommendation using a listed candidate ID.')
+    if protocol >= 7:
+        view['access'] = ('Read index pages for navigation and node conclusion pages for original science. '
+            'Implementation IDs name exact retained objects, not mounted files. For more than the first 16, '
+            'read implementation_index and next_page for further IDs; unselected objects are not mounted. '
+            'implementation_selection: null keeps only the already selected inputs, [] clears, and an ID list replaces them. '
+            'New direct deliverables pass automatically. Ordinary citations never select implementations. '
+            'candidate_recommendation is an independent scientific recommendation, not input selection or actual submission.')
     if len(_bytes(view)) > MAX_BRIEF_BYTES:
         raise ValueError('Default scientific history brief exceeds byte bound')
     return dict(nodes=[dict(step=row['step'], seal_sha256=row['seal_sha256']) for row in records],

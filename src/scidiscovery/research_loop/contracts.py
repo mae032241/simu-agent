@@ -15,8 +15,9 @@ from urllib.parse import unquote, urlsplit
 
 MAX_RESULT_BYTES = 64_000
 MAX_REUSED_INPUTS = 16
+MAX_UNRESOLVED_LINKS = 16
 REUSE_FRAGMENT = 'reuse-implementation'
-HANDOFF_PROTOCOL = 6
+HANDOFF_PROTOCOL = 7
 ACTIONS = {
     'H': ('experiment', 'analyze', 'extract', 'wait'),
     'A': ('continue_w', 'revise_h', 'extract', 'wait', 'finish'),
@@ -100,6 +101,13 @@ def result_schema(role: str, protocol=1):
         properties.update(next_action={'type': 'string', 'enum': list(ACTIONS[role])},
                           route_reason={'type': 'string', 'minLength': 1})
     required = list(properties)
+    if protocol >= 7:
+        properties['implementation_selection'] = dict(type=['array', 'null'], maxItems=MAX_REUSED_INPUTS,
+            items=dict(type='string', minLength=1, maxLength=80),
+            description='Scientific implementation choice for the next task: null keeps the already selected inputs; '
+            '[] clears them; listed object IDs replace the set. New direct deliverables pass automatically. '
+            'Do not repeat unchanged choices or write paths, hashes or handoff markers. This is separate from candidate recommendation and actual submission.')
+        required.append('implementation_selection')
     if role == 'A' and protocol >= 3:
         properties['candidate_recommendation'] = dict(type=['string', 'null'], maxLength=80,
             description='Optional scientific recommendation: one listed candidate ID, or null when unknown.')
@@ -110,11 +118,11 @@ def result_schema(role: str, protocol=1):
     if protocol >= 5 and role in {'H', 'A'}:
         from . import search
         field = 'search_plan' if role == 'H' else 'search_review'
-        properties[field] = search.schema(role)
+        properties[field] = search.schema(role, protocol)
         required.append(field)
     if protocol >= 6 and role == 'A':
         from . import correction
-        properties['progress_assessment'] = correction.schema()
+        properties['progress_assessment'] = correction.schema(protocol)
         required.append('progress_assessment')
     return dict(type='object', properties=properties, required=required, additionalProperties=False)
 
@@ -149,26 +157,44 @@ def _parent_view(job, ref):
     return view
 
 
-def artifact_entry_points(work, payload, materials):
+def artifact_entry_points(work, payload, materials, protocol=6, unresolved=None):
     """Resolve explicit inline scientific links, never infer paths from prose."""
     targets = {Path(row['source']).relative_to(work).as_posix(): row['path'] for row in materials}
     entries, seen = [], set()
+    def unavailable(label, target, reason):
+        if protocol < 7:
+            raise ValueError(reason)
+        if unresolved is not None:
+            if len(unresolved['items']) < MAX_UNRESOLVED_LINKS:
+                clip = lambda value, capacity: value.encode()[:capacity].decode('utf-8', errors='ignore')
+                unresolved['items'].append(dict(label=clip(label, 160), target=clip(target, 512), reason=reason))
+            else:
+                unresolved['omitted_count'] += 1
     links = re.finditer(r'\[([^\]\n]+)\]\((?:<([^>\n]+)>|([^\s()]+))\)', payload['scientific_result'])
     for link in links:
         label, angled, plain = link.groups()
         target = angled if angled is not None else plain
-        url = urlsplit(target)
+        try:
+            url = urlsplit(target)
+        except ValueError:
+            unavailable(label, target, 'malformed_scientific_link')
+            continue
         if url.scheme or url.netloc:
             continue
         decoded = unquote(url.path)
         normalized = PurePosixPath(decoded)
         if not normalized.parts or normalized.parts[0] not in {'artifacts', 'experiments'}:
+            if protocol >= 7 and (normalized.is_absolute() or '..' in normalized.parts
+                    or '\\' in decoded or decoded.startswith('.') or url.fragment == REUSE_FRAGMENT):
+                unavailable(label, target, 'unmanaged_or_legacy_link')
             continue
         if '..' in normalized.parts or url.query or '\\' in decoded:
-            raise ValueError('Scientific artifact links require an exact local deliverable path')
+            unavailable(label, target, 'Scientific artifact links require an exact local deliverable path')
+            continue
         path = normalized.as_posix()
         if path not in targets:
-            raise ValueError(f'Scientific artifact link {path!r} does not name a selected deliverable')
+            unavailable(label, target, 'Scientific artifact link does not name a selected deliverable')
+            continue
         if path not in seen:
             entries.append(dict(label=label[:160], path=targets[path]))
             seen.add(path)
@@ -183,26 +209,43 @@ def selected_inputs(work, payload, job):
     policy = settings(root)
     bound = {row['path']: row for row in job['direct_materials']}
     selected, seen, total = [], set(), 0
-    links = re.finditer(r'\[([^\]\n]+)\]\((?:<([^>\n]+)>|([^\s()]+))\)', payload['scientific_result'])
-    for link in links:
-        label, angled, plain = link.groups()
-        url = urlsplit(angled if angled is not None else plain)
-        if url.fragment != REUSE_FRAGMENT:
-            continue
-        decoded = unquote(url.path)
-        path = PurePosixPath(decoded)
-        if (url.scheme or url.netloc or url.query or '\\' in decoded or '..' in path.parts
-                or path.is_absolute() or path.as_posix() != decoded):
-            raise ValueError('Implementation reuse must name one exact already bound input')
-        if decoded in seen:
-            continue
-        seen.add(decoded)
-        row = bound.get(decoded)
-        if row is None and job.get('handoff_protocol', 1) >= 3 and decoded.startswith('history/nodes/'):
+    choices = []
+    if job.get('handoff_protocol', 1) >= 7:
+        choice = payload.get('implementation_selection')
+        if choice is None:
+            choices = [(row['label'], row['material']) for row in job.get('selected_inputs', [])]
+        else:
             from . import history
-            row = history.resolve(root, decoded, job['history']['nodes'])
-        if row is None:
-            raise ValueError('Implementation reuse must name one exact already bound input')
+            for object_id in dict.fromkeys(choice):
+                row = history.resolve_implementation(root, object_id, job['history']['nodes'])
+                choices.append((object_id, row))
+    else:
+        links = re.finditer(r'\[([^\]\n]+)\]\((?:<([^>\n]+)>|([^\s()]+))\)', payload['scientific_result'])
+        for link in links:
+            label, angled, plain = link.groups()
+            url = urlsplit(angled if angled is not None else plain)
+            if url.fragment != REUSE_FRAGMENT:
+                continue
+            decoded = unquote(url.path)
+            path = PurePosixPath(decoded)
+            if (url.scheme or url.netloc or url.query or '\\' in decoded or '..' in path.parts
+                    or path.is_absolute() or path.as_posix() != decoded):
+                raise ValueError('Implementation reuse must name one exact already bound input')
+            if decoded in seen:
+                continue
+            seen.add(decoded)
+            row = bound.get(decoded)
+            if row is None and job.get('handoff_protocol', 1) >= 3 and decoded.startswith('history/nodes/'):
+                from . import history
+                row = history.resolve(root, decoded, job['history']['nodes'])
+            if row is None:
+                raise ValueError('Implementation reuse must name one exact already bound input')
+            choices.append((label, row))
+    material_seen = set()
+    for label, row in choices:
+        if job.get('handoff_protocol', 1) >= 7 and row['path'] in material_seen:
+            continue
+        material_seen.add(row['path'])
         source = Path(row['source'])
         try:
             origin = source.relative_to(root / 'project/nodes').parts[0]
@@ -230,6 +273,7 @@ def selected_inputs(work, payload, job):
 
 
 def science_view(job):
+    protocol = job.get('handoff_protocol', 1)
     return {key: value for key, value in {
         'role': job['role'], 'question': job['instruction'],
         'global': dict(objective='inputs/global/objective.md',
@@ -238,16 +282,26 @@ def science_view(job):
         'parents': [_parent_view(job, ref) for ref in job['direct_refs']],
         **(dict(reused_implementations=[dict(label=row['label'], path=row['material']['path'])
                                        for row in job.get('selected_inputs', [])],
-                 implementation_reuse='To give the next role a needed implementation, link an already '
+                 implementation_reuse=('implementation_selection: null retains only your already selected inputs; '
+                 '[] clears them; listed scientific object IDs replace them. Direct new deliverables pass automatically. '
+                 'Ordinary citations do not select files; no handoff markers, paths or hashes are needed.' if protocol >= 7 else
+                 'To give the next role a needed implementation, link an already '
                  'bound input with #reuse-implementation. Ordinary citations do not forward old inputs. '
-                 'The host resolves identities; do not copy or index them.')
+                 'The host resolves identities; do not copy or index them.'))
            if job.get('handoff_protocol', 1) >= 2 else {}),
+        **(dict(implementation_options=job.get('implementation_options', []),
+                implementation_options_omitted_count=job.get('implementation_options_omitted_count', 0),
+                scientific_links='Ordinary citations are scientific prose. Only listed bound files are available; '
+                'unresolved links do not select inputs or acquire evidence qualification.') if protocol >= 7 else {}),
         **(dict(history=job['history']['view']) if job.get('handoff_protocol', 1) >= 3 else {}),
         **(dict(search=job['search']['view']) if job.get('search') else {}),
-        **(dict(progress_assessment='Judge global contribution as progress/no_progress/unknown with '
+        **(dict(progress_assessment=('Judge the current assessed work as progress/no_progress/unknown; '
+                'null means unknown. Explain scientific support and limitations in ordinary science. '
+                'The host binds the exact assessed task for counting, not scientific verification. Do not write evidence paths.' if protocol >= 7 else
+                'Judge global contribution as progress/no_progress/unknown with '
                 'few exact bound prior conclusion/history-page paths; null means unknown. Never use '
                 'your own new prose or unsealed files as progress evidence. Scientific explanations '
-                'belong in scientific_result and limitations; the host counts sealed decisions.')
+                'belong in scientific_result and limitations; the host counts sealed decisions.'))
            if job.get('handoff_protocol', 1) >= 6 and job['role'] == 'A' else {}),
         'final_response': list(result_schema(job['role'], job.get('handoff_protocol', 1))['properties']),
         'outputs': 'artifacts/', 'scratch': 'work/',
@@ -345,7 +399,7 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
     policy = settings(root)
     job_path = root / 'jobs' / f'{step:03d}.json'
     protocol = read(regular(job_path)).get('handoff_protocol', 1) if job_path.exists() else HANDOFF_PROTOCOL
-    if protocol not in (1, 2, 3, 4, 5, HANDOFF_PROTOCOL):
+    if protocol not in (1, 2, 3, 4, 5, 6, HANDOFF_PROTOCOL):
         raise ValueError('Unsupported frozen handoff protocol')
     work = workspace(root, step)
     work.mkdir(parents=True, exist_ok=True)
@@ -397,10 +451,14 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
                **(dict(handoff_protocol=protocol) if protocol >= 2 else {}))
     if protocol >= 3:
         from . import history
-        job['history'] = history.bind(root, step)
+        job['history'] = history.bind(root, step, protocol)
+        if protocol >= 7:
+            options = [item for parent in parents for item in history.implementation_options(root, parent)]
+            job['implementation_options'] = options[:16]
+            job['implementation_options_omitted_count'] = max(0, len(options) - 16)
     if protocol >= 5 and policy.get('search_policy') is not None:
         from . import search
-        job['search'] = search.bind(root, step, role)
+        job['search'] = search.bind(root, step, role, protocol)
     if correction_request is not None:
         job['correction_request'] = correction_request
         from . import correction
@@ -441,8 +499,11 @@ def validate(work: Path):
         correction.validate_payload(root, job, payload)
     if read(result) != envelope(job, payload):
         raise ValueError('Result envelope differs from author science')
-    if seal.get('entry_points', []) != artifact_entry_points(work, payload, seal['materials']):
+    unresolved = dict(items=[], omitted_count=0)
+    if seal.get('entry_points', []) != artifact_entry_points(work, payload, seal['materials'], job.get('handoff_protocol', 1), unresolved):
         raise ValueError('Scientific deliverable entry points changed')
+    if job.get('handoff_protocol', 1) >= 7 and seal.get('unresolved_links') != unresolved:
+        raise ValueError('Scientific unresolved link receipt changed')
     if seal.get('selected_inputs', []) != selected_inputs(work, payload, job):
         raise ValueError('Selected implementation receipts changed')
     _validate_inputs(root, work, job)
@@ -467,7 +528,7 @@ def _validate_inputs(root, work, job):
         correction.validate_job(root, job)
     if job.get('handoff_protocol', 1) >= 5 and policy.get('search_policy') is not None:
         from . import search
-        if job.get('search') != search.bind(root, job['step'], job['role']):
+        if job.get('search') != search.bind(root, job['step'], job['role'], job['handoff_protocol']):
             raise ValueError('Frozen scientific search binding changed')
     if job.get('handoff_protocol', 1) >= 3:
         from . import history
@@ -529,7 +590,8 @@ def seal_result(root: Path, step: int):
         from . import correction
         correction.validate_payload(root, job, value)
     materials = collect_materials(root, step)
-    entry_points = artifact_entry_points(work, value, materials)
+    unresolved = dict(items=[], omitted_count=0)
+    entry_points = artifact_entry_points(work, value, materials, job.get('handoff_protocol', 1), unresolved)
     selected = selected_inputs(work, value, job)
     observations = None
     if job.get('handoff_protocol', 1) >= 3:
@@ -541,6 +603,7 @@ def seal_result(root: Path, step: int):
     write(record / 'result-identity.json', dict(sha256=digest(record / 'result.json'), raw_sha256=digest(raw),
           job_sha256=digest(job_path), materials=materials, entry_points=entry_points,
           scope='Exact bytes and direct lineage; not scientific qualification',
+          **(dict(unresolved_links=unresolved) if job.get('handoff_protocol', 1) >= 7 else {}),
           **(dict(selected_inputs=selected) if selected else {}),
           **(dict(observations=observations) if observations else {})))
     result = validate(work)
