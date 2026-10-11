@@ -1,0 +1,174 @@
+"""One fresh native process per scientific role; no model scheduler.
+
+An explicit launcher owns native permissions and functional MCP configuration.
+The controller never constructs MCP agent calls or borrows a prior chat thread.
+"""
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+import selectors
+import signal
+import subprocess
+import time
+
+from .contracts import (ROLE_INSTRUCTIONS, digest, host_record, read,
+                        seal_result, workspace, write, settings as frozen_settings)
+
+
+def usage(root: Path):
+    """Sum distinct node meters, never re-add cumulative observations."""
+    totals = dict(input_tokens=0, cached_input_tokens=0, output_tokens=0)
+    unknown = []
+    settings = frozen_settings(root)
+    for step in range(1, settings['max_steps'] + 1):
+        record = host_record(workspace(root, step))
+        if not (record / 'native-intent.json').exists():
+            continue
+        meter = record / 'usage.json'
+        if not meter.exists():
+            unknown.append(step)
+            continue
+        value = read(meter)
+        for key in totals:
+            totals[key] += value[key]
+    return dict(**totals, observed_tokens=totals['input_tokens'] + totals['output_tokens'], unknown_steps=unknown)
+
+
+def _usage_event(event):
+    if event.get('type') != 'turn.completed':
+        return None
+    value = event.get('usage')
+    if not isinstance(value, dict) or any(type(value.get(k)) is not int or value[k] < 0
+                                          for k in ('input_tokens', 'output_tokens')):
+        return None
+    cached = value.get('cached_input_tokens', 0)
+    if type(cached) is not int or not 0 <= cached <= value['input_tokens']:
+        return None
+    return dict(input_tokens=value['input_tokens'], cached_input_tokens=cached, output_tokens=value['output_tokens'])
+
+
+def execute_native(root: Path, step: int):
+    settings = frozen_settings(root)
+    work = workspace(root, step)
+    job_path = root / 'jobs' / f'{step:03d}.json'
+    job = read(job_path)
+    record = host_record(work)
+    record.mkdir(parents=True, exist_ok=True)
+    # Exclusive intent precedes any external submission. Missing final evidence
+    # is an unknown outcome, never permission to launch the same work again.
+    with (record / 'native-intent.json').open('x') as stream:
+        json.dump(dict(step=step, task_sha256=digest(job_path), prepared_at=time.time()), stream)
+        stream.flush()
+        os.fsync(stream.fileno())
+    pending = record / 'result.pending.json'
+    args = [*settings['native_launcher_argv'], 'exec', '--json', '--output-last-message', str(pending),
+            '--model', settings['model'], '-c', f'model_reasoning_effort={json.dumps(settings["reasoning_effort"])}',
+            '--sandbox', 'workspace-write', '-C', str(work), '-']
+    # Raw Codex is supported as a local soft-isolation entry. Existing qualified
+    # launchers retain their own exact argv/config protocol and MCP settings.
+    if len(settings['native_launcher_argv']) == 1 and Path(args[0]).name == 'codex':
+        args[-1:-1] = ['--skip-git-repo-check', '--output-schema', str(work / 'science-result.schema.json'),
+                       '-c', 'project_doc_max_bytes=0', '-c', 'mcp_servers.scidiscovery.enabled=false',
+                       '-c', 'features.multi_agent=false', '-c', 'features.fast_mode=false',
+                       '-c', 'approval_policy="never"',
+                       '-c', 'developer_instructions=' + json.dumps(ROLE_INSTRUCTIONS[job['role']]),
+                       '-c', f'service_tier={json.dumps(settings["service_tier"])}']
+    (work / 'artifacts').mkdir(exist_ok=True)
+    budget = usage(root)
+    deadline = read(root / 'host-started.json')['at_unix'] + settings['max_seconds']
+    prompt = (ROLE_INSTRUCTIONS[job['role']] + '\nRead science-task.json and science-result.schema.json. '
+              'Read direct files as needed using native tools. Put your own deliverables in artifacts/. '
+              'Return ONLY the scientific JSON: no binding IDs, parent references, tool-call envelopes or framework reports. '
+              'next_action, when required, is one exact enum value; put reasons separately in route_reason. '
+              'Do not create other role agents: the controller dispatches your chosen successor. '
+              'Functional tools remain subject to their own permissions.\n' + json.dumps(dict(
+                  shared_seconds_remaining=max(0, int(deadline-time.time())),
+                  shared_observed_tokens_remaining=max(0, settings['max_tokens']-budget['observed_tokens']),
+                  metering='Native usage may be delayed; this is not a guaranteed billing cap.'), ensure_ascii=False))
+    home = root / 'native-homes' / work.name
+    home.mkdir(parents=True, exist_ok=True)
+    env = {**os.environ, 'THIN_HWA_ROLE': job['role'], 'THIN_HWA_WORKSPACE': str(work),
+           'THIN_HWA_NATIVE_HOME': str(home), 'THIN_HWA_JOB_MANIFEST': str(job_path)}
+    process = None
+    stop = None
+    error = None
+    pending_line = b''
+    meter = dict(input_tokens=0, cached_input_tokens=0, output_tokens=0)
+    observed = False
+    thread_id = None
+    try:
+        with (record / 'native.jsonl').open('wb') as log, (record / 'native.stderr').open('wb') as err:
+            process = subprocess.Popen(args, cwd=work, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                       stderr=err, env=env, start_new_session=True)
+            process.stdin.write(prompt.encode())
+            process.stdin.close()
+            with selectors.DefaultSelector() as selector:
+                selector.register(process.stdout, selectors.EVENT_READ)
+                while selector.get_map() or process.poll() is None:
+                    for key, _ in selector.select(1):
+                        chunk = os.read(key.fileobj.fileno(), 65536)
+                        if not chunk:
+                            selector.unregister(key.fileobj)
+                            continue
+                        log.write(chunk)
+                        log.flush()
+                        pending_line += chunk
+                        if len(pending_line) > 64 * 1024 * 1024:
+                            raise ValueError('Native event exceeds transport byte budget')
+                        while b'\n' in pending_line:
+                            line, pending_line = pending_line.split(b'\n', 1)
+                            try:
+                                event = json.loads(line)
+                            except ValueError:
+                                continue
+                            if not isinstance(event, dict):
+                                continue
+                            if event.get('type') == 'thread.started':
+                                thread_id = event.get('thread_id')
+                            current = _usage_event(event)
+                            if current is not None:
+                                # exec turn.completed usage belongs to this turn.
+                                for key in meter:
+                                    meter[key] += current[key]
+                                observed = True
+                                write(record / 'usage.json', meter)
+                    # Pause is a next-node barrier. Accepted work can finish and
+                    # seal; it must not become an unknown submission on resume.
+                    if time.time() >= deadline:
+                        stop = 'wall_limit'
+                    elif usage(root)['observed_tokens'] >= settings['max_tokens']:
+                        stop = 'token_limit'
+                    if stop:
+                        break
+    except BaseException as exc:
+        error = exc
+        stop = 'native_error_unknown'
+    finally:
+        if process is not None:
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait(timeout=5)
+            if process.stdout is not None:
+                process.stdout.close()
+            if process.stdin is not None and not process.stdin.closed:
+                process.stdin.close()
+    write(record / 'native-outcome.json', dict(returncode=process.returncode if process else None,
+          stop_reason=stop, usage=usage(root), thread_id=thread_id,
+          limitation='Terminal native usage observation; in-flight usage may be absent.'))
+    if error is not None:
+        raise error
+    if stop or process.returncode != 0 or not observed:
+        raise RuntimeError('Native work is not a verified terminal result; preserved without replay')
+    raw = record / 'science-output.json'
+    if pending.is_symlink() or not pending.is_file():
+        raise ValueError('Native science output is missing or not a regular file')
+    os.replace(pending, raw)
+    return seal_result(root, step)

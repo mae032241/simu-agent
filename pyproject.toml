@@ -25,6 +25,7 @@ test = [
 
 [project.scripts]
 scid = "scidiscovery.artifact_agent.interfaces.cli:main"
+scid-research = "scidiscovery.research_loop.cli:main"
 
 [project.entry-points."scidiscovery.plugins"]
 builtin = "scidiscovery.builtin_plugin:CORE_PLUGIN"
