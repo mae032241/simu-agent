@@ -96,6 +96,82 @@ def test_screened_requires_same_mechanism_screen_evidence(scene):
     assert not (c.host_record(c.workspace(scene, 3)) / 'result-identity.json').exists()
 
 
+def test_screened_carries_from_bound_a_history_while_screening_new_mechanism(scene):
+    start(scene, other=True)
+    finish(scene, 3, 'A', [1, 2], action='continue_w',
+           search_choice=review(next_focus=focus('h001.m2', 'screen')))
+    finish(scene, 4, 'W', [1, 2, 3])
+    choice = review(evidence='inputs/history/nodes/003/0001.json')
+    choice['dispositions'].extend(review('h001.m2', evidence='inputs/parents/004/conclusion.json')['dispositions'])
+    finish(scene, 5, 'A', [1, 4], action='finish', search_choice=choice)
+    state = search.project(scene, 6)
+    assert {ref: row['status'] for ref, row in state['mechanisms'].items()} == {
+        'h001.m1': 'screened', 'h001.m2': 'screened'}
+    job = c.read(scene / 'jobs/005.json')
+    assert job['direct_materials'] == []  # Historical A evidence does not inherit W2 attachments.
+    assert c.validate(c.workspace(scene, 5))['next_action'] == 'finish'
+
+
+@pytest.mark.parametrize('forged_view', [False, True])
+def test_first_screened_cannot_use_a_only_evidence_or_forged_view(scene, forged_view):
+    finish(scene, 1, 'H', [], action='analyze', search_choice=plan())
+    finish(scene, 2, 'A', [1], action='continue_w',
+           search_choice=dict(dispositions=[], next_focus=focus(action='screen')))
+    finish(scene, 3, 'W', [1, 2])
+    job = c.build_job(scene, 4, 'A', [1, 3])
+    if forged_view:
+        job['search']['view']['commitments'][0]['status'] = 'screened'
+    with pytest.raises(ValueError, match='same-mechanism'):
+        search.validate_payload(scene, job,
+            dict(search_review=review(evidence='inputs/history/nodes/002/0001.json')))
+    assert search.project(scene, 4)['mechanisms']['h001.m1']['status'] == 'pending'
+    assert not (c.host_record(c.workspace(scene, 4)) / 'result-identity.json').exists()
+
+
+def test_first_screened_requires_screen_not_improve_w_evidence(scene):
+    finish(scene, 1, 'H', [], action='analyze', search_choice=plan())
+    finish(scene, 2, 'A', [1], action='continue_w',
+           search_choice=review(status='waived', evidence='inputs/parents/001/conclusion.json', next_focus=focus()))
+    finish(scene, 3, 'W', [1, 2])
+    assert c.read(scene / 'jobs/003.json')['search']['focus']['action'] == 'improve'
+    with pytest.raises(ValueError, match='same-mechanism'):
+        finish(scene, 4, 'A', [1, 3], action='finish',
+               search_choice=review(evidence='inputs/parents/003/conclusion.json'))
+    assert not (c.host_record(c.workspace(scene, 4)) / 'result-identity.json').exists()
+
+
+@pytest.mark.parametrize('invalid', ['empty', 'tampered_history'])
+def test_existing_screened_still_requires_nonempty_exact_history(scene, invalid):
+    start(scene)
+    finish(scene, 3, 'A', [1, 2], action='continue_w', search_choice=review(next_focus=focus()))
+    finish(scene, 4, 'W', [1, 2, 3])
+    job = c.build_job(scene, 5, 'A', [1, 4])
+    choice = review(evidence='inputs/history/nodes/003/0001.json')
+    if invalid == 'empty':
+        choice['dispositions'][0]['evidence'] = []
+    else:
+        page = c.workspace(scene, 5) / 'inputs/history/nodes/003/0001.json'
+        page.chmod(0o600);page.write_text('{}')
+    with pytest.raises(ValueError, match='original evidence|exactly bound'):
+        search.validate_payload(scene, job, dict(search_review=choice))
+    assert not (c.host_record(c.workspace(scene, 5)) / 'result-identity.json').exists()
+
+
+def test_reopened_pending_rejects_old_a_only_screened_claim(scene):
+    start(scene)
+    finish(scene, 3, 'A', [1, 2], action='continue_w', search_choice=review(next_focus=focus()))
+    finish(scene, 4, 'W', [1, 2, 3])
+    finish(scene, 5, 'A', [1, 4], action='continue_w',
+           search_choice=dict(dispositions=[dict(mechanism_ref='h001.m1', status='pending',
+               reason='Reopened scientific question', evidence=[])], next_focus=focus(action='screen')))
+    finish(scene, 6, 'W', [1, 4, 5])
+    assert search.project(scene, 7)['mechanisms']['h001.m1']['status'] == 'pending'
+    with pytest.raises(ValueError, match='same-mechanism'):
+        finish(scene, 7, 'A', [1, 6], action='finish',
+               search_choice=review(evidence='inputs/history/nodes/003/0001.json'))
+    assert not (c.host_record(c.workspace(scene, 7)) / 'result-identity.json').exists()
+
+
 def test_null_review_clears_focus_and_does_not_force_recommendation(scene):
     start(scene)
     finish(scene, 3, 'A', [1, 2], action='continue_w')

@@ -115,9 +115,10 @@ def _apply(root, job, payload, state):
             sources = [_evidence(root, job, path) for path in item['evidence']]
             if item['status'] != 'pending' and not sources:
                 raise ValueError('A mechanism disposition requires original evidence')
-            if item['status'] == 'screened' and not any(source['role'] == 'W'
+            if (item['status'] == 'screened' and mechanisms[ref]['status'] != 'screened'
+                    and not any(source['role'] == 'W'
                     and ((source.get('search') or {}).get('focus') or {}).get('mechanism_ref') == ref
-                    and source['search']['focus']['action'] == 'screen' for source in sources):
+                    and source['search']['focus']['action'] == 'screen' for source in sources)):
                 raise ValueError('Screened requires same-mechanism W screening evidence')
             mechanisms[ref]['status'] = item['status']
         state['focus'] = review['next_focus']
