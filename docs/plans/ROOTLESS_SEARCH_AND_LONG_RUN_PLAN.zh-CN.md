@@ -1,5 +1,7 @@
 # 薄 HWA：有界搜索、行为历史与长时间运行
 
+后续设计入口（2026-10-11）：[统一方案谱系与自适应搜索 T0–T5](ROOTLESS_LINEAGE_ADAPTIVE_SEARCH_PLAN.zh-CN.md)。该提案细化 N2/N3 的后续演进，尚未实施；本文件继续维护 N 系列当前实现和验收事实。N5 已停止，终态见[预算收口记录](evidence/ROOTLESS_N5_BUDGET_CLOSEOUT_20261011.zh-CN.md)。后续先完成 N5/live02 全候选池零模型诊断，再做 N6 单节点上限与预算内交付，之后带着诊断进入 T0–T5。
+
 日期：2026-10-11。分支：dev。规划基线：`99e212d`。
 状态：N0、N1a/N1b、N2a/N2b、N3/N4 工程门禁与独审通过。真实第2场因时钟校验失败（e33ee9a已修复）；第3场H/W完成33次实验，A因严格输出schema缺required被API拒绝，新协议4修复已独审并通过67项定向测试。两场失败原件保留。后续N5首场已完成节点边界暂停/恢复及A2断点封存，W3后A3机械引用阻断经fc36d29修复并恢复；新协议W4/A4完成，A4触发H2修订，H2因重述四项旧组合且新focus未声明停在seal_pending；H增量组合与有界动作补正已完成无模型及安装门禁并独审通过，未真实恢复，整体验收和科学质量仍未通过。
 
@@ -43,7 +45,7 @@
 | N2 | 候选树与行为历史 | 找回最佳候选和失败原因，默认交接有界 | N2a/N2b 独审、回归及安装验证通过 |
 | N3 | W 内有界搜索 | 探索承诺有处置，局部搜索守住 H 边界 | [源码双独审、138项定向检查及安装入口通过](evidence/ROOTLESS_N3_ACCEPTANCE_20261011.zh-CN.md) |
 | N4 | A 主导纠偏与强制刹车 | 空转可止损，合理等待和已接受工作不被误伤 | [源码双独审、200项回归及4项增量、最终安装入口通过](evidence/ROOTLESS_N4_ACCEPTANCE_20261011.zh-CN.md)；新实例显式启用 |
-| N5 | cov 行为与恢复验收 | 完整闭环、历史使用和真实续接分别有证据 | [首场A2封存阻断已修复并独审，原A2只读验证通过](evidence/ROOTLESS_N5_SCREENED_CARRY_FIX_20261011.zh-CN.md)；原场已恢复至H2待封存，[统一机械引用修订已独审](evidence/ROOTLESS_N5_STATUS_DELTA_FIX_20261011.zh-CN.md)，W4/A4已成功；[H2组合缺陷修复已独审](evidence/ROOTLESS_N5_INCREMENTAL_H_AND_SEMANTIC_RECOVERY_20261011.zh-CN.md)，原场未恢复、整体验收未通过 |
+| N5 | cov 行为与恢复验收 | 完整闭环、历史使用和真实续接分别有证据 | [首场A2封存阻断已修复并独审，原A2只读验证通过](evidence/ROOTLESS_N5_SCREENED_CARRY_FIX_20261011.zh-CN.md)；原场已恢复至H2待封存，[统一机械引用修订已独审](evidence/ROOTLESS_N5_STATUS_DELTA_FIX_20261011.zh-CN.md)，W4/A4已成功；[H2组合缺陷修复已独审](evidence/ROOTLESS_N5_INCREMENTAL_H_AND_SEMANTIC_RECOVERY_20261011.zh-CN.md)，原场已恢复至 A016 封存，H017 因 token_limit 停止；[终态及三候选评分](evidence/ROOTLESS_N5_BUDGET_CLOSEOUT_20261011.zh-CN.md)已记录，预算内收口失败，整体验收未通过 |
 
 顺序：N0 → N1a → N1b 与 N2 分工实施 → 各自独审并提交 → 冻结同一候选 → 剩余两场 cov → N3 → N4 → N5。
 N2 是本轮真实测试前置条件：先修复 A→H→W 的确切旧实现交接断点并完成有界候选概览，再使用真实模型预算。N4 的回放夹具可以并行准备。[N3/N4规则与夹具设计草稿](evidence/ROOTLESS_N3_N4_DESIGN_DRAFT_20261011.zh-CN.md)已独立复审通过；N3 以实施设计及验收记录为准，N4 阈值以独审后的 N4 实施设计为准，N4 已完成生产接线及无模型验收，真实效果仍待 N5。
