@@ -16,7 +16,7 @@ from urllib.parse import unquote, urlsplit
 MAX_RESULT_BYTES = 64_000
 MAX_REUSED_INPUTS = 16
 REUSE_FRAGMENT = 'reuse-implementation'
-HANDOFF_PROTOCOL = 3
+HANDOFF_PROTOCOL = 4
 ACTIONS = {
     'H': ('experiment', 'analyze', 'extract', 'wait'),
     'A': ('continue_w', 'revise_h', 'extract', 'wait', 'finish'),
@@ -103,6 +103,10 @@ def result_schema(role: str, protocol=1):
     if role == 'A' and protocol >= 3:
         properties['candidate_recommendation'] = dict(type=['string', 'null'], maxLength=80,
             description='Optional scientific recommendation: one listed candidate ID, or null when unknown.')
+        if protocol >= 4:
+            properties['candidate_recommendation']['description'] = (
+                'Always include this field: one listed candidate ID, or null when no recommendation is made.')
+            required.append('candidate_recommendation')
     return dict(type='object', properties=properties, required=required, additionalProperties=False)
 
 
@@ -325,7 +329,7 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
     policy = settings(root)
     job_path = root / 'jobs' / f'{step:03d}.json'
     protocol = read(regular(job_path)).get('handoff_protocol', 1) if job_path.exists() else HANDOFF_PROTOCOL
-    if protocol not in (1, 2, HANDOFF_PROTOCOL):
+    if protocol not in (1, 2, 3, HANDOFF_PROTOCOL):
         raise ValueError('Unsupported frozen handoff protocol')
     work = workspace(root, step)
     work.mkdir(parents=True, exist_ok=True)

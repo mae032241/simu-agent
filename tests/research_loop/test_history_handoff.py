@@ -28,7 +28,7 @@ def finish(root, step, role, parents, text='A bounded scientific finding', actio
     work = contracts.workspace(root, step)
     record = contracts.host_record(work)
     payload = dict(summary=summary, scientific_result=text, limitations=limitations if limitations is not None else ['Fixture only'])
-    if recommendation is not None:
+    if role == 'A' and job.get('handoff_protocol', 1) >= 4 or recommendation is not None:
         payload['candidate_recommendation'] = recommendation
     if role in {'H', 'A'}:
         payload.update(next_action=action, route_reason='Exact scientific question')

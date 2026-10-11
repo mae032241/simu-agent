@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"01a12962-9e7c-7a01-b700-d132ead758a1"}
+{"type":"turn.started"}
+{"type":"error","message":"{\"type\":\"error\",\"error\":{\"message\":\"Invalid schema for response_format 'codex_output_schema': 'schema.required' is required to include every key in properties. Missing 'candidate_recommendation'.\",\"type\":\"invalid_request_error\",\"param\":\"text.format.schema\",\"code\":\"invalid_json_schema\"},\"status\":400}"}
+{"type":"turn.failed","error":{"message":"{\"type\":\"error\",\"error\":{\"message\":\"Invalid schema for response_format 'codex_output_schema': 'schema.required' is required to include every key in properties. Missing 'candidate_recommendation'.\",\"type\":\"invalid_request_error\",\"param\":\"text.format.schema\",\"code\":\"invalid_json_schema\"},\"status\":400}"}}

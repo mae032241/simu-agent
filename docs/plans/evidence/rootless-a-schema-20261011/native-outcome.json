@@ -1,0 +1,16 @@
+{
+  "returncode": 1,
+  "stop_reason": null,
+  "usage": {
+    "input_tokens": 1478638,
+    "cached_input_tokens": 1320064,
+    "output_tokens": 31211,
+    "observed_tokens": 1509849,
+    "unknown_steps": [
+      3
+    ]
+  },
+  "thread_id": "01a12962-9e7c-7a01-b700-d132ead758a1",
+  "cleanup": "observed_group_cleaned",
+  "limitation": "Terminal native usage observation; in-flight usage may be absent."
+}

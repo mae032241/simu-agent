@@ -201,7 +201,7 @@ def test_handoff_v2_packets_are_byte_compatible_after_history_upgrade(scene):
     assert 'history' not in c.science_view(job)
     assert c.build_job(scene, 3, 'A', [2]) == job
     next_job = c.build_job(scene, 4, 'H', [3])
-    assert next_job['handoff_protocol'] == 3 and next_job['history']['view']['node_count'] == 3
+    assert next_job['handoff_protocol'] == c.HANDOFF_PROTOCOL and next_job['history']['view']['node_count'] == 3
     assert all(path.read_bytes() == data for path, data in original.items())
     c.validate(work)
 

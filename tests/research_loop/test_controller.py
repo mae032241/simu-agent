@@ -369,6 +369,8 @@ def test_real_sealing_and_materials_compose_with_controller(tmp_path, monkeypatc
             limitations=["Unobserved goal conditions"])
         if role in {"H", "A"}:
             payload.update(next_action=action, route_reason="The direct evidence supports this route")
+        if role == 'A':
+            payload['candidate_recommendation'] = None
         artifacts = work / "artifacts"
         artifacts.mkdir(exist_ok=True)
         (artifacts / f"evidence-{step}.txt").write_text(f"Original {role} observation")

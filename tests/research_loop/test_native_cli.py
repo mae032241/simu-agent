@@ -34,6 +34,8 @@ payload={'summary':role+' bounded finding','scientific_result':'Evidence in arti
          'limitations':['Only a deterministic test; no science validation.']}
 if role in {'H','A'}:
     payload.update(next_action='experiment' if role=='H' else 'finish',route_reason='Exact test direction')
+if role == 'A':
+    payload['candidate_recommendation'] = None
 (work/'artifacts'/'observation.txt').write_text(role+' observation')
 output.write_text(json.dumps(payload))
 print(json.dumps({'type':'thread.started','thread_id':'native-'+role}),flush=True)
