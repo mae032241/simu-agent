@@ -5,10 +5,9 @@ from contextlib import contextmanager
 import fcntl
 import os
 from pathlib import Path
-import time
 import uuid
 
-from . import contracts, native, runtime
+from . import budget, contracts, native, runtime
 
 
 def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str], *,
@@ -47,7 +46,7 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
         raise ValueError('Global user updates must contain original user text')
     settings = dict(goal_id="scid-hwa-" + uuid.uuid4().hex[:12], objective=text,
         public_root=str(public_root.resolve()), native_launcher_argv=list(launcher),
-        max_tokens=max_tokens, max_seconds=max_seconds, max_steps=max_steps,
+        max_tokens=max_tokens, max_seconds=max_seconds, max_steps=max_steps, time_budget_basis="active",
         model=model, reasoning_effort=reasoning_effort, service_tier=service_tier,
         max_output_item_bytes=max_output_item_bytes,
         max_output_total_bytes=max_output_total_bytes)
@@ -99,18 +98,20 @@ def _parents(*steps):
     return list(dict.fromkeys(step for step in steps if step is not None))
 
 
-def _launch_limit(root, settings, deadline):
-    if time.time() >= deadline:
+def _launch_limit(root, settings):
+    limits = budget.snapshot(root, settings)
+    if limits['seconds_remaining'] <= 0:
         return "wall_limit"
     observed = native.usage(root)
     if observed["unknown_steps"]:
         return "usage_unknown"
-    if observed["observed_tokens"] >= settings["max_tokens"]:
+    if observed["observed_tokens"] >= limits["max_tokens"]:
         return "token_limit"
     return None
 
 
 def _finish(root, settings, status, completed, last, *, reason=None, next_role=None):
+    budget.inactive(root, status)
     result = dict(status=status, goal_id=settings["goal_id"], completed_steps=completed,
         last_step=completed or None, usage=native.usage(root),
         goal_completion="not_asserted", unmet_goal=settings["objective"])
@@ -208,8 +209,7 @@ def _run(root):
     settings = contracts.settings(root)
     started_path = root / "host-started.json"
     if not started_path.exists():
-        contracts.write(started_path, dict(at_unix=time.time()))
-    deadline = contracts.read(started_path)["at_unix"] + settings["max_seconds"]
+        contracts.write(started_path, budget.clock_stamp())
     role, parents, instruction, evidence_return = "H", [], "", None
     current_h = current_w = last = None
     completed = 0
@@ -221,6 +221,7 @@ def _run(root):
             retained = any(path.exists() for path in (record / "native-intent.json",
                 record / "native-outcome.json", record / "science-output.json", record / "result.json"))
             if retained:
+                budget.transition(root, 'advance', 'recover_original')
                 if runtime.node_state(root, step) == "running":
                     try:
                         native.wait_native(root, step)
@@ -244,7 +245,8 @@ def _run(root):
             if (root / "pause.request").exists():
                 return _finish(root, settings, "paused", completed, last,
                     reason="User pause.request prevents further native launches", next_role=role)
-            limit = _launch_limit(root, settings, deadline)
+            budget.transition(root, 'advance', 'controller_launch_boundary')
+            limit = _launch_limit(root, settings)
             if limit:
                 return _finish(root, settings, limit, completed, last, next_role=role)
             contracts.build_job(root, step, role, parents, instruction=instruction,
@@ -252,7 +254,7 @@ def _run(root):
             # Job creation is reversible; check again at the actual launch boundary.
             if (root / "pause.request").exists():
                 return _finish(root, settings, "paused", completed, last, next_role=role)
-            limit = _launch_limit(root, settings, deadline)
+            limit = _launch_limit(root, settings)
             if limit:
                 return _finish(root, settings, limit, completed, last, next_role=role)
             try:

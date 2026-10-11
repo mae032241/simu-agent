@@ -268,6 +268,7 @@ def test_explicit_budget_prevents_next_scientific_launch(scene, limit, value, st
 
 
 def test_wall_budget_survives_restart(scene):
+    scene.configure(time_budget_basis="elapsed")  # Preserve the old instance contract.
     scene.write(scene.root / "host-started.json", {"at_unix": 0})
     assert scene.controller.run(scene.root)["status"] == "wall_limit"
     assert scene.calls == []
@@ -275,7 +276,8 @@ def test_wall_budget_survives_restart(scene):
 
 def test_job_materialization_cannot_start_work_after_wall_limit(scene, monkeypatch):
     now = [100.0]
-    monkeypatch.setattr(scene.controller.time, "time", lambda: now[0])
+    monkeypatch.setattr(scene.controller.budget.time, "time", lambda: now[0])
+    monkeypatch.setattr(scene.controller.budget.time, "clock_gettime", lambda _: now[0])
     build = scene.controller.contracts.build_job
 
     def slow_build(*args, **kwargs):

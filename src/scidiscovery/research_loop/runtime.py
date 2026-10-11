@@ -15,7 +15,7 @@ import subprocess
 import sys
 import time
 
-from . import contracts
+from . import budget, contracts
 
 
 def process_identity(pid, task_sha256):
@@ -163,6 +163,17 @@ def _runner_lease(record):
         os.close(fd)
 
 
+def _complete_clock(root):
+    # Hold the same host writer lock through the append. An unlocked append
+    # after probing the lock could stop a newly accepted controller interval.
+    from .controller import _writer
+    try:
+        with _writer(root):
+            budget.inactive(root, 'runner_completion_without_controller')
+    except RuntimeError:
+        pass  # A live controller owns accepted work and the clock transition.
+
+
 def _run(root, step):
     record = contracts.host_record(contracts.workspace(root, step))
     with _runner_lease(record):
@@ -184,7 +195,10 @@ def _run(root, step):
         if not process_matches(contracts.read(record / 'watchdog-process.json'), binding):
             raise RuntimeError('Local cleanup watchdog identity is unavailable; no native launch')
         from .native import run_native
-        run_native(root, step)
+        try:
+            run_native(root, step)
+        finally:
+            _complete_clock(root)
 
 
 def _main():

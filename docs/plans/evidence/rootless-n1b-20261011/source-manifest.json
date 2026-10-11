@@ -1,0 +1,15 @@
+{
+  "base": "c64a43683cb45c150fe5bca0b7cb14a2dccb5916",
+  "files": {
+    "src/scidiscovery/research_loop/budget.py": "11a3b954c0b3ad69324252f7b6c023d8aa68b95189a2747b4e514c1e01aeca5f",
+    "src/scidiscovery/research_loop/controller.py": "28074f4318ed7b3241bc33edbea87434422ab369822edcab8159f9115fc659f7",
+    "src/scidiscovery/research_loop/native.py": "c5c3da670d4d27ec5ed3bdb71503499536524fd5982a1210cf38ad057a3ace94",
+    "src/scidiscovery/research_loop/runtime.py": "1ef1fe09522172003a9e0a5dbd3317ae25c1d11dfa68c1ef4672c180f7a8297e",
+    "src/scidiscovery/research_loop/cli.py": "84821c231220cc4f5a42e6ee0242b6204bc1ed66ac9ab22ce8d59609cc100b60",
+    "tests/research_loop/test_budget.py": "3717e276247c11b83c82188ba2f139c146527b5ab032f9dca688399ecb606d90",
+    "tests/research_loop/test_controller.py": "e232c3d680f7e1a6e60c61d83aefd8507938e0ce20ac807e556da872dccf696c",
+    "tests/research_loop/test_runtime.py": "eb023d70eccbdab0e22660822a3a3e099256318e2677bdea0be603d31c39f931",
+    "docs/ROOTLESS_CLI.zh-CN.md": "bf58655e588f27508b96a0e6d61c78419520ad2023ea1c77d125ac197470bb34"
+  },
+  "test_log": "/tmp/scid-n1b-focused-final/batch-001/pytest.log"
+}

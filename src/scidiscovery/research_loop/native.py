@@ -13,7 +13,7 @@ import signal
 import subprocess
 import time
 
-from . import runtime
+from . import budget as control_budget, runtime
 from .contracts import (ACTIONS, ROLE_INSTRUCTIONS, digest, host_record, read,
                         seal_result, workspace, write, settings as frozen_settings)
 
@@ -106,7 +106,7 @@ def run_native(root: Path, step: int):
     (work / 'artifacts').mkdir(exist_ok=True)
     (work / 'work').mkdir(exist_ok=True)
     budget = usage(root)
-    deadline = read(root / 'host-started.json')['at_unix'] + settings['max_seconds']
+    limits = control_budget.snapshot(root, settings)
     prompt = (ROLE_INSTRUCTIONS[job['role']] + '\nRead science-task.json, then the global files and direct '
               'parent conclusions it names. Read particular parent artifacts only as scientifically needed. '
               'Use work/ for scratch code, logs, diagnostics and intermediate models; artifacts/ contains only '
@@ -123,8 +123,8 @@ def run_native(root: Path, step: int):
               'separate route_reason. The controller dispatches the next role; functional tools retain their permissions.\n'
               + json.dumps(dict(
                   next_action_options=ACTIONS.get(job['role'], []),
-                  shared_seconds_remaining=max(0, int(deadline-time.time())),
-                  shared_observed_tokens_remaining=max(0, settings['max_tokens']-budget['observed_tokens']),
+                  shared_seconds_remaining=max(0, int(limits['seconds_remaining'])),
+                  shared_observed_tokens_remaining=max(0, limits['max_tokens']-budget['observed_tokens']),
                   metering='Native usage may be delayed; this is not a guaranteed billing cap.'), ensure_ascii=False))
     home = root / 'native-homes' / work.name
     home.mkdir(parents=True, exist_ok=True)
@@ -144,9 +144,10 @@ def run_native(root: Path, step: int):
             # Submission happens here, after runner/watchdog startup. Recheck
             # all shared limits; this fresh intent alone is not missing usage.
             latest = usage(root)
-            stop = ('wall_limit' if time.time() >= deadline else
+            limits = control_budget.snapshot(root, settings)
+            stop = ('wall_limit' if limits['seconds_remaining'] <= 0 else
                     'usage_unknown' if any(item != step for item in latest['unknown_steps']) else
-                    'token_limit' if latest['observed_tokens'] >= settings['max_tokens'] else None)
+                    'token_limit' if latest['observed_tokens'] >= limits['max_tokens'] else None)
             if stop:
                 write(record / 'usage.json', dict(input_tokens=0, cached_input_tokens=0, output_tokens=0))
                 write(record / 'native-outcome.json', dict(returncode=None, stop_reason=stop,
@@ -191,9 +192,10 @@ def run_native(root: Path, step: int):
                                 write(record / 'usage.json', meter)
                     # Pause is a next-node barrier. Accepted work can finish and
                     # seal; it must not become an unknown submission on resume.
-                    if time.time() >= deadline:
+                    limits = control_budget.snapshot(root, settings)
+                    if limits['seconds_remaining'] <= 0:
                         stop = 'wall_limit'
-                    elif usage(root)['observed_tokens'] >= settings['max_tokens']:
+                    elif usage(root)['observed_tokens'] >= limits['max_tokens']:
                         stop = 'token_limit'
                     if stop:
                         break

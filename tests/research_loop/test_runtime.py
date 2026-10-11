@@ -9,7 +9,7 @@ import time
 
 import pytest
 
-from scidiscovery.research_loop import contracts, controller, runtime
+from scidiscovery.research_loop import budget, contracts, controller, runtime
 from scidiscovery.research_loop.cli import status
 
 
@@ -76,15 +76,19 @@ def test_controller_kill_rejoins_same_native_execution(local):
     first.kill()
     first.communicate(timeout=3)
     assert runtime.process_matches(owner, owner['task_sha256'])
+    before_wait = budget.snapshot(root)['advance_seconds']
+    assert budget.snapshot(root)['clock_phase'] == 'advance'
     second = launch()
     time.sleep(.15)
     assert second.poll() is None  # Completion waiting launches no new role.
+    assert budget.snapshot(root)['advance_seconds'] > before_wait
     (work / 'work/release').touch()
     out, err = second.communicate(timeout=8)
     assert second.returncode == 0, out + err
     result = json.loads(out)
     assert result['status'] == 'wait'
     assert result['completed_steps'] == 1
+    assert budget.snapshot(root)['clock_phase'] == 'paused'
     assert (work / 'work/launches.txt').read_text() == 'launch\n'
     assert controller.run(root) == result
     assert contracts.read(record / 'native-outcome.json')['thread_id'] == 'exact-local-thread'
@@ -195,6 +199,10 @@ def test_direct_runner_entry_rejects_duplicate_and_retained_execution(local):
 def test_actual_native_boundary_rechecks_budget_without_submitting(local, monkeypatch, budget, reason):
     from scidiscovery.research_loop import native
     root, work, record, launch, until = local
+    settings = contracts.settings(root)
+    settings.pop('time_budget_basis')  # This fixture checks the legacy absolute deadline.
+    contracts.write(root / 'settings.json', settings)
+    contracts.write(root / 'settings-identity.json', dict(sha256=contracts.digest(root / 'settings.json')))
     contracts.build_job(root, 1, 'H', [])
     contracts.write(record / 'native-intent.json', dict(step=1, task_sha256=contracts.digest(root / 'jobs/001.json')))
     contracts.write(root / 'host-started.json', dict(at_unix=0 if budget == 'wall' else time.time()))
@@ -260,3 +268,37 @@ def test_budget_term_leader_exit_cleans_stubborn_standard_child(local):
     assert outcome['cleanup'] == 'observed_group_cleaned'
     assert not (record / 'result-identity.json').exists()
     _assert_child_dead(work, contracts.digest(root / 'jobs/001.json'))
+
+
+def test_runner_completion_stops_clock_after_controller_disconnect(local):
+    root, work, record, launch, until = local
+    front = launch()
+    until(lambda: (work / 'work/ready').exists())
+    front.kill()
+    front.communicate(timeout=3)
+    assert budget.snapshot(root)['clock_phase'] == 'advance'
+    (work / 'work/release').touch()
+    until(lambda: (record / 'native-outcome.json').exists())
+    until(lambda: budget.snapshot(root)['clock_phase'] == 'paused')
+    stopped = budget.snapshot(root)
+    time.sleep(.08)
+    later = budget.snapshot(root)
+    assert later['advance_seconds'] == stopped['advance_seconds']
+    assert later['paused_seconds'] > stopped['paused_seconds']
+    assert not (record / 'result-identity.json').exists()
+    assert controller.run(root)['status'] == 'wait'
+    assert (work / 'work/launches.txt').read_text() == 'launch\n'
+
+
+def test_budget_amend_refuses_live_runner_even_after_controller_disconnect(local):
+    root, work, record, launch, until = local
+    front = launch()
+    until(lambda: (work / 'work/ready').exists())
+    front.kill()
+    front.communicate(timeout=3)
+    with pytest.raises(RuntimeError, match='running or unknown'):
+        budget.amend(root, max_tokens=2000, authorization_note='A declaration cannot bypass activity')
+    assert all(contracts.read(path)['kind'] != 'budget_amend'
+               for path in (root / 'control-ledger').glob('*.json'))
+    (work / 'work/release').touch()
+    until(lambda: (record / 'native-outcome.json').exists())

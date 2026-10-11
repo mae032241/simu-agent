@@ -5,7 +5,7 @@ import argparse
 import json
 from pathlib import Path
 
-from . import contracts, controller, native, runtime
+from . import budget, contracts, controller, native, runtime
 
 
 def status(root: Path):
@@ -27,7 +27,7 @@ def status(root: Path):
         nodes.append(dict(step=step, role=job['role'], state=state))
     return dict(instance=str(root), goal_id=settings['goal_id'], objective=settings['objective'],
                 paused=(root / 'pause.request').exists(), nodes=nodes, usage=native.usage(root),
-                goal_completion='not_asserted')
+                goal_completion='not_asserted', budget=budget.snapshot(root))
 
 
 def main(argv=None):
@@ -40,7 +40,7 @@ def main(argv=None):
     prepare.add_argument('--public-root', type=Path, required=True)
     prepare.add_argument('--native-launcher-json', required=True, help='An argv JSON array, e.g. ["codex"]')
     prepare.add_argument('--max-tokens', type=int, required=True)
-    prepare.add_argument('--max-seconds', type=float, required=True)
+    prepare.add_argument('--max-seconds', type=float, required=True, help='Maximum advancement seconds; explicit pauses do not consume this ceiling')
     prepare.add_argument('--max-steps', type=int, required=True)
     prepare.add_argument('--model', default='gpt-6.1-sol')
     prepare.add_argument('--reasoning-effort', default='high')
@@ -52,6 +52,11 @@ def main(argv=None):
             ('continue', 'Clear the next-node pause and run; never replay unknown work')):
         command = commands.add_parser(name, help=help_text)
         command.add_argument('--root', type=Path, required=True)
+    amend = commands.add_parser('budget-amend', help='Record an external operator ceiling revision without resetting consumption')
+    amend.add_argument('--root', type=Path, required=True)
+    amend.add_argument('--max-tokens', type=int)
+    amend.add_argument('--max-seconds', type=float)
+    amend.add_argument('--authorization-note', required=True, help='Operator decision for the audit; this text is not authentication')
     args = parser.parse_args(argv)
     root = args.root.expanduser().resolve()
     try:
@@ -63,9 +68,17 @@ def main(argv=None):
             result = dict(status='prepared', instance=str(root), goal_id=settings['goal_id'])
         elif args.command == 'status':
             result = status(root)
+        elif args.command == 'budget-amend':
+            result = budget.amend(root, max_tokens=args.max_tokens, max_seconds=args.max_seconds,
+                                  authorization_note=args.authorization_note)
         elif args.command == 'pause':
             contracts.read(root / 'settings.json')
             contracts.write(root / 'pause.request', dict(reason='user_pause_at_next_node'))
+            try:
+                with controller._writer(root):
+                    budget.inactive(root, 'operator_pause')
+            except RuntimeError:
+                pass  # Accepted work retains advance time; its owner will pause.
             result = dict(status='pause_requested', accepted_work='allowed_to_finish_and_seal')
         elif args.command == 'continue':
             # Clear the marker only after obtaining the same per-instance writer
@@ -79,7 +92,7 @@ def main(argv=None):
         print(json.dumps(dict(status='error', error=str(error)), ensure_ascii=False))
         return 1
     print(json.dumps(result, ensure_ascii=False))
-    return 0 if result.get('status') in {None, 'prepared', 'finish', 'wait', 'paused', 'pause_requested'} else 2
+    return 0 if result.get('status') in {None, 'prepared', 'finish', 'wait', 'paused', 'pause_requested', 'budget_amended'} else 2
 
 
 if __name__ == '__main__':
