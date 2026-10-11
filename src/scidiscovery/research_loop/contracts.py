@@ -16,7 +16,7 @@ from urllib.parse import unquote, urlsplit
 MAX_RESULT_BYTES = 64_000
 MAX_REUSED_INPUTS = 16
 REUSE_FRAGMENT = 'reuse-implementation'
-HANDOFF_PROTOCOL = 5
+HANDOFF_PROTOCOL = 6
 ACTIONS = {
     'H': ('experiment', 'analyze', 'extract', 'wait'),
     'A': ('continue_w', 'revise_h', 'extract', 'wait', 'finish'),
@@ -112,6 +112,10 @@ def result_schema(role: str, protocol=1):
         field = 'search_plan' if role == 'H' else 'search_review'
         properties[field] = search.schema(role)
         required.append(field)
+    if protocol >= 6 and role == 'A':
+        from . import correction
+        properties['progress_assessment'] = correction.schema()
+        required.append('progress_assessment')
     return dict(type='object', properties=properties, required=required, additionalProperties=False)
 
 
@@ -240,6 +244,11 @@ def science_view(job):
            if job.get('handoff_protocol', 1) >= 2 else {}),
         **(dict(history=job['history']['view']) if job.get('handoff_protocol', 1) >= 3 else {}),
         **(dict(search=job['search']['view']) if job.get('search') else {}),
+        **(dict(progress_assessment='Judge global contribution as progress/no_progress/unknown with '
+                'few exact bound prior conclusion/history-page paths; null means unknown. Never use '
+                'your own new prose or unsealed files as progress evidence. Scientific explanations '
+                'belong in scientific_result and limitations; the host counts sealed decisions.')
+           if job.get('handoff_protocol', 1) >= 6 and job['role'] == 'A' else {}),
         'final_response': list(result_schema(job['role'], job.get('handoff_protocol', 1))['properties']),
         'outputs': 'artifacts/', 'scratch': 'work/',
         'experiments': 'experiments/<id>/{work/,artifacts/,conclusion.json or conclusion.md}; '
@@ -327,7 +336,8 @@ def _copy_bound(source: Path, destination: Path, sha256: str):
         raise ValueError('Bound input copy changed')
 
 
-def build_job(root: Path, step: int, role: str, parents: list[int], instruction='', evidence_return=None):
+def build_job(root: Path, step: int, role: str, parents: list[int], instruction='', evidence_return=None,
+              correction_request=None):
     if role not in ROLE_INSTRUCTIONS or type(step) is not int or step < 1:
         raise ValueError('Invalid scientific node')
     if len(parents) != len(set(parents)) or any(type(p) is not int or not 0 < p < step for p in parents):
@@ -335,7 +345,7 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
     policy = settings(root)
     job_path = root / 'jobs' / f'{step:03d}.json'
     protocol = read(regular(job_path)).get('handoff_protocol', 1) if job_path.exists() else HANDOFF_PROTOCOL
-    if protocol not in (1, 2, 3, 4, HANDOFF_PROTOCOL):
+    if protocol not in (1, 2, 3, 4, 5, HANDOFF_PROTOCOL):
         raise ValueError('Unsupported frozen handoff protocol')
     work = workspace(root, step)
     work.mkdir(parents=True, exist_ok=True)
@@ -391,6 +401,10 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
     if protocol >= 5 and policy.get('search_policy') is not None:
         from . import search
         job['search'] = search.bind(root, step, role)
+    if correction_request is not None:
+        job['correction_request'] = correction_request
+        from . import correction
+        correction.validate_job(root, job)
     for path, value in ((root / 'jobs' / f'{step:03d}.json', job),
                         (work / 'science-task.json', science_view(job)),
                         (host_record(work) / 'science-result.schema.json', result_schema(role, protocol))):
@@ -422,6 +436,9 @@ def validate(work: Path):
     if job.get('handoff_protocol', 1) >= 5:
         from . import search
         search.validate_payload(root, job, payload)
+    if job.get('handoff_protocol', 1) >= 6:
+        from . import correction
+        correction.validate_payload(root, job, payload)
     if read(result) != envelope(job, payload):
         raise ValueError('Result envelope differs from author science')
     if seal.get('entry_points', []) != artifact_entry_points(work, payload, seal['materials']):
@@ -445,6 +462,9 @@ def _validate_inputs(root, work, job):
     if job['global_materials'] != global_materials(root):
         raise ValueError('Bound global context changed')
     policy = settings(root)
+    if job.get('handoff_protocol', 1) >= 6:
+        from . import correction
+        correction.validate_job(root, job)
     if job.get('handoff_protocol', 1) >= 5 and policy.get('search_policy') is not None:
         from . import search
         if job.get('search') != search.bind(root, job['step'], job['role']):
@@ -505,6 +525,9 @@ def seal_result(root: Path, step: int):
     if job.get('handoff_protocol', 1) >= 5:
         from . import search
         search.validate_payload(root, job, value)
+    if job.get('handoff_protocol', 1) >= 6:
+        from . import correction
+        correction.validate_payload(root, job, value)
     materials = collect_materials(root, step)
     entry_points = artifact_entry_points(work, value, materials)
     selected = selected_inputs(work, value, job)

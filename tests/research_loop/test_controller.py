@@ -37,7 +37,8 @@ def scene(tmp_path, monkeypatch):
     def workspace(root, step):
         return root / "project/nodes" / f"{step:03d}"
 
-    def build_job(root, step, role, parents, instruction="", evidence_return=None):
+    def build_job(root, step, role, parents, instruction="", evidence_return=None, correction_request=None):
+        assert correction_request is None  # This legacy-policy fixture has no N4 request.
         settings = read(root / "settings.json")
         work = workspace(root, step)
         work.mkdir(parents=True, exist_ok=True)
@@ -371,6 +372,7 @@ def test_real_sealing_and_materials_compose_with_controller(tmp_path, monkeypatc
             payload.update(next_action=action, route_reason="The direct evidence supports this route")
         if role == 'A':
             payload['candidate_recommendation'] = None
+            payload['progress_assessment'] = None
         if role in {'H', 'A'}:
             payload['search_plan' if role == 'H' else 'search_review'] = None
         artifacts = work / "artifacts"

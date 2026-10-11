@@ -21,11 +21,11 @@ def scene(tmp_path):
     return root
 
 
-def finish(root, step, role, parents, text='A bounded scientific finding', action='wait', files=None, summary='A contribution', limitations=None, recommendation=None, search_choice=None):
+def finish(root, step, role, parents, text='A bounded scientific finding', action='wait', files=None, summary='A contribution', limitations=None, recommendation=None, search_choice=None, progress=None):
     path = root / 'jobs' / f'{step:03d}.json'
     previous = contracts.read(path) if path.exists() else {}
     job = contracts.build_job(root, step, role, parents, previous.get('instruction', ''),
-                              previous.get('evidence_return'))
+                              previous.get('evidence_return'), previous.get('correction_request'))
     work = contracts.workspace(root, step)
     record = contracts.host_record(work)
     payload = dict(summary=summary, scientific_result=text, limitations=limitations if limitations is not None else ['Fixture only'])
@@ -33,6 +33,8 @@ def finish(root, step, role, parents, text='A bounded scientific finding', actio
         payload['candidate_recommendation'] = recommendation
     if job.get('handoff_protocol', 1) >= 5 and role in {'H', 'A'}:
         payload['search_plan' if role == 'H' else 'search_review'] = search_choice
+    if job.get('handoff_protocol', 1) >= 6 and role == 'A':
+        payload['progress_assessment'] = progress
     if role in {'H', 'A'}:
         payload.update(next_action=action, route_reason='Exact scientific question')
     for name, contents in (files or {}).items():

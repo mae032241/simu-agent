@@ -1,8 +1,8 @@
 # N4：封存 A 判断驱动的两级纠偏
 
-日期：2026-10-11。基线：`1fdb282`。状态：独立设计审查 PASS（n_plan_review；审查版 SHA b2219aba9516766f7d9adb4d52ecb96fa6624fd114fd67da066f81d98a956304）；仅规则与无模型夹具草案，未实施、未授生产资格。真实模型测试已暂停；本文不授权启动、恢复或补跑。
+日期：2026-10-11。设计基线：`1fdb282`，生产增量基线：已独审提交的 N3 `c19498a`。状态：规则及最小接线独审 PASS；生产已实施并双独审 PASS；完整 rootless 门禁 200 passed（73.27s）、容量增量4项及最终独立安装验证通过，详见 ROOTLESS_N4_ACCEPTANCE_20261011.zh-CN.md。原规则审查版 SHA b2219aba9516766f7d9adb4d52ecb96fa6624fd114fd67da066f81d98a956304。真实模型测试已暂停；本文不授权启动、恢复或补跑。
 
-依据：[主计划 N4](../ROOTLESS_SEARCH_AND_LONG_RUN_PLAN.zh-CN.md)、[已审规则草案](ROOTLESS_N3_N4_DESIGN_DRAFT_20261011.zh-CN.md)。生产 ownership 须另行授权，N3 独审提交后串行接入。
+依据：[主计划 N4](../ROOTLESS_SEARCH_AND_LONG_RUN_PLAN.zh-CN.md)、[已审规则草案](ROOTLESS_N3_N4_DESIGN_DRAFT_20261011.zh-CN.md)。生产由独立执行者在 N3 独审提交后实施，两位非作者完成复审。
 
 ## 1. 科学接口只复用 N3
 
@@ -40,7 +40,9 @@ proxy 最高、A 推荐、实际提交继续分列，都不自动算进展。控
 
 所有计数／H 响应归属由原 seal、job 父关系和 evidence_return 重放，不新增 episode、交回状态机或祖先附件继承。新建与保留 job 的恢复核对必须共用同一有效派发判据，不能首次派 H、重启又按原 A continue_w 核对成 W。无法唯一核对归属则 unknown／要求修复；不制造 H 结论或授科学资格。
 
-第二阈值在任何新 intent 前刹车。已接受工作仍允许采集、取消和封存，按 N1 的 active／unknown 口径继续计时。已投递触发不得由后补说明、晚到结果、删缓存或改名自动撤销；重复恢复只得到同一触发。
+首级请求已由封存 H 的 experiment／analyze 真正响应、且暂停事实尚未发表时，新的可计 A 可以用未消费过的已绑定原件依据判 progress，结束当前首级请求并重新累计。原 trigger 与历史事实保留，重放按当时节点 cutoff 核对旧路由；后来的 progress 或 ack 不改已绑定的 H job。H 响应前，晚到判断或补充说明不能绕过已经派出的 H；已发表的暂停仍只能由确切 ack 有限放行。这是由不可变 trigger／ack 和科学原件推导的处理，不增加可变 episode 状态。
+
+第二阈值在任何新 intent 前刹车。已接受工作仍允许采集、取消和封存，按 N1 的 active／unknown 口径继续计时。已发表的暂停事实不得由后补说明、晚到结果、删缓存或改名自动撤销；重复恢复只得到同一触发。
 
 ## 4. 人工 continue：只认一个绑定触发的 ack
 
@@ -66,3 +68,15 @@ ack 最多覆盖**下一次非延期封存 A 决策周期**，含必要 H/W/E �
 | 原 seal／依据／ack 篡改或跨实例 | fail closed，无模型新派发，无伪造科学结论 |
 
 实施退出条件：复用已提交 N3 引用，冻结 N4 新协议 A 扩点、两阈值、证据去重和 ack cutoff，经独审后另授权 production ownership；必要小 gate 通过共享串行 scripts/run_tests.py。没有真实模型效果、hidden score、资格继承或自动补跑声明。
+
+## 6. 已冻结的最小接线与使用方式
+
+`prepare --correction-policy <JSON 文件>` 显式启用；默认值可写为 `{"review_after":3,"pause_after":2}`，未指定不迁移、不启用旧实例。要求同时冻结 N3 search policy。协议 6 的 A 根字段 `progress_assessment` 为 required nullable 严格对象，例如 `{"verdict":"progress","evidence":["inputs/parents/009/conclusion.json"]}`；verdict 只取 progress / no_progress / unknown，null 计未知。协议 1..5 保持原 schema/view/job/seal 字节，不补字段。
+
+首版依据仅接受当前绑定的父科学结论或历史科学页，统一回到原 raw SHA；不同节点的相同原字节不再给信用。裸候选 ID、附件名、当前 A 输出和未封存工作文件均不构成此入口，不新增 N2 观察权威。权限由 qualified launcher 保障，raw Codex 仍为软隔离；操作者说明不是认证。
+
+`correction.py` 重放原件，`correction-ledger/000001.json` 起仅追加 trigger/ack，带 settings 绑定、序号与前件摘要。整个发布或授权区间持同一个 host writer 锁。发布每次只取当前 sealed cutoff 投影中最早未发表触发，追加一条后立即在同 cutoff 重放，再选择仍成立的下一事实；不批量发表旧预测，崩溃从持久前缀继续，无效已发表链拒绝并保留。
+
+H job 的 `correction_request` 绑定原 review trigger；统一 effective-route 按每个历史节点自己的 cutoff 计算，后续 progress/ack 不改变旧 H 任务。H→E→H 通过原 evidence_return 继承请求，不增加交回状态机。已接受 intent 的恢复／采集／封存在新派发门禁之前。
+
+暂停返回 `status=correction_paused`、`correction_trigger.trigger_id`；只读 `status` 提供 `correction.current_pause` 和有限 `permit`。继续命令为 `continue --root <实例> --ack-correction <该 trigger_id> --authorization-note <决定>`；错误／过期触发在删除 user pause 前拒绝。重复 ack 保留原 cutoff，不延长授权。首次非延期 A 已封存即消费授权，然后复判**所有**未解决问题；unknown 不增加 no_progress，也不能解除其既有暂停。有效 progress 可清原问题；已知判断可结束连续未知。用量与 ceiling 仍完全沿 N1 原规则。

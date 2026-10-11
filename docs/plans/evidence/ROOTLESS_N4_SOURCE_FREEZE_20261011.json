@@ -1,0 +1,14 @@
+{
+  "src/scidiscovery/research_loop/correction.py": "5530a2ff2f8086503b28bc42ec45751ac9227033fb1670f6def7fe623001d710",
+  "src/scidiscovery/research_loop/contracts.py": "1f4709364d0dcb3e70f7c9bf17b85d999408555d2428a4b97d30752a13838be0",
+  "src/scidiscovery/research_loop/controller.py": "73fdde58b2accc764a9bd4b00ca71b230f2621c168540467ccf8da2b84e5c019",
+  "src/scidiscovery/research_loop/cli.py": "e1d5e384dbcc547156748378685c87dfe31d18161b027480d850ddf7754d8dfb",
+  "tests/research_loop/test_correction.py": "a02f3473a92b475f8e31eca94b77c6869775983bd9b80cf71bb2dbb13aa23f0a",
+  "tests/research_loop/test_controller.py": "198c987e2ae44d0f9ca9e35c947ebf847d5980f1767315cd5011e03f6ab71063",
+  "tests/research_loop/test_history_handoff.py": "ad31bcedbe58801dcbe4bf31bfedef242b980e293fc51c77aee12fae2ab7958c",
+  "tests/research_loop/test_native_cli.py": "4cc9725d3b93feee6b2ead2286360b0cbde32719fc8b06253e6feb8fa8a37fa1",
+  "tests/research_loop/test_result_schema.py": "bdf69bf99f1ab4a9df1d81dd285c6e7610c5bd0e9eb0d9f0368168d801569b87",
+  "tests/research_loop/test_runtime.py": "15d154b1150e333306d1681d751659b81f3ecca78d77e5bdf745c19cf25362c4",
+  "tests/research_loop/test_search.py": "fc88774574ed77d7c53a5e84d4f3c9e1b02abb9b6118f67abbc656d32a7eeac1",
+  "docs/plans/evidence/ROOTLESS_N4_IMPLEMENTATION_DESIGN_20261011.zh-CN.md": "aa617b40b1961e6e53ec417521514e1b30aa9f064acc278643542868e4914f3b"
+}

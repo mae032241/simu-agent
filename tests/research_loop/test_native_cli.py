@@ -36,6 +36,7 @@ if role in {'H','A'}:
     payload.update(next_action='experiment' if role=='H' else 'finish',route_reason='Exact test direction')
 if role == 'A':
     payload['candidate_recommendation'] = None
+    payload['progress_assessment'] = None
     ref=job['search']['commitments'][0]['mechanism_ref']
     payload['search_review']={'dispositions':[{'mechanism_ref':ref,'status':'screened',
       'reason':'Fixture screen evidence','evidence':['inputs/parents/002/conclusion.json']}], 'next_focus':None}

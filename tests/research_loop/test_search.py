@@ -162,6 +162,7 @@ payload={'summary':'Scientific fixture result','scientific_result':'Negative and
 if role=='H':
  payload.update(next_action='experiment',route_reason='Screen the declared mechanism',search_plan={'scope':'Bounded H scope','commitments':[{'label':'Mechanism','minimal_test':'Discriminating measurement','existing_ref':None}],'focus':{'label':'Mechanism','action':'screen','repair_source':None}})
 elif role=='A':
+ payload['progress_assessment']=None
  if 'search' not in job:
   payload.update(next_action='finish',route_reason='Legacy policy remains unchanged',candidate_recommendation=None,search_review=None)
  else:

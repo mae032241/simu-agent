@@ -5,7 +5,7 @@ import argparse
 import json
 from pathlib import Path
 
-from . import budget, contracts, controller, native, runtime, search
+from . import budget, contracts, controller, native, runtime, search, correction
 
 
 def status(root: Path):
@@ -27,7 +27,8 @@ def status(root: Path):
         nodes.append(dict(step=step, role=job['role'], state=state))
     return dict(instance=str(root), goal_id=settings['goal_id'], objective=settings['objective'],
                 paused=(root / 'pause.request').exists(), nodes=nodes, usage=native.usage(root),
-                goal_completion='not_asserted', budget=budget.snapshot(root))
+                goal_completion='not_asserted', budget=budget.snapshot(root),
+                correction=correction.project(root))
 
 
 def main(argv=None):
@@ -41,6 +42,7 @@ def main(argv=None):
     prepare.add_argument('--native-launcher-json', required=True, help='An argv JSON array, e.g. ["codex"]')
     prepare.add_argument('--history-observer-config', type=Path, help='Optional trusted host adapter/config JSON; frozen at preparation')
     prepare.add_argument('--search-policy', type=Path, help='Optional JSON override of the three frozen W-search ceilings')
+    prepare.add_argument('--correction-policy', type=Path, help='Explicitly enable N4 with review_after/pause_after JSON thresholds (defaults 3/2)')
     prepare.add_argument('--max-tokens', type=int, required=True)
     prepare.add_argument('--max-seconds', type=float, required=True, help='Maximum advancement seconds; explicit pauses do not consume this ceiling')
     prepare.add_argument('--max-steps', type=int, required=True)
@@ -54,6 +56,9 @@ def main(argv=None):
             ('continue', 'Clear the next-node pause and run; never replay unknown work')):
         command = commands.add_parser(name, help=help_text)
         command.add_argument('--root', type=Path, required=True)
+        if name == 'continue':
+            command.add_argument('--ack-correction', help='Exact current published pause trigger ID; permits one nondeferred A cycle')
+            command.add_argument('--authorization-note', help='External operator decision; not authentication or a budget amendment')
     amend = commands.add_parser('budget-amend', help='Record an external operator ceiling revision without resetting consumption')
     amend.add_argument('--root', type=Path, required=True)
     amend.add_argument('--max-tokens', type=int)
@@ -69,6 +74,8 @@ def main(argv=None):
                 service_tier=args.service_tier, user_updates=args.user_update,
                 search_policy=contracts.read(contracts.regular(args.search_policy, limit=4096))
                     if args.search_policy is not None else search.DEFAULT_POLICY,
+                correction_policy=contracts.read(contracts.regular(args.correction_policy, limit=4096))
+                    if args.correction_policy is not None else None,
                 history_observer=contracts.read(contracts.regular(args.history_observer_config, limit=64_000))
                     if args.history_observer_config is not None else None)
             result = dict(status='prepared', instance=str(root), goal_id=settings['goal_id'])
@@ -90,6 +97,10 @@ def main(argv=None):
             # Clear the marker only after obtaining the same per-instance writer
             # lock as run. A second caller cannot cancel a live owner's pause.
             with controller._writer(root):
+                if args.ack_correction is not None:
+                    correction.acknowledge(root, args.ack_correction, args.authorization_note)
+                elif args.authorization_note is not None:
+                    raise ValueError('An authorization note requires an exact correction trigger')
                 (root / 'pause.request').unlink(missing_ok=True)
                 result = controller._run(root)
         else:

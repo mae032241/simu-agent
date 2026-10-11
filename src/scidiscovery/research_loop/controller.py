@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import uuid
 
-from . import budget, contracts, history, native, runtime, search
+from . import budget, contracts, history, native, runtime, search, correction
 
 
 def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str], *,
@@ -17,7 +17,8 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
             max_output_total_bytes: int = 64 * 1024 * 1024,
             user_updates: list[Path] | None = None,
             history_observer: dict | None = None,
-            search_policy: dict | None = search.DEFAULT_POLICY) -> dict:
+            search_policy: dict | None = search.DEFAULT_POLICY,
+            correction_policy: dict | None = None) -> dict:
     """Freeze an explicit goal and finite launch budgets in a fresh directory."""
     root, objective, public_root = map(Path, (root, objective, public_root))
     for name, value in (("max_tokens", max_tokens), ("max_steps", max_steps),
@@ -48,6 +49,9 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
         raise ValueError('Global user updates must contain original user text')
     observer = history.observer_config(history_observer) if history_observer is not None else None
     search_limits = search.policy(search_policy) if search_policy is not None else None
+    correction_limits = correction.policy(correction_policy) if correction_policy is not None else None
+    if correction_limits is not None and search_limits is None:
+        raise ValueError('Correction requires the frozen search policy')
     settings = dict(goal_id="scid-hwa-" + uuid.uuid4().hex[:12], objective=text,
         public_root=str(public_root.resolve()), native_launcher_argv=list(launcher),
         max_tokens=max_tokens, max_seconds=max_seconds, max_steps=max_steps, time_budget_basis="active",
@@ -58,6 +62,8 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
         settings['history_observer'] = observer
     if search_limits is not None:
         settings['search_policy'] = search_limits
+    if correction_limits is not None:
+        settings['correction_policy'] = correction_limits
     root.mkdir(parents=True)
     globals_ = root / 'project/global'
     (globals_ / 'updates').mkdir(parents=True)
@@ -118,7 +124,7 @@ def _launch_limit(root, settings):
     return None
 
 
-def _finish(root, settings, status, completed, last, *, reason=None, next_role=None):
+def _finish(root, settings, status, completed, last, *, reason=None, next_role=None, correction_trigger=None):
     budget.inactive(root, status)
     result = dict(status=status, goal_id=settings["goal_id"], completed_steps=completed,
         last_step=completed or None, usage=native.usage(root),
@@ -132,10 +138,12 @@ def _finish(root, settings, status, completed, last, *, reason=None, next_role=N
         result["reason"] = reason
     if next_role is not None:
         result["next_role"] = next_role
+    if correction_trigger is not None:
+        result['correction_trigger'] = correction_trigger
     return result
 
 
-def _check_job(root, settings, step, role, parents, instruction, evidence_return):
+def _check_job(root, settings, step, role, parents, instruction, evidence_return, correction_request=None):
     """A retained node must be the exact job selected by its sealed predecessor."""
     job = contracts.read(root / "jobs" / f"{step:03d}.json")
     expected_refs = [dict(path=f"inputs/parents/{parent:03d}/conclusion.json",
@@ -146,7 +154,8 @@ def _check_job(root, settings, step, role, parents, instruction, evidence_return
             or job.get("public_root") != settings["public_root"]
             or job.get("direct_refs") != expected_refs
             or job.get("instruction", "") != instruction
-            or job.get("evidence_return") != evidence_return):
+            or job.get("evidence_return") != evidence_return
+            or job.get('correction_request') != correction_request):
         raise ValueError("Retained job differs from the sealed scientific route")
     return job
 
@@ -218,7 +227,7 @@ def _run(root):
     started_path = root / "host-started.json"
     if not started_path.exists():
         contracts.write(started_path, budget.clock_stamp())
-    role, parents, instruction, evidence_return = "H", [], "", None
+    role, parents, instruction, evidence_return, correction_request = "H", [], "", None, None
     current_h = current_w = last = None
     completed = 0
     for step in range(1, settings["max_steps"] + 1):
@@ -243,13 +252,17 @@ def _run(root):
                         reason="Retain the original native work; its terminal scientific output is unverified",
                         next_role=role)
                 try:
-                    _check_job(root, settings, step, role, parents, instruction, evidence_return)
+                    _check_job(root, settings, step, role, parents, instruction, evidence_return, correction_request)
                     contracts.seal_result(root, step)
                 except Exception as error:
                     return _finish(root, settings, "seal_pending", completed, last,
                         reason=f"Native science succeeded; host sealing requires repair: {_seal_reason(error)}",
                         next_role=role)
         if not identity.exists():
+            stopped = correction.gate(root, completed)
+            if stopped is not None:
+                return _finish(root, settings, 'correction_paused', completed, last,
+                    reason=stopped['reason'], next_role=role, correction_trigger=stopped)
             if (root / "pause.request").exists():
                 return _finish(root, settings, "paused", completed, last,
                     reason="User pause.request prevents further native launches", next_role=role)
@@ -258,7 +271,7 @@ def _run(root):
             if limit:
                 return _finish(root, settings, limit, completed, last, next_role=role)
             job = contracts.build_job(root, step, role, parents, instruction=instruction,
-                                      evidence_return=evidence_return)
+                                      evidence_return=evidence_return, correction_request=correction_request)
             search_limit = search.launch_reason(root, job)
             if search_limit:
                 return _finish(root, settings, 'search_pending', completed, last,
@@ -287,12 +300,13 @@ def _run(root):
             if (type(outcome.get("returncode")) is not int or outcome["returncode"] != 0 or outcome.get("stop_reason")
                     or outcome["usage"]["unknown_steps"]):
                 raise ValueError("Native outcome is ineligible for sealed continuation")
-            job = _check_job(root, settings, step, role, parents, instruction, evidence_return)
+            job = _check_job(root, settings, step, role, parents, instruction, evidence_return, correction_request)
             result = contracts.validate(work)
             if result["role"] != role:
                 raise ValueError("Sealed result role differs from its job")
-            next_role, next_parents, next_instruction, next_return, current_h, current_w = _route(
-                root, step, role, result, job, current_h, current_w)
+            correction.publish(root, step)
+            next_role, next_parents, next_instruction, next_return, current_h, current_w, next_correction = correction.effective_route(
+                root, step, result, job, _route(root, step, role, result, job, current_h, current_w))
         except (KeyError, ValueError, OSError, TypeError) as error:
             return _finish(root, settings, "sealed_node_invalid", completed, last,
                 reason=f"Retained node is not eligible for routing ({type(error).__name__})", next_role=role)
@@ -300,5 +314,5 @@ def _run(root):
         if next_role is None:
             return _finish(root, settings, result["next_action"], completed, last,
                 reason="Scientific role suggestion; overall goal success is not asserted")
-        role, parents, instruction, evidence_return = next_role, next_parents, next_instruction, next_return
+        role, parents, instruction, evidence_return, correction_request = next_role, next_parents, next_instruction, next_return, next_correction
     return _finish(root, settings, "bounded_steps_exhausted", completed, last, next_role=role)

@@ -126,6 +126,9 @@ def test_identity_mismatch_is_unknown_without_killing_original(local):
     (work / 'work/release').touch()
     until(lambda: (record / 'native-outcome.json').exists())
     front.communicate(timeout=5)
+    # Terminal output precedes the detached runner's final clock append under
+    # the host writer lock. Wait for its real identity, not the tampered file.
+    until(lambda: not runtime.process_matches(original, original['task_sha256']))
     assert controller.run(root)['status'] == 'wait'
     assert (work / 'work/launches.txt').read_text() == 'launch\n'
 

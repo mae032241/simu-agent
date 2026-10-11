@@ -1,0 +1,318 @@
+"""Sealed A assessments and immutable correction/ack facts, without a scheduler."""
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+
+from . import contracts as c, history
+
+DEFAULT_POLICY = dict(review_after=3, pause_after=2)
+REASONS = dict(no_progress='no_progress_unresolved', unknown='assessment_gap')
+MAX_RECORD_BYTES = 16_000
+
+
+def policy(value):
+    if (not isinstance(value, dict) or set(value) != set(DEFAULT_POLICY)
+            or any(type(item) is not int or item <= 0 for item in value.values())):
+        raise ValueError('Correction policy requires two positive integer thresholds')
+    return dict(value)
+
+
+def schema():
+    return dict(type=['object', 'null'], properties=dict(
+        verdict=dict(type='string', enum=['progress', 'no_progress', 'unknown']),
+        evidence=dict(type='array', maxItems=4, items=dict(type='string', minLength=1, maxLength=512))),
+        required=['verdict', 'evidence'], additionalProperties=False,
+        description='Judge global scientific contribution. Null means unknown. Progress needs exact bound '
+        'prior scientific conclusion/history-page paths, never your own new prose or unsealed files. '
+        'A useful negative result may be progress; proxy improvement alone is insufficient.')
+
+
+def _proofs(root, job, assessment):
+    if assessment is not None and (not isinstance(assessment, dict) or set(assessment) != {'verdict', 'evidence'}
+            or assessment['verdict'] not in {'progress', 'no_progress', 'unknown'}
+            or not isinstance(assessment['evidence'], list) or len(assessment['evidence']) > 4
+            or any(not isinstance(path, str) for path in assessment['evidence'])):
+        raise ValueError('Progress assessment fields are invalid')
+    proofs = set()
+    for path in (assessment or {}).get('evidence', []):
+        match = re.fullmatch(r'inputs/parents/([0-9]{3,})/conclusion\.json|inputs/history/nodes/([0-9]{3,})/([0-9]{4,})\.json', path)
+        if match is None:
+            raise ValueError('Progress evidence requires a bound original scientific conclusion')
+        step = int(match[1] or match[2])
+        rows = job['direct_refs'] if match[1] else job.get('history', {}).get('files', [])
+        row = next((row for row in rows if row['path'] == path), None)
+        if row is None or not 0 < step < job['step']:
+            raise ValueError('Progress evidence is not an exact prior bound original')
+        if c.digest(c.regular(c.workspace(root, job['step']) / path)) != row['sha256']:
+            raise ValueError('Progress evidence copy changed')
+        _, _, seal, _ = history._source(root, step)
+        # Pages and parent copies resolve to one original raw identity. Equal
+        # original bytes at another node do not create a fresh proof credit.
+        proofs.add(seal['raw_sha256'])
+    return proofs
+
+
+def validate_payload(root, job, payload):
+    if job.get('handoff_protocol', 1) >= 6 and job['role'] == 'A':
+        _proofs(root, job, payload.get('progress_assessment'))
+
+
+def _records(root):
+    identity = c.digest(root / 'settings.json')
+    events, parent, seen = [], None, set()
+    for seq, path in enumerate(sorted((root / 'correction-ledger').glob('*.json')), 1):
+        raw = c.regular(path, limit=MAX_RECORD_BYTES).read_bytes()
+        event = json.loads(raw)
+        if (not isinstance(event, dict) or type(event.get('seq')) is not int or event.get('seq') != seq or path.name != f'{seq:06d}.json'
+                or event.get('parent_sha256') != parent or event.get('settings_sha256') != identity
+                or event.get('kind') not in {'trigger', 'ack'}):
+            raise ValueError('Correction fact identity or sequence changed')
+        common = {'seq', 'parent_sha256', 'settings_sha256', 'kind'}
+        fields = {'trigger'} if event['kind'] == 'trigger' else {
+            'trigger_id', 'cutoff', 'cutoff_seal_sha256', 'authorization_note'}
+        if set(event) != common | fields:
+            raise ValueError('Correction fact fields changed')
+        if event['kind'] == 'trigger':
+            trigger = event['trigger']
+            if (not isinstance(trigger, dict) or set(trigger) != {
+                    'step', 'seal_sha256', 'raw_sha256', 'reason', 'level', 'trigger_id'}
+                    or type(trigger['step']) is not int or trigger['step'] <= 0
+                    or trigger['reason'] not in REASONS.values() or trigger['level'] not in {'review', 'pause'}
+                    or any(not isinstance(trigger[key], str) or re.fullmatch(r'[0-9a-f]{64}', trigger[key]) is None
+                           for key in ('seal_sha256', 'raw_sha256', 'trigger_id'))):
+                raise ValueError('Correction trigger fields changed')
+            if trigger['trigger_id'] in seen:
+                raise ValueError('Correction trigger is duplicated')
+            seen.add(trigger['trigger_id'])
+        events.append(event)
+        parent = hashlib.sha256(raw).hexdigest()
+    return events, parent
+
+
+def _append(root, events, parent, **fields):
+    # Caller owns the same host writer lock as dispatch and continue. There is
+    # no independent correction writer or mutable episode state.
+    event = dict(seq=len(events) + 1, parent_sha256=parent,
+                 settings_sha256=c.digest(root / 'settings.json'), **fields)
+    serialized = json.dumps(event, ensure_ascii=False, indent=2, allow_nan=False) + '\n'
+    if len(serialized.encode('utf-8')) > MAX_RECORD_BYTES:
+        raise ValueError('Correction fact exceeds its serialized UTF-8 byte bound')
+    c.write(root / 'correction-ledger' / f'{event["seq"]:06d}.json', event)
+    return event
+
+
+def _trigger(root, step, seal, reason, level):
+    value = dict(step=step, seal_sha256=c.digest(c.host_record(c.workspace(root, step)) / 'result-identity.json'),
+                 raw_sha256=seal['raw_sha256'], reason=reason, level=level)
+    identity = dict(settings_sha256=c.digest(root / 'settings.json'), **value)
+    value['trigger_id'] = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+    return value
+
+
+def project(root, before_step=None):
+    settings = c.settings(root)
+    limits = settings.get('correction_policy')
+    if limits is None:
+        return dict(enabled=False, counters=dict(no_progress=0, unknown=0), current_pause=None,
+                    review_request=None, triggers=[], eligible=[], permit=None)
+    limits = policy(limits)
+    events, _ = _records(root)
+    published = {event['trigger']['trigger_id']: event['trigger'] for event in events if event['kind'] == 'trigger'}
+    acks = {}
+    for event in events:
+        if event['kind'] == 'ack':
+            key = event.get('trigger_id')
+            if (key not in published or key in acks or not isinstance(event.get('authorization_note'), str)
+                    or not event['authorization_note'].strip() or type(event.get('cutoff')) is not int):
+                raise ValueError('Correction acknowledgment binding changed')
+            acks[key] = event
+    counters = dict(no_progress=0, unknown=0)
+    reviews = dict(no_progress=None, unknown=None)
+    used, eligible, triggers = set(), [], []
+    pause = permit = None
+    before_step = before_step or settings['max_steps'] + 1
+    for step in range(1, before_step):
+        record = c.host_record(c.workspace(root, step))
+        if not (record / 'result-identity.json').exists():
+            break
+        job, payload, seal, _ = history._source(root, step)
+        outcome = c.read(c.regular(record / 'native-outcome.json'))
+        intent = c.read(c.regular(record / 'native-intent.json'))
+        if (intent.get('task_sha256') != c.digest(root / 'jobs' / f'{step:03d}.json')
+                or type(outcome.get('returncode')) is not int or outcome['returncode'] != 0
+                or outcome.get('stop_reason') or outcome.get('usage', {}).get('unknown_steps') != []
+                or outcome.get('raw_sha256') != seal['raw_sha256']):
+            raise ValueError('Correction replay requires verified original terminal nodes')
+        if c.read(record / 'result.json') != c.envelope(job, payload):
+            raise ValueError('Correction result differs from original scientific fields')
+        request = job.get('correction_request')
+        if job['role'] == 'H' and request is not None and payload.get('next_action') in {'experiment', 'analyze'}:
+            for review in reviews.values():
+                if review is not None and review['trigger']['trigger_id'] == request['trigger_id']:
+                    review['response_h'] = step
+        if (job['role'] != 'A' or job.get('handoff_protocol', 1) < 6
+                or payload['next_action'] in {'extract', 'wait'}):
+            continue
+        seal_digest = c.digest(record / 'result-identity.json')
+        eligible.append(dict(step=step, seal_sha256=seal_digest))
+        sticky, consumed_pause = False, None
+        if pause is not None:
+            ack = acks.get(pause['trigger_id'])
+            if ack is not None and ack['cutoff'] < step:
+                permit = ack
+                consumed_pause = pause
+                pause = None  # The bounded permit is spent by this exact A.
+            else:
+                # A result arriving after an already published pause cannot
+                # automatically erase it. Original facts still remain sealed.
+                sticky = pause['trigger_id'] in published
+        assessment = payload.get('progress_assessment')
+        proof = _proofs(root, job, assessment)
+        verdict = (assessment or {}).get('verdict', 'unknown')
+        if verdict == 'progress' and not proof - used:
+            verdict = 'unknown'
+        if verdict == 'progress':
+            used.update(proof)
+            # Fulfil the first H request before science can end that stage.
+            if not sticky and all(review is None or review['response_h'] is not None for review in reviews.values()):
+                counters = dict(no_progress=0, unknown=0)
+                reviews = dict(no_progress=None, unknown=None)
+                pause = None
+        else:
+            if verdict == 'no_progress':
+                counters['unknown'] = 0
+                if reviews['unknown'] is not None and reviews['unknown']['response_h'] is not None:
+                    reviews['unknown'] = None
+                counters['no_progress'] += 1
+            else:
+                counters['unknown'] += 1
+            review = reviews[verdict]
+            if review is None and counters[verdict] >= limits['review_after']:
+                trigger = _trigger(root, step, seal, REASONS[verdict], 'review')
+                triggers.append(trigger)
+                reviews[verdict] = dict(trigger=trigger, response_h=None, after_h=0)
+            elif review is not None and review['response_h'] is not None:
+                review['after_h'] += 1
+                if review['after_h'] >= limits['pause_after'] and not sticky:
+                    pause = _trigger(root, step, seal, REASONS[verdict], 'pause')
+                    triggers.append(pause)
+        # One eligible A spends the permit even when its verdict changes
+        # buckets. Unknown cannot erase an already unresolved no-progress
+        # issue; genuine progress above can clear the original reviews.
+        if consumed_pause is not None and pause is None:
+            unresolved = [kind for kind, review in reviews.items() if review is not None
+                          and review['response_h'] is not None and review['after_h'] >= limits['pause_after']]
+            if unresolved:
+                reason = next((REASONS[kind] for kind in unresolved
+                               if REASONS[kind] == consumed_pause['reason']), REASONS[unresolved[0]])
+                pause = _trigger(root, step, seal, reason, 'pause')
+                triggers.append(pause)
+        permit = None
+    expected = {item['trigger_id']: item for item in triggers}
+    for key, value in published.items():
+        if value['step'] < before_step and expected.get(key) != value:
+            raise ValueError('Published correction trigger differs from sealed facts')
+    known_eligible = {item['step']: item['seal_sha256'] for item in eligible}
+    for ack in acks.values():
+        if ack['cutoff'] < before_step and (
+                known_eligible.get(ack['cutoff']) != ack.get('cutoff_seal_sha256')
+                or ack['cutoff'] < published[ack['trigger_id']]['step']
+                or published[ack['trigger_id']]['level'] != 'pause'):
+            raise ValueError('Correction acknowledgment cutoff changed')
+    if pause is not None:
+        ack = acks.get(pause['trigger_id'])
+        if ack is not None and ack['cutoff'] in known_eligible:
+            permit = ack
+        pause = dict(**pause, published=pause['trigger_id'] in published)
+    pending = [value['trigger'] for value in reviews.values()
+               if value is not None and value['response_h'] is None]
+    return dict(enabled=True, counters=counters, current_pause=pause, permit=permit,
+                review_request=max(pending, key=lambda item: item['step']) if pending else None,
+                triggers=triggers, eligible=eligible)
+
+
+def publish(root, cutoff):
+    events, parent = _records(root)
+    known = {event['trigger']['trigger_id'] for event in events if event['kind'] == 'trigger'}
+    while True:
+        state = project(root, cutoff + 1)
+        trigger = next((item for item in state['triggers'] if item['trigger_id'] not in known), None)
+        if trigger is None:
+            return state
+        event = _append(root, events, parent, kind='trigger', trigger=trigger)
+        events.append(event)
+        parent = c.digest(root / 'correction-ledger' / f'{event["seq"]:06d}.json')
+        known.add(trigger['trigger_id'])
+        # Publish in original cutoff order and replay after each fact: the
+        # first pause becomes sticky before any late accepted A is processed.
+
+
+def effective_route(root, step, result, job, route):
+    """Historical cutoff protects retained jobs from later progress or ack."""
+    role, parents, instruction, evidence_return, current_h, current_w = route
+    request = None
+    state = project(root, step + 1)
+    review = state['review_request']
+    if job['role'] == 'A' and review is not None and result['next_action'] in {'continue_w', 'revise_h'}:
+        role = 'H'
+        request = dict(trigger_id=review['trigger_id'])
+        instruction += f'\nControl requires H to reconsider {review["reason"]} after sealed A {review["step"]}; '
+        instruction += 'own the scientific response; the prior A conclusion is unchanged.'
+    elif job['role'] == 'E' and role == 'H':
+        # Base E routing clears evidence_return; use its original requester.
+        requester = c.read(root / 'jobs' / f'{job["evidence_return"]["step"]:03d}.json')
+        request = requester.get('correction_request')
+    return role, parents, instruction, evidence_return, current_h, current_w, request
+
+
+def validate_job(root, job):
+    request = job.get('correction_request')
+    if request is None:
+        return
+    if (job.get('handoff_protocol', 1) < 6 or job['role'] != 'H'
+            or not isinstance(request, dict) or set(request) != {'trigger_id'}):
+        raise ValueError('Correction H request binding is invalid')
+    events, _ = _records(root)
+    trigger = next((event['trigger'] for event in events if event['kind'] == 'trigger'
+                    and event['trigger']['trigger_id'] == request['trigger_id']), None)
+    if trigger is None or trigger['level'] != 'review' or trigger['step'] >= job['step']:
+        raise ValueError('Correction H request lacks its original review trigger')
+    parents = [int(row['path'].split('/')[2]) for row in job['direct_refs']]
+    if trigger['step'] in parents:
+        return
+    for parent in parents:
+        previous = c.read(root / 'jobs' / f'{parent:03d}.json')
+        if previous['role'] == 'E' and previous.get('evidence_return', {}).get('role') == 'H':
+            requester = c.read(root / 'jobs' / f'{previous["evidence_return"]["step"]:03d}.json')
+            if requester.get('correction_request') == request:
+                return
+    raise ValueError('Correction H response has no exact trigger/requester lineage')
+
+
+def gate(root, cutoff):
+    state = publish(root, cutoff)
+    if state['current_pause'] is not None and state['permit'] is None:
+        return state['current_pause']
+    return None
+
+
+def acknowledge(root, trigger_id, authorization_note):
+    """Caller holds the controller writer lock; this note is not authentication."""
+    from . import budget
+    if not isinstance(authorization_note, str) or not authorization_note.strip():
+        raise ValueError('Correction acknowledgment needs an explicit operator decision')
+    if budget.execution_blocked(root):
+        raise RuntimeError('Correction acknowledgment requires no active or unknown original')
+    state = project(root)
+    pause = state['current_pause']
+    if pause is None or not pause['published'] or pause['trigger_id'] != trigger_id:
+        raise ValueError('Correction acknowledgment requires the exact current published pause trigger')
+    events, parent = _records(root)
+    if state['permit'] is not None:
+        return state['permit']  # Retry cannot extend the original cutoff.
+    cutoff = state['eligible'][-1]
+    return _append(root, events, parent, kind='ack', trigger_id=trigger_id,
+                   cutoff=cutoff['step'], cutoff_seal_sha256=cutoff['seal_sha256'],
+                   authorization_note=authorization_note)
