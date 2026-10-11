@@ -158,13 +158,14 @@ def test_runner_inactive_append_holds_host_writer_until_finished(clocked, monkey
 
 
 @pytest.mark.parametrize('action', ['snapshot', 'transition', 'amend'])
-def test_clock_rollback_fails_closed_without_refunding_or_appending(clocked, action):
+def test_boot_clock_rollback_fails_closed_without_refunding_or_appending(clocked, monkeypatch, action):
     root, now = clocked
     transition(root, 'advance')
     now[0] = 110.
     transition(root, 'paused')
     before = {path.name: path.read_bytes() for path in (root / 'control-ledger').glob('*.json')}
-    now[0] = 109.
+    now[0] = 112.  # Advancing UTC cannot hide a negative boot-clock interval.
+    monkeypatch.setattr(budget.time, 'clock_gettime', lambda _: 109.)
     with pytest.raises(ValueError, match='backwards'):
         if action == 'snapshot':
             budget.snapshot(root)
@@ -176,25 +177,51 @@ def test_clock_rollback_fails_closed_without_refunding_or_appending(clocked, act
 
 
 @pytest.mark.parametrize('action', ['snapshot', 'transition', 'amend'])
-def test_open_interval_rollback_cannot_refund_observed_consumption(clocked, monkeypatch, action):
+def test_open_interval_utc_rollback_cannot_refund_observed_consumption(clocked, monkeypatch, action):
     root, now = clocked
     ticks = [100.]
     monkeypatch.setattr(budget.time, 'clock_gettime', lambda _: ticks[0])
     transition(root, 'advance')
     now[0] = ticks[0] = 120.
     assert budget.snapshot(root)['consumed_seconds'] == 20
-    before = {path.name: path.read_bytes() for path in (root / 'control-ledger').glob('*.json')}
-    now[0] = 110.  # Still newer than the last event, but UTC refunded 10s.
-    with pytest.raises(ValueError, match='backwards'):
-        if action == 'snapshot':
-            budget.snapshot(root)
-        elif action == 'transition':
-            transition(root, 'paused')
-        else:
-            budget.amend(root, max_seconds=50, authorization_note='Explicit operator decision')
-    assert {path.name: path.read_bytes() for path in (root / 'control-ledger').glob('*.json')} == before
+    now[0] = 110.  # UTC reversed; the actual boot-clock consumption did not.
+    if action == 'snapshot':
+        assert budget.snapshot(root)['consumed_seconds'] == 20
+    elif action == 'transition':
+        transition(root, 'paused')
+    else:
+        budget.amend(root, max_seconds=50, authorization_note='Explicit operator decision')
+    assert budget.snapshot(root)['consumed_seconds'] == 20
     now[0] = ticks[0] = 130.
-    assert budget.snapshot(root)['consumed_seconds'] == 30
+    assert budget.snapshot(root)['consumed_seconds'] == (20 if action == 'transition' else 30)
+
+
+def test_case02_clock_slew_uses_boot_consumption_without_false_stop(clocked, monkeypatch):
+    root, now = clocked
+    settings = contracts.settings(root)
+    settings['max_seconds'] = 3600
+    contracts.write(root / 'settings.json', settings)
+    contracts.write(root / 'settings-identity.json', dict(sha256=contracts.digest(root / 'settings.json')))
+    # Replay the observed same-boot case02 anchors, without touching that instance.
+    now[0] = 1791694089.621297
+    ticks = [2899.955554225]
+    monkeypatch.setattr(budget.time, 'clock_gettime', lambda _: ticks[0])
+    contracts.write(root / 'host-started.json', budget.clock_stamp())
+    transition(root, 'advance')
+    now[0], ticks[0] = 1791694169.1294773, 2979.883511218
+    observed = budget.snapshot(root)
+    assert observed['consumed_seconds'] == pytest.approx(79.927956993)
+    assert observed['seconds_remaining'] == pytest.approx(3520.072043007)
+    assert controller._launch_limit(root, settings) is None
+    transition(root, 'paused')
+    before = observed['consumed_seconds']
+    # UTC may even step below an earlier display timestamp. Ledger ordering
+    # and consumed time remain governed by BOOTTIME, not UTC.
+    now[0], ticks[0] = 1791694080., ticks[0] + 5
+    transition(root, 'advance')
+    assert budget.snapshot(root)['consumed_seconds'] == before
+    now[0], ticks[0] = now[0] + 1, ticks[0] + 1
+    assert budget.snapshot(root)['consumed_seconds'] == before + 1
 
 
 def test_changed_boot_refuses_unverifiable_open_interval(clocked, monkeypatch):
@@ -225,6 +252,32 @@ def test_legacy_elapsed_instance_retains_its_original_deadline(clocked):
     assert value['unclassified_seconds'] == 5
     assert value['paused_seconds'] == 25
     assert controller.run(root)['status'] == 'wall_limit'
+
+
+@pytest.mark.parametrize('action', ['snapshot', 'transition', 'amend'])
+def test_legacy_elapsed_ledger_rejects_open_utc_rollback_without_refund(clocked, monkeypatch, action):
+    root, now = clocked
+    settings = contracts.settings(root)
+    settings.pop('time_budget_basis')
+    contracts.write(root / 'settings.json', settings)
+    contracts.write(root / 'settings-identity.json', dict(sha256=contracts.digest(root / 'settings.json')))
+    ticks = [100.]
+    monkeypatch.setattr(budget.time, 'clock_gettime', lambda _: ticks[0])
+    transition(root, 'advance')
+    now[0] = ticks[0] = 120.
+    assert budget.snapshot(root)['consumed_seconds'] == 20
+    before = {path.name: path.read_bytes() for path in (root / 'control-ledger').glob('*.json')}
+    now[0] = 110.
+    with pytest.raises(ValueError, match='backwards'):
+        if action == 'snapshot':
+            budget.snapshot(root)
+        elif action == 'transition':
+            transition(root, 'paused')
+        else:
+            budget.amend(root, max_seconds=50, authorization_note='Explicit operator decision')
+    assert {path.name: path.read_bytes() for path in (root / 'control-ledger').glob('*.json')} == before
+    now[0] = ticks[0] = 130.
+    assert budget.snapshot(root)['consumed_seconds'] == 30
 
 
 def test_overlay_limits_reach_controller_and_actual_native_launch_boundary(clocked, monkeypatch):

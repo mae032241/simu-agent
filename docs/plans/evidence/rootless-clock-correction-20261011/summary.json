@@ -1,0 +1,13 @@
+{
+  "case": "case-02",
+  "status": "engineering_failed_before_W",
+  "candidate": "19f3e9f",
+  "observed_native_total_tokens": 79327,
+  "observed_native_uncached_input_plus_output": 22751,
+  "control_usage": "unknown; native turn interrupted before terminal usage event",
+  "formal_experiments": 0,
+  "sealed_nodes": 0,
+  "case_03": "not_started",
+  "replacement_runs": 0,
+  "original_instance_preserved": true
+}

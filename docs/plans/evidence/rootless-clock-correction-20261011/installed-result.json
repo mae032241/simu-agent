@@ -1,0 +1,14 @@
+{
+  "observer_enabled": true,
+  "separate_candidate_slots": true,
+  "passed": true,
+  "module": "/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/.trial/n1-clock-installed-final-20261011/venv/lib/python3.12/site-packages/scidiscovery/research_loop/budget.py",
+  "models_called": 0,
+  "completed_steps": 6,
+  "history_reuse": true,
+  "no_ancestor_bundle": true,
+  "no_replay": true,
+  "active_budget": true,
+  "audited_amend": true,
+  "wheel_sha256": "2319f0b3bec9f289542cc8e0ce660ea9b9887f1e6ed1cd82ecab4ab03ba439b8"
+}

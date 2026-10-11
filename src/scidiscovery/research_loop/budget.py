@@ -18,17 +18,20 @@ def clock_stamp():
                 boot_id=Path('/proc/sys/kernel/random/boot_id').read_text().strip())
 
 
-def _duration(before, after):
-    wall = after['at_unix'] - before['at_unix']
-    if wall < 0:
-        raise ValueError('Control clock moved backwards; consumption is not refundable')
+def _duration(before, after, *, legacy_elapsed=False):
     if 'at_boottime' not in before:  # Legacy elapsed startup has no monotonic anchor.
+        wall = after['at_unix'] - before['at_unix']
+        if wall < 0:
+            raise ValueError('Control clock moved backwards; consumption is not refundable')
         return wall
     if before['boot_id'] != after['boot_id']:
         raise ValueError('Control clock boot changed; elapsed interval cannot be verified')
     elapsed = after['at_boottime'] - before['at_boottime']
-    # Sampling UTC and boottime separately introduces a few microseconds of skew.
-    if elapsed < 0 or wall + .02 < elapsed:
+    # UTC can slew or step without a boot-clock reversal. It is a display
+    # timestamp, never a second authority over advancement consumption.
+    # Legacy elapsed retains its previously frozen UTC refusal rules.
+    wall = after['at_unix'] - before['at_unix']
+    if elapsed < 0 or legacy_elapsed and (wall < 0 or wall + .02 < elapsed):
         raise ValueError('Control clock moved backwards; consumption is not refundable')
     return elapsed
 
@@ -47,11 +50,10 @@ def _events(root, settings):
                 or type(event.get('at_boottime')) not in (int, float)
                 or not math.isfinite(event['at_boottime']) or event['at_boottime'] < 0
                 or not isinstance(event.get('boot_id'), str) or not event['boot_id']
-                or events and event['at_unix'] < events[-1]['at_unix']
                 or event.get('kind') not in {'clock', 'budget_amend'}):
             raise ValueError('Control ledger identity, sequence or time changed')
         if events:
-            _duration(events[-1], event)
+            _duration(events[-1], event, legacy_elapsed=settings.get('time_budget_basis', 'elapsed') == 'elapsed')
         if event['kind'] == 'budget_amend':
             for limits in (event.get('before'), event.get('after')):
                 if (not isinstance(limits, dict) or set(limits) != {'max_tokens', 'max_seconds'}
@@ -81,7 +83,7 @@ def _ledger_writer(root):
 def _append(root, settings, events, parent, **fields):
     stamp = clock_stamp()
     if events:
-        _duration(events[-1], stamp)
+        _duration(events[-1], stamp, legacy_elapsed=settings.get('time_budget_basis', 'elapsed') == 'elapsed')
     event = dict(seq=len(events) + 1, parent_sha256=parent,
                  settings_sha256=contracts.digest(root / 'settings.json'), **stamp, **fields)
     contracts.write(root / 'control-ledger' / f'{event["seq"]:06d}.json', event)
@@ -93,6 +95,11 @@ def snapshot(root, settings=None):
     if settings is not None and settings != original:
         raise ValueError('Budget view differs from original frozen settings')
     settings = original
+    basis = settings.get('time_budget_basis', 'elapsed')
+    if basis not in {'active', 'elapsed'}:
+        raise ValueError('Unknown frozen time-budget basis')
+    def interval(before, after):
+        return _duration(before, after, legacy_elapsed=basis == 'elapsed')
     events, _ = _events(root, settings)
     limits = dict(max_tokens=settings['max_tokens'], max_seconds=settings['max_seconds'])
     for event in events:
@@ -104,12 +111,9 @@ def snapshot(root, settings=None):
     started = root / 'host-started.json'
     start = contracts.read(started) if started.exists() else None
     if events:
-        _duration(events[-1], now)
+        interval(events[-1], now)
     if start is not None:
-        _duration(start, now)
-    basis = settings.get('time_budget_basis', 'elapsed')
-    if basis not in {'active', 'elapsed'}:
-        raise ValueError('Unknown frozen time-budget basis')
+        interval(start, now)
     if basis == 'active' and start is not None and 'at_boottime' not in start:
         raise ValueError('Active clock requires its original boot anchor')
     advance = paused = unclassified = 0.
@@ -118,7 +122,7 @@ def snapshot(root, settings=None):
         if event['kind'] != 'clock':
             continue
         if at is not None:
-            duration = _duration(at, event)
+            duration = interval(at, event)
             if phase == 'advance':
                 advance += duration
             elif phase == 'paused':
@@ -128,13 +132,15 @@ def snapshot(root, settings=None):
         at, phase = event, event['phase']
     if at is not None:
         if phase == 'advance':
-            advance += _duration(at, now)
+            advance += interval(at, now)
         elif phase == 'paused':
-            paused += _duration(at, now)
+            paused += interval(at, now)
         else:
-            unclassified += _duration(at, now)
-    elapsed = _duration(start, now) if start is not None else 0.
-    consumed = advance if basis == 'active' else (now['at_unix'] - start['at_unix'] if start else 0.)
+            unclassified += interval(at, now)
+    elapsed = interval(start, now) if start is not None else 0.
+    if basis == 'elapsed' and start is not None:
+        elapsed = _duration(dict(at_unix=start['at_unix']), now)
+    consumed = advance if basis == 'active' else elapsed
     return dict(**limits, time_budget_basis=basis, advance_seconds=advance,
                 paused_seconds=paused, unclassified_seconds=unclassified, elapsed_seconds=elapsed, consumed_seconds=consumed,
                 seconds_remaining=max(0., limits['max_seconds'] - consumed), clock_phase=phase,

@@ -1,0 +1,11 @@
+{
+  "seq": 1,
+  "parent_sha256": null,
+  "settings_sha256": "26ef23dc99e9b97e747c6a06db0f7bf5a4068a5021f2498a6576040c9afcbb02",
+  "at_unix": 1791694089.621297,
+  "at_boottime": 2899.955554225,
+  "boot_id": "f30b29a4-35be-470a-9d32-826d06c089c0",
+  "kind": "clock",
+  "phase": "advance",
+  "reason": "controller_launch_boundary"
+}

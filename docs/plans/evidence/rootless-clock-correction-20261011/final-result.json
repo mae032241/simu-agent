@@ -1,0 +1,8 @@
+{
+  "controller": {
+    "status": "error",
+    "error": "Control clock moved backwards; consumption is not refundable"
+  },
+  "pause_exercised": false,
+  "parts": 1
+}

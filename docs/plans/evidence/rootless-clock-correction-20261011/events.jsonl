@@ -1,0 +1,4 @@
+{"time": 1791694089.5868907, "event": "controller_started", "case": "case-02", "part": 1, "pid": 5, "command": "run"}
+{"time": 1791694131.2601206, "event": "controller_exited", "case": "case-02", "part": 1, "returncode": 1}
+{"time": 1791694131.2988603, "event": "status", "case": "case-02", "returncode": 1, "stdout": "{\"status\": \"error\", \"error\": \"Control clock moved backwards; consumption is not refundable\"}\n", "stderr": ""}
+{"time": 1791694131.2989895, "event": "campaign_stopped_on_error", "case": "case-02"}

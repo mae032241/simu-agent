@@ -1,0 +1,12 @@
+{
+  "base": "19f3e9f8a897a5925126827de95299b08a7b63b7",
+  "files": {
+    "src/scidiscovery/research_loop/budget.py": "88853b1dd1e27d1970f610642d3e54e211617ed987948b74600676ff4f0a09a4",
+    "tests/research_loop/test_budget.py": "7fbcca4e6a00c4ec8100dea63efede1b84ea7518ccfef2d74fb24b05a14a6d3e",
+    "docs/ROOTLESS_CLI.zh-CN.md": "07a691b61acab2d392562a7c32a1762082524a9085b6ccc12fbcbb1f05faba25",
+    "docs/plans/evidence/ROOTLESS_N1B_ACCEPTANCE_20261011.zh-CN.md": "1133a9b8d2861ce59dc95f636dd8e0bc5587f6a2109bda847b9e0fe90170f4ce"
+  },
+  "test_log": "/tmp/scid-n1-clock-slew-legacy-final/batch-001/pytest.log",
+  "runtime_sha256": "1ef1fe09522172003a9e0a5dbd3317ae25c1d11dfa68c1ef4672c180f7a8297e",
+  "runtime_changed": false
+}
