@@ -57,10 +57,14 @@ def execute_native(root: Path, step: int):
     record.mkdir(parents=True, exist_ok=True)
     job_path = root / "jobs" / f"{step:03d}.json"
     job = read(job_path)
-    anchor = search.accept(root, job)
+    node_anchor = control_budget.accept_node(root, job)
+    if node_anchor is not None and job['role'] == 'W' and search.launch_reason(root, job):
+        raise ValueError('W dispatch violates its frozen search authorization')
+    anchor = search.accept(root, job) if node_anchor is None else None
     with (record / "native-intent.json").open("x") as stream:
         json.dump(dict(step=step, task_sha256=digest(job_path), prepared_at=time.time(),
-                       **(dict(search_slice=anchor) if anchor is not None else {})), stream)
+                       **(dict(search_slice=anchor) if anchor is not None else {}),
+                       **(dict(budget_slice=node_anchor) if node_anchor is not None else {})), stream)
         stream.flush()
         os.fsync(stream.fileno())
     runtime.start(root, step)
@@ -93,6 +97,8 @@ def run_native(root: Path, step: int):
     intent = read(record / 'native-intent.json')
     if intent.get('task_sha256') != digest(job_path):
         raise ValueError('Native execution task changed')
+    # W statistics reuse this exact node anchor, never a second acceptance clock.
+    search_intent = dict(intent, search_slice=intent['budget_slice']) if intent.get('budget_slice') is not None and job.get('search') and job['role'] == 'W' else intent
     pending = record / 'result.pending.json'
     args = [*settings['native_launcher_argv'], 'exec', '--json', '--output-last-message', str(pending),
             '--model', settings['model'], '-c', f'model_reasoning_effort={json.dumps(settings["reasoning_effort"])}',
@@ -134,7 +140,8 @@ def run_native(root: Path, step: int):
                   next_action_options=ACTIONS.get(job['role'], []),
                   shared_seconds_remaining=max(0, int(limits['seconds_remaining'])),
                   shared_observed_tokens_remaining=max(0, limits['max_tokens']-budget['observed_tokens']),
-                  metering='Native usage may be delayed; this is not a guaranteed billing cap.'), ensure_ascii=False))
+                  metering='Native usage may be delayed; this is not a guaranteed billing cap.',
+                  **(dict(node_budget=intent['budget_slice']['limits']) if intent.get('budget_slice') else {})), ensure_ascii=False))
     home = root / 'native-homes' / work.name
     home.mkdir(parents=True, exist_ok=True)
     env = {**os.environ, 'THIN_HWA_ROLE': job['role'], 'THIN_HWA_WORKSPACE': str(work),
@@ -157,7 +164,9 @@ def run_native(root: Path, step: int):
             stop = ('wall_limit' if limits['seconds_remaining'] <= 0 else
                     'usage_unknown' if any(item != step for item in latest['unknown_steps']) else
                     'token_limit' if latest['observed_tokens'] >= limits['max_tokens'] else None)
-            stop = stop or search.stop_reason(root, job, intent, limits, meter)
+            stop = stop or control_budget.node_admission(root, job, ignore_step=step, intent=intent)
+            stop = stop or control_budget.stop_node(root, job, intent, limits, meter)
+            stop = stop or search.stop_reason(root, job, search_intent, limits, meter)
             if stop:
                 write(record / 'usage.json', dict(input_tokens=0, cached_input_tokens=0, output_tokens=0))
                 write(record / 'native-outcome.json', dict(returncode=None, stop_reason=stop,
@@ -207,7 +216,8 @@ def run_native(root: Path, step: int):
                         stop = 'wall_limit'
                     elif usage(root)['observed_tokens'] >= limits['max_tokens']:
                         stop = 'token_limit'
-                    stop = stop or search.stop_reason(root, job, intent, limits, meter)
+                    stop = stop or control_budget.stop_node(root, job, intent, limits, meter)
+                    stop = stop or search.stop_reason(root, job, search_intent, limits, meter)
                     if stop:
                         break
     except BaseException as exc:
@@ -237,9 +247,16 @@ def run_native(root: Path, step: int):
     outcome = dict(returncode=process.returncode if process else None,
           stop_reason=stop, usage=usage(root), thread_id=thread_id, cleanup=cleanup,
           limitation='Terminal native usage observation; in-flight usage may be absent.')
-    if intent.get('search_slice') is not None:
+    if intent.get('budget_slice') is not None:
         try:
-            outcome['search_slice'] = search.report(root, job, intent, meter)
+            outcome['budget_slice'] = control_budget.node_report(root, job, intent, meter)
+            outcome['budget_slice']['usage_observed'] = observed
+        except ValueError:
+            stop = outcome['stop_reason'] = 'node_slice_meter_unknown'
+            outcome['budget_slice'] = dict(status='unknown')
+    if search_intent.get('search_slice') is not None:
+        try:
+            outcome['search_slice'] = search.report(root, job, search_intent, meter)
         except ValueError:
             stop = outcome['stop_reason'] = 'w_slice_meter_unknown'
             outcome['search_slice'] = dict(status='unknown')

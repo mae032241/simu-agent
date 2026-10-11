@@ -24,7 +24,13 @@ def status(root: Path):
             outcome = contracts.read(contracts.host_record(contracts.workspace(root, step)) / 'native-outcome.json')
             if outcome.get('native_started') is False:
                 state = 'native_not_submitted'
-        nodes.append(dict(step=step, role=job['role'], state=state))
+        node = dict(step=step, role=job['role'], state=state)
+        if settings.get('node_budget_policy') is not None:
+            record = contracts.host_record(contracts.workspace(root, step))
+            intent = contracts.read(record / 'native-intent.json') if (record / 'native-intent.json').exists() else {}
+            outcome = contracts.read(record / 'native-outcome.json') if (record / 'native-outcome.json').exists() else {}
+            node.update(budget_slice=intent.get('budget_slice'), budget_report=outcome.get('budget_slice'), stop_reason=outcome.get('stop_reason'))
+        nodes.append(node)
     return dict(instance=str(root), goal_id=settings['goal_id'], objective=settings['objective'],
                 paused=(root / 'pause.request').exists(), nodes=nodes, usage=native.usage(root),
                 goal_completion='not_asserted', budget=budget.snapshot(root),
@@ -43,6 +49,7 @@ def main(argv=None):
     prepare.add_argument('--history-observer-config', type=Path, help='Optional trusted host adapter/config JSON; frozen at preparation')
     prepare.add_argument('--search-policy', type=Path, help='Optional JSON override of the three frozen W-search ceilings')
     prepare.add_argument('--correction-policy', type=Path, help='Explicitly enable N4 with review_after/pause_after JSON thresholds (defaults 3/2)')
+    prepare.add_argument('--node-budget-policy', type=Path, help='Explicit H/W/A/E max_observed_tokens/max_seconds JSON; no delivery guarantee')
     prepare.add_argument('--max-tokens', type=int, required=True)
     prepare.add_argument('--max-seconds', type=float, required=True, help='Maximum advancement seconds; explicit pauses do not consume this ceiling')
     prepare.add_argument('--max-steps', type=int, required=True)
@@ -76,6 +83,8 @@ def main(argv=None):
                     if args.search_policy is not None else search.DEFAULT_POLICY,
                 correction_policy=contracts.read(contracts.regular(args.correction_policy, limit=4096))
                     if args.correction_policy is not None else None,
+                node_budget_policy=contracts.read(contracts.regular(args.node_budget_policy, limit=4096))
+                    if args.node_budget_policy is not None else None,
                 history_observer=contracts.read(contracts.regular(args.history_observer_config, limit=64_000))
                     if args.history_observer_config is not None else None)
             result = dict(status='prepared', instance=str(root), goal_id=settings['goal_id'])

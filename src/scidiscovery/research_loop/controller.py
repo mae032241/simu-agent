@@ -18,7 +18,8 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
             user_updates: list[Path] | None = None,
             history_observer: dict | None = None,
             search_policy: dict | None = search.DEFAULT_POLICY,
-            correction_policy: dict | None = None) -> dict:
+            correction_policy: dict | None = None,
+            node_budget_policy: dict | None = None) -> dict:
     """Freeze an explicit goal and finite launch budgets in a fresh directory."""
     root, objective, public_root = map(Path, (root, objective, public_root))
     for name, value in (("max_tokens", max_tokens), ("max_steps", max_steps),
@@ -52,12 +53,15 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
     correction_limits = correction.policy(correction_policy) if correction_policy is not None else None
     if correction_limits is not None and search_limits is None:
         raise ValueError('Correction requires the frozen search policy')
+    node_limits = budget.node_policy(node_budget_policy) if node_budget_policy is not None else None
     settings = dict(goal_id="scid-hwa-" + uuid.uuid4().hex[:12], objective=text,
         public_root=str(public_root.resolve()), native_launcher_argv=list(launcher),
         max_tokens=max_tokens, max_seconds=max_seconds, max_steps=max_steps, time_budget_basis="active",
         model=model, reasoning_effort=reasoning_effort, service_tier=service_tier,
         max_output_item_bytes=max_output_item_bytes,
         max_output_total_bytes=max_output_total_bytes)
+    if node_limits is not None:
+        settings['node_budget_policy'] = node_limits
     if observer is not None:
         settings['history_observer'] = observer
     if search_limits is not None:
@@ -278,6 +282,9 @@ def _run(root):
             limit = _launch_limit(root, settings)
             if limit:
                 return _finish(root, settings, limit, completed, last, next_role=role)
+            node_limit = budget.node_admission(root, dict(step=step, role=role))
+            if node_limit:
+                return _finish(root, settings, node_limit, completed, last, next_role=role)
             if (root / 'jobs' / f'{step:03d}.json').exists():
                 try:
                     _check_job(root, settings, step, role, parents, instruction, evidence_return,
@@ -300,6 +307,8 @@ def _run(root):
                 return _finish(root, settings, limit, completed, last, next_role=role)
             try:
                 native.execute_native(root, step)
+            except budget.NodeBudgetUnavailable as error:
+                return _finish(root, settings, error.reason, completed, last, next_role=role)
             except Exception as error:
                 if _terminal_success(record):
                     return _finish(root, settings, "seal_pending", completed, last,

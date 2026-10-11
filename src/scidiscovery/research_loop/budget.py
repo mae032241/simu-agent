@@ -224,3 +224,98 @@ def amend(root, *, max_tokens=None, max_seconds=None, authorization_note):
                             after=after, authorization_note=authorization_note.strip())
         return dict(status='budget_amended', amendment_seq=event['seq'], before=before, after=after,
                     consumption='retained', authorization='operator_declaration_not_authentication')
+
+class NodeBudgetUnavailable(ValueError):
+    """An unaccepted node cannot fit its remaining authorized allocation."""
+    def __init__(self, reason):
+        super().__init__('Node budget admission refused: ' + reason)
+        self.reason = reason
+
+
+def node_policy(value):
+    """Explicit operator ceilings for every role; there are no trial defaults."""
+    if not isinstance(value, dict) or set(value) != {'H', 'W', 'A', 'E'}:
+        raise ValueError('Node budget policy requires exactly H/W/A/E')
+    for role, limits in value.items():
+        if (not isinstance(limits, dict) or set(limits) != {'max_observed_tokens', 'max_seconds'}
+                or type(limits['max_observed_tokens']) is not int or limits['max_observed_tokens'] <= 0
+                or type(limits['max_seconds']) not in (int, float)
+                or not 0 < limits['max_seconds'] < float('inf')):
+            raise ValueError(f'Node budget {role} requires positive finite explicit ceilings')
+    return {role: dict(limits) for role, limits in value.items()}
+
+
+def node_limits(root, job):
+    settings = contracts.settings(root)
+    policy = settings.get('node_budget_policy')
+    if policy is None:
+        return None
+    limits = node_policy(policy)[job['role']]
+    if job['role'] == 'W' and settings.get('search_policy') is not None:
+        limits['max_seconds'] = min(limits['max_seconds'], settings['search_policy']['max_w_seconds'])
+        limits['max_observed_tokens'] = min(limits['max_observed_tokens'], settings['search_policy']['max_w_observed_tokens'])
+    return limits
+
+
+def _node_duration(root, job, intent, limits):
+    anchor = intent.get('budget_slice')
+    if (not isinstance(anchor, dict) or anchor.get('task_sha256') != contracts.digest(root / 'jobs' / f'{job["step"]:03d}.json')
+            or anchor.get('role') != job['role'] or anchor.get('limits') != node_limits(root, job)
+            or anchor.get('shared_limits') != {key: limits[key] for key in ('max_tokens', 'max_seconds')}
+            or anchor.get('boot_id') != clock_stamp()['boot_id']
+            or type(anchor.get('advance_seconds')) not in (int, float)
+            or not math.isfinite(anchor['advance_seconds']) or anchor['advance_seconds'] < 0):
+        raise ValueError('Accepted node budget identity or boot changed')
+    duration = limits['advance_seconds'] - anchor['advance_seconds']
+    if duration < 0:
+        raise ValueError('Node consumption cannot move backwards')
+    return duration
+
+
+def node_admission(root, job, *, ignore_step=None, intent=None):
+    policy = node_limits(root, job)
+    if policy is None:
+        return None
+    from . import native
+    limits, meter = snapshot(root), native.usage(root)
+    if any(step != ignore_step for step in meter['unknown_steps']):
+        return 'usage_unknown'
+    duration = _node_duration(root, job, intent, limits) if intent is not None else 0.
+    if limits['seconds_remaining'] < max(0., policy['max_seconds'] - duration):
+        return 'node_budget_unavailable_seconds'
+    if limits['max_tokens'] - meter['observed_tokens'] < policy['max_observed_tokens']:
+        return 'node_budget_unavailable_tokens'
+    return None
+
+
+def accept_node(root, job):
+    policy = node_limits(root, job)
+    if policy is None:
+        return None
+    reason = node_admission(root, job)
+    if reason:
+        raise NodeBudgetUnavailable(reason)
+    limits, stamp = snapshot(root), clock_stamp()
+    return dict(task_sha256=contracts.digest(root / 'jobs' / f'{job["step"]:03d}.json'), role=job['role'],
+                boot_id=stamp['boot_id'], advance_seconds=limits['advance_seconds'], limits=policy,
+                shared_limits={key: limits[key] for key in ('max_tokens', 'max_seconds')})
+
+
+def stop_node(root, job, intent, limits, meter):
+    policy = node_limits(root, job)
+    if policy is None:
+        return None
+    duration = _node_duration(root, job, intent, limits)
+    if duration >= policy['max_seconds']:
+        return 'node_slice_time_limit'
+    if meter['input_tokens'] + meter['output_tokens'] >= policy['max_observed_tokens']:
+        return 'node_slice_token_limit'
+    return None
+
+
+def node_report(root, job, intent, meter):
+    duration = _node_duration(root, job, intent, snapshot(root))
+    return dict(role=job['role'], advance_seconds=duration, input_tokens=meter['input_tokens'],
+                cached_input_tokens=meter['cached_input_tokens'], output_tokens=meter['output_tokens'],
+                observed_tokens=meter['input_tokens'] + meter['output_tokens'], dispatches=1,
+                limits=intent['budget_slice']['limits'])
