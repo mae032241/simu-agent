@@ -18,12 +18,14 @@ def prepare_scene(tmp_path, correction_policy=None):
 
 
 @pytest.fixture
-def scene(tmp_path):
+def scene(tmp_path, monkeypatch):
+    monkeypatch.setattr(c, 'HANDOFF_PROTOCOL', 7)  # Published strict protocol7 behavior.
     return prepare_scene(tmp_path)
 
 
 @pytest.fixture
-def correcting_scene(tmp_path):
+def correcting_scene(tmp_path, monkeypatch):
+    monkeypatch.setattr(c, 'HANDOFF_PROTOCOL', 7)
     return prepare_scene(tmp_path, correction.DEFAULT_POLICY)
 
 
@@ -177,9 +179,19 @@ def test_first_screen_requires_one_real_same_mechanism_w_task(scene, source_coun
     else:
         finish(scene, 1, 'H', [], action='analyze', search_choice=plan())
         step, parents = 2, [1]
-    with pytest.raises(ValueError, match='same-mechanism'):
-        finish(scene, step, 'A', parents, search_choice=review())
-    assert not (c.host_record(c.workspace(scene, step)) / 'result-identity.json').exists()
+    job, work, record = finish(scene, step, 'A', parents, search_choice=review())
+    # An unsealed, terminal-valid published7 attempt may retain its science under
+    # the explicit new interpretation; it still cannot grant screening status.
+    payload = c.science_payload(record / 'science-output.json', 'A', 7)
+    with pytest.raises(search.UnresolvedSearch, match='same-mechanism'):
+        search.validate_payload(scene, job, payload)
+    seal = c.read(record / 'result-identity.json')
+    assert seal['control_outcome']['search_status'] == 'unresolved'
+    assert seal['control_outcome']['diagnostics'][0]['code'] == (
+        'screen_source_ambiguous' if source_count else 'screen_source_unavailable')
+    assert search.project(scene, step + 1)['mechanisms']['h001.m1']['status'] == 'pending'
+    assert (work / 'conclusion.json').read_bytes() == (record / 'science-output.json').read_bytes()
+    c.validate(work)
 
 
 @pytest.mark.parametrize('binding', ['unavailable', 'ambiguous'])

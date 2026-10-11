@@ -17,7 +17,7 @@ MAX_RESULT_BYTES = 64_000
 MAX_REUSED_INPUTS = 16
 MAX_UNRESOLVED_LINKS = 16
 REUSE_FRAGMENT = 'reuse-implementation'
-HANDOFF_PROTOCOL = 7
+HANDOFF_PROTOCOL = 8
 ACTIONS = {
     'H': ('experiment', 'analyze', 'extract', 'wait'),
     'A': ('continue_w', 'revise_h', 'extract', 'wait', 'finish'),
@@ -108,6 +108,10 @@ def result_schema(role: str, protocol=1):
             '[] clears them; listed object IDs replace the set. New direct deliverables pass automatically. '
             'Do not repeat unchanged choices or write paths, hashes or handoff markers. This is separate from candidate recommendation and actual submission.')
         required.append('implementation_selection')
+        if protocol >= 8:
+            properties['implementation_selection']['description'] += (
+                ' An unresolved choice preserves your science but blocks a dependent experiment; null retains that '
+                'unresolved status, never an older implementation. Make a justified replacement/clear choice when correcting it.')
     if role == 'A' and protocol >= 3:
         properties['candidate_recommendation'] = dict(type=['string', 'null'], maxLength=80,
             description='Optional scientific recommendation: one listed candidate ID, or null when unknown.')
@@ -201,7 +205,7 @@ def artifact_entry_points(work, payload, materials, protocol=6, unresolved=None)
     return entries
 
 
-def selected_inputs(work, payload, job):
+def selected_inputs(work, payload, job, diagnostics=None):
     """Resolve explicit reuse intent against this role's already frozen inputs."""
     if job.get('handoff_protocol', 1) < 2:
         return []  # Preserve the meaning and exact packets of historical jobs.
@@ -213,12 +217,27 @@ def selected_inputs(work, payload, job):
     if job.get('handoff_protocol', 1) >= 7:
         choice = payload.get('implementation_selection')
         if choice is None:
+            if job.get('handoff_protocol', 1) >= 8 and job.get('input_selection_status') == 'unresolved':
+                if diagnostics is not None:
+                    diagnostics.append(dict(code='implementation_unresolved', subject='inherited unresolved choice'))
+                return []
             choices = [(row['label'], row['material']) for row in job.get('selected_inputs', [])]
         else:
             from . import history
+            unresolved = []
             for object_id in dict.fromkeys(choice):
-                row = history.resolve_implementation(root, object_id, job['history']['nodes'])
+                try:
+                    row = history.resolve_implementation(root, object_id, job['history']['nodes'])
+                except history.UnresolvedImplementation:
+                    if job.get('handoff_protocol', 1) < 8:
+                        raise
+                    unresolved.append(dict(code='implementation_unresolved', subject=object_id))
+                    continue
                 choices.append((object_id, row))
+            if unresolved:
+                if diagnostics is not None:
+                    diagnostics.extend(unresolved)
+                return []  # No partial selection or fallback to a former choice.
     else:
         links = re.finditer(r'\[([^\]\n]+)\]\((?:<([^>\n]+)>|([^\s()]+))\)', payload['scientific_result'])
         for link in links:
@@ -272,8 +291,12 @@ def selected_inputs(work, payload, job):
     return selected
 
 
-def science_view(job):
+def science_view(job, root=None):
     protocol = job.get('handoff_protocol', 1)
+    request = None
+    if protocol >= 8 and job.get('author_correction'):
+        from . import semantic
+        request = semantic.public_request(root, job)
     return {key: value for key, value in {
         'role': job['role'], 'question': job['instruction'],
         'global': dict(objective='inputs/global/objective.md',
@@ -294,6 +317,10 @@ def science_view(job):
                 scientific_links='Ordinary citations are scientific prose. Only listed bound files are available; '
                 'unresolved links do not select inputs or acquire evidence qualification.') if protocol >= 7 else {}),
         **(dict(history=job['history']['view']) if job.get('handoff_protocol', 1) >= 3 else {}),
+        **(dict(input_selection_status=job['input_selection_status'], control_diagnostics=job['control_diagnostics'])
+           if job.get('handoff_protocol', 1) >= 8 else {}),
+        **(dict(control_request=request)
+           if job.get('handoff_protocol', 1) >= 8 and job.get('author_correction') else {}),
         **(dict(search=job['search']['view']) if job.get('search') else {}),
         **(dict(progress_assessment=('Judge the current assessed work as progress/no_progress/unknown; '
                 'null means unknown. Explain scientific support and limitations in ordinary science. '
@@ -391,7 +418,7 @@ def _copy_bound(source: Path, destination: Path, sha256: str):
 
 
 def build_job(root: Path, step: int, role: str, parents: list[int], instruction='', evidence_return=None,
-              correction_request=None):
+              correction_request=None, author_correction=None):
     if role not in ROLE_INSTRUCTIONS or type(step) is not int or step < 1:
         raise ValueError('Invalid scientific node')
     if len(parents) != len(set(parents)) or any(type(p) is not int or not 0 < p < step for p in parents):
@@ -399,7 +426,7 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
     policy = settings(root)
     job_path = root / 'jobs' / f'{step:03d}.json'
     protocol = read(regular(job_path)).get('handoff_protocol', 1) if job_path.exists() else HANDOFF_PROTOCOL
-    if protocol not in (1, 2, 3, 4, 5, 6, HANDOFF_PROTOCOL):
+    if protocol not in (1, 2, 3, 4, 5, 6, 7, HANDOFF_PROTOCOL):
         raise ValueError('Unsupported frozen handoff protocol')
     work = workspace(root, step)
     work.mkdir(parents=True, exist_ok=True)
@@ -449,6 +476,12 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
                instruction=instruction, direct_refs=refs, direct_materials=materials, direct_entry_points=entry_points, global_materials=globals_,
                evidence_return=evidence_return, **(dict(selected_inputs=selected) if selected else {}),
                **(dict(handoff_protocol=protocol) if protocol >= 2 else {}))
+    if protocol >= 8:
+        previous = read(host_record(workspace(root, step - 1)) / 'result-identity.json') if step - 1 in parents else {}
+        job['input_selection_status'] = previous.get('control_outcome', {}).get('selection_status', 'applied')
+        job['control_diagnostics'] = previous.get('control_outcome', {}).get('diagnostics', [])
+        if author_correction is not None:
+            job['author_correction'] = author_correction
     if protocol >= 3:
         from . import history
         job['history'] = history.bind(root, step, protocol)
@@ -464,7 +497,7 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
         from . import correction
         correction.validate_job(root, job)
     for path, value in ((root / 'jobs' / f'{step:03d}.json', job),
-                        (work / 'science-task.json', science_view(job)),
+                        (work / 'science-task.json', science_view(job, root)),
                         (host_record(work) / 'science-result.schema.json', result_schema(role, protocol))):
         if path.exists():
             if read(regular(path)) != value:
@@ -488,10 +521,16 @@ def validate(work: Path):
     if (seal['job_sha256'] != digest(job_path) or intent['task_sha256'] != digest(job_path)
             or seal['raw_sha256'] != digest(raw) or seal['sha256'] != digest(result)
             or seal['raw_sha256'] != digest(conclusion) or outcome.get('raw_sha256') != seal['raw_sha256']
-            or read(regular(work / 'science-task.json')) != science_view(job)):
+            or read(regular(work / 'science-task.json')) != science_view(job, root)):
         raise ValueError('Scientific node identity changed')
     payload = science_payload(raw, job['role'], job.get('handoff_protocol', 1))
-    if job.get('handoff_protocol', 1) >= 5:
+    if seal.get('control_outcome') is not None:
+        from . import semantic
+        if seal['control_outcome'] != semantic.outcome(root, job, payload, legacy_attempt=job.get('handoff_protocol', 1) == 7):
+            raise ValueError('Control outcome differs from its original scientific attempt')
+    elif job.get('handoff_protocol', 1) >= 8:
+        raise ValueError('Protocol8 scientific attempt has no control outcome')
+    elif job.get('handoff_protocol', 1) >= 5:
         from . import search
         search.validate_payload(root, job, payload)
     if job.get('handoff_protocol', 1) >= 6:
@@ -518,7 +557,7 @@ def validate(work: Path):
 
 
 def _validate_inputs(root, work, job):
-    if read(regular(work / 'science-task.json')) != science_view(job):
+    if read(regular(work / 'science-task.json')) != science_view(job, root):
         raise ValueError('Frozen scientific task changed')
     if job['global_materials'] != global_materials(root):
         raise ValueError('Bound global context changed')
@@ -526,6 +565,9 @@ def _validate_inputs(root, work, job):
     if job.get('handoff_protocol', 1) >= 6:
         from . import correction
         correction.validate_job(root, job)
+    if job.get('handoff_protocol', 1) >= 8:
+        from . import semantic
+        semantic.validate_job(root, job)
     if job.get('handoff_protocol', 1) >= 5 and policy.get('search_policy') is not None:
         from . import search
         if job.get('search') != search.bind(root, job['step'], job['role'], job['handoff_protocol']):
@@ -544,6 +586,13 @@ def _validate_inputs(root, work, job):
                                 'result-identity.json')).get('selected_inputs', [])
     if job.get('selected_inputs', []) != expected:
         raise ValueError('Bound implementation selection differs from its predecessor')
+    if job.get('handoff_protocol', 1) >= 8:
+        previous_seal = read(host_record(workspace(root, job['step'] - 1)) / 'result-identity.json') if any(
+            ref['path'] == previous for ref in job['direct_refs']) else {}
+        if job.get('input_selection_status') != previous_seal.get('control_outcome', {}).get('selection_status', 'applied'):
+            raise ValueError('Bound implementation resolution differs from its predecessor')
+        if job.get('control_diagnostics') != previous_seal.get('control_outcome', {}).get('diagnostics', []):
+            raise ValueError('Bound control diagnostics differ from their predecessor')
     if any(row['material'] not in job['direct_materials'] for row in expected):
         raise ValueError('Selected implementation is absent from bound materials')
     for row in job['global_materials']:
@@ -583,9 +632,19 @@ def seal_result(root: Path, step: int):
             or outcome.get('raw_sha256') != digest(raw)):
         raise ValueError('Terminal scientific output is unverified or changed')
     value = envelope(job, science_payload(raw, job['role'], job.get('handoff_protocol', 1)))
-    if job.get('handoff_protocol', 1) >= 5:
+    control = None
+    if job.get('handoff_protocol', 1) >= 8:
+        from . import semantic
+        control = semantic.outcome(root, job, value)
+    elif job.get('handoff_protocol', 1) >= 5:
         from . import search
-        search.validate_payload(root, job, value)
+        try:
+            search.validate_payload(root, job, value)
+        except search.UnresolvedSearch:
+            if job.get('handoff_protocol', 1) != 7:
+                raise
+            from . import semantic
+            control = semantic.outcome(root, job, value, legacy_attempt=True)
     if job.get('handoff_protocol', 1) >= 6:
         from . import correction
         correction.validate_payload(root, job, value)
@@ -603,6 +662,7 @@ def seal_result(root: Path, step: int):
     write(record / 'result-identity.json', dict(sha256=digest(record / 'result.json'), raw_sha256=digest(raw),
           job_sha256=digest(job_path), materials=materials, entry_points=entry_points,
           scope='Exact bytes and direct lineage; not scientific qualification',
+          **(dict(control_outcome=control) if control is not None else {}),
           **(dict(unresolved_links=unresolved) if job.get('handoff_protocol', 1) >= 7 else {}),
           **(dict(selected_inputs=selected) if selected else {}),
           **(dict(observations=observations) if observations else {})))

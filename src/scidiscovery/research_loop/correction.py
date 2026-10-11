@@ -51,7 +51,7 @@ def _proofs(root, job, assessment):
         if current is None:
             return set()
         source, payload, seal = current
-        if source['role'] == 'W' or (source['role'] == 'H' and payload.get('next_action') == 'analyze'):
+        if source['role'] == 'W' or (source['role'] == 'H' and payload.get('next_action') == 'analyze' and not source.get('author_correction')):
             return {seal['raw_sha256']}
         if source['role'] == 'E':
             target = source.get('evidence_return') or {}
@@ -180,11 +180,14 @@ def project(root, before_step=None):
         if c.read(record / 'result.json') != c.envelope(job, payload):
             raise ValueError('Correction result differs from original scientific fields')
         request = job.get('correction_request')
-        if job['role'] == 'H' and request is not None and payload.get('next_action') in {'experiment', 'analyze'}:
+        if (job['role'] == 'H' and request is not None
+                and payload.get('next_action') in {'experiment', 'analyze'}
+                and seal.get('control_outcome', {}).get('search_status') != 'unresolved'):
             for review in reviews.values():
                 if review is not None and review['trigger']['trigger_id'] == request['trigger_id']:
                     review['response_h'] = step
         if (job['role'] != 'A' or job.get('handoff_protocol', 1) < 6
+                or job.get('author_correction') is not None
                 or payload['next_action'] in {'extract', 'wait'}):
             continue
         seal_digest = c.digest(record / 'result-identity.json')
@@ -316,6 +319,10 @@ def validate_job(root, job):
         return
     for parent in parents:
         previous = c.read(root / 'jobs' / f'{parent:03d}.json')
+        if (job.get('handoff_protocol', 1) >= 8 and job.get('author_correction') is not None
+                and previous['role'] == 'H' and previous.get('correction_request') == request):
+            validate_job(root, previous)
+            return
         if previous['role'] == 'E' and previous.get('evidence_return', {}).get('role') == 'H':
             requester = c.read(root / 'jobs' / f'{previous["evidence_return"]["step"]:03d}.json')
             if requester.get('correction_request') == request:

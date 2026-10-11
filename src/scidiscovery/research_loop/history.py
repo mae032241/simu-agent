@@ -20,6 +20,10 @@ TEXT_CHARS = 8192
 MAX_PAGE_BYTES = 64_000
 MAX_HISTORY_BYTES = 32 * 1024 * 1024
 MAX_BRIEF_BYTES = 4096
+
+
+class UnresolvedImplementation(ValueError):
+    """A scientific object choice has no unique frozen original; not corruption."""
 MAX_OBSERVER_BYTES = 256_000
 MAX_OBJECT_BYTES = 128 * 1024 * 1024
 OBSERVER_SECONDS = 5
@@ -299,14 +303,16 @@ def implementation_options(root, step):
 def resolve_implementation(root, object_id, receipts):
     match = re.fullmatch(r'([HWAE])([0-9]{3,})-I([0-9]{3,})', object_id)
     if match is None:
-        raise ValueError('Implementation selection requires a listed scientific object ID')
+        raise UnresolvedImplementation('Implementation selection requires a listed scientific object ID')
     step, index = int(match[2]), int(match[3])
     receipt = next((row for row in receipts if row['step'] == step), None)
     job, _, seal, seal_sha = _source(root, step) if receipt else (None, None, None, None)
-    if (receipt is None or seal_sha != receipt['seal_sha256'] or job['role'] != match[1]
+    if receipt is not None and seal_sha != receipt['seal_sha256']:
+        raise ValueError('Historical node seal changed')
+    if (receipt is None or job['role'] != match[1]
             or object_id != f'{job["role"]}{step:03d}-I{index:03d}' or index < 1
             or index > len(seal['materials'])):
-        raise ValueError('Implementation selection is outside its exact frozen source')
+        raise UnresolvedImplementation('Implementation selection is outside its exact frozen source')
     return sorted(seal['materials'], key=lambda row: row['path'])[index - 1]
 
 

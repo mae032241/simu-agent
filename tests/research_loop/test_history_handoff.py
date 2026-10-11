@@ -26,7 +26,7 @@ def finish(root, step, role, parents, text='A bounded scientific finding', actio
     path = root / 'jobs' / f'{step:03d}.json'
     previous = contracts.read(path) if path.exists() else {}
     job = contracts.build_job(root, step, role, parents, previous.get('instruction', ''),
-                              previous.get('evidence_return'), previous.get('correction_request'))
+                              previous.get('evidence_return'), previous.get('correction_request'), previous.get('author_correction'))
     work = contracts.workspace(root, step)
     record = contracts.host_record(work)
     payload = dict(summary=summary, scientific_result=text, limitations=limitations if limitations is not None else ['Fixture only'])

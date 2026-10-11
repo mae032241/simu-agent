@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import copy
 import re
 
 from . import budget, contracts as c, history
@@ -10,6 +11,12 @@ DEFAULT_POLICY = dict(max_w_seconds=900.0, max_w_observed_tokens=2_000_000, max_
 MAX_VIEW_BYTES = 4096
 MAX_COMMITMENTS = 4
 MODES = ('screen', 'improve', 'repair')
+
+
+class UnresolvedSearch(ValueError):
+    def __init__(self, code, subject, message):
+        super().__init__(message)
+        self.code, self.subject = code, subject
 
 
 def policy(value):
@@ -41,6 +48,10 @@ def schema(role, protocol=6):
         value = _object(dict(scope=_text(), commitments=dict(type='array', maxItems=MAX_COMMITMENTS,
                 items=commitment), focus=focus('label')), nullable=True)
         value['description'] = 'Declare science, not a ledger. When search is enabled, experiment needs a non-null plan and focus. Revisions preserve known mechanism refs.'
+        if protocol >= 8:
+            value['description'] = ('Declare at most four additions or revisions this round; omitted registered mechanisms '
+                'and their statuses remain. Focus selects a newly declared label or an exact existing mechanism ref/unique '
+                'label. A new focus requires its own declared commitment and minimal_test; never restate the whole portfolio.')
         return value
     if role == 'A':
         disposition = _object(dict(mechanism_ref=_text(80), status=dict(type='string',
@@ -73,50 +84,70 @@ def _evidence(root, job, path):
     return source
 
 
-def _apply(root, job, payload, state):
+def _apply_science(root, job, payload, state, diagnostics):
     mechanisms = state['mechanisms']
     if job['role'] == 'H':
         state['current_h'] = job['step']
-        state['authorized'] = set()
-        state['scope'] = None
+        if job.get('handoff_protocol', 1) < 8:
+            state['authorized'] = set()
+            state['scope'] = None
         plan = payload.get('search_plan')
         state['plan'] = plan
         state['focus'] = None
         if plan is None:
+            if job.get('handoff_protocol', 1) >= 8 and payload.get('next_action') == 'experiment':
+                raise UnresolvedSearch('h_focus_unresolved', 'missing experiment plan', 'Experiment needs a declared scientific plan')
             return
         if not plan['scope'].strip():
             raise ValueError('H search scope must contain scientific content')
         labels, refs = {}, set()
         for index, item in enumerate(plan['commitments'], 1):
-            if not item['label'].strip() or not item['minimal_test'].strip() or item['label'] in labels:
+            if not item['label'].strip() or not item['minimal_test'].strip():
                 raise ValueError('H commitments require distinct scientific labels and minimal tests')
+            if item['label'] in labels:
+                raise UnresolvedSearch('h_mechanism_unresolved', item['label'], 'H commitments require distinct scientific labels and minimal tests')
             ref = item['existing_ref']
             if ref is not None and ref not in mechanisms:
-                raise ValueError('H revision must name an original known mechanism')
+                raise UnresolvedSearch('h_mechanism_unresolved', ref, 'H revision must name an original known mechanism')
             ref = ref or f'h{job["step"]:03d}.m{index}'
             if ref in refs:
-                raise ValueError('H revision repeats one mechanism identity')
+                raise UnresolvedSearch('h_mechanism_unresolved', ref, 'H revision repeats one mechanism identity')
             refs.add(ref);labels[item['label']] = ref
             if ref not in mechanisms:
                 mechanisms[ref] = dict(status='pending', original_h=job['step'])
             mechanisms[ref].update(label=item['label'], minimal_test=item['minimal_test'], source_h=job['step'])
         state['scope'] = plan['scope']
-        state['authorized'] = refs
+        state['authorized'] = state['authorized'] | refs if job.get('handoff_protocol', 1) >= 8 else refs
         if plan['focus'] is not None:
             focus = plan['focus']
-            if focus['label'] not in labels:
-                raise ValueError('H focus must select a declared commitment')
-            state['focus'] = dict(mechanism_ref=labels[focus['label']], action=focus['action'], repair_source=focus.get('repair_source'))
+            selected = labels.get(focus['label'])
+            if selected is None and job.get('handoff_protocol', 1) >= 8:
+                matches = [ref for ref in state['authorized']
+                           if ref == focus['label'] or mechanisms[ref]['label'] == focus['label']]
+                selected = matches[0] if len(matches) == 1 else None
+            if selected is None:
+                raise UnresolvedSearch('h_focus_unresolved', focus['label'], 'H focus must select a declared commitment')
+            state['focus'] = dict(mechanism_ref=selected, action=focus['action'], repair_source=focus.get('repair_source'))
+        elif job.get('handoff_protocol', 1) >= 8 and payload.get('next_action') == 'experiment':
+            raise UnresolvedSearch('h_focus_unresolved', 'missing experiment focus', 'Experiment needs a declared scientific focus')
     elif job['role'] == 'A':
         review = payload.get('search_review')
         state['focus'] = None
         if review is None:
             return
         refs = set()
+        repeated = {item['mechanism_ref'] for item in review['dispositions']
+                    if sum(other['mechanism_ref'] == item['mechanism_ref'] for other in review['dispositions']) > 1}
         for item in review['dispositions']:
             ref = item['mechanism_ref']
-            if ref not in mechanisms or ref in refs or not item['reason'].strip():
+            if not item['reason'].strip():
                 raise ValueError('A dispositions require distinct known mechanisms and scientific reasons')
+            if ref not in mechanisms or ref in repeated:
+                if job.get('handoff_protocol', 1) >= 8:
+                    diagnostics.append(dict(code='a_mechanism_unresolved', subject=ref))
+                    continue
+                raise UnresolvedSearch('a_mechanism_unresolved', ref,
+                    'A dispositions require distinct known mechanisms and scientific reasons')
             refs.add(ref)
             # Sealed originals own existing state. Redundant prose is retained
             # in the author's output, but neither changes nor re-proves it.
@@ -132,11 +163,51 @@ def _apply(root, job, payload, state):
                     and ((source.get('search') or {}).get('focus') or {}).get('mechanism_ref') == ref
                     and source['search']['focus']['action'] == 'screen']
             if item['status'] == 'screened' and (not screens or (job.get('handoff_protocol', 1) >= 7 and len(screens) != 1)):
-                raise ValueError('Screened requires same-mechanism W screening evidence')
+                if job.get('handoff_protocol', 1) >= 8:
+                    diagnostics.append(dict(code='screen_source_ambiguous' if screens else 'screen_source_unavailable', subject=ref))
+                    continue
+                raise UnresolvedSearch('screen_source_ambiguous' if screens else 'screen_source_unavailable', ref,
+                    'Screened requires same-mechanism W screening evidence')
             mechanisms[ref]['status'] = item['status']
         state['focus'] = dict(review['next_focus'], repair_source=review['next_focus'].get('repair_source')) if review['next_focus'] else None
         if state['focus'] is not None and state['focus']['mechanism_ref'] not in mechanisms:
-            raise ValueError('A focus must name an original known mechanism')
+            if job.get('handoff_protocol', 1) >= 8:
+                diagnostics.append(dict(code='a_focus_unresolved', subject=state['focus']['mechanism_ref']))
+                state['focus'] = None
+            else:
+                raise UnresolvedSearch('a_focus_unresolved', state['focus']['mechanism_ref'],
+                    'A focus must name an original known mechanism')
+
+
+def _apply(root, job, payload, state):
+    diagnostics = []
+    before = copy.deepcopy(state) if job.get('handoff_protocol', 1) >= 8 else None
+    try:
+        _apply_science(root, job, payload, state, diagnostics)
+    except UnresolvedSearch as error:
+        if before is None:
+            raise
+        state.clear();state.update(before)
+        state['current_h'] = job['step']
+        state['focus'] = None  # Preserve the attempt; it did not authorize a W.
+        diagnostics.append(dict(code=error.code, subject=error.subject))
+    return diagnostics
+
+
+def assess_payload(root, job, payload, *, legacy_attempt=False):
+    """A bounded host interpretation, never a scientific correctness verdict."""
+    state = project(root, job['step'])
+    if legacy_attempt:
+        if job.get('handoff_protocol', 1) != 7:
+            raise ValueError('Only a terminal protocol7 attempt supports semantic retention')
+        try:
+            _apply(root, job, payload, copy.deepcopy(state))
+        except UnresolvedSearch:
+            pass
+        else:
+            raise ValueError('A valid legacy result must retain its original interpretation')
+    interpreted = dict(job, handoff_protocol=8) if legacy_attempt else job
+    return _apply(root, interpreted, payload, state)
 
 
 def project(root, before_step):
@@ -144,7 +215,23 @@ def project(root, before_step):
                  accepted_slices=[], repairs={})
     for step in range(1, before_step):
         job, payload, seal, _ = history._source(root, step)
-        _apply(root, job, payload, state)
+        receipt = seal.get('control_outcome')
+        if receipt is not None:
+            if receipt.get('binding_protocol') != 8 or job.get('handoff_protocol', 1) not in {7, 8}:
+                raise ValueError('Control interpretation binding changed')
+            if job.get('handoff_protocol', 1) == 7:
+                try:
+                    _apply(root, job, payload, copy.deepcopy(state))
+                except UnresolvedSearch:
+                    pass
+                else:
+                    raise ValueError('Legacy valid science cannot be reinterpreted')
+            diagnostics = _apply(root, dict(job, handoff_protocol=8), payload, state)
+            if (receipt.get('search_status') != ('unresolved' if diagnostics else 'applied')
+                    or [row for row in receipt['diagnostics'] if not row['code'].startswith('implementation_')] != diagnostics):
+                raise ValueError('Search outcome differs from its original scientific attempt')
+        else:
+            _apply(root, job, payload, state)
         intent = c.host_record(c.workspace(root, step)) / 'native-intent.json'
         if job['role'] == 'W' and job.get('search') and intent.exists():
             value = c.read(c.regular(intent))
@@ -162,7 +249,7 @@ def project(root, before_step):
     return state
 
 
-def bind(root, step, role, protocol=6):
+def bind(root, step, role, protocol=6, *, write_pages=True):
     limits = c.settings(root).get('search_policy')
     if limits is None:
         return None
@@ -222,17 +309,57 @@ def bind(root, step, role, protocol=6):
             'Hard slice overruns retain unsealed failure; soft windows are advice.')
         view['focus'] = {key: value for key, value in focus.items() if key != 'repair_source'} if focus else None
         view['repair_binding'] = repair_binding
+    files = []
+    if protocol >= 8:
+        view['instructions'] += (' H plans contain only this round\'s additions/revisions (at most four), not the whole '
+            'portfolio. Omitted registered commitments stay active. Focus names a declared new label or unique existing '
+            'label/ref; undeclared new mechanisms never acquire authorization. Read mechanism_index for other identities; '
+            'Choose by mechanism_ref when a label is truncated; short excerpts link to the original H conclusion.')
+        registry = [dict(mechanism_ref=ref, label=clip(item['label'], 80), label_truncated=len(item['label'].encode()) > 80, status=item['status'],
+                         minimal_test=clip(item['minimal_test'], 160),
+                         minimal_test_truncated=len(item['minimal_test'].encode()) > 160,
+                         original=f'inputs/history/nodes/{item["source_h"]:03d}/0001.json')
+                    for ref, item in sorted(state['mechanisms'].items())]
+        prefix = 'inputs/search/mechanisms'
+        for offset in range(0, len(registry), 16):
+            number = offset // 16 + 1
+            path = f'{prefix}/{number:04d}.json'
+            value = dict(mechanisms=registry[offset:offset + 16],
+                next_page=f'{prefix}/{number + 1:04d}.json' if offset + 16 < len(registry) else None,
+                omitted_count=max(0, len(registry) - offset - 16))
+            raw = (json.dumps(value, ensure_ascii=False, indent=2) + '\n').encode()
+            if len(raw) > history.MAX_PAGE_BYTES:
+                raise ValueError('Mechanism navigation exceeds page byte capacity')
+            if write_pages:
+                destination = c.workspace(root, step) / path
+                if destination.exists() or destination.is_symlink():
+                    if c.regular(destination).read_bytes() != raw:
+                        raise ValueError('Frozen mechanism navigation changed')
+                else:
+                    if (root / 'jobs' / f'{step:03d}.json').exists():
+                        raise ValueError('Frozen mechanism navigation is missing')
+                    if any(parent.is_symlink() for parent in destination.parents):
+                        raise ValueError('Mechanism navigation directory is not original')
+                    c.write(destination, value);destination.chmod(0o400)
+                files.append(dict(path=path, sha256=c.digest(destination), size_bytes=len(raw)))
+        view['mechanism_index'] = f'{prefix}/0001.json' if registry else None
+        view['mechanism_count'] = len(registry)
     while len(json.dumps(view, ensure_ascii=False, indent=2).encode()) > MAX_VIEW_BYTES and len(view['commitments']) > 1:
         view['commitments'].pop()
         view['omitted_count'] += 1
     if len(json.dumps(view, ensure_ascii=False, indent=2).encode()) > MAX_VIEW_BYTES:
         raise ValueError('Default search view exceeds its byte bound')
     return dict(focus=focus, repair_root=repair_root, limits=limits, view=view,
+                **(dict(files=files) if protocol >= 8 else {}),
                 **(dict(repair_binding=repair_binding) if protocol >= 7 else {}))
 
 
 def launch_reason(root, job):
-    if job['role'] != 'W' or c.settings(root).get('search_policy') is None:
+    if job['role'] != 'W':
+        return None
+    if job.get('handoff_protocol', 1) >= 8 and job.get('input_selection_status') == 'unresolved':
+        return 'implementation_unresolved'
+    if c.settings(root).get('search_policy') is None:
         return None
     state = project(root, job['step'])
     focus = job['search']['focus']
@@ -257,10 +384,10 @@ def validate_payload(root, job, payload):
 
 
 def accept(root, job):
+    if job['role'] == 'W' and launch_reason(root, job):
+        raise ValueError('W dispatch violates its frozen search authorization')
     if job.get('search') is None or job['role'] != 'W':
         return None
-    if launch_reason(root, job):
-        raise ValueError('W dispatch violates its frozen search authorization')
     stamp = budget.clock_stamp()
     return dict(task_sha256=c.digest(root / 'jobs' / f'{job["step"]:03d}.json'),
                 boot_id=stamp['boot_id'], advance_seconds=budget.snapshot(root)['advance_seconds'])
