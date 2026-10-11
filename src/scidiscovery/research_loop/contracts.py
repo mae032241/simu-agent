@@ -14,6 +14,9 @@ import re
 from urllib.parse import unquote, urlsplit
 
 MAX_RESULT_BYTES = 64_000
+MAX_REUSED_INPUTS = 16
+REUSE_FRAGMENT = 'reuse-implementation'
+HANDOFF_PROTOCOL = 2
 ACTIONS = {
     'H': ('experiment', 'analyze', 'extract', 'wait'),
     'A': ('continue_w', 'revise_h', 'extract', 'wait', 'finish'),
@@ -155,6 +158,55 @@ def artifact_entry_points(work, payload, materials):
     return entries
 
 
+def selected_inputs(work, payload, job):
+    """Resolve explicit reuse intent against this role's already frozen inputs."""
+    if job.get('handoff_protocol', 1) != HANDOFF_PROTOCOL:
+        return []  # Preserve the meaning and exact packets of historical jobs.
+    root = work.parents[2]
+    policy = settings(root)
+    bound = {row['path']: row for row in job['direct_materials']}
+    selected, seen, total = [], set(), 0
+    links = re.finditer(r'\[([^\]\n]+)\]\((?:<([^>\n]+)>|([^\s()]+))\)', payload['scientific_result'])
+    for link in links:
+        label, angled, plain = link.groups()
+        url = urlsplit(angled if angled is not None else plain)
+        if url.fragment != REUSE_FRAGMENT:
+            continue
+        decoded = unquote(url.path)
+        path = PurePosixPath(decoded)
+        if (url.scheme or url.netloc or url.query or '\\' in decoded or '..' in path.parts
+                or path.is_absolute() or path.as_posix() != decoded or decoded not in bound):
+            raise ValueError('Implementation reuse must name one exact already bound input')
+        if decoded in seen:
+            continue
+        seen.add(decoded)
+        row = bound[decoded]
+        source = Path(row['source'])
+        try:
+            origin = source.relative_to(root / 'project/nodes').parts[0]
+            origin_step = int(origin)
+        except (ValueError, IndexError) as error:
+            raise ValueError('Implementation reuse requires an original instance node') from error
+        if origin != f'{origin_step:03d}' or not 0 < origin_step < job['step']:
+            raise ValueError('Implementation reuse requires an exact preceding node')
+        original = workspace(root, origin_step)
+        record = host_record(original)
+        identity = read(regular(record / 'result-identity.json'))
+        if (row not in identity['materials'] or source.resolve() != source.absolute()
+                or digest(regular(record / 'result.json')) != identity['sha256']
+                or digest(regular(record / 'science-output.json')) != identity['raw_sha256']
+                or digest(regular(root / 'jobs' / f'{origin_step:03d}.json')) != identity['job_sha256']
+                or digest(regular(source)) != row['sha256'] or source.stat().st_size != row['size_bytes']):
+            raise ValueError('Selected original implementation changed or is not sealed')
+        total += row['size_bytes']
+        if (len(selected) >= MAX_REUSED_INPUTS or row['size_bytes'] > policy['max_output_item_bytes']
+                or total > policy['max_output_total_bytes']):
+            raise ValueError('Selected implementations exceed the frozen handoff bound')
+        selected.append(dict(label=label[:160], origin_step=origin_step,
+                             origin_result_sha256=identity['sha256'], material=row))
+    return selected
+
+
 def science_view(job):
     return {key: value for key, value in {
         'role': job['role'], 'question': job['instruction'],
@@ -162,6 +214,12 @@ def science_view(job):
                        updates=[row['path'] for row in job['global_materials'][1:]]),
         'public_root': job['public_root'],
         'parents': [_parent_view(job, ref) for ref in job['direct_refs']],
+        **(dict(reused_implementations=[dict(label=row['label'], path=row['material']['path'])
+                                       for row in job.get('selected_inputs', [])],
+                 implementation_reuse='To give the next role a needed implementation, link an already '
+                 'bound input with #reuse-implementation. Ordinary citations do not forward old inputs. '
+                 'The host resolves identities; do not copy or index them.')
+           if job.get('handoff_protocol', 1) == HANDOFF_PROTOCOL else {}),
         'final_response': list(result_schema(job['role'])['properties']),
         'outputs': 'artifacts/', 'scratch': 'work/',
         'experiments': 'experiments/<id>/{work/,artifacts/,conclusion.json or conclusion.md}; '
@@ -236,6 +294,8 @@ def global_materials(root: Path):
 
 
 def _copy_bound(source: Path, destination: Path, sha256: str):
+    if any(parent.is_symlink() for parent in destination.parents):
+        raise ValueError('Bound input directories must not be links')
     destination.parent.mkdir(parents=True, exist_ok=True)
     if destination.exists() or destination.is_symlink():
         if digest(regular(destination)) != sha256:
@@ -253,6 +313,10 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
     if len(parents) != len(set(parents)) or any(type(p) is not int or not 0 < p < step for p in parents):
         raise ValueError('Parents must be exact distinct preceding nodes')
     policy = settings(root)
+    job_path = root / 'jobs' / f'{step:03d}.json'
+    protocol = read(regular(job_path)).get('handoff_protocol', 1) if job_path.exists() else HANDOFF_PROTOCOL
+    if protocol not in (1, HANDOFF_PROTOCOL):
+        raise ValueError('Unsupported frozen handoff protocol')
     work = workspace(root, step)
     work.mkdir(parents=True, exist_ok=True)
     (work / 'work').mkdir(exist_ok=True)
@@ -260,7 +324,7 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
     globals_ = global_materials(root)
     for item in globals_:
         _copy_bound(root / item['source'], work / item['path'], item['sha256'])
-    refs, materials, entry_points = [], [], []
+    refs, materials, entry_points, selected = [], [], [], []
     for parent in parents:
         source_work = workspace(root, parent)
         validate(source_work)
@@ -274,12 +338,33 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
         parent_seal = read(host_record(source_work) / 'result-identity.json')
         materials.extend(parent_seal['materials'])
         entry_points.extend(parent_seal.get('entry_points', []))
+        # Reuse is an instruction to the immediate next node, not persistent
+        # baggage on a retained H ancestor in every later scientific cycle.
+        if protocol == HANDOFF_PROTOCOL and parent == step - 1:
+            selected.extend(parent_seal.get('selected_inputs', []))
+    unique = {}
+    for item in [*materials, *[row['material'] for row in selected]]:
+        if item['path'] in unique and unique[item['path']] != item:
+            raise ValueError('Selected input paths conflict')
+        unique[item['path']] = item
+    materials = list(unique.values())
+    if protocol == HANDOFF_PROTOCOL and (any(row['size_bytes'] > policy['max_output_item_bytes'] for row in materials)
+            or sum(row['size_bytes'] for row in materials) > policy['max_output_total_bytes']):
+        raise ValueError('Combined input materials exceed the frozen handoff bound')
+    reused = {}
+    for row in selected:
+        reused.setdefault(row['material']['path'], row)
+    selected = list(reused.values())
+    if (len(selected) > MAX_REUSED_INPUTS
+            or sum(row['material']['size_bytes'] for row in selected) > policy['max_output_total_bytes']):
+        raise ValueError('Selected implementations exceed the frozen handoff bound')
     for item in materials:
         _copy_bound(Path(item['source']), work / item['path'], item['sha256'])
     # No recursive parent expansion; per-file identities stay in host storage.
     job = dict(step=step, role=role, goal_text=policy['objective'], public_root=policy['public_root'],
                instruction=instruction, direct_refs=refs, direct_materials=materials, direct_entry_points=entry_points, global_materials=globals_,
-               evidence_return=evidence_return)
+               evidence_return=evidence_return, **(dict(selected_inputs=selected) if selected else {}),
+               **(dict(handoff_protocol=protocol) if protocol == HANDOFF_PROTOCOL else {}))
     for path, value in ((root / 'jobs' / f'{step:03d}.json', job),
                         (work / 'science-task.json', science_view(job)),
                         (host_record(work) / 'science-result.schema.json', result_schema(role))):
@@ -312,6 +397,8 @@ def validate(work: Path):
         raise ValueError('Result envelope differs from author science')
     if seal.get('entry_points', []) != artifact_entry_points(work, payload, seal['materials']):
         raise ValueError('Scientific deliverable entry points changed')
+    if seal.get('selected_inputs', []) != selected_inputs(work, payload, job):
+        raise ValueError('Selected implementation receipts changed')
     _validate_inputs(root, work, job)
     for ref in seal['materials']:
         path = regular(Path(ref['source']))
@@ -325,6 +412,20 @@ def _validate_inputs(root, work, job):
         raise ValueError('Frozen scientific task changed')
     if job['global_materials'] != global_materials(root):
         raise ValueError('Bound global context changed')
+    policy = settings(root)
+    if job.get('handoff_protocol', 1) == HANDOFF_PROTOCOL and (
+            any(row['size_bytes'] > policy['max_output_item_bytes'] for row in job['direct_materials'])
+            or sum(row['size_bytes'] for row in job['direct_materials']) > policy['max_output_total_bytes']):
+        raise ValueError('Combined input materials exceed the frozen handoff bound')
+    expected = []
+    previous = f'inputs/parents/{job["step"] - 1:03d}/conclusion.json'
+    if any(ref['path'] == previous for ref in job['direct_refs']):
+        expected = read(regular(host_record(workspace(root, job['step'] - 1)) /
+                                'result-identity.json')).get('selected_inputs', [])
+    if job.get('selected_inputs', []) != expected:
+        raise ValueError('Bound implementation selection differs from its predecessor')
+    if any(row['material'] not in job['direct_materials'] for row in expected):
+        raise ValueError('Selected implementation is absent from bound materials')
     for row in job['global_materials']:
         if digest(regular(work / row['path'])) != row['sha256']:
             raise ValueError('The global context read by this role changed')
@@ -360,9 +461,11 @@ def seal_result(root: Path, step: int):
     value = envelope(job, science_payload(raw, job['role']))
     materials = collect_materials(root, step)
     entry_points = artifact_entry_points(work, value, materials)
+    selected = selected_inputs(work, value, job)
     _copy_bound(raw, work / 'conclusion.json', digest(raw))
     write(record / 'result.json', value)
     write(record / 'result-identity.json', dict(sha256=digest(record / 'result.json'), raw_sha256=digest(raw),
           job_sha256=digest(job_path), materials=materials, entry_points=entry_points,
-          scope='Exact bytes and direct lineage; not scientific qualification'))
+          scope='Exact bytes and direct lineage; not scientific qualification',
+          **(dict(selected_inputs=selected) if selected else {})))
     return validate(work)
