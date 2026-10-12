@@ -1,0 +1,478 @@
+{
+  "version": 1,
+  "synthetic": true,
+  "scope": "Development constraints, no A simulation/choice/reward",
+  "cases": [
+    {
+      "name": "ranking_reversal_unknown_target_weights",
+      "projection": {
+        "records": [
+          {
+            "step": 2,
+            "role": "W",
+            "recommendation": null,
+            "coverage": "complete",
+            "candidates": [
+              {
+                "id": "P-a",
+                "label": "P-a",
+                "evaluation_key": "public-A",
+                "metric": 0.9,
+                "direction": "max",
+                "status": "ok"
+              },
+              {
+                "id": "Q-a",
+                "label": "Q-a",
+                "evaluation_key": "public-A",
+                "metric": 0.8,
+                "direction": "max",
+                "status": "ok"
+              },
+              {
+                "id": "P-b",
+                "label": "P-b",
+                "evaluation_key": "public-B",
+                "metric": 0.4,
+                "direction": "max",
+                "status": "ok"
+              },
+              {
+                "id": "Q-b",
+                "label": "Q-b",
+                "evaluation_key": "public-B",
+                "metric": 0.7,
+                "direction": "max",
+                "status": "ok"
+              }
+            ],
+            "current_candidate": null,
+            "actual_submission": null
+          }
+        ]
+      },
+      "request": null,
+      "source_status": "unknown",
+      "expected": {
+        "automatic_swap": false,
+        "automatic_elimination": false,
+        "target_rank": "unknown",
+        "scientific_continuation_allowed": true,
+        "unverified_resubmit_allowed": false
+      }
+    },
+    {
+      "name": "different_and_unknown_evaluation_versions",
+      "projection": {
+        "records": [
+          {
+            "step": 2,
+            "role": "W",
+            "recommendation": null,
+            "coverage": "complete",
+            "candidates": [
+              {
+                "id": "P",
+                "label": "P",
+                "evaluation_key": "public-v1",
+                "metric": 0.9,
+                "direction": "max",
+                "status": "ok"
+              },
+              {
+                "id": "Q",
+                "label": "Q",
+                "evaluation_key": "public-v2",
+                "metric": 0.95,
+                "direction": "max",
+                "status": "ok"
+              },
+              {
+                "id": "U",
+                "label": "U",
+                "evaluation_key": null,
+                "metric": 1.0,
+                "direction": "max",
+                "status": "ok"
+              },
+              {
+                "id": "E",
+                "label": "E",
+                "evaluation_key": "",
+                "metric": 0.99,
+                "direction": "max",
+                "status": "ok"
+              }
+            ],
+            "current_candidate": null,
+            "actual_submission": null
+          }
+        ]
+      },
+      "request": null,
+      "source_status": "unknown",
+      "expected": {
+        "automatic_swap": false,
+        "automatic_elimination": false,
+        "target_rank": "unknown",
+        "scientific_continuation_allowed": true,
+        "unverified_resubmit_allowed": false
+      }
+    },
+    {
+      "name": "missing_audit_high_proxy",
+      "projection": {
+        "records": [
+          {
+            "step": 2,
+            "role": "W",
+            "recommendation": null,
+            "coverage": "complete",
+            "candidates": [
+              {
+                "id": "P",
+                "label": "P",
+                "evaluation_key": "public-v1",
+                "metric": 0.99,
+                "direction": "max",
+                "status": "ok"
+              },
+              {
+                "id": "Q",
+                "label": "Q",
+                "evaluation_key": "public-v1",
+                "metric": 0.8,
+                "direction": "max",
+                "status": "ok"
+              }
+            ],
+            "current_candidate": null,
+            "actual_submission": null
+          }
+        ],
+        "audits": [
+          {
+            "candidate_id": "Q",
+            "status": "completed",
+            "artifact_bound": true,
+            "leakage_flag": false
+          }
+        ]
+      },
+      "request": {
+        "action": "recommend",
+        "candidate_id": "P"
+      },
+      "source_status": "audit_pending",
+      "expected": {
+        "automatic_swap": false,
+        "automatic_elimination": false,
+        "target_rank": "unknown",
+        "scientific_continuation_allowed": true,
+        "unverified_resubmit_allowed": false,
+        "audit_required": true,
+        "next_step": "request_audit"
+      }
+    },
+    {
+      "name": "proxy_a_and_actual_are_independent",
+      "projection": {
+        "records": [
+          {
+            "step": 2,
+            "role": "W",
+            "recommendation": null,
+            "coverage": "complete",
+            "candidates": [
+              {
+                "id": "P",
+                "label": "P",
+                "evaluation_key": "public-v1",
+                "metric": 0.9,
+                "direction": "max",
+                "status": "ok"
+              },
+              {
+                "id": "Q",
+                "label": "Q",
+                "evaluation_key": "public-v1",
+                "metric": 0.8,
+                "direction": "max",
+                "status": "ok"
+              },
+              {
+                "id": "R",
+                "label": "R",
+                "evaluation_key": "public-v1",
+                "metric": 0.7,
+                "direction": "max",
+                "status": "ok"
+              }
+            ],
+            "current_candidate": {
+              "candidate_id": "Q"
+            },
+            "actual_submission": {
+              "candidate_id": "R",
+              "artifact_retention": "archived"
+            }
+          },
+          {
+            "step": 3,
+            "role": "A",
+            "recommendation": "Q",
+            "coverage": null,
+            "candidates": [],
+            "current_candidate": null,
+            "actual_submission": null
+          }
+        ]
+      },
+      "request": {
+        "action": "recommend",
+        "candidate_id": "Q"
+      },
+      "source_status": "audit_pending",
+      "expected": {
+        "automatic_swap": false,
+        "automatic_elimination": false,
+        "target_rank": "unknown",
+        "scientific_continuation_allowed": true,
+        "unverified_resubmit_allowed": false,
+        "next_step": "request_audit"
+      }
+    },
+    {
+      "name": "latest_a_null_clears_current_recommendation",
+      "projection": {
+        "records": [
+          {
+            "step": 2,
+            "role": "W",
+            "recommendation": null,
+            "coverage": "complete",
+            "candidates": [
+              {
+                "id": "P",
+                "label": "P",
+                "evaluation_key": "public-v1",
+                "metric": 0.9,
+                "direction": "max",
+                "status": "ok"
+              }
+            ],
+            "current_candidate": null,
+            "actual_submission": null
+          },
+          {
+            "step": 3,
+            "role": "A",
+            "recommendation": "P",
+            "coverage": null,
+            "candidates": [],
+            "current_candidate": null,
+            "actual_submission": null
+          },
+          {
+            "step": 5,
+            "role": "A",
+            "recommendation": null,
+            "coverage": null,
+            "candidates": [],
+            "current_candidate": null,
+            "actual_submission": null
+          }
+        ]
+      },
+      "request": null,
+      "source_status": "unknown",
+      "expected": {
+        "automatic_swap": false,
+        "automatic_elimination": false,
+        "target_rank": "unknown",
+        "scientific_continuation_allowed": true,
+        "unverified_resubmit_allowed": false
+      }
+    },
+    {
+      "name": "partial_does_not_claim_global_best",
+      "projection": {
+        "records": [
+          {
+            "step": 2,
+            "role": "W",
+            "recommendation": null,
+            "coverage": "partial",
+            "candidates": [
+              {
+                "id": "P",
+                "label": "P",
+                "evaluation_key": "public-v1",
+                "metric": 0.9,
+                "direction": "max",
+                "status": "ok"
+              }
+            ],
+            "current_candidate": null,
+            "actual_submission": null
+          }
+        ]
+      },
+      "request": null,
+      "source_status": "unknown",
+      "expected": {
+        "automatic_swap": false,
+        "automatic_elimination": false,
+        "target_rank": "unknown",
+        "scientific_continuation_allowed": true,
+        "unverified_resubmit_allowed": false
+      }
+    },
+    {
+      "name": "unknown_submit_preserves_old_confirmation",
+      "projection": {
+        "records": [
+          {
+            "step": 2,
+            "role": "W",
+            "recommendation": null,
+            "coverage": "complete",
+            "candidates": [
+              {
+                "id": "P",
+                "label": "P",
+                "evaluation_key": "public-v1",
+                "metric": 0.9,
+                "direction": "max",
+                "status": "ok"
+              },
+              {
+                "id": "Q",
+                "label": "Q",
+                "evaluation_key": "public-v1",
+                "metric": 0.8,
+                "direction": "max",
+                "status": "ok"
+              }
+            ],
+            "current_candidate": null,
+            "actual_submission": {
+              "candidate_id": "P",
+              "artifact_retention": "archived"
+            }
+          },
+          {
+            "step": 4,
+            "role": "W",
+            "recommendation": null,
+            "coverage": "complete",
+            "candidates": [],
+            "current_candidate": null,
+            "actual_submission": {
+              "candidate_id": "Q",
+              "artifact_retention": "archived"
+            }
+          }
+        ],
+        "delivery": {
+          "state": "unknown",
+          "last_confirmed": {
+            "candidate_id": "P"
+          }
+        }
+      },
+      "request": null,
+      "source_status": "unknown",
+      "expected": {
+        "automatic_swap": false,
+        "automatic_elimination": false,
+        "target_rank": "unknown",
+        "scientific_continuation_allowed": true,
+        "unverified_resubmit_allowed": false
+      }
+    },
+    {
+      "name": "explicit_hidden_field_rejected",
+      "projection": {
+        "records": [
+          {
+            "step": 2,
+            "role": "W",
+            "recommendation": null,
+            "coverage": "complete",
+            "candidates": [
+              {
+                "id": "P",
+                "label": "P",
+                "evaluation_key": "public-v1",
+                "metric": 0.9,
+                "direction": "max",
+                "status": "ok",
+                "hidden_score": 0.99
+              }
+            ],
+            "current_candidate": null,
+            "actual_submission": null
+          }
+        ]
+      },
+      "request": null,
+      "source_status": "unknown",
+      "expected": {
+        "error": "non_public_field"
+      }
+    },
+    {
+      "name": "audit_request_not_final_recommendation",
+      "projection": {
+        "records": [
+          {
+            "step": 2,
+            "role": "W",
+            "recommendation": null,
+            "coverage": "complete",
+            "candidates": [
+              {
+                "id": "P",
+                "label": "P",
+                "evaluation_key": "public-v1",
+                "metric": 0.99,
+                "direction": "max",
+                "status": "ok"
+              },
+              {
+                "id": "Q",
+                "label": "Q",
+                "evaluation_key": "public-v1",
+                "metric": 0.8,
+                "direction": "max",
+                "status": "ok"
+              }
+            ],
+            "current_candidate": null,
+            "actual_submission": null
+          }
+        ],
+        "audits": [
+          {
+            "candidate_id": "Q",
+            "status": "completed",
+            "artifact_bound": true,
+            "leakage_flag": false
+          }
+        ]
+      },
+      "request": {
+        "action": "audit",
+        "candidate_id": "P"
+      },
+      "source_status": "audit_pending",
+      "expected": {
+        "requested_audit_target": "P",
+        "audit_request_is_final_recommendation": false,
+        "next_step": "request_audit",
+        "automatic_swap": false
+      }
+    }
+  ]
+}
