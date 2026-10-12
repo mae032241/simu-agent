@@ -1,6 +1,8 @@
 """Rebuildable scientific history and optional host observations; no attachments."""
 from __future__ import annotations
 
+from . import execution
+
 import hashlib
 import json
 import math
@@ -126,7 +128,7 @@ def _capture(root, job, payload, materials):
     adapter = c.regular(Path(config['adapter']), limit=MAX_OBSERVER_BYTES)
     if adapter.resolve() != adapter or c.digest(adapter) != config['adapter_sha256']:
         raise ObserverIntegrityError('Frozen observer adapter changed')
-    raw = c.host_record(c.workspace(root, job['step'])) / 'science-output.json'
+    raw = execution.raw(root, job['step'])
     source_sha = c.digest(c.regular(raw, limit=c.MAX_RESULT_BYTES))
     path = root / 'host-history/observations' / f'{job["step"]:03d}.json'
     binding = dict(source_sha256=source_sha, adapter_sha256=config['adapter_sha256'])
@@ -242,7 +244,7 @@ def capture(root, job, payload, materials):
                 'malformed' if isinstance(error, json.JSONDecodeError) else
                 'capacity' if 'capacity' in str(error) or 'bound' in str(error) else
                 'adapter_io' if isinstance(error, OSError) else 'invalid_output')
-        raw = c.host_record(c.workspace(root, job['step'])) / 'science-output.json'
+        raw = execution.raw(root, job['step'])
         value = dict(binding=dict(source_sha256=c.digest(c.regular(raw, limit=c.MAX_RESULT_BYTES)),
                                   adapter_sha256=config['adapter_sha256']),
                      candidates=[], current_candidate=None, actual_submission=None,
@@ -256,7 +258,7 @@ def _source(root, step):
     record = c.host_record(c.workspace(root, step))
     seal_path = c.regular(record / 'result-identity.json')
     seal = c.read(seal_path)
-    raw = c.regular(record / 'science-output.json', limit=c.MAX_RESULT_BYTES)
+    raw = c.regular(execution.raw(root, step), limit=c.MAX_RESULT_BYTES)
     job_path = c.regular(root / 'jobs' / f'{step:03d}.json')
     if (c.digest(raw) != seal['raw_sha256'] or c.digest(job_path) != seal['job_sha256']
             or c.digest(c.regular(record / 'result.json')) != seal['sha256']):
@@ -280,10 +282,10 @@ def direct_sources(root, job):
         seen.add(step)
         source, payload, seal, _ = _source(root, step)
         record = c.host_record(c.workspace(root, step))
-        outcome = c.read(c.regular(record / 'native-outcome.json'))
+        outcome = c.read(c.regular(execution.record(root, step) / 'native-outcome.json'))
         if (c.digest(c.regular(c.workspace(root, job['step']) / ref['path'])) != ref['sha256']
                 or ref['sha256'] != seal['raw_sha256']
-                or c.read(record / 'native-intent.json')['task_sha256'] != seal['job_sha256']
+                or c.read(execution.record(root, step) / 'native-intent.json')['task_sha256'] != seal['job_sha256']
                 or type(outcome.get('returncode')) is not int or outcome['returncode'] != 0 or outcome.get('stop_reason')
                 or outcome.get('usage', {}).get('unknown_steps') != []
                 or outcome.get('raw_sha256') != seal['raw_sha256']

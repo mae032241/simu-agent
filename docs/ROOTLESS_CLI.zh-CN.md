@@ -200,6 +200,37 @@ scid-research closeout --root /绝对路径/实例 --export-only
 ### 恢复能力的区别
 
 控制器退出后可以重接仍活着的原 Worker；Worker 成功结束但未封存时，可以补封存原结果。
-本节的硬停收口转交 A，并不是续跑已停止的 Worker。已知异常终态的原线程续接正在单独修订，
-不能把现有 `run` 的重接能力当作该功能已实现。任意本地 shell 仍是软隔离；
+本节的硬停收口转交 A，并不是续跑已停止的 Worker。原线程续接见下节 N6c，源码与零模型安装已验收；
+实际 Codex 同线程恢复仍未验证。任意本地 shell 仍是软隔离；
 框架管理的外部执行应按原执行身份恢复，不重发不确定提交。
+
+## 可选的 Worker 原线程续接（N6c）
+
+新 `prepare` 可同时传 `--node-budget-policy /绝对路径/node.json` 和
+`--worker-resume-policy /绝对路径/resume.json`，后者无默认值，格式为：
+
+```json
+{"max_attempts":2,"protocol":"codex_exec_resume","usage_scope":"turn"}
+```
+
+`max_attempts` 只能为 1 或 2，表示初次执行之外最多新增的已接受续接次数。
+必须使用支持 resume 的冻结 launcher；策略声明和文件身份校验不等于实际 native 资格。
+旧未启用实例或 fresh-only wrapper 不支持，不原地改 settings，也不绕 wrapper 直接启动模型。
+
+```bash
+scid-research worker-resume --root /绝对路径/实例 --step 2
+```
+
+命令继续同一科学节点、真实 thread、home 和 workspace，追加 attempt 原件，保留 checkpoint；
+原 job、初次 intent/outcome/usage/raw 不覆盖。已接受续接先收集原工作，重复命令不重派；
+成功但未封存的输出优先补原 seal。首版仅接受非零数字 returncode、无 stop_reason、有效
+completed meter 且清理可确认的已知本地故障；缺 session/thread/meter、执行或清理 unknown、
+身份失配、原 pause/closeout 均不放行，不将预算硬停止当可无额续接。
+
+所有 attempt 成本累计，原 node/W cap 不重置、不退款；续接使用当前有效共享授权，并占一个
+原执行名额、保留交付预留。合法总额修订不自动扩节点 cap；命令没有续额参数。
+受管理执行按原 ID 恢复，不重发不确定提交；普通 shell 仍由角色判断 checkpoint，不承诺任意脚本幂等。
+
+源码、独立审查与最终 fake/installed 零模型门禁已通过；实际 Codex 同线程有效性、增量用量
+与权限尚未验证。范围见[原线程续接设计](plans/evidence/ROOTLESS_WORKER_RESUME_DESIGN_20261012.zh-CN.md)，
+测试快照与失败保留见[验收记录](plans/evidence/ROOTLESS_N6C_WORKER_RESUME_20261012.zh-CN.md)。

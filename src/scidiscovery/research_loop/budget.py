@@ -186,7 +186,7 @@ def transition(root, phase, reason):
 
 def execution_blocked(root, *, ignore_operation=None):
     """Unknown or live originals prohibit inactive time and amendments."""
-    from . import runtime
+    from . import runtime, execution
     settings = contracts.settings(root)
     state = closeout_state(root)
     if state['begin'] is not None and state['begin']['stop_reason'] == 'delivery_cleanup_unknown':
@@ -217,7 +217,7 @@ def execution_blocked(root, *, ignore_operation=None):
     if any(op != ignore_operation for op in state['unresolved_operations']):
         return True
     for step in range(1, settings['max_steps'] + 1):
-        record = contracts.host_record(contracts.workspace(root, step))
+        record = execution.record(root, step)
         if not (record / 'native-intent.json').exists():
             continue
         try:
@@ -231,7 +231,7 @@ def execution_blocked(root, *, ignore_operation=None):
                 return True
             if (record / 'native-process.json').exists():
                 child = contracts.read(record / 'native-process.json')
-                if runtime.process_matches(child, binding):
+                if runtime.process_matches(child, execution.identity(root, step)):
                     return True
         except (OSError, ValueError, KeyError, TypeError):
             return True
@@ -325,6 +325,33 @@ def node_limits(root, job):
     return limits
 
 
+
+def _attempt_consumption(root, job, paths):
+    """Derive cumulative consumption from exact completed native facts."""
+    from . import native
+    tokens, seconds = 0, 0.
+    policy = node_limits(root, job)
+    for number, path in enumerate(paths):
+        intent = contracts.read(contracts.regular(path / 'native-intent.json'))
+        anchor = intent.get('budget_slice', {})
+        meter = contracts.read(contracts.regular(path / 'usage.json'))
+        report = contracts.read(contracts.regular(path / 'native-outcome.json')).get('budget_slice', {})
+        if (native._usage_event(dict(type='turn.completed', usage=meter)) != meter
+                or intent.get('task_sha256') != contracts.digest(root / 'jobs' / f'{job["step"]:03d}.json')
+                or anchor.get('limits') != policy or anchor.get('role') != job['role']
+                or anchor.get('previous_tokens', 0) != tokens or anchor.get('previous_seconds', 0.) != seconds
+                or not report.get('usage_observed') or report.get('limits') != policy
+                or report.get('role') != job['role'] or report.get('dispatches') != number + 1
+                or any(report.get(key) != meter[key] for key in ('input_tokens', 'cached_input_tokens', 'output_tokens'))):
+            raise ValueError('Original node usage report or identity changed')
+        tokens += meter['input_tokens'] + meter['output_tokens']
+        duration = report.get('advance_seconds')
+        if (type(duration) not in (int, float) or not math.isfinite(duration) or duration < seconds
+                or report.get('observed_tokens') != tokens):
+            raise ValueError('Original cumulative node consumption changed')
+        seconds = duration
+    return tokens, seconds
+
 def _node_duration(root, job, intent, limits):
     anchor = intent.get('budget_slice')
     if (not isinstance(anchor, dict) or anchor.get('task_sha256') != contracts.digest(root / 'jobs' / f'{job["step"]:03d}.json')
@@ -334,7 +361,24 @@ def _node_duration(root, job, intent, limits):
             or type(anchor.get('advance_seconds')) not in (int, float)
             or not math.isfinite(anchor['advance_seconds']) or anchor['advance_seconds'] < 0):
         raise ValueError('Accepted node budget identity or boot changed')
-    duration = limits['advance_seconds'] - anchor['advance_seconds']
+    prior = anchor.get('previous_seconds', 0.)
+    prior_tokens = anchor.get('previous_tokens', 0)
+    if type(prior_tokens) is not int or prior_tokens < 0:
+        raise ValueError('Invalid original node token consumption')
+    if intent.get('attempt') is not None:
+        from . import execution
+        number = intent['attempt']
+        paths = execution.records(root, job['step'])
+        if type(number) is not int or not 0 < number < len(paths):
+            raise ValueError('Continuation has no exact original execution')
+        original = _attempt_consumption(root, job, paths[:number])
+        if (prior_tokens, prior) != original:
+            raise ValueError('Continuation cannot refund original consumption')
+    elif prior_tokens or prior:
+        raise ValueError('Initial node cannot invent previous consumption')
+    if type(prior) not in (int, float) or not math.isfinite(prior) or prior < 0:
+        raise ValueError('Invalid original node consumption')
+    duration = limits['advance_seconds'] - anchor['advance_seconds'] + prior
     if duration < 0:
         raise ValueError('Node consumption cannot move backwards')
     return duration
@@ -345,13 +389,18 @@ def node_admission(root, job, *, ignore_step=None, intent=None):
     if policy is None:
         return None
     from . import native
+    if contracts.settings(root).get('resume_policy') is not None:
+        additional = 0 if (root / 'jobs' / f'{job["step"]:03d}.json').exists() else 1
+        if used_steps(root) + additional > contracts.settings(root)['max_steps']:
+            return 'step_limit'
     limits, meter = snapshot(root), native.usage(root)
     if any(step != ignore_step for step in meter['unknown_steps']):
         return 'usage_unknown'
     duration = _node_duration(root, job, intent, limits) if intent is not None else 0.
     if limits['seconds_remaining'] < max(0., policy['max_seconds'] - duration):
         return 'node_budget_unavailable_seconds'
-    if limits['max_tokens'] - meter['observed_tokens'] < policy['max_observed_tokens']:
+    needed_tokens = policy['max_observed_tokens'] - (intent.get('budget_slice', {}).get('previous_tokens', 0) if intent else 0)
+    if limits['max_tokens'] - meter['observed_tokens'] < needed_tokens:
         return 'node_budget_unavailable_tokens'
     if job.get('purpose') == 'closeout':
         settings = contracts.settings(root)
@@ -391,7 +440,7 @@ def stop_node(root, job, intent, limits, meter):
     duration = _node_duration(root, job, intent, limits)
     if duration >= policy['max_seconds']:
         return 'node_slice_time_limit'
-    if meter['input_tokens'] + meter['output_tokens'] >= policy['max_observed_tokens']:
+    if meter['input_tokens'] + meter['output_tokens'] + intent['budget_slice'].get('previous_tokens', 0) >= policy['max_observed_tokens']:
         return 'node_slice_token_limit'
     return None
 
@@ -400,8 +449,27 @@ def node_report(root, job, intent, meter):
     duration = _node_duration(root, job, intent, snapshot(root))
     return dict(role=job['role'], advance_seconds=duration, input_tokens=meter['input_tokens'],
                 cached_input_tokens=meter['cached_input_tokens'], output_tokens=meter['output_tokens'],
-                observed_tokens=meter['input_tokens'] + meter['output_tokens'], dispatches=1,
+                observed_tokens=meter['input_tokens'] + meter['output_tokens'] + intent['budget_slice'].get('previous_tokens', 0), dispatches=1 + intent.get('attempt', 0),
                 limits=intent['budget_slice']['limits'])
+
+
+def accept_continuation(root, job, paths):
+    from . import native
+    tokens, seconds = _attempt_consumption(root, job, paths)
+    policy = node_limits(root, job)
+    limits, meter = snapshot(root), native.usage(root)
+    if (type(seconds) not in (int, float) or not math.isfinite(seconds) or seconds < 0
+            or tokens >= policy['max_observed_tokens'] or seconds >= policy['max_seconds']):
+        raise NodeBudgetUnavailable('worker_resume_node_exhausted')
+    reserve = delivery_reserve(contracts.settings(root)) or dict(tokens=0, seconds=0, steps=0)
+    if (meter['unknown_steps'] or limits['max_tokens'] - meter['observed_tokens'] < policy['max_observed_tokens'] - tokens + reserve['tokens']
+            or limits['seconds_remaining'] < policy['max_seconds'] - seconds + reserve['seconds']
+            or contracts.settings(root)['max_steps'] - used_steps(root) < 1 + reserve['steps']):
+        raise NodeBudgetUnavailable('worker_resume_budget_unavailable')
+    return dict(task_sha256=contracts.digest(root / 'jobs' / f'{job["step"]:03d}.json'), role=job['role'],
+                boot_id=clock_stamp()['boot_id'], advance_seconds=limits['advance_seconds'], limits=policy,
+                shared_limits={key: limits[key] for key in ('max_tokens', 'max_seconds')},
+                previous_tokens=tokens, previous_seconds=seconds)
 
 
 def closeout_state(root):
@@ -456,8 +524,10 @@ def delivery_reserve(settings):
 
 
 def used_steps(root):
+    from . import execution
     prepared = [int(path.stem) for path in (root / 'jobs').glob('*.json')]
-    return max(prepared, default=0) + len(closeout_state(root)['actions'])
+    continuations = sum(len(execution.records(root, step)) - 1 for step in prepared)
+    return max(prepared, default=0) + continuations + len(closeout_state(root)['actions'])
 
 
 def exploration_admission(root, job, *, ignore_step=None, intent=None):
@@ -470,7 +540,8 @@ def exploration_admission(root, job, *, ignore_step=None, intent=None):
     node = node_limits(root, job)
     if any(step != ignore_step for step in meter['unknown_steps']):
         return 'usage_unknown'
-    if limits['max_tokens'] - meter['observed_tokens'] < node['max_observed_tokens'] + reserve['tokens']:
+    needed_tokens = node['max_observed_tokens'] - (intent.get('budget_slice', {}).get('previous_tokens', 0) if intent else 0)
+    if limits['max_tokens'] - meter['observed_tokens'] < needed_tokens + reserve['tokens']:
         return 'closeout_reserve_tokens'
     duration = _node_duration(root, job, intent, limits) if intent is not None else 0.
     if limits['seconds_remaining'] < max(0., node['max_seconds'] - duration) + reserve['seconds']:

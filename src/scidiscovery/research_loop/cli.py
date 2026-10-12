@@ -5,7 +5,7 @@ import argparse
 import json
 from pathlib import Path
 
-from . import budget, contracts, controller, native, runtime, search, correction
+from . import budget, contracts, controller, native, runtime, search, correction, execution
 
 
 def status(root: Path):
@@ -21,15 +21,17 @@ def status(root: Path):
         state = {'sealed': 'seal_present_unverified', 'terminal': 'native_outcome_unsealed',
                  'unstarted': 'prepared'}.get(state, state)
         if state == 'native_outcome_unsealed':
-            outcome = contracts.read(contracts.host_record(contracts.workspace(root, step)) / 'native-outcome.json')
+            outcome = contracts.read(execution.record(root, step) / 'native-outcome.json')
             if outcome.get('native_started') is False:
                 state = 'native_not_submitted'
         node = dict(step=step, role=job['role'], state=state)
         if settings.get('node_budget_policy') is not None:
-            record = contracts.host_record(contracts.workspace(root, step))
+            record = execution.record(root, step)
             intent = contracts.read(record / 'native-intent.json') if (record / 'native-intent.json').exists() else {}
             outcome = contracts.read(record / 'native-outcome.json') if (record / 'native-outcome.json').exists() else {}
             node.update(budget_slice=intent.get('budget_slice'), budget_report=outcome.get('budget_slice'), stop_reason=outcome.get('stop_reason'))
+        if settings.get('resume_policy') is not None:
+            node['continuations'] = len(execution.records(root, step)) - 1
         nodes.append(node)
     closeout = budget.closeout_state(root)
     return dict(instance=str(root), goal_id=settings['goal_id'], objective=settings['objective'],
@@ -53,6 +55,7 @@ def main(argv=None):
     prepare.add_argument('--correction-policy', type=Path, help='Explicitly enable N4 with review_after/pause_after JSON thresholds (defaults 3/2)')
     prepare.add_argument('--node-budget-policy', type=Path, help='Explicit H/W/A/E max_observed_tokens/max_seconds JSON; no delivery guarantee')
     prepare.add_argument('--delivery-policy', type=Path, help='Explicit frozen closeout reserve and isolated delivery adapter JSON')
+    prepare.add_argument('--worker-resume-policy', type=Path, help='Explicit qualified same-thread finite continuation policy JSON')
     prepare.add_argument('--max-tokens', type=int, required=True)
     prepare.add_argument('--max-seconds', type=float, required=True, help='Maximum advancement seconds; explicit pauses do not consume this ceiling')
     prepare.add_argument('--max-steps', type=int, required=True)
@@ -77,6 +80,9 @@ def main(argv=None):
     closeout = commands.add_parser('closeout', help='Close exploration within the original remaining authorization')
     closeout.add_argument('--root', type=Path, required=True)
     closeout.add_argument('--export-only', action='store_true', help='Export existing verified results without sealing, launching science or delivering')
+    resume = commands.add_parser('worker-resume', help='Continue one known local failed node in its exact original thread')
+    resume.add_argument('--root', type=Path, required=True)
+    resume.add_argument('--step', type=int, required=True)
     args = parser.parse_args(argv)
     root = args.root.expanduser().resolve()
     try:
@@ -93,9 +99,13 @@ def main(argv=None):
                     if args.node_budget_policy is not None else None,
                 delivery_policy=contracts.read(contracts.regular(args.delivery_policy, limit=64_000))
                     if args.delivery_policy is not None else None,
+                resume_policy=contracts.read(contracts.regular(args.worker_resume_policy, limit=4096))
+                    if args.worker_resume_policy is not None else None,
                 history_observer=contracts.read(contracts.regular(args.history_observer_config, limit=64_000))
                     if args.history_observer_config is not None else None)
             result = dict(status='prepared', instance=str(root), goal_id=settings['goal_id'])
+        elif args.command == 'worker-resume':
+            result = controller.worker_resume(root, args.step)
         elif args.command == 'status':
             result = status(root)
         elif args.command == 'closeout':

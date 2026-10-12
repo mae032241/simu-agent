@@ -278,7 +278,7 @@ def selected_inputs(work, payload, job, diagnostics=None):
         identity = read(regular(record / 'result-identity.json'))
         if (row not in identity['materials'] or source.resolve() != source.absolute()
                 or digest(regular(record / 'result.json')) != identity['sha256']
-                or digest(regular(record / 'science-output.json')) != identity['raw_sha256']
+                or digest(regular(_execution_raw(root, origin_step))) != identity['raw_sha256']
                 or digest(regular(root / 'jobs' / f'{origin_step:03d}.json')) != identity['job_sha256']
                 or digest(regular(source)) != row['sha256'] or source.stat().st_size != row['size_bytes']):
             raise ValueError('Selected original implementation changed or is not sealed')
@@ -457,7 +457,7 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
         validate(source_work)
         # Pass the author's science, not the controller envelope and its parent
         # references. Historical lineage remains in the host-owned node tree.
-        source = host_record(source_work) / 'science-output.json'
+        source = _execution_raw(root, parent)
         ref = dict(path=f'inputs/parents/{parent:03d}/conclusion.json', sha256=digest(source))
         _copy_bound(source, work / ref['path'], ref['sha256'])
         (work / Path(ref['path']).parent / 'artifacts').mkdir(exist_ok=True)
@@ -533,9 +533,11 @@ def validate(work: Path):
     job = read(regular(job_path))
     record = host_record(work)
     seal = read(regular(record / 'result-identity.json'))
-    intent = read(regular(record / 'native-intent.json'))
-    outcome = read(regular(record / 'native-outcome.json'))
-    raw = regular(record / 'science-output.json', limit=MAX_RESULT_BYTES)
+    from . import execution
+    native_record = execution.record(root, job['step'])
+    intent = read(regular(native_record / 'native-intent.json'))
+    outcome = read(regular(native_record / 'native-outcome.json'))
+    raw = regular(native_record / 'science-output.json', limit=MAX_RESULT_BYTES)
     result = regular(record / 'result.json', limit=MAX_RESULT_BYTES * 2)
     conclusion = regular(work / 'conclusion.json', limit=MAX_RESULT_BYTES)
     if (seal['job_sha256'] != digest(job_path) or intent['task_sha256'] != digest(job_path)
@@ -658,12 +660,14 @@ def seal_result(root: Path, step: int):
             from . import history
             history.refresh(root, step + 1) if job.get('purpose') is None else None
         return result
-    intent = read(regular(record / 'native-intent.json'))
+    from . import execution
+    native_record = execution.record(root, step)
+    intent = read(regular(native_record / 'native-intent.json'))
     if intent['task_sha256'] != digest(regular(job_path)):
         raise ValueError('Native launch task changed')
     _validate_inputs(root, work, job)
-    raw = regular(record / 'science-output.json', limit=MAX_RESULT_BYTES)
-    outcome = read(regular(record / 'native-outcome.json'))
+    raw = regular(native_record / 'science-output.json', limit=MAX_RESULT_BYTES)
+    outcome = read(regular(native_record / 'native-outcome.json'))
     if (type(outcome.get('returncode')) is not int or outcome['returncode'] != 0
             or outcome.get('stop_reason') or outcome['usage']['unknown_steps']
             or outcome.get('raw_sha256') != digest(raw)):
@@ -699,6 +703,7 @@ def seal_result(root: Path, step: int):
     write(record / 'result-identity.json', dict(sha256=digest(record / 'result.json'), raw_sha256=digest(raw),
           job_sha256=digest(job_path), materials=materials, entry_points=entry_points,
           scope='Exact bytes and direct lineage; not scientific qualification',
+          **(dict(execution_ref=execution.reference(root, step)) if native_record != record else {}),
           **(dict(control_outcome=control) if control is not None else {}),
           **(dict(unresolved_links=unresolved) if job.get('handoff_protocol', 1) >= 7 else {}),
           **(dict(selected_inputs=selected) if selected else {}),
@@ -707,3 +712,8 @@ def seal_result(root: Path, step: int):
     if job.get('handoff_protocol', 1) >= 3:
         history.refresh(root, step + 1) if job.get('purpose') is None else None
     return result
+
+
+def _execution_raw(root, step):
+    from . import execution
+    return execution.raw(root, step)

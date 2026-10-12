@@ -15,7 +15,7 @@ import subprocess
 import sys
 import time
 
-from . import budget, contracts
+from . import budget, contracts, execution
 
 
 def process_identity(pid, task_sha256):
@@ -78,8 +78,8 @@ def cleanup_owned_group(child):
 
 def node_state(root, step):
     """Read original facts; unknown never permits a replacement submission."""
-    record = contracts.host_record(contracts.workspace(root, step))
-    if (record / 'result-identity.json').exists():
+    record = execution.record(root, step)
+    if (execution.origin(root, step) / 'result-identity.json').exists():
         return 'sealed'
     if (record / 'native-outcome.json').exists():
         return 'terminal'
@@ -87,9 +87,9 @@ def node_state(root, step):
         return 'unstarted'
     try:
         contracts.settings(root)
-        binding = contracts.digest(root / 'jobs' / f'{step:03d}.json')
+        binding = execution.identity(root, step)
         intent = contracts.read(record / 'native-intent.json')
-        if intent['task_sha256'] != binding:
+        if intent['task_sha256'] != contracts.digest(root / 'jobs' / f'{step:03d}.json'):
             return 'unknown'
         runner = contracts.read(record / 'runner-process.json')
         if process_matches(runner, binding):
@@ -99,24 +99,24 @@ def node_state(root, step):
     return 'unknown'
 
 
-def _spawn(root, step, mode):
-    record = contracts.host_record(contracts.workspace(root, step))
+def _spawn(root, step, mode, attempt=0):
+    record = execution.record(root, step, attempt)
     bootstrap = ('import runpy,sys;sys.path.insert(0,sys.argv.pop(1));'
                  'runpy.run_module("scidiscovery.research_loop.runtime",run_name="__main__")')
     with (record / f'{mode}.stderr').open('ab') as err:
         return subprocess.Popen([sys.executable, '-c', bootstrap,
-            str(Path(__file__).resolve().parents[2]), mode, str(root), str(step)],
+            str(Path(__file__).resolve().parents[2]), mode, str(root), str(step), str(attempt)],
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=err,
             start_new_session=True, close_fds=True)
 
 
-def start(root, step):
-    return _spawn(root, step, 'runner')
+def start(root, step, attempt=0):
+    return _spawn(root, step, 'runner', attempt)
 
 
-def _watch(root, step):
-    record = contracts.host_record(contracts.workspace(root, step))
-    binding = contracts.digest(root / 'jobs' / f'{step:03d}.json')
+def _watch(root, step, attempt=0):
+    record = execution.record(root, step, attempt)
+    binding = execution.identity(root, step, attempt)
     runner = contracts.read(record / 'runner-process.json')
     contracts.write(record / 'watchdog-process.json', process_identity(os.getpid(), binding))
     while process_matches(runner, binding):
@@ -174,19 +174,19 @@ def _complete_clock(root):
         pass  # A live controller owns accepted work and the clock transition.
 
 
-def _run(root, step):
-    record = contracts.host_record(contracts.workspace(root, step))
+def _run(root, step, attempt=0):
+    record = execution.record(root, step, attempt)
     with _runner_lease(record):
         contracts.settings(root)
-        binding = contracts.digest(root / 'jobs' / f'{step:03d}.json')
-        if contracts.read(record / 'native-intent.json').get('task_sha256') != binding:
+        binding = execution.identity(root, step, attempt)
+        if contracts.read(record / 'native-intent.json').get('task_sha256') != contracts.digest(root / 'jobs' / f'{step:03d}.json'):
             raise ValueError('Runner task binding changed')
         if any((record / name).exists() for name in
                ('runner-process.json', 'native-process.json', 'native-outcome.json')):
             raise RuntimeError('Original runner identity is retained; refusing duplicate execution')
         _subreaper()
         contracts.write(record / 'runner-process.json', process_identity(os.getpid(), binding))
-        _spawn(root, step, 'watchdog')
+        _spawn(root, step, 'watchdog', attempt)
         ready_until = time.monotonic() + 5
         while not (record / 'watchdog-process.json').exists():
             if time.monotonic() >= ready_until:
@@ -196,18 +196,18 @@ def _run(root, step):
             raise RuntimeError('Local cleanup watchdog identity is unavailable; no native launch')
         from .native import run_native
         try:
-            run_native(root, step)
+            run_native(root, step, attempt)
         finally:
             _complete_clock(root)
 
 
 def _main():
-    mode, root, step = sys.argv[1:]
+    mode, root, step, *tail = sys.argv[1:]
     root, step = Path(root), int(step)
     if mode == 'watchdog':
-        _watch(root, step)
+        _watch(root, step, int(tail[0]) if tail else 0)
     elif mode == 'runner':
-        _run(root, step)
+        _run(root, step, int(tail[0]) if tail else 0)
     else:
         raise ValueError('Unknown local runtime mode')
 

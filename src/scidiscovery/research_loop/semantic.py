@@ -1,6 +1,8 @@
 """Replayed scientific-control outcomes and finite author clarification."""
 from __future__ import annotations
 
+from . import execution
+
 from . import contracts as c, history, search
 
 MAX_DIAGNOSTICS = 8
@@ -99,7 +101,7 @@ def accepted(root, request, before_step):
             break
         job = c.read(c.regular(path))
         previous = job.get('author_correction')
-        intent = c.host_record(c.workspace(root, step)) / 'native-intent.json'
+        intent = execution.record(root, step) / 'native-intent.json'
         if previous is not None and previous['root'] == request['root'] and job['role'] in {'H', 'A'} and intent.exists():
             if c.read(c.regular(intent)).get('task_sha256') != c.digest(path):
                 raise ValueError('Author correction execution identity changed')

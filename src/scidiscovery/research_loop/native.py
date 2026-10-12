@@ -1,7 +1,8 @@
 """One fresh native process per scientific role; no model scheduler.
 
 An explicit launcher owns native permissions and functional MCP configuration.
-The controller never constructs MCP agent calls or borrows a prior chat thread.
+The controller never constructs MCP agent calls. Only explicit qualified continuation
+can continue the exact original native thread.
 """
 from __future__ import annotations
 
@@ -13,7 +14,7 @@ import signal
 import subprocess
 import time
 
-from . import budget as control_budget, runtime, search
+from . import budget as control_budget, execution, runtime, search
 from .contracts import (ACTIONS, ROLE_INSTRUCTIONS, digest, host_record, read,
                         seal_result, workspace, write, settings as frozen_settings)
 
@@ -24,16 +25,16 @@ def usage(root: Path):
     unknown = []
     settings = frozen_settings(root)
     for step in range(1, settings['max_steps'] + 1):
-        record = host_record(workspace(root, step))
-        if not (record / 'native-intent.json').exists():
-            continue
-        meter = record / 'usage.json'
-        if not meter.exists():
-            unknown.append(step)
-            continue
-        value = read(meter)
-        for key in totals:
-            totals[key] += value[key]
+        for record in execution.records(root, step):
+            if not (record / 'native-intent.json').exists():continue
+            meter = record / 'usage.json'
+            if not meter.exists():
+                if step not in unknown:unknown.append(step)
+                continue
+            value = read(meter)
+            if _usage_event(dict(type='turn.completed', usage=value)) != value:
+                raise ValueError('Native usage observation changed')
+            for key in totals:totals[key] += value[key]
     return dict(**totals, observed_tokens=totals['input_tokens'] + totals['output_tokens'], unknown_steps=unknown)
 
 
@@ -53,7 +54,7 @@ def _usage_event(event):
 def execute_native(root: Path, step: int):
     """Submit once, then wait for the same durable local runner."""
     frozen_settings(root)
-    record = host_record(workspace(root, step))
+    record = execution.record(root, step)
     record.mkdir(parents=True, exist_ok=True)
     job_path = root / "jobs" / f"{step:03d}.json"
     job = read(job_path)
@@ -73,7 +74,7 @@ def execute_native(root: Path, step: int):
 
 def wait_native(root: Path, step: int):
     """Completion polling is transport; only the original outcome can seal."""
-    record = host_record(workspace(root, step))
+    record = execution.record(root, step)
     startup_until = time.monotonic() + 5
     while True:
         state = runtime.node_state(root, step)
@@ -87,12 +88,12 @@ def wait_native(root: Path, step: int):
         time.sleep(.1)
 
 
-def run_native(root: Path, step: int):
+def run_native(root: Path, step: int, attempt=0):
     settings = frozen_settings(root)
     work = workspace(root, step)
     job_path = root / 'jobs' / f'{step:03d}.json'
     job = read(job_path)
-    record = host_record(work)
+    record = execution.record(root, step, attempt)
     record.mkdir(parents=True, exist_ok=True)
     intent = read(record / 'native-intent.json')
     if intent.get('task_sha256') != digest(job_path):
@@ -112,6 +113,32 @@ def run_native(root: Path, step: int):
                        '-c', 'approval_policy="never"',
                        '-c', 'developer_instructions=' + json.dumps(ROLE_INSTRUCTIONS[job['role']]),
                        '-c', f'service_tier={json.dumps(settings["service_tier"])}']
+    if settings.get('resume_policy') is not None:
+        from . import continuation
+        continuation.validate_launcher(root)
+    if attempt:
+        from .contracts import regular
+        session = intent['session']
+        if (session.get('home') != str(root / 'native-homes' / work.name)
+                or session.get('workspace') != str(work)
+                or Path(session['path']).resolve() != Path(session['path'])
+                or not Path(session['path']).is_relative_to(Path(session['home']) / 'sessions')):
+            raise ValueError('Original native session binding changed')
+        with regular(Path(session['path'])).open('rb') as stream:
+            header = stream.readline(65537)
+        import hashlib
+        if hashlib.sha256(header).hexdigest() != intent['session']['header_sha256']:
+            raise ValueError('Original native session header changed')
+        # Global permissions/cwd/config remain before the resume subcommand;
+        # all turn output belongs exclusively to this accepted attempt.
+        configs = [item for index, item in enumerate(args)
+                   if index > len(settings['native_launcher_argv']) and args[index - 1] == '-c']
+        global_args = ['-C', str(work), '--sandbox', 'workspace-write']
+        for config in configs:global_args.extend(['-c', config])
+        if '--skip-git-repo-check' in args:global_args.append('--skip-git-repo-check')
+        args = [*settings['native_launcher_argv'], 'exec', *global_args, 'resume', '--json', '--model', settings['model'], '--output-schema',
+                str(execution.origin(root, step) / 'science-result.schema.json'),
+                '--output-last-message', str(pending), session['thread_id'], '-']
     (work / 'artifacts').mkdir(exist_ok=True)
     (work / 'work').mkdir(exist_ok=True)
     budget = usage(root)
@@ -142,10 +169,17 @@ def run_native(root: Path, step: int):
                   shared_observed_tokens_remaining=max(0, limits['max_tokens']-budget['observed_tokens']),
                   metering='Native usage may be delayed; this is not a guaranteed billing cap.',
                   **(dict(node_budget=intent['budget_slice']['limits']) if intent.get('budget_slice') else {})), ensure_ascii=False))
+    if attempt:
+        remaining = dict(observed_tokens=max(0, intent['budget_slice']['limits']['max_observed_tokens'] - intent['budget_slice']['previous_tokens']),
+                         active_seconds=max(0., intent['budget_slice']['limits']['max_seconds'] - control_budget._node_duration(root, job, intent, limits)))
+        prompt = ('Original node remaining budget: ' + json.dumps(remaining) + '\nContinue this same task/session/workspace. Read existing checkpoints and confirmed results; '
+                  'collect or recover managed executions by their original IDs rather than resubmitting. '
+                  'Use scientific judgment for ordinary native shell checkpoints; no new mechanical registry is required.\n' + prompt)
     home = root / 'native-homes' / work.name
     home.mkdir(parents=True, exist_ok=True)
     env = {**os.environ, 'THIN_HWA_ROLE': job['role'], 'THIN_HWA_WORKSPACE': str(work),
            'THIN_HWA_NATIVE_HOME': str(home), 'THIN_HWA_JOB_MANIFEST': str(job_path)}
+    if settings.get('resume_policy') is not None:env['CODEX_HOME'] = str(home)
     process = None
     process_id = None
     stop = None
@@ -173,9 +207,11 @@ def run_native(root: Path, step: int):
                     native_started=False, usage=usage(root), thread_id=None,
                     limitation='Budget stopped the original intent before native submission.'))
                 return
+            if settings.get('resume_policy') is not None:
+                continuation.validate_task(root, step)
             process = subprocess.Popen(args, cwd=work, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                        stderr=err, env=env, start_new_session=True)
-            process_id = runtime.process_identity(process.pid, digest(job_path))
+            process_id = runtime.process_identity(process.pid, execution.identity(root, step, attempt))
             write(record / "native-process.json", process_id)
             process.stdin.write(prompt.encode())
             process.stdin.close()
@@ -248,6 +284,10 @@ def run_native(root: Path, step: int):
     outcome = dict(returncode=process.returncode if process else None,
           stop_reason=stop, usage=usage(root), thread_id=thread_id, cleanup=cleanup,
           limitation='Terminal native usage observation; in-flight usage may be absent.')
+    if attempt and thread_id != intent['session']['thread_id']:
+        stop = outcome['stop_reason'] = 'native_thread_changed'
+    if settings.get('resume_policy') is not None and process is not None:
+        outcome['execution_processes'] = {name: digest(record / name) for name in ('runner-process.json', 'native-process.json')}
     if intent.get('budget_slice') is not None:
         try:
             outcome['budget_slice'] = control_budget.node_report(root, job, intent, meter)
@@ -258,6 +298,7 @@ def run_native(root: Path, step: int):
     if search_intent.get('search_slice') is not None:
         try:
             outcome['search_slice'] = search.report(root, job, search_intent, meter)
+            if intent.get('budget_slice') is not None:outcome['search_slice'] = outcome['budget_slice']
         except ValueError:
             stop = outcome['stop_reason'] = 'w_slice_meter_unknown'
             outcome['search_slice'] = dict(status='unknown')

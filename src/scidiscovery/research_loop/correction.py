@@ -1,6 +1,8 @@
 """Sealed A assessments and immutable correction/ack facts, without a scheduler."""
 from __future__ import annotations
 
+from . import execution
+
 import hashlib
 import json
 import re
@@ -172,8 +174,8 @@ def project(root, before_step=None):
         if not (record / 'result-identity.json').exists():
             break
         job, payload, seal, _ = history._source(root, step)
-        outcome = c.read(c.regular(record / 'native-outcome.json'))
-        intent = c.read(c.regular(record / 'native-intent.json'))
+        outcome = c.read(c.regular(execution.record(root, step) / 'native-outcome.json'))
+        intent = c.read(c.regular(execution.record(root, step) / 'native-intent.json'))
         if (intent.get('task_sha256') != c.digest(root / 'jobs' / f'{step:03d}.json')
                 or type(outcome.get('returncode')) is not int or outcome['returncode'] != 0
                 or outcome.get('stop_reason') or outcome.get('usage', {}).get('unknown_steps') != []

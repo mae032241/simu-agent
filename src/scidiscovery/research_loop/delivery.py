@@ -1,6 +1,8 @@
 """Bounded delivery bindings and isolated calls; the control ledger owns actions."""
 from __future__ import annotations
 
+from . import execution
+
 import hashlib
 import json
 import math
@@ -313,7 +315,7 @@ def binding(root, job, result):
     # every candidate/static object here would multiply mechanical I/O by count.
     record = c.host_record(c.workspace(root, job['step']))
     decision = dict(step=job['step'], job_sha256=c.digest(path),
-                    raw_sha256=c.digest(record / 'science-output.json'), seal_sha256=c.digest(record / 'result-identity.json'))
+                    raw_sha256=c.digest(execution.raw(root, job['step'])), seal_sha256=c.digest(record / 'result-identity.json'))
     result = dict(candidate_id=chosen, decision=decision, source=item,
                   target=c.settings(root)['delivery_policy']['adapter']['target'])
     result['operation_id'] = hashlib.sha256(_bytes(dict(settings_sha256=c.digest(root / 'settings.json'), **result))).hexdigest()
@@ -405,7 +407,7 @@ def invoke(root, intent, max_seconds, *, on_process=None):
     decision = bound['decision'];step = decision['step']
     record = c.host_record(c.workspace(root, step))
     for path, key in [(root / 'jobs' / f'{step:03d}.json', 'job_sha256'),
-                      (record / 'science-output.json', 'raw_sha256'), (record / 'result-identity.json', 'seal_sha256')]:
+                      (execution.raw(root, step), 'raw_sha256'), (record / 'result-identity.json', 'seal_sha256')]:
         if c.digest(_file(path)) != decision[key]:
             raise ValueError('Delivery scientific decision changed')
     job = c.read(root / 'jobs' / f'{step:03d}.json')

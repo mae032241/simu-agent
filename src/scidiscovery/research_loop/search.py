@@ -1,6 +1,8 @@
 """Frozen W slices and scientific commitments derived from original nodes."""
 from __future__ import annotations
 
+from . import execution
+
 import json
 import copy
 import re
@@ -232,12 +234,12 @@ def project(root, before_step):
                 raise ValueError('Search outcome differs from its original scientific attempt')
         else:
             _apply(root, job, payload, state)
-        intent = c.host_record(c.workspace(root, step)) / 'native-intent.json'
+        intent = execution.record(root, step) / 'native-intent.json'
         if job['role'] == 'W' and job.get('search') and intent.exists():
             value = c.read(c.regular(intent))
             if value['task_sha256'] != c.digest(root / 'jobs' / f'{step:03d}.json'):
                 raise ValueError('W dispatch identity changed')
-            outcome = c.read(c.host_record(c.workspace(root, step)) / 'native-outcome.json')
+            outcome = c.read(execution.record(root, step) / 'native-outcome.json')
             observation = c.read(root / seal['observations']['path']) if seal.get('observations') else None
             state['accepted_slices'].append(dict(step=step, focus=job['search']['focus'],
                 meter=outcome.get('search_slice'), observed_new_candidates=len(observation['candidates']) if observation else None,
