@@ -1,0 +1,334 @@
+"""Exact pre-A snapshots and isolated delivery, deterministic zero-model processes."""
+import copy
+import hashlib
+import json
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+
+import pytest
+
+from scidiscovery.research_loop import budget, contracts as c, controller, cov_delivery, delivery, native
+from scidiscovery.research_loop import runtime
+from test_history_handoff import finish
+
+
+FAKE_HARNESS = '''import json,os,pathlib,shutil
+runs=pathlib.Path(os.environ['EXP_RUN_DIR'])
+row=json.loads((runs/'results.jsonl').read_text())
+meta=json.loads(pathlib.Path(os.environ['EXP_META']).read_text())
+# This subprocess is inside the audit namespace. Real targets/private control
+# must be absent even though the launcher knows their literal host paths.
+assert not pathlib.Path('/target').exists()
+assert not pathlib.Path(meta['control_path']).exists()
+assert not pathlib.Path(meta['hidden_path']).exists()
+shutil.copyfile(row['model_path'],runs/'submitted_model.pkl')
+mode=meta['mode']
+fact={'run_id':row['run_id'],'audit_score':.5 if mode!='skip' else None,
+      'audit_gap':.1 if mode!='skip' else None,'leakage_flag':mode=='leak',
+      'audit_note':'audit took 0.01s on fixture held-out rows' if mode!='skip' else 'audit skipped'}
+(runs/'submitted.json').write_text(json.dumps(fact))
+'''
+
+ZERO_PREDICTOR = '''import json,pathlib
+class ZeroPredictor:
+ def __init__(self,dimension=None):self.dimension=dimension
+ def predict(self,frame):
+  import numpy as np
+  return np.zeros((len(frame),self.dimension)) if self.dimension else np.zeros(len(frame))
+def train(train_df,val_df):
+ assert not pathlib.Path('/target').exists()
+ meta=json.loads(pathlib.Path('/inputs/harness/meta.json').read_text())
+ return ZeroPredictor(len(meta['target_cols']) if meta.get('target_cols') else None)
+'''
+
+
+def generate_isolated_model(python, script, meta, destination):
+    """Fixture producer serializes only in the declared task namespace."""
+    command = [shutil.which('bwrap'), '--unshare-user', '--unshare-pid', '--unshare-net',
+               '--die-with-parent', '--new-session', '--clearenv', '--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp']
+    base = Path(python).resolve().parent.parent
+    for path in dict.fromkeys(['/usr', '/bin', '/lib', '/lib64', str(Path(python).parent.parent),
+                               str(base / 'bin'), str(base / 'lib')]):
+        if Path(path).exists():command += ['--ro-bind', path, path]
+    command += ['--ro-bind', str(script), '/source.py', '--ro-bind', str(meta), '/meta.json',
+                '--bind', str(destination.parent), '/output', '--setenv', 'OPENBLAS_NUM_THREADS', '1',
+                '--', python, '-I', '-c',
+                'import cloudpickle,importlib.util,json,sys;'
+                's=importlib.util.spec_from_file_location("bounded_zero","/source.py");'
+                'm=importlib.util.module_from_spec(s);sys.modules[s.name]=m;s.loader.exec_module(m);'
+                'meta=json.load(open("/meta.json"));'
+                'model=m.ZeroPredictor(len(meta["target_cols"]) if meta.get("target_cols") else None);'
+                'cloudpickle.dump(model,open("/output/'+destination.name+'","wb"))']
+    subprocess.run(command, check=True, timeout=20, capture_output=True, env={'PATH': '/usr/bin:/bin'})
+
+
+def descriptor(root, public, *, python=sys.executable):
+    """Reusable real bwrap fixture for installed CLI gates; no host leaf fallback."""
+    module = Path(cov_delivery.__file__).absolute()
+    return dict(adapter=str(module), launcher_argv=[python, str(module), '--isolate'],
+                config=dict(runs='runs', namespace_runs='/opt/exp/runs', python=python),
+                target=dict(runs=str(root / 'runs'), submission=str(root / 'submission')),
+                inputs=[dict(label='harness/' + name, path=str(public / 'harness' / name))
+                        for name in ('exp_cli.py', 'runner.py', 'train.csv', 'val.csv', 'meta.json')]
+                       + [dict(label='runtime-python', path=python)],
+                source_roots=[str(root / 'runs'), str(root / 'project/nodes')])
+
+
+def delivery_policy(adapter):
+    return dict(closeout_a=dict(max_observed_tokens=1000, max_seconds=30),
+                inflight_tokens=100, cleanup_seconds=5, submit_seconds=20,
+                confirm_seconds=10, adapter=adapter)
+
+
+def prepare_fixture(tmp_path, mode='ok', *, real_harness=None, python=sys.executable, candidate_count=1):
+    if shutil.which('bwrap') is None:pytest.skip('Actual bwrap qualification lane required')
+    public = tmp_path / 'public';(public / 'harness').mkdir(parents=True)
+    root = tmp_path / 'instance'
+    for name in ('exp_cli.py', 'runner.py', 'train.csv', 'val.csv', 'meta.json'):
+        destination = public / 'harness' / name
+        if real_harness is not None:
+            shutil.copyfile(real_harness / name, destination)
+        elif name == 'exp_cli.py':destination.write_text(FAKE_HARNESS)
+        elif name == 'meta.json':
+            c.write(destination, dict(mode=mode, control_path=str(root / 'settings.json'), hidden_path=str(tmp_path / 'private-score.json')))
+        else:destination.write_text('public fixture only\n')
+    objective = public / 'objective.md';objective.write_text('Deliver an exact candidate without asserting goal completion.')
+    c.write(tmp_path / 'private-score.json', dict(secret='Never mounted'))
+    limits = {role: dict(max_observed_tokens=2000, max_seconds=60) for role in ('H', 'W', 'A', 'E')}
+    controller.prepare(root, objective, public, ['fake-no-model'], max_tokens=100_000,
+        max_seconds=300, max_steps=12, model='fixture', reasoning_effort='high', search_policy=None,
+        node_budget_policy=limits, history_observer=dict(adapter=str(Path(__file__).resolve().parents[2] / 'scripts/observe_covshift_candidates.py'),
+                                                      config=dict(runs='runs', evaluation_key='fixture-public')),
+        delivery_policy=delivery_policy(descriptor(root, public, python=python)))
+    (root / 'runs').mkdir();(root / 'submission').mkdir()
+    finish(root, 1, 'H', [], action='experiment')
+    # Ordinary candidate, not a previous audited/actual submission.
+    model = root / 'runs/exact-model.bin';model.write_bytes(b'not a host-loaded pickle\n' * 20_000)
+    script = c.workspace(root, 2) / 'artifacts/train.py'
+    row = dict(run_id=1, ok=True, val_acc=0 if mode == 'real_ok' else .6, val_score=0 if mode == 'real_ok' else .6,
+               model_path='/opt/exp/runs/exact-model.bin', script=str(script))
+    (root / 'runs/results.jsonl').write_text(''.join(json.dumps(dict(row, run_id=run)) + '\n'
+                                                  for run in range(1, candidate_count + 1)))
+    if real_harness is None:
+        code = 'def train(train_df, val_df): return None\n'
+    elif mode == 'real_ok':
+        code = ZERO_PREDICTOR
+        script.parent.mkdir(parents=True, exist_ok=True);script.write_text(code)
+        generate_isolated_model(python, script, public / 'harness/meta.json', model)
+    else:
+        code = 'def train(train_df, val_df):\n    return object()\n'  # Genuine public audit must skip/fail.
+    finish(root, 2, 'W', [1], files={'train.py': code})
+    c.write(root / 'host-started.json', budget.clock_stamp())
+    budget.transition(root, 'advance', 'bounded input preparation')
+    nodes = [dict(step=step, seal_sha256=c.digest(c.host_record(c.workspace(root, step)) / 'result-identity.json'))
+             for step in (1, 2)]
+    return root, public, nodes
+
+
+def closeout_decision(root, refs, recommendation='run-1'):
+    budget.begin_closeout(root, 2, 3, 'fixture closeout', delivery_sources=refs)
+    job = c.build_job(root, 3, 'A', [1, 2], purpose='closeout', source_cutoff=2, delivery_sources=refs)
+    record = c.host_record(c.workspace(root, 3))
+    payload = dict(summary='A selects the original candidate', scientific_result='A decision with remaining uncertainty',
+                   limitations=['Scientific goal remains unasserted'], implementation_selection=None,
+                   candidate_recommendation=recommendation, progress_assessment=None,
+                   search_review=None, next_action='finish', route_reason='An explicit bounded delivery decision')
+    c.write(record / 'native-intent.json', dict(task_sha256=c.digest(root / 'jobs/003.json')))
+    c.write(record / 'science-output.json', payload)
+    c.write(record / 'usage.json', dict(input_tokens=7, cached_input_tokens=2, output_tokens=3))
+    c.write(record / 'native-outcome.json', dict(returncode=0, stop_reason=None, usage=native.usage(root),
+                                              raw_sha256=c.digest(record / 'science-output.json')))
+    result = c.seal_result(root, 3)
+    return job, result, delivery.binding(root, job, result)
+
+
+def accepted(root, bound, kind='submit'):
+    return budget.accept_action(root, kind, bound['operation_id'], bound['decision'], bound,
+                                20 if kind == 'submit' else 10)
+
+
+def test_generic_descriptor_does_not_require_cov_config_fields(tmp_path):
+    script = tmp_path / 'adapter.py';script.write_text('print("bounded")')
+    supplied = dict(adapter=str(script), launcher_argv=[sys.executable, str(script)],
+                    config=dict(domain_specific='opaque'), target=dict(domain_target='opaque'),
+                    inputs=[], source_roots=[str(tmp_path)])
+    result = delivery.policy(delivery_policy(supplied))
+    assert result['adapter']['config'] == supplied['config']
+    assert result['adapter']['target'] == supplied['target']
+
+
+@pytest.mark.parametrize('invalid', ['missing', 'nan', 'zero_submit', 'negative_margin'])
+def test_delivery_policy_rejects_incomplete_or_unbounded_limits(tmp_path, invalid):
+    value = delivery_policy(None)
+    value['submit_seconds'] = value['confirm_seconds'] = 0
+    if invalid == 'missing':value.pop('inflight_tokens')
+    if invalid == 'nan':value['cleanup_seconds'] = float('nan')
+    if invalid == 'zero_submit':value['submit_seconds'] = 1  # No adapter may not spend external allowance.
+    if invalid == 'negative_margin':value['inflight_tokens'] = -1
+    with pytest.raises(ValueError):delivery.policy(value)
+
+
+def test_pre_a_sources_are_snapshot_pending_not_proxy_qualified(tmp_path):
+    root, _, nodes = prepare_fixture(tmp_path)
+    refs = delivery.freeze_sources(root, nodes)
+    assert refs['items'][0]['status'] == 'audit_pending'
+    assert refs['items'][0]['objects']['artifact']['size_bytes'] > delivery.MAX_BYTES
+    assert not (root / 'runs/submitted.json').exists()
+    saved = copy.deepcopy(refs)
+    (root / 'runs/exact-model.bin').write_bytes(b'Overwritten mutable public model')
+    (c.workspace(root, 2) / 'artifacts/train.py').chmod(0o600)
+    # Changing sealed material is corruption, unlike overwriting unsealed scratch.
+    delivery.validate_sources(root, refs)
+    assert refs == saved
+    view = json.dumps(delivery.public_sources(refs))
+    assert len(view.encode()) <= 4096 and 'sha256' not in view and 'host-delivery' not in view
+
+
+@pytest.mark.parametrize('mode', ['ok', 'skip', 'leak'])
+def test_real_namespace_audit_promotes_only_complete_nonleaking_result(tmp_path, mode):
+    root, _, nodes = prepare_fixture(tmp_path, mode)
+    (root / 'runs/submitted_model.pkl').write_bytes(b'Old confirmed bytes')
+    (root / 'submission/model.pkl').write_bytes(b'Old confirmed bytes')
+    old_settings = (root / 'settings.json').read_bytes()
+    refs = delivery.freeze_sources(root, nodes)
+    _, _, bound = closeout_decision(root, refs)
+    intent = accepted(root, bound)
+    result = delivery.invoke(root, intent, 20)
+    assert result['cleanup_confirmed'] is True
+    assert (root / 'settings.json').read_bytes() == old_settings
+    if mode == 'ok':
+        assert result['status'] == 'confirmed', result
+        expected = bound['source']['objects']['artifact']['sha256']
+        assert c.digest(root / 'submission/model.pkl') == expected
+        assert c.digest(root / 'runs/submitted_model.pkl') == expected
+        budget.action_outcome(root, intent, result)
+        before = (root / 'runs/submitted.json').read_bytes()
+        assert delivery.invoke(root, intent, 20) == result  # Stored outcome is a read, not resubmission.
+        query = accepted(root, bound, 'confirm')
+        assert delivery.invoke(root, query, 10)['status'] == 'confirmed'
+        assert (root / 'runs/submitted.json').read_bytes() == before
+    else:
+        assert result['status'] == 'failed', result
+        assert (root / 'submission/model.pkl').read_bytes() == b'Old confirmed bytes'
+        assert (root / 'runs/submitted_model.pkl').read_bytes() == b'Old confirmed bytes'
+        assert not (root / 'runs/rootless-delivery-operation.json').exists()
+
+
+def test_source_archive_tamper_and_changed_argv_symlink_are_hard_errors(tmp_path):
+    root, _, nodes = prepare_fixture(tmp_path)
+    refs = delivery.freeze_sources(root, nodes)
+    proof = refs['items'][0]['objects']['artifact']
+    snapshot = root / proof['path'];snapshot.chmod(0o600);snapshot.write_bytes(b'Changed immutable bytes')
+    with pytest.raises(ValueError, match='changed'):delivery.validate_sources(root, refs)
+    # Frozen argv lookup must validate the invocation path, not only its old target.
+    first = tmp_path / 'first.py';first.write_text('original')
+    second = tmp_path / 'second.py';second.write_text('replacement')
+    link = tmp_path / 'launcher-link';link.symlink_to(first)
+    value = c.settings(root)
+    descriptor_ = dict(value['delivery_policy']['adapter'])
+    descriptor_['launcher_files'].append(dict(path=str(first), invoked_path=str(link), sha256=c.digest(first)))
+    value['delivery_policy']['adapter'] = descriptor_
+    c.write(root / 'settings.json', value)
+    c.write(root / 'settings-identity.json', dict(sha256=c.digest(root / 'settings.json')))
+    link.unlink();link.symlink_to(second)
+    with pytest.raises(ValueError, match='names another original'):delivery._adapter(root)
+
+
+def test_seventeenth_source_remains_selectable_and_shared_objects_are_deduplicated(tmp_path, monkeypatch):
+    root, _, nodes = prepare_fixture(tmp_path, candidate_count=17)
+    refs = delivery.freeze_sources(root, nodes)
+    assert len(refs['items']) == 17 and refs['omitted_count'] == 0
+    assert len({item['objects']['artifact']['path'] for item in refs['items']}) == 1
+    assert len({item['objects']['source.py']['path'] for item in refs['items']}) == 1
+    assert delivery.public_sources(refs)['omitted_count'] == 1
+    read_original = delivery._proof
+    reads = []
+    def observe_read(root_, proof):
+        reads.append((proof['path'], proof['sha256'], proof['size_bytes']))
+        return read_original(root_, proof)
+    monkeypatch.setattr(delivery, '_proof', observe_read)
+    delivery.validate_sources(root, refs)
+    assert len(reads) == len(set(reads))  # Shared large objects are hashed once per validation.
+    conflict = copy.deepcopy(refs)
+    conflict['items'][1]['objects']['artifact'] = dict(conflict['items'][1]['objects']['artifact'], sha256='0' * 64)
+    with pytest.raises(ValueError, match='Conflicting delivery aliases'):
+        delivery.validate_sources(root, conflict)
+    _, _, bound = closeout_decision(root, refs, recommendation='run-17')
+    assert bound['candidate_id'] == 'run-17'
+    job = c.read(root / 'jobs/003.json')
+    assert 'run-17' in job['history']['candidate_ids']
+    page = c.workspace(root, 3) / 'inputs/history/candidates/0002.json'
+    assert c.read(page)['candidates'][0]['id'] == 'run-17'
+    assert page.stat().st_mode & 0o222 == 0
+
+
+def test_partial_target_or_missing_marker_cannot_confirm_or_resubmit(tmp_path):
+    root, _, nodes = prepare_fixture(tmp_path)
+    refs = delivery.freeze_sources(root, nodes)
+    _, _, bound = closeout_decision(root, refs)
+    original = accepted(root, bound)
+    # Accepted submit may have crashed after one target write. The controller
+    # recovers by a new confirm identity, never calling the submit again.
+    shutil.copyfile(root / bound['source']['objects']['artifact']['path'], root / 'submission/model.pkl')
+    # The local call is known ended; external state is explicitly unknown.
+    # With no such outcome/process fact the production guard must reject query.
+    budget.action_outcome(root, original, delivery._result(bound, 'unknown', 'fixture_partial_target', cleanup_confirmed=True))
+    query = accepted(root, bound, 'confirm')
+    assert query['operation_id'] == original['operation_id']
+    result = delivery.invoke(root, query, 10)
+    assert result['status'] == 'unknown', result
+    assert not (root / 'runs/submitted.json').exists()
+    assert not (root / 'runs/submitted_model.pkl').exists()
+
+
+def test_exited_launcher_with_live_stdout_child_is_cleaned_not_success(tmp_path):
+    launcher = tmp_path / 'misbehaving.py'
+    launcher.write_text('''import json,pathlib,subprocess,sys
+request=json.load(sys.stdin)
+child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(20)'])
+pathlib.Path(request['pid_file']).write_text(str(child.pid))
+print('{}',flush=True)
+''')
+    ids = []
+    value = delivery._call(dict(launcher_argv=[sys.executable, str(launcher)], adapter=str(launcher)),
+        dict(phase='audit', operation_id='exact-fixture-operation', pid_file=str(tmp_path / 'child.pid')), .5,
+        on_process=lambda phase, identity: ids.append((phase, identity)))
+    assert value is None  # EOF did not arrive before deadline; no claimed success.
+    assert len(ids) == 1 and ids[0][0] == 'audit'
+    pid = int((tmp_path / 'child.pid').read_text())
+    try:
+        child = runtime.process_identity(pid, ids[0][1]['task_sha256'])
+    except (OSError, ValueError):
+        child = None
+    if child is not None:assert not runtime.process_matches(child, child['task_sha256'])
+    # Reap only the fixture child that the real subreaper now owns.
+    import os
+    try:os.waitpid(pid, os.WNOHANG)
+    except ChildProcessError:pass
+
+
+@pytest.mark.parametrize('mode', ['real_ok', 'real_skip'])
+def test_actual_public_harness_audit_completion_controls_promotion(tmp_path, mode):
+    """Opt-in deterministic original public audit, no N5 instance or hidden data."""
+    import os
+    harness = os.environ.get('SCID_DELIVERY_PUBLIC_HARNESS')
+    python = os.environ.get('SCID_DELIVERY_TASK_PYTHON')
+    if not harness or not python:
+        pytest.skip('Parent supplies original public harness and isolated task runtime for this lane')
+    root, _, nodes = prepare_fixture(tmp_path, mode=mode, real_harness=Path(harness), python=python)
+    refs = delivery.freeze_sources(root, nodes)
+    _, _, bound = closeout_decision(root, refs)
+    intent = accepted(root, bound)
+    result = delivery.invoke(root, intent, 20)
+    if mode == 'real_ok':
+        assert result['status'] == 'confirmed', result
+        assert c.digest(root / 'submission/model.pkl') == bound['source']['objects']['artifact']['sha256']
+        receipt = c.read(root / 'runs/submitted.json')
+        assert receipt['leakage_flag'] is False
+        assert receipt['audit_score'] is not None and receipt['audit_note'].startswith('audit took ')
+    else:
+        assert result['status'] == 'failed', result
+        assert not (root / 'submission/model.pkl').exists()
+        assert not (root / 'runs/submitted.json').exists()

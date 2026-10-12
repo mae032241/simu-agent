@@ -31,10 +31,12 @@ def status(root: Path):
             outcome = contracts.read(record / 'native-outcome.json') if (record / 'native-outcome.json').exists() else {}
             node.update(budget_slice=intent.get('budget_slice'), budget_report=outcome.get('budget_slice'), stop_reason=outcome.get('stop_reason'))
         nodes.append(node)
+    closeout = budget.closeout_state(root)
     return dict(instance=str(root), goal_id=settings['goal_id'], objective=settings['objective'],
                 paused=(root / 'pause.request').exists(), nodes=nodes, usage=native.usage(root),
                 goal_completion='not_asserted', budget=budget.snapshot(root),
-                correction=correction.project(root))
+                correction=correction.project(root, before_step=closeout['begin']['source_cutoff'] + 1 if closeout['begin'] else None),
+                closeout=controller._closeout_result(root, 'closeout_status', read_only=True) if closeout['begin'] else None)
 
 
 def main(argv=None):
@@ -50,6 +52,7 @@ def main(argv=None):
     prepare.add_argument('--search-policy', type=Path, help='Optional JSON override of the three frozen W-search ceilings')
     prepare.add_argument('--correction-policy', type=Path, help='Explicitly enable N4 with review_after/pause_after JSON thresholds (defaults 3/2)')
     prepare.add_argument('--node-budget-policy', type=Path, help='Explicit H/W/A/E max_observed_tokens/max_seconds JSON; no delivery guarantee')
+    prepare.add_argument('--delivery-policy', type=Path, help='Explicit frozen closeout reserve and isolated delivery adapter JSON')
     prepare.add_argument('--max-tokens', type=int, required=True)
     prepare.add_argument('--max-seconds', type=float, required=True, help='Maximum advancement seconds; explicit pauses do not consume this ceiling')
     prepare.add_argument('--max-steps', type=int, required=True)
@@ -71,6 +74,9 @@ def main(argv=None):
     amend.add_argument('--max-tokens', type=int)
     amend.add_argument('--max-seconds', type=float)
     amend.add_argument('--authorization-note', required=True, help='Operator decision for the audit; this text is not authentication')
+    closeout = commands.add_parser('closeout', help='Close exploration within the original remaining authorization')
+    closeout.add_argument('--root', type=Path, required=True)
+    closeout.add_argument('--export-only', action='store_true', help='Export existing verified results without sealing, launching science or delivering')
     args = parser.parse_args(argv)
     root = args.root.expanduser().resolve()
     try:
@@ -85,11 +91,15 @@ def main(argv=None):
                     if args.correction_policy is not None else None,
                 node_budget_policy=contracts.read(contracts.regular(args.node_budget_policy, limit=4096))
                     if args.node_budget_policy is not None else None,
+                delivery_policy=contracts.read(contracts.regular(args.delivery_policy, limit=64_000))
+                    if args.delivery_policy is not None else None,
                 history_observer=contracts.read(contracts.regular(args.history_observer_config, limit=64_000))
                     if args.history_observer_config is not None else None)
             result = dict(status='prepared', instance=str(root), goal_id=settings['goal_id'])
         elif args.command == 'status':
             result = status(root)
+        elif args.command == 'closeout':
+            result = controller.closeout(root, export_only=args.export_only)
         elif args.command == 'budget-amend':
             result = budget.amend(root, max_tokens=args.max_tokens, max_seconds=args.max_seconds,
                                   authorization_note=args.authorization_note)
@@ -118,7 +128,7 @@ def main(argv=None):
         print(json.dumps(dict(status='error', error=str(error)), ensure_ascii=False))
         return 1
     print(json.dumps(result, ensure_ascii=False))
-    return 0 if result.get('status') in {None, 'prepared', 'finish', 'wait', 'paused', 'pause_requested', 'budget_amended'} else 2
+    return 0 if result.get('status') in {None, 'prepared', 'finish', 'wait', 'paused', 'pause_requested', 'budget_amended', 'delivery_confirmed', 'exported_unsubmitted'} else 2
 
 
 if __name__ == '__main__':

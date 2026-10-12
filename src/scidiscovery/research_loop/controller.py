@@ -19,7 +19,8 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
             history_observer: dict | None = None,
             search_policy: dict | None = search.DEFAULT_POLICY,
             correction_policy: dict | None = None,
-            node_budget_policy: dict | None = None) -> dict:
+            node_budget_policy: dict | None = None,
+            delivery_policy: dict | None = None) -> dict:
     """Freeze an explicit goal and finite launch budgets in a fresh directory."""
     root, objective, public_root = map(Path, (root, objective, public_root))
     for name, value in (("max_tokens", max_tokens), ("max_steps", max_steps),
@@ -54,12 +55,23 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
     if correction_limits is not None and search_limits is None:
         raise ValueError('Correction requires the frozen search policy')
     node_limits = budget.node_policy(node_budget_policy) if node_budget_policy is not None else None
+    delivery_limits = None
+    if delivery_policy is not None:
+        from . import delivery
+        delivery_limits = delivery.policy(delivery_policy)
+        if node_limits is None:
+            raise ValueError('Delivery requires explicitly frozen all-role node budgets')
     settings = dict(goal_id="scid-hwa-" + uuid.uuid4().hex[:12], objective=text,
         public_root=str(public_root.resolve()), native_launcher_argv=list(launcher),
         max_tokens=max_tokens, max_seconds=max_seconds, max_steps=max_steps, time_budget_basis="active",
         model=model, reasoning_effort=reasoning_effort, service_tier=service_tier,
         max_output_item_bytes=max_output_item_bytes,
         max_output_total_bytes=max_output_total_bytes)
+    if delivery_limits is not None:
+        settings['delivery_policy'] = delivery_limits
+        reserve = budget.delivery_reserve(settings)
+        if reserve['tokens'] > max_tokens or reserve['seconds'] > max_seconds or reserve['steps'] > max_steps:
+            raise ValueError('Delivery reservation exceeds original total authorization')
     if node_limits is not None:
         settings['node_budget_policy'] = node_limits
     if observer is not None:
@@ -232,6 +244,8 @@ def _seal_reason(error):
 
 def _run(root):
     settings = contracts.settings(root)
+    if budget.closeout_state(root)['begin'] is not None:
+        return _run_closeout(root)
     started_path = root / "host-started.json"
     if not started_path.exists():
         contracts.write(started_path, budget.clock_stamp())
@@ -278,6 +292,9 @@ def _run(root):
             if author_correction is not None and role in {'H', 'A'} and semantic.accepted(root, author_correction, step) >= semantic.MAX_AUTHOR_CORRECTIONS:
                 return _finish(root, settings, 'semantic_correction_required', completed, last,
                     reason='semantic_correction_limit', next_role=role)
+            reserve_stop = budget.exploration_admission(root, dict(step=step, role=role))
+            if reserve_stop and settings.get('delivery_policy') is not None:
+                return _start_closeout(root, completed, step, reserve_stop)
             budget.transition(root, 'advance', 'controller_launch_boundary')
             limit = _launch_limit(root, settings)
             if limit:
@@ -314,6 +331,10 @@ def _run(root):
                     return _finish(root, settings, "seal_pending", completed, last,
                         reason=f"Native science succeeded; host sealing requires repair: {_seal_reason(error)}",
                         next_role=role)
+                if settings.get('delivery_policy') is not None and (record / 'native-outcome.json').exists():
+                    stopped = contracts.read(record / 'native-outcome.json')
+                    if str(stopped.get('stop_reason', '')).startswith('closeout_protected_'):
+                        return _start_closeout(root, completed, step + 1, stopped['stop_reason'])
                 return _finish(root, settings, "native_stopped", completed, last,
                     reason=f"Native work did not seal ({type(error).__name__}); original intent is retained",
                     next_role=role)
@@ -339,8 +360,222 @@ def _run(root):
                 reason=f"Retained node is not eligible for routing ({type(error).__name__})", next_role=role)
         completed, last = step, result
         if next_role is None:
+            if settings.get('delivery_policy') is not None and result.get('next_action') == 'finish':
+                return _start_closeout(root, completed, step + 1, 'scientific_finish')
             return _finish(root, settings, result["next_action"], completed, last,
                 reason="Scientific role suggestion; overall goal success is not asserted")
         role, parents, instruction, evidence_return, correction_request = next_role, next_parents, next_instruction, next_return, next_correction
         author_correction = next_author
     return _finish(root, settings, "bounded_steps_exhausted", completed, last, next_role=role)
+
+
+def _closeout_result(root, status, *, reason=None, step=None, read_only=False):
+    state = budget.closeout_state(root)
+    begin = state['begin']
+    closed = []
+    if begin is not None:
+        for path in sorted((root / 'jobs').glob('*.json')):
+            job = contracts.read(path)
+            if job.get('purpose') == 'closeout' and (_record(root, job['step']) / 'result-identity.json').exists():
+                contracts.validate(contracts.workspace(root, job['step']))
+                closed.append(job['step'])
+    cutoff = begin['source_cutoff'] if begin else 0
+    previous = history.candidate_overview(history.rebuild(root, cutoff + 1, write_cache=False))
+    last = max(closed, default=cutoff) or None
+    confirmed = [row['outcome']['result'] for row in state['actions'] if row['outcome'] is not None
+                 and row['intent']['action_kind'] == 'confirm' and row['outcome']['result']['status'] == 'confirmed']
+    pending_confirmation = bool(state['actions'] and (state['actions'][-1]['intent']['action_kind'] == 'submit'
+        or state['actions'][-1]['outcome'] is None or state['actions'][-1]['outcome']['result']['status'] == 'unknown'))
+    if not read_only:
+        budget.inactive(root, status)
+    last_science = contracts.validate(contracts.workspace(root, last)) if last is not None else None
+    result = dict(status=status, goal_completion='not_asserted', objective_ref=str(root / 'project/global/objective.md'),
+        scientific_output_ref=str(_record(root,last)/'science-output.json') if last is not None else None,
+        scientific_limitations=last_science['limitations'][:4] if last_science is not None else [],
+        source_cutoff=cutoff, last_step=last, completed_scientific_nodes=cutoff + len(closed),
+        used_steps=budget.used_steps(root), usage=native.usage(root), budget=budget.snapshot(root),
+        previous_submission_observation=previous['actual_submission'], existing_A_recommendation=previous['a_recommended'],
+        last_confirmed=confirmed[-1] if confirmed else None,
+        current_actual='unknown' if state['unresolved_operations'] or pending_confirmation else (confirmed[-1] if confirmed else None))
+    if reason is not None:
+        result['reason'] = reason
+    if step is not None:
+        result['attempt_step'] = step
+    return result
+
+
+def _closeout_funds(root, *, preparation_seconds=0.):
+    settings = contracts.settings(root)
+    policy = settings.get('delivery_policy')
+    if policy is None:
+        return False
+    meter, limits = native.usage(root), budget.snapshot(root)
+    external = policy['adapter'] is not None
+    seconds = policy['closeout_a']['max_seconds'] + max(0., policy['cleanup_seconds'] - preparation_seconds)
+    seconds += policy['submit_seconds'] + policy['confirm_seconds'] if external else 0
+    return (not meter['unknown_steps']
+        and limits['max_tokens'] - meter['observed_tokens'] >= policy['closeout_a']['max_observed_tokens'] + policy['inflight_tokens']
+        and limits['seconds_remaining'] >= seconds
+        and settings['max_steps'] - budget.used_steps(root) >= 1 + (2 if external else 0))
+
+
+def _start_closeout(root, cutoff, first_step, reason, *, export_only=False):
+    from . import delivery
+    if budget.closeout_state(root)['begin'] is not None:
+        return _run_closeout(root)
+    if (root / 'jobs' / f'{first_step:03d}.json').exists():
+        return _closeout_result(root, 'retained_job_conflict', reason='Closeout cannot replace a prepared scientific task', step=first_step)
+    if budget.execution_blocked(root):
+        return _closeout_result(root, 'closeout_blocked', reason='Original execution remains live or unknown')
+    if (root / 'pause.request').exists() or correction.gate(root, cutoff) is not None:
+        return _closeout_result(root, 'closeout_blocked', reason='Original pause requires its existing release or exact ack')
+    # Validate the exact prefix, never globally ignore a stopped scientific node.
+    for step in range(1, cutoff + 1):
+        contracts.validate(contracts.workspace(root, step))
+    policy = contracts.settings(root).get('delivery_policy')
+    use_model = not export_only and policy is not None and policy['adapter'] is not None and _closeout_funds(root)
+    sources, preparation = None, 0.
+    if use_model:
+        budget.transition(root, 'advance', 'prepare_closeout_inputs')
+        at = budget.snapshot(root)['advance_seconds']
+        nodes = [dict(step=step, seal_sha256=contracts.digest(_record(root, step) / 'result-identity.json'))
+                 for step in range(1, cutoff + 1)]
+        try:
+            sources = delivery.freeze_sources(root, nodes)
+        except delivery.DeliveryUnresolved as error:
+            budget.begin_closeout(root, cutoff, first_step, error.code, export_only=True)
+            return _closeout_result(root, 'closeout_unresolved', reason=error.code)
+        preparation = budget.snapshot(root)['advance_seconds'] - at
+        use_model = _closeout_funds(root, preparation_seconds=preparation)
+    budget.begin_closeout(root, cutoff, first_step, reason, export_only=not use_model,
+                          delivery_sources=sources, preparation_seconds=preparation)
+    if not use_model:
+        return _closeout_result(root, 'exported_unsubmitted', reason='export_only' if export_only or policy is None or policy['adapter'] is None else 'closeout_budget_unavailable')
+    return _run_closeout(root)
+
+
+def _run_delivery_actions(root, job, result):
+    from . import delivery
+    state = budget.closeout_state(root)
+    policy = contracts.settings(root)['delivery_policy']
+    if policy['adapter'] is None:
+        return _closeout_result(root, 'exported_unsubmitted', reason='No external delivery adapter was configured')
+    if state['actions']:
+        original = state['actions'][0]['intent']
+        completed = state['actions'][-1]['outcome']
+        if completed is not None and completed['result']['status'] == 'confirmed' and state['actions'][-1]['intent']['action_kind'] == 'confirm':
+            return _closeout_result(root, 'delivery_confirmed')
+        if completed is not None and completed['result']['status'] == 'failed' and not state['unresolved_operations']:
+            return _closeout_result(root, 'delivery_failed', reason=completed['result']['note'])
+        kind, binding = 'confirm', original['binding']
+    else:
+        try:
+            binding = delivery.binding(root, job, result)
+        except delivery.DeliveryUnresolved as error:
+            return _closeout_result(root, 'closeout_unresolved', reason=error.code)
+        kind = 'submit'
+    while True:
+        try:
+            intent = budget.accept_action(root, kind, binding['operation_id'], binding['decision'], binding,
+                                          policy['submit_seconds' if kind == 'submit' else 'confirm_seconds'])
+        except budget.NodeBudgetUnavailable:
+            return _closeout_result(root, 'closeout_budget_unavailable')
+        budget.transition(root, 'advance', 'delivery_' + kind)
+        remaining = min(intent['max_seconds'], budget.snapshot(root)['seconds_remaining'])
+        reply = delivery.invoke(root, intent, remaining,
+            on_process=lambda phase, identity: budget.action_process(root, intent, phase, identity))
+        budget.action_outcome(root, intent, reply)
+        if reply['status'] != 'confirmed':
+            return _closeout_result(root, 'delivery_' + reply['status'], reason=reply['note'])
+        if kind == 'confirm':
+            return _closeout_result(root, 'delivery_confirmed')
+        kind = 'confirm'  # First confirmation is explicitly reserved and accepted once.
+
+
+def _run_closeout(root):
+    from . import delivery
+    begin = budget.closeout_state(root)['begin']
+    if begin is None:
+        raise ValueError('Closeout continuation has no immutable boundary')
+    if begin['mode'] == 'export_only':
+        return _closeout_result(root, 'exported_unsubmitted', reason=begin['stop_reason'])
+    if (root / 'pause.request').exists() or correction.gate(root, begin['source_cutoff']) is not None:
+        return _closeout_result(root, 'closeout_blocked', reason='Original pause remains effective')
+    parents = []
+    for role in ('H', 'W', 'A'):
+        matching = [step for step in range(1, begin['source_cutoff'] + 1)
+                    if contracts.read(root / 'jobs' / f'{step:03d}.json')['role'] == role]
+        if matching:
+            parents.append(matching[-1])
+    instruction = ('Choose a scientifically justified frozen candidate to retain or replace for delivery within the remaining authorization. '
+        'Candidates marked audit_pending are not qualified: the adapter performs the public audit after your choice and permits delivery only if it passes. '
+        'Do not perform or manufacture mechanical audit qualification. '
+        'Use candidate_recommendation, with null if no decision is justified. Explain science, limitations and unmet objectives. '
+        'This closes exploration; requests for new H/W/E or waiting remain unresolved, not automatic dispatch.')
+    author_request = None
+    for attempt in range(3):
+        step = begin['first_step'] + attempt
+        record = _record(root, step)
+        path = root / 'jobs' / f'{step:03d}.json'
+        if not (record / 'result-identity.json').exists():
+            if (record / 'native-intent.json').exists():
+                if runtime.node_state(root, step) == 'running':
+                    native.wait_native(root, step)
+                elif _terminal_success(record):
+                    contracts.seal_result(root, step)
+                else:
+                    return _closeout_result(root, 'closeout_native_unsealed', step=step)
+            else:
+                if budget.execution_blocked(root) or not _closeout_funds(root, preparation_seconds=begin['preparation_seconds']):
+                    return _closeout_result(root, 'closeout_budget_unavailable', step=step)
+                budget.transition(root, 'advance', 'closeout_author_admission')
+                if path.exists():
+                    prior = contracts.read(path)
+                    if prior.get('purpose') != 'closeout' or prior.get('source_cutoff') != begin['source_cutoff'] or prior['direct_refs'] != [dict(path=f'inputs/parents/{parent:03d}/conclusion.json',sha256=contracts.digest(_record(root,parent)/'science-output.json')) for parent in parents]:
+                        return _closeout_result(root, 'retained_job_conflict', step=step)
+                contracts.build_job(root, step, 'A', parents, instruction=instruction, purpose='closeout',
+                    source_cutoff=begin['source_cutoff'], delivery_sources=begin['delivery_sources'], author_correction=author_request)
+                try:
+                    native.execute_native(root, step)
+                except budget.NodeBudgetUnavailable:
+                    return _closeout_result(root, 'closeout_budget_unavailable', step=step)
+                except Exception:
+                    return _closeout_result(root, 'closeout_native_unsealed', step=step)
+        job = contracts.read(path)
+        result = contracts.validate(contracts.workspace(root, step))
+        if result['next_action'] != 'finish':
+            return _closeout_result(root, 'closeout_unresolved', reason='Original A route was retained; exploration stays closed', step=step)
+        # There is no implicit replacement or retention on missing choice/qualification.
+        try:
+            delivery.binding(root, job, result)
+        except delivery.DeliveryUnresolved as error:
+            if error.code in {'delivery_no_candidate', 'delivery_no_decision'}:
+                return _closeout_result(root, 'closeout_unresolved', reason=error.code, step=step)
+            source = semantic._source(root, step)
+            author_request = dict(root=author_request['root'] if author_request else source, source=source,
+                                  reason=author_request['reason'] if author_request else error.code)
+            parents = [step]
+            instruction = 'Correct only this unresolved delivery choice: ' + error.code + '. Original science and frozen sources remain retained.'
+            continue
+        return _run_delivery_actions(root, job, result)
+    return _closeout_result(root, 'closeout_unresolved', reason='semantic_correction_limit')
+
+
+def closeout(root, *, export_only=False):
+    root = Path(root).resolve()
+    with _writer(root):
+        if budget.closeout_state(root)['begin'] is not None:
+            return _closeout_result(root, 'exported_unsubmitted', reason='operator_export_only') if export_only else _run_closeout(root)
+        cutoff = 0
+        for step in range(1, contracts.settings(root)['max_steps'] + 1):
+            record = _record(root, step)
+            if (record / 'result-identity.json').exists():
+                contracts.validate(contracts.workspace(root, step));cutoff = step
+            elif not export_only and (record / 'native-intent.json').exists() and _terminal_success(record):
+                contracts.seal_result(root, step);cutoff = step
+            else:
+                break
+        first = max((int(path.stem) for path in (root / 'jobs').glob('*.json')), default=0) + 1
+        if not (root / 'host-started.json').exists():
+            contracts.write(root / 'host-started.json', budget.clock_stamp())
+        return _start_closeout(root, cutoff, first, 'operator_closeout', export_only=export_only)

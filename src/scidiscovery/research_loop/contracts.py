@@ -297,6 +297,12 @@ def science_view(job, root=None):
     if protocol >= 8 and job.get('author_correction'):
         from . import semantic
         request = semantic.public_request(root, job)
+    closeout = None
+    if job.get('purpose') == 'closeout':
+        from . import delivery
+        closeout = dict(source_cutoff=job['source_cutoff'],
+            selection='Choose a frozen candidate ID for delivery; null means no decision, not retention. Report scientific reasoning and limitations.',
+            sources=delivery.public_sources(job['delivery_sources']))
     return {key: value for key, value in {
         'role': job['role'], 'question': job['instruction'],
         'global': dict(objective='inputs/global/objective.md',
@@ -321,6 +327,7 @@ def science_view(job, root=None):
            if job.get('handoff_protocol', 1) >= 8 else {}),
         **(dict(control_request=request)
            if job.get('handoff_protocol', 1) >= 8 and job.get('author_correction') else {}),
+        **(dict(closeout=closeout) if closeout is not None else {}),
         **(dict(search=job['search']['view']) if job.get('search') else {}),
         **(dict(progress_assessment=('Judge the current assessed work as progress/no_progress/unknown; '
                 'null means unknown. Explain scientific support and limitations in ordinary science. '
@@ -418,12 +425,21 @@ def _copy_bound(source: Path, destination: Path, sha256: str):
 
 
 def build_job(root: Path, step: int, role: str, parents: list[int], instruction='', evidence_return=None,
-              correction_request=None, author_correction=None):
+              correction_request=None, author_correction=None, *, purpose=None, source_cutoff=None, delivery_sources=None):
     if role not in ROLE_INSTRUCTIONS or type(step) is not int or step < 1:
         raise ValueError('Invalid scientific node')
     if len(parents) != len(set(parents)) or any(type(p) is not int or not 0 < p < step for p in parents):
         raise ValueError('Parents must be exact distinct preceding nodes')
     policy = settings(root)
+    if purpose is not None:
+        from . import budget
+        begin = budget.closeout_state(root)['begin']
+        if (purpose != 'closeout' or role != 'A' or begin is None or begin['mode'] != 'model'
+                or source_cutoff != begin['source_cutoff'] or step < begin['first_step']
+                or delivery_sources is None):
+            raise ValueError('Closeout task requires its immutable configured boundary')
+    elif source_cutoff is not None or delivery_sources is not None:
+        raise ValueError('Ordinary task cannot select a noncontiguous science prefix')
     job_path = root / 'jobs' / f'{step:03d}.json'
     protocol = read(regular(job_path)).get('handoff_protocol', 1) if job_path.exists() else HANDOFF_PROTOCOL
     if protocol not in (1, 2, 3, 4, 5, 6, 7, HANDOFF_PROTOCOL):
@@ -476,6 +492,9 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
                instruction=instruction, direct_refs=refs, direct_materials=materials, direct_entry_points=entry_points, global_materials=globals_,
                evidence_return=evidence_return, **(dict(selected_inputs=selected) if selected else {}),
                **(dict(handoff_protocol=protocol) if protocol >= 2 else {}))
+    if purpose is not None:
+        job.update(purpose=purpose, source_cutoff=source_cutoff, delivery_sources=delivery_sources,
+                   closeout_begin=dict(seq=begin['seq'], sha256=digest(root / 'control-ledger' / f'{begin["seq"]:06d}.json')))
     if protocol >= 8:
         previous = read(host_record(workspace(root, step - 1)) / 'result-identity.json') if step - 1 in parents else {}
         job['input_selection_status'] = previous.get('control_outcome', {}).get('selection_status', 'applied')
@@ -484,12 +503,13 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
             job['author_correction'] = author_correction
     if protocol >= 3:
         from . import history
-        job['history'] = history.bind(root, step, protocol)
+        extra_steps = [parent for parent in parents if source_cutoff is not None and parent > source_cutoff]
+        job['history'] = history.bind(root, step, protocol, source_cutoff=source_cutoff, extra_steps=extra_steps)
         if protocol >= 7:
             options = [item for parent in parents for item in history.implementation_options(root, parent)]
             job['implementation_options'] = options[:16]
             job['implementation_options_omitted_count'] = max(0, len(options) - 16)
-    if protocol >= 5 and policy.get('search_policy') is not None:
+    if purpose is None and protocol >= 5 and policy.get('search_policy') is not None:
         from . import search
         job['search'] = search.bind(root, step, role, protocol)
     if correction_request is not None:
@@ -562,13 +582,30 @@ def _validate_inputs(root, work, job):
     if job['global_materials'] != global_materials(root):
         raise ValueError('Bound global context changed')
     policy = settings(root)
+    if job.get('purpose') is not None:
+        from . import budget, delivery
+        begin = budget.closeout_state(root)['begin']
+        if (job['purpose'] != 'closeout' or job['role'] != 'A' or begin is None
+                or job.get('source_cutoff') != begin['source_cutoff'] or job['step'] < begin['first_step']
+                or job.get('closeout_begin') != dict(seq=begin['seq'],sha256=digest(root/'control-ledger'/f'{begin["seq"]:06d}.json'))):
+            raise ValueError('Closeout task boundary changed')
+        if job.get('delivery_sources') != begin.get('delivery_sources'):
+            raise ValueError('Closeout candidate originals differ from their immutable preparation')
+        expected_steps = [*range(1, job['source_cutoff'] + 1), *sorted(int(ref['path'].split('/')[2])
+            for ref in job['direct_refs'] if int(ref['path'].split('/')[2]) > job['source_cutoff'])]
+        if [row['step'] for row in job['history']['nodes']] != expected_steps:
+            raise ValueError('Closeout history differs from its frozen science prefix and direct authors')
+        delivery.validate_sources(root, job['delivery_sources'])
+        first = root / 'jobs' / f'{begin["first_step"]:03d}.json'
+        if job['step'] > begin['first_step'] and job['delivery_sources'] != read(regular(first))['delivery_sources']:
+            raise ValueError('Closeout correction cannot resolve new candidate originals')
     if job.get('handoff_protocol', 1) >= 6:
         from . import correction
         correction.validate_job(root, job)
     if job.get('handoff_protocol', 1) >= 8:
         from . import semantic
         semantic.validate_job(root, job)
-    if job.get('handoff_protocol', 1) >= 5 and policy.get('search_policy') is not None:
+    if job.get('purpose') is None and job.get('handoff_protocol', 1) >= 5 and policy.get('search_policy') is not None:
         from . import search
         if job.get('search') != search.bind(root, job['step'], job['role'], job['handoff_protocol']):
             raise ValueError('Frozen scientific search binding changed')
@@ -619,7 +656,7 @@ def seal_result(root: Path, step: int):
         result = validate(work)
         if job.get('handoff_protocol', 1) >= 3:
             from . import history
-            history.refresh(root, step + 1)
+            history.refresh(root, step + 1) if job.get('purpose') is None else None
         return result
     intent = read(regular(record / 'native-intent.json'))
     if intent['task_sha256'] != digest(regular(job_path)):
@@ -668,5 +705,5 @@ def seal_result(root: Path, step: int):
           **(dict(observations=observations) if observations else {})))
     result = validate(work)
     if job.get('handoff_protocol', 1) >= 3:
-        history.refresh(root, step + 1)
+        history.refresh(root, step + 1) if job.get('purpose') is None else None
     return result

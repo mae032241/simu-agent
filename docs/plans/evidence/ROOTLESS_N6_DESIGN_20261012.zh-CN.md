@@ -1,8 +1,8 @@
 # N6：所有节点有界与预算内交付——设计草稿
 
-状态：独立设计评审通过，N6a 开始实施，尚无源码验收。首稿：2026-10-11；范围拆分：2026-10-12。
+状态：N6a 已验收并提交 `7c6072c`；[N6b 实现、回归及安装验收通过](ROOTLESS_N6B_CLOSEOUT_20261012.zh-CN.md)。首稿：2026-10-11；范围拆分：2026-10-12。
 代码基线：`123/scidiscovery-e5.2` 的 `020004b`；依据最新 `docs/plans/ROOTLESS_LINEAGE_ADAPTIVE_SEARCH_PLAN.zh-CN.md` 的 N6/T0 条款。
-本轮只读源码和原用量，未调用模型、未恢复 N5、未改生产代码。N5/live02 全池收尾与本设计独审均已通过；[设计评审记录](ROOTLESS_N6_DESIGN_REVIEW_20261012.md)只授予实施，不代表代码或真实运行通过。
+首轮设计仅读源码和原用量；后续实施状态以上行为准。未调用科研模型、未恢复 N5。N5/live02 全池收尾与本设计独审均已通过；[设计评审记录](ROOTLESS_N6_DESIGN_REVIEW_20261012.md)只授予实施，不代表代码或真实运行通过。
 
 ## 1. 根因与可承诺的边界
 
@@ -41,7 +41,7 @@ R_seconds = 最多 3 个 A 的节点时间上限 + submit 时间 + confirm 时�
 R_steps   = 最多 3 个 A 名额 + 1 submit 名额 + 1 confirm 名额
 ```
 
-无适配器时不预留外部 submit/confirm；只允许明确的本地交付导出，终态是 `exported_unsubmitted`，不声称实际提交确认。真实 N6 交付验收必须覆盖一个配置的适配器。
+无适配器时不预留外部 submit/confirm，直接作本地导出，不派新交付 A；终态是 `exported_unsubmitted`，不声称实际提交确认。真实 N6 交付验收必须覆盖一个配置的适配器。
 prepare 校验预留能放入总额度；每次实际补正、执行、失败都消耗原额度。不得把三份预留再加到总额之外。预算修订仍只用原 `budget-amend`，不修改科学 settings 或清空已消费事实；修订总额不自动恢复探索。
 
 ## 3. 唯一预算权威与节点准入
@@ -58,7 +58,7 @@ N6 的 `max_steps` 明确覆盖科学节点名额及已接受的 submit/confirm 
 
 ## 4. 正常交付与硬停止后的 `closeout`
 
-接口：`scid-research closeout --root ...`；`--export-only` 永不启动模型或外部提交。命令持同一 writer 锁，记录显式操作者请求；命令/说明不是身份认证，科学角色不能写宿主控制目录。`run/continue` 在已发表 closeout 后只返回/恢复交付状态，不自动探索或扩额。
+接口：`scid-research closeout --root ...`；`--export-only` 永不启动模型或外部提交。命令持同一 writer 锁，可写本地收口事实，记录显式操作者请求；命令/说明不是身份认证，科学角色不能写宿主控制目录。`run/continue` 在已发表 closeout 后只返回/恢复交付状态，不自动探索或扩额。
 
 入口顺序：
 
@@ -92,7 +92,7 @@ A 使用原协议 8：在明确交付问题中，`candidate_recommendation` 指�
 - 回收原 runner/outcome 优先于任何新 action；清理未知继续保守计时并拒新工作。外部 action 也纳入 `budget.execution_blocked`。
 - closeout A 的直接原件与候选索引固定；若后续外部改模型、历史页或资格记录，验证失败，不换用近似来源。
 - 交付完成与科学目标完成分开：即使提交确认，仍 `goal_completion=not_asserted`，原停止条件未满足项必须保留。
-- 只有本地只读导出可以在总额耗尽后执行；此时不能把远端 query/confirm 偷塞进“零模型导出”。
+- 只有不调用模型或外部适配器的本地导出可以在总额耗尽后执行；此时不能把远端 query/confirm 偷塞进“零模型导出”。
 
 ## 7. 最小回归与安装验收
 
@@ -166,3 +166,16 @@ N6b 任一完整交付门禁未过，不能提前单独开放 `--delivery-policy
 高风险是停止节点后的前缀读取与 native 在途计量；次风险为外部提交未知和 public adapter 权限。源改动落点：`budget` 的单一节点/动作准入；`native` 真 Popen 与轮询；`controller` 目的切换；`contracts/history` 的冻结前缀；`cli` 新命令；一个 `delivery.py` 加一个 cov 实现。`semantic` 只复用原补正身份，`correction` 保留原科学暂停/ack，不建第二状态机。
 
 独审需确认：前缀字段及 all-actions 步数口径是否足够薄；closeout 对科学 pause 必须仍要求原 exact ack，不能借交付免除；参数缺测时是否仅接受明确标注的试用冻结值；适配器的实例原授权与隔离证明；A 原字段在新交付目的下的明确解释是否可用。若确需新增科学输出字段，停止此替代接口，交 T0 统一升级设计后再实施。
+
+## 10. N6b实施接缝补充：普通候选的冻结与提交审计
+
+2026-10-12独立设计复核通过，源码资格待实施验收。已封存候选台账中的status=ok不等于有审计资格。
+
+- 构造交付A任务前，领域resolver从已封存台账的确切run行、冻结的runs路径映射取得model/script；有界快照并绑定来源、哈希与公开审计harness/data版本，标为audit_pending。身份可回读不等于通过审计。补正和重启复用同份快照，不事后改绑。
+- A选定后在隔离scratch执行公开诚信审计；fail/skip/timeout/malformed均不更新实际提交，不能只凭leakage_flag=false判断完整审计。源及模型身份前后核对。
+- scratch没有真实提交目标写权限，也不挂载隐藏数据；核心宿主不解包科学pickle。完整审计通过后才由适配器更新目标。
+- 更新前持久化同operation意图；崩溃或半写产生unknown，只对同一身份做有界confirm。resolver、audit、submit、confirm均计入原时间预算，live或未知执行阻止新动作。旧目标在审计失败时保持。
+
+本补充不新增科学输出schema，不新增平行账本；执行器权限保持原冻结范围。
+
+实际实施超出初稿行数估算，原因与独立范围复审见 N6b 验收记录；保留一份控制账本，不以省略资格或恢复检查控制行数。Worker 原线程断点续接不在本 N6b 验收范围。

@@ -216,6 +216,7 @@ def run_native(root: Path, step: int):
                         stop = 'wall_limit'
                     elif usage(root)['observed_tokens'] >= limits['max_tokens']:
                         stop = 'token_limit'
+                    stop = stop or control_budget.exploration_stop(root, job, limits)
                     stop = stop or control_budget.stop_node(root, job, intent, limits, meter)
                     stop = stop or search.stop_reason(root, job, search_intent, limits, meter)
                     if stop:

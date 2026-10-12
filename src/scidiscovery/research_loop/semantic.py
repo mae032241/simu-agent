@@ -10,7 +10,7 @@ MAX_AUTHOR_CORRECTIONS = 2
 def outcome(root, job, payload, *, legacy_attempt=False):
     if not legacy_attempt and job.get('handoff_protocol', 1) != 8:
         raise ValueError('Control outcomes require the frozen protocol8 interpretation')
-    diagnostics = search.assess_payload(root, job, payload, legacy_attempt=legacy_attempt) if c.settings(root).get('search_policy') else []
+    diagnostics = search.assess_payload(root, job, payload, legacy_attempt=legacy_attempt) if job.get('purpose') is None and c.settings(root).get('search_policy') else []
     selection = []
     c.selected_inputs(c.workspace(root, job['step']), payload, job, selection)
     rows = [*diagnostics, *selection]
@@ -28,11 +28,19 @@ def public_request(root, job):
     """Bound scientific clarification, without the private identity chain."""
     request = job['author_correction']
     first = c.read(c.host_record(c.workspace(root, request['root']['step'])) / 'result-identity.json')
+    diagnostics = first['control_outcome']['diagnostics']
+    if job.get('purpose') == 'closeout':
+        from . import delivery
+        original, payload, _, _ = history._source(root, request['root']['step'])
+        try:
+            delivery.binding(root, original, payload)
+        except delivery.DeliveryUnresolved as error:
+            diagnostics = [dict(code=error.code, subject=payload.get('candidate_recommendation'))]
     source_step = request['source']['step']
     return dict(reason=request['reason'], source_step=source_step,
                 original_science=f'inputs/parents/{source_step:03d}/conclusion.json',
                 initial_attempt_step=request['root']['step'],
-                unresolved=first['control_outcome']['diagnostics'],
+                unresolved=diagnostics,
                 remaining_author_corrections=max(0, MAX_AUTHOR_CORRECTIONS - accepted(root, request, job['step'])))
 
 
@@ -57,6 +65,20 @@ def validate_job(root, job):
         raise ValueError('Author correction root is not its first attempt')
     root_step = request['root']['step']
     root_job, root_payload, root_seal, _ = history._source(root, root_step)
+    if job.get('purpose') == 'closeout':
+        from . import delivery
+        if root_job.get('purpose') != 'closeout' or root_job['role'] != 'A' or root_payload.get('next_action') != 'finish':
+            raise ValueError('Closeout author correction has no exact prior delivery decision')
+        try:
+            delivery.binding(root, root_job, root_payload)
+        except delivery.DeliveryUnresolved as error:
+            if error.code != request['reason']:
+                raise ValueError('Closeout author root reason changed')
+        else:
+            raise ValueError('A resolved delivery decision cannot be reinterpreted as a correction')
+        if not any(ref['path'] == f'inputs/parents/{request["source"]["step"]:03d}/conclusion.json' for ref in job['direct_refs']):
+            raise ValueError('Closeout correction must bind its exact prior author')
+        return
     if (root_job['role'], root_payload.get('next_action')) not in {('H', 'experiment'), ('A', 'continue_w')}:
         raise ValueError('Author correction root did not request a dependent experiment')
     reason = 'implementation_unresolved' if root_seal.get('control_outcome', {}).get('selection_status') == 'unresolved' else None

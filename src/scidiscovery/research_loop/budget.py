@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import errno
 import fcntl
 import hashlib
 import json
@@ -50,7 +51,7 @@ def _events(root, settings):
                 or type(event.get('at_boottime')) not in (int, float)
                 or not math.isfinite(event['at_boottime']) or event['at_boottime'] < 0
                 or not isinstance(event.get('boot_id'), str) or not event['boot_id']
-                or event.get('kind') not in {'clock', 'budget_amend'}):
+                or event.get('kind') not in {'clock', 'budget_amend', 'closeout_begin', 'action_intent', 'action_outcome'}):
             raise ValueError('Control ledger identity, sequence or time changed')
         if events:
             _duration(events[-1], event, legacy_elapsed=settings.get('time_budget_basis', 'elapsed') == 'elapsed')
@@ -65,6 +66,23 @@ def _events(root, settings):
                 raise ValueError('Budget amendment has no operator decision')
         if event['kind'] == 'clock' and event.get('phase') not in {'advance', 'paused'}:
             raise ValueError('Unknown control clock phase')
+        if event['kind'] == 'closeout_begin':
+            if (type(event.get('source_cutoff')) is not int or event['source_cutoff'] < 0
+                    or type(event.get('first_step')) is not int or event['first_step'] <= event['source_cutoff']
+                    or type(event.get('preparation_seconds')) not in (int, float)
+                    or not math.isfinite(event['preparation_seconds']) or event['preparation_seconds'] < 0
+                    or not isinstance(event.get('stop_reason'), str) or event.get('mode') not in {'model', 'export_only'}):
+                raise ValueError('Invalid immutable closeout boundary')
+        if event['kind'] == 'action_intent':
+            if (event.get('action_kind') not in {'submit', 'confirm'} or not isinstance(event.get('action_id'), str)
+                    or not isinstance(event.get('operation_id'), str) or not isinstance(event.get('decision'), dict)
+                    or not isinstance(event.get('binding'), dict) or type(event.get('max_seconds')) not in (int, float)
+                    or not 0 < event['max_seconds'] < float('inf')
+                    or type(event.get('advance_seconds')) not in (int, float) or not math.isfinite(event['advance_seconds']) or event['advance_seconds'] < 0):
+                raise ValueError('Invalid bounded delivery action intent')
+        if event['kind'] == 'action_outcome' and (not isinstance(event.get('action_id'), str)
+                or not isinstance(event.get('result'), dict) or event['result'].get('status') not in {'confirmed', 'failed', 'unknown'}):
+            raise ValueError('Invalid delivery action outcome')
         events.append(event)
         parent = hashlib.sha256(data).hexdigest()
     return events, parent
@@ -166,10 +184,38 @@ def transition(root, phase, reason):
             _append(root, settings, events, parent, kind='clock', phase=phase, reason=reason)
 
 
-def execution_blocked(root):
+def execution_blocked(root, *, ignore_operation=None):
     """Unknown or live originals prohibit inactive time and amendments."""
     from . import runtime
     settings = contracts.settings(root)
+    state = closeout_state(root)
+    if state['begin'] is not None and state['begin']['stop_reason'] == 'delivery_cleanup_unknown':
+        return True  # A read-only resolver can still leave unknown local work.
+    for action in state['actions']:
+        outcome = action['outcome']
+        if outcome is not None and not outcome['result']['cleanup_confirmed']:
+            return True
+        if outcome is None:
+            paths = list((root / 'host-delivery/action-processes').glob(action['intent']['action_id'] + '-*.json'))
+            final_phase = 'promote' if action['intent']['action_kind'] == 'submit' else 'confirm'
+            if not any(path.name == action['intent']['action_id'] + '-' + final_phase + '.json' for path in paths):
+                return True  # Popen/identity persistence window is truly unknown.
+            for path in paths:
+                record = contracts.read(contracts.regular(path))
+                identity = record.get('identity', {})
+                if not isinstance(identity, dict):
+                    return True
+                if (record.get('action_id') != action['intent']['action_id'] or record.get('operation_id') != action['intent']['operation_id']
+                        or record.get('phase') not in {'audit', 'promote', 'confirm'}
+                        or path.name != action['intent']['action_id'] + '-' + record['phase'] + '.json'
+                        or identity.get('task_sha256') != action['intent']['operation_id']
+                        or identity.get('boot_id') != clock_stamp()['boot_id']
+                        or any(type(identity.get(key)) is not int or identity[key] <= 0 for key in ('pid', 'start_ticks', 'pgid', 'sid'))
+                        or runtime.process_matches(identity, action['intent']['operation_id'])
+                        or _delivery_group_live(identity)):
+                    return True
+    if any(op != ignore_operation for op in state['unresolved_operations']):
+        return True
     for step in range(1, settings['max_steps'] + 1):
         record = contracts.host_record(contracts.workspace(root, step))
         if not (record / 'native-intent.json').exists():
@@ -188,6 +234,23 @@ def execution_blocked(root):
                 if runtime.process_matches(child, binding):
                     return True
         except (OSError, ValueError, KeyError, TypeError):
+            return True
+    return False
+
+
+def _delivery_group_live(identity):
+    """Read-only recovery check under the launcher's same-group contract."""
+    from . import runtime
+    for path in Path('/proc').glob('[0-9]*'):
+        try:
+            member = runtime.process_identity(int(path.name), identity['task_sha256'])
+        except OSError as error:
+            if error.errno in {errno.ENOENT, errno.ESRCH}:
+                continue
+            return True  # An unobservable member is not cleanup proof.
+        except (ValueError, IndexError, KeyError, TypeError):
+            return True
+        if member['state'] != 'Z' and member['sid'] == identity['sid'] and member['pgid'] == identity['pgid']:
             return True
     return False
 
@@ -251,6 +314,11 @@ def node_limits(root, job):
     if policy is None:
         return None
     limits = node_policy(policy)[job['role']]
+    if job.get('purpose') == 'closeout':
+        delivery = settings.get('delivery_policy')
+        if delivery is None or job['role'] != 'A':
+            raise ValueError('Unconfigured closeout node budget')
+        limits = dict(delivery['closeout_a'])
     if job['role'] == 'W' and settings.get('search_policy') is not None:
         limits['max_seconds'] = min(limits['max_seconds'], settings['search_policy']['max_w_seconds'])
         limits['max_observed_tokens'] = min(limits['max_observed_tokens'], settings['search_policy']['max_w_observed_tokens'])
@@ -285,7 +353,22 @@ def node_admission(root, job, *, ignore_step=None, intent=None):
         return 'node_budget_unavailable_seconds'
     if limits['max_tokens'] - meter['observed_tokens'] < policy['max_observed_tokens']:
         return 'node_budget_unavailable_tokens'
-    return None
+    if job.get('purpose') == 'closeout':
+        settings = contracts.settings(root)
+        delivery = settings['delivery_policy']
+        begin = closeout_state(root)['begin']
+        if begin is None or begin['mode'] != 'model' or begin['source_cutoff'] != job['source_cutoff']:
+            raise ValueError('Closeout node has no exact model boundary')
+        external = delivery['adapter'] is not None
+        floor = max(0., delivery['cleanup_seconds'] - begin['preparation_seconds'])
+        floor += delivery['submit_seconds'] + delivery['confirm_seconds'] if external else 0
+        additional = 0 if (root / 'jobs' / f'{job["step"]:03d}.json').exists() else 1
+        if (limits['seconds_remaining'] < max(0., policy['max_seconds'] - duration) + floor
+                or limits['max_tokens'] - meter['observed_tokens'] < policy['max_observed_tokens'] + delivery['inflight_tokens']
+                or settings['max_steps'] - used_steps(root) < additional + (2 if external else 0)):
+            return 'closeout_budget_unavailable'
+        return None
+    return exploration_admission(root, job, ignore_step=ignore_step, intent=intent)
 
 
 def accept_node(root, job):
@@ -319,3 +402,158 @@ def node_report(root, job, intent, meter):
                 cached_input_tokens=meter['cached_input_tokens'], output_tokens=meter['output_tokens'],
                 observed_tokens=meter['input_tokens'] + meter['output_tokens'], dispatches=1,
                 limits=intent['budget_slice']['limits'])
+
+
+def closeout_state(root):
+    """Only immutable control facts; no second balance or mutable mode file."""
+    events, _ = _events(root, contracts.settings(root))
+    begin, actions, operations = None, {}, {}
+    for event in events:
+        if event['kind'] == 'closeout_begin':
+            if begin is not None:
+                raise ValueError('Closeout boundary cannot be published twice')
+            begin = event
+        elif event['kind'] == 'action_intent':
+            if begin is None or event['action_id'] in actions:
+                raise ValueError('Delivery intent requires a unique closeout action')
+            op = event['operation_id']
+            expected = dict(decision=event['decision'], binding=event['binding'])
+            if op in operations:
+                if event['action_kind'] != 'confirm' or expected != operations[op]:
+                    raise ValueError('Delivery may only confirm the exact accepted operation')
+            elif event['action_kind'] != 'submit':
+                raise ValueError('Confirmation has no original submit identity')
+            else:
+                operations[op] = expected
+            actions[event['action_id']] = dict(intent=event, outcome=None)
+        elif event['kind'] == 'action_outcome':
+            action = actions.get(event['action_id'])
+            if action is None or action['outcome'] is not None:
+                raise ValueError('Delivery outcome requires its original intent')
+            _validate_action_result(action['intent'], event['result'])
+            action['outcome'] = event
+    rows = list(actions.values())
+    unresolved = []
+    for op in operations:
+        sequence = [row for row in rows if row['intent']['operation_id'] == op]
+        confirmed = max((row['intent']['seq'] for row in sequence if row['outcome'] is not None
+                         and row['outcome']['result']['status'] == 'confirmed'), default=0)
+        if any(row['intent']['seq'] > confirmed and (row['outcome'] is None
+               or row['outcome']['result']['status'] == 'unknown') for row in sequence):
+            unresolved.append(op)
+    return dict(begin=begin, actions=rows, unresolved_operations=unresolved)
+
+
+def delivery_reserve(settings):
+    policy = settings.get('delivery_policy')
+    if policy is None:
+        return None
+    external = policy['adapter'] is not None
+    return dict(tokens=3 * policy['closeout_a']['max_observed_tokens'] + policy['inflight_tokens'],
+                seconds=3 * policy['closeout_a']['max_seconds'] + policy['cleanup_seconds']
+                        + (policy['submit_seconds'] + policy['confirm_seconds'] if external else 0),
+                steps=3 + (2 if external else 0))
+
+
+def used_steps(root):
+    prepared = [int(path.stem) for path in (root / 'jobs').glob('*.json')]
+    return max(prepared, default=0) + len(closeout_state(root)['actions'])
+
+
+def exploration_admission(root, job, *, ignore_step=None, intent=None):
+    settings = contracts.settings(root)
+    reserve = delivery_reserve(settings)
+    if reserve is None or job.get('purpose') == 'closeout':
+        return None
+    from . import native
+    limits, meter = snapshot(root), native.usage(root)
+    node = node_limits(root, job)
+    if any(step != ignore_step for step in meter['unknown_steps']):
+        return 'usage_unknown'
+    if limits['max_tokens'] - meter['observed_tokens'] < node['max_observed_tokens'] + reserve['tokens']:
+        return 'closeout_reserve_tokens'
+    duration = _node_duration(root, job, intent, limits) if intent is not None else 0.
+    if limits['seconds_remaining'] < max(0., node['max_seconds'] - duration) + reserve['seconds']:
+        return 'closeout_reserve_seconds'
+    additional = 0 if (root / 'jobs' / f'{job["step"]:03d}.json').exists() else 1
+    if settings['max_steps'] - used_steps(root) < additional + reserve['steps']:
+        return 'closeout_reserve_steps'
+    return None
+
+
+def begin_closeout(root, cutoff, first_step, reason, *, export_only=False, delivery_sources=None, preparation_seconds=0.):
+    settings = contracts.settings(root)
+    with _ledger_writer(root):
+        events, parent = _events(root, settings)
+        existing = closeout_state(root)['begin']
+        if existing is not None:
+            return existing
+        return _append(root, settings, events, parent, kind='closeout_begin', source_cutoff=cutoff,
+                       first_step=first_step, stop_reason=reason, mode='export_only' if export_only else 'model',
+                       delivery_sources=delivery_sources, preparation_seconds=preparation_seconds)
+
+
+def accept_action(root, kind, operation_id, decision, binding, max_seconds):
+    settings = contracts.settings(root)
+    begin = closeout_state(root)['begin']
+    if (settings.get('delivery_policy') is None or settings['delivery_policy']['adapter'] is None
+            or begin is None or begin['mode'] != 'model'):
+        raise ValueError('External delivery requires its frozen model closeout authorization')
+    if kind not in {'submit', 'confirm'} or execution_blocked(root, ignore_operation=operation_id if kind == 'confirm' else None):
+        raise RuntimeError('Delivery action is blocked by an original unresolved execution')
+    from . import native
+    meter = native.usage(root)
+    limits = snapshot(root)
+    if meter['unknown_steps'] or meter['observed_tokens'] >= limits['max_tokens']:
+        raise NodeBudgetUnavailable('closeout_budget_unavailable')
+    if limits['seconds_remaining'] < max_seconds or used_steps(root) >= settings['max_steps']:
+        raise NodeBudgetUnavailable('closeout_budget_unavailable')
+    with _ledger_writer(root):
+        events, parent = _events(root, settings)
+        action_id = f'action-{len(events) + 1:06d}'
+        return _append(root, settings, events, parent, kind='action_intent', action_id=action_id,
+                       action_kind=kind, operation_id=operation_id, decision=decision, binding=binding,
+                       max_seconds=max_seconds, advance_seconds=limits['advance_seconds'])
+
+
+def action_outcome(root, intent, result):
+    settings = contracts.settings(root)
+    _validate_action_result(intent, result)
+    with _ledger_writer(root):
+        events, parent = _events(root, settings)
+        return _append(root, settings, events, parent, kind='action_outcome', action_id=intent['action_id'], result=result)
+
+
+def exploration_stop(root, job, limits):
+    reserve = delivery_reserve(contracts.settings(root))
+    if reserve is None or job.get('purpose') == 'closeout':
+        return None
+    from . import native
+    if limits['seconds_remaining'] <= reserve['seconds']:
+        return 'closeout_protected_time_limit'
+    if limits['max_tokens'] - native.usage(root)['observed_tokens'] <= reserve['tokens']:
+        return 'closeout_protected_token_limit'
+    return None
+
+
+def _validate_action_result(intent, result):
+    binding = intent['binding']
+    if (set(result) != {'status', 'operation_id', 'candidate_id', 'artifact_sha256', 'note', 'cleanup_confirmed'}
+            or result['status'] not in {'confirmed', 'failed', 'unknown'}
+            or type(result['cleanup_confirmed']) is not bool
+            or not result['cleanup_confirmed'] and result['status'] != 'unknown'
+            or result['operation_id'] != intent['operation_id']
+            or result['candidate_id'] != binding['candidate_id']
+            or not isinstance(result['note'], str) or len(result['note'].encode()) > 4096
+            or result['artifact_sha256'] not in {None, binding['source']['objects']['artifact']['sha256']}
+            or result['status'] == 'confirmed' and result['artifact_sha256'] != binding['source']['objects']['artifact']['sha256']):
+        raise ValueError('Delivery result differs from its exact accepted candidate and artifact')
+
+
+def action_process(root, intent, phase, identity):
+    if phase not in {'audit', 'promote', 'confirm'} or identity['task_sha256'] != intent['operation_id']:
+        raise ValueError('Delivery process differs from its exact action phase')
+    path = root / 'host-delivery/action-processes' / (intent['action_id'] + '-' + phase + '.json')
+    if path.exists() or path.is_symlink():
+        raise ValueError('Delivery action phase cannot launch twice')
+    contracts.write(path, dict(action_id=intent['action_id'], operation_id=intent['operation_id'], phase=phase, identity=identity))

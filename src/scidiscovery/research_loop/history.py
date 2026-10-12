@@ -316,10 +316,27 @@ def resolve_implementation(root, object_id, receipts):
     return sorted(seal['materials'], key=lambda row: row['path'])[index - 1]
 
 
-def rebuild(root, before_step):
+def rebuild(root, before_step, *, source_cutoff=None, extra_steps=(), write_cache=True):
     """Recreate small node projections from originals; caches are not authority."""
     records, current_h = [], None
-    for step in range(1, before_step):
+    if source_cutoff is None:
+        steps = list(range(1, before_step))
+        if extra_steps:
+            raise ValueError('Ordinary history cannot skip scientific originals')
+    else:
+        if type(source_cutoff) is not int or not 0 <= source_cutoff < before_step:
+            raise ValueError('Invalid frozen scientific source cutoff')
+        if (list(extra_steps) != sorted(set(extra_steps))
+                or any(type(step) is not int or not source_cutoff < step < before_step for step in extra_steps)):
+            raise ValueError('Closeout history requires exact preceding corrective nodes')
+        steps = [*range(1, source_cutoff + 1), *extra_steps]
+    for step in steps:
+        if source_cutoff is not None:
+            c.validate(c.workspace(root, step))
+            if step > source_cutoff:
+                extra = c.read(root / 'jobs' / f'{step:03d}.json')
+                if extra.get('purpose') != 'closeout' or extra.get('source_cutoff') != source_cutoff:
+                    raise ValueError('Closeout history cannot include an unrelated stopped node')
         job, payload, seal, seal_sha = _source(root, step)
         if job['role'] == 'H':
             current_h = step
@@ -360,7 +377,8 @@ def rebuild(root, before_step):
                    observation=observation)
         # Replacing a disposable projection repairs deletion/corruption; originals
         # and sealed observer snapshots above remain independently verified.
-        c.write(root / 'host-history/nodes' / f'{step:03d}.json', row)
+        if write_cache:
+            c.write(root / 'host-history/nodes' / f'{step:03d}.json', row)
         records.append(row)
     return records
 
@@ -425,8 +443,8 @@ def candidate_overview(records):
                 limitation='Highest means highest observed metric only; candidate models are not retained unless a sealed artifact or explicit archived snapshot exists. Proxy groups use the frozen adapter evaluation_key and direction; they do not establish target optimality. Read each original scientific conclusion for applicability and blind spots. Null slots mean unknown, not agreement.')
 
 
-def bind(root, step, protocol=6):
-    records = rebuild(root, step)
+def bind(root, step, protocol=6, *, source_cutoff=None, extra_steps=()):
+    records = rebuild(root, step, source_cutoff=source_cutoff, extra_steps=extra_steps)
     if protocol >= 7:
         for record in records:
             options = implementation_options(root, record['step'])
