@@ -29,7 +29,7 @@ def status(root: Path):
             record = execution.record(root, step)
             intent = contracts.read(record / 'native-intent.json') if (record / 'native-intent.json').exists() else {}
             outcome = contracts.read(record / 'native-outcome.json') if (record / 'native-outcome.json').exists() else {}
-            node.update(budget_slice=intent.get('budget_slice'), budget_report=outcome.get('budget_slice'), stop_reason=outcome.get('stop_reason'))
+            node.update(**(dict(node_budget_mode='soft') if budget.node_mode(root)=='soft' else {}), budget_slice=intent.get('budget_slice'), budget_report=outcome.get('budget_slice'), stop_reason=outcome.get('stop_reason'))
         if settings.get('resume_policy') is not None:
             node['continuations'] = len(execution.records(root, step)) - 1
         nodes.append(node)
@@ -51,9 +51,10 @@ def main(argv=None):
     prepare.add_argument('--public-root', type=Path, required=True)
     prepare.add_argument('--native-launcher-json', required=True, help='An argv JSON array, e.g. ["codex"]')
     prepare.add_argument('--history-observer-config', type=Path, help='Optional trusted host adapter/config JSON; frozen at preparation')
-    prepare.add_argument('--search-policy', type=Path, help='Optional JSON override of the three frozen W-search ceilings')
+    prepare.add_argument('--search-policy', type=Path, help='Frozen W time/token targets (hard in hard mode) and hard requested-repair count')
     prepare.add_argument('--correction-policy', type=Path, help='Explicitly enable N4 with review_after/pause_after JSON thresholds (defaults 3/2)')
-    prepare.add_argument('--node-budget-policy', type=Path, help='Explicit H/W/A/E max_observed_tokens/max_seconds JSON; no delivery guarantee')
+    prepare.add_argument('--node-budget-policy', type=Path, help='Explicit H/W/A/E time/token targets; hard ceilings only with --node-budget-mode hard; no delivery guarantee')
+    prepare.add_argument('--node-budget-mode', choices=['soft','hard'], default='soft', help='Scientific node targets are soft by default; shared authorization stays hard')
     prepare.add_argument('--delivery-policy', type=Path, help='Explicit frozen closeout reserve and isolated delivery adapter JSON')
     prepare.add_argument('--worker-resume-policy', type=Path, help='Explicit qualified same-thread finite continuation policy JSON')
     prepare.add_argument('--max-tokens', type=int, required=True)
@@ -89,7 +90,7 @@ def main(argv=None):
         if args.command == 'prepare':
             settings = controller.prepare(root, args.objective, args.public_root,
                 json.loads(args.native_launcher_json), max_tokens=args.max_tokens, max_seconds=args.max_seconds,
-                max_steps=args.max_steps, model=args.model, reasoning_effort=args.reasoning_effort,
+                max_steps=args.max_steps, model=args.model, reasoning_effort=args.reasoning_effort, node_budget_mode=args.node_budget_mode,
                 service_tier=args.service_tier, user_updates=args.user_update,
                 search_policy=contracts.read(contracts.regular(args.search_policy, limit=4096))
                     if args.search_policy is not None else search.DEFAULT_POLICY,

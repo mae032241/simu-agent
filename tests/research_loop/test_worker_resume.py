@@ -40,7 +40,7 @@ def instance(tmp_path, *, cap=100, attempts=2, max_tokens=1000, steps=6, search_
     launcher=tmp_path/'native.py';launcher.write_text(FAKE)
     root=tmp_path/'instance'
     controller.prepare(root,objective,public,[sys.executable,str(launcher)],max_tokens=max_tokens,
-        max_seconds=120,max_steps=steps,model='no-model',reasoning_effort='high',search_policy=search_policy,delivery_policy=delivery_policy,
+        max_seconds=120,max_steps=steps,model='no-model',reasoning_effort='high', node_budget_mode='hard',search_policy=search_policy,delivery_policy=delivery_policy,
         node_budget_policy={role:dict(max_observed_tokens=cap,max_seconds=20) for role in 'HWAE'},
         resume_policy=dict(max_attempts=attempts,protocol='codex_exec_resume',usage_scope='turn'))
     return root

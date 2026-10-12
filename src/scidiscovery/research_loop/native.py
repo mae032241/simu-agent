@@ -169,10 +169,17 @@ def run_native(root: Path, step: int, attempt=0):
                   shared_observed_tokens_remaining=max(0, limits['max_tokens']-budget['observed_tokens']),
                   metering='Native usage may be delayed; this is not a guaranteed billing cap.',
                   **(dict(node_budget=intent['budget_slice']['limits']) if intent.get('budget_slice') else {})), ensure_ascii=False))
+    if control_budget.node_mode(root)=='soft':
+        prompt += ('\nNode and search limits are soft targets, not renewed grants. Between bounded actions read work/budget-status.json when available. '
+                   'Near/reached targets or delivery reserve: preserve useful results and return your scientific JSON promptly. '
+                   'This file is advisory and usage can be unknown; shared hard limits still apply. \n')
     if attempt:
         remaining = dict(observed_tokens=max(0, intent['budget_slice']['limits']['max_observed_tokens'] - intent['budget_slice']['previous_tokens']),
                          active_seconds=max(0., intent['budget_slice']['limits']['max_seconds'] - control_budget._node_duration(root, job, intent, limits)))
-        prompt = ('Original node remaining budget: ' + json.dumps(remaining) + '\nContinue this same task/session/workspace. Read existing checkpoints and confirmed results; '
+        if control_budget.node_mode(root)=='soft':
+            remaining.update(mode='soft_targets',previous_observed_tokens=intent['budget_slice']['previous_tokens'])
+        label = 'Original soft-target gaps (zero is not a new grant): ' if control_budget.node_mode(root)=='soft' else 'Original node remaining budget: '
+        prompt = (label + json.dumps(remaining) + '\nContinue this same task/session/workspace. Read existing checkpoints and confirmed results; '
                   'collect or recover managed executions by their original IDs rather than resubmitting. '
                   'Use scientific judgment for ordinary native shell checkpoints; no new mechanical registry is required.\n' + prompt)
     home = root / 'native-homes' / work.name
@@ -209,6 +216,9 @@ def run_native(root: Path, step: int, attempt=0):
                 return
             if settings.get('resume_policy') is not None:
                 continuation.validate_task(root, step)
+            control_budget.write_node_hint(root,job,intent,limits,meter,observed=observed)
+            next_hint=time.monotonic()+5
+            hint_dirty=False
             process = subprocess.Popen(args, cwd=work, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                        stderr=err, env=env, start_new_session=True)
             process_id = runtime.process_identity(process.pid, execution.identity(root, step, attempt))
@@ -244,6 +254,7 @@ def run_native(root: Path, step: int, attempt=0):
                                 for key in meter:
                                     meter[key] += current[key]
                                 observed = True
+                                hint_dirty=True
                                 write(record / 'usage.json', meter)
                     # Pause is a next-node barrier. Accepted work can finish and
                     # seal; it must not become an unknown submission on resume.
@@ -257,6 +268,10 @@ def run_native(root: Path, step: int, attempt=0):
                     stop = stop or search.stop_reason(root, job, search_intent, limits, meter)
                     if stop:
                         break
+                    if hint_dirty or time.monotonic()>=next_hint:
+                        control_budget.write_node_hint(root,job,intent,limits,meter,observed=observed)
+                        next_hint=time.monotonic()+5
+                        hint_dirty=False
     except BaseException as exc:
         error = exc
         stop = 'native_error_unknown'

@@ -24,12 +24,15 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
             resume_policy: dict | None = None,
             lineage_projection_version: int | None = 1,
             role_guidance: dict | None = guidance.DEFAULT,
-            selection_protocol: int | None = 1) -> dict:
+            selection_protocol: int | None = 1,
+            node_budget_mode: str = 'soft') -> dict:
     """Freeze an explicit goal and finite launch budgets in a fresh directory."""
     if lineage_projection_version is not None and (type(lineage_projection_version) is not int or lineage_projection_version != 1):
         raise ValueError('Unsupported lineage projection version')
     if selection_protocol is not None and (type(selection_protocol) is not int or selection_protocol != 1):
         raise ValueError('Unsupported public selection protocol')
+    if node_budget_mode not in ('soft', 'hard'):
+        raise ValueError('Node budget mode must be soft or hard')
     root, objective, public_root = map(Path, (root, objective, public_root))
     for name, value in (("max_tokens", max_tokens), ("max_steps", max_steps),
                         ("max_output_item_bytes", max_output_item_bytes),
@@ -79,6 +82,7 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
         model=model, reasoning_effort=reasoning_effort, service_tier=service_tier,
         max_output_item_bytes=max_output_item_bytes,
         max_output_total_bytes=max_output_total_bytes)
+    settings['node_budget_mode'] = node_budget_mode
     if selection_protocol is not None and lineage_projection_version == 1:
         settings['selection_protocol'] = selection_protocol
     if advice is not None:

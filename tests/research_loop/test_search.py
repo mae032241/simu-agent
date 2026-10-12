@@ -35,7 +35,7 @@ def scene(tmp_path, monkeypatch):
     objective = public / 'objective.md';objective.write_text('Resolve mechanisms without assuming proxy optimality.')
     root = tmp_path / 'instance'
     controller.prepare(root, objective, public, ['fake'], max_tokens=10_000_000,
-        max_seconds=3600, max_steps=24, model='fake', reasoning_effort='high')
+        max_seconds=3600, max_steps=24, model='fake', reasoning_effort='high', node_budget_mode='hard')
     return root
 
 
@@ -334,7 +334,7 @@ def process_instance(tmp_path, mode='normal'):
     if mode == 'tokens':
         limits['max_w_observed_tokens'] = 100
     controller.prepare(root, objective, public, [sys.executable, str(launcher)], max_tokens=100_000,
-        max_seconds=60, max_steps=6, model='fixture', reasoning_effort='high', search_policy=None if mode == 'legacy' else limits)
+        max_seconds=60, max_steps=6, model='fixture', reasoning_effort='high', node_budget_mode='hard', search_policy=None if mode == 'legacy' else limits)
     return root
 
 

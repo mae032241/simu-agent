@@ -55,7 +55,7 @@ def instance(tmp_path, *, limits=None, mode='normal', max_tokens=100_000,
     root = tmp_path / 'instance'
     controller.prepare(root, objective, public, [sys.executable, str(launcher)],
                        max_tokens=max_tokens, max_seconds=max_seconds, max_steps=6,
-                       model='fixture-no-model', reasoning_effort='high',
+                       model='fixture-no-model', reasoning_effort='high', node_budget_mode='hard',
                        search_policy=search_policy, node_budget_policy=limits)
     return root
 

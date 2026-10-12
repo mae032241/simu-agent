@@ -295,6 +295,13 @@ class NodeBudgetUnavailable(ValueError):
         self.reason = reason
 
 
+def node_mode(root):
+    mode = contracts.settings(root).get('node_budget_mode', 'hard')
+    if mode not in ('soft', 'hard'):
+        raise ValueError('Frozen node budget mode changed')
+    return mode
+
+
 def node_policy(value):
     """Explicit operator ceilings for every role; there are no trial defaults."""
     if not isinstance(value, dict) or set(value) != {'H', 'W', 'A', 'E'}:
@@ -399,7 +406,7 @@ def node_admission(root, job, *, ignore_step=None, intent=None):
     duration = _node_duration(root, job, intent, limits) if intent is not None else 0.
     if limits['seconds_remaining'] < max(0., policy['max_seconds'] - duration):
         return 'node_budget_unavailable_seconds'
-    needed_tokens = policy['max_observed_tokens'] - (intent.get('budget_slice', {}).get('previous_tokens', 0) if intent else 0)
+    needed_tokens = max(0, policy['max_observed_tokens'] - (intent.get('budget_slice', {}).get('previous_tokens', 0) if intent else 0))
     if limits['max_tokens'] - meter['observed_tokens'] < needed_tokens:
         return 'node_budget_unavailable_tokens'
     if job.get('purpose') == 'closeout':
@@ -438,6 +445,8 @@ def stop_node(root, job, intent, limits, meter):
     if policy is None:
         return None
     duration = _node_duration(root, job, intent, limits)
+    if node_mode(root) == 'soft':
+        return None
     if duration >= policy['max_seconds']:
         return 'node_slice_time_limit'
     if meter['input_tokens'] + meter['output_tokens'] + intent['budget_slice'].get('previous_tokens', 0) >= policy['max_observed_tokens']:
@@ -459,11 +468,12 @@ def accept_continuation(root, job, paths):
     policy = node_limits(root, job)
     limits, meter = snapshot(root), native.usage(root)
     if (type(seconds) not in (int, float) or not math.isfinite(seconds) or seconds < 0
-            or tokens >= policy['max_observed_tokens'] or seconds >= policy['max_seconds']):
+            or node_mode(root)=='hard' and (tokens >= policy['max_observed_tokens'] or seconds >= policy['max_seconds'])):
         raise NodeBudgetUnavailable('worker_resume_node_exhausted')
     reserve = delivery_reserve(contracts.settings(root)) or dict(tokens=0, seconds=0, steps=0)
-    if (meter['unknown_steps'] or limits['max_tokens'] - meter['observed_tokens'] < policy['max_observed_tokens'] - tokens + reserve['tokens']
-            or limits['seconds_remaining'] < policy['max_seconds'] - seconds + reserve['seconds']
+    if (meter['unknown_steps'] or limits['max_tokens'] - meter['observed_tokens'] < max(0,policy['max_observed_tokens'] - tokens) + reserve['tokens']
+            or limits['seconds_remaining'] < max(0.,policy['max_seconds'] - seconds) + reserve['seconds']
+            or node_mode(root)=='soft' and (limits['max_tokens'] - meter['observed_tokens'] <= reserve['tokens'] or limits['seconds_remaining'] <= reserve['seconds'])
             or contracts.settings(root)['max_steps'] - used_steps(root) < 1 + reserve['steps']):
         raise NodeBudgetUnavailable('worker_resume_budget_unavailable')
     return dict(task_sha256=contracts.digest(root / 'jobs' / f'{job["step"]:03d}.json'), role=job['role'],
@@ -540,7 +550,7 @@ def exploration_admission(root, job, *, ignore_step=None, intent=None):
     node = node_limits(root, job)
     if any(step != ignore_step for step in meter['unknown_steps']):
         return 'usage_unknown'
-    needed_tokens = node['max_observed_tokens'] - (intent.get('budget_slice', {}).get('previous_tokens', 0) if intent else 0)
+    needed_tokens = max(0, node['max_observed_tokens'] - (intent.get('budget_slice', {}).get('previous_tokens', 0) if intent else 0))
     if limits['max_tokens'] - meter['observed_tokens'] < needed_tokens + reserve['tokens']:
         return 'closeout_reserve_tokens'
     duration = _node_duration(root, job, intent, limits) if intent is not None else 0.
@@ -597,7 +607,7 @@ def action_outcome(root, intent, result):
 
 def exploration_stop(root, job, limits):
     reserve = delivery_reserve(contracts.settings(root))
-    if reserve is None or job.get('purpose') == 'closeout':
+    if reserve is None or job.get('purpose') == 'closeout' or node_mode(root)=='soft':
         return None
     from . import native
     if limits['seconds_remaining'] <= reserve['seconds']:
@@ -628,3 +638,56 @@ def action_process(root, intent, phase, identity):
     if path.exists() or path.is_symlink():
         raise ValueError('Delivery action phase cannot launch twice')
     contracts.write(path, dict(action_id=intent['action_id'], operation_id=intent['operation_id'], phase=phase, identity=identity))
+
+
+def write_node_hint(root, job, intent, limits, meter, *, observed):
+    """Optional replaceable advice; never read as a grant, meter or evidence."""
+    if node_mode(root)!='soft':
+        return
+    targets=node_limits(root,job)
+    duration=_node_duration(root,job,intent,limits) if targets else None
+    if targets is None and job['role']=='W' and job.get('search'):
+        from . import search
+        search.stop_reason(root,job,intent,limits,meter)
+        targets=dict(max_observed_tokens=job['search']['limits']['max_w_observed_tokens'],max_seconds=job['search']['limits']['max_w_seconds'])
+        duration=limits['advance_seconds']-intent['search_slice']['advance_seconds']
+    prior=intent.get('budget_slice',{}).get('previous_tokens',0)
+    consumed=prior+meter['input_tokens']+meter['output_tokens'] if observed else None
+    reserve=delivery_reserve(contracts.settings(root)) or dict(tokens=0,seconds=0,steps=0)
+    from . import native
+    shared=native.usage(root)
+    remaining=limits['max_tokens']-shared['observed_tokens']
+    state=('reached' if targets and ((consumed is not None and consumed>=targets['max_observed_tokens']) or duration>=targets['max_seconds'])
+           else 'near' if targets and ((consumed is not None and consumed>=.8*targets['max_observed_tokens']) or duration>=.8*targets['max_seconds']) else 'within')
+    hint=dict(scope='advice_only_not_authorization_or_scientific_evidence',updated_at_unix=time.time(),mode='soft',
+        target_state=state,targets=targets,active_seconds=duration,observed_tokens_lower_bound=consumed,
+        metering='observed_lower_bound' if observed else 'inflight_unknown',
+        shared_observed_tokens_remaining_upper_bound=max(0,remaining),shared_active_seconds_remaining=limits['seconds_remaining'],
+        reserve_state='reached' if remaining<=reserve['tokens'] or limits['seconds_remaining']<=reserve['seconds'] else 'within',
+        instruction='Near/reached targets or reserve: finish bounded actions and return your scientific JSON. Unknown usage is not zero. Shared hard limits still apply.')
+    data=(json.dumps(hint,ensure_ascii=False,indent=2,allow_nan=False)+'\n').encode()
+    if len(data)>4096:raise ValueError('Budget advice exceeds byte bound')
+    directory=contracts.workspace(root,job['step'])/'work'
+    fd=None;temporary=None
+    try:
+        if directory.resolve()!=directory or directory.is_symlink():return
+        destination=directory/'budget-status.json'
+        if destination.is_symlink() or destination.exists() and not destination.is_file():
+            return
+        fd=os.open(directory,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW|os.O_CLOEXEC)
+        identity=os.fstat(fd)
+        temporary='.budget-hint-'+os.urandom(12).hex()+'.tmp'
+        item=os.open(temporary,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW|os.O_CLOEXEC,0o600,dir_fd=fd)
+        with os.fdopen(item,'wb') as stream:
+            stream.write(data);stream.flush();os.fsync(stream.fileno());os.fchmod(stream.fileno(),0o400)
+        current=os.stat(directory,follow_symlinks=False)
+        if (current.st_dev,current.st_ino)!=(identity.st_dev,identity.st_ino):return
+        os.replace(temporary,'budget-status.json',src_dir_fd=fd,dst_dir_fd=fd);temporary=None
+    except OSError:
+        pass  # Advice unavailable cannot weaken or replace the independent guards.
+    finally:
+        if fd is not None:
+            if temporary is not None:
+                try:os.unlink(temporary,dir_fd=fd)
+                except OSError:pass
+            os.close(fd)

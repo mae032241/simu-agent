@@ -323,6 +323,13 @@ def bind(root, step, role, protocol=6, *, write_pages=True, state=None, unified=
             'Hard slice overruns retain unsealed failure; soft windows are advice.')
         view['focus'] = {key: value for key, value in focus.items() if key != 'repair_source'} if focus else None
         view['repair_binding'] = repair_binding
+    if budget.node_mode(root)=='soft':
+        view['instructions']=view['instructions'].replace(
+            'Hard slice overruns retain unsealed failure; soft windows are advice.',
+            'Node time/token budgets are soft targets: preserve results and conclude near targets; shared limits remain hard.')
+        view['instructions']=view['instructions'].replace(
+            'Soft windows are initial advice, not notifications. Hard overruns retain unsealed failure.',
+            'Soft targets are advice, not live notifications. Shared hard limits retain unsealed failure.')
     files = []
     if protocol >= 8:
         view['instructions'] += (' H plans contain only this round\'s additions/revisions (at most four), not the whole '
@@ -419,6 +426,8 @@ def stop_reason(root, job, intent, limits, meter):
     duration = limits['advance_seconds'] - anchor['advance_seconds']
     if duration < 0:
         raise ValueError('W slice consumption cannot move backwards')
+    if budget.node_mode(root) == 'soft':
+        return None
     if duration >= job['search']['limits']['max_w_seconds']:
         return 'w_slice_time_limit'
     if meter['input_tokens'] + meter['output_tokens'] >= job['search']['limits']['max_w_observed_tokens']:
