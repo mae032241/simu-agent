@@ -517,6 +517,12 @@ def bind(root, step, protocol=6, *, source_cutoff=None, extra_steps=()):
 
 
 def validate(root, work, binding):
+    if binding.get('audit_projection_version') == 1:
+        from . import candidate_audit
+        sources = [_source(root, row['step']) for row in binding['nodes']]
+        expected = candidate_audit.collect_refs(root, sources, step=int(work.name), adjacent=binding.get('adjacent_audit'))
+        if binding['audit_receipts'] != expected:
+            raise ValueError('Frozen audit receipts differ from their sealed prefix anchors')
     for row in binding['nodes']:
         _, _, _, seal_sha = _source(root, row['step'])
         if seal_sha != row['seal_sha256']:

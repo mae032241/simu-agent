@@ -244,3 +244,61 @@ def execute(root, job, payload):
         return finish(result['status'], result['note'], cleanup=result['cleanup_confirmed'], result=result)
     except delivery.DeliveryUnresolved as error:
         return finish('unknown', error.code, cleanup=error.code != 'delivery_cleanup_unknown')
+
+
+def collect_refs(root, sources, *, step, adjacent=None):
+    """Only frozen refs witnessed by the verified prefix, plus this exact next A."""
+    refs = {}
+    values = []
+    steps = {job['step'] for job, _, _, _ in sources}
+    for job, _, _, _ in sources:
+        ref = job.get('candidate_audit')
+        if ref is not None:
+            if job['role'] != 'A' or ref['step'] != job['step'] - 1:
+                raise ValueError('Historical audit lacks its exact adjacent sealed anchor')
+            values.append(ref)
+    if adjacent is not None:
+        if adjacent['step'] != step - 1 or adjacent['step'] not in steps:
+            raise ValueError('Adjacent audit is outside the frozen scientific prefix')
+        values.append(adjacent)
+    for ref in values:
+        if not 0 < ref['step'] < step:
+            raise ValueError('Audit receipt is outside the task boundary')
+        public_receipt(root, ref)  # Original outcome/binding/process, not scientific prose.
+        if ref['step'] in refs and refs[ref['step']] != ref:
+            raise ValueError('Conflicting original audit receipts')
+        refs[ref['step']] = ref
+    return [refs[key] for key in sorted(refs)]
+
+
+def project_receipts(root, records, refs):
+    """Adapter results and candidate-byte attribution; no leakage interpretation."""
+    models = {}
+    for record in records:
+        observation = record.get('observation') or {}
+        for context in observation.get('contexts', []):
+            model = context.get('model')
+            if context.get('status') == 'known_success' and model and model.get('retention') == 'archived':
+                models.setdefault(context['candidate_id'], set()).add((model['sha256'], model['size_bytes']))
+        actual = observation.get('actual_submission')
+        if actual and actual.get('candidate_id') is not None and (actual.get('artifact') or {}).get('retention') == 'archived':
+            model = actual['artifact']
+            models.setdefault(actual['candidate_id'], set()).add((model['sha256'], model['size_bytes']))
+    rows = []
+    for ref in refs:
+        public_receipt(root, ref)
+        value = _outcome(root, ref['step'])
+        result, chosen = value['result'], value['candidate_id']
+        binding = None
+        if value.get('binding_sha256') is not None:
+            binding = c.read(c.regular(_directory(root, ref['step']) / 'binding.json'))
+        artifact = binding['source']['objects']['artifact'] if binding is not None else None
+        identities = models.get(chosen, set())
+        match = ('unknown' if artifact is None or not identities else
+                 'matched' if identities == {(artifact['sha256'], artifact['size_bytes'])} else 'different')
+        spec = c.settings(root).get('delivery_policy', {}).get('adapter')
+        label = Path(spec['adapter']).name if spec is not None else 'unavailable'
+        rows.append(dict(candidate_id=chosen, adapter_result=result['status'], artifact_binding=match,
+                         audit_step=ref['step'], adapter=label.encode()[:80].decode(errors='ignore'),
+                         scope=SCOPE, leakage_flag=None))
+    return rows

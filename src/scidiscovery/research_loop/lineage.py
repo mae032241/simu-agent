@@ -270,8 +270,10 @@ def bounded_brief(value):
         value['recent'].pop(0);value['recent_omitted_count']+=1
     if value['candidates'].get('selection_protocol') == 1:
         for field, omitted in (('public_audits','audits_omitted_count'), ('unranked_ids','unranked_omitted_count')):
-            while size()>history.MAX_BRIEF_BYTES and value['candidates'][field]:
+            while size()>history.MAX_BRIEF_BYTES and value['candidates'].get(field):
                 value['candidates'][field].pop();value['candidates'][omitted]+=1
+    while size()>history.MAX_BRIEF_BYTES and value['candidates'].get('adapter_audits'):
+        value['candidates']['adapter_audits'].pop();value['candidates']['adapter_audits_omitted_count']+=1
     while size()>history.MAX_BRIEF_BYTES and value['candidates']['proxy_highest']:
         value['candidates']['proxy_highest'].pop();value['candidates']['proxy_groups_omitted_count']+=1
     while size()>history.MAX_BRIEF_BYTES and value.get('implementation_options'):
@@ -297,7 +299,8 @@ def public_relations(graph, sources):
     return rows
 
 
-def bind(root, step, role, protocol, *, source_cutoff=None, extra_steps=(), selection_protocol=0):
+def bind(root, step, role, protocol, *, source_cutoff=None, extra_steps=(), selection_protocol=0,
+         audit_projection_version=0, adjacent_audit=None):
     projection=project(root,step,source_cutoff=source_cutoff,extra_steps=extra_steps)
     records,state=projection['records'],projection['search_state']
     add,paged,files=history.page_writer(c.workspace(root,step))
@@ -330,6 +333,29 @@ def bind(root, step, role, protocol, *, source_cutoff=None, extra_steps=(), sele
     relations=paged(public_relations(projection['graph'],projection['sources']),16,'relations','inputs/lineage/relations','declared-not-proven-causality')
     indexes=dict(nodes=nodes[0] if nodes else None,candidates=candidates[0] if candidates else None,
                  mechanisms=mechanism_pages[0] if mechanism_pages else None,relations=relations[0] if relations else None)
+    audit_refs, audit_rows = [], []
+    if audit_projection_version == 1:
+        from . import candidate_audit
+        audit_refs = candidate_audit.collect_refs(root, projection['sources'], step=step, adjacent=adjacent_audit)
+        audit_rows = candidate_audit.project_receipts(root, records, audit_refs)
+        for index, row in enumerate(audit_rows):
+            row['original'] = f'inputs/lineage/audits/{index // 16 + 1:04d}.json'
+        audit_pages = paged(audit_rows, 16, 'adapter_audits', 'inputs/lineage/audits', 'frozen-adapter-audit-receipts')
+        indexes['audits'] = audit_pages[0] if audit_pages else None
+    elif audit_projection_version != 0:
+        raise ValueError('Unsupported frozen audit projection')
     view=brief(records,state,projection['graph'],overview,indexes,selection_protocol=selection_protocol)
-    return dict(nodes=[dict(step=row['step'],seal_sha256=row['seal_sha256']) for row in records],files=files,
+    if audit_projection_version == 1:
+        candidates_view = view['candidates']
+        if selection_protocol == 1:
+            explicit = [row for row in candidates_view['public_audits'] if row['status'] != 'unknown']
+            if explicit:
+                candidates_view['public_audits'] = explicit
+            else:
+                candidates_view.pop('public_audits')
+                candidates_view.pop('audits_omitted_count')
+        candidates_view.update(adapter_audits=audit_rows[:2], adapter_audits_omitted_count=max(0, len(audit_rows)-2),
+            leakage_assessment='Unknown unless explicitly reported; adapter status does not establish leakage or target suitability.')
+        bounded_brief(view)
+    return dict(**(dict(audit_projection_version=1, audit_receipts=audit_refs, adjacent_audit=adjacent_audit) if audit_projection_version == 1 else {}), nodes=[dict(step=row['step'],seal_sha256=row['seal_sha256']) for row in records],files=files,
                 candidate_ids=[row['id'] for row in candidate_rows],view=view),state

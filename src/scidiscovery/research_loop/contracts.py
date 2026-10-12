@@ -18,6 +18,7 @@ MAX_REUSED_INPUTS = 16
 MAX_UNRESOLVED_LINKS = 16
 REUSE_FRAGMENT = 'reuse-implementation'
 HANDOFF_PROTOCOL = 8
+AUDIT_PROJECTION_VERSION = 1
 ACTIONS = {
     'H': ('experiment', 'analyze', 'extract', 'wait'),
     'A': ('continue_w', 'revise_h', 'extract', 'wait', 'finish'),
@@ -489,6 +490,10 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
         raise ValueError('Unsupported frozen scientific handoff authority')
     protocol = retained.get('handoff_protocol', 1) if retained is not None else (9 if policy.get('candidate_audit_policy') else HANDOFF_PROTOCOL)
     projection_version = retained.get('lineage_projection_version', 0) if retained is not None else policy.get('lineage_projection_version', 0) if protocol >= 8 else 0
+    audit_projection_version = retained.get('audit_projection_version', 0) if retained is not None else (AUDIT_PROJECTION_VERSION if protocol >= 9 and projection_version == 1 else 0)
+    if (type(audit_projection_version) is not int or audit_projection_version not in (0, 1)
+            or (audit_projection_version == 1 and (protocol < 9 or projection_version != 1))):
+        raise ValueError('Unsupported frozen audit projection')
     selection_protocol = retained.get('selection_protocol', 0) if retained is not None else policy.get('selection_protocol', 0) if projection_version == 1 else 0
     if type(selection_protocol) is not int or selection_protocol not in (0, 1) or (selection_protocol == 1 and projection_version != 1):
         raise ValueError('Unsupported frozen public selection protocol')
@@ -550,6 +555,8 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
     if authority_version == 1:
         job['handoff_authority_version'] = 1
         job['native_role_instruction'] = retained['native_role_instruction'] if retained is not None else (advice if advice is not None else ROLE_INSTRUCTIONS[role])
+    if audit_projection_version == 1:
+        job['audit_projection_version'] = 1
     if selection_protocol == 1:
         job['selection_protocol'] = 1
     if projection_version == 1:
@@ -574,7 +581,8 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
         extra_steps = [parent for parent in parents if source_cutoff is not None and parent > source_cutoff]
         if projection_version == 1:
             from . import lineage
-            job['history'], state = lineage.bind(root, step, role, protocol, source_cutoff=source_cutoff, extra_steps=extra_steps, selection_protocol=selection_protocol)
+            job['history'], state = lineage.bind(root, step, role, protocol, source_cutoff=source_cutoff, extra_steps=extra_steps, selection_protocol=selection_protocol,
+                audit_projection_version=audit_projection_version, adjacent_audit=job.get('candidate_audit'))
         else:
             job['history'] = history.bind(root, step, protocol, source_cutoff=source_cutoff, extra_steps=extra_steps)
         if protocol >= 7:
@@ -659,6 +667,10 @@ def validate(work: Path):
 
 
 def _validate_inputs(root, work, job):
+    if job.get('audit_projection_version') == 1:
+        if (job['history'].get('audit_projection_version') != 1
+                or job['history'].get('adjacent_audit') != job.get('candidate_audit')):
+            raise ValueError('Frozen audit projection differs from its task boundary')
     if job.get('handoff_authority_version') == 1:
         if job.get('decision_context') != _decision_context(root, job):
             raise ValueError('Scientific handoff source authority changed')
