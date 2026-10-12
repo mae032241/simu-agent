@@ -399,8 +399,10 @@ def records_from_sources(root, sources, *, write_cache=True):
             if observation['binding']['source_sha256'] != seal['raw_sha256']:
                 raise ValueError('Observer snapshot differs from scientific source')
         row = dict(step=step, role=job['role'], seal_sha256=seal_sha, view=view, detail=detail,
-                   recommendation=payload.get('candidate_recommendation') if job['role'] == 'A' else None,
+                   recommendation=payload.get('candidate_recommendation') if job['role'] == 'A' and payload.get('next_action') != 'audit' else None,
                    observation=observation)
+        if job.get('handoff_protocol', 1) >= 9 and payload.get('next_action') == 'audit':
+            row['audit_request'] = True
         # Replacing a disposable projection repairs deletion/corruption; originals
         # and sealed observer snapshots above remain independently verified.
         if write_cache:
@@ -527,6 +529,8 @@ def validate(root, work, binding):
 
 def validate_recommendation(job, payload):
     recommendation = payload.get('candidate_recommendation')
+    if job.get('handoff_protocol', 1) >= 9 and payload.get('next_action') == 'audit':
+        return  # An unavailable audit request preserves science and returns a host diagnostic.
     if recommendation is not None and (job['role'] != 'A' or recommendation not in job['history']['candidate_ids']):
         raise ValueError('A recommendation requires one frozen listed candidate')
 

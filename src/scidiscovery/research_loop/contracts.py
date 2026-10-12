@@ -89,6 +89,10 @@ def regular(path: Path, *, limit=None):
     return path
 
 
+def actions(role, protocol=1):
+    return (*ACTIONS[role], 'audit') if role == 'A' and protocol >= 9 else ACTIONS.get(role, ())
+
+
 def result_schema(role: str, protocol=1):
     if role not in ROLE_INSTRUCTIONS:
         raise ValueError('Unknown scientific role')
@@ -98,7 +102,7 @@ def result_schema(role: str, protocol=1):
         'limitations': {'type': 'array', 'items': {'type': 'string'}},
     }
     if role in ACTIONS:
-        properties.update(next_action={'type': 'string', 'enum': list(ACTIONS[role])},
+        properties.update(next_action={'type': 'string', 'enum': list(actions(role, protocol))},
                           route_reason={'type': 'string', 'minLength': 1})
     required = list(properties)
     if protocol >= 7:
@@ -300,6 +304,10 @@ def science_view(job, root=None):
     if protocol >= 8 and job.get('author_correction'):
         from . import semantic
         request = semantic.public_request(root, job)
+    audit = None
+    if job.get('candidate_audit') is not None:
+        from . import candidate_audit
+        audit = candidate_audit.public_receipt(root, job['candidate_audit'])
     closeout = None
     if job.get('purpose') == 'closeout':
         from . import delivery
@@ -333,6 +341,7 @@ def science_view(job, root=None):
         **(dict(control_request=request)
            if job.get('handoff_protocol', 1) >= 8 and job.get('author_correction') else {}),
         **(dict(closeout=closeout) if closeout is not None else {}),
+        **(dict(candidate_audit=audit) if audit is not None else {}),
         **(dict(search=job['search']['view']) if job.get('search') and not unified else {}),
         **(dict(progress_assessment=('Judge the current assessed work as progress/no_progress/unknown; '
                 'null means unknown. Explain scientific support and limitations in ordinary science. '
@@ -447,14 +456,14 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
         raise ValueError('Ordinary task cannot select a noncontiguous science prefix')
     job_path = root / 'jobs' / f'{step:03d}.json'
     retained = read(regular(job_path)) if job_path.exists() else None
-    protocol = retained.get('handoff_protocol', 1) if retained is not None else HANDOFF_PROTOCOL
+    protocol = retained.get('handoff_protocol', 1) if retained is not None else (9 if policy.get('candidate_audit_policy') else HANDOFF_PROTOCOL)
     projection_version = retained.get('lineage_projection_version', 0) if retained is not None else policy.get('lineage_projection_version', 0) if protocol >= 8 else 0
     selection_protocol = retained.get('selection_protocol', 0) if retained is not None else policy.get('selection_protocol', 0) if projection_version == 1 else 0
     if type(selection_protocol) is not int or selection_protocol not in (0, 1) or (selection_protocol == 1 and projection_version != 1):
         raise ValueError('Unsupported frozen public selection protocol')
     if type(projection_version) is not int or projection_version not in (0, 1):
         raise ValueError('Unsupported frozen lineage projection version')
-    if protocol not in (1, 2, 3, 4, 5, 6, 7, HANDOFF_PROTOCOL):
+    if protocol not in (1, 2, 3, 4, 5, 6, 7, HANDOFF_PROTOCOL, 9):
         raise ValueError('Unsupported frozen handoff protocol')
     work = workspace(root, step)
     work.mkdir(parents=True, exist_ok=True)
@@ -520,6 +529,11 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
         job['control_diagnostics'] = previous.get('control_outcome', {}).get('diagnostics', [])
         if author_correction is not None:
             job['author_correction'] = author_correction
+    if protocol >= 9 and role == 'A' and step - 1 in parents:
+        from . import candidate_audit
+        receipt = candidate_audit.receipt_ref(root, step - 1)
+        if receipt is not None:
+            job['candidate_audit'] = receipt
     state = None
     if protocol >= 3:
         from . import history

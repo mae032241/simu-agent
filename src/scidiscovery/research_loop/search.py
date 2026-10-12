@@ -216,7 +216,7 @@ def apply_source(root, job, payload, seal, state):
     """The existing per-node interpretation guard, shared with read-only lineage."""
     receipt = seal.get('control_outcome')
     if receipt is not None:
-        if receipt.get('binding_protocol') != 8 or job.get('handoff_protocol', 1) not in {7, 8}:
+        if receipt.get('binding_protocol') != 8 or job.get('handoff_protocol', 1) not in {7, 8, 9}:
             raise ValueError('Control interpretation binding changed')
         if job.get('handoff_protocol', 1) == 7:
             try:

@@ -186,3 +186,34 @@ def test_enum_list_is_optional_projection_value_error(field):
         row['candidates'][0][field] = []
     with pytest.raises(ValueError):
         selection.project([row])
+
+
+def test_audit_request_preserves_prior_choice_and_observed_facts():
+    original = record([candidate('P')])
+    choice = dict(record([], step=3), role='A', recommendation='P')
+    audit = dict(record([candidate('Q', 2)], step=4), role='A', audit_request=True,
+                 actual_submission=dict(candidate_id='Q', artifact_retention='unknown'))
+    result = selection.project([original, choice, audit])
+    assert result['a_recommended'] == dict(candidate_id='P', author_step=3)
+    assert result['latest_a_step'] == 3
+    assert result['candidate_count'] == 2
+    assert result['observed_actual_submission']['candidate_id'] == 'Q'
+    assert result['proxy_highest'][0]['candidate_ids'] == ['Q']
+    # A later scientific null remains a real choice to clear the recommendation.
+    later = dict(record([], step=5), role='A')
+    assert selection.project([original, choice, audit, later])['a_recommended'] is None
+
+
+@pytest.mark.parametrize('changes', [dict(role='W'), dict(audit_request=False), dict(recommendation='P')])
+def test_audit_defer_marker_cannot_hide_a_different_author_or_choice(changes):
+    audit = dict(record([candidate('P')]), role='A', audit_request=True)
+    with pytest.raises(ValueError, match='defers candidate recommendation'):
+        selection.project([dict(audit, **changes)])
+
+
+def test_public_projection_retains_only_the_host_defer_flag():
+    raw = dict(step=3, role='A', recommendation=None, observation=None, audit_request=True,
+               audit_private_path='not public')
+    view = selection.public_inputs([raw])
+    assert view[0]['audit_request'] is True and 'audit_private_path' not in view[0]
+    assert selection.project(view)['latest_a_step'] is None

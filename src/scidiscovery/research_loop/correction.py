@@ -53,6 +53,8 @@ def _proofs(root, job, assessment):
         if current is None:
             return set()
         source, payload, seal = current
+        if source['role'] == 'A' and payload.get('next_action') == 'audit':
+            return _proofs(root, source, assessment)
         if source['role'] == 'W' or (source['role'] == 'H' and payload.get('next_action') == 'analyze' and not source.get('author_correction')):
             return {seal['raw_sha256']}
         if source['role'] == 'E':
@@ -192,7 +194,7 @@ def project(root, before_step=None):
                     review['response_h'] = step
         if (job['role'] != 'A' or job.get('purpose') == 'closeout' or job.get('handoff_protocol', 1) < 6
                 or job.get('author_correction') is not None
-                or payload['next_action'] in {'extract', 'wait'}):
+                or payload['next_action'] in {'extract', 'wait', 'audit'}):
             continue
         seal_digest = c.digest(record / 'result-identity.json')
         eligible.append(dict(step=step, seal_sha256=seal_digest))

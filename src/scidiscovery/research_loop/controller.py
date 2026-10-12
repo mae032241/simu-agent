@@ -25,7 +25,7 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
             lineage_projection_version: int | None = 1,
             role_guidance: dict | None = guidance.DEFAULT,
             selection_protocol: int | None = 1,
-            node_budget_mode: str = 'soft') -> dict:
+            node_budget_mode: str = 'soft', candidate_audit_policy: dict | None = None) -> dict:
     """Freeze an explicit goal and finite launch budgets in a fresh directory."""
     if lineage_projection_version is not None and (type(lineage_projection_version) is not int or lineage_projection_version != 1):
         raise ValueError('Unsupported lineage projection version')
@@ -76,6 +76,11 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
         delivery_limits = delivery.policy(delivery_policy)
         if node_limits is None:
             raise ValueError('Delivery requires explicitly frozen all-role node budgets')
+    if candidate_audit_policy is not None:
+        if candidate_audit_policy != {'version': 1} or type(candidate_audit_policy.get('version')) is not int:
+            raise ValueError('Unsupported candidate audit policy')
+        if delivery_limits is None or delivery_limits['adapter'] is None:
+            raise ValueError('Candidate audit requires an explicit isolated delivery adapter')
     settings = dict(goal_id="scid-hwa-" + uuid.uuid4().hex[:12], objective=text,
         public_root=str(public_root.resolve()), native_launcher_argv=list(launcher),
         max_tokens=max_tokens, max_seconds=max_seconds, max_steps=max_steps, time_budget_basis="active",
@@ -83,6 +88,8 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
         max_output_item_bytes=max_output_item_bytes,
         max_output_total_bytes=max_output_total_bytes)
     settings['node_budget_mode'] = node_budget_mode
+    if candidate_audit_policy is not None:
+        settings['candidate_audit_policy'] = dict(candidate_audit_policy)
     if selection_protocol is not None and lineage_projection_version == 1:
         settings['selection_protocol'] = selection_protocol
     if advice is not None:
@@ -230,6 +237,8 @@ def _route(root, step, role, result, job, current_h, current_w):
             route = ("W", parents, instruction, None)
         elif action == "revise_h":
             route = ("H", parents, instruction, None)
+        elif action == "audit" and job.get("handoff_protocol", 1) >= 9:
+            route = ("A", parents, instruction, None)
         elif action == "extract":
             route = ("E", parents, instruction, dict(role="A", step=step))
         elif action in {"finish", "wait"}:
@@ -374,6 +383,11 @@ def _run(root):
             result = contracts.validate(work)
             if result["role"] != role:
                 raise ValueError("Sealed result role differs from its job")
+            if role == 'A' and result.get('next_action') == 'audit':
+                from . import candidate_audit
+                audit_status = candidate_audit.execute(root, job, result)
+                if audit_status is not None:
+                    return _finish(root, settings, audit_status, step, result, next_role='A')
             correction.publish(root, step)
             next_role, next_parents, next_instruction, next_return, current_h, current_w, next_correction = correction.effective_route(
                 root, step, result, job, _route(root, step, role, result, job, current_h, current_w))
@@ -567,6 +581,14 @@ def _run_closeout(root):
                     return _closeout_result(root, 'closeout_native_unsealed', step=step)
         job = contracts.read(path)
         result = contracts.validate(contracts.workspace(root, step))
+        if result['next_action'] == 'audit' and job.get('handoff_protocol', 1) >= 9:
+            from . import candidate_audit
+            audit_status = candidate_audit.execute(root, job, result)
+            if audit_status is not None:
+                return _closeout_result(root, audit_status, step=step)
+            parents, author_request = [step], None
+            instruction = 'Reassess the requested candidate using the bound audit receipt; exploration remains closed.'
+            continue
         if result['next_action'] != 'finish':
             return _closeout_result(root, 'closeout_unresolved', reason='Original A route was retained; exploration stays closed', step=step)
         # There is no implicit replacement or retention on missing choice/qualification.

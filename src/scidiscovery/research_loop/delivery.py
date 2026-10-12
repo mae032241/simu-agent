@@ -121,7 +121,7 @@ def _adapter(root):
     return spec
 
 
-def freeze_sources(root, source_nodes):
+def freeze_sources(root, source_nodes, *, candidate_id=None):
     """Freeze readable objects before A; no model load, audit or qualification claim."""
     root = Path(root).resolve()
     spec = _adapter(root)
@@ -180,10 +180,12 @@ def freeze_sources(root, source_nodes):
         if fact['binding']['source_sha256'] != seal['raw_sha256']:
             raise ValueError('Delivery observer source binding changed')
         for context in fact.get('contexts', []):
-            candidate_id = context.get('candidate_id')
-            if candidate_id is not None:
-                contexts.setdefault(candidate_id, []).append(context)
+            context_candidate_id = context.get('candidate_id')
+            if context_candidate_id is not None:
+                contexts.setdefault(context_candidate_id, []).append(context)
         for candidate in fact['candidates']:
+            if candidate_id is not None and candidate['id'] != candidate_id:
+                continue
             if candidate['id'] in known:
                 raise ValueError('Delivery candidate identity is ambiguous')
             known.add(candidate['id'])
@@ -424,12 +426,17 @@ def _call(spec, request, seconds, *, on_process=None):
     return value
 
 
-def invoke(root, intent, max_seconds, *, on_process=None):
+def invoke(root, intent, max_seconds, *, on_process=None, audit_only=False):
     """Caller already durably accepted this action; recovered submits never call here."""
     root = Path(root).resolve()
     if type(max_seconds) not in (int, float) or not 0 < max_seconds < float('inf'):
         raise ValueError('Bounded action seconds required')
-    actions = budget.closeout_state(root)['actions']
+    if audit_only:
+        from . import candidate_audit
+        candidate_audit.validate_intent(root, intent)
+        actions = [dict(intent=intent, outcome=None)]
+    else:
+        actions = budget.closeout_state(root)['actions']
     stored = next((action for action in actions if action['intent']['action_id'] == intent.get('action_id')), None)
     if stored is None or stored['intent'] != intent:
         raise ValueError('Delivery action was not durably accepted in the control ledger')
@@ -451,9 +458,11 @@ def invoke(root, intent, max_seconds, *, on_process=None):
         if c.digest(_file(path)) != decision[key]:
             raise ValueError('Delivery scientific decision changed')
     job = c.read(root / 'jobs' / f'{step:03d}.json')
-    if binding(root, job, c.validate(c.workspace(root, step))) != bound:
+    if audit_only:
+        candidate_audit.validate_binding(root, intent)
+    elif binding(root, job, c.validate(c.workspace(root, step))) != bound:
         raise ValueError('Delivery input binding changed')
-    if intent['action_kind'] not in ('submit', 'confirm'):
+    if intent['action_kind'] not in (('audit',) if audit_only else ('submit', 'confirm')):
         raise ValueError('Unknown delivery action')
     with tempfile.TemporaryDirectory(prefix='scid-delivery-') as directory:
         stage = Path(directory)
@@ -468,7 +477,7 @@ def invoke(root, intent, max_seconds, *, on_process=None):
                        artifact_sha256=bound['source']['objects']['artifact']['sha256'], context=bound['source']['context'],
                        object_digests={name: proof['sha256'] for name, proof in bound['source']['objects'].items()},
                        inputs=spec['inputs'], config=spec['config'], target=spec['target'], stage=str(stage))
-        phases = ('audit', 'promote') if intent['action_kind'] == 'submit' else ('confirm',)
+        phases = ('audit',) if audit_only else ('audit', 'promote') if intent['action_kind'] == 'submit' else ('confirm',)
         for phase in phases:
             remaining = deadline - time.clock_gettime(time.CLOCK_BOOTTIME)
             try:
@@ -483,6 +492,8 @@ def invoke(root, intent, max_seconds, *, on_process=None):
                     or not isinstance(value['note'], str) or len(value['note'].encode()) > 1024):
                 return _result(bound, 'failed' if phase == 'audit' else 'unknown', 'invalid_' + phase + '_result')
             if phase == 'audit' and value['status'] == 'audited':
+                if audit_only:
+                    return dict(value, cleanup_confirmed=True)
                 continue
             if value['status'] not in ('confirmed', 'failed', 'unknown') or phase == 'audit' and value['status'] == 'confirmed':
                 return _result(bound, 'failed' if phase == 'audit' else 'unknown', 'invalid_phase_result')

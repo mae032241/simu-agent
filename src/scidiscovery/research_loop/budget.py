@@ -188,6 +188,10 @@ def execution_blocked(root, *, ignore_operation=None):
     """Unknown or live originals prohibit inactive time and amendments."""
     from . import runtime, execution
     settings = contracts.settings(root)
+    if settings.get('candidate_audit_policy'):
+        from . import candidate_audit
+        if candidate_audit.blocked(root):
+            return True
     state = closeout_state(root)
     if state['begin'] is not None and state['begin']['stop_reason'] == 'delivery_cleanup_unknown':
         return True  # A read-only resolver can still leave unknown local work.
@@ -537,7 +541,11 @@ def used_steps(root):
     from . import execution
     prepared = [int(path.stem) for path in (root / 'jobs').glob('*.json')]
     continuations = sum(len(execution.records(root, step)) - 1 for step in prepared)
-    return max(prepared, default=0) + continuations + len(closeout_state(root)['actions'])
+    audits = 0
+    if contracts.settings(root).get('candidate_audit_policy'):
+        from . import candidate_audit
+        audits = sum(1 for _ in candidate_audit.facts(root))
+    return max(prepared, default=0) + continuations + len(closeout_state(root)['actions']) + audits
 
 
 def exploration_admission(root, job, *, ignore_step=None, intent=None):

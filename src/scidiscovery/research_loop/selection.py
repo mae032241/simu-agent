@@ -29,6 +29,13 @@ def _object(value, fields):
         raise ValueError('Public fields differ from selection contract')
 
 
+def _record(value):
+    deferred = isinstance(value, dict) and 'audit_request' in value
+    _object(value, RECORD_FIELDS | ({'audit_request'} if deferred else set()))
+    if deferred and (value['audit_request'] is not True or value['role'] != 'A' or value['recommendation'] is not None):
+        raise ValueError('An audit request defers candidate recommendation')
+
+
 def _finite_metric(value):
     if type(value) not in (int, float):
         return False
@@ -60,7 +67,8 @@ def public_inputs(records):
             coverage=observation['coverage']['status'] if observation else None,
             candidates=candidates, current_candidate=dict(candidate_id=current['candidate_id']) if current else None,
             actual_submission=dict(candidate_id=actual['candidate_id'],
-                artifact_retention=actual.get('artifact', {}).get('retention', 'unknown')) if actual else None))
+                artifact_retention=actual.get('artifact', {}).get('retention', 'unknown')) if actual else None,
+            **(dict(audit_request=True) if record.get('audit_request') is True else {})))
     return result
 
 
@@ -69,7 +77,7 @@ def project(records, *, audits=(), delivery=None):
     if not isinstance(records, list) or not isinstance(audits, (list, tuple)):
         raise ValueError('Public records and audits must be bounded sequences')
     for record in records:
-        _object(record, RECORD_FIELDS)
+        _record(record)
         if type(record['step']) is not int or record['step'] <= 0:
             raise ValueError('Invalid sealed record identity')
     _public_keys(records)
@@ -79,7 +87,7 @@ def project(records, *, audits=(), delivery=None):
         raise ValueError('Public selection inputs exceed bound')
     candidates, steps, observations, authors = {}, set(), [], []
     for record in sorted(records, key=lambda row: row['step']):
-        _object(record, RECORD_FIELDS)
+        _record(record)
         step = record['step']
         if type(step) is not int or step <= 0 or step in steps or not isinstance(record['role'], str) or record['role'] not in {'H', 'W', 'A', 'E'}:
             raise ValueError('Invalid sealed record identity')
@@ -120,7 +128,8 @@ def project(records, *, audits=(), delivery=None):
                 _id(record['recommendation'])
             if record['recommendation'] is not None and record['recommendation'] not in candidates:
                 raise ValueError('A recommended unknown candidate')
-            authors.append(record)
+            if not record.get('audit_request'):
+                authors.append(record)
         elif record['recommendation'] is not None:
             raise ValueError('Only sealed A supplies recommendation')
     groups, unranked = {}, []

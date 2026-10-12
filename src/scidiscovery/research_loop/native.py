@@ -15,7 +15,7 @@ import subprocess
 import time
 
 from . import budget as control_budget, execution, runtime, search
-from .contracts import (ACTIONS, ROLE_INSTRUCTIONS, digest, host_record, read,
+from .contracts import (ACTIONS, actions, ROLE_INSTRUCTIONS, digest, host_record, read,
                         seal_result, workspace, write, settings as frozen_settings)
 
 
@@ -164,7 +164,7 @@ def run_native(root: Path, step: int, attempt=0):
               'by final_response, directly as your final answer. Routing, when needed, uses next_action with a '
               'separate route_reason. The controller dispatches the next role; functional tools retain their permissions.\n'
               + json.dumps(dict(
-                  next_action_options=ACTIONS.get(job['role'], []),
+                  next_action_options=actions(job['role'], job.get('handoff_protocol', 1)),
                   shared_seconds_remaining=max(0, int(limits['seconds_remaining'])),
                   shared_observed_tokens_remaining=max(0, limits['max_tokens']-budget['observed_tokens']),
                   metering='Native usage may be delayed; this is not a guaranteed billing cap.',
