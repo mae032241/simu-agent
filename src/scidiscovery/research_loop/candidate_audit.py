@@ -209,11 +209,19 @@ def execute(root, job, payload):
     if budget.execution_blocked(root):
         return 'candidate_audit_unknown'
     meter, limits = native.usage(root), budget.snapshot(root)
-    reserve = budget.delivery_reserve(c.settings(root))
+    settings = c.settings(root)
+    reserve = budget.delivery_reserve(settings)
+    soft_closeout = budget.node_mode(root) == 'soft' and job.get('purpose') == 'closeout'
+    if soft_closeout:
+        reserve = budget.closeout_floor(settings, preparation_seconds=budget.closeout_state(root)['begin']['preparation_seconds'])
+        reserve['steps'] += 1  # One actual follow-up A, plus the external actions.
     if meter['unknown_steps']:
         return 'candidate_audit_usage_unknown'
-    if (limits['seconds_remaining'] < policy['submit_seconds'] + reserve['seconds']
-            or limits['max_tokens'] - meter['observed_tokens'] < reserve['tokens']
+    seconds_unavailable = (limits['seconds_remaining'] <= policy['submit_seconds'] + reserve['seconds'] if soft_closeout else
+        limits['seconds_remaining'] < policy['submit_seconds'] + reserve['seconds'])
+    tokens_unavailable = (limits['max_tokens'] - meter['observed_tokens'] <= reserve['tokens'] if soft_closeout else
+        limits['max_tokens'] - meter['observed_tokens'] < reserve['tokens'])
+    if (seconds_unavailable or tokens_unavailable
             or budget.used_steps(root) + 1 + reserve['steps'] > c.settings(root)['max_steps']):
         return finish('unavailable', 'candidate_audit_reserve_unavailable')
     budget.transition(root, 'advance', 'candidate_audit')

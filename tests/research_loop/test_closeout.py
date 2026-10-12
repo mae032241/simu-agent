@@ -48,7 +48,7 @@ def real_chain(tmp_path):
     objective = public / 'objective.md';objective.write_text('Choose an exact candidate and deliver; scientific completion remains unasserted.')
     launcher = tmp_path / 'native.py';launcher.write_text(FAKE_NATIVE)
     nodes = {role:dict(max_observed_tokens=2000,max_seconds=60) for role in ('H','W','A','E')}
-    controller.prepare(root,objective,public,[sys.executable,str(launcher)],max_tokens=100_000,max_seconds=300,max_steps=7,
+    controller.prepare(root,objective,public,[sys.executable,str(launcher)],max_tokens=100_000,max_seconds=300,max_steps=5,
         model='no-model',reasoning_effort='high',search_policy=None,node_budget_policy=nodes,
         history_observer=dict(adapter=str(Path(__file__).resolve().parents[2]/'scripts/observe_covshift_candidates.py'),config=dict(runs='runs',evaluation_key='fixture-public')),
         delivery_policy=delivery_policy(descriptor(root,public)))
@@ -140,7 +140,7 @@ def test_actual_popen_protects_reserve_with_original_anchor(tmp_path, monkeypatc
     job = c.build_job(root,1,'H',[])
     record = c.host_record(c.workspace(root,1))
     c.write(record/'native-intent.json',dict(step=1,task_sha256=c.digest(root/'jobs/001.json'),budget_slice=budget.accept_node(root,job)))
-    now[0]=330.  # 70 seconds remain: full H=60 fits; closeout reserve=125 does not.
+    now[0]=340.  # 60 seconds remain: below the minimal soft closeout reserve=65.
     monkeypatch.setattr(native.subprocess,'Popen',lambda *a,**k:pytest.fail('Protected reserve must stop actual submission'))
     native.run_native(root,1)
     outcome=c.read(record/'native-outcome.json')
@@ -156,7 +156,7 @@ def test_build_time_reserve_refusal_keeps_prepared_job_without_intent(tmp_path, 
     c.write(root/'host-started.json',budget.clock_stamp())
     budget.transition(root,'advance','Admitted preparation')
     job=c.build_job(root,1,'H',[])
-    now[0]=240.  # 160 remains: H alone fits but H plus reserve no longer fits.
+    now[0]=340.  # Staging used the remaining soft exploration headroom; reserve=65.
     before=(root/'jobs/001.json').read_bytes()
     with pytest.raises(budget.NodeBudgetUnavailable,match='closeout_reserve_seconds'):
         native.execute_native(root,1)
@@ -195,7 +195,7 @@ def test_no_adapter_exports_empty_prefix_without_science(tmp_path, monkeypatch):
     objective=public/'objective.md';objective.write_text('Original objective')
     root=tmp_path/'instance'
     policy=delivery_policy(None);policy.update(submit_seconds=0,confirm_seconds=0)
-    controller.prepare(root,objective,public,['fake-no-model'],max_tokens=100_000,max_seconds=300,max_steps=7,
+    controller.prepare(root,objective,public,['fake-no-model'],max_tokens=100_000,max_seconds=300,max_steps=5,
         model='fixture-no-model',reasoning_effort='high',
         node_budget_policy={role:dict(max_observed_tokens=2000,max_seconds=60) for role in ('H','W','A','E')},
         delivery_policy=policy,search_policy=None)
@@ -218,7 +218,7 @@ def test_closeout_a_keeps_execution_floor_after_preparation(tmp_path, monkeypatc
     record=c.host_record(c.workspace(root,3))
     before=(root/'jobs/003.json').read_bytes()
     if boundary=='accept':
-        now[0]=360.  # 40s remains: A full allocation 30s fits; A + action floor 63s does not.
+        now[0]=368.  # 32s remains: below the actual cleanup(3)+submit(20)+confirm(10) floor.
         with pytest.raises(budget.NodeBudgetUnavailable,match='closeout_budget_unavailable'):
             native.execute_native(root,3)
         assert not (record/'native-intent.json').exists()
@@ -310,7 +310,7 @@ def test_controller_reports_unaccepted_closeout_floor_without_retained_intent(tm
     original=c.build_job
     def slow_build(*a,**kw):
         job=original(*a,**kw)
-        now[0]=360.  # Only A fits after staging; its mechanical execution floor no longer fits.
+        now[0]=366.  # 34 remains: below the mechanical execution floor=35, irrespective of A's target.
         return job
     monkeypatch.setattr(c,'build_job',slow_build)
     monkeypatch.setattr(native.subprocess,'Popen',lambda *a,**kw:pytest.fail('A was not accepted'))

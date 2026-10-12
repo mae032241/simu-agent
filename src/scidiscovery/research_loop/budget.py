@@ -408,10 +408,13 @@ def node_admission(root, job, *, ignore_step=None, intent=None):
     if any(step != ignore_step for step in meter['unknown_steps']):
         return 'usage_unknown'
     duration = _node_duration(root, job, intent, limits) if intent is not None else 0.
-    if limits['seconds_remaining'] < max(0., policy['max_seconds'] - duration):
+    soft = node_mode(root) == 'soft'
+    if (limits['seconds_remaining'] <= 0 if soft else
+            limits['seconds_remaining'] < max(0., policy['max_seconds'] - duration)):
         return 'node_budget_unavailable_seconds'
     needed_tokens = max(0, policy['max_observed_tokens'] - (intent.get('budget_slice', {}).get('previous_tokens', 0) if intent else 0))
-    if limits['max_tokens'] - meter['observed_tokens'] < needed_tokens:
+    if (limits['max_tokens'] - meter['observed_tokens'] <= 0 if soft else
+            limits['max_tokens'] - meter['observed_tokens'] < needed_tokens):
         return 'node_budget_unavailable_tokens'
     if job.get('purpose') == 'closeout':
         settings = contracts.settings(root)
@@ -420,11 +423,13 @@ def node_admission(root, job, *, ignore_step=None, intent=None):
         if begin is None or begin['mode'] != 'model' or begin['source_cutoff'] != job['source_cutoff']:
             raise ValueError('Closeout node has no exact model boundary')
         external = delivery['adapter'] is not None
-        floor = max(0., delivery['cleanup_seconds'] - begin['preparation_seconds'])
-        floor += delivery['submit_seconds'] + delivery['confirm_seconds'] if external else 0
+        floor = closeout_floor(settings, preparation_seconds=begin['preparation_seconds'])
         additional = 0 if (root / 'jobs' / f'{job["step"]:03d}.json').exists() else 1
-        if (limits['seconds_remaining'] < max(0., policy['max_seconds'] - duration) + floor
-                or limits['max_tokens'] - meter['observed_tokens'] < policy['max_observed_tokens'] + delivery['inflight_tokens']
+        seconds_unavailable = (limits['seconds_remaining'] <= floor['seconds'] if soft else
+            limits['seconds_remaining'] < max(0., policy['max_seconds'] - duration) + floor['seconds'])
+        tokens_unavailable = (limits['max_tokens'] - meter['observed_tokens'] <= floor['tokens'] if soft else
+            limits['max_tokens'] - meter['observed_tokens'] < policy['max_observed_tokens'] + floor['tokens'])
+        if (seconds_unavailable or tokens_unavailable
                 or settings['max_steps'] - used_steps(root) < additional + (2 if external else 0)):
             return 'closeout_budget_unavailable'
         return None
@@ -474,9 +479,14 @@ def accept_continuation(root, job, paths):
     if (type(seconds) not in (int, float) or not math.isfinite(seconds) or seconds < 0
             or node_mode(root)=='hard' and (tokens >= policy['max_observed_tokens'] or seconds >= policy['max_seconds'])):
         raise NodeBudgetUnavailable('worker_resume_node_exhausted')
-    reserve = delivery_reserve(contracts.settings(root)) or dict(tokens=0, seconds=0, steps=0)
-    if (meter['unknown_steps'] or limits['max_tokens'] - meter['observed_tokens'] < max(0,policy['max_observed_tokens'] - tokens) + reserve['tokens']
-            or limits['seconds_remaining'] < max(0.,policy['max_seconds'] - seconds) + reserve['seconds']
+    settings = contracts.settings(root)
+    soft = node_mode(root) == 'soft'
+    reserve = (closeout_floor(settings, preparation_seconds=closeout_state(root)['begin']['preparation_seconds'])
+        if soft and job.get('purpose') == 'closeout' else delivery_reserve(settings)) or dict(tokens=0, seconds=0, steps=0)
+    needed_tokens = 0 if soft else max(0, policy['max_observed_tokens'] - tokens)
+    needed_seconds = 0. if soft else max(0., policy['max_seconds'] - seconds)
+    if (meter['unknown_steps'] or limits['max_tokens'] - meter['observed_tokens'] < needed_tokens + reserve['tokens']
+            or limits['seconds_remaining'] < needed_seconds + reserve['seconds']
             or node_mode(root)=='soft' and (limits['max_tokens'] - meter['observed_tokens'] <= reserve['tokens'] or limits['seconds_remaining'] <= reserve['seconds'])
             or contracts.settings(root)['max_steps'] - used_steps(root) < 1 + reserve['steps']):
         raise NodeBudgetUnavailable('worker_resume_budget_unavailable')
@@ -531,10 +541,21 @@ def delivery_reserve(settings):
     if policy is None:
         return None
     external = policy['adapter'] is not None
-    return dict(tokens=3 * policy['closeout_a']['max_observed_tokens'] + policy['inflight_tokens'],
-                seconds=3 * policy['closeout_a']['max_seconds'] + policy['cleanup_seconds']
+    authors = 1 if settings.get('node_budget_mode', 'hard') == 'soft' else 3
+    return dict(tokens=authors * policy['closeout_a']['max_observed_tokens'] + policy['inflight_tokens'],
+                seconds=authors * policy['closeout_a']['max_seconds'] + policy['cleanup_seconds']
                         + (policy['submit_seconds'] + policy['confirm_seconds'] if external else 0),
-                steps=3 + (2 if external else 0))
+                steps=authors + (2 if external else 0))
+
+
+def closeout_floor(settings, *, preparation_seconds=0.):
+    """After exploration: retain execution allowance, not another whole A target."""
+    policy = settings['delivery_policy']
+    external = policy['adapter'] is not None
+    return dict(tokens=policy['inflight_tokens'],
+                seconds=max(0., policy['cleanup_seconds'] - preparation_seconds)
+                    + (policy['submit_seconds'] + policy['confirm_seconds'] if external else 0),
+                steps=2 if external else 0)
 
 
 def used_steps(root):
@@ -558,11 +579,14 @@ def exploration_admission(root, job, *, ignore_step=None, intent=None):
     node = node_limits(root, job)
     if any(step != ignore_step for step in meter['unknown_steps']):
         return 'usage_unknown'
-    needed_tokens = max(0, node['max_observed_tokens'] - (intent.get('budget_slice', {}).get('previous_tokens', 0) if intent else 0))
-    if limits['max_tokens'] - meter['observed_tokens'] < needed_tokens + reserve['tokens']:
+    soft = node_mode(root) == 'soft'
+    needed_tokens = 0 if soft else max(0, node['max_observed_tokens'] - (intent.get('budget_slice', {}).get('previous_tokens', 0) if intent else 0))
+    if (limits['max_tokens'] - meter['observed_tokens'] <= reserve['tokens'] if soft else
+            limits['max_tokens'] - meter['observed_tokens'] < needed_tokens + reserve['tokens']):
         return 'closeout_reserve_tokens'
     duration = _node_duration(root, job, intent, limits) if intent is not None else 0.
-    if limits['seconds_remaining'] < max(0., node['max_seconds'] - duration) + reserve['seconds']:
+    if (limits['seconds_remaining'] <= reserve['seconds'] if soft else
+            limits['seconds_remaining'] < max(0., node['max_seconds'] - duration) + reserve['seconds']):
         return 'closeout_reserve_seconds'
     additional = 0 if (root / 'jobs' / f'{job["step"]:03d}.json').exists() else 1
     if settings['max_steps'] - used_steps(root) < additional + reserve['steps']:
@@ -661,7 +685,10 @@ def write_node_hint(root, job, intent, limits, meter, *, observed):
         duration=limits['advance_seconds']-intent['search_slice']['advance_seconds']
     prior=intent.get('budget_slice',{}).get('previous_tokens',0)
     consumed=prior+meter['input_tokens']+meter['output_tokens'] if observed else None
-    reserve=delivery_reserve(contracts.settings(root)) or dict(tokens=0,seconds=0,steps=0)
+    settings = contracts.settings(root)
+    closeout = job.get('purpose') == 'closeout'
+    reserve = (closeout_floor(settings, preparation_seconds=closeout_state(root)['begin']['preparation_seconds'])
+        if closeout else delivery_reserve(settings)) or dict(tokens=0,seconds=0,steps=0)
     from . import native
     shared=native.usage(root)
     remaining=limits['max_tokens']-shared['observed_tokens']
@@ -672,6 +699,9 @@ def write_node_hint(root, job, intent, limits, meter, *, observed):
         metering='observed_lower_bound' if observed else 'inflight_unknown',
         shared_observed_tokens_remaining_upper_bound=max(0,remaining),shared_active_seconds_remaining=limits['seconds_remaining'],
         reserve_state='reached' if remaining<=reserve['tokens'] or limits['seconds_remaining']<=reserve['seconds'] else 'within',
+        reserve_scope='external_closeout_floor' if closeout else 'minimal_closeout_reserve',
+        current_work_observed_tokens_remaining_upper_bound=max(0,remaining-reserve['tokens']),
+        current_work_active_seconds_available=max(0.,limits['seconds_remaining']-reserve['seconds']),
         instruction='Near/reached targets or reserve: finish bounded actions and return your scientific JSON. Unknown usage is not zero. Shared hard limits still apply.')
     data=(json.dumps(hint,ensure_ascii=False,indent=2,allow_nan=False)+'\n').encode()
     if len(data)>4096:raise ValueError('Budget advice exceeds byte bound')

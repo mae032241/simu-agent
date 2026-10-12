@@ -1,6 +1,6 @@
 # 薄 HWA：统一方案谱系与自适应搜索实施计划
 
-日期：2026-10-11。类型：**待实施提案**。开发分支：dev。
+日期：2026-10-11。类型：**实施及验收记录**。开发分支：dev。
 用户已认可设计方向并要求执行；本轮计划独立审查通过，见[评审记录](evidence/ROOTLESS_LINEAGE_PLAN_REVIEW_20261011.md)。[T0 详细设计已独审通过](evidence/ROOTLESS_T0_REVIEW_20261012.md)，后续各节点实现仍待各自评审，不能据此声称功能完成。
 参考实现：`020004b`。N5 已因 token_limit 停止；协议 8 补正链路真实可用，但预算内收口失败，详见[N5 终态记录](evidence/ROOTLESS_N5_BUDGET_CLOSEOUT_20261011.zh-CN.md)。本次仅修订计划，不自动恢复原场或增加额度。
 
@@ -185,7 +185,7 @@ W 反复执行：
 
 ### T5：cov 小规模真实验收
 
-当前：[单场真实验收未通过](evidence/ROOTLESS_T5_COV_RESULT_20261012.zh-CN.md)。`f8427df` 的H001在420秒节点上限中断，未封存，W/A未启动；无正式提交可评分。保留失败证据，不自动重跑或扩额。T1–T4源码/安装通过不等于T5通过。
+当前：后续授权审计场已走通 A 请求审计→读取回执→选择→提交确认，但 A005 要求的下一轮 W 被软目标准入错误拦住；隐藏分未测，完整搜索效果仍未验收。[原因、修复与验证](evidence/ROOTLESS_SOFT_ADMISSION_FIX_20261012.zh-CN.md)。保留此前[单场真实验收未通过](evidence/ROOTLESS_T5_COV_RESULT_20261012.zh-CN.md)的记录：`f8427df` 的H001在420秒节点上限中断，未封存，W/A未启动；无正式提交可评分。保留失败证据，不自动重跑或扩额。T1–T4源码/安装通过不等于T5通过。
 
 分开工程行为资格与科学效果结论。先执行确定性夹具，再启动一场 cov 行为验收；效果对照仍只用 cov，不扩成多题矩阵。
 真实模型、推理等级、预算、版本、隔离方式及停止条件在启动前冻结；沿用 gpt-6.1-sol/high、非 fast 的用户偏好。新场预算需在届时确认或已有明确授权内执行；N5 的 900 万总额度及断点新增 1 小时只属于原场。
@@ -217,14 +217,14 @@ W 反复执行：
 | 节点 | 当前状态 | 前置 |
 | --- | --- | --- |
 | N5 收尾 | [92/92全池评分及独立审查通过](evidence/ROOTLESS_N5_LIVE02_POOL_EVALUATION_20261012.md)，仅事后诊断资格 | 已停止原场 |
-| N6 | [设计独审通过](evidence/ROOTLESS_N6_DESIGN_20261012.zh-CN.md)；[N6a 全角色节点上限验收及独审通过](evidence/ROOTLESS_N6A_NODE_BUDGET_20261012.zh-CN.md)，[N6b 完整收口、回归和安装验证通过](evidence/ROOTLESS_N6B_CLOSEOUT_20261012.zh-CN.md)，独审通过；T5 后[默认软目标修订](evidence/ROOTLESS_SOFT_NODE_BUDGET_20261012.zh-CN.md)源码/安装通过，旧 hard 保留；真实模型交付效果未验证 | N5 收尾 |
+| N6 | [设计独审通过](evidence/ROOTLESS_N6_DESIGN_20261012.zh-CN.md)；[N6a 全角色节点上限验收及独审通过](evidence/ROOTLESS_N6A_NODE_BUDGET_20261012.zh-CN.md)，[N6b 完整收口、回归和安装验证通过](evidence/ROOTLESS_N6B_CLOSEOUT_20261012.zh-CN.md)，独审通过；T5 后[默认软目标修订](evidence/ROOTLESS_SOFT_NODE_BUDGET_20261012.zh-CN.md)源码/安装通过，旧 hard 保留；后续真实场已确认交付，软目标准入提前收口缺陷见[修复记录](evidence/ROOTLESS_SOFT_ADMISSION_FIX_20261012.zh-CN.md) | N5 收尾 |
 | N6c | [源码、回归及零模型安装独审通过](evidence/ROOTLESS_N6C_WORKER_RESUME_20261012.zh-CN.md)；实际 Codex 同线程及增量用量未验证 | N6b 已提交 `a5f4bb7` |
 | T0 | [责任映射、入口与夹具设计独审通过](ROOTLESS_T0_LINEAGE_DESIGN.zh-CN.md)；入口B与测量已明确，非T1产品通过 | N6c；测量与设计可提前准备 |
 | T1 | [调用原件、v2观察与只读谱系已独审通过](evidence/ROOTLESS_T1_LINEAGE_20261012.zh-CN.md)；125项定向、9项安装、原public回执通过；真实native namespace未资格 | T0已提交 `c1dea80` |
 | T2 | 已独审并提交 `a1881ca`；有界统一视图和安装通过 | T1 |
 | T3 | 已独审并提交 `ac8e3fc`；轻量指导及公开执行接线通过，实际搜索行为待T5 | T1/T2 |
 | T4 | [71项定向与安装通过](evidence/ROOTLESS_T4_PUBLIC_SELECTION_20261012.zh-CN.md)，最终独审通过 | N6、T1/T2；与按测量缩放后的 T3 集成，评估设计可提前 |
-| T5 | 600万／60分钟单场已尝试，H节点420秒超时；真实验收未通过，后续重跑需授权 | T1–T4独审已提交；先修H职责与节点收尾策略 |
+| T5 | 首场 H 超时保留；后续授权审计场7节点封存、提交确认，第二轮 W 被提前收口阻止；完整搜索效果未通过，本次只修复准入，不开新场 | T1–T4独审已提交；先修H职责与节点收尾策略 |
 
 顺序：N5/live02 全池诊断收尾→N6 单节点上限与预算内交付→N6c 已知异常 Worker 原线程续接→T0 携诊断独立评审→T1/T2 谱系统一→按测量决定 T3 规模→T4 科学选择→T5 行为与效果分层验收。T4 的评估盲区设计与夹具提前准备，不等待 T3 扩大；共享控制代码按依赖集成。
 本轮不要求多 W 并行、复杂树搜索算法、多题统计验证或完整网页树可视化。先验证统一谱系与观察驱动的下一步，再决定是否扩展。

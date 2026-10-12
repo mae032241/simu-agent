@@ -442,18 +442,23 @@ def _closeout_result(root, status, *, reason=None, step=None, read_only=False):
     return result
 
 
-def _closeout_funds(root, *, preparation_seconds=0.):
+def _closeout_funds(root, *, preparation_seconds=0., step=None):
     settings = contracts.settings(root)
     policy = settings.get('delivery_policy')
     if policy is None:
         return False
     meter, limits = native.usage(root), budget.snapshot(root)
     external = policy['adapter'] is not None
-    seconds = policy['closeout_a']['max_seconds'] + max(0., policy['cleanup_seconds'] - preparation_seconds)
-    seconds += policy['submit_seconds'] + policy['confirm_seconds'] if external else 0
+    floor = budget.closeout_floor(settings, preparation_seconds=preparation_seconds)
+    if budget.node_mode(root) == 'soft':
+        additional = 0 if step is not None and (root / 'jobs' / f'{step:03d}.json').exists() else 1
+        return (not meter['unknown_steps']
+            and limits['max_tokens'] - meter['observed_tokens'] > floor['tokens']
+            and limits['seconds_remaining'] > floor['seconds']
+            and settings['max_steps'] - budget.used_steps(root) >= additional + floor['steps'])
     return (not meter['unknown_steps']
-        and limits['max_tokens'] - meter['observed_tokens'] >= policy['closeout_a']['max_observed_tokens'] + policy['inflight_tokens']
-        and limits['seconds_remaining'] >= seconds
+        and limits['max_tokens'] - meter['observed_tokens'] >= policy['closeout_a']['max_observed_tokens'] + floor['tokens']
+        and limits['seconds_remaining'] >= policy['closeout_a']['max_seconds'] + floor['seconds']
         and settings['max_steps'] - budget.used_steps(root) >= 1 + (2 if external else 0))
 
 
@@ -564,7 +569,7 @@ def _run_closeout(root):
                 else:
                     return _closeout_result(root, 'closeout_native_unsealed', step=step)
             else:
-                if budget.execution_blocked(root) or not _closeout_funds(root, preparation_seconds=begin['preparation_seconds']):
+                if budget.execution_blocked(root) or not _closeout_funds(root, preparation_seconds=begin['preparation_seconds'], step=step):
                     return _closeout_result(root, 'closeout_budget_unavailable', step=step)
                 budget.transition(root, 'advance', 'closeout_author_admission')
                 if path.exists():
