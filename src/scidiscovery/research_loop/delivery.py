@@ -164,7 +164,8 @@ def freeze_sources(root, source_nodes):
             saved.chmod(0o400)
         cache[path] = dict(path=saved.relative_to(root).as_posix(), sha256=digest, size_bytes=len(data))
         return cache[path]
-    candidates, known, evidence = [], set(), {}
+    candidates, known, evidence, contexts = [], set(), {}, {}
+    managed = c.settings(root).get('history_observer', {}).get('contract_version') == 2
     for receipt in source_nodes:
         _, _, seal, seal_sha = history._source(root, receipt['step'])
         if seal_sha != receipt['seal_sha256']:
@@ -178,6 +179,10 @@ def freeze_sources(root, source_nodes):
         fact = c.read(path)
         if fact['binding']['source_sha256'] != seal['raw_sha256']:
             raise ValueError('Delivery observer source binding changed')
+        for context in fact.get('contexts', []):
+            candidate_id = context.get('candidate_id')
+            if candidate_id is not None:
+                contexts.setdefault(candidate_id, []).append(context)
         for candidate in fact['candidates']:
             if candidate['id'] in known:
                 raise ValueError('Delivery candidate identity is ambiguous')
@@ -192,10 +197,34 @@ def freeze_sources(root, source_nodes):
                 evidence[label] = bound
                 proofs.append(dict(label=label, sha256=proof['sha256']))
             candidates.append(dict(candidate_id=candidate['id'], status=candidate['status'], evidence=proofs))
+    def execution_proof(proof):
+        value = dict(name=Path(proof['path']).name, sha256=proof['sha256'],
+                     size_bytes=proof['size_bytes'], retention=proof.get('retention'), input_label=None)
+        if proof.get('retention') == 'archived':
+            bound = dict(path=proof['snapshot'], sha256=proof['sha256'], size_bytes=proof['size_bytes'])
+            _proof(root, bound)
+            label = 'execution/' + proof['sha256']
+            if label in evidence and evidence[label] != bound:
+                raise ValueError('Execution archive alias changed')
+            evidence[label] = bound
+            value['input_label'] = label
+        return value
+    for candidate in candidates:
+        candidate['execution_contexts'] = None
+        if managed:
+            candidate['execution_contexts'] = [dict(call_id=context['call_id'], status=context['status'],
+                candidate_id=context['candidate_id'], run_id=context['run_id'],
+                proofs=[execution_proof(proof) for proof in context['proofs']],
+                model=execution_proof(context['model']) if context.get('model') is not None else None)
+                for context in contexts.get(candidate['candidate_id'], [])]
+    if sum(proof['size_bytes'] for proof in evidence.values()) > MAX_READ_BYTES:
+        raise DeliveryUnresolved('delivery_source_capacity')
     with tempfile.TemporaryDirectory(prefix='scid-resolve-') as directory:
         stage = Path(directory)
         (stage / 'inputs').mkdir();(stage / 'scratch').mkdir()
         for label, proof in evidence.items():
+            if time.clock_gettime(time.CLOCK_BOOTTIME) >= deadline:
+                raise DeliveryUnresolved('delivery_source_time_limit')
             destination = stage / 'inputs' / label;destination.parent.mkdir(exist_ok=True)
             shutil.copyfile(_proof(root, proof), destination);destination.chmod(0o400)
         for proof in spec['inputs']:
@@ -230,10 +259,21 @@ def freeze_sources(root, source_nodes):
             if not isinstance(item.get('objects'), list) or len(item['objects']) > 16 or not isinstance(item.get('context'), dict):
                 raise ValueError('Resolver objects require bounded references and context')
             for obj in item['objects']:
-                if not isinstance(obj, dict) or set(obj) != {'label', 'path', 'sha256', 'size_bytes'}:raise ValueError('Resolver object fields changed')
+                if not isinstance(obj, dict):raise ValueError('Resolver object fields changed')
+                from_execution = set(obj) == {'label', 'proof_label'}
+                if from_execution:
+                    authorized = {proof['input_label'] for context in originals[item['candidate_id']].get('execution_contexts') or []
+                                  for proof in context['proofs'] if proof.get('retention') == 'archived'}
+                    label = obj['proof_label']
+                    if label not in authorized or label not in evidence:
+                        raise ValueError('Resolver selected an unbound execution original')
+                    bound = evidence[label]
+                    obj = dict(label=obj['label'], path=str(_proof(root, bound)), sha256=bound['sha256'], size_bytes=bound['size_bytes'])
+                elif set(obj) != {'label', 'path', 'sha256', 'size_bytes'}:
+                    raise ValueError('Resolver object fields changed')
                 _label(obj['label'])
                 path = Path(obj['path'])
-                if obj['label'] in objects or not path.is_absolute() or not any(path.is_relative_to(Path(scope)) for scope in spec['source_roots']):
+                if obj['label'] in objects or not path.is_absolute() or (not from_execution and not any(path.is_relative_to(Path(scope)) for scope in spec['source_roots'])):
                     raise ValueError('Resolver object is outside its frozen read scope')
                 proof = freeze(path)
                 if proof['sha256'] != obj['sha256'] or proof['size_bytes'] != obj['size_bytes']:

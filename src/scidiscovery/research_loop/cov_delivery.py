@@ -76,12 +76,16 @@ def original(root, candidate, cfg, ledger_cache):
     return {key: row[key] for key in ('run_id', 'ok', 'model_path', 'script', 'val_acc')}, proof
 
 
-def model_path(root, row, cfg):
+def mapped_model(root, row, cfg):
     named = Path(row['model_path'])
     prefix = Path(cfg['namespace_runs'])
     if not named.is_absolute() or '..' in named.parts or not named.is_relative_to(prefix):
         raise SourceUnavailable('delivery_model_mapping_unavailable')
-    path = root / cfg['runs'] / named.relative_to(prefix)
+    return root / cfg['runs'] / named.relative_to(prefix)
+
+
+def model_path(root, row, cfg):
+    path = mapped_model(root, row, cfg)
     if path.resolve() != path or not path.is_file() or path.stat().st_size > BOUND:
         raise SourceUnavailable('delivery_model_unavailable')
     return path
@@ -94,6 +98,42 @@ def source_path(root, row):
             or path.stat().st_size > BOUND):
         raise SourceUnavailable('delivery_code_source_unavailable')
     return path
+
+
+def managed_objects(candidate, row):
+    contexts = candidate.get('execution_contexts')
+    if contexts is None:
+        return None  # Legacy v1: current source snapshot, not a historical claim.
+    if not isinstance(contexts, list) or len(contexts) != 1:
+        raise SourceUnavailable('delivery_managed_context_missing_or_ambiguous')
+    context = contexts[0]
+    if (context.get('candidate_id') != candidate['candidate_id'] or context.get('run_id') != row['run_id']
+            or context.get('status') != 'known_success' or not isinstance(context.get('proofs'), list)):
+        raise SourceUnavailable('delivery_managed_context_not_available')
+    def unique(name):
+        matches = [proof for proof in context['proofs'] if proof.get('name') == name]
+        if len(matches) != 1:
+            raise SourceUnavailable('delivery_managed_original_missing_or_ambiguous')
+        return matches[0]
+    def bound(proof):
+        if proof.get('retention') != 'archived' or not isinstance(proof.get('input_label'), str):
+            raise SourceUnavailable('delivery_managed_original_not_retained')
+        label = proof['input_label']
+        if not re.fullmatch(r'execution/[0-9a-f]{64}', label):
+            raise ValueError('Frozen execution proof label changed')
+        path = _exact(Path('/inputs') / label)
+        if _sha(path) != proof['sha256'] or path.stat().st_size != proof['size_bytes']:
+            raise ValueError('Frozen managed execution original changed')
+        return path
+    source, model, receipt = unique('source.py'), unique('model.pkl'), unique('row.json')
+    if context.get('model') != model:
+        raise ValueError('Managed model differs from frozen exact context')
+    original_row = json.loads(bound(receipt).read_text())
+    if any(original_row.get(key) != value for key, value in row.items()):
+        raise ValueError('Candidate ledger differs from frozen exact call row')
+    bound(source);bound(model)
+    return [dict(label='artifact', proof_label=model['input_label']),
+            dict(label='source.py', proof_label=source['input_label'])]
 
 
 def _audit(value, run_id):
@@ -135,13 +175,18 @@ def leaf(request):
             item = dict(candidate_id=candidate['candidate_id'], status='unavailable')
             try:
                 row, evidence = original(Path(request['root']), candidate, cfg, ledger_cache)
-                objects = []
-                for label, path in [('artifact', model_path(Path(request['root']), row, cfg)),
-                                    ('source.py', source_path(Path(request['root']), row))]:
-                    if path not in object_cache:object_cache[path] = dict(path=str(path), sha256=_sha(path), size_bytes=path.stat().st_size)
-                    objects.append(dict(label=label, **object_cache[path]))
+                mapped_model(Path(request['root']), row, cfg)
+                objects = managed_objects(candidate, row)
+                managed = objects is not None
+                if objects is None:
+                    objects = []
+                    for label, path in [('artifact', model_path(Path(request['root']), row, cfg)),
+                                        ('source.py', source_path(Path(request['root']), row))]:
+                        if path not in object_cache:object_cache[path] = dict(path=str(path), sha256=_sha(path), size_bytes=path.stat().st_size)
+                        objects.append(dict(label=label, **object_cache[path]))
                 item.update(status='audit_pending', evidence_label=evidence, objects=objects,
-                            context=dict(row=row, identity_note='Closeout snapshot; historical proxy does not validate current bytes.'))
+                    context=dict(row=row, identity_note=('Exact sealed managed call originals; public audit is still pending.' if managed else
+                        'Legacy current-source snapshot; original historical source version is not established.')))
             except (SourceUnavailable, FileNotFoundError):
                 pass
             items.append(item)
