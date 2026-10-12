@@ -5,6 +5,7 @@ This module never executes a domain experiment or imports a domain adapter.
 from __future__ import annotations
 
 import copy
+import json
 from pathlib import Path
 
 from . import contracts as c, execution, history, search
@@ -92,14 +93,14 @@ def contexts(root, job, items, archive, previous=()):
     return result
 
 
-def build(root, before_step):
+def build(root, before_step, *, sources=None, search_state=None):
     """Fold relations without rendering a default packet or updating authority."""
-    sources=[history._source(root,step) for step in range(1,before_step)]
-    state=dict(mechanisms={},current_h=None,scope=None,plan=None,authorized=set(),focus=None,accepted_slices=[],repairs={})
+    sources=history.source_sequence(root,before_step) if sources is None else sources
+    state=search_state or dict(mechanisms={},current_h=None,scope=None,plan=None,authorized=set(),focus=None,accepted_slices=[],repairs={})
     nodes=[];candidates={};edges=[];calls=set();coverage='complete';available={}
     for job,payload,seal,_ in sources:
         step=job['step']
-        if c.settings(root).get('search_policy') is not None:
+        if search_state is None and c.settings(root).get('search_policy') is not None:
             search.apply_source(root,job,payload,seal,state)
         nodes.append(dict(step=step,role=job['role'],parents=[int(Path(r['path']).parts[2]) for r in job['direct_refs']],
                           source_sha256=seal['raw_sha256'],summary=payload['summary'],limitations=payload['limitations']))
@@ -135,3 +136,180 @@ def build(root, before_step):
             visiting.add(current);current=parents[current]
     return dict(nodes=nodes,mechanisms=copy.deepcopy(state['mechanisms']),candidates=candidates,relations=edges,
                 coverage=coverage,limitation='Declared choices and observed call bindings; no inherited scientific or audit qualification')
+
+
+def candidate_view(records):
+    candidates, current, actual, selected, coverage = {}, None, None, None, None
+    for record in records:
+        observation = record['observation']
+        if observation is not None:
+            coverage = observation.get('coverage')
+            for candidate in observation['candidates']:
+                # Same scientific ID cannot silently point to another implementation
+                # or evaluation. Metric updates require a different candidate ID.
+                previous = candidates.get(candidate['id'])
+                view = record.get('view', {})
+                owner_step = int(candidate['implementation'].split('/')[2]) if candidate['implementation'] else None
+                owner = next((row for row in records if row['step'] == owner_step), None)
+                item = {**candidate, 'observation_step': record['step'], 'observation_h_scope': view.get('h_scope'),
+                        'observation_summary': view.get('summary', '')[:160],
+                        'observation_conclusion': next(iter(view.get('conclusion_pages', [])), None),
+                        'implementation_owner_step': owner_step,
+                        'implementation_conclusion': next(iter(owner.get('view', {}).get('conclusion_pages', [])), None) if owner else None,
+                        'candidate_h_scope': None, 'parent_candidate': None, 'candidate_action': None}
+                if previous and {k: previous[k] for k in candidate} != candidate:
+                    raise ValueError('Observed candidate identity changed')
+                candidates.setdefault(candidate['id'], item)
+                if len(candidates) > 4096:
+                    raise ValueError('Historical candidate count exceeds bound')
+            current = (dict(candidate_id=observation['current_candidate']['candidate_id'], observed_at=record['step'])
+                       if observation.get('current_candidate') is not None else None)
+            if observation['actual_submission'] is not None:
+                actual = dict(candidate_id=observation['actual_submission']['candidate_id'],
+                              observed_at=record['step'], retention=observation['actual_submission'].get('artifact', {}).get('retention', 'unknown'))
+        if record['recommendation'] is not None:
+            if record['recommendation'] not in candidates:
+                raise ValueError('A recommended an unknown candidate')
+            selected = dict(candidate_id=record['recommendation'], author_step=record['step'])
+    best = {}
+    for item in candidates.values():
+        if item['status'] != 'ok' or item['metric'] is None:
+            continue
+        key = (item['evaluation_key'], item['direction'])
+        if key not in best or (item['metric'] > best[key]['metric'] if item['direction'] == 'max' else item['metric'] < best[key]['metric']):
+            best[key] = item
+    def public(item):
+        return {key: item[key] for key in ('id', 'label', 'implementation', 'evaluation_key', 'metric', 'direction', 'status', 'observation_step', 'observation_h_scope', 'observation_summary', 'observation_conclusion', 'implementation_owner_step', 'implementation_conclusion', 'candidate_h_scope', 'parent_candidate', 'candidate_action')}
+    def compact(item):
+        view = public(item)
+        for key, capacity in (('label', 160), ('evaluation_key', 192), ('observation_summary', 160)):
+            text = view[key]
+            view[key] = text.encode()[:capacity].decode('utf-8', errors='ignore')
+            view[key + '_truncated'] = view[key] != text
+        if view['implementation'] is not None and len(view['implementation'].encode()) > 512:
+            view['implementation'] = None
+        view['details_in_index'] = True
+        return view
+    return dict(coverage=coverage, current_candidate=current, candidate_index=[public(row) for row in candidates.values()], proxy_highest=[compact(row) for row in list(best.values())[:8]],
+                proxy_groups_omitted_count=max(0, len(best) - 8),
+                a_recommended=selected, actual_submission=actual,
+                recent_candidates=[compact(row) for row in list(candidates.values())[-16:]],
+                candidates_omitted_count=max(0, len(candidates) - 16),
+                limitation='Highest means highest observed metric only; candidate models are not retained unless a sealed artifact or explicit archived snapshot exists. Proxy groups use the frozen adapter evaluation_key and direction; they do not establish target optimality. Read each original scientific conclusion for applicability and blind spots. Null slots mean unknown, not agreement.')
+
+
+
+def _clip(text, capacity):
+    return text.encode()[:capacity].decode('utf-8', errors='ignore')
+
+
+def project(root, before_step, *, source_cutoff=None, extra_steps=()):
+    """One verified source collection feeds all derived scientific navigation."""
+    sources=history.source_sequence(root,before_step,source_cutoff=source_cutoff,extra_steps=extra_steps)
+    records=history.records_from_sources(root,sources,write_cache=False)
+    state=search.fold(root,sources) if c.settings(root).get('search_policy') is not None else None
+    graph=build(root,before_step,sources=sources,search_state=state)
+    return dict(sources=sources,records=records,search_state=state,graph=graph,candidates=candidate_view(records))
+
+
+def brief(records, state, graph, candidates, indexes):
+    """The complete default lineage packet is bounded using its written bytes."""
+    recent=[]
+    for record in records[-2:]:
+        view=record['view']
+        recent.append(dict(step=record['step'],role=record['role'],summary=_clip(view['summary'],160),
+            summary_truncated=view['summary_omitted_chars']>0 or len(view['summary'].encode())>160,
+            limitation=_clip(next(iter(view['limitations']),''),96),
+            limitations_omitted_count=max(0,len(view['limitations'])-1)+view['limitations_omitted_count'],
+            original=view['conclusion_pages'][0]))
+    focus=state['focus'] if state else None
+    pending=[ref for ref,item in state['mechanisms'].items() if item['status']=='pending'] if state else []
+    value=dict(indexes=indexes,node_count=len(records),recent=recent,
+        mechanisms=dict(count=len(state['mechanisms']) if state else 0,pending_count=len(pending),
+                        focus={k:v for k,v in focus.items() if k!='repair_source'} if focus else None),
+        candidates=dict(count=len(candidates['candidate_index']),coverage=(dict(status=candidates['coverage']['status'],
+            note=_clip(candidates['coverage']['note'],96),note_truncated=len(candidates['coverage']['note'].encode())>96) if candidates['coverage'] else None),
+            current=candidates['current_candidate'],a_recommended=candidates['a_recommended'],actual=candidates['actual_submission'],
+            proxy_highest=[{k:item[k] for k in ('id','evaluation_key','metric','direction')} for item in candidates['proxy_highest'][:2]],
+            proxy_groups_omitted_count=candidates['proxy_groups_omitted_count']+max(0,len(candidates['proxy_highest'])-2)),
+        relationships=dict(count=len(graph['relations']),coverage=graph['coverage'],scope='Declared derivation and reuse; support remains unknown without original scientific intent.'),
+        access='Read index/next_page and original conclusion pages as needed. Unselected historical attachments are not mounted. '
+               'Implementation IDs select exact objects; null keeps current selected inputs, [] clears, lists replace. '
+               'Candidate recommendation, proxy highest and actual submission are independent; unknown/partial coverage is not a complete tree.')
+    # Large user labels/focus are navigation excerpts, never a license to drop bounds.
+    if value['mechanisms']['focus']:
+        for key,text in list(value['mechanisms']['focus'].items()):
+            if isinstance(text,str):value['mechanisms']['focus'][key]=_clip(text,80)
+    for row in value['candidates']['proxy_highest']:
+        row['evaluation_key']=_clip(row['evaluation_key'],192)
+        row['evaluation_key_truncated']=any(item['id']==row['id'] and item['evaluation_key']!=row['evaluation_key'] for item in candidates['proxy_highest'])
+    return bounded_brief(value)
+
+
+def bounded_brief(value):
+    """Drop only navigation excerpts with explicit omissions, never bound identities."""
+    value['recent_omitted_count']=value['node_count']-len(value['recent'])
+    def size():return len((json.dumps(value,ensure_ascii=False,indent=2,allow_nan=False)+'\n').encode())
+    while size()>history.MAX_BRIEF_BYTES and value['recent']:
+        value['recent'].pop(0);value['recent_omitted_count']+=1
+    while size()>history.MAX_BRIEF_BYTES and value['candidates']['proxy_highest']:
+        value['candidates']['proxy_highest'].pop();value['candidates']['proxy_groups_omitted_count']+=1
+    while size()>history.MAX_BRIEF_BYTES and value.get('implementation_options'):
+        value['implementation_options'].pop();value['implementation_options_omitted_count']+=1
+    if size()>history.MAX_BRIEF_BYTES:raise ValueError('Unified lineage brief metadata exceeds its frozen byte bound')
+    return value
+
+
+def public_relations(graph, sources):
+    originals={job['step']:(job,seal) for job,_,seal,_ in sources}
+    rows=[]
+    for edge in graph['relations']:
+        if edge['kind']=='reuse':
+            step=edge['target']['node'];job,seal=originals[step]
+            materials=sorted(seal['materials'],key=lambda row:row['path'])
+            index=next((i for i,row in enumerate(materials,1) if row==edge['target']['material']),None)
+            if index is None:raise ValueError('Reuse relationship has no exact sealed implementation')
+            rows.append(dict(kind='reuse',node=edge['subject']['node'],implementation_id=f'{job["role"]}{step:03d}-I{index:03d}',
+                label=_clip(Path(materials[index-1]['path']).name,80),source_node=step,
+                original=f'inputs/history/nodes/{step:03d}/0001.json',scope=edge['scope']))
+        else:
+            rows.append({key:edge[key] for key in ('kind','subject','target','scope')})
+    return rows
+
+
+def bind(root, step, role, protocol, *, source_cutoff=None, extra_steps=()):
+    projection=project(root,step,source_cutoff=source_cutoff,extra_steps=extra_steps)
+    records,state=projection['records'],projection['search_state']
+    add,paged,files=history.page_writer(c.workspace(root,step))
+    for record,source in zip(records,projection['sources']):
+        job,_,seal,_=source
+        options=[dict(id=f'{job["role"]}{job["step"]:03d}-I{number:03d}',label=_clip(Path(item['path']).name,80),
+                      label_truncated=len(Path(item['path']).name.encode())>80)
+                 for number,item in enumerate(sorted(seal['materials'],key=lambda row:row['path']),1)]
+        paths=paged(options,16,'implementations',f'inputs/history/implementations/{record["step"]:03d}','sealed-implementation-objects')
+        view=record['view'];view['implementation_index']=paths[0] if paths else None
+        view['implementations']=options[:16];view['implementations_omitted_count']=max(0,len(options)-16)
+        view['summary_truncated']=view['summary_omitted_chars']>0 or len(view['summary'].encode())>160
+        view['summary']=_clip(view['summary'],160)
+        view['limitations_truncated']=view['limitations_omitted_chars']>0 or any(len(text.encode())>96 for text in view['limitations'])
+        view['limitations']=[_clip(text,96) for text in view['limitations']]
+        for path,detail in zip(view['conclusion_pages'],record['detail']):add(path,detail)
+    nodes=paged([row['view'] for row in records],8,'records','inputs/history/pages','sealed-scientific-nodes')
+    overview=projection['candidates'];candidate_rows=overview['candidate_index']
+    for row in candidate_rows:
+        relation=projection['graph']['candidates'].get(row['id'],{})
+        row.update(parent_candidate=relation.get('parent'),mechanism_ref=relation.get('mechanism_ref'),
+                   derivation=relation.get('derivation','unknown'),support=relation.get('support','unknown'),
+                   execution_status=relation.get('execution_status','unknown'))
+    candidates=paged(candidate_rows,16,'candidates','inputs/history/candidates','observed-candidates')
+    mechanisms=[dict(mechanism_ref=ref,label=_clip(item['label'],80),label_truncated=len(item['label'].encode())>80,
+                     minimal_test=_clip(item['minimal_test'],160),minimal_test_truncated=len(item['minimal_test'].encode())>160,
+                     status=item['status'],original=f'inputs/history/nodes/{item["source_h"]:03d}/0001.json')
+                for ref,item in sorted(state['mechanisms'].items())] if state else []
+    mechanism_pages=paged(mechanisms,16,'mechanisms','inputs/lineage/mechanisms','sealed-H-A-interpretation')
+    relations=paged(public_relations(projection['graph'],projection['sources']),16,'relations','inputs/lineage/relations','declared-not-proven-causality')
+    indexes=dict(nodes=nodes[0] if nodes else None,candidates=candidates[0] if candidates else None,
+                 mechanisms=mechanism_pages[0] if mechanism_pages else None,relations=relations[0] if relations else None)
+    view=brief(records,state,projection['graph'],overview,indexes)
+    return dict(nodes=[dict(step=row['step'],seal_sha256=row['seal_sha256']) for row in records],files=files,
+                candidate_ids=[row['id'] for row in candidate_rows],view=view),state

@@ -21,8 +21,11 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
             correction_policy: dict | None = None,
             node_budget_policy: dict | None = None,
             delivery_policy: dict | None = None,
-            resume_policy: dict | None = None) -> dict:
+            resume_policy: dict | None = None,
+            lineage_projection_version: int | None = 1) -> dict:
     """Freeze an explicit goal and finite launch budgets in a fresh directory."""
+    if lineage_projection_version is not None and (type(lineage_projection_version) is not int or lineage_projection_version != 1):
+        raise ValueError('Unsupported lineage projection version')
     root, objective, public_root = map(Path, (root, objective, public_root))
     for name, value in (("max_tokens", max_tokens), ("max_steps", max_steps),
                         ("max_output_item_bytes", max_output_item_bytes),
@@ -71,6 +74,8 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
         model=model, reasoning_effort=reasoning_effort, service_tier=service_tier,
         max_output_item_bytes=max_output_item_bytes,
         max_output_total_bytes=max_output_total_bytes)
+    if lineage_projection_version is not None:
+        settings['lineage_projection_version'] = lineage_projection_version
     if delivery_limits is not None:
         settings['delivery_policy'] = delivery_limits
         reserve = budget.delivery_reserve(settings)

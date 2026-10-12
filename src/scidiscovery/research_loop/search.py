@@ -233,11 +233,11 @@ def apply_source(root, job, payload, seal, state):
         _apply(root, job, payload, state)
 
 
-def project(root, before_step):
+def fold(root, sources):
     state = dict(mechanisms={}, current_h=None, scope=None, plan=None, authorized=set(), focus=None,
                  accepted_slices=[], repairs={})
-    for step in range(1, before_step):
-        job, payload, seal, _ = history._source(root, step)
+    for job, payload, seal, _ in sources:
+        step = job["step"]
         apply_source(root, job, payload, seal, state)
         intent = execution.record(root, step) / 'native-intent.json'
         if job['role'] == 'W' and job.get('search') and intent.exists():
@@ -256,12 +256,16 @@ def project(root, before_step):
     return state
 
 
-def bind(root, step, role, protocol=6, *, write_pages=True):
+def project(root, before_step):
+    return fold(root, history.source_sequence(root, before_step))
+
+
+def bind(root, step, role, protocol=6, *, write_pages=True, state=None, unified=False):
     limits = c.settings(root).get('search_policy')
     if limits is None:
         return None
     limits = policy(limits)
-    state = project(root, step)
+    state = project(root, step) if state is None else state
     focus = state['focus'] if role == 'W' else None
     repair_root = None
     repair_binding = None
@@ -285,6 +289,9 @@ def bind(root, step, role, protocol=6, *, write_pages=True):
             repair_root = source['search'].get('repair_root') or source['step']
     elif focus is not None and focus['repair_source'] is not None:
         raise ValueError('Only repair requests may name a repair source')
+    if unified:
+        return dict(focus=focus, repair_root=repair_root, limits=limits, files=[],
+                    **(dict(repair_binding=repair_binding) if protocol >= 7 else {}))
     pending = [ref for ref, item in state['mechanisms'].items() if item['status'] == 'pending']
     def clip(text, size):
         return text.encode()[:size].decode('utf-8', errors='ignore')

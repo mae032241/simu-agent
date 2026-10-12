@@ -335,9 +335,9 @@ def resolve_implementation(root, object_id, receipts):
     return sorted(seal['materials'], key=lambda row: row['path'])[index - 1]
 
 
-def rebuild(root, before_step, *, source_cutoff=None, extra_steps=(), write_cache=True):
+def source_sequence(root, before_step, *, source_cutoff=None, extra_steps=()):
     """Recreate small node projections from originals; caches are not authority."""
-    records, current_h = [], None
+    sources = []
     if source_cutoff is None:
         steps = list(range(1, before_step))
         if extra_steps:
@@ -356,7 +356,14 @@ def rebuild(root, before_step, *, source_cutoff=None, extra_steps=(), write_cach
                 extra = c.read(root / 'jobs' / f'{step:03d}.json')
                 if extra.get('purpose') != 'closeout' or extra.get('source_cutoff') != source_cutoff:
                     raise ValueError('Closeout history cannot include an unrelated stopped node')
-        job, payload, seal, seal_sha = _source(root, step)
+        sources.append(_source(root, step))
+    return sources
+
+
+def records_from_sources(root, sources, *, write_cache=True):
+    records, current_h = [], None
+    for job, payload, seal, seal_sha in sources:
+        step = job["step"]
         if job['role'] == 'H':
             current_h = step
         parents = [int(Path(ref['path']).parts[2]) for ref in job['direct_refs']]
@@ -402,74 +409,17 @@ def rebuild(root, before_step, *, source_cutoff=None, extra_steps=(), write_cach
     return records
 
 
+def rebuild(root, before_step, *, source_cutoff=None, extra_steps=(), write_cache=True):
+    """Legacy layout, using the same verified source boundary as lineage."""
+    return records_from_sources(root, source_sequence(root, before_step, source_cutoff=source_cutoff, extra_steps=extra_steps),
+                                write_cache=write_cache)
+
 def candidate_overview(records):
-    candidates, current, actual, selected, coverage = {}, None, None, None, None
-    for record in records:
-        observation = record['observation']
-        if observation is not None:
-            coverage = observation.get('coverage')
-            for candidate in observation['candidates']:
-                # Same scientific ID cannot silently point to another implementation
-                # or evaluation. Metric updates require a different candidate ID.
-                previous = candidates.get(candidate['id'])
-                view = record.get('view', {})
-                owner_step = int(candidate['implementation'].split('/')[2]) if candidate['implementation'] else None
-                owner = next((row for row in records if row['step'] == owner_step), None)
-                item = {**candidate, 'observation_step': record['step'], 'observation_h_scope': view.get('h_scope'),
-                        'observation_summary': view.get('summary', '')[:160],
-                        'observation_conclusion': next(iter(view.get('conclusion_pages', [])), None),
-                        'implementation_owner_step': owner_step,
-                        'implementation_conclusion': next(iter(owner.get('view', {}).get('conclusion_pages', [])), None) if owner else None,
-                        'candidate_h_scope': None, 'parent_candidate': None, 'candidate_action': None}
-                if previous and {k: previous[k] for k in candidate} != candidate:
-                    raise ValueError('Observed candidate identity changed')
-                candidates.setdefault(candidate['id'], item)
-                if len(candidates) > 4096:
-                    raise ValueError('Historical candidate count exceeds bound')
-            current = (dict(candidate_id=observation['current_candidate']['candidate_id'], observed_at=record['step'])
-                       if observation.get('current_candidate') is not None else None)
-            if observation['actual_submission'] is not None:
-                actual = dict(candidate_id=observation['actual_submission']['candidate_id'],
-                              observed_at=record['step'], retention=observation['actual_submission'].get('artifact', {}).get('retention', 'unknown'))
-        if record['recommendation'] is not None:
-            if record['recommendation'] not in candidates:
-                raise ValueError('A recommended an unknown candidate')
-            selected = dict(candidate_id=record['recommendation'], author_step=record['step'])
-    best = {}
-    for item in candidates.values():
-        if item['status'] != 'ok' or item['metric'] is None:
-            continue
-        key = (item['evaluation_key'], item['direction'])
-        if key not in best or (item['metric'] > best[key]['metric'] if item['direction'] == 'max' else item['metric'] < best[key]['metric']):
-            best[key] = item
-    def public(item):
-        return {key: item[key] for key in ('id', 'label', 'implementation', 'evaluation_key', 'metric', 'direction', 'status', 'observation_step', 'observation_h_scope', 'observation_summary', 'observation_conclusion', 'implementation_owner_step', 'implementation_conclusion', 'candidate_h_scope', 'parent_candidate', 'candidate_action')}
-    def compact(item):
-        view = public(item)
-        for key, capacity in (('label', 160), ('evaluation_key', 192), ('observation_summary', 160)):
-            text = view[key]
-            view[key] = text.encode()[:capacity].decode('utf-8', errors='ignore')
-            view[key + '_truncated'] = view[key] != text
-        if view['implementation'] is not None and len(view['implementation'].encode()) > 512:
-            view['implementation'] = None
-        view['details_in_index'] = True
-        return view
-    return dict(coverage=coverage, current_candidate=current, candidate_index=[public(row) for row in candidates.values()], proxy_highest=[compact(row) for row in list(best.values())[:8]],
-                proxy_groups_omitted_count=max(0, len(best) - 8),
-                a_recommended=selected, actual_submission=actual,
-                recent_candidates=[compact(row) for row in list(candidates.values())[-16:]],
-                candidates_omitted_count=max(0, len(candidates) - 16),
-                limitation='Highest means highest observed metric only; candidate models are not retained unless a sealed artifact or explicit archived snapshot exists. Proxy groups use the frozen adapter evaluation_key and direction; they do not establish target optimality. Read each original scientific conclusion for applicability and blind spots. Null slots mean unknown, not agreement.')
+    from . import lineage
+    return lineage.candidate_view(records)
 
 
-def bind(root, step, protocol=6, *, source_cutoff=None, extra_steps=()):
-    records = rebuild(root, step, source_cutoff=source_cutoff, extra_steps=extra_steps)
-    if protocol >= 7:
-        for record in records:
-            options = implementation_options(root, record['step'])
-            record['view']['implementations'] = options[:16]
-            record['view']['implementations_omitted_count'] = max(0, len(options) - 16)
-    work = c.workspace(root, step)
+def page_writer(work):
     files, total = [], 0
     def add(path, value):
         nonlocal total
@@ -506,6 +456,17 @@ def bind(root, step, protocol=6, *, source_cutoff=None, extra_steps=()):
             next_page = f'{prefix}/{index + 2:04d}.json' if index + 1 < len(groups) else None
             add(path, value(items, next_page, remaining))
         return paths
+    return add, paged, files
+
+
+def bind(root, step, protocol=6, *, source_cutoff=None, extra_steps=()):
+    records = rebuild(root, step, source_cutoff=source_cutoff, extra_steps=extra_steps)
+    if protocol >= 7:
+        for record in records:
+            options = implementation_options(root, record['step'])
+            record['view']['implementations'] = options[:16]
+            record['view']['implementations_omitted_count'] = max(0, len(options) - 16)
+    add, paged, files = page_writer(c.workspace(root, step))
     if protocol >= 7:
         for record in records:
             paths = paged(implementation_options(root, record['step']), 16, 'implementations',
@@ -610,8 +571,12 @@ def _validate_proof(root, proof):
 
 def refresh(root, before_step):
     """Update disposable projections after every seal, including a terminal A."""
-    records = rebuild(root, before_step)
-    overview = candidate_overview(records)
+    latest = c.read(root / 'jobs' / f'{before_step-1:03d}.json') if before_step > 1 else {}
+    if latest.get('lineage_projection_version') == 1:
+        from . import lineage
+        overview = lineage.project(root, before_step)['candidates']
+    else:
+        overview = candidate_overview(rebuild(root, before_step))
     overview.pop('candidate_index')
     if len(_bytes(overview)) > MAX_PAGE_BYTES:
         raise ValueError('Candidate overview exceeds its bounded projection capacity')

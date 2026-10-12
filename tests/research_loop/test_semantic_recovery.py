@@ -337,23 +337,39 @@ def test_unknown_submission_is_never_rerouted_or_replayed(scene, monkeypatch):
 
 @pytest.mark.parametrize('changed', ['raw', 'job', 'history_page'])
 def test_integrity_corruption_is_not_semantic_author_recovery(scene, monkeypatch, changed):
-    job = c.build_job(scene, 1, 'H', [])
-    terminal_payload(scene, 1, h_payload(plan([commitment('Declared')], 'Undeclared')))
-    record = c.host_record(c.workspace(scene, 1))
+    step=3 if changed=='history_page' else 1
+    if step==3:
+        finish(scene,1,'H',[],action='experiment',search_choice=plan([commitment('Declared')],'Declared'))
+        route=c.read(c.host_record(c.workspace(scene,1))/'science-output.json')['route_reason']
+        c.build_job(scene,2,'W',[1],instruction=route)
+        finish(scene,2,'W',[1])
+        job=c.build_job(scene,3,'A',[1,2])
+        payload=dict(summary='Scientific attempt',scientific_result='Retain science, not unauthorized focus',limitations=['Fixture only'],
+            implementation_selection=None,candidate_recommendation=None,progress_assessment=None,search_review=review(next_focus=focus('unknown')),
+            next_action='continue_w',route_reason='Needs bounded author repair')
+    else:
+        job=c.build_job(scene,1,'H',[]);payload=h_payload(plan([commitment('Declared')],'Undeclared'))
+    terminal_payload(scene,step,payload)
+    record=c.host_record(c.workspace(scene,step))
     if changed == 'raw':
         (record / 'science-output.json').write_text('TAMPERED SCIENCE')
     elif changed == 'job':
         c.write(scene / 'jobs/001.json', {**job, 'instruction': 'Different immutable task'})
     else:
-        page = c.workspace(scene, 1) / job['history']['files'][0]['path']
+        page = c.workspace(scene, step) / job['history']['view']['indexes']['nodes']
         page.chmod(0o600)
         page.write_text('TAMPERED HISTORY')
     def forbidden(*args, **kwargs):
         pytest.fail('Integrity corruption cannot create a new scientific attempt')
     monkeypatch.setattr(native, 'execute_native', forbidden)
-    assert controller.run(scene)['status'] in {'native_outcome_unsealed', 'seal_pending'}
+    stopped=controller.run(scene)
+    if changed=='history_page':
+        assert stopped['status']=='seal_pending' and stopped['completed_steps']==2
+        assert 'Bound scientific history page changed' in stopped['reason']
+    else:
+        assert stopped['status'] in {'native_outcome_unsealed','seal_pending'}
     assert not (record / 'result-identity.json').exists()
-    assert not (scene / 'jobs/002.json').exists()
+    assert not (scene / 'jobs' / f'{step+1:03d}.json').exists()
 
 
 def test_terminal_unsealed_attempt_is_collected_before_new_author_work(scene, monkeypatch):
@@ -430,10 +446,11 @@ def test_more_than_sixteen_multibyte_mechanisms_have_bounded_readonly_navigation
         finish(scene, step, 'H', [step - 1] if step > 1 else [], action='analyze',
                search_choice=plan(rows, rows[0]['label']))
     job = c.build_job(scene, 6, 'A', [5])
-    view = job['search']['view']
-    assert view['mechanism_count'] == 20
+    view = c.science_view(job,scene)['lineage']
+    assert 'search' not in c.science_view(job,scene)
+    assert view['mechanisms']['count'] == 20
     assert len(json.dumps(view, ensure_ascii=False, indent=2).encode()) <= search.MAX_VIEW_BYTES
-    path, rows, pages = view['mechanism_index'], [], []
+    path, rows, pages = view['indexes']['mechanisms'], [], []
     while path:
         page_path = c.workspace(scene, 6) / path
         page = c.read(page_path)

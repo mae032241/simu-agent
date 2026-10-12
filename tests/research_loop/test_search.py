@@ -297,10 +297,11 @@ if role=='H':
  payload.update(next_action='experiment',route_reason='Screen the declared mechanism',search_plan={'scope':'Bounded H scope','commitments':[{'label':'Mechanism','minimal_test':'Discriminating measurement','existing_ref':None}],'focus':{'label':'Mechanism','action':'screen','repair_source':None}})
 elif role=='A':
  payload['progress_assessment']=None
- if 'search' not in job:
+ if 'search' not in job and not job.get('lineage',{}).get('mechanisms',{}).get('count'):
   payload.update(next_action='finish',route_reason='Legacy policy remains unchanged',candidate_recommendation=None,search_review=None)
  else:
-  ref=job['search']['commitments'][0]['mechanism_ref']
+  if 'search' in job:ref=job['search']['commitments'][0]['mechanism_ref']
+  else:ref=json.loads((work/job['lineage']['indexes']['mechanisms']).read_text())['mechanisms'][0]['mechanism_ref']
   payload.update(next_action='continue_w' if step==3 else 'finish',route_reason='Evidence warrants this scientific route',candidate_recommendation=None,search_review={'dispositions':[{'mechanism_ref':ref,'status':'screened','reason':'Bounded negative result counts as screening','evidence':['inputs/parents/002/conclusion.json']}] if step==3 else [],'next_focus':{'mechanism_ref':ref,'action':'improve','repair_source':None} if step==3 else None})
 if 'implementation_selection' in job['final_response']:
  payload['implementation_selection']=None

@@ -293,6 +293,7 @@ def selected_inputs(work, payload, job, diagnostics=None):
 
 def science_view(job, root=None):
     protocol = job.get('handoff_protocol', 1)
+    unified = job.get('lineage_projection_version') == 1
     request = None
     if protocol >= 8 and job.get('author_correction'):
         from . import semantic
@@ -321,14 +322,15 @@ def science_view(job, root=None):
         **(dict(implementation_options=job.get('implementation_options', []),
                 implementation_options_omitted_count=job.get('implementation_options_omitted_count', 0),
                 scientific_links='Ordinary citations are scientific prose. Only listed bound files are available; '
-                'unresolved links do not select inputs or acquire evidence qualification.') if protocol >= 7 else {}),
-        **(dict(history=job['history']['view']) if job.get('handoff_protocol', 1) >= 3 else {}),
+                'unresolved links do not select inputs or acquire evidence qualification.') if protocol >= 7 and not unified else {}),
+        **(dict(lineage=job['history']['view']) if unified else {}),
+        **(dict(history=job['history']['view']) if job.get('handoff_protocol', 1) >= 3 and not unified else {}),
         **(dict(input_selection_status=job['input_selection_status'], control_diagnostics=job['control_diagnostics'])
            if job.get('handoff_protocol', 1) >= 8 else {}),
         **(dict(control_request=request)
            if job.get('handoff_protocol', 1) >= 8 and job.get('author_correction') else {}),
         **(dict(closeout=closeout) if closeout is not None else {}),
-        **(dict(search=job['search']['view']) if job.get('search') else {}),
+        **(dict(search=job['search']['view']) if job.get('search') and not unified else {}),
         **(dict(progress_assessment=('Judge the current assessed work as progress/no_progress/unknown; '
                 'null means unknown. Explain scientific support and limitations in ordinary science. '
                 'The host binds the exact assessed task for counting, not scientific verification. Do not write evidence paths.' if protocol >= 7 else
@@ -441,7 +443,11 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
     elif source_cutoff is not None or delivery_sources is not None:
         raise ValueError('Ordinary task cannot select a noncontiguous science prefix')
     job_path = root / 'jobs' / f'{step:03d}.json'
-    protocol = read(regular(job_path)).get('handoff_protocol', 1) if job_path.exists() else HANDOFF_PROTOCOL
+    retained = read(regular(job_path)) if job_path.exists() else None
+    protocol = retained.get('handoff_protocol', 1) if retained is not None else HANDOFF_PROTOCOL
+    projection_version = retained.get('lineage_projection_version', 0) if retained is not None else policy.get('lineage_projection_version', 0) if protocol >= 8 else 0
+    if type(projection_version) is not int or projection_version not in (0, 1):
+        raise ValueError('Unsupported frozen lineage projection version')
     if protocol not in (1, 2, 3, 4, 5, 6, 7, HANDOFF_PROTOCOL):
         raise ValueError('Unsupported frozen handoff protocol')
     work = workspace(root, step)
@@ -492,6 +498,8 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
                instruction=instruction, direct_refs=refs, direct_materials=materials, direct_entry_points=entry_points, global_materials=globals_,
                evidence_return=evidence_return, **(dict(selected_inputs=selected) if selected else {}),
                **(dict(handoff_protocol=protocol) if protocol >= 2 else {}))
+    if projection_version == 1:
+        job['lineage_projection_version'] = 1
     if purpose is not None:
         job.update(purpose=purpose, source_cutoff=source_cutoff, delivery_sources=delivery_sources,
                    closeout_begin=dict(seq=begin['seq'], sha256=digest(root / 'control-ledger' / f'{begin["seq"]:06d}.json')))
@@ -501,17 +509,26 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
         job['control_diagnostics'] = previous.get('control_outcome', {}).get('diagnostics', [])
         if author_correction is not None:
             job['author_correction'] = author_correction
+    state = None
     if protocol >= 3:
         from . import history
         extra_steps = [parent for parent in parents if source_cutoff is not None and parent > source_cutoff]
-        job['history'] = history.bind(root, step, protocol, source_cutoff=source_cutoff, extra_steps=extra_steps)
+        if projection_version == 1:
+            from . import lineage
+            job['history'], state = lineage.bind(root, step, role, protocol, source_cutoff=source_cutoff, extra_steps=extra_steps)
+        else:
+            job['history'] = history.bind(root, step, protocol, source_cutoff=source_cutoff, extra_steps=extra_steps)
         if protocol >= 7:
             options = [item for parent in parents for item in history.implementation_options(root, parent)]
             job['implementation_options'] = options[:16]
             job['implementation_options_omitted_count'] = max(0, len(options) - 16)
+            if projection_version == 1:
+                job['history']['view']['implementation_options'] = [dict(id=row['id'], label=row['label'].encode()[:80].decode('utf-8',errors='ignore')) for row in options[:2]]
+                job['history']['view']['implementation_options_omitted_count'] = max(0,len(options)-2)
+                lineage.bounded_brief(job['history']['view'])
     if purpose is None and protocol >= 5 and policy.get('search_policy') is not None:
         from . import search
-        job['search'] = search.bind(root, step, role, protocol)
+        job['search'] = search.bind(root, step, role, protocol, state=state, unified=projection_version == 1)
     if correction_request is not None:
         job['correction_request'] = correction_request
         from . import correction
@@ -609,7 +626,7 @@ def _validate_inputs(root, work, job):
         semantic.validate_job(root, job)
     if job.get('purpose') is None and job.get('handoff_protocol', 1) >= 5 and policy.get('search_policy') is not None:
         from . import search
-        if job.get('search') != search.bind(root, job['step'], job['role'], job['handoff_protocol']):
+        if job.get('search') != search.bind(root, job['step'], job['role'], job['handoff_protocol'], unified=job.get('lineage_projection_version') == 1):
             raise ValueError('Frozen scientific search binding changed')
     if job.get('handoff_protocol', 1) >= 3:
         from . import history
