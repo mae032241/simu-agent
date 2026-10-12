@@ -295,8 +295,34 @@ def selected_inputs(work, payload, job, diagnostics=None):
     return selected
 
 
+def _decision_context(root, job):
+    """Label the exact immediate scientific source; do not parse its prose."""
+    if (job['role'] not in {'W', 'H'} or job.get('purpose') is not None
+            or job.get('author_correction') or job.get('correction_request')):
+        return None
+    previous = job['step'] - 1
+    ref = next((row for row in job['direct_refs'] if row['path'] == f'inputs/parents/{previous:03d}/conclusion.json'), None)
+    if ref is None:
+        return None
+    source_job = read(regular(root / 'jobs' / f'{previous:03d}.json'))
+    source = science_payload(_execution_raw(root, previous), source_job['role'], source_job.get('handoff_protocol', 1))
+    action = 'continue_w' if job['role'] == 'W' else 'revise_h'
+    if (source_job['role'] != 'A' or source.get('next_action') != action
+            or job['instruction'] != source.get('route_reason')):
+        return None  # H directives, E questions/returns and control corrections keep their question.
+    return dict(source_role='A', source_action=action, source_original=ref['path'],
+                original_instruction=job['instruction'],
+                authority='A selects global direction and decision-changing evidence. Concrete execution methods are proposals. '
+                'Original user constraints and H scope/discriminating commitments remain binding; W owns execution design and H owns mechanism revision.')
+
+
 def science_view(job, root=None):
     protocol = job.get('handoff_protocol', 1)
+    context = job.get('decision_context')
+    question = job['instruction']
+    if context is not None:
+        question = ("Choose observation-driven experiments within the original H mechanism and user constraints; use A's global direction and evidence gap."
+                    if job['role'] == 'W' else "Revise the qualitative mechanism matrix and discriminating design in light of A's global assessment; preserve original constraints.")
     unified = job.get('lineage_projection_version') == 1
     if unified and job.get('selection_protocol', 0) != job['history']['view']['candidates'].get('selection_protocol', 0):
         raise ValueError('Frozen selection projection differs from its task marker')
@@ -315,7 +341,9 @@ def science_view(job, root=None):
             selection='Choose a frozen candidate ID for delivery; null means no decision, not retention. Report scientific reasoning and limitations.',
             sources=delivery.public_sources(job['delivery_sources']))
     return {key: value for key, value in {
-        'role': job['role'], 'question': job['instruction'],
+        'role': job['role'], 'question': question,
+        **(dict(decision_context=context) if context is not None else {}),
+        **(dict(role_instruction=job['native_role_instruction']) if job.get('native_role_instruction') and not job.get('role_guidance') else {}),
         **(dict(role_guidance=job['role_guidance']) if job.get('role_guidance') else {}),
         'global': dict(objective='inputs/global/objective.md',
                        updates=[row['path'] for row in job['global_materials'][1:]]),
@@ -456,6 +484,9 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
         raise ValueError('Ordinary task cannot select a noncontiguous science prefix')
     job_path = root / 'jobs' / f'{step:03d}.json'
     retained = read(regular(job_path)) if job_path.exists() else None
+    authority_version = retained.get('handoff_authority_version', 0) if retained is not None else policy.get('handoff_authority_version', 0)
+    if type(authority_version) is not int or authority_version not in (0, 1):
+        raise ValueError('Unsupported frozen scientific handoff authority')
     protocol = retained.get('handoff_protocol', 1) if retained is not None else (9 if policy.get('candidate_audit_policy') else HANDOFF_PROTOCOL)
     projection_version = retained.get('lineage_projection_version', 0) if retained is not None else policy.get('lineage_projection_version', 0) if protocol >= 8 else 0
     selection_protocol = retained.get('selection_protocol', 0) if retained is not None else policy.get('selection_protocol', 0) if projection_version == 1 else 0
@@ -516,6 +547,9 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
     advice = retained.get('role_guidance') if retained is not None else policy.get('role_guidance', {}).get(role)
     if advice is not None:
         job['role_guidance'] = advice
+    if authority_version == 1:
+        job['handoff_authority_version'] = 1
+        job['native_role_instruction'] = retained['native_role_instruction'] if retained is not None else (advice if advice is not None else ROLE_INSTRUCTIONS[role])
     if selection_protocol == 1:
         job['selection_protocol'] = 1
     if projection_version == 1:
@@ -558,6 +592,10 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
         job['correction_request'] = correction_request
         from . import correction
         correction.validate_job(root, job)
+    if authority_version == 1:
+        context = _decision_context(root, job)
+        if context is not None:
+            job['decision_context'] = context
     for path, value in ((root / 'jobs' / f'{step:03d}.json', job),
                         (work / 'science-task.json', science_view(job, root)),
                         (host_record(work) / 'science-result.schema.json', result_schema(role, protocol))):
@@ -621,6 +659,11 @@ def validate(work: Path):
 
 
 def _validate_inputs(root, work, job):
+    if job.get('handoff_authority_version') == 1:
+        if job.get('decision_context') != _decision_context(root, job):
+            raise ValueError('Scientific handoff source authority changed')
+        if job.get('role_guidance') and job.get('native_role_instruction') != job['role_guidance']:
+            raise ValueError('Native role instruction differs from its frozen scientific guidance')
     if read(regular(work / 'science-task.json')) != science_view(job, root):
         raise ValueError('Frozen scientific task changed')
     if job['global_materials'] != global_materials(root):

@@ -25,8 +25,11 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
             lineage_projection_version: int | None = 1,
             role_guidance: dict | None = guidance.DEFAULT,
             selection_protocol: int | None = 1,
-            node_budget_mode: str = 'soft', candidate_audit_policy: dict | None = None) -> dict:
+            node_budget_mode: str = 'soft', candidate_audit_policy: dict | None = None,
+            handoff_authority_version: int | None = 1) -> dict:
     """Freeze an explicit goal and finite launch budgets in a fresh directory."""
+    if handoff_authority_version is not None and (type(handoff_authority_version) is not int or handoff_authority_version != 1):
+        raise ValueError('Unsupported scientific handoff authority version')
     if lineage_projection_version is not None and (type(lineage_projection_version) is not int or lineage_projection_version != 1):
         raise ValueError('Unsupported lineage projection version')
     if selection_protocol is not None and (type(selection_protocol) is not int or selection_protocol != 1):
@@ -88,6 +91,8 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
         max_output_item_bytes=max_output_item_bytes,
         max_output_total_bytes=max_output_total_bytes)
     settings['node_budget_mode'] = node_budget_mode
+    if handoff_authority_version is not None:
+        settings['handoff_authority_version'] = handoff_authority_version
     if candidate_audit_policy is not None:
         settings['candidate_audit_policy'] = dict(candidate_audit_policy)
     if selection_protocol is not None and lineage_projection_version == 1:

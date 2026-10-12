@@ -104,6 +104,7 @@ def run_native(root: Path, step: int, attempt=0):
     args = [*settings['native_launcher_argv'], 'exec', '--json', '--output-last-message', str(pending),
             '--model', settings['model'], '-c', f'model_reasoning_effort={json.dumps(settings["reasoning_effort"])}',
             '--sandbox', 'workspace-write', '-C', str(work), '-']
+    role_instruction = job.get('native_role_instruction', ROLE_INSTRUCTIONS[job['role']])
     # Raw Codex is supported as a local soft-isolation entry. Existing qualified
     # launchers retain their own exact argv/config protocol and MCP settings.
     if len(settings['native_launcher_argv']) == 1 and Path(args[0]).name == 'codex':
@@ -111,7 +112,7 @@ def run_native(root: Path, step: int, attempt=0):
                        '-c', 'project_doc_max_bytes=0', '-c', 'mcp_servers.scidiscovery.enabled=false',
                        '-c', 'features.multi_agent=false', '-c', 'features.fast_mode=false',
                        '-c', 'approval_policy="never"',
-                       '-c', 'developer_instructions=' + json.dumps(ROLE_INSTRUCTIONS[job['role']]),
+                       '-c', 'developer_instructions=' + json.dumps(role_instruction),
                        '-c', f'service_tier={json.dumps(settings["service_tier"])}']
     if settings.get('resume_policy') is not None:
         from . import continuation
@@ -150,14 +151,17 @@ def run_native(root: Path, step: int, attempt=0):
               if job.get('handoff_protocol', 1) >= 7 else
               'and Markdown links to the few needed deliverables, such as [comparison](artifacts/comparison.csv); '
               'the host resolves these links for the next role. ')
-    prompt = (ROLE_INSTRUCTIONS[job['role']] + '\nRead science-task.json, then the global files and direct '
+    completion = ("Complete your role's scientific work within the budget, preserving necessary validation. Report findings, uncertainties "
+                  if job.get('handoff_authority_version') == 1 else
+                  'Conclude once you have a decision-relevant scientific contribution. Report findings, uncertainties ')
+    verification = '' if job.get('handoff_authority_version') == 1 else 'Leave further scientific verification requests to A. '
+    prompt = (role_instruction + '\nRead science-task.json, then the global files and direct '
               'parent conclusions it names. Read particular parent artifacts only as scientifically needed. '
               'Use work/ for scratch code, logs, diagnostics and intermediate models; artifacts/ contains only '
               'necessary deliverables for the next role. Experiments may use experiments/<name>/{work,artifacts} '
               'and an optional brief scientific conclusion.md. Those are directories, not extra role agents. '
-              'Conclude once you have a decision-relevant scientific contribution. Report findings, uncertainties '
-              + links_instruction + 'Leave further scientific verification requests to A. '
-              'The controller collects deliverables, records paths and hashes, validates and seals your final response. '
+              + completion + links_instruction + verification
+              + 'The controller collects deliverables, records paths and hashes, validates and seals your final response. '
               'Do not build attachment indexes, manifests, provenance inventories, hash lists, packaging scripts, '
               'or schema validators. Do not duplicate final responses in files or copy every model for handoff. '
               'Scientific checks required by the task remain your work. Return the small scientific JSON described '
