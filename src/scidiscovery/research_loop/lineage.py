@@ -212,7 +212,7 @@ def project(root, before_step, *, source_cutoff=None, extra_steps=()):
     return dict(sources=sources,records=records,search_state=state,graph=graph,candidates=candidate_view(records))
 
 
-def brief(records, state, graph, candidates, indexes):
+def brief(records, state, graph, candidates, indexes, *, selection_protocol=0):
     """The complete default lineage packet is bounded using its written bytes."""
     recent=[]
     for record in records[-2:]:
@@ -243,6 +243,22 @@ def brief(records, state, graph, candidates, indexes):
     for row in value['candidates']['proxy_highest']:
         row['evaluation_key']=_clip(row['evaluation_key'],192)
         row['evaluation_key_truncated']=any(item['id']==row['id'] and item['evaluation_key']!=row['evaluation_key'] for item in candidates['proxy_highest'])
+    if selection_protocol == 1:
+        from . import selection
+        try:
+            public = selection.project(selection.public_inputs(records))
+        except ValueError:
+            # Sources were verified before this optional projection. No broad
+            # catch may cover source/hash/permission checks or scientific seals.
+            public = dict(scope='unavailable', target_best=None, candidate_count=len(candidates['candidate_index']),
+                coverage='unknown', current_candidate=None, a_recommended=None, historical_a_recommendation=None,
+                observed_actual_submission=None, delivery=dict(state='unknown', current_confirmed=None, last_confirmed=None),
+                proxy_highest=[], proxy_groups_omitted_count=0,
+                unranked_ids=[], unranked_omitted_count=0, public_audits=[], audits_omitted_count=0,
+                limitation='Public selection overview unavailable; inspect existing candidate and original conclusion indexes.')
+        value['candidates'] = dict(public, selection_protocol=1)
+    elif selection_protocol != 0:
+        raise ValueError('Unsupported frozen selection protocol')
     return bounded_brief(value)
 
 
@@ -252,6 +268,10 @@ def bounded_brief(value):
     def size():return len((json.dumps(value,ensure_ascii=False,indent=2,allow_nan=False)+'\n').encode())
     while size()>history.MAX_BRIEF_BYTES and value['recent']:
         value['recent'].pop(0);value['recent_omitted_count']+=1
+    if value['candidates'].get('selection_protocol') == 1:
+        for field, omitted in (('public_audits','audits_omitted_count'), ('unranked_ids','unranked_omitted_count')):
+            while size()>history.MAX_BRIEF_BYTES and value['candidates'][field]:
+                value['candidates'][field].pop();value['candidates'][omitted]+=1
     while size()>history.MAX_BRIEF_BYTES and value['candidates']['proxy_highest']:
         value['candidates']['proxy_highest'].pop();value['candidates']['proxy_groups_omitted_count']+=1
     while size()>history.MAX_BRIEF_BYTES and value.get('implementation_options'):
@@ -277,7 +297,7 @@ def public_relations(graph, sources):
     return rows
 
 
-def bind(root, step, role, protocol, *, source_cutoff=None, extra_steps=()):
+def bind(root, step, role, protocol, *, source_cutoff=None, extra_steps=(), selection_protocol=0):
     projection=project(root,step,source_cutoff=source_cutoff,extra_steps=extra_steps)
     records,state=projection['records'],projection['search_state']
     add,paged,files=history.page_writer(c.workspace(root,step))
@@ -310,6 +330,6 @@ def bind(root, step, role, protocol, *, source_cutoff=None, extra_steps=()):
     relations=paged(public_relations(projection['graph'],projection['sources']),16,'relations','inputs/lineage/relations','declared-not-proven-causality')
     indexes=dict(nodes=nodes[0] if nodes else None,candidates=candidates[0] if candidates else None,
                  mechanisms=mechanism_pages[0] if mechanism_pages else None,relations=relations[0] if relations else None)
-    view=brief(records,state,projection['graph'],overview,indexes)
+    view=brief(records,state,projection['graph'],overview,indexes,selection_protocol=selection_protocol)
     return dict(nodes=[dict(step=row['step'],seal_sha256=row['seal_sha256']) for row in records],files=files,
                 candidate_ids=[row['id'] for row in candidate_rows],view=view),state

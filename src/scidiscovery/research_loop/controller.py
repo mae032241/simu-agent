@@ -23,10 +23,13 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
             delivery_policy: dict | None = None,
             resume_policy: dict | None = None,
             lineage_projection_version: int | None = 1,
-            role_guidance: dict | None = guidance.DEFAULT) -> dict:
+            role_guidance: dict | None = guidance.DEFAULT,
+            selection_protocol: int | None = 1) -> dict:
     """Freeze an explicit goal and finite launch budgets in a fresh directory."""
     if lineage_projection_version is not None and (type(lineage_projection_version) is not int or lineage_projection_version != 1):
         raise ValueError('Unsupported lineage projection version')
+    if selection_protocol is not None and (type(selection_protocol) is not int or selection_protocol != 1):
+        raise ValueError('Unsupported public selection protocol')
     root, objective, public_root = map(Path, (root, objective, public_root))
     for name, value in (("max_tokens", max_tokens), ("max_steps", max_steps),
                         ("max_output_item_bytes", max_output_item_bytes),
@@ -76,6 +79,8 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
         model=model, reasoning_effort=reasoning_effort, service_tier=service_tier,
         max_output_item_bytes=max_output_item_bytes,
         max_output_total_bytes=max_output_total_bytes)
+    if selection_protocol is not None and lineage_projection_version == 1:
+        settings['selection_protocol'] = selection_protocol
     if advice is not None:
         settings['role_guidance'] = advice
     if lineage_projection_version is not None:

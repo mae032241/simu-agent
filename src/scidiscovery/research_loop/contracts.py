@@ -294,6 +294,8 @@ def selected_inputs(work, payload, job, diagnostics=None):
 def science_view(job, root=None):
     protocol = job.get('handoff_protocol', 1)
     unified = job.get('lineage_projection_version') == 1
+    if unified and job.get('selection_protocol', 0) != job['history']['view']['candidates'].get('selection_protocol', 0):
+        raise ValueError('Frozen selection projection differs from its task marker')
     request = None
     if protocol >= 8 and job.get('author_correction'):
         from . import semantic
@@ -447,6 +449,9 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
     retained = read(regular(job_path)) if job_path.exists() else None
     protocol = retained.get('handoff_protocol', 1) if retained is not None else HANDOFF_PROTOCOL
     projection_version = retained.get('lineage_projection_version', 0) if retained is not None else policy.get('lineage_projection_version', 0) if protocol >= 8 else 0
+    selection_protocol = retained.get('selection_protocol', 0) if retained is not None else policy.get('selection_protocol', 0) if projection_version == 1 else 0
+    if type(selection_protocol) is not int or selection_protocol not in (0, 1) or (selection_protocol == 1 and projection_version != 1):
+        raise ValueError('Unsupported frozen public selection protocol')
     if type(projection_version) is not int or projection_version not in (0, 1):
         raise ValueError('Unsupported frozen lineage projection version')
     if protocol not in (1, 2, 3, 4, 5, 6, 7, HANDOFF_PROTOCOL):
@@ -502,6 +507,8 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
     advice = retained.get('role_guidance') if retained is not None else policy.get('role_guidance', {}).get(role)
     if advice is not None:
         job['role_guidance'] = advice
+    if selection_protocol == 1:
+        job['selection_protocol'] = 1
     if projection_version == 1:
         job['lineage_projection_version'] = 1
     if purpose is not None:
@@ -519,7 +526,7 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
         extra_steps = [parent for parent in parents if source_cutoff is not None and parent > source_cutoff]
         if projection_version == 1:
             from . import lineage
-            job['history'], state = lineage.bind(root, step, role, protocol, source_cutoff=source_cutoff, extra_steps=extra_steps)
+            job['history'], state = lineage.bind(root, step, role, protocol, source_cutoff=source_cutoff, extra_steps=extra_steps, selection_protocol=selection_protocol)
         else:
             job['history'] = history.bind(root, step, protocol, source_cutoff=source_cutoff, extra_steps=extra_steps)
         if protocol >= 7:

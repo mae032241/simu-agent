@@ -1,0 +1,420 @@
+{
+  "contract_version": 1,
+  "synthetic": true,
+  "limits": {
+    "max_candidates": 4096,
+    "max_input_bytes": 4194304,
+    "max_brief_bytes": 4096,
+    "max_groups": 8,
+    "max_ties_per_group": 4,
+    "max_status_preview": 16
+  },
+  "cases": [
+    {
+      "name": "ranking_reversal_unknown_target_weights",
+      "input": {
+        "records": [
+          {
+            "step": 2,
+            "role": "W",
+            "recommendation": null,
+            "coverage": "complete",
+            "candidates": [
+              {
+                "id": "P-a",
+                "label": "P-a",
+                "evaluation_key": "public-A",
+                "metric": 0.9,
+                "direction": "max",
+                "status": "ok"
+              },
+              {
+                "id": "Q-a",
+                "label": "Q-a",
+                "evaluation_key": "public-A",
+                "metric": 0.8,
+                "direction": "max",
+                "status": "ok"
+              },
+              {
+                "id": "P-b",
+                "label": "P-b",
+                "evaluation_key": "public-B",
+                "metric": 0.4,
+                "direction": "max",
+                "status": "ok"
+              },
+              {
+                "id": "Q-b",
+                "label": "Q-b",
+                "evaluation_key": "public-B",
+                "metric": 0.7,
+                "direction": "max",
+                "status": "ok"
+              }
+            ],
+            "current_candidate": null,
+            "actual_submission": null
+          }
+        ]
+      },
+      "expected": {
+        "proxy_group_winners": {
+          "public-A/max": [
+            "P-a"
+          ],
+          "public-B/max": [
+            "Q-b"
+          ]
+        },
+        "target_best": null,
+        "cross_group_ranking": false
+      }
+    },
+    {
+      "name": "different_and_unknown_evaluation_versions",
+      "input": {
+        "records": [
+          {
+            "step": 2,
+            "role": "W",
+            "recommendation": null,
+            "coverage": "complete",
+            "candidates": [
+              {
+                "id": "P",
+                "label": "P",
+                "evaluation_key": "public-v1",
+                "metric": 0.9,
+                "direction": "max",
+                "status": "ok"
+              },
+              {
+                "id": "Q",
+                "label": "Q",
+                "evaluation_key": "public-v2",
+                "metric": 0.95,
+                "direction": "max",
+                "status": "ok"
+              },
+              {
+                "id": "U",
+                "label": "U",
+                "evaluation_key": null,
+                "metric": 1.0,
+                "direction": "max",
+                "status": "ok"
+              },
+              {
+                "id": "E",
+                "label": "E",
+                "evaluation_key": "",
+                "metric": 0.99,
+                "direction": "max",
+                "status": "ok"
+              }
+            ],
+            "current_candidate": null,
+            "actual_submission": null
+          }
+        ]
+      },
+      "expected": {
+        "proxy_group_count": 2,
+        "unranked_ids": [
+          "U",
+          "E"
+        ],
+        "target_best": null
+      }
+    },
+    {
+      "name": "missing_audit_high_proxy",
+      "input": {
+        "records": [
+          {
+            "step": 2,
+            "role": "W",
+            "recommendation": null,
+            "coverage": "complete",
+            "candidates": [
+              {
+                "id": "P",
+                "label": "P",
+                "evaluation_key": "public-v1",
+                "metric": 0.99,
+                "direction": "max",
+                "status": "ok"
+              },
+              {
+                "id": "Q",
+                "label": "Q",
+                "evaluation_key": "public-v1",
+                "metric": 0.8,
+                "direction": "max",
+                "status": "ok"
+              }
+            ],
+            "current_candidate": null,
+            "actual_submission": null
+          }
+        ],
+        "audits": [
+          {
+            "candidate_id": "Q",
+            "status": "completed",
+            "artifact_bound": true,
+            "leakage_flag": false
+          }
+        ]
+      },
+      "expected": {
+        "proxy_group_winners": {
+          "public-v1/max": [
+            "P"
+          ]
+        },
+        "audit_states": {
+          "P": "unknown",
+          "Q": "public_audit_passed"
+        },
+        "target_best": null
+      }
+    },
+    {
+      "name": "proxy_a_and_actual_are_independent",
+      "input": {
+        "records": [
+          {
+            "step": 2,
+            "role": "W",
+            "recommendation": null,
+            "coverage": "complete",
+            "candidates": [
+              {
+                "id": "P",
+                "label": "P",
+                "evaluation_key": "public-v1",
+                "metric": 0.9,
+                "direction": "max",
+                "status": "ok"
+              },
+              {
+                "id": "Q",
+                "label": "Q",
+                "evaluation_key": "public-v1",
+                "metric": 0.8,
+                "direction": "max",
+                "status": "ok"
+              },
+              {
+                "id": "R",
+                "label": "R",
+                "evaluation_key": "public-v1",
+                "metric": 0.7,
+                "direction": "max",
+                "status": "ok"
+              }
+            ],
+            "current_candidate": {
+              "candidate_id": "Q"
+            },
+            "actual_submission": {
+              "candidate_id": "R",
+              "artifact_retention": "archived"
+            }
+          },
+          {
+            "step": 3,
+            "role": "A",
+            "recommendation": "Q",
+            "coverage": null,
+            "candidates": [],
+            "current_candidate": null,
+            "actual_submission": null
+          }
+        ]
+      },
+      "expected": {
+        "proxy_group_winners": {
+          "public-v1/max": [
+            "P"
+          ]
+        },
+        "a_recommended": "Q",
+        "current_candidate": "Q",
+        "observed_actual_submission": "R",
+        "delivery_state": "unknown"
+      }
+    },
+    {
+      "name": "latest_a_null_clears_current_recommendation",
+      "input": {
+        "records": [
+          {
+            "step": 2,
+            "role": "W",
+            "recommendation": null,
+            "coverage": "complete",
+            "candidates": [
+              {
+                "id": "P",
+                "label": "P",
+                "evaluation_key": "public-v1",
+                "metric": 0.9,
+                "direction": "max",
+                "status": "ok"
+              }
+            ],
+            "current_candidate": null,
+            "actual_submission": null
+          },
+          {
+            "step": 3,
+            "role": "A",
+            "recommendation": "P",
+            "coverage": null,
+            "candidates": [],
+            "current_candidate": null,
+            "actual_submission": null
+          },
+          {
+            "step": 5,
+            "role": "A",
+            "recommendation": null,
+            "coverage": null,
+            "candidates": [],
+            "current_candidate": null,
+            "actual_submission": null
+          }
+        ]
+      },
+      "expected": {
+        "a_recommended": null,
+        "historical_a_recommendation": {
+          "candidate_id": "P",
+          "author_step": 3
+        },
+        "latest_a_step": 5
+      }
+    },
+    {
+      "name": "partial_does_not_claim_global_best",
+      "input": {
+        "records": [
+          {
+            "step": 2,
+            "role": "W",
+            "recommendation": null,
+            "coverage": "partial",
+            "candidates": [
+              {
+                "id": "P",
+                "label": "P",
+                "evaluation_key": "public-v1",
+                "metric": 0.9,
+                "direction": "max",
+                "status": "ok"
+              }
+            ],
+            "current_candidate": null,
+            "actual_submission": null
+          }
+        ]
+      },
+      "expected": {
+        "coverage": "partial",
+        "target_best": null,
+        "scope": "observed_only"
+      }
+    },
+    {
+      "name": "unknown_submit_preserves_old_confirmation",
+      "input": {
+        "records": [
+          {
+            "step": 2,
+            "role": "W",
+            "recommendation": null,
+            "coverage": "complete",
+            "candidates": [
+              {
+                "id": "P",
+                "label": "P",
+                "evaluation_key": "public-v1",
+                "metric": 0.9,
+                "direction": "max",
+                "status": "ok"
+              },
+              {
+                "id": "Q",
+                "label": "Q",
+                "evaluation_key": "public-v1",
+                "metric": 0.8,
+                "direction": "max",
+                "status": "ok"
+              }
+            ],
+            "current_candidate": null,
+            "actual_submission": {
+              "candidate_id": "P",
+              "artifact_retention": "archived"
+            }
+          },
+          {
+            "step": 4,
+            "role": "W",
+            "recommendation": null,
+            "coverage": "complete",
+            "candidates": [],
+            "current_candidate": null,
+            "actual_submission": {
+              "candidate_id": "Q",
+              "artifact_retention": "archived"
+            }
+          }
+        ],
+        "delivery": {
+          "state": "unknown",
+          "last_confirmed": {
+            "candidate_id": "P"
+          }
+        }
+      },
+      "expected": {
+        "delivery_state": "unknown",
+        "last_confirmed": "P",
+        "observed_actual_submission": "Q"
+      }
+    },
+    {
+      "name": "explicit_hidden_field_rejected",
+      "input": {
+        "records": [
+          {
+            "step": 2,
+            "role": "W",
+            "recommendation": null,
+            "coverage": "complete",
+            "candidates": [
+              {
+                "id": "P",
+                "label": "P",
+                "evaluation_key": "public-v1",
+                "metric": 0.9,
+                "direction": "max",
+                "status": "ok",
+                "hidden_score": 0.99
+              }
+            ],
+            "current_candidate": null,
+            "actual_submission": null
+          }
+        ]
+      },
+      "expected": {
+        "error": "non_public_field"
+      }
+    }
+  ]
+}

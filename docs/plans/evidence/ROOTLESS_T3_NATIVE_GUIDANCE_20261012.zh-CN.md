@@ -40,6 +40,6 @@ v2 observer 补齐原公开 `submitted.json/submitted_model.pkl` 观察，避免
 
 namespace门禁使用 fake model transport；没有实际 Codex 权限或模型科学选择行为资格。两次常量模型调用只验证传输、权限及原harness回执，不证明科学自适应或效果提升。
 
-待退出：独立源码审查、提交。指导如何使用观测不是科研收益证明；没有本节点真实科研成本/效果比较，T5 单场验收另行冻结。
+代码已独审通过并提交 `ac8e3fc`。指导如何使用观测不是科研收益证明；没有本节点真实科研成本/效果比较，T5 单场验收另行冻结。
 
 独立审查已完成，报告见 [T3 review](ROOTLESS_T3_REVIEW_20261012.md)。
