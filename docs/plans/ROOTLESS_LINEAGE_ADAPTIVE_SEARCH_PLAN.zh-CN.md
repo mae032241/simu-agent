@@ -1,7 +1,7 @@
 # 薄 HWA：统一方案谱系与自适应搜索实施计划
 
 日期：2026-10-11。类型：**待实施提案**。开发分支：dev。
-用户已认可设计方向并要求执行；本轮计划独立审查通过，见[评审记录](evidence/ROOTLESS_LINEAGE_PLAN_REVIEW_20261011.md)。T0 详细设计与各节点实现仍待各自评审，不能据此声称功能完成。
+用户已认可设计方向并要求执行；本轮计划独立审查通过，见[评审记录](evidence/ROOTLESS_LINEAGE_PLAN_REVIEW_20261011.md)。[T0 详细设计已独审通过](evidence/ROOTLESS_T0_REVIEW_20261012.md)，后续各节点实现仍待各自评审，不能据此声称功能完成。
 参考实现：`020004b`。N5 已因 token_limit 停止；协议 8 补正链路真实可用，但预算内收口失败，详见[N5 终态记录](evidence/ROOTLESS_N5_BUDGET_CLOSEOUT_20261011.zh-CN.md)。本次仅修订计划，不自动恢复原场或增加额度。
 
 ## 1. 责任与适用范围
@@ -97,6 +97,8 @@ N6b 后、T0 前独立实施。[首版设计](evidence/ROOTLESS_WORKER_RESUME_DE
 退出：定向 fake、旧字节兼容、独立 wheel/CLI 与集中 execution-ref 门禁通过，代码独审并提交。实际 native 会话与增量用量另行资格核验，不能用无模型验收替代；不自动迁移旧 wrapper 或恢复 N5。
 
 ### T0：冻结数据责任、边界与验收口径
+
+当前[逐函数责任与冻结夹具设计](ROOTLESS_T0_LINEAGE_DESIGN.zh-CN.md)已冻结待独审；首版候选入口选定领域 CLI 窄wrapper，正常确切回执绑定，缺失保unknown不重发，不据此标产品通过。首版 T3 原生 W 优先，辅助者未资格禁用；T4 只用公开规则，不按隐藏池调参。
 
 - 带上 N5/live02 全池诊断，结合上下文和步骤成本确定 T3/T4 的主线与实施规模；高选择损失优先评估和选择，低池质量不直接等于树结构缺失。评估盲区和搜索效率两项都保留验收，不能由少数分数取消。
 - 对照现有机制表、候选台账、历史投影、实现选择和插件适配器，列出复用、替换与删除项，精确到模块及函数：
@@ -202,7 +204,7 @@ W 反复执行：
 | N5 收尾 | [92/92全池评分及独立审查通过](evidence/ROOTLESS_N5_LIVE02_POOL_EVALUATION_20261012.md)，仅事后诊断资格 | 已停止原场 |
 | N6 | [设计独审通过](evidence/ROOTLESS_N6_DESIGN_20261012.zh-CN.md)；[N6a 全角色节点上限验收及独审通过](evidence/ROOTLESS_N6A_NODE_BUDGET_20261012.zh-CN.md)，[N6b 完整收口、回归和安装验证通过](evidence/ROOTLESS_N6B_CLOSEOUT_20261012.zh-CN.md)，独审通过；真实模型交付效果未验证 | N5 收尾 |
 | N6c | [源码、回归及零模型安装独审通过](evidence/ROOTLESS_N6C_WORKER_RESUME_20261012.zh-CN.md)；实际 Codex 同线程及增量用量未验证 | N6b 已提交 `a5f4bb7` |
-| T0 | 待独立设计评审 | N6c；测量与设计可提前准备 |
+| T0 | [责任映射、入口与夹具设计独审通过](ROOTLESS_T0_LINEAGE_DESIGN.zh-CN.md)；入口B与测量已明确，非T1产品通过 | N6c；测量与设计可提前准备 |
 | T1 | 待实施 | T0 |
 | T2 | 待实施 | T1 |
 | T3 | 待实施 | T1/T2 |

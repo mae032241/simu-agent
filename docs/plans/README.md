@@ -4,9 +4,11 @@
 N0 基线 → N1 恢复/预算/等待 → N2 候选树与历史 → N3 有界搜索 → N4 纠偏与强制刹车 → N5 cov 验收。
 N 系列的具体实施与验收状态以该计划节点表为准；旧 F/S 与后文旧链计划保留历史范围，不作为新入口的并行执行排期。
 
-后续提案：[统一方案谱系与自适应搜索 T0–T5](ROOTLESS_LINEAGE_ADAPTIVE_SEARCH_PLAN.zh-CN.md)。统一历史维护、机制/候选谱系和 W 的观察驱动搜索；先做 N5/live02 全候选池离线诊断，再做 N6 单节点上限、收口预留与硬停后收口命令，带着诊断进入 T0–T5；计划独审及92候选全池诊断独审已通过；N6设计独审已通过，N6a节点保护代码、回归和安装独审已通过，[N6b完整收口实现、回归和安装独审通过](evidence/ROOTLESS_N6B_CLOSEOUT_20261012.zh-CN.md)，T节点待实施。[新增 N6c 原线程续接](evidence/ROOTLESS_N6C_WORKER_RESUME_20261012.zh-CN.md)源码、回归及零模型安装独审通过；实际 Codex 同线程及增量用量未验证。不退款或自动扩额，与N6b转交A收口不同；后续 T0 待设计评审。
+后续提案：[统一方案谱系与自适应搜索 T0–T5](ROOTLESS_LINEAGE_ADAPTIVE_SEARCH_PLAN.zh-CN.md)。统一历史维护、机制/候选谱系和 W 的观察驱动搜索；先做 N5/live02 全候选池离线诊断，再做 N6 单节点上限、收口预留与硬停后收口命令，带着诊断进入 T0–T5；计划独审及92候选全池诊断独审已通过；N6设计独审已通过，N6a节点保护代码、回归和安装独审已通过，[N6b完整收口实现、回归和安装独审通过](evidence/ROOTLESS_N6B_CLOSEOUT_20261012.zh-CN.md)，T1–T5待实施。[新增 N6c 原线程续接](evidence/ROOTLESS_N6C_WORKER_RESUME_20261012.zh-CN.md)源码、回归及零模型安装独审通过；实际 Codex 同线程及增量用量未验证。不退款或自动扩额，与N6b转交A收口不同；T0设计已独审通过。
 
 ## 当前架构迁移
+
+[T0 逐函数谱系设计](ROOTLESS_T0_LINEAGE_DESIGN.zh-CN.md)与[合成冻结夹具](fixtures/rootless-lineage-v1.json)已获[独立设计评审通过](evidence/ROOTLESS_T0_REVIEW_20261012.md)；首版领域CLI入口B及测量已明确，允许进入 T1 实施，不授予未实现的产品资格。
 
 [CLI 实例控制与薄 HWA 交接](ROOTLESS_THIN_HANDOFF_PLAN.zh-CN.md)：用户于 2026-10-11
 决定先去掉 LLM Root，以 CLI 控制实例、启动科学角色并交接文件。MCP 保留功能插件；实例管理、
