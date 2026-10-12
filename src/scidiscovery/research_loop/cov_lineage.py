@@ -258,7 +258,7 @@ def observe(request):
         path = Path(config[key])
         if path.is_absolute() or '..' in path.parts or (root/path).resolve() != root/path:raise IntegrityError('Observer escaped original instance')
     rows = _rows(root/config['runs']/'results.jsonl');known=set(request.get('known_candidates',[]))
-    contexts=[]
+    contexts=[];models={}
     for directory in sorted((root/config['calls']).glob('*/work/lineage/calls/*')):
         result = _completed(directory)
         if result is not None:
@@ -267,6 +267,7 @@ def observe(request):
             accepted=json.loads(_read(directory/'accepted.json'))
             result=dict(call_id=accepted['call_id'],scope=accepted['scope'],status='unknown',candidate_id=None,run_id=None,model=None,
                 parent=accepted['parent'],change_intent=accepted['change_intent'],proofs=[_proof(directory/'accepted.json')],note='Accepted original without exact completion')
+        if result['status']=='known_success':models[result['candidate_id']]=result['model']
         if result['scope']['step'] != request['step']:continue
         if result and result['call_id'] not in set(request.get('known_contexts',[])):
             # _completed checks immutable proofs; relative names let core archive once.
@@ -283,8 +284,22 @@ def observe(request):
             metric=row.get('val_score'),direction='max',status='ok' if row.get('ok') is True else 'failed',evidence=[str(Path(config['runs'])/'results.jsonl')]))
     bound={item['candidate_id'] for item in contexts if item['candidate_id']}
     partial=partial or any(row['id'] not in bound for row in candidates) or any(item['status']=='unknown' for item in contexts)
-    return dict(candidates=candidates,current_candidate=None,actual_submission=None,contexts=contexts,
-        coverage=dict(status='partial' if partial else 'complete',note='Managed declared relations only; ordinary shell/parallel or unknown calls remain uncovered'))
+    actual=None;submission_note=''
+    submitted=root/config['runs']/'submitted.json';model=root/config['runs']/'submitted_model.pkl'
+    if submitted.exists():
+        fact=json.loads(_read(submitted))
+        if not model.exists():
+            partial=True;submission_note=' Submitted record lacks an exact artifact; actual identity unknown.'
+        else:
+            artifact=_proof(model);run_id=fact.get('run_id')
+            candidate=f'run-{run_id}' if type(run_id) is int and run_id>0 else None
+            original=models.get(candidate)
+            if (fact.get('model_path')!=str(model) or candidate not in known|{row['id'] for row in candidates} or original is None
+                    or artifact['sha256']!=original['sha256'] or artifact['size_bytes']!=original['size_bytes']):
+                candidate=None;partial=True;submission_note=' Submitted artifact is observed but candidate binding is unknown.'
+            actual=dict(candidate_id=candidate,artifact=str(model.relative_to(root)),evidence=[str(submitted.relative_to(root))])
+    return dict(candidates=candidates,current_candidate=None,actual_submission=actual,contexts=contexts,
+        coverage=dict(status='partial' if partial else 'complete',note='Managed declared relations only; ordinary shell/parallel or unknown calls remain uncovered.'+submission_note))
 
 
 
@@ -313,6 +328,25 @@ def configure(root, step, run_argv, runs_root, output):
     _write(Path(output),value);Path(output).chmod(0o400)
     return dict(status='configured',config=str(output))
 
+def public_feedback(config, result, *, include_model=False):
+    value={key:result[key] for key in ('call_id','status','candidate_id','run_id','parent','change_intent','note')}
+    if include_model:value['model']={'retained':True} if result['model'] else None
+    if result['status'] in {'known_success','known_failed'}:
+        path=Path(config['record_dir'])/'calls'/result['call_id']/'row.json'
+        data=_read(path)
+        proof=next((item for item in result['proofs'] if item['path']==str(path)),None)
+        if proof is None or hashlib.sha256(data).hexdigest()!=proof['sha256'] or len(data)!=proof['size_bytes']:
+            raise IntegrityError('Public feedback original changed')
+        row=json.loads(data)
+        value['evaluation_key']=config['evaluation_key']
+        if isinstance(row.get('metric'),str):value['metric']=row['metric'].encode()[:80].decode('utf-8',errors='ignore')
+        for key in ('val_score','val_acc','wall_seconds'):
+            number=row.get(key)
+            if type(number) in (int,float) and math.isfinite(number):value[key]=number
+        if isinstance(row.get('error'),str):value['error']=row['error'].encode()[:160].decode('utf-8',errors='ignore')
+    return value
+
+
 def main(argv=None):
     if argv is None and len(sys.argv)==1:
         try:print(json.dumps(observe(json.loads(sys.stdin.buffer.read(MAX_BYTES+1))),allow_nan=False))
@@ -323,21 +357,29 @@ def main(argv=None):
         p.add_argument('--run-argv-json',required=True);p.add_argument('--runs-root',type=Path,required=True);p.add_argument('--output',type=Path,required=True);a=p.parse_args()
         print(json.dumps(configure(a.root,a.step,json.loads(a.run_argv_json),a.runs_root,a.output)));return 0
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--config',type=Path,required=True)
-    sub=parser.add_subparsers(dest='command',required=True);r=sub.add_parser('run');r.add_argument('--script',type=Path,required=True)
+    sub=parser.add_subparsers(dest='command',required=True);r=sub.add_parser('run');r.add_argument('--script',type=Path)
     group=r.add_mutually_exclusive_group();group.add_argument('--parent-plan');group.add_argument('--new-plan',action='store_true')
     r.add_argument('--change-intent');sub.add_parser('lineage-status');args=parser.parse_args(argv)
     try:
         config,digest=_config(args.config)
         if args.command=='lineage-status':result=dict(calls=status(config));code=0
         else:
-            result=run(config,digest,args.script,args.parent_plan,args.new_plan,args.change_intent)
+            script=args.script
+            if script is None:
+                default=os.environ.get('EXP_DEFAULT_SCRIPT')
+                if not default or not Path(default).is_absolute():
+                    raise ValueError('Absolute EXP_DEFAULT_SCRIPT is unavailable; pass --script explicitly')
+                script=Path(default)
+            result=run(config,digest,script,args.parent_plan,args.new_plan,args.change_intent)
             code={'known_success':0,'known_failed':1,'unknown':2}.get(result['status'],2)
     except IntegrityError as error:result=dict(status='integrity_error',note=str(error));code=3
     except ValueError as error:result=dict(status='unresolved',note=str(error));code=2
-    if args.command=='run' and 'scope' in result:
-        result={key:result[key] for key in ('call_id','status','candidate_id','run_id','parent','change_intent','note')} | {'model':{'retained':True} if result['model'] else None}
-    elif args.command=='lineage-status' and 'calls' in result:
-        result={'calls':[{key:item[key] for key in ('call_id','status','candidate_id','run_id','parent','change_intent','note')} for item in result['calls']]}
+    try:
+        if args.command=='run' and 'scope' in result:
+            result=public_feedback(config,result,include_model=True)
+        elif args.command=='lineage-status' and 'calls' in result:
+            result={'calls':[public_feedback(config,item) for item in result['calls']]}
+    except IntegrityError as error:result=dict(status='integrity_error',note=str(error));code=3
     print(json.dumps(result,allow_nan=False));return code
 
 

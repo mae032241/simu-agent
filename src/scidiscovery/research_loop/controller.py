@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import uuid
 
-from . import budget, contracts, history, native, runtime, search, correction, semantic, execution, continuation
+from . import budget, contracts, history, native, runtime, search, correction, semantic, execution, continuation, guidance
 
 
 def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str], *,
@@ -22,7 +22,8 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
             node_budget_policy: dict | None = None,
             delivery_policy: dict | None = None,
             resume_policy: dict | None = None,
-            lineage_projection_version: int | None = 1) -> dict:
+            lineage_projection_version: int | None = 1,
+            role_guidance: dict | None = guidance.DEFAULT) -> dict:
     """Freeze an explicit goal and finite launch budgets in a fresh directory."""
     if lineage_projection_version is not None and (type(lineage_projection_version) is not int or lineage_projection_version != 1):
         raise ValueError('Unsupported lineage projection version')
@@ -54,6 +55,7 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
     if any(not update.strip() for update in updates):
         raise ValueError('Global user updates must contain original user text')
     observer = history.observer_config(history_observer) if history_observer is not None else None
+    advice = guidance.policy(role_guidance) if role_guidance is not None else None
     search_limits = search.policy(search_policy) if search_policy is not None else None
     correction_limits = correction.policy(correction_policy) if correction_policy is not None else None
     if correction_limits is not None and search_limits is None:
@@ -74,6 +76,8 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
         model=model, reasoning_effort=reasoning_effort, service_tier=service_tier,
         max_output_item_bytes=max_output_item_bytes,
         max_output_total_bytes=max_output_total_bytes)
+    if advice is not None:
+        settings['role_guidance'] = advice
     if lineage_projection_version is not None:
         settings['lineage_projection_version'] = lineage_projection_version
     if delivery_limits is not None:

@@ -306,6 +306,7 @@ def science_view(job, root=None):
             sources=delivery.public_sources(job['delivery_sources']))
     return {key: value for key, value in {
         'role': job['role'], 'question': job['instruction'],
+        **(dict(role_guidance=job['role_guidance']) if job.get('role_guidance') else {}),
         'global': dict(objective='inputs/global/objective.md',
                        updates=[row['path'] for row in job['global_materials'][1:]]),
         'public_root': job['public_root'],
@@ -498,6 +499,9 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
                instruction=instruction, direct_refs=refs, direct_materials=materials, direct_entry_points=entry_points, global_materials=globals_,
                evidence_return=evidence_return, **(dict(selected_inputs=selected) if selected else {}),
                **(dict(handoff_protocol=protocol) if protocol >= 2 else {}))
+    advice = retained.get('role_guidance') if retained is not None else policy.get('role_guidance', {}).get(role)
+    if advice is not None:
+        job['role_guidance'] = advice
     if projection_version == 1:
         job['lineage_projection_version'] = 1
     if purpose is not None:
