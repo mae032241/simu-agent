@@ -212,28 +212,33 @@ def assess_payload(root, job, payload, *, legacy_attempt=False):
     return _apply(root, interpreted, payload, state)
 
 
+def apply_source(root, job, payload, seal, state):
+    """The existing per-node interpretation guard, shared with read-only lineage."""
+    receipt = seal.get('control_outcome')
+    if receipt is not None:
+        if receipt.get('binding_protocol') != 8 or job.get('handoff_protocol', 1) not in {7, 8}:
+            raise ValueError('Control interpretation binding changed')
+        if job.get('handoff_protocol', 1) == 7:
+            try:
+                _apply(root, job, payload, copy.deepcopy(state))
+            except UnresolvedSearch:
+                pass
+            else:
+                raise ValueError('Legacy valid science cannot be reinterpreted')
+        diagnostics = _apply(root, dict(job, handoff_protocol=8), payload, state)
+        if (receipt.get('search_status') != ('unresolved' if diagnostics else 'applied')
+                or [row for row in receipt['diagnostics'] if not row['code'].startswith('implementation_')] != diagnostics):
+            raise ValueError('Search outcome differs from its original scientific attempt')
+    else:
+        _apply(root, job, payload, state)
+
+
 def project(root, before_step):
     state = dict(mechanisms={}, current_h=None, scope=None, plan=None, authorized=set(), focus=None,
                  accepted_slices=[], repairs={})
     for step in range(1, before_step):
         job, payload, seal, _ = history._source(root, step)
-        receipt = seal.get('control_outcome')
-        if receipt is not None:
-            if receipt.get('binding_protocol') != 8 or job.get('handoff_protocol', 1) not in {7, 8}:
-                raise ValueError('Control interpretation binding changed')
-            if job.get('handoff_protocol', 1) == 7:
-                try:
-                    _apply(root, job, payload, copy.deepcopy(state))
-                except UnresolvedSearch:
-                    pass
-                else:
-                    raise ValueError('Legacy valid science cannot be reinterpreted')
-            diagnostics = _apply(root, dict(job, handoff_protocol=8), payload, state)
-            if (receipt.get('search_status') != ('unresolved' if diagnostics else 'applied')
-                    or [row for row in receipt['diagnostics'] if not row['code'].startswith('implementation_')] != diagnostics):
-                raise ValueError('Search outcome differs from its original scientific attempt')
-        else:
-            _apply(root, job, payload, state)
+        apply_source(root, job, payload, seal, state)
         intent = execution.record(root, step) / 'native-intent.json'
         if job['role'] == 'W' and job.get('search') and intent.exists():
             value = c.read(c.regular(intent))

@@ -44,13 +44,15 @@ def _bytes(value):
 
 def observer_config(value):
     """Freeze a trusted synchronous, side-effect-free external adapter."""
-    if not isinstance(value, dict) or set(value) != {'adapter', 'config'} or not isinstance(value['config'], dict):
+    if (not isinstance(value, dict) or set(value) not in ({'adapter','config'},{'adapter','config','contract_version'})
+            or not isinstance(value['config'],dict) or 'contract_version' in value and (type(value['contract_version']) is not int or value['contract_version'] != 2)):
         raise ValueError('Observer requires an exact adapter and configuration')
     path = Path(value['adapter']).absolute()
     if path.resolve() != path or len(_bytes(value['config'])) > MAX_PAGE_BYTES:
         raise ValueError('Observer requires an original bounded configuration')
     c.regular(path, limit=MAX_OBSERVER_BYTES)
-    return dict(adapter=str(path), adapter_sha256=c.digest(path), config=value['config'])
+    return dict(adapter=str(path), adapter_sha256=c.digest(path), config=value['config'],
+                **(dict(contract_version=2) if value.get('contract_version') == 2 else {}))
 
 
 def handle(row):
@@ -131,13 +133,13 @@ def _capture(root, job, payload, materials):
     raw = execution.raw(root, job['step'])
     source_sha = c.digest(c.regular(raw, limit=c.MAX_RESULT_BYTES))
     path = root / 'host-history/observations' / f'{job["step"]:03d}.json'
-    binding = dict(source_sha256=source_sha, adapter_sha256=config['adapter_sha256'])
+    binding = _observer_binding(source_sha, config)
     if path.exists():
         stored = c.read(c.regular(path, limit=MAX_OBSERVER_BYTES))
         if stored.get('binding') != binding:
             raise ObserverIntegrityError('Retained observer snapshot binding changed')
         return dict(path=path.relative_to(root).as_posix(), sha256=c.digest(path))
-    known = set()
+    known = set();known_contexts = set();prior_contexts = []
     for receipt in job.get('history', {}).get('nodes', []):
         old_seal = c.read(c.host_record(c.workspace(root, receipt['step'])) / 'result-identity.json')
         observation = old_seal.get('observations')
@@ -145,9 +147,13 @@ def _capture(root, job, payload, materials):
             old_path = root / observation['path']
             if c.digest(c.regular(old_path, limit=MAX_OBSERVER_BYTES)) != observation['sha256']:
                 raise ObserverIntegrityError('Sealed observer snapshot changed')
-            known.update(row['id'] for row in c.read(old_path)['candidates'])
+            prior = c.read(old_path)
+            known.update(row['id'] for row in prior['candidates'])
+            known_contexts.update(row['call_id'] for row in prior.get('contexts', []))
+            prior_contexts.extend(prior.get('contexts', []))
     request = dict(root=str(root), step=job['step'], config=config['config'], materials=materials,
-                   known_candidates=sorted(known))
+                   known_candidates=sorted(known),
+                   **(dict(known_contexts=sorted(known_contexts)) if config.get('contract_version') == 2 else {}))
     if len(_bytes(request)) > MAX_OBSERVER_BYTES:
         raise ValueError('Observer input exceeds byte bound')
     def bound_output():
@@ -164,7 +170,11 @@ def _capture(root, job, payload, materials):
     if len(data) > MAX_OBSERVER_BYTES:
         raise ValueError('Observer output capacity exceeded')
     value = json.loads(data)
-    if not isinstance(value, dict) or set(value) != {'candidates', 'current_candidate', 'actual_submission', 'coverage'}:
+    if config.get('contract_version') == 2 and isinstance(value,dict) and set(value)=={'integrity_error'}:
+        raise ObserverIntegrityError(str(value['integrity_error']))
+    expected = {'candidates','current_candidate','actual_submission','coverage'}
+    if config.get('contract_version') == 2:expected.add('contexts')
+    if not isinstance(value, dict) or set(value) != expected:
         raise ValueError('Observer must return candidates and actual_submission separately')
     if not isinstance(value['candidates'], list) or len(value['candidates']) > MAX_CANDIDATES:
         raise ValueError('Observer candidate count exceeds bound')
@@ -217,7 +227,14 @@ def _capture(root, job, payload, materials):
             raise ValueError('Actual submission requires an original artifact and evidence')
         actual = dict(candidate_id=actual['candidate_id'], artifact=proof(actual['artifact']),
                       evidence=[proof(name) for name in actual['evidence']])
-    snapshot = dict(binding=binding, candidates=candidates, current_candidate=current, actual_submission=actual, coverage=coverage)
+    contexts = None
+    if config.get('contract_version') == 2:
+        from . import lineage
+        contexts = lineage.contexts(root, job, value['contexts'], proof, prior_contexts)
+        if any(row['status']=='unknown' for row in contexts):
+            coverage = dict(status='partial',note='Original execution contexts include unknown outcomes.')
+    snapshot = dict(binding=binding, candidates=candidates, current_candidate=current, actual_submission=actual, coverage=coverage,
+                    **(dict(contexts=contexts) if contexts is not None else {}))
     if len(_bytes(snapshot)) > MAX_OBSERVER_BYTES:
         raise ValueError('Observer snapshot exceeds byte bound')
     c.write(path, snapshot)
@@ -245,9 +262,9 @@ def capture(root, job, payload, materials):
                 'capacity' if 'capacity' in str(error) or 'bound' in str(error) else
                 'adapter_io' if isinstance(error, OSError) else 'invalid_output')
         raw = execution.raw(root, job['step'])
-        value = dict(binding=dict(source_sha256=c.digest(c.regular(raw, limit=c.MAX_RESULT_BYTES)),
-                                  adapter_sha256=config['adapter_sha256']),
+        value = dict(binding=_observer_binding(c.digest(c.regular(raw,limit=c.MAX_RESULT_BYTES)),config),
                      candidates=[], current_candidate=None, actual_submission=None,
+                     **(dict(contexts=[]) if config.get('contract_version') == 2 else {}),
                      coverage=dict(status='unavailable', note='Observer returned no verified bounded facts; original science is retained.'),
                      diagnostic=dict(failure_type=type(error).__name__, error_code=code))
         c.write(path, value)
@@ -567,7 +584,7 @@ def validate_observation(root, job, seal):
     if path != expected or c.digest(c.regular(path, limit=MAX_OBSERVER_BYTES)) != receipt['sha256']:
         raise ObserverIntegrityError('Sealed observer snapshot changed')
     value = c.read(path)
-    if value['binding'] != dict(source_sha256=seal['raw_sha256'], adapter_sha256=config['adapter_sha256']):
+    if value['binding'] != _observer_binding(seal['raw_sha256'], config):
         raise ValueError('Observer snapshot source binding changed')
     proofs = [proof for row in value['candidates'] for proof in row['evidence']]
     for field in ('current_candidate', 'actual_submission'):
@@ -575,6 +592,10 @@ def validate_observation(root, job, seal):
             proofs.extend(value[field]['evidence'])
     if value.get('actual_submission'):
         proofs.append(value['actual_submission']['artifact'])
+    if config.get('contract_version') == 2:
+        for context in value.get('contexts', []):
+            proofs.extend(context['proofs'])
+            if context.get('model'):proofs.append(context['model'])
     for proof in proofs:
         _validate_proof(root, proof)
 
@@ -595,3 +616,8 @@ def refresh(root, before_step):
     if len(_bytes(overview)) > MAX_PAGE_BYTES:
         raise ValueError('Candidate overview exceeds its bounded projection capacity')
     c.write(root / 'host-history/overview.json', overview)
+
+
+def _observer_binding(source_sha, config):
+    return dict(source_sha256=source_sha,adapter_sha256=config['adapter_sha256'],
+                **(dict(contract_version=2) if config.get('contract_version') == 2 else {}))
