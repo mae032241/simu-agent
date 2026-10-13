@@ -10,7 +10,7 @@ MAX_AUTHOR_CORRECTIONS = 2
 
 
 def outcome(root, job, payload, *, legacy_attempt=False):
-    if not legacy_attempt and job.get('handoff_protocol', 1) not in {8, 9, 10, 11, 12}:
+    if not legacy_attempt and job.get('handoff_protocol', 1) not in {8, 9, 10, 11, 12, 13}:
         raise ValueError('Control outcomes require the frozen protocol8 interpretation')
     diagnostics = search.assess_payload(root, job, payload, legacy_attempt=legacy_attempt) if job.get('purpose') is None and c.settings(root).get('search_policy') else []
     selection = []
@@ -18,8 +18,10 @@ def outcome(root, job, payload, *, legacy_attempt=False):
     from . import decision
     requests = decision.assess(root, job, payload)
     portfolio = search.portfolio_assess(root, job, payload)
-    rows = [*diagnostics, *selection, *requests, *portfolio]
-    return dict(**(dict(portfolio_status='unresolved' if portfolio else 'applied') if job.get('handoff_protocol', 1) >= 11 else {}),
+    order = search.order_assess(root, job, payload)
+    rows = [*diagnostics, *selection, *requests, *portfolio, *order]
+    return dict(**(dict(order_status='unresolved' if order else 'applied') if job.get('handoff_protocol', 1) >= 13 else {}),
+                **(dict(portfolio_status='unresolved' if portfolio else 'applied') if job.get('handoff_protocol', 1) >= 11 else {}),
                 **(dict(decision_status='unresolved' if requests else 'applied')
                    if job.get('handoff_protocol', 1) >= 10 else {}),
                 binding_protocol=8, search_status='unresolved' if diagnostics else 'applied',
@@ -100,8 +102,9 @@ def validate_job(root, job):
         raise ValueError('Author correction root did not request a dependent experiment')
     reason = 'implementation_unresolved' if root_seal.get('control_outcome', {}).get('selection_status') == 'unresolved' else None
     if reason is None and c.settings(root).get('search_policy') is not None:
-        reason = search.launch_reason(root, dict(step=root_step + 1, role='W',
-            search=search.bind(root, root_step + 1, 'W', 8, write_pages=False)))
+        protocol = root_job.get('handoff_protocol', 1)
+        reason = search.launch_reason(root, dict(step=root_step + 1, role='W', handoff_protocol=protocol,
+            search=search.bind(root, root_step + 1, 'W', protocol, write_pages=False, unified=protocol >= 13)))
     if request['reason'] != reason:
         raise ValueError('Author correction reason differs from its original blocked action')
     if not any(ref['path'] == f'inputs/parents/{request["source"]["step"]:03d}/conclusion.json' for ref in job['direct_refs']):
@@ -148,7 +151,9 @@ def effective_route(root, step, result, job, route):
     elif role == 'W':
         code = 'implementation_unresolved' if seal.get('control_outcome', {}).get('selection_status') == 'unresolved' else None
         if code is None and c.settings(root).get('search_policy') is not None:
-            planned = dict(step=step + 1, role='W', search=search.bind(root, step + 1, 'W', 8, write_pages=False))
+            protocol = job.get('handoff_protocol', 1)
+            planned = dict(step=step + 1, role='W', handoff_protocol=protocol,
+                           search=search.bind(root, step + 1, 'W', protocol, write_pages=False, unified=protocol >= 13))
             code = search.launch_reason(root, planned)
         if code is not None:
             source = _source(root, step)

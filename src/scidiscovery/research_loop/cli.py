@@ -56,6 +56,7 @@ def main(argv=None):
     prepare.add_argument('--node-budget-policy', type=Path, help='Explicit H/W/A/E time/token targets; hard ceilings only with --node-budget-mode hard; no delivery guarantee')
     prepare.add_argument('--node-budget-mode', choices=['soft','hard'], default='soft', help='Scientific node targets are soft by default; shared authorization stays hard')
     prepare.add_argument('--portfolio-review-after-cycles', type=int, help='Enable version2/protocol12 opportunity-cost review after this many unserved W+A cycles; recommended 3')
+    prepare.add_argument('--exploration-order', action='store_true', help='Enable protocol13 execution of scientific exploration order; requires explicit portfolio review')
     prepare.add_argument('--decision-contract', action='store_true', help='Freeze protocol10 scientific A decision requests and exact repeat admission')
     prepare.add_argument('--enable-candidate-audit', action='store_true', help='Opt into protocol9 A audit requests; requires an isolated delivery adapter')
     prepare.add_argument('--delivery-policy', type=Path, help='Explicit frozen closeout reserve and isolated delivery adapter JSON')
@@ -98,6 +99,7 @@ def main(argv=None):
                 candidate_audit_policy={'version':1} if args.enable_candidate_audit else None,
                 decision_contract_version=1 if args.decision_contract else None,
                 portfolio_policy=dict(review_after_cycles=args.portfolio_review_after_cycles) if args.portfolio_review_after_cycles is not None else None,
+                exploration_order_version=1 if args.exploration_order else None,
                 search_policy=contracts.read(contracts.regular(args.search_policy, limit=4096))
                     if args.search_policy is not None else search.DEFAULT_POLICY,
                 correction_policy=contracts.read(contracts.regular(args.correction_policy, limit=4096))

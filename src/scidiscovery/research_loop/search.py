@@ -43,24 +43,30 @@ def _text(limit=1024, nullable=False):
 
 
 def schema(role, protocol=6):
+    order = dict(exploration_order=_object(dict(priority=dict(type='array', minItems=1, maxItems=4,
+        items=_text(80)), reason=_text()), nullable=True)) if protocol >= 13 else {}
     focus = lambda key: _object({key: _text(80), 'action': dict(type='string', enum=list(MODES)),
         **({'repair_source': _text(512, nullable=True)} if protocol < 7 else {})}, nullable=True)
     if role == 'H':
         commitment = _object(dict(label=_text(80), minimal_test=_text(), existing_ref=_text(80, nullable=True)))
         value = _object(dict(scope=_text(), commitments=dict(type='array', maxItems=MAX_COMMITMENTS,
-                items=commitment), focus=focus('label')), nullable=True)
+                items=commitment), focus=focus('label'), **order), nullable=True)
         value['description'] = 'Declare science, not a ledger. When search is enabled, experiment needs a non-null plan and focus. Revisions preserve known mechanism refs.'
         if protocol >= 8:
             value['description'] = ('Declare at most four additions or revisions this round; omitted registered mechanisms '
                 'and their statuses remain. Focus selects a newly declared label or an exact existing mechanism ref/unique '
                 'label. A new focus requires its own declared commitment and minimal_test; never restate the whole portfolio.')
+        if protocol >= 13:
+            value['description'] += (' New commitments are declared in scientific exploration order; explain priorities in scope. '
+                'exploration_order is an incremental priority prefix with a scientific reason; omitted unfinished items remain. '
+                'Experiment focus must match the resulting head. Use exact refs or unique labels; null preserves order.')
         return value
     if role == 'A':
         disposition = _object(dict(mechanism_ref=_text(80), status=dict(type='string',
             enum=['screened', 'deferred', 'waived', 'pending']), reason=_text(),
             **(dict(evidence=dict(type='array', maxItems=4, items=_text(512))) if protocol < 7 else {})))
         value = _object(dict(dispositions=dict(type='array', maxItems=MAX_COMMITMENTS,
-                items=disposition), next_focus=focus('mechanism_ref')), nullable=True)
+                items=disposition), next_focus=focus('mechanism_ref'), **order), nullable=True)
         value['description'] = 'Dispose commitments using scientific evidence. Null review or next_focus clears the next W focus; continue_w needs an explicit focus.'
         if protocol >= 7:
             value['description'] = ('Report only this round\'s changed dispositions; omitted mechanisms retain their sealed status. '
@@ -68,6 +74,11 @@ def schema(role, protocol=6):
                 'Explain scientific judgments in reason and scientific_result. The host binds the exact task lineage; '
                 'screened needs a same-mechanism screen W, not a role-authored evidence path. '
                 'Null review or next_focus clears the next W focus; continue_w needs an explicit focus.')
+        if protocol >= 13:
+            value['description'] += (' After assessing W, its allocated opportunity is consumed once unless the same head needs repair. '
+                'Use exploration_order to move or reinsert a priority prefix, with scientific reasons; omitted unfinished items remain. '
+                'continue_w must choose the resulting head. A screened branch can be explicitly rescheduled for deeper work. '
+                'A valid order reason also supplies this round\'s portfolio tradeoff. Audit/extract/wait do not change order.')
         return value
     raise ValueError('Only H and A declare scientific search choices')
 
@@ -117,6 +128,8 @@ def _apply_science(root, job, payload, state, diagnostics):
             refs.add(ref);labels[item['label']] = ref
             if ref not in mechanisms:
                 mechanisms[ref] = dict(status='pending', original_h=job['step'])
+                if job.get('handoff_protocol', 1) >= 13:
+                    state['order']['remaining'].append(dict(mechanism_ref=ref, planned_step=job['step']))
             mechanisms[ref].update(label=item['label'], minimal_test=item['minimal_test'], source_h=job['step'])
         state['scope'] = plan['scope']
         state['authorized'] = state['authorized'] | refs if job.get('handoff_protocol', 1) >= 8 else refs
@@ -216,7 +229,7 @@ def apply_source(root, job, payload, seal, state):
     """The existing per-node interpretation guard, shared with read-only lineage."""
     receipt = seal.get('control_outcome')
     if receipt is not None:
-        if receipt.get('binding_protocol') != 8 or job.get('handoff_protocol', 1) not in {7, 8, 9, 10, 11, 12}:
+        if receipt.get('binding_protocol') != 8 or job.get('handoff_protocol', 1) not in {7, 8, 9, 10, 11, 12, 13}:
             raise ValueError('Control interpretation binding changed')
         if job.get('handoff_protocol', 1) == 7:
             try:
@@ -225,10 +238,11 @@ def apply_source(root, job, payload, seal, state):
                 pass
             else:
                 raise ValueError('Legacy valid science cannot be reinterpreted')
-        diagnostics = _apply(root, dict(job, handoff_protocol=8), payload, state)
+        diagnostics = _apply(root, dict(job, handoff_protocol=8) if job.get('handoff_protocol', 1) == 7 else job, payload, state)
         if (receipt.get('search_status') != ('unresolved' if diagnostics else 'applied')
                 or [row for row in receipt['diagnostics'] if not row['code'].startswith('implementation_')
                     and not (job.get('handoff_protocol', 1) >= 10 and row['code'].startswith('a_decision_'))
+                    and not (job.get('handoff_protocol', 1) >= 13 and row['code'].startswith('order_'))
                     and not (job.get('handoff_protocol', 1) >= 11 and row['code'].startswith('a_portfolio_'))] != diagnostics):
             raise ValueError('Search outcome differs from its original scientific attempt')
     else:
@@ -240,11 +254,20 @@ def fold(root, sources):
                  accepted_slices=[], repairs={})
     if c.settings(root).get('portfolio_policy') is not None:
         state['portfolio'] = dict(invested={}, deferred={}, seen_w=set(), pending_w=None, last_branch=None, last_review=None)
+    if c.settings(root).get('exploration_order_version') == 1:
+        state['order'] = dict(remaining=[], diagnostics=[])
     for job, payload, seal, seal_sha in sources:
         step = job["step"]
         apply_source(root, job, payload, seal, state)
         if 'portfolio' in state:
             _portfolio_update(root, job, payload, seal, state, seal_sha)
+        if job.get('handoff_protocol', 1) >= 13:
+            diagnostics = _order_update(root, job, payload, seal, state)
+            receipt = seal['control_outcome']
+            reported = [row for row in receipt['diagnostics'] if row['code'].startswith('order_')]
+            if (receipt.get('order_status') != ('unresolved' if diagnostics else 'applied') or reported != diagnostics[:len(reported)]
+                    or (len(reported) < len(diagnostics) and not receipt['omitted_count'])):
+                raise ValueError('Scientific exploration order differs from its sealed interpretation')
         intent = execution.record(root, step) / 'native-intent.json'
         if job['role'] == 'W' and job.get('search') and intent.exists():
             value = c.read(c.regular(intent))
@@ -297,6 +320,8 @@ def bind(root, step, role, protocol=6, *, write_pages=True, state=None, unified=
         raise ValueError('Only repair requests may name a repair source')
     if unified:
         return dict(focus=focus, repair_root=repair_root, limits=limits, files=[],
+                    **(dict(order_head=state['order']['remaining'][0] if state['order']['remaining'] else None,
+                            order_diagnostics=state['order']['diagnostics']) if protocol >= 13 else {}),
                     **(dict(repair_binding=repair_binding) if protocol >= 7 else {}))
     pending = [ref for ref, item in state['mechanisms'].items() if item['status'] == 'pending']
     def clip(text, size):
@@ -390,11 +415,16 @@ def launch_reason(root, job):
         return None
     state = project(root, job['step'])
     focus = job['search']['focus']
+    if job.get('handoff_protocol', 1) >= 13:
+        if job['search']['order_diagnostics']:
+            return job['search']['order_diagnostics'][0]['code']
+        if focus is None or job['search']['order_head'] is None or focus['mechanism_ref'] != job['search']['order_head']['mechanism_ref']:
+            return 'order_focus_conflict'
     if focus is None:
         return 'search_focus_required'
     if focus['mechanism_ref'] not in state['authorized']:
         return 'search_focus_outside_h_scope'
-    if focus['action'] == 'improve' and any(item['status'] == 'pending' for item in state['mechanisms'].values()):
+    if job.get('handoff_protocol', 1) < 13 and focus['action'] == 'improve' and any(item['status'] == 'pending' for item in state['mechanisms'].values()):
         return 'search_commitments_pending'
     if focus['action'] == 'repair' and job['search'].get('repair_binding') in {'unavailable', 'ambiguous'}:
         return 'search_repair_source_' + job['search']['repair_binding']
@@ -533,6 +563,8 @@ def portfolio_assess(root, job, payload):
     control = dict(search_status='unresolved' if diagnostics else 'applied',
                    selection_status='unresolved' if selected else 'applied', decision_status='unresolved' if decision.assess(root, job, payload) else 'applied')
     _portfolio_update(root, job, payload, dict(control_outcome=control), state)
+    if job.get('handoff_protocol', 1) >= 13:
+        _order_update(root, job, payload, dict(control_outcome=control), state)
     focus = state['focus']
     branch = focus['mechanism_ref'] if focus else None
     policy = c.settings(root)['portfolio_policy']
@@ -541,6 +573,76 @@ def portfolio_assess(root, job, payload):
     if portfolio_due(state['portfolio'], state['mechanisms'], branch, threshold, version=version):
         return [dict(code='a_portfolio_review_required', subject=branch)]
     return []
+
+
+def _order_update(root, job, payload, seal, state):
+    """Replay author choices and exact accepted opportunities; no ranking or ledger."""
+    if job.get('purpose') is not None or job['role'] not in {'H', 'A'}:
+        return []
+    order, mechanisms = state['order'], state['mechanisms']
+    control = seal.get('control_outcome', {})
+    if any(control.get(key) == 'unresolved' for key in ('search_status', 'selection_status', 'decision_status')):
+        return []
+    if job['role'] == 'A' and payload['next_action'] in {'audit', 'extract', 'wait'}:
+        return []
+    focus = state['focus']
+    if job['role'] == 'A':
+        sources = [(source, c.digest(c.host_record(c.workspace(root, source['step'])) / 'result-identity.json'))
+                   for source, _, _ in history.direct_sources(root, job) if source['role'] == 'W']
+        if len(sources) == 1:
+            source, identity = sources[0]
+            original = c.read(root / 'jobs' / f'{job["author_correction"]["root"]["step"]:03d}.json') if job.get('author_correction') else job
+            eligible = original['role'] == 'A' and any(ref['path'] == f'inputs/parents/{source["step"]:03d}/conclusion.json' for ref in original['direct_refs'])
+            head = (source.get('search') or {}).get('order_head')
+            repair = focus and focus['action'] == 'repair' and head and focus['mechanism_ref'] == head['mechanism_ref']
+            if eligible and (source['step'], identity) in state['portfolio']['seen_w'] and head and order['remaining'][:1] == [head] and not repair:
+                order['remaining'].pop(0)
+    order['remaining'] = [item for item in order['remaining'] if mechanisms[item['mechanism_ref']]['status'] != 'waived']
+    before = copy.deepcopy(order['remaining'])
+    choice = (payload.get('search_plan') if job['role'] == 'H' else payload.get('search_review')) or {}
+    prefix = choice.get('exploration_order')
+    diagnostics = []
+    resolved = []
+    if prefix is not None:
+        for name in prefix['priority']:
+            matches = [name] if name in mechanisms else [ref for ref, item in mechanisms.items() if item['label'] == name]
+            ref = matches[0] if len(matches) == 1 else None
+            if ref is None or ref in resolved or mechanisms[ref]['status'] == 'waived':
+                diagnostics.append(dict(code='order_priority_unresolved', subject=name))
+            else:
+                resolved.append(ref)
+        if not prefix['reason'].strip():
+            diagnostics.append(dict(code='order_reason_required', subject='exploration_order'))
+        if not diagnostics:
+            current = {item['mechanism_ref']: item for item in before}
+            order['remaining'] = [current.get(ref, dict(mechanism_ref=ref, planned_step=job['step'])) for ref in resolved]
+            order['remaining'] += [item for item in before if item['mechanism_ref'] not in resolved]
+    if payload['next_action'] in {'experiment', 'continue_w'}:
+        if not focus or not order['remaining'] or focus['mechanism_ref'] != order['remaining'][0]['mechanism_ref']:
+            diagnostics.append(dict(code='order_focus_conflict', subject=(focus or {}).get('mechanism_ref') or 'empty order'))
+    if diagnostics:
+        order['remaining'] = before
+    elif prefix is not None and job['role'] == 'A':
+        state['portfolio']['invested'].clear()
+        state['portfolio']['deferred'].clear()
+        state['portfolio']['last_review'] = job['step']
+    order['diagnostics'] = diagnostics
+    return diagnostics
+
+
+def order_assess(root, job, payload):
+    if job.get('handoff_protocol', 1) < 13 or job.get('purpose') is not None or job['role'] not in {'H', 'A'}:
+        return []
+    state = project(root, job['step'])
+    diagnostics = _apply(root, job, payload, state)
+    selected = []
+    c.selected_inputs(c.workspace(root, job['step']), payload, job, selected)
+    from . import decision
+    control = dict(search_status='unresolved' if diagnostics else 'applied', selection_status='unresolved' if selected else 'applied',
+                   decision_status='unresolved' if decision.assess(root, job, payload) else 'applied')
+    seal = dict(control_outcome=control)
+    _portfolio_update(root, job, payload, seal, state)
+    return _order_update(root, job, payload, seal, state)
 
 
 def portfolio_view(state, threshold, *, prospective=False, version=1):

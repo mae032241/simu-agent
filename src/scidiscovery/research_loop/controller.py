@@ -28,9 +28,12 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
             selection_protocol: int | None = 1,
             node_budget_mode: str = 'soft', candidate_audit_policy: dict | None = None,
             handoff_authority_version: int | None = 1, decision_contract_version: int | None = None,
-            portfolio_policy: dict | None = None) -> dict:
+            portfolio_policy: dict | None = None, exploration_order_version: int | None = None) -> dict:
     """Freeze an explicit goal and finite launch budgets in a fresh directory."""
     portfolio_limits = search.portfolio_policy(portfolio_policy) if portfolio_policy is not None else None
+    if exploration_order_version is not None and (type(exploration_order_version) is not int or exploration_order_version != 1
+            or portfolio_limits is None or portfolio_limits.get('version', 1) != 2):
+        raise ValueError('Exploration order requires explicit version1 and portfolio version2')
     if portfolio_limits is not None:
         if search_policy is None or lineage_projection_version != 1:
             raise ValueError('Portfolio review requires H commitment search and unified lineage projection')
@@ -108,6 +111,8 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
         settings['decision_contract_version'] = decision_contract_version
     if portfolio_limits is not None:
         settings['portfolio_policy'] = portfolio_limits
+    if exploration_order_version is not None:
+        settings['exploration_order_version'] = exploration_order_version
     if candidate_audit_policy is not None:
         settings['candidate_audit_policy'] = dict(candidate_audit_policy)
     if selection_protocol is not None and lineage_projection_version == 1:
