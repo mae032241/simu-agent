@@ -73,7 +73,9 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
     if any(not update.strip() for update in updates):
         raise ValueError('Global user updates must contain original user text')
     observer = history.observer_config(history_observer) if history_observer is not None else None
-    advice = guidance.policy(role_guidance) if role_guidance is not None else None
+    literal_guidance = (guidance.OPPORTUNITY if portfolio_limits is not None and portfolio_limits.get('version', 1) == 2
+                        and role_guidance is guidance.DEFAULT else role_guidance)
+    advice = guidance.policy(literal_guidance) if literal_guidance is not None else None
     search_limits = search.policy(search_policy) if search_policy is not None else None
     correction_limits = correction.policy(correction_policy) if correction_policy is not None else None
     if correction_limits is not None and search_limits is None:

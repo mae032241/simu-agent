@@ -14,13 +14,13 @@ REQUEST = dict(decision='mechanism', question='Which declared mechanism should r
                change_criterion='A controlled contradiction would change the mechanism choice.')
 
 
-def prepare(tmp_path, *, threshold=2, enabled=True):
+def prepare(tmp_path, *, threshold=2, enabled=True, version=1):
     public = tmp_path / 'public'; public.mkdir(parents=True)
     objective = public / 'objective.md'; objective.write_text('Judge the whole committed mechanism portfolio without abandoning original constraints.')
     root = tmp_path / 'instance'
     controller.prepare(root, objective, public, ['never-launched'], max_tokens=100_000, max_seconds=3600,
         max_steps=64, model='fixture', reasoning_effort='high', decision_contract_version=1,
-        portfolio_policy=dict(review_after_cycles=threshold) if enabled else None)
+        portfolio_policy=dict(review_after_cycles=threshold, version=version) if enabled else None)
     plan = dict(scope='Competing solutions', commitments=[dict(label=label, minimal_test='A discriminating comparison', existing_ref=None)
                 for label in ('P', 'Q', 'R', 'S')], focus=dict(label='P', action='screen'))
     finish(root, 1, 'H', [], action='experiment', search_choice=plan)

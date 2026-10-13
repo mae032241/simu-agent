@@ -10,7 +10,7 @@ MAX_AUTHOR_CORRECTIONS = 2
 
 
 def outcome(root, job, payload, *, legacy_attempt=False):
-    if not legacy_attempt and job.get('handoff_protocol', 1) not in {8, 9, 10, 11}:
+    if not legacy_attempt and job.get('handoff_protocol', 1) not in {8, 9, 10, 11, 12}:
         raise ValueError('Control outcomes require the frozen protocol8 interpretation')
     diagnostics = search.assess_payload(root, job, payload, legacy_attempt=legacy_attempt) if job.get('purpose') is None and c.settings(root).get('search_policy') else []
     selection = []

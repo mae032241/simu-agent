@@ -55,7 +55,7 @@ def main(argv=None):
     prepare.add_argument('--correction-policy', type=Path, help='Explicitly enable N4 with review_after/pause_after JSON thresholds (defaults 3/2)')
     prepare.add_argument('--node-budget-policy', type=Path, help='Explicit H/W/A/E time/token targets; hard ceilings only with --node-budget-mode hard; no delivery guarantee')
     prepare.add_argument('--node-budget-mode', choices=['soft','hard'], default='soft', help='Scientific node targets are soft by default; shared authorization stays hard')
-    prepare.add_argument('--portfolio-review-after-cycles', type=int, help='Enable protocol11 portfolio review after this many completed same-branch W+A cycles; recommended 3')
+    prepare.add_argument('--portfolio-review-after-cycles', type=int, help='Enable version2/protocol12 opportunity-cost review after this many unserved W+A cycles; recommended 3')
     prepare.add_argument('--decision-contract', action='store_true', help='Freeze protocol10 scientific A decision requests and exact repeat admission')
     prepare.add_argument('--enable-candidate-audit', action='store_true', help='Opt into protocol9 A audit requests; requires an isolated delivery adapter')
     prepare.add_argument('--delivery-policy', type=Path, help='Explicit frozen closeout reserve and isolated delivery adapter JSON')

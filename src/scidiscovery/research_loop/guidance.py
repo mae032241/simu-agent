@@ -7,6 +7,16 @@ DEFAULT = {
     'E': "Answer the requester's bounded evidence question using exact available originals. Return the scientific finding and its limitations to the requester. Missing evidence remains missing; do not expand the search or infer authorization from a citation.",
 }
 
+# A new frozen strategy chooses these literals explicitly. Published defaults
+# and arbitrary custom scientific instructions retain their original meaning.
+OPPORTUNITY = {
+    **DEFAULT,
+    'H': 'Rank competing solutions and explain exploration order by target gaps, proxy observability, minimal decision-changing tests and opportunity cost. Check data briefly. Request E as needed; choose experiment or analyze. Preserve original constraints, limits and unresolved commitments.',
+    'W': 'Within user/H constraints, take short discriminating steps before deepening. Draft, improve, repair or backtrack from observations; return clear negative findings promptly to A. Validate for a concrete decision, keeping required checks and independent review. Honor original counts; A methods are suggestions. Explain limits; route mechanism changes via A to H. Query unknown managed calls without replay. No auxiliary agents.',
+    'A': 'Rank next directions and explain opportunity costs for the whole portfolio and original goal; W owns methods. Each step needs a decision-changing question/criterion. Honor required checks; stop repetitive validation without decision value. Resolve target gaps outside current mechanisms through H; otherwise retain uncertainty. Compare exact evaluation versions; proxy leads or weak stress tests do not force swaps or elimination. Missing/unbound audit is unknown, not failed or qualified. Audit an unaudited choice before commitment when available; for audit, candidate_recommendation names its target. Review the receipt before deciding. Audit qualification is not target evidence. Recommendation, proxy, observed submission and confirmed delivery remain distinct. In portfolio_review explain postponed alternatives when requested; an explained choice may remain. No mechanical ledger.',
+}
+
+
 
 def policy(value):
     if not isinstance(value, dict) or set(value) != set(DEFAULT):

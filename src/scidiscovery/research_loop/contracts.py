@@ -138,6 +138,10 @@ def result_schema(role: str, protocol=1):
             description='When the portfolio overview marks continued investment due for review, give a short '
                         'scientific global tradeoff. You may retain the same branch. Explain in words; '
                         'do not restate mechanism tables, counts or original references. Otherwise null is allowed.')
+        if protocol >= 12:
+            properties['portfolio_review']['description'] = ('On A continue_w while other commitments are overdue, '
+                'give a short scientific opportunity-cost tradeoff unless selecting an overdue commitment. '
+                'You may retain this route with explanation. Use words, not counts, ID inventories or original references; otherwise null.')
         required.append('portfolio_review')
     if role == 'A' and protocol >= 10:
         from . import decision
@@ -507,7 +511,7 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
     authority_version = retained.get('handoff_authority_version', 0) if retained is not None else policy.get('handoff_authority_version', 0)
     if type(authority_version) is not int or authority_version not in (0, 1):
         raise ValueError('Unsupported frozen scientific handoff authority')
-    protocol = retained.get('handoff_protocol', 1) if retained is not None else (11 if policy.get('portfolio_policy') is not None else 10 if policy.get('decision_contract_version') == 1 else 9 if policy.get('candidate_audit_policy') else HANDOFF_PROTOCOL)
+    protocol = retained.get('handoff_protocol', 1) if retained is not None else (12 if (policy.get('portfolio_policy') or {}).get('version', 1) == 2 else 11 if policy.get('portfolio_policy') is not None else 10 if policy.get('decision_contract_version') == 1 else 9 if policy.get('candidate_audit_policy') else HANDOFF_PROTOCOL)
     projection_version = retained.get('lineage_projection_version', 0) if retained is not None else policy.get('lineage_projection_version', 0) if protocol >= 8 else 0
     audit_projection_version = retained.get('audit_projection_version', 0) if retained is not None else (AUDIT_PROJECTION_VERSION if protocol >= 9 and projection_version == 1 else 0)
     if (type(audit_projection_version) is not int or audit_projection_version not in (0, 1)
@@ -518,11 +522,13 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
         raise ValueError('Unsupported frozen public selection protocol')
     if type(projection_version) is not int or projection_version not in (0, 1):
         raise ValueError('Unsupported frozen lineage projection version')
+    if protocol >= 12 and (policy.get('portfolio_policy') or {}).get('version', 1) != 2:
+        raise ValueError('Opportunity-cost protocol requires its frozen version2 strategy')
     if protocol >= 11 and policy.get('portfolio_policy') is None:
         raise ValueError('Scientific portfolio protocol requires its frozen instance policy')
     if protocol >= 10 and policy.get('decision_contract_version') != 1:
         raise ValueError('Scientific decision protocol requires its frozen instance policy')
-    if protocol not in (1, 2, 3, 4, 5, 6, 7, HANDOFF_PROTOCOL, 9, 10, 11):
+    if protocol not in (1, 2, 3, 4, 5, 6, 7, HANDOFF_PROTOCOL, 9, 10, 11, 12):
         raise ValueError('Unsupported frozen handoff protocol')
     work = workspace(root, step)
     work.mkdir(parents=True, exist_ok=True)
@@ -579,7 +585,7 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
         job['handoff_authority_version'] = 1
         from . import guidance
         job['native_role_instruction'] = (retained['native_role_instruction'] if retained is not None
-                                          else advice if advice is not None else guidance.DEFAULT[role])
+                                          else advice if advice is not None else (guidance.OPPORTUNITY if protocol >= 12 else guidance.DEFAULT)[role])
     if audit_projection_version == 1:
         job['audit_projection_version'] = 1
     if selection_protocol == 1:

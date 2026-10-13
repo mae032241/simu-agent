@@ -216,7 +216,7 @@ def apply_source(root, job, payload, seal, state):
     """The existing per-node interpretation guard, shared with read-only lineage."""
     receipt = seal.get('control_outcome')
     if receipt is not None:
-        if receipt.get('binding_protocol') != 8 or job.get('handoff_protocol', 1) not in {7, 8, 9, 10, 11}:
+        if receipt.get('binding_protocol') != 8 or job.get('handoff_protocol', 1) not in {7, 8, 9, 10, 11, 12}:
             raise ValueError('Control interpretation binding changed')
         if job.get('handoff_protocol', 1) == 7:
             try:
@@ -456,10 +456,13 @@ def report(root, job, intent, meter):
 
 
 def portfolio_policy(value):
-    if (not isinstance(value, dict) or set(value) != {'review_after_cycles'}
+    if (not isinstance(value, dict) or set(value) not in ({'review_after_cycles'}, {'review_after_cycles', 'version'})
             or type(value['review_after_cycles']) is not int or value['review_after_cycles'] <= 0):
         raise ValueError('Portfolio review needs a positive completed-cycle frequency')
-    return dict(value)
+    version = value.get('version', 2)
+    if type(version) is not int or version not in (1, 2):
+        raise ValueError('Unsupported frozen portfolio semantics')
+    return dict(review_after_cycles=value['review_after_cycles'], **(dict(version=2) if version == 2 else {}))
 
 
 def _portfolio_cycle(portfolio, mechanisms, branch):
@@ -501,7 +504,16 @@ def _portfolio_update(root, job, payload, seal, state, seal_sha=None):
         portfolio['last_review'] = job['step']
 
 
-def portfolio_due(portfolio, mechanisms, branch, threshold):
+def portfolio_due(portfolio, mechanisms, branch, threshold, *, version=1):
+    if version == 2:
+        if branch is None or branch not in mechanisms:
+            return False
+        def overdue(ref):
+            return (mechanisms[ref]['status'] in {'pending', 'deferred'}
+                    and portfolio['deferred'].get(ref, 0) >= threshold)
+        # Allocating an overdue commitment always remains possible, including
+        # when another commitment is also overdue. A review may retain any route.
+        return not overdue(branch) and any(ref != branch and overdue(ref) for ref in mechanisms)
     return (branch is not None and branch == portfolio['last_branch']
             and portfolio['invested'].get(branch, 0) >= threshold
             and any(ref != branch and item['status'] in {'pending', 'deferred'}
@@ -523,17 +535,32 @@ def portfolio_assess(root, job, payload):
     _portfolio_update(root, job, payload, dict(control_outcome=control), state)
     focus = state['focus']
     branch = focus['mechanism_ref'] if focus else None
-    threshold = c.settings(root)['portfolio_policy']['review_after_cycles']
-    if portfolio_due(state['portfolio'], state['mechanisms'], branch, threshold):
+    policy = c.settings(root)['portfolio_policy']
+    threshold = policy['review_after_cycles']
+    version = 2 if job.get('handoff_protocol', 1) >= 12 else 1
+    if portfolio_due(state['portfolio'], state['mechanisms'], branch, threshold, version=version):
         return [dict(code='a_portfolio_review_required', subject=branch)]
     return []
 
 
-def portfolio_view(state, threshold, *, prospective=False):
+def portfolio_view(state, threshold, *, prospective=False, version=1):
     portfolio = copy.deepcopy(state['portfolio'])
     if prospective and portfolio['pending_w']:
         _portfolio_cycle(portfolio, state['mechanisms'], portfolio['pending_w']['branch'])
     branch = portfolio['last_branch']
+    if version == 2:
+        overdue = [ref for ref, item in state['mechanisms'].items() if item['status'] in {'pending', 'deferred'}
+                   and portfolio['deferred'].get(ref, 0) >= threshold]
+        return dict(version=2, review_after_cycles=threshold, last_assessed_branch=branch,
+                    completed_cycles=state['portfolio']['invested'].get(branch, 0),
+                    cycles_if_assessed=portfolio['invested'].get(branch, 0),
+                    pending_assessment=bool(prospective and portfolio['pending_w']),
+                    overdue_count_if_assessed=len(overdue),
+                    review_required_for_non_overdue_selection=bool(overdue),
+                    last_review_step=portfolio['last_review'],
+                    scope='On A continue_w, choose an overdue pending/deferred commitment or explain the opportunity cost in portfolio_review. '
+                          'Any explained selection may continue. H ranks solutions scientifically; no host ranking or forced full coverage. '
+                          'Pending W assessment and projected delay are not completed cycles.')
     return dict(review_after_cycles=threshold, same_branch=branch,
                 completed_cycles=state['portfolio']['invested'].get(branch, 0),
                 cycles_if_assessed=portfolio['invested'].get(branch, 0),

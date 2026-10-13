@@ -335,6 +335,11 @@ def bind(root, step, role, protocol, *, source_cutoff=None, extra_steps=(), sele
         for row in mechanisms:
             row['completed_cycles_in_window'] = state['portfolio']['invested'].get(row['mechanism_ref'], 0)
             row['deferred_cycles_in_window'] = state['portfolio']['deferred'].get(row['mechanism_ref'], 0)
+            if protocol >= 12:
+                pending = state['portfolio']['pending_w'] if role == 'A' else None
+                row['deferred_cycles_if_assessed'] = (row['deferred_cycles_in_window'] + 1
+                    if pending and row['mechanism_ref'] != pending['branch'] and row['status'] in {'pending', 'deferred'}
+                    else 0 if pending and row['mechanism_ref'] == pending['branch'] else row['deferred_cycles_in_window'])
     mechanism_pages=paged(mechanisms,16,'mechanisms','inputs/lineage/mechanisms','sealed-H-A-interpretation')
     relations=paged(public_relations(projection['graph'],projection['sources']),16,'relations','inputs/lineage/relations','declared-not-proven-causality')
     indexes=dict(nodes=nodes[0] if nodes else None,candidates=candidates[0] if candidates else None,
@@ -354,12 +359,12 @@ def bind(root, step, role, protocol, *, source_cutoff=None, extra_steps=(), sele
     if protocol >= 11:
         threshold = c.settings(root)['portfolio_policy']['review_after_cycles']
         ordered = sorted(mechanisms, key=lambda row: (
-            0 if row['status'] in {'pending', 'deferred'} and row['deferred_cycles_in_window'] >= threshold else
+            0 if row['status'] in {'pending', 'deferred'} and row.get('deferred_cycles_if_assessed', row['deferred_cycles_in_window']) >= threshold else
             1 if row['status'] in {'pending', 'deferred'} else 2,
-            -row['deferred_cycles_in_window'], row['mechanism_ref']))
+            -row.get('deferred_cycles_if_assessed', row['deferred_cycles_in_window']), row['mechanism_ref']))
         view['mechanisms'].update(overview=ordered[:4], overview_omitted_count=max(0, len(ordered)-4),
                                   index=indexes['mechanisms'],
-                                  portfolio=search.portfolio_view(state, threshold, prospective=role == 'A'))
+                                  portfolio=search.portfolio_view(state, threshold, prospective=role == 'A', version=2 if protocol >= 12 else 1))
         bounded_brief(view)
     if audit_projection_version == 1:
         candidates_view = view['candidates']
