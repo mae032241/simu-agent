@@ -5,7 +5,7 @@ import argparse
 import json
 from pathlib import Path
 
-from . import budget, contracts, controller, native, runtime, search, correction, execution
+from . import budget, contracts, controller, native, runtime, search, correction, execution, feedback, history
 
 
 def status(root: Path):
@@ -22,6 +22,8 @@ def status(root: Path):
                  'unstarted': 'prepared'}.get(state, state)
         if state == 'native_outcome_unsealed':
             outcome = contracts.read(execution.record(root, step) / 'native-outcome.json')
+            if not isinstance(outcome, dict):
+                raise history.ObserverIntegrityError('Native status original outcome is malformed')
             if outcome.get('native_started') is False:
                 state = 'native_not_submitted'
         node = dict(step=step, role=job['role'], state=state)
@@ -29,9 +31,13 @@ def status(root: Path):
             record = execution.record(root, step)
             intent = contracts.read(record / 'native-intent.json') if (record / 'native-intent.json').exists() else {}
             outcome = contracts.read(record / 'native-outcome.json') if (record / 'native-outcome.json').exists() else {}
+            if not isinstance(intent, dict) or not isinstance(outcome, dict):
+                raise history.ObserverIntegrityError('Native budget status originals are malformed')
             node.update(**(dict(node_budget_mode='soft') if budget.node_mode(root)=='soft' else {}), budget_slice=intent.get('budget_slice'), budget_report=outcome.get('budget_slice'), stop_reason=outcome.get('stop_reason'))
         if settings.get('resume_policy') is not None:
             node['continuations'] = len(execution.records(root, step)) - 1
+        if job.get('live_feedback_version') == 1 and state != 'seal_present_unverified':
+            node['live_feedback'] = feedback.live(root, job)
         nodes.append(node)
     closeout = budget.closeout_state(root)
     return dict(instance=str(root), goal_id=settings['goal_id'], objective=settings['objective'],

@@ -105,6 +105,7 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
         max_output_item_bytes=max_output_item_bytes,
         max_output_total_bytes=max_output_total_bytes)
     settings['node_budget_mode'] = node_budget_mode
+    settings['live_feedback_version'] = 1
     if handoff_authority_version is not None:
         settings['handoff_authority_version'] = handoff_authority_version
     if decision_contract_version is not None:

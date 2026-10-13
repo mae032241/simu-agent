@@ -15,6 +15,8 @@ import time
 import uuid
 import fcntl
 
+if __package__ in {None, ''}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 MAX_BYTES = 256_000
 MAX_ASSET = 32 * 1024 * 1024
 MAX_SCAN = 4 * 1024 * 1024
@@ -27,6 +29,15 @@ class IntegrityError(ValueError):
 
 def _bytes(value):
     return (json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False) + '\n').encode()
+
+
+def _finite(value):
+    if type(value) not in (int, float):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def _read(path, limit=MAX_BYTES):
@@ -65,8 +76,8 @@ def _rows(path):
 
 def _config(path):
     data = _read(path);value = json.loads(data)
-    keys = {'contract_version','record_dir','runs_root','run_argv','scope','parents','evaluation_key'}
-    if set(value) != keys or value['contract_version'] != 2:
+    keys = {'contract_version','record_dir','runs_root','run_argv','scope','parents','evaluation_key','feedback_version'}
+    if set(value) != keys or value['contract_version'] != 2 or value['feedback_version'] != 1:
         raise ValueError('Explicit wrapper contract2 configuration required')
     scope = value['scope']
     if set(scope) != {'step','role','job_sha256','execution_key','mechanism_ref'} or type(scope['step']) is not int or scope['step'] <= 0 or scope['role'] not in {'H','W','A','E'}:
@@ -83,15 +94,19 @@ def _config(path):
     return value, hashlib.sha256(data).hexdigest()
 
 
-def _completed(directory):
-    accepted = json.loads(_read(directory/'accepted.json'))
+def _completed(directory, *, verify_assets=True):
     path = directory/'completed.json'
     if not path.exists():return None
     result = json.loads(_read(path))
+    for proof in result['proofs']:
+        if not verify_assets and Path(proof['path']) not in {directory / name for name in ('accepted.json', 'source.py', 'stdout.raw', 'row.json', 'terminal.json', 'model.pkl')}:
+            raise IntegrityError('Progress proof escaped this exact call')
+        if verify_assets or Path(proof['path']).name not in {'source.py', 'model.pkl'}:
+            _check(proof)
+    if result['model'] is not None and verify_assets:_check(result['model'])
+    accepted = json.loads(_read(directory/'accepted.json'))
     if result['call_id'] != accepted['call_id'] or result['scope'] != accepted['scope'] or result['parent'] != accepted['parent'] or result['change_intent'] != accepted['change_intent']:
         raise IntegrityError('Completion differs from accepted scientific context')
-    for proof in result['proofs']:_check(proof)
-    if result['model'] is not None:_check(result['model'])
     if result['status'] in {'known_success','known_failed'}:
         # Canonical completion comes only from the immutable same-call transport.
         row=json.loads(_read(directory/'row.json'))
@@ -106,7 +121,8 @@ def _completed(directory):
                 or (result['model'] is not None)!=ok
                 or (ok and row.get('model_path')!=str(Path(accepted['runs_root'])/f'model_run{row["run_id"]}.pkl'))):
             raise IntegrityError('Completion differs from immutable same-call transport')
-        if ok and (result['model']!=_proof(directory/'model.pkl') or result['model'] not in result['proofs']):
+        if ok and ((verify_assets and result['model']!=_proof(directory/'model.pkl'))
+                   or result['model']['path']!=str(directory/'model.pkl') or result['model'] not in result['proofs']):
             raise IntegrityError('Completed model differs from this exact call original')
         required={str(directory/name) for name in ('accepted.json','source.py','stdout.raw','row.json','terminal.json')}
         if not required.issubset({proof['path'] for proof in result['proofs']}):
@@ -118,6 +134,8 @@ def _completed(directory):
 
 def _calls(config):
     root = Path(config['record_dir'])/'calls'
+    if root.resolve() != root:
+        raise IntegrityError('Call namespace directory changed')
     paths = sorted(root.iterdir()) if root.exists() else []
     if len(paths) > MAX_CALLS:raise ValueError('Call observation capacity exceeded')
     for path in paths:
@@ -178,10 +196,10 @@ def _receipt(directory, accepted, rows, returncode, cleanup, transport_complete=
         scope=accepted['scope'],proofs=proofs)
 
 
-def status(config):
+def status(config, *, verify_assets=True):
     results = []
     for directory in _calls(config):
-        result = _completed(directory)
+        result = _completed(directory, verify_assets=verify_assets)
         if result is None:
             accepted = json.loads(_read(directory/'accepted.json'))
             if result is None:
@@ -251,7 +269,82 @@ def run(config, config_sha, script, parent=None, new=False, change=None):
     finally:os.close(fd)
 
 
+def progress(request):
+    """Only current accepted call metadata; no models, source bodies or raw logs."""
+    root, config, scope = Path(request['root']), request['config'], request['scope']
+    calls = Path(config['calls'])
+    if calls.is_absolute() or '..' in calls.parts or (root / calls).resolve() != root / calls:
+        raise IntegrityError('Live observation escaped its configured original')
+    return _progress(dict(record_dir=str(root / calls / f'{request["step"]:03d}/work/lineage'),
+                          evaluation_key=config['evaluation_key']), scope)
+
+
+def _progress(config, scope):
+    from scidiscovery.research_loop import runtime
+    try:
+        directories = _calls(config)
+    except OSError as error:
+        raise IntegrityError('Live call namespace cannot be read') from error
+    rows = []
+    counts = dict.fromkeys(('accepted', 'running', 'known_success', 'known_failed', 'unknown'), 0)
+    for directory in directories:
+        state, accepted, completed = 'unknown', None, None
+        metric = wall = parent = None
+        try:
+            completed = _completed(directory, verify_assets=False)
+            if not (directory / 'accepted.json').exists():
+                raise FileNotFoundError('Acceptance has not been published')
+            accepted = json.loads(_read(directory / 'accepted.json'))
+            if not isinstance(accepted, dict) or not isinstance(accepted.get('scope'), dict):
+                raise IntegrityError('Published live acceptance is malformed')
+            bound = accepted['scope']
+            if (type(bound['step']) is not int or bound['step'] != scope['step'] or bound['role'] != scope['role'] or bound['job_sha256'] != scope['job_sha256']
+                    or bound['execution_key'] not in scope['execution_keys'] or bound['mechanism_ref'] != scope['mechanism_ref']
+                    or accepted['call_id'] != directory.name):
+                raise IntegrityError('Live call differs from the exact accepted scientific task')
+            if not isinstance(accepted.get('parent'), dict):
+                raise IntegrityError('Published live parent is malformed')
+            parent = accepted['parent']['candidate_id']
+            if parent is not None and (not isinstance(parent, str) or not 0 < len(parent.encode()) <= 80):
+                raise IntegrityError('Published live parent is malformed')
+            if completed is not None:
+                state = completed['status']
+            elif (directory / 'process.json').exists():
+                identity = json.loads(_read(directory / 'process.json'))
+                if not isinstance(identity, dict):
+                    raise IntegrityError('Published live process identity is malformed')
+                key = hashlib.sha256(_bytes(accepted)).hexdigest()
+                if identity.get('task_sha256') != key:
+                    raise IntegrityError('Live process binding differs from the accepted call')
+                if runtime.process_matches(identity, key):
+                    state = 'running'
+            if state in {'known_success', 'known_failed'}:
+                original = json.loads(_read(directory / 'row.json'))
+                metric = original.get('val_score')
+                wall = original.get('wall_seconds')
+                metric = metric if _finite(metric) else None
+                wall = wall if _finite(wall) else None
+        except (FileNotFoundError, json.JSONDecodeError, UnicodeDecodeError):
+            state, completed = 'unknown', None  # Half-written metadata never proves execution or completion.
+            metric = wall = None
+        except OSError as error:
+            raise IntegrityError('Published live original cannot be read') from error
+        except IntegrityError:
+            raise
+        except (ValueError, KeyError, TypeError, AttributeError, UnicodeEncodeError, RecursionError, OverflowError) as error:
+            raise IntegrityError('Published live metadata is malformed') from error
+        counts[state] += 1
+        rows.append(dict(call_id=directory.name, status=state,
+            candidate_id=completed['candidate_id'] if completed is not None else None,
+            evaluation_key=config['evaluation_key'], metric=metric, direction='max', wall_seconds=wall,
+            parent_candidate=parent))
+    return dict(version=1, scope=scope, calls=rows[-16:], counts=counts, omitted_count=max(0, len(rows)-16),
+                coverage='partial' if counts['unknown'] else 'complete', observed_at=time.time())
+
+
 def observe(request):
+    if request.get('progress_version') == 1:
+        return progress(request)
     config = request['config'];root = Path(request['root'])
     if set(config) != {'runs','calls','evaluation_key'}:raise ValueError('Explicit public run/call roots required')
     for key in ('runs','calls'):
@@ -321,7 +414,7 @@ def configure(root, step, run_argv, runs_root, output):
             if completion is None:continue
             parents.append(dict(name=candidate,candidate_id=candidate,model=dict(path=str(path),sha256=model['sha256'],size_bytes=model['size_bytes']),
                                 binding=_binding(context,completion)))
-    value=dict(contract_version=2,record_dir=str(c.workspace(root,step)/'work/lineage'),runs_root=str(runs_root),run_argv=run_argv,
+    value=dict(contract_version=2,feedback_version=1,record_dir=str(c.workspace(root,step)/'work/lineage'),runs_root=str(runs_root),run_argv=run_argv,
         scope=dict(step=step,role=job['role'],job_sha256=c.digest(root/'jobs'/f'{step:03d}.json'),execution_key=execution.identity(root,step),
                    mechanism_ref=((job.get('search') or {}).get('focus') or {}).get('mechanism_ref')),
         parents=parents,evaluation_key='covshift-public-val-v1')
@@ -342,7 +435,7 @@ def public_feedback(config, result, *, include_model=False):
         if isinstance(row.get('metric'),str):value['metric']=row['metric'].encode()[:80].decode('utf-8',errors='ignore')
         for key in ('val_score','val_acc','wall_seconds'):
             number=row.get(key)
-            if type(number) in (int,float) and math.isfinite(number):value[key]=number
+            if _finite(number):value[key]=number
         if isinstance(row.get('error'),str):value['error']=row['error'].encode()[:160].decode('utf-8',errors='ignore')
     return value
 
@@ -362,7 +455,11 @@ def main(argv=None):
     r.add_argument('--change-intent');sub.add_parser('lineage-status');args=parser.parse_args(argv)
     try:
         config,digest=_config(args.config)
-        if args.command=='lineage-status':result=dict(calls=status(config));code=0
+        if args.command=='lineage-status':
+            scope = dict(config['scope'])
+            scope['execution_keys'] = [scope.pop('execution_key')]
+            result = {key: value for key, value in _progress(config, scope).items() if key != 'scope'}
+            code=0
         else:
             script=args.script
             if script is None:
@@ -374,12 +471,14 @@ def main(argv=None):
             code={'known_success':0,'known_failed':1,'unknown':2}.get(result['status'],2)
     except IntegrityError as error:result=dict(status='integrity_error',note=str(error));code=3
     except ValueError as error:result=dict(status='unresolved',note=str(error));code=2
+    from scidiscovery.research_loop import feedback
     try:
         if args.command=='run' and 'scope' in result:
             result=public_feedback(config,result,include_model=True)
-        elif args.command=='lineage-status' and 'calls' in result:
-            result={'calls':[public_feedback(config,item) for item in result['calls']]}
-    except IntegrityError as error:result=dict(status='integrity_error',note=str(error));code=3
+        if 'config' in locals():result['feedback'] = dict(version=1, budget=feedback.budget_hint(Path(config['record_dir']).parent.parent),
+            qualification='Progress metadata does not establish source/model integrity or audit qualification.',
+            notification='Available only at a tool return or explicit query; no mid-turn message channel.')
+    except (IntegrityError, feedback.history.ObserverIntegrityError) as error:result=dict(status='integrity_error',note=str(error));code=3
     print(json.dumps(result,allow_nan=False));return code
 
 

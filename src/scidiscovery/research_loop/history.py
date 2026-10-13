@@ -122,6 +122,30 @@ def _proof(root, source, read_limit=MAX_OBJECT_BYTES):
                 snapshot=snapshot.relative_to(root).as_posix())
 
 
+def read_adapter(config, request):
+    """The existing bounded, trusted, synchronous observation transport."""
+    adapter = c.regular(Path(config['adapter']), limit=MAX_OBSERVER_BYTES)
+    if adapter.resolve() != adapter or c.digest(adapter) != config['adapter_sha256']:
+        raise ObserverIntegrityError('Frozen observer adapter changed')
+    if len(_bytes(request)) > MAX_OBSERVER_BYTES:
+        raise ValueError('Observer input exceeds byte bound')
+    def bound_output():
+        resource.setrlimit(resource.RLIMIT_FSIZE, (MAX_OBSERVER_BYTES, MAX_OBSERVER_BYTES))
+    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+        result = subprocess.run([sys.executable, '-I', str(adapter)], input=_bytes(request),
+            stdout=out, stderr=err, timeout=OBSERVER_SECONDS, env={'PATH': os.defpath}, preexec_fn=bound_output)
+        out.seek(0)
+        data = out.read(MAX_OBSERVER_BYTES + 1)
+    if result.returncode:
+        raise ValueError('Observer output capacity exceeded' if result.returncode == -25 else 'Observer adapter failed')
+    if len(data) > MAX_OBSERVER_BYTES:
+        raise ValueError('Observer output capacity exceeded')
+    value = json.loads(data)
+    if config.get('contract_version') == 2 and isinstance(value, dict) and set(value) == {'integrity_error'}:
+        raise ObserverIntegrityError(str(value['integrity_error']))
+    return value
+
+
 def _capture(root, job, payload, materials):
     """Snapshot mechanical adapter facts once, before the scientific seal."""
     config = c.settings(root).get('history_observer')
@@ -154,24 +178,7 @@ def _capture(root, job, payload, materials):
     request = dict(root=str(root), step=job['step'], config=config['config'], materials=materials,
                    known_candidates=sorted(known),
                    **(dict(known_contexts=sorted(known_contexts)) if config.get('contract_version') == 2 else {}))
-    if len(_bytes(request)) > MAX_OBSERVER_BYTES:
-        raise ValueError('Observer input exceeds byte bound')
-    def bound_output():
-        resource.setrlimit(resource.RLIMIT_FSIZE, (MAX_OBSERVER_BYTES, MAX_OBSERVER_BYTES))
-    # Trusted adapters must be synchronous and must not spawn children or effects.
-    # This is a small observation call, not an execution/recovery engine.
-    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
-        result = subprocess.run([sys.executable, '-I', str(adapter)], input=_bytes(request),
-            stdout=out, stderr=err, timeout=OBSERVER_SECONDS, env={'PATH': os.defpath}, preexec_fn=bound_output)
-        out.seek(0)
-        data = out.read(MAX_OBSERVER_BYTES + 1)
-    if result.returncode:
-        raise ValueError('Observer output capacity exceeded' if result.returncode == -25 else 'Observer adapter failed')
-    if len(data) > MAX_OBSERVER_BYTES:
-        raise ValueError('Observer output capacity exceeded')
-    value = json.loads(data)
-    if config.get('contract_version') == 2 and isinstance(value,dict) and set(value)=={'integrity_error'}:
-        raise ObserverIntegrityError(str(value['integrity_error']))
+    value = read_adapter(config, request)
     expected = {'candidates','current_candidate','actual_submission','coverage'}
     if config.get('contract_version') == 2:expected.add('contexts')
     if not isinstance(value, dict) or set(value) != expected:

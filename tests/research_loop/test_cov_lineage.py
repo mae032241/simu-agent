@@ -45,7 +45,7 @@ def wrapper(tmp_path):
     runs = tmp_path / 'runs'
     records = tmp_path / 'work/lineage'
     config = tmp_path / 'config.json'
-    config.write_text(json.dumps(dict(contract_version=2, record_dir=str(records), runs_root=str(runs),
+    config.write_text(json.dumps(dict(contract_version=2, feedback_version=1, record_dir=str(records), runs_root=str(runs),
         run_argv=[sys.executable, str(backend), '--runs-root', str(runs)],
         scope=dict(step=2, role='W', job_sha256='a'*64, execution_key='b'*64, mechanism_ref='h001.m1'),
         parents=[], evaluation_key='fixture-public-v1')))
@@ -150,7 +150,12 @@ def test_retained_call_asset_tamper_is_hard_error_and_blocks_new_execution(wrapp
     else:
         path.write_bytes(path.read_bytes() + b'tampered')
     before = wrapper.calls()
-    assert wrapper.cli('lineage-status', expected=3)['status'] == 'integrity_error'
+    if name in {'model.pkl', 'source.py'}:
+        preview = wrapper.cli('lineage-status')
+        assert preview['calls'][0]['status'] == 'known_success'
+        assert 'does not establish source/model integrity' in preview['feedback']['qualification']
+    else:
+        assert wrapper.cli('lineage-status', expected=3)['status'] == 'integrity_error'
     assert wrapper.run('cannot-use-mutated-parent', 'success', '--parent-plan', result['candidate_id'], expected=3)['status'] == 'integrity_error'
     assert wrapper.calls() == before and len(wrapper.accepted()) == 1
 
