@@ -87,3 +87,5 @@ def _terminal(root, step, chain, outcome):
             raise ValueError('Terminal continuation differs from its accepted process identity')
     from . import budget
     budget._attempt_consumption(root, c.read(root / 'jobs' / f'{step:03d}.json'), chain)
+    from . import continuation
+    continuation.validate_repair_chain(root, step, chain)

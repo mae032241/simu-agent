@@ -545,8 +545,12 @@ def test_ineligible_native_work_cannot_use_sealing_recovery(real_node, monkeypat
     launches = []
     monkeypatch.setattr(n.controller, 'native', SimpleNamespace(
         usage=n.native.usage, execute_native=lambda *args: launches.append(args)))
-    expected = 'seal_pending' if change == 'invalid_science' else 'native_outcome_unsealed'
-    assert n.controller.run(n.root)['status'] == expected
+    expected = 'output_repair_required' if change == 'invalid_science' else 'native_outcome_unsealed'
+    result = n.controller.run(n.root)
+    assert result['status'] == expected
+    if change == 'invalid_science':
+        assert result['reason'] == 'invalid_fields'
+        assert not (n.record / 'continuations').exists()
     assert not launches
     assert not (n.record / 'result-identity.json').exists()
 

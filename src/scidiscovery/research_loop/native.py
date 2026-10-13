@@ -15,6 +15,7 @@ import subprocess
 import time
 
 from . import budget as control_budget, execution, runtime, search
+from .output_repair import OutputRepairRequired
 from .contracts import (ACTIONS, actions, ROLE_INSTRUCTIONS, digest, host_record, read,
                         seal_result, workspace, write, settings as frozen_settings)
 
@@ -79,7 +80,8 @@ def wait_native(root: Path, step: int):
     while True:
         state = runtime.node_state(root, step)
         if state in {"terminal", "sealed"}:
-            return seal_result(root, step)
+            from . import continuation
+            return continuation.seal_or_repair(root, step)
         if state != "running":
             if not (record / "runner-process.json").exists() and time.monotonic() < startup_until:
                 time.sleep(.05)
@@ -119,6 +121,7 @@ def run_native(root: Path, step: int, attempt=0):
         continuation.validate_launcher(root)
     if attempt:
         from .contracts import regular
+        continuation.validate_repair(root, step, intent)
         session = intent['session']
         if (session.get('home') != str(root / 'native-homes' / work.name)
                 or session.get('workspace') != str(work)
@@ -186,6 +189,12 @@ def run_native(root: Path, step: int, attempt=0):
         prompt = (label + json.dumps(remaining) + '\nContinue this same task/session/workspace. Read existing checkpoints and confirmed results; '
                   'collect or recover managed executions by their original IDs rather than resubmitting. '
                   'Use scientific judgment for ordinary native shell checkpoints; no new mechanical registry is required.\n' + prompt)
+        if intent.get('output_repair'):
+            prompt = ('Repair only your final response for this same completed task. Preserve completed experiments and '
+                      'their results; do not rerun or resubmit them. Return corrected scientific JSON using the frozen '
+                      'final_response contract. Controller diagnosis: '
+                      + json.dumps({key: intent['output_repair'][key] for key in ('code', 'diagnostic')}, ensure_ascii=False)
+                      + '\n' + prompt)
     home = root / 'native-homes' / work.name
     home.mkdir(parents=True, exist_ok=True)
     env = {**os.environ, 'THIN_HWA_ROLE': job['role'], 'THIN_HWA_WORKSPACE': str(work),
@@ -328,8 +337,14 @@ def run_native(root: Path, step: int, attempt=0):
         write(record / 'native-outcome.json', outcome)
         raise RuntimeError('Native work is not a verified terminal result; preserved without replay')
     raw = record / 'science-output.json'
-    if pending.is_symlink() or not pending.is_file():
+    if pending.is_symlink() or (pending.exists() and not pending.is_file()):
+        outcome['output_status'] = 'unsafe'
+        write(record / 'native-outcome.json', outcome)
         raise ValueError('Native science output is missing or not a regular file')
+    if not pending.exists():
+        outcome['output_status'] = 'missing'
+        write(record / 'native-outcome.json', outcome)
+        raise OutputRepairRequired('missing_output', 'Return the required final scientific JSON; the completed work and checkpoints are already retained.')
     os.replace(pending, raw)
     outcome['raw_sha256'] = digest(raw)
     write(record / 'native-outcome.json', outcome)

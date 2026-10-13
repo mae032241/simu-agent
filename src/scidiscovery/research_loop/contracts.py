@@ -133,19 +133,29 @@ def result_schema(role: str, protocol=1):
         from . import correction
         properties['progress_assessment'] = correction.schema(protocol)
         required.append('progress_assessment')
+    if role == 'A' and protocol >= 10:
+        from . import decision
+        properties['decision_request'] = decision.schema()
+        required.append('decision_request')
     return dict(type='object', properties=properties, required=required, additionalProperties=False)
 
 
 def science_payload(path: Path, role: str, protocol=1):
     import jsonschema
-    value = read(regular(path, limit=MAX_RESULT_BYTES))
+    from .output_repair import OutputRepairRequired
+    original = regular(path, limit=MAX_RESULT_BYTES)
+    try:
+        value = read(original)
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        raise OutputRepairRequired('invalid_json', 'Return one valid JSON object matching final_response; completed experiments remain retained.') from error
     try:
         jsonschema.validate(value, result_schema(role, protocol))
     except jsonschema.ValidationError as error:
-        raise ValueError('Invalid scientific result fields') from error
+        location = '.'.join(map(str, error.absolute_path))[:128] or 'final response'
+        raise OutputRepairRequired('invalid_fields', 'Correct required fields and types in ' + location + ' using final_response; do not repeat experiments.') from error
     if any(not value[key].strip() for key in ('summary', 'scientific_result')) or (
             role in ACTIONS and not value['route_reason'].strip()):
-        raise ValueError('Scientific content and routing reasons must be nonempty')
+        raise OutputRepairRequired('empty_content', 'Return nonempty scientific content and routing reasons for the already completed task.')
     return value
 
 
@@ -380,6 +390,9 @@ def science_view(job, root=None):
                 'your own new prose or unsealed files as progress evidence. Scientific explanations '
                 'belong in scientific_result and limitations; the host counts sealed decisions.'))
            if job.get('handoff_protocol', 1) >= 6 and job['role'] == 'A' else {}),
+        **(dict(decision_request='For scientific continuation, declare the decision, question and result that would change it. '
+                'Exact completed requests without new bound evidence require clarification; this is not a scientific value judgment.')
+           if protocol >= 10 and job['role'] == 'A' else {}),
         'final_response': list(result_schema(job['role'], job.get('handoff_protocol', 1))['properties']),
         'outputs': 'artifacts/', 'scratch': 'work/',
         'experiments': 'experiments/<id>/{work/,artifacts/,conclusion.json or conclusion.md}; '
@@ -488,7 +501,7 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
     authority_version = retained.get('handoff_authority_version', 0) if retained is not None else policy.get('handoff_authority_version', 0)
     if type(authority_version) is not int or authority_version not in (0, 1):
         raise ValueError('Unsupported frozen scientific handoff authority')
-    protocol = retained.get('handoff_protocol', 1) if retained is not None else (9 if policy.get('candidate_audit_policy') else HANDOFF_PROTOCOL)
+    protocol = retained.get('handoff_protocol', 1) if retained is not None else (10 if policy.get('decision_contract_version') == 1 else 9 if policy.get('candidate_audit_policy') else HANDOFF_PROTOCOL)
     projection_version = retained.get('lineage_projection_version', 0) if retained is not None else policy.get('lineage_projection_version', 0) if protocol >= 8 else 0
     audit_projection_version = retained.get('audit_projection_version', 0) if retained is not None else (AUDIT_PROJECTION_VERSION if protocol >= 9 and projection_version == 1 else 0)
     if (type(audit_projection_version) is not int or audit_projection_version not in (0, 1)
@@ -499,7 +512,9 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
         raise ValueError('Unsupported frozen public selection protocol')
     if type(projection_version) is not int or projection_version not in (0, 1):
         raise ValueError('Unsupported frozen lineage projection version')
-    if protocol not in (1, 2, 3, 4, 5, 6, 7, HANDOFF_PROTOCOL, 9):
+    if protocol >= 10 and policy.get('decision_contract_version') != 1:
+        raise ValueError('Scientific decision protocol requires its frozen instance policy')
+    if protocol not in (1, 2, 3, 4, 5, 6, 7, HANDOFF_PROTOCOL, 9, 10):
         raise ValueError('Unsupported frozen handoff protocol')
     work = workspace(root, step)
     work.mkdir(parents=True, exist_ok=True)
@@ -554,7 +569,9 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
         job['role_guidance'] = advice
     if authority_version == 1:
         job['handoff_authority_version'] = 1
-        job['native_role_instruction'] = retained['native_role_instruction'] if retained is not None else (advice if advice is not None else ROLE_INSTRUCTIONS[role])
+        from . import guidance
+        job['native_role_instruction'] = (retained['native_role_instruction'] if retained is not None
+                                          else advice if advice is not None else guidance.DEFAULT[role])
     if audit_projection_version == 1:
         job['audit_projection_version'] = 1
     if selection_protocol == 1:
@@ -763,11 +780,20 @@ def seal_result(root: Path, step: int):
     if intent['task_sha256'] != digest(regular(job_path)):
         raise ValueError('Native launch task changed')
     _validate_inputs(root, work, job)
-    raw = regular(native_record / 'science-output.json', limit=MAX_RESULT_BYTES)
     outcome = read(regular(native_record / 'native-outcome.json'))
     if (type(outcome.get('returncode')) is not int or outcome['returncode'] != 0
-            or outcome.get('stop_reason') or outcome['usage']['unknown_steps']
-            or outcome.get('raw_sha256') != digest(raw)):
+            or outcome.get('stop_reason') or outcome['usage']['unknown_steps']):
+        raise ValueError('Terminal scientific output is unverified or changed')
+    raw_path = native_record / 'science-output.json'
+    pending = native_record / 'result.pending.json'
+    if outcome.get('output_status') == 'missing':
+        if (outcome.get('raw_sha256') is not None or raw_path.exists() or raw_path.is_symlink()
+                or pending.exists() or pending.is_symlink()):
+            raise ValueError('Missing final output identity changed')
+        from .output_repair import OutputRepairRequired
+        raise OutputRepairRequired('missing_output', 'Return the required final scientific JSON; the completed work and checkpoints are already retained.')
+    raw = regular(raw_path, limit=MAX_RESULT_BYTES)
+    if outcome.get('raw_sha256') != digest(raw):
         raise ValueError('Terminal scientific output is unverified or changed')
     value = envelope(job, science_payload(raw, job['role'], job.get('handoff_protocol', 1)))
     control = None

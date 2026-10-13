@@ -10,13 +10,17 @@ MAX_AUTHOR_CORRECTIONS = 2
 
 
 def outcome(root, job, payload, *, legacy_attempt=False):
-    if not legacy_attempt and job.get('handoff_protocol', 1) not in {8, 9}:
+    if not legacy_attempt and job.get('handoff_protocol', 1) not in {8, 9, 10}:
         raise ValueError('Control outcomes require the frozen protocol8 interpretation')
     diagnostics = search.assess_payload(root, job, payload, legacy_attempt=legacy_attempt) if job.get('purpose') is None and c.settings(root).get('search_policy') else []
     selection = []
     c.selected_inputs(c.workspace(root, job['step']), payload, job, selection)
-    rows = [*diagnostics, *selection]
-    return dict(binding_protocol=8, search_status='unresolved' if diagnostics else 'applied',
+    from . import decision
+    requests = decision.assess(root, job, payload)
+    rows = [*diagnostics, *selection, *requests]
+    return dict(**(dict(decision_status='unresolved' if requests else 'applied')
+                   if job.get('handoff_protocol', 1) >= 10 else {}),
+                binding_protocol=8, search_status='unresolved' if diagnostics else 'applied',
                 selection_status='unresolved' if selection else 'applied',
                 diagnostics=rows[:MAX_DIAGNOSTICS], omitted_count=max(0, len(rows) - MAX_DIAGNOSTICS))
 
@@ -81,6 +85,15 @@ def validate_job(root, job):
         if not any(ref['path'] == f'inputs/parents/{request["source"]["step"]:03d}/conclusion.json' for ref in job['direct_refs']):
             raise ValueError('Closeout correction must bind its exact prior author')
         return
+    from . import decision
+    decision_reason = decision.reason(root, root_job, root_payload)
+    decision_actions = decision.ACTIONS if decision_reason else {'continue_w': 'W'}
+    if (root_job['role'] == 'A' and root_payload.get('next_action') in decision_actions and decision_reason):
+        if request['reason'] != decision_reason:
+            raise ValueError('Author decision correction differs from its original diagnostic')
+        if not any(ref['path'] == f'inputs/parents/{request["source"]["step"]:03d}/conclusion.json' for ref in job['direct_refs']):
+            raise ValueError('Decision correction must bind its actual author')
+        return
     if (root_job['role'], root_payload.get('next_action')) not in {('H', 'experiment'), ('A', 'continue_w')}:
         raise ValueError('Author correction root did not request a dependent experiment')
     reason = 'implementation_unresolved' if root_seal.get('control_outcome', {}).get('selection_status') == 'unresolved' else None
@@ -117,7 +130,17 @@ def effective_route(root, step, result, job, route):
     seal = c.read(c.host_record(c.workspace(root, step)) / 'result-identity.json')
     if job.get('handoff_protocol', 1) < 8 and seal.get('control_outcome') is None:
         return (*route, None)  # Published valid routes keep their exact frozen successors.
-    if role == 'W':
+    from . import decision
+    decision_code = decision.reason(root, job, result)
+    if decision_code is not None:
+        source = _source(root, step)
+        request = dict(root=previous['root'] if previous else source, source=source,
+                       reason=previous['reason'] if previous else decision_code)
+        role, parents = 'A', list(dict.fromkeys([*parents, step]))
+        instruction = ('Clarify the scientific decision, concrete question and result that would change it. '
+                       'The original science is retained; no dependent research is authorized: ' + decision_code + '.')
+        evidence_return, correction_request = None, None
+    elif role == 'W':
         code = 'implementation_unresolved' if seal.get('control_outcome', {}).get('selection_status') == 'unresolved' else None
         if code is None and c.settings(root).get('search_policy') is not None:
             planned = dict(step=step + 1, role='W', search=search.bind(root, step + 1, 'W', 8, write_pages=False))

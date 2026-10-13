@@ -2,11 +2,13 @@
 import json
 import hashlib
 import os
+import time
 from itertools import islice
 from pathlib import Path
 import uuid
 
 from . import budget, contracts as c, execution, native, runtime
+from .output_repair import OutputRepairRequired
 
 
 class ResumeUnavailable(ValueError):
@@ -14,9 +16,11 @@ class ResumeUnavailable(ValueError):
 
 
 def policy(value, launcher):
-    if (not isinstance(value, dict) or set(value) != {'max_attempts', 'protocol', 'usage_scope'}
+    if (not isinstance(value, dict) or set(value) not in ({'max_attempts', 'protocol', 'usage_scope'},
+            {'max_attempts', 'protocol', 'usage_scope', 'output_repair'})
             or type(value['max_attempts']) is not int or not 1 <= value['max_attempts'] <= 2
-            or value['protocol'] != 'codex_exec_resume' or value['usage_scope'] != 'turn'):
+            or value['protocol'] != 'codex_exec_resume' or value['usage_scope'] != 'turn'
+            or ('output_repair' in value and type(value['output_repair']) is not bool)):
         raise ValueError('Resume requires explicit finite attempts and qualified turn-scoped launcher protocol')
     if not launcher or not Path(launcher[0]).is_absolute() or not Path(launcher[0]).is_file():
         raise ValueError('Resume requires an exact frozen executable, never PATH selection')
@@ -85,6 +89,65 @@ def session(root, step, record):
     return dict(thread_id=thread, home=str(home), workspace=str(c.workspace(root, step)), **matches[0])
 
 
+def seal_or_repair(root, step):
+    """Try the original seal first; only a frozen opt-in can accept a repair turn."""
+    try:
+        return c.seal_result(root, step)
+    except OutputRepairRequired:
+        if not (c.settings(root).get('resume_policy') or {}).get('output_repair', False):
+            raise
+        return start(root, step)
+
+
+def output_request(root, step, record, *, source_attempt=None, verify_task=True):
+    """Recompute a repair binding from verified original final-response bytes."""
+    job = validate_task(root, step) if verify_task else c.read(c.regular(root / 'jobs' / f'{step:03d}.json'))
+    outcome = c.read(c.regular(record / 'native-outcome.json'))
+    if (type(outcome.get('returncode')) is not int or outcome['returncode'] != 0
+            or outcome.get('stop_reason') or outcome['usage']['unknown_steps']):
+        raise ValueError('Output repair requires a known completed original turn')
+    raw = record / 'science-output.json'
+    if outcome.get('output_status') == 'missing':
+        if raw.exists() or raw.is_symlink() or (record / 'result.pending.json').exists() or (record / 'result.pending.json').is_symlink():
+            raise ValueError('Missing final output identity changed')
+        error = OutputRepairRequired('missing_output', 'Return the required final scientific JSON; the completed work and checkpoints are already retained.')
+    else:
+        if c.digest(c.regular(raw, limit=c.MAX_RESULT_BYTES)) != outcome.get('raw_sha256'):
+            raise ValueError('Original final output changed before repair')
+        try:
+            c.science_payload(raw, job['role'], job.get('handoff_protocol', 1))
+        except OutputRepairRequired as failure:
+            error = failure
+        else:
+            raise ValueError('A valid final response does not authorize an output repair')
+    if source_attempt is None:
+        source_attempt = len(execution.records(root, step)) - 1
+    return dict(**error.request(), source_attempt=source_attempt,
+                outcome_sha256=c.digest(record / 'native-outcome.json'), raw_sha256=outcome.get('raw_sha256'))
+
+
+def validate_repair(root, step, intent, *, prior_record=None, verify_task=True):
+    request = intent.get('output_repair')
+    if request is None:
+        return
+    if not validate_launcher(root).get('output_repair', False):
+        raise ValueError('Output repair is not authorized by the frozen policy')
+    prior = prior_record if prior_record is not None else execution.records(root, step)[intent['attempt'] - 1]
+    expected = output_request(root, step, prior, source_attempt=intent['attempt'] - 1, verify_task=verify_task)
+    if request != expected:
+        raise ValueError('Accepted output repair differs from its original response failure')
+
+
+def validate_repair_chain(root, step, chain):
+    """Terminal execution checks every repair source without replaying projections."""
+    for number, record in enumerate(chain[1:], 1):
+        intent = c.read(c.regular(record / 'native-intent.json'))
+        if intent.get('output_repair') is not None:
+            # execution.records already verified task/attempt/previous identities.
+            # Avoid terminal -> scientific projection -> terminal recursion.
+            validate_repair(root, step, intent, prior_record=chain[number - 1], verify_task=False)
+
+
 def start(root, step):
     limits = validate_launcher(root)
     if (execution.origin(root, step) / 'result-identity.json').exists():
@@ -94,9 +157,18 @@ def start(root, step):
         return native.wait_native(root, step)  # An accepted attempt is collected before cap checks.
     last = paths[-1]
     outcome = c.read(c.regular(last / 'native-outcome.json'))
+    repair = None
     if outcome.get('returncode') == 0 and not outcome.get('stop_reason'):
-        return c.seal_result(root, step)
-    if (root / 'pause.request').exists() or budget.closeout_state(root)['begin'] is not None:
+        try:
+            return c.seal_result(root, step)
+        except OutputRepairRequired:
+            if not limits.get('output_repair', False):
+                raise
+            repair = output_request(root, step, last)
+    closeout = budget.closeout_state(root)['begin']
+    job = c.read(c.regular(root / 'jobs' / f'{step:03d}.json'))
+    if (root / 'pause.request').exists() or (closeout is not None and
+            (repair is None or job.get('purpose') != 'closeout')):
         raise ResumeUnavailable('worker_resume_paused_or_closeout')
     from . import correction
     if correction.gate(root, step - 1) is not None:
@@ -106,13 +178,12 @@ def start(root, step):
     for later in range(step + 1, settings['max_steps'] + 1):
         if (execution.origin(root, later) / 'native-intent.json').exists():
             raise ResumeUnavailable('worker_resume_successor_present')
-    job = c.read(c.regular(root / 'jobs' / f'{step:03d}.json'))
     original_intent = c.read(c.regular(paths[0] / 'native-intent.json'))
     if original_intent.get('task_sha256') != c.digest(root / 'jobs' / f'{step:03d}.json'):
         raise ValueError('Original native task identity changed')
     validate_task(root, step)
     outcome = c.read(c.regular(last / 'native-outcome.json'))
-    if (type(outcome.get('returncode')) is not int or outcome['returncode'] == 0
+    if (type(outcome.get('returncode')) is not int or (outcome['returncode'] == 0 and repair is None)
             or outcome.get('stop_reason') or outcome.get('cleanup') != 'observed_group_cleaned'):
         raise ResumeUnavailable('worker_resume_terminal_ineligible')
     meter = c.read(c.regular(last / 'usage.json'))
@@ -127,6 +198,12 @@ def start(root, step):
                 or any(type(identity.get(key)) is not int or identity[key] <= 0
                        for key in ('pid', 'start_ticks', 'pgid', 'sid', 'ppid'))):
             raise ValueError('Original execution process identity is invalid')
+        # The durable terminal receipt can precede its runner's lock release.
+        # Collect that exact local process; never launch alongside it.
+        if name == 'runner-process.json' and repair is not None:
+            until = time.monotonic() + 5
+            while runtime.process_matches(identity, execution.identity(root, step)) and time.monotonic() < until:
+                time.sleep(.05)
         if runtime.process_matches(identity, execution.identity(root, step)):
             raise ResumeUnavailable('worker_resume_original_running')
     report = outcome.get('budget_slice')
@@ -140,7 +217,8 @@ def start(root, step):
     record.mkdir(parents=True, exist_ok=True)
     intent = dict(step=step, attempt=number, task_sha256=c.digest(root / 'jobs' / f'{step:03d}.json'),
                   root_intent_sha256=c.digest(paths[0] / 'native-intent.json'), previous=execution.proof(last),
-                  session=session_ref, budget_slice=anchor)
+                  session=session_ref, budget_slice=anchor,
+                  **(dict(output_repair=repair) if repair is not None else {}))
     with (record / 'native-intent.json').open('x') as stream:
         json.dump(intent, stream);stream.flush();os.fsync(stream.fileno())
     runtime.start(root, step, number)

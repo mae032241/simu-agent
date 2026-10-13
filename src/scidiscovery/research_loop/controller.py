@@ -8,6 +8,7 @@ from pathlib import Path
 import uuid
 
 from . import budget, contracts, history, native, runtime, search, correction, semantic, execution, continuation, guidance
+from .output_repair import OutputRepairRequired
 
 
 def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str], *,
@@ -26,8 +27,10 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
             role_guidance: dict | None = guidance.DEFAULT,
             selection_protocol: int | None = 1,
             node_budget_mode: str = 'soft', candidate_audit_policy: dict | None = None,
-            handoff_authority_version: int | None = 1) -> dict:
+            handoff_authority_version: int | None = 1, decision_contract_version: int | None = None) -> dict:
     """Freeze an explicit goal and finite launch budgets in a fresh directory."""
+    if decision_contract_version is not None and (type(decision_contract_version) is not int or decision_contract_version != 1):
+        raise ValueError('Unsupported scientific decision contract')
     if handoff_authority_version is not None and (type(handoff_authority_version) is not int or handoff_authority_version != 1):
         raise ValueError('Unsupported scientific handoff authority version')
     if lineage_projection_version is not None and (type(lineage_projection_version) is not int or lineage_projection_version != 1):
@@ -93,6 +96,8 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
     settings['node_budget_mode'] = node_budget_mode
     if handoff_authority_version is not None:
         settings['handoff_authority_version'] = handoff_authority_version
+    if decision_contract_version is not None:
+        settings['decision_contract_version'] = decision_contract_version
     if candidate_audit_policy is not None:
         settings['candidate_audit_policy'] = dict(candidate_audit_policy)
     if selection_protocol is not None and lineage_projection_version == 1:
@@ -266,12 +271,17 @@ def _route(root, step, role, result, job, current_h, current_w):
 
 
 def _terminal_success(record):
+    """Known terminal turn, including diagnosed missing output, never unknown work."""
     try:
         outcome = contracts.read(record / 'native-outcome.json')
-        raw = contracts.regular(record / 'science-output.json')
-        return (type(outcome.get('returncode')) is int and outcome['returncode'] == 0
-                and not outcome.get('stop_reason') and not outcome['usage']['unknown_steps']
-                and outcome.get('raw_sha256') == contracts.digest(raw))
+        if (type(outcome.get('returncode')) is not int or outcome['returncode'] != 0
+                or outcome.get('stop_reason') or outcome['usage']['unknown_steps']):
+            return False
+        raw, pending = record / 'science-output.json', record / 'result.pending.json'
+        if outcome.get('output_status') == 'missing':
+            return (outcome.get('raw_sha256') is None and outcome.get('cleanup') == 'observed_group_cleaned'
+                    and not raw.exists() and not raw.is_symlink() and not pending.exists() and not pending.is_symlink())
+        return outcome.get('raw_sha256') == contracts.digest(contracts.regular(raw))
     except (KeyError, ValueError, OSError, TypeError):
         return False
 
@@ -303,6 +313,10 @@ def _run(root):
                 if runtime.node_state(root, step) == "running":
                     try:
                         native.wait_native(root, step)
+                    except continuation.ResumeUnavailable as error:
+                        return _finish(root, settings, 'output_repair_unavailable', completed, last, reason=str(error), next_role=role)
+                    except OutputRepairRequired as error:
+                        return _finish(root, settings, 'output_repair_required', completed, last, reason=error.code, next_role=role)
                     except Exception:
                         if not _terminal_success(execution.record(root, step)):
                             return _finish(root, settings, "native_outcome_unsealed", completed, last,
@@ -314,10 +328,16 @@ def _run(root):
                         next_role=role)
                 try:
                     _check_job(root, settings, step, role, parents, instruction, evidence_return, correction_request, author_correction)
-                    contracts.seal_result(root, step)
+                    continuation.seal_or_repair(root, step)
+                except continuation.ResumeUnavailable as error:
+                    return _finish(root, settings, 'output_repair_unavailable', completed, last, reason=str(error), next_role=role)
+                except OutputRepairRequired as error:
+                    return _finish(root, settings, 'output_repair_required', completed, last, reason=error.code, next_role=role)
+                except budget.NodeBudgetUnavailable as error:
+                    return _finish(root, settings, error.reason, completed, last, next_role=role)
                 except Exception as error:
                     return _finish(root, settings, "seal_pending", completed, last,
-                        reason=f"Native science succeeded; host sealing requires repair: {_seal_reason(error)}",
+                        reason=f"Native turn completed; host sealing requires repair: {_seal_reason(error)}",
                         next_role=role)
         if not identity.exists():
             stopped = correction.gate(root, completed)
@@ -364,10 +384,14 @@ def _run(root):
                 native.execute_native(root, step)
             except budget.NodeBudgetUnavailable as error:
                 return _finish(root, settings, error.reason, completed, last, next_role=role)
+            except continuation.ResumeUnavailable as error:
+                return _finish(root, settings, 'output_repair_unavailable', completed, last, reason=str(error), next_role=role)
+            except OutputRepairRequired as error:
+                return _finish(root, settings, 'output_repair_required', completed, last, reason=error.code, next_role=role)
             except Exception as error:
                 if _terminal_success(execution.record(root, step)):
                     return _finish(root, settings, "seal_pending", completed, last,
-                        reason=f"Native science succeeded; host sealing requires repair: {_seal_reason(error)}",
+                        reason=f"Native turn completed; host sealing requires repair: {_seal_reason(error)}",
                         next_role=role)
                 if settings.get('delivery_policy') is not None and (record / 'native-outcome.json').exists():
                     stopped = contracts.read(record / 'native-outcome.json')
@@ -570,7 +594,12 @@ def _run_closeout(root):
                 if runtime.node_state(root, step) == 'running':
                     native.wait_native(root, step)
                 elif _terminal_success(execution.record(root, step)):
-                    contracts.seal_result(root, step)
+                    try:
+                        continuation.seal_or_repair(root, step)
+                    except continuation.ResumeUnavailable as error:
+                        return _closeout_result(root, 'output_repair_unavailable', step=step, reason=str(error))
+                    except OutputRepairRequired as error:
+                        return _closeout_result(root, 'output_repair_required', step=step, reason=error.code)
                 else:
                     return _closeout_result(root, 'closeout_native_unsealed', step=step)
             else:
@@ -628,7 +657,7 @@ def closeout(root, *, export_only=False):
             if (record / 'result-identity.json').exists():
                 contracts.validate(contracts.workspace(root, step));cutoff = step
             elif not export_only and (record / 'native-intent.json').exists() and _terminal_success(execution.record(root, step)):
-                contracts.seal_result(root, step);cutoff = step
+                continuation.seal_or_repair(root, step);cutoff = step
             else:
                 break
         first = max((int(path.stem) for path in (root / 'jobs').glob('*.json')), default=0) + 1

@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from scidiscovery.research_loop import budget, contracts as c, controller, execution, native
+from scidiscovery.research_loop import budget, contracts as c, controller, execution, native, continuation
+from scidiscovery.research_loop.output_repair import OutputRepairRequired
 from scidiscovery.research_loop.cli import status
 
 
@@ -34,15 +35,52 @@ pathlib.Path(args[args.index('--output-last-message')+1]).write_text(json.dumps(
 '''
 
 
-def instance(tmp_path, *, cap=100, attempts=2, max_tokens=1000, steps=6, search_policy=None, delivery_policy=None):
+REPAIR_FAKE = r'''import json,os,pathlib,sys
+args=sys.argv[1:];prompt=sys.stdin.read()
+work=pathlib.Path(os.environ['THIN_HWA_WORKSPACE']);home=pathlib.Path(os.environ['THIN_HWA_NATIVE_HOME'])
+role=os.environ['THIN_HWA_ROLE'];thread='11111111-2222-4333-8444-555555555555'
+resume='resume' in args
+with (work/'work/launches').open('a') as f:f.write('resume\n' if resume else 'exec\n')
+print(json.dumps({'type':'thread.started','thread_id':thread}),flush=True)
+if not resume:
+ p=home/'sessions/rollout.jsonl';p.parent.mkdir(parents=True,exist_ok=True)
+ p.write_text(json.dumps({'type':'session_meta','payload':{'id':thread,'cwd':str(work)}})+'\n')
+ (work/'work/completed-experiment').write_text('one completed execution')
+else:
+ assert thread in args and pathlib.Path(os.environ['CODEX_HOME'])==home
+ assert (work/'work/completed-experiment').read_text()=='one completed execution'
+ assert 'Repair only your final response' in prompt and 'do not rerun or resubmit' in prompt
+ (work/'work/repair-prompt').write_text(prompt)
+kind=(work/'work/output-kind').read_text()
+if kind!='unknown':print(json.dumps({'type':'turn.completed','usage':{'input_tokens':10,'cached_input_tokens':3,'output_tokens':4}}),flush=True)
+payload={'summary':'Retained finding','scientific_result':'Completed experiment retained.','limitations':[],'implementation_selection':None}
+if role=='H':payload.update(search_plan=None,next_action='wait',route_reason='Bounded output repaired')
+if role=='A':payload.update(search_review=None,candidate_recommendation=None,progress_assessment=None,next_action='finish',route_reason='Bounded output repaired')
+destination=pathlib.Path(args[args.index('--output-last-message')+1])
+if resume and (not (work/'work/repeat-bad-output').exists() or
+ (work/'work/valid-after-second').exists() and (work/'work/launches').read_text().count('resume\n')>=2):
+ destination.write_text(json.dumps(payload));sys.exit(0)
+if kind=='missing':sys.exit(0)
+if kind=='unsafe':destination.symlink_to(work/'work/completed-experiment');sys.exit(0)
+if kind=='badjson':destination.write_text('{invalid JSON');sys.exit(0)
+if kind=='missingfield':del payload['summary']
+if kind=='wrongtype':payload['limitations']='not an array'
+if kind=='empty':payload['scientific_result']='  '
+destination.write_text(json.dumps(payload))
+'''
+
+
+def instance(tmp_path, *, cap=100, attempts=2, max_tokens=1000, steps=6, search_policy=None, delivery_policy=None,
+             fake=FAKE, output_repair=False, with_policy=True):
     public=tmp_path/'public';public.mkdir()
     objective=public/'objective.md';objective.write_text('Continue a bounded scientific task using its checkpoint.')
-    launcher=tmp_path/'native.py';launcher.write_text(FAKE)
+    launcher=tmp_path/'native.py';launcher.write_text(fake)
     root=tmp_path/'instance'
     controller.prepare(root,objective,public,[sys.executable,str(launcher)],max_tokens=max_tokens,
         max_seconds=120,max_steps=steps,model='no-model',reasoning_effort='high', node_budget_mode='hard',search_policy=search_policy,delivery_policy=delivery_policy,
         node_budget_policy={role:dict(max_observed_tokens=cap,max_seconds=20) for role in 'HWAE'},
-        resume_policy=dict(max_attempts=attempts,protocol='codex_exec_resume',usage_scope='turn'))
+        resume_policy=dict(max_attempts=attempts,protocol='codex_exec_resume',usage_scope='turn',
+                           **(dict(output_repair=True) if output_repair else {})) if with_policy else None)
     return root
 
 
@@ -60,6 +98,183 @@ def wait_runner(root, step=1):
 def fail(root, step=1):
     assert controller.run(root)['status']=='native_stopped'
     return wait_runner(root, step)
+
+
+def repair_instance(tmp_path, role='H', kind='badjson', *, enabled=True, attempts=2, cap=100, max_tokens=1000):
+    root=instance(tmp_path, fake=REPAIR_FAKE, output_repair=enabled, attempts=attempts, cap=cap,max_tokens=max_tokens)
+    c.build_job(root,1,role,[])
+    (c.workspace(root,1)/'work').mkdir(exist_ok=True)
+    (c.workspace(root,1)/'work/output-kind').write_text(kind)
+    c.write(root/'host-started.json',budget.clock_stamp())
+    budget.transition(root,'advance','fake_output_repair')
+    return root
+
+
+@pytest.mark.parametrize('role', list('HWAE'))
+@pytest.mark.parametrize('kind', ['badjson','missingfield'])
+def test_completed_output_repair_is_same_role_node_session_without_experiment_replay(tmp_path,role,kind):
+    root=repair_instance(tmp_path,role,kind)
+    assert native.execute_native(root,1)['role']==role
+    first=execution.origin(root,1);current=execution.record(root,1)
+    assert current==first/'continuations/001'
+    assert c.read(first/'native-outcome.json')['returncode']==0
+    assert (first/'science-output.json').read_bytes()!=execution.raw(root,1).read_bytes()
+    intent=c.read(current/'native-intent.json')
+    assert intent['output_repair']['raw_sha256']==c.digest(first/'science-output.json')
+    assert intent['session']['workspace']==str(c.workspace(root,1))
+    assert intent['session']['home']==str(root/'native-homes/001')
+    assert intent['session']['thread_id']=='11111111-2222-4333-8444-555555555555'
+    assert native.usage(root)['observed_tokens']==28 and budget.used_steps(root)==2
+    assert (c.workspace(root,1)/'work/launches').read_text()=='exec\nresume\n'
+    before={p:p.read_bytes() for p in first.iterdir() if p.is_file()}
+    assert continuation.seal_or_repair(root,1)['role']==role
+    assert all(p.read_bytes()==data for p,data in before.items())
+    assert (c.workspace(root,1)/'work/completed-experiment').read_text()=='one completed execution'
+
+
+@pytest.mark.parametrize('kind', ['missing','wrongtype','empty'])
+def test_known_output_failure_keeps_execution_facts_and_repairs(tmp_path,kind):
+    root=repair_instance(tmp_path,kind=kind)
+    assert native.execute_native(root,1)['next_action']=='wait'
+    first=execution.origin(root,1);outcome=c.read(first/'native-outcome.json')
+    assert outcome['returncode']==0 and outcome['cleanup']=='observed_group_cleaned'
+    assert outcome['budget_slice']['usage_observed'] and outcome['thread_id']
+    if kind=='missing':
+        assert outcome['output_status']=='missing' and not (first/'science-output.json').exists()
+    else:
+        assert outcome['raw_sha256']==c.digest(first/'science-output.json')
+
+
+def test_old_resume_policy_does_not_automatically_repair_successful_bad_output(tmp_path):
+    root=repair_instance(tmp_path,enabled=False)
+    with pytest.raises(OutputRepairRequired):native.execute_native(root,1)
+    wait_runner(root)
+    with pytest.raises(OutputRepairRequired):controller.worker_resume(root,1)
+    assert len(execution.records(root,1))==1
+
+
+def test_default_without_resume_policy_retains_typed_output_error(tmp_path,monkeypatch):
+    root=instance(tmp_path,fake=REPAIR_FAKE,with_policy=False)
+    c.build_job(root,1,'H',[])
+    (c.workspace(root,1)/'work').mkdir(exist_ok=True)
+    (c.workspace(root,1)/'work/output-kind').write_text('badjson')
+    c.write(root/'host-started.json',budget.clock_stamp())
+    budget.transition(root,'advance','fake_default_output')
+    with pytest.raises(OutputRepairRequired):native.execute_native(root,1)
+    wait_runner(root)
+    original=c.settings
+    monkeypatch.setattr(c,'settings',lambda value:dict(original(value),resume_policy=None))
+    with pytest.raises(OutputRepairRequired):continuation.seal_or_repair(root,1)
+    assert len(execution.records(root,1))==1
+
+
+def test_output_repair_shares_original_attempt_limit_and_retains_all_bad_outputs(tmp_path):
+    root=repair_instance(tmp_path,attempts=2)
+    (c.workspace(root,1)/'work/repeat-bad-output').touch()
+    with pytest.raises(continuation.ResumeUnavailable,match='worker_resume_limit'):
+        native.execute_native(root,1)
+    wait_runner(root)
+    paths=execution.records(root,1)
+    assert len(paths)==3 and native.usage(root)['observed_tokens']==42
+    assert all((p/'science-output.json').read_text()=='{invalid JSON' for p in paths)
+    with pytest.raises(continuation.ResumeUnavailable,match='worker_resume_limit'):
+        continuation.seal_or_repair(root,1)
+    assert (c.workspace(root,1)/'work/launches').read_text()=='exec\nresume\nresume\n'
+
+
+def test_output_repair_does_not_replenish_insufficient_shared_budget(tmp_path,monkeypatch):
+    root=repair_instance(tmp_path)
+    with monkeypatch.context() as patch:
+        patch.setattr(continuation,'seal_or_repair',c.seal_result)
+        with pytest.raises(OutputRepairRequired):native.execute_native(root,1)
+    wait_runner(root)
+    budget.amend(root,max_tokens=20,authorization_note='Explicit fixture reduction after known first completion')
+    with pytest.raises(budget.NodeBudgetUnavailable):continuation.seal_or_repair(root,1)
+    assert len(execution.records(root,1))==1 and native.usage(root)['observed_tokens']==14
+    assert (c.workspace(root,1)/'work/launches').read_text()=='exec\n'
+
+
+@pytest.mark.parametrize('attempts', [1,2])
+def test_terminal_repair_rechecks_initial_bad_output_before_seal(tmp_path,monkeypatch,attempts):
+    root=repair_instance(tmp_path)
+    first=execution.origin(root,1)
+    if attempts==2:(c.workspace(root,1)/'work/repeat-bad-output').touch()
+    original=c.seal_result
+    class DeferSeal(RuntimeError):pass
+    def terminal_before_seal(root,step):
+        current=execution.record(root,step)
+        if current!=first:
+            intent=c.read(current/'native-intent.json')
+            if intent['attempt']==attempts:
+                assert c.read(current/'native-outcome.json')['returncode']==0
+                raise DeferSeal('Known repaired turn retained before seal')
+        return original(root,step)
+    if attempts==2:
+        # First repair is another bad response; the second is valid.
+        # Configure the already frozen fake behavior through a workspace flag.
+        (c.workspace(root,1)/'work/valid-after-second').touch()
+    with monkeypatch.context() as patch:
+        patch.setattr(c,'seal_result',terminal_before_seal)
+        with pytest.raises(DeferSeal):native.execute_native(root,1)
+    wait_runner(root)
+    assert len(execution.records(root,1))==attempts+1
+    (first/'science-output.json').write_text('{changed original bad output')
+    with pytest.raises(ValueError,match='Original final output changed'):
+        c.seal_result(root,1)
+    assert not (first/'result-identity.json').exists()
+    assert len(execution.records(root,1))==attempts+1
+
+
+def test_output_repair_without_original_session_stops_without_fresh_fallback(tmp_path,monkeypatch):
+    root=repair_instance(tmp_path)
+    with monkeypatch.context() as patch:
+        patch.setattr(continuation,'seal_or_repair',c.seal_result)
+        with pytest.raises(OutputRepairRequired):native.execute_native(root,1)
+    wait_runner(root)
+    (root/'native-homes/001/sessions/rollout.jsonl').unlink()
+    with pytest.raises(continuation.ResumeUnavailable,match='worker_resume_session_unavailable'):
+        continuation.seal_or_repair(root,1)
+    assert len(execution.records(root,1))==1
+    assert (c.workspace(root,1)/'work/launches').read_text()=='exec\n'
+
+
+@pytest.mark.parametrize('kind', ['unknown','unsafe'])
+def test_unknown_execution_or_unsafe_output_never_starts_repair(tmp_path,kind):
+    root=repair_instance(tmp_path,kind=kind)
+    with pytest.raises((ValueError,RuntimeError)):native.execute_native(root,1)
+    wait_runner(root)
+    assert len(execution.records(root,1))==1
+    assert (c.workspace(root,1)/'work/launches').read_text()=='exec\n'
+
+
+@pytest.mark.parametrize('mutation', ['raw','job','schema'])
+def test_output_repair_does_not_soften_original_integrity_failure(tmp_path,monkeypatch,mutation):
+    root=repair_instance(tmp_path)
+    with monkeypatch.context() as patch:
+        patch.setattr(continuation,'seal_or_repair',c.seal_result)
+        with pytest.raises(OutputRepairRequired):native.execute_native(root,1)
+    first=wait_runner(root)
+    if mutation=='raw':(first/'science-output.json').write_text('{different broken output')
+    elif mutation=='job':
+        job=c.read(root/'jobs/001.json');job['instruction']='changed';c.write(root/'jobs/001.json',job)
+    else:c.write(first/'science-result.schema.json',dict(type='object'))
+    with pytest.raises(ValueError):continuation.seal_or_repair(root,1)
+    assert len(execution.records(root,1))==1
+
+
+def test_host_write_failure_retries_original_seal_without_model_reexecution(tmp_path,monkeypatch):
+    root=repair_instance(tmp_path,kind='valid')
+    original=c.write
+    def fail_result(path,value):
+        if path.name=='result.json':raise OSError('Host disk fixture')
+        return original(path,value)
+    with monkeypatch.context() as patch:
+        patch.setattr(c,'write',fail_result)
+        with pytest.raises(OSError,match='Host disk fixture'):native.execute_native(root,1)
+    first=wait_runner(root);preserved=(first/'science-output.json').read_bytes()
+    assert continuation.seal_or_repair(root,1)['next_action']=='wait'
+    assert (first/'science-output.json').read_bytes()==preserved
+    assert len(execution.records(root,1))==1 and native.usage(root)['observed_tokens']==14
 
 
 def test_known_failure_same_thread_success_keeps_originals_and_cumulative_budget(tmp_path):

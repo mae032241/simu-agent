@@ -2,6 +2,7 @@
 import pytest
 
 from scidiscovery.research_loop import contracts as c
+from scidiscovery.research_loop.output_repair import OutputRepairRequired
 from test_history_handoff import finish, scene, source
 
 
@@ -37,8 +38,9 @@ def test_current_a_scientific_recommendation_can_be_null_or_candidate(tmp_path, 
     assert c.science_payload(raw, 'A', c.HANDOFF_PROTOCOL) == payload
     payload.pop('candidate_recommendation')
     c.write(raw, payload)
-    with pytest.raises(ValueError, match='Invalid scientific result fields'):
+    with pytest.raises(OutputRepairRequired) as failure:
         c.science_payload(raw, 'A', c.HANDOFF_PROTOCOL)
+    assert failure.value.code == 'invalid_fields'
 
 
 @pytest.mark.parametrize('protocol', [1, 2, 3])

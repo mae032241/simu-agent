@@ -216,7 +216,7 @@ def apply_source(root, job, payload, seal, state):
     """The existing per-node interpretation guard, shared with read-only lineage."""
     receipt = seal.get('control_outcome')
     if receipt is not None:
-        if receipt.get('binding_protocol') != 8 or job.get('handoff_protocol', 1) not in {7, 8, 9}:
+        if receipt.get('binding_protocol') != 8 or job.get('handoff_protocol', 1) not in {7, 8, 9, 10}:
             raise ValueError('Control interpretation binding changed')
         if job.get('handoff_protocol', 1) == 7:
             try:
@@ -227,7 +227,8 @@ def apply_source(root, job, payload, seal, state):
                 raise ValueError('Legacy valid science cannot be reinterpreted')
         diagnostics = _apply(root, dict(job, handoff_protocol=8), payload, state)
         if (receipt.get('search_status') != ('unresolved' if diagnostics else 'applied')
-                or [row for row in receipt['diagnostics'] if not row['code'].startswith('implementation_')] != diagnostics):
+                or [row for row in receipt['diagnostics'] if not row['code'].startswith('implementation_')
+                    and not (job.get('handoff_protocol', 1) >= 10 and row['code'].startswith('a_decision_'))] != diagnostics):
             raise ValueError('Search outcome differs from its original scientific attempt')
     else:
         _apply(root, job, payload, state)
