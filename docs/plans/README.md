@@ -1,3 +1,7 @@
+## 当前增量入口（2026-10-13）
+
+[W分片监控与按需复核](ROOTLESS_LINEAGE_ADAPTIVE_SEARCH_PLAN.zh-CN.md#7-w-分片监控与按需复核2026-10-13修订)：U0实时观测 → U1软复核边界 → U2检查点/恢复 → U3调整A介入频率 → U4小规模真实验收，均待实施。已提交的[探索顺序控制](evidence/ROOTLESS_EXPLORATION_ORDER_IMPLEMENTATION_20261013.zh-CN.md)继续有效；控制执行H/A确认的次序，W分片不消耗额外科学周期。以下N/T及旧链段落是各阶段历史入口，当前状态以对应主计划及绑定提交的证据为准。
+
 ## 当前新入口后续计划（2026-10-11）
 
 [薄 HWA：有界搜索、行为历史与长时间运行](ROOTLESS_SEARCH_AND_LONG_RUN_PLAN.zh-CN.md)：
