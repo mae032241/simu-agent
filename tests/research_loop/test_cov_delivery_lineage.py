@@ -40,7 +40,8 @@ def managed_scene(tmp_path, *, alias_correct=True):
     finish(root, 1, 'H', [], action='experiment')
     c.build_job(root, 2, 'W', [1])
     record = c.host_record(c.workspace(root, 2))
-    c.write(record / 'native-intent.json', dict(task_sha256=c.digest(root / 'jobs/002.json')))
+    c.write(record / 'native-intent.json', dict(task_sha256=c.digest(root / 'jobs/002.json'),
+        budget_slice=budget.accept_node(root,c.read(root/'jobs/002.json'))))
     backend = tmp_path / 'backend.py';backend.write_text(BACKEND)
     config_path = tmp_path / 'config.json'
     cov_lineage.configure(root, 2, [sys.executable, str(backend), '--runs-root', str(root / 'runs')], root / 'runs', config_path)

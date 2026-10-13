@@ -103,7 +103,9 @@ def live(root, job):
             if (bound['step']!=scope['step'] or bound['role']!=scope['role'] or bound['job_sha256']!=task
                     or bound['execution_key'] not in keys or bound['mechanism_ref']!=scope['mechanism_ref']):
                 raise history.ObserverIntegrityError('Registered experiment observation escaped its frozen task')
-            try:value=dict(experiments.progress(frozen),scope=scope)
+            try:
+                value=dict(experiments.progress(frozen),scope=scope)
+                result['review']=experiments.review_feedback(frozen)
             except experiments.IntegrityError as error:raise history.ObserverIntegrityError(str(error)) from error
         else:value = history.read_adapter(config, request)
         expected = {'version', 'scope', 'calls', 'counts', 'omitted_count', 'coverage', 'observed_at'}

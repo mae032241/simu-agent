@@ -108,7 +108,7 @@ def _append(root, settings, events, parent, **fields):
     return event
 
 
-def snapshot(root, settings=None):
+def snapshot(root, settings=None, *, sample_stamp=None):
     original = contracts.settings(root)
     if settings is not None and settings != original:
         raise ValueError('Budget view differs from original frozen settings')
@@ -125,7 +125,7 @@ def snapshot(root, settings=None):
             if event.get('before') != limits:
                 raise ValueError('Budget amendment predecessor changed')
             limits = event['after']
-    now = clock_stamp()
+    now = clock_stamp() if sample_stamp is None else sample_stamp
     started = root / 'host-started.json'
     start = contracts.read(started) if started.exists() else None
     if events:
@@ -676,6 +676,7 @@ def write_node_hint(root, job, intent, limits, meter, *, observed):
     """Optional replaceable advice; never read as a grant, meter or evidence."""
     if node_mode(root)!='soft':
         return
+    publish_review(root,job,intent,limits,meter,observed=observed)
     targets=node_limits(root,job)
     duration=_node_duration(root,job,intent,limits) if targets else None
     if targets is None and job['role']=='W' and job.get('search'):
@@ -729,3 +730,80 @@ def write_node_hint(root, job, intent, limits, meter, *, observed):
                 try:os.unlink(temporary,dir_fd=fd)
                 except OSError:pass
             os.close(fd)
+
+
+def _review_directory(root,job):
+    return Path(root)/'host-runtime/experiment-control'/contracts.digest(Path(root)/'jobs'/f'{job["step"]:03d}.json')
+
+
+def review_configuration(root,job):
+    """Host-owned projection, shared by every implementation of this stage."""
+    from . import execution,experiments
+    settings=contracts.settings(Path(root))
+    if settings.get('managed_admission_version')!=experiments.ADMISSION_VERSION or job.get('managed_admission_version')!=experiments.ADMISSION_VERSION:
+        raise experiments.UnsupportedExecution('Preserved review contract is read-only; prepare a new instance')
+    if node_mode(root)!='soft':return dict(version=experiments.ADMISSION_VERSION,mode='hard')
+    directory=_review_directory(root,job);directory.mkdir(parents=True,exist_ok=True)
+    if directory.resolve()!=directory:raise ValueError('Host review directory changed')
+    fd=os.open(directory/'accept.lock',os.O_RDONLY|os.O_CREAT|os.O_NOFOLLOW|os.O_CLOEXEC,0o444);os.close(fd)
+    record=execution.record(root,job['step'])
+    intent=contracts.read(contracts.regular(record/'native-intent.json'))
+    meter=contracts.read(record/'usage.json') if (record/'usage.json').exists() else dict(input_tokens=0,cached_input_tokens=0,output_tokens=0)
+    publish_review(root,job,intent,snapshot(Path(root)),meter,observed=(record/'usage.json').exists())
+    return dict(version=experiments.ADMISSION_VERSION,mode='soft',directory=str(directory),
+        stage_anchor=contracts.digest(Path(root)/'jobs'/f'{job["step"]:03d}.json'))
+
+
+def publish_review(root,job,intent,limits,meter,*,observed):
+    """Derive replaceable facts from original anchors, never an additional budget."""
+    from . import execution,experiments,native,search
+    root=Path(root);settings=contracts.settings(root)
+    if job.get('managed_admission_version')!=experiments.ADMISSION_VERSION or settings.get('managed_admission_version')!=experiments.ADMISSION_VERSION:
+        raise experiments.UnsupportedExecution('Preserved review contract is read-only; prepare a new instance')
+    if node_mode(root)!='soft':return
+    directory=_review_directory(root,job);directory.mkdir(parents=True,exist_ok=True)
+    if directory.resolve()!=directory:raise ValueError('Host review directory changed')
+    fd=os.open(directory/'accept.lock',os.O_RDONLY|os.O_CREAT|os.O_NOFOLLOW|os.O_CLOEXEC,0o444)
+    try:
+        fcntl.flock(fd,fcntl.LOCK_EX)
+        stamp=clock_stamp()
+        limits=snapshot(root,sample_stamp=stamp)
+        record=execution.record(root,job['step'])
+        intent=contracts.read(contracts.regular(record/'native-intent.json'))
+        observed=(record/'usage.json').exists()
+        meter=contracts.read(contracts.regular(record/'usage.json')) if observed else dict(input_tokens=0,output_tokens=0)
+        task=contracts.digest(root/'jobs'/f'{job["step"]:03d}.json')
+        if intent.get('task_sha256')!=task:raise ValueError('Review publication has no exact native task')
+        targets=node_limits(root,job);duration=None
+        if targets is not None:duration=_node_duration(root,job,intent,limits)
+        elif job['role']=='W' and job.get('search'):
+            search.stop_reason(root,job,intent,limits,meter)
+            targets=dict(max_observed_tokens=job['search']['limits']['max_w_observed_tokens'],max_seconds=job['search']['limits']['max_w_seconds'])
+            duration=limits['advance_seconds']-intent['search_slice']['advance_seconds']
+        prior=intent.get('budget_slice',{}).get('previous_tokens',0)
+        consumed=prior+meter['input_tokens']+meter['output_tokens'] if observed else prior
+        reserve=delivery_reserve(settings) or dict(tokens=0,seconds=0,steps=0)
+        shared=native.usage(root)
+        # The original grant remains the ceiling for this accepted stage.
+        grant=intent.get('budget_slice',{}).get('shared_limits',dict(max_tokens=settings['max_tokens'],max_seconds=settings['max_seconds']))
+        available_tokens=min(limits['max_tokens'],grant['max_tokens'])-shared['observed_tokens']-reserve['tokens']
+        available_seconds=min(limits['seconds_remaining'],max(0.,grant['max_seconds']-limits['consumed_seconds']))-reserve['seconds']
+        remaining=min(available_seconds,max(0.,targets['max_seconds']-duration)) if targets else available_seconds
+        reason=('shared_usage_unknown' if any(step!=job['step'] for step in shared['unknown_steps']) else
+            'reserve_reached' if available_seconds<=0 or available_tokens<=0 else
+            'target_time_reached' if targets and duration>=targets['max_seconds'] else
+            'target_tokens_reached' if targets and consumed>=targets['max_observed_tokens'] else None)
+        value=dict(version=experiments.ADMISSION_VERSION,stage_anchor=task,
+            scope=dict(step=job['step'],role=job['role'],job_sha256=task,execution_key=execution.identity(root,job['step'],0),
+                mechanism_ref=((job.get('search') or {}).get('focus') or {}).get('mechanism_ref')),
+            native_attempt=dict(number=len(execution.records(root,job['step']))-1,execution_key=execution.identity(root,job['step'])),
+            boot_id=stamp['boot_id'],observed_at=stamp['at_unix'],deadline_boottime=stamp['at_boottime']+max(0.,remaining),
+            valid_until_boottime=stamp['at_boottime']+10,pending=bool(reason),reason=reason,
+            observed_tokens_lower_bound=consumed,inflight_usage_unknown=True,targets=targets)
+        path=directory/'review.json'
+        if path.exists():
+            old=contracts.read(contracts.regular(path))
+            if old.get('stage_anchor')!=task or old.get('scope')!=value['scope'] or old.get('boot_id')!=stamp['boot_id']:
+                raise ValueError('Host review projection binding changed')
+        contracts.write(path,value);path.chmod(0o400)
+    finally:os.close(fd)

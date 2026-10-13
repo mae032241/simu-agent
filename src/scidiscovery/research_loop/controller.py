@@ -107,6 +107,7 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
     settings['node_budget_mode'] = node_budget_mode
     settings['live_feedback_version'] = 1
     settings['experiment_interface_version'] = 1
+    settings['managed_admission_version'] = 1
     if handoff_authority_version is not None:
         settings['handoff_authority_version'] = handoff_authority_version
     if decision_contract_version is not None:

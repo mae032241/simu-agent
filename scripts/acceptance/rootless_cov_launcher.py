@@ -132,6 +132,8 @@ def prepare_home(s,w,h, auth_source=None):
         s['public_root']:'read','/instruction.md':'read','/opt/exp':'read','/opt/exp/runs':'write',
         '/submission':'write','/task-tmp':'write',s['runs_dir']:'write',s['submission_dir']:'write',
         s['native']:'read',s['code_mode_host']['path']:'read',str(helper):'read'}
+    control=Path(s['scene_root'])/'host-runtime/experiment-control'/hashlib.sha256(regular(os.environ['THIN_HWA_JOB_MANIFEST'])).hexdigest()
+    grants[str(control)]='read'
     for p in ['/usr','/bin','/lib','/lib64',*s['runtime_paths']]:grants[p]='read'
     lines=['model='+json.dumps(s['model']),'model_reasoning_effort='+json.dumps(s['reasoning_effort']),
         'service_tier="default"','default_permissions='+json.dumps(s['profile']),
@@ -166,6 +168,9 @@ def outer(s,w,h,command,materials=()):
         c.extend(['--ro-bind',str(Path(s['scene_root'])/'host-runtime/native-bin'),str(Path(s['scene_root'])/'host-runtime/native-bin'),'--ro-bind',s['public_root']+'/environment/harness/'+name,'/opt/exp/'+name])
     for source,target in materials:c.extend(['--ro-bind',source,target])
     c.extend(['--ro-bind', str(Path(s['scene_root'])/'host-runtime'/('lineage-'+w.name+'.json')), str(w/'work/lineage-config.json')])
+    manifest=Path(s['scene_root'])/'jobs'/(w.name+'.json')
+    control=Path(s['scene_root'])/'host-runtime/experiment-control'/hashlib.sha256(regular(manifest)).hexdigest()
+    if control.exists():c.extend(['--ro-bind',str(control),str(control)])
     for k,v in {**environment(s,w),'CODEX_HOME':str(h),'LANG':'C.UTF-8'}.items():c.extend(['--setenv',k,v])
     return c+command
 

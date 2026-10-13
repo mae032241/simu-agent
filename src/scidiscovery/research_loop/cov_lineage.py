@@ -75,7 +75,8 @@ def _rows(path):
 
 def _config(path):
     data = _read(path);value = json.loads(data)
-    keys = {'contract_version','record_dir','runs_root','run_argv','scope','parents','evaluation_key','feedback_version','execution_interface','max_seconds'}
+    keys = {'contract_version','record_dir','runs_root','run_argv','scope','parents','evaluation_key','feedback_version','execution_interface','max_seconds','admission'}
+    if 'native_attempt' in value:keys.add('native_attempt')
     if set(value) != keys or value['contract_version'] != 2 or value['feedback_version'] != 1:
         raise ValueError('Explicit wrapper contract2 configuration required')
     scope = value['scope']

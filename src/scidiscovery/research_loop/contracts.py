@@ -586,6 +586,8 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
         job['live_feedback_version'] = 1
     if (retained.get('experiment_interface_version') if retained is not None else policy.get('experiment_interface_version')) == 1:
         job['experiment_interface_version'] = 1
+    if (retained.get('managed_admission_version') if retained is not None else policy.get('managed_admission_version')) == 1:
+        job['managed_admission_version'] = 1
     advice = retained.get('role_guidance') if retained is not None else policy.get('role_guidance', {}).get(role)
     if advice is not None:
         job['role_guidance'] = advice

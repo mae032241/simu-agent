@@ -22,7 +22,7 @@ def managed(tmp_path,request,execution_registry):
     records=tmp_path/'work/lineage'
     config=tmp_path/'config.json'
     scope=dict(step=2,role='W',job_sha256='a'*64,execution_key='b'*64,mechanism_ref=None)
-    value=dict(record_dir=str(records),scope=scope,run_argv=[sys.executable],max_seconds=10)
+    value=dict(admission=dict(version=1,mode='hard'),record_dir=str(records),scope=scope,run_argv=[sys.executable],max_seconds=10)
     kind=request.param
     executor='local_execution:command'
     if kind=='cov':
@@ -186,7 +186,7 @@ def test_unregistered_key_and_preserved_config_never_launch(tmp_path,execution_r
 
 def test_nonlocal_contract_retains_different_external_identity_without_core_process_assumptions(tmp_path,remote_registry):
     config=tmp_path/'remote.json'
-    value=dict(record_dir=str(tmp_path/'records'),scope=dict(step=2,role='W',job_sha256='a'*64,
+    value=dict(admission=dict(version=1,mode='hard'),record_dir=str(tmp_path/'records'),scope=dict(step=2,role='W',job_sha256='a'*64,
         execution_key='b'*64,mechanism_ref=None))
     config.write_text(json.dumps(experiments.freeze(value,'remote_execution:fixture',path=config)))
     source=tmp_path/'opaque-package';source.write_bytes(b'not a local script')

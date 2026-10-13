@@ -26,6 +26,7 @@ from scidiscovery.operations.runtime_plugins import RuntimePluginContext, Runtim
 
 GROUP = 'scidiscovery.execution_interfaces'
 VERSION = 1
+ADMISSION_VERSION = 1
 MAX_BYTES = 256_000
 MAX_ASSET = 32 * 1024 * 1024
 MAX_CALLS = 128
@@ -38,6 +39,48 @@ class IntegrityError(ValueError):
 
 class UnsupportedExecution(ValueError):
     pass
+
+
+class ReviewRequired(ValueError):
+    pass
+
+
+class ConcurrentExecution(ValueError):
+    pass
+
+
+def review_status(config):
+    """Read host facts; a missing lease or deadline never becomes a new grant."""
+    admission=config.get('admission')
+    if not isinstance(admission,dict) or type(admission.get('version')) is not int or admission['version']!=ADMISSION_VERSION:
+        raise UnsupportedExecution('Preserved admission contract is read-only; prepare a new instance')
+    if admission.get('mode')=='hard':return dict(requested=False,reason=None,enforced=False,inflight_usage_unknown=True)
+    if admission.get('mode')!='soft':raise UnsupportedExecution('Frozen review applicability is unavailable; prepare an applicable admission contract')
+    from . import budget
+    stamp=budget.clock_stamp()
+    try:
+        value=json.loads(read(Path(admission['directory'])/'review.json',16_000))
+        if (value['scope']!=config['scope'] or value['stage_anchor']!=admission['stage_anchor']
+                or value['native_attempt']!=config['native_attempt'] or value['boot_id']!=stamp['boot_id']):
+            raise IntegrityError('Host review facts differ from the frozen stage or native attempt')
+        deadline,lease=value['deadline_boottime'],value['valid_until_boottime']
+        if (type(deadline) not in (int,float) or not 0<deadline<float('inf')
+                or type(lease) not in (int,float) or not 0<lease<float('inf')):
+            raise IntegrityError('Host review facts have no finite original deadline')
+        reason=(value['reason'] if value['pending'] else 'review_deadline_reached' if stamp['at_boottime']>=deadline
+            else 'host_review_observation_expired' if stamp['at_boottime']>=lease else None)
+    except FileNotFoundError:
+        reason='host_review_observation_unavailable'
+    except (KeyError,TypeError) as exc:
+        raise IntegrityError('Host review facts are malformed') from exc
+    return dict(requested=bool(reason),reason=reason,enforced=True,inflight_usage_unknown=True)
+
+
+def review_feedback(config):
+    """Optional current advice cannot erase an original operation's confirmed result."""
+    try:return review_status(config)
+    except (OSError,ValueError,KeyError,TypeError):
+        return dict(requested=None,reason='current_review_observation_unavailable',enforced=False,inflight_usage_unknown=True)
 
 
 def encoded(value):
@@ -95,6 +138,7 @@ def _adapter(config, path):
 def freeze(config, executor, *, path=None):
     """Host preparation only: freeze selected factory, code, configuration and flags."""
     value = dict(config)
+    value.setdefault('admission',dict(version=ADMISSION_VERSION,mode='unavailable'))
     scope=value.get('scope')
     if (not isinstance(scope,dict) or set(scope)!={'step','role','job_sha256','execution_key','mechanism_ref'}
             or type(scope.get('step')) is not int or scope['step']<=0 or scope['role'] not in {'H','W','A','E'}
@@ -118,29 +162,43 @@ def freeze(config, executor, *, path=None):
 
 def configure(root,step,executor,config,output):
     """Freeze a host-bound interface before the Worker enters its existing namespace."""
-    from . import contracts as c, execution
+    from . import contracts as c, execution, budget
     root=Path(root).resolve();job=c.read(c.regular(root/'jobs'/f'{step:03d}.json'))
     versions=(c.settings(root).get('experiment_interface_version'),job.get('experiment_interface_version'))
     if any(type(value) is not int or value!=VERSION for value in versions):
         raise UnsupportedExecution('Preserved scientific instance is read-only; prepare a new registered instance')
+    versions=(c.settings(root).get('managed_admission_version'),job.get('managed_admission_version'))
+    if any(type(value) is not int or value!=ADMISSION_VERSION for value in versions):
+        raise UnsupportedExecution('Preserved scientific admission is read-only; prepare a new instance')
     c._validate_inputs(root,c.workspace(root,step),job)
     record=execution.record(root,step)
     if c.read(c.regular(record/'native-intent.json')).get('task_sha256')!=c.digest(root/'jobs'/f'{step:03d}.json'):
         raise IntegrityError('Host configuration has no exact accepted scientific task')
-    value=dict(config,record_dir=str(c.workspace(root,step)/'work/lineage'),
+    native_attempt=dict(number=len(execution.records(root,step))-1,execution_key=execution.identity(root,step))
+    admission=budget.review_configuration(root,job)
+    value=dict(config,record_dir=str(c.workspace(root,step)/'work/lineage'),native_attempt=native_attempt,admission=admission,
         scope=dict(step=step,role=job['role'],job_sha256=c.digest(root/'jobs'/f'{step:03d}.json'),
-            execution_key=execution.identity(root,step),mechanism_ref=((job.get('search') or {}).get('focus') or {}).get('mechanism_ref')))
+            execution_key=execution.identity(root,step,0),mechanism_ref=((job.get('search') or {}).get('focus') or {}).get('mechanism_ref')))
     value=freeze(value,executor,path=output)
+    updates=[]
     for path in (Path(output),record/'experiment-config.json'):
         if path.exists():
-            if c.read(c.regular(path))!=value:raise IntegrityError('Frozen experiment configuration changed')
-        else:c.write(path,value);path.chmod(0o400)
+            old=c.read(c.regular(path))
+            if old==value:continue
+            if path==record/'experiment-config.json' or old.get('scope')!=value['scope']:
+                raise IntegrityError('Frozen experiment configuration changed')
+        updates.append(path)
+    # Validate every immutable conflict before replacing the current pointer.
+    for path in updates:
+        c.write(path,value);path.chmod(0o400)
     return value
 
 
 def load(config, *, path=None):
     if not isinstance(config,dict):
         raise IntegrityError('Frozen execution configuration is malformed')
+    if 'admission' not in config:
+        raise UnsupportedExecution('Preserved admission contract is read-only; prepare a new instance')
     selected = config.get('execution_interface')
     if not isinstance(selected, dict) or type(selected.get('version')) is not int or selected['version'] != VERSION:
         raise UnsupportedExecution('Preserved execution configuration is read-only; prepare a new registered instance')
@@ -179,6 +237,14 @@ class Records:
 
     @contextmanager
     def lease(self, name='node.lock'):
+        if name=='accept.lock' and self.config.get('admission',{}).get('mode')=='soft':
+            path=Path(self.config['admission']['directory'])/'accept.lock'
+            fd=os.open(path,os.O_RDONLY|os.O_CLOEXEC|os.O_NOFOLLOW)
+            try:
+                fcntl.flock(fd,fcntl.LOCK_EX)
+                yield
+            finally:os.close(fd)
+            return
         self.root.mkdir(parents=True, exist_ok=True)
         fd = os.open(self.root / name, os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
         try:
@@ -187,22 +253,35 @@ class Records:
         finally:
             os.close(fd)
 
-    def accept(self, descriptor, metadata, interface):
+    def accept(self, descriptor, metadata, interface, *, expected_calls=None):
         """Short admission linearization point. No solver or domain IO under lock."""
         data = read(descriptor.local_path, MAX_ASSET)
         if hashlib.sha256(data).hexdigest() != descriptor.sha256 or len(data) != descriptor.size_bytes:
             raise IntegrityError('Prepared execution input changed')
         if len(self.calls()) >= MAX_CALLS:
             raise ValueError('Execution call capacity exceeded')
-        directory = self.root / 'calls' / descriptor.name
-        directory.mkdir(parents=True)
+        import shutil,tempfile
+        self.root.mkdir(parents=True,exist_ok=True)
+        directory=Path(tempfile.mkdtemp(prefix='.prepared-',dir=self.root))
         source = directory / 'source.py'
         source.write_bytes(data);source.chmod(0o400)
+        destination=self.root/'calls'/descriptor.name
+        source_proof=proof(source);source_proof['path']=str(destination/'source.py')
         accepted = dict(metadata, call_id=descriptor.name, scope=self.config['scope'],
-            source_script=descriptor.local_path, script=proof(source),
+            source_script=descriptor.local_path, script=source_proof,native_attempt=self.config.get('native_attempt'),
             prepared=descriptor.model_dump(mode='json'), interface=interface)
-        with self.lease('accept.lock'):
-            write(directory / 'accepted.json', accepted)
+        try:
+            with self.lease():
+                if expected_calls is not None and [path.name for path in self.calls()]!=expected_calls:
+                    raise ConcurrentExecution('Another original execution was accepted; query its identity')
+                with self.lease('accept.lock'):
+                    review=review_status(self.config)
+                    if review['requested']:raise ReviewRequired(review['reason'])
+                    write(directory/'accepted.json',accepted)
+                    destination.parent.mkdir(exist_ok=True)
+                    directory.rename(destination)
+        finally:
+            if directory.exists():shutil.rmtree(directory)
         return accepted
 
     def publish(self, call_id, filename, value):
@@ -269,6 +348,7 @@ def dispatch(config, script, *, parent=None, new=False, change=None):
 def dispatch_descriptor(config, payload, *, parent=None, new=False, change=None):
     try:return _dispatch_descriptor(config,payload,parent=parent,new=new,change=change)
     except BlockingIOError:return dict(status='unknown',note='Original accepted execution still owns its lease')
+    except ConcurrentExecution as error:return dict(status='unknown',note=str(error))
 
 
 def _dispatch_descriptor(config, payload, *, parent=None, new=False, change=None):
@@ -277,20 +357,20 @@ def _dispatch_descriptor(config, payload, *, parent=None, new=False, change=None
     if not capabilities.atomic_admission:
         raise UnsupportedExecution('Implementation does not support managed admission')
     records = Records(config)
-    with records.lease():
-        for path in records.calls():
-            details=adapter.status_details(path.name)
-            if details['state'] in {'unknown', 'running','accepted','submitted'}:
-                return dict(status='unknown', note='Preserve original execution; query its identity instead of replay')
-        call_id = f'{len(records.calls())+1:04d}-{uuid.uuid4().hex}'
-        descriptor = payload.model_copy(update={'name':call_id})
-        prepared = adapter.prepare(descriptor, preparation_profile='research_loop.v1', exchange_directory=records.root)
-        metadata = adapter.acceptance_metadata(prepared, parent=parent, new=new, change=change)
-        accepted = records.accept(prepared, metadata, config['execution_interface'])
-        adapter.dispatch_lease(accepted)
-        external_id,state=adapter.submit(prepared)
-        records.bind_external(call_id,external_id,state)
-        return adapter.result(call_id)
+    before=records.calls()
+    for path in before:
+        details=adapter.status_details(path.name)
+        if details['state'] in {'unknown', 'running','accepted','submitted'}:
+            return dict(status='unknown', note='Preserve original execution; query its identity instead of replay')
+    call_id = f'{len(before)+1:04d}-{uuid.uuid4().hex}'
+    descriptor = payload.model_copy(update={'name':call_id})
+    prepared = adapter.prepare(descriptor, preparation_profile='research_loop.v1', exchange_directory=records.root)
+    metadata = adapter.acceptance_metadata(prepared, parent=parent, new=new, change=change)
+    accepted = records.accept(prepared, metadata, config['execution_interface'],expected_calls=[path.name for path in before])
+    adapter.dispatch_lease(accepted)
+    external_id,state=adapter.submit(prepared)
+    records.bind_external(call_id,external_id,state)
+    return adapter.result(call_id)
 
 
 def progress(config):
@@ -354,7 +434,9 @@ def main(argv=None):
             else:result=dict(status=adapter.cancel_original(args.call_id))
             code=0
         result['feedback']=dict(version=1,budget=feedback.budget_hint(Path(config['record_dir']).parent.parent),
+            review=review_feedback(config),
             qualification='Execution metadata does not establish scientific or candidate qualification.')
+    except ReviewRequired as error:result=dict(status='review_required',reason=str(error),accepted=False);code=2
     except (IntegrityError,feedback.history.ObserverIntegrityError) as error:result=dict(status='integrity_error',note=str(error));code=3
     except OSError:result=dict(status='integrity_error',note='Execution original cannot be read');code=3
     except ValueError as error:result=dict(status='unavailable' if isinstance(error,UnsupportedExecution) else 'unresolved',note=str(error));code=2

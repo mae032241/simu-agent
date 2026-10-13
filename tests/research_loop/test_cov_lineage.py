@@ -47,7 +47,7 @@ def wrapper(tmp_path,execution_registry):
     runs = tmp_path / 'runs'
     records = tmp_path / 'work/lineage'
     config = tmp_path / 'config.json'
-    value=dict(contract_version=2, feedback_version=1, record_dir=str(records), runs_root=str(runs),
+    value=dict(admission=dict(version=1,mode='hard'),contract_version=2, feedback_version=1, record_dir=str(records), runs_root=str(runs),
         run_argv=[sys.executable, str(backend), '--runs-root', str(runs)],
         scope=dict(step=2, role='W', job_sha256='a'*64, execution_key='b'*64, mechanism_ref='h001.m1'),
         parents=[], evaluation_key='fixture-public-v1')
