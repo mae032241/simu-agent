@@ -27,8 +27,14 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
             role_guidance: dict | None = guidance.DEFAULT,
             selection_protocol: int | None = 1,
             node_budget_mode: str = 'soft', candidate_audit_policy: dict | None = None,
-            handoff_authority_version: int | None = 1, decision_contract_version: int | None = None) -> dict:
+            handoff_authority_version: int | None = 1, decision_contract_version: int | None = None,
+            portfolio_policy: dict | None = None) -> dict:
     """Freeze an explicit goal and finite launch budgets in a fresh directory."""
+    portfolio_limits = search.portfolio_policy(portfolio_policy) if portfolio_policy is not None else None
+    if portfolio_limits is not None:
+        if search_policy is None or lineage_projection_version != 1:
+            raise ValueError('Portfolio review requires H commitment search and unified lineage projection')
+        decision_contract_version = 1
     if decision_contract_version is not None and (type(decision_contract_version) is not int or decision_contract_version != 1):
         raise ValueError('Unsupported scientific decision contract')
     if handoff_authority_version is not None and (type(handoff_authority_version) is not int or handoff_authority_version != 1):
@@ -98,6 +104,8 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
         settings['handoff_authority_version'] = handoff_authority_version
     if decision_contract_version is not None:
         settings['decision_contract_version'] = decision_contract_version
+    if portfolio_limits is not None:
+        settings['portfolio_policy'] = portfolio_limits
     if candidate_audit_policy is not None:
         settings['candidate_audit_policy'] = dict(candidate_audit_policy)
     if selection_protocol is not None and lineage_projection_version == 1:

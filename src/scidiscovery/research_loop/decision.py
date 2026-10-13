@@ -75,4 +75,7 @@ def assess(root, job, payload):
 
 def reason(root, job, payload):
     diagnostics = assess(root, job, payload)
+    if not diagnostics:
+        from . import search
+        diagnostics = search.portfolio_assess(root, job, payload)
     return diagnostics[0]['code'] if diagnostics else None

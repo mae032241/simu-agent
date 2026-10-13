@@ -274,6 +274,8 @@ def bounded_brief(value):
                 value['candidates'][field].pop();value['candidates'][omitted]+=1
     while size()>history.MAX_BRIEF_BYTES and value['candidates'].get('adapter_audits'):
         value['candidates']['adapter_audits'].pop();value['candidates']['adapter_audits_omitted_count']+=1
+    while size()>history.MAX_BRIEF_BYTES and value['mechanisms'].get('overview'):
+        value['mechanisms']['overview'].pop();value['mechanisms']['overview_omitted_count']+=1
     while size()>history.MAX_BRIEF_BYTES and value['candidates']['proxy_highest']:
         value['candidates']['proxy_highest'].pop();value['candidates']['proxy_groups_omitted_count']+=1
     while size()>history.MAX_BRIEF_BYTES and value.get('implementation_options'):
@@ -329,6 +331,10 @@ def bind(root, step, role, protocol, *, source_cutoff=None, extra_steps=(), sele
                      minimal_test=_clip(item['minimal_test'],160),minimal_test_truncated=len(item['minimal_test'].encode())>160,
                      status=item['status'],original=f'inputs/history/nodes/{item["source_h"]:03d}/0001.json')
                 for ref,item in sorted(state['mechanisms'].items())] if state else []
+    if protocol >= 11:
+        for row in mechanisms:
+            row['completed_cycles_in_window'] = state['portfolio']['invested'].get(row['mechanism_ref'], 0)
+            row['deferred_cycles_in_window'] = state['portfolio']['deferred'].get(row['mechanism_ref'], 0)
     mechanism_pages=paged(mechanisms,16,'mechanisms','inputs/lineage/mechanisms','sealed-H-A-interpretation')
     relations=paged(public_relations(projection['graph'],projection['sources']),16,'relations','inputs/lineage/relations','declared-not-proven-causality')
     indexes=dict(nodes=nodes[0] if nodes else None,candidates=candidates[0] if candidates else None,
@@ -345,6 +351,16 @@ def bind(root, step, role, protocol, *, source_cutoff=None, extra_steps=(), sele
     elif audit_projection_version != 0:
         raise ValueError('Unsupported frozen audit projection')
     view=brief(records,state,projection['graph'],overview,indexes,selection_protocol=selection_protocol)
+    if protocol >= 11:
+        threshold = c.settings(root)['portfolio_policy']['review_after_cycles']
+        ordered = sorted(mechanisms, key=lambda row: (
+            0 if row['status'] in {'pending', 'deferred'} and row['deferred_cycles_in_window'] >= threshold else
+            1 if row['status'] in {'pending', 'deferred'} else 2,
+            -row['deferred_cycles_in_window'], row['mechanism_ref']))
+        view['mechanisms'].update(overview=ordered[:4], overview_omitted_count=max(0, len(ordered)-4),
+                                  index=indexes['mechanisms'],
+                                  portfolio=search.portfolio_view(state, threshold, prospective=role == 'A'))
+        bounded_brief(view)
     if audit_projection_version == 1:
         candidates_view = view['candidates']
         if selection_protocol == 1:

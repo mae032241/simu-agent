@@ -216,7 +216,7 @@ def apply_source(root, job, payload, seal, state):
     """The existing per-node interpretation guard, shared with read-only lineage."""
     receipt = seal.get('control_outcome')
     if receipt is not None:
-        if receipt.get('binding_protocol') != 8 or job.get('handoff_protocol', 1) not in {7, 8, 9, 10}:
+        if receipt.get('binding_protocol') != 8 or job.get('handoff_protocol', 1) not in {7, 8, 9, 10, 11}:
             raise ValueError('Control interpretation binding changed')
         if job.get('handoff_protocol', 1) == 7:
             try:
@@ -228,7 +228,8 @@ def apply_source(root, job, payload, seal, state):
         diagnostics = _apply(root, dict(job, handoff_protocol=8), payload, state)
         if (receipt.get('search_status') != ('unresolved' if diagnostics else 'applied')
                 or [row for row in receipt['diagnostics'] if not row['code'].startswith('implementation_')
-                    and not (job.get('handoff_protocol', 1) >= 10 and row['code'].startswith('a_decision_'))] != diagnostics):
+                    and not (job.get('handoff_protocol', 1) >= 10 and row['code'].startswith('a_decision_'))
+                    and not (job.get('handoff_protocol', 1) >= 11 and row['code'].startswith('a_portfolio_'))] != diagnostics):
             raise ValueError('Search outcome differs from its original scientific attempt')
     else:
         _apply(root, job, payload, state)
@@ -237,9 +238,13 @@ def apply_source(root, job, payload, seal, state):
 def fold(root, sources):
     state = dict(mechanisms={}, current_h=None, scope=None, plan=None, authorized=set(), focus=None,
                  accepted_slices=[], repairs={})
-    for job, payload, seal, _ in sources:
+    if c.settings(root).get('portfolio_policy') is not None:
+        state['portfolio'] = dict(invested={}, deferred={}, seen_w=set(), pending_w=None, last_branch=None, last_review=None)
+    for job, payload, seal, seal_sha in sources:
         step = job["step"]
         apply_source(root, job, payload, seal, state)
+        if 'portfolio' in state:
+            _portfolio_update(root, job, payload, seal, state, seal_sha)
         intent = execution.record(root, step) / 'native-intent.json'
         if job['role'] == 'W' and job.get('search') and intent.exists():
             value = c.read(c.regular(intent))
@@ -448,3 +453,91 @@ def report(root, job, intent, meter):
     return dict(advance_seconds=duration, input_tokens=meter['input_tokens'],
                 cached_input_tokens=meter['cached_input_tokens'], output_tokens=meter['output_tokens'],
                 observed_tokens=meter['input_tokens'] + meter['output_tokens'], dispatches=1)
+
+
+def portfolio_policy(value):
+    if (not isinstance(value, dict) or set(value) != {'review_after_cycles'}
+            or type(value['review_after_cycles']) is not int or value['review_after_cycles'] <= 0):
+        raise ValueError('Portfolio review needs a positive completed-cycle frequency')
+    return dict(value)
+
+
+def _portfolio_cycle(portfolio, mechanisms, branch):
+    portfolio['invested'][branch] = portfolio['invested'].get(branch, 0) + 1
+    for ref, item in mechanisms.items():
+        if ref != branch and item['status'] in {'pending', 'deferred'}:
+            portfolio['deferred'][ref] = portfolio['deferred'].get(ref, 0) + 1
+        else:
+            portfolio['deferred'].pop(ref, None)
+    portfolio['last_branch'] = branch
+
+
+def _portfolio_update(root, job, payload, seal, state, seal_sha=None):
+    portfolio, mechanisms = state['portfolio'], state['mechanisms']
+    if job['role'] == 'W':
+        focus = (job.get('search') or {}).get('focus')
+        if focus and focus['mechanism_ref'] in mechanisms:
+            portfolio['pending_w'] = dict(step=job['step'], identity=(job['step'], seal_sha), branch=focus['mechanism_ref'])
+        return
+    if job['role'] != 'A' or job.get('purpose') == 'closeout':
+        return
+    control = seal.get('control_outcome', {})
+    valid = all(control.get(key) != 'unresolved' for key in ('search_status', 'selection_status', 'decision_status'))
+    ordinary = not job.get('author_correction') and payload.get('next_action') not in {'audit', 'extract', 'wait'}
+    pending = portfolio['pending_w']
+    original_cycle = ordinary
+    if job.get('author_correction') and pending:
+        original = history._source(root, job['author_correction']['root']['step'])[0]
+        original_cycle = (original['role'] == 'A' and any(ref['path'] == f'inputs/parents/{pending["step"]:03d}/conclusion.json' for ref in original['direct_refs']))
+    if valid and original_cycle and payload.get('next_action') not in {'audit', 'extract', 'wait'} and pending and any(ref['path'] == f'inputs/parents/{pending["step"]:03d}/conclusion.json' for ref in job['direct_refs']):
+        if pending['identity'] not in portfolio['seen_w']:
+            _portfolio_cycle(portfolio, mechanisms, pending['branch'])
+            portfolio['seen_w'].add(pending['identity'])
+        portfolio['pending_w'] = None
+    # Audit/extraction/wait never renew the window. An author may clarify the
+    # original global tradeoff without manufacturing another W+A cycle.
+    if valid and payload.get('next_action') in {'continue_w', 'revise_h', 'finish'} and (payload.get('portfolio_review') or '').strip():
+        portfolio['invested'].clear();portfolio['deferred'].clear()
+        portfolio['last_review'] = job['step']
+
+
+def portfolio_due(portfolio, mechanisms, branch, threshold):
+    return (branch is not None and branch == portfolio['last_branch']
+            and portfolio['invested'].get(branch, 0) >= threshold
+            and any(ref != branch and item['status'] in {'pending', 'deferred'}
+                    and portfolio['deferred'].get(ref, 0) >= threshold for ref, item in mechanisms.items()))
+
+
+def portfolio_assess(root, job, payload):
+    if job.get('handoff_protocol', 1) < 11 or job['role'] != 'A' or job.get('purpose') == 'closeout':
+        return []
+    if payload['next_action'] != 'continue_w':
+        return []
+    state = project(root, job['step'])
+    diagnostics = _apply(root, job, payload, state)
+    from . import decision
+    selected = []
+    c.selected_inputs(c.workspace(root, job['step']), payload, job, selected)
+    control = dict(search_status='unresolved' if diagnostics else 'applied',
+                   selection_status='unresolved' if selected else 'applied', decision_status='unresolved' if decision.assess(root, job, payload) else 'applied')
+    _portfolio_update(root, job, payload, dict(control_outcome=control), state)
+    focus = state['focus']
+    branch = focus['mechanism_ref'] if focus else None
+    threshold = c.settings(root)['portfolio_policy']['review_after_cycles']
+    if portfolio_due(state['portfolio'], state['mechanisms'], branch, threshold):
+        return [dict(code='a_portfolio_review_required', subject=branch)]
+    return []
+
+
+def portfolio_view(state, threshold, *, prospective=False):
+    portfolio = copy.deepcopy(state['portfolio'])
+    if prospective and portfolio['pending_w']:
+        _portfolio_cycle(portfolio, state['mechanisms'], portfolio['pending_w']['branch'])
+    branch = portfolio['last_branch']
+    return dict(review_after_cycles=threshold, same_branch=branch,
+                completed_cycles=state['portfolio']['invested'].get(branch, 0),
+                cycles_if_assessed=portfolio['invested'].get(branch, 0),
+                review_due_for_same_branch=portfolio_due(portfolio, state['mechanisms'], branch, threshold),
+                last_review_step=portfolio['last_review'],
+                pending_assessment=bool(prospective and portfolio['pending_w']),
+                scope='All registered H commitments; tradeoffs are scientific. Review may retain this branch. Counts are cumulative same-branch W+A cycles in this review window, not experiments. A pending assessment is prospective.')

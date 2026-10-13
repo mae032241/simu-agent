@@ -10,15 +10,17 @@ MAX_AUTHOR_CORRECTIONS = 2
 
 
 def outcome(root, job, payload, *, legacy_attempt=False):
-    if not legacy_attempt and job.get('handoff_protocol', 1) not in {8, 9, 10}:
+    if not legacy_attempt and job.get('handoff_protocol', 1) not in {8, 9, 10, 11}:
         raise ValueError('Control outcomes require the frozen protocol8 interpretation')
     diagnostics = search.assess_payload(root, job, payload, legacy_attempt=legacy_attempt) if job.get('purpose') is None and c.settings(root).get('search_policy') else []
     selection = []
     c.selected_inputs(c.workspace(root, job['step']), payload, job, selection)
     from . import decision
     requests = decision.assess(root, job, payload)
-    rows = [*diagnostics, *selection, *requests]
-    return dict(**(dict(decision_status='unresolved' if requests else 'applied')
+    portfolio = search.portfolio_assess(root, job, payload)
+    rows = [*diagnostics, *selection, *requests, *portfolio]
+    return dict(**(dict(portfolio_status='unresolved' if portfolio else 'applied') if job.get('handoff_protocol', 1) >= 11 else {}),
+                **(dict(decision_status='unresolved' if requests else 'applied')
                    if job.get('handoff_protocol', 1) >= 10 else {}),
                 binding_protocol=8, search_status='unresolved' if diagnostics else 'applied',
                 selection_status='unresolved' if selection else 'applied',
@@ -137,8 +139,11 @@ def effective_route(root, step, result, job, route):
         request = dict(root=previous['root'] if previous else source, source=source,
                        reason=previous['reason'] if previous else decision_code)
         role, parents = 'A', list(dict.fromkeys([*parents, step]))
-        instruction = ('Clarify the scientific decision, concrete question and result that would change it. '
-                       'The original science is retained; no dependent research is authorized: ' + decision_code + '.')
+        instruction = (('Give a short scientific global portfolio tradeoff; you may retain the same branch. '
+                        'Do not repeat counts, mechanism tables or original references. '
+                        if decision_code == 'a_portfolio_review_required' else
+                        'Clarify the scientific decision, concrete question and result that would change it. ')
+                       + 'The original science is retained; no dependent research is authorized: ' + decision_code + '.')
         evidence_return, correction_request = None, None
     elif role == 'W':
         code = 'implementation_unresolved' if seal.get('control_outcome', {}).get('selection_status') == 'unresolved' else None

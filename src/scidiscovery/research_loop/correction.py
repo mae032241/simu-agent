@@ -195,6 +195,7 @@ def project(root, before_step=None):
         if (job['role'] != 'A' or job.get('purpose') == 'closeout' or job.get('handoff_protocol', 1) < 6
                 or job.get('author_correction') is not None
                 or seal.get('control_outcome', {}).get('decision_status') == 'unresolved'
+                or seal.get('control_outcome', {}).get('portfolio_status') == 'unresolved'
                 or payload['next_action'] in {'extract', 'wait', 'audit'}):
             continue
         seal_digest = c.digest(record / 'result-identity.json')
