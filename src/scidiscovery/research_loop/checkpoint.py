@@ -86,6 +86,8 @@ def capture(root, job, record):
     changed by later fragments; their archived bytes remain the checkpoint truth.
     Managed call identity and candidate facts stay in their existing receipts.
     """
+    from .protocol import require_current
+    require_current(root,job)
     root, record = Path(root), Path(record)
     binding = _binding(root, job, record)
     destination = record / 'checkpoint.json'
@@ -160,6 +162,8 @@ def _clip(value, limit):
 
 def end_stage(root, job, record, reason):
     """Record why control ended this stage without rewriting scientific bytes."""
+    from .protocol import require_current
+    require_current(root,job)
     root, record = Path(root), Path(record)
     saved = validate(root, job, record)
     value = dict(version=VERSION, binding=saved['binding'], reason=reason,

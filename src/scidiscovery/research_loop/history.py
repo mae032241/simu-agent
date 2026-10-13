@@ -85,6 +85,8 @@ def resolve(root, target, receipts, *, current=None):
 
 
 def _proof(root, source, read_limit=MAX_OBJECT_BYTES):
+    from .protocol import require_current
+    require_current(root)
     if not isinstance(source, str):
         raise ValueError('Observer evidence path is not a string')
     path = root / source
@@ -250,6 +252,8 @@ def _capture(root, job, payload, materials):
 
 def capture(root, job, payload, materials):
     """Optional capacity/availability failures never discard original science."""
+    from .protocol import require_current
+    require_current(root,job)
     config = c.settings(root).get('history_observer')
     if config is None:
         return None
@@ -368,6 +372,9 @@ def source_sequence(root, before_step, *, source_cutoff=None, extra_steps=()):
 
 
 def records_from_sources(root, sources, *, write_cache=True):
+    if write_cache:
+        from .protocol import require_current
+        require_current(root)
     records, current_h = [], None
     for job, payload, seal, seal_sha in sources:
         step = job["step"]
@@ -429,6 +436,8 @@ def candidate_overview(records):
 
 
 def page_writer(work):
+    from .protocol import require_current
+    require_current(Path(work).parents[2])
     files, total = [], 0
     def add(path, value):
         nonlocal total
@@ -468,59 +477,10 @@ def page_writer(work):
     return add, paged, files
 
 
-def bind(root, step, protocol=6, *, source_cutoff=None, extra_steps=()):
-    records = rebuild(root, step, source_cutoff=source_cutoff, extra_steps=extra_steps)
-    if protocol >= 7:
-        for record in records:
-            options = implementation_options(root, record['step'])
-            record['view']['implementations'] = options[:16]
-            record['view']['implementations_omitted_count'] = max(0, len(options) - 16)
-    add, paged, files = page_writer(c.workspace(root, step))
-    if protocol >= 7:
-        for record in records:
-            paths = paged(implementation_options(root, record['step']), 16, 'implementations',
-                          f'inputs/history/implementations/{record["step"]:03d}', 'sealed-implementation-objects')
-            record['view']['implementation_index'] = paths[0] if paths else None
-    pages = paged([row['view'] for row in records], PAGE_ROWS, 'records',
-                  'inputs/history/pages', 'sealed-scientific-nodes')
-    for record in records:
-        for path, value in zip(record['view']['conclusion_pages'], record['detail']):
-            add(path, value)
-    overview = candidate_overview(records)
-    candidate_index = overview.pop('candidate_index')
-    paged(candidate_index, 16, 'candidates', 'inputs/history/candidates')
-    overview['index'] = 'inputs/history/candidates/0001.json' if candidate_index else None
-    add('inputs/history/candidates.json', overview)
-    def brief(record):
-        original = record['view']
-        def clip(text, capacity):
-            return text.encode()[:capacity].decode('utf-8', errors='ignore')
-        return dict(step=record['step'], role=record['role'], summary=clip(original['summary'], 160),
-                    limitations=[clip(value, 96) for value in original['limitations'][:1]],
-                    detail=original['conclusion_pages'][0],
-                    summary_truncated=(len(original['summary'].encode()) > 160 or original['summary_omitted_chars'] > 0),
-                    limitations_omitted_count=max(0, len(original['limitations']) - 1) + original['limitations_omitted_count'],
-                    limitations_truncated=any(len(value.encode()) > 96 for value in original['limitations'][:1]) or original['limitations_omitted_chars'] > 0)
-    view = dict(index=pages[0] if pages else None, node_count=len(records), page_rows=PAGE_ROWS,
-        recent=[brief(row) for row in records[-3:]],
-        declared_limitations=[dict(step=row['step'], limitations=[value.encode()[:96].decode('utf-8', errors='ignore') for value in row['view']['limitations'][:1]], detail=row['view']['conclusion_pages'][0], truncated=any(len(value.encode()) > 96 for value in row['view']['limitations'][:1]) or row['view']['limitations_omitted_chars'] > 0, omitted_count=max(0, len(row['view']['limitations']) - 1) + row['view']['limitations_omitted_count']) for row in records if row['view']['limitations']][-3:],
-        h_lineage=[dict(step=row['step'], parents=row['view']['h_parents']) for row in records if row['role'] == 'H'][-8:],
-        h_lineage_omitted_count=max(0, sum(row['role'] == 'H' for row in records) - 8),
-        candidates='inputs/history/candidates.json',
-        access='Read one index or conclusion page as needed; these are original scientific fields, not new host conclusions. '
-        'Implementation handles are not mounted files. To give the next role an exact old implementation, link its history/nodes/.../artifacts/... handle with #reuse-implementation. '
-        'Historical text may cite unavailable attachments; citations never mount them. Ordinary citations only cite evidence. A may optionally report candidate_recommendation using a listed candidate ID.')
-    if protocol >= 7:
-        view['access'] = ('Read index pages for navigation and node conclusion pages for original science. '
-            'Implementation IDs name exact retained objects, not mounted files. For more than the first 16, '
-            'read implementation_index and next_page for further IDs; unselected objects are not mounted. '
-            'implementation_selection: null keeps only the already selected inputs, [] clears, and an ID list replaces them. '
-            'New direct deliverables pass automatically. Ordinary citations never select implementations. '
-            'candidate_recommendation is an independent scientific recommendation, not input selection or actual submission.')
-    if len(_bytes(view)) > MAX_BRIEF_BYTES:
-        raise ValueError('Default scientific history brief exceeds byte bound')
-    return dict(nodes=[dict(step=row['step'], seal_sha256=row['seal_sha256']) for row in records],
-                files=files, candidate_ids=[row['id'] for row in candidate_index], view=view)
+def bind(root,step,protocol=None,*,source_cutoff=None,extra_steps=()):
+    from .protocol import require_current
+    require_current(root)
+    raise ValueError('Historical page renderer is retired; current tasks use unified lineage')
 
 
 def validate(root, work, binding):
@@ -588,6 +548,8 @@ def _validate_proof(root, proof):
 
 def refresh(root, before_step):
     """Update disposable projections after every seal, including a terminal A."""
+    from .protocol import require_current
+    require_current(root)
     latest = c.read(root / 'jobs' / f'{before_step-1:03d}.json') if before_step > 1 else {}
     if latest.get('lineage_projection_version') == 1:
         from . import lineage

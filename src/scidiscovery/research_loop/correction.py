@@ -21,73 +21,38 @@ def policy(value):
     return dict(value)
 
 
-def schema(protocol=6):
-    if protocol >= 7:
-        return dict(type=['object', 'null'], properties=dict(
-            verdict=dict(type='string', enum=['progress', 'no_progress', 'unknown'])),
-            required=['verdict'], additionalProperties=False,
-            description='Judge the current assessed work\'s global scientific contribution. Null means unknown. '
-            'Explain applicability, negative results and blind spots in scientific_result/limitations. '
-            'The host binds only the exact assessed task and counts each original once; this is not scientific verification. '
-            'Do not write evidence paths, hashes or inventories; proxy improvement alone is insufficient.')
-    return dict(type=['object', 'null'], properties=dict(
-        verdict=dict(type='string', enum=['progress', 'no_progress', 'unknown']),
-        evidence=dict(type='array', maxItems=4, items=dict(type='string', minLength=1, maxLength=512))),
-        required=['verdict', 'evidence'], additionalProperties=False,
-        description='Judge global scientific contribution. Null means unknown. Progress needs exact bound '
-        'prior scientific conclusion/history-page paths, never your own new prose or unsealed files. '
-        'A useful negative result may be progress; proxy improvement alone is insufficient.')
+def schema(protocol=None):
+    return dict(type=['object','null'],properties=dict(verdict=dict(type='string',enum=['progress','no_progress','unknown'])),
+        required=['verdict'],additionalProperties=False,
+        description='Scientific progress judgment for the exact assessed final stage; null means unknown. Explain support in ordinary science; control binds originals and counts, not scientific correctness.')
 
 
 def _proofs(root, job, assessment):
-    if job.get('handoff_protocol', 1) >= 7:
-        if assessment is None:
-            return set()
-        if (not isinstance(assessment, dict) or set(assessment) != {'verdict'}
-                or assessment['verdict'] not in {'progress', 'no_progress', 'unknown'}):
-            raise ValueError('Progress assessment fields are invalid')
-        if assessment['verdict'] != 'progress':
-            return set()
-        sources = history.direct_sources(root, job)
-        current = next((row for row in sources if row[0]['step'] == job['step'] - 1), None)
-        if current is None:
-            return set()
-        source, payload, seal = current
-        if source['role'] == 'A' and payload.get('next_action') == 'audit':
-            return _proofs(root, source, assessment)
-        if source['role'] == 'W' or (source['role'] == 'H' and payload.get('next_action') == 'analyze' and not source.get('author_correction')):
-            return {seal['raw_sha256']}
-        if source['role'] == 'E':
-            target = source.get('evidence_return') or {}
-            requester = next((row for row in sources if row[0]['step'] == target.get('step')), None)
-            e_sources = history.direct_sources(root, source)
-            if (target.get('role') == 'A' and requester is not None and requester[0]['role'] == 'A'
-                    and requester[1].get('next_action') == 'extract'
-                    and any(row[0]['step'] == target['step'] for row in e_sources)):
-                return {seal['raw_sha256']}
+    if assessment is None:
         return set()
-    if assessment is not None and (not isinstance(assessment, dict) or set(assessment) != {'verdict', 'evidence'}
-            or assessment['verdict'] not in {'progress', 'no_progress', 'unknown'}
-            or not isinstance(assessment['evidence'], list) or len(assessment['evidence']) > 4
-            or any(not isinstance(path, str) for path in assessment['evidence'])):
+    if (not isinstance(assessment, dict) or set(assessment) != {'verdict'}
+            or assessment['verdict'] not in {'progress', 'no_progress', 'unknown'}):
         raise ValueError('Progress assessment fields are invalid')
-    proofs = set()
-    for path in (assessment or {}).get('evidence', []):
-        match = re.fullmatch(r'inputs/parents/([0-9]{3,})/conclusion\.json|inputs/history/nodes/([0-9]{3,})/([0-9]{4,})\.json', path)
-        if match is None:
-            raise ValueError('Progress evidence requires a bound original scientific conclusion')
-        step = int(match[1] or match[2])
-        rows = job['direct_refs'] if match[1] else job.get('history', {}).get('files', [])
-        row = next((row for row in rows if row['path'] == path), None)
-        if row is None or not 0 < step < job['step']:
-            raise ValueError('Progress evidence is not an exact prior bound original')
-        if c.digest(c.regular(c.workspace(root, job['step']) / path)) != row['sha256']:
-            raise ValueError('Progress evidence copy changed')
-        _, _, seal, _ = history._source(root, step)
-        # Pages and parent copies resolve to one original raw identity. Equal
-        # original bytes at another node do not create a fresh proof credit.
-        proofs.add(seal['raw_sha256'])
-    return proofs
+    if assessment['verdict'] != 'progress':
+        return set()
+    sources = history.direct_sources(root, job)
+    current = next((row for row in sources if row[0]['step'] == job['step'] - 1), None)
+    if current is None:
+        return set()
+    source, payload, seal = current
+    if source['role'] == 'A' and payload.get('next_action') == 'audit':
+        return _proofs(root, source, assessment)
+    if source['role'] == 'W' or (source['role'] == 'H' and payload.get('next_action') == 'analyze' and not source.get('author_correction')):
+        return {seal['raw_sha256']}
+    if source['role'] == 'E':
+        target = source.get('evidence_return') or {}
+        requester = next((row for row in sources if row[0]['step'] == target.get('step')), None)
+        e_sources = history.direct_sources(root, source)
+        if (target.get('role') == 'A' and requester is not None and requester[0]['role'] == 'A'
+                and requester[1].get('next_action') == 'extract'
+                and any(row[0]['step'] == target['step'] for row in e_sources)):
+            return {seal['raw_sha256']}
+    return set()
 
 
 def validate_payload(root, job, payload):
@@ -132,6 +97,8 @@ def _records(root):
 def _append(root, events, parent, **fields):
     # Caller owns the same host writer lock as dispatch and continue. There is
     # no independent correction writer or mutable episode state.
+    from .protocol import require_current
+    require_current(root)
     event = dict(seq=len(events) + 1, parent_sha256=parent,
                  settings_sha256=c.digest(root / 'settings.json'), **fields)
     serialized = json.dumps(event, ensure_ascii=False, indent=2, allow_nan=False) + '\n'
@@ -277,6 +244,8 @@ def project(root, before_step=None):
 
 
 def publish(root, cutoff):
+    from .protocol import require_current
+    require_current(root)
     events, parent = _records(root)
     known = {event['trigger']['trigger_id'] for event in events if event['kind'] == 'trigger'}
     while True:
@@ -347,6 +316,8 @@ def gate(root, cutoff):
 
 def acknowledge(root, trigger_id, authorization_note):
     """Caller holds the controller writer lock; this note is not authentication."""
+    from .protocol import require_current
+    require_current(root)
     from . import budget
     if not isinstance(authorization_note, str) or not authorization_note.strip():
         raise ValueError('Correction acknowledgment needs an explicit operator decision')

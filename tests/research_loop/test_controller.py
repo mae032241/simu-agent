@@ -99,7 +99,7 @@ def scene(tmp_path, monkeypatch):
             next_action=payload.get('next_action', ''), route_reason=payload.get('route_reason', ''))
         write(record / 'result.json', result)
         write(record / 'result-identity.json', dict(sha256=digest(record / 'result.json'),
-            job_sha256=digest(job_path), raw_sha256=digest(record / 'science-output.json')))
+            job_sha256=digest(job_path), raw_sha256=digest(record / 'science-output.json'),control_outcome={}))
         return validate(work)
 
     def execute_native(root, step):
@@ -123,7 +123,7 @@ def scene(tmp_path, monkeypatch):
         write(record / "native-outcome.json", dict(returncode=0, stop_reason=None,
             usage=dict(observed_tokens=10, unknown_steps=[])))
         write(record / "result-identity.json", dict(sha256=digest(root / "native-evidence" / work.name / "result.json"),
-            job_sha256=digest(job_path), raw_sha256=digest(record / "science-output.json")))
+            job_sha256=digest(job_path), raw_sha256=digest(record / "science-output.json"),control_outcome={}))
 
     contracts = SimpleNamespace(read=read, write=write, digest=digest,
         workspace=workspace, build_job=build_job, validate=validate,
@@ -375,6 +375,10 @@ def test_real_sealing_and_materials_compose_with_controller(tmp_path, monkeypatc
         if role == 'A':
             payload['candidate_recommendation'] = None
             payload['progress_assessment'] = None
+            payload['decision_request'] = None
+            payload['portfolio_review'] = None
+        if role == 'W':
+            payload['stage_intent'] = 'review'
         if role in {'H', 'A'}:
             payload['search_plan' if role == 'H' else 'search_review'] = None
         artifacts = work / "artifacts"
@@ -468,7 +472,7 @@ def test_nested_experiment_deliverables_exclude_scratch_and_need_no_manifest(rea
         dict(task_sha256=n.contracts.digest(n.root / 'jobs/002.json')))
     n.contracts.write(child_record / 'science-output.json', dict(summary='Local W finding',
         scientific_result='No further selected output', limitations=['One experiment'],
-        implementation_selection=None))
+        implementation_selection=None, stage_intent='review'))
     n.contracts.write(child_record / 'native-outcome.json', dict(returncode=0, stop_reason=None,
         usage=dict(unknown_steps=[]), raw_sha256=n.contracts.digest(child_record / 'science-output.json')))
     n.contracts.seal_result(n.root, 2)

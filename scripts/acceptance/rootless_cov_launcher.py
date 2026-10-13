@@ -210,6 +210,11 @@ def main():
     s=load(q.config);w,h=controlled(s,os.environ['THIN_HWA_WORKSPACE'],os.environ['THIN_HWA_NATIVE_HOME'])
     if os.environ.get('THIN_HWA_ROLE') not in ['H','W','A','E']:raise ValueError('declared_scientific_role_required')
     args=q.command[1:] if q.command and q.command[0]=='--' else q.command
+    import subprocess
+    checked=subprocess.run([s['scid_python'],'-I','-c',
+        'import sys;from pathlib import Path;from scidiscovery.research_loop import contracts as c;from scidiscovery.research_loop.protocol import require_current;require_current(Path(sys.argv[1]),c.read(c.regular(Path(sys.argv[2]))))',
+        s['scene_root'],os.environ['THIN_HWA_JOB_MANIFEST']],capture_output=True,text=True)
+    if checked.returncode:raise ValueError('Current scientific contract required before launcher preparation')
     args=native_args(s,w,args);materials=direct_materials(s,w,os.environ.get('THIN_HWA_JOB_MANIFEST'));prepare_home(s,w,h,os.environ.get('THIN_HWA_AUTH_SOURCE'))
     # Only the trusted host sees controller jobs; config is a read-only mount.
     from scidiscovery.research_loop.cov_lineage import configure

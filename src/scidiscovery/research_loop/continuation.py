@@ -92,6 +92,10 @@ def session(root, step, record):
 
 def seal_or_repair(root, step):
     """Try the original seal first; only a frozen opt-in can accept a repair turn."""
+    from .protocol import require_current
+    require_current(root)
+    from . import contracts as _contracts
+    require_current(root,_contracts.read(_contracts.regular(Path(root)/'jobs'/f'{step:03d}.json')))
     try:
         job = c.read(c.regular(root / 'jobs' / f'{step:03d}.json'))
         if checkpoint.enabled(root, job) and not (execution.origin(root, step) / 'result-identity.json').exists():
@@ -204,9 +208,8 @@ def fragment_review(root, job):
     """Observe host investment even when the Worker did not call an adapter."""
     from . import experiments
     admission = budget.review_configuration(root, job)
-    scope = dict(step=job['step'], role='W', job_sha256=c.digest(root / 'jobs' / f'{job["step"]:03d}.json'),
-        execution_key=execution.identity(root, job['step'], 0),
-        mechanism_ref=((job.get('search') or {}).get('focus') or {}).get('mechanism_ref'))
+    from .protocol import stage_scope
+    scope=stage_scope(root,job)
     native_attempt = dict(number=len(execution.records(root, job['step'])) - 1,
                           execution_key=execution.identity(root, job['step']))
     return experiments.review_status(dict(admission=admission, scope=scope, native_attempt=native_attempt))
@@ -243,6 +246,10 @@ def _eligible_original(root, step, paths, *, successful=False, wait_runner=False
 
 def fragment_start(root, step):
     """Accept the next successful W fragment, never a failure retry or new job."""
+    from .protocol import require_current
+    require_current(root)
+    from . import contracts as _contracts
+    require_current(root,_contracts.read(_contracts.regular(Path(root)/'jobs'/f'{step:03d}.json')))
     root = Path(root)
     validate_launcher(root)
     job = validate_task(root, step)
@@ -295,6 +302,10 @@ def fragment_start(root, step):
 
 
 def start(root, step):
+    from .protocol import require_current
+    require_current(root)
+    from . import contracts as _contracts
+    require_current(root,_contracts.read(_contracts.regular(Path(root)/'jobs'/f'{step:03d}.json')))
     limits = validate_launcher(root)
     if (execution.origin(root, step) / 'result-identity.json').exists():
         return c.validate(c.workspace(root, step))

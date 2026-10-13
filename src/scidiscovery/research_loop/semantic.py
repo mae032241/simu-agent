@@ -9,24 +9,24 @@ MAX_DIAGNOSTICS = 8
 MAX_AUTHOR_CORRECTIONS = 2
 
 
-def outcome(root, job, payload, *, legacy_attempt=False):
-    if not legacy_attempt and job.get('handoff_protocol', 1) not in {8, 9, 10, 11, 12, 13}:
-        raise ValueError('Control outcomes require the frozen protocol8 interpretation')
-    diagnostics = search.assess_payload(root, job, payload, legacy_attempt=legacy_attempt) if job.get('purpose') is None and c.settings(root).get('search_policy') else []
-    selection = []
-    c.selected_inputs(c.workspace(root, job['step']), payload, job, selection)
+def outcome(root,job,payload):
+    from .protocol import CURRENT
+    if type(job.get('handoff_protocol')) is not int or job['handoff_protocol']!=CURRENT:
+        raise ValueError('Current scientific interpretation required')
+    enabled=job.get('purpose') is None and c.settings(root).get('search_policy') is not None
+    interpretation=search.interpret(root,job,payload) if enabled else dict(focus=None,allocation=None,diagnostics=[])
+    diagnostics=interpretation['diagnostics']
+    selection=[];c.selected_inputs(c.workspace(root,job['step']),payload,job,selection)
     from . import decision
-    requests = decision.assess(root, job, payload)
-    portfolio = search.portfolio_assess(root, job, payload)
-    order = search.order_assess(root, job, payload)
-    rows = [*diagnostics, *selection, *requests, *portfolio, *order]
-    return dict(**(dict(order_status='unresolved' if order else 'applied') if job.get('handoff_protocol', 1) >= 13 else {}),
-                **(dict(portfolio_status='unresolved' if portfolio else 'applied') if job.get('handoff_protocol', 1) >= 11 else {}),
-                **(dict(decision_status='unresolved' if requests else 'applied')
-                   if job.get('handoff_protocol', 1) >= 10 else {}),
-                binding_protocol=8, search_status='unresolved' if diagnostics else 'applied',
-                selection_status='unresolved' if selection else 'applied',
-                diagnostics=rows[:MAX_DIAGNOSTICS], omitted_count=max(0, len(rows) - MAX_DIAGNOSTICS))
+    requests=decision.assess(root,job,payload,focus=interpretation['focus'])
+    portfolio=search.portfolio_assess(root,job,payload,interpretation=interpretation,
+        decision_diagnostics=requests,selection_diagnostics=selection)
+    rows=[*diagnostics,*selection,*requests,*portfolio]
+    return dict(**(dict(stage_end_reason='continuation_unavailable') if job['role']=='W' and payload.get('stage_intent')=='continue' and not job.get('worker_fragment_policy') else {}),
+        binding_protocol=CURRENT,resolved_focus=interpretation['focus'],resolved_allocation=interpretation['allocation'],
+        search_status='unresolved' if diagnostics else 'applied',selection_status='unresolved' if selection else 'applied',
+        decision_status='unresolved' if requests else 'applied',portfolio_status='unresolved' if portfolio else 'applied',
+        diagnostics=rows[:MAX_DIAGNOSTICS],omitted_count=max(0,len(rows)-MAX_DIAGNOSTICS))
 
 
 def _source(root, step):
@@ -58,7 +58,7 @@ def validate_job(root, job):
     request = job.get('author_correction')
     if request is None:
         return
-    if (job.get('handoff_protocol', 1) < 8 or job['role'] not in {'H', 'A', 'E'}
+    if (job['role'] not in {'H', 'A', 'E'}
             or not isinstance(request, dict) or set(request) != {'root', 'source', 'reason'}
             or not isinstance(request['reason'], str)):
         raise ValueError('Author correction binding is invalid')
@@ -104,7 +104,7 @@ def validate_job(root, job):
     if reason is None and c.settings(root).get('search_policy') is not None:
         protocol = root_job.get('handoff_protocol', 1)
         reason = search.launch_reason(root, dict(step=root_step + 1, role='W', handoff_protocol=protocol,
-            search=search.bind(root, root_step + 1, 'W', protocol, write_pages=False, unified=protocol >= 13)))
+            search=search.bind(root, root_step + 1, 'W', protocol, write_pages=False, unified=True)))
     if request['reason'] != reason:
         raise ValueError('Author correction reason differs from its original blocked action')
     if not any(ref['path'] == f'inputs/parents/{request["source"]["step"]:03d}/conclusion.json' for ref in job['direct_refs']):
@@ -133,8 +133,6 @@ def effective_route(root, step, result, job, route):
     request = None
     previous = job.get('author_correction')
     seal = c.read(c.host_record(c.workspace(root, step)) / 'result-identity.json')
-    if job.get('handoff_protocol', 1) < 8 and seal.get('control_outcome') is None:
-        return (*route, None)  # Published valid routes keep their exact frozen successors.
     from . import decision
     decision_code = decision.reason(root, job, result)
     if decision_code is not None:
@@ -153,7 +151,7 @@ def effective_route(root, step, result, job, route):
         if code is None and c.settings(root).get('search_policy') is not None:
             protocol = job.get('handoff_protocol', 1)
             planned = dict(step=step + 1, role='W', handoff_protocol=protocol,
-                           search=search.bind(root, step + 1, 'W', protocol, write_pages=False, unified=protocol >= 13))
+                           search=search.bind(root, step + 1, 'W', protocol, write_pages=False, unified=True))
             code = search.launch_reason(root, planned)
         if code is not None:
             source = _source(root, step)

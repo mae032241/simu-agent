@@ -38,6 +38,8 @@ def finish(root, step, role, parents, text='A bounded scientific finding', actio
         payload['search_plan' if role == 'H' else 'search_review'] = search_choice
     if job.get('handoff_protocol', 1) >= 6 and role == 'A':
         payload['progress_assessment'] = progress
+    if role=='W':payload['stage_intent']='review'
+    if role=='A':payload.update(decision_request=None,portfolio_review=None)
     if role in {'H', 'A'}:
         payload.update(next_action=action, route_reason='Exact scientific question')
     for name, contents in (files or {}).items():

@@ -137,10 +137,12 @@ def _adapter(config, path):
 
 def freeze(config, executor, *, path=None):
     """Host preparation only: freeze selected factory, code, configuration and flags."""
+    from .protocol import require_scope
+    require_scope(config.get('scope'))
     value = dict(config)
     value.setdefault('admission',dict(version=ADMISSION_VERSION,mode='unavailable'))
     scope=value.get('scope')
-    if (not isinstance(scope,dict) or set(scope)!={'step','role','job_sha256','execution_key','mechanism_ref'}
+    if (not isinstance(scope,dict) or set(scope)!={'step','role','job_sha256','execution_key','mechanism_ref','handoff_protocol'}
             or type(scope.get('step')) is not int or scope['step']<=0 or scope['role'] not in {'H','W','A','E'}
             or any(not isinstance(scope.get(key),str) or not re.fullmatch('[0-9a-f]{64}',scope[key])
                    for key in ('job_sha256','execution_key'))):
@@ -162,6 +164,10 @@ def freeze(config, executor, *, path=None):
 
 def configure(root,step,executor,config,output):
     """Freeze a host-bound interface before the Worker enters its existing namespace."""
+    from .protocol import require_current
+    require_current(root)
+    from . import contracts as _contracts
+    require_current(root,_contracts.read(_contracts.regular(Path(root)/'jobs'/f'{step:03d}.json')))
     from . import contracts as c, execution, budget
     root=Path(root).resolve();job=c.read(c.regular(root/'jobs'/f'{step:03d}.json'))
     versions=(c.settings(root).get('experiment_interface_version'),job.get('experiment_interface_version'))
@@ -176,9 +182,9 @@ def configure(root,step,executor,config,output):
         raise IntegrityError('Host configuration has no exact accepted scientific task')
     native_attempt=dict(number=len(execution.records(root,step))-1,execution_key=execution.identity(root,step))
     admission=budget.review_configuration(root,job)
+    from .protocol import stage_scope
     value=dict(config,record_dir=str(c.workspace(root,step)/'work/lineage'),native_attempt=native_attempt,admission=admission,
-        scope=dict(step=step,role=job['role'],job_sha256=c.digest(root/'jobs'/f'{step:03d}.json'),
-            execution_key=execution.identity(root,step,0),mechanism_ref=((job.get('search') or {}).get('focus') or {}).get('mechanism_ref')))
+        scope=stage_scope(root,job))
     value=freeze(value,executor,path=output)
     updates=[]
     for path in (Path(output),record/'experiment-config.json'):
@@ -195,6 +201,8 @@ def configure(root,step,executor,config,output):
 
 
 def load(config, *, path=None):
+    from .protocol import require_scope
+    require_scope(config.get('scope') if isinstance(config,dict) else None)
     if not isinstance(config,dict):
         raise IntegrityError('Frozen execution configuration is malformed')
     if 'admission' not in config:
@@ -255,6 +263,8 @@ class Records:
 
     def accept(self, descriptor, metadata, interface, *, expected_calls=None):
         """Short admission linearization point. No solver or domain IO under lock."""
+        from .protocol import require_scope
+        require_scope(self.config['scope'])
         data = read(descriptor.local_path, MAX_ASSET)
         if hashlib.sha256(data).hexdigest() != descriptor.sha256 or len(data) != descriptor.size_bytes:
             raise IntegrityError('Prepared execution input changed')
@@ -285,6 +295,8 @@ class Records:
         return accepted
 
     def publish(self, call_id, filename, value):
+        from .protocol import require_scope
+        require_scope(self.config['scope'])
         if filename not in {'process.json', 'terminal.json', 'completed.json','submission.json','collected.json'}:
             raise ValueError('Unknown execution receipt')
         directory = self.directory(call_id)
@@ -352,6 +364,8 @@ def dispatch_descriptor(config, payload, *, parent=None, new=False, change=None)
 
 
 def _dispatch_descriptor(config, payload, *, parent=None, new=False, change=None):
+    from .protocol import require_scope
+    require_scope(config.get('scope'))
     adapter = load(config)
     capabilities = lifecycle_capabilities(adapter)
     if not capabilities.atomic_admission:
@@ -399,6 +413,19 @@ def progress(config):
         coverage='partial' if counts['unknown'] else 'complete', observed_at=time.time())
 
 
+def preserved_progress(config):
+    records=Records(config);rows=[];counts=dict.fromkeys(('accepted','running','known_success','known_failed','unknown'),0)
+    for directory in records.calls():
+        records.accepted(directory.name)
+        path=directory/'completed.json'
+        value=json.loads(read(path)) if path.exists() else {}
+        status=value.get('status','unknown')
+        if status not in counts:status='unknown'
+        counts[status]+=1
+        rows.append(dict(call_id=directory.name,status=status,qualification='Preserved receipt; no current scientific interpretation'))
+    return dict(calls=rows[-16:],counts=counts,omitted_count=max(0,len(rows)-16),coverage='preserved_originals_only')
+
+
 def main(argv=None):
     from . import feedback
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--config',type=Path,required=True)
@@ -411,7 +438,15 @@ def main(argv=None):
         item=sub.add_parser(name);item.add_argument('--call-id',required=True)
     args=parser.parse_args(argv)
     try:
-        config=json.loads(read(args.config));adapter=load(config,path=args.config)
+        config=json.loads(read(args.config))
+        from . import protocol
+        scope=config.get('scope',{})
+        if args.command=='lineage-status' and (type(scope.get('handoff_protocol')) is not int or scope['handoff_protocol']!=protocol.CURRENT):
+            print(json.dumps(preserved_progress(config),allow_nan=False));return 0
+        if args.command in {'run','lookup','collect','cancel'}:
+            from .protocol import require_scope
+            require_scope(config.get('scope'))
+        adapter=load(config,path=args.config)
         if args.command=='run':
             result=dispatch(config,args.script or args.payload,parent=args.parent_plan,new=args.new_plan,change=args.change_intent)
             result=adapter.public_result(result)

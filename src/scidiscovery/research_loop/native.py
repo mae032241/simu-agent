@@ -54,6 +54,10 @@ def _usage_event(event):
 
 def execute_native(root: Path, step: int):
     """Submit once, then wait for the same durable local runner."""
+    from .protocol import require_current
+    require_current(root)
+    from . import contracts as _contracts
+    require_current(root,_contracts.read(_contracts.regular(Path(root)/'jobs'/f'{step:03d}.json')))
     frozen_settings(root)
     record = execution.record(root, step)
     record.mkdir(parents=True, exist_ok=True)
@@ -105,6 +109,10 @@ def wait_native(root: Path, step: int):
 
 
 def run_native(root: Path, step: int, attempt=0):
+    from .protocol import require_current
+    require_current(root)
+    from . import contracts as _contracts
+    require_current(root,_contracts.read(_contracts.regular(Path(root)/'jobs'/f'{step:03d}.json')))
     settings = frozen_settings(root)
     work = workspace(root, step)
     job_path = root / 'jobs' / f'{step:03d}.json'

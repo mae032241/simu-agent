@@ -42,402 +42,178 @@ def _text(limit=1024, nullable=False):
     return dict(type=['string', 'null'] if nullable else 'string', maxLength=limit, minLength=1)
 
 
-def schema(role, protocol=6):
-    order = dict(exploration_order=_object(dict(priority=dict(type='array', minItems=1, maxItems=4,
-        items=_text(80)), reason=_text()), nullable=True)) if protocol >= 13 else {}
-    focus = lambda key: _object({key: _text(80), 'action': dict(type='string', enum=list(MODES)),
-        **({'repair_source': _text(512, nullable=True)} if protocol < 7 else {})}, nullable=True)
-    if role == 'H':
-        commitment = _object(dict(label=_text(80), minimal_test=_text(), existing_ref=_text(80, nullable=True)))
-        value = _object(dict(scope=_text(), commitments=dict(type='array', maxItems=MAX_COMMITMENTS,
-                items=commitment), focus=focus('label'), **order), nullable=True)
-        value['description'] = 'Declare science, not a ledger. When search is enabled, experiment needs a non-null plan and focus. Revisions preserve known mechanism refs.'
-        if protocol >= 8:
-            value['description'] = ('Declare at most four additions or revisions this round; omitted registered mechanisms '
-                'and their statuses remain. Focus selects a newly declared label or an exact existing mechanism ref/unique '
-                'label. A new focus requires its own declared commitment and minimal_test; never restate the whole portfolio.')
-        if protocol >= 13:
-            value['description'] += (' New commitments are declared in scientific exploration order; explain priorities in scope. '
-                'exploration_order is an incremental priority prefix with a scientific reason; omitted unfinished items remain. '
-                'Experiment focus must match the resulting head. Use exact refs or unique labels; null preserves order.')
+def schema(role, protocol=None):
+    focus=lambda key:_object({key:_text(80),'action':dict(type='string',enum=list(MODES))},nullable=True)
+    if role=='H':
+        commitment=_object(dict(label=_text(80),minimal_test=_text(),existing_ref=_text(80,nullable=True)))
+        value=_object(dict(scope=_text(),commitments=dict(type='array',maxItems=MAX_COMMITMENTS,items=commitment),focus=focus('label')),nullable=True)
+        value['description']=('Declare at most four additions or revisions in scientific exploration order; omitted unfinished mechanisms remain. '
+            'Null focus follows the confirmed unfinished plan. Explicit exact ref or unique label with route_reason selects scientific screen/improve/repair without rewriting an order table.')
         return value
-    if role == 'A':
-        disposition = _object(dict(mechanism_ref=_text(80), status=dict(type='string',
-            enum=['screened', 'deferred', 'waived', 'pending']), reason=_text(),
-            **(dict(evidence=dict(type='array', maxItems=4, items=_text(512))) if protocol < 7 else {})))
-        value = _object(dict(dispositions=dict(type='array', maxItems=MAX_COMMITMENTS,
-                items=disposition), next_focus=focus('mechanism_ref'), **order), nullable=True)
-        value['description'] = 'Dispose commitments using scientific evidence. Null review or next_focus clears the next W focus; continue_w needs an explicit focus.'
-        if protocol >= 7:
-            value['description'] = ('Report only this round\'s changed dispositions; omitted mechanisms retain their sealed status. '
-                'Same-status restatements are ignored and do not replace prior evidence or reasons. '
-                'Explain scientific judgments in reason and scientific_result. The host binds the exact task lineage; '
-                'screened needs a same-mechanism screen W, not a role-authored evidence path. '
-                'Null review or next_focus clears the next W focus; continue_w needs an explicit focus.')
-        if protocol >= 13:
-            value['description'] += (' After assessing W, its allocated opportunity is consumed once unless the same head needs repair. '
-                'Use exploration_order to move or reinsert a priority prefix, with scientific reasons; omitted unfinished items remain. '
-                'continue_w must choose the resulting head. A screened branch can be explicitly rescheduled for deeper work. '
-                'A valid order reason also supplies this round\'s portfolio tradeoff. Audit/extract/wait do not change order.')
+    if role=='A':
+        disposition=_object(dict(mechanism_ref=_text(80),status=dict(type='string',enum=['screened','deferred','waived','pending']),reason=_text()))
+        value=_object(dict(dispositions=dict(type='array',maxItems=MAX_COMMITMENTS,items=disposition),next_focus=focus('mechanism_ref')),nullable=True)
+        value['description']=('Declare only changed scientific dispositions; screened needs one same-mechanism final W original. '
+            'Null next_focus follows the unfinished plan after this eligible final W assessment. '
+            'An explicit exact ref or unique label plus route_reason may deepen another authorized mechanism. Do not write mechanical IDs, counts, paths or priorities.')
         return value
     raise ValueError('Only H and A declare scientific search choices')
 
 
-def _evidence(root, job, path):
-    match = re.fullmatch(r'inputs/parents/([0-9]{3,})/conclusion\.json|inputs/history/nodes/([0-9]{3,})/([0-9]{4,})\.json', path)
-    if not match:
-        raise ValueError('Search evidence requires a bound original scientific conclusion')
-    step = int(match[1] or match[2])
-    rows = job['direct_refs'] if match[1] else job.get('history', {}).get('files', [])
-    row = next((row for row in rows if row['path'] == path), None)
-    original = c.regular(c.workspace(root, job['step']) / path)
-    if row is None or c.digest(original) != row['sha256'] or not 0 < step < job['step']:
-        raise ValueError('Search scientific evidence is not exactly bound')
-    source, _, _, _ = history._source(root, step)
-    return source
+def _assessed(root,job):
+    if job['role']!='A' or job.get('purpose') is not None:return None
+    original=history._source(root,job['author_correction']['root']['step'])[0] if job.get('author_correction') else job
+    if original['role']!='A':return None
+    sources=[source for source,_,_ in history.direct_sources(root,job) if source['role']=='W']
+    if len(sources)!=1:return None
+    source=sources[0]
+    if not any(ref['path']==f'inputs/parents/{source["step"]:03d}/conclusion.json' for ref in original['direct_refs']):return None
+    focus=(source.get('search') or {}).get('focus')
+    if focus is None:return None
+    seal=c.regular(c.host_record(c.workspace(root,source['step']))/'result-identity.json')
+    return dict(identity=(source['step'],c.digest(seal)),mechanism_ref=focus['mechanism_ref'],allocation=source['search']['allocation'])
 
 
-def _apply_science(root, job, payload, state, diagnostics):
-    mechanisms = state['mechanisms']
-    if job['role'] == 'H':
-        state['current_h'] = job['step']
-        if job.get('handoff_protocol', 1) < 8:
-            state['authorized'] = set()
-            state['scope'] = None
-        plan = payload.get('search_plan')
-        state['plan'] = plan
-        state['focus'] = None
-        if plan is None:
-            if job.get('handoff_protocol', 1) >= 8 and payload.get('next_action') == 'experiment':
-                raise UnresolvedSearch('h_focus_unresolved', 'missing experiment plan', 'Experiment needs a declared scientific plan')
-            return
-        if not plan['scope'].strip():
-            raise ValueError('H search scope must contain scientific content')
-        labels, refs = {}, set()
-        for index, item in enumerate(plan['commitments'], 1):
-            if not item['label'].strip() or not item['minimal_test'].strip():
-                raise ValueError('H commitments require distinct scientific labels and minimal tests')
-            if item['label'] in labels:
-                raise UnresolvedSearch('h_mechanism_unresolved', item['label'], 'H commitments require distinct scientific labels and minimal tests')
-            ref = item['existing_ref']
-            if ref is not None and ref not in mechanisms:
-                raise UnresolvedSearch('h_mechanism_unresolved', ref, 'H revision must name an original known mechanism')
-            ref = ref or f'h{job["step"]:03d}.m{index}'
-            if ref in refs:
-                raise UnresolvedSearch('h_mechanism_unresolved', ref, 'H revision repeats one mechanism identity')
-            refs.add(ref);labels[item['label']] = ref
-            if ref not in mechanisms:
-                mechanisms[ref] = dict(status='pending', original_h=job['step'])
-                if job.get('handoff_protocol', 1) >= 13:
-                    state['order']['remaining'].append(dict(mechanism_ref=ref, planned_step=job['step']))
-            mechanisms[ref].update(label=item['label'], minimal_test=item['minimal_test'], source_h=job['step'])
-        state['scope'] = plan['scope']
-        state['authorized'] = state['authorized'] | refs if job.get('handoff_protocol', 1) >= 8 else refs
-        if plan['focus'] is not None:
-            focus = plan['focus']
-            selected = labels.get(focus['label'])
-            if selected is None and job.get('handoff_protocol', 1) >= 8:
-                matches = [ref for ref in state['authorized']
-                           if ref == focus['label'] or mechanisms[ref]['label'] == focus['label']]
-                selected = matches[0] if len(matches) == 1 else None
-            if selected is None:
-                raise UnresolvedSearch('h_focus_unresolved', focus['label'], 'H focus must select a declared commitment')
-            state['focus'] = dict(mechanism_ref=selected, action=focus['action'], repair_source=focus.get('repair_source'))
-        elif job.get('handoff_protocol', 1) >= 8 and payload.get('next_action') == 'experiment':
-            raise UnresolvedSearch('h_focus_unresolved', 'missing experiment focus', 'Experiment needs a declared scientific focus')
-    elif job['role'] == 'A':
-        review = payload.get('search_review')
-        state['focus'] = None
-        if review is None:
-            return
-        refs = set()
-        repeated = {item['mechanism_ref'] for item in review['dispositions']
-                    if sum(other['mechanism_ref'] == item['mechanism_ref'] for other in review['dispositions']) > 1}
+def _apply_science(root,job,payload,state,diagnostics):
+    mechanisms=state['mechanisms']
+    if job['role']=='H':
+        state['current_h']=job['step']
+        plan=payload.get('search_plan')
+        if plan is not None:
+            if not plan['scope'].strip():raise UnresolvedSearch('h_scope_empty','scope','H scope needs scientific content')
+            labels=set();refs=set()
+            for index,item in enumerate(plan['commitments'],1):
+                if not item['label'].strip() or not item['minimal_test'].strip() or item['label'] in labels:
+                    raise UnresolvedSearch('h_mechanism_unresolved',item['label'],'H commitments need distinct labels and minimal tests')
+                labels.add(item['label']);ref=item['existing_ref']
+                if ref is not None and ref not in mechanisms:raise UnresolvedSearch('h_mechanism_unresolved',ref,'Revision requires an exact registered mechanism')
+                ref=ref or f'h{job["step"]:03d}.m{index}'
+                if ref in refs:raise UnresolvedSearch('h_mechanism_unresolved',ref,'A revision cannot repeat one mechanism')
+                refs.add(ref)
+                if ref not in mechanisms:
+                    mechanisms[ref]=dict(status='pending',original_h=job['step'])
+                    state['order']['remaining'].append(dict(mechanism_ref=ref,planned_step=job['step']))
+                mechanisms[ref].update(label=item['label'],minimal_test=item['minimal_test'],source_h=job['step'])
+            state['scope']=plan['scope'];state['plan']=plan;state['authorized']|=refs
+    elif job['role']=='A':
+        review=payload.get('search_review') or dict(dispositions=[])
+        repeated={item['mechanism_ref'] for item in review['dispositions'] if sum(other['mechanism_ref']==item['mechanism_ref'] for other in review['dispositions'])>1}
         for item in review['dispositions']:
-            ref = item['mechanism_ref']
-            if not item['reason'].strip():
-                raise ValueError('A dispositions require distinct known mechanisms and scientific reasons')
+            ref=item['mechanism_ref']
             if ref not in mechanisms or ref in repeated:
-                if job.get('handoff_protocol', 1) >= 8:
-                    diagnostics.append(dict(code='a_mechanism_unresolved', subject=ref))
-                    continue
-                raise UnresolvedSearch('a_mechanism_unresolved', ref,
-                    'A dispositions require distinct known mechanisms and scientific reasons')
-            refs.add(ref)
-            # Sealed originals own existing state. Redundant prose is retained
-            # in the author's output, but neither changes nor re-proves it.
-            if item['status'] == mechanisms[ref]['status']:
-                continue
-            if job.get('handoff_protocol', 1) >= 7:
-                sources = [source for source, _, _ in history.direct_sources(root, job)] if item['status'] == 'screened' else []
-            else:
-                sources = [_evidence(root, job, path) for path in item['evidence']]
-            if job.get('handoff_protocol', 1) < 7 and item['status'] != 'pending' and not sources:
-                raise ValueError('A mechanism disposition requires original evidence')
-            screens = [source for source in sources if source['role'] == 'W'
-                    and ((source.get('search') or {}).get('focus') or {}).get('mechanism_ref') == ref
-                    and source['search']['focus']['action'] == 'screen']
-            if item['status'] == 'screened' and (not screens or (job.get('handoff_protocol', 1) >= 7 and len(screens) != 1)):
-                if job.get('handoff_protocol', 1) >= 8:
-                    diagnostics.append(dict(code='screen_source_ambiguous' if screens else 'screen_source_unavailable', subject=ref))
-                    continue
-                raise UnresolvedSearch('screen_source_ambiguous' if screens else 'screen_source_unavailable', ref,
-                    'Screened requires same-mechanism W screening evidence')
-            mechanisms[ref]['status'] = item['status']
-        state['focus'] = dict(review['next_focus'], repair_source=review['next_focus'].get('repair_source')) if review['next_focus'] else None
-        if state['focus'] is not None and state['focus']['mechanism_ref'] not in mechanisms:
-            if job.get('handoff_protocol', 1) >= 8:
-                diagnostics.append(dict(code='a_focus_unresolved', subject=state['focus']['mechanism_ref']))
-                state['focus'] = None
-            else:
-                raise UnresolvedSearch('a_focus_unresolved', state['focus']['mechanism_ref'],
-                    'A focus must name an original known mechanism')
+                diagnostics.append(dict(code='a_mechanism_unresolved',subject=ref));continue
+            if not item['reason'].strip():
+                diagnostics.append(dict(code='a_disposition_reason_required',subject=ref));continue
+            if item['status']==mechanisms[ref]['status']:continue
+            if item['status']=='screened':
+                screens=[source for source,_,_ in history.direct_sources(root,job) if source['role']=='W'
+                    and ((source.get('search') or {}).get('focus') or {}).get('mechanism_ref')==ref
+                    and source['search']['focus']['action']=='screen']
+                if len(screens)!=1:
+                    diagnostics.append(dict(code='screen_source_ambiguous' if screens else 'screen_source_unavailable',subject=ref));continue
+            mechanisms[ref]['status']=item['status']
+    from .scientific_intent import resolve_intent
+    interpretation=resolve_intent(state,job,payload,assessed=_assessed(root,job))
+    diagnostics.extend(interpretation['diagnostics'])
+    state['focus']=interpretation['focus']
+    state['order'].update(remaining=interpretation['unfinished_plan'],seen_w=interpretation['seen_w'],allocation=interpretation['allocation'],diagnostics=interpretation['diagnostics'])
 
 
-def _apply(root, job, payload, state):
-    diagnostics = []
-    before = copy.deepcopy(state) if job.get('handoff_protocol', 1) >= 8 else None
-    try:
-        _apply_science(root, job, payload, state, diagnostics)
-    except UnresolvedSearch as error:
-        if before is None:
-            raise
-        state.clear();state.update(before)
-        state['current_h'] = job['step']
-        state['focus'] = None  # Preserve the attempt; it did not authorize a W.
-        diagnostics.append(dict(code=error.code, subject=error.subject))
-    return diagnostics
+def interpret(root,job,payload,*,state=None):
+    """One prospective interpretation; callers do not publish its mutations."""
+    state=copy.deepcopy(project(root,job['step']) if state is None else state)
+    diagnostics=[]
+    try:_apply_science(root,job,payload,state,diagnostics)
+    except UnresolvedSearch as error:diagnostics.append(dict(code=error.code,subject=error.subject))
+    return dict(state=state,focus=state['focus'],allocation=state['order']['allocation'],diagnostics=diagnostics)
 
 
-def assess_payload(root, job, payload, *, legacy_attempt=False):
-    """A bounded host interpretation, never a scientific correctness verdict."""
-    state = project(root, job['step'])
-    if legacy_attempt:
-        if job.get('handoff_protocol', 1) != 7:
-            raise ValueError('Only a terminal protocol7 attempt supports semantic retention')
-        try:
-            _apply(root, job, payload, copy.deepcopy(state))
-        except UnresolvedSearch:
-            pass
-        else:
-            raise ValueError('A valid legacy result must retain its original interpretation')
-    interpreted = dict(job, handoff_protocol=8) if legacy_attempt else job
-    return _apply(root, interpreted, payload, state)
+def assess_payload(root,job,payload):
+    return interpret(root,job,payload)['diagnostics']
 
 
-def apply_source(root, job, payload, seal, state):
-    """The existing per-node interpretation guard, shared with read-only lineage."""
-    receipt = seal.get('control_outcome')
-    if receipt is not None:
-        if receipt.get('binding_protocol') != 8 or job.get('handoff_protocol', 1) not in {7, 8, 9, 10, 11, 12, 13}:
-            raise ValueError('Control interpretation binding changed')
-        if job.get('handoff_protocol', 1) == 7:
-            try:
-                _apply(root, job, payload, copy.deepcopy(state))
-            except UnresolvedSearch:
-                pass
-            else:
-                raise ValueError('Legacy valid science cannot be reinterpreted')
-        diagnostics = _apply(root, dict(job, handoff_protocol=8) if job.get('handoff_protocol', 1) == 7 else job, payload, state)
-        if (receipt.get('search_status') != ('unresolved' if diagnostics else 'applied')
-                or [row for row in receipt['diagnostics'] if not row['code'].startswith('implementation_')
-                    and not (job.get('handoff_protocol', 1) >= 10 and row['code'].startswith('a_decision_'))
-                    and not (job.get('handoff_protocol', 1) >= 13 and row['code'].startswith('order_'))
-                    and not (job.get('handoff_protocol', 1) >= 11 and row['code'].startswith('a_portfolio_'))] != diagnostics):
-            raise ValueError('Search outcome differs from its original scientific attempt')
+def apply_source(root,job,payload,seal,state):
+    from .protocol import CURRENT
+    receipt=seal['control_outcome']
+    if job.get('handoff_protocol')!=CURRENT or receipt.get('binding_protocol')!=CURRENT:
+        raise ValueError('Control interpretation binding changed')
+    result=interpret(root,job,payload,state=state)
+    diagnostics=result['diagnostics']
+    reported=[row for row in receipt['diagnostics'] if not row['code'].startswith(('implementation_','a_decision_','a_portfolio_'))]
+    if (receipt['search_status']!=('unresolved' if diagnostics else 'applied') or reported!=diagnostics[:len(reported)]
+            or len(reported)<len(diagnostics) and not receipt['omitted_count']
+            or receipt['resolved_focus']!=result['focus'] or receipt['resolved_allocation']!=result['allocation']):
+        raise ValueError('Scientific intent differs from its sealed interpretation')
+    if all(receipt.get(key)!='unresolved' for key in ('search_status','selection_status','decision_status','portfolio_status')):
+        state.clear();state.update(result['state'])
     else:
-        _apply(root, job, payload, state)
+        state['focus']=None
+        state['order']['allocation']=None
+        state['order']['diagnostics']=receipt['diagnostics']
 
 
-def fold(root, sources):
-    state = dict(mechanisms={}, current_h=None, scope=None, plan=None, authorized=set(), focus=None,
-                 accepted_slices=[], repairs={})
+def fold(root,sources):
+    state=dict(mechanisms={},current_h=None,scope=None,plan=None,authorized=set(),focus=None,accepted_slices=[],repairs={},
+        order=dict(remaining=[],seen_w=set(),allocation=None,diagnostics=[]))
     if c.settings(root).get('portfolio_policy') is not None:
-        state['portfolio'] = dict(invested={}, deferred={}, seen_w=set(), pending_w=None, last_branch=None, last_review=None)
-    if c.settings(root).get('exploration_order_version') == 1:
-        state['order'] = dict(remaining=[], diagnostics=[])
-    for job, payload, seal, seal_sha in sources:
-        step = job["step"]
-        apply_source(root, job, payload, seal, state)
-        if 'portfolio' in state:
-            _portfolio_update(root, job, payload, seal, state, seal_sha)
-        if job.get('handoff_protocol', 1) >= 13:
-            diagnostics = _order_update(root, job, payload, seal, state)
-            receipt = seal['control_outcome']
-            reported = [row for row in receipt['diagnostics'] if row['code'].startswith('order_')]
-            if (receipt.get('order_status') != ('unresolved' if diagnostics else 'applied') or reported != diagnostics[:len(reported)]
-                    or (len(reported) < len(diagnostics) and not receipt['omitted_count'])):
-                raise ValueError('Scientific exploration order differs from its sealed interpretation')
-        intent = execution.record(root, step) / 'native-intent.json'
-        if job['role'] == 'W' and job.get('search') and intent.exists():
-            value = c.read(c.regular(intent))
-            if value['task_sha256'] != c.digest(root / 'jobs' / f'{step:03d}.json'):
-                raise ValueError('W dispatch identity changed')
-            outcome = c.read(execution.record(root, step) / 'native-outcome.json')
-            observation = c.read(root / seal['observations']['path']) if seal.get('observations') else None
-            state['accepted_slices'].append(dict(step=step, focus=job['search']['focus'],
-                meter=outcome.get('search_slice'), observed_new_candidates=len(observation['candidates']) if observation else None,
+        state['portfolio']=dict(invested={},deferred={},seen_w=set(),pending_w=None,last_branch=None,last_review=None)
+    enabled=c.settings(root).get('search_policy') is not None
+    for job,payload,seal,seal_sha in sources:
+        if enabled:apply_source(root,job,payload,seal,state)
+        if 'portfolio' in state:_portfolio_update(root,job,payload,seal,state,seal_sha)
+        step=job['step'];intent=execution.record(root,step)/'native-intent.json'
+        if job['role']=='W' and job.get('search') and intent.exists():
+            value=c.read(c.regular(intent))
+            if value['task_sha256']!=c.digest(root/'jobs'/f'{step:03d}.json'):raise ValueError('W dispatch identity changed')
+            outcome=c.read(execution.record(root,step)/'native-outcome.json')
+            observation=c.read(root/seal['observations']['path']) if seal.get('observations') else None
+            state['accepted_slices'].append(dict(step=step,focus=job['search']['focus'],meter=outcome.get('search_slice'),
+                observed_new_candidates=len(observation['candidates']) if observation else None,
                 candidate_coverage=observation['coverage']['status'] if observation else 'unknown'))
-            focus = job['search']['focus']
-            if focus and focus['action'] == 'repair':
-                repair_root = job['search']['repair_root']
-                state['repairs'][repair_root] = state['repairs'].get(repair_root, 0) + 1
+            focus=job['search']['focus']
+            if focus and focus['action']=='repair':
+                repair_root=job['search']['repair_root'];state['repairs'][repair_root]=state['repairs'].get(repair_root,0)+1
     return state
 
 
-def project(root, before_step):
-    return fold(root, history.source_sequence(root, before_step))
+def project(root,before_step):
+    return fold(root,history.source_sequence(root,before_step))
 
 
-def bind(root, step, role, protocol=6, *, write_pages=True, state=None, unified=False):
-    limits = c.settings(root).get('search_policy')
-    if limits is None:
-        return None
-    limits = policy(limits)
-    state = project(root, step) if state is None else state
-    focus = state['focus'] if role == 'W' else None
-    repair_root = None
-    repair_binding = None
-    if focus is not None and focus['action'] == 'repair':
-        # The latest scientific chooser owns this path in its original workspace.
-        chooser_step = max(index for index in range(1, step)
-            if c.read(root / 'jobs' / f'{index:03d}.json')['role'] in {'H', 'A'})
-        chooser = c.read(root / 'jobs' / f'{chooser_step:03d}.json')
-        if chooser.get('handoff_protocol', 1) >= 7:
-            sources = [source for source, _, _ in history.direct_sources(root, chooser)
-                       if source['role'] == 'W' and ((source.get('search') or {}).get('focus') or {}).get('mechanism_ref') == focus['mechanism_ref']]
-            repair_binding = 'available' if len(sources) == 1 else 'ambiguous' if sources else 'unavailable'
-            source = sources[0] if len(sources) == 1 else None
-        else:
-            if focus['repair_source'] is None:
-                raise ValueError('Repair requests require an exact original W conclusion')
-            source = _evidence(root, chooser, focus['repair_source'])
-            if source['role'] != 'W' or ((source.get('search') or {}).get('focus') or {}).get('mechanism_ref') != focus['mechanism_ref']:
-                raise ValueError('Repair source must be a same-mechanism W original')
-        if source is not None:
-            repair_root = source['search'].get('repair_root') or source['step']
-    elif focus is not None and focus['repair_source'] is not None:
-        raise ValueError('Only repair requests may name a repair source')
-    if unified:
-        return dict(focus=focus, repair_root=repair_root, limits=limits, files=[],
-                    **(dict(order_head=state['order']['remaining'][0] if state['order']['remaining'] else None,
-                            order_diagnostics=state['order']['diagnostics']) if protocol >= 13 else {}),
-                    **(dict(repair_binding=repair_binding) if protocol >= 7 else {}))
-    pending = [ref for ref, item in state['mechanisms'].items() if item['status'] == 'pending']
-    def clip(text, size):
-        return text.encode()[:size].decode('utf-8', errors='ignore')
-    choices = list(dict.fromkeys([*(list(state['authorized'])), *pending]))
-    choices.sort(key=lambda ref: (ref != (focus or {}).get('mechanism_ref'), ref not in pending, ref))
-    rows = [dict(mechanism_ref=ref, label=clip(state['mechanisms'][ref]['label'], 80),
-                 minimal_test=clip(state['mechanisms'][ref]['minimal_test'], 160), status=state['mechanisms'][ref]['status'],
-                 original=f'inputs/history/nodes/{state["mechanisms"][ref]["source_h"]:03d}/0001.json') for ref in choices[:MAX_COMMITMENTS]]
-    view = dict(scope=clip(state['scope'] or '', 240), commitments=rows, pending_count=len(pending),
-        omitted_count=max(0, len(choices) - len(rows)), index='inputs/history/pages/0001.json' if step > 1 else None,
-        focus=focus, accepted_w_slices=len(state['accepted_slices']),
-        recent_w=[dict(step=row['step'], action=(row['focus'] or {}).get('action'),
-            mechanism_ref=(row['focus'] or {}).get('mechanism_ref'), meter=row['meter'],
-            observed_new_candidates=row['observed_new_candidates'], candidate_coverage=row['candidate_coverage'],
-            original=f'inputs/history/nodes/{row["step"]:03d}/0001.json') for row in state['accepted_slices'][-2:]],
-        candidate_count='Unknown unless covered by the sealed N2 observer; candidates are not dispatches.',
-        slice=dict(**limits, soft_seconds=limits['max_w_seconds'] * .8, soft_observed_tokens=int(limits['max_w_observed_tokens'] * .8)),
-        instructions='H declares scientific scope/commitments; A disposes exact refs with bound conclusion paths. '
-            'Enabled experiment needs a non-null H plan/focus. A null review/next_focus clears focus; continue_w needs an explicit focus. '
-            'Before deep improvement screen pending commitments or justify deferral/waiver. W reports ordinary science; '
-            'W follows its bound focus and does not invent a new mechanism. '
-            'do not maintain a ledger. Soft windows are initial advice, not notifications. Hard overruns retain unsealed failure.')
-    if protocol >= 7:
-        view['instructions'] = ('H declares scientific scope and mechanisms; A reports only changed dispositions. '
-            'Omissions and same-status restatements retain sealed state. Choose mechanisms/actions and explain scientific reasons; '
-            'the host binds screening and repair tasks, not scientific support. Do not write evidence paths or repair sources. '
-            'Enabled experiment needs an H plan/focus; continue_w needs next_focus. Screen pending mechanisms before improvement '
-            'or explain deferral/waiver. W follows its frozen focus and reports science, not a ledger. '
-            'Hard slice overruns retain unsealed failure; soft windows are advice.')
-        view['focus'] = {key: value for key, value in focus.items() if key != 'repair_source'} if focus else None
-        view['repair_binding'] = repair_binding
-    if budget.node_mode(root)=='soft':
-        view['instructions']=view['instructions'].replace(
-            'Hard slice overruns retain unsealed failure; soft windows are advice.',
-            'Node time/token budgets are soft targets: preserve results and conclude near targets; shared limits remain hard.')
-        view['instructions']=view['instructions'].replace(
-            'Soft windows are initial advice, not notifications. Hard overruns retain unsealed failure.',
-            'Soft targets are advice, not live notifications. Shared hard limits retain unsealed failure.')
-    files = []
-    if protocol >= 8:
-        view['instructions'] += (' H plans contain only this round\'s additions/revisions (at most four), not the whole '
-            'portfolio. Omitted registered commitments stay active. Focus names a declared new label or unique existing '
-            'label/ref; undeclared new mechanisms never acquire authorization. Read mechanism_index for other identities; '
-            'Choose by mechanism_ref when a label is truncated; short excerpts link to the original H conclusion.')
-        registry = [dict(mechanism_ref=ref, label=clip(item['label'], 80), label_truncated=len(item['label'].encode()) > 80, status=item['status'],
-                         minimal_test=clip(item['minimal_test'], 160),
-                         minimal_test_truncated=len(item['minimal_test'].encode()) > 160,
-                         original=f'inputs/history/nodes/{item["source_h"]:03d}/0001.json')
-                    for ref, item in sorted(state['mechanisms'].items())]
-        prefix = 'inputs/search/mechanisms'
-        for offset in range(0, len(registry), 16):
-            number = offset // 16 + 1
-            path = f'{prefix}/{number:04d}.json'
-            value = dict(mechanisms=registry[offset:offset + 16],
-                next_page=f'{prefix}/{number + 1:04d}.json' if offset + 16 < len(registry) else None,
-                omitted_count=max(0, len(registry) - offset - 16))
-            raw = (json.dumps(value, ensure_ascii=False, indent=2) + '\n').encode()
-            if len(raw) > history.MAX_PAGE_BYTES:
-                raise ValueError('Mechanism navigation exceeds page byte capacity')
-            if write_pages:
-                destination = c.workspace(root, step) / path
-                if destination.exists() or destination.is_symlink():
-                    if c.regular(destination).read_bytes() != raw:
-                        raise ValueError('Frozen mechanism navigation changed')
-                else:
-                    if (root / 'jobs' / f'{step:03d}.json').exists():
-                        raise ValueError('Frozen mechanism navigation is missing')
-                    if any(parent.is_symlink() for parent in destination.parents):
-                        raise ValueError('Mechanism navigation directory is not original')
-                    c.write(destination, value);destination.chmod(0o400)
-                files.append(dict(path=path, sha256=c.digest(destination), size_bytes=len(raw)))
-        view['mechanism_index'] = f'{prefix}/0001.json' if registry else None
-        view['mechanism_count'] = len(registry)
-    while len(json.dumps(view, ensure_ascii=False, indent=2).encode()) > MAX_VIEW_BYTES and len(view['commitments']) > 1:
-        view['commitments'].pop()
-        view['omitted_count'] += 1
-    if len(json.dumps(view, ensure_ascii=False, indent=2).encode()) > MAX_VIEW_BYTES:
-        raise ValueError('Default search view exceeds its byte bound')
-    return dict(focus=focus, repair_root=repair_root, limits=limits, view=view,
-                **(dict(files=files) if protocol >= 8 else {}),
-                **(dict(repair_binding=repair_binding) if protocol >= 7 else {}))
+def bind(root,step,role,protocol=None,*,write_pages=True,state=None,unified=True):
+    limits=c.settings(root).get('search_policy')
+    if limits is None:return None
+    state=project(root,step) if state is None else state
+    focus=state['focus'] if role=='W' else None
+    repair_root=repair_binding=None
+    if focus is not None and focus['action']=='repair':
+        chooser_step=max(index for index in range(1,step) if c.read(root/'jobs'/f'{index:03d}.json')['role'] in {'H','A'})
+        chooser=c.read(root/'jobs'/f'{chooser_step:03d}.json')
+        sources=[source for source,_,_ in history.direct_sources(root,chooser) if source['role']=='W'
+            and ((source.get('search') or {}).get('focus') or {}).get('mechanism_ref')==focus['mechanism_ref']]
+        repair_binding='available' if len(sources)==1 else 'ambiguous' if sources else 'unavailable'
+        if len(sources)==1:repair_root=sources[0]['search'].get('repair_root') or sources[0]['step']
+    return dict(focus=focus,allocation=copy.deepcopy(state['order']['allocation']),unfinished_plan=copy.deepcopy(state['order']['remaining']),
+        intent_diagnostics=state['order']['diagnostics'],repair_root=repair_root,repair_binding=repair_binding,limits=policy(limits),files=[])
 
 
-def launch_reason(root, job):
-    if job['role'] != 'W':
-        return None
-    if job.get('handoff_protocol', 1) >= 8 and job.get('input_selection_status') == 'unresolved':
-        return 'implementation_unresolved'
-    if c.settings(root).get('search_policy') is None:
-        return None
-    state = project(root, job['step'])
-    focus = job['search']['focus']
-    if job.get('handoff_protocol', 1) >= 13:
-        if job['search']['order_diagnostics']:
-            return job['search']['order_diagnostics'][0]['code']
-        if focus is None or job['search']['order_head'] is None or focus['mechanism_ref'] != job['search']['order_head']['mechanism_ref']:
-            return 'order_focus_conflict'
-    if focus is None:
-        return 'search_focus_required'
-    if focus['mechanism_ref'] not in state['authorized']:
-        return 'search_focus_outside_h_scope'
-    if job.get('handoff_protocol', 1) < 13 and focus['action'] == 'improve' and any(item['status'] == 'pending' for item in state['mechanisms'].values()):
-        return 'search_commitments_pending'
-    if focus['action'] == 'repair' and job['search'].get('repair_binding') in {'unavailable', 'ambiguous'}:
-        return 'search_repair_source_' + job['search']['repair_binding']
-    if focus['action'] == 'repair' and state['repairs'].get(job['search']['repair_root'], 0) >= job['search']['limits']['max_requested_repairs']:
-        return 'search_repair_limit'
+def launch_reason(root,job):
+    if job['role']!='W':return None
+    if job.get('input_selection_status')=='unresolved':return 'implementation_unresolved'
+    if c.settings(root).get('search_policy') is None:return None
+    bound=job['search'];focus=bound['focus'];state=project(root,job['step'])
+    if bound['intent_diagnostics']:return bound['intent_diagnostics'][0]['code']
+    if focus is None:return 'science_plan_empty'
+    if focus['mechanism_ref'] not in state['authorized']:return 'search_focus_outside_h_scope'
+    if focus['action']=='repair' and bound['repair_binding'] in {'unavailable','ambiguous'}:return 'search_repair_source_'+bound['repair_binding']
+    if focus['action']=='repair' and state['repairs'].get(bound['repair_root'],0)>=bound['limits']['max_requested_repairs']:return 'search_repair_limit'
     return None
 
 
-def validate_payload(root, job, payload):
-    if job.get('handoff_protocol', 1) < 5 or c.settings(root).get('search_policy') is None:
-        return
-    state = project(root, job['step'])
-    _apply(root, job, payload, state)
+def validate_payload(root,job,payload):
+    if c.settings(root).get('search_policy') is None:return
+    diagnostics=assess_payload(root,job,payload)
+    if diagnostics:raise UnresolvedSearch(diagnostics[0]['code'],diagnostics[0]['subject'],'Scientific intent needs clarification')
 
 
 def accept(root, job):
@@ -490,9 +266,9 @@ def portfolio_policy(value):
             or type(value['review_after_cycles']) is not int or value['review_after_cycles'] <= 0):
         raise ValueError('Portfolio review needs a positive completed-cycle frequency')
     version = value.get('version', 2)
-    if type(version) is not int or version not in (1, 2):
+    if type(version) is not int or version != 2:
         raise ValueError('Unsupported frozen portfolio semantics')
-    return dict(review_after_cycles=value['review_after_cycles'], **(dict(version=2) if version == 2 else {}))
+    return dict(review_after_cycles=value['review_after_cycles'],version=2)
 
 
 def _portfolio_cycle(portfolio, mechanisms, branch):
@@ -510,163 +286,70 @@ def _portfolio_update(root, job, payload, seal, state, seal_sha=None):
     if job['role'] == 'W':
         focus = (job.get('search') or {}).get('focus')
         if focus and focus['mechanism_ref'] in mechanisms:
-            portfolio['pending_w'] = dict(step=job['step'], identity=(job['step'], seal_sha), branch=focus['mechanism_ref'])
+            identity=(job['step'],seal_sha)
+            if focus['action']=='repair':
+                original=job['search']['repair_root']
+                identity=(original,c.digest(c.regular(c.host_record(c.workspace(root,original))/'result-identity.json')))
+            portfolio['pending_w']=dict(step=job['step'],identity=identity,branch=focus['mechanism_ref'])
         return
     if job['role'] != 'A' or job.get('purpose') == 'closeout':
         return
     control = seal.get('control_outcome', {})
-    valid = all(control.get(key) != 'unresolved' for key in ('search_status', 'selection_status', 'decision_status'))
+    valid = all(control.get(key) != 'unresolved' for key in ('search_status', 'selection_status', 'decision_status', 'portfolio_status'))
     ordinary = not job.get('author_correction') and payload.get('next_action') not in {'audit', 'extract', 'wait'}
     pending = portfolio['pending_w']
     original_cycle = ordinary
     if job.get('author_correction') and pending:
         original = history._source(root, job['author_correction']['root']['step'])[0]
         original_cycle = (original['role'] == 'A' and any(ref['path'] == f'inputs/parents/{pending["step"]:03d}/conclusion.json' for ref in original['direct_refs']))
-    if valid and original_cycle and payload.get('next_action') not in {'audit', 'extract', 'wait'} and pending and any(ref['path'] == f'inputs/parents/{pending["step"]:03d}/conclusion.json' for ref in job['direct_refs']):
+    focus=state['focus']
+    repairing=focus and focus['action']=='repair' and pending and focus['mechanism_ref']==pending['branch']
+    if valid and original_cycle and not repairing and payload.get('next_action') not in {'audit', 'extract', 'wait'} and pending and any(ref['path'] == f'inputs/parents/{pending["step"]:03d}/conclusion.json' for ref in job['direct_refs']):
         if pending['identity'] not in portfolio['seen_w']:
             _portfolio_cycle(portfolio, mechanisms, pending['branch'])
             portfolio['seen_w'].add(pending['identity'])
         portfolio['pending_w'] = None
     # Audit/extraction/wait never renew the window. An author may clarify the
     # original global tradeoff without manufacturing another W+A cycle.
-    if valid and payload.get('next_action') in {'continue_w', 'revise_h', 'finish'} and (payload.get('portfolio_review') or '').strip():
+    if valid and payload.get('next_action') in {'continue_w', 'revise_h', 'finish'} and ((payload.get('portfolio_review') or '').strip() or
+            (payload.get('search_review') or {}).get('next_focus') is not None and (payload.get('route_reason') or '').strip()):
         portfolio['invested'].clear();portfolio['deferred'].clear()
         portfolio['last_review'] = job['step']
 
 
-def portfolio_due(portfolio, mechanisms, branch, threshold, *, version=1):
-    if version == 2:
-        if branch is None or branch not in mechanisms:
-            return False
-        def overdue(ref):
-            return (mechanisms[ref]['status'] in {'pending', 'deferred'}
-                    and portfolio['deferred'].get(ref, 0) >= threshold)
-        # Allocating an overdue commitment always remains possible, including
-        # when another commitment is also overdue. A review may retain any route.
-        return not overdue(branch) and any(ref != branch and overdue(ref) for ref in mechanisms)
-    return (branch is not None and branch == portfolio['last_branch']
-            and portfolio['invested'].get(branch, 0) >= threshold
-            and any(ref != branch and item['status'] in {'pending', 'deferred'}
-                    and portfolio['deferred'].get(ref, 0) >= threshold for ref, item in mechanisms.items()))
+def portfolio_due(portfolio,mechanisms,branch,threshold,*,version=2):
+    if branch is None or branch not in mechanisms:return False
+    overdue=lambda ref:mechanisms[ref]['status'] in {'pending','deferred'} and portfolio['deferred'].get(ref,0)>=threshold
+    return not overdue(branch) and any(ref!=branch and overdue(ref) for ref in mechanisms)
 
 
-def portfolio_assess(root, job, payload):
-    if job.get('handoff_protocol', 1) < 11 or job['role'] != 'A' or job.get('purpose') == 'closeout':
-        return []
-    if payload['next_action'] != 'continue_w':
-        return []
-    state = project(root, job['step'])
-    diagnostics = _apply(root, job, payload, state)
+def portfolio_assess(root,job,payload,*,interpretation=None,decision_diagnostics=None,selection_diagnostics=None):
+    configured=c.settings(root).get('portfolio_policy')
+    if configured is None or job['role']!='A' or job.get('purpose') is not None or payload['next_action']!='continue_w':return []
+    interpretation=interpret(root,job,payload) if interpretation is None else interpretation
+    state=copy.deepcopy(interpretation['state'])
     from . import decision
-    selected = []
-    c.selected_inputs(c.workspace(root, job['step']), payload, job, selected)
-    control = dict(search_status='unresolved' if diagnostics else 'applied',
-                   selection_status='unresolved' if selected else 'applied', decision_status='unresolved' if decision.assess(root, job, payload) else 'applied')
-    _portfolio_update(root, job, payload, dict(control_outcome=control), state)
-    if job.get('handoff_protocol', 1) >= 13:
-        _order_update(root, job, payload, dict(control_outcome=control), state)
-    focus = state['focus']
-    branch = focus['mechanism_ref'] if focus else None
-    policy = c.settings(root)['portfolio_policy']
-    threshold = policy['review_after_cycles']
-    version = 2 if job.get('handoff_protocol', 1) >= 12 else 1
-    if portfolio_due(state['portfolio'], state['mechanisms'], branch, threshold, version=version):
-        return [dict(code='a_portfolio_review_required', subject=branch)]
+    if decision_diagnostics is None:decision_diagnostics=decision.assess(root,job,payload,focus=interpretation['focus'])
+    if selection_diagnostics is None:
+        selection_diagnostics=[];c.selected_inputs(c.workspace(root,job['step']),payload,job,selection_diagnostics)
+    control=dict(search_status='unresolved' if interpretation['diagnostics'] else 'applied',
+        selection_status='unresolved' if selection_diagnostics else 'applied',decision_status='unresolved' if decision_diagnostics else 'applied')
+    _portfolio_update(root,job,payload,dict(control_outcome=control),state)
+    focus=interpretation['focus'];branch=focus['mechanism_ref'] if focus else None
+    explicit=(payload.get('search_review') or {}).get('next_focus') is not None
+    explained=(payload.get('portfolio_review') or '').strip() or explicit and (payload.get('route_reason') or '').strip()
+    if not explained and portfolio_due(state['portfolio'],state['mechanisms'],branch,configured['review_after_cycles']):
+        return [dict(code='a_portfolio_review_required',subject=branch)]
     return []
 
 
-def _order_update(root, job, payload, seal, state):
-    """Replay author choices and exact accepted opportunities; no ranking or ledger."""
-    if job.get('purpose') is not None or job['role'] not in {'H', 'A'}:
-        return []
-    order, mechanisms = state['order'], state['mechanisms']
-    control = seal.get('control_outcome', {})
-    if any(control.get(key) == 'unresolved' for key in ('search_status', 'selection_status', 'decision_status')):
-        return []
-    if job['role'] == 'A' and payload['next_action'] in {'audit', 'extract', 'wait'}:
-        return []
-    focus = state['focus']
-    if job['role'] == 'A':
-        sources = [(source, c.digest(c.host_record(c.workspace(root, source['step'])) / 'result-identity.json'))
-                   for source, _, _ in history.direct_sources(root, job) if source['role'] == 'W']
-        if len(sources) == 1:
-            source, identity = sources[0]
-            original = c.read(root / 'jobs' / f'{job["author_correction"]["root"]["step"]:03d}.json') if job.get('author_correction') else job
-            eligible = original['role'] == 'A' and any(ref['path'] == f'inputs/parents/{source["step"]:03d}/conclusion.json' for ref in original['direct_refs'])
-            head = (source.get('search') or {}).get('order_head')
-            repair = focus and focus['action'] == 'repair' and head and focus['mechanism_ref'] == head['mechanism_ref']
-            if eligible and (source['step'], identity) in state['portfolio']['seen_w'] and head and order['remaining'][:1] == [head] and not repair:
-                order['remaining'].pop(0)
-    order['remaining'] = [item for item in order['remaining'] if mechanisms[item['mechanism_ref']]['status'] != 'waived']
-    before = copy.deepcopy(order['remaining'])
-    choice = (payload.get('search_plan') if job['role'] == 'H' else payload.get('search_review')) or {}
-    prefix = choice.get('exploration_order')
-    diagnostics = []
-    resolved = []
-    if prefix is not None:
-        for name in prefix['priority']:
-            matches = [name] if name in mechanisms else [ref for ref, item in mechanisms.items() if item['label'] == name]
-            ref = matches[0] if len(matches) == 1 else None
-            if ref is None or ref in resolved or mechanisms[ref]['status'] == 'waived':
-                diagnostics.append(dict(code='order_priority_unresolved', subject=name))
-            else:
-                resolved.append(ref)
-        if not prefix['reason'].strip():
-            diagnostics.append(dict(code='order_reason_required', subject='exploration_order'))
-        if not diagnostics:
-            current = {item['mechanism_ref']: item for item in before}
-            order['remaining'] = [current.get(ref, dict(mechanism_ref=ref, planned_step=job['step'])) for ref in resolved]
-            order['remaining'] += [item for item in before if item['mechanism_ref'] not in resolved]
-    if payload['next_action'] in {'experiment', 'continue_w'}:
-        if not focus or not order['remaining'] or focus['mechanism_ref'] != order['remaining'][0]['mechanism_ref']:
-            diagnostics.append(dict(code='order_focus_conflict', subject=(focus or {}).get('mechanism_ref') or 'empty order'))
-    if diagnostics:
-        order['remaining'] = before
-    elif prefix is not None and job['role'] == 'A':
-        state['portfolio']['invested'].clear()
-        state['portfolio']['deferred'].clear()
-        state['portfolio']['last_review'] = job['step']
-    order['diagnostics'] = diagnostics
-    return diagnostics
-
-
-def order_assess(root, job, payload):
-    if job.get('handoff_protocol', 1) < 13 or job.get('purpose') is not None or job['role'] not in {'H', 'A'}:
-        return []
-    state = project(root, job['step'])
-    diagnostics = _apply(root, job, payload, state)
-    selected = []
-    c.selected_inputs(c.workspace(root, job['step']), payload, job, selected)
-    from . import decision
-    control = dict(search_status='unresolved' if diagnostics else 'applied', selection_status='unresolved' if selected else 'applied',
-                   decision_status='unresolved' if decision.assess(root, job, payload) else 'applied')
-    seal = dict(control_outcome=control)
-    _portfolio_update(root, job, payload, seal, state)
-    return _order_update(root, job, payload, seal, state)
-
-
-def portfolio_view(state, threshold, *, prospective=False, version=1):
-    portfolio = copy.deepcopy(state['portfolio'])
-    if prospective and portfolio['pending_w']:
-        _portfolio_cycle(portfolio, state['mechanisms'], portfolio['pending_w']['branch'])
-    branch = portfolio['last_branch']
-    if version == 2:
-        overdue = [ref for ref, item in state['mechanisms'].items() if item['status'] in {'pending', 'deferred'}
-                   and portfolio['deferred'].get(ref, 0) >= threshold]
-        return dict(version=2, review_after_cycles=threshold, last_assessed_branch=branch,
-                    completed_cycles=state['portfolio']['invested'].get(branch, 0),
-                    cycles_if_assessed=portfolio['invested'].get(branch, 0),
-                    pending_assessment=bool(prospective and portfolio['pending_w']),
-                    overdue_count_if_assessed=len(overdue),
-                    review_required_for_non_overdue_selection=bool(overdue),
-                    last_review_step=portfolio['last_review'],
-                    scope='On A continue_w, choose an overdue pending/deferred commitment or explain the opportunity cost in portfolio_review. '
-                          'Any explained selection may continue. H ranks solutions scientifically; no host ranking or forced full coverage. '
-                          'Pending W assessment and projected delay are not completed cycles.')
-    return dict(review_after_cycles=threshold, same_branch=branch,
-                completed_cycles=state['portfolio']['invested'].get(branch, 0),
-                cycles_if_assessed=portfolio['invested'].get(branch, 0),
-                review_due_for_same_branch=portfolio_due(portfolio, state['mechanisms'], branch, threshold),
-                last_review_step=portfolio['last_review'],
-                pending_assessment=bool(prospective and portfolio['pending_w']),
-                scope='All registered H commitments; tradeoffs are scientific. Review may retain this branch. Counts are cumulative same-branch W+A cycles in this review window, not experiments. A pending assessment is prospective.')
+def portfolio_view(state,threshold,*,prospective=False,version=2):
+    portfolio=copy.deepcopy(state['portfolio'])
+    if prospective and portfolio['pending_w']:_portfolio_cycle(portfolio,state['mechanisms'],portfolio['pending_w']['branch'])
+    branch=portfolio['last_branch']
+    overdue=[ref for ref,item in state['mechanisms'].items() if item['status'] in {'pending','deferred'} and portfolio['deferred'].get(ref,0)>=threshold]
+    return dict(version=2,review_after_cycles=threshold,last_assessed_branch=branch,
+        completed_cycles=state['portfolio']['invested'].get(branch,0),cycles_if_assessed=portfolio['invested'].get(branch,0),
+        pending_assessment=bool(prospective and portfolio['pending_w']),overdue_count_if_assessed=len(overdue),
+        review_required_for_non_overdue_selection=bool(overdue),last_review_step=portfolio['last_review'],
+        scope='A compares scientific opportunity cost; explicit justified selection or portfolio_review may retain any route. Pending W assessment is not a completed cycle.')

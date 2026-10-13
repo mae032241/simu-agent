@@ -80,7 +80,7 @@ def _config(path):
     if set(value) != keys or value['contract_version'] != 2 or value['feedback_version'] != 1:
         raise ValueError('Explicit wrapper contract2 configuration required')
     scope = value['scope']
-    if set(scope) != {'step','role','job_sha256','execution_key','mechanism_ref'} or type(scope['step']) is not int or scope['step'] <= 0 or scope['role'] not in {'H','W','A','E'}:
+    if set(scope) != ({'step','role','job_sha256','execution_key','mechanism_ref','handoff_protocol'} if 'handoff_protocol' in scope else {'step','role','job_sha256','execution_key','mechanism_ref'}) or type(scope['step']) is not int or scope['step'] <= 0 or scope['role'] not in {'H','W','A','E'}:
         raise ValueError('Exact frozen scientific execution scope required')
     for key in ('job_sha256','execution_key'):
         if not isinstance(scope[key],str) or len(scope[key]) != 64:raise ValueError('Execution digest required')
@@ -344,6 +344,10 @@ def observe(request):
 
 def configure(root, step, run_argv, runs_root, output):
     """Trusted launcher's host-side preparation, before entering its namespace."""
+    from .protocol import require_current
+    require_current(root)
+    from . import contracts as _contracts
+    require_current(root,_contracts.read(_contracts.regular(Path(root)/'jobs'/f'{step:03d}.json')))
     from scidiscovery.research_loop import contracts as c, execution, lineage
     root=Path(root).resolve();job=c.read(c.regular(root/'jobs'/f'{step:03d}.json'))
     c._validate_inputs(root,c.workspace(root,step),job)
@@ -360,9 +364,9 @@ def configure(root, step, run_argv, runs_root, output):
             if completion is None:continue
             parents.append(dict(name=candidate,candidate_id=candidate,model=dict(path=str(path),sha256=model['sha256'],size_bytes=model['size_bytes']),
                                 binding=_binding(context,completion)))
+    from scidiscovery.research_loop.protocol import stage_scope
     value=dict(contract_version=2,feedback_version=1,record_dir=str(c.workspace(root,step)/'work/lineage'),runs_root=str(runs_root),run_argv=run_argv,
-        scope=dict(step=step,role=job['role'],job_sha256=c.digest(root/'jobs'/f'{step:03d}.json'),execution_key=execution.identity(root,step),
-                   mechanism_ref=((job.get('search') or {}).get('focus') or {}).get('mechanism_ref')),
+        scope=stage_scope(root,job),
         parents=parents,evaluation_key='covshift-public-val-v1')
     from scidiscovery.research_loop import experiments
     value=experiments.configure(root,step,'cov_execution:experiment',value,output)

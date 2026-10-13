@@ -32,9 +32,8 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
             worker_fragment_policy: dict | None = None) -> dict:
     """Freeze an explicit goal and finite launch budgets in a fresh directory."""
     portfolio_limits = search.portfolio_policy(portfolio_policy) if portfolio_policy is not None else None
-    if exploration_order_version is not None and (type(exploration_order_version) is not int or exploration_order_version != 1
-            or portfolio_limits is None or portfolio_limits.get('version', 1) != 2):
-        raise ValueError('Exploration order requires explicit version1 and portfolio version2')
+    if exploration_order_version is not None:
+        raise ValueError('Author priority-table strategy is retired; current science declares intent directly')
     if portfolio_limits is not None:
         if search_policy is None or lineage_projection_version != 1:
             raise ValueError('Portfolio review requires H commitment search and unified lineage projection')
@@ -111,6 +110,9 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
         model=model, reasoning_effort=reasoning_effort, service_tier=service_tier,
         max_output_item_bytes=max_output_item_bytes,
         max_output_total_bytes=max_output_total_bytes)
+    from .protocol import CURRENT
+    settings['handoff_protocol']=CURRENT
+    settings['handoff_authority_version']=settings['lineage_projection_version']=settings['selection_protocol']=1
     settings['node_budget_mode'] = node_budget_mode
     settings['live_feedback_version'] = 1
     settings['experiment_interface_version'] = 1
@@ -121,8 +123,6 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
         settings['decision_contract_version'] = decision_contract_version
     if portfolio_limits is not None:
         settings['portfolio_policy'] = portfolio_limits
-    if exploration_order_version is not None:
-        settings['exploration_order_version'] = exploration_order_version
     if fragment_limits is not None:
         settings['worker_fragment_policy'] = fragment_limits
     if candidate_audit_policy is not None:
@@ -169,6 +169,8 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
 
 @contextmanager
 def _writer(root):
+    from .protocol import require_current
+    require_current(root)
     descriptor = os.open(root / "host-run.lock",
         os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
     try:
@@ -183,6 +185,8 @@ def _writer(root):
 
 def run(root: Path) -> dict:
     """Reconstruct routing from sealed nodes; never replay an uncertain launch."""
+    from .protocol import require_current
+    require_current(root)
     root = Path(root).resolve()
     with _writer(root):
         return _run(root)
@@ -269,6 +273,8 @@ def _route(root, step, role, result, job, current_h, current_w):
         record = execution.record(root, step)
         ended = checkpoint.stage_end(root, job, record) if (record / 'stage-end.json').exists() else None
         question = 'Review the scientific contribution and original goal limits; control ended this stage for ' + ended['reason'] + '.' if ended else ''
+        if not ended and contracts.read(_record(root,step)/'result-identity.json')['control_outcome'].get('stage_end_reason')=='continuation_unavailable':
+            question='Frozen context continuation was unavailable; judge the original retained contribution and its limitations.'
         route = ("A", _parents(current_h, step), question, None)
     elif role == "A":
         action = result["next_action"]
@@ -277,7 +283,7 @@ def _route(root, step, role, result, job, current_h, current_w):
             route = ("W", parents, instruction, None)
         elif action == "revise_h":
             route = ("H", parents, instruction, None)
-        elif action == "audit" and job.get("handoff_protocol", 1) >= 9:
+        elif action == "audit":
             route = ("A", parents, instruction, None)
         elif action == "extract":
             route = ("E", parents, instruction, dict(role="A", step=step))
@@ -321,6 +327,8 @@ def _seal_reason(error):
 
 
 def _run(root):
+    from .protocol import require_current
+    require_current(root)
     settings = contracts.settings(root)
     if budget.closeout_state(root)['begin'] is not None:
         return _run_closeout(root)
@@ -655,7 +663,7 @@ def _run_closeout(root):
                     return _closeout_result(root, 'closeout_native_unsealed', step=step)
         job = contracts.read(path)
         result = contracts.validate(contracts.workspace(root, step))
-        if result['next_action'] == 'audit' and job.get('handoff_protocol', 1) >= 9:
+        if result['next_action'] == 'audit':
             from . import candidate_audit
             audit_status = candidate_audit.execute(root, job, result)
             if audit_status is not None:
@@ -682,6 +690,8 @@ def _run_closeout(root):
 
 
 def closeout(root, *, export_only=False):
+    from .protocol import require_current
+    require_current(root)
     root = Path(root).resolve()
     with _writer(root):
         if budget.closeout_state(root)['begin'] is not None:
@@ -703,6 +713,8 @@ def closeout(root, *, export_only=False):
 
 def worker_resume(root: Path, step: int):
     """Explicitly accept one continuation, or collect its already accepted work."""
+    from .protocol import require_current
+    require_current(root)
     root = Path(root).resolve()
     with _writer(root):
         settings = contracts.settings(root)

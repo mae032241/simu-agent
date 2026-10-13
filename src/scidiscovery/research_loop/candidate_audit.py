@@ -172,6 +172,8 @@ def public_receipt(root, ref):
 
 def execute(root, job, payload):
     """Returns a blocking status, or None once an immutable receipt is available."""
+    from .protocol import require_current
+    require_current(root,job)
     step, chosen = job['step'], payload.get('candidate_recommendation')
     directory = _directory(root, step)
     previous = _outcome(root, step)

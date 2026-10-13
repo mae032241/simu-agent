@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from scidiscovery.research_loop import experiments
+from scidiscovery.research_loop import experiments, protocol
 from scidiscovery.operations.execution import LifecycleCapabilities, lifecycle_capabilities
 from execution_fixtures import execution_registry,remote_registry
 from test_cov_lineage import BACKEND
@@ -21,7 +21,7 @@ from test_cov_lineage import BACKEND
 def managed(tmp_path,request,execution_registry):
     records=tmp_path/'work/lineage'
     config=tmp_path/'config.json'
-    scope=dict(step=2,role='W',job_sha256='a'*64,execution_key='b'*64,mechanism_ref=None)
+    scope=dict(handoff_protocol=14,step=2,role='W',job_sha256='a'*64,execution_key='b'*64,mechanism_ref=None)
     value=dict(admission=dict(version=1,mode='hard'),record_dir=str(records),scope=scope,run_argv=[sys.executable],max_seconds=10)
     kind=request.param
     executor='local_execution:command'
@@ -180,13 +180,16 @@ def test_missing_lifecycle_declaration_is_unavailable_not_method_inference():
 
 
 def test_unregistered_key_and_preserved_config_never_launch(tmp_path,execution_registry):
+    before=snapshot(tmp_path)
     with pytest.raises(experiments.UnsupportedExecution):experiments.registration('missing_execution:command')
-    with pytest.raises(experiments.UnsupportedExecution):experiments.load(dict(record_dir=str(tmp_path)))
+    with pytest.raises(protocol.UnsupportedProtocol,match='current research-loop protocol'):
+        experiments.load(dict(record_dir=str(tmp_path)))
+    assert snapshot(tmp_path)==before
 
 
 def test_nonlocal_contract_retains_different_external_identity_without_core_process_assumptions(tmp_path,remote_registry):
     config=tmp_path/'remote.json'
-    value=dict(admission=dict(version=1,mode='hard'),record_dir=str(tmp_path/'records'),scope=dict(step=2,role='W',job_sha256='a'*64,
+    value=dict(admission=dict(version=1,mode='hard'),record_dir=str(tmp_path/'records'),scope=dict(handoff_protocol=14,step=2,role='W',job_sha256='a'*64,
         execution_key='b'*64,mechanism_ref=None))
     config.write_text(json.dumps(experiments.freeze(value,'remote_execution:fixture',path=config)))
     source=tmp_path/'opaque-package';source.write_bytes(b'not a local script')

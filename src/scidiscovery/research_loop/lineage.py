@@ -227,7 +227,7 @@ def brief(records, state, graph, candidates, indexes, *, selection_protocol=0):
     focus=state['focus'] if state else None
     pending=[ref for ref,item in state['mechanisms'].items() if item['status']=='pending'] if state else []
     value=dict(indexes=indexes,node_count=len(records),recent=recent,
-        mechanisms=dict(count=len(state['mechanisms']) if state else 0,pending_count=len(pending),
+        mechanisms=dict(availability='available' if state else 'unavailable',count=len(state['mechanisms']) if state else 0,pending_count=len(pending),
                         focus={k:v for k,v in focus.items() if k!='repair_source'} if focus else None),
         candidates=dict(count=len(candidates['candidate_index']),coverage=(dict(status=candidates['coverage']['status'],
             note=_clip(candidates['coverage']['note'],96),note_truncated=len(candidates['coverage']['note'].encode())>96) if candidates['coverage'] else None),
@@ -276,7 +276,7 @@ def bounded_brief(value):
                 value['candidates'][field].pop();value['candidates'][omitted]+=1
     while size()>history.MAX_BRIEF_BYTES and value['candidates'].get('adapter_audits'):
         value['candidates']['adapter_audits'].pop();value['candidates']['adapter_audits_omitted_count']+=1
-    order = value['mechanisms'].get('exploration_order')
+    order = value['mechanisms'].get('unfinished_plan')
     while size()>history.MAX_BRIEF_BYTES and order and len(order['remaining']) > 1:
         order['remaining'].pop();order['omitted_count']+=1
     while size()>history.MAX_BRIEF_BYTES and value['mechanisms'].get('overview'):
@@ -308,6 +308,8 @@ def public_relations(graph, sources):
 
 def bind(root, step, role, protocol, *, source_cutoff=None, extra_steps=(), selection_protocol=0,
          audit_projection_version=0, adjacent_audit=None):
+    from .protocol import require_current
+    require_current(root)
     projection=project(root,step,source_cutoff=source_cutoff,extra_steps=extra_steps)
     records,state=projection['records'],projection['search_state']
     add,paged,files=history.page_writer(c.workspace(root,step))
@@ -336,11 +338,11 @@ def bind(root, step, role, protocol, *, source_cutoff=None, extra_steps=(), sele
                      minimal_test=_clip(item['minimal_test'],160),minimal_test_truncated=len(item['minimal_test'].encode())>160,
                      status=item['status'],original=f'inputs/history/nodes/{item["source_h"]:03d}/0001.json')
                 for ref,item in sorted(state['mechanisms'].items())] if state else []
-    if protocol >= 11:
+    if state and 'portfolio' in state:
         for row in mechanisms:
             row['completed_cycles_in_window'] = state['portfolio']['invested'].get(row['mechanism_ref'], 0)
             row['deferred_cycles_in_window'] = state['portfolio']['deferred'].get(row['mechanism_ref'], 0)
-            if protocol >= 12:
+            if state and 'portfolio' in state:
                 pending = state['portfolio']['pending_w'] if role == 'A' else None
                 row['deferred_cycles_if_assessed'] = (row['deferred_cycles_in_window'] + 1
                     if pending and row['mechanism_ref'] != pending['branch'] and row['status'] in {'pending', 'deferred'}
@@ -348,8 +350,8 @@ def bind(root, step, role, protocol, *, source_cutoff=None, extra_steps=(), sele
     mechanism_pages=paged(mechanisms,16,'mechanisms','inputs/lineage/mechanisms','sealed-H-A-interpretation')
     order_rows = [dict(mechanism_ref=item['mechanism_ref'], label=_clip(state['mechanisms'][item['mechanism_ref']]['label'], 80),
                        original=f'inputs/history/nodes/{item["planned_step"]:03d}/0001.json')
-                  for item in state['order']['remaining']] if protocol >= 13 else []
-    order_pages = paged(order_rows, 16, 'opportunities', 'inputs/lineage/order', 'sealed-scientific-exploration-order') if protocol >= 13 else []
+                  for item in state['order']['remaining']] if state else []
+    order_pages = paged(order_rows, 16, 'opportunities', 'inputs/lineage/order', 'sealed-scientific-exploration-order') if state else []
     relations=paged(public_relations(projection['graph'],projection['sources']),16,'relations','inputs/lineage/relations','declared-not-proven-causality')
     indexes=dict(nodes=nodes[0] if nodes else None,candidates=candidates[0] if candidates else None,
                  mechanisms=mechanism_pages[0] if mechanism_pages else None,relations=relations[0] if relations else None)
@@ -365,7 +367,7 @@ def bind(root, step, role, protocol, *, source_cutoff=None, extra_steps=(), sele
     elif audit_projection_version != 0:
         raise ValueError('Unsupported frozen audit projection')
     view=brief(records,state,projection['graph'],overview,indexes,selection_protocol=selection_protocol)
-    if protocol >= 11:
+    if state and 'portfolio' in state:
         threshold = c.settings(root)['portfolio_policy']['review_after_cycles']
         ordered = sorted(mechanisms, key=lambda row: (
             0 if row['status'] in {'pending', 'deferred'} and row.get('deferred_cycles_if_assessed', row['deferred_cycles_in_window']) >= threshold else
@@ -373,13 +375,12 @@ def bind(root, step, role, protocol, *, source_cutoff=None, extra_steps=(), sele
             -row.get('deferred_cycles_if_assessed', row['deferred_cycles_in_window']), row['mechanism_ref']))
         view['mechanisms'].update(overview=ordered[:4], overview_omitted_count=max(0, len(ordered)-4),
                                   index=indexes['mechanisms'],
-                                  portfolio=search.portfolio_view(state, threshold, prospective=role == 'A', version=2 if protocol >= 12 else 1))
-        if protocol >= 13:
-            view['mechanisms']['exploration_order'] = dict(head=order_rows[0]['mechanism_ref'] if order_rows else None,
-                remaining=order_rows[:4], remaining_count=len(order_rows), omitted_count=max(0, len(order_rows)-4),
-                index=order_pages[0] if order_pages else None,
-                rule='Shown queue precedes current A assessment. H experiment selects its shown head; A assesses W first (same-head repair retains the opportunity), applies any explicit priority prefix, then continue_w selects the resulting head.')
-        bounded_brief(view)
+                                  portfolio=search.portfolio_view(state, threshold, prospective=role == 'A', version=2))
+    if state:
+        view['mechanisms']['unfinished_plan']=dict(remaining=order_rows[:4],remaining_count=len(order_rows),
+            omitted_count=max(0,len(order_rows)-4),index=order_pages[0] if order_pages else None,
+            rule='Original unfinished opportunities before this A assessment. Null follows the plan; explicit scientific selection does not reorder or discard omitted items. Only an eligible final W assessment consumes its allocation.')
+    bounded_brief(view)
     if audit_projection_version == 1:
         candidates_view = view['candidates']
         if selection_protocol == 1:

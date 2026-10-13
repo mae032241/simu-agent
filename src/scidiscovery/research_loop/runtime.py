@@ -100,6 +100,10 @@ def node_state(root, step):
 
 
 def _spawn(root, step, mode, attempt=0):
+    from .protocol import require_current
+    require_current(root)
+    from . import contracts as _contracts
+    require_current(root,_contracts.read(_contracts.regular(Path(root)/'jobs'/f'{step:03d}.json')))
     record = execution.record(root, step, attempt)
     bootstrap = ('import runpy,sys;sys.path.insert(0,sys.argv.pop(1));'
                  'runpy.run_module("scidiscovery.research_loop.runtime",run_name="__main__")')
@@ -111,10 +115,18 @@ def _spawn(root, step, mode, attempt=0):
 
 
 def start(root, step, attempt=0):
+    from .protocol import require_current
+    require_current(root)
+    from . import contracts as _contracts
+    require_current(root,_contracts.read(_contracts.regular(Path(root)/'jobs'/f'{step:03d}.json')))
     return _spawn(root, step, 'runner', attempt)
 
 
 def _watch(root, step, attempt=0):
+    from .protocol import require_current
+    require_current(root)
+    from . import contracts as _contracts
+    require_current(root,_contracts.read(_contracts.regular(Path(root)/'jobs'/f'{step:03d}.json')))
     record = execution.record(root, step, attempt)
     binding = execution.identity(root, step, attempt)
     runner = contracts.read(record / 'runner-process.json')
@@ -175,6 +187,10 @@ def _complete_clock(root):
 
 
 def _run(root, step, attempt=0):
+    from .protocol import require_current
+    require_current(root)
+    from . import contracts as _contracts
+    require_current(root,_contracts.read(_contracts.regular(Path(root)/'jobs'/f'{step:03d}.json')))
     record = execution.record(root, step, attempt)
     with _runner_lease(record):
         contracts.settings(root)

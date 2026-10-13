@@ -10,7 +10,10 @@ from . import budget, contracts, controller, native, runtime, search, correction
 
 def status(root: Path):
     root = root.resolve()
-    settings = contracts.read(root / 'settings.json')
+    settings = contracts.settings(root)
+    from . import protocol
+    if type(settings.get('handoff_protocol')) is not int or settings['handoff_protocol']!=protocol.CURRENT:
+        return protocol.archive_status(root)
     nodes = []
     for step in range(1, settings['max_steps'] + 1):
         job_path = root / 'jobs' / f'{step:03d}.json'
@@ -62,10 +65,10 @@ def main(argv=None):
     prepare.add_argument('--node-budget-policy', type=Path, help='Explicit H/W/A/E time/token targets; hard ceilings only with --node-budget-mode hard; no delivery guarantee')
     prepare.add_argument('--node-budget-mode', choices=['soft','hard'], default='soft', help='Scientific node targets are soft by default; shared authorization stays hard')
     prepare.add_argument('--portfolio-review-after-cycles', type=int, help='Enable version2/protocol12 opportunity-cost review after this many unserved W+A cycles; recommended 3')
-    prepare.add_argument('--exploration-order', action='store_true', help='Enable protocol13 execution of scientific exploration order; requires explicit portfolio review')
     prepare.add_argument('--decision-contract', action='store_true', help='Freeze protocol10 scientific A decision requests and exact repeat admission')
     prepare.add_argument('--enable-candidate-audit', action='store_true', help='Opt into protocol9 A audit requests; requires an isolated delivery adapter')
     prepare.add_argument('--delivery-policy', type=Path, help='Explicit frozen closeout reserve and isolated delivery adapter JSON')
+    prepare.add_argument('--worker-context',choices=['same_session','new_context'],help='Qualified W fragments within the same stage; requires explicit resume policy and node budgets')
     prepare.add_argument('--worker-resume-policy', type=Path, help='Explicit qualified same-thread finite continuation policy JSON')
     prepare.add_argument('--max-tokens', type=int, required=True)
     prepare.add_argument('--max-seconds', type=float, required=True, help='Maximum advancement seconds; explicit pauses do not consume this ceiling')
@@ -97,6 +100,9 @@ def main(argv=None):
     args = parser.parse_args(argv)
     root = args.root.expanduser().resolve()
     try:
+        if args.command not in {'prepare','status'}:
+            from .protocol import require_current
+            require_current(root)
         if args.command == 'prepare':
             settings = controller.prepare(root, args.objective, args.public_root,
                 json.loads(args.native_launcher_json), max_tokens=args.max_tokens, max_seconds=args.max_seconds,
@@ -105,7 +111,6 @@ def main(argv=None):
                 candidate_audit_policy={'version':1} if args.enable_candidate_audit else None,
                 decision_contract_version=1 if args.decision_contract else None,
                 portfolio_policy=dict(review_after_cycles=args.portfolio_review_after_cycles) if args.portfolio_review_after_cycles is not None else None,
-                exploration_order_version=1 if args.exploration_order else None,
                 search_policy=contracts.read(contracts.regular(args.search_policy, limit=4096))
                     if args.search_policy is not None else search.DEFAULT_POLICY,
                 correction_policy=contracts.read(contracts.regular(args.correction_policy, limit=4096))
@@ -114,6 +119,7 @@ def main(argv=None):
                     if args.node_budget_policy is not None else None,
                 delivery_policy=contracts.read(contracts.regular(args.delivery_policy, limit=64_000))
                     if args.delivery_policy is not None else None,
+                worker_fragment_policy=dict(context=args.worker_context) if args.worker_context else None,
                 resume_policy=contracts.read(contracts.regular(args.worker_resume_policy, limit=4096))
                     if args.worker_resume_policy is not None else None,
                 history_observer=contracts.read(contracts.regular(args.history_observer_config, limit=64_000))
@@ -150,10 +156,11 @@ def main(argv=None):
         else:
             result = controller.run(root)
     except (OSError, ValueError, RuntimeError) as error:
-        print(json.dumps(dict(status='error', error=str(error)), ensure_ascii=False))
+        from .protocol import UnsupportedProtocol
+        print(json.dumps(dict(status='error',error=str(error),**(dict(code=error.code) if isinstance(error,UnsupportedProtocol) else {})), ensure_ascii=False))
         return 1
     print(json.dumps(result, ensure_ascii=False))
-    return 0 if result.get('status') in {None, 'prepared', 'finish', 'wait', 'paused', 'pause_requested', 'budget_amended', 'delivery_confirmed', 'exported_unsubmitted'} else 2
+    return 0 if result.get('status') in {None, 'preserved_read_only', 'prepared', 'finish', 'wait', 'paused', 'pause_requested', 'budget_amended', 'delivery_confirmed', 'exported_unsubmitted'} else 2
 
 
 if __name__ == '__main__':

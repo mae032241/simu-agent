@@ -49,7 +49,7 @@ def wrapper(tmp_path,execution_registry):
     config = tmp_path / 'config.json'
     value=dict(admission=dict(version=1,mode='hard'),contract_version=2, feedback_version=1, record_dir=str(records), runs_root=str(runs),
         run_argv=[sys.executable, str(backend), '--runs-root', str(runs)],
-        scope=dict(step=2, role='W', job_sha256='a'*64, execution_key='b'*64, mechanism_ref='h001.m1'),
+        scope=dict(handoff_protocol=14,step=2, role='W', job_sha256='a'*64, execution_key='b'*64, mechanism_ref='h001.m1'),
         parents=[], evaluation_key='fixture-public-v1')
     config.write_text(json.dumps(experiments.freeze(value,'cov_execution:experiment',path=config)))
     env = dict(os.environ, PYTHONPATH=str(Path(cov_lineage.__file__).parents[2])+os.pathsep+os.environ.get('PYTHONPATH',''), EXP_WALL_CAP_S='1')

@@ -90,6 +90,8 @@ def _events(root, settings):
 
 @contextmanager
 def _ledger_writer(root):
+    from .protocol import require_current
+    require_current(root)
     fd = os.open(root / 'control-ledger.lock', os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
@@ -99,6 +101,8 @@ def _ledger_writer(root):
 
 
 def _append(root, settings, events, parent, **fields):
+    from .protocol import require_current
+    require_current(root)
     stamp = clock_stamp()
     if events:
         _duration(events[-1], stamp, legacy_elapsed=settings.get('time_budget_basis', 'elapsed') == 'elapsed')
@@ -167,6 +171,8 @@ def snapshot(root, settings=None, *, sample_stamp=None):
 
 def transition(root, phase, reason):
     """Caller owns the host writer lock; runner must obtain it too."""
+    from .protocol import require_current
+    require_current(root)
     if phase not in {'advance', 'paused'}:
         raise ValueError('Unknown control clock phase')
     settings = contracts.settings(root)
@@ -260,6 +266,8 @@ def _delivery_group_live(identity):
 
 
 def inactive(root, reason):
+    from .protocol import require_current
+    require_current(root)
     if execution_blocked(root):
         transition(root, 'advance', 'unknown_or_running_original')
     else:
@@ -268,6 +276,8 @@ def inactive(root, reason):
 
 def amend(root, *, max_tokens=None, max_seconds=None, authorization_note):
     """Operator entry only. A note records a decision; it authenticates nobody."""
+    from .protocol import require_current
+    require_current(root)
     from .controller import _writer
     if not isinstance(authorization_note, str) or not authorization_note.strip():
         raise ValueError('An explicit operator authorization note is required')
@@ -437,6 +447,8 @@ def node_admission(root, job, *, ignore_step=None, intent=None):
 
 
 def accept_node(root, job):
+    from .protocol import require_current
+    require_current(root,job)
     policy = node_limits(root, job)
     if policy is None:
         return None
@@ -472,6 +484,8 @@ def node_report(root, job, intent, meter):
 
 
 def accept_continuation(root, job, paths):
+    from .protocol import require_current
+    require_current(root,job)
     from . import native
     tokens, seconds = _attempt_consumption(root, job, paths)
     policy = node_limits(root, job)
@@ -595,6 +609,8 @@ def exploration_admission(root, job, *, ignore_step=None, intent=None):
 
 
 def begin_closeout(root, cutoff, first_step, reason, *, export_only=False, delivery_sources=None, preparation_seconds=0.):
+    from .protocol import require_current
+    require_current(root)
     settings = contracts.settings(root)
     with _ledger_writer(root):
         events, parent = _events(root, settings)
@@ -607,6 +623,8 @@ def begin_closeout(root, cutoff, first_step, reason, *, export_only=False, deliv
 
 
 def accept_action(root, kind, operation_id, decision, binding, max_seconds):
+    from .protocol import require_current
+    require_current(root)
     settings = contracts.settings(root)
     begin = closeout_state(root)['begin']
     if (settings.get('delivery_policy') is None or settings['delivery_policy']['adapter'] is None
@@ -630,6 +648,8 @@ def accept_action(root, kind, operation_id, decision, binding, max_seconds):
 
 
 def action_outcome(root, intent, result):
+    from .protocol import require_current
+    require_current(root)
     settings = contracts.settings(root)
     _validate_action_result(intent, result)
     with _ledger_writer(root):
@@ -664,6 +684,8 @@ def _validate_action_result(intent, result):
 
 
 def action_process(root, intent, phase, identity):
+    from .protocol import require_current
+    require_current(root)
     if phase not in {'audit', 'promote', 'confirm'} or identity['task_sha256'] != intent['operation_id']:
         raise ValueError('Delivery process differs from its exact action phase')
     path = root / 'host-delivery/action-processes' / (intent['action_id'] + '-' + phase + '.json')
@@ -674,6 +696,8 @@ def action_process(root, intent, phase, identity):
 
 def write_node_hint(root, job, intent, limits, meter, *, observed):
     """Optional replaceable advice; never read as a grant, meter or evidence."""
+    from .protocol import require_current
+    require_current(root,job)
     if node_mode(root)!='soft':
         return
     publish_review(root,job,intent,limits,meter,observed=observed)
@@ -738,6 +762,8 @@ def _review_directory(root,job):
 
 def review_configuration(root,job):
     """Host-owned projection, shared by every implementation of this stage."""
+    from .protocol import require_current
+    require_current(root,job)
     from . import execution,experiments
     settings=contracts.settings(Path(root))
     if settings.get('managed_admission_version')!=experiments.ADMISSION_VERSION or job.get('managed_admission_version')!=experiments.ADMISSION_VERSION:
@@ -756,7 +782,10 @@ def review_configuration(root,job):
 
 def publish_review(root,job,intent,limits,meter,*,observed):
     """Derive replaceable facts from original anchors, never an additional budget."""
+    from .protocol import require_current
+    require_current(root,job)
     from . import execution,experiments,native,search
+    from .protocol import stage_scope
     root=Path(root);settings=contracts.settings(root)
     if job.get('managed_admission_version')!=experiments.ADMISSION_VERSION or settings.get('managed_admission_version')!=experiments.ADMISSION_VERSION:
         raise experiments.UnsupportedExecution('Preserved review contract is read-only; prepare a new instance')
@@ -794,8 +823,7 @@ def publish_review(root,job,intent,limits,meter,*,observed):
             'target_time_reached' if targets and duration>=targets['max_seconds'] else
             'target_tokens_reached' if targets and consumed>=targets['max_observed_tokens'] else None)
         value=dict(version=experiments.ADMISSION_VERSION,stage_anchor=task,
-            scope=dict(step=job['step'],role=job['role'],job_sha256=task,execution_key=execution.identity(root,job['step'],0),
-                mechanism_ref=((job.get('search') or {}).get('focus') or {}).get('mechanism_ref')),
+            scope=stage_scope(root,job),
             native_attempt=dict(number=len(execution.records(root,job['step']))-1,execution_key=execution.identity(root,job['step'])),
             boot_id=stamp['boot_id'],observed_at=stamp['at_unix'],deadline_boottime=stamp['at_boottime']+max(0.,remaining),
             valid_until_boottime=stamp['at_boottime']+10,pending=bool(reason),reason=reason,

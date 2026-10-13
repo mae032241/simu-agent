@@ -14,9 +14,8 @@ def schema():
                     'No evidence paths or hashes: the host binds the actual mechanism and assessed originals.')
 
 
-def _key(job, payload):
+def _key(job, payload, focus):
     request = payload['decision_request']
-    focus = (payload.get('search_review') or {}).get('next_focus') or (job.get('search') or {}).get('focus')
     mechanism = focus.get('mechanism_ref') if focus else None
     candidate = payload.get('candidate_recommendation') if request['decision'] == 'candidate' else None
     return (payload['next_action'], request['decision'], request['question'].strip(),
@@ -43,15 +42,15 @@ def _completed(job, payload, sources):
     return True
 
 
-def assess(root, job, payload):
-    if job.get('handoff_protocol', 1) < 10 or job['role'] != 'A' or job.get('purpose') == 'closeout':
+def assess(root, job, payload, *, focus=None):
+    if c.settings(root).get('decision_contract_version')!=1 or job['role'] != 'A' or job.get('purpose') == 'closeout':
         return []
     if payload['next_action'] not in ACTIONS:
         return []  # Necessary audit, pause and delivery choices are independent.
     request = payload.get('decision_request')
     if request is None or any(not request[key].strip() for key in ('question', 'change_criterion')):
         return [dict(code='a_decision_request_missing', subject=payload['next_action'])]
-    key, basis = _key(job, payload), _basis(root, job)
+    key, basis = _key(job, payload, focus), _basis(root, job)
     sources = {}
     for ref in job['history']['nodes']:
         source = history._source(root, ref['step'])
@@ -61,20 +60,21 @@ def assess(root, job, payload):
     for original, prior, seal, _ in sources.values():
         control = seal.get('control_outcome', {})
         if (original['role'] != 'A' or original.get('purpose') == 'closeout'
-                or original.get('handoff_protocol', 1) < 10
                 or prior.get('next_action') not in ACTIONS
                 or control.get('decision_status') != 'applied'
                 or control.get('search_status') == 'unresolved'
                 or control.get('selection_status') == 'unresolved'):
             continue
         if (prior.get('decision_request') is not None and _completed(original, prior, sources)
-                and _key(original, prior) == key and basis <= _basis(root, original)):
+                and _key(original, prior, control.get('resolved_focus')) == key and basis <= _basis(root, original)):
             return [dict(code='a_decision_request_repeated', subject=payload['next_action'])]
     return []
 
 
 def reason(root, job, payload):
-    diagnostics = assess(root, job, payload)
+    from . import search
+    interpretation=search.interpret(root,job,payload) if c.settings(root).get('search_policy') else None
+    diagnostics = assess(root, job, payload,focus=interpretation['focus'] if interpretation else None)
     if not diagnostics:
         from . import search
         diagnostics = search.portfolio_assess(root, job, payload)

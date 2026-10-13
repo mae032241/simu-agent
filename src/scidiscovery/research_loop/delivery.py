@@ -118,11 +118,17 @@ def _adapter(root):
             raise ValueError('Frozen executable or input path now names another original')
         if c.digest(_file(proof['path'], 128 * 1024 * 1024)) != proof['sha256']:
             raise ValueError('Frozen delivery executable or public harness changed')
-    return spec
+    from . import protocol
+    source=Path(protocol.__file__).resolve()
+    if any(item['label']=='scid-current-protocol' for item in spec['inputs']):raise ValueError('Reserved current protocol input label')
+    item=dict(label='scid-current-protocol',path=str(source),sha256=c.digest(source),size_bytes=source.stat().st_size)
+    return dict(spec,inputs=[*spec['inputs'],item])
 
 
 def freeze_sources(root, source_nodes, *, candidate_id=None):
     """Freeze readable objects before A; no model load, audit or qualification claim."""
+    from .protocol import require_current
+    require_current(root)
     root = Path(root).resolve()
     spec = _adapter(root)
     remaining = budget.snapshot(root)['seconds_remaining']
@@ -233,7 +239,7 @@ def freeze_sources(root, source_nodes, *, candidate_id=None):
             destination = stage / 'inputs' / proof['label'];destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(_file(proof['path']), destination);destination.chmod(0o400)
             if c.digest(destination) != proof['sha256']:raise ValueError('Frozen provider input changed during staging')
-        request = dict(phase='resolve', operation_id=hashlib.sha256(_bytes(source_nodes)).hexdigest(),
+        request = dict(scope=dict(handoff_protocol=c.settings(root)['handoff_protocol']),phase='resolve', operation_id=hashlib.sha256(_bytes(source_nodes)).hexdigest(),
                        candidate_id=None, artifact_sha256=None, root=str(root), source_roots=spec['source_roots'],
                        candidates=candidates, inputs=spec['inputs'], config=spec['config'], target=spec['target'], stage=str(stage))
         value = _call(spec, request, deadline - time.clock_gettime(time.CLOCK_BOOTTIME))
@@ -428,6 +434,8 @@ def _call(spec, request, seconds, *, on_process=None):
 
 def invoke(root, intent, max_seconds, *, on_process=None, audit_only=False):
     """Caller already durably accepted this action; recovered submits never call here."""
+    from .protocol import require_current
+    require_current(root)
     root = Path(root).resolve()
     if type(max_seconds) not in (int, float) or not 0 < max_seconds < float('inf'):
         raise ValueError('Bounded action seconds required')
@@ -473,7 +481,7 @@ def invoke(root, intent, max_seconds, *, on_process=None, audit_only=False):
             (stage / 'inputs' / name).parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(_proof(root, proof), stage / 'inputs' / name)
             (stage / 'inputs' / name).chmod(0o400)
-        request = dict(operation_id=bound['operation_id'], candidate_id=bound['candidate_id'],
+        request = dict(scope=dict(handoff_protocol=c.settings(root)['handoff_protocol']),operation_id=bound['operation_id'], candidate_id=bound['candidate_id'],
                        artifact_sha256=bound['source']['objects']['artifact']['sha256'], context=bound['source']['context'],
                        object_digests={name: proof['sha256'] for name, proof in bound['source']['objects'].items()},
                        inputs=spec['inputs'], config=spec['config'], target=spec['target'], stage=str(stage))

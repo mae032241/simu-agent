@@ -161,7 +161,21 @@ def _replace(path, data):
     os.replace(pending, path)
 
 
+def _current_guard(request):
+    # Standalone task Python has no framework import; load the host-frozen pure contract.
+    import runpy
+    host=Path(__file__).with_name('protocol.py')
+    source=host if host.is_file() else Path('/inputs/scid-current-protocol')
+    data=_exact(source,256_000)
+    if source!=host:
+        proof=next((item for item in request.get('inputs',[]) if item.get('label')=='scid-current-protocol'),None)
+        if proof is None or hashlib.sha256(data).hexdigest()!=proof['sha256'] or len(data)!=proof['size_bytes']:
+            raise ValueError('Frozen current protocol original differs')
+    runpy.run_path(str(source))['require_scope'](request.get('scope'))
+
+
 def leaf(request):
+    _current_guard(request)
     phase = request['phase']
     if phase == 'resolve':
         cfg = request['config']
@@ -246,6 +260,7 @@ def leaf(request):
 
 def isolate(request, adapter):
     """Exec the declared namespace; only promotion can write true target dirs."""
+    _current_guard(request)
     stage = Path(request['stage'])
     if stage.resolve() != stage or not stage.is_dir() or not Path(adapter).is_file():
         raise ValueError('Exact delivery stage required')
