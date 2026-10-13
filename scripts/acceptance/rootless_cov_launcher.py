@@ -174,12 +174,50 @@ def outer(s,w,h,command,materials=()):
     for k,v in {**environment(s,w),'CODEX_HOME':str(h),'LANG':'C.UTF-8'}.items():c.extend(['--setenv',k,v])
     return c+command
 
+def accepted_attempt(s,w,output):
+    """Bind fresh exec to its original dispatch, not a guessed continuation path."""
+    from scidiscovery.research_loop import contracts as c,execution,continuation,runtime
+    from scidiscovery.research_loop.protocol import require_current
+    import time
+    root=Path(s['scene_root']).absolute();step=int(w.name)
+    job_path=Path(os.environ['THIN_HWA_JOB_MANIFEST']).absolute()
+    if job_path!=root/'jobs'/f'{step:03d}.json' or job_path.resolve()!=job_path:
+        raise ValueError('exact_job_manifest_required')
+    job=c.read(c.regular(job_path));require_current(root,job)
+    if w!=c.workspace(root,step) or os.environ['THIN_HWA_ROLE']!=job['role']:
+        raise ValueError('accepted_role_workspace_mismatch')
+    continuation.validate_task(root,step)
+    paths=execution.records(root,step);number=len(paths)-1;record=paths[number]
+    if output!=record/'result.pending.json' or output.resolve()!=output:
+        raise ValueError('output_path_outside_accepted_attempt')
+    if (record/'native-outcome.json').exists() or output.exists():
+        raise ValueError('original_dispatch_already_terminal_or_returned')
+    intent=c.read(c.regular(record/'native-intent.json'))
+    if intent.get('task_sha256')!=c.digest(job_path):raise ValueError('accepted_native_task_changed')
+    if Path(os.environ['THIN_HWA_NATIVE_HOME']).absolute()!=execution.home(root,step,number):
+        raise ValueError('accepted_native_home_mismatch')
+    if number and (intent.get('continuation_kind')!='fragment' or intent.get('context_mode')!='new_context'
+            or (c.settings(root).get('worker_fragment_policy') or {}).get('context')!='new_context'):
+        raise ValueError('same_session_launcher_unsupported')
+    binding=execution.identity(root,step,number)
+    runner=c.read(c.regular(record/'runner-process.json'))
+    if runner['pid']!=os.getppid() or not runtime.process_matches(runner,binding):
+        raise ValueError('original_runner_dispatch_required')
+    # Popen precedes publication of this exact child receipt; wait only for that receipt.
+    deadline=time.monotonic()+2
+    while not (record/'native-process.json').exists() and time.monotonic()<deadline:time.sleep(.01)
+    child=c.read(c.regular(record/'native-process.json'))
+    if child['pid']!=os.getpid() or not runtime.process_matches(child,binding):
+        raise ValueError('unknown_native_dispatch_cannot_be_replayed')
+    return execution.origin(root,step)/'science-result.schema.json'
+
 def native_args(s,w,args):
-    # Exact fresh exec protocol from the generic runner; reject broad overrides.
+    # Fresh exec supports only the exact accepted initial/new-context dispatch.
     if not args or args[0]!='exec':raise ValueError('fresh_native_exec_required')
-    result=['exec'];i=1;seen=set()
+    result=['exec'];i=1;seen=set();output=None
     while i<len(args):
         x=args[i]
+        if x=='resume':raise ValueError('same_session_launcher_unsupported')
         if x in ['--json','--skip-git-repo-check']:
             result.append(x);i+=1;continue
         if x=='-' and i==len(args)-1:result.append(x);i+=1;continue
@@ -196,13 +234,14 @@ def native_args(s,w,args):
         if x=='-c' and v!='model_reasoning_effort="'+s['reasoning_effort']+'"':raise ValueError('native_config_override_rejected')
         if x=='--output-last-message':
             p=Path(v).absolute()
-            if p.parent!=Path(s['scene_root'])/'native-evidence'/w.name or p.parent.resolve()!=p.parent:raise ValueError('output_path_outside_native_evidence')
+            output=p
         result.extend([x,v])
     if not {'--output-last-message','--model','-c','-C'}.issubset(seen) or result[-1]!='-':
         raise ValueError('complete_stdin_role_command_required')
     if '--skip-git-repo-check' not in result:result.insert(1,'--skip-git-repo-check')
-    schema=Path(s['scene_root'])/'native-evidence'/w.name/'science-result.schema.json'
-    if schema.is_file():result[-1:-1]=['--output-schema',str(schema)]
+    schema=accepted_attempt(s,w,output)
+    regular(schema)  # The frozen origin schema is mandatory for every context.
+    result[-1:-1]=['--output-schema',str(schema)]
     return result
 
 def main():

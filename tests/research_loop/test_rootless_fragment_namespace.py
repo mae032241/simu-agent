@@ -1,0 +1,86 @@
+"""Real bwrap/main/registered-cov path with two fake native turns, zero models."""
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+
+import pytest
+
+from scidiscovery.research_loop import budget,contracts as c,controller,execution,native
+from test_cov_lineage import BACKEND
+
+
+FAKE_NATIVE=r'''import json,os,pathlib,subprocess,sys
+args=sys.argv[1:];sys.stdin.read()
+work=pathlib.Path(args[args.index('-C')+1]);home=pathlib.Path(os.environ['CODEX_HOME'])
+output=pathlib.Path(args[args.index('--output-last-message')+1]);later=output.parent.parent.name=='continuations'
+assert 'resume' not in args
+assert pathlib.Path(args[args.index('--output-schema')+1]).name=='science-result.schema.json'
+thread='22222222-2222-4222-8222-222222222222' if later else '11111111-1111-4111-8111-111111111111'
+print(json.dumps(dict(type='thread.started',thread_id=thread)),flush=True)
+session=home/'sessions/current.jsonl';session.parent.mkdir(parents=True,exist_ok=True)
+session.write_text(json.dumps(dict(type='session_meta',payload=dict(id=thread,cwd=str(work))))+'\n')
+if not later:
+ p=work/'payload.json';p.write_text('{}')
+ result=subprocess.run([str(work/'bin/exp'),'run','--script',str(p),'--new-plan'],capture_output=True,text=True)
+ assert result.returncode==0,(result.stdout,result.stderr)
+ reply=json.loads(result.stdout);assert reply['status']=='known_success'
+ (work/'work/original-call.json').write_text(json.dumps(dict(call_id=reply['call_id'])))
+else:
+ assert home.name=='context-001'
+ assert (work/'work/science-resume.json').is_file()
+ call=json.loads((work/'work/original-call.json').read_text())['call_id']
+ result=subprocess.run([str(work/'bin/exp'),'query','--call-id',call],capture_output=True,text=True)
+ assert result.returncode==0,(result.stdout,result.stderr)
+ assert json.loads(result.stdout)['state']=='succeeded'
+ (work/'work/second-context-query.json').write_text(result.stdout)
+print(json.dumps(dict(type='turn.completed',usage=dict(input_tokens=1,cached_input_tokens=0,output_tokens=0))),flush=True)
+output.write_text(json.dumps(dict(summary='Synthetic namespace contribution',scientific_result='No scientific efficacy was measured.',
+ limitations=['Fake native transport, not a model.'],implementation_selection=None,stage_intent='review' if later else 'continue')))
+'''
+
+
+def test_actual_launcher_two_new_contexts_keep_original_registered_call(tmp_path):
+    if shutil.which('bwrap') is None:pytest.skip('Actual namespace unavailable')
+    installed=subprocess.run([sys.executable,'-I','-c','from scidiscovery.research_loop.protocol import CURRENT;assert CURRENT==14'],capture_output=True,text=True)
+    if installed.returncode:pytest.skip('Real installed CURRENT14 interpreter required for isolated launcher')
+    repo=Path(__file__).resolve().parents[2];launcher=repo/'scripts/acceptance/rootless_cov_launcher.py'
+    public=tmp_path/'public';harness=public/'environment/harness';harness.mkdir(parents=True)
+    (public/'instruction.md').write_text('Two synthetic native contexts; zero model requests.')
+    (public/'task.toml').write_text('fixture=true\n');(public/'environment/Dockerfile').write_text('FROM fixture\n')
+    (harness/'exp_cli.py').write_text(BACKEND.replace("p.add_argument('--runs-root',type=pathlib.Path,required=True)","p.add_argument('--runs-root',type=pathlib.Path,default=pathlib.Path(__import__('os').environ['EXP_RUN_DIR']))"))
+    for name in ('runner.py','train.csv','val.csv','meta.json'):(harness/name).write_text('{}')
+    manifest=tmp_path/'public-manifest.json'
+    c.write(manifest,dict(task_revision='d78f5eb52ad754c5ee9154741af73130a85a65b8',
+        public_files_sha256={p.relative_to(public).as_posix():c.digest(p) for p in public.rglob('*') if p.is_file()}))
+    fake=tmp_path/'fake-codex';fake.write_text('#!'+sys.executable+'\n'+FAKE_NATIVE);fake.chmod(0o555)
+    root=tmp_path/'instance';config=tmp_path/'launcher.json';python=str(Path(sys.executable).absolute());codehost=Path('/usr/bin/true').resolve()
+    c.write(config,dict(scene_root=str(root),public_root=str(public),public_manifest=str(manifest),
+        runs_dir=str(root/'runs'),submission_dir=str(root/'submission'),native=str(fake),native_sha256=c.digest(fake),
+        code_mode_host=dict(path=str(codehost),sha256=c.digest(codehost)),task_python=python,scid_python=python,
+        runtime_paths=list(dict.fromkeys([sys.base_prefix,str(Path(python).parent.parent)])),
+        model='no-model',reasoning_effort='high',profile='namespace-no-model'))
+    controller.prepare(root,public/'instruction.md',public,[python,str(launcher),'--config',str(config),'--'],
+        max_tokens=100000,max_seconds=120,max_steps=8,model='no-model',reasoning_effort='high',search_policy=None,
+        node_budget_policy={role:dict(max_observed_tokens=10000,max_seconds=60) for role in 'HWAE'},
+        resume_policy=dict(max_attempts=2,protocol='codex_exec_resume',usage_scope='turn',output_repair=False),
+        worker_fragment_policy=dict(context='new_context'))
+    c.build_job(root,1,'W',[])
+    c.write(root/'host-started.json',budget.clock_stamp());budget.transition(root,'advance','Namespace zero-model transport probe')
+    native.execute_native(root,1)
+    chain=execution.records(root,1)
+    assert len(chain)==2 and chain[1].name=='001'
+    assert c.read(chain[0]/'science-output.json')['stage_intent']=='continue'
+    assert c.read(chain[1]/'science-output.json')['stage_intent']=='review'
+    assert c.read(chain[0]/'native-outcome.json')['thread_id']!=c.read(chain[1]/'native-outcome.json')['thread_id']
+    assert native.usage(root)['observed_tokens']==2
+    first=c.read(chain[0]/'experiment-config.json');second=c.read(chain[1]/'experiment-config.json')
+    assert first['scope']==second['scope'] and first['native_attempt']!=second['native_attempt']
+    work=c.workspace(root,1)
+    assert len(list((work/'work/lineage/calls').glob('*/accepted.json')))==1
+    assert c.read(work/'work/second-context-query.json')['state']=='succeeded'
+    assert len(list((root/'jobs').glob('*.json')))==1
+    assert c.validate(work)['stage_intent']=='review'
