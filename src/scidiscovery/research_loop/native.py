@@ -14,7 +14,7 @@ import signal
 import subprocess
 import time
 
-from . import budget as control_budget, execution, runtime, search
+from . import budget as control_budget, execution, runtime, search, checkpoint
 from .output_repair import OutputRepairRequired
 from .contracts import (ACTIONS, actions, ROLE_INSTRUCTIONS, digest, host_record, read,
                         seal_result, workspace, write, settings as frozen_settings)
@@ -81,7 +81,21 @@ def wait_native(root: Path, step: int):
         state = runtime.node_state(root, step)
         if state in {"terminal", "sealed"}:
             from . import continuation
-            return continuation.seal_or_repair(root, step)
+            job = read(root / 'jobs' / f'{step:03d}.json')
+            if state == 'terminal' and checkpoint.enabled(root, job) and not (record / 'checkpoint.json').exists():
+                # Outcome publication precedes the runner's checkpoint. Never
+                # capture live paths merely because their outcome is unknown.
+                runner = record / 'runner-process.json'
+                if runner.exists() and runtime.process_matches(read(runner), execution.identity(root, step)):
+                    time.sleep(.1)
+                    continue
+                raise continuation.ResumeUnavailable('worker_fragment_checkpoint_unavailable')
+            result = continuation.seal_or_repair(root, step)
+            if result.get('fragment_continuation') is True:
+                record = execution.record(root, step)
+                startup_until = time.monotonic() + 5
+                continue
+            return result
         if state != "running":
             if not (record / "runner-process.json").exists() and time.monotonic() < startup_until:
                 time.sleep(.05)
@@ -110,7 +124,7 @@ def run_native(root: Path, step: int, attempt=0):
     # Raw Codex is supported as a local soft-isolation entry. Existing qualified
     # launchers retain their own exact argv/config protocol and MCP settings.
     if len(settings['native_launcher_argv']) == 1 and Path(args[0]).name == 'codex':
-        args[-1:-1] = ['--skip-git-repo-check', '--output-schema', str(record / 'science-result.schema.json'),
+        args[-1:-1] = ['--skip-git-repo-check', '--output-schema', str(execution.origin(root, step) / 'science-result.schema.json'),
                        '-c', 'project_doc_max_bytes=0', '-c', 'mcp_servers.scidiscovery.enabled=false',
                        '-c', 'features.multi_agent=false', '-c', 'features.fast_mode=false',
                        '-c', 'approval_policy="never"',
@@ -119,11 +133,11 @@ def run_native(root: Path, step: int, attempt=0):
     if settings.get('resume_policy') is not None:
         from . import continuation
         continuation.validate_launcher(root)
-    if attempt:
+    if attempt and intent.get('context_mode') != 'new_context':
         from .contracts import regular
         continuation.validate_repair(root, step, intent)
         session = intent['session']
-        if (session.get('home') != str(root / 'native-homes' / work.name)
+        if (session.get('home') != str(execution.home(root, step, attempt))
                 or session.get('workspace') != str(work)
                 or Path(session['path']).resolve() != Path(session['path'])
                 or not Path(session['path']).is_relative_to(Path(session['home']) / 'sessions')):
@@ -180,13 +194,19 @@ def run_native(root: Path, step: int, attempt=0):
         prompt += ('\nNode and search limits are soft targets, not renewed grants. Between bounded actions read work/budget-status.json when available. '
                    'Near/reached targets or delivery reserve: preserve useful results and return your scientific JSON promptly. '
                    'This file is advisory and usage can be unknown; shared hard limits still apply. \n')
+    if checkpoint.enabled(root, job):
+        prompt += ('\nA native turn can be a fragment of this same scientific stage. Give your current understanding, '
+                   'unresolved questions and scientific next intent. stage_intent=continue requests more work in this mechanism; '
+                   'review requests A. The host can require review at the original investment boundary. '
+                   'The host creates checkpoints and counts attempts; do not write mechanical checkpoint or budget fields.\n')
     if attempt:
         remaining = dict(observed_tokens=max(0, intent['budget_slice']['limits']['max_observed_tokens'] - intent['budget_slice']['previous_tokens']),
                          active_seconds=max(0., intent['budget_slice']['limits']['max_seconds'] - control_budget._node_duration(root, job, intent, limits)))
         if control_budget.node_mode(root)=='soft':
             remaining.update(mode='soft_targets',previous_observed_tokens=intent['budget_slice']['previous_tokens'])
         label = 'Original soft-target gaps (zero is not a new grant): ' if control_budget.node_mode(root)=='soft' else 'Original node remaining budget: '
-        prompt = (label + json.dumps(remaining) + '\nContinue this same task/session/workspace. Read existing checkpoints and confirmed results; '
+        context = 'new context for this same task/workspace' if intent.get('context_mode') == 'new_context' else 'same task/session/workspace'
+        prompt = (label + json.dumps(remaining) + '\nContinue this ' + context + '. Read existing checkpoints and confirmed results; '
                   'collect or recover managed executions by their original IDs rather than resubmitting. '
                   'Use scientific judgment for ordinary native shell checkpoints; no new mechanical registry is required.\n' + prompt)
         if intent.get('output_repair'):
@@ -195,7 +215,17 @@ def run_native(root: Path, step: int, attempt=0):
                       'final_response contract. Controller diagnosis: '
                       + json.dumps({key: intent['output_repair'][key] for key in ('code', 'diagnostic')}, ensure_ascii=False)
                       + '\n' + prompt)
-    home = root / 'native-homes' / work.name
+    if intent.get('continuation_kind') == 'fragment':
+        prior = execution.record(root, step, attempt - 1)
+        saved = intent['fragment_checkpoint']
+        if saved['path'] != (prior / 'checkpoint.json').relative_to(root).as_posix() or saved['sha256'] != digest(prior / 'checkpoint.json'):
+            raise ValueError('Native fragment checkpoint changed before launch')
+        packet = checkpoint.brief(root, job, prior)
+        write(work / 'work/science-resume.json', packet)
+        prompt += ('\nRead work/science-resume.json for the bounded prior fragment preview. Continue within the original scientific scope; '
+                   'the host retains exact execution and candidate identities. Return current understanding, remaining questions '
+                   'and stage_intent (continue this mechanism or review by A). Do not write checkpoint IDs, counters or file manifests.\n')
+    home = execution.home(root, step, attempt)
     home.mkdir(parents=True, exist_ok=True)
     env = {**os.environ, 'THIN_HWA_ROLE': job['role'], 'THIN_HWA_WORKSPACE': str(work),
            'THIN_HWA_NATIVE_HOME': str(home), 'THIN_HWA_JOB_MANIFEST': str(job_path)}
@@ -312,7 +342,7 @@ def run_native(root: Path, step: int, attempt=0):
     outcome = dict(returncode=process.returncode if process else None,
           stop_reason=stop, usage=usage(root), thread_id=thread_id, cleanup=cleanup,
           limitation='Terminal native usage observation; in-flight usage may be absent.')
-    if attempt and thread_id != intent['session']['thread_id']:
+    if attempt and intent.get('context_mode') != 'new_context' and thread_id != intent['session']['thread_id']:
         stop = outcome['stop_reason'] = 'native_thread_changed'
     if settings.get('resume_policy') is not None and process is not None:
         outcome['execution_processes'] = {name: digest(record / name) for name in ('runner-process.json', 'native-process.json')}

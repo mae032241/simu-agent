@@ -7,7 +7,7 @@ from itertools import islice
 from pathlib import Path
 import uuid
 
-from . import budget, contracts as c, execution, native, runtime
+from . import budget, contracts as c, execution, native, runtime, checkpoint
 from .output_repair import OutputRepairRequired
 
 
@@ -72,7 +72,8 @@ def session(root, step, record):
                 found = True
                 break
     if not found:raise ResumeUnavailable('worker_resume_thread_unavailable')
-    home = root / 'native-homes' / f'{step:03d}'
+    number = execution.records(root, step).index(record)
+    home = execution.home(root, step, number)
     if home.resolve() != home:raise ValueError('Original native home changed')
     matches = []
     for visited, path in enumerate(islice((home / 'sessions').rglob('*.jsonl'), 257), 1):
@@ -92,6 +93,36 @@ def session(root, step, record):
 def seal_or_repair(root, step):
     """Try the original seal first; only a frozen opt-in can accept a repair turn."""
     try:
+        job = c.read(c.regular(root / 'jobs' / f'{step:03d}.json'))
+        if checkpoint.enabled(root, job) and not (execution.origin(root, step) / 'result-identity.json').exists():
+            record = execution.record(root, step)
+            if (record / 'stage-end.json').exists():
+                checkpoint.stage_end(root, job, record)
+                return c.seal_result(root, step)
+            saved = checkpoint.validate(root, job, record)
+            outcome = c.read(c.regular(record / 'native-outcome.json'))
+            if (outcome.get('returncode') == 0 and not outcome.get('stop_reason')
+                    and not outcome['usage']['unknown_steps']):
+                if saved['science']['status'] != 'present':
+                    # c.seal_result provides the bound output diagnosis/repair.
+                    return c.seal_result(root, step)
+                science = c.science_payload(record / 'science-output.json', 'W', job.get('handoff_protocol', 1))
+                review = fragment_review(root, job)
+                if checkpoint.disposition(science, review_requested=review['requested']) == 'continue':
+                    try:
+                        fragment_start(root, step)
+                    except budget.NodeBudgetUnavailable as error:
+                        # A valid scientific contribution is retained at the
+                        # original budget boundary, without another native turn.
+                        checkpoint.end_stage(root, job, record, error.reason)
+                        return c.seal_result(root, step)
+                    except ResumeUnavailable as error:
+                        if str(error) != 'worker_fragment_review_requested':
+                            raise
+                        checkpoint.end_stage(root, job, record, error.review_reason)
+                        return c.seal_result(root, step)
+                    return dict(fragment_continuation=True)
+                checkpoint.end_stage(root, job, record, review['reason'] if review['requested'] else 'worker_requested')
         return c.seal_result(root, step)
     except OutputRepairRequired:
         if not (c.settings(root).get('resume_policy') or {}).get('output_repair', False):
@@ -148,6 +179,121 @@ def validate_repair_chain(root, step, chain):
             validate_repair(root, step, intent, prior_record=chain[number - 1], verify_task=False)
 
 
+def validate_fragment_chain(root, step, chain):
+    job = c.read(c.regular(root / 'jobs' / f'{step:03d}.json'))
+    for number, record in enumerate(chain[1:], 1):
+        intent = c.read(c.regular(record / 'native-intent.json'))
+        if intent.get('continuation_kind') != 'fragment':
+            continue
+        prior = chain[number - 1]
+        saved = checkpoint.validate(root, job, prior)
+        original = c.read(c.regular(prior / 'native-outcome.json'))
+        science = c.science_payload(prior / 'science-output.json', 'W', job.get('handoff_protocol', 1))
+        if (saved['science']['status'] != 'present' or science.get('stage_intent') != 'continue'
+                or original.get('returncode') != 0 or original.get('stop_reason')
+                or original['usage']['unknown_steps']):
+            raise ValueError('Fragment continuation has no qualified original continuing turn')
+        mode = intent.get('context_mode')
+        if mode != checkpoint.policy(c.settings(root)['worker_fragment_policy'])['context']:
+            raise ValueError('Fragment context mode changed its frozen policy')
+        if mode == 'new_context' and intent.get('native_home') != str(root / 'native-homes' / f'{step:03d}' / f'context-{number:03d}'):
+            raise ValueError('Fresh native context changed its exact attempt namespace')
+
+
+def fragment_review(root, job):
+    """Observe host investment even when the Worker did not call an adapter."""
+    from . import experiments
+    admission = budget.review_configuration(root, job)
+    scope = dict(step=job['step'], role='W', job_sha256=c.digest(root / 'jobs' / f'{job["step"]:03d}.json'),
+        execution_key=execution.identity(root, job['step'], 0),
+        mechanism_ref=((job.get('search') or {}).get('focus') or {}).get('mechanism_ref'))
+    native_attempt = dict(number=len(execution.records(root, job['step'])) - 1,
+                          execution_key=execution.identity(root, job['step']))
+    return experiments.review_status(dict(admission=admission, scope=scope, native_attempt=native_attempt))
+
+
+def _eligible_original(root, step, paths, *, successful=False, wait_runner=False):
+    """No accepted replacement until the exact old native writer is terminal."""
+    last = paths[-1]
+    outcome = c.read(c.regular(last / 'native-outcome.json'))
+    if (type(outcome.get('returncode')) is not int or outcome['returncode'] == 0 and not successful
+            or outcome.get('stop_reason') or outcome.get('cleanup') != 'observed_group_cleaned'):
+        raise ResumeUnavailable('worker_resume_terminal_ineligible')
+    meter = c.read(c.regular(last / 'usage.json'))
+    if native._usage_event(dict(type='turn.completed', usage=meter)) != meter:
+        raise ResumeUnavailable('worker_resume_usage_unknown')
+    binding = execution.identity(root, step, len(paths) - 1)
+    for name in ('runner-process.json', 'native-process.json'):
+        if c.digest(c.regular(last / name)) != outcome.get('execution_processes', {}).get(name):
+            raise ValueError('Original execution process receipt changed')
+        identity = c.read(c.regular(last / name))
+        if (identity.get('task_sha256') != binding or identity.get('boot_id') != budget.clock_stamp()['boot_id']
+                or any(type(identity.get(key)) is not int or identity[key] <= 0
+                       for key in ('pid', 'start_ticks', 'pgid', 'sid', 'ppid'))):
+            raise ValueError('Original execution process identity is invalid')
+        if name == 'runner-process.json' and wait_runner:
+            until = time.monotonic() + 5
+            while runtime.process_matches(identity, binding) and time.monotonic() < until:
+                time.sleep(.05)
+        if runtime.process_matches(identity, binding):
+            raise ResumeUnavailable('worker_resume_original_running')
+    if not isinstance(outcome.get('budget_slice'), dict) or not outcome['budget_slice'].get('usage_observed'):
+        raise ResumeUnavailable('worker_resume_usage_unknown')
+
+
+def fragment_start(root, step):
+    """Accept the next successful W fragment, never a failure retry or new job."""
+    root = Path(root)
+    validate_launcher(root)
+    job = validate_task(root, step)
+    if not checkpoint.enabled(root, job):
+        raise ResumeUnavailable('worker_fragments_unavailable')
+    if (execution.origin(root, step) / 'result-identity.json').exists():
+        raise ResumeUnavailable('worker_fragment_stage_already_sealed')
+    if (root / 'pause.request').exists() or budget.closeout_state(root)['begin'] is not None:
+        raise ResumeUnavailable('worker_resume_paused_or_closeout')
+    from . import correction
+    if correction.gate(root, step - 1) is not None:
+        raise ResumeUnavailable('worker_resume_correction_paused')
+    settings = c.settings(root)
+    for later in range(step + 1, settings['max_steps'] + 1):
+        if (execution.origin(root, later) / 'native-intent.json').exists():
+            raise ResumeUnavailable('worker_resume_successor_present')
+    paths = execution.records(root, step)
+    last = paths[-1]
+    saved = checkpoint.validate(root, job, last)
+    science = c.science_payload(last / 'science-output.json', 'W', job.get('handoff_protocol', 1))
+    if saved['science']['status'] != 'present' or checkpoint.disposition(science) != 'continue':
+        raise ResumeUnavailable('worker_fragment_not_continuing')
+    _eligible_original(root, step, paths, successful=True, wait_runner=True)
+    review = fragment_review(root, job)
+    if review['requested']:
+        error = ResumeUnavailable('worker_fragment_review_requested')
+        error.review_reason = review['reason']
+        raise error
+    mode = checkpoint.policy(settings['worker_fragment_policy'])['context']
+    session_ref = session(root, step, last) if mode == 'same_session' else None
+    # All previous targets and shared authorization are cumulatively consumed.
+    budget.transition(root, 'advance', 'accepted_worker_fragment')
+    anchor = budget.accept_continuation(root, job, paths)
+    number = len(paths)
+    record = execution.origin(root, step) / 'continuations' / f'{number:03d}'
+    record.mkdir(parents=True, exist_ok=True)
+    intent = dict(step=step, attempt=number, continuation_kind='fragment', context_mode=mode,
+                  task_sha256=c.digest(root / 'jobs' / f'{step:03d}.json'),
+                  root_intent_sha256=c.digest(paths[0] / 'native-intent.json'), previous=execution.proof(last),
+                  fragment_checkpoint=dict(path=(last / 'checkpoint.json').relative_to(root).as_posix(),
+                                           sha256=c.digest(last / 'checkpoint.json')), budget_slice=anchor)
+    if session_ref is not None:
+        intent['session'] = session_ref
+    else:
+        intent['native_home'] = str(root / 'native-homes' / f'{step:03d}' / f'context-{number:03d}')
+    with (record / 'native-intent.json').open('x') as stream:
+        json.dump(intent, stream);stream.flush();os.fsync(stream.fileno())
+    runtime.start(root, step, number)
+    return intent
+
+
 def start(root, step):
     limits = validate_launcher(root)
     if (execution.origin(root, step) / 'result-identity.json').exists():
@@ -160,6 +306,11 @@ def start(root, step):
     repair = None
     if outcome.get('returncode') == 0 and not outcome.get('stop_reason'):
         try:
+            if checkpoint.enabled(root, c.read(root / 'jobs' / f'{step:03d}.json')):
+                if outcome.get('output_status') == 'missing':
+                    raise OutputRepairRequired('missing_output', 'Return the missing scientific summary without rerunning completed work.')
+                c.science_payload(last / 'science-output.json', 'W', c.read(root / 'jobs' / f'{step:03d}.json').get('handoff_protocol', 1))
+                return native.wait_native(root, step)
             return c.seal_result(root, step)
         except OutputRepairRequired:
             if not limits.get('output_repair', False):
@@ -173,7 +324,8 @@ def start(root, step):
     from . import correction
     if correction.gate(root, step - 1) is not None:
         raise ResumeUnavailable('worker_resume_correction_paused')
-    if len(paths) - 1 >= limits['max_attempts']:raise ResumeUnavailable('worker_resume_limit')
+    repairs = sum(c.read(path / 'native-intent.json').get('continuation_kind', 'repair') != 'fragment' for path in paths[1:])
+    if repairs >= limits['max_attempts']:raise ResumeUnavailable('worker_resume_limit')
     settings = c.settings(root)
     for later in range(step + 1, settings['max_steps'] + 1):
         if (execution.origin(root, later) / 'native-intent.json').exists():
@@ -182,40 +334,14 @@ def start(root, step):
     if original_intent.get('task_sha256') != c.digest(root / 'jobs' / f'{step:03d}.json'):
         raise ValueError('Original native task identity changed')
     validate_task(root, step)
-    outcome = c.read(c.regular(last / 'native-outcome.json'))
-    if (type(outcome.get('returncode')) is not int or (outcome['returncode'] == 0 and repair is None)
-            or outcome.get('stop_reason') or outcome.get('cleanup') != 'observed_group_cleaned'):
-        raise ResumeUnavailable('worker_resume_terminal_ineligible')
-    meter = c.read(c.regular(last / 'usage.json'))
-    if native._usage_event(dict(type='turn.completed', usage=meter)) != meter:
-        raise ResumeUnavailable('worker_resume_usage_unknown')
-    for name in ('runner-process.json', 'native-process.json'):
-        if c.digest(c.regular(last / name)) != outcome.get('execution_processes', {}).get(name):
-            raise ValueError('Original execution process receipt changed')
-        identity = c.read(c.regular(last / name))
-        if (identity.get('task_sha256') != execution.identity(root, step)
-                or identity.get('boot_id') != budget.clock_stamp()['boot_id']
-                or any(type(identity.get(key)) is not int or identity[key] <= 0
-                       for key in ('pid', 'start_ticks', 'pgid', 'sid', 'ppid'))):
-            raise ValueError('Original execution process identity is invalid')
-        # The durable terminal receipt can precede its runner's lock release.
-        # Collect that exact local process; never launch alongside it.
-        if name == 'runner-process.json' and repair is not None:
-            until = time.monotonic() + 5
-            while runtime.process_matches(identity, execution.identity(root, step)) and time.monotonic() < until:
-                time.sleep(.05)
-        if runtime.process_matches(identity, execution.identity(root, step)):
-            raise ResumeUnavailable('worker_resume_original_running')
-    report = outcome.get('budget_slice')
-    if not isinstance(report, dict) or not report.get('usage_observed'):
-        raise ResumeUnavailable('worker_resume_usage_unknown')
+    _eligible_original(root, step, paths, successful=repair is not None, wait_runner=repair is not None)
     session_ref = session(root, step, last)
     number = len(paths)
     budget.transition(root, 'advance', 'explicit_worker_continuation')
     anchor = budget.accept_continuation(root, job, paths)
     record = execution.origin(root, step) / 'continuations' / f'{number:03d}'
     record.mkdir(parents=True, exist_ok=True)
-    intent = dict(step=step, attempt=number, task_sha256=c.digest(root / 'jobs' / f'{step:03d}.json'),
+    intent = dict(step=step, attempt=number, continuation_kind='repair', task_sha256=c.digest(root / 'jobs' / f'{step:03d}.json'),
                   root_intent_sha256=c.digest(paths[0] / 'native-intent.json'), previous=execution.proof(last),
                   session=session_ref, budget_slice=anchor,
                   **(dict(output_repair=repair) if repair is not None else {}))

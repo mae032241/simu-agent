@@ -9,8 +9,12 @@ def origin(root, step):
 
 
 def proof(record):
-    return {name: c.digest(c.regular(record / name)) for name in
-            ('native-intent.json', 'native-outcome.json', 'usage.json')}
+    names = ['native-intent.json', 'native-outcome.json', 'usage.json']
+    if (record / 'checkpoint.json').exists():
+        names.append('checkpoint.json')
+    if (record / 'stage-end.json').exists():
+        names.append('stage-end.json')
+    return {name: c.digest(c.regular(record / name)) for name in names}
 
 
 def records(root, step):
@@ -20,7 +24,13 @@ def records(root, step):
     directory = first / 'continuations'
     if not directory.exists():return result
     if directory.resolve() != directory:raise ValueError('Native continuation directory changed')
-    limit = c.settings(root).get('resume_policy', {}).get('max_attempts', 0)
+    settings = c.settings(root)
+    repair_limit = settings.get('resume_policy', {}).get('max_attempts', 0)
+    job = c.read(c.regular(root / 'jobs' / f'{step:03d}.json'))
+    from . import checkpoint
+    fragments = checkpoint.enabled(root, job)
+    limit = settings['max_steps'] - 1 if fragments else repair_limit
+    repairs = 0
     task = c.digest(c.regular(root / 'jobs' / f'{step:03d}.json'))
     if c.read(c.regular(first / 'native-intent.json')).get('task_sha256') != task:
         raise ValueError('Original native task identity changed')
@@ -35,13 +45,25 @@ def records(root, step):
                 or intent.get('previous') != proof(result[-1])
                 or intent.get('root_intent_sha256') != c.digest(c.regular(first / 'native-intent.json'))):
             raise ValueError('Native continuation chain changed')
+        kind = intent.get('continuation_kind', 'repair')
+        if kind not in {'repair', 'fragment'} or kind == 'fragment' and not fragments:
+            raise ValueError('Native continuation kind differs from its frozen policy')
+        if kind == 'repair':
+            repairs += 1
+            if repairs > repair_limit:
+                raise ValueError('Native repair attempts exceed their original finite authorization')
+        if kind == 'fragment':
+            prior = result[-1] / 'checkpoint.json'
+            expected = dict(path=prior.relative_to(root).as_posix(), sha256=c.digest(c.regular(prior)))
+            if intent.get('fragment_checkpoint') != expected:
+                raise ValueError('Fragment continuation changed its exact checkpoint')
         result.append(path)
     return result
 
 
 def reference(root, step):
     chain = records(root, step)
-    if len(chain) == 1:return None
+    if len(chain) == 1 and not (chain[0] / 'stage-end.json').exists():return None
     return dict(attempt=len(chain) - 1, chain=[proof(path) for path in chain])
 
 
@@ -71,6 +93,20 @@ def identity(root, step, attempt=None):
     return c.digest(path / 'native-intent.json') if path != origin(root, step) else c.digest(root / 'jobs' / f'{step:03d}.json')
 
 
+def home(root, step, attempt=0):
+    """Read the accepted native home; rotation never changes the scientific job."""
+    root = Path(root)
+    current = record(root, step, attempt)
+    intent = c.read(c.regular(current / 'native-intent.json'))
+    base = root / 'native-homes' / f'{step:03d}'
+    selected = Path(intent.get('native_home', intent.get('session', {}).get('home', str(base))))
+    if (selected.resolve() != selected or selected != base and
+            (selected.parent != base or not selected.name.startswith('context-')
+             or not selected.name[8:].isdigit())):
+        raise ValueError('Native home differs from its exact stage namespace')
+    return selected
+
+
 def _terminal(root, step, chain, outcome):
     """A terminal continuation cannot rebind its accepted intent before seal."""
     current = chain[-1]
@@ -89,3 +125,4 @@ def _terminal(root, step, chain, outcome):
     budget._attempt_consumption(root, c.read(root / 'jobs' / f'{step:03d}.json'), chain)
     from . import continuation
     continuation.validate_repair_chain(root, step, chain)
+    continuation.validate_fragment_chain(root, step, chain)

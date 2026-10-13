@@ -850,7 +850,7 @@ def seal_result(root: Path, step: int):
     write(record / 'result-identity.json', dict(sha256=digest(record / 'result.json'), raw_sha256=digest(raw),
           job_sha256=digest(job_path), materials=materials, entry_points=entry_points,
           scope='Exact bytes and direct lineage; not scientific qualification',
-          **(dict(execution_ref=execution.reference(root, step)) if native_record != record else {}),
+          **(dict(execution_ref=execution.reference(root, step)) if execution.reference(root, step) is not None else {}),
           **(dict(control_outcome=control) if control is not None else {}),
           **(dict(unresolved_links=unresolved) if job.get('handoff_protocol', 1) >= 7 else {}),
           **(dict(selected_inputs=selected) if selected else {}),

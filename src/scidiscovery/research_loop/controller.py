@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import uuid
 
-from . import budget, contracts, history, native, runtime, search, correction, semantic, execution, continuation, guidance
+from . import budget, contracts, history, native, runtime, search, correction, semantic, execution, continuation, guidance, checkpoint
 from .output_repair import OutputRepairRequired
 
 
@@ -28,7 +28,8 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
             selection_protocol: int | None = 1,
             node_budget_mode: str = 'soft', candidate_audit_policy: dict | None = None,
             handoff_authority_version: int | None = 1, decision_contract_version: int | None = None,
-            portfolio_policy: dict | None = None, exploration_order_version: int | None = None) -> dict:
+            portfolio_policy: dict | None = None, exploration_order_version: int | None = None,
+            worker_fragment_policy: dict | None = None) -> dict:
     """Freeze an explicit goal and finite launch budgets in a fresh directory."""
     portfolio_limits = search.portfolio_policy(portfolio_policy) if portfolio_policy is not None else None
     if exploration_order_version is not None and (type(exploration_order_version) is not int or exploration_order_version != 1
@@ -85,6 +86,12 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
         raise ValueError('Correction requires the frozen search policy')
     node_limits = budget.node_policy(node_budget_policy) if node_budget_policy is not None else None
     resume_limits = continuation.policy(resume_policy, launcher) if resume_policy is not None else None
+    fragment_limits = checkpoint.policy(worker_fragment_policy) if worker_fragment_policy is not None else None
+    if fragment_limits is not None:
+        if resume_limits is None or node_limits is None:
+            raise ValueError('W fragments require frozen turn-scoped launcher and original node budgets')
+        if 'stage_intent' not in contracts.result_schema('W', contracts.HANDOFF_PROTOCOL)['properties']:
+            raise ValueError('W fragments require the complete stage-intent schema; protocol13 is not enabled')
     if resume_limits is not None and node_limits is None:
         raise ValueError('Continuation requires explicit original node budgets')
     delivery_limits = None
@@ -116,6 +123,8 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
         settings['portfolio_policy'] = portfolio_limits
     if exploration_order_version is not None:
         settings['exploration_order_version'] = exploration_order_version
+    if fragment_limits is not None:
+        settings['worker_fragment_policy'] = fragment_limits
     if candidate_audit_policy is not None:
         settings['candidate_audit_policy'] = dict(candidate_audit_policy)
     if selection_protocol is not None and lineage_projection_version == 1:
@@ -257,7 +266,10 @@ def _route(root, step, role, result, job, current_h, current_w):
             raise ValueError("Invalid sealed H route")
     elif role == "W":
         current_w = step
-        route = ("A", _parents(current_h, step), "", None)
+        record = execution.record(root, step)
+        ended = checkpoint.stage_end(root, job, record) if (record / 'stage-end.json').exists() else None
+        question = 'Review the scientific contribution and original goal limits; control ended this stage for ' + ended['reason'] + '.' if ended else ''
+        route = ("A", _parents(current_h, step), question, None)
     elif role == "A":
         action = result["next_action"]
         parents = _parents(current_h, current_w, step)
@@ -328,7 +340,12 @@ def _run(root):
                 record / "native-outcome.json", record / "science-output.json", record / "result.json"))
             if retained:
                 budget.transition(root, 'advance', 'recover_original')
-                if runtime.node_state(root, step) == "running":
+                job_path = root / 'jobs' / f'{step:03d}.json'
+                if not job_path.exists():
+                    return _finish(root, settings, "native_outcome_unsealed", completed, last,
+                        reason="The original scientific job is missing; retained work is preserved without replay", next_role=role)
+                retained_job = contracts.read(job_path)
+                if runtime.node_state(root, step) == "running" or checkpoint.enabled(root, retained_job):
                     try:
                         native.wait_native(root, step)
                     except continuation.ResumeUnavailable as error:

@@ -198,7 +198,15 @@ def _run(root, step, attempt=0):
         try:
             run_native(root, step, attempt)
         finally:
-            _complete_clock(root)
+            try:
+                from . import checkpoint
+                job = contracts.read(root / 'jobs' / f'{step:03d}.json')
+                if checkpoint.enabled(root, job):
+                    # run_native has returned/raised after ending all writes to
+                    # this attempt. Unknown usage/cleanup is saved, not granted.
+                    checkpoint.capture(root, job, record)
+            finally:
+                _complete_clock(root)
 
 
 def _main():
