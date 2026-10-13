@@ -12,6 +12,7 @@ import pytest
 from scidiscovery.research_loop import cli, contracts as c, controller, cov_lineage, feedback, history
 from test_cov_lineage import wrapper  # Real CLI fixture, never mocked transport.
 from test_history_handoff import finish
+from execution_fixtures import execution_registry
 
 
 def hint(work, *, target='within', reserve='within'):
@@ -33,7 +34,7 @@ def test_running_call_is_visible_before_w_or_call_finishes_and_queries_are_reado
     code = wrapper.backend.read_text().replace("if mode=='failed':row", "if mode=='slow':\n import time;time.sleep(2)\nif mode=='failed':row", 1)
     wrapper.backend.write_text(code)
     script = wrapper.script('inflight', 'slow')
-    env = dict(os.environ, PYTHONPATH=str(Path(cov_lineage.__file__).parents[2]), EXP_WALL_CAP_S='4')
+    env = dict(os.environ, PYTHONPATH=str(Path(cov_lineage.__file__).parents[2])+os.pathsep+os.environ.get('PYTHONPATH',''), EXP_WALL_CAP_S='4')
     process = subprocess.Popen([sys.executable, '-m', 'scidiscovery.research_loop.cov_lineage',
         '--config', str(wrapper.config), 'run', '--script', str(script), '--new-plan'],
         cwd=wrapper.root, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -289,7 +290,7 @@ def test_host_status_malformed_live_original_reports_bounded_integrity_error(tmp
     if name == 'native-intent.json':
         with pytest.raises(history.ObserverIntegrityError):
             feedback.live(root, job)
-    env = dict(os.environ, PYTHONPATH=str(Path(cov_lineage.__file__).parents[2]))
+    env = dict(os.environ, PYTHONPATH=str(Path(cov_lineage.__file__).parents[2])+os.pathsep+os.environ.get('PYTHONPATH',''))
     reply = subprocess.run([sys.executable, '-m', 'scidiscovery.research_loop.cli', 'status', '--root', str(root)],
         env=env, capture_output=True, text=True, timeout=10)
     assert reply.returncode == 1 and not reply.stderr
@@ -385,3 +386,26 @@ def test_no_observer_is_explicitly_unavailable_not_zero_progress(tmp_path):
     value = feedback.live(root, job)
     assert value['status'] == value['coverage'] == 'unavailable' and value['counts'] is None
     assert value['budget']['inflight_usage_unknown'] is True
+
+
+def test_registered_local_host_feedback_requires_no_domain_observer(tmp_path):
+    from scidiscovery.research_loop import experiments
+    public=tmp_path/'public';public.mkdir();objective=public/'goal';objective.write_text('Original public goal')
+    root=tmp_path/'instance'
+    controller.prepare(root,objective,public,['never-launched'],max_tokens=1000,max_seconds=60,
+        max_steps=4,model='fixture',reasoning_effort='high',search_policy=None)
+    job=c.build_job(root,1,'H',[]);record=c.host_record(c.workspace(root,1))
+    c.write(record/'native-intent.json',dict(task_sha256=c.digest(root/'jobs/001.json')))
+    path=tmp_path/'local-config.json'
+    experiments.configure(root,1,'local_execution:command',dict(run_argv=[sys.executable],max_seconds=10),path)
+    source=tmp_path/'ordinary.py';source.write_text('print("public output without domain metric")\n')
+    env=dict(os.environ,PYTHONPATH=str(Path(cov_lineage.__file__).parents[2])+os.pathsep+os.environ.get('PYTHONPATH',''))
+    reply=subprocess.run([sys.executable,'-m','scidiscovery.research_loop.experiments','--config',str(path),
+        'run','--script',str(source)],env=env,capture_output=True,text=True,timeout=20)
+    assert reply.returncode==0,reply.stderr
+    before={p:p.read_bytes() for p in root.rglob('*') if p.is_file()}
+    value=cli.status(root)['nodes'][0]['live_feedback']
+    assert value['status']=='observed' and value['counts']['known_success']==1
+    assert value['calls'][0]['candidate_id'] is value['calls'][0]['metric'] is None
+    assert 'history_observer' not in c.settings(root)
+    assert before=={p:p.read_bytes() for p in before}

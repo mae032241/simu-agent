@@ -584,6 +584,8 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
                **(dict(handoff_protocol=protocol) if protocol >= 2 else {}))
     if (retained.get('live_feedback_version') if retained is not None else policy.get('live_feedback_version')) == 1:
         job['live_feedback_version'] = 1
+    if (retained.get('experiment_interface_version') if retained is not None else policy.get('experiment_interface_version')) == 1:
+        job['experiment_interface_version'] = 1
     advice = retained.get('role_guidance') if retained is not None else policy.get('role_guidance', {}).get(role)
     if advice is not None:
         job['role_guidance'] = advice

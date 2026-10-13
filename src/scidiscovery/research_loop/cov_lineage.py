@@ -23,8 +23,7 @@ MAX_SCAN = 4 * 1024 * 1024
 MAX_CALLS = 128
 
 
-class IntegrityError(ValueError):
-    pass
+from scidiscovery.research_loop.experiments import IntegrityError
 
 
 def _bytes(value):
@@ -76,7 +75,7 @@ def _rows(path):
 
 def _config(path):
     data = _read(path);value = json.loads(data)
-    keys = {'contract_version','record_dir','runs_root','run_argv','scope','parents','evaluation_key','feedback_version'}
+    keys = {'contract_version','record_dir','runs_root','run_argv','scope','parents','evaluation_key','feedback_version','execution_interface','max_seconds'}
     if set(value) != keys or value['contract_version'] != 2 or value['feedback_version'] != 1:
         raise ValueError('Explicit wrapper contract2 configuration required')
     scope = value['scope']
@@ -210,63 +209,8 @@ def status(config, *, verify_assets=True):
 
 
 def run(config, config_sha, script, parent=None, new=False, change=None):
-    from scidiscovery.research_loop import runtime
-    root = Path(config['record_dir']);root.mkdir(parents=True,exist_ok=True)
-    fd = os.open(root/'node.lock',os.O_CREAT|os.O_RDWR|os.O_CLOEXEC|os.O_NOFOLLOW,0o600)
-    try:
-        try:fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
-        except BlockingIOError:return dict(status='unknown',note='Existing node call still owns execution')
-        if any(item['status']=='unknown' for item in status(config)):
-            return dict(status='unknown',note='Preserve accepted call; query lineage-status instead of replay')
-        selected,parent_binding = _parent(config,parent,new)
-        script = Path(script).resolve();data = _read(script,MAX_ASSET)
-        if len(_calls(config)) >= MAX_CALLS:raise ValueError('Call capacity exceeded')
-        directory = root/'calls'/f'{len(_calls(config))+1:04d}-{uuid.uuid4().hex}';directory.mkdir(parents=True)
-        (directory/'source.py').write_bytes(data);(directory/'source.py').chmod(0o400)
-        accepted = dict(call_id=directory.name,scope=config['scope'],parent=selected,parent_binding=parent_binding,change_intent=change,
-                        source_script=str(script),script=_proof(directory/'source.py'),runs_root=config['runs_root'],config_sha256=config_sha)
-        _write(directory/'accepted.json',accepted)
-        runtime._subreaper()
-        process = None;cleanup = False;returncode = None;transport_complete = True
-        with (directory/'stdout.raw').open('xb') as out,(directory/'stderr.raw').open('xb') as err:
-            process = subprocess.Popen([*config['run_argv'],'run','--script',str(script)],stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True)
-            identity = runtime.process_identity(process.pid,hashlib.sha256(_bytes(accepted)).hexdigest())
-            _write(directory/'process.json',identity)
-            deadline = time.monotonic()+int(os.environ.get('EXP_WALL_CAP_S','60'))+5
-            with selectors.DefaultSelector() as selector:
-                selector.register(process.stdout,selectors.EVENT_READ)
-                selector.register(process.stderr,selectors.EVENT_READ)
-                count = 0
-                while selector.get_map() or process.poll() is None:
-                    for key,_ in selector.select(.1):
-                        chunk = os.read(key.fileobj.fileno(),65536)
-                        if not chunk:selector.unregister(key.fileobj);continue
-                        count += len(chunk)
-                        if count > MAX_BYTES:
-                            transport_complete = False
-                            break
-                        sink = out if key.fileobj is process.stdout else err
-                        sink.write(chunk);sink.flush()
-                    if count > MAX_BYTES or time.monotonic() >= deadline:
-                        transport_complete = False
-                        if runtime.process_matches(identity,identity['task_sha256']):os.killpg(identity['pgid'],signal.SIGTERM)
-                        break
-            try:process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                if runtime.process_matches(identity,identity['task_sha256']):os.killpg(identity['pgid'],signal.SIGKILL)
-                process.wait(timeout=5)
-            cleanup = runtime.cleanup_owned_group(identity)=='observed_group_cleaned'
-            returncode = process.returncode
-            process.stdout.close();process.stderr.close()
-        _write(directory/'terminal.json',dict(returncode=returncode,cleanup_confirmed=cleanup,transport_complete=transport_complete))
-        result = _receipt(directory,accepted,_rows(Path(config['runs_root'])/'results.jsonl'),returncode,cleanup,transport_complete=transport_complete)
-        if result is None:
-            result = dict(call_id=accepted['call_id'],status='unknown',candidate_id=None,run_id=None,model=None,
-                parent=selected,change_intent=change,scope=config['scope'],proofs=[_proof(directory/name) for name in ('accepted.json','source.py','stdout.raw','terminal.json')],
-                note='No exact completed public receipt; preserve without replay')
-        _write(directory/'completed.json',result)
-        return result
-    finally:os.close(fd)
+    from scidiscovery.research_loop.experiments import dispatch
+    return dispatch(config,script,parent=parent,new=new,change=change)
 
 
 def progress(request):
@@ -313,7 +257,8 @@ def _progress(config, scope):
                 identity = json.loads(_read(directory / 'process.json'))
                 if not isinstance(identity, dict):
                     raise IntegrityError('Published live process identity is malformed')
-                key = hashlib.sha256(_bytes(accepted)).hexdigest()
+                from scidiscovery.research_loop import experiments
+                key = hashlib.sha256(experiments.encoded(accepted) if 'interface' in accepted else _bytes(accepted)).hexdigest()
                 if identity.get('task_sha256') != key:
                     raise IntegrityError('Live process binding differs from the accepted call')
                 if runtime.process_matches(identity, key):
@@ -418,7 +363,8 @@ def configure(root, step, run_argv, runs_root, output):
         scope=dict(step=step,role=job['role'],job_sha256=c.digest(root/'jobs'/f'{step:03d}.json'),execution_key=execution.identity(root,step),
                    mechanism_ref=((job.get('search') or {}).get('focus') or {}).get('mechanism_ref')),
         parents=parents,evaluation_key='covshift-public-val-v1')
-    _write(Path(output),value);Path(output).chmod(0o400)
+    from scidiscovery.research_loop import experiments
+    value=experiments.configure(root,step,'cov_execution:experiment',value,output)
     return dict(status='configured',config=str(output))
 
 def public_feedback(config, result, *, include_model=False):
@@ -456,9 +402,8 @@ def main(argv=None):
     try:
         config,digest=_config(args.config)
         if args.command=='lineage-status':
-            scope = dict(config['scope'])
-            scope['execution_keys'] = [scope.pop('execution_key')]
-            result = {key: value for key, value in _progress(config, scope).items() if key != 'scope'}
+            from scidiscovery.research_loop import experiments
+            result = experiments.progress(config)
             code=0
         else:
             script=args.script

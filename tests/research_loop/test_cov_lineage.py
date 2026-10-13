@@ -9,6 +9,8 @@ import sys
 import pytest
 
 from scidiscovery.research_loop import cov_lineage
+from scidiscovery.research_loop import experiments
+from execution_fixtures import execution_registry
 
 
 # The installed probe's tiny public-exp-shaped backend, extended only for exact
@@ -39,17 +41,18 @@ raise SystemExit(1 if mode=='failed' else 0)
 
 
 @pytest.fixture
-def wrapper(tmp_path):
+def wrapper(tmp_path,execution_registry):
     backend = tmp_path / 'backend.py'
     backend.write_text(BACKEND)
     runs = tmp_path / 'runs'
     records = tmp_path / 'work/lineage'
     config = tmp_path / 'config.json'
-    config.write_text(json.dumps(dict(contract_version=2, feedback_version=1, record_dir=str(records), runs_root=str(runs),
+    value=dict(contract_version=2, feedback_version=1, record_dir=str(records), runs_root=str(runs),
         run_argv=[sys.executable, str(backend), '--runs-root', str(runs)],
         scope=dict(step=2, role='W', job_sha256='a'*64, execution_key='b'*64, mechanism_ref='h001.m1'),
-        parents=[], evaluation_key='fixture-public-v1')))
-    env = dict(os.environ, PYTHONPATH=str(Path(cov_lineage.__file__).parents[2]), EXP_WALL_CAP_S='1')
+        parents=[], evaluation_key='fixture-public-v1')
+    config.write_text(json.dumps(experiments.freeze(value,'cov_execution:experiment',path=config)))
+    env = dict(os.environ, PYTHONPATH=str(Path(cov_lineage.__file__).parents[2])+os.pathsep+os.environ.get('PYTHONPATH',''), EXP_WALL_CAP_S='1')
 
     class Wrapper:
         def cli(self, *args, expected=0):

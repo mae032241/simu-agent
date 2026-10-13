@@ -70,7 +70,8 @@ def live(root, job):
         coverage='unavailable', observed_at=None, budget=advisory,
         limitation='No mid-turn notification channel; visible at a tool return or explicit query. Unmanaged work is not covered.')
     config = c.settings(root).get('history_observer')
-    if job.get('live_feedback_version') != VERSION or config is None or config.get('contract_version') != 2:
+    registered=job.get('experiment_interface_version')==1
+    if job.get('live_feedback_version') != VERSION or (not registered and (config is None or config.get('contract_version') != 2)):
         return result
     chains = execution.records(root, job['step'])
     intent_path = chains[-1] / 'native-intent.json'
@@ -90,9 +91,21 @@ def live(root, job):
         return result
     scope = dict(step=job['step'], role=job['role'], job_sha256=task,
         execution_keys=keys, mechanism_ref=((job.get('search') or {}).get('focus') or {}).get('mechanism_ref'))
-    request = dict(progress_version=VERSION, root=str(root), step=job['step'], scope=scope, config=config['config'])
+    request = dict(progress_version=VERSION, root=str(root), step=job['step'], scope=scope,
+        config=config['config'] if not registered else None)
     try:
-        value = history.read_adapter(config, request)
+        if registered:
+            from . import experiments
+            path=chains[-1]/'experiment-config.json'
+            if not path.exists():return result
+            frozen=c.read(c.regular(path))
+            bound=frozen['scope']
+            if (bound['step']!=scope['step'] or bound['role']!=scope['role'] or bound['job_sha256']!=task
+                    or bound['execution_key'] not in keys or bound['mechanism_ref']!=scope['mechanism_ref']):
+                raise history.ObserverIntegrityError('Registered experiment observation escaped its frozen task')
+            try:value=dict(experiments.progress(frozen),scope=scope)
+            except experiments.IntegrityError as error:raise history.ObserverIntegrityError(str(error)) from error
+        else:value = history.read_adapter(config, request)
         expected = {'version', 'scope', 'calls', 'counts', 'omitted_count', 'coverage', 'observed_at'}
         if not isinstance(value, dict) or set(value) != expected or value['version'] != VERSION:
             raise ValueError('Progress component does not support its frozen contract')

@@ -124,7 +124,7 @@ def prepare_home(s,w,h, auth_source=None):
         elif alias.exists():raise ValueError('native_helper_alias_not_symlink')
         else:alias.symlink_to(target)
     (w/'bin').mkdir(exist_ok=True)
-    wrapper = '#!/bin/sh\ncase "$1" in\nrun|lineage-status) exec ' + shlex.quote(s['scid_python']) + ' -I -m scidiscovery.research_loop.cov_lineage --config ' + shlex.quote(str(w/'work/lineage-config.json')) + ' "$@";;\n*) exec ' + shlex.quote(s['task_python']) + ' -I /opt/exp/exp_cli.py "$@";;\nesac\n'
+    wrapper = '#!/bin/sh\ncase "$1" in\nrun|lineage-status|query|collect|cancel) exec ' + shlex.quote(s['scid_python']) + ' -I -m scidiscovery.research_loop.experiments --config ' + shlex.quote(str(w/'work/lineage-config.json')) + ' "$@";;\n*) exec ' + shlex.quote(s['task_python']) + ' -I /opt/exp/exp_cli.py "$@";;\nesac\n'
     p=w/'bin/exp'
     if p.exists() and regular(p).decode()!=wrapper:raise ValueError('exp_wrapper_changed')
     if not p.exists():p.write_text(wrapper);p.chmod(0o555)

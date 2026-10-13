@@ -6,6 +6,7 @@ import shutil
 import sys
 
 import pytest
+from execution_fixtures import execution_registry
 
 from scidiscovery.research_loop import budget, contracts as c, controller, cov_delivery, cov_lineage, delivery
 from test_cov_lineage import BACKEND

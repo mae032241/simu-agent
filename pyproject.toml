@@ -26,10 +26,15 @@ test = [
 [project.scripts]
 scid = "scidiscovery.artifact_agent.interfaces.cli:main"
 scid-research = "scidiscovery.research_loop.cli:main"
+scid-experiment = "scidiscovery.research_loop.experiments:main"
 
 [project.entry-points."scidiscovery.plugins"]
 builtin = "scidiscovery.builtin_plugin:CORE_PLUGIN"
 general_science = "scidiscovery.general_science_plugin:PLUGIN"
+
+[project.entry-points."scidiscovery.execution_interfaces"]
+local_execution = "scidiscovery.research_loop.local_experiments:REGISTRATION"
+cov_execution = "scidiscovery.research_loop.cov_experiments:REGISTRATION"
 
 [project.entry-points."scidiscovery.instance_views"]
 general_science = "scidiscovery.general_science_views:build_presentation"

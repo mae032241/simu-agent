@@ -2,54 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping, Protocol
+from typing import Mapping
+
+from scidiscovery.operations.execution import AdapterCapability, ExecutionAdapter
 
 from .schema.approval import CompiledApprovalIdentity
 from .schema.execution import ExecutionAdmission, LocalFileDescriptor
 from .service.executions import ExecutionService, ExecutionServiceError
-
-
-@dataclass(frozen=True)
-class AdapterCapability:
-    """One public immutable capability document supplied by an adapter."""
-
-    key: str
-    kind: str
-    schema_id: str
-    payload_schema_version: int
-    media_type: str
-    content: bytes
-    public_summary: Mapping[str, object]
-
-
-class ExecutionAdapter(Protocol):
-    def capabilities(self) -> tuple[AdapterCapability, ...]: ...
-
-    def prepare(
-        self,
-        payload: LocalFileDescriptor,
-        *,
-        preparation_profile: str,
-        exchange_directory: Path,
-    ) -> LocalFileDescriptor: ...
-
-    def submit(self, submission: LocalFileDescriptor) -> tuple[str, str]:
-        """Idempotently submit this exact frozen descriptor."""
-        ...
-
-    def lookup_submission(
-        self, submission: LocalFileDescriptor
-    ) -> tuple[str, str] | None:
-        """Return an existing exact submission; None does not retire an in-flight submit."""
-        ...
-
-    def status(self, external_run_id: str) -> str: ...
-
-    def cancel(self, external_run_id: str) -> str: ...
-
-    def collect(self, external_run_id: str) -> tuple[LocalFileDescriptor, ...]: ...
 
 
 class ExecutionBridge:
