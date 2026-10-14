@@ -90,7 +90,7 @@ def live(root, job):
     if not keys:
         return result
     scope = dict(step=job['step'], role=job['role'], job_sha256=task,
-        execution_keys=keys, mechanism_ref=((job.get('search') or {}).get('focus') or {}).get('mechanism_ref'))
+        execution_keys=keys, mechanism_ref=None if (job.get('search') or {}).get('breadth') else ((job.get('search') or {}).get('focus') or {}).get('mechanism_ref'))
     request = dict(progress_version=VERSION, root=str(root), step=job['step'], scope=scope,
         config=config['config'] if not registered else None)
     try:
@@ -127,10 +127,12 @@ def live(root, job):
         ids = set()
         allowed = {'call_id', 'status', 'candidate_id', 'evaluation_key', 'metric', 'direction', 'wall_seconds', 'parent_candidate'}
         for row in value['calls']:
-            if (not isinstance(row, dict) or set(row) != allowed or row['status'] not in names
+            if (not isinstance(row, dict) or set(row) not in (allowed,allowed|{'mechanism_ref'}) or row['status'] not in names
                     or not isinstance(row['call_id'], str) or not 0 < len(row['call_id']) <= 128 or row['call_id'] in ids):
                 raise ValueError('Progress call identities are not unique')
             ids.add(row['call_id'])
+            if 'mechanism_ref' in row and (not isinstance(row['mechanism_ref'],str) or row['mechanism_ref'] not in {item['mechanism_ref'] for item in (job.get('search') or {}).get('breadth',{}).get('mechanisms',[])}):
+                raise history.ObserverIntegrityError('Progress mechanism escaped frozen H combination')
             if any(row[key] is not None and (not isinstance(row[key], str) or len(row[key].encode()) > 80)
                    for key in ('candidate_id', 'evaluation_key', 'parent_candidate')):
                 raise ValueError('Progress text exceeds its bound')

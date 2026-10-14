@@ -32,11 +32,12 @@ def test_sealed_current_h_configures_registered_cov_and_final_a(tmp_path,executi
     config=tmp_path/'experiment-config.json'
     cov_lineage.configure(root,2,[sys.executable,str(backend),'--runs-root',str(root/'runs')],root/'runs',config)
     frozen=c.read(config)
-    assert frozen['scope']['mechanism_ref']=='h001.m1'
+    assert frozen['scope']['mechanism_ref'] is None
+    assert frozen['breadth']['mechanisms'][0]['mechanism_ref']=='h001.m1'
     script=c.workspace(root,2)/'work/payload.json';script.write_text('{}')
     env=dict(os.environ,PYTHONPATH=str(Path(cov_lineage.__file__).parents[2])+os.pathsep+os.environ.get('PYTHONPATH',''))
     command=[sys.executable,'-m','scidiscovery.research_loop.experiments','--config',str(config)]
-    reply=subprocess.run([*command,'run','--script',str(script),'--new-plan'],env=env,capture_output=True,text=True,timeout=20)
+    reply=subprocess.run([*command,'run','--script',str(script),'--new-plan','--mechanism','P'],env=env,capture_output=True,text=True,timeout=20)
     assert reply.returncode==0,(reply.stdout,reply.stderr)
     result=json.loads(reply.stdout)
     assert result['status']=='known_success'
@@ -48,7 +49,8 @@ def test_sealed_current_h_configures_registered_cov_and_final_a(tmp_path,executi
     assert state['mechanisms']['h001.m1']['status']=='screened'
     assert state['order']['remaining']==[] and len(state['order']['seen_w'])==1
     context=graph['candidates'][result['candidate_id']]['context']
-    assert context['call_id']==result['call_id'] and context['scope']['mechanism_ref']=='h001.m1'
+    assert context['call_id']==result['call_id'] and context['scope']['mechanism_ref'] is None
+    assert context['mechanism_binding']['mechanism_ref']=='h001.m1'
     assert context['status']=='known_success'
     before={p:p.read_bytes() for p in root.rglob('*') if p.is_file()}
     assert lineage.build(root,4)==graph

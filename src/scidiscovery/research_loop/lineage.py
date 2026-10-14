@@ -48,7 +48,7 @@ def contexts(root, job, items, archive, previous=()):
     expected_scope=stage_scope(root,job)
     result=[];seen=set();available={item['candidate_id']:item for item in previous if item['status']=='known_success'}
     for item in items:
-        if not isinstance(item,dict) or set(item)!={'call_id','scope','status','candidate_id','run_id','model','parent','change_intent','note','proofs'}:
+        if not isinstance(item,dict) or set(item) not in ({'call_id','scope','status','candidate_id','run_id','model','parent','change_intent','note','proofs'}, {'call_id','scope','status','candidate_id','run_id','model','parent','change_intent','note','proofs','mechanism_binding'}):
             raise ValueError('Plugin context fields differ from contract2')
         if not isinstance(item['call_id'],str) or len(item['call_id'])>128 or item['call_id'] in seen:
             raise history.ObserverIntegrityError('Execution context identity is ambiguous')
@@ -74,6 +74,15 @@ def contexts(root, job, items, archive, previous=()):
             if original['sha256']!=proof['sha256'] or original['size_bytes']!=proof['size_bytes']:
                 raise history.ObserverIntegrityError('Execution context original changed')
             proofs.append(original)
+        if (job.get('search') or {}).get('breadth'):
+            from . import breadth
+            original=next((proof for proof in proofs if Path(proof['path']).name=='accepted.json'),None)
+            if original is None or original.get('retention')!='archived':raise history.ObserverIntegrityError('Accepted call original missing')
+            accepted=c.read(root/original['snapshot'])
+            binding=item.get('mechanism_binding')
+            if accepted.get('scope')!=scope or accepted.get('call_id')!=item['call_id'] or accepted.get('mechanism_binding')!=binding:
+                raise history.ObserverIntegrityError('Context mechanism differs from original accepted call')
+            breadth.check_binding(job['search']['breadth'],binding,scope)
         model=None
         if item['model'] is not None:
             model=archive(item['model']['path'])
@@ -117,7 +126,7 @@ def build(root, before_step, *, sources=None, search_state=None):
             if context['status']=='unknown':coverage='partial';continue
             if candidate not in candidates:raise ValueError('Context has no observed candidate')
             parent=context['parent'];item=candidates[candidate]
-            item.update(execution_status=context['status'],mechanism_ref=context['scope']['mechanism_ref'],
+            item.update(execution_status=context['status'],mechanism_ref=(context.get('mechanism_binding') or {}).get('mechanism_ref',context['scope']['mechanism_ref']),
                         parent=parent['candidate_id'],derivation=parent['status'],context=context)
             if context['status']=='known_success' and parent['status']=='declared':
                 if parent['candidate_id'] not in candidates:raise ValueError('Declared parent has no exact original')
@@ -338,8 +347,8 @@ def bind(root, step, role, protocol, *, source_cutoff=None, extra_steps=(), sele
             if state and 'portfolio' in state:
                 pending = state['portfolio']['pending_w'] if role == 'A' else None
                 row['deferred_cycles_if_assessed'] = (row['deferred_cycles_in_window'] + 1
-                    if pending and row['mechanism_ref'] != pending['branch'] and row['status'] in {'pending', 'deferred'}
-                    else 0 if pending and row['mechanism_ref'] == pending['branch'] else row['deferred_cycles_in_window'])
+                    if pending and row['mechanism_ref'] not in (pending.get('branches') or [pending['branch']]) and row['status'] in {'pending', 'deferred'}
+                    else 0 if pending and row['mechanism_ref'] in (pending.get('branches') or [pending['branch']]) else row['deferred_cycles_in_window'])
     mechanism_pages=paged(mechanisms,16,'mechanisms','inputs/lineage/mechanisms','sealed-H-A-interpretation')
     order_rows = [dict(mechanism_ref=item['mechanism_ref'], label=_clip(state['mechanisms'][item['mechanism_ref']]['label'], 80),
                        original=f'inputs/history/nodes/{item["planned_step"]:03d}/0001.json')

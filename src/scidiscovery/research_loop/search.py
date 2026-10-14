@@ -22,14 +22,16 @@ class UnresolvedSearch(ValueError):
 
 
 def policy(value):
-    if not isinstance(value, dict) or set(value) != set(DEFAULT_POLICY):
-        raise ValueError('Search policy requires three exact finite ceilings')
+    if not isinstance(value, dict) or set(value) not in (set(DEFAULT_POLICY),set(DEFAULT_POLICY)|{'initial_calls'}):
+        raise ValueError('Search policy requires finite ceilings and optional initial_calls')
     seconds = value['max_w_seconds']
     if type(seconds) not in (int, float) or not 0 < seconds < float('inf'):
         raise ValueError('W slice seconds must be positive and finite')
     if any(type(value[key]) is not int or value[key] <= 0
            for key in ('max_w_observed_tokens', 'max_requested_repairs')):
         raise ValueError('W tokens and repair ceilings must be positive integers')
+    if 'initial_calls' in value and (type(value['initial_calls']) is not int or value['initial_calls'] <= 0):
+        raise ValueError('Initial registered-call opportunities must be a positive integer')
     return dict(value)
 
 
@@ -45,7 +47,8 @@ def _text(limit=1024, nullable=False):
 def schema(role, protocol=None):
     focus=lambda key:_object({key:_text(80),'action':dict(type='string',enum=list(MODES))},nullable=True)
     if role=='H':
-        commitment=_object(dict(label=_text(80),minimal_test=_text(),existing_ref=_text(80,nullable=True)))
+        test=_text();test['description']='State the discriminating scientific prediction or question and why this mechanism has this exploration priority. Do not prescribe run counts, parameter grids or costs.'
+        commitment=_object(dict(label=_text(80),minimal_test=test,existing_ref=_text(80,nullable=True)))
         value=_object(dict(scope=_text(),commitments=dict(type='array',maxItems=MAX_COMMITMENTS,items=commitment),focus=focus('label')),nullable=True)
         value['description']=('Declare at most four additions or revisions in scientific exploration order; omitted unfinished mechanisms remain. '
             'Null focus follows the confirmed unfinished plan. Explicit exact ref or unique label with route_reason selects scientific screen/improve/repair without rewriting an order table.')
@@ -53,25 +56,52 @@ def schema(role, protocol=None):
     if role=='A':
         disposition=_object(dict(mechanism_ref=_text(80),status=dict(type='string',enum=['screened','deferred','waived','pending']),reason=_text()))
         value=_object(dict(dispositions=dict(type='array',maxItems=MAX_COMMITMENTS,items=disposition),next_focus=focus('mechanism_ref')),nullable=True)
-        value['description']=('Declare only changed scientific dispositions; screened needs one same-mechanism final W original. '
+        value['description']=('Declare only changed scientific dispositions; screened requires this mechanism and H version in one exact final W with sealed accepted and known terminal originals; execution success alone is not scientific screening. '
             'Null next_focus follows the unfinished plan after this eligible final W assessment. '
             'An explicit exact ref or unique label plus route_reason may deepen another authorized mechanism. Do not write mechanical IDs, counts, paths or priorities.')
         return value
     raise ValueError('Only H and A declare scientific search choices')
 
 
-def _assessed(root,job):
+
+
+def _managed_refs(root,source,seal,state):
+    if not seal.get('observations'):return set()
+    observation=c.read(root/seal['observations']['path']);hashes={};refs=set()
+    for row in observation.get('managed_calls',[]):
+        binding=row['mechanism_binding'];ref=binding['mechanism_ref']
+        current=state['mechanisms'].get(ref)
+        if current is None or row['status'] not in {'known_success','known_failed'} or binding['source_h']!=current['source_h']:continue
+        step=current['source_h']
+        if step not in hashes:hashes[step]=c.digest(c.regular(c.host_record(c.workspace(root,step))/'result-identity.json'))
+        if binding['source_h_sha256']==hashes[step]:refs.add(ref)
+    return refs
+
+
+def _mechanism_sources(root,job,ref,state,*,screen=False):
+    sources=[]
+    for source,_,seal in history.direct_sources(root,job):
+        if source['role']!='W':continue
+        if (source.get('search') or {}).get('breadth'):
+            if ref in _managed_refs(root,source,seal,state):sources.append(source)
+        elif ((source.get('search') or {}).get('focus') or {}).get('mechanism_ref')==ref and (not screen or source['search']['focus']['action']=='screen'):
+            sources.append(source)
+    return sources
+
+
+def _assessed(root,job,state):
     if job['role']!='A' or job.get('purpose') is not None:return None
     original=history._source(root,job['author_correction']['root']['step'])[0] if job.get('author_correction') else job
     if original['role']!='A':return None
-    sources=[source for source,_,_ in history.direct_sources(root,job) if source['role']=='W']
+    sources=[(source,seal) for source,_,seal in history.direct_sources(root,job) if source['role']=='W']
     if len(sources)!=1:return None
-    source=sources[0]
+    source,source_seal=sources[0]
     if not any(ref['path']==f'inputs/parents/{source["step"]:03d}/conclusion.json' for ref in original['direct_refs']):return None
     focus=(source.get('search') or {}).get('focus')
     if focus is None:return None
     seal=c.regular(c.host_record(c.workspace(root,source['step']))/'result-identity.json')
-    return dict(identity=(source['step'],c.digest(seal)),mechanism_ref=focus['mechanism_ref'],allocation=source['search']['allocation'])
+    return dict(identity=(source['step'],c.digest(seal)),mechanism_ref=focus['mechanism_ref'],allocation=source['search']['allocation'],
+        breadth=bool(source['search'].get('breadth')),mechanism_refs=sorted(_managed_refs(root,source,source_seal,state)))
 
 
 def _apply_science(root,job,payload,state,diagnostics):
@@ -93,6 +123,13 @@ def _apply_science(root,job,payload,state,diagnostics):
                 if ref not in mechanisms:
                     mechanisms[ref]=dict(status='pending',original_h=job['step'])
                     state['order']['remaining'].append(dict(mechanism_ref=ref,planned_step=job['step']))
+                else:
+                    mechanisms[ref]['status']='pending'
+                    remaining=state['order']['remaining']
+                    match=next((row for row in remaining if row['mechanism_ref']==ref),None)
+                    if match is None:remaining.append(dict(mechanism_ref=ref,planned_step=job['step']))
+                    else:match['planned_step']=job['step']
+                    if state.get('extra_grant',{} ) and state['extra_grant']['mechanism_ref']==ref:state['extra_grant']=None
                 mechanisms[ref].update(label=item['label'],minimal_test=item['minimal_test'],source_h=job['step'])
             state['scope']=plan['scope'];state['plan']=plan;state['authorized']|=refs
     elif job['role']=='A':
@@ -106,16 +143,16 @@ def _apply_science(root,job,payload,state,diagnostics):
                 diagnostics.append(dict(code='a_disposition_reason_required',subject=ref));continue
             if item['status']==mechanisms[ref]['status']:continue
             if item['status']=='screened':
-                screens=[source for source,_,_ in history.direct_sources(root,job) if source['role']=='W'
-                    and ((source.get('search') or {}).get('focus') or {}).get('mechanism_ref')==ref
-                    and source['search']['focus']['action']=='screen']
+                screens=_mechanism_sources(root,job,ref,state,screen=True)
                 if len(screens)!=1:
                     diagnostics.append(dict(code='screen_source_ambiguous' if screens else 'screen_source_unavailable',subject=ref));continue
             mechanisms[ref]['status']=item['status']
     from .scientific_intent import resolve_intent
-    interpretation=resolve_intent(state,job,payload,assessed=_assessed(root,job))
+    interpretation=resolve_intent(state,job,payload,assessed=_assessed(root,job,state))
     diagnostics.extend(interpretation['diagnostics'])
     state['focus']=interpretation['focus']
+    if job['role']=='A' and interpretation['focus'] and (payload.get('search_review') or {}).get('next_focus') is not None and not diagnostics:
+        state['extra_grant']=dict(mechanism_ref=interpretation['focus']['mechanism_ref'],source_a=job['step'])
     state['order'].update(remaining=interpretation['unfinished_plan'],seen_w=interpretation['seen_w'],allocation=interpretation['allocation'],diagnostics=interpretation['diagnostics'])
 
 
@@ -153,7 +190,7 @@ def apply_source(root,job,payload,seal,state):
 
 
 def fold(root,sources):
-    state=dict(mechanisms={},current_h=None,scope=None,plan=None,authorized=set(),focus=None,accepted_slices=[],repairs={},
+    state=dict(opportunity_counts={},opportunity_grants={},opportunity_unknown=False,extra_grant=None,mechanisms={},current_h=None,scope=None,plan=None,authorized=set(),focus=None,accepted_slices=[],repairs={},
         order=dict(remaining=[],seen_w=set(),allocation=None,diagnostics=[]))
     if c.settings(root).get('portfolio_policy') is not None:
         state['portfolio']=dict(invested={},deferred={},seen_w=set(),pending_w=None,last_branch=None,last_review=None)
@@ -161,6 +198,16 @@ def fold(root,sources):
     for job,payload,seal,seal_sha in sources:
         if enabled:apply_source(root,job,payload,seal,state)
         if 'portfolio' in state:_portfolio_update(root,job,payload,seal,state,seal_sha)
+        if seal.get('observations'):
+            observation=c.read(root/seal['observations']['path'])
+            for row in observation.get('managed_calls',[]):
+                binding=row['mechanism_binding'];ref=binding['mechanism_ref']
+                state['opportunity_counts'][ref]=state['opportunity_counts'].get(ref,0)+1
+                grant=binding['grant']
+                if grant:
+                    key=(grant['source_a'],grant['source_a_sha256'])
+                    state['opportunity_grants'][key]=state['opportunity_grants'].get(key,0)+1
+                if row['status']=='unknown':state['opportunity_unknown']=True
         step=job['step'];intent=execution.record(root,step)/'native-intent.json'
         if job['role']=='W' and job.get('search') and intent.exists():
             value=c.read(c.regular(intent))
@@ -180,6 +227,29 @@ def project(root,before_step):
     return fold(root,history.source_sequence(root,before_step))
 
 
+
+def _breadth(root,state,limits):
+    from . import breadth
+    # Keep H declaration order across revisions; never discard authorized pending items.
+    refs=[item['mechanism_ref'] for item in state['order']['remaining'] if item['mechanism_ref'] in state['authorized']]
+    refs+= [ref for ref in state['mechanisms'] if ref in state['authorized'] and ref not in refs]
+    if not refs:return None
+    if len(refs)>breadth.MAX_MECHANISMS:raise ValueError('Authorized H combination exceeds frozen opportunity capacity')
+    mechanisms=[]
+    for ref in refs:
+        item=state['mechanisms'][ref];step=item['source_h']
+        mechanisms.append(dict(mechanism_ref=ref,label=item['label'],source_h=step,
+            source_h_sha256=c.digest(c.regular(c.host_record(c.workspace(root,step))/'result-identity.json')),
+            minimal_test=item['minimal_test'],status=item['status']))
+    declared=state.get('extra_grant');grant=None
+    if declared and declared['mechanism_ref'] in refs:
+        step=declared['source_a'];sha=c.digest(c.regular(c.host_record(c.workspace(root,step))/'result-identity.json'))
+        grant=dict(declared,source_a_sha256=sha,extra_calls=1,used_calls=min(1,state['opportunity_grants'].get((step,sha),0)))
+    return breadth.validate(dict(version=1,initial_calls=limits.get('initial_calls',1),mechanisms=mechanisms,
+        baseline=[dict(mechanism_ref=ref,accepted_count=state['opportunity_counts'].get(ref,0)) for ref in refs],
+        grant=grant,prior_unknown=state['opportunity_unknown']))
+
+
 def bind(root,step,role,protocol=None,*,write_pages=True,state=None,unified=True):
     limits=c.settings(root).get('search_policy')
     if limits is None:return None
@@ -189,12 +259,11 @@ def bind(root,step,role,protocol=None,*,write_pages=True,state=None,unified=True
     if focus is not None and focus['action']=='repair':
         chooser_step=max(index for index in range(1,step) if c.read(root/'jobs'/f'{index:03d}.json')['role'] in {'H','A'})
         chooser=c.read(root/'jobs'/f'{chooser_step:03d}.json')
-        sources=[source for source,_,_ in history.direct_sources(root,chooser) if source['role']=='W'
-            and ((source.get('search') or {}).get('focus') or {}).get('mechanism_ref')==focus['mechanism_ref']]
+        sources=_mechanism_sources(root,chooser,focus['mechanism_ref'],state)
         repair_binding='available' if len(sources)==1 else 'ambiguous' if sources else 'unavailable'
         if len(sources)==1:repair_root=sources[0]['search'].get('repair_root') or sources[0]['step']
     return dict(focus=focus,allocation=copy.deepcopy(state['order']['allocation']),unfinished_plan=copy.deepcopy(state['order']['remaining']),
-        intent_diagnostics=state['order']['diagnostics'],repair_root=repair_root,repair_binding=repair_binding,limits=policy(limits),files=[])
+        breadth=_breadth(root,state,limits) if role=='W' else None,intent_diagnostics=state['order']['diagnostics'],repair_root=repair_root,repair_binding=repair_binding,limits=policy(limits),files=[])
 
 
 def launch_reason(root,job):
@@ -271,14 +340,16 @@ def portfolio_policy(value):
     return dict(review_after_cycles=value['review_after_cycles'],version=2)
 
 
-def _portfolio_cycle(portfolio, mechanisms, branch):
-    portfolio['invested'][branch] = portfolio['invested'].get(branch, 0) + 1
+def _portfolio_cycle(portfolio, mechanisms, branch, branches=None):
+    branches=set(branches or [branch])
+    for ref in branches:portfolio['invested'][ref]=portfolio['invested'].get(ref,0)+1
     for ref, item in mechanisms.items():
-        if ref != branch and item['status'] in {'pending', 'deferred'}:
+        if ref not in branches and item['status'] in {'pending', 'deferred'}:
             portfolio['deferred'][ref] = portfolio['deferred'].get(ref, 0) + 1
         else:
             portfolio['deferred'].pop(ref, None)
-    portfolio['last_branch'] = branch
+    portfolio['last_branches']=sorted(branches)
+    portfolio['last_branch']=next(iter(branches)) if len(branches)==1 else None
 
 
 def _portfolio_update(root, job, payload, seal, state, seal_sha=None):
@@ -290,7 +361,11 @@ def _portfolio_update(root, job, payload, seal, state, seal_sha=None):
             if focus['action']=='repair':
                 original=job['search']['repair_root']
                 identity=(original,c.digest(c.regular(c.host_record(c.workspace(root,original))/'result-identity.json')))
-            portfolio['pending_w']=dict(step=job['step'],identity=identity,branch=focus['mechanism_ref'])
+            branches=[focus['mechanism_ref']]
+            if (job.get('search') or {}).get('breadth'):
+                observation=c.read(root/seal['observations']['path']) if seal.get('observations') else {}
+                branches=list(dict.fromkeys(row['mechanism_binding']['mechanism_ref'] for row in observation.get('managed_calls',[])))
+            portfolio['pending_w']=dict(step=job['step'],identity=identity,branch=focus['mechanism_ref'],branches=branches)
         return
     if job['role'] != 'A' or job.get('purpose') == 'closeout':
         return
@@ -303,10 +378,10 @@ def _portfolio_update(root, job, payload, seal, state, seal_sha=None):
         original = history._source(root, job['author_correction']['root']['step'])[0]
         original_cycle = (original['role'] == 'A' and any(ref['path'] == f'inputs/parents/{pending["step"]:03d}/conclusion.json' for ref in original['direct_refs']))
     focus=state['focus']
-    repairing=focus and focus['action']=='repair' and pending and focus['mechanism_ref']==pending['branch']
+    repairing=focus and focus['action']=='repair' and pending and focus['mechanism_ref'] in (pending.get('branches') or [pending['branch']])
     if valid and original_cycle and not repairing and payload.get('next_action') not in {'audit', 'extract', 'wait'} and pending and any(ref['path'] == f'inputs/parents/{pending["step"]:03d}/conclusion.json' for ref in job['direct_refs']):
         if pending['identity'] not in portfolio['seen_w']:
-            _portfolio_cycle(portfolio, mechanisms, pending['branch'])
+            _portfolio_cycle(portfolio, mechanisms, pending['branch'],pending.get('branches'))
             portfolio['seen_w'].add(pending['identity'])
         portfolio['pending_w'] = None
     # Audit/extraction/wait never renew the window. An author may clarify the
@@ -345,10 +420,12 @@ def portfolio_assess(root,job,payload,*,interpretation=None,decision_diagnostics
 
 def portfolio_view(state,threshold,*,prospective=False,version=2):
     portfolio=copy.deepcopy(state['portfolio'])
-    if prospective and portfolio['pending_w']:_portfolio_cycle(portfolio,state['mechanisms'],portfolio['pending_w']['branch'])
+    if prospective and portfolio['pending_w']:_portfolio_cycle(portfolio,state['mechanisms'],portfolio['pending_w']['branch'],portfolio['pending_w'].get('branches'))
     branch=portfolio['last_branch']
     overdue=[ref for ref,item in state['mechanisms'].items() if item['status'] in {'pending','deferred'} and portfolio['deferred'].get(ref,0)>=threshold]
+    actual=portfolio.get('last_branches',[])
     return dict(version=2,review_after_cycles=threshold,last_assessed_branch=branch,
+        last_assessed_branches=actual[:4],last_assessed_branch_count=len(actual),last_assessed_branches_omitted_count=max(0,len(actual)-4),
         completed_cycles=state['portfolio']['invested'].get(branch,0),cycles_if_assessed=portfolio['invested'].get(branch,0),
         pending_assessment=bool(prospective and portfolio['pending_w']),overdue_count_if_assessed=len(overdue),
         review_required_for_non_overdue_selection=bool(overdue),last_review_step=portfolio['last_review'],

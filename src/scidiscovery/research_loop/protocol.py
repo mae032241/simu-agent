@@ -6,7 +6,7 @@ is compatibility information, never permission or scientific qualification.
 from pathlib import Path
 
 
-CURRENT = 14
+CURRENT = 15
 
 
 class UnsupportedProtocol(ValueError):
@@ -65,7 +65,8 @@ def stage_scope(root,job):
     return dict(step=job['step'],role=job['role'],handoff_protocol=job['handoff_protocol'],
         job_sha256=c.digest(Path(root)/'jobs'/f'{job["step"]:03d}.json'),
         execution_key=execution.identity(Path(root),job['step'],0),
-        mechanism_ref=((job.get('search') or {}).get('focus') or {}).get('mechanism_ref'))
+        mechanism_ref=(None if (job.get('search') or {}).get('breadth') is not None
+            else ((job.get('search') or {}).get('focus') or {}).get('mechanism_ref')))
 
 def archive_status(root):
     """Preserved original facts only; no schema replay, observer, cache or page writes."""

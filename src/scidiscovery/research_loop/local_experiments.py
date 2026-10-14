@@ -164,6 +164,9 @@ class LocalExecution:
         result=json.loads(e.read(path))
         if result['call_id']!=call_id or result['scope']!=self.config['scope']:
             raise e.IntegrityError('Completed execution binding changed')
+        accepted=self.records.accepted(call_id)
+        if result.get('mechanism_binding')!=accepted.get('mechanism_binding'):
+            raise e.IntegrityError('Completed scientific mechanism binding changed')
         for item in result['proofs']:
             if e.proof(item['path'])!=item:raise e.IntegrityError('Completed execution original changed')
         return result

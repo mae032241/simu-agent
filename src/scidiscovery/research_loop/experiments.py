@@ -140,6 +140,8 @@ def freeze(config, executor, *, path=None):
     from .protocol import require_scope
     require_scope(config.get('scope'))
     value = dict(config)
+    from . import breadth
+    breadth.validate(value.get('breadth'))
     value.setdefault('admission',dict(version=ADMISSION_VERSION,mode='unavailable'))
     scope=value.get('scope')
     if (not isinstance(scope,dict) or set(scope)!={'step','role','job_sha256','execution_key','mechanism_ref','handoff_protocol'}
@@ -153,7 +155,7 @@ def freeze(config, executor, *, path=None):
     value['execution_interface'] = dict(executor=executor)
     declared, adapter, body = _adapter(value, path or Path(config['record_dir']).parent / 'config.json')
     assets = [Path(inspect.getfile(declared.factory.build)).resolve(),
-              Path(inspect.getfile(type(adapter))).resolve(), Path(__file__).resolve()]
+              Path(inspect.getfile(type(adapter))).resolve(), Path(__file__).resolve(), Path(inspect.getfile(breadth)).resolve()]
     assets += [Path(item).resolve() for item in adapter.code_assets()]
     value['execution_interface'] = dict(version=VERSION, executor=executor, plugin_version=declared.version,
         config_sha256=hashlib.sha256(encoded(body)).hexdigest(),
@@ -184,7 +186,7 @@ def configure(root,step,executor,config,output):
     admission=budget.review_configuration(root,job)
     from .protocol import stage_scope
     value=dict(config,record_dir=str(c.workspace(root,step)/'work/lineage'),native_attempt=native_attempt,admission=admission,
-        scope=stage_scope(root,job))
+        scope=stage_scope(root,job),breadth=(job.get('search') or {}).get('breadth'))
     value=freeze(value,executor,path=output)
     updates=[]
     for path in (Path(output),record/'experiment-config.json'):
@@ -261,7 +263,7 @@ class Records:
         finally:
             os.close(fd)
 
-    def accept(self, descriptor, metadata, interface, *, expected_calls=None):
+    def accept(self, descriptor, metadata, interface, *, expected_calls=None, mechanism=None):
         """Short admission linearization point. No solver or domain IO under lock."""
         from .protocol import require_scope
         require_scope(self.config['scope'])
@@ -287,6 +289,10 @@ class Records:
                 with self.lease('accept.lock'):
                     review=review_status(self.config)
                     if review['requested']:raise ReviewRequired(review['reason'])
+                    from . import breadth
+                    binding=breadth.admit(self.config.get('breadth'),mechanism,self.config['scope'],
+                        [self.accepted(path.name) for path in self.calls()])
+                    if binding is not None:accepted['mechanism_binding']=binding
                     write(directory/'accepted.json',accepted)
                     destination.parent.mkdir(exist_ok=True)
                     directory.rename(destination)
@@ -303,6 +309,10 @@ class Records:
         accepted = json.loads(read(directory / 'accepted.json'))
         if accepted['scope'] != self.config['scope'] or accepted['call_id'] != call_id:
             raise IntegrityError('Execution receipt escaped its accepted scope')
+        if 'mechanism_binding' in accepted:
+            if 'mechanism_binding' in value and value['mechanism_binding']!=accepted['mechanism_binding']:
+                raise IntegrityError('Execution receipt changed scientific mechanism')
+            value=dict(value,call_id=call_id,scope=self.config['scope'],mechanism_binding=accepted['mechanism_binding'])
         write(directory / filename, value)
 
     def accepted(self,call_id):
@@ -311,6 +321,9 @@ class Records:
                 or not isinstance(value.get('scope'),dict) or type(value['scope'].get('step')) is not int
                 or value['scope']!=self.config['scope']):
             raise IntegrityError('Accepted execution binding changed')
+        from . import breadth
+        try:breadth.check_binding(self.config.get('breadth'),value.get('mechanism_binding'),self.config['scope'])
+        except ValueError as error:raise IntegrityError('Accepted scientific mechanism binding changed') from error
         parent=value.get('parent')
         if not isinstance(parent,dict) or 'candidate_id' not in parent:
             raise IntegrityError('Published execution parent is malformed')
@@ -322,7 +335,9 @@ class Records:
     def bind_external(self,call_id,external_id,state):
         if not isinstance(external_id,str) or not ID.fullmatch(external_id):
             raise IntegrityError('Submitted external execution identity is invalid')
+        accepted=self.accepted(call_id)
         value=dict(call_id=call_id,external_run_id=external_id,scope=self.config['scope'])
+        if 'mechanism_binding' in accepted:value['mechanism_binding']=accepted['mechanism_binding']
         path=self.directory(call_id)/'submission.json'
         if path.exists():
             if json.loads(read(path))!=value:raise IntegrityError('Original external execution identity changed')
@@ -330,11 +345,12 @@ class Records:
         return external_id,state
 
     def external(self,call_id):
-        self.accepted(call_id)
+        accepted=self.accepted(call_id)
         path=self.directory(call_id)/'submission.json'
         if not path.exists():return None
         value=json.loads(read(path))
-        if value.get('call_id')!=call_id or value.get('scope')!=self.config['scope']:
+        if (value.get('call_id')!=call_id or value.get('scope')!=self.config['scope']
+                or value.get('mechanism_binding')!=accepted.get('mechanism_binding')):
             raise IntegrityError('External execution binding changed')
         return value['external_run_id']
 
@@ -349,21 +365,21 @@ class Records:
         return {'known_success':'succeeded','known_failed':'failed','unknown':'unknown'}.get(completed.get('status'),'unknown')
 
 
-def dispatch(config, script, *, parent=None, new=False, change=None):
+def dispatch(config, script, *, parent=None, new=False, change=None, mechanism=None):
     """Convenience input path; neutral callers may provide a descriptor directly."""
     source=Path(script).resolve();item=proof(source)
     payload=LocalFileDescriptor(name='input',local_path=str(source),sha256=item['sha256'],
         size_bytes=item['size_bytes'],media_type='application/octet-stream')
-    return dispatch_descriptor(config,payload,parent=parent,new=new,change=change)
+    return dispatch_descriptor(config,payload,parent=parent,new=new,change=change,mechanism=mechanism)
 
 
-def dispatch_descriptor(config, payload, *, parent=None, new=False, change=None):
-    try:return _dispatch_descriptor(config,payload,parent=parent,new=new,change=change)
+def dispatch_descriptor(config, payload, *, parent=None, new=False, change=None, mechanism=None):
+    try:return _dispatch_descriptor(config,payload,parent=parent,new=new,change=change,mechanism=mechanism)
     except BlockingIOError:return dict(status='unknown',note='Original accepted execution still owns its lease')
     except ConcurrentExecution as error:return dict(status='unknown',note=str(error))
 
 
-def _dispatch_descriptor(config, payload, *, parent=None, new=False, change=None):
+def _dispatch_descriptor(config, payload, *, parent=None, new=False, change=None, mechanism=None):
     from .protocol import require_scope
     require_scope(config.get('scope'))
     adapter = load(config)
@@ -380,7 +396,7 @@ def _dispatch_descriptor(config, payload, *, parent=None, new=False, change=None
     descriptor = payload.model_copy(update={'name':call_id})
     prepared = adapter.prepare(descriptor, preparation_profile='research_loop.v1', exchange_directory=records.root)
     metadata = adapter.acceptance_metadata(prepared, parent=parent, new=new, change=change)
-    accepted = records.accept(prepared, metadata, config['execution_interface'],expected_calls=[path.name for path in before])
+    accepted = records.accept(prepared, metadata, config['execution_interface'],expected_calls=[path.name for path in before],mechanism=mechanism)
     adapter.dispatch_lease(accepted)
     external_id,state=adapter.submit(prepared)
     records.bind_external(call_id,external_id,state)
@@ -394,8 +410,10 @@ def progress(config):
     rows = []
     counts = dict.fromkeys(('accepted', 'running', 'known_success', 'known_failed', 'unknown'), 0)
     for path in Records(config).calls():
+        binding=None
         try:
             details = adapter.status_details(path.name)
+            binding=Records(config).accepted(path.name).get('mechanism_binding')
         except (FileNotFoundError,json.JSONDecodeError,UnicodeDecodeError):
             details=dict(state='unknown')
         except IntegrityError:
@@ -406,7 +424,7 @@ def progress(config):
         if state not in counts:
             state = 'unknown'
         counts[state] += 1
-        rows.append(dict(call_id=path.name, status=state, candidate_id=details.get('candidate_id'),
+        rows.append(dict(call_id=path.name, **(dict(mechanism_ref=binding['mechanism_ref']) if binding else {}), status=state, candidate_id=details.get('candidate_id'),
             evaluation_key=details.get('evaluation_key'), metric=details.get('metric'), direction=details.get('direction'),
             wall_seconds=details.get('wall_seconds'), parent_candidate=details.get('parent_candidate')))
     return dict(version=1, calls=rows[-16:], counts=counts, omitted_count=max(0, len(rows)-16),
@@ -427,13 +445,14 @@ def preserved_progress(config):
 
 
 def main(argv=None):
-    from . import feedback
+    # -m runs this file as __main__; registered factories import its canonical name.
+    from . import feedback, experiments as common
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--config',type=Path,required=True)
     sub=parser.add_subparsers(dest='command',required=True)
     run=sub.add_parser('run');payload=run.add_mutually_exclusive_group(required=True)
     payload.add_argument('--script',type=Path);payload.add_argument('--payload',type=Path)
     choice=run.add_mutually_exclusive_group();choice.add_argument('--parent-plan');choice.add_argument('--new-plan',action='store_true')
-    run.add_argument('--change-intent');sub.add_parser('lineage-status')
+    run.add_argument('--change-intent');run.add_argument('--mechanism');sub.add_parser('lineage-status')
     for name in ('query','lookup','collect','cancel'):
         item=sub.add_parser(name);item.add_argument('--call-id',required=True)
     args=parser.parse_args(argv)
@@ -448,7 +467,7 @@ def main(argv=None):
             require_scope(config.get('scope'))
         adapter=load(config,path=args.config)
         if args.command=='run':
-            result=dispatch(config,args.script or args.payload,parent=args.parent_plan,new=args.new_plan,change=args.change_intent)
+            result=dispatch(config,args.script or args.payload,parent=args.parent_plan,new=args.new_plan,change=args.change_intent,mechanism=args.mechanism)
             result=adapter.public_result(result)
             code={'known_success':0,'known_failed':1}.get(result['status'],2)
         elif args.command=='lineage-status':result=progress(config);code=0
@@ -472,9 +491,9 @@ def main(argv=None):
             review=review_feedback(config),
             qualification='Execution metadata does not establish scientific or candidate qualification.')
     except ReviewRequired as error:result=dict(status='review_required',reason=str(error),accepted=False);code=2
-    except (IntegrityError,feedback.history.ObserverIntegrityError) as error:result=dict(status='integrity_error',note=str(error));code=3
+    except (IntegrityError,common.IntegrityError,feedback.history.ObserverIntegrityError) as error:result=dict(status='integrity_error',note=str(error));code=3
     except OSError:result=dict(status='integrity_error',note='Execution original cannot be read');code=3
-    except ValueError as error:result=dict(status='unavailable' if isinstance(error,UnsupportedExecution) else 'unresolved',note=str(error));code=2
+    except ValueError as error:result=dict(status='unavailable' if isinstance(error,(UnsupportedExecution,common.UnsupportedExecution)) else 'unresolved',note=str(error));code=2
     print(json.dumps(result,allow_nan=False));return code
 
 

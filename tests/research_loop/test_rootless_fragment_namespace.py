@@ -10,13 +10,15 @@ import sys
 import pytest
 
 from scidiscovery.research_loop import budget,contracts as c,controller,cov_lineage,execution,lineage,native,search
+from scidiscovery.research_loop.protocol import CURRENT
 from test_cov_lineage import BACKEND
 
 
 FAKE_NATIVE=r'''import json,os,pathlib,subprocess,sys
 args=sys.argv[1:];sys.stdin.read()
 work=pathlib.Path(args[args.index('-C')+1]);home=pathlib.Path(os.environ['CODEX_HOME'])
-role=json.loads((work/'science-task.json').read_text())['role']
+task=json.loads((work/'science-task.json').read_text());role=task['role']
+search_enabled=bool(task.get('lineage',{}).get('mechanisms',{}).get('authorized_count'))
 output=pathlib.Path(args[args.index('--output-last-message')+1]);later=output.parent.parent.name=='continuations'
 assert 'resume' not in args
 assert pathlib.Path(args[args.index('--output-schema')+1]).name=='science-result.schema.json'
@@ -27,9 +29,16 @@ session.write_text(json.dumps(dict(type='session_meta',payload=dict(id=thread,cw
 if role=='W':
  if not later:
   p=work/'payload.json';p.write_text('{}')
-  result=subprocess.run([str(work/'bin/exp'),'run','--script',str(p),'--new-plan'],capture_output=True,text=True)
+  cmd=[str(work/'bin/exp'),'run','--script',str(p),'--new-plan']
+  result=subprocess.run(cmd+(['--mechanism','P'] if search_enabled else []),capture_output=True,text=True)
   assert result.returncode==0,(result.stdout,result.stderr)
   reply=json.loads(result.stdout);assert reply['status']=='known_success'
+  if search_enabled:
+   rejected=subprocess.run(cmd+['--mechanism','P'],capture_output=True,text=True)
+   assert rejected.returncode!=0 and 'Other H mechanisms' in rejected.stdout+rejected.stderr,(rejected.stdout,rejected.stderr)
+   other=subprocess.run(cmd+['--mechanism','Q'],capture_output=True,text=True)
+   assert other.returncode==0,(other.stdout,other.stderr)
+   assert json.loads(other.stdout)['status']=='known_success'
   (work/'work/original-call.json').write_text(json.dumps(dict(call_id=reply['call_id'])))
  else:
   assert home.name=='context-001'
@@ -44,10 +53,10 @@ payload=dict(summary='Synthetic namespace contribution',scientific_result='No sc
  limitations=['Fake native transport, not a model.'],implementation_selection=None)
 if role=='W':payload['stage_intent']='review' if later else 'continue'
 if role=='H':payload.update(next_action='experiment',route_reason='Discriminate the declared mechanism',
- search_plan=dict(scope='Synthetic current search',commitments=[dict(label='P',minimal_test='One bounded experiment',existing_ref=None)],focus=None))
+ search_plan=dict(scope='Synthetic current search',commitments=[dict(label=label,minimal_test='One bounded experiment; prioritize competing mechanisms before fine tuning',existing_ref=None) for label in ('P','Q')],focus=None))
 if role=='A':payload.update(next_action='finish',route_reason='The synthetic combination was observed',candidate_recommendation=None,
  progress_assessment=None,decision_request=None,portfolio_review=None,
- search_review=dict(dispositions=[dict(mechanism_ref='h001.m1',status='screened',reason='One final W was assessed')],next_focus=None))
+ search_review=dict(dispositions=[dict(mechanism_ref=ref,status='screened',reason='One final W was assessed') for ref in ('h001.m1','h001.m2')],next_focus=None))
 output.write_text(json.dumps(payload))
 '''
 
@@ -55,8 +64,8 @@ output.write_text(json.dumps(payload))
 @pytest.mark.parametrize('search_enabled',[False,True],ids=['no-search','sealed-h-search-w-a'])
 def test_actual_launcher_two_new_contexts_keep_original_registered_call(tmp_path,search_enabled):
     if shutil.which('bwrap') is None:pytest.skip('Actual namespace unavailable')
-    installed=subprocess.run([sys.executable,'-I','-c','from scidiscovery.research_loop.protocol import CURRENT;assert CURRENT==14'],capture_output=True,text=True)
-    if installed.returncode:pytest.skip('Real installed CURRENT14 interpreter required for isolated launcher')
+    installed=subprocess.run([sys.executable,'-I','-c',f'from scidiscovery.research_loop.protocol import CURRENT;assert CURRENT=={CURRENT}'],capture_output=True,text=True)
+    if installed.returncode:pytest.skip(f'Real installed CURRENT{CURRENT} interpreter required for isolated launcher')
     repo=Path(__file__).resolve().parents[2];launcher=repo/'scripts/acceptance/rootless_cov_launcher.py'
     public=tmp_path/'public';harness=public/'environment/harness';harness.mkdir(parents=True)
     (public/'instruction.md').write_text('Two synthetic native contexts; zero model requests.')
@@ -100,17 +109,18 @@ def test_actual_launcher_two_new_contexts_keep_original_registered_call(tmp_path
     first=c.read(chain[0]/'experiment-config.json');second=c.read(chain[1]/'experiment-config.json')
     assert first['scope']==second['scope'] and first['native_attempt']!=second['native_attempt']
     work=c.workspace(root,step)
-    assert len(list((work/'work/lineage/calls').glob('*/accepted.json')))==1
+    assert len(list((work/'work/lineage/calls').glob('*/accepted.json')))==(2 if search_enabled else 1)
     assert c.read(work/'work/second-context-query.json')['state']=='succeeded'
     assert len(list((root/'jobs').glob('*.json')))==step
     assert c.validate(work)['stage_intent']=='review'
     if search_enabled:
-        assert first['scope']['mechanism_ref']=='h001.m1'
+        assert first['scope']['mechanism_ref'] is None
         c.build_job(root,3,'A',[1,2]);native.execute_native(root,3)
         assert c.validate(c.workspace(root,3))['next_action']=='finish'
         state=search.project(root,4);graph=lineage.build(root,4)
         assert graph['mechanisms']==state['mechanisms']
-        assert state['mechanisms']['h001.m1']['status']=='screened'
+        assert all(row['status']=='screened' for row in state['mechanisms'].values())
         assert len(state['order']['seen_w'])==1 and state['order']['remaining']==[]
-        assert len(graph['candidates'])==1
+        assert len(graph['candidates'])==2
+        assert {item['mechanism_ref'] for item in graph['candidates'].values()}=={'h001.m1','h001.m2'}
         assert native.usage(root)['observed_tokens']==4

@@ -1,19 +1,21 @@
 """Current scientific choices, without role-authored control paths."""
 import json
+import sys
 
 import pytest
 
-from scidiscovery.research_loop import contracts as c, controller, correction, history, search, protocol
+from scidiscovery.research_loop import contracts as c, controller, correction, execution, experiments, history, search, protocol
+from execution_fixtures import execution_registry
 from test_history_handoff import finish
 
 
-def prepare_scene(tmp_path, correction_policy=None):
+def prepare_scene(tmp_path, correction_policy=None, *, node_budget_mode='soft'):
     public = tmp_path / 'public';public.mkdir()
     objective = public / 'objective.md';objective.write_text('Compare mechanisms and retain applicable controls.')
     root = tmp_path / 'instance'
     controller.prepare(root, objective, public, ['fake'], max_tokens=100_000, max_seconds=3600,
                        max_steps=32, model='fake', reasoning_effort='high',
-                       correction_policy=correction_policy)
+                       correction_policy=correction_policy,node_budget_mode=node_budget_mode)
     return root
 
 
@@ -25,6 +27,11 @@ def scene(tmp_path):
 @pytest.fixture
 def correcting_scene(tmp_path):
     return prepare_scene(tmp_path, correction.DEFAULT_POLICY)
+
+
+@pytest.fixture
+def registered_scene(tmp_path,execution_registry):
+    return prepare_scene(tmp_path,node_budget_mode='hard')
 
 
 def plan(action='screen', existing_ref=None):
@@ -73,6 +80,30 @@ SECOND = 'inputs/parents/002/artifacts/b.py'
 def original_worker(root):
     finish(root, 1, 'H', [], action='experiment', search_choice=plan())
     return finish(root, 2, 'W', [1], files={'a.py': 'FIRST_IMPLEMENTATION', 'b.py': 'SECOND_IMPLEMENTATION'})
+
+
+def registered_worker(root,step,parents,*,text='Exact managed scientific contribution'):
+    job=c.build_job(root,step,'W',parents)
+    record=execution.record(root,step)
+    c.write(record/'native-intent.json',dict(task_sha256=c.digest(root/'jobs'/f'{step:03d}.json')))
+    output=root/f'local-config-{step}.json'
+    config=experiments.configure(root,step,'local_execution:command',dict(run_argv=[sys.executable]),output)
+    script=c.workspace(root,step)/'work/managed-input.py';script.write_text('print("bounded fixture observation")\n')
+    result=experiments.dispatch(config,script,mechanism='Mechanism')
+    assert result['status']=='known_success'
+    binding=result['mechanism_binding']
+    assert binding['mechanism_ref']=='h001.m1' and binding['source_h']==1
+    assert binding['source_h_sha256']==c.digest(execution.origin(root,1)/'result-identity.json')
+    sealed=finish(root,step,'W',parents,text=text)
+    observation=c.read(root/c.read(sealed[2]/'result-identity.json')['observations']['path'])
+    assert len(observation['managed_calls'])==1
+    assert observation['managed_calls'][0]['mechanism_binding']==binding
+    return sealed
+
+
+def registered_original_worker(root):
+    finish(root,1,'H',[],action='experiment',search_choice=plan())
+    return registered_worker(root,2,[1])
 
 
 def selected_paths(job):
@@ -170,12 +201,13 @@ def test_mechanical_hash_mismatch_still_blocks_scientific_seal(scene, changed):
 
 
 @pytest.mark.parametrize('source_count', [0, 2])
-def test_first_screen_requires_one_real_same_mechanism_w_task(scene, source_count):
+def test_first_screen_requires_one_real_same_mechanism_w_task(registered_scene, source_count):
+    scene=registered_scene
     if source_count:
-        original_worker(scene)
+        registered_original_worker(scene)
         finish(scene, 3, 'A', [1, 2], action='continue_w',
                search_choice=dict(dispositions=[], next_focus=focus()))
-        finish(scene, 4, 'W', [1, 2, 3], text='Second distinct screen original')
+        registered_worker(scene,4,[1,2,3],text='Second distinct screen original')
         step, parents = 5, [1, 2, 4]
     else:
         finish(scene, 1, 'H', [], action='analyze', search_choice=plan())
@@ -193,12 +225,13 @@ def test_first_screen_requires_one_real_same_mechanism_w_task(scene, source_coun
 
 
 @pytest.mark.parametrize('binding', ['unavailable', 'ambiguous'])
-def test_repair_without_a_unique_bound_worker_stops_new_dispatch(scene, binding):
+def test_repair_without_a_unique_bound_worker_stops_new_dispatch(registered_scene, binding):
+    scene=registered_scene
     if binding == 'ambiguous':
-        original_worker(scene)
+        registered_original_worker(scene)
         finish(scene, 3, 'A', [1, 2], action='continue_w',
                search_choice=dict(dispositions=[], next_focus=focus()))
-        finish(scene, 4, 'W', [1, 2, 3], text='Other same-mechanism worker')
+        registered_worker(scene,4,[1,2,3],text='Other same-mechanism worker')
         a_step, parents = 5, [1, 2, 4]
     else:
         finish(scene, 1, 'H', [], action='analyze', search_choice=plan())
@@ -212,12 +245,13 @@ def test_repair_without_a_unique_bound_worker_stops_new_dispatch(scene, binding)
     assert not (c.host_record(c.workspace(scene, a_step + 1)) / 'native-intent.json').exists()
 
 
-def test_repair_requests_bind_original_root_without_role_paths(scene):
-    original_worker(scene)
+def test_repair_requests_bind_original_root_without_role_paths(registered_scene):
+    scene=registered_scene
+    registered_original_worker(scene)
     for a_step, w_step, source in [(3, 4, 2), (5, 6, 4)]:
         finish(scene, a_step, 'A', [1, source], action='continue_w',
                search_choice=dict(dispositions=[], next_focus=focus('repair')))
-        job, _, _ = finish(scene, w_step, 'W', [1, source, a_step])
+        job, _, _ = registered_worker(scene,w_step,[1,source,a_step])
         assert job['search']['repair_root'] == 2
     finish(scene, 7, 'A', [1, 6], action='continue_w',
            search_choice=dict(dispositions=[], next_focus=focus('repair')))

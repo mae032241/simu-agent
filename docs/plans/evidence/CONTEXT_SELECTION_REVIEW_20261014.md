@@ -1,5 +1,7 @@
 # 角色 context 选材独立审查
 
+后续资格：b8f402a context 的安装及protocol15机械组合已由 [290 PASS/1不适用skip联合独审](BREADTH_EXECUTION_REVIEW_20261014.md)取得；本文原源码阶段的待安装说明为历史状态。真实模型效用、token节省与旧实例迁移仍未授资格。
+
 状态：**PASS，限定 full02 的角色选材源码资格**。最终 authority 为 `/tmp/scid-context-full-02.json` 五文件，独审实际 SHA 全部 MATCH，最终 context 七项源码门禁通过。安装/live 与协议15实际广度准入联合资格仍待后续验收，不授真实科研效用、helper token 减少或完整新协议 PASS。独审只读冻结差量和父代理证据，不运行 tests/build/模型、不改生产/测试，也不读取进行中的 breadth 实现，仅维护本文件。
 
 ## 审查 authority

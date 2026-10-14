@@ -33,9 +33,12 @@ def resolve_intent(state, job, payload, *, assessed=None):
         identity=assessed['identity']
         if identity not in seen:
             allocation=assessed.get('allocation')
-            same_repair=repair and selected==assessed['mechanism_ref']
+            same_repair=repair and selected in (assessed.get('mechanism_refs') or [assessed['mechanism_ref']])
             if not same_repair:
-                if allocation is not None:
+                if assessed.get('breadth'):
+                    disposed={row['mechanism_ref'] for row in choice.get('dispositions',[]) if row['status'] in {'screened','deferred','waived'} and mechanisms.get(row['mechanism_ref'],{}).get('status')==row['status']}
+                    remaining=[item for item in remaining if item['mechanism_ref'] not in disposed]
+                elif allocation is not None:
                     remaining=[item for item in remaining if item!=allocation]
                 seen.add(identity)
     remaining=[item for item in remaining if mechanisms[item['mechanism_ref']]['status']!='waived']

@@ -1,4 +1,5 @@
 """Real isolate/bwrap/leaf guards across delivery phases; zero model services."""
+from scidiscovery.research_loop.protocol import CURRENT
 import json
 import os
 from pathlib import Path
@@ -20,7 +21,7 @@ def test_real_isolated_resolve_audit_promote_and_confirm(tmp_path,monkeypatch,ex
         proof=next(p for p in request['inputs'] if p['label']=='scid-current-protocol')
         staged=Path(request['stage'])/'inputs/scid-current-protocol'
         assert c.digest(staged)==proof['sha256'] and staged.stat().st_size==proof['size_bytes']
-        assert request['scope']['handoff_protocol']==14
+        assert request['scope']['handoff_protocol']==CURRENT
         return original(spec,request,seconds,**kwargs)
     monkeypatch.setattr(delivery,'_call',observe)
     refs=delivery.freeze_sources(root,nodes)
@@ -72,7 +73,7 @@ def _negative(tmp_path,monkeypatch,phase,damage,scope=None):
         reply=subprocess.run([*spec['launcher_argv'],spec['adapter']],input=json.dumps(request),
             env={'PATH':os.defpath},capture_output=True,text=True,timeout=10,start_new_session=True)
         assert reply.returncode!=0 and not reply.stdout
-        expected='requires current research-loop protocol 14' if damage=='scope' else 'Frozen current protocol original differs'
+        expected=f'requires current research-loop protocol {CURRENT}' if damage=='scope' else 'Frozen current protocol original differs'
         assert expected in reply.stderr and 'TypeError' not in reply.stderr
         assert before=={p:p.read_bytes() for directory in (root/'runs',root/'submission') for p in directory.rglob('*') if p.is_file()}
         seen.append(request['phase'])

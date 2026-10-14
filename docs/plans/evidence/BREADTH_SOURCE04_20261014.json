@@ -1,0 +1,14 @@
+{
+  "src/scidiscovery/research_loop/breadth.py": "10f14a0abd517377ae8ee8c552a18e203942b3b96b2b86177b60b1ccc0311844",
+  "src/scidiscovery/research_loop/experiments.py": "5e160f4eef50abc6e02f1dd22b17e8059678bba39f667a5f5d4a872497277868",
+  "src/scidiscovery/research_loop/local_experiments.py": "130d977c38763474e26b433a74fd24931fc8b25b000e85330c27ef6ceaf89512",
+  "src/scidiscovery/research_loop/search.py": "996bab0a723dfb2467a909f02ac54e6e1f32bad3e639d107eab435467c8f48d1",
+  "src/scidiscovery/research_loop/scientific_intent.py": "87c5e6afc7966c08404fffea8ff4377af5ec8bfca447b6113a3f697ae4c95866",
+  "src/scidiscovery/research_loop/history.py": "ceaf1a256973de2082ef6d238cc0a338ff99b73d64ff6939a6049f5b437568e2",
+  "src/scidiscovery/research_loop/lineage.py": "3ae28e79900abb9e9fcff7efcb49f9b3c13b2c56dc2d1cfa726ad58d08653794",
+  "src/scidiscovery/research_loop/feedback.py": "49f9b8ebec69677e416918140dae1a3e7eef289b6d37a455185d9cfadeb2c55d",
+  "src/scidiscovery/research_loop/cov_lineage.py": "5e5547cfa9fc41597504a3702b8922bc800d12ada354c8f7ef6f381fe9517aaa",
+  "src/scidiscovery/research_loop/guidance.py": "bac70cd8181e90aaecc5e7994f06195d562cb2d52ce284c6af8bc21858d7a02a",
+  "tests/research_loop/test_breadth_science.py": "f591858d3cc0622f81ddf9fe61ba955d2feb21ad1ced9db544640c76c25bf41a",
+  "tests/research_loop/test_lineage_current_search.py": "bade37b9a4726c77c52afbc3325a0d8e1e54beb6db19940c27c7f7bffc3f42e9"
+}

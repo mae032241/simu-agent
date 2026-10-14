@@ -77,6 +77,7 @@ def _config(path):
     data = _read(path);value = json.loads(data)
     keys = {'contract_version','record_dir','runs_root','run_argv','scope','parents','evaluation_key','feedback_version','execution_interface','max_seconds','admission'}
     if 'native_attempt' in value:keys.add('native_attempt')
+    if 'breadth' in value:keys.add('breadth')
     if set(value) != keys or value['contract_version'] != 2 or value['feedback_version'] != 1:
         raise ValueError('Explicit wrapper contract2 configuration required')
     scope = value['scope']
@@ -105,6 +106,8 @@ def _completed(directory, *, verify_assets=True):
             _check(proof)
     if result['model'] is not None and verify_assets:_check(result['model'])
     accepted = json.loads(_read(directory/'accepted.json'))
+    if result.get('mechanism_binding')!=accepted.get('mechanism_binding'):
+        raise IntegrityError('Completion changed accepted scientific mechanism')
     if result['call_id'] != accepted['call_id'] or result['scope'] != accepted['scope'] or result['parent'] != accepted['parent'] or result['change_intent'] != accepted['change_intent']:
         raise IntegrityError('Completion differs from accepted scientific context')
     if result['status'] in {'known_success','known_failed'}:
@@ -200,18 +203,21 @@ def status(config, *, verify_assets=True):
     results = []
     for directory in _calls(config):
         result = _completed(directory, verify_assets=verify_assets)
+        accepted = json.loads(_read(directory/'accepted.json'))
         if result is None:
             accepted = json.loads(_read(directory/'accepted.json'))
             if result is None:
                 result = dict(call_id=accepted['call_id'],status='unknown',candidate_id=None,run_id=None,model=None,
                     parent=accepted['parent'],change_intent=accepted['change_intent'],scope=accepted['scope'],proofs=[],note='Accepted original has no verified completion; never replay')
+        if result['status']=='unknown' and 'mechanism_binding' in accepted:
+            result['mechanism_binding']=accepted['mechanism_binding']
         results.append(result)
     return results
 
 
-def run(config, config_sha, script, parent=None, new=False, change=None):
+def run(config, config_sha, script, parent=None, new=False, change=None, mechanism=None):
     from scidiscovery.research_loop.experiments import dispatch
-    return dispatch(config,script,parent=parent,new=new,change=change)
+    return dispatch(config,script,parent=parent,new=new,change=change,mechanism=mechanism)
 
 
 def progress(request):
@@ -300,12 +306,14 @@ def observe(request):
     contexts=[];models={}
     for directory in sorted((root/config['calls']).glob('*/work/lineage/calls/*')):
         result = _completed(directory)
+        accepted=json.loads(_read(directory/'accepted.json'))
         if result is not None:
             result['proofs'].append(_proof(directory/'completed.json'))
         if result is None:
             accepted=json.loads(_read(directory/'accepted.json'))
             result=dict(call_id=accepted['call_id'],scope=accepted['scope'],status='unknown',candidate_id=None,run_id=None,model=None,
                 parent=accepted['parent'],change_intent=accepted['change_intent'],proofs=[_proof(directory/'accepted.json')],note='Accepted original without exact completion')
+        if result['status']=='unknown' and 'mechanism_binding' in accepted:result['mechanism_binding']=accepted['mechanism_binding']
         if result['status']=='known_success':models[result['candidate_id']]=result['model']
         if result['scope']['step'] != request['step']:continue
         if result and result['call_id'] not in set(request.get('known_contexts',[])):
@@ -403,7 +411,7 @@ def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--config',type=Path,required=True)
     sub=parser.add_subparsers(dest='command',required=True);r=sub.add_parser('run');r.add_argument('--script',type=Path)
     group=r.add_mutually_exclusive_group();group.add_argument('--parent-plan');group.add_argument('--new-plan',action='store_true')
-    r.add_argument('--change-intent');sub.add_parser('lineage-status');args=parser.parse_args(argv)
+    r.add_argument('--change-intent');r.add_argument('--mechanism');sub.add_parser('lineage-status');args=parser.parse_args(argv)
     try:
         config,digest=_config(args.config)
         if args.command=='lineage-status':
@@ -417,7 +425,7 @@ def main(argv=None):
                 if not default or not Path(default).is_absolute():
                     raise ValueError('Absolute EXP_DEFAULT_SCRIPT is unavailable; pass --script explicitly')
                 script=Path(default)
-            result=run(config,digest,script,args.parent_plan,args.new_plan,args.change_intent)
+            result=run(config,digest,script,args.parent_plan,args.new_plan,args.change_intent,args.mechanism)
             code={'known_success':0,'known_failed':1,'unknown':2}.get(result['status'],2)
     except IntegrityError as error:result=dict(status='integrity_error',note=str(error));code=3
     except ValueError as error:result=dict(status='unresolved',note=str(error));code=2
