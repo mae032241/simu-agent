@@ -100,7 +100,7 @@ def test_retired_protocol_cannot_rebuild_lineage_or_mutate_originals(tmp_path,mo
     before=snapshot()
     def forbidden(*args,**kwargs):raise AssertionError('Retired protocol must not render current lineage')
     monkeypatch.setattr(lineage,'bind',forbidden)
-    with pytest.raises(current_protocol.UnsupportedProtocol,match='current research-loop protocol 14'):
+    with pytest.raises(current_protocol.UnsupportedProtocol,match=f'current research-loop protocol {current_protocol.CURRENT}'):
         c.build_job(root,2,'W',[1])
     assert snapshot()==before
 

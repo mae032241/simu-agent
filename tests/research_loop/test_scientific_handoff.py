@@ -1,9 +1,9 @@
-"""Protocol 7 scientific choices, without role-authored control paths."""
+"""Current scientific choices, without role-authored control paths."""
 import json
 
 import pytest
 
-from scidiscovery.research_loop import contracts as c, controller, correction, history, search
+from scidiscovery.research_loop import contracts as c, controller, correction, history, search, protocol
 from test_history_handoff import finish
 
 
@@ -18,14 +18,12 @@ def prepare_scene(tmp_path, correction_policy=None):
 
 
 @pytest.fixture
-def scene(tmp_path, monkeypatch):
-    monkeypatch.setattr(c, 'HANDOFF_PROTOCOL', 7)  # Published strict protocol7 behavior.
+def scene(tmp_path):
     return prepare_scene(tmp_path)
 
 
 @pytest.fixture
-def correcting_scene(tmp_path, monkeypatch):
-    monkeypatch.setattr(c, 'HANDOFF_PROTOCOL', 7)
+def correcting_scene(tmp_path):
     return prepare_scene(tmp_path, correction.DEFAULT_POLICY)
 
 
@@ -44,8 +42,8 @@ def review(status='screened', action='improve'):
 
 
 @pytest.mark.parametrize('role', ['H', 'W', 'A', 'E'])
-def test_protocol7_has_no_mechanical_reference_fields(role):
-    schema = c.result_schema(role, 7)
+def test_current_protocol_has_no_mechanical_reference_fields(role):
+    schema = c.result_schema(role, protocol.CURRENT)
     assert 'implementation_selection' in schema['properties']
     assert 'implementation_selection' in schema['required']
     def strict(value):
@@ -149,9 +147,12 @@ def test_bad_ordinary_links_do_not_change_selection_or_prevent_seal(scene, role)
 @pytest.mark.parametrize('selection', [['W999-I001'], ['W002-I999'], ['../../private']])
 def test_invalid_explicit_implementation_ids_are_not_ordinary_link_diagnostics(scene, selection):
     original_worker(scene)
-    with pytest.raises(ValueError):
-        finish(scene, 3, 'A', [1, 2], selection=selection)
-    assert not (c.host_record(c.workspace(scene, 3)) / 'result-identity.json').exists()
+    _,work,record=finish(scene, 3, 'A', [1, 2], selection=selection)
+    seal=c.read(record/'result-identity.json')
+    assert seal.get('selected_inputs',[])==[]
+    assert seal['control_outcome']['selection_status']=='unresolved'
+    assert 'implementation_unresolved' in {row['code'] for row in seal['control_outcome']['diagnostics']}
+    assert c.validate(work)['implementation_selection']==selection
 
 
 @pytest.mark.parametrize('changed', ['original', 'history_page'])
@@ -180,11 +181,8 @@ def test_first_screen_requires_one_real_same_mechanism_w_task(scene, source_coun
         finish(scene, 1, 'H', [], action='analyze', search_choice=plan())
         step, parents = 2, [1]
     job, work, record = finish(scene, step, 'A', parents, search_choice=review())
-    # An unsealed, terminal-valid published7 attempt may retain its science under
-    # the explicit new interpretation; it still cannot grant screening status.
-    payload = c.science_payload(record / 'science-output.json', 'A', 7)
-    with pytest.raises(search.UnresolvedSearch, match='same-mechanism'):
-        search.validate_payload(scene, job, payload)
+    payload = c.science_payload(record / 'science-output.json', 'A', protocol.CURRENT)
+    assert search.assess_payload(scene,job,payload)
     seal = c.read(record / 'result-identity.json')
     assert seal['control_outcome']['search_status'] == 'unresolved'
     assert seal['control_outcome']['diagnostics'][0]['code'] == (
@@ -269,7 +267,7 @@ def test_seventeenth_implementation_is_paged_selected_and_hash_bound(scene, monk
     finish(scene, 2, 'W', [1], files={f'a{i:02d}.py': f'ORIGINAL_IMPLEMENTATION_{i}' for i in range(17)})
     job = c.build_job(scene, 3, 'A', [1, 2])
     work = c.workspace(scene, 3)
-    index = c.read(work / job['history']['view']['index'])
+    index = c.read(work / job['history']['view']['indexes']['nodes'])
     worker = next(row for row in index['records'] if row['step'] == 2)
     assert worker['implementations_omitted_count'] == 1
     path, objects, pages = worker['implementation_index'], [], []

@@ -206,14 +206,19 @@ def brief(root, job, record):
                   omitted_files=value['omitted_materials'], truncated=False,
                   material_status=value['material_status'],
                   missing_native_originals=value['missing_native_originals'],
+                  original_access='Read sealed parents and lineage originals through science-task.json. The previous fragment full text is not mounted; this preview is incomplete when omissions are reported.',
+                  interpretation='Current understanding and limitations are authored claims, not independently verified observations. Unstated questions remain unknown.',
                   scope='Fragment preview; original task and permissions remain binding. No restart or scientific qualification is granted.')
     if science is not None:
         result['scientific_summary'], a = _clip(science['summary'], 384)
         result['current_understanding'], b = _clip(science['scientific_result'], 1400)
-        result['limitations'] = [_clip(item, 192)[0] for item in science['limitations'][:4]]
-        result['omitted_limitations'] = max(0, len(science['limitations']) - len(result['limitations']))
-        result['truncated'] = a or b or len(science['limitations']) > 4 or any(
-            len(item.encode()) > 192 for item in science['limitations'][:4])
+        result['limitations'],result['omitted_limitations']=c._whole_limitations(science['limitations'],byte_limit=1536)
+        result['truncated'] = a or b or result['omitted_limitations']>0
+        result['stage_intent']=science['stage_intent']
+    plan=job.get('history',{}).get('view',{}).get('mechanisms',{}).get('unfinished_plan')
+    if plan is not None:
+        result['unfinished_mechanisms']=dict(count=plan['remaining_count'],index=plan['index'],
+            interpretation='Original unconsumed opportunities, not proof of scientifically untested mechanisms. Read the index for all entries.')
     for row in value['materials']:
         name, clipped = _clip(row['name'], 256)
         result['direct_files'].append(dict(name=name, name_truncated=clipped,
@@ -221,10 +226,6 @@ def brief(root, job, record):
     while len(_bytes(result)) > MAX_BRIEF_BYTES and result['direct_files']:
         result['direct_files'].pop()
         result['omitted_files'] += 1
-    while len(_bytes(result)) > MAX_BRIEF_BYTES and result['limitations']:
-        result['limitations'].pop()
-        result['omitted_limitations'] += 1
-        result['truncated'] = True
     # UTF-8 lengths alone do not bound JSON: quotes, backslashes and controls
     # expand during encoding. Trim only scientific excerpts using the actual
     # bytes written by c.write, preserving diagnosis and omission metadata.

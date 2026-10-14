@@ -173,6 +173,16 @@ def project(records, *, audits=(), delivery=None):
     latest = authors[-1] if authors else None
     old = next((row for row in reversed(authors[:-1]) if row['recommendation'] is not None), None)
     actual = next((row for row in reversed(observations) if row['actual_submission'] is not None), None)
+    alerts=[dict(candidate_id=item['id'],status=item['status']) for item in candidates.values() if item['status'] in {'failed','unknown'}]
+    important=[latest['recommendation'] if latest else None,
+        observations[-1]['current_candidate']['candidate_id'] if observations and observations[-1]['current_candidate'] else None,
+        actual['actual_submission']['candidate_id'] if actual else None,
+        confirmed['candidate_id'] if confirmed else None]
+    preferred=set(cid for cid in important if cid is not None)
+    alerts.sort(key=lambda row:row['candidate_id'] not in preferred)
+    audit_ids=list(candidates)
+    if len(audit_ids)>16:
+        audit_ids.sort(key=lambda cid:0 if cid in preferred else 1 if audit_by_id.get(cid)=='public_audit_failed' else 2)
     proxy = []
     for group in groups.values():
         ids = group['candidate_ids']
@@ -189,13 +199,19 @@ def project(records, *, audits=(), delivery=None):
         delivery=dict(state=delivery['state'], current_confirmed=confirmed if delivery['state']=='confirmed' else None, last_confirmed=confirmed),
         proxy_highest=proxy[:8], proxy_groups_omitted_count=max(0,len(proxy)-8),
         unranked_ids=unranked[:16], unranked_omitted_count=max(0,len(unranked)-16),
-        public_audits=[dict(candidate_id=cid,status=audit_by_id.get(cid,'unknown')) for cid in list(candidates)[:16]],
+        public_audits=[dict(candidate_id=cid,status=audit_by_id.get(cid,'unknown')) for cid in audit_ids[:16]],
         audits_omitted_count=max(0,len(candidates)-16),
+        candidate_alerts=alerts[:4],candidate_alerts_omitted_count=max(0,len(alerts)-4),
+        failed_candidate_count=sum(item['status']=='failed' for item in candidates.values()),
+        unknown_candidate_count=sum(item['status']=='unknown' for item in candidates.values()),
         limitation='Observed proxy groups do not establish target weights or optimality. Public audit projections do not authorize delivery. Read existing T2 indexes for omitted originals; A owns applicability judgments.')
-    for field, omitted in (('public_audits','audits_omitted_count'), ('unranked_ids','unranked_omitted_count'), ('proxy_highest','proxy_groups_omitted_count')):
+    for field, omitted in (('proxy_highest','proxy_groups_omitted_count'), ('unranked_ids','unranked_omitted_count'), ('public_audits','audits_omitted_count')):
         while len(_bytes(value)) > MAX_BRIEF_BYTES and value[field]:
             value[field].pop()
             value[omitted] += 1
+    while len(_bytes(value))>MAX_BRIEF_BYTES and value['candidate_alerts']:
+        value['candidate_alerts'].pop()
+        value['candidate_alerts_omitted_count']+=1
     if len(_bytes(value)) > MAX_BRIEF_BYTES:
         raise ValueError('Selection fixed fields exceed brief bound')
     return value

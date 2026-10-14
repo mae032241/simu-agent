@@ -146,7 +146,16 @@ def envelope(job, payload):
             'next_action': payload.get('next_action', ''), 'route_reason': payload.get('route_reason', '')}
 
 
-def _parent_view(job, ref):
+def _whole_limitations(values, *, byte_limit=1024):
+    """Keep whole authored entries; a long item cannot crowd out later caveats."""
+    selected=[]
+    for value in values:
+        if len((json.dumps([*selected,value],ensure_ascii=False,indent=2)+'\n').encode())<=byte_limit:
+            selected.append(value)
+    return selected,len(values)-len(selected)
+
+
+def _parent_view(job, ref, root=None, *, limitation_bytes=1024):
     directory = str(Path(ref['path']).parent / 'artifacts')
     entries = [row for row in job.get('direct_entry_points', [])
                if row['path'].startswith(directory + '/')]
@@ -155,6 +164,14 @@ def _parent_view(job, ref):
         view['evidence'] = entries[:16]
         if len(entries) > 16:
             view['evidence_omitted_count'] = len(entries) - 16
+    if root is not None:
+        path=regular(workspace(Path(root),job['step'])/ref['path'],limit=MAX_RESULT_BYTES)
+        if digest(path)!=ref['sha256']:
+            raise ValueError('Direct scientific original changed')
+        payload=read(path)
+        parent_step=int(Path(ref['path']).parts[2])
+        view['role']=read(regular(Path(root)/'jobs'/f'{parent_step:03d}.json'))['role']
+        view['limitations'],view['limitations_omitted_count']=_whole_limitations(payload['limitations'],byte_limit=limitation_bytes)
     return view
 
 
@@ -280,12 +297,38 @@ def _decision_context(root, job):
                 'Original user constraints and H scope/discriminating commitments remain binding; W owns execution design and H owns mechanism revision.')
 
 
+def _role_lineage(job):
+    """Select default material from the same frozen view; indexes retain all facts."""
+    import copy
+    view=copy.deepcopy(job['history']['view'])
+    if job['role']!='A':
+        candidates=view['candidates']
+        ranking=candidates.get('proxy_highest',[])
+        candidates['proxy_highest']=[]
+        candidates['proxy_groups_omitted_count']=candidates.get('proxy_groups_omitted_count',0)+len(ranking)
+        if ranking:
+            candidates['limitation']='Global ranking omitted here; candidate indexes retain comparisons. '+candidates['limitation']
+    breadth=(job.get('search') or {}).get('breadth')
+    if job['role']=='W' and breadth is not None:
+        rows=breadth['mechanisms']
+        mechanisms=view['mechanisms']
+        mechanisms['focus']=None
+        mechanisms['authorized_count']=len(rows)
+        mechanisms['overview']=[dict(mechanism_ref=row['mechanism_ref'],label=row['label'],
+            status=row['status'],original=f'inputs/history/nodes/{row["source_h"]:03d}/0001.json') for row in rows[:4]]
+        mechanisms['overview_omitted_count']=max(0,len(rows)-4)
+        mechanisms['scope']='Frozen H-authorized problem combination; statuses are authored judgments, not proof of experiment coverage.'
+        from .lineage import bounded_brief
+        bounded_brief(view)
+    return view
+
+
 def science_view(job, root=None):
     protocol = job.get('handoff_protocol', 1)
     context = job.get('decision_context')
     question = job['instruction']
     if context is not None:
-        question = ("Choose observation-driven experiments within the original H mechanism and user constraints; use A's global direction and evidence gap."
+        question = ("Choose observation-driven experiments within the bound H scientific questions and user constraints; use A's global direction and evidence gap."
                     if job['role'] == 'W' else "Revise the qualitative mechanism matrix and discriminating design in light of A's global assessment; preserve original constraints.")
     unified = job.get('lineage_projection_version') == 1
     if unified and job.get('selection_protocol', 0) != job['history']['view']['candidates'].get('selection_protocol', 0):
@@ -304,6 +347,20 @@ def science_view(job, root=None):
         closeout = dict(source_cutoff=job['source_cutoff'],
             selection='Choose a frozen candidate ID for delivery; null means no decision, not retention. Report scientific reasoning and limitations.',
             sources=delivery.public_sources(job['delivery_sources']))
+    priorities={
+        'H':('A','E','H','W'), 'W':('H','A','W','E'),
+        'A':('W','E','H','A'), 'E':('A','H','W','E')}
+    reading={
+        'H':'Constraints, A judgments/counterevidence, then unresolved H questions.',
+        'W':'Constraints and authorized H questions, then A direction and prior observations.',
+        'A':'W observations, H questions and unresolved alternatives, then further investment.',
+        'E':'Exact requester question and constraints, then requested original evidence.'}
+    parents=[_parent_view(job,ref,root,limitation_bytes=1024//max(1,len(job['direct_refs']))) for ref in job['direct_refs']]
+    order=priorities[job['role']]
+    if job['role']=='E' and (job.get('evidence_return') or {}).get('role') in order:
+        requester=job['evidence_return']['role']
+        order=(requester,*[role for role in order if role!=requester])
+    parents.sort(key=lambda row:order.index(row['role']) if row.get('role') in order else len(order))
     return {key: value for key, value in {
         'role': job['role'], 'question': question,
         **(dict(stage_continuation=dict(status='configured' if job.get('worker_fragment_policy') else 'unavailable',
@@ -316,21 +373,17 @@ def science_view(job, root=None):
         'global': dict(objective='inputs/global/objective.md',
                        updates=[row['path'] for row in job['global_materials'][1:]]),
         'public_root': job['public_root'],
-        'parents': [_parent_view(job, ref) for ref in job['direct_refs']],
+        'parents': parents,
+        'reading_order':reading[job['role']]+' Preserve listed limitations. Parents are authored statements, not execution facts. Verify relevant originals as needed, delegating when native permissions allow; omissions use conclusion/index/next_page.',
         **(dict(reused_implementations=[dict(label=row['label'], path=row['material']['path'])
                                        for row in job.get('selected_inputs', [])],
-                 implementation_reuse=('implementation_selection: null retains only your already selected inputs; '
-                 '[] clears them; listed scientific object IDs replace them. Direct new deliverables pass automatically. '
-                 'Ordinary citations do not select files; no handoff markers, paths or hashes are needed.' if protocol >= 7 else
-                 'To give the next role a needed implementation, link an already '
-                 'bound input with #reuse-implementation. Ordinary citations do not forward old inputs. '
-                 'The host resolves identities; do not copy or index them.'))
+                 implementation_reuse='Choose only listed scientific objects; control resolves their originals.')
            if job.get('handoff_protocol', 1) >= 2 else {}),
         **(dict(implementation_options=job.get('implementation_options', []),
                 implementation_options_omitted_count=job.get('implementation_options_omitted_count', 0),
                 scientific_links='Ordinary citations are scientific prose. Only listed bound files are available; '
                 'unresolved links do not select inputs or acquire evidence qualification.') if protocol >= 7 and not unified else {}),
-        **(dict(lineage=job['history']['view']) if unified else {}),
+        **(dict(lineage=_role_lineage(job)) if unified else {}),
         **(dict(history=job['history']['view']) if job.get('handoff_protocol', 1) >= 3 and not unified else {}),
         **(dict(input_selection_status=job['input_selection_status'], control_diagnostics=job['control_diagnostics'])
            if job.get('handoff_protocol', 1) >= 8 else {}),
@@ -352,8 +405,6 @@ def science_view(job, root=None):
            if protocol >= 10 and job['role'] == 'A' else {}),
         'final_response': list(result_schema(job['role'], job.get('handoff_protocol', 1))['properties']),
         'outputs': 'artifacts/', 'scratch': 'work/',
-        'experiments': 'experiments/<id>/{work/,artifacts/,conclusion.json or conclusion.md}; '
-                       'child deliverables are collected by the host; scratch is excluded',
     }.items() if value}
 
 
