@@ -8,7 +8,7 @@ from pathlib import Path
 import uuid
 
 from . import budget, contracts as c, execution, native, runtime, checkpoint
-from .output_repair import OutputRepairRequired
+from .output_repair import OutputRepairRequired, WorkRepairRequired
 
 
 class ResumeUnavailable(ValueError):
@@ -90,6 +90,18 @@ def session(root, step, record):
     return dict(thread_id=thread, home=str(home), workspace=str(c.workspace(root, step)), **matches[0])
 
 
+
+def _work_exit(root,job,record,reason):
+    from . import worker_delivery
+    paths=execution.records(root,job['step'])
+    _eligible_original(root,job['step'],paths,successful=True,wait_runner=True,
+        budgeted=budget.node_limits(root,job) is not None)
+    proof=worker_delivery.authorize_exit(root,job,record,reason)
+    if not (record/'checkpoint.json').exists():checkpoint.capture(root,job,record)
+    checkpoint.end_stage(root,job,record,reason,work_exit=proof)
+    return c.seal_result(root,job['step'])
+
+
 def seal_or_repair(root, step):
     """Try the original seal first; only a frozen opt-in can accept a repair turn."""
     from .protocol import require_current
@@ -112,22 +124,38 @@ def seal_or_repair(root, step):
                     return c.seal_result(root, step)
                 science = c.science_payload(record / 'science-output.json', 'W', job.get('handoff_protocol', 1))
                 review = fragment_review(root, job)
+                from . import worker_delivery
+                delivery=worker_delivery.assessment(root,job,science,record)
+                if delivery['status']=='partial':
+                    checkpoint.end_stage(root,job,record,delivery['reason'])
+                    return c.seal_result(root,step)
+                if delivery['status']=='incomplete' and review['requested']:
+                    return _work_exit(root,job,record,review['reason'])
+                if science['stage_intent']!='continue':worker_delivery.require_delivery(root,job,science,record)
                 if checkpoint.disposition(science, review_requested=review['requested']) == 'continue':
                     try:
                         fragment_start(root, step)
                     except budget.NodeBudgetUnavailable as error:
                         # A valid scientific contribution is retained at the
                         # original budget boundary, without another native turn.
+                        if delivery['status']=='incomplete':return _work_exit(root,job,record,error.reason)
                         checkpoint.end_stage(root, job, record, error.reason)
                         return c.seal_result(root, step)
                     except ResumeUnavailable as error:
                         if str(error) != 'worker_fragment_review_requested':
                             raise
+                        if delivery['status']=='incomplete':return _work_exit(root,job,record,error.review_reason)
                         checkpoint.end_stage(root, job, record, error.review_reason)
                         return c.seal_result(root, step)
                     return dict(fragment_continuation=True)
                 checkpoint.end_stage(root, job, record, review['reason'] if review['requested'] else 'worker_requested')
         return c.seal_result(root, step)
+    except WorkRepairRequired:
+        job=c.read(c.regular(root/'jobs'/f'{step:03d}.json'));record=execution.record(root,step)
+        try:return start(root,step)
+        except budget.NodeBudgetUnavailable as error:return _work_exit(root,job,record,error.reason)
+        except ResumeUnavailable as error:
+            return _work_exit(root,job,record,str(error))
     except OutputRepairRequired:
         if not (c.settings(root).get('resume_policy') or {}).get('output_repair', False):
             raise
@@ -150,7 +178,10 @@ def output_request(root, step, record, *, source_attempt=None, verify_task=True)
         if c.digest(c.regular(raw, limit=c.MAX_RESULT_BYTES)) != outcome.get('raw_sha256'):
             raise ValueError('Original final output changed before repair')
         try:
-            c.science_payload(raw, job['role'], job.get('handoff_protocol', 1))
+            science=c.science_payload(raw, job['role'], job.get('handoff_protocol', 1))
+            if job['role']=='W':
+                from . import worker_delivery
+                worker_delivery.require_delivery(root,job,science,record)
         except OutputRepairRequired as failure:
             error = failure
         else:
@@ -158,14 +189,15 @@ def output_request(root, step, record, *, source_attempt=None, verify_task=True)
     if source_attempt is None:
         source_attempt = len(execution.records(root, step)) - 1
     return dict(**error.request(), source_attempt=source_attempt,
-                outcome_sha256=c.digest(record / 'native-outcome.json'), raw_sha256=outcome.get('raw_sha256'))
+                outcome_sha256=c.digest(record / 'native-outcome.json'), raw_sha256=outcome.get('raw_sha256'),
+                **(dict(work_evidence_sha256=c.digest(record/'work-evidence.json')) if isinstance(error,WorkRepairRequired) else {}))
 
 
 def validate_repair(root, step, intent, *, prior_record=None, verify_task=True):
-    request = intent.get('output_repair')
+    request = intent.get('work_repair') or intent.get('output_repair')
     if request is None:
         return
-    if not validate_launcher(root).get('output_repair', False):
+    if intent.get('work_repair') is None and not validate_launcher(root).get('output_repair', False):
         raise ValueError('Output repair is not authorized by the frozen policy')
     prior = prior_record if prior_record is not None else execution.records(root, step)[intent['attempt'] - 1]
     expected = output_request(root, step, prior, source_attempt=intent['attempt'] - 1, verify_task=verify_task)
@@ -177,7 +209,7 @@ def validate_repair_chain(root, step, chain):
     """Terminal execution checks every repair source without replaying projections."""
     for number, record in enumerate(chain[1:], 1):
         intent = c.read(c.regular(record / 'native-intent.json'))
-        if intent.get('output_repair') is not None:
+        if intent.get('output_repair') is not None or intent.get('work_repair') is not None:
             # execution.records already verified task/attempt/previous identities.
             # Avoid terminal -> scientific projection -> terminal recursion.
             validate_repair(root, step, intent, prior_record=chain[number - 1], verify_task=False)
@@ -215,7 +247,7 @@ def fragment_review(root, job):
     return experiments.review_status(dict(admission=admission, scope=scope, native_attempt=native_attempt))
 
 
-def _eligible_original(root, step, paths, *, successful=False, wait_runner=False):
+def _eligible_original(root, step, paths, *, successful=False, wait_runner=False, budgeted=True):
     """No accepted replacement until the exact old native writer is terminal."""
     last = paths[-1]
     outcome = c.read(c.regular(last / 'native-outcome.json'))
@@ -240,7 +272,7 @@ def _eligible_original(root, step, paths, *, successful=False, wait_runner=False
                 time.sleep(.05)
         if runtime.process_matches(identity, binding):
             raise ResumeUnavailable('worker_resume_original_running')
-    if not isinstance(outcome.get('budget_slice'), dict) or not outcome['budget_slice'].get('usage_observed'):
+    if budgeted and (not isinstance(outcome.get('budget_slice'), dict) or not outcome['budget_slice'].get('usage_observed')):
         raise ResumeUnavailable('worker_resume_usage_unknown')
 
 
@@ -315,14 +347,21 @@ def start(root, step):
     last = paths[-1]
     outcome = c.read(c.regular(last / 'native-outcome.json'))
     repair = None
+    work_repair=False
     if outcome.get('returncode') == 0 and not outcome.get('stop_reason'):
         try:
             if checkpoint.enabled(root, c.read(root / 'jobs' / f'{step:03d}.json')):
                 if outcome.get('output_status') == 'missing':
                     raise OutputRepairRequired('missing_output', 'Return the missing scientific summary without rerunning completed work.')
-                c.science_payload(last / 'science-output.json', 'W', c.read(root / 'jobs' / f'{step:03d}.json').get('handoff_protocol', 1))
-                return native.wait_native(root, step)
+                job=c.read(root/'jobs'/f'{step:03d}.json')
+                science=c.science_payload(last/'science-output.json','W',job.get('handoff_protocol',1))
+                from . import worker_delivery
+                if science['stage_intent']!='continue' or (last/'stage-end.json').exists():worker_delivery.require_delivery(root,job,science,last)
+                return native.wait_native(root,step)
             return c.seal_result(root, step)
+        except WorkRepairRequired:
+            repair=output_request(root,step,last)
+            work_repair=True
         except OutputRepairRequired:
             if not limits.get('output_repair', False):
                 raise
@@ -355,7 +394,7 @@ def start(root, step):
     intent = dict(step=step, attempt=number, continuation_kind='repair', task_sha256=c.digest(root / 'jobs' / f'{step:03d}.json'),
                   root_intent_sha256=c.digest(paths[0] / 'native-intent.json'), previous=execution.proof(last),
                   session=session_ref, budget_slice=anchor,
-                  **(dict(output_repair=repair) if repair is not None else {}))
+                  **({('work_repair' if work_repair else 'output_repair'):repair} if repair is not None else {}))
     with (record / 'native-intent.json').open('x') as stream:
         json.dump(intent, stream);stream.flush();os.fsync(stream.fileno())
     runtime.start(root, step, number)

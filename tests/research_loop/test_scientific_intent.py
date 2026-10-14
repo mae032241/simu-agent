@@ -17,11 +17,11 @@ def assessed():
     return dict(identity=(2,'a'*64),mechanism_ref='P',allocation=dict(mechanism_ref='P',planned_step=1))
 
 
-def test_default_h_then_eligible_a_follows_original_plan_without_mutating_preview():
+def test_explicit_screen_h_then_eligible_a_follows_original_plan_without_mutating_preview():
     state=plan();original=copy.deepcopy(state)
-    first=resolve_intent(state,dict(role='H'),dict(next_action='experiment',search_plan=dict(focus=None)))
+    first=resolve_intent(state,dict(role='H'),dict(next_action='experiment',search_plan=dict(focus=dict(label=None,action='screen'))))
     assert first['focus']==dict(mechanism_ref='P',action='screen')
-    next_=resolve_intent(state,dict(role='A'),dict(next_action='continue_w',search_review=None),assessed=assessed())
+    next_=resolve_intent(state,dict(role='A'),dict(next_action='continue_w',search_review=dict(next_focus=dict(mechanism_ref=None,action='screen'))),assessed=assessed())
     assert next_['focus']==dict(mechanism_ref='Q',action='screen')
     assert next_['unfinished_plan']==[dict(mechanism_ref='Q',planned_step=1)]
     assert state==original
@@ -62,10 +62,21 @@ def test_ambiguous_label_and_empty_plan_have_scientific_diagnostics():
         search_plan=dict(focus=dict(label='same',action='screen'))))
     assert ambiguous['diagnostics'][0]['code']=='science_focus_ambiguous'
     state['order']['remaining']=[]
-    empty=resolve_intent(state,dict(role='H'),dict(next_action='experiment',search_plan=None))
+    empty=resolve_intent(state,dict(role='H'),dict(next_action='experiment',search_plan=dict(focus=dict(label=None,action='screen'))))
     assert empty['diagnostics'][0]['code']=='science_plan_empty'
 
 
 def test_internal_state_damage_is_host_error_not_scientific_clarification():
     state=plan();del state['order']
     with pytest.raises(KeyError):resolve_intent(state,dict(role='H'),dict(next_action='experiment'))
+
+
+@pytest.mark.parametrize('role,action,choice_key,focus_key',[('H','experiment','search_plan','focus'),('A','continue_w','search_review','next_focus')])
+@pytest.mark.parametrize('choice',[None,{}])
+def test_missing_explicit_task_action_is_diagnostic_without_implicit_screen(role,action,choice_key,focus_key,choice):
+    state=plan();before=copy.deepcopy(state)
+    value=None if choice is None else {focus_key:None}
+    result=resolve_intent(state,dict(role=role),dict(next_action=action,**{choice_key:value}))
+    assert result['focus'] is None and result['allocation'] is None
+    assert result['diagnostics']==[dict(code='science_task_action_required',subject='W scientific task')]
+    assert result['unfinished_plan']==before['order']['remaining'] and state==before

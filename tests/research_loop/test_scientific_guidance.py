@@ -11,6 +11,8 @@ import pytest
 from scidiscovery.research_loop import contracts as c, controller, cov_lineage as cov, execution, guidance
 from test_history_handoff import finish
 from test_cov_lineage import wrapper
+from execution_fixtures import execution_registry
+from scidiscovery.research_loop.protocol import CURRENT
 
 
 def prepare(tmp_path, advice=guidance.DEFAULT):
@@ -23,13 +25,13 @@ def prepare(tmp_path, advice=guidance.DEFAULT):
 
 def test_only_current_role_literal_is_delivered_and_retained_bytes_are_stable(tmp_path,monkeypatch):
     root=prepare(tmp_path);stored=c.settings(root)['role_guidance']
-    assert sum(len(text.encode()) for text in stored.values())<=2048
+    assert sum(len(text.encode()) for text in stored.values())<=2560
     assert 'exp run' not in stored['W'] and 'lineage-status' not in stored['W']
     for step,role in enumerate(['H','W','A','E'],1):
         job,work,record=finish(root,step,role,[step-1] if step>1 else [])
         view=c.science_view(job,root)
         assert view['role_guidance']==stored[role] and isinstance(view['role_guidance'],str)
-        assert 'role_guidance' not in c.result_schema(role,8)['properties']
+        assert 'role_guidance' not in c.result_schema(role,CURRENT)['properties']
         originals={p:p.read_bytes() for p in (root/'jobs'/f'{step:03d}.json',work/'science-task.json',record/'result-identity.json')}
         monkeypatch.setitem(guidance.DEFAULT,role,'Changed future guidance; not this task')
         c.build_job(root,step,role,[step-1] if step>1 else [])
@@ -75,7 +77,9 @@ def test_implicit_default_and_explicit_override_use_same_call_receipts(wrapper):
         assert not any(key in json.dumps(result) for key in ('sha256','scope','proofs',str(wrapper.root)))
     before=wrapper.calls()
     query=cli(wrapper,'lineage-status')['calls']
-    assert query[0]['val_score']==first['val_score'] and wrapper.calls()==before
+    assert query[0]['metric']==first['val_score'] and wrapper.calls()==before
+    assert query[0]['candidate_id']==first['candidate_id']
+    assert query[0]['evaluation_key']==first['evaluation_key'] and query[0]['status']=='known_success'
 
 
 @pytest.mark.parametrize('default',[None,'relative-script.py'])

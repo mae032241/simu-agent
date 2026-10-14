@@ -273,7 +273,11 @@ def _route(root, step, role, result, job, current_h, current_w):
         record = execution.record(root, step)
         ended = checkpoint.stage_end(root, job, record) if (record / 'stage-end.json').exists() else None
         question = 'Review the scientific contribution and original goal limits; control ended this stage for ' + ended['reason'] + '.' if ended else ''
-        if not ended and contracts.read(_record(root,step)/'result-identity.json')['control_outcome'].get('stage_end_reason')=='continuation_unavailable':
+        outcome = contracts.read(_record(root,step)/'result-identity.json')['control_outcome']
+        delivery = outcome.get('worker_delivery') or {}
+        if delivery.get('status') == 'partial':
+            question = 'Review the retained partial scientific contribution and original goal limits; assigned work remains incomplete for ' + delivery['reason'] + '.'
+        elif not ended and outcome.get('stage_end_reason')=='continuation_unavailable':
             question='Frozen context continuation was unavailable; judge the original retained contribution and its limitations.'
         route = ("A", _parents(current_h, step), question, None)
     elif role == "A":

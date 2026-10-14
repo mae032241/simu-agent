@@ -28,7 +28,7 @@ def prepare(tmp_path, *, cov=False, initial_calls=1, portfolio=False):
 def h(root, step=1, parents=(), labels=('P','Q','R'), existing=None):
     choice=dict(scope='Competing mechanisms for the original scientific question',
         commitments=[dict(label=label,minimal_test=f'Prediction for {label}; priority follows its discriminating observability',
-            existing_ref=existing if index==0 else None) for index,label in enumerate(labels)],focus=None)
+            existing_ref=existing if index==0 else None) for index,label in enumerate(labels)],focus=dict(label=None,action='screen'))
     finish(root,step,'H',list(parents),action='experiment',search_choice=choice)
 
 
@@ -54,12 +54,17 @@ def run(root, config, label, *, failed=False):
     return experiments.dispatch(config,source,new=True,mechanism=label)
 
 
-def a(root,step,parents,*,focus=None,dispositions=(),action='continue_w',mode='improve'):
+def findings(*observed,blocked=()):
+    return [dict(mechanism=name,basis='observed',finding='The fixture observation is available; scientific adequacy remains for A.') for name in observed]+[
+        dict(mechanism=name,basis='blocked',finding='This fixture deliberately leaves this direction untested and asks A to allocate its later work.') for name in blocked]
+
+
+def a(root,step,parents,*,focus=None,dispositions=(),action='continue_w',mode='screen'):
     job=c.build_job(root,step,'A',parents);record=execution.record(root,step)
     payload=dict(summary='Assess exact scientific mechanisms',scientific_result='The original observations retain scientific limitations.',
         limitations=['Mechanical completion alone does not establish screening'],implementation_selection=None,
         candidate_recommendation=None,progress_assessment=None,portfolio_review=None,
-        search_review=dict(dispositions=list(dispositions),next_focus=dict(mechanism_ref=focus,action=mode) if focus else None),
+        search_review=dict(dispositions=list(dispositions),next_focus=dict(mechanism_ref=focus,action=mode) if action=='continue_w' else None),
         next_action=action,route_reason='Resolve the mechanism comparison under the original constraints',
         decision_request=dict(decision='mechanism',question='Can the failed discriminating measurement be repaired?' if mode=='repair' else 'Which mechanism should receive the next independent comparison?',
             change_criterion='A trustworthy discriminating measurement would change the mechanism choice') if action=='continue_w' else None)
@@ -84,7 +89,7 @@ def test_multi_mechanism_cov_originals_bind_candidates_and_a_screens_exactly(tmp
     assert p['scope']==q['scope']==config['scope']
     assert p['mechanism_binding']['mechanism_ref']=='h001.m1'
     assert q['mechanism_binding']['mechanism_ref']=='h001.m2'
-    finish(root,2,'W',[1])
+    finish(root,2,'W',[1],mechanism_findings=findings('P','Q'))
     state=search.project(root,3)
     assert all(row['status']=='pending' for row in state['mechanisms'].values())
     graph=lineage.build(root,3)
@@ -103,17 +108,17 @@ def test_multi_mechanism_cov_originals_bind_candidates_and_a_screens_exactly(tmp
 def test_generic_cross_w_once_a_grant_and_same_ref_revision_do_not_refund(tmp_path,execution_registry):
     root=prepare(tmp_path);h(root)
     _,first=worker(root,tmp_path,2,[1]);run(root,first,'P',failed=True)
-    finish(root,2,'W',[1]);a(root,3,[1,2],focus='h001.m1')
+    finish(root,2,'W',[1],mechanism_findings=findings('P',blocked=('Q','R')));a(root,3,[1,2],focus='h001.m1')
     _,second=worker(root,tmp_path,4,[1,2,3])
     assert second['breadth']['baseline'][0]['accepted_count']==1
     granted=run(root,second,'P')
     assert granted['mechanism_binding']['grant']['source_a']==3
     with pytest.raises(breadth.OpportunityRequired):run(root,second,'P')
-    finish(root,4,'W',[1,2,3]);a(root,5,[1,4])
+    finish(root,4,'W',[1,2,3],mechanism_findings=findings('P',blocked=('Q','R')));a(root,5,[1,4])
     _,third=worker(root,tmp_path,6,[1,4,5])
     assert third['breadth']['grant']['used_calls']==1
     with pytest.raises(breadth.OpportunityRequired):run(root,third,'P')
-    run(root,third,'Q');finish(root,6,'W',[1,4,5])
+    run(root,third,'Q');finish(root,6,'W',[1,4,5],mechanism_findings=findings('P','Q',blocked=('R',)))
     h(root,7,[1,6],labels=('Renamed P',),existing='h001.m1')
     _,fourth=worker(root,tmp_path,8,[7])
     count={row['mechanism_ref']:row['accepted_count'] for row in fourth['breadth']['baseline']}
@@ -127,7 +132,7 @@ def test_generic_cross_w_once_a_grant_and_same_ref_revision_do_not_refund(tmp_pa
 def test_a_cannot_screen_unexecuted_branch(tmp_path,execution_registry):
     root=prepare(tmp_path);h(root,labels=('P','Q'))
     _,config=worker(root,tmp_path,2,[1]);run(root,config,'P')
-    finish(root,2,'W',[1]);job=c.build_job(root,3,'A',[1,2])
+    finish(root,2,'W',[1],mechanism_findings=findings('P',blocked=('Q',)));job=c.build_job(root,3,'A',[1,2])
     result=search.interpret(root,job,dict(next_action='continue_w',route_reason='Assess the exact W',search_review=dict(
         dispositions=[dict(mechanism_ref='h001.m2',status='screened',reason='Claimed scientific screening')],next_focus=None)))
     assert dict(code='screen_source_unavailable',subject='h001.m2') in result['diagnostics']
@@ -151,7 +156,7 @@ def test_multi_mechanism_q_repair_uses_exact_w_and_preserves_single_science_cycl
     root=prepare(tmp_path,portfolio=True);h(root,labels=('P','Q'))
     job,config=worker(root,tmp_path,2,[1])
     assert job['search']['focus']['mechanism_ref']=='h001.m1'
-    run(root,config,'Q',failed=True);finish(root,2,'W',[1])
+    run(root,config,'Q',failed=True);finish(root,2,'W',[1],mechanism_findings=findings('Q',blocked=('P',)))
     before=search.project(root,3)
     assessed=search.portfolio_view(before,3,prospective=True)
     assert assessed['last_assessed_branch']=='h001.m2'

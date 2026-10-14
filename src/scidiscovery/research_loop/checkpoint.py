@@ -16,7 +16,7 @@ MAX_BYTES = 64_000
 MAX_BRIEF_BYTES = 4096
 MAX_MATERIALS = 128
 NATIVE_ORIGINALS = ('native-intent.json', 'native-outcome.json', 'usage.json',
-                    'science-output.json', 'experiment-config.json')
+                    'science-output.json', 'experiment-config.json', 'work-evidence.json')
 
 
 def policy(value):
@@ -93,6 +93,8 @@ def capture(root, job, record):
     destination = record / 'checkpoint.json'
     if destination.exists() or destination.is_symlink():
         return validate(root, job, record)
+    from . import worker_delivery
+    if worker_delivery.applicable(job) and (record/'science-output.json').exists():worker_delivery.capture(root,job,record)
     originals, missing = [], []
     for name in NATIVE_ORIGINALS:
         path = record / name
@@ -160,7 +162,7 @@ def _clip(value, limit):
     return data[:limit].decode('utf-8', errors='ignore'), len(data) > limit
 
 
-def end_stage(root, job, record, reason):
+def end_stage(root, job, record, reason, *, work_exit=None):
     """Record why control ended this stage without rewriting scientific bytes."""
     from .protocol import require_current
     require_current(root,job)
@@ -168,7 +170,8 @@ def end_stage(root, job, record, reason):
     saved = validate(root, job, record)
     value = dict(version=VERSION, binding=saved['binding'], reason=reason,
                  checkpoint_sha256=c.digest(record / 'checkpoint.json'),
-                 raw_sha256=c.digest(c.regular(record / 'science-output.json')))
+                 raw_sha256=c.digest(c.regular(record / 'science-output.json')),
+                 **(dict(work_exit=work_exit) if work_exit is not None else {}))
     path = record / 'stage-end.json'
     if path.exists() or path.is_symlink():
         if stage_end(root, job, record) != value:
@@ -247,6 +250,6 @@ def disposition(science, *, review_requested=False):
     if science is None:
         return 'repair'
     intent = science.get('stage_intent')
-    if intent not in {'continue', 'review'}:
+    if intent not in {'continue', 'review','decision'}:
         raise OutputRepairRequired('stage_intent_invalid', 'Express whether to continue this mechanism or request independent A review.')
-    return 'review' if review_requested or intent == 'review' else 'continue'
+    return 'review' if review_requested or intent in {'review','decision'} else 'continue'

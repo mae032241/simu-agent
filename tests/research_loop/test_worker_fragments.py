@@ -37,6 +37,8 @@ def science(record, **changes):
     job = c.read(root / 'jobs/001.json')
     if 'stage_intent' in c.result_schema('W', job.get('handoff_protocol', 1))['properties']:
         value['stage_intent'] = 'review'
+    if 'mechanism_findings' in c.result_schema('W', job.get('handoff_protocol', 1))['properties']:
+        value['mechanism_findings'] = None
     value.update(changes)
     c.write(record / 'science-output.json', value)
     outcome = c.read(record / 'native-outcome.json')
@@ -253,7 +255,7 @@ if role=='H':payload.update(search_plan=None,next_action='experiment',route_reas
 if role=='W':
     turns=int(os.environ.get('SCID_U2_FAKE_TURNS','2'))
     intent='continue' if case=='normal' and number+1<turns else 'review'
-    payload.update(stage_intent=intent)
+    payload.update(stage_intent=intent,mechanism_findings=None)
 if role=='A':payload.update(search_review=None,candidate_recommendation=None,progress_assessment=None,next_action='finish',route_reason='Retain bounded uncertainty')
 for field in ('decision_request','portfolio_review'):
     if field in c.result_schema(role,job.get('handoff_protocol',1))['properties']:payload[field]=None

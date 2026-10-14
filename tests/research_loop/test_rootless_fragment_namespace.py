@@ -51,18 +51,19 @@ if role=='W':
 print(json.dumps(dict(type='turn.completed',usage=dict(input_tokens=1,cached_input_tokens=0,output_tokens=0))),flush=True)
 payload=dict(summary='Synthetic namespace contribution',scientific_result='No scientific efficacy was measured.',
  limitations=['Fake native transport, not a model.'],implementation_selection=None)
-if role=='W':payload['stage_intent']='review' if later else 'continue'
+if role=='W':
+ payload['stage_intent']='review' if later else 'continue'
+ payload['mechanism_findings']=([dict(mechanism=label,basis='observed',finding='Independent bounded interpretation; fake transport, no measured efficacy.') for label in ('P','Q')] if search_enabled else None)
 if role=='H':payload.update(next_action='experiment',route_reason='Discriminate the declared mechanism',
- search_plan=dict(scope='Synthetic current search',commitments=[dict(label=label,minimal_test='One bounded experiment; prioritize competing mechanisms before fine tuning',existing_ref=None) for label in ('P','Q')],focus=None))
+ search_plan=dict(scope='Synthetic current search',commitments=[dict(label=label,minimal_test='One bounded experiment; prioritize competing mechanisms before fine tuning',existing_ref=None) for label in ('P','Q')],focus=dict(label=None,action='screen')))
 if role=='A':payload.update(next_action='finish',route_reason='The synthetic combination was observed',candidate_recommendation=None,
  progress_assessment=None,decision_request=None,portfolio_review=None,
- search_review=dict(dispositions=[dict(mechanism_ref=ref,status='screened',reason='One final W was assessed') for ref in ('h001.m1','h001.m2')],next_focus=None))
+ search_review=dict(dispositions=[dict(mechanism_ref=ref,status='screened',reason='One final W was assessed') for ref in ('h001.m1','h001.m2')],next_focus=dict(mechanism_ref=None,action='screen')))
 output.write_text(json.dumps(payload))
 '''
 
 
-@pytest.mark.parametrize('search_enabled',[False,True],ids=['no-search','sealed-h-search-w-a'])
-def test_actual_launcher_two_new_contexts_keep_original_registered_call(tmp_path,search_enabled):
+def prepare_namespace(tmp_path,*,search_enabled=False,fake_source=FAKE_NATIVE,context='new_context',repair=False):
     if shutil.which('bwrap') is None:pytest.skip('Actual namespace unavailable')
     installed=subprocess.run([sys.executable,'-I','-c',f'from scidiscovery.research_loop.protocol import CURRENT;assert CURRENT=={CURRENT}'],capture_output=True,text=True)
     if installed.returncode:pytest.skip(f'Real installed CURRENT{CURRENT} interpreter required for isolated launcher')
@@ -75,7 +76,7 @@ def test_actual_launcher_two_new_contexts_keep_original_registered_call(tmp_path
     manifest=tmp_path/'public-manifest.json'
     c.write(manifest,dict(task_revision='d78f5eb52ad754c5ee9154741af73130a85a65b8',
         public_files_sha256={p.relative_to(public).as_posix():c.digest(p) for p in public.rglob('*') if p.is_file()}))
-    fake=tmp_path/'fake-codex';fake.write_text('#!'+sys.executable+'\n'+FAKE_NATIVE);fake.chmod(0o555)
+    fake=tmp_path/'fake-codex';fake.write_text('#!'+sys.executable+'\n'+fake_source);fake.chmod(0o555)
     root=tmp_path/'instance';config=tmp_path/'launcher.json';python=str(Path(sys.executable).absolute());codehost=Path('/usr/bin/true').resolve()
     c.write(config,dict(scene_root=str(root),public_root=str(public),public_manifest=str(manifest),
         runs_dir=str(root/'runs'),submission_dir=str(root/'submission'),native=str(fake),native_sha256=c.digest(fake),
@@ -87,9 +88,15 @@ def test_actual_launcher_two_new_contexts_keep_original_registered_call(tmp_path
         history_observer=dict(adapter=str(Path(cov_lineage.__file__).resolve()),contract_version=2,
             config=dict(runs='runs',calls='project/nodes',evaluation_key='covshift-public-val-v1')) if search_enabled else None,
         node_budget_policy={role:dict(max_observed_tokens=10000,max_seconds=60) for role in 'HWAE'},
-        resume_policy=dict(max_attempts=2,protocol='codex_exec_resume',usage_scope='turn',output_repair=False),
-        worker_fragment_policy=dict(context='new_context'))
+        resume_policy=dict(max_attempts=2,protocol='codex_exec_resume',usage_scope='turn',output_repair=repair),
+        worker_fragment_policy=dict(context=context))
     c.write(root/'host-started.json',budget.clock_stamp());budget.transition(root,'advance','Namespace zero-model transport probe')
+    return root
+
+
+@pytest.mark.parametrize('search_enabled',[False,True],ids=['no-search','sealed-h-search-w-a'])
+def test_actual_launcher_two_new_contexts_keep_original_registered_call(tmp_path,search_enabled):
+    root=prepare_namespace(tmp_path,search_enabled=search_enabled)
     if search_enabled:
         c.build_job(root,1,'H',[]);native.execute_native(root,1)
         assert 'exploration_order_version' not in c.settings(root)

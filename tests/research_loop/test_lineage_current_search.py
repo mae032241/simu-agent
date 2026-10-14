@@ -20,7 +20,7 @@ def test_sealed_current_h_configures_registered_cov_and_final_a(tmp_path,executi
         model='no-model',reasoning_effort='high',search_policy=search.DEFAULT_POLICY,node_budget_mode='hard',
         history_observer=dict(adapter=str(Path(cov_lineage.__file__).resolve()),contract_version=2,
             config=dict(runs='runs',calls='project/nodes',evaluation_key='covshift-public-val-v1')))
-    plan=dict(scope='One original mechanism',commitments=[dict(label='P',minimal_test='One bounded experiment',existing_ref=None)],focus=None)
+    plan=dict(scope='One original mechanism',commitments=[dict(label='P',minimal_test='One bounded experiment',existing_ref=None)],focus=dict(label=None,action='screen'))
     finish(root,1,'H',[],action='experiment',search_choice=plan)
     assert 'exploration_order_version' not in c.settings(root)
     job=c.build_job(root,2,'W',[1]);record=execution.record(root,2)
@@ -41,7 +41,7 @@ def test_sealed_current_h_configures_registered_cov_and_final_a(tmp_path,executi
     assert reply.returncode==0,(reply.stdout,reply.stderr)
     result=json.loads(reply.stdout)
     assert result['status']=='known_success'
-    finish(root,2,'W',[1])
+    finish(root,2,'W',[1],mechanism_findings=[dict(mechanism='P',basis='observed',finding='The bounded fixture observation is available; target adequacy remains untested.')])
     finish(root,3,'A',[1,2],action='finish',search_choice=dict(dispositions=[dict(
         mechanism_ref='h001.m1',status='screened',reason='The final W original was assessed')],next_focus=None))
     state=search.project(root,4);graph=lineage.build(root,4)

@@ -204,8 +204,8 @@ def run_native(root: Path, step: int, attempt=0):
                    'This file is advisory and usage can be unknown; shared hard limits still apply. \n')
     if checkpoint.enabled(root, job):
         prompt += ('\nA native turn can be a fragment of this same scientific stage. Give your current understanding, '
-                   'unresolved questions and scientific next intent. stage_intent=continue requests more work in this mechanism; '
-                   'review requests A. The host can require review at the original investment boundary. '
+                   'unresolved questions and scientific next intent. stage_intent=continue requests more work in the assigned task; '
+                   'review reports its completed scientific delivery, while decision requests A with partial work. The host can require review at the original investment boundary. '
                    'The host creates checkpoints and counts attempts; do not write mechanical checkpoint or budget fields.\n')
     if attempt:
         remaining = dict(observed_tokens=max(0, intent['budget_slice']['limits']['max_observed_tokens'] - intent['budget_slice']['previous_tokens']),
@@ -223,6 +223,13 @@ def run_native(root: Path, step: int, attempt=0):
                       'final_response contract. Controller diagnosis: '
                       + json.dumps({key: intent['output_repair'][key] for key in ('code', 'diagnostic')}, ensure_ascii=False)
                       + '\n' + prompt)
+    if intent.get('work_repair'):
+        request=intent['work_repair']
+        prompt=('Complete the missing scientific delivery for this same assigned task/session. Keep the original task action. '
+            'Reuse confirmed observations and query existing original calls; never resubmit completed experiments. '
+            'Add experiments only for scientifically unresolved assigned mechanisms within original authorization. '
+            'Return your own mechanism findings, obstacles and limitations; require A decision if science cannot proceed. '
+            'Controller diagnosis: '+json.dumps({key:request[key] for key in ('code','diagnostic')},ensure_ascii=False)+'\n'+prompt)
     if intent.get('continuation_kind') == 'fragment':
         prior = execution.record(root, step, attempt - 1)
         saved = intent['fragment_checkpoint']

@@ -1,0 +1,287 @@
+"""Structural W delivery checks from frozen observations; A owns their meaning."""
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+
+from . import contracts as c, history, execution
+from .output_repair import WorkRepairRequired
+
+MAX_BYTES = 64_000
+FACT_NAME = 'work-evidence.json'
+
+
+def schema():
+    return dict(type=['array','null'],maxItems=128,items=dict(type='object',additionalProperties=False,
+        properties=dict(mechanism=dict(type='string',minLength=1,maxLength=80),
+            basis=dict(type='string',enum=['observed','blocked']),
+            finding=dict(type='string',minLength=1,maxLength=1024)),required=['mechanism','basis','finding']),
+        description='For a screen task, give your own scientific finding and limitations for each assigned mechanism. '
+            'observed uses exact available observations; blocked states a concrete scientific obstacle and goes to A as partial. '
+            'Names are scientific labels or listed mechanism refs. Do not write hashes, call IDs, paths or counts. Local tasks may use null.')
+
+
+def applicable(job):
+    return job['role']=='W' and ((job.get('search') or {}).get('focus') or {}).get('action')=='screen'
+
+
+def _bytes(value):
+    return (json.dumps(value,ensure_ascii=False,indent=2,allow_nan=False)+'\n').encode()
+
+
+def _original(root,path):
+    return history._proof(root,Path(path).relative_to(root).as_posix())
+
+
+def _candidate(root,accepted,completed,terminal):
+    """No live backend query; terminal bytes must agree with the accepted owner."""
+    if completed is None or terminal is None:return False
+    return (completed.get('call_id')==accepted.get('call_id') and completed.get('scope')==accepted.get('scope')
+        and completed.get('mechanism_binding')==accepted.get('mechanism_binding')
+        and terminal.get('call_id')==accepted.get('call_id') and terminal.get('scope')==accepted.get('scope')
+        and terminal.get('mechanism_binding')==accepted.get('mechanism_binding')
+        and terminal.get('cleanup_confirmed') is True and terminal.get('transport_complete') is True
+        and type(terminal.get('returncode')) is int
+        and completed.get('status')==('known_success' if terminal['returncode']==0 else 'known_failed'))
+
+
+
+def writers_stopped(root,job,record):
+    from . import runtime
+    number=execution.records(root,job['step']).index(record)
+    identity=execution.identity(root,job['step'],number)
+    for name in ('runner-process.json','native-process.json'):
+        path=record/name
+        if path.exists():
+            receipt=c.read(c.regular(path))
+            if name=='runner-process.json' and receipt.get('pid')==os.getpid():
+                outcome=c.read(c.regular(record/'native-outcome.json'))
+                if c.digest(path)==outcome.get('execution_processes',{}).get(name) and receipt.get('task_sha256')==identity:
+                    continue  # The original leased owner is publishing its final checkpoint.
+            if not runtime.process_matches(receipt,identity):continue
+            raise ValueError('Original native writer still owns this attempt; no delivery snapshot can be captured')
+
+
+def capture(root,job,record):
+    """The native owner calls this only after its attempt has stopped writing.
+
+    This is one attempt's fact original, not a new call index or mutable balance.
+    Each proof uses the existing archive. Later calls/collections cannot change it.
+    """
+    if not applicable(job):return None
+    from .protocol import require_current,stage_scope
+    require_current(root,job)
+    root,record=Path(root),Path(record);path=record/FACT_NAME
+    number=execution.records(root,job['step']).index(record)
+    binding=dict(job_sha256=c.digest(root/'jobs'/f'{job["step"]:03d}.json'),
+        raw_sha256=c.digest(c.regular(record/'science-output.json',limit=c.MAX_RESULT_BYTES)),source_attempt=number)
+    if path.exists():return validate(root,job,record)
+    writers_stopped(root,job,record)
+    needed={row['mechanism_ref'] for row in job['search']['coverage_obligation']}
+    rows=[];unknown=[];capacity=False
+    # Frozen predecessor observations only, never recursively copy their assets.
+    for receipt in job['history']['nodes']:
+        source_record=c.host_record(c.workspace(root,receipt['step']))
+        seal_path=c.regular(source_record/'result-identity.json')
+        if c.digest(seal_path)!=receipt['seal_sha256']:raise history.ObserverIntegrityError('Worker evidence prefix changed')
+        seal=c.read(seal_path);observation=seal.get('observations')
+        if observation is None:continue
+        source=c.read(c.regular(root/'jobs'/f'{receipt["step"]:03d}.json'))
+        observed_path=c.regular(root/observation['path'],limit=history.MAX_OBSERVER_BYTES)
+        if c.digest(observed_path)!=observation['sha256']:raise history.ObserverIntegrityError('Worker observation original changed')
+        observed=c.read(observed_path)
+        if (source.get('search') or {}).get('breadth'):history.validate_managed(root,source,observed['managed_calls'])
+        for row in observed.get('managed_calls',[]):
+            ref=row['mechanism_binding']['mechanism_ref']
+            if ref not in needed:continue
+            if row['status']!='unknown':rows.append(dict(mechanism_ref=ref,accepted=row['accepted'],completed=row['completed'],terminal=row['terminal']))
+    from . import experiments,breadth
+    scope=stage_scope(root,job)
+    records=experiments.Records(dict(record_dir=str(c.workspace(root,job['step'])/'work/lineage'),scope=scope,breadth=job['search']['breadth']))
+    for directory in records.calls():
+        accepted_path=directory/'accepted.json'
+        try:
+            accepted=records.accepted(directory.name)
+        except (FileNotFoundError,json.JSONDecodeError,UnicodeDecodeError):
+            unknown.append(dict(accepted=_original(root,accepted_path) if accepted_path.exists() else None,completed=None,terminal=None));continue
+        attempt=accepted.get('native_attempt')
+        if not isinstance(attempt,dict) or type(attempt.get('number')) is not int:
+            raise history.ObserverIntegrityError('Worker observation has no exact accepted native attempt')
+        if attempt['number']>number:continue
+        comp=directory/'completed.json';term=directory/'terminal.json'
+        comp_proof=_original(root,comp) if comp.exists() else None
+        term_proof=_original(root,term) if term.exists() else None
+        proofs=dict(accepted=_original(root,accepted_path),completed=comp_proof,terminal=term_proof)
+        try:
+            completed=c.read(comp) if comp.exists() else None;terminal=c.read(term) if term.exists() else None
+        except (json.JSONDecodeError,UnicodeDecodeError):completed=terminal=None
+        if _candidate(root,accepted,completed,terminal):
+            ref=accepted['mechanism_binding']['mechanism_ref']
+            if ref in needed:rows.append(dict(mechanism_ref=ref,**proofs))
+        else:unknown.append(proofs)
+    # Keep one exact observation per required current-H mechanism.
+    obligations={row['mechanism_ref']:row for row in job['search']['coverage_obligation']};selected={}
+    for row in rows:
+        original=row['accepted']
+        if original.get('retention')!='archived':capacity=True;continue
+        value=c.read(root/original['snapshot']);mechanism=value.get('mechanism_binding') or {};ref=row['mechanism_ref'];expected=obligations[ref]
+        if all(mechanism.get(key)==expected[key] for key in ('mechanism_ref','source_h','source_h_sha256')):selected[ref]=row
+    value=dict(version=1,binding=binding,evidence=list(selected.values()),unknown=unknown,
+        prior_unknown=job['search']['breadth']['prior_unknown'],capacity=capacity,omitted_evidence=0,omitted_unknown=0)
+    while len(_bytes(value))>MAX_BYTES and value['evidence']:
+        value['evidence'].pop();value['omitted_evidence']+=1;value['capacity']=True
+    while len(_bytes(value))>MAX_BYTES and value['unknown']:
+        value['unknown'].pop();value['omitted_unknown']+=1;value['capacity']=True
+    c.write(path,value);path.chmod(0o400)
+    return validate(root,job,record)
+
+
+def validate(root,job,record):
+    value=c.read(c.regular(record/FACT_NAME,limit=MAX_BYTES))
+    expected=dict(job_sha256=c.digest(root/'jobs'/f'{job["step"]:03d}.json'),
+        raw_sha256=c.digest(c.regular(record/'science-output.json',limit=c.MAX_RESULT_BYTES)),
+        source_attempt=execution.records(root,job['step']).index(record))
+    if value.get('version')!=1 or value.get('binding')!=expected:raise history.ObserverIntegrityError('Worker fact snapshot binding changed')
+    for row in [*value['evidence'],*value['unknown']]:
+        for key in ('accepted','completed','terminal'):
+            proof=row[key]
+            if proof is not None:history._validate_proof(root,proof)
+        if 'mechanism_ref' in row:
+            if any(row[key] is None or row[key].get('retention')!='archived' for key in ('accepted','completed','terminal')):
+                raise history.ObserverIntegrityError('Worker known observation originals unavailable')
+            accepted=c.read(root/row['accepted']['snapshot']);completed=c.read(root/row['completed']['snapshot']);terminal=c.read(root/row['terminal']['snapshot'])
+            if not _candidate(root,accepted,completed,terminal):raise history.ObserverIntegrityError('Worker observation differs from accepted terminal originals')
+            ref=row['mechanism_ref'];target=next((item for item in job['search']['coverage_obligation'] if item['mechanism_ref']==ref),None)
+            if target is None or any(accepted['mechanism_binding'].get(key)!=target[key] for key in ('mechanism_ref','source_h','source_h_sha256')):
+                raise history.ObserverIntegrityError('Worker observation differs from assigned H version')
+    return value
+
+
+def assessment(root,job,science,record):
+    """Coverage of this task's own authored findings; no scientific screened verdict."""
+    if not applicable(job):return dict(status='not_applicable',missing=[],blocked=[],reason=None)
+    facts=validate(root,job,record)
+    expected={row['mechanism_ref'] for row in job['search']['coverage_obligation']}
+    mechanisms=job['search']['breadth']['mechanisms'];known={row['mechanism_ref'] for row in facts['evidence']}
+    findings=science.get('mechanism_findings') or [];seen=set();missing=[];blocked=[]
+    for row in findings:
+        matches=[item['mechanism_ref'] for item in mechanisms if row['mechanism'] in (item['mechanism_ref'],item['label'])]
+        if len(matches)!=1 or matches[0] not in expected or matches[0] in seen or not row['finding'].strip():
+            missing.append(row['mechanism']);continue
+        ref=matches[0];seen.add(ref)
+        if row['basis']=='blocked':blocked.append(ref)
+        elif ref not in known:missing.append(ref)
+    missing=sorted(set(missing)|(expected-seen))
+    reason=('work_evidence_capacity' if facts['capacity'] else 'original_execution_unknown' if facts['unknown'] or facts['prior_unknown']
+        else 'worker_decision' if science.get('stage_intent')=='decision' else 'scientific_blocked' if blocked else None)
+    return dict(status='partial' if reason else 'incomplete' if missing else 'complete',missing=missing,blocked=blocked,reason=reason,
+        facts_sha256=c.digest(c.regular(record/FACT_NAME)))
+
+
+def require_delivery(root,job,science,record):
+    result=assessment(root,job,science,record)
+    if result['status']=='incomplete':
+        ending=record/'stage-end.json'
+        if ending.exists():
+            from . import checkpoint
+            value=checkpoint.stage_end(root,job,record)
+            if value.get('work_exit') is not None:
+                reason=validate_exit(root,job,record,value['work_exit'])
+                if value['reason']!=reason:raise history.ObserverIntegrityError('Stage ending changed its verified Worker exception')
+                return dict(result,status='partial',reason=reason)
+        raise WorkRepairRequired('Complete your scientific findings for assigned mechanisms: '+', '.join(result['missing'])+'. Reuse retained observations; do not resubmit completed experiments.')
+    return result
+
+
+def authorize_exit(root,job,record,reason):
+    """Freeze a host exception from original policy/receipts, never a Worker hint."""
+    from . import budget,continuation,experiments,native
+    from .protocol import stage_scope
+    paths=execution.records(root,job['step']);number=paths.index(record)
+    value=dict(reason=reason,job_sha256=c.digest(root/'jobs'/f'{job["step"]:03d}.json'),
+        source_attempt=number,outcome_sha256=c.digest(c.regular(record/'native-outcome.json')))
+    policy=c.settings(root).get('resume_policy')
+    repairs=sum(c.read(path/'native-intent.json').get('continuation_kind','repair')=='repair' for path in paths[1:number+1])
+    if reason=='worker_resume_unsupported' and policy is None:
+        return dict(value,kind='resume_policy',settings_sha256=c.digest(root/'settings.json'))
+    if reason=='worker_resume_limit' and policy is not None and repairs>=policy['max_attempts']:
+        return dict(value,kind='repair_cap',max_attempts=policy['max_attempts'])
+    if reason.startswith('worker_resume_') and reason not in {'worker_resume_terminal_ineligible','worker_resume_original_running','worker_resume_usage_unknown'}:
+        try:continuation.session(root,job['step'],record)
+        except continuation.ResumeUnavailable as error:
+            if str(error)==reason:return dict(value,kind='session',native_jsonl=_original(root,record/'native.jsonl'))
+    admission=budget.review_configuration(root,job)
+    config=dict(admission=admission,scope=stage_scope(root,job),
+        native_attempt=dict(number=number,execution_key=execution.identity(root,job['step'],number)))
+    review=experiments.review_status(config)
+    if review['requested'] and review['reason']==reason:
+        return dict(value,kind='host_review',review=_original(root,Path(admission['directory'])/'review.json'),sample=budget.clock_stamp())
+    if reason in {'worker_resume_node_exhausted','worker_resume_budget_unavailable'}:
+        try:budget.accept_continuation(root,job,paths[:number+1])
+        except budget.NodeBudgetUnavailable as error:
+            if error.reason==reason:
+                tokens,seconds=budget._attempt_consumption(root,job,paths[:number+1])
+                return dict(value,kind='budget',consumption=dict(tokens=tokens,seconds=seconds),
+                    limits=budget.node_limits(root,job),shared=dict(budget.snapshot(root),used_steps=budget.used_steps(root)),meter=native.usage(root))
+    raise ValueError('No original host exception authorizes incomplete W delivery: '+reason)
+
+
+def validate_exit(root,job,record,value):
+    """A hand-written stage-end reason is insufficient to bypass ordinary review."""
+    from . import budget
+    number=execution.records(root,job['step']).index(record)
+    if (not isinstance(value,dict) or value.get('job_sha256')!=c.digest(root/'jobs'/f'{job["step"]:03d}.json')
+            or value.get('source_attempt')!=number or value.get('outcome_sha256')!=c.digest(c.regular(record/'native-outcome.json'))):
+        raise history.ObserverIntegrityError('Worker exit differs from original attempt')
+    policy=c.settings(root).get('resume_policy');kind=value.get('kind');reason=value['reason']
+    if kind=='resume_policy':
+        if policy is not None or reason!='worker_resume_unsupported' or value.get('settings_sha256')!=c.digest(root/'settings.json'):
+            raise history.ObserverIntegrityError('Worker exit has no original unsupported policy')
+    elif kind=='repair_cap':
+        paths=execution.records(root,job['step'])[:number+1]
+        repairs=sum(c.read(path/'native-intent.json').get('continuation_kind','repair')=='repair' for path in paths[1:])
+        if policy is None or reason!='worker_resume_limit' or value['max_attempts']!=policy['max_attempts'] or repairs<policy['max_attempts']:
+            raise history.ObserverIntegrityError('Worker exit has no exhausted original repair cap')
+    elif kind=='session':
+        from . import continuation
+        history._validate_proof(root,value['native_jsonl'])
+        if value['native_jsonl']['path']!=(record/'native.jsonl').relative_to(root).as_posix():raise history.ObserverIntegrityError('Worker unavailable session source changed')
+        try:continuation.session(root,job['step'],record)
+        except continuation.ResumeUnavailable as error:
+            if str(error)!=reason:raise history.ObserverIntegrityError('Worker unavailable session diagnosis changed') from error
+        else:raise history.ObserverIntegrityError('Original session was available; incomplete delivery cannot bypass correction')
+    elif kind=='host_review':
+        proof=value['review'];history._validate_proof(root,proof)
+        expected=(budget._review_directory(root,job)/'review.json').relative_to(root).as_posix()
+        if proof.get('path')!=expected or proof.get('retention')!='archived':raise history.ObserverIntegrityError('Worker exit did not use protected host review')
+        review=c.read(root/proof['snapshot']);sample=value['sample']
+        from .protocol import stage_scope
+        if (review['scope']!=stage_scope(root,job) or review['stage_anchor']!=c.digest(root/'jobs'/f'{job["step"]:03d}.json')
+                or review['native_attempt']!=dict(number=number,execution_key=execution.identity(root,job['step'],number))
+                or sample['boot_id']!=review['boot_id']):raise history.ObserverIntegrityError('Worker host review scope changed')
+        actual=(review['reason'] if review['pending'] else 'review_deadline_reached' if sample['at_boottime']>=review['deadline_boottime']
+            else 'host_review_observation_expired' if sample['at_boottime']>=review['valid_until_boottime'] else None)
+        if actual!=reason:raise history.ObserverIntegrityError('Worker host review did not request this exit')
+    elif kind=='budget':
+        paths=execution.records(root,job['step'])[:number+1]
+        tokens,seconds=budget._attempt_consumption(root,job,paths)
+        if value['consumption']!=dict(tokens=tokens,seconds=seconds) or value['limits']!=budget.node_limits(root,job):raise history.ObserverIntegrityError('Worker budget exit refunded original consumption')
+        if reason=='worker_resume_node_exhausted':
+            if budget.node_mode(root)!='hard' or tokens<value['limits']['max_observed_tokens'] and seconds<value['limits']['max_seconds']:
+                raise history.ObserverIntegrityError('Worker node budget was not exhausted')
+        elif reason=='worker_resume_budget_unavailable':
+            # The control snapshot is immutable in stage-end; source consumption
+            # and policy are checked above. Later amendments never rewrite it.
+            shared=value['shared'];meter=value['meter'];soft=budget.node_mode(root)=='soft'
+            reserve=budget.delivery_reserve(c.settings(root)) or dict(tokens=0,seconds=0,steps=0)
+            needed_tokens=0 if soft else max(0,value['limits']['max_observed_tokens']-tokens)
+            needed_seconds=0. if soft else max(0.,value['limits']['max_seconds']-seconds)
+            if not (meter['unknown_steps'] or shared['max_tokens']-meter['observed_tokens']<needed_tokens+reserve['tokens']
+                    or shared['seconds_remaining']<needed_seconds+reserve['seconds']
+                    or soft and (shared['max_tokens']-meter['observed_tokens']<=reserve['tokens'] or shared['seconds_remaining']<=reserve['seconds'])
+                    or c.settings(root)['max_steps']-shared.get('used_steps',budget.used_steps(root))<1+reserve['steps']):
+                raise history.ObserverIntegrityError('Worker shared budget did not require exit')
+        else:raise history.ObserverIntegrityError('Unknown Worker budget exception')
+    else:raise history.ObserverIntegrityError('Worker exit lacks original host exception facts')
+    return reason

@@ -12,7 +12,7 @@ from . import budget, contracts as c, history
 DEFAULT_POLICY = dict(max_w_seconds=900.0, max_w_observed_tokens=2_000_000, max_requested_repairs=2)
 MAX_VIEW_BYTES = 4096
 MAX_COMMITMENTS = 4
-MODES = ('screen', 'improve', 'repair')
+MODES = ('screen', 'improve', 'repair', 'validate')
 
 
 class UnresolvedSearch(ValueError):
@@ -45,19 +45,19 @@ def _text(limit=1024, nullable=False):
 
 
 def schema(role, protocol=None):
-    focus=lambda key:_object({key:_text(80),'action':dict(type='string',enum=list(MODES))},nullable=True)
+    focus=lambda key:_object({key:_text(80,nullable=True),'action':dict(type='string',enum=list(MODES))},nullable=True)
     if role=='H':
         test=_text();test['description']='State the discriminating scientific prediction or question and why this mechanism has this exploration priority. Do not prescribe run counts, parameter grids or costs.'
         commitment=_object(dict(label=_text(80),minimal_test=test,existing_ref=_text(80,nullable=True)))
         value=_object(dict(scope=_text(),commitments=dict(type='array',maxItems=MAX_COMMITMENTS,items=commitment),focus=focus('label')),nullable=True)
         value['description']=('Declare at most four additions or revisions in scientific exploration order; omitted unfinished mechanisms remain. '
-            'Null focus follows the confirmed unfinished plan. Explicit exact ref or unique label with route_reason selects scientific screen/improve/repair without rewriting an order table.')
+            'Choose action explicitly for a W task: screen covers the confirmed combination; improve, repair and validate are local. A null label with screen delegates the primary route selection; a null whole focus cannot dispatch W. Explicit exact ref or unique label with route_reason selects scientific screen/improve/repair without rewriting an order table.')
         return value
     if role=='A':
         disposition=_object(dict(mechanism_ref=_text(80),status=dict(type='string',enum=['screened','deferred','waived','pending']),reason=_text()))
         value=_object(dict(dispositions=dict(type='array',maxItems=MAX_COMMITMENTS,items=disposition),next_focus=focus('mechanism_ref')),nullable=True)
         value['description']=('Declare only changed scientific dispositions; screened requires this mechanism and H version in one exact final W with sealed accepted and known terminal originals; execution success alone is not scientific screening. '
-            'Null next_focus follows the unfinished plan after this eligible final W assessment. '
+            'Choose the W task action explicitly: screen covers the unfinished combination; improve, repair and validate require one exact mechanism. Null whole next_focus cannot dispatch W; a null mechanism_ref is allowed only with screen. '
             'An explicit exact ref or unique label plus route_reason may deepen another authorized mechanism. Do not write mechanical IDs, counts, paths or priorities.')
         return value
     raise ValueError('Only H and A declare scientific search choices')
@@ -78,12 +78,42 @@ def _managed_refs(root,source,seal,state):
     return refs
 
 
+def _screen_refs(root,source,seal,state):
+    """A judges this final W's findings using its frozen, reusable observations.
+
+    Reused proofs qualify scientific assessment only. They remain absent from
+    this W's managed_calls and its new execution or portfolio investment counts.
+    """
+    from . import worker_delivery
+    if not worker_delivery.applicable(source):return _managed_refs(root,source,seal,state)
+    record=execution.record(root,source['step'])
+    facts=worker_delivery.validate(root,source,record)
+    receipt=seal['control_outcome'].get('worker_delivery') or {}
+    if receipt.get('facts_sha256')!=c.digest(c.regular(record/worker_delivery.FACT_NAME)):
+        raise history.ObserverIntegrityError('Final W scientific evidence differs from its seal')
+    science=c.science_payload(execution.raw(root,source['step']),'W',source['handoff_protocol'])
+    declared={};mechanisms=source['search']['breadth']['mechanisms']
+    for finding in science.get('mechanism_findings') or []:
+        matches=[item['mechanism_ref'] for item in mechanisms
+            if finding['mechanism'] in (item['mechanism_ref'],item['label'])]
+        if len(matches)==1:declared.setdefault(matches[0],[]).append(finding)
+    refs=set();hashes={}
+    for row in facts['evidence']:
+        ref=row['mechanism_ref'];findings=declared.get(ref,[]);current=state['mechanisms'].get(ref)
+        if current is None or len(findings)!=1 or findings[0]['basis']!='observed' or not findings[0]['finding'].strip():continue
+        binding=c.read(root/row['accepted']['snapshot'])['mechanism_binding'];step=current['source_h']
+        if step not in hashes:hashes[step]=c.digest(c.regular(c.host_record(c.workspace(root,step))/'result-identity.json'))
+        if binding['source_h']==step and binding['source_h_sha256']==hashes[step]:refs.add(ref)
+    return refs
+
+
 def _mechanism_sources(root,job,ref,state,*,screen=False):
     sources=[]
     for source,_,seal in history.direct_sources(root,job):
         if source['role']!='W':continue
         if (source.get('search') or {}).get('breadth'):
-            if ref in _managed_refs(root,source,seal,state):sources.append(source)
+            refs=_screen_refs(root,source,seal,state) if screen else _managed_refs(root,source,seal,state)
+            if ref in refs:sources.append(source)
         elif ((source.get('search') or {}).get('focus') or {}).get('mechanism_ref')==ref and (not screen or source['search']['focus']['action']=='screen'):
             sources.append(source)
     return sources
@@ -151,7 +181,7 @@ def _apply_science(root,job,payload,state,diagnostics):
     interpretation=resolve_intent(state,job,payload,assessed=_assessed(root,job,state))
     diagnostics.extend(interpretation['diagnostics'])
     state['focus']=interpretation['focus']
-    if job['role']=='A' and interpretation['focus'] and (payload.get('search_review') or {}).get('next_focus') is not None and not diagnostics:
+    if job['role']=='A' and interpretation['focus'] and ((payload.get('search_review') or {}).get('next_focus') or {}).get('mechanism_ref') is not None and not diagnostics:
         state['extra_grant']=dict(mechanism_ref=interpretation['focus']['mechanism_ref'],source_a=job['step'])
     state['order'].update(remaining=interpretation['unfinished_plan'],seen_w=interpretation['seen_w'],allocation=interpretation['allocation'],diagnostics=interpretation['diagnostics'])
 
@@ -228,11 +258,12 @@ def project(root,before_step):
 
 
 
-def _breadth(root,state,limits):
+def _breadth(root,state,limits,focus):
     from . import breadth
     # Keep H declaration order across revisions; never discard authorized pending items.
     refs=[item['mechanism_ref'] for item in state['order']['remaining'] if item['mechanism_ref'] in state['authorized']]
     refs+= [ref for ref in state['mechanisms'] if ref in state['authorized'] and ref not in refs]
+    if focus and focus['action']!='screen':refs=[focus['mechanism_ref']]
     if not refs:return None
     if len(refs)>breadth.MAX_MECHANISMS:raise ValueError('Authorized H combination exceeds frozen opportunity capacity')
     mechanisms=[]
@@ -262,8 +293,12 @@ def bind(root,step,role,protocol=None,*,write_pages=True,state=None,unified=True
         sources=_mechanism_sources(root,chooser,focus['mechanism_ref'],state)
         repair_binding='available' if len(sources)==1 else 'ambiguous' if sources else 'unavailable'
         if len(sources)==1:repair_root=sources[0]['search'].get('repair_root') or sources[0]['step']
-    return dict(focus=focus,allocation=copy.deepcopy(state['order']['allocation']),unfinished_plan=copy.deepcopy(state['order']['remaining']),
-        breadth=_breadth(root,state,limits) if role=='W' else None,intent_diagnostics=state['order']['diagnostics'],repair_root=repair_root,repair_binding=repair_binding,limits=policy(limits),files=[])
+    obligation=[]
+    if role=='W' and focus and focus['action']=='screen':
+        obligation=[dict(mechanism_ref=ref,source_h=item['source_h'],source_h_sha256=c.digest(c.regular(c.host_record(c.workspace(root,item['source_h']))/'result-identity.json')))
+            for ref,item in state['mechanisms'].items() if ref in state['authorized'] and item['status']=='pending']
+    return dict(coverage_obligation=obligation,focus=focus,allocation=copy.deepcopy(state['order']['allocation']),unfinished_plan=copy.deepcopy(state['order']['remaining']),
+        breadth=_breadth(root,state,limits,focus) if role=='W' else None,intent_diagnostics=state['order']['diagnostics'],repair_root=repair_root,repair_binding=repair_binding,limits=policy(limits),files=[])
 
 
 def launch_reason(root,job):
@@ -387,7 +422,7 @@ def _portfolio_update(root, job, payload, seal, state, seal_sha=None):
     # Audit/extraction/wait never renew the window. An author may clarify the
     # original global tradeoff without manufacturing another W+A cycle.
     if valid and payload.get('next_action') in {'continue_w', 'revise_h', 'finish'} and ((payload.get('portfolio_review') or '').strip() or
-            (payload.get('search_review') or {}).get('next_focus') is not None and (payload.get('route_reason') or '').strip()):
+            ((payload.get('search_review') or {}).get('next_focus') or {}).get('mechanism_ref') is not None and (payload.get('route_reason') or '').strip()):
         portfolio['invested'].clear();portfolio['deferred'].clear()
         portfolio['last_review'] = job['step']
 
@@ -411,7 +446,7 @@ def portfolio_assess(root,job,payload,*,interpretation=None,decision_diagnostics
         selection_status='unresolved' if selection_diagnostics else 'applied',decision_status='unresolved' if decision_diagnostics else 'applied')
     _portfolio_update(root,job,payload,dict(control_outcome=control),state)
     focus=interpretation['focus'];branch=focus['mechanism_ref'] if focus else None
-    explicit=(payload.get('search_review') or {}).get('next_focus') is not None
+    explicit=((payload.get('search_review') or {}).get('next_focus') or {}).get('mechanism_ref') is not None
     explained=(payload.get('portfolio_review') or '').strip() or explicit and (payload.get('route_reason') or '').strip()
     if not explained and portfolio_due(state['portfolio'],state['mechanisms'],branch,configured['review_after_cycles']):
         return [dict(code='a_portfolio_review_required',subject=branch)]

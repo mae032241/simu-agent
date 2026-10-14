@@ -108,8 +108,11 @@ def result_schema(role: str,protocol=CURRENT):
             description='Null retains the selected implementation; [] clears it; listed scientific object IDs replace it. No paths, hashes or handoff markers.'))
     if role in ACTIONS:
         properties.update(next_action=dict(type='string',enum=list(actions(role))),route_reason=dict(type='string',minLength=1))
-    if role=='W':properties['stage_intent']=dict(type='string',enum=['continue','review'],
-        description='Continue the same scientific stage or request independent review. This does not grant budget or execution. Control may end the stage at a review or shared boundary.')
+    if role=='W':
+        from . import worker_delivery
+        properties['mechanism_findings']=worker_delivery.schema()
+        properties['stage_intent']=dict(type='string',enum=['continue','review','decision'],
+        description='Continue the same scientific stage, report completed work for review, or request an A scientific decision with partial work. This does not grant budget or execution. Control may end the stage at a review or shared boundary.')
     if role in {'H','A'}:
         from . import search
         properties['search_plan' if role=='H' else 'search_review']=search.schema(role)
@@ -317,7 +320,11 @@ def _role_lineage(job):
         mechanisms['overview']=[dict(mechanism_ref=row['mechanism_ref'],label=row['label'],
             status=row['status'],original=f'inputs/history/nodes/{row["source_h"]:03d}/0001.json') for row in rows[:4]]
         mechanisms['overview_omitted_count']=max(0,len(rows)-4)
-        mechanisms['scope']='Frozen H-authorized problem combination; statuses are authored judgments, not proof of experiment coverage.'
+        action=((job.get('search') or {}).get('focus') or {}).get('action')
+        mechanisms['task_action']=action
+        mechanisms['scope']=('Assigned shallow combination; each mechanism needs your own scientific finding or explicit obstacle.' if action=='screen' else
+            'Assigned local '+str(action)+' task; do not repeat other mechanisms. Existing observations retain their limitations.')
+        mechanisms['coverage_required_count']=len((job.get('search') or {}).get('coverage_obligation',[]))
         from .lineage import bounded_brief
         bounded_brief(view)
     return view
@@ -366,7 +373,7 @@ def science_view(job, root=None):
         **(dict(stage_continuation=dict(status='configured' if job.get('worker_fragment_policy') else 'unavailable',
             context=(job.get('worker_fragment_policy') or {}).get('context'),
             permission='Configured context is not permission: control verifies original terminal, cleanup, usage, session and remaining shared authorization before accepting another fragment.',
-            intent='review ends this stage for A. continue requests another fragment only when configured; otherwise control ends the stage with an explicit unavailable reason.')) if job['role']=='W' else {}),
+            intent='review reports completed assigned work; decision sends a scientific obstacle to A as partial; continue requests another fragment only when configured; otherwise control ends the stage with an explicit unavailable reason.')) if job['role']=='W' else {}),
         **(dict(decision_context=context) if context is not None else {}),
         **(dict(role_instruction=job['native_role_instruction']) if job.get('native_role_instruction') and not job.get('role_guidance') else {}),
         **(dict(role_guidance=job['role_guidance']) if job.get('role_guidance') else {}),
@@ -785,6 +792,15 @@ def seal_result(root: Path, step: int):
     if outcome.get('raw_sha256') != digest(raw):
         raise ValueError('Terminal scientific output is unverified or changed')
     value = envelope(job, science_payload(raw, job['role'], job.get('handoff_protocol', 1)))
+    if job['role']=='W':
+        from . import worker_delivery
+        if worker_delivery.applicable(job):
+            from . import checkpoint
+            if not (native_record/'checkpoint.json').exists():
+                worker_delivery.writers_stopped(root,job,native_record)
+                checkpoint.capture(root,job,native_record)
+            else:checkpoint.validate(root,job,native_record)
+        worker_delivery.require_delivery(root,job,value,native_record)
     control = None
     from . import semantic
     control = semantic.outcome(root, job, value)

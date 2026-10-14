@@ -11,3 +11,10 @@ class OutputRepairRequired(ValueError):
 
     def request(self):
         return dict(code=self.code, diagnostic=self.diagnostic)
+
+
+class WorkRepairRequired(OutputRepairRequired):
+    """A schema-valid W response needs bounded scientific delivery correction."""
+
+    def __init__(self, diagnostic):
+        super().__init__('worker_delivery_incomplete', diagnostic)

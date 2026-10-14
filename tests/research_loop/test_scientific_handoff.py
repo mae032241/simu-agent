@@ -75,11 +75,14 @@ def test_current_protocol_has_no_mechanical_reference_fields(role):
 
 FIRST = 'inputs/parents/002/artifacts/a.py'
 SECOND = 'inputs/parents/002/artifacts/b.py'
+PENDING_FINDINGS = [dict(mechanism='Mechanism',basis='blocked',
+    finding='Implementation files alone do not establish a discriminating observation; evaluation remains pending.')]
 
 
 def original_worker(root):
     finish(root, 1, 'H', [], action='experiment', search_choice=plan())
-    return finish(root, 2, 'W', [1], files={'a.py': 'FIRST_IMPLEMENTATION', 'b.py': 'SECOND_IMPLEMENTATION'})
+    return finish(root, 2, 'W', [1], files={'a.py': 'FIRST_IMPLEMENTATION', 'b.py': 'SECOND_IMPLEMENTATION'},
+        mechanism_findings=PENDING_FINDINGS)
 
 
 def registered_worker(root,step,parents,*,text='Exact managed scientific contribution'):
@@ -94,7 +97,8 @@ def registered_worker(root,step,parents,*,text='Exact managed scientific contrib
     binding=result['mechanism_binding']
     assert binding['mechanism_ref']=='h001.m1' and binding['source_h']==1
     assert binding['source_h_sha256']==c.digest(execution.origin(root,1)/'result-identity.json')
-    sealed=finish(root,step,'W',parents,text=text)
+    sealed=finish(root,step,'W',parents,text=text,mechanism_findings=[dict(mechanism='Mechanism',
+        basis='observed',finding='The managed fixture produced an observation; target-condition validity is untested.')])
     observation=c.read(root/c.read(sealed[2]/'result-identity.json')['observations']['path'])
     assert len(observation['managed_calls'])==1
     assert observation['managed_calls'][0]['mechanism_binding']==binding
@@ -160,7 +164,8 @@ def test_bad_ordinary_links_do_not_change_selection_or_prevent_seal(scene, role)
         step, parents = 4, [3]
     else:
         step, parents = 3, [1, 2]
-    _, work, record = finish(scene, step, role, parents, text=text, search_choice=choice)
+    _, work, record = finish(scene, step, role, parents, text=text, search_choice=choice,
+        mechanism_findings=PENDING_FINDINGS if role == 'W' else None)
     assert c.validate(work)['scientific_result'] == text
     seal = c.read(record / 'result-identity.json')
     assert seal.get('selected_inputs', []) == []
@@ -285,10 +290,10 @@ def test_progress_binds_h_analysis_and_exact_extraction_return(scene):
 def test_equal_worker_raws_have_only_one_progress_credit(correcting_scene):
     scene = correcting_scene
     finish(scene, 1, 'H', [], action='experiment', search_choice=plan())
-    finish(scene, 2, 'W', [1], text='Same original science bytes')
+    finish(scene, 2, 'W', [1], text='Same original science bytes',mechanism_findings=PENDING_FINDINGS)
     finish(scene, 3, 'A', [1, 2], action='continue_w', progress=dict(verdict='progress'),
            search_choice=dict(dispositions=[], next_focus=focus()))
-    finish(scene, 4, 'W', [1, 2, 3], text='Same original science bytes')
+    finish(scene, 4, 'W', [1, 2, 3], text='Same original science bytes',mechanism_findings=PENDING_FINDINGS)
     finish(scene, 5, 'A', [1, 4], action='finish', progress=dict(verdict='progress'))
     assert c.digest(c.host_record(c.workspace(scene, 2)) / 'science-output.json') == c.digest(
         c.host_record(c.workspace(scene, 4)) / 'science-output.json')
@@ -298,7 +303,8 @@ def test_equal_worker_raws_have_only_one_progress_credit(correcting_scene):
 @pytest.mark.parametrize('fault', [None, 'missing_page', 'changed_page'])
 def test_seventeenth_implementation_is_paged_selected_and_hash_bound(scene, monkeypatch, fault):
     finish(scene, 1, 'H', [], action='experiment', search_choice=plan())
-    finish(scene, 2, 'W', [1], files={f'a{i:02d}.py': f'ORIGINAL_IMPLEMENTATION_{i}' for i in range(17)})
+    finish(scene, 2, 'W', [1], files={f'a{i:02d}.py': f'ORIGINAL_IMPLEMENTATION_{i}' for i in range(17)},
+        mechanism_findings=PENDING_FINDINGS)
     job = c.build_job(scene, 3, 'A', [1, 2])
     work = c.workspace(scene, 3)
     index = c.read(work / job['history']['view']['indexes']['nodes'])

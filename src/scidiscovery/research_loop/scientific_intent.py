@@ -18,7 +18,7 @@ def resolve_intent(state, job, payload, *, assessed=None):
     choice=(payload.get('search_plan') if role=='H' else payload.get('search_review')) or {}
     declared=choice.get('focus' if role=='H' else 'next_focus')
     selected=None;diagnostics=[]
-    if declared is not None:
+    if declared is not None and declared['label' if role=='H' else 'mechanism_ref'] is not None:
         name=declared['label' if role=='H' else 'mechanism_ref']
         matches=[name] if name in authorized else [ref for ref in authorized if mechanisms[ref]['label']==name]
         selected=matches[0] if len(matches)==1 else None
@@ -28,6 +28,8 @@ def resolve_intent(state, job, payload, *, assessed=None):
             diagnostics.append(dict(code='science_focus_waived',subject=selected))
         elif not (payload.get('route_reason') or '').strip():
             diagnostics.append(dict(code='science_focus_reason_required',subject=selected))
+    if declared is not None and declared['label' if role=='H' else 'mechanism_ref'] is None and declared['action']!='screen':
+        diagnostics.append(dict(code='science_focus_required',subject=declared['action']))
     repair=declared is not None and declared['action']=='repair'
     if role=='A' and action not in {'audit','extract','wait'} and assessed is not None:
         identity=assessed['identity']
@@ -45,6 +47,8 @@ def resolve_intent(state, job, payload, *, assessed=None):
     focus=None;allocation=None
     if action in {'experiment','continue_w'}:
         if declared is None:
+            diagnostics.append(dict(code='science_task_action_required',subject='W scientific task'))
+        elif selected is None and not diagnostics and declared['action']=='screen':
             available=[item for item in remaining if item['mechanism_ref'] in authorized]
             if not available:
                 diagnostics.append(dict(code='science_plan_empty',subject='unfinished scientific plan'))

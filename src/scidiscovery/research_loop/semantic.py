@@ -21,8 +21,13 @@ def outcome(root,job,payload):
     requests=decision.assess(root,job,payload,focus=interpretation['focus'])
     portfolio=search.portfolio_assess(root,job,payload,interpretation=interpretation,
         decision_diagnostics=requests,selection_diagnostics=selection)
+    delivery=None
+    if job['role']=='W':
+        from . import worker_delivery
+        delivery=worker_delivery.require_delivery(root,job,payload,execution.record(root,job['step']))
     rows=[*diagnostics,*selection,*requests,*portfolio]
     return dict(**(dict(stage_end_reason='continuation_unavailable') if job['role']=='W' and payload.get('stage_intent')=='continue' and not job.get('worker_fragment_policy') else {}),
+        **(dict(worker_delivery=delivery) if delivery is not None else {}),
         binding_protocol=CURRENT,resolved_focus=interpretation['focus'],resolved_allocation=interpretation['allocation'],
         search_status='unresolved' if diagnostics else 'applied',selection_status='unresolved' if selection else 'applied',
         decision_status='unresolved' if requests else 'applied',portfolio_status='unresolved' if portfolio else 'applied',

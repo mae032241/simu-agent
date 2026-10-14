@@ -22,7 +22,7 @@ def scene(tmp_path, monkeypatch):
     return root
 
 
-def finish(root, step, role, parents, text='A bounded scientific finding', action='wait', files=None, summary='A contribution', limitations=None, recommendation=None, search_choice=None, progress=None, selection=None):
+def finish(root, step, role, parents, text='A bounded scientific finding', action='wait', files=None, summary='A contribution', limitations=None, recommendation=None, search_choice=None, progress=None, selection=None, mechanism_findings=None):
     path = root / 'jobs' / f'{step:03d}.json'
     previous = contracts.read(path) if path.exists() else {}
     job = contracts.build_job(root, step, role, parents, previous.get('instruction', ''),
@@ -38,7 +38,7 @@ def finish(root, step, role, parents, text='A bounded scientific finding', actio
         payload['search_plan' if role == 'H' else 'search_review'] = search_choice
     if job.get('handoff_protocol', 1) >= 6 and role == 'A':
         payload['progress_assessment'] = progress
-    if role=='W':payload['stage_intent']='review'
+    if role=='W':payload.update(stage_intent='review',mechanism_findings=mechanism_findings)
     if role=='A':payload.update(decision_request=None,portfolio_review=None)
     if role in {'H', 'A'}:
         payload.update(next_action=action, route_reason='Exact scientific question')

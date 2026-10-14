@@ -174,8 +174,8 @@ def outer(s,w,h,command,materials=()):
     for k,v in {**environment(s,w),'CODEX_HOME':str(h),'LANG':'C.UTF-8'}.items():c.extend(['--setenv',k,v])
     return c+command
 
-def accepted_attempt(s,w,output):
-    """Bind fresh exec to its original dispatch, not a guessed continuation path."""
+def accepted_attempt(s,w,output,*,resume_thread=None,schema=None):
+    """Bind fresh/resumed exec to this exact already accepted native dispatch."""
     from scidiscovery.research_loop import contracts as c,execution,continuation,runtime
     from scidiscovery.research_loop.protocol import require_current
     import time
@@ -187,6 +187,8 @@ def accepted_attempt(s,w,output):
     if w!=c.workspace(root,step) or os.environ['THIN_HWA_ROLE']!=job['role']:
         raise ValueError('accepted_role_workspace_mismatch')
     continuation.validate_task(root,step)
+    if resume_thread is not None or c.settings(root).get('resume_policy') is not None:
+        continuation.validate_launcher(root)
     paths=execution.records(root,step);number=len(paths)-1;record=paths[number]
     if output!=record/'result.pending.json' or output.resolve()!=output:
         raise ValueError('output_path_outside_accepted_attempt')
@@ -196,9 +198,25 @@ def accepted_attempt(s,w,output):
     if intent.get('task_sha256')!=c.digest(job_path):raise ValueError('accepted_native_task_changed')
     if Path(os.environ['THIN_HWA_NATIVE_HOME']).absolute()!=execution.home(root,step,number):
         raise ValueError('accepted_native_home_mismatch')
-    if number and (intent.get('continuation_kind')!='fragment' or intent.get('context_mode')!='new_context'
+    expected_schema=execution.origin(root,step)/'science-result.schema.json'
+    if resume_thread is not None:
+        if not number or intent.get('session') is None:
+            raise ValueError('accepted_resume_session_required')
+        if intent.get('continuation_kind')=='fragment':
+            if (intent.get('context_mode')!='same_session'
+                    or (c.settings(root).get('worker_fragment_policy') or {}).get('context')!='same_session'):
+                raise ValueError('accepted_resume_context_mismatch')
+        elif intent.get('continuation_kind')=='repair':
+            continuation.validate_repair(root,step,intent)
+        else:raise ValueError('accepted_resume_kind_required')
+        original=continuation.session(root,step,paths[number-1])
+        if intent['session']!=original or resume_thread!=original['thread_id']:
+            raise ValueError('accepted_resume_session_mismatch')
+        if schema!=expected_schema or schema.resolve()!=schema:
+            raise ValueError('accepted_resume_schema_mismatch')
+    elif number and (intent.get('continuation_kind')!='fragment' or intent.get('context_mode')!='new_context'
             or (c.settings(root).get('worker_fragment_policy') or {}).get('context')!='new_context'):
-        raise ValueError('same_session_launcher_unsupported')
+        raise ValueError('accepted_resume_command_required')
     binding=execution.identity(root,step,number)
     runner=c.read(c.regular(record/'runner-process.json'))
     if runner['pid']!=os.getppid() or not runtime.process_matches(runner,binding):
@@ -209,19 +227,31 @@ def accepted_attempt(s,w,output):
     child=c.read(c.regular(record/'native-process.json'))
     if child['pid']!=os.getpid() or not runtime.process_matches(child,binding):
         raise ValueError('unknown_native_dispatch_cannot_be_replayed')
-    return execution.origin(root,step)/'science-result.schema.json'
+    return expected_schema
 
 def native_args(s,w,args):
-    # Fresh exec supports only the exact accepted initial/new-context dispatch.
+    # Resume is an exact accepted session, never selection by name or recency.
     if not args or args[0]!='exec':raise ValueError('fresh_native_exec_required')
-    result=['exec'];i=1;seen=set();output=None
+    result=['exec'];i=1;seen=set();output=None;schema=None;resuming=False;thread=None
     while i<len(args):
         x=args[i]
-        if x=='resume':raise ValueError('same_session_launcher_unsupported')
+        if x=='resume':
+            if resuming or any(key in seen for key in ('--model','--output-last-message','--output-schema')):
+                raise ValueError('accepted_resume_command_shape_required')
+            resuming=True;result.append(x);i+=1;continue
         if x in ['--json','--skip-git-repo-check']:
             result.append(x);i+=1;continue
         if x=='-' and i==len(args)-1:result.append(x);i+=1;continue
-        if x not in ['--output-last-message','--model','-c','--sandbox','-C'] or i+1>=len(args):
+        if resuming and not x.startswith('-'):
+            import uuid
+            if thread is not None:
+                raise ValueError('one_exact_resume_thread_required')
+            try:
+                if str(uuid.UUID(x))!=x:raise ValueError
+            except ValueError:raise ValueError('exact_resume_uuid_required') from None
+            thread=x;result.append(x);i+=1;continue
+        allowed=['--output-last-message','--model','-c','--sandbox','-C']+(['--output-schema'] if resuming else [])
+        if x not in allowed or i+1>=len(args) or resuming and x in ['-c','--sandbox','-C']:
             raise ValueError('undeclared_native_argument')
         v=args[i+1];i+=2
         if x in seen:raise ValueError('duplicate_native_argument')
@@ -235,13 +265,16 @@ def native_args(s,w,args):
         if x=='--output-last-message':
             p=Path(v).absolute()
             output=p
+        if x=='--output-schema':schema=Path(v).absolute()
         result.extend([x,v])
     if not {'--output-last-message','--model','-c','-C'}.issubset(seen) or result[-1]!='-':
         raise ValueError('complete_stdin_role_command_required')
     if '--skip-git-repo-check' not in result:result.insert(1,'--skip-git-repo-check')
-    schema=accepted_attempt(s,w,output)
+    if resuming and (thread is None or schema is None):
+        raise ValueError('complete_resume_session_schema_required')
+    schema=accepted_attempt(s,w,output,resume_thread=thread if resuming else None,schema=schema)
     regular(schema)  # The frozen origin schema is mandatory for every context.
-    result[-1:-1]=['--output-schema',str(schema)]
+    if not resuming:result[-1:-1]=['--output-schema',str(schema)]
     return result
 
 def main():
