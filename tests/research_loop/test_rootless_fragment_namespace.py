@@ -9,13 +9,14 @@ import sys
 
 import pytest
 
-from scidiscovery.research_loop import budget,contracts as c,controller,execution,native
+from scidiscovery.research_loop import budget,contracts as c,controller,cov_lineage,execution,lineage,native,search
 from test_cov_lineage import BACKEND
 
 
 FAKE_NATIVE=r'''import json,os,pathlib,subprocess,sys
 args=sys.argv[1:];sys.stdin.read()
 work=pathlib.Path(args[args.index('-C')+1]);home=pathlib.Path(os.environ['CODEX_HOME'])
+role=json.loads((work/'science-task.json').read_text())['role']
 output=pathlib.Path(args[args.index('--output-last-message')+1]);later=output.parent.parent.name=='continuations'
 assert 'resume' not in args
 assert pathlib.Path(args[args.index('--output-schema')+1]).name=='science-result.schema.json'
@@ -23,27 +24,36 @@ thread='22222222-2222-4222-8222-222222222222' if later else '11111111-1111-4111-
 print(json.dumps(dict(type='thread.started',thread_id=thread)),flush=True)
 session=home/'sessions/current.jsonl';session.parent.mkdir(parents=True,exist_ok=True)
 session.write_text(json.dumps(dict(type='session_meta',payload=dict(id=thread,cwd=str(work))))+'\n')
-if not later:
- p=work/'payload.json';p.write_text('{}')
- result=subprocess.run([str(work/'bin/exp'),'run','--script',str(p),'--new-plan'],capture_output=True,text=True)
- assert result.returncode==0,(result.stdout,result.stderr)
- reply=json.loads(result.stdout);assert reply['status']=='known_success'
- (work/'work/original-call.json').write_text(json.dumps(dict(call_id=reply['call_id'])))
-else:
- assert home.name=='context-001'
- assert (work/'work/science-resume.json').is_file()
- call=json.loads((work/'work/original-call.json').read_text())['call_id']
- result=subprocess.run([str(work/'bin/exp'),'query','--call-id',call],capture_output=True,text=True)
- assert result.returncode==0,(result.stdout,result.stderr)
- assert json.loads(result.stdout)['state']=='succeeded'
- (work/'work/second-context-query.json').write_text(result.stdout)
+if role=='W':
+ if not later:
+  p=work/'payload.json';p.write_text('{}')
+  result=subprocess.run([str(work/'bin/exp'),'run','--script',str(p),'--new-plan'],capture_output=True,text=True)
+  assert result.returncode==0,(result.stdout,result.stderr)
+  reply=json.loads(result.stdout);assert reply['status']=='known_success'
+  (work/'work/original-call.json').write_text(json.dumps(dict(call_id=reply['call_id'])))
+ else:
+  assert home.name=='context-001'
+  assert (work/'work/science-resume.json').is_file()
+  call=json.loads((work/'work/original-call.json').read_text())['call_id']
+  result=subprocess.run([str(work/'bin/exp'),'query','--call-id',call],capture_output=True,text=True)
+  assert result.returncode==0,(result.stdout,result.stderr)
+  assert json.loads(result.stdout)['state']=='succeeded'
+  (work/'work/second-context-query.json').write_text(result.stdout)
 print(json.dumps(dict(type='turn.completed',usage=dict(input_tokens=1,cached_input_tokens=0,output_tokens=0))),flush=True)
-output.write_text(json.dumps(dict(summary='Synthetic namespace contribution',scientific_result='No scientific efficacy was measured.',
- limitations=['Fake native transport, not a model.'],implementation_selection=None,stage_intent='review' if later else 'continue')))
+payload=dict(summary='Synthetic namespace contribution',scientific_result='No scientific efficacy was measured.',
+ limitations=['Fake native transport, not a model.'],implementation_selection=None)
+if role=='W':payload['stage_intent']='review' if later else 'continue'
+if role=='H':payload.update(next_action='experiment',route_reason='Discriminate the declared mechanism',
+ search_plan=dict(scope='Synthetic current search',commitments=[dict(label='P',minimal_test='One bounded experiment',existing_ref=None)],focus=None))
+if role=='A':payload.update(next_action='finish',route_reason='The synthetic combination was observed',candidate_recommendation=None,
+ progress_assessment=None,decision_request=None,portfolio_review=None,
+ search_review=dict(dispositions=[dict(mechanism_ref='h001.m1',status='screened',reason='One final W was assessed')],next_focus=None))
+output.write_text(json.dumps(payload))
 '''
 
 
-def test_actual_launcher_two_new_contexts_keep_original_registered_call(tmp_path):
+@pytest.mark.parametrize('search_enabled',[False,True],ids=['no-search','sealed-h-search-w-a'])
+def test_actual_launcher_two_new_contexts_keep_original_registered_call(tmp_path,search_enabled):
     if shutil.which('bwrap') is None:pytest.skip('Actual namespace unavailable')
     installed=subprocess.run([sys.executable,'-I','-c','from scidiscovery.research_loop.protocol import CURRENT;assert CURRENT==14'],capture_output=True,text=True)
     if installed.returncode:pytest.skip('Real installed CURRENT14 interpreter required for isolated launcher')
@@ -64,23 +74,43 @@ def test_actual_launcher_two_new_contexts_keep_original_registered_call(tmp_path
         runtime_paths=list(dict.fromkeys([sys.base_prefix,str(Path(python).parent.parent)])),
         model='no-model',reasoning_effort='high',profile='namespace-no-model'))
     controller.prepare(root,public/'instruction.md',public,[python,str(launcher),'--config',str(config),'--'],
-        max_tokens=100000,max_seconds=120,max_steps=8,model='no-model',reasoning_effort='high',search_policy=None,
+        max_tokens=100000,max_seconds=120,max_steps=8,model='no-model',reasoning_effort='high',search_policy=search.DEFAULT_POLICY if search_enabled else None,
+        history_observer=dict(adapter=str(Path(cov_lineage.__file__).resolve()),contract_version=2,
+            config=dict(runs='runs',calls='project/nodes',evaluation_key='covshift-public-val-v1')) if search_enabled else None,
         node_budget_policy={role:dict(max_observed_tokens=10000,max_seconds=60) for role in 'HWAE'},
         resume_policy=dict(max_attempts=2,protocol='codex_exec_resume',usage_scope='turn',output_repair=False),
         worker_fragment_policy=dict(context='new_context'))
-    c.build_job(root,1,'W',[])
     c.write(root/'host-started.json',budget.clock_stamp());budget.transition(root,'advance','Namespace zero-model transport probe')
-    native.execute_native(root,1)
-    chain=execution.records(root,1)
+    if search_enabled:
+        c.build_job(root,1,'H',[]);native.execute_native(root,1)
+        assert 'exploration_order_version' not in c.settings(root)
+        assert c.validate(c.workspace(root,1))['search_plan']['commitments']
+    step=2 if search_enabled else 1
+    job=c.build_job(root,step,'W',[1] if search_enabled else [])
+    if search_enabled:
+        assert job['search']['focus']['mechanism_ref']=='h001.m1'
+        assert lineage.build(root,step)['mechanisms']==search.project(root,step)['mechanisms']
+    native.execute_native(root,step)
+    chain=execution.records(root,step)
     assert len(chain)==2 and chain[1].name=='001'
     assert c.read(chain[0]/'science-output.json')['stage_intent']=='continue'
     assert c.read(chain[1]/'science-output.json')['stage_intent']=='review'
     assert c.read(chain[0]/'native-outcome.json')['thread_id']!=c.read(chain[1]/'native-outcome.json')['thread_id']
-    assert native.usage(root)['observed_tokens']==2
+    assert native.usage(root)['observed_tokens']==(3 if search_enabled else 2)
     first=c.read(chain[0]/'experiment-config.json');second=c.read(chain[1]/'experiment-config.json')
     assert first['scope']==second['scope'] and first['native_attempt']!=second['native_attempt']
-    work=c.workspace(root,1)
+    work=c.workspace(root,step)
     assert len(list((work/'work/lineage/calls').glob('*/accepted.json')))==1
     assert c.read(work/'work/second-context-query.json')['state']=='succeeded'
-    assert len(list((root/'jobs').glob('*.json')))==1
+    assert len(list((root/'jobs').glob('*.json')))==step
     assert c.validate(work)['stage_intent']=='review'
+    if search_enabled:
+        assert first['scope']['mechanism_ref']=='h001.m1'
+        c.build_job(root,3,'A',[1,2]);native.execute_native(root,3)
+        assert c.validate(c.workspace(root,3))['next_action']=='finish'
+        state=search.project(root,4);graph=lineage.build(root,4)
+        assert graph['mechanisms']==state['mechanisms']
+        assert state['mechanisms']['h001.m1']['status']=='screened'
+        assert len(state['order']['seen_w'])==1 and state['order']['remaining']==[]
+        assert len(graph['candidates'])==1
+        assert native.usage(root)['observed_tokens']==4

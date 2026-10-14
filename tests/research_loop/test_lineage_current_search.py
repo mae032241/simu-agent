@@ -1,0 +1,73 @@
+"""Current sealed H/search + registered cov execution + A, without models."""
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+import pytest
+
+from scidiscovery.research_loop import contracts as c,controller,cov_lineage,execution,history,lineage,search
+from execution_fixtures import execution_registry
+from test_cov_lineage import BACKEND
+from test_history_handoff import finish
+
+
+def test_sealed_current_h_configures_registered_cov_and_final_a(tmp_path,execution_registry):
+    public=tmp_path/'public';public.mkdir();objective=public/'objective.md';objective.write_text('Bounded current scientific composition')
+    root=tmp_path/'instance'
+    controller.prepare(root,objective,public,['never-call-a-model'],max_tokens=100000,max_seconds=120,max_steps=8,
+        model='no-model',reasoning_effort='high',search_policy=search.DEFAULT_POLICY,node_budget_mode='hard',
+        history_observer=dict(adapter=str(Path(cov_lineage.__file__).resolve()),contract_version=2,
+            config=dict(runs='runs',calls='project/nodes',evaluation_key='covshift-public-val-v1')))
+    plan=dict(scope='One original mechanism',commitments=[dict(label='P',minimal_test='One bounded experiment',existing_ref=None)],focus=None)
+    finish(root,1,'H',[],action='experiment',search_choice=plan)
+    assert 'exploration_order_version' not in c.settings(root)
+    job=c.build_job(root,2,'W',[1]);record=execution.record(root,2)
+    c.write(record/'native-intent.json',dict(task_sha256=c.digest(root/'jobs/002.json')))
+    assert job['search']['focus']['mechanism_ref']=='h001.m1'
+    graph=lineage.build(root,2)
+    assert graph['mechanisms']==search.project(root,2)['mechanisms']
+    backend=tmp_path/'backend.py';backend.write_text(BACKEND)
+    config=tmp_path/'experiment-config.json'
+    cov_lineage.configure(root,2,[sys.executable,str(backend),'--runs-root',str(root/'runs')],root/'runs',config)
+    frozen=c.read(config)
+    assert frozen['scope']['mechanism_ref']=='h001.m1'
+    script=c.workspace(root,2)/'work/payload.json';script.write_text('{}')
+    env=dict(os.environ,PYTHONPATH=str(Path(cov_lineage.__file__).parents[2])+os.pathsep+os.environ.get('PYTHONPATH',''))
+    command=[sys.executable,'-m','scidiscovery.research_loop.experiments','--config',str(config)]
+    reply=subprocess.run([*command,'run','--script',str(script),'--new-plan'],env=env,capture_output=True,text=True,timeout=20)
+    assert reply.returncode==0,(reply.stdout,reply.stderr)
+    result=json.loads(reply.stdout)
+    assert result['status']=='known_success'
+    finish(root,2,'W',[1])
+    finish(root,3,'A',[1,2],action='finish',search_choice=dict(dispositions=[dict(
+        mechanism_ref='h001.m1',status='screened',reason='The final W original was assessed')],next_focus=None))
+    state=search.project(root,4);graph=lineage.build(root,4)
+    assert graph['mechanisms']==state['mechanisms']
+    assert state['mechanisms']['h001.m1']['status']=='screened'
+    assert state['order']['remaining']==[] and len(state['order']['seen_w'])==1
+    context=graph['candidates'][result['candidate_id']]['context']
+    assert context['call_id']==result['call_id'] and context['scope']['mechanism_ref']=='h001.m1'
+    assert context['status']=='known_success'
+    before={p:p.read_bytes() for p in root.rglob('*') if p.is_file()}
+    assert lineage.build(root,4)==graph
+    assert before=={p:p.read_bytes() for p in root.rglob('*') if p.is_file()}
+
+
+@pytest.mark.parametrize('damage',['missing_protocol','different_owner'])
+def test_context_requires_current_stable_stage_scope(tmp_path,execution_registry,damage):
+    from test_lineage import scene
+    root,config,digest=scene(tmp_path)
+    script=c.workspace(root,2)/'work/train.py';script.write_text('success')
+    cov_lineage.run(config,digest,script,new=True)
+    request=dict(root=str(root),step=2,config=c.settings(root)['history_observer']['config'],known_candidates=[],known_contexts=[])
+    contexts=cov_lineage.observe(request)['contexts']
+    wrong=json.loads(json.dumps(contexts))
+    if damage=='missing_protocol':wrong[0]['scope'].pop('handoff_protocol')
+    else:wrong[0]['scope']['execution_key']=c.digest(root/'jobs/001.json')
+    def forbidden_archive(*args,**kwargs):raise AssertionError('Scope must be checked before asset archive')
+    before={p:p.read_bytes() for p in root.rglob('*') if p.is_file()}
+    with pytest.raises(history.ObserverIntegrityError,match='Execution context differs'):
+        lineage.contexts(root,c.read(root/'jobs/002.json'),wrong,forbidden_archive)
+    assert before=={p:p.read_bytes() for p in root.rglob('*') if p.is_file()}

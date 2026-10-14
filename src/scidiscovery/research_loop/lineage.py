@@ -8,7 +8,7 @@ import copy
 import json
 from pathlib import Path
 
-from . import contracts as c, execution, history, search
+from . import contracts as c, history, search
 
 MAX_CONTEXTS = 128
 
@@ -44,9 +44,8 @@ def contexts(root, job, items, archive, previous=()):
     """Validate plugin v2 against the actual frozen task/attempt before sealing."""
     if not isinstance(items,list) or len(items)>MAX_CONTEXTS:
         raise ValueError('Bounded execution contexts required')
-    task=c.digest(root/'jobs'/f'{job["step"]:03d}.json')
-    keys={execution.identity(root,job['step'],i) for i in range(len(execution.records(root,job['step'])))}
-    mechanism=((job.get('search') or {}).get('focus') or {}).get('mechanism_ref')
+    from .protocol import stage_scope
+    expected_scope=stage_scope(root,job)
     result=[];seen=set();available={item['candidate_id']:item for item in previous if item['status']=='known_success'}
     for item in items:
         if not isinstance(item,dict) or set(item)!={'call_id','scope','status','candidate_id','run_id','model','parent','change_intent','note','proofs'}:
@@ -54,9 +53,7 @@ def contexts(root, job, items, archive, previous=()):
         if not isinstance(item['call_id'],str) or len(item['call_id'])>128 or item['call_id'] in seen:
             raise history.ObserverIntegrityError('Execution context identity is ambiguous')
         seen.add(item['call_id']);scope=item['scope']
-        if (not isinstance(scope,dict) or set(scope)!={'step','role','job_sha256','execution_key','mechanism_ref'}
-                or scope['step']!=job['step'] or scope['role']!=job['role'] or scope['job_sha256']!=task
-                or scope['execution_key'] not in keys or scope['mechanism_ref']!=mechanism):
+        if not isinstance(scope,dict) or scope!=expected_scope:
             raise history.ObserverIntegrityError('Execution context differs from frozen scientific task')
         if item['status'] not in {'known_success','known_failed','unknown'}:
             raise ValueError('Explicit known failed/unknown execution status required')
@@ -96,14 +93,10 @@ def contexts(root, job, items, archive, previous=()):
 def build(root, before_step, *, sources=None, search_state=None):
     """Fold relations without rendering a default packet or updating authority."""
     sources=history.source_sequence(root,before_step) if sources is None else sources
-    if search_state is None and c.settings(root).get('exploration_order_version') == 1:
-        search_state = search.fold(root, sources)
-    state=search_state or dict(mechanisms={},current_h=None,scope=None,plan=None,authorized=set(),focus=None,accepted_slices=[],repairs={})
+    state=search.fold(root,sources) if search_state is None else search_state
     nodes=[];candidates={};edges=[];calls=set();coverage='complete';available={}
     for job,payload,seal,_ in sources:
         step=job['step']
-        if search_state is None and c.settings(root).get('search_policy') is not None:
-            search.apply_source(root,job,payload,seal,state)
         nodes.append(dict(step=step,role=job['role'],parents=[int(Path(r['path']).parts[2]) for r in job['direct_refs']],
                           source_sha256=seal['raw_sha256'],summary=payload['summary'],limitations=payload['limitations']))
         for selected in seal.get('selected_inputs',[]):

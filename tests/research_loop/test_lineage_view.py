@@ -1,10 +1,10 @@
-"""Single bounded default view, original page access, and legacy frozen layouts."""
+"""Single bounded default view, original pages, and retired write rejection."""
 import json
 from pathlib import Path
 
 import pytest
 
-from scidiscovery.research_loop import contracts as c, controller, execution, history, lineage
+from scidiscovery.research_loop import contracts as c, controller, execution, history, lineage, protocol as current_protocol
 from test_history_handoff import finish
 
 
@@ -89,16 +89,20 @@ def test_bound_lineage_page_damage_is_hard_before_acceptance(tmp_path,damage):
 
 
 @pytest.mark.parametrize('protocol',range(1,9))
-def test_existing_protocol_layout_bytes_survive_new_renderer(tmp_path,monkeypatch,protocol):
-    monkeypatch.setattr(c,'HANDOFF_PROTOCOL',protocol)
-    root=scene(tmp_path,version=None);job,work,record=finish(root,1,'H',[],action='wait')
-    files=[root/'settings.json',root/'jobs/001.json',work/'science-task.json',record/'science-result.schema.json',record/'science-output.json',record/'result-identity.json']
-    originals={p:p.read_bytes() for p in files}
-    monkeypatch.setattr(c,'HANDOFF_PROTOCOL',8)
-    rebuilt=c.build_job(root,1,'H',[])
-    assert 'lineage_projection_version' not in rebuilt and 'lineage' not in c.science_view(rebuilt,root)
-    assert c.validate(work)['next_action']=='wait'
-    assert all(path.read_bytes()==data for path,data in originals.items())
+def test_retired_protocol_cannot_rebuild_lineage_or_mutate_originals(tmp_path,monkeypatch,protocol):
+    root=scene(tmp_path);finish(root,1,'H',[],action='wait')
+    settings=c.read(root/'settings.json');settings['handoff_protocol']=protocol
+    c.write(root/'settings.json',settings)
+    c.write(root/'settings-identity.json',dict(sha256=c.digest(root/'settings.json')))
+    def snapshot():
+        return {path.relative_to(root).as_posix():(path.stat().st_mode,path.read_bytes() if path.is_file() else None)
+                for path in [root,*root.rglob('*')]}
+    before=snapshot()
+    def forbidden(*args,**kwargs):raise AssertionError('Retired protocol must not render current lineage')
+    monkeypatch.setattr(lineage,'bind',forbidden)
+    with pytest.raises(current_protocol.UnsupportedProtocol,match='current research-loop protocol 14'):
+        c.build_job(root,2,'W',[1])
+    assert snapshot()==before
 
 
 def test_thousand_node_multibyte_brief_bounds_every_lineage_domain():
