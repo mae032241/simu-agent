@@ -134,7 +134,8 @@ def closeout_decision(root, refs, recommendation='run-1'):
     payload = dict(summary='A selects the original candidate', scientific_result='A decision with remaining uncertainty',
                    limitations=['Scientific goal remains unasserted'], implementation_selection=None,
                    candidate_recommendation=recommendation, progress_assessment=None,
-                   search_review=None, next_action='finish', route_reason='An explicit bounded delivery decision')
+                   search_review=None, decision_request=None, portfolio_review=None,
+                   next_action='finish', route_reason='An explicit bounded delivery decision')
     c.write(record / 'native-intent.json', dict(task_sha256=c.digest(root / 'jobs/003.json')))
     c.write(record / 'science-output.json', payload)
     c.write(record / 'usage.json', dict(input_tokens=7, cached_input_tokens=2, output_tokens=3))

@@ -166,7 +166,10 @@ def _current_guard(request):
     import runpy
     host=Path(__file__).with_name('protocol.py')
     source=host if host.is_file() else Path('/inputs/scid-current-protocol')
-    data=_exact(source,256_000)
+    with _exact(source,256_000).open('rb') as stream:
+        data=stream.read(256_001)
+    if len(data)>256_000:
+        raise ValueError('Exact bounded delivery original required')
     if source!=host:
         proof=next((item for item in request.get('inputs',[]) if item.get('label')=='scid-current-protocol'),None)
         if proof is None or hashlib.sha256(data).hexdigest()!=proof['sha256'] or len(data)!=proof['size_bytes']:
