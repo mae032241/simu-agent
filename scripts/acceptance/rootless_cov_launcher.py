@@ -19,6 +19,8 @@ def file_digest(p):
 
 def load(p):
     s=json.loads(regular(p));public=Path(s['public_root'])
+    if s.get('cov_receipt_channel','public_runner_main') not in {'public_runner_main','backend_file'}:
+        raise ValueError('explicit_cov_receipt_channel_required')
     if not public.is_absolute() or public.resolve()!=public:
         raise ValueError('absolute_unsymlinked_public_root_required')
     m=json.loads(regular(s['public_manifest']))
@@ -292,7 +294,8 @@ def main():
     from scidiscovery.research_loop.cov_lineage import configure
     job=json.loads(regular(os.environ['THIN_HWA_JOB_MANIFEST']))
     configured=Path(s['scene_root'])/'host-runtime'/('lineage-'+w.name+'.json')
-    configure(Path(s['scene_root']),job['step'],[s['task_python'],'-I','/opt/exp/exp_cli.py'],Path(s['runs_dir']),configured)
+    configure(Path(s['scene_root']),job['step'],[s['task_python'],'-I','/opt/exp/exp_cli.py'],Path(s['runs_dir']),configured,
+        receipt_channel=s.get('cov_receipt_channel','public_runner_main'))
     (w/'work/lineage-config.json').touch(exist_ok=True)
     command=outer(s,w,h,[s['native'],*args],materials);os.execv(command[0],command)
 

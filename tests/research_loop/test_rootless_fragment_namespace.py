@@ -82,7 +82,7 @@ def prepare_namespace(tmp_path,*,search_enabled=False,fake_source=FAKE_NATIVE,co
         runs_dir=str(root/'runs'),submission_dir=str(root/'submission'),native=str(fake),native_sha256=c.digest(fake),
         code_mode_host=dict(path=str(codehost),sha256=c.digest(codehost)),task_python=python,scid_python=python,
         runtime_paths=list(dict.fromkeys([sys.base_prefix,str(Path(python).parent.parent)])),
-        model='no-model',reasoning_effort='high',profile='namespace-no-model'))
+        model='no-model',reasoning_effort='high',profile='namespace-no-model',cov_receipt_channel='backend_file'))
     controller.prepare(root,public/'instruction.md',public,[python,str(launcher),'--config',str(config),'--'],
         max_tokens=100000,max_seconds=120,max_steps=8,model='no-model',reasoning_effort='high',search_policy=search.DEFAULT_POLICY if search_enabled else None,
         history_observer=dict(adapter=str(Path(cov_lineage.__file__).resolve()),contract_version=2,

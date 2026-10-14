@@ -28,7 +28,7 @@ def managed(tmp_path,request,execution_registry):
     executor='local_execution:command'
     if kind=='cov':
         backend=tmp_path/'backend.py';backend.write_text(BACKEND)
-        value.update(contract_version=2,feedback_version=1,runs_root=str(tmp_path/'runs'),
+        value.update(receipt_channel='backend_file',contract_version=2,feedback_version=1,runs_root=str(tmp_path/'runs'),
             run_argv=[sys.executable,str(backend),'--runs-root',str(tmp_path/'runs')],parents=[],evaluation_key='fixture-public-v1')
         executor='cov_execution:experiment'
     config.write_text(json.dumps(experiments.freeze(value,executor,path=config)))

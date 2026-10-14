@@ -5,19 +5,23 @@ from pathlib import Path
 from scidiscovery.operations.execution import ExecutionInterfaceRegistration
 from scidiscovery.operations.runtime_plugins import RuntimePluginContribution, RuntimePluginFactory
 from .local_experiments import LocalExecution
-from . import cov_lineage as cov, experiments as e
+from . import cov_lineage as cov, experiments as e, cov_receipt
 
 
 class CovExecution(LocalExecution):
     @staticmethod
     def code_assets():
         from . import local_experiments
-        return [*LocalExecution.code_assets(),cov.__file__,local_experiments.__file__]
+        return [*LocalExecution.code_assets(),cov.__file__,local_experiments.__file__,cov_receipt.__file__]
 
     def acceptance_metadata(self,payload,*,parent=None,new=False,change=None):
+        channel=self.config.get('receipt_channel')
+        if channel not in {'public_runner_main','backend_file'}:
+            raise e.UnsupportedExecution('Cov execution needs an explicit independent receipt channel; preserved calls remain read-only')
         selected,binding=cov._parent(self.config,parent,new)
         return dict(parent=selected,parent_binding=binding,change_intent=change,runs_root=self.config['runs_root'],
             command=[*self.config['run_argv'],'run','--script',payload.local_path],cwd=None,
+            receipt_transport=cov_receipt.profile(self.config['run_argv'],channel),
             config_sha256=e.hashlib.sha256(e.encoded(self.config)).hexdigest())
 
     def completion(self,directory,accepted,returncode,cleanup,transport_complete):
@@ -35,7 +39,10 @@ class CovExecution(LocalExecution):
         # verify exact prepared bytes both before execution and in its receipt.
         if e.proof(accepted['source_script'])['sha256']!=accepted['prepared']['sha256']:
             raise e.IntegrityError('Original cov execution source changed')
-        return accepted['command']
+        # The task interpreter retains its scientific libraries and permissions.
+        # Only cov's stdout/receipt separation changes; generic execution is shared.
+        return [self.config['run_argv'][0],'-I',str(Path(cov_receipt.__file__).resolve()),
+            str(self.records.directory(accepted['call_id'])/'accepted.json')]
 
     def result(self,call_id):
         result=cov._completed(self.records.directory(call_id))

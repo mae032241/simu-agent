@@ -39,7 +39,7 @@ def worker(root, tmp_path, step, parents, *, cov=False):
     if cov:
         backend=tmp_path/'backend.py'
         if not backend.exists():backend.write_text(BACKEND)
-        cov_lineage.configure(root,step,[sys.executable,str(backend),'--runs-root',str(root/'runs')],root/'runs',output)
+        cov_lineage.configure(root,step,[sys.executable,str(backend),'--runs-root',str(root/'runs')],root/'runs',output,receipt_channel='backend_file')
     else:
         experiments.configure(root,step,'local_execution:command',dict(run_argv=[sys.executable]),output)
     return job,c.read(output)

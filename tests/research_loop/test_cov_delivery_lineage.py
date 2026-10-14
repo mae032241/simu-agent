@@ -44,7 +44,7 @@ def managed_scene(tmp_path, *, alias_correct=True):
         budget_slice=budget.accept_node(root,c.read(root/'jobs/002.json'))))
     backend = tmp_path / 'backend.py';backend.write_text(BACKEND)
     config_path = tmp_path / 'config.json'
-    cov_lineage.configure(root, 2, [sys.executable, str(backend), '--runs-root', str(root / 'runs')], root / 'runs', config_path)
+    cov_lineage.configure(root, 2, [sys.executable, str(backend), '--runs-root', str(root / 'runs')], root / 'runs', config_path,receipt_channel='backend_file')
     config, digest = cov_lineage._config(config_path)
     script = c.workspace(root, 2) / 'work/train.py'
     script.write_text(json.dumps(dict(mode='success', revision='P')))

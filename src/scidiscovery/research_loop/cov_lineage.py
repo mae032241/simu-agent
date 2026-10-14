@@ -78,6 +78,7 @@ def _config(path):
     keys = {'contract_version','record_dir','runs_root','run_argv','scope','parents','evaluation_key','feedback_version','execution_interface','max_seconds','admission'}
     if 'native_attempt' in value:keys.add('native_attempt')
     if 'breadth' in value:keys.add('breadth')
+    if 'receipt_channel' in value:keys.add('receipt_channel')
     if set(value) != keys or value['contract_version'] != 2 or value['feedback_version'] != 1:
         raise ValueError('Explicit wrapper contract2 configuration required')
     scope = value['scope']
@@ -100,7 +101,7 @@ def _completed(directory, *, verify_assets=True):
     if not path.exists():return None
     result = json.loads(_read(path))
     for proof in result['proofs']:
-        if not verify_assets and Path(proof['path']) not in {directory / name for name in ('accepted.json', 'source.py', 'stdout.raw', 'row.json', 'terminal.json', 'model.pkl')}:
+        if not verify_assets and Path(proof['path']) not in {directory / name for name in ('accepted.json', 'source.py', 'stdout.raw', 'stderr.raw', 'receipt.json', 'row.json', 'terminal.json', 'model.pkl')}:
             raise IntegrityError('Progress proof escaped this exact call')
         if verify_assets or Path(proof['path']).name not in {'source.py', 'model.pkl'}:
             _check(proof)
@@ -113,10 +114,10 @@ def _completed(directory, *, verify_assets=True):
     if result['status'] in {'known_success','known_failed'}:
         # Canonical completion comes only from the immutable same-call transport.
         row=json.loads(_read(directory/'row.json'))
-        stdout=json.loads(_read(directory/'stdout.raw'))
+        receipt=_receipt_row(directory,accepted)
         terminal=json.loads(_read(directory/'terminal.json'))
         ok=result['status']=='known_success'
-        if (row!=stdout or row.get('script')!=accepted['source_script']
+        if (row!=receipt or row.get('script')!=accepted['source_script']
                 or type(row.get('run_id')) is not int or row['run_id']<1
                 or result['run_id']!=row['run_id'] or result['candidate_id']!=f'run-{row["run_id"]}'
                 or row.get('ok') is not ok or terminal.get('returncode')!=(0 if ok else 1)
@@ -127,7 +128,7 @@ def _completed(directory, *, verify_assets=True):
         if ok and ((verify_assets and result['model']!=_proof(directory/'model.pkl'))
                    or result['model']['path']!=str(directory/'model.pkl') or result['model'] not in result['proofs']):
             raise IntegrityError('Completed model differs from this exact call original')
-        required={str(directory/name) for name in ('accepted.json','source.py','stdout.raw','row.json','terminal.json')}
+        required={str(directory/name) for name in ('accepted.json','source.py','stdout.raw','stderr.raw','receipt.json','row.json','terminal.json')}
         if not required.issubset({proof['path'] for proof in result['proofs']}):
             raise IntegrityError('Completion lacks original transport proofs')
     elif result['status']!='unknown' or any(result[key] is not None for key in ('candidate_id','run_id','model')):
@@ -167,12 +168,22 @@ def _binding(context, completion):
                 model_sha256=model['sha256'],model_size_bytes=model['size_bytes'])
 
 
+def _receipt_row(directory,accepted):
+    """Read one exact independent receipt; logs never qualify an execution."""
+    try:
+        value=json.loads(_read(directory/'receipt.json'))
+    except (OSError,ValueError):return None
+    from scidiscovery.research_loop import experiments
+    if (not isinstance(value,dict) or set(value)!={'version','call_id','accepted_sha256','source_sha256','row'}
+            or type(value['version']) is not int or value['version']!=1 or value['call_id']!=accepted['call_id']
+            or value['accepted_sha256']!=hashlib.sha256(experiments.encoded(accepted)).hexdigest()
+            or value['source_sha256']!=accepted['script']['sha256']):return None
+    return value['row']
+
+
 def _receipt(directory, accepted, rows, returncode, cleanup, transport_complete=True):
     if not transport_complete:return None
-    try:
-        raw = _read(directory/'stdout.raw')
-        row = json.loads(raw)
-    except (OSError,ValueError):return None
+    row=_receipt_row(directory,accepted)
     if not isinstance(row,dict) or type(row.get('run_id')) is not int or row.get('script') != accepted['source_script']:
         return None
     matches = [item for item in rows if item.get('run_id') == row['run_id']]
@@ -191,7 +202,7 @@ def _receipt(directory, accepted, rows, returncode, cleanup, transport_complete=
         model = _proof(archive)
         if model['sha256'] != hashlib.sha256(data).hexdigest():raise IntegrityError('Retained model changed')
     if not (directory/'row.json').exists():_write(directory/'row.json',row)
-    proofs = [_proof(directory/name) for name in ('accepted.json','source.py','stdout.raw','row.json','terminal.json')]
+    proofs = [_proof(directory/name) for name in ('accepted.json','source.py','stdout.raw','stderr.raw','receipt.json','row.json','terminal.json')]
     if model:proofs.append(model)
     return dict(call_id=accepted['call_id'],status='known_success' if row['ok'] else 'known_failed',
         candidate_id=f'run-{row["run_id"]}',run_id=row['run_id'],model=model,parent=accepted['parent'],
@@ -350,7 +361,7 @@ def observe(request):
 
 
 
-def configure(root, step, run_argv, runs_root, output):
+def configure(root, step, run_argv, runs_root, output, *, receipt_channel='public_runner_main'):
     """Trusted launcher's host-side preparation, before entering its namespace."""
     from .protocol import require_current
     require_current(root)
@@ -374,7 +385,7 @@ def configure(root, step, run_argv, runs_root, output):
                                 binding=_binding(context,completion)))
     from scidiscovery.research_loop.protocol import stage_scope
     value=dict(contract_version=2,feedback_version=1,record_dir=str(c.workspace(root,step)/'work/lineage'),runs_root=str(runs_root),run_argv=run_argv,
-        scope=stage_scope(root,job),
+        scope=stage_scope(root,job),receipt_channel=receipt_channel,
         parents=parents,evaluation_key='covshift-public-val-v1')
     from scidiscovery.research_loop import experiments
     value=experiments.configure(root,step,'cov_execution:experiment',value,output)

@@ -30,7 +30,7 @@ def test_sealed_current_h_configures_registered_cov_and_final_a(tmp_path,executi
     assert graph['mechanisms']==search.project(root,2)['mechanisms']
     backend=tmp_path/'backend.py';backend.write_text(BACKEND)
     config=tmp_path/'experiment-config.json'
-    cov_lineage.configure(root,2,[sys.executable,str(backend),'--runs-root',str(root/'runs')],root/'runs',config)
+    cov_lineage.configure(root,2,[sys.executable,str(backend),'--runs-root',str(root/'runs')],root/'runs',config,receipt_channel='backend_file')
     frozen=c.read(config)
     assert frozen['scope']['mechanism_ref'] is None
     assert frozen['breadth']['mechanisms'][0]['mechanism_ref']=='h001.m1'

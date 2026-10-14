@@ -318,7 +318,7 @@ def test_host_status_observes_unsealed_w_through_frozen_adapter_without_writer_l
     backend = tmp_path / 'backend.py'
     backend.write_text(BACKEND)
     config_path = tmp_path / 'configured.json'
-    cov_lineage.configure(root, 2, [sys.executable, str(backend), '--runs-root', str(root / 'data/runs')], root / 'data/runs', config_path)
+    cov_lineage.configure(root, 2, [sys.executable, str(backend), '--runs-root', str(root / 'data/runs')], root / 'data/runs', config_path,receipt_channel='backend_file')
     config, config_sha = cov_lineage._config(config_path)
     script = tmp_path / 'candidate.json'
     script.write_text(json.dumps(dict(mode='success')))

@@ -63,7 +63,7 @@ def contexts(root, job, items, archive, previous=()):
                 or parent['source'] not in {'sealed','same_node_completed_call','none'}
                 or (parent['status']=='declared')!=(parent['candidate_id'] is not None)):
             raise ValueError('Declared parent choice differs from contract2')
-        if not isinstance(item['proofs'],list) or not 1<=len(item['proofs'])<=8:
+        if not isinstance(item['proofs'],list) or not 1<=len(item['proofs'])<=9:
             raise ValueError('Context originals are missing')
         proofs=[]
         for proof in item['proofs']:

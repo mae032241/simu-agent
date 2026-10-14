@@ -6,10 +6,11 @@ import sys
 
 import pytest
 
-from scidiscovery.research_loop import contracts as c, controller, cov_lineage as cov, execution, history, lineage
+from scidiscovery.research_loop import contracts as c, controller, cov_lineage as cov, execution, history, lineage, experiments
 from test_history_handoff import finish
+from execution_fixtures import execution_registry
 
-BACKEND = '''import json,pathlib,sys
+BACKEND = '''import json,os,pathlib,sys
 runs=pathlib.Path(sys.argv[1]);runs.mkdir(exist_ok=True)
 script=pathlib.Path(sys.argv[sys.argv.index('--script')+1]).resolve()
 ledger=runs/'results.jsonl';rows=ledger.read_text().splitlines() if ledger.exists() else []
@@ -20,6 +21,10 @@ if ok:
  row.update(val_score=.5,val_acc=.5,model_path=str(model),wall_seconds=.01)
 else:row.update(error='Declared fixture failure',wall_seconds=.01)
 with ledger.open('a') as f:f.write(json.dumps(row)+'\\n')
+if os.environ.get('SCID_COV_RECEIPT_PATH'):
+ envelope=dict(version=1,call_id=os.environ['SCID_COV_CALL_ID'],accepted_sha256=os.environ['SCID_COV_ACCEPTED_SHA256'],
+  source_sha256=os.environ['SCID_COV_SOURCE_SHA256'],row=row)
+ with open(os.environ['SCID_COV_RECEIPT_PATH'],'x') as f:json.dump(envelope,f)
 print(json.dumps(row,indent=2));sys.exit(0 if ok else 1)
 '''
 
@@ -36,7 +41,7 @@ def scene(tmp_path):
     c.write(record/'native-intent.json',dict(task_sha256=c.digest(root/'jobs/002.json')))
     backend=tmp_path/'exp.py';backend.write_text(BACKEND)
     output=tmp_path/'config.json'
-    cov.configure(root,2,[sys.executable,str(backend),str(root/'runs')],root/'runs',output)
+    cov.configure(root,2,[sys.executable,str(backend),str(root/'runs')],root/'runs',output,receipt_channel='backend_file')
     config,digest=cov._config(output)
     return root,config,digest
 
@@ -102,7 +107,7 @@ def test_sealed_parent_exact_completion_is_distinct_from_implementation_reuse(tm
     c.build_job(root,4,'W',[3])
     c.write(execution.origin(root,4)/'native-intent.json',dict(task_sha256=c.digest(root/'jobs/004.json')))
     output=tmp_path/'next.json'
-    cov.configure(root,4,config['run_argv'],root/'runs',output)
+    cov.configure(root,4,config['run_argv'],root/'runs',output,receipt_channel='backend_file')
     next_config,next_sha=cov._config(output)
     script=c.workspace(root,4)/'work/train.py';script.write_text('success')
     child=cov.run(next_config,next_sha,script,parent=parent['candidate_id'])
@@ -125,14 +130,24 @@ def test_declared_parent_binding_cannot_borrow_another_or_future_original(tmp_pa
     if wrong=='model':
         accepted['parent_binding']['model_sha256']='0'*64
         (directory/'accepted.json').write_bytes(cov._bytes(accepted))
+        # Construct a transport-consistent fixture with an intentionally wrong
+        # scientific parent binding; independent receipt rejection is tested
+        # separately in test_cov_lineage's receipt.json tamper control.
+        receipt_path=directory/'receipt.json'
+        receipt=json.loads(receipt_path.read_text())
+        receipt['accepted_sha256']=hashlib.sha256(experiments.encoded(accepted)).hexdigest()
+        receipt_path.write_bytes(cov._bytes(receipt))
         completed=json.loads((directory/'completed.json').read_text())
-        completed['proofs'][0]=cov._proof(directory/'accepted.json')
+        completed['proofs']=[cov._proof(Path(proof['path'])) if Path(proof['path']).name in {'accepted.json','receipt.json'} else proof
+            for proof in completed['proofs']]
         (directory/'completed.json').write_bytes(cov._bytes(completed))
     request=dict(root=str(root),step=2,config=c.settings(root)['history_observer']['config'],known_candidates=[],known_contexts=[])
     observed=cov.observe(request)
     items=observed['contexts']
+    assert all(item['status']=='known_success' for item in items)
     if wrong=='future':items.reverse()
-    with pytest.raises(history.ObserverIntegrityError):
+    expected='Declared parent completion/artifact/source differs' if wrong=='model' else 'Declared parent has no earlier completed original'
+    with pytest.raises(history.ObserverIntegrityError,match=expected):
         lineage.contexts(root,c.read(root/'jobs/002.json'),items,lambda path:history._proof(root,path))
 
 

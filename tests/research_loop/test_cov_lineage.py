@@ -15,8 +15,8 @@ from execution_fixtures import execution_registry
 
 
 # The installed probe's tiny public-exp-shaped backend, extended only for exact
-# stdout and aggregate stdio boundaries. No training, imports or HWA machinery.
-BACKEND = r'''import argparse,json,pathlib,sys
+# independent per-call receipts and aggregate stdio boundaries. No training or models.
+BACKEND = r'''import argparse,json,os,pathlib,sys
 p=argparse.ArgumentParser();p.add_argument('--runs-root',type=pathlib.Path,required=True)
 s=p.add_subparsers(dest='command',required=True);r=s.add_parser('run');r.add_argument('--script',type=pathlib.Path,required=True)
 a=p.parse_args();root=a.runs_root;root.mkdir(parents=True,exist_ok=True);ledger=root/'results.jsonl'
@@ -32,8 +32,19 @@ with ledger.open('a') as f:f.write(json.dumps(row)+'\n')
 returned=dict(row)
 if mode=='wrong_script':returned['script']=str(root/'unrelated.py')
 if mode=='wrong_metric':returned['val_score']=.9
+receipt=os.environ.get('SCID_COV_RECEIPT_PATH')
+if receipt and mode!='missing_receipt':
+ envelope=dict(version=1,call_id=os.environ['SCID_COV_CALL_ID'],accepted_sha256=os.environ['SCID_COV_ACCEPTED_SHA256'],
+  source_sha256=os.environ['SCID_COV_SOURCE_SHA256'],row=returned)
+ with open(receipt,'x') as stream:json.dump(envelope,stream)
 encoded=(json.dumps(returned)+'\n').encode()
-if mode!='missing_receipt':sys.stdout.buffer.write(encoded);sys.stdout.buffer.flush()
+if mode=='noise':
+ sys.stdout.write('Ordinary training diagnostic before the final report\n')
+ sys.stderr.write('Ordinary backend warning, not a receipt\n')
+if mode=='json_shaped_logs':
+ sys.stdout.write(json.dumps(dict(run_id=987654,ok=True,val_score=.999,script='unrelated-log.py'))+'\n')
+ sys.stderr.write(json.dumps(dict(type='diagnostic',metric='not-evidence'))+'\n')
+sys.stdout.buffer.write(encoded);sys.stdout.buffer.flush()
 if mode=='stdout_overflow':sys.stdout.buffer.write(b'x'*(spec['bound']+1));sys.stdout.buffer.flush()
 if mode=='stderr_overflow':sys.stderr.buffer.write(b'e'*(spec['bound']+1));sys.stderr.buffer.flush()
 if mode=='exact_stdio':sys.stderr.buffer.write(b'e'*(spec['bound']-len(encoded)));sys.stderr.buffer.flush()
@@ -48,7 +59,7 @@ def wrapper(tmp_path,execution_registry):
     runs = tmp_path / 'runs'
     records = tmp_path / 'work/lineage'
     config = tmp_path / 'config.json'
-    value=dict(admission=dict(version=1,mode='hard'),contract_version=2, feedback_version=1, record_dir=str(records), runs_root=str(runs),
+    value=dict(receipt_channel='backend_file',admission=dict(version=1,mode='hard'),contract_version=2, feedback_version=1, record_dir=str(records), runs_root=str(runs),
         run_argv=[sys.executable, str(backend), '--runs-root', str(runs)],
         scope=dict(handoff_protocol=CURRENT,step=2, role='W', job_sha256='a'*64, execution_key='b'*64, mechanism_ref='h001.m1'),
         parents=[], evaluation_key='fixture-public-v1')
@@ -117,10 +128,14 @@ def test_exact_failed_receipt_preserves_known_failure_and_allows_new_repair(wrap
 
 
 @pytest.mark.parametrize('mode', ['missing_receipt', 'wrong_script', 'wrong_metric'])
-def test_uncertain_or_mismatched_exact_stdout_never_guesses_or_replays(wrapper, mode):
+def test_missing_or_mismatched_independent_receipt_never_guesses_or_replays(wrapper, mode):
     unknown = wrapper.run('uncertain', mode, '--new-plan', expected=2)
     assert unknown['status'] == 'unknown' and unknown['candidate_id'] is None
-    # A public row and model exist even though ownership could not be verified.
+    # Public rows, models and plausible stdout cannot establish call ownership.
+    directory=wrapper.directory(unknown)
+    assert json.loads((directory/'stdout.raw').read_text())['ok'] is True
+    if mode=='missing_receipt':assert not (directory/'receipt.json').exists()
+    else:assert (directory/'receipt.json').is_file()
     assert (wrapper.runs / 'model_run1.pkl').exists()
     original_calls, original_accepts = wrapper.calls(), wrapper.accepted()
     snapshot = {p: p.read_bytes() for p in wrapper.root.rglob('*') if p.is_file()}
@@ -142,7 +157,7 @@ def test_unmanaged_public_row_does_not_create_a_selectable_declared_parent(wrapp
     assert omitted['status'] == 'known_success' and omitted['parent']['status'] == 'unknown'
 
 
-@pytest.mark.parametrize('name', ['model.pkl', 'source.py', 'stdout.raw', 'row.json', 'accepted.json'])
+@pytest.mark.parametrize('name', ['model.pkl', 'source.py', 'stdout.raw', 'row.json', 'receipt.json', 'accepted.json'])
 def test_retained_call_asset_tamper_is_hard_error_and_blocks_new_execution(wrapper, name):
     result = wrapper.run('P', 'success', '--new-plan')
     path = wrapper.directory(result) / name
@@ -177,7 +192,12 @@ def test_incomplete_transport_rejects_even_exact_successful_receipt(wrapper):
     accepted = json.loads((directory / 'accepted.json').read_text())
     rows = [json.loads(line) for line in (wrapper.runs / 'results.jsonl').read_text().splitlines()]
     original = {path: path.read_bytes() for path in directory.iterdir() if path.is_file()}
-    assert json.loads((directory / 'stdout.raw').read_text()) == rows[0]
+    receipt=json.loads((directory/'receipt.json').read_text())
+    assert receipt['row']==rows[0]
+    assert set(receipt)=={'version','call_id','accepted_sha256','source_sha256','row'}
+    assert receipt['version']==1 and receipt['call_id']==accepted['call_id']
+    assert receipt['accepted_sha256']==hashlib.sha256(experiments.encoded(accepted)).hexdigest()
+    assert receipt['source_sha256']==accepted['script']['sha256']
     assert cov_lineage._receipt(directory, accepted, rows, 0, True, transport_complete=True)['status'] == 'known_success'
     assert cov_lineage._receipt(directory, accepted, rows, 0, True, transport_complete=False) is None
     assert original == {path: path.read_bytes() for path in directory.iterdir() if path.is_file()}
@@ -192,3 +212,22 @@ def test_stdio_overflow_cannot_be_accepted_as_known_completion(wrapper, mode):
     before = wrapper.calls()
     assert wrapper.run('overflow-not-replayed', expected=2)['status'] == 'unknown'
     assert wrapper.calls() == before
+
+
+@pytest.mark.parametrize('mode',['noise','json_shaped_logs'])
+def test_ordinary_and_json_shaped_logs_do_not_replace_independent_receipt(wrapper,mode):
+    result=wrapper.run('independent-receipt',mode,'--new-plan')
+    assert result['status']=='known_success' and result['run_id']==1
+    assert result['val_score']==.5
+    directory=wrapper.directory(result)
+    receipt=json.loads((directory/'receipt.json').read_text())
+    assert receipt['row']==json.loads((directory/'row.json').read_text())
+    assert receipt['call_id']==result['call_id'] and receipt['row']['run_id']==1
+    assert (directory/'stderr.raw').read_bytes()
+    assert len((directory/'stdout.raw').read_text().splitlines())==2
+    if mode=='json_shaped_logs':assert '987654' in (directory/'stdout.raw').read_text()
+    else:assert 'Ordinary training diagnostic' in (directory/'stdout.raw').read_text()
+    before=wrapper.calls()
+    preview=wrapper.cli('lineage-status')
+    assert preview['counts']['known_success']==1 and preview['calls'][0]['metric']==.5
+    assert wrapper.calls()==before
