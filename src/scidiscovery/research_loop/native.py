@@ -179,6 +179,8 @@ def run_native(root: Path, step: int, attempt=0):
     completion = ("Complete your role's scientific work within the budget, preserving necessary validation. Report findings, uncertainties "
                   if job.get('handoff_authority_version') == 1 else
                   'Conclude once you have a decision-relevant scientific contribution. Report findings, uncertainties ')
+    if job.get('scientific_work_unit'):
+        completion=job['scientific_work_unit']+' Report findings, uncertainties '
     verification = '' if job.get('handoff_authority_version') == 1 else 'Leave further scientific verification requests to A. '
     prompt = (role_instruction + '\nRead science-task.json, then the global files and direct '
               'parent conclusions it names. Read particular parent artifacts only as scientifically needed. '

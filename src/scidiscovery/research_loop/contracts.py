@@ -337,6 +337,8 @@ def science_view(job, root=None):
     if context is not None:
         question = ("Choose observation-driven experiments within the bound H scientific questions and user constraints; use A's global direction and evidence gap."
                     if job['role'] == 'W' else "Revise the qualitative mechanism matrix and discriminating design in light of A's global assessment; preserve original constraints.")
+    if job.get('scientific_work_unit'):
+        question += '\nWork unit: ' + job['scientific_work_unit']
     unified = job.get('lineage_projection_version') == 1
     if unified and job.get('selection_protocol', 0) != job['history']['view']['candidates'].get('selection_protocol', 0):
         raise ValueError('Frozen selection projection differs from its task marker')
@@ -615,6 +617,12 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
     if purpose is None and protocol >= 5 and policy.get('search_policy') is not None:
         from . import search
         job['search'] = search.bind(root, step, role, protocol, state=state, unified=projection_version == 1)
+    if retained is not None:
+        if 'scientific_work_unit' in retained:job['scientific_work_unit']=retained['scientific_work_unit']
+    elif role=='W':
+        from . import guidance
+        action=((job.get('search') or {}).get('focus') or {}).get('action')
+        if action in guidance.WORK_UNITS:job['scientific_work_unit']=guidance.WORK_UNITS[action]
     if correction_request is not None:
         job['correction_request'] = correction_request
         from . import correction
