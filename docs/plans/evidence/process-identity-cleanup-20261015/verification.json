@@ -1,0 +1,81 @@
+{
+  "kind": "process_identity_cleanup_verification",
+  "date": "2026-10-15",
+  "base_commit": "658aacf",
+  "scope": [
+    "scripts/compiled_worker_process_guard.py",
+    "scripts/run_tests.py",
+    "tests/operations/test_compiled_worker_process_guard.py",
+    "tests/operations/test_supervision_evidence.py"
+  ],
+  "changes": [
+    "Retain (pid, boot_id, start_ticks) and verify each identity immediately before every signal.",
+    "Observe surviving owned identities after reparenting; never signal an unverified numeric process group.",
+    "Every normal, memory-stop, cancellation and exception reap uses WNOWAIT observation before releasing the original leader PID.",
+    "Capture the root identity before allowing spawn cancellation; clean descendants discovered during compiled finally cleanup."
+  ],
+  "verification": {
+    "distinct_test_cases_passed": 53,
+    "source": {
+      "passed": 18,
+      "pytest_seconds": 0.49,
+      "independent_supervision_seconds": 0.823,
+      "independent_peak_tree_rss_bytes": 86401024,
+      "evidence_directory": "/tmp/scid-process-identity-check-20261015-d/source",
+      "deselected": 35
+    },
+    "final_process": {
+      "passed": 35,
+      "deselected": 18,
+      "pytest_seconds": 11.92,
+      "independent_supervision_seconds": 12.388,
+      "independent_peak_tree_rss_bytes": 140853248,
+      "evidence_directory": "/tmp/scid-process-identity-check-20261015-c"
+    },
+    "targets": [
+      "tests/operations/test_compiled_worker_process_guard.py",
+      "tests/operations/test_guard_memory_pressure.py",
+      "tests/operations/test_supervision_evidence.py",
+      "tests/operations/test_independent_codex_worker_launcher.py",
+      "tests/operations/test_guard_live_output.py"
+    ],
+    "method": "Run scripts/run_tests.py in explicit source/process lanes under a separate supervisor using unchanged OwnedProcessTree, shared serial_lock and bounded tree RSS, system memory, logs and lifetime.",
+    "all_supervision_runs": {
+      "resource_stop": false,
+      "cleanup_complete": true
+    },
+    "diff_check": "passed"
+  },
+  "failures_and_repairs": [
+    {
+      "finding": "Initial process selection had four pilot fixture failures before host launch.",
+      "cause": "Existing synthetic fixture omitted frozen role-profile admission and did not stub verify_frozen_configuration.",
+      "repair": "Stub configuration admission only in the synthetic host-failure fixture so its intended host cleanup boundary executes.",
+      "verification": "All four failed cases passed in the focused repair run and final 35-case process run."
+    },
+    {
+      "finding": "First independent review reproduced a child leak when a root TERM handler forked after cleanup sampling.",
+      "cause": "Cleanup Popen.wait reaped the root before the next identity observation.",
+      "repair": "Unify every wait/reap path through WNOWAIT observation and clean newly discovered descendants after compiled finally.",
+      "verification": "Three new real-process regressions passed; the independent reviewer inverted and reran the original counterexample successfully."
+    }
+  ],
+  "independent_final_review": {
+    "verdict": "PASS",
+    "counterexample_replay": {
+      "returncode": 0,
+      "spawned_child_state": null,
+      "spawned_identity_still_present": false,
+      "cleanup_complete": true,
+      "independent_supervision_seconds": 0.5865738860011334,
+      "independent_peak_tree_rss_bytes": 29327360,
+      "evidence_directory": "/tmp/scid-pid-closed-1792068571"
+    }
+  },
+  "limits": [
+    "Linux /proc sampling and identity checks remain a trusted-local emergency brake rather than an OS isolation boundary.",
+    "Never-observed descendants which completely detach retain unknown resource coverage.",
+    "The full suite, live model lane and real scientific workloads were not run for this focused scripting change.",
+    "Raw supervision logs are local /tmp evidence; this record retains their decision-relevant results."
+  ]
+}

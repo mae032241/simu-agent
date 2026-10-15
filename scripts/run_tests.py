@@ -22,9 +22,9 @@ import sys
 import time
 
 try:
-    from scripts.compiled_worker_process_guard import _descendant_rss_kib, _signal_processes
+    from scripts.compiled_worker_process_guard import _descendant_rss_kib, _poll_process, _process_identity, _signal_processes, _wait_process
 except ModuleNotFoundError:  # Direct execution puts scripts/ on sys.path.
-    from compiled_worker_process_guard import _descendant_rss_kib, _signal_processes
+    from compiled_worker_process_guard import _descendant_rss_kib, _poll_process, _process_identity, _signal_processes, _wait_process
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = ROOT / "scripts/test_resources.json"
@@ -130,7 +130,7 @@ def run_one(command, environment, limits, output, lock_fd):
     """Persist bounded samples and final evidence, then propagate original errors.
 
     SIGKILL cannot run cleanup: observers must treat its stale record as unknown.
-    RSS is sampled; cleanup covers the child group and observed descendants.
+    RSS is sampled; cleanup covers identity-verified observed descendants.
     """
     started = time.monotonic()
     interval = min(1., limits["sample_interval_seconds"])
@@ -160,11 +160,14 @@ def run_one(command, environment, limits, output, lock_fd):
             else:
                 def restrict():
                     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-                # Defer cancellation until Popen returns the owned PID.
+                # Defer cancellation until the owned identity has been captured.
                 signals["interrupt"] = False
                 try:
                     process = subprocess.Popen(command, cwd=ROOT, env=environment, stdout=subprocess.PIPE,
                         stderr=subprocess.STDOUT, start_new_session=True, preexec_fn=restrict, pass_fds=(lock_fd,))
+                    identity = _process_identity(process.pid)
+                    if identity is not None:
+                        observed.add(identity)
                 finally:
                     signals["interrupt"] = True
                 if signals["received"]:
@@ -192,7 +195,7 @@ def run_one(command, environment, limits, output, lock_fd):
                                 result["stop_reason"] = "log_limit"
                                 break
                 while True:
-                    descendants, rss = _descendant_rss_kib(process.pid)
+                    descendants, rss = _descendant_rss_kib(observed)
                     observed.update(descendants)
                     result["observed_tree_rss_high_water_bytes"] = max(result["observed_tree_rss_high_water_bytes"], rss * 1024)
                     current = memory()
@@ -217,7 +220,7 @@ def run_one(command, environment, limits, output, lock_fd):
                     drain(interval)
                     if result["stop_reason"] != "exited":
                         break
-                    if process.poll() is not None:
+                    if _poll_process(process, observed) is not None:
                         # Drain bytes written between select and poll. Descendants
                         # holding the pipe open do not delay owned-tree cleanup.
                         drain(0)
@@ -243,23 +246,25 @@ def run_one(command, environment, limits, output, lock_fd):
                     deadline = time.monotonic() + limits["termination_grace_seconds"]
                     while True:
                         try:
-                            return process.wait(timeout=min(heartbeat_interval, max(0., deadline - time.monotonic())))
+                            return _wait_process(process, observed,
+                                timeout=min(heartbeat_interval, max(0., deadline - time.monotonic())))
                         except subprocess.TimeoutExpired:
                             cleanup(save)
                             if time.monotonic() >= deadline:
                                 raise
                 def observe():
-                    descendants, _ = _descendant_rss_kib(process.pid)
+                    descendants, _ = _descendant_rss_kib(observed)
                     observed.update(descendants)
                 cleanup(observe)
-                cleanup(lambda: _signal_processes(process.pid, observed, signal.SIGTERM))
+                cleanup(lambda: _signal_processes(observed, signal.SIGTERM))
                 try:
                     wait_child()
                 except subprocess.TimeoutExpired:
                     pass
                 except BaseException as exc:
                     cleanup_errors.append(exc)
-                cleanup(lambda: _signal_processes(process.pid, observed, signal.SIGKILL))
+                cleanup(observe)
+                cleanup(lambda: _signal_processes(observed, signal.SIGKILL))
                 cleanup(wait_child)
                 result["returncode"] = process.returncode
                 cleanup(process.stdout.close)

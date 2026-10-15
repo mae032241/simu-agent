@@ -7,81 +7,133 @@ import signal
 import subprocess
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 
 MEMORY_LIMIT_EXIT_CODE = 86
 
 
-def _process_table() -> dict[int, tuple[int, int]]:
-    """Return pid -> (parent pid, resident KiB) for the current /proc snapshot."""
+class ProcessIdentity(NamedTuple):
+    pid: int
+    boot_id: str
+    start_ticks: int
 
-    table: dict[int, tuple[int, int]] = {}
+
+class _ProcessRecord(NamedTuple):
+    identity: ProcessIdentity
+    parent_pid: int
+    resident_kib: int
+    process_group: int
+    session: int
+
+
+def _process_record(pid: int, boot_id: str) -> _ProcessRecord | None:
+    try:
+        # comm may contain spaces and parentheses; stat fields follow its final ')'.
+        fields = Path(f"/proc/{pid}/stat").read_text("utf-8").rsplit(")", 1)[1].split()
+        return _ProcessRecord(
+            ProcessIdentity(pid, boot_id, int(fields[19])),
+            int(fields[1]), int(fields[21]) * os.sysconf("SC_PAGE_SIZE") // 1024,
+            int(fields[2]), int(fields[3]),
+        )
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def _process_identity(pid: int) -> ProcessIdentity | None:
+    boot_id = Path("/proc/sys/kernel/random/boot_id").read_text("utf-8").strip()
+    record = _process_record(pid, boot_id)
+    return record.identity if record else None
+
+
+def _process_table() -> dict[int, _ProcessRecord]:
+    """Return identities, parents and resident KiB from the current /proc snapshot."""
+
+    boot_id = Path("/proc/sys/kernel/random/boot_id").read_text("utf-8").strip()
+    table = {}
     for entry in Path("/proc").iterdir():
-        if not entry.name.isdecimal():
-            continue
-        parent_pid: int | None = None
-        resident_kib = 0
-        try:
-            for line in (entry / "status").read_text("utf-8").splitlines():
-                if line.startswith("PPid:"):
-                    parent_pid = int(line.split()[1])
-                elif line.startswith("VmRSS:"):
-                    resident_kib = int(line.split()[1])
-                if parent_pid is not None and resident_kib:
-                    break
-        except (FileNotFoundError, PermissionError, ProcessLookupError, ValueError):
-            continue
-        if parent_pid is not None:
-            table[int(entry.name)] = (parent_pid, resident_kib)
+        if entry.name.isdecimal():
+            record = _process_record(int(entry.name), boot_id)
+            if record is not None:
+                table[record.identity.pid] = record
     return table
 
 
-def _descendant_rss_kib(root_pid: int) -> tuple[set[int], int]:
+def _descendant_rss_kib(owned: set[ProcessIdentity]) -> tuple[set[ProcessIdentity], int]:
     table = _process_table()
     children: dict[int, list[int]] = {}
-    for pid, (parent_pid, _) in table.items():
-        children.setdefault(parent_pid, []).append(pid)
+    for pid, record in table.items():
+        parent = table.get(record.parent_pid)
+        if parent is not None and record.identity.start_ticks >= parent.identity.start_ticks:
+            children.setdefault(record.parent_pid, []).append(pid)
     descendants: set[int] = set()
-    pending = [root_pid]
+    # Observed descendants remain roots after reparenting. Reused PIDs never do.
+    pending = [identity.pid for identity in tuple(owned)
+               if identity.pid in table and table[identity.pid].identity == identity]
+    # An unreaped original session leader also anchors ordinary children that
+    # reparented before this sample. A recycled leader cannot anchor a group.
+    for pid in tuple(pending):
+        leader = table[pid]
+        if leader.process_group == pid and leader.session == pid:
+            pending.extend(member for member, record in table.items()
+                           if record.process_group == pid and record.session == pid
+                           and record.identity.start_ticks >= leader.identity.start_ticks)
     while pending:
         pid = pending.pop()
         if pid in descendants:
             continue
         descendants.add(pid)
         pending.extend(children.get(pid, ()))
-    return descendants, sum(table.get(pid, (0, 0))[1] for pid in descendants)
+    return ({table[pid].identity for pid in descendants},
+            sum(table[pid].resident_kib for pid in descendants))
 
 
-def _signal_processes(process_group: int, pids: set[int], signum: int) -> None:
-    try:
-        os.killpg(process_group, signum)
-    except ProcessLookupError:
-        pass
-    for pid in sorted(pids, reverse=True):
+def _poll_process(process: subprocess.Popen, observed: set[ProcessIdentity]) -> int | None:
+    """Observe the original leader's group before reaping releases its PID."""
+    if process.returncode is None:
+        exited = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+        if exited is None:
+            return None
+        descendants, _ = _descendant_rss_kib(observed)
+        observed.update(descendants)
+    return process.poll()
+
+
+def _wait_process(
+    process: subprocess.Popen, observed: set[ProcessIdentity], timeout: float | None = None,
+) -> int:
+    """Every reap path observes the original leader before releasing its PID."""
+    deadline = None if timeout is None else time.monotonic() + timeout
+    while True:
+        return_code = _poll_process(process, observed)
+        if return_code is not None:
+            return return_code
+        if deadline is not None and time.monotonic() >= deadline:
+            raise subprocess.TimeoutExpired(process.args, timeout)
+        time.sleep(.01 if deadline is None else min(.01, max(0., deadline - time.monotonic())))
+
+
+def _signal_processes(identities: set[ProcessIdentity], signum: int) -> None:
+    # Never signal a numeric group after its leader exits: that PGID can be reused.
+    for identity in sorted(identities, reverse=True):
+        if _process_identity(identity.pid) != identity:
+            continue
         try:
-            os.kill(pid, signum)
+            os.kill(identity.pid, signum)
         except ProcessLookupError:
             pass
 
 
-def _cleanup_after_root_exit(process_group: int, observed_pids: set[int]) -> None:
-    """Do not let background descendants outlive one completed Worker."""
+def _cleanup_after_root_exit(observed: set[ProcessIdentity]) -> None:
+    """Do not let observed background descendants outlive one completed Worker."""
 
-    live_observed = {pid for pid in observed_pids if Path(f"/proc/{pid}").exists()}
-    try:
-        os.killpg(process_group, 0)
-        group_exists = True
-    except ProcessLookupError:
-        group_exists = False
-    if not live_observed and not group_exists:
-        return
-    _signal_processes(process_group, live_observed, signal.SIGTERM)
+    descendants, _ = _descendant_rss_kib(observed)
+    observed.update(descendants)
+    _signal_processes(observed, signal.SIGTERM)
     time.sleep(0.05)
-    live_observed = {
-        pid for pid in live_observed if Path(f"/proc/{pid}").exists()
-    }
-    _signal_processes(process_group, live_observed, signal.SIGKILL)
+    descendants, _ = _descendant_rss_kib(observed)
+    observed.update(descendants)
+    _signal_processes(observed, signal.SIGKILL)
 
 
 def run_process_group(
@@ -108,53 +160,59 @@ def run_process_group(
     memory_limit_exceeded = False
     termination_started: float | None = None
     previous: dict[int, Any] = {}
-    observed_pids: set[int] = set()
+    identity = _process_identity(process.pid)
+    observed: set[ProcessIdentity] = {identity} if identity else set()
 
     def forward(signum: int, _frame: Any) -> None:
         nonlocal termination_started
-        if process.poll() is not None:
+        if process.returncode is not None:
             return
-        descendants, _ = _descendant_rss_kib(process.pid)
+        descendants, _ = _descendant_rss_kib(observed)
+        observed.update(descendants)
         if termination_started is None:
             termination_started = time.monotonic()
-            _signal_processes(process.pid, descendants, signum)
+            _signal_processes(observed, signum)
         else:
-            _signal_processes(process.pid, descendants, signal.SIGKILL)
+            _signal_processes(observed, signal.SIGKILL)
 
     for signum in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
         previous[signum] = signal.signal(signum, forward)
     try:
         while True:
-            descendants, resident_kib = _descendant_rss_kib(process.pid)
-            observed_pids.update(descendants)
+            descendants, resident_kib = _descendant_rss_kib(observed)
+            observed.update(descendants)
             peak_rss_kib = max(peak_rss_kib, resident_kib)
             if resident_kib > memory_limit_kib:
                 memory_limit_exceeded = True
-                _signal_processes(process.pid, descendants, signal.SIGKILL)
-                process.wait()
-                _cleanup_after_root_exit(process.pid, observed_pids)
+                _signal_processes(observed, signal.SIGKILL)
+                _wait_process(process, observed)
+                _cleanup_after_root_exit(observed)
                 return MEMORY_LIMIT_EXIT_CODE, peak_rss_kib, True
-            try:
-                return_code = process.wait(timeout=sample_interval_seconds)
-                _cleanup_after_root_exit(process.pid, observed_pids)
+            return_code = _poll_process(process, observed)
+            if return_code is not None:
+                _cleanup_after_root_exit(observed)
                 return return_code, peak_rss_kib, memory_limit_exceeded
-            except subprocess.TimeoutExpired:
-                if (
-                    termination_started is not None
-                    and time.monotonic() - termination_started >= 5
-                ):
-                    descendants, _ = _descendant_rss_kib(process.pid)
-                    _signal_processes(process.pid, descendants, signal.SIGKILL)
+            if (
+                termination_started is not None
+                and time.monotonic() - termination_started >= 5
+            ):
+                descendants, _ = _descendant_rss_kib(observed)
+                observed.update(descendants)
+                _signal_processes(observed, signal.SIGKILL)
+            time.sleep(sample_interval_seconds)
     finally:
-        if process.poll() is None:
-            descendants, _ = _descendant_rss_kib(process.pid)
-            _signal_processes(process.pid, descendants, signal.SIGTERM)
+        if process.returncode is None:
+            descendants, _ = _descendant_rss_kib(observed)
+            observed.update(descendants)
+            _signal_processes(observed, signal.SIGTERM)
             try:
-                process.wait(timeout=5)
+                _wait_process(process, observed, timeout=5)
             except subprocess.TimeoutExpired:
-                descendants, _ = _descendant_rss_kib(process.pid)
-                _signal_processes(process.pid, descendants, signal.SIGKILL)
-                process.wait()
+                descendants, _ = _descendant_rss_kib(observed)
+                observed.update(descendants)
+                _signal_processes(observed, signal.SIGKILL)
+                _wait_process(process, observed)
+            _cleanup_after_root_exit(observed)
         for signum, handler in previous.items():
             signal.signal(signum, handler)
 

@@ -10,6 +10,7 @@ import time
 import pytest
 
 from scripts import run_tests as guard
+from scripts.compiled_worker_process_guard import ProcessIdentity
 
 
 def await_file(path, process, timeout=5):
@@ -33,12 +34,12 @@ def cleanup_owned(process, directory):
     if process.poll() is None:
         process.kill()
     process.wait(timeout=3)
-    # SIGKILL cannot clean its child. The test owns these exact recorded PIDs.
-    for name in ('owned.json', 'host.json'):
+    # SIGKILL cannot clean its child. Retain identities recorded by the fixture.
+    for name in ('owned-identities.json', 'host-identities.json'):
         path = directory / name
         if path.exists():
-            pids = json.loads(path.read_text())
-            guard._signal_processes(pids[0], set(pids), signal.SIGKILL)
+            identities = {ProcessIdentity(*value) for value in json.loads(path.read_text())}
+            guard._signal_processes(identities, signal.SIGKILL)
 
 
 SUPERVISOR = r'''
@@ -55,6 +56,8 @@ import json,os,subprocess,sys,time
 from pathlib import Path
 case,root=sys.argv[1:];root=Path(root)
 child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(100)'],start_new_session=True)
+from scripts.compiled_worker_process_guard import _process_identity
+(root/'owned-identities.json').write_text(json.dumps([_process_identity(os.getpid()),_process_identity(child.pid)]))
 (root/'owned.json').write_text(json.dumps([os.getpid(),child.pid]))
 time.sleep(.3 if case in ('normal','exit_error') else 100)
 print('x'*200000+'tail_retained',flush=True)
@@ -74,8 +77,8 @@ if case in ('sampling_error','cleanup_error'):
 if case in ('cleanup_error','timeout_cleanup_error'):
     if case=='timeout_cleanup_error':limits['timeout_seconds']=.4
     original_signal=guard._signal_processes
-    def send(group,pids,signum):
-        original_signal(group,pids,signum)
+    def send(identities,signum):
+        original_signal(identities,signum)
         if signum==signal.SIGTERM:raise RuntimeError('secondary_cleanup_fault')
     guard._signal_processes=send
 try:
@@ -171,6 +174,8 @@ spec={'root':str(root),'project':str(root),'python':sys.executable,'arm':'native
       'native':'not-executed','task_python':sys.executable,'settings_sha256':'digest','native_sha256':'digest',
       'public_sha256':{},'code_mode_host':{}}
 installed.__file__=str(Path(sys.executable).parent.parent/'synthetic-installed.py')
+# This fixture starts at the host failure boundary, after configuration admission.
+pilot.verify_frozen_configuration=lambda spec:None
 pilot.sha=lambda path:'digest';pilot.native_runtime=lambda path:{}
 pilot.canary_code=lambda spec:'synthetic-no-execution'
 for name in ('control/private-canary.txt','codex-home/auth-canary.json','codex-home/sessions/history-canary'):
@@ -178,6 +183,8 @@ for name in ('control/private-canary.txt','codex-home/auth-canary.json','codex-h
 def launch(spec,meter):
     child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(100)'],start_new_session=True,
                            stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+    from scripts.compiled_worker_process_guard import _process_identity
+    (root/'host-identities.json').write_text(json.dumps([_process_identity(child.pid)]))
     (root/'host.json').write_text(json.dumps([child.pid]))
     def rpc(*args):
         if case=='TERM':
