@@ -221,9 +221,9 @@ SHORTLIST_RULE = ('Rank completed candidates of one exact evaluation version by 
     'equal metric ranks the later observed candidate first. Members: top-k, the current A recommendation and '
     'the best candidate first observed at or after the latest A assessment. Multiple versions require an explicit '
     'evaluation key; conflicting directions never rank. Without a ranking, retain bounded group bests for A.')
-DEFAULT_RULE = ('Default: best-ranked comparable member whose smoke is ok and audit passed (or audit unconfigured); '
-    'else, when no audit passed, the best-ranked smoke-ok member whose audit did not fail (the submit audit still gates promotion). '
-    'Failed or unknown smoke and failed audit never become the default.')
+DEFAULT_RULE = ('Default: best-ranked comparable member whose smoke is ok or not provided and audit passed (or audit unconfigured); '
+    'else, when no audit passed, the best-ranked such member whose audit is pending (the submit audit still gates promotion). '
+    'Unavailable, failed or unknown smoke and failed, engineering-failed or unknown audit never become the default.')
 
 
 def shortlist(records, k, *, evaluation_key=None):
@@ -279,8 +279,8 @@ def shortlist(records, k, *, evaluation_key=None):
 def default_choice(members, statuses):
     """Pre-registered default over screened members; statuses map id -> smoke/audit status."""
     ranked = sorted((row for row in members if row['rank'] is not None), key=lambda row: row['rank'])
-    usable = [row for row in ranked if statuses[row['candidate_id']]['smoke'] == 'ok'
-              and statuses[row['candidate_id']]['audit'] != 'failed']
+    usable = [row for row in ranked if statuses[row['candidate_id']]['smoke'] in {'ok', 'not_provided'}
+              and statuses[row['candidate_id']]['audit'] in {'passed', 'unconfigured', 'not_run'}]
     passed = [row for row in usable if statuses[row['candidate_id']]['audit'] in {'passed', 'unconfigured'}]
     chosen, basis = ((passed[0], 'audit_passed' if statuses[passed[0]['candidate_id']]['audit'] == 'passed' else 'audit_unconfigured') if passed
                      else (usable[0], 'submit_audit_pending') if usable else (None, 'none_qualified'))

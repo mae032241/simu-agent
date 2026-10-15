@@ -35,10 +35,45 @@ def _failure(root, decision_step):
             value=c.read(c.regular(path))
             if value.get('decision_step')==decision_step and value['reason']=='implementation_source_missing':
                 return dict(status='engineering_error',note=value['reason'],cleanup_confirmed=True),path,dict(candidate_id=value['candidate_id'],source=dict(objects={}))
-        return None
+        return screen_failure(root, decision_step)
     row = actions[-1]
     path = root/'control-ledger'/f'{row["outcome"]["seq"]:06d}.json'
     return row['outcome']['result'], path, row['intent']['binding']
+
+
+def screen_failure(root, decision_step):
+    """Read only the fault in the exact screen selected by this sealed A."""
+    from . import budget, delivery, shortlist
+    path = root/'jobs'/f'{decision_step:03d}.json'
+    if not path.exists():return None
+    job = c.read(c.regular(path))
+    if job['role'] != 'A' or not job.get('selection'):return None
+    if not (c.host_record(c.workspace(root,decision_step))/'result-identity.json').exists():return None
+    raw = c.validate(c.workspace(root,decision_step))
+    if raw['next_action'] == 'deliver':
+        try:cid = shortlist.choice(root, job, raw)
+        except delivery.DeliveryUnresolved:return None  # Author must first repair its comparison.
+    elif raw['next_action'] == 'audit':cid = raw['candidate_recommendation']
+    else:return None
+    screen = shortlist._screen(root, job['selection'])
+    rows = [row for row in screen['rows'] if row['candidate_id'] == cid and row['audit']['status'] == 'engineering_failed']
+    if not rows:return None
+    row = rows[0]
+    directory = shortlist._directory(root, repair_step=job['selection'].get('repair_step',0))
+    name = row['audit']['receipt']
+    outcome_path, intent_path = directory/(name+'.outcome.json'), directory/(name+'.intent.json')
+    outcome, intent = c.read(c.regular(outcome_path)), c.read(c.regular(intent_path))
+    refs = delivery.selected_sources(root, job['delivery_sources'], cid)
+    originals = [item for item in refs['items'] if item['candidate_id'] == cid and item['status'] == 'audit_pending']
+    if len(originals) != 1:raise RepairUnavailable('engineering_source_missing_or_ambiguous')
+    source = originals[0]
+    begin = budget.closeout_state(root)['begin']
+    if (not shortlist.candidate_fault(outcome) or intent['kind'] != 'audit' or intent['candidate_id'] != cid
+            or outcome['intent_sha256'] != c.digest(intent_path)
+            or intent['operation_id'] != shortlist._operation(root,begin,directory,'audit',source)
+            or screen['closeout_begin'] != job['closeout_begin']):
+        raise ValueError('Selected screen repair diagnosis changed')
+    return outcome, outcome_path, dict(candidate_id=cid,source=source)
 
 
 def request(root, decision_step):

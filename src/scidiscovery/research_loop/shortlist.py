@@ -18,6 +18,13 @@ DEFAULT = dict(version=1, shortlist_k=3, smoke_seconds=20)
 CAPABILITY = 'smoke'
 
 
+def candidate_fault(outcome):
+    """Only typed, cleaned faults with candidate-local scope may be isolated."""
+    from .audit_recovery import WORKER_CODES
+    return (outcome['status'] == 'engineering_error' and outcome['cleanup_confirmed']
+            and outcome['note'] in WORKER_CODES | {'audit_source_missing', 'audit_output_capacity'})
+
+
 def policy(value):
     if (not isinstance(value, dict) or set(value) not in (set(DEFAULT), set(DEFAULT) | {'evaluation_key'})
             or type(value['version']) is not int or value['version'] != 1):
@@ -99,6 +106,12 @@ def _affordable(root, begin, seconds):
             and settings['max_steps'] - budget.used_steps(root) >= 1 + pending + floor['steps'])
 
 
+def _operation(root, begin, directory, kind, source):
+    return hashlib.sha256(delivery._bytes(dict(settings_sha256=c.digest(root / 'settings.json'),
+        closeout_begin=_boundary(root, begin), generation=directory.relative_to(root).as_posix(), kind=kind, candidate_id=source['candidate_id'],
+        artifact_sha256=source['objects']['artifact']['sha256']))).hexdigest()
+
+
 def _call(root, begin, index, kind, source, seconds):
     """Returns the immutable outcome, or None for an accepted call without one."""
     directory = _directory(root)
@@ -112,9 +125,7 @@ def _call(root, begin, index, kind, source, seconds):
     if intent_path.exists():
         return None  # Never repeat an uncertain accepted call.
     budget.transition(root, 'advance', 'selection_' + kind)
-    operation = hashlib.sha256(delivery._bytes(dict(settings_sha256=c.digest(root / 'settings.json'),
-        closeout_begin=_boundary(root, begin), generation=directory.relative_to(root).as_posix(), kind=kind, candidate_id=source['candidate_id'],
-        artifact_sha256=source['objects']['artifact']['sha256']))).hexdigest()
+    operation = _operation(root, begin, directory, kind, source)
     intent = dict(operation_id=operation, kind=kind, index=index, candidate_id=source['candidate_id'],
                   max_seconds=seconds, advance_seconds=budget.snapshot(root)['advance_seconds'])
     _save(intent_path, intent)
@@ -184,7 +195,7 @@ def screen(root, begin, before_step=None):
     rows = []
     for index, member in enumerate(computed['members']):
         source = sources.get(member['candidate_id'])
-        smoke = dict(status='unavailable', note='plugin_smoke_unavailable')
+        smoke = dict(status='not_provided', note='plugin_smoke_not_provided')
         if member['candidate_id'] in repaired_originals:
             smoke=dict(status='unavailable',note='original_implementation_requires_repair')
         elif source is None or source['status'] != 'audit_pending':
@@ -192,7 +203,7 @@ def screen(root, begin, before_step=None):
         elif capable:
             if (directory / f'smoke-{index:02d}.intent.json').exists() or _affordable(root, begin, limits['smoke_seconds']):
                 outcome = _call(root, begin, index, 'smoke', source, limits['smoke_seconds'])
-                if outcome is None or not outcome['cleanup_confirmed']:
+                if outcome is None or not outcome['cleanup_confirmed'] or outcome['status'] == 'unknown':
                     return 'selection_smoke_unknown'
                 smoke = dict(status=outcome['status'], note=outcome['note'], receipt=f'smoke-{index:02d}')
             else:
@@ -206,17 +217,17 @@ def screen(root, begin, before_step=None):
         cid = row['candidate_id']
         if cid in prior:
             row['audit'] = dict(status=prior[cid], note='a_requested_receipt')
-        elif row['rank'] is None or row['smoke']['status'] != 'ok':
+        elif row['rank'] is None or row['smoke']['status'] not in {'ok', 'not_provided'}:
             row['audit'] = dict(status='not_run', note='not_comparable' if row['rank'] is None else 'smoke_not_ok')
         elif found:
             row['audit'] = dict(status='not_run', note='below_audited_default')
         elif (directory / f'audit-{index:02d}.intent.json').exists() or _affordable(root, begin, settings['delivery_policy']['submit_seconds']):
             outcome = _call(root, begin, index, 'audit', sources[cid], settings['delivery_policy']['submit_seconds'])
-            if outcome is None or not outcome['cleanup_confirmed']:
+            if outcome is None or not outcome['cleanup_confirmed'] or outcome['status'] == 'unknown':
                 return 'selection_audit_unknown'
-            if outcome['status'] in {'engineering_error', 'unclassified'}:
+            if outcome['status'] == 'unclassified' or outcome['status'] == 'engineering_error' and not candidate_fault(outcome):
                 return 'selection_audit_' + outcome['status']
-            row['audit'] = dict(status={'audited': 'passed', 'rejected': 'failed'}.get(outcome['status'], 'unknown'),
+            row['audit'] = dict(status={'audited': 'passed', 'rejected': 'failed', 'engineering_error': 'engineering_failed'}.get(outcome['status'], 'unknown'),
                                 note=outcome['note'], receipt=f'audit-{index:02d}')
         else:
             row['audit'] = dict(status='not_run', note='selection_reserve_unavailable')
@@ -227,7 +238,7 @@ def screen(root, begin, before_step=None):
             name = row[kind].get('receipt')
             if name is not None:
                 receipts[name] = c.digest(c.regular(directory / (name + '.outcome.json')))
-    value = dict(version=1, shortlist_sha256=c.digest(path), closeout_begin=computed['closeout_begin'],
+    value = dict(version=1, public_view_version=2, shortlist_sha256=c.digest(path), closeout_begin=computed['closeout_begin'],
                  smoke_capability=capable, audit_configured=audit_on, rows=rows, receipts=receipts,
                  evaluation_key=computed.get('evaluation_key'), direction=computed.get('direction'),
                  evaluation_groups_omitted_count=computed.get('evaluation_groups_omitted_count', 0),
@@ -264,16 +275,23 @@ def _clip(text, size):
 def public_table(root, mark):
     value = _screen(root, mark)
     default = value['default']['candidate_id']
+    view_version = value.get('public_view_version', 1)
+    if view_version not in {1, 2}:raise ValueError('Unsupported selection public view')
+    fields = ('candidate_comparison.rows: every listed candidate in this order with key_risk and decision keep|replace; '
+        'keep marks only the delivered candidate. A choice other than the default requires override '
+        '(default_candidate, chosen_candidate, reason, evidence_steps: exact frozen node steps).')
+    if view_version == 2:
+        fields = ('smoke not_provided means the adapter did not declare this optional capability; it is not a passed check. '
+            'engineering_failed and audit_fault retain an unqualified candidate and its typed engineering reason; choosing it does not authorize delivery of those bytes. ' + fields)
     return dict(evaluation_key=_clip(value['evaluation_key'], 96), direction=value['direction'],
         evaluation_groups_omitted_count=value.get('evaluation_groups_omitted_count', 0),
         default=dict(candidate_id=default, basis=value['default']['basis']),
         rows=[dict(candidate_id=row['candidate_id'], public_metric=row['metric'], evaluation_version=_clip(row['evaluation_key'], 96),
                    comparable=row['rank'] is not None, rank=row['rank'], reasons=row['reasons'], smoke=row['smoke']['status'],
-                   audit=row['audit']['status'], default=row['candidate_id'] == default) for row in value['rows']],
+                   audit=row['audit']['status'], default=row['candidate_id'] == default,
+                   **(dict(audit_fault=row['audit']['note'] if row['audit']['status'] == 'engineering_failed' else None) if view_version == 2 else {})) for row in value['rows']],
         rule=value['default']['rule'],
-        fields='candidate_comparison.rows: every listed candidate in this order with key_risk and decision keep|replace; '
-               'keep marks only the delivered candidate. A choice other than the default requires override '
-               '(default_candidate, chosen_candidate, reason, evidence_steps: exact frozen node steps).')
+        fields=fields)
 
 
 def pending_status(root):
@@ -286,8 +304,8 @@ def pending_status(root):
         if not outcome.exists():return 'selection_'+intent['kind']+'_unknown'
         value=c.read(c.regular(outcome))
         if value['intent_sha256']!=c.digest(path):raise ValueError('Selection pending receipt changed')
-        if not value['cleanup_confirmed']:return 'selection_'+intent['kind']+'_unknown'
-        if intent['kind']=='audit' and value['status'] in {'engineering_error','unclassified'}:
+        if not value['cleanup_confirmed'] or value['status']=='unknown':return 'selection_'+intent['kind']+'_unknown'
+        if intent['kind']=='audit' and (value['status']=='unclassified' or value['status']=='engineering_error' and not candidate_fault(value)):
             return 'selection_audit_'+value['status']
     return None
 

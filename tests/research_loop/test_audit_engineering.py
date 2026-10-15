@@ -273,7 +273,8 @@ def test_accepted_control_recovery_without_outcome_is_never_replayed(tmp_path,mo
     assert not (root/'submission/model.pkl').exists()
 
 
-def test_control_selection_engineering_fault_reaches_exact_worker_then_author(tmp_path,monkeypatch):
+@pytest.mark.parametrize('author_action', ['deliver', 'audit'])
+def test_only_author_selected_screen_fault_reaches_exact_worker_then_author(tmp_path,monkeypatch,author_action):
     from scidiscovery.research_loop import controller,native,shortlist
     from test_candidate_audit import _seal_existing
     from test_control_selection import scene
@@ -281,6 +282,12 @@ def test_control_selection_engineering_fault_reaches_exact_worker_then_author(tm
         "else 'audit skipped'","else 'audit failed during training: ModuleNotFoundError: No module named fixture_helper'")
     root=scene(tmp_path,harness=harness)
     calls=[]
+    phases=[]
+    leaf=delivery.leaf_phase
+    def counted(root,source,operation,phase,*args,**kwargs):
+        phases.append((phase,source['candidate_id']))
+        return leaf(root,source,operation,phase,*args,**kwargs)
+    monkeypatch.setattr(delivery,'leaf_phase',counted)
     def complete(root,step):
         job=c.read(root/'jobs'/f'{step:03d}.json');calls.append(job['role'])
         task=c.read(c.workspace(root,step)/'science-task.json')
@@ -288,7 +295,18 @@ def test_control_selection_engineering_fault_reaches_exact_worker_then_author(tm
             limitations=['No replacement candidate was produced'],implementation_selection=None)
         if job['role']=='W':
             assert task['engineering_repair']['candidate_id']=='run-2'
+            failure=job['engineering_repair']['failure']
+            assert failure==dict(path='host-delivery/selection/audit-01.outcome.json',sha256=c.digest(root/failure['path']))
+            assert job['engineering_repair']['decision_step']==4 and job['engineering_repair']['source']['step']==2
             payload.update(stage_intent='decision',mechanism_findings=None)
+        elif step==4:
+            comparison=task['closeout']['comparison']
+            assert comparison['default']['candidate_id']=='run-3'
+            table=dict(rows=[dict(candidate_id=row['candidate_id'],key_risk='Known implementation fault' if row['candidate_id']=='run-2' else 'Public proxy only',
+                decision='keep' if row['candidate_id']=='run-2' else 'replace') for row in comparison['rows']],
+                override=dict(default_candidate='run-3',chosen_candidate='run-2',reason='Explicitly request exact implementation repair',evidence_steps=[2]))
+            payload.update(next_action=author_action,route_reason='Choose the exact fault for repair',candidate_recommendation='run-2',
+                candidate_comparison=table if author_action=='deliver' else None,search_review=None,progress_assessment=None)
         else:
             assert task['closeout']['comparison']['default']['candidate_id']=='run-3'
             payload.update(next_action='finish',route_reason='Decline delivery after the repair evidence',candidate_recommendation=None,
@@ -297,14 +315,43 @@ def test_control_selection_engineering_fault_reaches_exact_worker_then_author(tm
     monkeypatch.setattr(native,'execute_native',complete)
     result=controller.closeout(root)
     assert result['status']=='exported_unsubmitted',result
-    assert calls==['W','A']
+    assert calls==['A','W','A']
+    assert phases.count(('audit','run-2'))==1 and phases.count(('smoke','run-2'))==1
+    assert not list((root/'native-evidence/004').glob('candidate-audit/*.json'))
     assert (root/'host-delivery/selection/shortlist.json').exists()
-    assert (root/'host-delivery/selection/repairs/004/screen.json').exists()
+    assert (root/'host-delivery/selection/repairs/005/screen.json').exists()
     mark=shortlist.marker(root)
     rows=shortlist.public_table(root,mark)['rows']
     assert next(row for row in rows if row['candidate_id']=='run-2')['audit']=='not_run'
     assert not (root/'submission/model.pkl').exists()
-    assert controller.run(root)['status']==result['status'] and calls==['W','A']
+    assert controller.run(root)['status']==cli(root,'status')['closeout']['status']==cli(root)['status']==result['status'] and calls==['A','W','A']
+    # The newer repaired generation must never replace the old A's exact selected fault.
+    original_mark=c.read(root/'jobs/004.json')['selection']
+    assert original_mark!=shortlist.marker(root)
+    assert engineering.request(root,4)['failure']['path']=='host-delivery/selection/audit-01.outcome.json'
+    assert next(row for row in c.read(root/'host-delivery/selection/repairs/005/screen.json')['rows'] if row['candidate_id']=='run-2')['smoke']==dict(
+        status='unavailable',note='original_implementation_requires_repair')
+    before=list(phases)
+    intent_path=root/'host-delivery/selection/audit-01.intent.json'
+    original=intent_path.read_bytes()
+    for field,value in [('candidate_id','run-3'),('operation_id','0'*64)]:
+        intent=c.read(intent_path);intent[field]=value
+        intent_path.chmod(0o600);c.write(intent_path,intent);intent_path.chmod(0o400)
+        with pytest.raises(ValueError,match='Selected screen repair diagnosis changed'):
+            engineering.request(root,4)
+        intent_path.chmod(0o600);intent_path.write_bytes(original);intent_path.chmod(0o400)
+    from copy import deepcopy
+    selected=delivery.selected_sources
+    def different_artifact(*args,**kwargs):
+        refs=deepcopy(selected(*args,**kwargs))
+        for row in refs['items']:
+            if row['candidate_id']=='run-2' and row['status']=='audit_pending':row['objects']['artifact']=row['objects']['source.py']
+        return refs
+    with monkeypatch.context() as patch:
+        patch.setattr(delivery,'selected_sources',different_artifact)
+        with pytest.raises(ValueError,match='Selected screen repair diagnosis changed'):
+            engineering.request(root,4)
+    assert phases==before and engineering.request(root,4)['failure']['path']=='host-delivery/selection/audit-01.outcome.json'
 
 
 @pytest.mark.parametrize('mode',['soft','hard'])

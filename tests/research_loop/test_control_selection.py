@@ -123,6 +123,18 @@ def test_default_excludes_failed_or_unknown_smoke_and_prefers_passed_audit():
         candidate_id=None, basis='none_qualified', rule=selection.DEFAULT_RULE)
 
 
+@pytest.mark.parametrize('smoke,audit,eligible', [
+    ('not_provided', 'passed', True), ('not_provided', 'not_run', True),
+    ('unavailable', 'passed', False), ('failed', 'passed', False), ('unknown', 'passed', False),
+    ('not_provided', 'engineering_failed', False), ('ok', 'engineering_failed', False),
+    ('not_provided', 'failed', False), ('ok', 'unknown', False),
+])
+def test_optional_smoke_never_disguises_an_unqualified_candidate(smoke, audit, eligible):
+    rows = selection.shortlist([rec(2, 'W', [cand('run-1', .9)])], 1)['members']
+    chosen = selection.default_choice(rows, screened([('run-1', smoke, audit)]))
+    assert chosen['candidate_id'] == ('run-1' if eligible else None)
+
+
 def _screen_files(root, default='run-2', ids=('run-1', 'run-2', 'run-3')):
     directory = root / 'host-delivery/selection';directory.mkdir(parents=True)
     c.write(directory / 'shortlist.json', dict(members=list(ids)))
@@ -281,7 +293,8 @@ def closeout_author(monkeypatch, *attempts):
         payload = dict(summary='Closeout comparison', scientific_result='Public validation only; target suitability is not asserted.',
                        limitations=['Fixture transport, not a model'], implementation_selection=None, search_review=None,
                        progress_assessment=None, decision_request=None, portfolio_review=None, next_action='deliver',
-                       route_reason='Bounded delivery decision', **attempts[len(calls)](task))
+                       route_reason='Bounded delivery decision')
+        payload.update(attempts[len(calls)](task))
         calls.append((step, task))
         record = c.host_record(c.workspace(root, step))
         c.write(record / 'native-intent.json', dict(task_sha256=c.digest(root / 'jobs' / f'{step:03d}.json')))
@@ -318,7 +331,7 @@ def test_closeout_smoke_excludes_unloadable_public_best_and_null_delivers_defaul
     (step, task), = calls
     view = task['closeout']['comparison']
     assert [row['candidate_id'] for row in view['rows']] == ['run-1', 'run-2', 'run-3'] and view['default']['candidate_id'] == 'run-2'
-    assert set(view['rows'][0]) == {'candidate_id', 'public_metric', 'evaluation_version', 'comparable', 'rank', 'reasons', 'smoke', 'audit', 'default'}
+    assert set(view['rows'][0]) == {'candidate_id', 'public_metric', 'evaluation_version', 'comparable', 'rank', 'reasons', 'smoke', 'audit', 'audit_fault', 'default'}
     assert 'candidate_comparison' in task['final_response'] and 'host-delivery' not in json.dumps(task) and 'hidden' not in json.dumps(view)
     assert c.read(root / 'jobs' / f'{step:03d}.json')['selection'] == shortlist.marker(root)
     assert 'candidate_comparison' in c.read(c.host_record(c.workspace(root, step)) / 'science-result.schema.json')['properties']
@@ -345,19 +358,34 @@ def test_override_needs_symmetric_table_and_bound_reason_through_correction(tmp_
     assert c.read(root / 'jobs/005.json')['selection'] == c.read(root / 'jobs/004.json')['selection']
 
 
-def test_plugin_without_smoke_is_unavailable_never_ok(tmp_path, monkeypatch):
-    root = scene(tmp_path)
+def without_smoke(monkeypatch):
     original = delivery.freeze_sources
     def undeclared(*args, **kwargs):
-        refs = original(*args, **kwargs);refs.pop('capabilities');return refs
+        refs = original(*args, **kwargs);refs.pop('capabilities', None);return refs
     monkeypatch.setattr(delivery, 'freeze_sources', undeclared)
-    closeout_author(monkeypatch, keep_default, keep_default, keep_default)
+
+
+@pytest.mark.parametrize('missing_original', [False, True])
+def test_plugin_without_smoke_is_neutral_and_missing_original_still_excluded(tmp_path, monkeypatch, missing_original):
+    root = scene(tmp_path)
+    if missing_original:(root / 'runs/model-1.pkl').unlink()
+    without_smoke(monkeypatch)
+    calls = closeout_author(monkeypatch, keep_default)
     result = controller.closeout(root)
     screen = c.read(root / 'host-delivery/selection/screen.json')
-    assert {row['smoke']['status'] for row in screen['rows']} == {'unavailable'} and screen['smoke_capability'] is False
-    assert {row['audit']['note'] for row in screen['rows']} == {'smoke_not_ok'} and screen['default']['candidate_id'] is None
-    assert result['status'] == 'closeout_unresolved' and result['reason'] == 'semantic_correction_limit'
-    assert shortlist.calls(root) == 0 and 'smoke' not in leaf_phases(root)
+    assert screen['smoke_capability'] is False
+    assert {row['smoke']['status'] for row in screen['rows'][1:]} == {'not_provided'}
+    assert screen['rows'][0]['smoke'] == (dict(status='unavailable', note='candidate_original_unavailable') if missing_original
+        else dict(status='not_provided', note='plugin_smoke_not_provided'))
+    chosen = 'run-2' if missing_original else 'run-1'
+    assert screen['default']['candidate_id'] == chosen and screen['default']['basis'] == 'audit_passed'
+    assert next(row for row in screen['rows'] if row['candidate_id'] == chosen)['audit']['status'] == 'passed'
+    assert result['status'] == 'delivery_confirmed' and result['last_confirmed']['candidate_id'] == chosen
+    assert len(calls) == 1 and calls[0][1]['role'] == 'A'
+    assert shortlist.calls(root) == 1 and 'smoke' not in leaf_phases(root)
+    from scidiscovery.research_loop.cli import status
+    assert controller.run(root)['status'] == status(root)['closeout']['status'] == result['status']
+
 
 
 def test_uncertain_smoke_is_never_repeated_and_blocks_execution(tmp_path, monkeypatch):
@@ -389,3 +417,167 @@ def test_tampered_screen_receipt_invalidates_the_bound_closeout(tmp_path, monkey
     path.write_text(path.read_text().replace('"failed"', '"ok"'))
     with pytest.raises(ValueError, match='Control selection receipts changed'):
         c.validate(c.workspace(root, 4))
+
+
+def candidate_fault_harness(note, *, all_failed=False):
+    return FAKE_HARNESS.replace("mode=meta['mode']", "mode='skip'" if all_failed else "mode='skip' if row['run_id']==1 else 'ok'").replace(
+        "else 'audit skipped'", 'else ' + repr(note))
+
+
+@pytest.mark.parametrize('note', [
+    'audit failed during training: ModuleNotFoundError: No module named fixture_helper',
+    'script /inputs/source.py not found; audit skipped',
+])
+def test_cleaned_candidate_fault_continues_to_next_default_without_worker(tmp_path, monkeypatch, note):
+    from scidiscovery.research_loop.cli import status
+    root = scene(tmp_path, harness=candidate_fault_harness(note))
+    without_smoke(monkeypatch)
+    calls = closeout_author(monkeypatch, keep_default)
+    result = controller.closeout(root)
+    screen = c.read(root / 'host-delivery/selection/screen.json')
+    assert [row['audit']['status'] for row in screen['rows']] == ['engineering_failed', 'passed', 'not_run']
+    assert screen['rows'][0]['audit']['receipt'] == 'audit-00'
+    assert screen['receipts']['audit-00'] == c.digest(root / 'host-delivery/selection/audit-00.outcome.json')
+    assert screen['default']['candidate_id'] == result['last_confirmed']['candidate_id'] == 'run-2'
+    assert [task['role'] for _, task in calls] == ['A'] and shortlist.calls(root) == 2
+    assert status(root)['closeout']['status'] == controller.run(root)['status'] == result['status'] == 'delivery_confirmed'
+
+
+def test_all_candidate_engineering_faults_have_no_default_and_author_can_decline(tmp_path, monkeypatch):
+    from scidiscovery.research_loop.cli import status
+    root = scene(tmp_path, harness=candidate_fault_harness('audit failed during training: ValueError: bad shape', all_failed=True))
+    without_smoke(monkeypatch)
+    def decline(task):
+        comparison = task['closeout']['comparison']
+        assert comparison['default']['candidate_id'] is None
+        assert {row['audit'] for row in comparison['rows']} == {'engineering_failed'}
+        return dict(next_action='finish', candidate_recommendation=None, candidate_comparison=None)
+    calls = closeout_author(monkeypatch, decline)
+    result = controller.closeout(root)
+    assert result['status'] == 'exported_unsubmitted' and [task['role'] for _, task in calls] == ['A']
+    assert shortlist.calls(root) == 3 and not list((root / 'host-delivery/selection').glob('repairs/*'))
+    assert not (root / 'submission/model.pkl').exists()
+    assert status(root)['closeout']['status'] == controller.run(root)['status'] == result['status']
+
+
+@pytest.mark.parametrize('interrupt_after', ['audit-00.outcome.json', 'audit-01.outcome.json'])
+def test_restart_reuses_each_candidate_outcome_without_replaying_screen(tmp_path, monkeypatch, interrupt_after):
+    from scidiscovery.research_loop.cli import status
+    root = scene(tmp_path, harness=candidate_fault_harness('audit failed during training: ValueError: bad shape'))
+    without_smoke(monkeypatch)
+    save, leaf = shortlist._save, delivery.leaf_phase
+    phases = []
+    def counted(root, source, operation, phase, *args, **kwargs):
+        phases.append((phase, source['candidate_id']))
+        return leaf(root, source, operation, phase, *args, **kwargs)
+    def interrupted(path, value):
+        save(path, value)
+        if path.name == interrupt_after:raise RuntimeError('Interrupted after sealed screen outcome')
+    monkeypatch.setattr(delivery, 'leaf_phase', counted)
+    monkeypatch.setattr(shortlist, '_save', interrupted)
+    with pytest.raises(RuntimeError, match='Interrupted after sealed screen outcome'):
+        controller.closeout(root)
+    assert not (root / 'host-delivery/selection/screen.json').exists()
+    assert not (root / 'jobs/004.json').exists() and shortlist.pending_status(root) is None
+    assert status(root)['closeout']['status'] == 'closeout_pending'
+    monkeypatch.setattr(shortlist, '_save', save)
+    closeout_author(monkeypatch, keep_default)
+    result = controller.run(root)
+    assert result['status'] == 'delivery_confirmed' and result['last_confirmed']['candidate_id'] == 'run-2'
+    assert phases == [('audit', 'run-1'), ('audit', 'run-2')]
+    directory = root / 'host-delivery/selection'
+    screen = c.read(directory / 'screen.json')
+    assert set(screen['receipts']) == {'audit-00', 'audit-01'}
+    for name, digest in screen['receipts'].items():
+        outcome = c.read(directory / (name + '.outcome.json'))
+        assert digest == c.digest(directory / (name + '.outcome.json'))
+        assert outcome['intent_sha256'] == c.digest(directory / (name + '.intent.json'))
+    assert status(root)['closeout']['status'] == controller.run(root)['status'] == result['status']
+    assert phases == [('audit', 'run-1'), ('audit', 'run-2')]
+
+
+@pytest.mark.parametrize('kind,result_status,cleaned,note,expected', [
+    ('smoke', 'unknown', True, 'smoke_public_harness_unavailable', 'selection_smoke_unknown'),
+    ('audit', 'unknown', True, 'audit_process_unverified', 'selection_audit_unknown'),
+    ('audit', 'unclassified', True, 'audit_receipt_invalid', 'selection_audit_unclassified'),
+    ('audit', 'engineering_error', False, 'audit_training_error', 'selection_audit_unknown'),
+    ('audit', 'engineering_error', True, 'audit_harness_unavailable', 'selection_audit_engineering_error'),
+])
+def test_unknown_unclassified_or_shared_faults_stop_without_advancing_or_replay(tmp_path, monkeypatch, kind, result_status, cleaned, note, expected):
+    from test_audit_engineering import cli
+    root = scene(tmp_path)
+    if kind == 'audit':without_smoke(monkeypatch)
+    phases = []
+    def fault(root, source, operation, phase, *args, **kwargs):
+        phases.append((phase, source['candidate_id']))
+        return dict(status=result_status, note=note, cleanup_confirmed=cleaned)
+    monkeypatch.setattr(delivery, 'leaf_phase', fault)
+    monkeypatch.setattr(native, 'execute_native', lambda *args: pytest.fail('Screen fault dispatched an author or repair'))
+    result = controller.closeout(root)
+    assert result['status'] == shortlist.pending_status(root) == expected
+    assert cli(root, 'status')['closeout']['status'] == cli(root)['status'] == expected
+    assert controller.run(root)['status'] == expected and phases == [(kind, 'run-1')]
+    assert shortlist.calls(root) == 1 and not (root / 'jobs/004.json').exists()
+    assert not (root / 'host-delivery/selection/screen.json').exists()
+
+
+@pytest.mark.parametrize('code', ['audit_source_missing', 'audit_output_capacity'])
+@pytest.mark.parametrize('author_action', ['deliver', 'audit'])
+def test_author_selected_local_control_fault_stops_without_reaudit_or_worker(tmp_path, monkeypatch, code, author_action):
+    from test_audit_engineering import cli
+    root = scene(tmp_path)
+    without_smoke(monkeypatch)
+    leaf = delivery.leaf_phase
+    phases = []
+    def fault(root, source, operation, phase, *args, **kwargs):
+        phases.append((phase, source['candidate_id']))
+        if source['candidate_id'] == 'run-1':return dict(status='engineering_error', note=code, cleanup_confirmed=True)
+        return leaf(root, source, operation, phase, *args, **kwargs)
+    monkeypatch.setattr(delivery, 'leaf_phase', fault)
+    def choose_fault(task):
+        comparison = task['closeout']['comparison']
+        assert comparison['default']['candidate_id'] == 'run-2'
+        assert comparison['rows'][0]['audit_fault'] == code
+        value = dict(next_action=author_action, candidate_recommendation='run-1', candidate_comparison=None)
+        if author_action == 'deliver':
+            value['candidate_comparison'] = dict(rows=[dict(candidate_id=row['candidate_id'], key_risk='Candidate control fault' if row['candidate_id']=='run-1' else 'Proxy only',
+                decision='keep' if row['candidate_id']=='run-1' else 'replace') for row in comparison['rows']],
+                override=dict(default_candidate='run-2', chosen_candidate='run-1', reason='Explicitly choose this fault', evidence_steps=[2]))
+        return value
+    calls = closeout_author(monkeypatch, choose_fault)
+    result = controller.closeout(root)
+    assert result['status'] == 'closeout_preparation_unavailable'
+    assert [task['role'] for _, task in calls] == ['A'] and phases == [('audit', 'run-1'), ('audit', 'run-2')]
+    assert cli(root, 'status')['closeout']['status'] == cli(root)['status'] == controller.run(root)['status'] == result['status']
+    assert phases == [('audit', 'run-1'), ('audit', 'run-2')] and shortlist.calls(root) == 2
+    assert not (root / 'jobs/005.json').exists() and not (root / 'submission/model.pkl').exists()
+
+
+def test_legacy_sealed_author_retains_original_screen_and_public_view_bytes(tmp_path, monkeypatch):
+    from legacy_selection_view import DEFAULT_RULE, public_table
+    from test_audit_engineering import cli
+    root = scene(tmp_path)
+    save = shortlist._save
+    def legacy_screen(path, value):
+        if path.name == 'screen.json':
+            value.pop('public_view_version')
+            value['default']['rule'] = DEFAULT_RULE
+        return save(path, value)
+    calls = closeout_author(monkeypatch, keep_default)
+    with monkeypatch.context() as patch:
+        patch.setattr(shortlist, '_save', legacy_screen)
+        patch.setattr(shortlist, 'public_table', public_table)
+        result = controller.closeout(root)
+    assert result['status'] == 'delivery_confirmed' and len(calls) == 1
+    step, task = calls[0]
+    assert not any('audit_fault' in row for row in task['closeout']['comparison']['rows'])
+    screen = root / 'host-delivery/selection/screen.json'
+    assert 'public_view_version' not in c.read(screen)
+    work = c.workspace(root, step)
+    originals = [screen, root / 'jobs' / f'{step:03d}.json', work / 'science-task.json',
+        c.host_record(work) / 'science-output.json', c.host_record(work) / 'result-identity.json']
+    snapshots = {path: path.read_bytes() for path in originals}
+    assert shortlist.public_table(root, c.read(root / 'jobs' / f'{step:03d}.json')['selection']) == task['closeout']['comparison']
+    assert c.validate(work)['next_action'] == 'deliver'
+    assert cli(root, 'status')['closeout']['status'] == cli(root)['status'] == controller.run(root)['status'] == result['status']
+    assert all(path.read_bytes() == data for path, data in snapshots.items())

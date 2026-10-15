@@ -598,6 +598,9 @@ def _closeout_result(root, status, *, reason=None, step=None, read_only=False):
                     engineering.admit(root,repair,last+1)
                     status='engineering_repair_pending' if _repair_funds(root) else 'engineering_repair_budget_unavailable'
                 except engineering.RepairUnavailable as error:status=str(error)
+            elif engineering.screen_failure(root,last) is not None:
+                failure=engineering.screen_failure(root,last)[0]
+                status,reason='closeout_preparation_unavailable',failure['note']
             elif last_science.get('next_action')=='audit':
                 receipt=candidate_audit._outcome(root,last)
                 if receipt is not None:
@@ -606,15 +609,6 @@ def _closeout_result(root, status, *, reason=None, step=None, read_only=False):
         screening=shortlist.pending_status(root) if contracts.settings(root).get('selection_policy') is not None else None
         if screening is not None and not pending and not state['unresolved_operations'] and not candidate_audit.blocked(root):
             status=screening
-            if screening=='selection_audit_engineering_error':
-                from . import engineering
-                next_step=max((int(path.stem) for path in (root/'jobs').glob('*.json')),default=begin['source_cutoff'])+1
-                repair=engineering.screen_request(root,next_step)
-                if repair is not None:
-                    try:
-                        engineering.admit(root,repair,next_step)
-                        status='engineering_repair_pending' if _repair_funds(root) else 'engineering_repair_budget_unavailable'
-                    except engineering.RepairUnavailable as error:status=str(error)
         if status in {'closeout_correction_pending', 'closeout_preparation_pending'}:
             errors = semantic.closeout_errors(root, (last or 0) + 1)
             if errors > semantic.MAX_AUTHOR_CORRECTIONS:
@@ -773,13 +767,7 @@ def _run_closeout(root):
             stopped = shortlist.screen(root, begin)  # Control shortlist, smoke and audit before the first closeout A.
         except delivery.DeliveryUnresolved as error:
             return _closeout_result(root, 'closeout_preparation_unavailable', reason=error.code)
-        if stopped is not None:
-            if stopped=='selection_audit_engineering_error':
-                initial_repair=engineering.screen_request(root,begin['first_step'])
-                if initial_repair is not None:
-                    try:engineering.admit(root,initial_repair,begin['first_step'])
-                    except engineering.RepairUnavailable as error:return _closeout_result(root,str(error))
-            if initial_repair is None:return _closeout_result(root,stopped)
+        if stopped is not None:return _closeout_result(root,stopped)
     parents = []
     for role in ('H', 'W', 'A'):
         matching = [step for step in range(1, begin['source_cutoff'] + 1)
@@ -814,6 +802,8 @@ def _run_closeout(root):
         if job['role'] != 'A' or job.get('purpose') is not None or result['next_action'] != 'deliver' or step != begin['source_cutoff']:
             raise ValueError('Original direct delivery authorization changed')
         try:
+            if job.get('selection') and engineering.screen_failure(root,step) is not None:
+                raise delivery.PreparationUnavailable('selection_candidate_engineering_failed')
             delivery.prepare_binding(root, job, result)
         except delivery.PreparationUnavailable as error:
             repair=engineering.request(root,step)
@@ -880,15 +870,7 @@ def _run_closeout(root):
                         return _closeout_result(root, 'retained_job_conflict', step=step)
                 if repair is None and contracts.settings(root).get('selection_policy') is not None:
                     stopped=shortlist.screen(root,begin,before_step=step)
-                    if stopped is not None:
-                        if stopped=='selection_audit_engineering_error':
-                            repair=engineering.screen_request(root,step)
-                            if repair is not None:
-                                try:engineering.admit(root,repair,step)
-                                except engineering.RepairUnavailable as error:return _closeout_result(root,str(error),step=step)
-                                if not _repair_funds(root):return _closeout_result(root,'engineering_repair_budget_unavailable',step=step)
-                                parents=sorted({repair['decision_step'],repair['source']['step']})
-                        if repair is None:return _closeout_result(root,stopped,step=step)
+                    if stopped is not None:return _closeout_result(root,stopped,step=step)
                 try:
                     contracts.build_job(root, step, 'W' if repair else 'A', parents,
                         instruction=engineering.public(repair)['scope'] if repair else instruction, purpose='closeout',
@@ -916,13 +898,16 @@ def _run_closeout(root):
             continue
         if result['next_action'] == 'audit':
             from . import candidate_audit
-            audit_status = candidate_audit.execute(root, job, result)
-            if audit_status is not None:
-                return _closeout_result(root, audit_status, step=step)
-            receipt=candidate_audit._outcome(root,step)['result']
+            screened_failure=engineering.screen_failure(root,step)
+            if screened_failure is None:
+                audit_status = candidate_audit.execute(root, job, result)
+                if audit_status is not None:
+                    return _closeout_result(root, audit_status, step=step)
+                receipt=candidate_audit._outcome(root,step)['result']
+            else:receipt=screened_failure[0]
             repair=engineering.request(root,step)
             if repair is not None or receipt['status'] in {'engineering_error','unclassified'}:
-                if repair is None:return _closeout_result(root,'candidate_audit_'+receipt['status'],reason=receipt['note'],step=step)
+                if repair is None:return _closeout_result(root,'closeout_preparation_unavailable' if screened_failure is not None else 'candidate_audit_'+receipt['status'],reason=receipt['note'],step=step)
                 try:engineering.admit(root,repair,step+1)
                 except engineering.RepairUnavailable as error:return _closeout_result(root,str(error),step=step)
             parents, author_request = sorted({step,*engineering.steps(root,step),*([repair['source']['step']] if repair else [])}), None
@@ -933,6 +918,8 @@ def _run_closeout(root):
                 reason='scientific_delivery_declined' if result['next_action'] == 'finish' else 'scientific_wait', step=step)
         # There is no implicit replacement or retention on missing choice/qualification.
         try:
+            if job.get('selection') and engineering.screen_failure(root,step) is not None:
+                raise delivery.PreparationUnavailable('selection_candidate_engineering_failed')
             delivery.prepare_binding(root, job, result)
         except delivery.PreparationUnavailable as error:
             repair=engineering.request(root,step)
