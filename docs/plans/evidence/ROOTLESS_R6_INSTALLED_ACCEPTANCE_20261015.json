@@ -1,0 +1,353 @@
+{
+  "base_commit": "85ca78ce26c92d260eea40ac52943b3655f17614",
+  "protocol": 18,
+  "wheel": "/tmp/rootless-r6-final-installed-20261015/wheelhouse/scidiscovery-0.1.1-py3-none-any.whl",
+  "wheel_sha256": "332cd4c5c93b4482ab99ca538972e9a843e6e920a8eee211ea3abb95be1f6897",
+  "identity": {
+    "source_file_count": 239,
+    "source_manifest_sha256": "39ce5a9f70f7f0fdfdec56ed9a5b7b6a3d6af66158e8eff1b0873f4192812087",
+    "installed_package": "/tmp/rootless-r6-final-installed-20261015/venv/lib/python3.12/site-packages/scidiscovery",
+    "mismatch": [],
+    "plugins": [
+      "builtin",
+      "general_science"
+    ],
+    "execution_interfaces": [
+      "cov_execution",
+      "local_execution"
+    ],
+    "sys_path": [
+      "/home/da/miniconda3/lib/python312.zip",
+      "/home/da/miniconda3/lib/python3.12",
+      "/home/da/miniconda3/lib/python3.12/lib-dynload",
+      "/tmp/rootless-r6-final-installed-20261015/venv/lib/python3.12/site-packages"
+    ]
+  },
+  "resources": {
+    "build-resource": {
+      "returncode": 0,
+      "stop_reason": "exited",
+      "cleanup_complete": true,
+      "elapsed_seconds": 2.885,
+      "memory_stop_triggers": [],
+      "observed_tree_rss_high_water_bytes": 110698496
+    },
+    "identity-resource": {
+      "returncode": 0,
+      "stop_reason": "exited",
+      "cleanup_complete": true,
+      "elapsed_seconds": 0.088,
+      "memory_stop_triggers": [],
+      "observed_tree_rss_high_water_bytes": 23244800
+    },
+    "default-local-resource": {
+      "returncode": 0,
+      "stop_reason": "exited",
+      "cleanup_complete": true,
+      "elapsed_seconds": 2.344,
+      "memory_stop_triggers": [],
+      "observed_tree_rss_high_water_bytes": 183566336
+    },
+    "selected-resource": {
+      "returncode": 0,
+      "stop_reason": "exited",
+      "cleanup_complete": true,
+      "elapsed_seconds": 18.151,
+      "memory_stop_triggers": [],
+      "observed_tree_rss_high_water_bytes": 237490176
+    },
+    "science-deps-resource": {
+      "returncode": 0,
+      "stop_reason": "exited",
+      "cleanup_complete": true,
+      "elapsed_seconds": 2.12,
+      "memory_stop_triggers": [],
+      "observed_tree_rss_high_water_bytes": 24944640
+    },
+    "selection-resource": {
+      "returncode": 0,
+      "stop_reason": "exited",
+      "cleanup_complete": true,
+      "elapsed_seconds": 30.07,
+      "memory_stop_triggers": [],
+      "observed_tree_rss_high_water_bytes": 167964672
+    }
+  },
+  "default_local": {
+    "passed": true,
+    "models_called": 0,
+    "experiment_mode": "local",
+    "experiment_mode_explicit": false,
+    "node_budget_mode": "soft",
+    "search_policy": null,
+    "roles": [
+      "H",
+      "W",
+      "A"
+    ],
+    "call": {
+      "call_id": "0001-a78fa7565ea74e0187374d277fbda32b",
+      "scope": {
+        "step": 2,
+        "role": "W",
+        "handoff_protocol": 18,
+        "job_sha256": "05bb1f8077b34c2779103c3cc74724fdfa38f90630e9815761c15478fbe75436",
+        "execution_key": "05bb1f8077b34c2779103c3cc74724fdfa38f90630e9815761c15478fbe75436",
+        "mechanism_ref": null
+      },
+      "mechanism_binding": null,
+      "status": "known_success",
+      "accepted": {
+        "path": "project/nodes/002/work/lineage/calls/0001-a78fa7565ea74e0187374d277fbda32b/accepted.json",
+        "sha256": "46a944557ac6aa0dec57ec710137e68ff9958198d9224e0e1529d5108e557096",
+        "size_bytes": 3929,
+        "retention": "archived",
+        "snapshot": "host-history/objects/46a944557ac6aa0dec57ec710137e68ff9958198d9224e0e1529d5108e557096"
+      },
+      "completed": {
+        "path": "project/nodes/002/work/lineage/calls/0001-a78fa7565ea74e0187374d277fbda32b/completed.json",
+        "sha256": "99a1392a67f60689bc627ad7403656ed050dc2d4398e2bb7c42dd5921f8c9e0c",
+        "size_bytes": 3340,
+        "retention": "archived",
+        "snapshot": "host-history/objects/99a1392a67f60689bc627ad7403656ed050dc2d4398e2bb7c42dd5921f8c9e0c"
+      },
+      "terminal": {
+        "path": "project/nodes/002/work/lineage/calls/0001-a78fa7565ea74e0187374d277fbda32b/terminal.json",
+        "sha256": "94b02e9e173ef84db474a14c1c08ccee09604b44a1f388a8029aa714359c1aae",
+        "size_bytes": 412,
+        "retention": "archived",
+        "snapshot": "host-history/objects/94b02e9e173ef84db474a14c1c08ccee09604b44a1f388a8029aa714359c1aae"
+      },
+      "originals": [
+        {
+          "path": "project/nodes/002/work/lineage/calls/0001-a78fa7565ea74e0187374d277fbda32b/inputs/input.txt",
+          "sha256": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+          "size_bytes": 2,
+          "retention": "archived",
+          "snapshot": "host-history/objects/73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049"
+        },
+        {
+          "path": "project/nodes/002/work/lineage/calls/0001-a78fa7565ea74e0187374d277fbda32b/inputs/run.py",
+          "sha256": "6e8a07af660423792721dd03c67d427f33818c8b9b45e6ca070735be4dc4b57e",
+          "size_bytes": 510,
+          "retention": "archived",
+          "snapshot": "host-history/objects/6e8a07af660423792721dd03c67d427f33818c8b9b45e6ca070735be4dc4b57e"
+        },
+        {
+          "path": "project/nodes/002/work/lineage/calls/0001-a78fa7565ea74e0187374d277fbda32b/accepted.json",
+          "sha256": "46a944557ac6aa0dec57ec710137e68ff9958198d9224e0e1529d5108e557096",
+          "size_bytes": 3929,
+          "retention": "archived",
+          "snapshot": "host-history/objects/46a944557ac6aa0dec57ec710137e68ff9958198d9224e0e1529d5108e557096"
+        },
+        {
+          "path": "project/nodes/002/work/lineage/calls/0001-a78fa7565ea74e0187374d277fbda32b/source.py",
+          "sha256": "6e8a07af660423792721dd03c67d427f33818c8b9b45e6ca070735be4dc4b57e",
+          "size_bytes": 510,
+          "retention": "archived",
+          "snapshot": "host-history/objects/6e8a07af660423792721dd03c67d427f33818c8b9b45e6ca070735be4dc4b57e"
+        },
+        {
+          "path": "project/nodes/002/work/lineage/calls/0001-a78fa7565ea74e0187374d277fbda32b/process.json",
+          "sha256": "5d2ee0b6dd3394fbf90a3d14432be288e8ed3ac9d001bcd1b45893f1c7281968",
+          "size_bytes": 520,
+          "retention": "archived",
+          "snapshot": "host-history/objects/5d2ee0b6dd3394fbf90a3d14432be288e8ed3ac9d001bcd1b45893f1c7281968"
+        },
+        {
+          "path": "project/nodes/002/work/lineage/calls/0001-a78fa7565ea74e0187374d277fbda32b/stdout.raw",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "size_bytes": 0,
+          "retention": "archived",
+          "snapshot": "host-history/objects/e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "project/nodes/002/work/lineage/calls/0001-a78fa7565ea74e0187374d277fbda32b/stderr.raw",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "size_bytes": 0,
+          "retention": "archived",
+          "snapshot": "host-history/objects/e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "path": "project/nodes/002/work/lineage/calls/0001-a78fa7565ea74e0187374d277fbda32b/terminal.json",
+          "sha256": "94b02e9e173ef84db474a14c1c08ccee09604b44a1f388a8029aa714359c1aae",
+          "size_bytes": 412,
+          "retention": "archived",
+          "snapshot": "host-history/objects/94b02e9e173ef84db474a14c1c08ccee09604b44a1f388a8029aa714359c1aae"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "argv.json",
+          "path": "project/nodes/002/work/lineage/calls/0001-a78fa7565ea74e0187374d277fbda32b/outputs/argv.json",
+          "sha256": "ba401857bec7d1eb7316c46a50aed239aa7449ff3537592b73031362a70f2e51",
+          "size_bytes": 37,
+          "retention": "archived",
+          "snapshot": "host-history/objects/ba401857bec7d1eb7316c46a50aed239aa7449ff3537592b73031362a70f2e51"
+        },
+        {
+          "name": "result.json",
+          "path": "project/nodes/002/work/lineage/calls/0001-a78fa7565ea74e0187374d277fbda32b/outputs/result.json",
+          "sha256": "5ed127f601c246ec4ef96571c8ec159189278579d66c524d2b0581904861a4a9",
+          "size_bytes": 196,
+          "retention": "archived",
+          "snapshot": "host-history/objects/5ed127f601c246ec4ef96571c8ec159189278579d66c524d2b0581904861a4a9"
+        },
+        {
+          "name": "value.txt",
+          "path": "project/nodes/002/work/lineage/calls/0001-a78fa7565ea74e0187374d277fbda32b/outputs/value.txt",
+          "sha256": "73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049",
+          "size_bytes": 2,
+          "retention": "archived",
+          "snapshot": "host-history/objects/73475cb40a568e8da8a045ced110137e159f890ac4da883b6b17dc651b3a8049"
+        }
+      ],
+      "execution": {
+        "returncode": 0,
+        "wall_seconds": 0.020204218999424484,
+        "result": {
+          "metrics": [
+            {
+              "name": "observation",
+              "value": 42
+            }
+          ],
+          "outputs": [
+            {
+              "label": "measured value",
+              "path": "artifacts/value.txt"
+            },
+            {
+              "label": "literal argv",
+              "path": "artifacts/argv.json"
+            }
+          ],
+          "status": "available"
+        }
+      }
+    },
+    "accepted_argv": [
+      "/tmp/rootless-r6-final-installed-20261015/venv/bin/python",
+      "/tmp/rootless-r6-final-installed-20261015/default-local/instance/project/nodes/002/work/lineage/calls/0001-a78fa7565ea74e0187374d277fbda32b/inputs/run.py",
+      "literal $(never-run)",
+      "two words"
+    ],
+    "a_read_retained_output": true,
+    "export_status": "exported_unsubmitted",
+    "goal_completion": "not_asserted",
+    "restart_no_replay": true,
+    "imports": [
+      {
+        "core": "/tmp/rootless-r6-final-installed-20261015/venv/lib/python3.12/site-packages/scidiscovery/research_loop/__init__.py",
+        "sys_path": [
+          "/home/da/miniconda3/lib/python312.zip",
+          "/home/da/miniconda3/lib/python3.12",
+          "/home/da/miniconda3/lib/python3.12/lib-dynload",
+          "/tmp/rootless-r6-final-installed-20261015/venv/lib/python3.12/site-packages"
+        ]
+      },
+      {
+        "core": "/tmp/rootless-r6-final-installed-20261015/venv/lib/python3.12/site-packages/scidiscovery/research_loop/__init__.py",
+        "sys_path": [
+          "/home/da/miniconda3/lib/python312.zip",
+          "/home/da/miniconda3/lib/python3.12",
+          "/home/da/miniconda3/lib/python3.12/lib-dynload",
+          "/tmp/rootless-r6-final-installed-20261015/venv/lib/python3.12/site-packages"
+        ]
+      },
+      {
+        "core": "/tmp/rootless-r6-final-installed-20261015/venv/lib/python3.12/site-packages/scidiscovery/research_loop/__init__.py",
+        "sys_path": [
+          "/home/da/miniconda3/lib/python312.zip",
+          "/home/da/miniconda3/lib/python3.12",
+          "/home/da/miniconda3/lib/python3.12/lib-dynload",
+          "/tmp/rootless-r6-final-installed-20261015/venv/lib/python3.12/site-packages"
+        ]
+      }
+    ]
+  },
+  "selected_tests": {
+    "test_copy": "/tmp/rootless-r6-final-installed-20261015/test-copy",
+    "test_source_identical": true,
+    "source_tree_present": false,
+    "project_conftest_present": false,
+    "targets": [
+      "test_local_managed.py",
+      "test_control_selection.py::test_plugin_without_smoke_is_neutral_and_missing_original_still_excluded",
+      "test_control_selection.py::test_cleaned_candidate_fault_continues_to_next_default_without_worker",
+      "test_control_selection.py::test_unknown_unclassified_or_shared_faults_stop_without_advancing_or_replay",
+      "test_registered_experiments.py::test_registered_cli_lifecycle_query_collect_and_byte_identity[local]",
+      "test_registered_experiments.py::test_original_unknown_submission_is_preserved_without_second_launch[local]",
+      "test_registered_experiments.py::test_lookup_restores_same_external_binding_after_lost_reply[local]",
+      "test_registered_experiments.py::test_cli_discovery_and_lifecycle_do_not_load_control_plane_services[local]",
+      "test_runtime.py::test_controller_kill_rejoins_same_native_execution",
+      "test_runtime.py::test_successful_leader_exit_cleans_surviving_standard_child",
+      "test_runtime.py::test_stale_identity_never_signals_an_unrelated_process"
+    ]
+  },
+  "scientific_fixture_dependencies": {
+    "versions": {
+      "numpy": "2.4.4",
+      "pandas": "2.3.3",
+      "python-dateutil": "2.9.0.post0",
+      "pytz": "2025.2",
+      "tzdata": "2025.2",
+      "six": "1.17.0",
+      "cloudpickle": "3.1.2"
+    },
+    "source_python": "/home/da/project/ai4s/tcad/git_release/scidiscovery-agent/123/scidiscovery-e5.2/../../.trial/e11/bin/python",
+    "source_read_only": true,
+    "test_observer_sha256": "ce5f9bf8aa18e470ad25fa983ae99fbe2223146a63153be19798fec02ce0bbc3",
+    "core_wheel_changed": false
+  },
+  "pytest_results": [
+    {
+      "phase": "selected",
+      "passed": 33,
+      "skipped": 9,
+      "seconds": 17.72,
+      "note": "All nine selection cases skipped before tested path due missing numpy/pandas"
+    },
+    {
+      "phase": "selection",
+      "passed": 9,
+      "skipped": 0,
+      "seconds": 29.7,
+      "note": "Only the previously skipped cases, after copying test dependencies and exact observer; no assertion or wheel changes"
+    }
+  ],
+  "remaining_skips": 0,
+  "models_called": 0,
+  "production_code_modified": false,
+  "budget_changed": false,
+  "pushed": false,
+  "independent_evidence_review": {
+    "status": "PASS",
+    "reviewer": "global_runtime_audit",
+    "base_commit": "85ca78ce26c92d260eea40ac52943b3655f17614",
+    "wheel_sha256": "332cd4c5c93b4482ab99ca538972e9a843e6e920a8eee211ea3abb95be1f6897",
+    "scope": "Independent raw artifacts, wheel, 239 installed files and 71 copied test files; default-local HWA archived proofs, two pytest batches and six resource results. Not full suite, real model or scientific efficacy qualification."
+  },
+  "limitations": [
+    "No real model or solver",
+    "No hidden target or scientific efficacy qualification",
+    "No full suite or long resource stress",
+    "Search disabled explicitly for deterministic default-local HWA; experiment mode and soft node mode use defaults",
+    "Optional screening fixtures exercise built-in cov execution interface without installing domain plugins"
+  ],
+  "initial_obsolete_build": "e926600 preliminary wheel was built but never tested; retained separately and excluded from qualification",
+  "upper_budget_and_driver_witnesses": [
+    {
+      "test": "test_r1_native_owner_cleans_de0",
+      "stop_reason": null,
+      "cleanup": "observed_group_cleaned",
+      "managed_experiments": null
+    },
+    {
+      "test": "test_r1_native_owner_cleans_de1",
+      "stop_reason": "node_slice_time_limit",
+      "cleanup": "observed_group_cleaned",
+      "managed_experiments": null
+    }
+  ]
+}
