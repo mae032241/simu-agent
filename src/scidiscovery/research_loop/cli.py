@@ -62,6 +62,7 @@ def main(argv=None):
     prepare.add_argument('--public-root', type=Path, required=True)
     prepare.add_argument('--native-launcher-json', required=True, help='An argv JSON array, e.g. ["codex"]')
     prepare.add_argument('--history-observer-config', type=Path, help='Optional trusted host adapter/config JSON; frozen at preparation')
+    prepare.add_argument('--experiment-mode', choices=['local', 'external'], help='Managed local W experiments or launcher-owned execution; standard codex defaults to local, custom launchers to external')
     prepare.add_argument('--search-policy', type=Path, help='Frozen W time/token targets (hard in hard mode) and hard requested-repair count')
     prepare.add_argument('--correction-policy', type=Path, help='Explicitly enable N4 with review_after/pause_after JSON thresholds (defaults 3/2)')
     prepare.add_argument('--node-budget-policy', type=Path, help='Explicit H/W/A/E time/token targets; hard ceilings only with --node-budget-mode hard; no delivery guarantee')
@@ -119,6 +120,7 @@ def main(argv=None):
                 max_steps=args.max_steps, model=args.model, reasoning_effort=args.reasoning_effort, node_budget_mode=args.node_budget_mode,
                 service_tier=args.service_tier, user_updates=args.user_update,
                 role_profiles=role_profiles,
+                experiment_mode=args.experiment_mode,
                 candidate_audit_policy={'version':1} if args.enable_candidate_audit else None,
                 decision_contract_version=1 if args.decision_contract else None,
                 portfolio_policy=dict(review_after_cycles=args.portfolio_review_after_cycles) if args.portfolio_review_after_cycles is not None else None,

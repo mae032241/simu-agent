@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import selectors
 import signal
+import shutil
 import subprocess
 import time
 
@@ -51,12 +53,54 @@ class LocalExecution:
             raise ValueError('Finite original execution time limit required')
         return payload
 
-    def acceptance_metadata(self,payload,*,parent=None,new=False,change=None):
+    def acceptance_metadata(self,payload,*,parent=None,new=False,change=None,command_options=None):
         if parent is not None or change is not None:
             raise ValueError('This implementation does not declare candidate parent semantics')
-        return dict(parent=dict(status='unknown',candidate_id=None,source='none'),change_intent=None,
-            command=[*self.config['run_argv'],payload.local_path],cwd=self.config.get('cwd'),
+        options=command_options or {}; arguments=options.get('arguments',[])
+        if (set(options)-{'arguments','experiment_directory'} or not isinstance(arguments,list)
+                or len(arguments)>128 or any(not isinstance(item,str) or '\0' in item for item in arguments)
+                or sum(len(item.encode()) for item in arguments)>16_000):
+            raise ValueError('Bounded command argv required')
+        metadata=dict(parent=dict(status='unknown',candidate_id=None,source='none'),change_intent=None,
+            local_observation_version=1,
+            command=[*self.config['run_argv'],payload.local_path,*arguments],script_index=len(self.config['run_argv']),cwd=self.config.get('cwd'),
             config_sha256=hashlib.sha256(e.encoded(self.config)).hexdigest())
+        if options.get('experiment_directory') is not None:
+            root=Path(options['experiment_directory']).absolute()
+            if root.resolve()!=root or not root.is_dir() or self.records.root.is_relative_to(root):
+                raise ValueError('Explicit original experiment directory must exclude execution records')
+            source=Path(payload.local_path)
+            if not source.is_relative_to(root) or source.relative_to(root).parts[0]=='artifacts':
+                raise ValueError('Script must belong to the experiment input directory')
+            metadata.update(experiment_directory=str(root),entry=source.relative_to(root).as_posix(),
+                snapshot_files=self.files(root,exclude_artifacts=True))
+            entry=next(item for item in metadata['snapshot_files'] if item['name']==metadata['entry'])
+            if entry['sha256']!=payload.sha256 or entry['size_bytes']!=payload.size_bytes:
+                raise e.IntegrityError('Experiment script changed during preparation')
+            metadata['cwd']=str(self.records.root/'calls'/payload.name/'inputs')
+        snapshot=self.records.root/'calls'/payload.name
+        metadata['command'][metadata['script_index']]=str(snapshot/'inputs'/metadata['entry'] if 'entry' in metadata else snapshot/'source.py')
+        return metadata
+
+    @staticmethod
+    def files(root,*,exclude_artifacts=False):
+        if root.resolve()!=root or not root.is_dir():
+            raise ValueError('Managed files require an original directory')
+        files=[];total=0
+        for directory,subdirs,names in os.walk(root,followlinks=False):
+            if exclude_artifacts and Path(directory)==root:subdirs[:]=[name for name in subdirs if name!='artifacts']
+            if any((Path(directory)/name).is_symlink() for name in subdirs):
+                raise ValueError('Managed directories cannot contain links')
+            for name in sorted(names):
+                if exclude_artifacts and Path(directory)==root and name=='artifacts':
+                    raise ValueError('Managed artifacts output must be a directory')
+                path=Path(directory)/name;item=e.proof(path);total+=item['size_bytes']
+                if len(path.relative_to(root).as_posix().encode())>512:
+                    raise ValueError('Managed file path capacity exceeded')
+                files.append(dict(item,name=path.relative_to(root).as_posix()))
+                if len(files)>e.MAX_INPUT_FILES or total>e.MAX_INPUT_BYTES:
+                    raise ValueError('Managed file capacity exceeded')
+        return sorted(files,key=lambda item:item['name'])
 
     def dispatch_lease(self,accepted):
         if accepted['scope']!=self.config['scope']:
@@ -87,7 +131,9 @@ class LocalExecution:
     def command(self,accepted):
         # Execute the exact control snapshot. cwd is separately configured;
         # imports/environment beyond this one payload are not frozen evidence.
-        return [*accepted['command'][:-1],str(self.records.directory(accepted['call_id'])/'source.py')]
+        command=list(accepted['command']);directory=self.records.directory(accepted['call_id'])
+        command[accepted.get('script_index',len(command)-1)]=str(directory/'inputs'/accepted['entry'] if 'entry' in accepted else directory/'source.py')
+        return command
 
     def _state(self,call_id):
         from . import runtime
@@ -117,9 +163,13 @@ class LocalExecution:
         from . import runtime
         directory=self.records.directory(call_id)
         runtime._subreaper()
+        started=time.monotonic()
         transport_complete=True;cleanup=False;returncode=None
+        cwd=accepted.get('cwd')
+        if 'entry' in accepted:
+            cwd=str(directory/'inputs');(Path(cwd)/'artifacts').mkdir()
         with (directory/'stdout.raw').open('xb') as out,(directory/'stderr.raw').open('xb') as err:
-            process=subprocess.Popen(self.command(accepted),cwd=accepted.get('cwd'),stdout=subprocess.PIPE,
+            process=subprocess.Popen(self.command(accepted),cwd=cwd,stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,start_new_session=True)
             identity=runtime.process_identity(process.pid,hashlib.sha256(e.encoded(accepted)).hexdigest())
             self.records.publish(call_id,'process.json',identity)
@@ -147,15 +197,74 @@ class LocalExecution:
             returncode=process.returncode
             process.stdout.close();process.stderr.close()
         self.records.publish(call_id,'terminal.json',dict(returncode=returncode,cleanup_confirmed=cleanup,
-            transport_complete=transport_complete))
+            transport_complete=transport_complete,wall_seconds=time.monotonic()-started))
         self.records.publish(call_id,'completed.json',self.completion(directory,accepted,returncode,cleanup,transport_complete))
 
     def completion(self,directory,accepted,returncode,cleanup,transport_complete):
         known=cleanup and transport_complete and type(returncode) is int
-        return dict(call_id=accepted['call_id'],status=('known_success' if returncode==0 else 'known_failed') if known else 'unknown',
+        original=dict(call_id=accepted['call_id'],status=('known_success' if returncode==0 else 'known_failed') if known else 'unknown',
             candidate_id=None,run_id=None,model=None,parent=accepted['parent'],change_intent=None,scope=accepted['scope'],
             proofs=[e.proof(directory/name) for name in ('accepted.json','source.py','process.json','stdout.raw','stderr.raw','terminal.json')],
             note='Original local command outcome; no domain metric or candidate qualification')
+        if accepted.get('local_observation_version')!=1:return original
+        outputs=[];result=dict(status='not_requested',metrics=[],outputs=[])
+        if 'entry' in accepted:
+            if not cleanup:
+                result=dict(status='unavailable',metrics=[],outputs=[],diagnostic='execution_cleanup_unknown')
+            else:
+                try:
+                    for item in self.files(directory/'inputs/artifacts'):
+                        source=Path(item['path']);target=directory/'outputs'/item['name']
+                        target.parent.mkdir(parents=True,exist_ok=True)
+                        shutil.copyfile(source,target);target.chmod(0o400)
+                        frozen=e.proof(target)
+                        if frozen['sha256']!=item['sha256']:raise e.IntegrityError('Managed output changed during collection')
+                        outputs.append(dict(frozen,name=item['name']))
+                    result=self.read_result(directory/'outputs',outputs)
+                except (OSError,ValueError) as error:
+                    result=dict(status='unavailable',metrics=[],outputs=[],diagnostic='managed_output_io' if isinstance(error,OSError) else 'managed_output_invalid')
+        terminal=json.loads(e.read(directory/'terminal.json'))
+        completed=dict(original,
+            outputs=outputs,result=result,wall_seconds=terminal.get('wall_seconds'),returncode=returncode,
+            note='Observed local command and declared results; external imports/environment and scientific validity are not qualified')
+        if len(e.encoded(completed))>e.MAX_BYTES:
+            retained=[item for item in outputs if item['name']=='result.json']
+            completed.update(outputs=retained,result=dict(status='unavailable',metrics=[],outputs=[],
+                diagnostic='managed_output_metadata_capacity',outputs_omitted_count=len(outputs)-len(retained)))
+        return completed
+
+    @staticmethod
+    def read_result(directory,outputs):
+        path=directory/'result.json'
+        if not path.exists():return dict(status='missing',metrics=[],outputs=[])
+        try:
+            value=json.loads(e.read(path,64_000))
+            if (not isinstance(value,dict) or set(value)!={'version','metrics','outputs'}
+                    or type(value['version']) is not int or value['version']!=1
+                    or not isinstance(value['metrics'],list) or len(value['metrics'])>32
+                    or not isinstance(value['outputs'],list) or len(value['outputs'])>128):
+                raise ValueError('Expected version 1 metrics and outputs')
+            seen=set()
+            for metric in value['metrics']:
+                if (not isinstance(metric,dict) or set(metric)-{'name','value','unit','evaluation_key','direction'}
+                        or not {'name','value'}<=set(metric) or not isinstance(metric['name'],str) or not 0<len(metric['name'].encode())<=160
+                        or metric['name'] in seen or type(metric['value']) not in (int,float) or not math.isfinite(metric['value'])
+                        or metric.get('direction') is not None and (not isinstance(metric['direction'],str) or metric['direction'] not in ('min','max'))
+                        or any(metric.get(key) is not None and (not isinstance(metric[key],str) or not 0<len(metric[key].encode())<=512)
+                            for key in ('unit','evaluation_key'))):
+                    raise ValueError('Metrics require distinct names and explicit finite values')
+                seen.add(metric['name'])
+            names={'artifacts/'+item['name'] for item in outputs}
+            seen=set()
+            for item in value['outputs']:
+                if (not isinstance(item,dict) or set(item)!={'path','label'} or not isinstance(item['path'],str)
+                        or item['path'] not in names or item['path'] in seen
+                        or not isinstance(item['label'],str) or not 0<len(item['label'].encode())<=160):
+                    raise ValueError('Result outputs require unique retained artifacts paths and labels')
+                seen.add(item['path'])
+            return dict(status='available',metrics=value['metrics'],outputs=value['outputs'])
+        except (OSError,ValueError,OverflowError,RecursionError) as error:
+            return dict(status='invalid',metrics=[],outputs=[],diagnostic='result_io' if isinstance(error,OSError) else 'result_json_invalid')
 
     def result(self,call_id):
         directory=self.records.directory(call_id)
@@ -169,6 +278,13 @@ class LocalExecution:
             raise e.IntegrityError('Completed scientific mechanism binding changed')
         for item in result['proofs']:
             if e.proof(item['path'])!=item:raise e.IntegrityError('Completed execution original changed')
+        for item in result.get('outputs',[]):
+            if e.proof(item['path'])!={key:item[key] for key in ('path','sha256','size_bytes')}:
+                raise e.IntegrityError('Completed output original changed')
+        for item in accepted.get('snapshot_files',[]):
+            original=e.proof(directory/'inputs'/item['name'])
+            if any(original[key]!=item[key] for key in ('sha256','size_bytes')):
+                raise e.IntegrityError('Accepted input snapshot changed')
         return result
 
     def status(self,external_run_id):
@@ -176,11 +292,13 @@ class LocalExecution:
 
     def status_details(self,external_run_id):
         state=self._state(external_run_id)
+        result={}
         if state in {'succeeded','failed'}:
             result=self.result(external_run_id)
             if result['status']=='unknown':state='unknown'
         return dict(state=state,call_id=external_run_id,candidate_id=None,evaluation_key=None,metric=None,
-            direction=None,wall_seconds=None,parent_candidate=None)
+            direction=None,wall_seconds=result.get('wall_seconds'),returncode=result.get('returncode'),
+            result=result.get('result'),parent_candidate=None)
 
     def cancel(self,external_run_id):
         raise e.UnsupportedExecution('Original command cancellation is not declared')
@@ -198,15 +316,16 @@ class LocalExecution:
     def collect(self,external_run_id):
         if self.status(external_run_id) not in {'succeeded','failed'}:
             raise e.UnsupportedExecution('Original command is not confirmed terminal')
-        self.result(external_run_id)
+        result=self.result(external_run_id)
         directory=self.records.directory(external_run_id)
-        return tuple(LocalFileDescriptor(name=name.replace('.','-'),local_path=str(directory/name),
-            sha256=e.proof(directory/name)['sha256'],size_bytes=(directory/name).stat().st_size,
-            media_type='application/octet-stream') for name in ('stdout.raw','stderr.raw'))
+        paths=[directory/name for name in ('stdout.raw','stderr.raw')]+[Path(item['path']) for item in result.get('outputs',[])]
+        return tuple(LocalFileDescriptor(name=f'output-{index}',local_path=str(path),
+            sha256=e.proof(path)['sha256'],size_bytes=path.stat().st_size,
+            media_type='application/octet-stream') for index,path in enumerate(paths))
 
     @staticmethod
     def public_result(result):
-        return {key:result[key] for key in ('call_id','status','note') if key in result}
+        return {key:result[key] for key in ('call_id','status','note','returncode','wall_seconds','result') if key in result}
 
 
 def build(context):
@@ -214,3 +333,33 @@ def build(context):
 
 
 REGISTRATION=ExecutionInterfaceRegistration('local_execution','1',RuntimePluginFactory(build))
+
+
+def cleanup(root,job,*,watchdog=False):
+    """Clean only this native owner's accepted local groups; never replay calls."""
+    from . import contracts as c, execution, protocol, runtime
+    if job.get('experiment_mode')!='local' or job['role']!='W':return 'not_applicable'
+    path=execution.record(root,job['step'])/'experiment-config.json'
+    if not path.exists():return 'not_configured'
+    config=c.read(c.regular(path));e.load(config,path=path)
+    if config['scope']!=protocol.stage_scope(root,job) or config['execution_interface']['executor']!='local_execution:command':
+        raise e.IntegrityError('Local cleanup escaped its frozen native owner')
+    result='observed_group_cleaned'
+    records=e.Records(config)
+    for directory in records.calls():
+        accepted=records.accepted(directory.name)
+        if accepted.get('local_observation_version')!=1:raise e.IntegrityError('Local cleanup original differs')
+        terminal=directory/'terminal.json'
+        if terminal.exists():
+            value=json.loads(e.read(terminal))
+            if value.get('call_id')!=directory.name or value.get('scope')!=config['scope']:
+                raise e.IntegrityError('Local terminal owner differs')
+            if value.get('cleanup_confirmed') is True:continue
+        process=directory/'process.json'
+        if not process.exists():result='cleanup_unknown';continue
+        identity=json.loads(e.read(process));key=hashlib.sha256(e.encoded(accepted)).hexdigest()
+        if identity.get('task_sha256')!=key or identity.get('pgid')!=identity.get('pid') or identity.get('sid')!=identity.get('pid'):
+            raise e.IntegrityError('Local cleanup process binding differs')
+        status=runtime.signal_observed_group(identity) if watchdog else runtime.cleanup_owned_group(identity)
+        if status!='observed_group_cleaned':result='cleanup_unknown'
+    return result

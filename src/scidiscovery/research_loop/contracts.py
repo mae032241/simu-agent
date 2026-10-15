@@ -444,6 +444,9 @@ def science_view(job, root=None):
                 'Exact completed requests without new bound evidence require clarification; this is not a scientific value judgment.')
            if protocol >= 10 and job['role'] == 'A' else {}),
         'final_response': list(result_schema(job['role'], job.get('handoff_protocol', 1), 'selection' in job)['properties']),
+        **(dict(experiment_execution=('Managed local W commands are available; only calls through the provided experiment command are recorded. Native scratch shell remains available.'
+            if job['experiment_mode'] == 'local' else 'External launcher owns experiment configuration; native shell commands are not automatically recorded.'))
+            if 'experiment_mode' in job else {}),
         'outputs': 'artifacts/', 'scratch': 'work/',
     }.items() if value}
 
@@ -499,6 +502,16 @@ def collect_materials(root: Path, step: int):
 
     artifacts(work / 'artifacts')
     experiments(work / 'experiments')
+    job=read(root/'jobs'/f'{step:03d}.json')
+    if job.get('experiment_mode')=='local' and job['role']=='W':
+        from . import execution, experiments as managed
+        config_path=execution.record(root,step)/'experiment-config.json'
+        if config_path.exists():
+            config=read(regular(config_path));adapter=managed.load(config,path=config_path)
+            for directory in managed.Records(config).calls():
+                result=adapter.result(directory.name)
+                for item in result.get('outputs',[]):
+                    add(Path(item['path']),f'experiments/{directory.name}/artifacts/{item["name"]}')
     if len({row['path'] for row in rows}) != len(rows):
         raise ValueError('Deliverable paths collide with nested experiment outputs')
     return sorted(rows, key=lambda row: row['path'])
@@ -615,6 +628,8 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
         job['experiment_interface_version'] = 1
     if (retained.get('managed_admission_version') if retained is not None else policy.get('managed_admission_version')) == 1:
         job['managed_admission_version'] = 1
+    if policy.get('experiment_mode') is not None:
+        job['experiment_mode'] = policy['experiment_mode']
     advice = retained.get('role_guidance') if retained is not None else policy.get('role_guidance', {}).get(role)
     if advice is not None:
         job['role_guidance'] = advice
@@ -748,6 +763,8 @@ def validate(work: Path):
 
 
 def _validate_inputs(root, work, job):
+    if job.get('experiment_mode')!=settings(root).get('experiment_mode'):
+        raise ValueError('Frozen experiment mode differs from its original settings')
     if job['role']=='W' and job.get('worker_fragment_policy')!=settings(root).get('worker_fragment_policy'):
         raise ValueError('Frozen W continuation configuration differs from its original settings')
     if job.get('audit_projection_version') == 1:

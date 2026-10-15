@@ -30,6 +30,8 @@ ADMISSION_VERSION = 1
 MAX_BYTES = 256_000
 MAX_ASSET = 32 * 1024 * 1024
 MAX_CALLS = 128
+MAX_INPUT_FILES = 128
+MAX_INPUT_BYTES = 64 * 1024 * 1024
 ID = re.compile(r'[A-Za-z0-9._-]{1,128}\Z')
 
 
@@ -284,6 +286,26 @@ class Records:
             source_script=descriptor.local_path, script=source_proof,native_attempt=self.config.get('native_attempt'),
             prepared=descriptor.model_dump(mode='json'), interface=interface)
         try:
+            files = metadata.get('snapshot_files', [])
+            if not isinstance(files, list) or len(files) > MAX_INPUT_FILES:
+                raise ValueError('Managed input file capacity exceeded')
+            total = 0; seen = set()
+            for item in files:
+                name = item['name']; relative = Path(name)
+                if (not isinstance(name, str) or relative.is_absolute() or '..' in relative.parts
+                        or relative.as_posix() != name or not relative.parts or name in seen):
+                    raise ValueError('Managed input path is not canonical')
+                seen.add(name)
+                content = read(item['path'], MAX_ASSET); total += len(content)
+                if total > MAX_INPUT_BYTES:
+                    raise ValueError('Managed input byte capacity exceeded')
+                if hashlib.sha256(content).hexdigest() != item['sha256'] or len(content) != item['size_bytes']:
+                    raise IntegrityError('Managed input changed before acceptance')
+                target = directory / 'inputs' / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with target.open('xb') as stream:
+                    stream.write(content); stream.flush(); os.fsync(stream.fileno())
+                target.chmod(0o400)
             with self.lease():
                 if expected_calls is not None and [path.name for path in self.calls()]!=expected_calls:
                     raise ConcurrentExecution('Another original execution was accepted; query its identity')
@@ -310,6 +332,7 @@ class Records:
         accepted = json.loads(read(directory / 'accepted.json'))
         if accepted['scope'] != self.config['scope'] or accepted['call_id'] != call_id:
             raise IntegrityError('Execution receipt escaped its accepted scope')
+        value=dict(value,call_id=call_id,scope=self.config['scope'])
         if 'mechanism_binding' in accepted:
             if 'mechanism_binding' in value and value['mechanism_binding']!=accepted['mechanism_binding']:
                 raise IntegrityError('Execution receipt changed scientific mechanism')
@@ -366,21 +389,21 @@ class Records:
         return {'known_success':'succeeded','known_failed':'failed','unknown':'unknown'}.get(completed.get('status'),'unknown')
 
 
-def dispatch(config, script, *, parent=None, new=False, change=None, mechanism=None):
+def dispatch(config, script, *, parent=None, new=False, change=None, mechanism=None, command_options=None):
     """Convenience input path; neutral callers may provide a descriptor directly."""
     source=Path(script).resolve();item=proof(source)
     payload=LocalFileDescriptor(name='input',local_path=str(source),sha256=item['sha256'],
         size_bytes=item['size_bytes'],media_type='application/octet-stream')
-    return dispatch_descriptor(config,payload,parent=parent,new=new,change=change,mechanism=mechanism)
+    return dispatch_descriptor(config,payload,parent=parent,new=new,change=change,mechanism=mechanism,command_options=command_options)
 
 
-def dispatch_descriptor(config, payload, *, parent=None, new=False, change=None, mechanism=None):
-    try:return _dispatch_descriptor(config,payload,parent=parent,new=new,change=change,mechanism=mechanism)
+def dispatch_descriptor(config, payload, *, parent=None, new=False, change=None, mechanism=None, command_options=None):
+    try:return _dispatch_descriptor(config,payload,parent=parent,new=new,change=change,mechanism=mechanism,command_options=command_options)
     except BlockingIOError:return dict(status='unknown',note='Original accepted execution still owns its lease')
     except ConcurrentExecution as error:return dict(status='unknown',note=str(error))
 
 
-def _dispatch_descriptor(config, payload, *, parent=None, new=False, change=None, mechanism=None):
+def _dispatch_descriptor(config, payload, *, parent=None, new=False, change=None, mechanism=None, command_options=None):
     from .protocol import require_scope
     require_scope(config.get('scope'))
     repair=config.get('engineering_repair')
@@ -399,7 +422,12 @@ def _dispatch_descriptor(config, payload, *, parent=None, new=False, change=None
     call_id = f'{len(before)+1:04d}-{uuid.uuid4().hex}'
     descriptor = payload.model_copy(update={'name':call_id})
     prepared = adapter.prepare(descriptor, preparation_profile='research_loop.v1', exchange_directory=records.root)
-    metadata = adapter.acceptance_metadata(prepared, parent=parent, new=new, change=change)
+    options = dict(command_options=command_options) if command_options is not None else {}
+    try:
+        metadata = adapter.acceptance_metadata(prepared, parent=parent, new=new, change=change, **options)
+    except TypeError as error:
+        if options:raise UnsupportedExecution('Selected executor does not support local command options') from error
+        raise
     accepted = records.accept(prepared, metadata, config['execution_interface'],expected_calls=[path.name for path in before],mechanism=mechanism)
     adapter.dispatch_lease(accepted)
     external_id,state=adapter.submit(prepared)
@@ -430,7 +458,8 @@ def progress(config):
         counts[state] += 1
         rows.append(dict(call_id=path.name, **(dict(mechanism_ref=binding['mechanism_ref']) if binding else {}), status=state, candidate_id=details.get('candidate_id'),
             evaluation_key=details.get('evaluation_key'), metric=details.get('metric'), direction=details.get('direction'),
-            wall_seconds=details.get('wall_seconds'), parent_candidate=details.get('parent_candidate')))
+            wall_seconds=details.get('wall_seconds'), parent_candidate=details.get('parent_candidate'),
+            **(dict(returncode=details['returncode'],result=details['result']) if details.get('result') is not None else {})))
     return dict(version=1, calls=rows[-16:], counts=counts, omitted_count=max(0, len(rows)-16),
         coverage='partial' if counts['unknown'] else 'complete', observed_at=time.time())
 
@@ -455,8 +484,11 @@ def main(argv=None):
     sub=parser.add_subparsers(dest='command',required=True)
     run=sub.add_parser('run');payload=run.add_mutually_exclusive_group(required=True)
     payload.add_argument('--script',type=Path);payload.add_argument('--payload',type=Path)
+    run.add_argument('--experiment-dir',type=Path,help='Snapshot only this explicit experiment directory, excluding artifacts/; execute its script copy and collect artifacts/')
     choice=run.add_mutually_exclusive_group();choice.add_argument('--parent-plan');choice.add_argument('--new-plan',action='store_true')
-    run.add_argument('--change-intent');run.add_argument('--mechanism');sub.add_parser('lineage-status')
+    run.add_argument('--change-intent');run.add_argument('--mechanism')
+    run.add_argument('arguments',nargs=argparse.REMAINDER,help='Script arguments after --; passed as argv, never shell text')
+    sub.add_parser('lineage-status')
     for name in ('query','lookup','collect','cancel'):
         item=sub.add_parser(name);item.add_argument('--call-id',required=True)
     args=parser.parse_args(argv)
@@ -471,7 +503,10 @@ def main(argv=None):
             require_scope(config.get('scope'))
         adapter=load(config,path=args.config)
         if args.command=='run':
-            result=dispatch(config,args.script or args.payload,parent=args.parent_plan,new=args.new_plan,change=args.change_intent,mechanism=args.mechanism)
+            arguments=args.arguments[1:] if args.arguments[:1]==['--'] else args.arguments
+            options=dict(arguments=arguments,experiment_directory=str(args.experiment_dir.absolute()) if args.experiment_dir else None)
+            result=dispatch(config,args.script or args.payload,parent=args.parent_plan,new=args.new_plan,change=args.change_intent,mechanism=args.mechanism,
+                command_options=options if arguments or args.experiment_dir else None)
             result=adapter.public_result(result)
             code={'known_success':0,'known_failed':1}.get(result['status'],2)
         elif args.command=='lineage-status':result=progress(config);code=0

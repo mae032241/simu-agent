@@ -93,6 +93,7 @@ def capture(root,job,record):
         observed=c.read(observed_path)
         if (source.get('search') or {}).get('breadth'):history.validate_managed(root,source,observed['managed_calls'])
         for row in observed.get('managed_calls',[]):
+            if row.get('mechanism_binding') is None:continue
             ref=row['mechanism_binding']['mechanism_ref']
             if ref not in needed:continue
             if row['status']!='unknown':rows.append(dict(mechanism_ref=ref,accepted=row['accepted'],completed=row['completed'],terminal=row['terminal']))

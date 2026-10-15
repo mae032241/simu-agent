@@ -33,6 +33,48 @@ scid-research run --root /absolute/path/new-instance
 rootless cov launcher 的 operator 配置应声明相同全局值与 `role_profiles`（可为等价的稀疏配置）；它核对冻结实例，再生成匹配的 CODEX_HOME 配置，拒绝不一致的 model/effort/tier 参数。
 这些记录证明请求参数一致，不代替服务端实际模型或计费观测。
 
+## 受管本地实验
+
+标准单项 `codex` launcher 新建实例默认冻结 `--experiment-mode local`，W 启动前由控制层准备本地执行配置。
+自定义 launcher 省略此参数时按兼容规则冻结 `external`，其执行配置由 launcher 提供；任务简报会说明普通 shell 命令没有自动记录。
+自定义本地 launcher 可显式传 `--experiment-mode local`；已有 cov launcher 使用 `external`，不会被默认 local 配置覆盖。
+模式在 settings/job 中冻结，恢复沿用原选择；已有实例缺少此字段时保持原配置路径。
+原生 shell 和权限照常可用，临时分析无需逐项受管。
+
+W 可在 `experiments/<name>/` 编写脚本及输入，通过已有执行 CLI 正式运行：
+
+```sh
+scid-experiment --config work/experiment-config.json run \
+  --experiment-dir experiments/check-one --script experiments/check-one/run.py -- --seed 7
+```
+
+控制层只快照明确选择的目录，排除该目录原有的 `artifacts/`，在接受执行前验证文件原件并原子保留。
+输入上限为128个文件、单件32MiB、合计64MiB；拒绝符号链接和路径逃逸，不扫描整个工作区寻找依赖。
+复制的脚本以快照根为工作目录运行，命令参数按 argv 原样传入；脚本将输出写到 `artifacts/`。
+原目录不接收这些运行输出。控制记录命令、参数、退出码、耗时和日志，保留输入及输出快照。
+命令默认最多65秒且不超过实例原秒数上限，日志合计最多256000字节；任务和共享预算仍适用。
+未在所选目录中的导入、环境及外部文件没有被快照，不据此承诺完整环境复现。
+脚本应使用相对路径读取受管输入；argv 不推断文件含义或改写绝对路径，原生访问本身不构成读取快照的证明。
+仅 `--script` 的原单文件入口仍可用；需要输入、成果自动快照时使用 `--experiment-dir`。
+
+科学代码可生成可选的 `artifacts/result.json`：
+
+```json
+{"version":1,"metrics":[{"name":"loss","value":0.2,"unit":null,"evaluation_key":"public-v1","direction":"min"}],"outputs":[{"path":"artifacts/comparison.csv","label":"比较数据"}]}
+```
+
+`metrics` 至多32项，要求不同的名称和有限数值；`unit`、`evaluation_key`、`direction` 可省略或为 null。
+`outputs` 至多128项，声明本次已保留的 `artifacts/` 相对路径及科学标签。科学代码只写结果，不填哈希、原件ID或审计结论。
+控制保留原 JSON 和成果，自动采集指标，在后继角色的 `lineage.indexes.experiments` 提供分页入口，并按现有成果机制交接文件。
+指标名不赋予目标含义，通用结果目前不自动生成候选或参与候选排名；A 的本地候选推荐可以为 null。
+
+执行状态与结果状态分别显示：退出码0只表示命令成功；结果文件缺失为 `missing`，JSON或指标无效为 `invalid`，采集失败为 `unavailable`。
+原件、cleanup或外部结果未知时保留 `unknown`，不得重发以代替查明原调用。
+成果元数据超出控制记录容量时保留执行终态和原始结果文件入口，标记采集不可用及省略数量，不将其视为完整交付。
+使用 `lineage-status` 查看已有调用，或用其原 call ID 执行 `query`、`lookup`、`collect`；失败和缺失不会变成科学合格。
+无外部交付 adapter 时可使用 `scid-research closeout --root /path/to/instance --export-only` 保留成果及限制，状态为 `exported_unsubmitted`。
+本地成果封存及交接不产生 cov 审计资格或外部提交确认。
+
 ## 文件与职责
 
 H 提出竞争机制和最小判别依据，决定是否请求 E。W 在用户约束与 H 范围内拥有实验设计和搜索责任，根据结果新建、改进、修复或回退候选。A 判断全局贡献、关键证据缺口和下一方向；它可要求关键反例，但不默认指定完整算法、参数或扰动矩阵。机制改变交回 H。

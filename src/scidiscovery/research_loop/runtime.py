@@ -76,6 +76,27 @@ def cleanup_owned_group(child):
         time.sleep(.02)
 
 
+def signal_observed_group(child):
+    """Watchdog fallback: signal exact members while their original leader is live."""
+    key=child['task_sha256']
+    if not process_matches(child,key):return 'cleanup_unknown'
+    members=[]
+    for entry in Path('/proc').iterdir():
+        if not entry.name.isdecimal():continue
+        try:
+            member=process_identity(int(entry.name),key)
+            if (member['pgid']==child['pgid'] and member['sid']==child['sid']
+                    and member['boot_id']==child['boot_id'] and member['start_ticks']>=child['start_ticks']):
+                members.append(member)
+        except (OSError,ValueError,IndexError):pass
+    if not process_matches(child,key):return 'cleanup_unknown'
+    for member in members:
+        if process_matches(member,key):
+            try:os.kill(member['pid'],signal.SIGKILL)
+            except ProcessLookupError:pass
+    return 'observed_group_signalled'  # Signalling alone never asserts cleanup or execution outcome.
+
+
 def node_state(root, step):
     """Read original facts; unknown never permits a replacement submission."""
     record = execution.record(root, step)
@@ -161,7 +182,15 @@ def _watch(root, step, attempt=0):
                 cleanup = 'observed_group_signalled'
     except (OSError, ValueError, KeyError, TypeError):
         pass
+    managed=None
+    try:
+        job=contracts.read(root/'jobs'/f'{step:03d}.json')
+        if job.get('experiment_mode')=='local' and job['role']=='W':
+            from . import local_experiments
+            managed=local_experiments.cleanup(root,job,watchdog=True)
+    except (OSError,ValueError,KeyError,TypeError):managed='cleanup_unknown'
     contracts.write(record / 'runner-cleanup.json', dict(status=cleanup,
+        **(dict(managed_experiments=managed) if managed is not None else {}),
         limitation='Only exactly observed original process-group members; detached descendants are not covered.'))
 
 

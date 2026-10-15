@@ -1,0 +1,349 @@
+"""R1 local receipts and R2 bounded results through real processes; no models."""
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+import pytest
+
+from execution_fixtures import execution_registry
+from scidiscovery.research_loop import contracts as c, controller, experiments as e, history, native
+from scidiscovery.research_loop.local_experiments import LocalExecution
+from scidiscovery.research_loop.protocol import CURRENT
+
+
+@pytest.fixture
+def local(tmp_path, execution_registry):
+    root=tmp_path/'experiment';root.mkdir()
+    (root/'inputs').mkdir();(root/'inputs/value.txt').write_text('42')
+    script=root/'run.py'
+    script.write_text('import json,pathlib,sys\n'
+        'value=int(pathlib.Path("inputs/value.txt").read_text())\n'
+        'pathlib.Path("artifacts/value.txt").write_text(str(value))\n'
+        'pathlib.Path("artifacts/result.json").write_text(json.dumps({"version":1,"metrics":[{"name":"value","value":value}],'
+        '"outputs":[{"path":"artifacts/value.txt","label":"observation"}]}))\n'
+        'print(json.dumps(sys.argv[1:]))\n')
+    config_path=tmp_path/'config.json'
+    config=e.freeze(dict(admission=dict(version=1,mode='hard'),record_dir=str(tmp_path/'receipts'),
+        scope=dict(handoff_protocol=CURRENT,step=2,role='W',job_sha256='a'*64,execution_key='b'*64,mechanism_ref=None),
+        run_argv=[sys.executable],max_seconds=10),'local_execution:command',path=config_path)
+    config_path.write_text(json.dumps(config))
+    return root,script,config,config_path
+
+
+def test_r1_snapshot_argv_facts_and_original_lookup(local,monkeypatch):
+    root,script,config,_=local
+    original=LocalExecution._execute
+    def changed(self,*args):
+        (root/'inputs/value.txt').write_text('99')
+        original(self,*args)
+    monkeypatch.setattr(LocalExecution,'_execute',changed)
+    result=e.dispatch(config,script,command_options=dict(experiment_directory=str(root),arguments=['literal $(never-run)','two words']))
+    assert result['status']=='known_success' and result['returncode']==0 and result['wall_seconds']>=0
+    call=result['call_id'];directory=e.Records(config).directory(call)
+    accepted=json.loads((directory/'accepted.json').read_text())
+    assert accepted['command'][-2:]==['literal $(never-run)','two words']
+    assert accepted['cwd']==str(directory/'inputs')
+    assert json.loads((directory/'stdout.raw').read_text())==accepted['command'][-2:]
+    assert (directory/'outputs/value.txt').read_text()=='42'
+    assert not (root/'artifacts').exists()
+    adapter=e.load(config)
+    assert adapter.lookup_submission(e.LocalFileDescriptor.model_validate(accepted['prepared']))==(call,'succeeded')
+    assert adapter.collect_original(call)
+    assert len(e.Records(config).calls())==1
+    assert e.progress(config)['calls'][0]['result']['status']=='available'
+
+
+@pytest.mark.parametrize('content,status',[(None,'missing'),('invalid','invalid'),
+    ('{"version":1,"metrics":[{"name":"x","value":NaN}],"outputs":[]}','invalid'),
+    ('{"version":1,"metrics":[],"outputs":[{"path":"../escape","label":"bad"}]}','invalid')])
+def test_r2_bad_or_missing_result_preserves_process_success(local,content,status):
+    root,script,config,_=local
+    script.write_text('import pathlib\n'+('pathlib.Path("artifacts/result.json").write_text('+repr(content)+')\n' if content is not None else ''))
+    result=e.dispatch(config,script,command_options=dict(experiment_directory=str(root),arguments=[]))
+    assert result['status']=='known_success' and result['returncode']==0
+    assert result['result']['status']==status and result['result']['metrics']==[]
+    if content is not None:
+        assert any(item['name']=='result.json' for item in result['outputs'])
+
+
+def test_r1_input_link_rejected_before_acceptance_and_output_link_is_collection_failure(local):
+    root,script,config,_=local
+    (root/'inputs/link').symlink_to(root/'inputs/value.txt')
+    with pytest.raises(ValueError):e.dispatch(config,script,command_options=dict(experiment_directory=str(root),arguments=[]))
+    assert e.Records(config).calls()==[]
+    (root/'inputs/link').unlink()
+    script.write_text('import pathlib\npathlib.Path("artifacts/link").symlink_to("/etc/passwd")\n')
+    result=e.dispatch(config,script,command_options=dict(experiment_directory=str(root),arguments=[]))
+    assert result['status']=='known_success' and result['result']['status']=='unavailable'
+    assert result['outputs']==[]
+
+
+def test_r2_unknown_cleanup_never_upgrades_execution_or_collects(local,monkeypatch):
+    from scidiscovery.research_loop import runtime
+    root,script,config,_=local
+    monkeypatch.setattr(runtime,'cleanup_owned_group',lambda identity:'unknown')
+    result=e.dispatch(config,script,command_options=dict(experiment_directory=str(root),arguments=[]))
+    assert result['status']=='unknown' and result['result']['status']=='unavailable' and result['outputs']==[]
+    assert e.dispatch(config,script)['status']=='unknown'
+    assert len(e.Records(config).calls())==1
+
+
+@pytest.mark.parametrize('launcher,mode,expected',[(['codex'],None,'local'),(['custom'],None,'external'),
+    (['codex'],'external','external'),(['custom'],'local','local')])
+def test_prepare_freezes_effective_mode(tmp_path,launcher,mode,expected):
+    public=tmp_path/'public';public.mkdir();objective=public/'goal.md';objective.write_text('Bounded goal')
+    root=tmp_path/'instance'
+    settings=controller.prepare(root,objective,public,launcher,max_tokens=1000,max_seconds=30,max_steps=3,
+        model='fake',reasoning_effort='high',search_policy=None,experiment_mode=mode)
+    assert settings['experiment_mode']==expected
+    job=c.build_job(root,1,'H',[])
+    assert job['experiment_mode']==expected
+    assert ('not automatically recorded' in c.science_view(job,root)['experiment_execution'])==(expected=='external')
+
+
+NATIVE='''import json,os,pathlib,subprocess,sys
+work=pathlib.Path(os.environ['THIN_HWA_WORKSPACE']);role=os.environ['THIN_HWA_ROLE']
+task=json.loads((work/'science-task.json').read_text());prompt=sys.stdin.read()
+payload=dict(summary=role+' finding',scientific_result='Synthetic observation only.',limitations=['No scientific qualification.'],implementation_selection=None)
+if role=='H':payload.update(next_action='experiment',route_reason='Measure explicit input',search_plan=None)
+if role=='W':
+ assert 'Managed local experiments:' in prompt
+ exp=work/'experiments/one';exp.mkdir(parents=True)
+ (exp/'input.txt').write_text('42')
+ (exp/'run.py').write_text('import json,pathlib\\nvalue=int(pathlib.Path("input.txt").read_text())\\npathlib.Path("artifacts/value.txt").write_text(str(value))\\npathlib.Path("artifacts/result.json").write_text(json.dumps({"version":1,"metrics":[{"name":"observation","value":value}],"outputs":[{"path":"artifacts/value.txt","label":"measured value"}]}))\\n')
+ run=subprocess.run([sys.executable,'-m','scidiscovery.research_loop.experiments','--config',str(work/'work/experiment-config.json'),'run','--experiment-dir',str(exp),'--script',str(exp/'run.py')],capture_output=True,text=True)
+ assert run.returncode==0,(run.stdout,run.stderr)
+ payload.update(stage_intent='review',mechanism_findings=None)
+if role=='A':
+ index=json.loads((work/task['lineage']['indexes']['experiments']).read_text())
+ call=index['experiments'][0]
+ assert call['execution_status']=='known_success' and call['result_status']=='available',call
+ assert call['metrics']==[{'name':'observation','value':42}]
+ observed=next(row['path'] for row in call['outputs'] if row['path'].endswith('/value.txt'))
+ assert (work/observed).read_text()=='42'
+ payload.update(next_action='finish',route_reason='Retain bounded evidence',candidate_recommendation=None,search_review=None,progress_assessment=None,decision_request=None,portfolio_review=None,
+  scientific_result='Read exact retained observation: [value]('+observed+').')
+args=sys.argv[1:];pathlib.Path(args[args.index('--output-last-message')+1]).write_text(json.dumps(payload))
+print(json.dumps({'type':'thread.started','thread_id':'fixture-'+role}),flush=True)
+print(json.dumps({'type':'turn.completed','usage':{'input_tokens':10,'cached_input_tokens':0,'output_tokens':5}}),flush=True)
+'''
+
+
+def test_r1_r2_real_native_hwa_without_search_archives_results_for_a_and_export(tmp_path,execution_registry,monkeypatch):
+    source=Path(__file__).parents[2]/'src'
+    monkeypatch.setenv('PYTHONPATH',str(source)+os.pathsep+os.environ.get('PYTHONPATH',''))
+    public=tmp_path/'public';public.mkdir();objective=public/'goal.md';objective.write_text('Read the explicit observation; preserve uncertainty.')
+    launcher=tmp_path/'native.py';launcher.write_text(NATIVE)
+    root=tmp_path/'instance'
+    controller.prepare(root,objective,public,[sys.executable,str(launcher)],max_tokens=1000,max_seconds=60,max_steps=5,
+        model='fake',reasoning_effort='high',search_policy=None,experiment_mode='local',node_budget_mode='hard')
+    result=controller.run(root)
+    assert result['status']=='finish',result
+    work=c.workspace(root,2);seal=c.read(c.host_record(work)/'result-identity.json')
+    observation=c.read(root/seal['observations']['path']);call=observation['managed_calls'][0]
+    assert call['mechanism_binding'] is None and call['status']=='known_success'
+    assert observation['candidates']==[]
+    assert all(item['retention']=='archived' for item in [*call['originals'],*call['outputs']])
+    assert 'Read exact retained observation' in c.validate(c.workspace(root,3))['scientific_result']
+    before={p:p.read_bytes() for p in (work/'work/lineage/calls').rglob('*') if p.is_file()}
+    assert controller.run(root)==result
+    assert before=={p:p.read_bytes() for p in (work/'work/lineage/calls').rglob('*') if p.is_file()}
+    assert controller.closeout(root,export_only=True)['status']=='exported_unsubmitted'
+    assert not list((root/'host-delivery').glob('**/*.intent.json'))
+    output=next(item for item in call['outputs'] if item['name']=='value.txt')
+    assert (root/output['snapshot']).read_text()=='42'
+
+
+@pytest.mark.parametrize('direction',[[],{}])
+def test_r2_unhashable_json_direction_is_invalid_not_lost_completion(local,direction):
+    root,script,config,_=local
+    value=dict(version=1,metrics=[dict(name='x',value=1,direction=direction)],outputs=[])
+    script.write_text('import pathlib\npathlib.Path("artifacts/result.json").write_text('+repr(json.dumps(value))+')\n')
+    result=e.dispatch(config,script,command_options=dict(experiment_directory=str(root),arguments=[]))
+    assert result['status']=='known_success' and result['result']['status']=='invalid'
+    assert any(item['name']=='result.json' for item in result['outputs'])
+
+
+def test_r1_input_capacity_rejected_without_acceptance(local,monkeypatch):
+    root,script,config,_=local
+    monkeypatch.setattr(e,'MAX_INPUT_BYTES',1)
+    with pytest.raises(ValueError,match='capacity'):
+        e.dispatch(config,script,command_options=dict(experiment_directory=str(root),arguments=[]))
+    assert e.Records(config).calls()==[]
+
+
+def test_legacy_current_job_without_mode_keeps_science_view_and_observer_shape(tmp_path):
+    from test_history_handoff import finish
+    public=tmp_path/'public';public.mkdir();objective=public/'goal.md';objective.write_text('Legacy bounded observation')
+    observer=tmp_path/'observer.py';observer.write_text('import json,sys\njson.load(sys.stdin)\njson.dump(dict(candidates=[],current_candidate=None,actual_submission=None,coverage=dict(status="complete",note="Legacy public facts")),sys.stdout)\n')
+    root=tmp_path/'instance'
+    controller.prepare(root,objective,public,['custom'],max_tokens=1000,max_seconds=30,max_steps=4,model='fake',reasoning_effort='high',
+        search_policy=None,history_observer=dict(adapter=str(observer),config={}))
+    # Construct the exact pre-feature current-protocol contract before any job exists.
+    settings=c.read(root/'settings.json');settings.pop('experiment_mode');c.write(root/'settings.json',settings)
+    c.write(root/'settings-identity.json',dict(sha256=c.digest(root/'settings.json')))
+    finish(root,1,'H',[],action='experiment')
+    w=c.build_job(root,2,'W',[1]);record=c.host_record(c.workspace(root,2))
+    c.write(record/'experiment-config.json',{'legacy_configuration':True})
+    finish(root,2,'W',[1])
+    a=c.build_job(root,3,'A',[2])
+    before={p:p.read_bytes() for p in [root/'jobs/002.json',root/'jobs/003.json',record/'result-identity.json',c.workspace(root,2)/'science-task.json']}
+    assert 'experiment_execution' not in c.science_view(w,root)
+    assert 'experiments' not in a['history']['view']['indexes']
+    observed=c.read(root/c.read(record/'result-identity.json')['observations']['path'])
+    assert 'managed_calls' not in observed
+    assert c.validate(c.workspace(root,2))['role']=='W'
+    assert c.build_job(root,3,'A',[2])==a
+    assert all(path.read_bytes()==content for path,content in before.items())
+
+
+LONG_NATIVE='''import json,os,pathlib,signal,subprocess,sys,time
+work=pathlib.Path(os.environ['THIN_HWA_WORKSPACE']);role=os.environ['THIN_HWA_ROLE'];sys.stdin.read()
+print(json.dumps({'type':'thread.started','thread_id':'long-fixture-'+role}),flush=True)
+payload=dict(summary=role+' bounded observation',scientific_result='Cancelled process remains unknown.',limitations=['Synthetic transport only.'],implementation_selection=None)
+if role=='H':payload.update(next_action='experiment',route_reason='Bounded process experiment',search_plan=None)
+if role=='W':
+ exp=work/'experiments/long';exp.mkdir(parents=True)
+ (exp/'run.py').write_text('import os,pathlib,time\\npathlib.Path("artifacts/started").write_text(str(os.getpid()))\\ntime.sleep(60)\\n')
+ driver=subprocess.Popen([sys.executable,'-m','scidiscovery.research_loop.experiments','--config',str(work/'work/experiment-config.json'),'run','--experiment-dir',str(exp),'--script',str(exp/'run.py')],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+ deadline=time.monotonic()+10
+ while not list((work/'work/lineage/calls').glob('*/inputs/artifacts/started')):
+  assert time.monotonic()<deadline
+  time.sleep(.02)
+ if os.environ.get('LOCAL_STOP_CASE')=='driver':
+  os.kill(driver.pid,signal.SIGKILL);driver.wait()
+ else:driver.communicate()
+ payload.update(stage_intent='review',mechanism_findings=None)
+args=sys.argv[1:];pathlib.Path(args[args.index('--output-last-message')+1]).write_text(json.dumps(payload))
+print(json.dumps({'type':'turn.completed','usage':{'input_tokens':10,'cached_input_tokens':0,'output_tokens':5}}),flush=True)
+'''
+
+
+def long_instance(tmp_path,monkeypatch,case):
+    source=Path(__file__).parents[2]/'src'
+    monkeypatch.setenv('PYTHONPATH',str(source)+os.pathsep+os.environ.get('PYTHONPATH',''))
+    monkeypatch.setenv('LOCAL_STOP_CASE',case)
+    public=tmp_path/'public';public.mkdir();objective=public/'goal.md';objective.write_text('Bounded local process cleanup')
+    launcher=tmp_path/'native.py';launcher.write_text(LONG_NATIVE)
+    root=tmp_path/'instance'
+    policy={role:dict(max_seconds=4 if role=='W' and case=='budget' else 15,max_observed_tokens=100) for role in ('H','W','A','E')}
+    controller.prepare(root,objective,public,[sys.executable,str(launcher)],max_tokens=1000,max_seconds=45,max_steps=2,
+        model='fake',reasoning_effort='high',search_policy=None,experiment_mode='local',node_budget_mode='hard',node_budget_policy=policy)
+    return root
+
+
+@pytest.mark.parametrize('case',['driver','budget'])
+def test_r1_native_owner_cleans_detached_local_group_after_driver_kill_or_budget(tmp_path,execution_registry,monkeypatch,case):
+    from scidiscovery.research_loop import runtime
+    root=long_instance(tmp_path,monkeypatch,case)
+    result=controller.run(root)
+    assert result['status']==('native_stopped' if case=='budget' else 'bounded_steps_exhausted'),result
+    directory=next((c.workspace(root,2)/'work/lineage/calls').iterdir())
+    identity=c.read(directory/'process.json')
+    assert not runtime.process_matches(identity,identity['task_sha256'])
+    assert not (directory/'completed.json').exists()
+    assert len(list(directory.parent.iterdir()))==1
+    before=c.digest(directory/'accepted.json')
+    controller.run(root)
+    assert c.digest(directory/'accepted.json')==before and len(list(directory.parent.iterdir()))==1
+
+
+def test_r1_watchdog_signals_only_exact_local_group_after_runner_kill(tmp_path,execution_registry,monkeypatch):
+    import signal,time
+    from scidiscovery.research_loop import runtime
+    root=long_instance(tmp_path,monkeypatch,'runner')
+    process=subprocess.Popen([sys.executable,'-c','import json,sys;from pathlib import Path;from scidiscovery.research_loop import controller;print(json.dumps(controller.run(Path(sys.argv[1]))))',str(root)],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+    directory=None
+    try:
+        until=time.monotonic()+15
+        while time.monotonic()<until:
+            matches=list((c.workspace(root,2)/'work/lineage/calls').glob('*/inputs/artifacts/started'))
+            if matches:directory=matches[0].parents[2];break
+            time.sleep(.05)
+        assert directory is not None
+        identity=c.read(directory/'process.json')
+        record=c.host_record(c.workspace(root,2));runner=c.read(record/'runner-process.json')
+        assert runtime.process_matches(runner,runner['task_sha256'])
+        os.kill(runner['pid'],signal.SIGKILL)
+        until=time.monotonic()+10
+        while runtime.process_matches(identity,identity['task_sha256']) and time.monotonic()<until:time.sleep(.05)
+        assert not runtime.process_matches(identity,identity['task_sha256'])
+        assert not (directory/'completed.json').exists()
+        process.communicate(timeout=15)
+        assert c.read(record/'runner-cleanup.json')['managed_experiments']=='cleanup_unknown'
+        assert len(list(directory.parent.iterdir()))==1
+    finally:
+        if process.poll() is None:process.terminate();process.communicate(timeout=10)
+
+
+def test_r1_lost_local_process_original_keeps_budget_cleanup_blocked(tmp_path,execution_registry,monkeypatch):
+    import signal
+    from scidiscovery.research_loop import budget,runtime
+    root=long_instance(tmp_path,monkeypatch,'budget')
+    launcher=tmp_path/'native.py'
+    text=launcher.read_text().replace("if os.environ.get('LOCAL_STOP_CASE')=='driver':",'''original=next((work/'work/lineage/calls').glob('*/process.json'))
+ (work/'work/lost-identity.json').write_bytes(original.read_bytes());original.unlink()
+ if os.environ.get('LOCAL_STOP_CASE')=='driver':''')
+    launcher.write_text(text)
+    identity=None
+    try:
+        result=controller.run(root)
+        record=c.host_record(c.workspace(root,2))
+        identity=c.read(c.workspace(root,2)/'work/lost-identity.json')
+        assert result['status']=='native_stopped',result
+        assert c.read(record/'native-outcome.json')['stop_reason']=='cleanup_unknown'
+        assert budget.execution_blocked(root)
+        accepted=list((c.workspace(root,2)/'work/lineage/calls').glob('*/accepted.json'))
+        assert len(accepted)==1
+        controller.run(root)
+        assert list((c.workspace(root,2)/'work/lineage/calls').glob('*/accepted.json'))==accepted
+    finally:
+        # The deliberately destroyed owner original cannot authorize production cleanup.
+        # This test retains its exact identity separately solely to clean the negative fixture.
+        if identity is not None and runtime.process_matches(identity,identity['task_sha256']):
+            os.kill(identity['pid'],signal.SIGKILL)
+
+
+def test_r2_cov_missing_receipt_fallback_keeps_domain_context_shape(local,monkeypatch):
+    from scidiscovery.research_loop.cov_experiments import CovExecution
+    from scidiscovery.research_loop import cov_lineage
+    root,script,config,_=local
+    result=e.dispatch(config,script,command_options=dict(experiment_directory=str(root),arguments=[]))
+    directory=e.Records(config).directory(result['call_id'])
+    accepted=c.read(directory/'accepted.json');accepted.pop('local_observation_version')
+    monkeypatch.setattr(cov_lineage,'_receipt',lambda *args,**kwargs:None)
+    adapter=CovExecution(dict(config,runs_root=str(root/'runs')))
+    fallback=adapter.completion(directory,accepted,0,True,True)
+    assert set(fallback)=={'call_id','status','candidate_id','run_id','model','parent','change_intent','scope','proofs','note'}
+    assert fallback['status']=='unknown'
+
+
+def test_r2_output_metadata_capacity_preserves_known_execution(local):
+    root,script,config,path=local
+    nested=path.parent
+    for _ in range(10):nested=nested/('deep-'+'d'*195)
+    nested.mkdir(parents=True)
+    body={key:value for key,value in config.items() if key!='execution_interface'}
+    body['record_dir']=str(nested/'receipts')
+    config=e.freeze(body,'local_execution:command',path=path)
+    script.write_text('import pathlib\n'
+        'for number in range(127):pathlib.Path("artifacts",str(number)+"x"*195).write_text("x")\n'
+        'pathlib.Path("artifacts/result.json").write_text(\'{"version":1,"metrics":[],"outputs":[]}\')\n')
+    result=e.dispatch(config,script,command_options=dict(experiment_directory=str(root),arguments=[]))
+    assert result['status']=='known_success' and result['returncode']==0
+    assert result['result']==dict(status='unavailable',metrics=[],outputs=[],diagnostic='managed_output_metadata_capacity',outputs_omitted_count=127)
+    assert [item['name'] for item in result['outputs']]==['result.json']
+    directory=e.Records(config).directory(result['call_id'])
+    assert len((directory/'completed.json').read_bytes())<=e.MAX_BYTES
+    assert len(list((directory/'outputs').iterdir()))==128
+
+
+def test_r2_excessive_json_depth_is_invalid_and_raw_result_is_retained(local):
+    root,script,config,_=local
+    content='['*1500+'0'+']'*1500
+    script.write_text('import pathlib\npathlib.Path("artifacts/result.json").write_text('+repr(content)+')\n')
+    result=e.dispatch(config,script,command_options=dict(experiment_directory=str(root),arguments=[]))
+    assert result['status']=='known_success' and result['result']['status']=='invalid'
+    assert Path(result['outputs'][0]['path']).read_text()==content

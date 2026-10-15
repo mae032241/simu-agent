@@ -127,10 +127,13 @@ def live(root, job):
         ids = set()
         allowed = {'call_id', 'status', 'candidate_id', 'evaluation_key', 'metric', 'direction', 'wall_seconds', 'parent_candidate'}
         for row in value['calls']:
-            if (not isinstance(row, dict) or set(row) not in (allowed,allowed|{'mechanism_ref'}) or row['status'] not in names
+            if (not isinstance(row, dict) or set(row) not in (allowed,allowed|{'mechanism_ref'},allowed|{'returncode','result'},allowed|{'mechanism_ref','returncode','result'}) or row['status'] not in names
                     or not isinstance(row['call_id'], str) or not 0 < len(row['call_id']) <= 128 or row['call_id'] in ids):
                 raise ValueError('Progress call identities are not unique')
             ids.add(row['call_id'])
+            if 'result' in row and (not registered or row['returncode'] is not None and type(row['returncode']) is not int
+                    or not isinstance(row['result'],dict)):
+                raise ValueError('Registered result observation is malformed')
             if 'mechanism_ref' in row and (not isinstance(row['mechanism_ref'],str) or row['mechanism_ref'] not in {item['mechanism_ref'] for item in (job.get('search') or {}).get('breadth',{}).get('mechanisms',[])}):
                 raise history.ObserverIntegrityError('Progress mechanism escaped frozen H combination')
             if any(row[key] is not None and (not isinstance(row[key], str) or len(row[key].encode()) > 80)

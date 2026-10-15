@@ -12,6 +12,7 @@ from pathlib import Path
 import selectors
 import signal
 import subprocess
+import sys
 import time
 
 from . import budget as control_budget, execution, runtime, search, checkpoint, profiles
@@ -131,6 +132,13 @@ def run_native(root: Path, step: int, attempt=0):
     if intent.get('task_sha256') != digest(job_path):
         raise ValueError('Native execution task changed')
     profile = profiles.validate_intent(settings, job, intent)
+    if job.get('experiment_mode') != settings.get('experiment_mode'):
+        raise ValueError('Frozen experiment mode changed')
+    if job['role']=='W' and job.get('experiment_mode')=='local':
+        from . import experiments
+        experiments.configure(root,step,'local_execution:command',
+            dict(run_argv=[sys.executable],max_seconds=min(65,settings['max_seconds']),cwd=str(work)),
+            work/'work/experiment-config.json')
     if attempt:
         profiles.validate_intent(settings, job, read(execution.origin(root, step) / 'native-intent.json'))
     # W statistics reuse this exact node anchor, never a second acceptance clock.
@@ -220,6 +228,15 @@ def run_native(root: Path, step: int, attempt=0):
         prompt += ('\nNode and search limits are soft targets, not renewed grants. Between bounded actions read work/budget-status.json when available. '
                    'Near/reached targets or delivery reserve: preserve useful results and return your scientific JSON promptly. '
                    'This file is advisory and usage can be unknown; shared hard limits still apply. \n')
+    if job['role']=='W' and job.get('experiment_mode')=='local':
+        prompt += ('\nManaged local experiments: run '+json.dumps([sys.executable,'-m','scidiscovery.research_loop.experiments',
+            '--config','work/experiment-config.json','run','--experiment-dir','experiments/<name>','--script','experiments/<name>/run.py','--','<script args>'])
+            +'. Use real paths/arguments. Only the chosen directory is snapshotted, excluding its artifacts/. '
+            'The copied script runs with that snapshot as cwd and writes artifacts/; original directories are unchanged. '
+            'Control retains exit/time/logs/inputs/outputs. Optional artifacts/result.json is version 1 JSON with metrics '
+            '(name,value; optional unit,evaluation_key,direction) and outputs (path relative to the experiment root, label). '
+            'Use finite metric values; control does not infer metric meaning, candidate ranking or qualification. '
+            'Do not write hashes or identities. Native shell remains available for scratch. Query lineage-status for original calls; never repeat an unknown call.\n')
     if checkpoint.enabled(root, job):
         prompt += ('\nA native turn can be a fragment of this same scientific stage. Give your current understanding, '
                    'unresolved questions and scientific next intent. stage_intent=continue requests more work in the assigned task; '
@@ -388,6 +405,12 @@ def run_native(root: Path, step: int, attempt=0):
                 cleanup = runtime.cleanup_owned_group(process_id)
                 if cleanup == 'cleanup_unknown':
                     stop = 'cleanup_unknown'
+            if job.get('experiment_mode')=='local' and job['role']=='W':
+                from . import local_experiments
+                try:managed_cleanup=local_experiments.cleanup(root,job)
+                except (OSError,ValueError,KeyError,TypeError):managed_cleanup='cleanup_unknown'
+                if managed_cleanup=='cleanup_unknown':
+                    cleanup='cleanup_unknown';stop='cleanup_unknown'
             if process.stdout is not None:
                 process.stdout.close()
             if process.stdin is not None and not process.stdin.closed:

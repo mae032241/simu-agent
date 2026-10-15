@@ -69,7 +69,9 @@ def _managed_refs(root,source,seal,state):
     if not seal.get('observations'):return set()
     observation=c.read(root/seal['observations']['path']);hashes={};refs=set()
     for row in observation.get('managed_calls',[]):
-        binding=row['mechanism_binding'];ref=binding['mechanism_ref']
+        binding=row.get('mechanism_binding')
+        if binding is None:continue
+        ref=binding['mechanism_ref']
         current=state['mechanisms'].get(ref)
         if current is None or row['status'] not in {'known_success','known_failed'} or binding['source_h']!=current['source_h']:continue
         step=current['source_h']
@@ -234,7 +236,9 @@ def fold(root,sources):
         if seal.get('observations'):
             observation=c.read(root/seal['observations']['path'])
             for row in observation.get('managed_calls',[]):
-                binding=row['mechanism_binding'];ref=binding['mechanism_ref']
+                binding=row.get('mechanism_binding')
+                if binding is None:continue
+                ref=binding['mechanism_ref']
                 state['opportunity_counts'][ref]=state['opportunity_counts'].get(ref,0)+1
                 grant=binding['grant']
                 if grant:
@@ -403,7 +407,7 @@ def _portfolio_update(root, job, payload, seal, state, seal_sha=None):
             branches=[focus['mechanism_ref']]
             if (job.get('search') or {}).get('breadth'):
                 observation=c.read(root/seal['observations']['path']) if seal.get('observations') else {}
-                branches=list(dict.fromkeys(row['mechanism_binding']['mechanism_ref'] for row in observation.get('managed_calls',[])))
+                branches=list(dict.fromkeys(row['mechanism_binding']['mechanism_ref'] for row in observation.get('managed_calls',[]) if row.get('mechanism_binding') is not None))
             portfolio['pending_w']=dict(step=job['step'],identity=identity,branch=focus['mechanism_ref'],branches=branches)
         return
     if job['role'] != 'A' or job.get('purpose') == 'closeout':

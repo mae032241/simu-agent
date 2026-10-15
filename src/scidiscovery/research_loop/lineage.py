@@ -357,6 +357,23 @@ def bind(root, step, role, protocol, *, source_cutoff=None, extra_steps=(), sele
     relations=paged(public_relations(projection['graph'],projection['sources']),16,'relations','inputs/lineage/relations','declared-not-proven-causality')
     indexes=dict(nodes=nodes[0] if nodes else None,candidates=candidates[0] if candidates else None,
                  mechanisms=mechanism_pages[0] if mechanism_pages else None,relations=relations[0] if relations else None)
+    experiments=[]
+    for record in records:
+        for call in (record.get('observation') or {}).get('managed_calls',[]):
+            if 'execution' not in call:continue
+            details=call.get('execution') or {};result=details.get('result') or {}
+            outputs=[dict(path=f'inputs/parents/{record["step"]:03d}/artifacts/experiments/{call["call_id"]}/artifacts/{item["name"]}',
+                          historical=f'history/nodes/{record["step"]:03d}/artifacts/experiments/{call["call_id"]}/artifacts/{item["name"]}',
+                          retention=item['retention']) for item in call.get('outputs',[])]
+            metrics=result.get('metrics',[])
+            experiments.append(dict(step=record['step'],call_id=call['call_id'],execution_status=call['status'],
+                returncode=details.get('returncode'),wall_seconds=details.get('wall_seconds'),
+                result_status=result.get('status','unobserved'),diagnostic=result.get('diagnostic'),
+                metrics=metrics[:8],metrics_omitted_count=max(0,len(metrics)-8),
+                outputs=outputs[:8],outputs_omitted_count=max(0,len(outputs)-8),
+                limitation='Declared metrics and retained files; candidate ranking, scientific validity and external submission are not established. Direct-parent paths are mounted only for bound parents; use historical handles for other nodes.'))
+    experiment_pages=paged(experiments,2,'experiments','inputs/history/experiments','managed-local-observations')
+    if experiment_pages:indexes['experiments']=experiment_pages[0]
     audit_refs, audit_rows = [], []
     if audit_projection_version == 1:
         from . import candidate_audit

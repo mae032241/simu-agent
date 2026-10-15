@@ -149,8 +149,18 @@ def read_adapter(config, request):
 
 
 
-def _managed_config(job):
-    return dict(adapter_sha256='registered-originals-v1') if (job.get('search') or {}).get('breadth') else None
+def _managed_config(job,root=None):
+    configured = ((job.get('search') or {}).get('breadth') or 'experiment_mode' in job and
+        (job['experiment_mode']=='local' and job['role']=='W'
+         or root is not None and (execution.record(root,job['step'])/'experiment-config.json').exists()))
+    return dict(adapter_sha256='registered-originals-v1') if configured else None
+
+
+def _managed_proof(root,path,original):
+    proof=_proof(root,Path(path).relative_to(root).as_posix())
+    if any(proof[key]!=original[key] for key in ('sha256','size_bytes')):
+        raise ObserverIntegrityError('Managed file differs from completed original')
+    return proof
 
 
 def managed_calls(root, job):
@@ -164,8 +174,8 @@ def managed_calls(root, job):
         accepted=c.read(c.regular(accepted_path,limit=experiments.MAX_BYTES))
         if accepted.get('scope')!=scope or accepted.get('call_id')!=directory.name:
             raise ObserverIntegrityError('Managed original escaped its stage owner')
-        binding=breadth.check_binding(job['search']['breadth'],accepted.get('mechanism_binding'),scope)
-        completion=directory/'completed.json';state='unknown';terminal=None
+        binding=breadth.check_binding((job.get('search') or {}).get('breadth'),accepted.get('mechanism_binding'),scope)
+        completion=directory/'completed.json';state='unknown';terminal=None;value={}
         if completion.exists():
             value=c.read(c.regular(completion,limit=experiments.MAX_BYTES))
             if value.get('call_id')!=directory.name or value.get('scope')!=scope or value.get('mechanism_binding')!=binding:
@@ -181,7 +191,12 @@ def managed_calls(root, job):
                     state=value['status'];terminal=_proof(root,terminal_path.relative_to(root).as_posix())
         result.append(dict(call_id=directory.name,scope=scope,mechanism_binding=binding,status=state,
             accepted=_proof(root,accepted_path.relative_to(root).as_posix()),
-            completed=_proof(root,completion.relative_to(root).as_posix()) if completion.exists() else None,terminal=terminal))
+            completed=_proof(root,completion.relative_to(root).as_posix()) if completion.exists() else None,terminal=terminal,
+            **(dict(originals=[_managed_proof(root,directory/'inputs'/item['name'],item) for item in accepted.get('snapshot_files',[])]
+                    +[_managed_proof(root,item['path'],item) for item in value.get('proofs',[])],
+                outputs=[dict(name=item['name'],**_managed_proof(root,item['path'],item)) for item in value.get('outputs',[])],
+                execution=dict(returncode=value.get('returncode'),wall_seconds=value.get('wall_seconds'),result=value.get('result')))
+               if 'result' in value else {})))
     return result
 
 
@@ -191,7 +206,7 @@ def validate_managed(root, job, rows):
     if not isinstance(rows,list) or len(rows)>128:raise ObserverIntegrityError('Managed receipt capacity exceeded')
     scope=stage_scope(root,job);seen=set()
     for row in rows:
-        if set(row)!={'call_id','scope','mechanism_binding','status','accepted','completed','terminal'} or row['call_id'] in seen or row['scope']!=scope:
+        if set(row) not in ({'call_id','scope','mechanism_binding','status','accepted','completed','terminal'}, {'call_id','scope','mechanism_binding','status','accepted','completed','terminal','originals','outputs','execution'}) or row['call_id'] in seen or row['scope']!=scope:
             raise ObserverIntegrityError('Managed receipt owner differs')
         seen.add(row['call_id'])
         for key in ('accepted','completed','terminal'):
@@ -202,7 +217,21 @@ def validate_managed(root, job, rows):
         accepted=c.read(root/row['accepted']['snapshot'])
         if accepted.get('call_id')!=row['call_id'] or accepted.get('scope')!=scope or accepted.get('mechanism_binding')!=row['mechanism_binding']:
             raise ObserverIntegrityError('Managed receipt differs from accepted original')
-        breadth.check_binding(job['search']['breadth'],row['mechanism_binding'],scope)
+        breadth.check_binding((job.get('search') or {}).get('breadth'),row['mechanism_binding'],scope)
+        for proof in [*row.get('originals',[]),*row.get('outputs',[])]:_validate_proof(root,proof)
+        if 'execution' in row:
+            completed=c.read(root/row['completed']['snapshot'])
+            if row['execution']!=dict(returncode=completed.get('returncode'),wall_seconds=completed.get('wall_seconds'),result=completed.get('result')):
+                raise ObserverIntegrityError('Managed results differ from completed original')
+            originals=[*accepted.get('snapshot_files',[]),*completed.get('proofs',[])]
+            if (len(row['originals'])!=len(originals) or any(any(proof[key]!=original[key] for key in ('sha256','size_bytes'))
+                    for proof,original in zip(row['originals'],originals))):
+                raise ObserverIntegrityError('Managed input or log original changed')
+            if len(row['outputs'])!=len(completed.get('outputs',[])):
+                raise ObserverIntegrityError('Managed outputs differ from completed original')
+            for proof,original in zip(row['outputs'],completed.get('outputs',[])):
+                if any(proof[key]!=original[key] for key in ('name','sha256','size_bytes')):
+                    raise ObserverIntegrityError('Managed output changed')
         if row['status'] not in {'known_success','known_failed','unknown'}:raise ObserverIntegrityError('Managed state differs')
         if row['status']!='unknown':
             if row['completed'] is None or row['terminal'] is None:raise ObserverIntegrityError('Managed terminal originals absent')
@@ -219,7 +248,7 @@ def _capture(root, job, payload, materials):
     """Snapshot mechanical adapter facts once, before the scientific seal."""
     config = c.settings(root).get('history_observer')
     if config is None:
-        config=_managed_config(job)
+        config=_managed_config(job,root)
         if config is None:return None
         raw_sha=c.digest(c.regular(execution.raw(root,job['step']),limit=c.MAX_RESULT_BYTES))
         path=root/'host-history/observations'/f'{job["step"]:03d}.json'
@@ -325,7 +354,7 @@ def _capture(root, job, payload, materials):
             coverage = dict(status='partial',note='Original execution contexts include unknown outcomes.')
     snapshot = dict(binding=binding, candidates=candidates, current_candidate=current, actual_submission=actual, coverage=coverage,
                     **(dict(contexts=contexts) if contexts is not None else {}))
-    if (job.get('search') or {}).get('breadth'):snapshot['managed_calls']=managed_calls(root,job)
+    if _managed_config(job,root):snapshot['managed_calls']=managed_calls(root,job)
     if len(_bytes(snapshot)) > MAX_OBSERVER_BYTES:
         raise ValueError('Observer snapshot exceeds byte bound')
     c.write(path, snapshot)
@@ -338,7 +367,7 @@ def capture(root, job, payload, materials):
     require_current(root,job)
     config = c.settings(root).get('history_observer')
     if config is None:
-        return _capture(root,job,payload,materials) if _managed_config(job) else None
+        return _capture(root,job,payload,materials) if _managed_config(job,root) else None
     adapter = c.regular(Path(config['adapter']), limit=MAX_OBSERVER_BYTES)
     if adapter.resolve() != adapter or c.digest(adapter) != config['adapter_sha256']:
         raise ObserverIntegrityError('Frozen observer adapter changed')
@@ -360,7 +389,7 @@ def capture(root, job, payload, materials):
                      **(dict(contexts=[]) if config.get('contract_version') == 2 else {}),
                      coverage=dict(status='unavailable', note='Observer returned no verified bounded facts; original science is retained.'),
                      diagnostic=dict(failure_type=type(error).__name__, error_code=code))
-        if _managed_config(job):value['managed_calls']=managed_calls(root,job)
+        if _managed_config(job,root):value['managed_calls']=managed_calls(root,job)
         if len(_bytes(value))>MAX_OBSERVER_BYTES:raise ObserverIntegrityError('Managed receipt capacity exceeded')
         c.write(path, value)
         return dict(path=path.relative_to(root).as_posix(), sha256=c.digest(path))
@@ -594,7 +623,7 @@ def validate_recommendation(job, payload):
 
 def validate_observation(root, job, seal):
     receipt = seal.get('observations')
-    config = c.settings(root).get('history_observer') or _managed_config(job)
+    config = c.settings(root).get('history_observer') or _managed_config(job,root)
     if config is None:
         if receipt is not None:
             raise ValueError('Unconfigured observer snapshot in scientific seal')
@@ -608,7 +637,7 @@ def validate_observation(root, job, seal):
     value = c.read(path)
     if value['binding'] != _observer_binding(seal['raw_sha256'], config):
         raise ValueError('Observer snapshot source binding changed')
-    if _managed_config(job):
+    if _managed_config(job,root):
         validate_managed(root,job,value['managed_calls'])
     proofs = [proof for row in value['candidates'] for proof in row['evidence']]
     for field in ('current_candidate', 'actual_submission'):

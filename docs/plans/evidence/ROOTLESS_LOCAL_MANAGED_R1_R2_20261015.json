@@ -1,0 +1,188 @@
+{
+  "scope": "Rootless R1 managed local execution and R2 declared result/retained output handoff",
+  "base_commit": "fe269f2",
+  "models_called": 0,
+  "pushed": false,
+  "implementation": {
+    "default": "Standard single codex launcher freezes local; custom launchers retain external unless explicitly local.",
+    "receipts": "Existing Records accepted/process/terminal/completed and history object archive; no separate experiment ledger.",
+    "results": "Finite explicit metrics and retained output declarations; no inferred candidates, ranking, scientific qualification or external delivery.",
+    "cleanup": "Default-local owner cleans original child groups; watchdog signals exact observed identities and preserves unknown. Missing originals block progression.",
+    "delivery": "A reads retained output bytes through ordinary handoff; export-only retains exported_unsubmitted."
+  },
+  "source_sha256": {
+    "src/scidiscovery/research_loop/cli.py": "13c16af53994ff3edd8765eaebc8ca2f92b2be9051c29ddb4a36b628f39a690e",
+    "src/scidiscovery/research_loop/contracts.py": "e1a8a1e34912397ddf13ff1ee49a9a242c892bb3c24a31c1fba85ca131b0012d",
+    "src/scidiscovery/research_loop/controller.py": "71ca5986f6ceeea5a72330175b6684f7fcb6b39ad5983139ec6cc460165efa13",
+    "src/scidiscovery/research_loop/experiments.py": "6c8e10c2e0f4d44dd2e21d27eac2abf9a0c0e7206e06eebd618cd008a545958f",
+    "src/scidiscovery/research_loop/feedback.py": "ae3ca7bf4b76f1b42218050f5cb88fb7af399959b9eea0cc46374a368b555a4d",
+    "src/scidiscovery/research_loop/history.py": "2ce9b213d411220e114eb5147490bbacc1021ee4c67a351bc62cd265bd7bfdfa",
+    "src/scidiscovery/research_loop/lineage.py": "5f04fff0097c331a9f4f73a935ecf6dde7143fd3f73a6d17dcdd07118d08fa37",
+    "src/scidiscovery/research_loop/local_experiments.py": "49fc276744f8910febeeb934b0b4c2237fd16d0c4dc035ea76d7dec91da3b2bf",
+    "src/scidiscovery/research_loop/native.py": "70e65f031bdec012ca7d6051835e983b13e988ab69cf8b563d5f5931a410277c",
+    "src/scidiscovery/research_loop/runtime.py": "ddacca632029a5981f6e6c7f090fb6b29436afdf462a240afc22c3d5718f5125",
+    "src/scidiscovery/research_loop/search.py": "fa3d199c1a03286407650c921c8fefe09e35792bf57c731600e8c71b9022b3ba",
+    "src/scidiscovery/research_loop/worker_delivery.py": "3f3aeedf6de5a80787e375c53ae916941c8f553e8dffbc5cf7d5e2d73afd0983",
+    "tests/research_loop/test_local_managed.py": "941bbb6f9a9ab49c3e6e21a4c9d8d293cc47bcdc40593eeb5c63486ef6142bc1",
+    "docs/ROOTLESS_CLI.zh-CN.md": "ecfb7091418e913c91ecb674df23559c8a1a1884b15d7ddb103c50e8a3dcb1b5"
+  },
+  "checks": [
+    {
+      "evidence_directory": "/tmp/scid-r1r2-first",
+      "supervision": {
+        "lane": "source",
+        "config": {
+          "numeric_threads": 1,
+          "limits": {
+            "observed_tree_rss_stop_bytes": 1500000000,
+            "minimum_available_bytes": 8589934592,
+            "available_drop_stop_bytes": 2000000000,
+            "timeout_seconds": 300,
+            "sample_interval_seconds": 0.1,
+            "termination_grace_seconds": 2,
+            "log_bytes": 8388608
+          }
+        },
+        "status": "passed",
+        "batches": [
+          {
+            "targets": [
+              "tests/research_loop/test_local_managed.py",
+              "tests/research_loop/test_registered_experiments.py"
+            ],
+            "state": "terminal",
+            "phase": "finished",
+            "supervisor_pid": 2,
+            "child_pid": 8,
+            "returncode": 0,
+            "stop_reason": "exited",
+            "cleanup_complete": true,
+            "observed_tree_rss_high_water_bytes": 227926016,
+            "memory_stop_triggers": [],
+            "address_space_limit_enabled": false,
+            "heartbeat_stale_after_seconds": 5.0,
+            "heartbeat_at_unix": 1792070069.5601356,
+            "elapsed_seconds": 22.272,
+            "system_memory_baseline": {
+              "MemAvailable": 14575591424
+            },
+            "system_memory_final": {
+              "MemAvailable": 14394077184
+            },
+            "received_signals": []
+          }
+        ]
+      },
+      "pytest_log": "..............................s.....                                     [100%]\n35 passed, 1 skipped in 21.99s\n"
+    },
+    {
+      "evidence_directory": "/tmp/scid-r1r2-cleanup-guard",
+      "supervision": {
+        "lane": "source",
+        "config": {
+          "numeric_threads": 1,
+          "limits": {
+            "observed_tree_rss_stop_bytes": 1500000000,
+            "minimum_available_bytes": 8589934592,
+            "available_drop_stop_bytes": 2000000000,
+            "timeout_seconds": 300,
+            "sample_interval_seconds": 0.1,
+            "termination_grace_seconds": 2,
+            "log_bytes": 8388608
+          }
+        },
+        "status": "passed",
+        "batches": [
+          {
+            "targets": [
+              "tests/research_loop/test_local_managed.py::test_r1_lost_local_process_original_keeps_budget_cleanup_blocked",
+              "tests/research_loop/test_local_managed.py::test_r2_cov_missing_receipt_fallback_keeps_domain_context_shape"
+            ],
+            "state": "terminal",
+            "phase": "finished",
+            "supervisor_pid": 2,
+            "child_pid": 9,
+            "returncode": 0,
+            "stop_reason": "exited",
+            "cleanup_complete": true,
+            "observed_tree_rss_high_water_bytes": 202346496,
+            "memory_stop_triggers": [],
+            "address_space_limit_enabled": false,
+            "heartbeat_stale_after_seconds": 5.0,
+            "heartbeat_at_unix": 1792070126.7294571,
+            "elapsed_seconds": 5.306,
+            "system_memory_baseline": {
+              "MemAvailable": 14615031808
+            },
+            "system_memory_final": {
+              "MemAvailable": 14537912320
+            },
+            "received_signals": []
+          }
+        ]
+      },
+      "pytest_log": "..                                                                       [100%]\n2 passed in 5.02s\n"
+    },
+    {
+      "evidence_directory": "/tmp/scid-r1r2-capacity",
+      "supervision": {
+        "lane": "source",
+        "config": {
+          "numeric_threads": 1,
+          "limits": {
+            "observed_tree_rss_stop_bytes": 1500000000,
+            "minimum_available_bytes": 8589934592,
+            "available_drop_stop_bytes": 2000000000,
+            "timeout_seconds": 300,
+            "sample_interval_seconds": 0.1,
+            "termination_grace_seconds": 2,
+            "log_bytes": 8388608
+          }
+        },
+        "status": "passed",
+        "batches": [
+          {
+            "targets": [
+              "tests/research_loop/test_local_managed.py::test_r2_output_metadata_capacity_preserves_known_execution",
+              "tests/research_loop/test_local_managed.py::test_r2_excessive_json_depth_is_invalid_and_raw_result_is_retained",
+              "tests/research_loop/test_local_managed.py::test_r1_lost_local_process_original_keeps_budget_cleanup_blocked"
+            ],
+            "state": "terminal",
+            "phase": "finished",
+            "supervisor_pid": 2,
+            "child_pid": 9,
+            "returncode": 0,
+            "stop_reason": "exited",
+            "cleanup_complete": true,
+            "observed_tree_rss_high_water_bytes": 202440704,
+            "memory_stop_triggers": [],
+            "address_space_limit_enabled": false,
+            "heartbeat_stale_after_seconds": 5.0,
+            "heartbeat_at_unix": 1792070210.892531,
+            "elapsed_seconds": 5.422,
+            "system_memory_baseline": {
+              "MemAvailable": 14585753600
+            },
+            "system_memory_final": {
+              "MemAvailable": 14493732864
+            },
+            "received_signals": []
+          }
+        ]
+      },
+      "pytest_log": "...                                                                      [100%]\n3 passed in 5.14s\n"
+    }
+  ],
+  "review": {
+    "status": "PASS",
+    "independent": true,
+    "scope": "Final source, exact process ownership, legacy frozen views, bounded result parsing/metadata and recorded no-model subprocess evidence."
+  },
+  "limitations": [
+    "No new wheel or installed package acceptance in this change; R6 owns that gate.",
+    "No model requests or scientific performance qualification.",
+    "Input snapshots preserve declared files and executed script/cwd, not arbitrary native reads, external imports or the environment.",
+    "After the first batch, only bounded completion metadata degradation and result parser RecursionError handling changed in production; the final focused batch covers those edits plus cleanup blocking.",
+    "Two initial test launch attempts were rejected by the repository serial lock before pytest started; production changes were subsequently frozen for each test window."
+  ]
+}

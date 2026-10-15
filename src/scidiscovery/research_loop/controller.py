@@ -30,7 +30,8 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
             handoff_authority_version: int | None = 1, decision_contract_version: int | None = None,
             portfolio_policy: dict | None = None, exploration_order_version: int | None = None,
             worker_fragment_policy: dict | None = None, role_budget_policy: dict | None = None,
-            selection_policy: dict | None = None, role_profiles: dict | None = None) -> dict:
+            selection_policy: dict | None = None, role_profiles: dict | None = None,
+            experiment_mode: str | None = None) -> dict:
     """Freeze an explicit goal and finite launch budgets in a fresh directory."""
     portfolio_limits = search.portfolio_policy(portfolio_policy) if portfolio_policy is not None else None
     if exploration_order_version is not None:
@@ -68,6 +69,10 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
     if (not isinstance(launcher, list) or not launcher
             or not all(isinstance(item, str) and item.strip() for item in launcher)):
         raise ValueError("An explicit native launcher argument list is required")
+    if experiment_mode is None:
+        experiment_mode = 'local' if len(launcher) == 1 and Path(launcher[0]).name == 'codex' else 'external'
+    if experiment_mode not in {'local', 'external'}:
+        raise ValueError('Experiment mode must be local or external')
     if root.exists() or root.is_symlink():
         raise ValueError("Preparation requires a fresh directory")
     if not objective.is_file() or not public_root.is_dir():
@@ -130,6 +135,7 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
     settings['live_feedback_version'] = 1
     settings['experiment_interface_version'] = 1
     settings['managed_admission_version'] = 1
+    settings['experiment_mode'] = experiment_mode
     if handoff_authority_version is not None:
         settings['handoff_authority_version'] = handoff_authority_version
     if decision_contract_version is not None:
