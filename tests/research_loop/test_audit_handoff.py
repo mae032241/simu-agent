@@ -6,6 +6,7 @@ import shutil
 
 import pytest
 
+from execution_fixtures import execution_registry
 from scidiscovery.research_loop import budget, candidate_audit, contracts as c, controller, delivery, history
 from test_delivery import FAKE_HARNESS, descriptor, delivery_policy
 from test_history_handoff import finish

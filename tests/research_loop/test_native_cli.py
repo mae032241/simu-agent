@@ -167,3 +167,174 @@ def test_actual_native_launch_rechecks_frozen_settings(instance, monkeypatch):
     with pytest.raises(ValueError, match='settings changed'):
         native.execute_native(instance, 1)
     assert not (contracts.host_record(contracts.workspace(instance, 1)) / 'native-intent.json').exists()
+
+
+@pytest.mark.process_e2e
+def test_running_session_tokens_project_before_terminal_without_double_count(instance):
+    import time
+    settings = contracts.read(instance / 'settings.json')
+    script = Path(settings['native_launcher_argv'][1])
+    original = "print(json.dumps({'type':'thread.started','thread_id':'native-'+role}),flush=True)"
+    streaming = '''import time
+thread='native-'+role
+home=pathlib.Path(os.environ['THIN_HWA_NATIVE_HOME'])
+session=home/'sessions'/('rollout-'+thread+'.jsonl')
+session.parent.mkdir(parents=True,exist_ok=True)
+session.write_text(json.dumps({'type':'session_meta','payload':{'id':thread,'cwd':str(work)}})+'\\n')
+print(json.dumps({'type':'thread.started','thread_id':thread}),flush=True)
+with session.open('a') as log:
+    log.write(json.dumps({'type':'event_msg','payload':{'type':'token_count','info':{'total_token_usage':{'input_tokens':30,'cached_input_tokens':20,'output_tokens':2}}}})+'\\n')
+    log.flush()
+if role == 'H':
+    (work/'work/tokens-written').write_text(str(time.monotonic()))
+    until=time.monotonic()+15
+    while not (work/'work/release').exists() and time.monotonic()<until:time.sleep(.05)
+with session.open('a') as log:
+    log.write(json.dumps({'type':'event_msg','payload':{'type':'token_count','info':{'total_token_usage':{'input_tokens':100,'cached_input_tokens':80,'output_tokens':5}}}})+'\\n')
+'''
+    script.write_text(script.read_text().replace(original, streaming))
+    env = {**os.environ, 'PYTHONPATH': str(Path(__file__).parents[2] / 'src')}
+    contracts.build_job(instance, 1, 'H', [])
+    bootstrap = ('import json,sys;from pathlib import Path;'
+                 'from scidiscovery.research_loop import native;'
+                 'print(json.dumps(native.execute_native(Path(sys.argv[1]),1)))')
+    process = subprocess.Popen([sys.executable, '-c', bootstrap, str(instance)],
+        env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    work = contracts.workspace(instance, 1)
+    record = contracts.host_record(work)
+    until = time.monotonic() + 10
+    try:
+        while time.monotonic() < until:
+            if (record / 'usage-observation.json').exists():
+                observation = contracts.read(record / 'usage-observation.json')
+                if observation['coverage'] == 'live':
+                    break
+            time.sleep(.05)
+        else:
+            pytest.fail('running token projection was not published within 10 seconds')
+        assert process.poll() is None
+        assert time.monotonic() - float((work / 'work/tokens-written').read_text()) < 5
+        assert contracts.read(record / 'usage.json')['input_tokens'] == 30
+        assert observation['tokens']['output_tokens'] == 2
+        assert observation['unreported_usage']
+        assert not (record / 'native-outcome.json').exists()
+    finally:
+        (work / 'work/release').touch()
+        stdout, stderr = process.communicate(timeout=20)
+    assert process.returncode == 0, stderr + stdout
+    result = json.loads(stdout)
+    assert result['summary'] == 'H bounded finding', result
+    assert native.usage(instance)['observed_tokens'] == 105
+    assert contracts.read(record / 'usage.json')['input_tokens'] == 100
+    metering = contracts.read(record / 'native-outcome.json')['metering']
+    assert metering['coverage'] == 'terminal'
+    assert metering['reconciliation'] == 'matched'
+
+
+@pytest.mark.process_e2e
+def test_terminal_usage_cannot_reduce_live_observation(instance):
+    settings = contracts.read(instance / 'settings.json')
+    script = Path(settings['native_launcher_argv'][1])
+    original = "print(json.dumps({'type':'thread.started','thread_id':'native-'+role}),flush=True)"
+    script.write_text(script.read_text().replace(original, '''thread='native-'+role
+home=pathlib.Path(os.environ['THIN_HWA_NATIVE_HOME'])
+session=home/'sessions'/('rollout-'+thread+'.jsonl')
+session.parent.mkdir(parents=True,exist_ok=True)
+session.write_text(json.dumps({'type':'session_meta','payload':{'id':thread,'cwd':str(work)}})+'\\n'+json.dumps({'type':'event_msg','payload':{'type':'token_count','info':{'total_token_usage':{'input_tokens':150,'cached_input_tokens':80,'output_tokens':5}}}})+'\\n')
+print(json.dumps({'type':'thread.started','thread_id':thread}),flush=True)'''))
+    result = controller.run(instance)
+    assert result['status'] == 'native_stopped', result
+    record = contracts.host_record(contracts.workspace(instance, 1))
+    outcome = contracts.read(record / 'native-outcome.json')
+    assert outcome['stop_reason'] == 'native_usage_unreconciled'
+    assert outcome['metering']['reason'] == 'terminal_usage_below_live_observation'
+    assert contracts.read(record / 'usage.json')['input_tokens'] == 150
+    assert outcome['usage']['unknown_steps'] == [1]
+
+
+@pytest.mark.process_e2e
+def test_live_tokens_reach_shared_limit_before_turn_completion(tmp_path):
+    import time
+    public = tmp_path / 'public'
+    public.mkdir()
+    objective = public / 'objective.txt'
+    objective.write_text('No model; verify a running token observation stops execution.')
+    launcher = tmp_path / 'native.py'
+    launcher.write_text('''import json,os,pathlib,sys,time
+sys.stdin.read()
+work=pathlib.Path(os.environ['THIN_HWA_WORKSPACE'])
+home=pathlib.Path(os.environ['THIN_HWA_NATIVE_HOME'])
+thread='live-limit-thread'
+session=home/'sessions'/('rollout-'+thread+'.jsonl')
+session.parent.mkdir(parents=True,exist_ok=True)
+session.write_text(json.dumps({'type':'session_meta','payload':{'id':thread,'cwd':str(work)}})+'\\n'+json.dumps({'type':'event_msg','payload':{'type':'token_count','info':{'total_token_usage':{'input_tokens':100,'cached_input_tokens':80,'output_tokens':5}}}})+'\\n')
+print(json.dumps({'type':'thread.started','thread_id':thread}),flush=True)
+time.sleep(20)
+''')
+    root = tmp_path / 'instance'
+    controller.prepare(root, objective, public, [sys.executable, str(launcher)],
+        max_tokens=50, max_seconds=60, max_steps=6, model='no-model', reasoning_effort='high')
+    started = time.monotonic()
+    result = controller.run(root)
+    assert time.monotonic() - started < 5
+    assert result['status'] == 'native_stopped', result
+    record = contracts.host_record(contracts.workspace(root, 1))
+    outcome = contracts.read(record / 'native-outcome.json')
+    assert outcome['stop_reason'] == 'token_limit'
+    assert outcome['usage']['observed_tokens'] == 105
+    assert outcome['usage']['unknown_steps'] == [1]
+    assert outcome['metering']['reason'] == 'terminal_usage_unreported'
+
+
+@pytest.mark.process_e2e
+@pytest.mark.parametrize('explicit_home', [True, False])
+def test_raw_codex_live_usage_uses_actual_inherited_home_without_replacing_config(tmp_path, monkeypatch, explicit_home):
+    import time
+    user_home = tmp_path / 'user-home'
+    user_home.mkdir()
+    actual_home = tmp_path / 'configured-codex-home' if explicit_home else user_home / '.codex'
+    actual_home.mkdir()
+    (actual_home / 'config.toml').write_text('fixture configuration')
+    (actual_home / 'auth.json').write_text('fixture credentials')
+    monkeypatch.setenv('HOME', str(user_home))
+    if explicit_home:
+        monkeypatch.setenv('CODEX_HOME', str(actual_home))
+    else:
+        monkeypatch.delenv('CODEX_HOME', raising=False)
+    public = tmp_path / 'public'
+    public.mkdir()
+    objective = public / 'objective.txt'
+    objective.write_text('No model; meter the raw launcher from its actual native home.')
+    launcher = tmp_path / 'codex'
+    launcher.write_text('#!' + sys.executable + '\n' + '''import json,os,pathlib,sys,time
+sys.stdin.read()
+work=pathlib.Path(os.environ['THIN_HWA_WORKSPACE'])
+# Mimic raw Codex storage; deliberately do not read THIN_HWA_NATIVE_HOME.
+home=pathlib.Path(os.environ.get('CODEX_HOME') or (pathlib.Path.home()/'.codex'))
+assert (home/'config.toml').read_text()=='fixture configuration'
+assert (home/'auth.json').read_text()=='fixture credentials'
+(work/'work/native-env.json').write_text(json.dumps({'codex_home':os.environ.get('CODEX_HOME'),'home':str(pathlib.Path.home())}))
+thread='raw-native-home-thread'
+session=home/'sessions'/('rollout-'+thread+'.jsonl')
+session.parent.mkdir(parents=True,exist_ok=True)
+session.write_text(json.dumps({'type':'session_meta','payload':{'id':thread,'cwd':str(work)}})+'\\n'+json.dumps({'type':'event_msg','payload':{'type':'token_count','info':{'total_token_usage':{'input_tokens':100,'cached_input_tokens':80,'output_tokens':5}}}})+'\\n')
+print(json.dumps({'type':'thread.started','thread_id':thread}),flush=True)
+time.sleep(20)
+''')
+    launcher.chmod(0o755)
+    root = tmp_path / 'instance'
+    controller.prepare(root, objective, public, [str(launcher)], max_tokens=50,
+        max_seconds=10, max_steps=6, model='no-model', reasoning_effort='high')
+    started = time.monotonic()
+    result = controller.run(root)
+    assert time.monotonic() - started < 5
+    assert result['status'] == 'native_stopped', result
+    work = contracts.workspace(root, 1)
+    outcome = contracts.read(contracts.host_record(work) / 'native-outcome.json')
+    assert outcome['stop_reason'] == 'token_limit'
+    assert outcome['usage']['observed_tokens'] == 105
+    assert contracts.read(work / 'work/native-env.json') == dict(
+        codex_home=str(actual_home) if explicit_home else None, home=str(user_home))
+    assert not (root / 'native-homes/001/sessions').exists()
+    assert (actual_home / 'config.toml').read_text() == 'fixture configuration'
+    assert (actual_home / 'auth.json').read_text() == 'fixture credentials'

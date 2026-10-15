@@ -51,7 +51,7 @@ def scene(tmp_path, actions, *, count=2, audit=True, selective_failure=False, ma
     if shutil.which('bwrap') is None:
         pytest.skip('Actual isolated adapter required')
     root=tmp_path/'instance';public=tmp_path/'public';(public/'harness').mkdir(parents=True)
-    harness=FAKE_HARNESS.replace("mode=meta['mode']", "mode='skip' if row['run_id']==1 else 'ok'") if selective_failure else FAKE_HARNESS
+    harness=FAKE_HARNESS.replace("mode=meta['mode']", "mode='leak' if row['run_id']==1 else 'ok'") if selective_failure else FAKE_HARNESS
     for name in ('exp_cli.py','runner.py','train.csv','val.csv','meta.json'):
         path=public/'harness'/name
         if name=='exp_cli.py':path.write_text(harness)

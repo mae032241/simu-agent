@@ -97,12 +97,13 @@ def test_unavailable_choice_preserves_science_and_returns_diagnostic(tmp_path, c
 
 
 @pytest.mark.parametrize('mode', ['skip','leak'])
-def test_failed_audit_never_promotes_or_claims_global_qualification(tmp_path, mode):
+def test_incomplete_and_rejected_audits_never_promote_or_claim_global_qualification(tmp_path, mode):
     root = audit_fixture(tmp_path, mode)
     job,payload = request(root)
     assert candidate_audit.execute(root,job,payload) is None
     receipt = candidate_audit.public_receipt(root,candidate_audit.receipt_ref(root,3))
-    assert receipt['status']=='failed'
+    assert receipt['status']==('unclassified' if mode=='skip' else 'rejected')
+    assert receipt['qualification']==('not_completed' if mode=='skip' else 'rejected')
     assert not (root/'runs/submitted.json').exists() and not list((root/'submission').iterdir())
     assert not budget.execution_blocked(root)
 
@@ -205,7 +206,8 @@ def test_published_correction_pause_blocks_new_audit_acceptance(tmp_path):
 
 
 def _seal_existing(root,step,payload):
-    payload={'decision_request':None,'portfolio_review':None,**payload}
+    if c.read(root/'jobs'/f'{step:03d}.json')['role']=='A':
+        payload={'decision_request':None,'portfolio_review':None,**payload}
     record=c.host_record(c.workspace(root,step))
     c.write(record/'native-intent.json',dict(task_sha256=c.digest(root/'jobs'/f'{step:03d}.json')))
     c.write(record/'science-output.json',payload)

@@ -9,7 +9,7 @@ import sys
 
 import pytest
 
-from scidiscovery.research_loop import budget,contracts as c,delivery
+from scidiscovery.research_loop import audit_recovery,budget,contracts as c,delivery
 from scidiscovery.research_loop.protocol import CURRENT
 from execution_fixtures import execution_registry
 from test_cov_delivery_lineage import managed_scene
@@ -116,13 +116,14 @@ def test_polluted_public_harness_fails_before_any_scene_or_launch(tmp_path):
     assert not (tmp_path/'scene/instance').exists() and 'status' not in verdict
 
 
-def _leaf_files(root,phase):
+def _leaf_files(root,phase,count=1):
     indexes=sorted((root/'host-delivery/leaf-output').glob(f'*-{phase}-*.json'))
-    assert len(indexes)==1,indexes
-    index=c.read(indexes[0]);stream=index['streams']['stderr']
-    data=(indexes[0].parent/stream['path']).read_bytes()
-    assert stream['sha256']==hashlib.sha256(data).hexdigest() and stream['kept_bytes']==len(data)
-    return index,data
+    assert len(indexes)==count,indexes
+    for path in indexes:
+        index=c.read(path);stream=index['streams']['stderr']
+        data=(path.parent/stream['path']).read_bytes()
+        assert stream['sha256']==hashlib.sha256(data).hexdigest() and stream['kept_bytes']==len(data)
+        yield index,data
 
 
 @pytest.mark.parametrize('phase',['resolve','audit','promote','confirm'])
@@ -145,7 +146,7 @@ def test_isolated_leaf_failure_keeps_exact_traceback_as_host_only_output(tmp_pat
         submit=accepted(root,bound);result=delivery.invoke(root,submit,20)
         if phase=='confirm':
             budget.action_outcome(root,submit,result);result=delivery.invoke(root,accepted(root,bound,'confirm'),10)
-        assert result['status']==('failed' if phase=='audit' else 'unknown')
+        assert result['status']==('engineering_error' if phase=='audit' else 'unknown')
         keys={'status','operation_id','candidate_id','artifact_sha256','note','cleanup_confirmed'}
         if phase=='audit':
             assert result['failure_phase']=='audit'
@@ -154,9 +155,15 @@ def test_isolated_leaf_failure_keeps_exact_traceback_as_host_only_output(tmp_pat
             assert 'failure_phase' not in result
         assert set(result)==keys
         assert 'Traceback' not in result['note']
-    index,data=_leaf_files(root,phase)
-    assert index['phase']==phase and index['returncode']!=0 and index['outcome']=='exited'
-    assert b'Traceback' in data and b'Frozen current protocol original differs' in data
+    if phase=='audit':
+        retries=list(audit_recovery.facts(root))
+        assert len(retries)==1 and retries[0][1]['status']=='engineering_error'
+        assert retries[0][1]['note']=='audit_process_failed'
+    else:
+        assert not list(audit_recovery.facts(root))
+    for index,data in _leaf_files(root,phase,2 if phase=='audit' else 1):
+        assert index['phase']==phase and index['returncode']!=0 and index['outcome']=='exited'
+        assert b'Traceback' in data and b'Frozen current protocol original differs' in data
     for path in (root/'project').rglob('*'):
         if path.is_file():assert b'Frozen current protocol original differs' not in path.read_bytes()
 

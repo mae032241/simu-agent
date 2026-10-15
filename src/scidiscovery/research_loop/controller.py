@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import uuid
 
-from . import budget, contracts, history, native, runtime, search, correction, semantic, execution, continuation, guidance, checkpoint, role_share, shortlist
+from . import budget, contracts, history, native, runtime, search, correction, semantic, execution, continuation, guidance, checkpoint, role_share, shortlist, engineering
 from .output_repair import OutputRepairRequired
 
 
@@ -30,7 +30,7 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
             handoff_authority_version: int | None = 1, decision_contract_version: int | None = None,
             portfolio_policy: dict | None = None, exploration_order_version: int | None = None,
             worker_fragment_policy: dict | None = None, role_budget_policy: dict | None = None,
-            selection_policy: dict | None = None) -> dict:
+            selection_policy: dict | None = None, role_profiles: dict | None = None) -> dict:
     """Freeze an explicit goal and finite launch budgets in a fresh directory."""
     portfolio_limits = search.portfolio_policy(portfolio_policy) if portfolio_policy is not None else None
     if exploration_order_version is not None:
@@ -62,6 +62,9 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
     if not all(isinstance(value, str) and value.strip()
                for value in (model, reasoning_effort, service_tier)):
         raise ValueError("Explicit model, reasoning effort and service tier are required")
+    from . import profiles
+    frozen_profiles = profiles.normalize(role_profiles, dict(model=model, reasoning_effort=reasoning_effort,
+        service_tier=service_tier)) if role_profiles is not None else None
     if (not isinstance(launcher, list) or not launcher
             or not all(isinstance(item, str) and item.strip() for item in launcher)):
         raise ValueError("An explicit native launcher argument list is required")
@@ -119,6 +122,8 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
         max_output_item_bytes=max_output_item_bytes,
         max_output_total_bytes=max_output_total_bytes)
     from .protocol import CURRENT
+    if frozen_profiles is not None:
+        settings['role_profiles'] = frozen_profiles
     settings['handoff_protocol']=CURRENT
     settings['handoff_authority_version']=settings['lineage_projection_version']=settings['selection_protocol']=1
     settings['node_budget_mode'] = node_budget_mode
@@ -301,7 +306,13 @@ def _route(root, step, role, result, job, current_h, current_w):
         elif action == "revise_h":
             route = ("H", parents, instruction, None)
         elif action == "audit":
-            route = ("A", parents, instruction, None)
+            from . import engineering
+            repair=engineering.request(root,step)
+            if repair is not None:
+                engineering.admit(root,repair,step+1)
+                route=('W',sorted(set([*parents,repair['source']['step']])),engineering.public(repair)['scope'],None)
+            else:
+                route = ("A", parents, instruction, None)
         elif action == "extract":
             route = ("E", parents, instruction, dict(role="A", step=step))
         elif action in {"finish", "deliver", "wait"}:
@@ -410,6 +421,11 @@ def _run(root):
             if author_correction is not None and role in {'H', 'A'} and semantic.accepted(root, author_correction, step) >= semantic.MAX_AUTHOR_CORRECTIONS:
                 return _finish(root, settings, 'semantic_correction_required', completed, last,
                     reason='semantic_correction_limit', next_role=role)
+            if role=='W' and parents:
+                from . import engineering
+                pending_repair=engineering.request(root,max(parents))
+                if pending_repair is not None and not _repair_funds(root):
+                    return _finish(root,settings,'engineering_repair_budget_unavailable',completed,last,next_role='W')
             reserve_stop = budget.exploration_admission(root, dict(step=step, role=role))
             if reserve_stop and settings.get('delivery_policy') is not None:
                 return _start_closeout(root, completed, step, reserve_stop)
@@ -427,10 +443,13 @@ def _run(root):
                 except ValueError:
                     return _finish(root, settings, 'retained_job_conflict', completed, last,
                         reason='A prepared task differs from the exact retained scientific route', next_role=role)
-            job = contracts.build_job(root, step, role, parents, instruction=instruction,
-                                      evidence_return=evidence_return, correction_request=correction_request,
-                                      **(dict(author_correction=author_correction) if author_correction is not None else {}),
-                                      **(dict(role_budget=role_budget) if role_budget is not None else {}))
+            try:
+                job = contracts.build_job(root, step, role, parents, instruction=instruction,
+                    evidence_return=evidence_return, correction_request=correction_request,
+                    **(dict(author_correction=author_correction) if author_correction is not None else {}),
+                    **(dict(role_budget=role_budget) if role_budget is not None else {}))
+            except engineering.RepairUnavailable as error:
+                return _finish(root,settings,str(error),completed,last,next_role=role)
             search_limit = search.launch_reason(root, job)
             if search_limit:
                 return _finish(root, settings, 'search_pending', completed, last,
@@ -478,6 +497,15 @@ def _run(root):
                 audit_status = candidate_audit.execute(root, job, result)
                 if audit_status is not None:
                     return _finish(root, settings, audit_status, step, result, next_role='A')
+                receipt=candidate_audit._outcome(root,step)['result']
+                from . import engineering
+                repair=engineering.request(root,step)
+                if repair is not None or receipt['status'] in {'engineering_error','unclassified'}:
+                    if repair is None:
+                        return _finish(root,settings,'candidate_audit_'+receipt['status'],step,result,reason=receipt['note'])
+                    try:engineering.admit(root,repair,step+1)
+                    except engineering.RepairUnavailable as error:
+                        return _finish(root,settings,str(error),step,result)
             correction.publish(root, step)
             next_role, next_parents, next_instruction, next_return, current_h, current_w, next_correction = correction.effective_route(
                 root, step, result, job, _route(root, step, role, result, job, current_h, current_w))
@@ -525,8 +553,10 @@ def _closeout_result(root, status, *, reason=None, step=None, read_only=False):
     last = max(closed, default=cutoff) or None
     confirmed = [row['outcome']['result'] for row in state['actions'] if row['outcome'] is not None
                  and row['intent']['action_kind'] == 'confirm' and row['outcome']['result']['status'] == 'confirmed']
-    pending_confirmation = bool(state['actions'] and (state['actions'][-1]['intent']['action_kind'] == 'submit'
-        or state['actions'][-1]['outcome'] is None or state['actions'][-1]['outcome']['result']['status'] == 'unknown'))
+    last_action=state['actions'][-1] if state['actions'] else None
+    last_outcome=last_action['outcome']['result'] if last_action and last_action['outcome'] is not None else None
+    pending_confirmation=bool(last_action and (last_outcome is None or last_outcome['status']=='unknown'
+        or last_action['intent']['action_kind']=='submit' and last_outcome['status']=='confirmed'))
     if not read_only:
         budget.inactive(root, status)
     last_science = contracts.validate(contracts.workspace(root, last)) if last is not None else None
@@ -548,9 +578,11 @@ def _closeout_result(root, status, *, reason=None, step=None, read_only=False):
             row = state['actions'][-1]
             outcome = row['outcome']['result'] if row['outcome'] else None
             status = ('delivery_unknown' if outcome is None else
-                'delivery_reselect' if outcome['status'] == 'failed' and outcome.get('failure_phase') == 'audit' else
+                'delivery_reselect' if outcome['status'] == 'rejected' and outcome.get('failure_phase') == 'audit' else
                 'delivery_confirmation_pending' if outcome['status'] == 'confirmed' and row['intent']['action_kind'] == 'submit' else
                 'delivery_' + outcome['status'])
+        elif last in closed and last_science['role']=='W':
+            status='engineering_repair_review_pending'
         elif last in closed or last == begin.get('authorization_step'):
             status = {'wait':'closeout_waiting', 'finish':'exported_unsubmitted', 'audit':'candidate_audit_pending',
                 'deliver':'closeout_preparation_pending'}.get(last_science['next_action'], 'closeout_correction_pending')
@@ -558,6 +590,31 @@ def _closeout_result(root, status, *, reason=None, step=None, read_only=False):
                 status = 'selection_comparison_pending'
         else:
             status = 'closeout_pending'
+        if last_science is not None and last_science['role']=='A' and not pending and not state['unresolved_operations'] and not candidate_audit.blocked(root):
+            from . import engineering
+            repair=engineering.request(root,last)
+            if repair is not None:
+                try:
+                    engineering.admit(root,repair,last+1)
+                    status='engineering_repair_pending' if _repair_funds(root) else 'engineering_repair_budget_unavailable'
+                except engineering.RepairUnavailable as error:status=str(error)
+            elif last_science.get('next_action')=='audit':
+                receipt=candidate_audit._outcome(root,last)
+                if receipt is not None:
+                    kind=receipt['result']['status']
+                    status='candidate_audit_'+kind if kind in {'engineering_error','unclassified'} else 'candidate_audit_review_pending'
+        screening=shortlist.pending_status(root) if contracts.settings(root).get('selection_policy') is not None else None
+        if screening is not None and not pending and not state['unresolved_operations'] and not candidate_audit.blocked(root):
+            status=screening
+            if screening=='selection_audit_engineering_error':
+                from . import engineering
+                next_step=max((int(path.stem) for path in (root/'jobs').glob('*.json')),default=begin['source_cutoff'])+1
+                repair=engineering.screen_request(root,next_step)
+                if repair is not None:
+                    try:
+                        engineering.admit(root,repair,next_step)
+                        status='engineering_repair_pending' if _repair_funds(root) else 'engineering_repair_budget_unavailable'
+                    except engineering.RepairUnavailable as error:status=str(error)
         if status in {'closeout_correction_pending', 'closeout_preparation_pending'}:
             errors = semantic.closeout_errors(root, (last or 0) + 1)
             if errors > semantic.MAX_AUTHOR_CORRECTIONS:
@@ -566,7 +623,7 @@ def _closeout_result(root, status, *, reason=None, step=None, read_only=False):
                 preparation = delivery.preparation_status(root)
                 if preparation is not None and preparation['candidate_id'] == last_science.get('candidate_recommendation'):
                     status, reason = 'closeout_preparation_unavailable', preparation['last_failure']
-        if status in {'closeout_pending', 'closeout_correction_pending', 'candidate_audit_pending', 'delivery_reselect', 'selection_comparison_pending'} and not _closeout_funds(
+        if status in {'closeout_pending', 'closeout_correction_pending', 'candidate_audit_pending', 'delivery_reselect', 'selection_comparison_pending','engineering_repair_review_pending','candidate_audit_review_pending'} and not _closeout_funds(
                 root, preparation_seconds=begin['preparation_seconds'], step=step):
             status = 'closeout_budget_unavailable'
     result = dict(status=status, goal_completion='not_asserted', objective_ref=str(root / 'project/global/objective.md'),
@@ -655,8 +712,8 @@ def _run_delivery_actions(root, job, result):
         completed = actions[-1]['outcome']
         if completed is not None and completed['result']['status'] == 'confirmed' and actions[-1]['intent']['action_kind'] == 'confirm':
             return _closeout_result(root, 'delivery_confirmed')
-        if completed is not None and completed['result']['status'] == 'failed' and completed['result']['cleanup_confirmed']:
-            return _closeout_result(root, 'delivery_reselect' if completed['result'].get('failure_phase') == 'audit' else 'delivery_failed', reason=completed['result']['note'])
+        if completed is not None and completed['result']['status'] in {'failed', 'rejected', 'engineering_error', 'unclassified'} and completed['result']['cleanup_confirmed']:
+            return _closeout_result(root, 'delivery_reselect' if completed['result']['status']=='rejected' else 'delivery_' + completed['result']['status'], reason=completed['result']['note'])
         kind, binding = 'confirm', original['binding']
         if budget.execution_blocked(root, ignore_operation=binding['operation_id']):
             return _closeout_result(root, 'delivery_unknown', reason='Original operation remains live or unverified; never resubmit')
@@ -678,7 +735,7 @@ def _run_delivery_actions(root, job, result):
             on_process=lambda phase, identity: budget.action_process(root, intent, phase, identity))
         budget.action_outcome(root, intent, reply)
         if reply['status'] != 'confirmed':
-            status = ('delivery_reselect' if reply['status'] == 'failed' and reply.get('failure_phase') == 'audit'
+            status = ('delivery_reselect' if reply['status'] == 'rejected' and reply.get('failure_phase') == 'audit'
                 and reply['cleanup_confirmed'] else 'delivery_' + reply['status'])
             return _closeout_result(root, status, reason=reply['note'])
         if kind == 'confirm':
@@ -686,8 +743,21 @@ def _run_delivery_actions(root, job, result):
         kind = 'confirm'  # First confirmation is explicitly reserved and accepted once.
 
 
+def _repair_funds(root):
+    settings=contracts.settings(root)
+    limits,meter=budget.snapshot(root),native.usage(root)
+    if budget.execution_blocked(root) or meter['unknown_steps']:return False
+    worker=(settings.get('node_budget_policy') or {}).get('W')
+    if worker is None:return False
+    policy=settings['delivery_policy'];author=policy['closeout_a']
+    floor=budget.closeout_floor(settings)
+    return (limits['max_tokens']-meter['observed_tokens'] >= worker['max_observed_tokens']+author['max_observed_tokens']+floor['tokens']
+        and limits['seconds_remaining'] >= worker['max_seconds']+author['max_seconds']+floor['seconds']
+        and settings['max_steps']-budget.used_steps(root) >= 2+floor['steps'])
+
+
 def _run_closeout(root):
-    from . import delivery
+    from . import delivery,engineering
     begin = budget.closeout_state(root)['begin']
     if begin is None:
         raise ValueError('Closeout continuation has no immutable boundary')
@@ -695,13 +765,21 @@ def _run_closeout(root):
         return _closeout_result(root, 'exported_unsubmitted', reason=begin['stop_reason'])
     if (root / 'pause.request').exists() or correction.gate(root, begin['source_cutoff']) is not None:
         return _closeout_result(root, 'closeout_blocked', reason='Original pause remains effective')
-    if contracts.settings(root).get('selection_policy') and not (root / 'jobs' / f'{begin["first_step"]:03d}.json').exists():
+    initial_repair=None
+    first_job=root/'jobs'/f'{begin["first_step"]:03d}.json'
+    if first_job.exists():initial_repair=contracts.read(first_job).get('engineering_repair')
+    if contracts.settings(root).get('selection_policy') and not first_job.exists():
         try:
             stopped = shortlist.screen(root, begin)  # Control shortlist, smoke and audit before the first closeout A.
         except delivery.DeliveryUnresolved as error:
             return _closeout_result(root, 'closeout_preparation_unavailable', reason=error.code)
         if stopped is not None:
-            return _closeout_result(root, stopped)
+            if stopped=='selection_audit_engineering_error':
+                initial_repair=engineering.screen_request(root,begin['first_step'])
+                if initial_repair is not None:
+                    try:engineering.admit(root,initial_repair,begin['first_step'])
+                    except engineering.RepairUnavailable as error:return _closeout_result(root,str(error))
+            if initial_repair is None:return _closeout_result(root,stopped)
     parents = []
     for role in ('H', 'W', 'A'):
         matching = [step for step in range(1, begin['source_cutoff'] + 1)
@@ -722,8 +800,11 @@ def _run_closeout(root):
             'Use next_action=deliver to explicitly authorize adapter delivery, finish to decline, or wait to pause. '
             'Explain science, limitations and unmet objectives; global completion remains unasserted. '
             'E extracts scientific evidence only. Exploration is closed; new H/W/E requests require bounded clarification.')
+    from . import engineering
+    repair=initial_repair
+    if repair:parents=sorted({repair['decision_step'],repair['source']['step']})
     author_request, corrections = None, 0
-    if begin.get('authorization_step') is not None:
+    if begin.get('authorization_step') is not None and repair is None:
         step = begin['authorization_step']
         if not budget.closeout_state(root)['actions'] and not _closeout_funds(root,
                 preparation_seconds=begin['preparation_seconds'], author_required=False):
@@ -735,7 +816,10 @@ def _run_closeout(root):
         try:
             delivery.prepare_binding(root, job, result)
         except delivery.PreparationUnavailable as error:
-            return _closeout_result(root, 'closeout_preparation_unavailable', reason=error.code, step=step)
+            repair=engineering.request(root,step)
+            if repair is None:return _closeout_result(root,'closeout_preparation_unavailable',reason=error.code,step=step)
+            try:engineering.admit(root,repair,begin['first_step'])
+            except engineering.RepairUnavailable as blocked:return _closeout_result(root,str(blocked),step=step)
         except delivery.DeliveryUnresolved as error:
             if error.code == 'selection_comparison_required':
                 instruction = ('Control screening is ready under the frozen selection policy. Compare every closeout.comparison row '
@@ -749,11 +833,16 @@ def _run_closeout(root):
                     + '. Use deliver for exact adapter delivery, audit for qualification, finish to decline or wait. E extracts scientific evidence only.')
         else:
             delivered = _run_delivery_actions(root, job, result)
-            if delivered['status'] != 'delivery_reselect':
+            if delivered['status']=='delivery_engineering_error':
+                repair=engineering.request(root,step)
+                if repair is None:return delivered
+                try:engineering.admit(root,repair,begin['first_step'])
+                except engineering.RepairUnavailable as error:return _closeout_result(root,str(error))
+            elif delivered['status'] != 'delivery_reselect':
                 return delivered
             instruction = ('The adapter failed audit before submission: ' + delivered.get('reason', '')
                 + '. Select another candidate with deliver, request audit, decline with finish or wait. The original budget remains binding.')
-        parents = [step]
+        parents = sorted({step,repair['source']['step']}) if repair else [step]
     # Normal audit/selection turns are bounded by the original shared budget.
     # Only an invalid author decision consumes the separate correction allowance.
     for step in range(begin['first_step'], contracts.settings(root)['max_steps'] + 1):
@@ -780,15 +869,33 @@ def _run_closeout(root):
                 except Exception:
                     return _closeout_result(root, 'closeout_native_unsealed', step=step)
             else:
-                if budget.execution_blocked(root) or not _closeout_funds(root, preparation_seconds=begin['preparation_seconds'], step=step):
+                if repair is not None and not _repair_funds(root):
+                    return _closeout_result(root,'engineering_repair_budget_unavailable',step=step)
+                if budget.execution_blocked(root) or repair is None and not _closeout_funds(root, preparation_seconds=begin['preparation_seconds'], step=step):
                     return _closeout_result(root, 'closeout_budget_unavailable', step=step)
-                budget.transition(root, 'advance', 'closeout_author_admission')
+                budget.transition(root, 'advance', 'closeout_engineering_repair_admission' if repair else 'closeout_author_admission')
                 if path.exists():
                     prior = contracts.read(path)
                     if prior.get('purpose') != 'closeout' or prior.get('source_cutoff') != begin['source_cutoff'] or prior['direct_refs'] != [dict(path=f'inputs/parents/{parent:03d}/conclusion.json',sha256=contracts.digest(execution.raw(root,parent))) for parent in parents]:
                         return _closeout_result(root, 'retained_job_conflict', step=step)
-                contracts.build_job(root, step, 'A', parents, instruction=instruction, purpose='closeout',
-                    source_cutoff=begin['source_cutoff'], delivery_sources=begin['delivery_sources'], author_correction=author_request)
+                if repair is None and contracts.settings(root).get('selection_policy') is not None:
+                    stopped=shortlist.screen(root,begin,before_step=step)
+                    if stopped is not None:
+                        if stopped=='selection_audit_engineering_error':
+                            repair=engineering.screen_request(root,step)
+                            if repair is not None:
+                                try:engineering.admit(root,repair,step)
+                                except engineering.RepairUnavailable as error:return _closeout_result(root,str(error),step=step)
+                                if not _repair_funds(root):return _closeout_result(root,'engineering_repair_budget_unavailable',step=step)
+                                parents=sorted({repair['decision_step'],repair['source']['step']})
+                        if repair is None:return _closeout_result(root,stopped,step=step)
+                try:
+                    contracts.build_job(root, step, 'W' if repair else 'A', parents,
+                        instruction=engineering.public(repair)['scope'] if repair else instruction, purpose='closeout',
+                        source_cutoff=begin['source_cutoff'], delivery_sources=engineering.sources(root,step),
+                        author_correction=author_request if repair is None else None, engineering_repair=repair)
+                except engineering.RepairUnavailable as error:
+                    return _closeout_result(root,str(error),step=step)
                 try:
                     native.execute_native(root, step)
                 except budget.NodeBudgetUnavailable:
@@ -801,12 +908,24 @@ def _run_closeout(root):
                     return _closeout_result(root, 'closeout_native_unsealed', step=step)
         job = contracts.read(path)
         result = contracts.validate(contracts.workspace(root, step))
+        if job['role']=='W':
+            repair=None
+            parents=sorted({step,*engineering.steps(root,step),*parents})
+            instruction='Judge the bounded implementation repair and new candidate from exact evidence. Old delivery authorization does not cover new bytes. Use deliver only for an explicit new choice, or report unresolved science.'
+            author_request=None
+            continue
         if result['next_action'] == 'audit':
             from . import candidate_audit
             audit_status = candidate_audit.execute(root, job, result)
             if audit_status is not None:
                 return _closeout_result(root, audit_status, step=step)
-            parents, author_request = [step], None
+            receipt=candidate_audit._outcome(root,step)['result']
+            repair=engineering.request(root,step)
+            if repair is not None or receipt['status'] in {'engineering_error','unclassified'}:
+                if repair is None:return _closeout_result(root,'candidate_audit_'+receipt['status'],reason=receipt['note'],step=step)
+                try:engineering.admit(root,repair,step+1)
+                except engineering.RepairUnavailable as error:return _closeout_result(root,str(error),step=step)
+            parents, author_request = sorted({step,*engineering.steps(root,step),*([repair['source']['step']] if repair else [])}), None
             instruction = 'Reassess the requested candidate using the bound audit receipt; exploration remains closed.'
             continue
         if result['next_action'] in {'finish', 'wait'}:
@@ -816,7 +935,13 @@ def _run_closeout(root):
         try:
             delivery.prepare_binding(root, job, result)
         except delivery.PreparationUnavailable as error:
-            return _closeout_result(root, 'closeout_preparation_unavailable', reason=error.code, step=step)
+            repair=engineering.request(root,step)
+            if repair is None:return _closeout_result(root,'closeout_preparation_unavailable',reason=error.code,step=step)
+            try:engineering.admit(root,repair,step+1)
+            except engineering.RepairUnavailable as blocked:return _closeout_result(root,str(blocked),step=step)
+            parents=sorted({step,repair['source']['step'],*engineering.steps(root,step)})
+            author_request=None
+            continue
         except delivery.DeliveryUnresolved as error:
             corrections += 1
             source = semantic._source(root, step)
@@ -828,10 +953,15 @@ def _run_closeout(root):
                 'extract means scientific evidence extraction; it never authorizes copying or submission. Exploration is closed.')
             continue
         delivered = _run_delivery_actions(root, job, result)
-        if delivered['status'] != 'delivery_reselect':
+        if delivered['status']=='delivery_engineering_error':
+            repair=engineering.request(root,step)
+            if repair is None:return delivered
+            try:engineering.admit(root,repair,step+1)
+            except engineering.RepairUnavailable as error:return _closeout_result(root,str(error),step=step)
+        elif delivered['status'] != 'delivery_reselect':
             return delivered
-        parents, author_request = [step], None
-        instruction = ('The adapter deterministically failed public audit before submission for candidate '
+        parents, author_request = sorted({step,*engineering.steps(root,step),*([repair['source']['step']] if repair else [])}), None
+        instruction = ('The completed public audit rejected candidate '
             + str(result.get('candidate_recommendation')) + ': ' + delivered.get('reason', '')
             + '. Select an alternative candidate with deliver, request audit, decline with finish or wait. '
             'No unknown external operation may be repeated; original science and budget remain binding.')

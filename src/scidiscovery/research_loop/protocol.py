@@ -6,7 +6,7 @@ is compatibility information, never permission or scientific qualification.
 from pathlib import Path
 
 
-CURRENT = 17
+CURRENT = 18
 
 
 class UnsupportedProtocol(ValueError):

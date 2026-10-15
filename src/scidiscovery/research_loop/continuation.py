@@ -312,13 +312,16 @@ def fragment_start(root, step):
         raise error
     mode = checkpoint.policy(settings['worker_fragment_policy'])['context']
     session_ref = session(root, step, last) if mode == 'same_session' else None
+    from . import profiles
+    profile_binding = profiles.binding(settings, job)
+    profiles.validate_intent(settings, job, c.read(paths[0] / 'native-intent.json'))
     # All previous targets and shared authorization are cumulatively consumed.
     budget.transition(root, 'advance', 'accepted_worker_fragment')
     anchor = budget.accept_continuation(root, job, paths)
     number = len(paths)
     record = execution.origin(root, step) / 'continuations' / f'{number:03d}'
     record.mkdir(parents=True, exist_ok=True)
-    intent = dict(step=step, attempt=number, continuation_kind='fragment', context_mode=mode,
+    intent = dict(step=step, attempt=number, continuation_kind='fragment', context_mode=mode, **profile_binding,
                   task_sha256=c.digest(root / 'jobs' / f'{step:03d}.json'),
                   root_intent_sha256=c.digest(paths[0] / 'native-intent.json'), previous=execution.proof(last),
                   fragment_checkpoint=dict(path=(last / 'checkpoint.json').relative_to(root).as_posix(),
@@ -385,12 +388,15 @@ def start(root, step):
     validate_task(root, step)
     _eligible_original(root, step, paths, successful=repair is not None, wait_runner=repair is not None)
     session_ref = session(root, step, last)
+    from . import profiles
+    profile_binding = profiles.binding(settings, job)
+    profiles.validate_intent(settings, job, original_intent)
     number = len(paths)
     budget.transition(root, 'advance', 'explicit_worker_continuation')
     anchor = budget.accept_continuation(root, job, paths)
     record = execution.origin(root, step) / 'continuations' / f'{number:03d}'
     record.mkdir(parents=True, exist_ok=True)
-    intent = dict(step=step, attempt=number, continuation_kind='repair', task_sha256=c.digest(root / 'jobs' / f'{step:03d}.json'),
+    intent = dict(step=step, attempt=number, continuation_kind='repair', **profile_binding, task_sha256=c.digest(root / 'jobs' / f'{step:03d}.json'),
                   root_intent_sha256=c.digest(paths[0] / 'native-intent.json'), previous=execution.proof(last),
                   session=session_ref, budget_slice=anchor,
                   **({('work_repair' if work_repair else 'output_repair'):repair} if repair is not None else {}))

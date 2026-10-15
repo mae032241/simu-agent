@@ -78,6 +78,7 @@ def _config(path):
     keys = {'contract_version','record_dir','runs_root','run_argv','scope','parents','evaluation_key','feedback_version','execution_interface','max_seconds','admission'}
     if 'native_attempt' in value:keys.add('native_attempt')
     if 'breadth' in value:keys.add('breadth')
+    if 'engineering_repair' in value:keys.add('engineering_repair')
     if 'receipt_channel' in value:keys.add('receipt_channel')
     if set(value) != keys or value['contract_version'] != 2 or value['feedback_version'] != 1:
         raise ValueError('Explicit wrapper contract2 configuration required')

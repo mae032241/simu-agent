@@ -118,7 +118,12 @@ def exp_wrapper(s,w):
         + shlex.quote(warning) + ' >&2; ' + public + ';;\n*) ' + public + ';;\nesac\n')
 
 
+def native_profile(s):
+    from scidiscovery.research_loop import profiles
+    return profiles.selected({'service_tier':'default', **s}, os.environ['THIN_HWA_ROLE'])
+
 def prepare_home(s,w,h, auth_source=None):
+    profile=native_profile(s)
     h.mkdir(parents=True,exist_ok=True);(h/'tmp/arg0').mkdir(parents=True,exist_ok=True)
     for p in [Path(s['runs_dir']),Path(s['submission_dir'])]:
         if not p.is_relative_to(Path(s['scene_root'])):
@@ -147,8 +152,8 @@ def prepare_home(s,w,h, auth_source=None):
     control=Path(s['scene_root'])/'host-runtime/experiment-control'/hashlib.sha256(regular(os.environ['THIN_HWA_JOB_MANIFEST'])).hexdigest()
     grants[str(control)]='read'
     for p in ['/usr','/bin','/lib','/lib64',*s['runtime_paths']]:grants[p]='read'
-    lines=['model='+json.dumps(s['model']),'model_reasoning_effort='+json.dumps(s['reasoning_effort']),
-        'service_tier="default"','default_permissions='+json.dumps(s['profile']),
+    lines=['model='+json.dumps(profile['model']),'model_reasoning_effort='+json.dumps(profile['reasoning_effort']),
+        'service_tier='+json.dumps(profile['service_tier']),'default_permissions='+json.dumps(s['profile']),
         'approval_policy="never"','web_search="disabled"','[permissions.'+s['profile']+'.filesystem]']
     lines.extend(json.dumps(k)+'='+json.dumps(v) for k,v in grants.items())
     lines.extend(['[permissions.'+s['profile']+'.network]','enabled=false','[shell_environment_policy]',
@@ -188,7 +193,7 @@ def outer(s,w,h,command,materials=()):
 
 def accepted_attempt(s,w,output,*,resume_thread=None,schema=None):
     """Bind fresh/resumed exec to this exact already accepted native dispatch."""
-    from scidiscovery.research_loop import contracts as c,execution,continuation,runtime
+    from scidiscovery.research_loop import contracts as c,execution,continuation,runtime,profiles
     from scidiscovery.research_loop.protocol import require_current
     import time
     root=Path(s['scene_root']).absolute();step=int(w.name)
@@ -198,6 +203,11 @@ def accepted_attempt(s,w,output,*,resume_thread=None,schema=None):
     job=c.read(c.regular(job_path));require_current(root,job)
     if w!=c.workspace(root,step) or os.environ['THIN_HWA_ROLE']!=job['role']:
         raise ValueError('accepted_role_workspace_mismatch')
+    frozen=c.settings(root)
+    declared={'service_tier':'default', **s}
+    if profiles.normalize(declared.get('role_profiles',{}),declared)!=profiles.normalize(frozen.get('role_profiles',{}),frozen):
+        raise ValueError('launcher_role_profiles_mismatch')
+    profiles.for_job(frozen,job)
     continuation.validate_task(root,step)
     if resume_thread is not None or c.settings(root).get('resume_policy') is not None:
         continuation.validate_launcher(root)
@@ -208,6 +218,8 @@ def accepted_attempt(s,w,output,*,resume_thread=None,schema=None):
         raise ValueError('original_dispatch_already_terminal_or_returned')
     intent=c.read(c.regular(record/'native-intent.json'))
     if intent.get('task_sha256')!=c.digest(job_path):raise ValueError('accepted_native_task_changed')
+    profiles.validate_intent(frozen,job,intent)
+    profiles.validate_intent(frozen,job,c.read(execution.origin(root,step)/'native-intent.json'))
     if Path(os.environ['THIN_HWA_NATIVE_HOME']).absolute()!=execution.home(root,step,number):
         raise ValueError('accepted_native_home_mismatch')
     expected_schema=execution.origin(root,step)/'science-result.schema.json'
@@ -244,7 +256,8 @@ def accepted_attempt(s,w,output,*,resume_thread=None,schema=None):
 def native_args(s,w,args):
     # Resume is an exact accepted session, never selection by name or recency.
     if not args or args[0]!='exec':raise ValueError('fresh_native_exec_required')
-    result=['exec'];i=1;seen=set();output=None;schema=None;resuming=False;thread=None
+    profile=native_profile(s)
+    result=['exec'];i=1;seen=set();configs=set();output=None;schema=None;resuming=False;thread=None
     while i<len(args):
         x=args[i]
         if x=='resume':
@@ -266,14 +279,19 @@ def native_args(s,w,args):
         if x not in allowed or i+1>=len(args) or resuming and x in ['-c','--sandbox','-C']:
             raise ValueError('undeclared_native_argument')
         v=args[i+1];i+=2
-        if x in seen:raise ValueError('duplicate_native_argument')
+        if x in seen and x!='-c':raise ValueError('duplicate_native_argument')
         seen.add(x)
         if x=='--sandbox':
             if v!='workspace-write':raise ValueError('unexpected_legacy_sandbox')
             continue  # Exact legacy flag would override the pinned named deny profile.
         if x=='-C' and Path(v).absolute()!=w:raise ValueError('workspace_argument_mismatch')
-        if x=='--model' and v!=s['model']:raise ValueError('model_profile_mismatch')
-        if x=='-c' and v!='model_reasoning_effort="'+s['reasoning_effort']+'"':raise ValueError('native_config_override_rejected')
+        if x=='--model' and v!=profile['model']:raise ValueError('model_profile_mismatch')
+        if x=='-c':
+            key=v.split('=',1)[0]
+            expected={'model_reasoning_effort':profile['reasoning_effort'],'service_tier':profile['service_tier']}
+            if key not in expected or v!=key+'='+json.dumps(expected[key]) or key in configs:
+                raise ValueError('native_config_override_rejected')
+            configs.add(key)
         if x=='--output-last-message':
             p=Path(v).absolute()
             output=p
@@ -281,6 +299,8 @@ def native_args(s,w,args):
         result.extend([x,v])
     if not {'--output-last-message','--model','-c','-C'}.issubset(seen) or result[-1]!='-':
         raise ValueError('complete_stdin_role_command_required')
+    if 'model_reasoning_effort' not in configs or s.get('role_profiles') is not None and 'service_tier' not in configs:
+        raise ValueError('complete_role_profile_config_required')
     if '--skip-git-repo-check' not in result:result.insert(1,'--skip-git-repo-check')
     if resuming and (thread is None or schema is None):
         raise ValueError('complete_resume_session_schema_required')

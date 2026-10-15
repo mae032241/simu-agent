@@ -37,8 +37,16 @@ def configured(root):
     return policy(value) if value is not None else None
 
 
-def _directory(root):
+def _directory(root, before_step=None, *, repair_step=None):
+    from . import engineering
+    if repair_step is None:
+        repaired=engineering.steps(root,before_step)
+        if repaired:
+            begin=budget.closeout_state(root)['begin']
+            repaired=[step for step in repaired if begin and step>begin['source_cutoff']]
+        repair_step=max(repaired,default=0)
     path = root / 'host-delivery/selection'
+    if repair_step:path=path/'repairs'/f'{repair_step:03d}'
     if path.resolve() != path:
         raise ValueError('Control selection original location changed')
     return path
@@ -48,9 +56,12 @@ def _boundary(root, begin):
     return dict(seq=begin['seq'], sha256=c.digest(root / 'control-ledger' / f'{begin["seq"]:06d}.json'))
 
 
-def _members(root, begin):
+def _members(root, begin, before_step=None):
     from . import history
-    records = selection.public_inputs(history.rebuild(root, begin['source_cutoff'] + 1, write_cache=False))
+    from . import engineering
+    repaired=[step for step in engineering.steps(root,before_step) if step>begin['source_cutoff']]
+    end=max(repaired,default=begin['source_cutoff'])+1
+    records = selection.public_inputs(history.rebuild(root,end,source_cutoff=begin['source_cutoff'],extra_steps=repaired,write_cache=False))
     try:
         limits = configured(root)
         return selection.shortlist(records, limits['shortlist_k'], evaluation_key=limits.get('evaluation_key'))
@@ -60,7 +71,7 @@ def _members(root, begin):
 
 def _intents(root):
     directory = root / 'host-delivery/selection'
-    return sorted(directory.glob('*.intent.json')) if directory.is_dir() else []
+    return sorted(directory.rglob('*.intent.json')) if directory.is_dir() else []
 
 
 def calls(root):
@@ -102,7 +113,7 @@ def _call(root, begin, index, kind, source, seconds):
         return None  # Never repeat an uncertain accepted call.
     budget.transition(root, 'advance', 'selection_' + kind)
     operation = hashlib.sha256(delivery._bytes(dict(settings_sha256=c.digest(root / 'settings.json'),
-        closeout_begin=_boundary(root, begin), kind=kind, candidate_id=source['candidate_id'],
+        closeout_begin=_boundary(root, begin), generation=directory.relative_to(root).as_posix(), kind=kind, candidate_id=source['candidate_id'],
         artifact_sha256=source['objects']['artifact']['sha256']))).hexdigest()
     intent = dict(operation_id=operation, kind=kind, index=index, candidate_id=source['candidate_id'],
                   max_seconds=seconds, advance_seconds=budget.snapshot(root)['advance_seconds'])
@@ -114,7 +125,8 @@ def _call(root, begin, index, kind, source, seconds):
     except delivery.DeliveryUnresolved as error:
         result = dict(status='unknown', note=error.code, cleanup_confirmed=error.code != 'delivery_cleanup_unknown')
     value = dict(intent_sha256=c.digest(intent_path), status=result['status'], note=result['note'].encode()[:1024].decode(errors='ignore'),
-                 cleanup_confirmed=result['cleanup_confirmed'], leaf_output=delivery.leaf_refs(root, operation))
+                 cleanup_confirmed=result['cleanup_confirmed'], leaf_output=delivery.leaf_refs(root, operation),
+        **(dict(diagnostic=result['diagnostic']) if 'diagnostic' in result else {}))
     _save(outcome_path, value)
     return value
 
@@ -130,33 +142,36 @@ def _prior_audits(root, sources):
             continue
         cid, status = outcome['candidate_id'], outcome['result']['status']
         source = sources.get(cid)
-        if (status in {'audited', 'failed'} and source is not None and source['status'] == 'audit_pending'
+        if (status in {'audited', 'rejected'} and source is not None and source['status'] == 'audit_pending'
                 and outcome['result'].get('artifact_sha256') == source['objects']['artifact']['sha256']):
-            found[cid] = 'failed' if status == 'failed' or found.get(cid) == 'failed' else 'passed'
+            found[cid] = 'failed' if status == 'rejected' or found.get(cid) == 'failed' else 'passed'
     return found
 
 
-def screen(root, begin):
+def screen(root, begin, before_step=None):
     """Freeze shortlist, smoke and audit as affordable; None once screen.json exists."""
-    directory = _directory(root)
+    directory = _directory(root,before_step)
     final = directory / 'screen.json'
     if final.exists():
         return None
     limits = configured(root)
     path = directory / 'shortlist.json'
-    computed = dict(_members(root, begin), closeout_begin=_boundary(root, begin))
+    computed = dict(_members(root, begin,before_step), closeout_begin=_boundary(root, begin))
     if path.exists():
         if c.read(c.regular(path)) != computed:
             raise ValueError('Control shortlist differs from its sealed public prefix')
     else:
         _save(path, computed)
-    sources = {row['candidate_id']: row for row in (begin.get('delivery_sources') or {}).get('items', [])}
-    capable = CAPABILITY in (begin.get('delivery_sources') or {}).get('capabilities', [])
-    if (begin.get('delivery_sources') or {}).get('catalogue'):
+    from . import engineering
+    refs=engineering.sources(root,before_step or (max(engineering.steps(root),default=begin['source_cutoff'])+1))
+    sources = {row['candidate_id']: row for row in (refs or {}).get('items', [])}
+    capable = CAPABILITY in (refs or {}).get('capabilities', [])
+    if (refs or {}).get('catalogue'):
         sources = {}
+        catalogue=refs
         for member in computed['members']:
             try:
-                refs = delivery.selected_sources(root, begin['delivery_sources'], member['candidate_id'], prepare=True)
+                refs = delivery.selected_sources(root, catalogue, member['candidate_id'], prepare=True)
             except delivery.DeliveryUnresolved as error:
                 if error.code == 'delivery_cleanup_unknown':
                     raise
@@ -165,11 +180,14 @@ def screen(root, begin):
             capable = capable or CAPABILITY in refs.get('capabilities', [])
     settings = c.settings(root)
     audit_on = bool(settings.get('candidate_audit_policy')) and settings['delivery_policy']['adapter'] is not None
+    repaired_originals={c.read(root/'jobs'/f'{step:03d}.json')['engineering_repair']['candidate_id'] for step in engineering.steps(root,before_step)}
     rows = []
     for index, member in enumerate(computed['members']):
         source = sources.get(member['candidate_id'])
         smoke = dict(status='unavailable', note='plugin_smoke_unavailable')
-        if source is None or source['status'] != 'audit_pending':
+        if member['candidate_id'] in repaired_originals:
+            smoke=dict(status='unavailable',note='original_implementation_requires_repair')
+        elif source is None or source['status'] != 'audit_pending':
             smoke = dict(status='unavailable', note='candidate_original_unavailable')
         elif capable:
             if (directory / f'smoke-{index:02d}.intent.json').exists() or _affordable(root, begin, limits['smoke_seconds']):
@@ -196,7 +214,9 @@ def screen(root, begin):
             outcome = _call(root, begin, index, 'audit', sources[cid], settings['delivery_policy']['submit_seconds'])
             if outcome is None or not outcome['cleanup_confirmed']:
                 return 'selection_audit_unknown'
-            row['audit'] = dict(status={'audited': 'passed', 'failed': 'failed'}.get(outcome['status'], 'unknown'),
+            if outcome['status'] in {'engineering_error', 'unclassified'}:
+                return 'selection_audit_' + outcome['status']
+            row['audit'] = dict(status={'audited': 'passed', 'rejected': 'failed'}.get(outcome['status'], 'unknown'),
                                 note=outcome['note'], receipt=f'audit-{index:02d}')
         else:
             row['audit'] = dict(status='not_run', note='selection_reserve_unavailable')
@@ -217,15 +237,16 @@ def screen(root, begin):
     return None
 
 
-def marker(root):
-    path = root / 'host-delivery/selection/screen.json'
+def marker(root,before_step=None):
+    directory=_directory(root,before_step)
+    path = directory/'screen.json'
     if not path.exists() or not c.read(c.regular(path))['rows']:
         return None
-    return dict(version=1, sha256=c.digest(path))
+    return dict(version=1, sha256=c.digest(path),**(dict(repair_step=int(directory.name)) if directory.parent.name=='repairs' else {}))
 
 
 def _screen(root, mark):
-    directory = _directory(root)
+    directory = _directory(root,repair_step=mark.get('repair_step',0))
     path = directory / 'screen.json'
     if c.digest(c.regular(path)) != mark['sha256']:
         raise ValueError('Control selection screen changed')
@@ -255,8 +276,24 @@ def public_table(root, mark):
                '(default_candidate, chosen_candidate, reason, evidence_steps: exact frozen node steps).')
 
 
+def pending_status(root):
+    """The same retained current-generation receipts that stop screen()."""
+    directory=_directory(root)
+    if (directory/'screen.json').exists():return None
+    for path in sorted(directory.glob('*.intent.json')):
+        intent=c.read(c.regular(path))
+        outcome=path.with_name(path.name.replace('.intent.json','.outcome.json'))
+        if not outcome.exists():return 'selection_'+intent['kind']+'_unknown'
+        value=c.read(c.regular(outcome))
+        if value['intent_sha256']!=c.digest(path):raise ValueError('Selection pending receipt changed')
+        if not value['cleanup_confirmed']:return 'selection_'+intent['kind']+'_unknown'
+        if intent['kind']=='audit' and value['status'] in {'engineering_error','unclassified'}:
+            return 'selection_audit_'+value['status']
+    return None
+
+
 def summary(root):
-    path = root / 'host-delivery/selection/screen.json'
+    path = _directory(root)/'screen.json'
     if not path.exists():
         return None
     value = c.read(c.regular(path))

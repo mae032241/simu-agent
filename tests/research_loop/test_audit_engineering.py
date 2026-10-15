@@ -1,0 +1,297 @@
+"""Engineering audit faults are not scientific rejection; real CLI/leaf processes."""
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+import pytest
+
+from execution_fixtures import execution_registry
+from scidiscovery.research_loop import audit_recovery, budget, contracts as c, cov_delivery, delivery, engineering
+from test_cov_delivery_lineage import managed_scene
+from test_cov_lineage import BACKEND
+from test_delivery import FAKE_HARNESS, prepare_fixture, closeout_decision, accepted
+from test_history_handoff import finish
+
+
+@pytest.mark.parametrize('note,expected',[
+    ('script /inputs/source.py not found; audit skipped',('engineering_error','audit_source_missing')),
+    ('audit timed out after 45s (audit exceeded 45s budget)',('engineering_error','audit_timeout')),
+    ('audit failed during training: ModuleNotFoundError: missing helper',('engineering_error','audit_dependency_missing')),
+    ('audit failed during training: ValueError: broken shape',('engineering_error','audit_training_error')),
+    ('audit prediction failed: RuntimeError: shape',('engineering_error','audit_prediction_error')),
+    ('train.py has no train() function; audit skipped',('engineering_error','audit_interface_missing')),
+    ('could not import runner.score: absent',('engineering_error','audit_harness_unavailable')),
+    ('audit skipped',('unclassified','audit_not_completed_unclassified')),
+])
+def test_typed_incomplete_receipt_never_claims_scientific_failure(note,expected):
+    assert cov_delivery.audit_status(dict(run_id=1,leakage_flag=False,audit_score=None,audit_gap=None,audit_note=note),1)==expected
+
+
+@pytest.mark.parametrize('flag,status',[(False,'audited'),(True,'rejected')])
+def test_only_complete_finite_audit_can_qualify_or_reject(flag,status):
+    proof=dict(run_id=1,leakage_flag=flag,audit_score=.1,audit_gap=.2,audit_note='audit took .1s on held-out rows')
+    assert cov_delivery.audit_status(proof,1)[0]==status
+    proof['audit_score']=None
+    assert cov_delivery.audit_status(proof,1)[0]=='unclassified'
+
+
+NATIVE=r'''import json,os,pathlib,subprocess,sys
+from scidiscovery.research_loop import cov_lineage
+args=sys.argv[1:];sys.stdin.read()
+work=pathlib.Path(os.environ['THIN_HWA_WORKSPACE']);manifest=json.loads(pathlib.Path(os.environ['THIN_HWA_JOB_MANIFEST']).read_text())
+root=pathlib.Path(os.environ['THIN_HWA_JOB_MANIFEST']).parents[1]
+task=json.loads((work/'science-task.json').read_text())
+payload=dict(summary='Bounded fake repair evidence',scientific_result='No scientific efficacy claim.',limitations=['Deterministic native fixture'],implementation_selection=None)
+if task['role']=='W':
+ thread='11111111-2222-4333-8444-555555555555'
+ print(json.dumps(dict(type='thread.started',thread_id=thread)),flush=True)
+ home=pathlib.Path(os.environ['THIN_HWA_NATIVE_HOME']);session=home/'sessions/rollout.jsonl';session.parent.mkdir(parents=True,exist_ok=True)
+ if not session.exists():session.write_text(json.dumps(dict(type='session_meta',payload=dict(id=thread,cwd=str(work))))+'\n')
+ if FAIL_FIRST and 'resume' not in args:
+  print(json.dumps(dict(type='turn.completed',usage=dict(input_tokens=7,cached_input_tokens=2,output_tokens=3))),flush=True);raise SystemExit(7)
+ if 'resume' in args:assert thread in args
+ repair=task['engineering_repair'];assert repair['candidate_id']=='run-1'
+ assert 'No module named' in repair['diagnostic'] or 'timed out' in repair['diagnostic']
+ assert json.loads((work/repair['source']).read_text())['revision']=='P'
+ config=work/'work/experiment-config.json'
+ cov_lineage.configure(root,manifest['step'],[sys.executable,BACKEND,'--runs-root',str(root/'runs')],root/'runs',config,receipt_channel='backend_file')
+ script=work/'work/fixed.py';script.write_text(json.dumps(dict(mode='success',revision='fixed')))
+ base=[sys.executable,'-m','scidiscovery.research_loop.experiments','--config',str(config),'run','--script',str(script)]
+ wrong=subprocess.run([*base,'--new-plan'],capture_output=True,text=True);assert wrong.returncode==2,wrong.stdout
+ result=subprocess.run([*base,'--parent-plan','run-1','--change-intent','Repair the missing implementation helper'],capture_output=True,text=True)
+ assert result.returncode==0,(result.stdout,result.stderr)
+ assert json.loads(result.stdout)['candidate_id']=='run-3'
+ again=subprocess.run([*base,'--parent-plan','run-1','--change-intent','Duplicate repair'],capture_output=True,text=True)
+ assert again.returncode==2,again.stdout
+ payload.update(stage_intent='review',mechanism_findings=None)
+else:
+ assert task['role']=='A' and 'run-3' in json.dumps(task)
+ assert not (root/'submission/model.pkl').exists()
+ payload.update(next_action='deliver',candidate_recommendation='run-3',route_reason='Authorize only the new repaired candidate',
+  search_review=None,progress_assessment=None,decision_request=None,portfolio_review=None)
+pathlib.Path(args[args.index('--output-last-message')+1]).write_text(json.dumps(payload))
+print(json.dumps(dict(type='turn.completed',usage=dict(input_tokens=7,cached_input_tokens=2,output_tokens=3))),flush=True)
+'''
+
+
+def cli(root,action='run',*extra):
+    env={**os.environ,'PYTHONPATH':str(Path(__file__).resolve().parents[2]/'src')+os.pathsep+os.environ.get('PYTHONPATH','')}
+    done=subprocess.run([sys.executable,'-m','scidiscovery.research_loop.cli',action,'--root',str(root),*extra],env=env,text=True,capture_output=True,timeout=120)
+    assert done.returncode in (0,2),(done.stdout,done.stderr)
+    return json.loads(done.stdout)
+
+
+def repair_scene(tmp_path,*,ordinary=False,reason='dependency',always_fail=False,max_tokens=100000,crash=False,output_capacity=None):
+    backend=tmp_path/'repair-backend.py';backend.write_text(BACKEND)
+    native=tmp_path/'native.py';native.write_text('FAIL_FIRST='+repr(crash)+'\nBACKEND='+repr(str(backend))+'\n'+NATIVE)
+    harness=FAKE_HARNESS.replace("mode=meta['mode']", "spec=json.loads(pathlib.Path('/inputs/source.py').read_text())\nmode='skip' if spec['revision']=='P' else 'ok'")
+    if always_fail:harness=harness.replace("spec['revision']=='P'","spec['revision']!='Q'")
+    note='audit failed during training: ModuleNotFoundError: No module named fixture_helper' if reason=='dependency' else 'audit timed out after 45s (audit exceeded 45s budget)'
+    harness=harness.replace("else 'audit skipped'",'else '+repr(note))
+    root,*rest=managed_scene(tmp_path,launcher=[sys.executable,str(native)],harness=harness,audit=ordinary,max_tokens=max_tokens,output_capacity=output_capacity,resume_policy=dict(max_attempts=1,protocol='codex_exec_resume',usage_scope='turn',output_repair=False) if crash else None)
+    if ordinary:
+        finish(root,3,'A',[1,2],action='audit',recommendation='run-1')
+    else:
+        finish(root,3,'A',[1,2],action='deliver',recommendation='run-1')
+    return root,rest
+
+
+@pytest.mark.parametrize('ordinary',[False,True])
+@pytest.mark.parametrize('reason',['dependency','timeout'])
+def test_exact_worker_repair_creates_new_candidate_and_requires_new_authorization(tmp_path,ordinary,reason):
+    root,rest=repair_scene(tmp_path,ordinary=ordinary,reason=reason)
+    seals={n:(root/f'native-evidence/{n:03d}/result-identity.json').read_bytes() for n in (1,2,3)}
+    result=cli(root)
+    assert result['status']=='delivery_confirmed',(result,[(str(p),p.read_text()[-4000:]) for p in (root/'native-evidence').rglob('native.stderr')])
+    jobs=[c.read(path) for path in sorted((root/'jobs').glob('*.json'))]
+    assert [job['role'] for job in jobs]==['H','W','A','W','A']
+    assert jobs[3]['engineering_repair']['candidate_id']=='run-1'
+    assert jobs[3].get('purpose')==(None if ordinary else 'closeout')
+    assert len(list((c.workspace(root,4)/'work/lineage/calls').iterdir()))==1
+    assert result['last_confirmed']['candidate_id']=='run-3'
+    assert (root/'submission/model.pkl').read_bytes()!=rest[-1]
+    assert all((root/f'native-evidence/{n:03d}/result-identity.json').read_bytes()==value for n,value in seals.items())
+    assert len(list(audit_recovery.facts(root)))==1
+    before=budget.used_steps(root)
+    assert cli(root)['status']=='delivery_confirmed' and budget.used_steps(root)==before
+    assert cli(root,'status')['closeout']['status']=='delivery_confirmed'
+
+
+@pytest.mark.parametrize('fault',['packing','timeout'])
+def test_control_rebuilds_exact_archives_without_model_copy_or_new_science(tmp_path,monkeypatch,fault):
+    root,_,nodes=prepare_fixture(tmp_path);refs=delivery.freeze_sources(root,nodes)
+    _,_,bound=closeout_decision(root,refs)
+    intent=accepted(root,bound);before=budget.used_steps(root)
+    original=delivery._call;phases=[]
+    def initial_pack_error(spec,request,seconds,**kwargs):
+        phases.append(request['phase'])
+        if phases==['audit'] and fault=='packing':
+            (Path(request['stage'])/'inputs/source.py').unlink()
+        return original(spec,request,.001 if phases==['audit'] and fault=='timeout' else seconds,**kwargs)
+    monkeypatch.setattr(delivery,'_call',initial_pack_error)
+    result=delivery.invoke(root,intent,20)
+    assert result['status']=='confirmed',result
+    assert phases==['audit','audit','promote']
+    assert budget.used_steps(root)==before+1
+    recovery=list(audit_recovery.facts(root));assert len(recovery)==1 and recovery[0][1]['status']=='audited'
+    assert recovery[0][0]['max_seconds']<=c.settings(root)['delivery_policy']['submit_seconds']
+    assert len(list((root/'jobs').glob('*.json')))==3
+    assert not any(c.read(p)['kind']=='budget_amend' for p in (root/'control-ledger').glob('*.json'))
+
+
+@pytest.mark.parametrize('ordinary',[False,True])
+def test_insufficient_original_budget_stops_before_new_worker(tmp_path,ordinary):
+    root,_=repair_scene(tmp_path,ordinary=ordinary,max_tokens=3000)
+    result=cli(root)
+    assert result['status']=='engineering_repair_budget_unavailable',result
+    assert len(list((root/'jobs').glob('*.json')))==3
+    assert not (root/'submission/model.pkl').exists()
+
+
+def test_same_fault_lineage_cannot_automatically_spawn_workers_forever(tmp_path):
+    root,_=repair_scene(tmp_path,always_fail=True)
+    result=cli(root)
+    assert result['status']=='engineering_repair_exhausted',result
+    assert len(list((root/'jobs').glob('*.json')))==5
+    assert len([c.read(p) for p in (root/'jobs').glob('*.json') if c.read(p).get('engineering_repair')])==1
+    assert not (root/'submission/model.pkl').exists()
+    assert cli(root,'status')['closeout']['status']==result['status']
+    assert cli(root)['status']==result['status']
+
+
+def test_accepted_control_recovery_without_outcome_is_never_replayed(tmp_path,monkeypatch):
+    root,_,nodes=prepare_fixture(tmp_path);refs=delivery.freeze_sources(root,nodes)
+    _,_,bound=closeout_decision(root,refs);intent=accepted(root,bound)
+    original=delivery._call
+    def pack_error(spec,request,seconds,**kwargs):
+        if request['phase']=='audit' and Path(request['stage']).name!='recovery-1':
+            (Path(request['stage'])/'inputs/source.py').unlink()
+        return original(spec,request,seconds,**kwargs)
+    monkeypatch.setattr(delivery,'_call',pack_error)
+    from scidiscovery.research_loop import candidate_audit
+    save=candidate_audit._save
+    def crash_after_accepted(path,value):
+        if path.name=='outcome.json' and 'audit-recovery' in str(path):raise RuntimeError('Injected host interruption')
+        return save(path,value)
+    monkeypatch.setattr(candidate_audit,'_save',crash_after_accepted)
+    with pytest.raises(RuntimeError,match='Injected host interruption'):
+        delivery.invoke(root,intent,20)
+    assert budget.execution_blocked(root) and len(list(audit_recovery.facts(root)))==1
+    before=len(list((root/'host-delivery/leaf-output').glob('*-audit-*.json')))
+    assert cli(root)['status']=='delivery_unknown'
+    assert cli(root)['status']=='delivery_unknown'
+    assert len(list((root/'host-delivery/leaf-output').glob('*-audit-*.json')))==before
+    assert not (root/'submission/model.pkl').exists()
+
+
+def test_control_selection_engineering_fault_reaches_exact_worker_then_author(tmp_path,monkeypatch):
+    from scidiscovery.research_loop import controller,native,shortlist
+    from test_candidate_audit import _seal_existing
+    from test_control_selection import scene
+    harness=FAKE_HARNESS.replace("mode=meta['mode']","mode='skip' if row['run_id']==2 else 'ok'").replace(
+        "else 'audit skipped'","else 'audit failed during training: ModuleNotFoundError: No module named fixture_helper'")
+    root=scene(tmp_path,harness=harness)
+    calls=[]
+    def complete(root,step):
+        job=c.read(root/'jobs'/f'{step:03d}.json');calls.append(job['role'])
+        task=c.read(c.workspace(root,step)/'science-task.json')
+        payload=dict(summary='Bounded repair assessment',scientific_result='A scientific change would be needed; no new model is asserted.',
+            limitations=['No replacement candidate was produced'],implementation_selection=None)
+        if job['role']=='W':
+            assert task['engineering_repair']['candidate_id']=='run-2'
+            payload.update(stage_intent='decision',mechanism_findings=None)
+        else:
+            assert task['closeout']['comparison']['default']['candidate_id']=='run-3'
+            payload.update(next_action='finish',route_reason='Decline delivery after the repair evidence',candidate_recommendation=None,
+                candidate_comparison=None,search_review=None,progress_assessment=None)
+        _seal_existing(root,step,payload)
+    monkeypatch.setattr(native,'execute_native',complete)
+    result=controller.closeout(root)
+    assert result['status']=='exported_unsubmitted',result
+    assert calls==['W','A']
+    assert (root/'host-delivery/selection/shortlist.json').exists()
+    assert (root/'host-delivery/selection/repairs/004/screen.json').exists()
+    mark=shortlist.marker(root)
+    rows=shortlist.public_table(root,mark)['rows']
+    assert next(row for row in rows if row['candidate_id']=='run-2')['audit']=='not_run'
+    assert not (root/'submission/model.pkl').exists()
+    assert controller.run(root)['status']==result['status'] and calls==['W','A']
+
+
+def test_known_unsealed_repair_worker_resumes_exact_session_without_rewriting_seals(tmp_path):
+    root,_=repair_scene(tmp_path,crash=True)
+    result=cli(root)
+    assert result['status']=='closeout_native_unsealed',result
+    original=(root/'jobs/004.json').read_bytes()
+    assert not (root/'native-evidence/004/result-identity.json').exists()
+    result=cli(root,'worker-resume','--step','4')
+    assert result['status']=='delivery_confirmed',result
+    assert (root/'jobs/004.json').read_bytes()==original
+    from scidiscovery.research_loop import execution
+    records=execution.records(root,4)
+    assert len(records)==2
+    resumed=c.read(records[1]/'native-intent.json')
+    assert resumed['continuation_kind']=='repair' and resumed['session']['thread_id']=='11111111-2222-4333-8444-555555555555'
+    seal=(root/'native-evidence/004/result-identity.json').read_bytes()
+    assert cli(root,'worker-resume','--step','4')['status']=='delivery_confirmed'
+    assert len(execution.records(root,4))==2 and (root/'native-evidence/004/result-identity.json').read_bytes()==seal
+
+
+@pytest.mark.parametrize('raw',['{not json','[]','null'])
+def test_exit_zero_with_malformed_or_nondict_proof_stays_unclassified_without_retry(tmp_path,raw):
+    harness=FAKE_HARNESS.replace("(runs/'submitted.json').write_text(json.dumps(fact))",
+        "(runs/'submitted.json').write_text("+repr(raw)+")")
+    root,nodes,*_=managed_scene(tmp_path,harness=harness)
+    refs=delivery.freeze_sources(root,nodes)
+    _,_,bound=closeout_decision(root,refs)
+    intent=accepted(root,bound)
+    result=delivery.invoke(root,intent,20)
+    assert result['status']=='unclassified' and result['note']=='audit_receipt_invalid'
+    assert not list(audit_recovery.facts(root))
+    audits=list((root/'host-delivery/leaf-output').glob('*-audit-*.json'))
+    assert len(audits)==1 and c.read(audits[0])['returncode']==0
+    budget.action_outcome(root,intent,result)
+    assert not budget.execution_blocked(root)
+    assert cli(root)['status']=='delivery_unclassified'
+    status=cli(root,'status')['closeout']
+    assert status['status']=='delivery_unclassified' and status['current_actual'] is None
+    assert not (root/'submission/model.pkl').exists()
+
+
+@pytest.mark.parametrize('damage',['changed','missing'])
+def test_completed_rejection_requires_the_exact_audited_artifact(tmp_path,damage):
+    changed="(runs/'submitted_model.pkl').write_bytes(b'different model')" if damage=='changed' else "(runs/'submitted_model.pkl').unlink()"
+    harness=FAKE_HARNESS.replace("mode=meta['mode']","mode='leak'\n"+changed)
+    root,nodes,*_=managed_scene(tmp_path,harness=harness)
+    refs=delivery.freeze_sources(root,nodes)
+    _,_,bound=closeout_decision(root,refs);intent=accepted(root,bound)
+    result=delivery.invoke(root,intent,20)
+    assert result['status']=='unclassified' and result['note']=='audit_model_identity_changed'
+    assert not list(audit_recovery.facts(root)) and not (root/'submission/model.pkl').exists()
+
+
+@pytest.mark.parametrize('cause',['unclassified','control_environment'])
+def test_selection_early_stop_and_status_share_typed_receipts(tmp_path,cause):
+    from scidiscovery.research_loop import controller
+    from test_control_selection import scene
+    note='audit skipped' if cause=='unclassified' else 'could not import runner.score: missing control module'
+    harness=FAKE_HARNESS.replace("mode=meta['mode']","mode='skip'").replace("else 'audit skipped'",'else '+repr(note))
+    root=scene(tmp_path,harness=harness)
+    result=controller.closeout(root)
+    expected='selection_audit_unclassified' if cause=='unclassified' else 'selection_audit_engineering_error'
+    assert result['status']==expected,result
+    assert cli(root,'status')['closeout']['status']==expected
+    assert cli(root)['status']==expected
+    assert len(list((root/'jobs').glob('*.json')))==3 and not (root/'submission/model.pkl').exists()
+
+
+def test_original_input_capacity_blocks_preparation_and_status_without_a_worker(tmp_path):
+    root,_=repair_scene(tmp_path,output_capacity=64)
+    result=cli(root)
+    assert result['status']=='engineering_repair_input_capacity',result
+    assert len(list((root/'jobs').glob('*.json')))==3
+    assert not (root/'native-evidence/004/native-intent.json').exists()
+    assert cli(root,'status')['closeout']['status']==result['status']
+    assert cli(root)['status']==result['status']

@@ -186,7 +186,8 @@ def configure(root,step,executor,config,output):
     admission=budget.review_configuration(root,job)
     from .protocol import stage_scope
     value=dict(config,record_dir=str(c.workspace(root,step)/'work/lineage'),native_attempt=native_attempt,admission=admission,
-        scope=stage_scope(root,job),breadth=(job.get('search') or {}).get('breadth'))
+        scope=stage_scope(root,job),breadth=(job.get('search') or {}).get('breadth'),
+        **(dict(engineering_repair=dict(candidate_id=job['engineering_repair']['candidate_id'])) if job.get('engineering_repair') else {}))
     value=freeze(value,executor,path=output)
     updates=[]
     for path in (Path(output),record/'experiment-config.json'):
@@ -382,6 +383,9 @@ def dispatch_descriptor(config, payload, *, parent=None, new=False, change=None,
 def _dispatch_descriptor(config, payload, *, parent=None, new=False, change=None, mechanism=None):
     from .protocol import require_scope
     require_scope(config.get('scope'))
+    repair=config.get('engineering_repair')
+    if repair is not None and (parent!=repair['candidate_id'] or new or not change or Records(config).calls()):
+        raise ValueError('Engineering repair allows one exact parent candidate call with a declared change')
     adapter = load(config)
     capabilities = lifecycle_capabilities(adapter)
     if not capabilities.atomic_admission:

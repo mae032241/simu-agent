@@ -14,7 +14,7 @@ from test_delivery import FAKE_HARNESS, descriptor, delivery_policy, prepare_fix
 from test_history_handoff import finish
 
 
-def managed_scene(tmp_path, *, alias_correct=True, rewrite_script=True):
+def managed_scene(tmp_path, *, alias_correct=True, rewrite_script=True, launcher=None, harness=None, audit=False, max_tokens=100000, resume_policy=None, output_capacity=None):
     if shutil.which('bwrap') is None:
         pytest.skip('Actual namespace lane required')
     root, public = tmp_path / 'instance', tmp_path / 'public'
@@ -22,7 +22,7 @@ def managed_scene(tmp_path, *, alias_correct=True, rewrite_script=True):
     for name in ('exp_cli.py', 'runner.py', 'train.csv', 'val.csv', 'meta.json'):
         path = public / 'harness' / name
         if name == 'exp_cli.py':
-            path.write_text(FAKE_HARNESS)
+            path.write_text(harness or FAKE_HARNESS)
         elif name == 'meta.json':
             c.write(path, dict(mode='ok', control_path=str(root / 'settings.json'), hidden_path=str(tmp_path / 'hidden-never-mounted')))
         else:
@@ -35,8 +35,8 @@ def managed_scene(tmp_path, *, alias_correct=True, rewrite_script=True):
         adapter.write_text(Path(cov_delivery.__file__).read_text().replace("script='/inputs/source.py'", "script=request['context']['row']['script']"))
         spec.update(adapter=str(adapter),launcher_argv=[sys.executable,str(adapter),'--isolate'])
     spec['config']['namespace_runs'] = str(root / 'runs') if alias_correct else '/opt/exp/runs'
-    controller.prepare(root, objective, public, ['fake-no-model'], max_tokens=100000, max_seconds=300, max_steps=12,
-        model='fixture', reasoning_effort='high', search_policy=None,
+    controller.prepare(root, objective, public, launcher or ['fake-no-model'], max_tokens=max_tokens, max_seconds=300, max_steps=12,
+        model='fixture', reasoning_effort='high', search_policy=None,**(dict(max_output_item_bytes=output_capacity,max_output_total_bytes=output_capacity) if output_capacity else {}),resume_policy=resume_policy,candidate_audit_policy={'version':1} if audit else None,
         node_budget_policy={role: dict(max_observed_tokens=2000, max_seconds=60) for role in ('H','W','A','E')},
         delivery_policy=delivery_policy(spec),
         history_observer=dict(contract_version=2, adapter=str(Path(cov_lineage.__file__).absolute()),
@@ -143,18 +143,14 @@ def test_direct_delivery_audits_frozen_w_scratch_without_mounting_old_workspace(
         assert (root/source['objects']['source.py']['path']).read_bytes()==source_p
         assert [c.read(path)['role'] for path in sorted((root/'jobs').glob('*.json'))]==['H','W','A']
     else:
-        # Deliberately broken adapter is a namespace negative control. Stop at
-        # its deterministic audit failure before any alternative author launch.
-        original=controller._run_delivery_actions
-        def stop_after_failure(*args,**kwargs):
-            result=original(*args,**kwargs)
-            if result['status']=='delivery_reselect':
-                (root/'pause.request').write_text('{}')
-            return result
-        monkeypatch.setattr(controller,'_run_delivery_actions',stop_after_failure)
+        # A frozen adapter that still uses inaccessible scratch is an engineering
+        # fault. Re-staging once cannot rewrite its code or justify A reselect.
         result=controller.run(root)
-        assert result['status'] in {'closeout_budget_unavailable','closeout_blocked'},result
+        assert result['status']=='delivery_engineering_error' and result['reason']=='audit_process_failed',result
         actions=budget.closeout_state(root)['actions']
-        assert len(actions)==1 and actions[0]['outcome']['result']['status']=='failed'
+        assert len(actions)==1 and actions[0]['outcome']['result']['status']=='engineering_error'
         assert actions[0]['outcome']['result']['failure_phase']=='audit'
+        from scidiscovery.research_loop import audit_recovery
+        assert len(list(audit_recovery.facts(root)))==1
+        assert len(list((root/'jobs').glob('*.json')))==3
         assert not (root/'submission/model.pkl').exists()

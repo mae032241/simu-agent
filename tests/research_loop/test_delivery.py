@@ -211,7 +211,7 @@ def test_real_namespace_audit_promotes_only_complete_nonleaking_result(tmp_path,
         assert delivery.invoke(root, query, 10)['status'] == 'confirmed'
         assert (root / 'runs/submitted.json').read_bytes() == before
     else:
-        assert result['status'] == 'failed', result
+        assert result['status'] == ('unclassified' if mode=='skip' else 'rejected'), result
         assert (root / 'submission/model.pkl').read_bytes() == b'Old confirmed bytes'
         assert (root / 'runs/submitted_model.pkl').read_bytes() == b'Old confirmed bytes'
         assert not (root / 'runs/rootless-delivery-operation.json').exists()
@@ -293,10 +293,12 @@ pathlib.Path(request['pid_file']).write_text(str(child.pid))
 print('{}',flush=True)
 ''')
     ids = []
-    value = delivery._call(dict(launcher_argv=[sys.executable, str(launcher)], adapter=str(launcher)),
-        dict(phase='audit', operation_id='exact-fixture-operation', pid_file=str(tmp_path / 'child.pid')), .5,
-        on_process=lambda phase, identity: ids.append((phase, identity)))
-    assert value is None  # EOF did not arrive before deadline; no claimed success.
+    with pytest.raises(delivery.DeliveryUnresolved,match='delivery_audit_timeout'):
+        delivery._call(dict(launcher_argv=[sys.executable, str(launcher)], adapter=str(launcher)),
+            dict(phase='audit', operation_id='exact-fixture-operation', pid_file=str(tmp_path / 'child.pid')), .5,
+            on_process=lambda phase, identity: ids.append((phase, identity)))
+    # EOF did not arrive before the deadline; the typed engineering timeout is
+    # returned only after the actually owned child group is cleaned.
     assert len(ids) == 1 and ids[0][0] == 'audit'
     pid = int((tmp_path / 'child.pid').read_text())
     try:
@@ -330,6 +332,6 @@ def test_actual_public_harness_audit_completion_controls_promotion(tmp_path, mod
         assert receipt['leakage_flag'] is False
         assert receipt['audit_score'] is not None and receipt['audit_note'].startswith('audit took ')
     else:
-        assert result['status'] == 'failed', result
+        assert result['status'] == 'engineering_error' and result['note']=='audit_interface_missing', result
         assert not (root / 'submission/model.pkl').exists()
         assert not (root / 'runs/submitted.json').exists()

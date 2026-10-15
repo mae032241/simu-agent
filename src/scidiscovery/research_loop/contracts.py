@@ -370,7 +370,7 @@ def science_view(job, root=None):
         audit_capability = dict(available=available,
             unavailable_reason=None if available else 'candidate_audit_disabled')
     closeout = None
-    if job.get('purpose') == 'closeout':
+    if job.get('purpose') == 'closeout' and job['role']=='A':
         from . import delivery
         closeout = dict(source_cutoff=job['source_cutoff'],
             selection='Choose a frozen candidate ID for delivery; null means no decision, not retention. Report scientific reasoning and limitations.',
@@ -396,8 +396,10 @@ def science_view(job, root=None):
         requester=job['evidence_return']['role']
         order=(requester,*[role for role in order if role!=requester])
     parents.sort(key=lambda row:order.index(row['role']) if row.get('role') in order else len(order))
+    from . import engineering
     return {key: value for key, value in {
         'role': job['role'], 'question': question,
+        **(dict(engineering_repair=engineering.public(job['engineering_repair'])) if job.get('engineering_repair') else {}),
         **(dict(stage_continuation=dict(status='configured' if job.get('worker_fragment_policy') else 'unavailable',
             context=(job.get('worker_fragment_policy') or {}).get('context'),
             permission='Configured context is not permission: control verifies original terminal, cleanup, usage, session and remaining shared authorization before accepting another fragment.',
@@ -527,7 +529,7 @@ def _copy_bound(source: Path, destination: Path, sha256: str):
 
 
 def build_job(root: Path, step: int, role: str, parents: list[int], instruction='', evidence_return=None,
-              correction_request=None, author_correction=None, *, purpose=None, source_cutoff=None, delivery_sources=None, role_budget=None):
+              correction_request=None, author_correction=None, *, purpose=None, source_cutoff=None, delivery_sources=None, role_budget=None, engineering_repair=None):
     if role not in ROLE_INSTRUCTIONS or type(step) is not int or step < 1:
         raise ValueError('Invalid scientific node')
     if role_budget is not None and (role != 'W' or purpose is not None or settings(root).get('role_budget_policy') is None):
@@ -539,11 +541,17 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
     if purpose is not None:
         from . import budget
         begin=budget.closeout_state(root)['begin']
-        if (purpose!='closeout' or role!='A' or begin is None or begin['mode']!='model'
+        if (purpose!='closeout' or role not in {'A','W'} or role=='W' and engineering_repair is None or begin is None or begin['mode']!='model'
                 or source_cutoff!=begin['source_cutoff'] or step<begin['first_step'] or delivery_sources is None):
             raise ValueError('Closeout task requires its immutable configured boundary')
     elif source_cutoff is not None or delivery_sources is not None:
         raise ValueError('Ordinary task cannot select a noncontiguous science prefix')
+    from . import engineering
+    if role=='W' and engineering_repair is None and parents:
+        engineering_repair=engineering.request(root,max(parents))
+    if engineering_repair is not None:
+        if role!='W':raise ValueError('Engineering repair requires a new exact Worker task')
+        engineering.admit(root,engineering_repair,step)
     job_path=root/'jobs'/f'{step:03d}.json'
     retained=read(regular(job_path)) if job_path.exists() else None
     if retained is not None:require_current(root,retained)
@@ -598,6 +606,11 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
                instruction=instruction, direct_refs=refs, direct_materials=materials, direct_entry_points=entry_points, global_materials=globals_,
                evidence_return=evidence_return, **(dict(selected_inputs=selected) if selected else {}),
                **(dict(handoff_protocol=protocol) if protocol >= 2 else {}))
+    from . import profiles
+    if policy.get('role_profiles') is not None:
+        job['native_profile'] = profiles.selected(policy, role)
+    if retained is not None:
+        profiles.for_job(policy, retained)
     if (retained.get('live_feedback_version') if retained is not None else policy.get('live_feedback_version')) == 1:
         job['live_feedback_version'] = 1
     if (retained.get('experiment_interface_version') if retained is not None else policy.get('experiment_interface_version')) == 1:
@@ -618,12 +631,15 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
         job['selection_protocol'] = 1
     if projection_version == 1:
         job['lineage_projection_version'] = 1
+    if engineering_repair is not None:
+        job['engineering_repair']=engineering_repair
+        engineering.bind_inputs(root,job)
     if purpose is not None:
         job.update(purpose=purpose, source_cutoff=source_cutoff, delivery_sources=delivery_sources,
                    closeout_begin=dict(seq=begin['seq'], sha256=digest(root / 'control-ledger' / f'{begin["seq"]:06d}.json')))
-        if policy.get('selection_policy') is not None:
+        if role=='A' and policy.get('selection_policy') is not None:
             from . import shortlist
-            mark = shortlist.marker(root)
+            mark = shortlist.marker(root,step)
             if mark is not None:
                 job['selection'] = mark
     previous = read(host_record(workspace(root, step - 1)) / 'result-identity.json') if step - 1 in parents else {}
@@ -652,7 +668,7 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
         job['history']['view']['implementation_options'] = [dict(id=row['id'], label=row['label'].encode()[:80].decode('utf-8',errors='ignore')) for row in options[:2]]
         job['history']['view']['implementation_options_omitted_count'] = max(0,len(options)-2)
         lineage.bounded_brief(job['history']['view'])
-    if purpose is None and protocol >= 5 and policy.get('search_policy') is not None:
+    if purpose is None and engineering_repair is None and protocol >= 5 and policy.get('search_policy') is not None:
         from . import search
         job['search'] = search.bind(root, step, role, protocol, state=state, unified=projection_version == 1,
                                     redirect=(role_budget or {}).get('focus_source'))
@@ -756,11 +772,12 @@ def _validate_inputs(root, work, job):
     if job.get('purpose') is not None:
         from . import budget, delivery
         begin = budget.closeout_state(root)['begin']
-        if (job['purpose'] != 'closeout' or job['role'] != 'A' or begin is None
+        if (job['purpose'] != 'closeout' or job['role'] not in {'A','W'} or job['role']=='W' and job.get('engineering_repair') is None or begin is None
                 or job.get('source_cutoff') != begin['source_cutoff'] or job['step'] < begin['first_step']
                 or job.get('closeout_begin') != dict(seq=begin['seq'],sha256=digest(root/'control-ledger'/f'{begin["seq"]:06d}.json'))):
             raise ValueError('Closeout task boundary changed')
-        if job.get('delivery_sources') != begin.get('delivery_sources'):
+        from . import engineering
+        if job.get('delivery_sources') != engineering.sources(root,job['step']):
             raise ValueError('Closeout candidate originals differ from their immutable preparation')
         expected_steps = [*range(1, job['source_cutoff'] + 1), *sorted(int(ref['path'].split('/')[2])
             for ref in job['direct_refs'] if int(ref['path'].split('/')[2]) > job['source_cutoff'])]
@@ -770,19 +787,18 @@ def _validate_inputs(root, work, job):
         if job['delivery_sources'].get('catalogue') and read(regular(work / 'inputs/delivery-candidates.json')) != dict(
                 items=job['delivery_sources']['items'], omitted_count=job['delivery_sources']['omitted_count']):
             raise ValueError('Frozen candidate catalogue changed')
-        first = root / 'jobs' / f'{begin["first_step"]:03d}.json'
-        if job['step'] > begin['first_step'] and job['delivery_sources'] != read(regular(first))['delivery_sources']:
-            raise ValueError('Closeout correction cannot resolve new candidate originals')
         from . import shortlist
-        if job.get('selection') != (shortlist.marker(root) if policy.get('selection_policy') is not None else None):
+        if job.get('selection') != (shortlist.marker(root,job['step']) if job['role']=='A' and policy.get('selection_policy') is not None else None):
             raise ValueError('Closeout comparison differs from its frozen control screening')
     if job.get('role_budget') is not None and (job['role'] != 'W' or policy.get('role_budget_policy') is None):
         raise ValueError('Control role-budget routing differs from its frozen policy')
+    from . import engineering
+    engineering.validate_job(root,job)
     from . import correction
     correction.validate_job(root, job)
     from . import semantic
     semantic.validate_job(root, job)
-    if job.get('purpose') is None and job.get('handoff_protocol', 1) >= 5 and policy.get('search_policy') is not None:
+    if job.get('purpose') is None and not job.get('engineering_repair') and job.get('handoff_protocol', 1) >= 5 and policy.get('search_policy') is not None:
         from . import search
         if job.get('search') != search.bind(root, job['step'], job['role'], job['handoff_protocol'], unified=job.get('lineage_projection_version') == 1,
                                             redirect=(job.get('role_budget') or {}).get('focus_source')):

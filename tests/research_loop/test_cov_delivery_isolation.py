@@ -91,5 +91,5 @@ def _negative(tmp_path,monkeypatch,phase,damage,scope=None):
             assert result['status']=='confirmed'
             budget.action_outcome(root,submit,result)
             result=delivery.invoke(root,accepted(root,bound,'confirm'),10)
-        assert result['status']==('failed' if phase=='audit' else 'unknown')
+        assert result['status']==('unclassified' if phase=='audit' else 'unknown')
     assert seen==[phase]

@@ -80,6 +80,7 @@ def main(argv=None):
     prepare.add_argument('--model', default='gpt-6.1-sol')
     prepare.add_argument('--reasoning-effort', default='high')
     prepare.add_argument('--service-tier', default='default')
+    prepare.add_argument('--role-profiles', type=Path, help='Optional H/W/A/E model, reasoning_effort and service_tier overrides; omitted roles/fields inherit global defaults')
     for name, help_text in (
             ('run', 'Run or recover only completed sealed scientific handoffs'),
             ('status', 'Read instance state without changing or starting work'),
@@ -108,10 +109,16 @@ def main(argv=None):
             from .protocol import require_current
             require_current(root)
         if args.command == 'prepare':
+            role_profiles = None
+            if args.role_profiles is not None:
+                role_profiles = contracts.read(contracts.regular(args.role_profiles, limit=4096))
+                if not isinstance(role_profiles, dict):
+                    raise ValueError('Role profiles file must contain a JSON object')
             settings = controller.prepare(root, args.objective, args.public_root,
                 json.loads(args.native_launcher_json), max_tokens=args.max_tokens, max_seconds=args.max_seconds,
                 max_steps=args.max_steps, model=args.model, reasoning_effort=args.reasoning_effort, node_budget_mode=args.node_budget_mode,
                 service_tier=args.service_tier, user_updates=args.user_update,
+                role_profiles=role_profiles,
                 candidate_audit_policy={'version':1} if args.enable_candidate_audit else None,
                 decision_contract_version=1 if args.decision_contract else None,
                 portfolio_policy=dict(review_after_cycles=args.portfolio_review_after_cycles) if args.portfolio_review_after_cycles is not None else None,

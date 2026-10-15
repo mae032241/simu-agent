@@ -208,7 +208,7 @@ def rebind(settings_path, launcher_path, work, scid_python, fault=None):
         'max_output_item_bytes', 'max_output_total_bytes', 'node_budget_mode') if key in settings}
     for key in ('search_policy', 'correction_policy', 'node_budget_policy', 'role_guidance', 'candidate_audit_policy',
                 'portfolio_policy', 'worker_fragment_policy', 'lineage_projection_version', 'selection_protocol',
-                'handoff_authority_version', 'decision_contract_version', 'role_budget_policy', 'selection_policy'):
+                'handoff_authority_version', 'decision_contract_version', 'role_budget_policy', 'selection_policy', 'role_profiles'):
         kwargs[key] = settings.get(key)
     adopted = []
     if settings.get('history_observer') is not None:

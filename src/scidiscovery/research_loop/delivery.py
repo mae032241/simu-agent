@@ -195,11 +195,11 @@ def selected_sources(root, refs, candidate_id, *, prepare=False):
     return validate_sources(root, value)
 
 
-def preparation_failure(root, reason, source_nodes, *, candidate_id=None):
+def preparation_failure(root, reason, source_nodes, *, candidate_id=None, decision_step=None):
     directory = root / 'host-delivery/preparation'
     number = len(list(directory.glob('*.json'))) + 1
     c.write(directory / f'{number:03d}.json', dict(reason=reason, source_nodes=source_nodes,
-        candidate_id=candidate_id, cleanup_confirmed=reason != 'delivery_cleanup_unknown'))
+        candidate_id=candidate_id, cleanup_confirmed=reason != 'delivery_cleanup_unknown',**(dict(decision_step=decision_step) if decision_step is not None else {})))
 
 
 def preparation_status(root):
@@ -351,7 +351,7 @@ def freeze_sources(root, source_nodes, *, candidate_id=None):
             raise ValueError('Resolver candidate identity or availability changed')
         seen.add(item['candidate_id'])
         if item['status'] == 'unavailable':
-            items.append(dict(candidate_id=item['candidate_id'], status='unavailable', reason='delivery_source_unavailable'));continue
+            items.append(dict(candidate_id=item['candidate_id'], status='unavailable', reason=(item.get('reason') if item.get('reason') in {'delivery_code_source_unavailable','delivery_managed_original_missing_or_ambiguous','delivery_model_unavailable','delivery_original_missing'} else 'delivery_source_unavailable')));continue
         evidence_label = item.get('evidence_label')
         if evidence_label not in {proof['label'] for proof in originals[item['candidate_id']]['evidence']}:
             raise ValueError('Resolver used another candidate original')
@@ -452,7 +452,7 @@ def _choice(root, job, result):
         raise DeliveryUnresolved('delivery_authorization_required')
     from . import shortlist
     if c.settings(root).get('selection_policy') is not None:
-        expected = shortlist.marker(root)
+        expected = shortlist.marker(root,job['step'])
         if expected is None:
             raise DeliveryUnresolved('selection_screen_unavailable')
         if job.get('selection') != expected:
@@ -466,7 +466,11 @@ def prepare_binding(root, job, result):
         if chosen is not None:
             refs = job.get('delivery_sources') or budget.closeout_state(root)['begin']['delivery_sources']
             try:
-                selected_sources(root, refs, chosen, prepare=True)
+                prepared=selected_sources(root, refs, chosen, prepare=True)
+                rows=[row for row in prepared['items'] if row['candidate_id']==chosen]
+                if len(rows)==1 and rows[0]['status']=='unavailable' and rows[0].get('reason')=='delivery_code_source_unavailable':
+                    preparation_failure(root,'implementation_source_missing',refs['source_nodes'],candidate_id=chosen,decision_step=job['step'])
+                    raise PreparationUnavailable('implementation_source_missing')
             except DeliveryUnresolved as error:
                 if error.code == 'delivery_source_unavailable':
                     raise
@@ -494,9 +498,14 @@ def binding(root, job, result):
     if len(rows) != 1 or rows[0]['status'] != 'audit_pending':
         raise DeliveryUnresolved('delivery_source_unavailable')
     item = rows[0]
+    from . import engineering
+    for repair_step in engineering.steps(root,job['step']):
+        repair=c.read(root/'jobs'/f'{repair_step:03d}.json')['engineering_repair']
+        if repair['candidate_id']==chosen:
+            raise DeliveryUnresolved('delivery_engineering_original_unrepaired')
     for row in budget.closeout_state(root)['actions']:
         outcome = row['outcome']
-        if (outcome is not None and outcome['result']['status'] == 'failed'
+        if (outcome is not None and outcome['result']['status'] == 'rejected'
                 and outcome['result'].get('failure_phase') == 'audit'
                 and row['intent']['binding']['candidate_id'] == chosen
                 and row['intent']['binding']['source']['objects']['artifact']['sha256'] == item['objects']['artifact']['sha256']):
@@ -586,8 +595,12 @@ def _call(spec, request, seconds, *, on_process=None, evidence=None):
         _keep(evidence, request, outcome, returncode, streams)
     with tempfile.TemporaryFile() as input_file:
         input_file.write(data);input_file.seek(0)
-        process = subprocess.Popen([*spec['launcher_argv'], spec['adapter']], stdin=input_file,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, env={'PATH': os.defpath}, start_new_session=True)
+        try:
+            process = subprocess.Popen([*spec['launcher_argv'], spec['adapter']], stdin=input_file,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, env={'PATH': os.defpath}, start_new_session=True)
+        except OSError as error:
+            if request.get('phase')=='audit':raise DeliveryUnresolved('delivery_audit_process_unavailable') from error
+            raise
         identity = runtime.process_identity(process.pid, request['operation_id'])
         if on_process is not None:
             try:
@@ -623,6 +636,8 @@ def _call(spec, request, seconds, *, on_process=None, evidence=None):
             keep('time_or_byte_limit', process.returncode)
             if runtime.cleanup_owned_group(identity) != 'observed_group_cleaned':
                 raise DeliveryUnresolved('delivery_cleanup_unknown')
+            if request.get('phase') == 'audit':
+                raise DeliveryUnresolved('delivery_audit_capacity' if total > MAX_BYTES else 'delivery_audit_timeout')
             return None
         process.wait(timeout=5)
         process.stdout.close();process.stderr.close()
@@ -630,6 +645,7 @@ def _call(spec, request, seconds, *, on_process=None, evidence=None):
         if runtime.cleanup_owned_group(identity) != 'observed_group_cleaned':
             raise DeliveryUnresolved('delivery_cleanup_unknown')
     if process.returncode:
+        if request.get('phase') == 'audit':raise DeliveryUnresolved('delivery_audit_process_failed')
         return None
     try:
         value = json.loads(output)
@@ -663,6 +679,10 @@ def leaf_phase(root, source, operation_id, phase, seconds, *, on_process=None):
     spec = _adapter(Path(root).resolve())
     with tempfile.TemporaryDirectory(prefix='scid-selection-') as directory:
         request = dict(_staged(root, spec, source, operation_id, Path(directory)), phase=phase)
+        if phase == 'audit':
+            from . import audit_recovery
+            value, _, _ = audit_recovery.run(root, spec, source, request, seconds, on_process=on_process)
+            return value
         value = _call(spec, request, seconds, on_process=on_process, evidence=leaf_output(root))
     if value is None:
         return dict(status='failed' if phase == 'audit' else 'unknown', note='bounded_' + phase + '_unverified', cleanup_confirmed=True)
@@ -719,6 +739,14 @@ def invoke(root, intent, max_seconds, *, on_process=None, audit_only=False):
         phases = ('audit',) if audit_only else ('audit', 'promote') if intent['action_kind'] == 'submit' else ('confirm',)
         for phase in phases:
             remaining = deadline - time.clock_gettime(time.CLOCK_BOOTTIME)
+            if phase == 'audit':
+                from . import audit_recovery
+                value, request, deadline = audit_recovery.run(root, spec, bound['source'], request, remaining, on_process=on_process, author_required=audit_only)
+                if value['status'] == 'audited':
+                    if audit_only:
+                        return dict(_result(bound, 'audited', value['note']), cleanup_confirmed=value['cleanup_confirmed'])
+                    continue
+                return dict(_result(bound, value['status'], value['note'], cleanup_confirmed=value['cleanup_confirmed']), failure_phase='audit',**(dict(diagnostic=value['diagnostic']) if 'diagnostic' in value else {}))
             try:
                 value = _call(spec, dict(request, phase=phase), remaining, on_process=on_process,
                               evidence=leaf_output(root)) if remaining > 0 else None

@@ -128,14 +128,14 @@ def _outcome(root, step):
                     or identity.get('task_sha256') != intent['operation_id']
                     or any(type(identity.get(key)) is not int or identity[key] <= 0 for key in ('pid', 'pgid', 'sid', 'start_ticks'))):
                 raise ValueError('Candidate audit process identity changed')
-        if result['status'] == 'audited' and (value.get('binding_sha256') is None or value.get('process_sha256') is None):
+        if result['status'] in {'audited','rejected'} and (value.get('binding_sha256') is None or value.get('process_sha256') is None):
             raise ValueError('Audited receipt has no exact object and process original')
         result_path = directory / 'adapter-result.json'
         if c.digest(c.regular(result_path)) != value['result_sha256'] or c.read(result_path) != value['result']:
             raise ValueError('Candidate audit adapter result changed')
     elif value['result']['status'] != 'unavailable':
         raise ValueError('An unaccepted audit cannot acquire qualification')
-    if (value['result']['status'] not in {'audited', 'failed', 'unknown', 'unavailable'}
+    if (value['result']['status'] not in {'audited', 'rejected', 'engineering_error', 'unclassified', 'unknown', 'unavailable'}
             or type(value['result']['cleanup_confirmed']) is not bool):
         raise ValueError('Candidate audit outcome fields changed')
     return value
@@ -171,8 +171,8 @@ def public_receipt(root, ref):
     value = _outcome(root, ref['step'])
     result = value['result']
     return dict(candidate_id=value['candidate_id'], status=result['status'],
-                note=result['note'], scope=SCOPE,
-                qualification='passed' if result['status'] == 'audited' else result['status'],
+                note=result['note'], scope=SCOPE,**(dict(diagnostic=result['diagnostic']) if 'diagnostic' in result else {}),
+                qualification=('passed' if result['status'] == 'audited' else 'rejected' if result['status'] == 'rejected' else 'not_completed'),
                 artifact_scope='exact frozen artifact; does not establish target performance')
 
 
@@ -317,5 +317,5 @@ def project_receipts(root, records, refs):
         rows.append(dict(candidate_id=chosen, adapter_result=result['status'], artifact_binding=match,
                          audit_step=ref['step'], adapter=label.encode()[:80].decode(errors='ignore'),
                          scope=SCOPE, qualification='passed' if result['status'] == 'audited' and match == 'matched' else
-                         'artifact_scope_unknown' if result['status'] == 'audited' else result['status']))
+                         'artifact_scope_unknown' if result['status'] == 'audited' else 'rejected' if result['status']=='rejected' else 'not_completed'))
     return rows

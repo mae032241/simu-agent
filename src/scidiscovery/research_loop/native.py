@@ -14,8 +14,9 @@ import signal
 import subprocess
 import time
 
-from . import budget as control_budget, execution, runtime, search, checkpoint
+from . import budget as control_budget, execution, runtime, search, checkpoint, profiles
 from .output_repair import OutputRepairRequired
+from .native_usage import SessionUsage
 from .contracts import (ACTIONS, actions, ROLE_INSTRUCTIONS, digest, host_record, read,
                         seal_result, workspace, write, settings as frozen_settings)
 
@@ -35,6 +36,12 @@ def usage(root: Path):
             value = read(meter)
             if _usage_event(dict(type='turn.completed', usage=value)) != value:
                 raise ValueError('Native usage observation changed')
+            observation = record / 'usage-observation.json'
+            outcome = record / 'native-outcome.json'
+            metadata = read(outcome).get('metering') if outcome.exists() else None
+            if metadata is None and observation.exists():metadata = read(observation)
+            if metadata is not None and metadata.get('coverage') == 'unknown' and step not in unknown:
+                unknown.append(step)
             for key in totals:totals[key] += value[key]
     return dict(**totals, observed_tokens=totals['input_tokens'] + totals['output_tokens'], unknown_steps=unknown)
 
@@ -58,17 +65,18 @@ def execute_native(root: Path, step: int):
     require_current(root)
     from . import contracts as _contracts
     require_current(root,_contracts.read(_contracts.regular(Path(root)/'jobs'/f'{step:03d}.json')))
-    frozen_settings(root)
+    settings = frozen_settings(root)
     record = execution.record(root, step)
     record.mkdir(parents=True, exist_ok=True)
     job_path = root / "jobs" / f"{step:03d}.json"
     job = read(job_path)
+    profile_binding = profiles.binding(settings, job)
     node_anchor = control_budget.accept_node(root, job)
     if node_anchor is not None and job['role'] == 'W' and search.launch_reason(root, job):
         raise ValueError('W dispatch violates its frozen search authorization')
     anchor = search.accept(root, job) if node_anchor is None else None
     with (record / "native-intent.json").open("x") as stream:
-        json.dump(dict(step=step, task_sha256=digest(job_path), prepared_at=time.time(),
+        json.dump(dict(step=step, task_sha256=digest(job_path), prepared_at=time.time(), **profile_binding,
                        **(dict(search_slice=anchor) if anchor is not None else {}),
                        **(dict(budget_slice=node_anchor) if node_anchor is not None else {})), stream)
         stream.flush()
@@ -122,11 +130,14 @@ def run_native(root: Path, step: int, attempt=0):
     intent = read(record / 'native-intent.json')
     if intent.get('task_sha256') != digest(job_path):
         raise ValueError('Native execution task changed')
+    profile = profiles.validate_intent(settings, job, intent)
+    if attempt:
+        profiles.validate_intent(settings, job, read(execution.origin(root, step) / 'native-intent.json'))
     # W statistics reuse this exact node anchor, never a second acceptance clock.
     search_intent = dict(intent, search_slice=intent['budget_slice']) if intent.get('budget_slice') is not None and job.get('search') and job['role'] == 'W' else intent
     pending = record / 'result.pending.json'
     args = [*settings['native_launcher_argv'], 'exec', '--json', '--output-last-message', str(pending),
-            '--model', settings['model'], '-c', f'model_reasoning_effort={json.dumps(settings["reasoning_effort"])}',
+            '--model', profile['model'], '-c', f'model_reasoning_effort={json.dumps(profile["reasoning_effort"])}',
             '--sandbox', 'workspace-write', '-C', str(work), '-']
     role_instruction = job.get('native_role_instruction', ROLE_INSTRUCTIONS[job['role']])
     # Raw Codex is supported as a local soft-isolation entry. Existing qualified
@@ -137,7 +148,9 @@ def run_native(root: Path, step: int, attempt=0):
                        '-c', 'features.multi_agent=false', '-c', 'features.fast_mode=false',
                        '-c', 'approval_policy="never"',
                        '-c', 'developer_instructions=' + json.dumps(role_instruction),
-                       '-c', f'service_tier={json.dumps(settings["service_tier"])}']
+                       '-c', f'service_tier={json.dumps(profile["service_tier"])}']
+    elif settings.get('role_profiles') is not None:
+        args[-1:-1] = ['-c', f'service_tier={json.dumps(profile["service_tier"])}']
     if settings.get('resume_policy') is not None:
         from . import continuation
         continuation.validate_launcher(root)
@@ -162,7 +175,7 @@ def run_native(root: Path, step: int, attempt=0):
         global_args = ['-C', str(work), '--sandbox', 'workspace-write']
         for config in configs:global_args.extend(['-c', config])
         if '--skip-git-repo-check' in args:global_args.append('--skip-git-repo-check')
-        args = [*settings['native_launcher_argv'], 'exec', *global_args, 'resume', '--json', '--model', settings['model'], '--output-schema',
+        args = [*settings['native_launcher_argv'], 'exec', *global_args, 'resume', '--json', '--model', profile['model'], '--output-schema',
                 str(execution.origin(root, step) / 'science-result.schema.json'),
                 '--output-last-message', str(pending), session['thread_id'], '-']
     (work / 'artifacts').mkdir(exist_ok=True)
@@ -250,6 +263,13 @@ def run_native(root: Path, step: int, attempt=0):
     env = {**os.environ, 'THIN_HWA_ROLE': job['role'], 'THIN_HWA_WORKSPACE': str(work),
            'THIN_HWA_NATIVE_HOME': str(home), 'THIN_HWA_JOB_MANIFEST': str(job_path)}
     if settings.get('resume_policy') is not None:env['CODEX_HOME'] = str(home)
+    meter_home = home
+    if settings.get('resume_policy') is None and len(settings['native_launcher_argv']) == 1 and Path(args[0]).name == 'codex':
+        # Raw Codex keeps its inherited credentials/configuration and writes its
+        # rollout into that same actual home, not the stage's launcher namespace.
+        meter_home = Path(env['CODEX_HOME']) if env.get('CODEX_HOME') else Path.home() / '.codex'
+        if not meter_home.is_absolute():meter_home = work / meter_home
+        meter_home = meter_home.resolve()
     process = None
     process_id = None
     stop = None
@@ -257,6 +277,9 @@ def run_native(root: Path, step: int, attempt=0):
     pending_line = b''
     meter = dict(input_tokens=0, cached_input_tokens=0, output_tokens=0)
     observed = False
+    terminal_observed = False
+    terminal_meter = dict(meter)
+    live_meter = SessionUsage(meter_home, work, session=intent.get('session') if attempt and intent.get('context_mode') != 'new_context' else None)
     cleanup = None
     thread_id = None
     try:
@@ -311,14 +334,24 @@ def run_native(root: Path, step: int, attempt=0):
                                 continue
                             if event.get('type') == 'thread.started':
                                 thread_id = event.get('thread_id')
+                                live_meter.bind_thread(thread_id)
                             current = _usage_event(event)
                             if current is not None:
                                 # exec turn.completed usage belongs to this turn.
-                                for key in meter:
-                                    meter[key] += current[key]
+                                for key in terminal_meter:
+                                    terminal_meter[key] += current[key]
+                                terminal_observed = True
                                 observed = True
                                 hint_dirty=True
-                                write(record / 'usage.json', meter)
+                    observation = live_meter.poll()
+                    projected = {key: max(terminal_meter[key], observation['tokens'][key]) for key in meter}
+                    if projected != meter:
+                        hint_dirty = True
+                    meter = projected
+                    observed = observed or observation['has_observation']
+                    if observed:
+                        write(record / 'usage.json', meter)
+                    write(record / 'usage-observation.json', observation)
                     # Pause is a next-node barrier. Accepted work can finish and
                     # seal; it must not become an unknown submission on resume.
                     limits = control_budget.snapshot(root, settings)
@@ -359,9 +392,33 @@ def run_native(root: Path, step: int, attempt=0):
                 process.stdout.close()
             if process.stdin is not None and not process.stdin.closed:
                 process.stdin.close()
+    if process is not None:
+        observation = live_meter.poll()
+        observed = observed or observation['has_observation']
+        for key in meter:
+            meter[key] = max(meter[key], observation['tokens'][key], terminal_meter[key])
+        observation.update(live_coverage=observation['coverage'], live_reason=observation['reason'],
+                           live_tokens=dict(observation['tokens']))
+        if terminal_observed:
+            mismatch = any(terminal_meter[key] < meter[key] for key in meter)
+            if mismatch or live_meter.fault:
+                observation.update(coverage='unknown', reason=live_meter.fault or 'terminal_usage_below_live_observation')
+                stop = stop or 'native_usage_unreconciled'
+            else:
+                observation.update(coverage='terminal', reason=None, source='turn.completed',
+                                   reconciliation=('matched' if observation['tokens'] == terminal_meter else 'terminal_covers_live')
+                                       if observation['has_observation'] else 'terminal_fallback',
+                                   unreported_usage=None)
+        else:
+            observation.update(coverage='unknown', reason=live_meter.fault or 'terminal_usage_unreported')
+        observation['tokens'] = dict(meter)
+        if observed:
+            write(record / 'usage.json', meter)
+        write(record / 'usage-observation.json', observation)
     outcome = dict(returncode=process.returncode if process else None,
           stop_reason=stop, usage=usage(root), thread_id=thread_id, cleanup=cleanup,
-          limitation='Terminal native usage observation; in-flight usage may be absent.')
+          metering=live_meter.snapshot() if process is None else observation,
+          limitation='Observed token metadata only; running requests and reporting delay are unmeasured.')
     if attempt and intent.get('context_mode') != 'new_context' and thread_id != intent['session']['thread_id']:
         stop = outcome['stop_reason'] = 'native_thread_changed'
     if settings.get('resume_policy') is not None and process is not None:
@@ -383,7 +440,7 @@ def run_native(root: Path, step: int, attempt=0):
     if error is not None:
         write(record / 'native-outcome.json', outcome)
         raise error
-    if stop or process.returncode != 0 or not observed:
+    if stop or process.returncode != 0 or not terminal_observed:
         write(record / 'native-outcome.json', outcome)
         raise RuntimeError('Native work is not a verified terminal result; preserved without replay')
     raw = record / 'science-output.json'

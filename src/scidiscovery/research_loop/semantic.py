@@ -148,6 +148,7 @@ def closeout_errors(root, before_step):
         job = c.read(path)
         if job['step'] >= before_step:
             break
+        if job['role']!='A':continue
         if (job.get('purpose') != 'closeout' and (begin or {}).get('authorization_step') != job['step']) or not (c.host_record(c.workspace(root, job['step'])) / 'result-identity.json').exists():
             continue
         science = c.read(execution.raw(root, job['step']))

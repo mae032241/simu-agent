@@ -83,7 +83,7 @@ def _events(root, settings):
                     or type(event.get('advance_seconds')) not in (int, float) or not math.isfinite(event['advance_seconds']) or event['advance_seconds'] < 0):
                 raise ValueError('Invalid bounded delivery action intent')
         if event['kind'] == 'action_outcome' and (not isinstance(event.get('action_id'), str)
-                or not isinstance(event.get('result'), dict) or event['result'].get('status') not in {'confirmed', 'failed', 'unknown'}):
+                or not isinstance(event.get('result'), dict) or event['result'].get('status') not in {'confirmed', 'failed', 'unknown', 'rejected', 'engineering_error', 'unclassified'}):
             raise ValueError('Invalid delivery action outcome')
         events.append(event)
         parent = hashlib.sha256(data).hexdigest()
@@ -197,6 +197,9 @@ def execution_blocked(root, *, ignore_operation=None):
     from . import runtime, execution
     settings = contracts.settings(root)
     from . import delivery
+    from . import audit_recovery
+    if audit_recovery.blocked(root):
+        return True
     if delivery.preparation_blocked(root):
         return True
     from . import candidate_audit
@@ -343,7 +346,7 @@ def node_limits(root, job):
     if policy is None:
         return None
     limits = node_policy(policy)[job['role']]
-    if job.get('purpose') == 'closeout':
+    if job.get('purpose') == 'closeout' and job['role']=='A':
         delivery = settings.get('delivery_policy')
         if delivery is None or job['role'] != 'A':
             raise ValueError('Unconfigured closeout node budget')
@@ -445,13 +448,15 @@ def node_admission(root, job, *, ignore_step=None, intent=None):
             raise ValueError('Closeout node has no exact model boundary')
         external = delivery['adapter'] is not None
         floor = closeout_floor(settings, preparation_seconds=begin['preparation_seconds'])
+        if job.get('engineering_repair'):
+            floor=dict(tokens=floor['tokens']+delivery['closeout_a']['max_observed_tokens'],seconds=floor['seconds']+delivery['closeout_a']['max_seconds'],steps=floor['steps']+1)
         additional = 0 if (root / 'jobs' / f'{job["step"]:03d}.json').exists() else 1
         seconds_unavailable = (limits['seconds_remaining'] <= floor['seconds'] if soft else
             limits['seconds_remaining'] < max(0., policy['max_seconds'] - duration) + floor['seconds'])
         tokens_unavailable = (limits['max_tokens'] - meter['observed_tokens'] <= floor['tokens'] if soft else
             limits['max_tokens'] - meter['observed_tokens'] < policy['max_observed_tokens'] + floor['tokens'])
         if (seconds_unavailable or tokens_unavailable
-                or settings['max_steps'] - used_steps(root) < additional + (2 if external else 0)):
+                or settings['max_steps'] - used_steps(root) < additional + floor['steps']):
             return 'closeout_budget_unavailable'
         return None
     return exploration_admission(root, job, ignore_step=ignore_step, intent=intent)
@@ -588,7 +593,8 @@ def used_steps(root):
     prepared = [int(path.stem) for path in (root / 'jobs').glob('*.json')]
     continuations = sum(len(execution.records(root, step)) - 1 for step in prepared)
     from . import candidate_audit
-    audits = sum(1 for _ in candidate_audit.facts(root))
+    from . import audit_recovery
+    audits = sum(1 for _ in candidate_audit.facts(root)) + sum(1 for _ in audit_recovery.facts(root))
     if contracts.settings(root).get('selection_policy'):
         from . import shortlist
         audits += shortlist.calls(root)  # Control screening calls are bounded external actions too.
@@ -684,9 +690,10 @@ def exploration_stop(root, job, limits):
 
 def _validate_action_result(intent, result):
     binding = intent['binding']
-    if (set(result) - {'failure_phase'} != {'status', 'operation_id', 'candidate_id', 'artifact_sha256', 'note', 'cleanup_confirmed'}
-            or 'failure_phase' in result and (result['status'] != 'failed' or result['failure_phase'] not in {'audit', 'promote', 'confirm'})
-            or result['status'] not in {'confirmed', 'failed', 'unknown'}
+    if (set(result) - {'failure_phase','diagnostic'} != {'status', 'operation_id', 'candidate_id', 'artifact_sha256', 'note', 'cleanup_confirmed'}
+            or 'failure_phase' in result and (result['status'] not in {'failed', 'rejected', 'engineering_error', 'unclassified', 'unknown'} or result['failure_phase'] not in {'audit', 'promote', 'confirm'})
+            or 'diagnostic' in result and (not isinstance(result['diagnostic'],str) or len(result['diagnostic'].encode())>4096)
+            or result['status'] not in {'confirmed', 'failed', 'unknown', 'rejected', 'engineering_error', 'unclassified'}
             or type(result['cleanup_confirmed']) is not bool
             or not result['cleanup_confirmed'] and result['status'] != 'unknown'
             or result['operation_id'] != intent['operation_id']

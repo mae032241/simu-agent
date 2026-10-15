@@ -189,7 +189,7 @@ def _apply_science(root,job,payload,state,diagnostics):
 def interpret(root,job,payload,*,state=None):
     """One prospective interpretation; callers do not publish its mutations."""
     state=copy.deepcopy(project(root,job['step']) if state is None else state)
-    if job.get('purpose')=='closeout':
+    if job.get('purpose')=='closeout' or job.get('engineering_repair'):
         return dict(state=state,focus=None,allocation=None,diagnostics=[])
     diagnostics=[]
     try:_apply_science(root,job,payload,state,diagnostics)
@@ -213,7 +213,7 @@ def apply_source(root,job,payload,seal,state):
             or len(reported)<len(diagnostics) and not receipt['omitted_count']
             or receipt['resolved_focus']!=result['focus'] or receipt['resolved_allocation']!=result['allocation']):
         raise ValueError('Scientific intent differs from its sealed interpretation')
-    if job.get('purpose')=='closeout':return
+    if job.get('purpose')=='closeout' or job.get('engineering_repair'):return
     if all(receipt.get(key)!='unresolved' for key in ('search_status','selection_status','decision_status','portfolio_status')):
         state.clear();state.update(result['state'])
     else:
@@ -328,6 +328,7 @@ def bind(root,step,role,protocol=None,*,write_pages=True,state=None,unified=True
 
 def launch_reason(root,job):
     if job['role']!='W':return None
+    if job.get('engineering_repair'):return None
     if job.get('input_selection_status')=='unresolved':return 'implementation_unresolved'
     if c.settings(root).get('search_policy') is None:return None
     bound=job['search'];focus=bound['focus'];state=project(root,job['step'])

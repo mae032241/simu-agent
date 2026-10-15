@@ -143,6 +143,35 @@ def _audit(value, run_id):
             and isinstance(value.get('audit_note'), str) and value['audit_note'].startswith('audit took '))
 
 
+def audit_status(value, run_id):
+    """Known frozen harness fields; exit zero and a false leakage bit are insufficient."""
+    if not isinstance(value, dict) or type(value.get('run_id')) is not int or value['run_id'] != run_id:
+        return 'unclassified', 'audit_receipt_invalid'
+    complete = (type(value.get('leakage_flag')) is bool
+        and all(type(value.get(k)) in (int, float) and math.isfinite(value[k]) for k in ('audit_score', 'audit_gap'))
+        and isinstance(value.get('audit_note'), str) and value['audit_note'].startswith('audit took '))
+    if complete:
+        return ('rejected', 'public_audit_rejected') if value['leakage_flag'] else ('audited', 'public_audit_completed_nonleaking')
+    note = value.get('audit_note', '')
+    if not isinstance(note, str):
+        return 'unclassified', 'audit_receipt_invalid'
+    if note.startswith('script ') and note.endswith(' not found; audit skipped'):
+        return 'engineering_error', 'audit_source_missing'
+    if note.startswith('audit timed out after '):
+        return 'engineering_error', 'audit_timeout'
+    if note.startswith('audit failed during training: ModuleNotFoundError:'):
+        return 'engineering_error', 'audit_dependency_missing'
+    if note.startswith('audit failed during training:'):
+        return 'engineering_error', 'audit_training_error'
+    if note.startswith('audit prediction failed:'):
+        return 'engineering_error', 'audit_prediction_error'
+    if note in ('train.py has no train() function; audit skipped', 'audit model has no .predict; audit skipped', 'could not load script for audit'):
+        return 'engineering_error', 'audit_interface_missing'
+    if note.startswith('could not import runner.score:') or note == 'train.csv missing; audit skipped':
+        return 'engineering_error', 'audit_harness_unavailable'
+    return 'unclassified', 'audit_not_completed_unclassified'
+
+
 # Smoke: the exact saved artifact loads and predicts public validation inputs in
 # the leaf, with the frozen task interpreter. No score, audit or target claim.
 SMOKE = r'''import importlib.util,json
@@ -247,8 +276,10 @@ def leaf(request):
                 item.update(status='audit_pending', evidence_label=evidence, objects=objects,
                     context=dict(row=row, identity_note=('Exact sealed managed call originals; public audit is still pending.' if managed else
                         'Legacy current-source snapshot; original historical source version is not established.')))
-            except (SourceUnavailable, FileNotFoundError):
-                pass
+            except SourceUnavailable as error:
+                item['reason']=str(error)
+            except FileNotFoundError:
+                item['reason']='delivery_original_missing'
             items.append(item)
         return dict(items=items, capabilities=['smoke'])
     run_id = request['context']['row']['run_id']
@@ -272,10 +303,25 @@ def leaf(request):
             result = subprocess.run([request['config']['python'], '-I', '/inputs/harness/exp_cli.py',
                                      'submit', '--run-id', str(run_id)], env=env, stdout=out, stderr=err)
         proof = scratch / 'submitted.json'
-        if result.returncode or not proof.exists() or not _audit(json.loads(_exact(proof, 256_000).read_text()), run_id):
-            return _reply(request, 'failed', 'audit_unavailable_or_failed')
-        if _sha(scratch / 'submitted_model.pkl') != request['artifact_sha256']:
-            return _reply(request, 'failed', 'audit_model_identity_changed')
+        if result.returncode:
+            return _reply(request, 'engineering_error', 'audit_process_failed')
+        if not proof.exists():
+            return _reply(request, 'unclassified', 'audit_receipt_missing')
+        value=None
+        try:
+            value=json.loads(_exact(proof, 256_000).read_text())
+            status, note = audit_status(value, run_id)
+        except (OSError, ValueError):
+            status, note = 'unclassified', 'audit_receipt_invalid'
+        if status in {'audited','rejected'}:
+            try:matched=_sha(scratch/'submitted_model.pkl')==request['artifact_sha256']
+            except (OSError,ValueError):matched=False
+            if not matched:status,note='unclassified','audit_model_identity_changed'
+        if status != 'audited':
+            reply=_reply(request, status, note)
+            diagnostic=value.get('audit_note') if isinstance(value,dict) else None
+            if isinstance(diagnostic,str):reply['diagnostic']=diagnostic[:1024]
+            return reply
         return _reply(request, 'audited', 'public_audit_completed_nonleaking')
     if phase == 'promote':
         audit = json.loads(_exact('/scratch/runs/submitted.json', 256_000).read_text())

@@ -20,6 +20,19 @@ scid-research run --root /absolute/path/new-instance
 预算示例不保证完成一轮；三节点允许典型 H→W→A，但科学角色也可以选择证据提取或等待。
 源码入口为 `PYTHONPATH=src python -m scidiscovery.research_loop.cli`。
 
+可在 prepare 传入 `--role-profiles /absolute/path/role-profiles.json` 固定各角色的模型、推理力度和服务档位，例如：
+
+```json
+{"H":{"model":"gpt-6.1-sol"},"W":{"model":"gpt-6.1-sol"},"A":{"model":"gpt-5.6-sol"}}
+```
+
+省略的角色和字段继承 `--model`、`--reasoning-effort`、`--service-tier`；上例 E 继承全局默认。
+显式配置文件须为 JSON 对象（`{}` 可用，`null` 和数组拒绝）；配置只接受 H/W/A/E 及 `model`、`reasoning_effort`、`service_tier` 非空字符串，模型名没有白名单。
+准备时展开并冻结完整四角色配置；job、native intent 和实际 argv 使用同一 profile，原 session 的修复和 fragment 恢复也保持原值。
+修改原配置文件不影响已准备实例；不传该选项时保留全局配置行为。未知角色、无效配置或原件绑定不一致在原生提交前拒绝，不自动换模型。
+rootless cov launcher 的 operator 配置应声明相同全局值与 `role_profiles`（可为等价的稀疏配置）；它核对冻结实例，再生成匹配的 CODEX_HOME 配置，拒绝不一致的 model/effort/tier 参数。
+这些记录证明请求参数一致，不代替服务端实际模型或计费观测。
+
 ## 文件与职责
 
 H 提出竞争机制和最小判别依据，决定是否请求 E。W 在用户约束与 H 范围内拥有实验设计和搜索责任，根据结果新建、改进、修复或回退候选。A 判断全局贡献、关键证据缺口和下一方向；它可要求关键反例，但不默认指定完整算法、参数或扰动矩阵。机制改变交回 H。
@@ -182,7 +195,7 @@ A 可在新协议最终科学 JSON 可选填写 `candidate_recommendation`（已
 
 适配器是独立的领域接口。核心冻结其代码、启动器、输入原件及读取范围，不解释领域台账。
 收口先冻结完整有界候选目录，`science-task.json` 给出目录文件；16 项摘要有省略计数，完整目录保留精确候选 ID 和来源节点。控制层仅对实际选择或控制 shortlist 中的候选解析并冻结原件，不受历史前 128 项原件包截断影响。可用性与审计资格分别展示；精确原件的审计结果、工件匹配和适用范围沿历史传递，不额外制造未知泄漏待办。A 选择不等于审计通过。原生 `exp submit` 保留公共命令，但只使用 run 声明的路径，不解析历史跨节点原件；受管 wrapper 的 submit/help 会提示历史交付使用 A `deliver`，不会阻断或改写命令。
-普通 A 的 `deliver` 复用其已封存选择进入控制交付，不经过 E。未配置选择策略时保持 H/W/A 三节点；显式 `selection_policy` 先执行冻结筛选，再由精确 closeout A 按默认与 override 合同比较，不能绕开策略。公开审计必须完整通过才能更新实际提交；失败、跳过或未知不能冒充确认成功。收口 A 用 `deliver` 授权适配器交付，用 `audit` 请求资格，用 `finish` 拒绝交付，用 `wait` 暂停。`extract / continue_w / revise_h` 的原话保留并触发最多两次作者补正，不会静默转换成交付授权，也不会在收口重新派 H/W/E。正常审计往返及提交前确定审计失败后的改选只消耗原总预算，不消耗错误补正次数。审计失败的同一候选工件不能再次提交；未知操作绝不改选或重放。
+普通 A 的 `deliver` 复用其已封存选择进入控制交付，不经过 E。未配置选择策略时保持 H/W/A 三节点；显式 `selection_policy` 先执行冻结筛选，再由精确 closeout A 按默认与 override 合同比较，不能绕开策略。公开审计必须完整通过才能更新实际提交；失败、跳过或未知不能冒充确认成功。收口 A 用 `deliver` 授权适配器交付，用 `audit` 请求资格，用 `finish` 拒绝交付，用 `wait` 暂停。`extract / continue_w / revise_h` 的原话保留并触发最多两次作者补正，不会静默转换成交付授权，不会据此重新开放收口探索；协议 18 只为已绑定工程故障允许一次精确 W repair。正常审计往返及提交前完整审计明确拒绝后的改选只消耗原总预算，不消耗错误补正次数。完整审计拒绝的同一候选工件不能再次提交；工程故障、未运行和未分类回执不冒充科学拒绝。未知操作绝不改选或重放。
 未知提交仅在本地进程已结束、原额度仍足够时查询同一操作，不重复提交。
 `adapter: null` 时 `submit_seconds` 和 `confirm_seconds` 必须为零，仅作本地导出，不启动新的交付 A。
 
@@ -201,9 +214,21 @@ scid-research closeout --root /绝对路径/实例 --export-only
 `exported_unsubmitted`、`closeout_unresolved`、`delivery_failed`、`delivery_unknown` 分别保留未提交、
 未决、失败和未知，不等同科研任务完成。配置交付但预算不足返回 `closeout_budget_unavailable`，保留 model 收口边界，不伪装成操作者 export_only。暂时来源准备失败返回 `closeout_preparation_unavailable`，保留失败原件，重复 `run/closeout` 可在原预算内重试准备并复用已封存 A；它不固化为操作者 `export_only`。清理未知继续阻止任何新执行。`status` 由相同原件重建状态和最新收口 A 推荐；此前实际提交观察与当前确认结果仍分开。真实科学效果须另行验收。
 
-当前写协议为 **17**。协议 16 及更早的真实场和证据保持归档只读，不能用新代码续接、重解释或原地迁移；新场必须重新 `prepare`。此变更不增加预算，不对冻结旧场执行任何恢复。
+当前写协议为 **18**。协议 17 及更早的真实场和证据保持归档只读，不能用新代码续接、重解释或原地迁移；新场必须重新 `prepare`。此变更不增加预算，不对冻结旧场执行任何恢复。
 
-适配器只冻结声明的脚本 `source.py`、模型和静态输入。受管 call 的封存脚本可来自旧 W scratch；审计台账局部改写为 `/inputs/source.py` 与 `/inputs/artifact`，旧 W workspace 不挂载到审计命名空间。脚本的任意本地兄弟模块或未声明依赖不会递归捕获；缺依赖导致审计失败，不能据此声明所有脚本都可交付。
+适配器只冻结声明的脚本 `source.py`、模型和静态输入。受管 call 的封存脚本可来自旧 W scratch；审计台账局部改写为 `/inputs/source.py` 与 `/inputs/artifact`，旧 W workspace 不挂载到审计命名空间。脚本的任意本地兄弟模块或未声明依赖不会递归捕获；缺依赖属于工程故障，不能据此声明审计已完成或所有脚本都可交付。
+
+### 审计工程故障与科学拒绝（协议 18）
+
+进程退出 0、`leakage_flag=false` 都不足以证明审计通过。适配器核对精确候选、有限审计数值、完整执行回执及审计模型字节：`audited` 表示通过，`rejected` 才表示完整审计明确不合格；脚本、依赖、训练、进程或资源故障为 `engineering_error`，缺回执、无法可靠归因或原件身份不一致为 `unclassified`。后二者均不授予科学资格，也不自动要求换候选。
+
+控制层先允许一次 scratch 审计工程恢复：重新从封存原件准备输入，写入独立不可变 intent/outcome，使用原共享余额与原单次上限并计步。它只重做未写真实交付目标的审计，不能重放 promote、confirm 或未知提交。任一 accepted intent 缺 outcome、进程清理未知或用量未知都会阻止新执行。重复 `run` 不重放已接受恢复。
+
+确认是实现或未声明依赖问题时，可在原额度内建立一个精确 W repair，绑定故障回执、原候选、原 W 和封存输入。相同原候选 lineage 最多一个此类 W，不提高总额度或原次数上限。注册工具只允许对绑定 parent 运行一次新候选；不接受无 parent、新计划、换 parent 或重复调用。W 报告实现修复或需要科学改动，A 重新判断并授权新候选，旧授权不覆盖新字节。已封存结论不可覆写；只有未封存且符合既有恢复条件的任务可用 `worker-resume` 在原 session 续接。工件无法定位时不能重建并冒充历史原件。
+
+选择策略在修复后保留旧筛选原件，并按 repair W step 冻结新一代比较。原故障实现仍展示但不当作可执行默认；A 仍须遵守同一默认/override 规则。状态从当前代相同 intent/outcome 投影，工程故障和未分类早停不会显示成等待执行。
+
+这套自动恢复针对控制适配器和注册工具的语义回执，不解析任意 shell 输出，也不把原生 `exp submit` 退出成功当作资格。冻结运行时/公共 harness 无法恢复的工程问题会明确停机；不会热改安装或递归捕获任意依赖。预算、输入容量不足或修复次数耗尽分别保留明确状态，不能静默增额或改派无限任务。
 
 ### 恢复能力的区别
 

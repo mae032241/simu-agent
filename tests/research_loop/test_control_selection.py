@@ -243,11 +243,11 @@ def science_python():
     pytest.skip('Smoke needs an interpreter with numpy/pandas (the frozen task Python)')
 
 
-def scene(tmp_path, *, policy=shortlist.DEFAULT, metrics=(.9, .8, .7), launcher=None, author_action='finish'):
+def scene(tmp_path, *, policy=shortlist.DEFAULT, metrics=(.9, .8, .7), launcher=None, author_action='finish', harness=None):
     python = science_python()
     public, root = tmp_path / 'public', (tmp_path / 'instance').absolute()
     (public / 'harness').mkdir(parents=True)
-    files = {'exp_cli.py': FAKE_HARNESS, 'runner.py': RUNNER, 'train.csv': 'public fixture only\n', 'val.csv': 'y0,y1,x0,x1\n1,2,0,0\n3,4,0,1\n'}
+    files = {'exp_cli.py': harness or FAKE_HARNESS, 'runner.py': RUNNER, 'train.csv': 'public fixture only\n', 'val.csv': 'y0,y1,x0,x1\n1,2,0,0\n3,4,0,1\n'}
     for name, text in files.items():(public / 'harness' / name).write_text(text)
     c.write(public / 'harness/meta.json', dict(mode='ok', target_cols=['x0', 'x1'], control_path=str(root / 'settings.json'), hidden_path=str(tmp_path / 'hidden.json')))
     c.write(tmp_path / 'hidden.json', dict(secret='Never an input'))
