@@ -83,7 +83,7 @@ def cli(root,action='run',*extra):
     return json.loads(done.stdout)
 
 
-def repair_scene(tmp_path,*,ordinary=False,reason='dependency',always_fail=False,max_tokens=100000,crash=False,output_capacity=None,audit_after_repair=False,pause_after_author=False,deliver_after_unavailable=False):
+def repair_scene(tmp_path,*,ordinary=False,reason='dependency',always_fail=False,max_tokens=100000,crash=False,output_capacity=None,audit_after_repair=False,pause_after_author=False,deliver_after_unavailable=False,initial_action=None):
     backend=tmp_path/'repair-backend.py';backend.write_text(BACKEND)
     program=NATIVE
     if audit_after_repair:
@@ -98,7 +98,9 @@ def repair_scene(tmp_path,*,ordinary=False,reason='dependency',always_fail=False
     note='audit failed during training: ModuleNotFoundError: No module named fixture_helper' if reason=='dependency' else 'audit timed out after 45s (audit exceeded 45s budget)'
     harness=harness.replace("else 'audit skipped'",'else '+repr(note))
     root,*rest=managed_scene(tmp_path,launcher=[sys.executable,str(native)],harness=harness,audit=ordinary or audit_after_repair,max_tokens=max_tokens,output_capacity=output_capacity,resume_policy=dict(max_attempts=1,protocol='codex_exec_resume',usage_scope='turn',output_repair=False) if crash else None)
-    if ordinary:
+    if initial_action:
+        finish(root,3,'A',[1,2],action=initial_action)
+    elif ordinary:
         finish(root,3,'A',[1,2],action='audit',recommendation='run-1')
     else:
         finish(root,3,'A',[1,2],action='deliver',recommendation='run-1')
@@ -120,10 +122,88 @@ def test_exact_worker_repair_creates_new_candidate_and_requires_new_authorizatio
     assert result['last_confirmed']['candidate_id']=='run-3'
     assert (root/'submission/model.pkl').read_bytes()!=rest[-1]
     assert all((root/f'native-evidence/{n:03d}/result-identity.json').read_bytes()==value for n,value in seals.items())
-    assert len(list(audit_recovery.facts(root)))==1
+    assert not list(audit_recovery.facts(root))
     before=budget.used_steps(root)
     assert cli(root)['status']=='delivery_confirmed' and budget.used_steps(root)==before
     assert cli(root,'status')['closeout']['status']=='delivery_confirmed'
+
+
+@pytest.mark.parametrize('unresolved_selection',[False,True])
+def test_default_search_routes_exact_repair_with_no_active_scientific_focus(tmp_path,monkeypatch,unresolved_selection):
+    from scidiscovery.research_loop import controller,cov_lineage,search
+    import test_cov_delivery_lineage as managed
+    prepare=controller.prepare
+    def default_search(*args,**kwargs):
+        kwargs.pop('search_policy',None)
+        return prepare(*args,**kwargs)
+    monkeypatch.setattr(controller,'prepare',default_search)
+    def planned_finish(root,step,role,parents,*args,**kwargs):
+        if step==1 and role=='H':
+            kwargs['search_choice']=dict(scope='Original method',commitments=[dict(label='P',minimal_test='Bounded observation',existing_ref=None)],focus=dict(label='P',action='improve'))
+        return finish(root,step,role,parents,*args,**kwargs)
+    monkeypatch.setattr(managed,'finish',planned_finish)
+    run=cov_lineage.run
+    def initial_mechanism(*args,**kwargs):
+        return run(*args,**dict(kwargs,mechanism='P'))
+    monkeypatch.setattr(cov_lineage,'run',initial_mechanism)
+    root,_=repair_scene(tmp_path,ordinary=True,initial_action='revise_h')
+    c.build_job(root,4,'H',[1,2,3],instruction='Exact scientific question')
+    finish(root,4,'H',[1,2,3],action='analyze')
+    c.build_job(root,5,'A',[4,2],instruction='Exact scientific question')
+    finish(root,5,'A',[4,2],action='audit',recommendation='run-1',selection=['W002-I999'] if unresolved_selection else None)
+    outcome=c.read(root/'native-evidence/005/result-identity.json')['control_outcome']
+    assert outcome['selection_status']==('unresolved' if unresolved_selection else 'applied')
+    assert c.settings(root)['search_policy']==search.DEFAULT_POLICY
+    assert search.project(root,6)['focus'] is None
+    originals={p:p.read_bytes() for p in (root/'native-evidence').glob('*/result-identity.json')}
+    result=cli(root)
+    assert result['status']=='delivery_confirmed',result
+    repair=c.read(root/'jobs/006.json')
+    assert repair['role']=='W' and repair['engineering_repair']['source']['step']==2
+    assert repair.get('search') is None and repair.get('author_correction') is None
+    from copy import deepcopy
+    altered=deepcopy(repair);altered['engineering_repair']['candidate_id']='run-2'
+    with pytest.raises(ValueError,match='exact audit diagnosis'):
+        engineering.validate_job(root,altered)
+    altered=deepcopy(repair);altered['search']={}
+    with pytest.raises(ValueError,match='new scientific search scope'):
+        engineering.validate_job(root,altered)
+    assert len(list((c.workspace(root,6)/'work/lineage/calls').iterdir()))==1
+    assert not list(audit_recovery.facts(root))
+    assert all(path.read_bytes()==value for path,value in originals.items())
+    steps=budget.used_steps(root)
+    assert cli(root)['status']=='delivery_confirmed' and budget.used_steps(root)==steps
+
+
+@pytest.mark.parametrize('code',sorted(audit_recovery.WORKER_CODES))
+def test_worker_audit_fault_is_preserved_without_unchanged_retry(tmp_path,monkeypatch,code):
+    calls=[]
+    request=dict(operation_id='a'*64,candidate_id='run-1',artifact_sha256='b'*64)
+    def fault(spec,item,seconds,**kwargs):
+        calls.append(item)
+        return dict(request,status='engineering_error',note=code,diagnostic='Original bounded diagnostic')
+    monkeypatch.setattr(delivery,'_call',fault)
+    result,returned,_=audit_recovery.run(tmp_path,{},None,request,5)
+    assert result==dict(status='engineering_error',note=code,diagnostic='Original bounded diagnostic',cleanup_confirmed=True)
+    assert len(calls)==1 and returned==request
+    assert not (tmp_path/'host-delivery/audit-recovery').exists()
+
+
+@pytest.mark.parametrize('searched',[False,True])
+def test_ordinary_unresolved_selection_still_requires_its_author(tmp_path,searched):
+    from scidiscovery.research_loop import controller,search,semantic
+    public=tmp_path/'public';public.mkdir();objective=public/'objective';objective.write_text('Retain exact scientific scope.')
+    root=tmp_path/'instance'
+    controller.prepare(root,objective,public,['never-call-a-model'],max_tokens=100000,max_seconds=60,max_steps=6,
+        model='no-model',reasoning_effort='high',search_policy=search.DEFAULT_POLICY if searched else None)
+    plan=dict(scope='Original method',commitments=[dict(label='P',minimal_test='Bounded observation',existing_ref=None)],focus=dict(label='P',action='improve'))
+    job,_,_=finish(root,1,'H',[],action='experiment',search_choice=plan if searched else None,selection=['H999-I001'])
+    payload=c.validate(c.workspace(root,1))
+    route=semantic.effective_route(root,1,payload,job,(*controller._route(root,1,'H',payload,job,None,None),None))
+    assert route[0]=='H' and route[-1]['reason']=='implementation_unresolved'
+    corrected=c.build_job(root,2,route[0],route[1],instruction=route[2],author_correction=route[-1])
+    assert corrected.get('engineering_repair') is None
+    assert not (root/'native-evidence/002/native-intent.json').exists()
 
 
 @pytest.mark.parametrize('fault',['packing','timeout'])
@@ -227,16 +307,34 @@ def test_control_selection_engineering_fault_reaches_exact_worker_then_author(tm
     assert controller.run(root)['status']==result['status'] and calls==['W','A']
 
 
-def test_known_unsealed_repair_worker_resumes_exact_session_without_rewriting_seals(tmp_path):
-    root,_=repair_scene(tmp_path,crash=True)
+@pytest.mark.parametrize('mode',['soft','hard'])
+def test_known_unsealed_repair_worker_resumes_exact_session_without_rewriting_seals(tmp_path,monkeypatch,mode):
+    from scidiscovery.research_loop import controller
+    prepare=controller.prepare
+    def node_mode(*args,**kwargs):
+        return prepare(*args,**dict(kwargs,node_budget_mode=mode))
+    monkeypatch.setattr(controller,'prepare',node_mode)
+    # Hard exploration must first fit W's full 2000 plus the 3100 delivery reserve.
+    root,_=repair_scene(tmp_path,crash=True,max_tokens=5500 if mode=='hard' else 3500)
     result=cli(root)
     assert result['status']=='closeout_native_unsealed',result
     original=(root/'jobs/004.json').read_bytes()
     assert not (root/'native-evidence/004/result-identity.json').exists()
+    from scidiscovery.research_loop import execution,native
+    job=c.read(root/'jobs/004.json');paths=execution.records(root,4)
+    tokens,_=budget._attempt_consumption(root,job,paths)
+    settings=c.settings(root);limits=budget.snapshot(root);meter=native.usage(root)
+    floor=budget.closeout_floor(settings,preparation_seconds=budget.closeout_state(root)['begin']['preparation_seconds'])
+    needed=0 if mode=='soft' else budget.node_limits(root,job)['max_observed_tokens']-tokens
+    remaining=needed+floor['tokens']+settings['delivery_policy']['closeout_a']['max_observed_tokens']-1
+    with monkeypatch.context() as patch:
+        patch.setattr(native,'usage',lambda root:dict(meter,observed_tokens=limits['max_tokens']-remaining))
+        with pytest.raises(budget.NodeBudgetUnavailable,match='worker_resume_budget_unavailable'):
+            budget.accept_continuation(root,job,paths)
+    assert len(execution.records(root,4))==1  # A future author is still reserved; no attempt accepted.
     result=cli(root,'worker-resume','--step','4')
     assert result['status']=='delivery_confirmed',result
     assert (root/'jobs/004.json').read_bytes()==original
-    from scidiscovery.research_loop import execution
     records=execution.records(root,4)
     assert len(records)==2
     resumed=c.read(records[1]/'native-intent.json')
@@ -371,7 +469,7 @@ def test_legacy_preflight_settles_without_replaying_old_audit_or_rewriting_scien
     assert cli(root,'status')['closeout']['status']=='candidate_audit_unknown'
     assert {p.name:p.read_bytes() for p in directory.iterdir()}==snapshot  # Queries never settle.
     result=cli(root)
-    expected='delivery_confirmed' if partial_result else 'closeout_budget_unavailable'
+    expected='delivery_confirmed'
     assert result['status']==expected,result
     assert all(path.read_bytes()==data for path,data in originals.items())
     old=candidate_audit._outcome(root,5)
@@ -383,8 +481,10 @@ def test_legacy_preflight_settles_without_replaying_old_audit_or_rewriting_scien
         assert candidate_audit._outcome(root,6) is None
         assert (root/'submission/model.pkl').is_file()  # New A authorizes; control really audits before promotion.
     else:
-        assert candidate_audit._outcome(root,6)['result']['note']=='candidate_audit_reserve_unavailable'
-        assert not (root/'submission/model.pkl').exists()
+        # Skipping the unchanged Worker-fault retry leaves one real action slot.
+        assert candidate_audit._outcome(root,6)['result']['status']=='audited'
+        assert c.read(root/'native-evidence/007/science-output.json')['next_action']=='deliver'
+        assert (root/'submission/model.pkl').is_file()
     assert budget.used_steps(root)>before
     after=budget.used_steps(root)
     assert cli(root)['status']==expected and budget.used_steps(root)==after

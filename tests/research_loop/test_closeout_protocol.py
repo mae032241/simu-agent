@@ -47,7 +47,7 @@ print(json.dumps(dict(type='turn.completed',usage=dict(input_tokens=7,cached_inp
 '''
 
 
-def scene(tmp_path, actions, *, count=2, audit=True, selective_failure=False, max_tokens=100000, max_seconds=600):
+def scene(tmp_path, actions, *, count=2, audit=True, selective_failure=False, max_tokens=100000, max_seconds=600,node_budget_mode='soft'):
     if shutil.which('bwrap') is None:
         pytest.skip('Actual isolated adapter required')
     root=tmp_path/'instance';public=tmp_path/'public';(public/'harness').mkdir(parents=True)
@@ -60,7 +60,7 @@ def scene(tmp_path, actions, *, count=2, audit=True, selective_failure=False, ma
     objective=public/'objective.md';objective.write_text('Choose a candidate for delivery while carrying scientific uncertainty.')
     launcher=tmp_path/'native.py';launcher.write_text('SCENARIO='+repr(actions)+'\nFIRST_STEP='+str(5 if count>128 else 3)+'\n'+NATIVE)
     controller.prepare(root,objective,public,[sys.executable,str(launcher)],max_tokens=max_tokens,max_seconds=max_seconds,max_steps=32,
-        model='no-model',reasoning_effort='high',search_policy=None,
+        model='no-model',reasoning_effort='high',search_policy=None,node_budget_mode=node_budget_mode,
         resume_policy=dict(max_attempts=2,protocol='codex_exec_resume',usage_scope='turn',output_repair=True),
         node_budget_policy={r:dict(max_observed_tokens=2000,max_seconds=60) for r in 'HWAE'},
         candidate_audit_policy={'version':1} if audit else None,
@@ -129,8 +129,10 @@ def test_known_audit_failure_can_reselect_within_same_budget(tmp_path):
     assert len(budget.closeout_state(root)['actions'])==3
 
 
-def test_known_closeout_abort_resumes_exact_session(tmp_path):
-    root=scene(tmp_path,[dict(action='deliver',candidate='run-1',crash=True)])
+@pytest.mark.parametrize('mode',['soft','hard'])
+def test_known_closeout_abort_resumes_exact_session(tmp_path,mode):
+    root=scene(tmp_path,[dict(action='deliver',candidate='run-1',crash=True)],max_tokens=3500,node_budget_mode=mode)
+    settings=(root/'settings.json').read_bytes()
     assert command(root)['status']=='closeout_native_unsealed'
     original=(root/'jobs/003.json').read_bytes()
     assert command(root,'status')['closeout']['status']=='closeout_native_unsealed'
@@ -140,6 +142,54 @@ def test_known_closeout_abort_resumes_exact_session(tmp_path):
     assert (c.workspace(root,3)/'work/launches').read_text()=='exec\nresume\n'
     assert command(root,'run')['status']=='delivery_confirmed'
     assert len(list((root/'native-evidence/003/continuations').glob('*/native-intent.json')))==1
+    assert (root/'settings.json').read_bytes()==settings
+    assert not any(c.read(path)['kind']=='budget_amend' for path in (root/'control-ledger').glob('*.json'))
+
+
+@pytest.mark.parametrize('mode',['soft','hard'])
+def test_closeout_resume_retains_original_node_allowance_and_delivery_floor(tmp_path,monkeypatch,mode):
+    from scidiscovery.research_loop import execution
+    root=scene(tmp_path,[dict(action='deliver',candidate='run-1',crash=True)],node_budget_mode=mode)
+    assert command(root)['status']=='closeout_native_unsealed'
+    job=c.read(root/'jobs/003.json');paths=execution.records(root,3)
+    tokens,seconds=budget._attempt_consumption(root,job,paths)
+    settings=c.settings(root);policy=budget.node_limits(root,job)
+    floor=budget.closeout_floor(settings,preparation_seconds=budget.closeout_state(root)['begin']['preparation_seconds'])
+    limits=budget.snapshot(root);meter=native.usage(root);used=budget.used_steps(root)
+    current_limits=dict(limits);current_meter=dict(meter);current_steps=[used]
+    monkeypatch.setattr(budget,'snapshot',lambda root:dict(current_limits))
+    monkeypatch.setattr(native,'usage',lambda root:dict(current_meter))
+    monkeypatch.setattr(budget,'used_steps',lambda root:current_steps[0])
+    for boundary in ('tokens','seconds','steps'):
+        for delta in (-1,0,1):
+            current_limits.update(limits);current_meter.update(meter);current_steps[0]=used
+            if boundary=='tokens':
+                needed=0 if mode=='soft' else policy['max_observed_tokens']-tokens
+                current_meter['observed_tokens']=limits['max_tokens']-(needed+floor['tokens']+delta)
+            elif boundary=='seconds':
+                needed=0 if mode=='soft' else policy['max_seconds']-seconds
+                current_limits['seconds_remaining']=needed+floor['seconds']+delta
+            else:
+                current_steps[0]=settings['max_steps']-(1+floor['steps']+delta)
+            blocked=delta<0 or mode=='soft' and boundary!='steps' and delta==0
+            if blocked:
+                with pytest.raises(budget.NodeBudgetUnavailable,match='worker_resume_budget_unavailable'):
+                    budget.accept_continuation(root,job,paths)
+            else:
+                anchor=budget.accept_continuation(root,job,paths)
+                assert anchor['previous_tokens']==tokens and anchor['previous_seconds']==seconds
+                assert anchor['limits']==policy and anchor['shared_limits']=={key:limits[key] for key in ('max_tokens','max_seconds')}
+    current_limits.update(limits);current_meter.update(meter);current_steps[0]=used
+    if mode=='hard':
+        current_meter['observed_tokens']=limits['max_tokens']-(policy['max_observed_tokens']-tokens+floor['tokens'])
+        anchor=budget.accept_continuation(root,job,paths)
+        record=paths[0]/'continuations/001'
+        c.write(record/'native-intent.json',dict(task_sha256=c.digest(root/'jobs/003.json'),attempt=1,budget_slice=anchor,
+            previous=execution.proof(paths[0]),root_intent_sha256=c.digest(paths[0]/'native-intent.json')))
+        assert budget.node_admission(root,job,ignore_step=3,intent=c.read(record/'native-intent.json')) is None
+        assert not (record/'native-process.json').exists()
+    else:
+        assert not (paths[0]/'continuations').exists()
 
 
 def test_late_candidate_is_locatable_and_resolved_without_historical_pack(tmp_path):

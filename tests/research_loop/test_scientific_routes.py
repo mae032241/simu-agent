@@ -1,10 +1,13 @@
 """Real current jobs and seals, no model or domain submission."""
 import copy
 from pathlib import Path
+import sys
 
 import pytest
 
-from scidiscovery.research_loop import contracts as c,controller,correction,decision,execution,native,search,semantic
+from scidiscovery.research_loop import contracts as c,controller,correction,decision,execution,experiments,native,search,semantic
+from execution_fixtures import execution_registry
+from test_breadth_science import findings,run
 
 
 def scene(tmp_path,*,portfolio=False):
@@ -17,20 +20,37 @@ def scene(tmp_path,*,portfolio=False):
 
 
 def plan(focus=None):
-    return dict(scope='Competing target mechanisms',commitments=[dict(label=label,minimal_test='A bounded independent discrimination',existing_ref=None) for label in ('P','Q')],focus=focus)
+    return dict(scope='Competing target mechanisms',commitments=[dict(label=label,minimal_test='A bounded independent discrimination',existing_ref=None) for label in ('P','Q')],focus=focus or dict(label=None,action='screen'))
 
 
-def seal(root,step,role,parents,*,action='wait',choice=None,question='What target observation would change this choice?',evidence_return=None,stage_intent='review'):
+def review(ref):
+    return dict(dispositions=[dict(mechanism_ref=ref,status='screened',reason='Assess the exact W finding with its retained observation and limitations')],
+        next_focus=dict(mechanism_ref=None,action='screen'))
+
+
+def observe(root,step,*labels):
+    record=execution.record(root,step)
+    job=c.read(root/'jobs'/f'{step:03d}.json')
+    c.write(record/'native-intent.json',dict(task_sha256=c.digest(root/'jobs'/f'{step:03d}.json'),search_slice=search.accept(root,job)))
+    path=c.workspace(root,step)/'work/experiment-config.json'
+    experiments.configure(root,step,'local_execution:command',dict(run_argv=[sys.executable]),path)
+    config=c.read(path)
+    for label in labels:
+        assert run(root,config,label)['status']=='known_success'
+
+
+def seal(root,step,role,parents,*,action='wait',choice=None,question='What target observation would change this choice?',evidence_return=None,stage_intent='review',mechanism_findings=None):
     job=c.build_job(root,step,role,parents,instruction='Bounded original scientific question',evidence_return=evidence_return)
     payload=dict(summary='Bounded scientific finding',scientific_result='The original limitations remain explicit.',limitations=['No scientific efficacy was tested.'],implementation_selection=None)
     if role in {'H','A'}:
         payload.update(next_action=action,route_reason='Prioritize a decision-changing target discrimination')
         payload['search_plan' if role=='H' else 'search_review']=choice
-    if role=='W':payload['stage_intent']=stage_intent
+    if role=='W':payload.update(stage_intent=stage_intent,mechanism_findings=mechanism_findings)
     if role=='A':payload.update(candidate_recommendation=None,progress_assessment=None,portfolio_review=None,
         decision_request=dict(decision='mechanism',question=question,change_criterion='A conflicting qualified target observation') if action in decision.ACTIONS else None)
     record=execution.record(root,step)
-    c.write(record/'native-intent.json',dict(task_sha256=c.digest(root/'jobs'/f'{step:03d}.json')))
+    if not (record/'native-intent.json').exists():
+        c.write(record/'native-intent.json',dict(task_sha256=c.digest(root/'jobs'/f'{step:03d}.json')))
     c.write(record/'usage.json',dict(input_tokens=7,cached_input_tokens=2,output_tokens=3))
     c.write(record/'science-output.json',payload)
     c.write(record/'native-outcome.json',dict(returncode=0,stop_reason=None,usage=native.usage(root),raw_sha256=c.digest(record/'science-output.json')))
@@ -42,13 +62,16 @@ def prefix(root):
     seal(root,1,'H',[],action='experiment',choice=plan())
     first=c.build_job(root,2,'W',[1],instruction='Bounded original scientific question')
     assert first['search']['focus']['mechanism_ref']=='h001.m1'
-    seal(root,2,'W',[1])
+    observe(root,2,'P')
+    _,_,receipt=seal(root,2,'W',[1],mechanism_findings=findings('P',blocked=('Q',)))
+    assert receipt['control_outcome']['worker_delivery']['status']=='partial'
 
 
 def test_default_after_final_a_resolves_q_and_decision_key_uses_same_receipt(tmp_path):
     root=scene(tmp_path,portfolio=True);prefix(root)
-    job,payload,receipt=seal(root,3,'A',[1,2],action='continue_w',choice=None)
+    job,payload,receipt=seal(root,3,'A',[1,2],action='continue_w',choice=review('h001.m1'))
     control=receipt['control_outcome'];focus=control['resolved_focus']
+    assert not control['diagnostics']
     assert focus==dict(mechanism_ref='h001.m2',action='screen')
     assert decision._key(job,payload,focus)[4]=='h001.m2'
     original=c.validate(c.workspace(root,3))
@@ -70,8 +93,11 @@ def test_explicit_redirect_and_deepening_do_not_require_priority_prefix(tmp_path
     redirected=c.build_job(root,2,'W',[1],instruction='Bounded original scientific question')
     assert redirected['search']['focus']['mechanism_ref']=='h001.m2'
     assert [item['mechanism_ref'] for item in redirected['search']['unfinished_plan']]==['h001.m1','h001.m2']
-    seal(root,2,'W',[1])
-    job,_,_=seal(root,3,'A',[1,2],action='continue_w',choice=dict(dispositions=[],next_focus=dict(mechanism_ref='h001.m2',action='improve')))
+    observe(root,2,'Q')
+    seal(root,2,'W',[1],mechanism_findings=findings('Q',blocked=('P',)))
+    choice=review('h001.m2');choice['next_focus']=dict(mechanism_ref='h001.m2',action='improve')
+    job,_,receipt=seal(root,3,'A',[1,2],action='continue_w',choice=choice)
+    assert not receipt['control_outcome']['diagnostics']
     original=c.validate(c.workspace(root,3))
     route=controller._route(root,3,'A',original,job,1,2)
     route=correction.effective_route(root,3,original,job,route)
@@ -91,16 +117,20 @@ def test_e_round_trip_preserves_unfinished_plan_until_eligible_final_a(tmp_path)
     after=search.project(root,5)
     assert after['order']['remaining']==before['order']['remaining']
     assert after['portfolio']['seen_w']==before['portfolio']['seen_w']==set()
-    seal(root,5,'A',[1,2,3,4],action='continue_w',choice=None)
+    _,_,receipt=seal(root,5,'A',[1,2,3,4],action='continue_w',choice=review('h001.m1'))
+    assert not receipt['control_outcome']['diagnostics']
     state=search.project(root,6)
     assert [item['mechanism_ref'] for item in state['order']['remaining']]==['h001.m2']
     assert state['portfolio']['invested']['h001.m1']==1
 
 
-def test_a_to_h_null_revision_preserves_original_unfinished_q(tmp_path):
+def test_a_to_h_empty_revision_preserves_original_unfinished_q(tmp_path):
     root=scene(tmp_path);prefix(root)
-    seal(root,3,'A',[1,2],action='revise_h',choice=None)
-    seal(root,4,'H',[1,2,3],action='experiment',choice=None)
+    choice=review('h001.m1');choice['next_focus']=None
+    seal(root,3,'A',[1,2],action='revise_h',choice=choice)
+    _,_,receipt=seal(root,4,'H',[1,2,3],action='experiment',choice=dict(scope='Retain the original unfinished comparison',
+        commitments=[],focus=dict(label=None,action='screen')))
+    assert not receipt['control_outcome']['diagnostics']
     next_=c.build_job(root,5,'W',[4],instruction='Bounded original scientific question')
     assert next_['search']['focus']['mechanism_ref']=='h001.m2'
     assert len(search.project(root,5)['mechanisms'])==2
@@ -115,19 +145,22 @@ def test_mechanism_repair_completes_original_opportunity_once_not_an_extra_cycle
     assert [item['mechanism_ref'] for item in state['order']['remaining']]==['h001.m1','h001.m2']
     repair=c.build_job(root,4,'W',[1,2,3],instruction='Bounded original scientific question')
     assert repair['search']['repair_root']==2
+    observe(root,4,'P')
     seal(root,4,'W',[1,2,3])
-    seal(root,5,'A',[1,4],action='continue_w',choice=None,question='After the repair, which mechanism should be screened next?')
+    _,_,receipt=seal(root,5,'A',[1,4],action='continue_w',choice=review('h001.m1'),question='After the repair, which mechanism should be screened next?')
+    assert not receipt['control_outcome']['diagnostics']
     state=search.project(root,6)
     assert state['portfolio']['invested']['h001.m1']==1
     assert len(state['portfolio']['seen_w'])==1
     assert [item['mechanism_ref'] for item in state['order']['remaining']]==['h001.m2']
     assert c.validate(c.workspace(root,3))['search_review']['next_focus']['action']=='repair'
-    assert c.validate(c.workspace(root,5))['search_review'] is None
+    assert c.validate(c.workspace(root,5))['search_review']['next_focus']==dict(mechanism_ref=None,action='screen')
 
 
 def test_empty_plan_seals_original_science_and_yields_bounded_author_correction(tmp_path):
     root=scene(tmp_path)
-    job,payload,receipt=seal(root,1,'H',[],action='experiment',choice=None)
+    job,payload,receipt=seal(root,1,'H',[],action='experiment',choice=dict(scope='No unfinished mechanism is available',
+        commitments=[],focus=dict(label=None,action='screen')))
     assert receipt['control_outcome']['diagnostics'][0]['code']=='science_plan_empty'
     route=('W',[1],payload['route_reason'],None,1,None,None)
     corrected=semantic.effective_route(root,1,c.validate(c.workspace(root,1)),job,route)
@@ -151,12 +184,15 @@ def test_internal_parser_failure_remains_host_error_without_author_retry(tmp_pat
 def test_unconfigured_continue_preserves_raw_and_records_control_reason_without_author_retry(tmp_path):
     root=scene(tmp_path)
     seal(root,1,'H',[],action='experiment',choice=plan())
-    job,payload,receipt=seal(root,2,'W',[1],stage_intent='continue')
+    c.build_job(root,2,'W',[1],instruction='Bounded original scientific question')
+    observe(root,2,'P','Q')
+    job,payload,receipt=seal(root,2,'W',[1],stage_intent='continue',mechanism_findings=findings('P','Q'))
     work=c.workspace(root,2);view=c.read(work/'science-task.json')
     assert view['stage_continuation']['status']=='unavailable'
     assert view['stage_continuation']['context'] is None
     raw=execution.record(root,2)/'science-output.json';before=raw.read_bytes()
     assert receipt['control_outcome']['stage_end_reason']=='continuation_unavailable'
+    assert receipt['control_outcome']['worker_delivery']['status']=='complete'
     assert not receipt['control_outcome']['diagnostics']
     result=c.validate(work)
     route=controller._route(root,2,'W',result,job,1,None)

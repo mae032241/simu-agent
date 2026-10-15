@@ -1,4 +1,4 @@
-"""One pre-authorized engineering retry of a scratch-only audit, never promotion.
+"""One pre-authorized control retry of a scratch-only audit, never promotion.
 
 Every retry has an immutable intent/outcome and consumes the original shared
 budget. An accepted retry without its outcome is unknown and cannot be replayed.
@@ -91,6 +91,10 @@ def run(root, spec, source, request, seconds, *, on_process=None, author_require
         return result, request, deadline
     if result['note'] not in WORKER_CODES | CONTROL_CODES:
         return dict(status='unclassified', note='audit_engineering_reason_unclassified', cleanup_confirmed=True), request, deadline
+    # Re-staging can repair control transport/packing, but cannot change the
+    # frozen implementation. Preserve Worker diagnostics for its exact repair.
+    if result['note'] in WORKER_CODES:
+        return result, request, deadline
     limits, meter = budget.snapshot(root), native.usage(root)
     policy=c.settings(root)['delivery_policy']
     reserved_seconds=policy['cleanup_seconds']+policy['confirm_seconds']

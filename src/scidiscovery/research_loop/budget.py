@@ -454,7 +454,7 @@ def node_admission(root, job, *, ignore_step=None, intent=None):
         seconds_unavailable = (limits['seconds_remaining'] <= floor['seconds'] if soft else
             limits['seconds_remaining'] < max(0., policy['max_seconds'] - duration) + floor['seconds'])
         tokens_unavailable = (limits['max_tokens'] - meter['observed_tokens'] <= floor['tokens'] if soft else
-            limits['max_tokens'] - meter['observed_tokens'] < policy['max_observed_tokens'] + floor['tokens'])
+            limits['max_tokens'] - meter['observed_tokens'] < needed_tokens + floor['tokens'])
         if (seconds_unavailable or tokens_unavailable
                 or settings['max_steps'] - used_steps(root) < additional + floor['steps']):
             return 'closeout_budget_unavailable'
@@ -512,7 +512,11 @@ def accept_continuation(root, job, paths):
     settings = contracts.settings(root)
     soft = node_mode(root) == 'soft'
     reserve = (closeout_floor(settings, preparation_seconds=closeout_state(root)['begin']['preparation_seconds'])
-        if soft and job.get('purpose') == 'closeout' else delivery_reserve(settings)) or dict(tokens=0, seconds=0, steps=0)
+        if job.get('purpose') == 'closeout' else delivery_reserve(settings)) or dict(tokens=0, seconds=0, steps=0)
+    if job.get('purpose') == 'closeout' and job.get('engineering_repair'):
+        author = settings['delivery_policy']['closeout_a']
+        reserve = dict(tokens=reserve['tokens'] + author['max_observed_tokens'],
+                       seconds=reserve['seconds'] + author['max_seconds'], steps=reserve['steps'] + 1)
     needed_tokens = 0 if soft else max(0, policy['max_observed_tokens'] - tokens)
     needed_seconds = 0. if soft else max(0., policy['max_seconds'] - seconds)
     if (meter['unknown_steps'] or limits['max_tokens'] - meter['observed_tokens'] < needed_tokens + reserve['tokens']

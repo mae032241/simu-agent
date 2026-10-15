@@ -181,11 +181,16 @@ def effective_route(root, step, result, job, route):
                        + 'The original science is retained; no dependent research is authorized: ' + decision_code + '.')
         evidence_return, correction_request = None, None
     elif role == 'W':
-        code = 'implementation_unresolved' if seal.get('control_outcome', {}).get('selection_status') == 'unresolved' else None
+        from . import engineering
+        repair = engineering.request(root, max(parents)) if parents else None
+        if repair is not None:
+            engineering.admit(root, repair, step + 1)
+        code = 'implementation_unresolved' if repair is None and seal.get('control_outcome', {}).get('selection_status') == 'unresolved' else None
         if code is None and c.settings(root).get('search_policy') is not None:
             protocol = job.get('handoff_protocol', 1)
             planned = dict(step=step + 1, role='W', handoff_protocol=protocol,
-                           search=search.bind(root, step + 1, 'W', protocol, write_pages=False, unified=True))
+                           engineering_repair=repair,
+                           search=None if repair is not None else search.bind(root, step + 1, 'W', protocol, write_pages=False, unified=True))
             code = search.launch_reason(root, planned)
         if code is not None:
             source = _source(root, step)
