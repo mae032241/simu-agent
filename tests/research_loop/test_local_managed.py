@@ -347,3 +347,33 @@ def test_r2_excessive_json_depth_is_invalid_and_raw_result_is_retained(local):
     result=e.dispatch(config,script,command_options=dict(experiment_directory=str(root),arguments=[]))
     assert result['status']=='known_success' and result['result']['status']=='invalid'
     assert Path(result['outputs'][0]['path']).read_text()==content
+
+
+def test_r1_empty_input_directories_are_bounded_before_acceptance(local,monkeypatch):
+    from scidiscovery.research_loop import local_experiments
+    root,script,config,_=local
+    monkeypatch.setattr(local_experiments,'MAX_SCAN_ENTRIES',4)
+    for number in range(5):(root/f'empty-{number}').mkdir()
+    with pytest.raises(ValueError,match='directory entry capacity'):
+        e.dispatch(config,script,command_options=dict(experiment_directory=str(root),arguments=[]))
+    assert e.Records(config).calls()==[]
+
+
+def test_r2_empty_output_directories_do_not_erase_known_execution(local,monkeypatch):
+    from scidiscovery.research_loop import local_experiments
+    root,script,config,_=local
+    monkeypatch.setattr(local_experiments,'MAX_SCAN_ENTRIES',4)
+    script.write_text('import pathlib\nfor number in range(5):pathlib.Path("artifacts",f"empty-{number}").mkdir()\n')
+    result=e.dispatch(config,script,command_options=dict(experiment_directory=str(root),arguments=[]))
+    assert result['status']=='known_success' and result['returncode']==0
+    assert result['result']['status']=='unavailable' and result['outputs']==[]
+    assert (e.Records(config).directory(result['call_id'])/'completed.json').is_file()
+
+
+def test_r1_input_scan_excludes_prior_artifacts_subtree(local,monkeypatch):
+    from scidiscovery.research_loop import local_experiments
+    root,script,config,_=local
+    monkeypatch.setattr(local_experiments,'MAX_SCAN_ENTRIES',4)
+    for number in range(5):(root/'artifacts'/f'prior-{number}').mkdir(parents=True)
+    result=e.dispatch(config,script,command_options=dict(experiment_directory=str(root),arguments=[]))
+    assert result['status']=='known_success' and result['result']['status']=='available'

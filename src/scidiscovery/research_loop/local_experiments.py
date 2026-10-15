@@ -17,6 +17,8 @@ from scidiscovery.operations.execution import (AdapterCapability, ExecutionInter
 from scidiscovery.operations.runtime_plugins import RuntimePluginContribution, RuntimePluginFactory
 from . import experiments as e
 
+MAX_SCAN_ENTRIES = 1024
+
 
 class LocalExecution:
     def __init__(self, config):
@@ -86,20 +88,29 @@ class LocalExecution:
     def files(root,*,exclude_artifacts=False):
         if root.resolve()!=root or not root.is_dir():
             raise ValueError('Managed files require an original directory')
-        files=[];total=0
-        for directory,subdirs,names in os.walk(root,followlinks=False):
-            if exclude_artifacts and Path(directory)==root:subdirs[:]=[name for name in subdirs if name!='artifacts']
-            if any((Path(directory)/name).is_symlink() for name in subdirs):
-                raise ValueError('Managed directories cannot contain links')
-            for name in sorted(names):
-                if exclude_artifacts and Path(directory)==root and name=='artifacts':
-                    raise ValueError('Managed artifacts output must be a directory')
-                path=Path(directory)/name;item=e.proof(path);total+=item['size_bytes']
-                if len(path.relative_to(root).as_posix().encode())>512:
-                    raise ValueError('Managed file path capacity exceeded')
-                files.append(dict(item,name=path.relative_to(root).as_posix()))
-                if len(files)>e.MAX_INPUT_FILES or total>e.MAX_INPUT_BYTES:
-                    raise ValueError('Managed file capacity exceeded')
+        files=[];total=0;scanned=0;pending=[root]
+        while pending:
+            directory=pending.pop()
+            if directory.resolve()!=directory or not directory.is_dir():
+                raise ValueError('Managed directories must remain original')
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    if exclude_artifacts and directory==root and entry.name=='artifacts':
+                        if not entry.is_dir(follow_symlinks=False):
+                            raise ValueError('Managed artifacts output must be an original directory')
+                        continue
+                    scanned+=1
+                    if scanned>MAX_SCAN_ENTRIES:
+                        raise ValueError('Managed directory entry capacity exceeded')
+                    path=Path(entry.path);name=path.relative_to(root).as_posix()
+                    if entry.is_symlink():raise ValueError('Managed directories cannot contain links')
+                    if len(name.encode())>512:raise ValueError('Managed file path capacity exceeded')
+                    if entry.is_dir(follow_symlinks=False):
+                        pending.append(path);continue
+                    item=e.proof(path);total+=item['size_bytes']
+                    files.append(dict(item,name=name))
+                    if len(files)>e.MAX_INPUT_FILES or total>e.MAX_INPUT_BYTES:
+                        raise ValueError('Managed file capacity exceeded')
         return sorted(files,key=lambda item:item['name'])
 
     def dispatch_lease(self,accepted):

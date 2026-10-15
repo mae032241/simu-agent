@@ -1,0 +1,71 @@
+{
+  "scope": "Bound input and output scanning when managed directories contain empty subdirectories",
+  "base_commit": "e9266004e055a9bb74f6fc016a797170473590ad",
+  "limits": {
+    "scan_entries": 1024,
+    "files": 128,
+    "total_bytes": 67108864,
+    "path_utf8_bytes": 512
+  },
+  "behavior": "Stream directory entries with scandir and a bounded pending stack. Count directories and files before use; exclude only the original root artifacts input subtree. Input overflow creates no accepted execution. Output overflow preserves known execution and marks collection unavailable.",
+  "source_sha256": {
+    "src/scidiscovery/research_loop/local_experiments.py": "4ab0b93f8fcd7ffa981d010d8fa25ef5b3d83769f3abbe766e1fff2c67eb9c1e",
+    "tests/research_loop/test_local_managed.py": "b8710fe5065d844959a644500e571de96e2f6fcb15e34ca50ed554543d577361"
+  },
+  "supervision": {
+    "lane": "source",
+    "config": {
+      "numeric_threads": 1,
+      "limits": {
+        "observed_tree_rss_stop_bytes": 1500000000,
+        "minimum_available_bytes": 8589934592,
+        "available_drop_stop_bytes": 2000000000,
+        "timeout_seconds": 300,
+        "sample_interval_seconds": 0.1,
+        "termination_grace_seconds": 2,
+        "log_bytes": 8388608
+      }
+    },
+    "status": "passed",
+    "batches": [
+      {
+        "targets": [
+          "tests/research_loop/test_local_managed.py::test_r1_empty_input_directories_are_bounded_before_acceptance",
+          "tests/research_loop/test_local_managed.py::test_r2_empty_output_directories_do_not_erase_known_execution",
+          "tests/research_loop/test_local_managed.py::test_r1_input_scan_excludes_prior_artifacts_subtree",
+          "tests/research_loop/test_local_managed.py::test_r1_input_link_rejected_before_acceptance_and_output_link_is_collection_failure",
+          "tests/research_loop/test_local_managed.py::test_r1_snapshot_argv_facts_and_original_lookup"
+        ],
+        "state": "terminal",
+        "phase": "finished",
+        "supervisor_pid": 2,
+        "child_pid": 9,
+        "returncode": 0,
+        "stop_reason": "exited",
+        "cleanup_complete": true,
+        "observed_tree_rss_high_water_bytes": 58638336,
+        "memory_stop_triggers": [],
+        "address_space_limit_enabled": false,
+        "heartbeat_stale_after_seconds": 5.0,
+        "heartbeat_at_unix": 1792070732.3846767,
+        "elapsed_seconds": 0.957,
+        "system_memory_baseline": {
+          "MemAvailable": 14493237248
+        },
+        "system_memory_final": {
+          "MemAvailable": 14423093248
+        },
+        "received_signals": []
+      }
+    ]
+  },
+  "pytest_log": ".....                                                                    [100%]\n5 passed in 0.42s\n",
+  "review": {
+    "status": "PASS",
+    "independent": true,
+    "scope": "Final streamed entry bounds, preserved link/path/file/byte checks, and five supervised focused tests."
+  },
+  "limitations": [
+    "No models called, no push, no installed-wheel acceptance in this increment. R6 must build a fresh wheel from the new commit."
+  ]
+}
