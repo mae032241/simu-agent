@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-from scidiscovery.research_loop import contracts as c, controller, cov_lineage as cov, execution, history, lineage, experiments
+from scidiscovery.research_loop import budget, contracts as c, controller, cov_lineage as cov, execution, history, lineage, experiments
 from test_history_handoff import finish
 from execution_fixtures import execution_registry
 
@@ -38,7 +38,9 @@ def scene(tmp_path):
             config=dict(runs='runs',calls='project/nodes',evaluation_key='covshift-public-val-v1')))
     finish(root,1,'H',[],action='experiment')
     c.build_job(root,2,'W',[1]);record=c.host_record(c.workspace(root,2))
-    c.write(record/'native-intent.json',dict(task_sha256=c.digest(root/'jobs/002.json')))
+    intent=dict(task_sha256=c.digest(root/'jobs/002.json'))
+    if c.settings(root).get('node_budget_policy') is not None:intent['budget_slice']=budget.accept_node(root,c.read(root/'jobs/002.json'))
+    c.write(record/'native-intent.json',intent)
     backend=tmp_path/'exp.py';backend.write_text(BACKEND)
     output=tmp_path/'config.json'
     cov.configure(root,2,[sys.executable,str(backend),str(root/'runs')],root/'runs',output,receipt_channel='backend_file')

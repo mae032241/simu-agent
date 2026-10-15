@@ -43,10 +43,12 @@ def status(root: Path):
             node['live_feedback'] = feedback.live(root, job)
         nodes.append(node)
     closeout = budget.closeout_state(root)
+    from . import delivery
     return dict(instance=str(root), goal_id=settings['goal_id'], objective=settings['objective'],
                 paused=(root / 'pause.request').exists(), nodes=nodes, usage=native.usage(root),
                 goal_completion='not_asserted', budget=budget.snapshot(root),
                 correction=correction.project(root, before_step=closeout['begin']['source_cutoff'] + 1 if closeout['begin'] else None),
+                closeout_preparation=delivery.preparation_status(root),
                 closeout=controller._closeout_result(root, 'closeout_status', read_only=True) if closeout['begin'] else None)
 
 

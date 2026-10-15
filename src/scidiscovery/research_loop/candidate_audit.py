@@ -11,6 +11,10 @@ from . import budget, contracts as c, delivery, execution, native
 SCOPE = 'Adapter-scoped qualification, not target evidence or submission.'
 
 
+def enabled(settings):
+    return settings.get('candidate_audit_policy') == {'version': 1}
+
+
 def _directory(root, step):
     path = c.host_record(c.workspace(root, step)) / 'candidate-audit'
     if path.resolve() != path:
@@ -167,7 +171,9 @@ def public_receipt(root, ref):
     value = _outcome(root, ref['step'])
     result = value['result']
     return dict(candidate_id=value['candidate_id'], status=result['status'],
-                note=result['note'], scope=SCOPE)
+                note=result['note'], scope=SCOPE,
+                qualification='passed' if result['status'] == 'audited' else result['status'],
+                artifact_scope='exact frozen artifact; does not establish target performance')
 
 
 def execute(root, job, payload):
@@ -205,6 +211,8 @@ def execute(root, job, payload):
                          leaf_output=(delivery.leaf_refs(root, resolved) if resolved else []) + delivery.leaf_refs(root, intent['operation_id']))
         _save(directory / 'outcome.json', value)
         return None if cleanup else 'candidate_audit_unknown'
+    if not enabled(c.settings(root)):
+        return finish('unavailable', 'candidate_audit_disabled')
     if chosen is None or chosen not in job['history']['candidate_ids']:
         return finish('unavailable', 'candidate_unavailable')
     policy = c.settings(root).get('delivery_policy')
@@ -218,6 +226,8 @@ def execute(root, job, payload):
     soft_closeout = budget.node_mode(root) == 'soft' and job.get('purpose') == 'closeout'
     if soft_closeout:
         reserve = budget.closeout_floor(settings, preparation_seconds=budget.closeout_state(root)['begin']['preparation_seconds'])
+        reserve['tokens'] += policy['closeout_a']['max_observed_tokens']
+        reserve['seconds'] += policy['closeout_a']['max_seconds']
         reserve['steps'] += 1  # One actual follow-up A, plus the external actions.
     if meter['unknown_steps']:
         return 'candidate_audit_usage_unknown'
@@ -235,7 +245,8 @@ def execute(root, job, payload):
     _save(directory / 'intent.json', intent)
     try:
         if not job.get('delivery_sources'):resolved = hashlib.sha256(delivery._bytes(job['history']['nodes'])).hexdigest()
-        refs = job.get('delivery_sources') or delivery.freeze_sources(root, job['history']['nodes'], candidate_id=chosen)
+        refs = (delivery.selected_sources(root, job['delivery_sources'], chosen, prepare=True)
+            if job.get('delivery_sources') else delivery.freeze_sources(root, job['history']['nodes'], candidate_id=chosen))
         _save(directory / 'sources.json', refs)
         rows = [row for row in refs['items'] if row['candidate_id'] == chosen and row['status'] == 'audit_pending']
         if len(rows) != 1:
@@ -305,5 +316,6 @@ def project_receipts(root, records, refs):
         label = Path(spec['adapter']).name if spec is not None else 'unavailable'
         rows.append(dict(candidate_id=chosen, adapter_result=result['status'], artifact_binding=match,
                          audit_step=ref['step'], adapter=label.encode()[:80].decode(errors='ignore'),
-                         scope=SCOPE, leakage_flag=None))
+                         scope=SCOPE, qualification='passed' if result['status'] == 'audited' and match == 'matched' else
+                         'artifact_scope_unknown' if result['status'] == 'audited' else result['status']))
     return rows

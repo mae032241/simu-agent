@@ -108,6 +108,16 @@ def environment(s,w):
         'MKL_NUM_THREADS':'1','TMPDIR':'/task-tmp','HOME':'/task-tmp','LOOPX_USAGE_PING':'0',
         'PYTHONDONTWRITEBYTECODE':'1'}
 
+def exp_wrapper(s,w):
+    warning = ('Historical cross-node delivery: use A next_action=deliver and the controller adapter. '
+        'Native exp submit uses the paths declared in the run and does not resolve archived historical originals.')
+    public = 'exec ' + shlex.quote(s['task_python']) + ' -I /opt/exp/exp_cli.py "$@"'
+    return ('#!/bin/sh\ncase "$1" in\nrun|lineage-status|query|collect|cancel) exec '
+        + shlex.quote(s['scid_python']) + ' -I -m scidiscovery.research_loop.experiments --config '
+        + shlex.quote(str(w/'work/lineage-config.json')) + ' "$@";;\nsubmit|--help|-h|help) printf \'%s\\n\' '
+        + shlex.quote(warning) + ' >&2; ' + public + ';;\n*) ' + public + ';;\nesac\n')
+
+
 def prepare_home(s,w,h, auth_source=None):
     h.mkdir(parents=True,exist_ok=True);(h/'tmp/arg0').mkdir(parents=True,exist_ok=True)
     for p in [Path(s['runs_dir']),Path(s['submission_dir'])]:
@@ -126,7 +136,7 @@ def prepare_home(s,w,h, auth_source=None):
         elif alias.exists():raise ValueError('native_helper_alias_not_symlink')
         else:alias.symlink_to(target)
     (w/'bin').mkdir(exist_ok=True)
-    wrapper = '#!/bin/sh\ncase "$1" in\nrun|lineage-status|query|collect|cancel) exec ' + shlex.quote(s['scid_python']) + ' -I -m scidiscovery.research_loop.experiments --config ' + shlex.quote(str(w/'work/lineage-config.json')) + ' "$@";;\n*) exec ' + shlex.quote(s['task_python']) + ' -I /opt/exp/exp_cli.py "$@";;\nesac\n'
+    wrapper = exp_wrapper(s,w)
     p=w/'bin/exp'
     if p.exists() and regular(p).decode()!=wrapper:raise ValueError('exp_wrapper_changed')
     if not p.exists():p.write_text(wrapper);p.chmod(0o555)

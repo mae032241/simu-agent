@@ -73,6 +73,8 @@ def _events(root, settings):
                     or not math.isfinite(event['preparation_seconds']) or event['preparation_seconds'] < 0
                     or not isinstance(event.get('stop_reason'), str) or event.get('mode') not in {'model', 'export_only'}):
                 raise ValueError('Invalid immutable closeout boundary')
+            if 'authorization_step' in event and (type(event['authorization_step']) is not int or event['authorization_step'] != event['source_cutoff']):
+                raise ValueError('Direct delivery authorization must bind its exact scientific boundary')
         if event['kind'] == 'action_intent':
             if (event.get('action_kind') not in {'submit', 'confirm'} or not isinstance(event.get('action_id'), str)
                     or not isinstance(event.get('operation_id'), str) or not isinstance(event.get('decision'), dict)
@@ -194,10 +196,12 @@ def execution_blocked(root, *, ignore_operation=None):
     """Unknown or live originals prohibit inactive time and amendments."""
     from . import runtime, execution
     settings = contracts.settings(root)
-    if settings.get('candidate_audit_policy'):
-        from . import candidate_audit
-        if candidate_audit.blocked(root):
-            return True
+    from . import delivery
+    if delivery.preparation_blocked(root):
+        return True
+    from . import candidate_audit
+    if candidate_audit.blocked(root):
+        return True
     if settings.get('selection_policy'):
         from . import shortlist
         if shortlist.blocked(root):
@@ -583,10 +587,8 @@ def used_steps(root):
     from . import execution
     prepared = [int(path.stem) for path in (root / 'jobs').glob('*.json')]
     continuations = sum(len(execution.records(root, step)) - 1 for step in prepared)
-    audits = 0
-    if contracts.settings(root).get('candidate_audit_policy'):
-        from . import candidate_audit
-        audits = sum(1 for _ in candidate_audit.facts(root))
+    from . import candidate_audit
+    audits = sum(1 for _ in candidate_audit.facts(root))
     if contracts.settings(root).get('selection_policy'):
         from . import shortlist
         audits += shortlist.calls(root)  # Control screening calls are bounded external actions too.
@@ -618,7 +620,7 @@ def exploration_admission(root, job, *, ignore_step=None, intent=None):
     return None
 
 
-def begin_closeout(root, cutoff, first_step, reason, *, export_only=False, delivery_sources=None, preparation_seconds=0.):
+def begin_closeout(root, cutoff, first_step, reason, *, export_only=False, delivery_sources=None, preparation_seconds=0., authorization_step=None):
     from .protocol import require_current
     require_current(root)
     settings = contracts.settings(root)
@@ -629,7 +631,8 @@ def begin_closeout(root, cutoff, first_step, reason, *, export_only=False, deliv
             return existing
         return _append(root, settings, events, parent, kind='closeout_begin', source_cutoff=cutoff,
                        first_step=first_step, stop_reason=reason, mode='export_only' if export_only else 'model',
-                       delivery_sources=delivery_sources, preparation_seconds=preparation_seconds)
+                       delivery_sources=delivery_sources, preparation_seconds=preparation_seconds,
+                       **(dict(authorization_step=authorization_step) if authorization_step is not None else {}))
 
 
 def accept_action(root, kind, operation_id, decision, binding, max_seconds):
@@ -681,7 +684,8 @@ def exploration_stop(root, job, limits):
 
 def _validate_action_result(intent, result):
     binding = intent['binding']
-    if (set(result) != {'status', 'operation_id', 'candidate_id', 'artifact_sha256', 'note', 'cleanup_confirmed'}
+    if (set(result) - {'failure_phase'} != {'status', 'operation_id', 'candidate_id', 'artifact_sha256', 'note', 'cleanup_confirmed'}
+            or 'failure_phase' in result and (result['status'] != 'failed' or result['failure_phase'] not in {'audit', 'promote', 'confirm'})
             or result['status'] not in {'confirmed', 'failed', 'unknown'}
             or type(result['cleanup_confirmed']) is not bool
             or not result['cleanup_confirmed'] and result['status'] != 'unknown'

@@ -152,6 +152,17 @@ def screen(root, begin):
         _save(path, computed)
     sources = {row['candidate_id']: row for row in (begin.get('delivery_sources') or {}).get('items', [])}
     capable = CAPABILITY in (begin.get('delivery_sources') or {}).get('capabilities', [])
+    if (begin.get('delivery_sources') or {}).get('catalogue'):
+        sources = {}
+        for member in computed['members']:
+            try:
+                refs = delivery.selected_sources(root, begin['delivery_sources'], member['candidate_id'], prepare=True)
+            except delivery.DeliveryUnresolved as error:
+                if error.code == 'delivery_cleanup_unknown':
+                    raise
+                return 'closeout_preparation_unavailable'
+            sources.update({row['candidate_id']: row for row in refs['items']})
+            capable = capable or CAPABILITY in refs.get('capabilities', [])
     settings = c.settings(root)
     audit_on = bool(settings.get('candidate_audit_policy')) and settings['delivery_policy']['adapter'] is not None
     rows = []

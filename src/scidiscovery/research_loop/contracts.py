@@ -22,7 +22,7 @@ HANDOFF_PROTOCOL = CURRENT
 AUDIT_PROJECTION_VERSION = 1
 ACTIONS = {
     'H': ('experiment', 'analyze', 'extract', 'wait'),
-    'A': ('continue_w', 'revise_h', 'extract', 'wait', 'finish'),
+    'A': ('continue_w', 'revise_h', 'extract', 'wait', 'finish', 'deliver'),
 }
 ROLE_INSTRUCTIONS = {
     'H': 'Own the scientific direction toward the original global goal. Propose or revise mechanisms, '
@@ -34,10 +34,13 @@ ROLE_INSTRUCTIONS = {
     'A': 'Independently judge the contribution to the original global goal, not only local improvement. '
          'Check evaluation blind spots, contrary evidence and unexplored mechanisms. Request further W experiments '
          'within H, return to H for a mechanism revision, request evidence, wait or support a scoped conclusion. '
-         'A self-built proxy alone does not establish performance under unobserved target conditions.',
+         'A self-built proxy alone does not establish performance under unobserved target conditions. '
+         'deliver explicitly authorizes adapter delivery; finish ends scientific exploration. Neither asserts global completion. '
+         'extract requests scientific evidence only; control resolves, packages and submits exact originals.',
     'E': 'Answer the exact evidence question from the requesting H or A. Retrieve or extract only needed materials '
          'using available functional tools. Preserve original sources, locators, conflicts and missing evidence. '
-         'Return to the requester; do not choose the research direction or assert qualification.',
+         'Return to the requester; do not choose the research direction or assert qualification. '
+         'Mechanical candidate copying, packaging, path resolution and submission belong to the delivery adapter.',
 }
 
 
@@ -91,10 +94,10 @@ def regular(path: Path, *, limit=None):
     return path
 
 
-def actions(role,protocol=CURRENT):
+def actions(role,protocol=CURRENT,*,audit_enabled=True):
     from .protocol import _current
     _current(protocol,'Scientific result schema')
-    return (*ACTIONS[role],'audit') if role=='A' else ACTIONS.get(role,())
+    return (*ACTIONS[role],'audit') if role=='A' and audit_enabled else ACTIONS.get(role,())
 
 
 def result_schema(role: str,protocol=CURRENT,comparison=False):
@@ -109,6 +112,12 @@ def result_schema(role: str,protocol=CURRENT,comparison=False):
             description='Null retains the selected implementation; [] clears it; listed scientific object IDs replace it. No paths, hashes or handoff markers.'))
     if role in ACTIONS:
         properties.update(next_action=dict(type='string',enum=list(actions(role))),route_reason=dict(type='string',minLength=1))
+        if role == 'A':
+            properties['next_action']['description'] = ('deliver explicitly authorizes adapter delivery of candidate_recommendation; '
+                'finish ends scientific exploration without granting delivery or asserting global completion. '
+                'extract requests scientific evidence from E, never copying, packaging, path resolution or submission. '
+                'audit is optional: check audit_capability.available; a disabled request returns unavailable without execution. '
+                'During closeout use deliver, audit, finish or wait; other actions receive bounded clarification because exploration is closed.')
     if role=='W':
         from . import worker_delivery
         properties['mechanism_findings']=worker_delivery.schema()
@@ -354,12 +363,21 @@ def science_view(job, root=None):
     if job.get('candidate_audit') is not None:
         from . import candidate_audit
         audit = candidate_audit.public_receipt(root, job['candidate_audit'])
+    audit_capability = None
+    if job['role'] == 'A' and root is not None:
+        from . import candidate_audit
+        available = candidate_audit.enabled(settings(Path(root)))
+        audit_capability = dict(available=available,
+            unavailable_reason=None if available else 'candidate_audit_disabled')
     closeout = None
     if job.get('purpose') == 'closeout':
         from . import delivery
         closeout = dict(source_cutoff=job['source_cutoff'],
             selection='Choose a frozen candidate ID for delivery; null means no decision, not retention. Report scientific reasoning and limitations.',
-            sources=delivery.public_sources(job['delivery_sources']))
+            sources=delivery.public_sources(job['delivery_sources'], job['history']['view']['candidates'].get('adapter_audits', [])),
+            actions='deliver authorizes delivery; audit obtains qualification; finish declines delivery; wait pauses. No new H/W/E work during closeout.')
+        if job['delivery_sources'].get('catalogue'):
+            closeout['sources']['catalogue'] = 'inputs/delivery-candidates.json'
         if job.get('selection') is not None:
             from . import shortlist
             closeout.update(selection='Compare every comparison row; null keeps the control default. Report scientific reasoning and limitations.',
@@ -408,6 +426,9 @@ def science_view(job, root=None):
            if job.get('handoff_protocol', 1) >= 8 and job.get('author_correction') else {}),
         **(dict(closeout=closeout) if closeout is not None else {}),
         **(dict(candidate_audit=audit) if audit is not None else {}),
+        **(dict(audit_capability=audit_capability) if audit_capability is not None else {}),
+        **(dict(delivery_selection='Frozen selection policy requires control screening and an exact closeout A comparison before delivery; ordinary deliver does not bypass the default/override rule.')
+           if job['role'] == 'A' and root is not None and settings(Path(root)).get('selection_policy') is not None else {}),
         **(dict(search=job['search']['view']) if job.get('search') and not unified else {}),
         **(dict(progress_assessment=('Judge the current assessed work as progress/no_progress/unknown; '
                 'null means unknown. Explain scientific support and limitations in ordinary science. '
@@ -649,6 +670,15 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
         context = _decision_context(root, job)
         if context is not None:
             job['decision_context'] = context
+    if purpose == 'closeout' and delivery_sources.get('catalogue'):
+        catalogue_path = work / 'inputs/delivery-candidates.json'
+        catalogue = dict(items=delivery_sources['items'], omitted_count=delivery_sources['omitted_count'])
+        if catalogue_path.exists():
+            if read(regular(catalogue_path)) != catalogue:
+                raise ValueError('Frozen candidate catalogue changed')
+        else:
+            write(catalogue_path, catalogue)
+            catalogue_path.chmod(0o400)
     for path, value in ((root / 'jobs' / f'{step:03d}.json', job),
                         (work / 'science-task.json', science_view(job, root)),
                         (host_record(work) / 'science-result.schema.json', result_schema(role, protocol, 'selection' in job))):
@@ -737,6 +767,9 @@ def _validate_inputs(root, work, job):
         if [row['step'] for row in job['history']['nodes']] != expected_steps:
             raise ValueError('Closeout history differs from its frozen science prefix and direct authors')
         delivery.validate_sources(root, job['delivery_sources'])
+        if job['delivery_sources'].get('catalogue') and read(regular(work / 'inputs/delivery-candidates.json')) != dict(
+                items=job['delivery_sources']['items'], omitted_count=job['delivery_sources']['omitted_count']):
+            raise ValueError('Frozen candidate catalogue changed')
         first = root / 'jobs' / f'{begin["first_step"]:03d}.json'
         if job['step'] > begin['first_step'] and job['delivery_sources'] != read(regular(first))['delivery_sources']:
             raise ValueError('Closeout correction cannot resolve new candidate originals')

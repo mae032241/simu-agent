@@ -7,6 +7,7 @@ import sys
 
 import pytest
 
+from scidiscovery.research_loop.protocol import CURRENT
 from scidiscovery.research_loop import budget, contracts as c, controller, delivery, native, selection, shortlist
 from test_delivery import FAKE_HARNESS, descriptor, delivery_policy
 from test_history_handoff import finish
@@ -201,7 +202,7 @@ def test_prepare_selection_requires_explicit_policy_and_observer_adapter(tmp_pat
         with pytest.raises(ValueError):controller.prepare(tmp_path / 'instance', objective, public, ['never'], **kwargs)
         return
     settings = controller.prepare(tmp_path / 'instance', objective, public, ['never'], **kwargs)
-    assert settings.get('selection_policy') == expected and settings['handoff_protocol'] == 16
+    assert settings.get('selection_policy') == expected and settings['handoff_protocol'] == CURRENT
 
 
 def test_cli_prepare_selection_policy_override_and_null(tmp_path):
@@ -242,7 +243,7 @@ def science_python():
     pytest.skip('Smoke needs an interpreter with numpy/pandas (the frozen task Python)')
 
 
-def scene(tmp_path, *, policy=shortlist.DEFAULT, metrics=(.9, .8, .7)):
+def scene(tmp_path, *, policy=shortlist.DEFAULT, metrics=(.9, .8, .7), launcher=None, author_action='finish'):
     python = science_python()
     public, root = tmp_path / 'public', (tmp_path / 'instance').absolute()
     (public / 'harness').mkdir(parents=True)
@@ -252,12 +253,13 @@ def scene(tmp_path, *, policy=shortlist.DEFAULT, metrics=(.9, .8, .7)):
     c.write(tmp_path / 'hidden.json', dict(secret='Never an input'))
     objective = public / 'objective.md';objective.write_text('Deliver one exact public candidate; completion is not asserted.')
     kwargs = dict(selection_policy=policy)
-    controller.prepare(root, objective, public, ['fake-no-model'], max_tokens=100_000, max_seconds=600, max_steps=24, model='fixture',
+    controller.prepare(root, objective, public, launcher or ['fake-no-model'], max_tokens=100_000, max_seconds=600, max_steps=24, model='fixture',
         reasoning_effort='high', search_policy=None, node_budget_policy={role: dict(max_observed_tokens=2000, max_seconds=60) for role in 'HWAE'},
         delivery_policy=delivery_policy(descriptor(root, public, python=python)), candidate_audit_policy={'version': 1},
         history_observer=dict(adapter=str(OBSERVER), config=dict(runs='runs', evaluation_key='fixture-public')), **kwargs)
     (root / 'runs').mkdir();(root / 'submission').mkdir()
     finish(root, 1, 'H', [], action='experiment')
+    c.build_job(root,2,'W',[1],instruction='Exact scientific question')
     script = c.workspace(root, 2) / 'artifacts/train.py'
     # run-1 is the public best but its saved bytes are not a loadable model; the others predict zeros.
     (root / 'runs/model-1.pkl').write_bytes(b'not a pickle')
@@ -267,7 +269,7 @@ def scene(tmp_path, *, policy=shortlist.DEFAULT, metrics=(.9, .8, .7)):
     (root / 'runs/results.jsonl').write_text(''.join(json.dumps(dict(run_id=run, ok=True, val_acc=metric, val_score=metric,
         model_path=f'/opt/exp/runs/model-{run}.pkl', script=str(script))) + '\n' for run, metric in enumerate(metrics, 1)))
     finish(root, 2, 'W', [1], files={'train.py': 'def train(train_df, val_df): return None\n'})
-    finish(root, 3, 'A', [1, 2], action='finish', recommendation='run-3', progress={'verdict': 'progress'})
+    finish(root, 3, 'A', [1, 2], action=author_action, recommendation='run-3', progress={'verdict': 'progress'})
     c.write(root / 'host-started.json', budget.clock_stamp())
     return root
 
@@ -278,7 +280,7 @@ def closeout_author(monkeypatch, *attempts):
         task = c.read(c.workspace(root, step) / 'science-task.json')
         payload = dict(summary='Closeout comparison', scientific_result='Public validation only; target suitability is not asserted.',
                        limitations=['Fixture transport, not a model'], implementation_selection=None, search_review=None,
-                       progress_assessment=None, decision_request=None, portfolio_review=None, next_action='finish',
+                       progress_assessment=None, decision_request=None, portfolio_review=None, next_action='deliver',
                        route_reason='Bounded delivery decision', **attempts[len(calls)](task))
         calls.append((step, task))
         record = c.host_record(c.workspace(root, step))
@@ -349,12 +351,12 @@ def test_plugin_without_smoke_is_unavailable_never_ok(tmp_path, monkeypatch):
     def undeclared(*args, **kwargs):
         refs = original(*args, **kwargs);refs.pop('capabilities');return refs
     monkeypatch.setattr(delivery, 'freeze_sources', undeclared)
-    closeout_author(monkeypatch, keep_default)
+    closeout_author(monkeypatch, keep_default, keep_default, keep_default)
     result = controller.closeout(root)
     screen = c.read(root / 'host-delivery/selection/screen.json')
     assert {row['smoke']['status'] for row in screen['rows']} == {'unavailable'} and screen['smoke_capability'] is False
     assert {row['audit']['note'] for row in screen['rows']} == {'smoke_not_ok'} and screen['default']['candidate_id'] is None
-    assert result['status'] == 'closeout_unresolved' and result['reason'] == 'delivery_no_decision'
+    assert result['status'] == 'closeout_unresolved' and result['reason'] == 'semantic_correction_limit'
     assert shortlist.calls(root) == 0 and 'smoke' not in leaf_phases(root)
 
 

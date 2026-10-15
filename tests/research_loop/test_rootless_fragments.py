@@ -20,6 +20,24 @@ def launcher():
     return module
 
 
+@pytest.mark.parametrize('action',['submit','--help','-h','help','status'])
+def test_native_exp_warning_preserves_public_command_and_exit_status(launcher,tmp_path,action):
+    executable=tmp_path/'task python'
+    executable.write_text('#!/bin/sh\nprintf \'%s\\n\' "$@"\nexit 7\n')
+    executable.chmod(0o755)
+    wrapper=tmp_path/'exp'
+    wrapper.write_text(launcher.exp_wrapper(dict(task_python=str(executable),scid_python='unused'),tmp_path))
+    wrapper.chmod(0o755)
+    result=subprocess.run([str(wrapper),action,'--run-id','13'],text=True,capture_output=True)
+    assert result.returncode==7
+    assert result.stdout.splitlines()==['-I','/opt/exp/exp_cli.py',action,'--run-id','13']
+    if action=='status':
+        assert result.stderr==''
+    else:
+        assert 'A next_action=deliver' in result.stderr
+        assert 'does not resolve archived historical originals' in result.stderr
+
+
 def policies():
     return dict(node_budget_policy={role:dict(max_observed_tokens=10000,max_seconds=60) for role in 'HWAE'},
         resume_policy=dict(max_attempts=2,protocol='codex_exec_resume',usage_scope='turn',output_repair=False),

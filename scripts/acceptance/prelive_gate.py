@@ -22,7 +22,7 @@ REPO = Path(__file__).resolve().parents[2]
 LAUNCHER = REPO / 'scripts/acceptance/rootless_cov_launcher.py'
 MAX_VERDICT_BYTES = 64 * 1024
 CHAIN = [('H', None, 'experiment'), ('W', None, 'review'), ('A', None, 'audit'), ('A', None, 'continue_w'),
-         ('W', None, 'review'), ('A', None, 'finish'), ('A', 'closeout', 'audit'), ('A', 'closeout', 'finish')]
+         ('W', None, 'review'), ('A', None, 'finish'), ('A', 'closeout', 'audit'), ('A', 'closeout', 'deliver')]
 
 FAKE_NATIVE = r'''import json,os,pathlib,re,subprocess,sys,uuid
 args=sys.argv[1:];sys.stdin.read()
@@ -89,18 +89,20 @@ else:
  improved=any(row.get('summary')=='Synthetic pre-live improve contribution' for row in parents)
  none=dict(search_review=None,progress_assessment=None,decision_request=None,portfolio_review=None)
  table=(closeout or {}).get('comparison')
+ if closeout is not None and audit:
+  assert audit['status']=='audited' and audit['qualification']=='passed',audit
  if table is not None:
   default=table['default']['candidate_id']
   rows=[dict(candidate_id=row['candidate_id'],key_risk='Public validation only; fake transport, no target evidence.',
    decision='keep' if row['candidate_id']==default else 'replace') for row in table['rows']]
-  # Audit the control default, then finish with null: the pre-registered default is delivered.
-  payload.update(none,next_action='finish' if audit else 'audit',candidate_recommendation=None if audit else default,
+  # Audit the control default, then explicitly authorize its delivery with null.
+  payload.update(none,next_action='deliver' if audit else 'audit',candidate_recommendation=None if audit else default,
    candidate_comparison=dict(rows=rows,override=None) if audit else None,
    route_reason='Keep the control default after its receipt' if audit else 'Audit the control default before delivery')
  elif closeout is not None:
-  pending=[row['candidate_id'] for row in closeout['sources']['items'] if row['status']=='audit_pending']
-  latest=max(pending,key=lambda value:int(value.split('-')[1]))
-  payload.update(none,next_action='finish' if audit else 'audit',candidate_recommendation=audit['candidate_id'] if audit else latest,
+  available=[row['candidate_id'] for row in closeout['sources']['items'] if row['availability']=='available']
+  latest=max(available,key=lambda value:int(value.split('-')[1]))
+  payload.update(none,next_action='deliver' if audit else 'audit',candidate_recommendation=audit['candidate_id'] if audit else latest,
    route_reason='Deliver the audited choice' if audit else 'Audit the exact latest choice before delivery')
  elif improved:
   payload.update(none,next_action='finish',candidate_recommendation=ids()[-1],route_reason='Close the bounded synthetic search')

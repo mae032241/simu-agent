@@ -14,7 +14,7 @@ from test_delivery import FAKE_HARNESS, descriptor, delivery_policy, prepare_fix
 from test_history_handoff import finish
 
 
-def managed_scene(tmp_path, *, alias_correct=True):
+def managed_scene(tmp_path, *, alias_correct=True, rewrite_script=True):
     if shutil.which('bwrap') is None:
         pytest.skip('Actual namespace lane required')
     root, public = tmp_path / 'instance', tmp_path / 'public'
@@ -29,6 +29,11 @@ def managed_scene(tmp_path, *, alias_correct=True):
             path.write_text('Public fixture only\n')
     objective = public / 'objective.md';objective.write_text('Deliver the exact public scientific candidate.')
     spec = descriptor(root, public)
+    if not rewrite_script:
+        adapter=tmp_path/'adapter_without_script_rebinding.py'
+        shutil.copyfile(Path(cov_delivery.__file__).with_name('protocol.py'),tmp_path/'protocol.py')
+        adapter.write_text(Path(cov_delivery.__file__).read_text().replace("script='/inputs/source.py'", "script=request['context']['row']['script']"))
+        spec.update(adapter=str(adapter),launcher_argv=[sys.executable,str(adapter),'--isolate'])
     spec['config']['namespace_runs'] = str(root / 'runs') if alias_correct else '/opt/exp/runs'
     controller.prepare(root, objective, public, ['fake-no-model'], max_tokens=100000, max_seconds=300, max_steps=12,
         model='fixture', reasoning_effort='high', search_policy=None,
@@ -38,7 +43,7 @@ def managed_scene(tmp_path, *, alias_correct=True):
             config=dict(runs='runs', calls='project/nodes', evaluation_key='covshift-public-val-v1')))
     (root / 'runs').mkdir();(root / 'submission').mkdir()
     finish(root, 1, 'H', [], action='experiment')
-    c.build_job(root, 2, 'W', [1])
+    c.build_job(root, 2, 'W', [1],instruction='Exact scientific question')
     record = c.host_record(c.workspace(root, 2))
     c.write(record / 'native-intent.json', dict(task_sha256=c.digest(root / 'jobs/002.json'),
         budget_slice=budget.accept_node(root,c.read(root/'jobs/002.json'))))
@@ -70,6 +75,10 @@ def test_real_resolver_uses_p_archives_after_same_script_model_and_calls_change(
     assert chosen['status'] == 'audit_pending'
     assert (root / chosen['objects']['source.py']['path']).read_bytes() == source_p
     assert (root / chosen['objects']['artifact']['path']).read_bytes() == model_p
+    seal = c.read(c.host_record(c.workspace(root, 2)) / 'result-identity.json')
+    observation = c.read(root / seal['observations']['path'])
+    candidate = next(row for row in observation['candidates'] if row['id'] == first['candidate_id'])
+    assert chosen['ledger']['sha256'] == candidate['evidence'][0]['sha256']
     assert chosen['context']['identity_note'].startswith('Exact sealed managed')
 
 
@@ -108,3 +117,44 @@ def test_legacy_v1_snapshot_is_explicitly_limited_and_still_works(tmp_path):
     refs = delivery.freeze_sources(root, nodes)
     assert refs['items'][0]['status'] == 'audit_pending'
     assert refs['items'][0]['context']['identity_note'].startswith('Legacy current-source snapshot')
+
+
+@pytest.mark.parametrize('rewrite_script',[False,True])
+def test_direct_delivery_audits_frozen_w_scratch_without_mounting_old_workspace(tmp_path,monkeypatch,rewrite_script):
+    """Counterfactual original absolute path fails; adapter-bound original succeeds."""
+    checked = FAKE_HARNESS.replace("# This subprocess is inside the audit namespace.",
+        "assert not (pathlib.Path(meta['control_path']).parent/'project/nodes/002/work/train.py').exists()\n"
+        "assert row['script']=='/inputs/source.py' and pathlib.Path(row['script']).is_file()\n"
+        "# This subprocess is inside the audit namespace.")
+    monkeypatch.setattr(sys.modules[__name__],'FAKE_HARNESS',checked)
+    root,_,first,_,script,source_p,model_p=managed_scene(tmp_path,rewrite_script=rewrite_script)
+    # The old host scratch still exists and now differs. The exact sealed call
+    # supplies the script; neither E nor the adapter mounts that old workspace.
+    script.write_text('Unrelated mutable W scratch after the sealed call\n')
+    assert script.is_file() and script.read_bytes()!=source_p
+    finish(root,3,'A',[1,2],action='deliver',recommendation=first['candidate_id'])
+    if rewrite_script:
+        result=controller.run(root)
+        assert result['status']=='delivery_confirmed',result
+        assert (root/'submission/model.pkl').read_bytes()==model_p
+        actions=budget.closeout_state(root)['actions']
+        assert [row['intent']['action_kind'] for row in actions]==['submit','confirm']
+        source=actions[0]['intent']['binding']['source']
+        assert (root/source['objects']['source.py']['path']).read_bytes()==source_p
+        assert [c.read(path)['role'] for path in sorted((root/'jobs').glob('*.json'))]==['H','W','A']
+    else:
+        # Deliberately broken adapter is a namespace negative control. Stop at
+        # its deterministic audit failure before any alternative author launch.
+        original=controller._run_delivery_actions
+        def stop_after_failure(*args,**kwargs):
+            result=original(*args,**kwargs)
+            if result['status']=='delivery_reselect':
+                (root/'pause.request').write_text('{}')
+            return result
+        monkeypatch.setattr(controller,'_run_delivery_actions',stop_after_failure)
+        result=controller.run(root)
+        assert result['status'] in {'closeout_budget_unavailable','closeout_blocked'},result
+        actions=budget.closeout_state(root)['actions']
+        assert len(actions)==1 and actions[0]['outcome']['result']['status']=='failed'
+        assert actions[0]['outcome']['result']['failure_phase']=='audit'
+        assert not (root/'submission/model.pkl').exists()

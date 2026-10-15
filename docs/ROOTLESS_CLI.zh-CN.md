@@ -71,8 +71,8 @@ native-evidence/<node>/           # 私有原生轨迹、schema、哈希与封�
 ## 路由与暂停
 
 H 选择 `experiment / analyze / extract / wait`；W 固定交 A；
-A 选择 `continue_w / revise_h / extract / wait / finish`；E 返回请求它的 H 或 A。
-`next_action` 是枚举，理由单独写 `route_reason`。`finish` 仍是科学结题建议，非控制层资格认证。
+A 选择 `continue_w / revise_h / extract / deliver / wait / finish`，冻结启用候选审计能力时还可选 `audit`；E 返回请求它的 H 或 A。禁用时 `audit_capability.available=false`，audit 请求返回明确不可用回执且不执行外部调用；已接受原件仍按原身份计步并检查未知状态。
+`next_action` 是枚举，理由单独写 `route_reason`。`deliver` 明确授权适配器交付所选候选；`finish` 结束科学探索，收口时表示不授权交付。两者都不宣称全局目标已完成。`extract` 仅向 E 请求科学证据提取；精确原件定位、复制、封装、提交由控制层和交付适配器完成。
 
 ```sh
 scid-research status --root /absolute/path/new-instance
@@ -177,12 +177,12 @@ A 可在新协议最终科学 JSON 可选填写 `candidate_recommendation`（已
 新实例可在 `prepare` 同时冻结 `--node-budget-policy` 和 `--delivery-policy`。
 交付策略包含 `closeout_a` 的 token/秒上限、`inflight_tokens`、`cleanup_seconds`、
 `submit_seconds`、`confirm_seconds` 和 `adapter`；各值由操作者明确配置，没有生产默认预算。
-预留来自原总额度，不是追加额度。默认 soft 模式预留一次收口 A 目标、在途缓冲、清理及提交/确认；有预留之外的正额度即可准入探索，不要求剩余额度容纳完整下一节点目标。进入收口后，A 保留机械交付底线使用剩余预算，额外补正逐次准入。
+预留来自原总额度，不是追加额度。默认 soft 模式预留一次收口 A 目标、在途缓冲、清理及提交/确认；有预留之外的正额度即可准入探索，不要求剩余额度容纳完整下一节点目标。进入收口前为下一次 A 保留声明的 token/时间目标与机械交付底线；接受后的 soft A 仍按共享剩余预算运行。额外 A 逐次准入，可选审计另保留一个后续 A 的完整目标。
 显式 hard 及未记录模式的旧实例仍预留最多三个收口 A（含两次补正），并要求下一节点硬上限与预留同时可用。到达准入边界时转入收口；A 选择候选，适配器落实提交。soft 提示不能保证在途节点及时返回，总预算硬停止仍有效。
 
 适配器是独立的领域接口。核心冻结其代码、启动器、输入原件及读取范围，不解释领域台账。
-普通候选在 A 前由控制层冻结为 `audit_pending`；A 选择不等于审计通过。
-公开审计必须完整通过才能更新实际提交；失败、跳过或未知不能冒充确认成功。
+收口先冻结完整有界候选目录，`science-task.json` 给出目录文件；16 项摘要有省略计数，完整目录保留精确候选 ID 和来源节点。控制层仅对实际选择或控制 shortlist 中的候选解析并冻结原件，不受历史前 128 项原件包截断影响。可用性与审计资格分别展示；精确原件的审计结果、工件匹配和适用范围沿历史传递，不额外制造未知泄漏待办。A 选择不等于审计通过。原生 `exp submit` 保留公共命令，但只使用 run 声明的路径，不解析历史跨节点原件；受管 wrapper 的 submit/help 会提示历史交付使用 A `deliver`，不会阻断或改写命令。
+普通 A 的 `deliver` 复用其已封存选择进入控制交付，不经过 E。未配置选择策略时保持 H/W/A 三节点；显式 `selection_policy` 先执行冻结筛选，再由精确 closeout A 按默认与 override 合同比较，不能绕开策略。公开审计必须完整通过才能更新实际提交；失败、跳过或未知不能冒充确认成功。收口 A 用 `deliver` 授权适配器交付，用 `audit` 请求资格，用 `finish` 拒绝交付，用 `wait` 暂停。`extract / continue_w / revise_h` 的原话保留并触发最多两次作者补正，不会静默转换成交付授权，也不会在收口重新派 H/W/E。正常审计往返及提交前确定审计失败后的改选只消耗原总预算，不消耗错误补正次数。审计失败的同一候选工件不能再次提交；未知操作绝不改选或重放。
 未知提交仅在本地进程已结束、原额度仍足够时查询同一操作，不重复提交。
 `adapter: null` 时 `submit_seconds` 和 `confirm_seconds` 必须为零，仅作本地导出，不启动新的交付 A。
 
@@ -199,7 +199,11 @@ scid-research closeout --root /绝对路径/实例 --export-only
 
 `delivery_confirmed` 仅表示 A 选定的确切工件已确认提交；`goal_completion` 仍为 `not_asserted`。
 `exported_unsubmitted`、`closeout_unresolved`、`delivery_failed`、`delivery_unknown` 分别保留未提交、
-未决、失败和未知，不等同科研任务完成。真实科学效果须另行验收。
+未决、失败和未知，不等同科研任务完成。配置交付但预算不足返回 `closeout_budget_unavailable`，保留 model 收口边界，不伪装成操作者 export_only。暂时来源准备失败返回 `closeout_preparation_unavailable`，保留失败原件，重复 `run/closeout` 可在原预算内重试准备并复用已封存 A；它不固化为操作者 `export_only`。清理未知继续阻止任何新执行。`status` 由相同原件重建状态和最新收口 A 推荐；此前实际提交观察与当前确认结果仍分开。真实科学效果须另行验收。
+
+当前写协议为 **17**。协议 16 及更早的真实场和证据保持归档只读，不能用新代码续接、重解释或原地迁移；新场必须重新 `prepare`。此变更不增加预算，不对冻结旧场执行任何恢复。
+
+适配器只冻结声明的脚本 `source.py`、模型和静态输入。受管 call 的封存脚本可来自旧 W scratch；审计台账局部改写为 `/inputs/source.py` 与 `/inputs/artifact`，旧 W workspace 不挂载到审计命名空间。脚本的任意本地兄弟模块或未声明依赖不会递归捕获；缺依赖导致审计失败，不能据此声明所有脚本都可交付。
 
 ### 恢复能力的区别
 
@@ -229,7 +233,7 @@ scid-research worker-resume --root /绝对路径/实例 --step 2
 原 job、初次 intent/outcome/usage/raw 不覆盖。已接受续接先收集原工作，重复命令不重派；
 成功但未封存的输出优先补原 seal。首版仅接受非零数字 returncode、无 stop_reason、有效
 completed meter 且清理可确认的已知本地故障；缺 session/thread/meter、执行或清理 unknown、
-身份失配、原 pause/closeout 均不放行，不将预算硬停止当可无额续接。
+身份失配、原 pause 均不放行；收口继续阻止普通探索任务续接，但允许对该收口 A 的已知故障使用同一 `worker-resume --step` 和原 session。原模型、launcher、权限、attempt 上限、累计用量及交付底线均保留，不将预算硬停止当可无额续接。
 
 所有 attempt 成本累计，原 node/W cap 不重置、不退款；续接使用当前有效共享授权，并占一个
 原执行名额、保留交付预留。合法总额修订不自动扩节点 cap；命令没有续额参数。

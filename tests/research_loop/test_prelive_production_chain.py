@@ -1,6 +1,7 @@
 """Pre-live gate: latest frozen settings, real launcher/bwrap/controller/delivery, zero models."""
 import hashlib
 import os
+import runpy
 from pathlib import Path
 import shutil
 import subprocess
@@ -41,6 +42,40 @@ def originals(*paths):
     return {str(p):hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
 
 
+@pytest.mark.parametrize('comparison',[False,True])
+@pytest.mark.parametrize('audit_status',[None,'audited','unknown'])
+def test_fake_closeout_author_uses_current_delivery_contract(tmp_path,comparison,audit_status):
+    """Exercise the actual gate native program even without an installed lane."""
+    work=tmp_path/'work';(work/'inputs/parents').mkdir(parents=True)
+    sources=dict(items=[dict(candidate_id=cid,availability='available',audit=dict(qualification='not_observed'))
+        for cid in ('run-1','run-2')],omitted_count=0)
+    closeout=dict(sources=sources)
+    if comparison:
+        closeout['comparison']=dict(default=dict(candidate_id='run-1'),
+            rows=[dict(candidate_id=cid) for cid in ('run-1','run-2')])
+    task=dict(role='A',closeout=closeout)
+    if audit_status is not None:
+        task['candidate_audit']=dict(candidate_id='run-1',status=audit_status,
+            qualification='passed' if audit_status=='audited' else 'unknown')
+    c.write(work/'science-task.json',task)
+    schema=tmp_path/'science-result.schema.json';c.write(schema,c.result_schema('A',CURRENT,comparison))
+    program=tmp_path/'fake-native.py';program.write_text(runpy.run_path(str(GATE))['FAKE_NATIVE'])
+    output=work/'result.pending.json'
+    result=subprocess.run([sys.executable,str(program),'-C',str(work),'--output-schema',str(schema),
+        '--output-last-message',str(output)],input='',text=True,capture_output=True,timeout=10,
+        env={**os.environ,'CODEX_HOME':str(tmp_path/'native-home')})
+    if audit_status=='unknown':
+        assert result.returncode!=0 and not output.exists()
+        return
+    assert result.returncode==0,result.stderr
+    payload=c.science_payload(output,'A',CURRENT,comparison)
+    assert payload['next_action']==('deliver' if audit_status=='audited' else 'audit')
+    assert payload['candidate_recommendation']==(None if comparison and audit_status else
+        'run-1' if comparison or audit_status else 'run-2')
+    if comparison and audit_status:
+        assert [row['candidate_id'] for row in payload['candidate_comparison']['rows'] if row['decision']=='keep']==['run-1']
+
+
 def test_latest_frozen_settings_drive_full_chain_to_confirmed_delivery(tmp_path):
     settings,launcher=latest();before=originals(settings,launcher)
     result,verdict=gate(tmp_path,settings,launcher)
@@ -51,7 +86,7 @@ def test_latest_frozen_settings_drive_full_chain_to_confirmed_delivery(tmp_path)
         assert verdict['checks']['selection_disabled_preserved']
     assert verdict['source_protocol']==verdict['current_protocol']==CURRENT and verdict['settings_differences']==[]
     assert [(row['role'],row['purpose'],row['route']) for row in verdict['chain']]==[('H',None,'experiment'),('W',None,'review'),
-        ('A',None,'audit'),('A',None,'continue_w'),('W',None,'review'),('A',None,'finish'),('A','closeout','audit'),('A','closeout','finish')]
+        ('A',None,'audit'),('A',None,'continue_w'),('W',None,'review'),('A',None,'finish'),('A','closeout','audit'),('A','closeout','deliver')]
     assert verdict['chain'][4]['fragments']==2 and verdict['usage']['unknown_steps']==[]
     assert originals(settings,launcher)==before
 
@@ -111,7 +146,13 @@ def test_isolated_leaf_failure_keeps_exact_traceback_as_host_only_output(tmp_pat
         if phase=='confirm':
             budget.action_outcome(root,submit,result);result=delivery.invoke(root,accepted(root,bound,'confirm'),10)
         assert result['status']==('failed' if phase=='audit' else 'unknown')
-        assert set(result)=={'status','operation_id','candidate_id','artifact_sha256','note','cleanup_confirmed'}
+        keys={'status','operation_id','candidate_id','artifact_sha256','note','cleanup_confirmed'}
+        if phase=='audit':
+            assert result['failure_phase']=='audit'
+            keys.add('failure_phase')
+        else:
+            assert 'failure_phase' not in result
+        assert set(result)==keys
         assert 'Traceback' not in result['note']
     index,data=_leaf_files(root,phase)
     assert index['phase']==phase and index['returncode']!=0 and index['outcome']=='exited'

@@ -84,7 +84,7 @@ def test_original_audit_survives_a_h_w_and_is_bounded_readonly(tmp_path, monkeyp
         rows = view['candidates']['adapter_audits']
         assert len(rows) == 1 and rows[0]['candidate_id'] == candidate
         assert rows[0]['adapter_result'] == 'audited' and rows[0]['artifact_binding'] == 'matched'
-        assert rows[0]['leakage_flag'] is None and rows[0]['scope'] == candidate_audit.SCOPE
+        assert rows[0]['qualification'] == 'passed' and rows[0]['scope'] == candidate_audit.SCOPE
         assert 'public_audits' not in view['candidates']  # No contradictory unknown duplicate slot.
         assert len((json.dumps(view, ensure_ascii=False, indent=2) + '\n').encode()) <= history.MAX_BRIEF_BYTES
         page = work / view['indexes']['audits']
@@ -110,7 +110,7 @@ def test_audit_cannot_qualify_different_or_missing_candidate_artifact(tmp_path, 
     rows = candidate_audit.project_receipts(root, records, [candidate_audit.receipt_ref(root, 3)])
     assert rows[0]['adapter_result'] == 'audited'
     assert rows[0]['artifact_binding'] == ('different' if identity == 'different' else 'unknown')
-    assert rows[0]['leakage_flag'] is None
+    assert rows[0]['qualification']=='artifact_scope_unknown'
 
 
 def test_adapter_nonleaking_note_is_not_a_leakage_fact(tmp_path, monkeypatch):
@@ -119,19 +119,20 @@ def test_adapter_nonleaking_note_is_not_a_leakage_fact(tmp_path, monkeypatch):
     assert 'nonleaking' in candidate_audit.public_receipt(root, ref)['note']
     job = next_review(root)
     row = job['history']['view']['candidates']['adapter_audits'][0]
-    assert row['leakage_flag'] is None and 'note' not in row
+    assert row['qualification']=='passed' and 'leakage_flag' not in row and 'note' not in row
     assert 'target_best' in job['history']['view']['candidates']
     assert job['history']['view']['candidates']['target_best'] is None
     assert not (root / 'runs/submitted.json').exists()
     assert not list((root / 'submission').iterdir())
 
 
-def test_retained_protocol_nine_without_projection_marker_preserves_exact_bytes(tmp_path, monkeypatch):
+def test_current_projection_marker_preserves_exact_bytes(tmp_path, monkeypatch):
     root, _ = audited_scene(tmp_path, monkeypatch)
     with monkeypatch.context() as old:
         old.setattr(c, 'AUDIT_PROJECTION_VERSION', 0)
         job = next_review(root)
-    assert job['handoff_protocol'] == 9 and 'audit_projection_version' not in job
+    from scidiscovery.research_loop.protocol import CURRENT
+    assert job['handoff_protocol'] == CURRENT and job['audit_projection_version'] == 1
     originals = {path: path.read_bytes() for path in (
         root / 'jobs/004.json', c.workspace(root, 4) / 'science-task.json',
         c.host_record(c.workspace(root, 4)) / 'result-identity.json')}

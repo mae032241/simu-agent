@@ -33,6 +33,10 @@ class DeliveryUnresolved(ValueError):
         super().__init__(code)
 
 
+class PreparationUnavailable(DeliveryUnresolved):
+    """Retained author decision needs retryable transport, not author correction."""
+
+
 def _bytes(value):
     return (json.dumps(value, ensure_ascii=False, allow_nan=False, sort_keys=True) + '\n').encode()
 
@@ -126,6 +130,90 @@ def _adapter(root):
     if any(item['label']=='scid-current-protocol' for item in spec['inputs']):raise ValueError('Reserved current protocol input label')
     item=dict(label='scid-current-protocol',path=str(source),sha256=c.digest(source),size_bytes=source.stat().st_size)
     return dict(spec,inputs=[*spec['inputs'],item])
+
+
+def catalogue_sources(root, source_nodes):
+    """Discover every exact candidate without opening executable/model originals.
+
+    The complete bounded directory is readable in the A workspace. A resolver is
+    called only for a selected ID, so historical objects cannot crowd it out.
+    """
+    from .protocol import require_current
+    require_current(root)
+    _adapter(root)
+    items, known = [], set()
+    for receipt in source_nodes:
+        _, _, seal, seal_sha = history._source(root, receipt['step'])
+        if seal_sha != receipt['seal_sha256']:
+            raise ValueError('Delivery source scientific seal changed')
+        observation = seal.get('observations')
+        if observation is None:
+            continue
+        path = _file(root / observation['path'], MAX_BYTES)
+        if c.digest(path) != observation['sha256']:
+            raise ValueError('Delivery observer original changed')
+        fact = c.read(path)
+        if fact['binding']['source_sha256'] != seal['raw_sha256']:
+            raise ValueError('Delivery observer source binding changed')
+        for candidate in fact['candidates']:
+            if candidate['id'] in known:
+                raise ValueError('Delivery candidate identity is ambiguous')
+            known.add(candidate['id'])
+            items.append(dict(candidate_id=candidate['id'], status='available', source_step=receipt['step']))
+    result = dict(catalogue=True, items=items, omitted_count=0, source_nodes=list(source_nodes))
+    if len(_bytes(result)) > MAX_BYTES:
+        raise DeliveryUnresolved('delivery_catalogue_capacity')
+    return result
+
+
+def selected_sources(root, refs, candidate_id, *, prepare=False):
+    """Reuse one immutable resolution, or prepare exactly one candidate's originals."""
+    if not refs.get('catalogue'):
+        return refs
+    if candidate_id not in {row['candidate_id'] for row in refs['items']}:
+        raise DeliveryUnresolved('delivery_source_unavailable')
+    key = hashlib.sha256(_bytes(dict(source_nodes=refs['source_nodes'], candidate_id=candidate_id))).hexdigest()
+    path = root / 'host-delivery/resolved' / (key + '.json')
+    if not path.exists():
+        if not prepare:
+            raise DeliveryUnresolved('delivery_source_unprepared')
+        # Candidate audit records its own intent before resolving these inputs.
+        # Its admission already checked other execution; that unlaunched intent
+        # must not block its own read-only preparation.
+        if preparation_blocked(root) or budget.closeout_state(root)['unresolved_operations']:
+            raise DeliveryUnresolved('delivery_original_execution_unresolved')
+        try:
+            value = freeze_sources(root, refs['source_nodes'], candidate_id=candidate_id)
+        except DeliveryUnresolved as error:
+            preparation_failure(root, error.code, refs['source_nodes'], candidate_id=candidate_id)
+            raise
+        c.write(path, value)
+        path.chmod(0o400)
+    value = c.read(c.regular(path, limit=MAX_BYTES))
+    if value['source_nodes'] != refs['source_nodes'] or any(row['candidate_id'] != candidate_id for row in value['items']):
+        raise ValueError('Selected delivery originals differ from their catalogue')
+    return validate_sources(root, value)
+
+
+def preparation_failure(root, reason, source_nodes, *, candidate_id=None):
+    directory = root / 'host-delivery/preparation'
+    number = len(list(directory.glob('*.json'))) + 1
+    c.write(directory / f'{number:03d}.json', dict(reason=reason, source_nodes=source_nodes,
+        candidate_id=candidate_id, cleanup_confirmed=reason != 'delivery_cleanup_unknown'))
+
+
+def preparation_status(root):
+    paths = sorted((root / 'host-delivery/preparation').glob('*.json'))
+    if not paths:
+        return None
+    value = c.read(c.regular(paths[-1]))
+    return dict(attempts=len(paths), last_failure=value['reason'], candidate_id=value['candidate_id'],
+        cleanup_confirmed=value['cleanup_confirmed'])
+
+
+def preparation_blocked(root):
+    return any(not c.read(c.regular(path))['cleanup_confirmed']
+        for path in (root / 'host-delivery/preparation').glob('*.json'))
 
 
 def freeze_sources(root, source_nodes, *, candidate_id=None):
@@ -264,8 +352,8 @@ def freeze_sources(root, source_nodes, *, candidate_id=None):
         seen.add(item['candidate_id'])
         if item['status'] == 'unavailable':
             items.append(dict(candidate_id=item['candidate_id'], status='unavailable', reason='delivery_source_unavailable'));continue
-        label = item.get('evidence_label')
-        if label not in {proof['label'] for proof in originals[item['candidate_id']]['evidence']}:
+        evidence_label = item.get('evidence_label')
+        if evidence_label not in {proof['label'] for proof in originals[item['candidate_id']]['evidence']}:
             raise ValueError('Resolver used another candidate original')
         objects = dict(static)
         try:
@@ -295,7 +383,7 @@ def freeze_sources(root, source_nodes, *, candidate_id=None):
             if 'artifact' not in objects:raise DeliveryUnresolved('delivery_artifact_unavailable')
             if len(_bytes(item['context'])) > 8192:raise ValueError('Resolver context exceeds byte bound')
             items.append(dict(candidate_id=item['candidate_id'], status='audit_pending',
-                              context=item['context'], ledger=evidence[label], objects=objects))
+                              context=item['context'], ledger=evidence[evidence_label], objects=objects))
         except DeliveryUnresolved as error:
             items.append(dict(candidate_id=item['candidate_id'], status='unavailable', reason=error.code))
     for candidate in candidates:
@@ -311,13 +399,23 @@ def freeze_sources(root, source_nodes, *, candidate_id=None):
     return packed
 
 
-def public_sources(refs):
-    result = dict(items=[{key: row[key] for key in ('candidate_id', 'status', 'reason') if key in row}
-                         for row in refs['items'][:16]],
-                  omitted_count=refs['omitted_count'] + max(0, len(refs['items']) - 16),
-                  qualification='Pending audit; a closeout snapshot does not verify the historical proxy metric.')
-    if len(_bytes(result)) > 4096:
-        raise ValueError('Delivery public brief exceeds byte bound')
+def public_sources(refs, audits=()):
+    facts = {}
+    for audit in audits:
+        facts[audit['candidate_id']] = {key:audit[key] for key in ('qualification', 'artifact_binding', 'scope')}
+    rows = [dict(candidate_id=row['candidate_id'],
+                         availability='available' if row['status'] in {'audit_pending', 'available'} else row['status'],
+                         **(dict(reason=row['reason']) if 'reason' in row else {}),
+                         audit=facts.get(row['candidate_id'], dict(qualification='not_observed')))
+                         for row in refs['items'][:16]]
+    result = dict(items=[], omitted_count=refs['omitted_count'] + len(refs['items']),
+                  qualification='Availability is not qualification. Read bound candidate audit receipts for exact artifact scope; public audit does not establish target performance.')
+    if refs.get('catalogue'):
+        result['catalogue'] = 'inputs/delivery-candidates.json'
+    for row in rows:
+        proposed = dict(result, items=[*result['items'], row], omitted_count=result['omitted_count'] - 1)
+        if len(_bytes(proposed)) <= 4096:
+            result = proposed
     return result
 
 
@@ -349,9 +447,38 @@ def validate_sources(root, refs):
     return refs
 
 
+def _choice(root, job, result):
+    if result.get('next_action') != 'deliver':
+        raise DeliveryUnresolved('delivery_authorization_required')
+    from . import shortlist
+    if c.settings(root).get('selection_policy') is not None:
+        expected = shortlist.marker(root)
+        if expected is None:
+            raise DeliveryUnresolved('selection_screen_unavailable')
+        if job.get('selection') != expected:
+            raise DeliveryUnresolved('selection_comparison_required')
+    return shortlist.choice(root, job, result) if job.get('selection') else result.get('candidate_recommendation')
+
+
+def prepare_binding(root, job, result):
+    if result.get('next_action') == 'deliver':
+        chosen = _choice(root, job, result)
+        if chosen is not None:
+            refs = job.get('delivery_sources') or budget.closeout_state(root)['begin']['delivery_sources']
+            try:
+                selected_sources(root, refs, chosen, prepare=True)
+            except DeliveryUnresolved as error:
+                if error.code == 'delivery_source_unavailable':
+                    raise
+                raise PreparationUnavailable(error.code) from error
+    return binding(root, job, result)
+
+
 def binding(root, job, result):
-    if job.get('purpose') != 'closeout' or job['role'] != 'A':
-        raise ValueError('Only a frozen closeout A can decide delivery')
+    begin = budget.closeout_state(root)['begin']
+    ordinary = begin is not None and begin.get('authorization_step') == job['step']
+    if job['role'] != 'A' or not (job.get('purpose') == 'closeout' or ordinary):
+        raise ValueError('Delivery requires its exact frozen A authorization')
     path = root / 'jobs' / f'{job["step"]:03d}.json'
     if c.read(path) != job:
         raise ValueError('Delivery decision job changed')
@@ -359,15 +486,24 @@ def binding(root, job, result):
     chosen = result.get('candidate_recommendation')
     if chosen != raw.get('candidate_recommendation'):
         raise ValueError('Delivery choice differs from sealed original')
-    if job.get('selection') is not None and raw.get('next_action') == 'finish':
-        from . import shortlist
-        chosen = shortlist.choice(root, job, raw)  # Null keeps the pre-registered control default.
-    if chosen is None or raw.get('next_action') != 'finish':
+    chosen = _choice(root, job, raw)
+    if chosen is None:
         raise DeliveryUnresolved('delivery_no_decision')
-    rows = [row for row in job.get('delivery_sources', {}).get('items', []) if row['candidate_id'] == chosen]
+    refs = selected_sources(root, job.get('delivery_sources') or begin['delivery_sources'], chosen)
+    rows = [row for row in refs['items'] if row['candidate_id'] == chosen]
     if len(rows) != 1 or rows[0]['status'] != 'audit_pending':
         raise DeliveryUnresolved('delivery_source_unavailable')
     item = rows[0]
+    for row in budget.closeout_state(root)['actions']:
+        outcome = row['outcome']
+        if (outcome is not None and outcome['result']['status'] == 'failed'
+                and outcome['result'].get('failure_phase') == 'audit'
+                and row['intent']['binding']['candidate_id'] == chosen
+                and row['intent']['binding']['source']['objects']['artifact']['sha256'] == item['objects']['artifact']['sha256']):
+            # The original author remains a valid historical binding. A new
+            # decision cannot replay the same failed candidate bytes.
+            if row['intent']['decision']['step'] < job['step']:
+                raise DeliveryUnresolved('delivery_candidate_failed')
     # c.validate already checks this entire frozen source pack once. Re-reading
     # every candidate/static object here would multiply mechanical I/O by count.
     record = c.host_record(c.workspace(root, job['step']))
@@ -590,16 +726,19 @@ def invoke(root, intent, max_seconds, *, on_process=None, audit_only=False):
                 if error.code != 'delivery_cleanup_unknown':raise
                 return _result(bound, 'unknown', 'cleanup_unknown', cleanup_confirmed=False)
             if value is None:
-                return _result(bound, 'failed' if phase == 'audit' else 'unknown', 'bounded_' + phase + '_unverified')
+                result = _result(bound, 'failed' if phase == 'audit' else 'unknown', 'bounded_' + phase + '_unverified')
+                return dict(result, failure_phase='audit') if phase == 'audit' else result
             if (not isinstance(value, dict) or set(value) != {'status', 'operation_id', 'candidate_id', 'artifact_sha256', 'note'}
                     or any(value.get(key) != request[key] for key in ('operation_id', 'candidate_id', 'artifact_sha256'))
                     or not isinstance(value['note'], str) or len(value['note'].encode()) > 1024):
-                return _result(bound, 'failed' if phase == 'audit' else 'unknown', 'invalid_' + phase + '_result')
+                result = _result(bound, 'failed' if phase == 'audit' else 'unknown', 'invalid_' + phase + '_result')
+                return dict(result, failure_phase='audit') if phase == 'audit' else result
             if phase == 'audit' and value['status'] == 'audited':
                 if audit_only:
                     return dict(value, cleanup_confirmed=True)
                 continue
             if value['status'] not in ('confirmed', 'failed', 'unknown') or phase == 'audit' and value['status'] == 'confirmed':
-                return _result(bound, 'failed' if phase == 'audit' else 'unknown', 'invalid_phase_result')
-            return dict(value, cleanup_confirmed=True)
+                result = _result(bound, 'failed' if phase == 'audit' else 'unknown', 'invalid_phase_result')
+                return dict(result, failure_phase='audit') if phase == 'audit' else result
+            return dict(value, cleanup_confirmed=True, **(dict(failure_phase=phase) if value['status'] == 'failed' else {}))
     raise AssertionError('Delivery phase produced no bounded outcome')

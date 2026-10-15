@@ -368,8 +368,7 @@ def start(root, step):
             repair = output_request(root, step, last)
     closeout = budget.closeout_state(root)['begin']
     job = c.read(c.regular(root / 'jobs' / f'{step:03d}.json'))
-    if (root / 'pause.request').exists() or (closeout is not None and
-            (repair is None or job.get('purpose') != 'closeout')):
+    if (root / 'pause.request').exists() or (closeout is not None and job.get('purpose') != 'closeout'):
         raise ResumeUnavailable('worker_resume_paused_or_closeout')
     from . import correction
     if correction.gate(root, step - 1) is not None:

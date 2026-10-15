@@ -46,7 +46,8 @@ def audit_fixture(tmp_path, mode='ok', *, enabled=True, candidate_count=1, corre
     script = c.workspace(root, 2) / 'artifacts/train.py'
     row = dict(ok=True, val_acc=.6, val_score=.6, model_path='/opt/exp/runs/exact-model.bin', script=str(script))
     (root / 'runs/results.jsonl').write_text(''.join(json.dumps(dict(row, run_id=i))+'\n' for i in range(1,candidate_count+1)))
-    finish(root, 2, 'W', [1], files={'train.py':'def train(train_df,val_df): return None\n'})
+    finish(root, 2, 'W', [1], files={'train.py':'def train(train_df,val_df): return None\n'},
+        mechanism_findings=[dict(mechanism='Mechanism',basis='blocked',finding='Fixture has no managed scientific observation')] if correction_enabled else None)
     c.write(root / 'host-started.json', budget.clock_stamp())
     budget.transition(root, 'advance', 'fixture')
     return root
@@ -132,13 +133,13 @@ def test_filter_selects_early_candidate_without_changing_default_full_pool(tmp_p
     assert candidate_audit.execute(root,job,payload) is None
 
 
-def test_old_setting_future_job_and_schema_stay_eight(tmp_path):
+def test_current_job_and_schema_reject_retired_audit_protocol(tmp_path):
+    from scidiscovery.research_loop.protocol import CURRENT, UnsupportedProtocol
     root=audit_fixture(tmp_path,enabled=False)
     original=(root/'jobs/002.json').read_bytes()
     job=c.build_job(root,3,'A',[1,2])
-    assert job['handoff_protocol']==8 and 'audit' not in c.actions('A',8)
-    assert 'audit' not in c.result_schema('A',8)['properties']['next_action']['enum']
-    assert 'audit' in c.result_schema('A',9)['properties']['next_action']['enum']
+    assert job['handoff_protocol']==CURRENT and 'audit' in c.actions('A',CURRENT)
+    with pytest.raises(UnsupportedProtocol):c.result_schema('A',8)
     assert (root/'jobs/002.json').read_bytes()==original
 
 
@@ -177,7 +178,7 @@ def test_published_correction_pause_blocks_new_audit_acceptance(tmp_path):
     plan=dict(scope='Reconsider scientific blind spots',commitments=[],focus=dict(label='h001.m1',action='screen'))
     finish(root,4,'H',[1,2,3],action='experiment',search_choice=plan)
     c.build_job(root,5,'W',[4],instruction='Exact scientific question')
-    finish(root,5,'W',[4])
+    finish(root,5,'W',[4],mechanism_findings=[dict(mechanism='Mechanism',basis='blocked',finding='No new managed observation in this fixture')])
     finish(root,6,'A',[4,5],action='continue_w',search_choice=review,progress={'verdict':'no_progress'})
     state=correction.publish(root,6)
     pause=state['current_pause']
@@ -204,6 +205,7 @@ def test_published_correction_pause_blocks_new_audit_acceptance(tmp_path):
 
 
 def _seal_existing(root,step,payload):
+    payload={'decision_request':None,'portfolio_review':None,**payload}
     record=c.host_record(c.workspace(root,step))
     c.write(record/'native-intent.json',dict(task_sha256=c.digest(root/'jobs'/f'{step:03d}.json')))
     c.write(record/'science-output.json',payload)
@@ -221,7 +223,7 @@ def test_closeout_audit_keeps_exact_prefix_returns_a_without_promotion(tmp_path,
     c.build_job(root,3,'A',[1,2],purpose='closeout',source_cutoff=2,delivery_sources=refs)
     payload=dict(summary='Audit before deciding',scientific_result='A needs public qualification without claiming target suitability',
         limitations=['Audit is not target evidence'],implementation_selection=None,search_review=None,progress_assessment=None,
-        candidate_recommendation='run-1',next_action='audit',route_reason='Reassess after exact audit')
+        candidate_recommendation='run-1',decision_request=None,portfolio_review=None,next_action='audit',route_reason='Reassess after exact audit')
     _seal_existing(root,3,payload)
     calls=[]
     def complete(root,step):
@@ -233,7 +235,7 @@ def test_closeout_audit_keeps_exact_prefix_returns_a_without_promotion(tmp_path,
         assert view['candidate_audit']['status']=='audited'
         assert not (root/'runs/submitted.json').exists() and not list((root/'submission').iterdir())
         assert budget.closeout_state(root)['actions']==[]
-        _seal_existing(root,step,dict(payload,next_action='finish'))
+        _seal_existing(root,step,dict(payload,next_action='deliver'))
     monkeypatch.setattr(native,'execute_native',complete)
     result=controller.run(root)
     assert result['status']=='delivery_confirmed', result

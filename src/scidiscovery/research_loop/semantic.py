@@ -81,8 +81,10 @@ def validate_job(root, job):
     root_step = request['root']['step']
     root_job, root_payload, root_seal, _ = history._source(root, root_step)
     if job.get('purpose') == 'closeout':
-        from . import delivery
-        if root_job.get('purpose') != 'closeout' or root_job['role'] != 'A' or root_payload.get('next_action') != 'finish':
+        from . import budget, delivery
+        begin = budget.closeout_state(root)['begin']
+        if root_job['role'] != 'A' or not (root_job.get('purpose') == 'closeout'
+                or begin.get('authorization_step') == root_step):
             raise ValueError('Closeout author correction has no exact prior delivery decision')
         try:
             delivery.binding(root, root_job, root_payload)
@@ -117,6 +119,11 @@ def validate_job(root, job):
 
 
 def accepted(root, request, before_step):
+    original = c.read(root / 'jobs' / f'{request["root"]["step"]:03d}.json')
+    from . import budget
+    begin = budget.closeout_state(root)['begin']
+    if original.get('purpose') == 'closeout' or begin is not None and begin.get('authorization_step') == original['step']:
+        return max(0, closeout_errors(root, before_step) - 1)
     count = 0
     for step in range(request['root']['step'] + 1, before_step):
         path = root / 'jobs' / f'{step:03d}.json'
@@ -130,6 +137,27 @@ def accepted(root, request, before_step):
                 raise ValueError('Author correction execution identity changed')
             count += 1
     return count
+
+
+def closeout_errors(root, before_step):
+    """Invalid closeout choices only; audit and deterministic failure are normal turns."""
+    from . import budget, delivery
+    begin = budget.closeout_state(root)['begin']
+    errors = 0
+    for path in sorted((root / 'jobs').glob('*.json')):
+        job = c.read(path)
+        if job['step'] >= before_step:
+            break
+        if (job.get('purpose') != 'closeout' and (begin or {}).get('authorization_step') != job['step']) or not (c.host_record(c.workspace(root, job['step'])) / 'result-identity.json').exists():
+            continue
+        science = c.read(execution.raw(root, job['step']))
+        if science['next_action'] in {'audit', 'finish', 'wait'}:
+            continue
+        try:
+            delivery.binding(root, job, science)
+        except delivery.DeliveryUnresolved as error:
+            errors += error.code not in {'delivery_source_unprepared', 'selection_comparison_required'}
+    return errors
 
 
 def effective_route(root, step, result, job, route):

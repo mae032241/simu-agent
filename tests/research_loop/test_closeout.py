@@ -20,18 +20,19 @@ root=pathlib.Path(os.environ['THIN_HWA_JOB_MANIFEST']).parents[1]
 payload=dict(summary='Finite '+role+' contribution',scientific_result='Original fake scientific observation',limitations=['Fake transport; no scientific qualification'],implementation_selection=None)
 if role=='H':payload.update(next_action='experiment',route_reason='One original experiment',search_plan=None)
 if role=='W':
+ payload.update(stage_intent='review',mechanism_findings=None)
  source=work/'artifacts/train.py';source.write_text('def train(train_df,val_df): return None\\n')
  model=root/'runs/exact-model.bin';model.write_bytes(b'Exact snapshot, never host-unpickled')
  (root/'runs/results.jsonl').write_text(json.dumps(dict(run_id=1,ok=True,val_acc=.6,val_score=.6,model_path='/opt/exp/runs/exact-model.bin',script=str(source)))+'\\n')
 if role=='A':
  task=json.loads((work/'science-task.json').read_text());assert task['closeout']['source_cutoff']==2
- payload.update(next_action='finish',route_reason='A decides delivery within declared limits',candidate_recommendation='run-1',progress_assessment=None,search_review=None)
+ payload.update(next_action='deliver',route_reason='A decides delivery within declared limits',candidate_recommendation='run-1',progress_assessment=None,search_review=None,decision_request=None,portfolio_review=None)
 pathlib.Path(args[args.index('--output-last-message')+1]).write_text(json.dumps(payload))
 print(json.dumps(dict(type='turn.completed',usage=dict(input_tokens=7,cached_input_tokens=2,output_tokens=3))),flush=True)
 '''
 
 
-def real_chain(tmp_path):
+def real_chain(tmp_path, *, max_steps=5, launcher_text=FAKE_NATIVE):
     if shutil.which('bwrap') is None:
         pytest.skip('Real provider namespace required')
     public = tmp_path / 'public';(public / 'harness').mkdir(parents=True)
@@ -46,9 +47,9 @@ def real_chain(tmp_path):
             path.write_text('Fixture public data only\n')
     c.write(tmp_path / 'hidden.json', dict(secret='Must never be visible to provider'))
     objective = public / 'objective.md';objective.write_text('Choose an exact candidate and deliver; scientific completion remains unasserted.')
-    launcher = tmp_path / 'native.py';launcher.write_text(FAKE_NATIVE)
+    launcher = tmp_path / 'native.py';launcher.write_text(launcher_text)
     nodes = {role:dict(max_observed_tokens=2000,max_seconds=60) for role in ('H','W','A','E')}
-    controller.prepare(root,objective,public,[sys.executable,str(launcher)],max_tokens=100_000,max_seconds=300,max_steps=5,
+    controller.prepare(root,objective,public,[sys.executable,str(launcher)],max_tokens=100_000,max_seconds=300,max_steps=max_steps,
         model='no-model',reasoning_effort='high',search_policy=None,node_budget_policy=nodes,
         history_observer=dict(adapter=str(Path(__file__).resolve().parents[2]/'scripts/observe_covshift_candidates.py'),config=dict(runs='runs',evaluation_key='fixture-public')),
         delivery_policy=delivery_policy(descriptor(root,public)))
@@ -67,7 +68,7 @@ def test_actual_fake_h_w_closeout_a_submit_confirm_and_no_replay(tmp_path):
     jobs=[c.read(root/'jobs'/f'{step:03d}.json') for step in (1,2,3)]
     assert [job['role'] for job in jobs]==['H','W','A']
     assert jobs[2]['purpose']=='closeout' and [row['step'] for row in jobs[2]['history']['nodes']]==[1,2]
-    assert jobs[2]['delivery_sources']['items'][0]['status']=='audit_pending'
+    assert jobs[2]['delivery_sources']['items'][0]['status']=='available'
     facts=budget.closeout_state(root)
     assert [row['intent']['action_kind'] for row in facts['actions']]==['submit','confirm']
     assert not facts['unresolved_operations'] and not budget.execution_blocked(root)

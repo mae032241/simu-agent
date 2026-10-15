@@ -191,11 +191,14 @@ def run_native(root: Path, step: int, attempt=0):
               + 'The controller collects deliverables, records paths and hashes, validates and seals your final response. '
               'Do not build attachment indexes, manifests, provenance inventories, hash lists, packaging scripts, '
               'or schema validators. Do not duplicate final responses in files or copy every model for handoff. '
+              'Historical cross-node delivery uses A next_action=deliver and the controller adapter; native exp submit '
+              'uses declared run paths and does not resolve archived historical originals. '
               'Scientific checks required by the task remain your work. Return the small scientific JSON described '
               'by final_response, directly as your final answer. Routing, when needed, uses next_action with a '
               'separate route_reason. The controller dispatches the next role; functional tools retain their permissions.\n'
               + json.dumps(dict(
-                  next_action_options=actions(job['role'], job.get('handoff_protocol', 1)),
+                  next_action_options=actions(job['role'], job.get('handoff_protocol', 1),
+                      audit_enabled=settings.get('candidate_audit_policy') == {'version': 1}),
                   shared_seconds_remaining=max(0, int(limits['seconds_remaining'])),
                   shared_observed_tokens_remaining=max(0, limits['max_tokens']-budget['observed_tokens']),
                   metering='Native usage may be delayed; this is not a guaranteed billing cap.',
