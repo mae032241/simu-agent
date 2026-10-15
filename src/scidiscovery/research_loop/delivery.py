@@ -11,6 +11,7 @@ from pathlib import Path
 import shutil
 import selectors
 import signal
+import stat
 import subprocess
 import tempfile
 import time
@@ -22,6 +23,7 @@ MAX_ASSET_BYTES = 32 * 1024 * 1024
 MAX_READ_BYTES = 128 * 1024 * 1024
 MAX_SOURCES = 128
 SOURCE_SECONDS = 5  # Mechanical transport safety, never a scientific cost estimate.
+MAX_LEAF_TAIL = 64 * 1024  # Host-only stream tail retained per isolated leaf call.
 
 
 class DeliveryUnresolved(ValueError):
@@ -242,7 +244,7 @@ def freeze_sources(root, source_nodes, *, candidate_id=None):
         request = dict(scope=dict(handoff_protocol=c.settings(root)['handoff_protocol']),phase='resolve', operation_id=hashlib.sha256(_bytes(source_nodes)).hexdigest(),
                        candidate_id=None, artifact_sha256=None, root=str(root), source_roots=spec['source_roots'],
                        candidates=candidates, inputs=spec['inputs'], config=spec['config'], target=spec['target'], stage=str(stage))
-        value = _call(spec, request, deadline - time.clock_gettime(time.CLOCK_BOOTTIME))
+        value = _call(spec, request, deadline - time.clock_gettime(time.CLOCK_BOOTTIME), evidence=leaf_output(root))
     if not isinstance(value, dict) or set(value) != {'items'} or not isinstance(value['items'], list):
         raise DeliveryUnresolved('delivery_resolver_unavailable')
     originals = {row['candidate_id']: row for row in candidates}
@@ -376,11 +378,69 @@ def _result(binding, status, note, *, cleanup_confirmed=True):
                 cleanup_confirmed=cleanup_confirmed)
 
 
-def _call(spec, request, seconds, *, on_process=None):
+def leaf_output(root):
+    return Path(root) / 'host-delivery/leaf-output'
+
+
+def leaf_refs(root, operation_id):
+    """Exact host diagnostics for one operation; outcome receipts reference these."""
+    directory = leaf_output(root)
+    return [dict(path=path.relative_to(root).as_posix(), sha256=c.digest(path))
+            for path in sorted(directory.glob(operation_id + '-*.json'))] if directory.is_dir() else []
+
+
+def _tail(path):
+    """Bounded tail of a leaf-written scratch log; never follows a link."""
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    except OSError:
+        return None
+    with os.fdopen(descriptor, 'rb') as stream:
+        status = os.fstat(descriptor)
+        if not stat.S_ISREG(status.st_mode):return None
+        size = status.st_size
+        stream.seek(max(0, size - MAX_LEAF_TAIL))
+        return size, stream.read(MAX_LEAF_TAIL)
+
+
+def _keep(evidence, request, outcome, returncode, streams):
+    """Host-only diagnostics beside the action outcome, keyed by operation/phase.
+
+    Never a scientific original: no workspace, history or model brief reads it.
+    """
+    if evidence is None:return
+    try:
+        directory = Path(evidence);directory.mkdir(parents=True, exist_ok=True)
+        if directory.resolve() != directory:return
+        stem = next(f"{request['operation_id']}-{request['phase']}-{n}" for n in range(1, 1000)
+                    if not (directory / f"{request['operation_id']}-{request['phase']}-{n}.json").exists())
+        index = dict(operation_id=request['operation_id'], phase=request['phase'], outcome=outcome, returncode=returncode, streams={})
+        for label, (size, data) in streams.items():
+            entry = dict(total_bytes=size, kept_bytes=len(data), truncated=size > len(data), path=None, sha256=None)
+            if data:
+                path = directory / f'{stem}.{label}'
+                with path.open('xb') as stream:stream.write(data)
+                path.chmod(0o400);entry.update(path=path.name, sha256=hashlib.sha256(data).hexdigest())
+            index['streams'][label] = entry
+        with (directory / (stem + '.json')).open('x') as stream:stream.write(json.dumps(index, sort_keys=True) + '\n')
+        (directory / (stem + '.json')).chmod(0o400)
+    except (OSError, StopIteration):
+        pass  # Diagnostics never change the bounded delivery outcome.
+
+
+def _call(spec, request, seconds, *, on_process=None, evidence=None):
     if seconds <= 0:return None
     data = _bytes(request)
     if len(data) > MAX_BYTES:raise ValueError('Delivery request exceeds byte bound')
     runtime._subreaper()  # Same actual ownership cleanup used by native runners.
+    output, errors, totals = bytearray(), bytearray(), dict(stdout=0, stderr=0)
+    def keep(outcome, returncode=None):
+        streams = dict(stdout=(totals['stdout'], bytes(output[-MAX_LEAF_TAIL:])), stderr=(totals['stderr'], bytes(errors)))
+        if request.get('phase') == 'audit' and request.get('stage'):
+            for name in ('stdout', 'stderr'):
+                found = _tail(Path(request['stage']) / 'scratch' / f'audit.{name}')
+                if found is not None:streams['audit.' + name] = found
+        _keep(evidence, request, outcome, returncode, streams)
     with tempfile.TemporaryFile() as input_file:
         input_file.write(data);input_file.seek(0)
         process = subprocess.Popen([*spec['launcher_argv'], spec['adapter']], stdin=input_file,
@@ -397,7 +457,7 @@ def _call(spec, request, seconds, *, on_process=None):
                     raise DeliveryUnresolved('delivery_cleanup_unknown')
                 raise
         deadline = time.clock_gettime(time.CLOCK_BOOTTIME) + seconds
-        output, total, failed = bytearray(), 0, False
+        total, failed = 0, False
         with selectors.DefaultSelector() as selector:
             selector.register(process.stdout, selectors.EVENT_READ)
             selector.register(process.stderr, selectors.EVENT_READ)
@@ -408,19 +468,22 @@ def _call(spec, request, seconds, *, on_process=None):
                     block = os.read(key.fileobj.fileno(), 65536)
                     if not block:selector.unregister(key.fileobj);continue
                     total += len(block)
+                    if key.fileobj is process.stdout:output.extend(block);totals['stdout'] += len(block)
+                    else:errors.extend(block);del errors[:-MAX_LEAF_TAIL];totals['stderr'] += len(block)
                     if total > MAX_BYTES:failed = True;break
-                    if key.fileobj is process.stdout:output.extend(block)
                 if failed:break
         if failed:
             if runtime.process_matches(identity, identity['task_sha256']):
                 os.killpg(identity['pgid'], signal.SIGKILL)
             process.wait(timeout=5)
             process.stdout.close();process.stderr.close()
+            keep('time_or_byte_limit', process.returncode)
             if runtime.cleanup_owned_group(identity) != 'observed_group_cleaned':
                 raise DeliveryUnresolved('delivery_cleanup_unknown')
             return None
         process.wait(timeout=5)
         process.stdout.close();process.stderr.close()
+        keep('exited', process.returncode)
         if runtime.cleanup_owned_group(identity) != 'observed_group_cleaned':
             raise DeliveryUnresolved('delivery_cleanup_unknown')
     if process.returncode:
@@ -489,7 +552,8 @@ def invoke(root, intent, max_seconds, *, on_process=None, audit_only=False):
         for phase in phases:
             remaining = deadline - time.clock_gettime(time.CLOCK_BOOTTIME)
             try:
-                value = _call(spec, dict(request, phase=phase), remaining, on_process=on_process) if remaining > 0 else None
+                value = _call(spec, dict(request, phase=phase), remaining, on_process=on_process,
+                              evidence=leaf_output(root)) if remaining > 0 else None
             except DeliveryUnresolved as error:
                 if error.code != 'delivery_cleanup_unknown':raise
                 return _result(bound, 'unknown', 'cleanup_unknown', cleanup_confirmed=False)

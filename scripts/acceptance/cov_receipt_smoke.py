@@ -33,7 +33,8 @@ def main():
     required=['exp_cli.py','runner.py','train.csv','val.csv','meta.json']
     before={name:c.digest(c.regular(harness/name)) for name in required}
     os.environ.update(EXP_HARNESS=str(harness),EXP_RUNNER=str(harness/'runner.py'),EXP_TRAIN=str(harness/'train.csv'),
-        EXP_VAL=str(harness/'val.csv'),EXP_META=str(harness/'meta.json'),EXP_RUN_DIR=str(root/'runs'),EXP_WALL_CAP_S='60')
+        EXP_VAL=str(harness/'val.csv'),EXP_META=str(harness/'meta.json'),EXP_RUN_DIR=str(root/'runs'),EXP_WALL_CAP_S='60',
+        PYTHONDONTWRITEBYTECODE='1')  # Host runner import must not add harness/__pycache__ to the frozen public whitelist.
     controller.prepare(root,public/'instruction.md',public,['never-call-a-model'],model='no-model',reasoning_effort='high',
         max_tokens=100000,max_seconds=180,max_steps=8,node_budget_mode='hard',search_policy=search.DEFAULT_POLICY,
         history_observer=dict(adapter=str(Path(cov_lineage.__file__).resolve()),contract_version=2,
@@ -86,6 +87,7 @@ def main():
     c.validate(c.workspace(root,2));lineage.build(root,3)
     assert before_tree=={str(p.relative_to(root)):c.digest(p) for p in root.rglob('*') if p.is_file()}
     assert before=={name:c.digest(c.regular(harness/name)) for name in required}
+    assert sorted(p.name for p in harness.iterdir())==sorted(required),'Public harness whitelist changed'
     c.write(root/'receipt-probe-result.json',dict(status='pass',calls=results,model_api_calls=0,
         scope='Independent public runner receipts, not scientific screening or hidden scoring'))
     print(json.dumps(dict(status='pass',calls=results,model_api_calls=0)))

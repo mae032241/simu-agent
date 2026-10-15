@@ -189,6 +189,7 @@ def execute(root, job, payload):
     decision = _decision(root, step)
     intent = None
     binding = None
+    resolved = None
     def finish(status, note, *, cleanup=True, result=None):
         result = result or dict(status=status, note=note, cleanup_confirmed=cleanup)
         if intent is not None and 'operation_id' not in result:
@@ -200,7 +201,8 @@ def execute(root, job, payload):
             value.update(intent_sha256=c.digest(directory / 'intent.json'),
                          binding_sha256=c.digest(directory / 'binding.json') if binding is not None else None,
                          result_sha256=c.digest(directory / 'adapter-result.json'),
-                         process_sha256=c.digest(directory / 'process.json') if (directory / 'process.json').exists() else None)
+                         process_sha256=c.digest(directory / 'process.json') if (directory / 'process.json').exists() else None,
+                         leaf_output=(delivery.leaf_refs(root, resolved) if resolved else []) + delivery.leaf_refs(root, intent['operation_id']))
         _save(directory / 'outcome.json', value)
         return None if cleanup else 'candidate_audit_unknown'
     if chosen is None or chosen not in job['history']['candidate_ids']:
@@ -232,6 +234,7 @@ def execute(root, job, payload):
                   candidate_id=chosen, max_seconds=policy['submit_seconds'], advance_seconds=budget.snapshot(root)['advance_seconds'])
     _save(directory / 'intent.json', intent)
     try:
+        if not job.get('delivery_sources'):resolved = hashlib.sha256(delivery._bytes(job['history']['nodes'])).hexdigest()
         refs = job.get('delivery_sources') or delivery.freeze_sources(root, job['history']['nodes'], candidate_id=chosen)
         _save(directory / 'sources.json', refs)
         rows = [row for row in refs['items'] if row['candidate_id'] == chosen and row['status'] == 'audit_pending']
