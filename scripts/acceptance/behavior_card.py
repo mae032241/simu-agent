@@ -123,7 +123,7 @@ def card(root):
             focus=focus.get('mechanism_ref'),task_action=focus.get('action'),next_action=science.get('next_action'),
             stage_end=ending or (control.get('worker_delivery') or {}).get('reason') or control.get('stage_end_reason') or outcome.get('stop_reason'),
             registered_calls=len(calls),new_public_runs=sum(row['step']==step for row in pool.values()),soft_review=reason,hint_state=hint,
-            role_budget=(job.get('role_budget') or {}).get('reason'),author_correction=(job.get('author_correction') or {}).get('reason'))
+            author_correction=(job.get('author_correction') or {}).get('reason'))
         if usage['unknown']:entry['usage_unknown']=True
         nodes.append(entry)
         bucket=roles.setdefault(role,dict(tokens=0,cached=0,seconds=0.,nodes=0))

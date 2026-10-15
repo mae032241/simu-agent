@@ -82,21 +82,15 @@ def reason(root, step, job, result, role, correction_request=None):
     return None
 
 
-def record(root, step, code, focus_source=None):
-    meter = usage(root, step)
-    return dict(version=1, reason=code, source_step=step, focus_source=focus_source, thinking_observed_tokens=meter['thinking'],
-                thinking_cap_tokens=int(configured(root)['max_thinking_share'] * c.settings(root)['max_tokens']))
-
-
 def effective_route(root, step, result, job, route):
     """Preserve required corrections; stop optional thinking without inventing work."""
     role, parents, instruction, evidence_return, current_h, current_w, correction_request, author = route
     # Author corrections are mandatory control repairs, not optional thinking.
     # Their existing finite correction allowance and global budget still apply.
     if author is not None:
-        return (*route, None, None)
+        return (*route, None)
     code = reason(root, step, job, result, role, correction_request)
     if code is None:
-        return (*route, None, None)
+        return (*route, None)
     # Insufficient allocation never authorizes another scientific task.
-    return None, [], '', None, current_h, current_w, None, None, None, code
+    return None, [], '', None, current_h, current_w, None, None, code

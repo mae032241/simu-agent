@@ -251,7 +251,7 @@ def _finish(root, settings, status, completed, last, *, reason=None, next_role=N
     return result
 
 
-def _check_job(root, settings, step, role, parents, instruction, evidence_return, correction_request=None, author_correction=None, role_budget=None):
+def _check_job(root, settings, step, role, parents, instruction, evidence_return, correction_request=None, author_correction=None):
     """A retained node must be the exact job selected by its sealed predecessor."""
     job = contracts.read(root / "jobs" / f"{step:03d}.json")
     expected_refs = [dict(path=f"inputs/parents/{parent:03d}/conclusion.json",
@@ -264,8 +264,7 @@ def _check_job(root, settings, step, role, parents, instruction, evidence_return
             or job.get("instruction", "") != instruction
             or job.get("evidence_return") != evidence_return
             or job.get('correction_request') != correction_request
-            or job.get('author_correction') != author_correction
-            or job.get('role_budget') != role_budget):
+            or job.get('author_correction') != author_correction):
         raise ValueError("Retained job differs from the sealed scientific route")
     return job
 
@@ -364,7 +363,7 @@ def _run(root):
     if not started_path.exists():
         contracts.write(started_path, budget.clock_stamp())
     role, parents, instruction, evidence_return, correction_request = "H", [], "", None, None
-    author_correction = role_budget = None
+    author_correction = None
     current_h = current_w = last = None
     completed = 0
     for step in range(1, settings["max_steps"] + 1):
@@ -398,7 +397,7 @@ def _run(root):
                         reason="Retain the original native work; its terminal scientific output is unverified",
                         next_role=role)
                 try:
-                    _check_job(root, settings, step, role, parents, instruction, evidence_return, correction_request, author_correction, role_budget)
+                    _check_job(root, settings, step, role, parents, instruction, evidence_return, correction_request, author_correction)
                     continuation.seal_or_repair(root, step)
                 except continuation.ResumeUnavailable as error:
                     return _finish(root, settings, 'output_repair_unavailable', completed, last, reason=str(error), next_role=role)
@@ -439,15 +438,14 @@ def _run(root):
             if (root / 'jobs' / f'{step:03d}.json').exists():
                 try:
                     _check_job(root, settings, step, role, parents, instruction, evidence_return,
-                               correction_request, author_correction, role_budget)
+                               correction_request, author_correction)
                 except ValueError:
                     return _finish(root, settings, 'retained_job_conflict', completed, last,
                         reason='A prepared task differs from the exact retained scientific route', next_role=role)
             try:
                 job = contracts.build_job(root, step, role, parents, instruction=instruction,
                     evidence_return=evidence_return, correction_request=correction_request,
-                    **(dict(author_correction=author_correction) if author_correction is not None else {}),
-                    **(dict(role_budget=role_budget) if role_budget is not None else {}))
+                    **(dict(author_correction=author_correction) if author_correction is not None else {}))
             except engineering.RepairUnavailable as error:
                 return _finish(root,settings,str(error),completed,last,next_role=role)
             search_limit = search.launch_reason(root, job)
@@ -488,7 +486,7 @@ def _run(root):
             if (type(outcome.get("returncode")) is not int or outcome["returncode"] != 0 or outcome.get("stop_reason")
                     or outcome["usage"]["unknown_steps"]):
                 raise ValueError("Native outcome is ineligible for sealed continuation")
-            job = _check_job(root, settings, step, role, parents, instruction, evidence_return, correction_request, author_correction, role_budget)
+            job = _check_job(root, settings, step, role, parents, instruction, evidence_return, correction_request, author_correction)
             result = contracts.validate(work)
             if result["role"] != role:
                 raise ValueError("Sealed result role differs from its job")
@@ -512,7 +510,7 @@ def _run(root):
             next_role, next_parents, next_instruction, next_return, current_h, current_w, next_correction, next_author = semantic.effective_route(
                 root, step, result, job, (next_role, next_parents, next_instruction, next_return, current_h, current_w, next_correction))
             (next_role, next_parents, next_instruction, next_return, current_h, current_w, next_correction, next_author,
-             next_budget, share_stop) = role_share.effective_route(root, step, result, job,
+             share_stop) = role_share.effective_route(root, step, result, job,
                 (next_role, next_parents, next_instruction, next_return, current_h, current_w, next_correction, next_author))
         except (KeyError, ValueError, OSError, TypeError) as error:
             return _finish(root, settings, "sealed_node_invalid", completed, last,
@@ -531,7 +529,7 @@ def _run(root):
             return _finish(root, settings, result["next_action"], completed, last,
                 reason="Scientific role suggestion; overall goal success is not asserted")
         role, parents, instruction, evidence_return, correction_request = next_role, next_parents, next_instruction, next_return, next_correction
-        author_correction, role_budget = next_author, next_budget
+        author_correction = next_author
     return _finish(root, settings, "bounded_steps_exhausted", completed, last, next_role=role)
 
 

@@ -29,8 +29,7 @@ def seal(root, step, role, parents, *, action='wait', tokens=10, plan=None, revi
     path = root / 'jobs' / f'{step:03d}.json'
     previous = c.read(path) if path.exists() else {}
     job = c.build_job(root, step, role, parents, previous.get('instruction', ''), previous.get('evidence_return'),
-                      previous.get('correction_request'), previous.get('author_correction'),
-                      **({'role_budget': previous['role_budget']} if previous.get('role_budget') else {}))
+                      previous.get('correction_request'), previous.get('author_correction'))
     record = c.host_record(c.workspace(root, step))
     payload = dict(summary='A contribution', scientific_result='A bounded finding', limitations=['Fixture only'], implementation_selection=None)
     if role == 'H':payload.update(search_plan=plan)
@@ -119,7 +118,8 @@ def test_old_instance_without_policy_keeps_original_routes(tmp_path):
     seal(root, 2, 'W', [1], findings=FINDINGS, tokens=100_000)
     a, ap = seal(root, 3, 'A', [1, 2], action='revise_h', tokens=9_000_000)
     assert role_share.reason(root, 3, a, ap, 'A') is None
-    assert role_share.effective_route(root, 3, ap, a, ('H', [1, 2, 3], 'x', None, 1, 2, None, None))[-2:] == (None, None)
+    route = ('H', [1, 2, 3], 'x', None, 1, 2, None, None)
+    assert role_share.effective_route(root, 3, ap, a, route) == (*route, None)
 
 
 def test_budget_refusal_never_substitutes_a_w_task(tmp_path, monkeypatch):
