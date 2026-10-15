@@ -19,12 +19,16 @@ CAPABILITY = 'smoke'
 
 
 def policy(value):
-    if not isinstance(value, dict) or set(value) != set(DEFAULT) or type(value['version']) is not int or value['version'] != 1:
+    if (not isinstance(value, dict) or set(value) not in (set(DEFAULT), set(DEFAULT) | {'evaluation_key'})
+            or type(value['version']) is not int or value['version'] != 1):
         raise ValueError('Selection policy requires version 1 shortlist size and smoke ceiling')
     seconds = value['smoke_seconds']
     if (type(value['shortlist_k']) is not int or not 1 <= value['shortlist_k'] <= 8
             or type(seconds) not in (int, float) or not math.isfinite(seconds) or not 0 < seconds <= 600):
         raise ValueError('Selection shortlist size or smoke ceiling is out of bounds')
+    key = value.get('evaluation_key')
+    if key is not None and (not isinstance(key, str) or not key or len(key.encode()) > 2048):
+        raise ValueError('Selection evaluation key must be an exact public version')
     return dict(value)
 
 
@@ -48,7 +52,8 @@ def _members(root, begin):
     from . import history
     records = selection.public_inputs(history.rebuild(root, begin['source_cutoff'] + 1, write_cache=False))
     try:
-        return selection.shortlist(records, configured(root)['shortlist_k'])
+        limits = configured(root)
+        return selection.shortlist(records, limits['shortlist_k'], evaluation_key=limits.get('evaluation_key'))
     except ValueError:  # Verified sources; only the optional public projection is unavailable.
         return dict(version=1, members=[], availability='public_projection_unavailable')
 
@@ -70,15 +75,16 @@ def blocked(root):
     return False
 
 
-def _affordable(root, begin, seconds, *, protect_author):
+def _affordable(root, begin, seconds):
     settings = c.settings(root)
     if budget.execution_blocked(root):
         return False
     floor = budget.closeout_floor(settings, preparation_seconds=begin['preparation_seconds'])
-    author = settings['delivery_policy']['closeout_a']['max_seconds'] if protect_author or budget.node_mode(root) == 'hard' else 0
+    author = settings['delivery_policy']['closeout_a']
     meter, limits = native.usage(root), budget.snapshot(root)
     pending = 0 if (root / 'jobs' / f'{begin["first_step"]:03d}.json').exists() else 1
-    return (not meter['unknown_steps'] and limits['seconds_remaining'] > seconds + floor['seconds'] + author
+    return (not meter['unknown_steps'] and limits['seconds_remaining'] > seconds + floor['seconds'] + author['max_seconds']
+            and limits['max_tokens'] - meter['observed_tokens'] >= floor['tokens'] + author['max_observed_tokens']
             and settings['max_steps'] - budget.used_steps(root) >= 1 + pending + floor['steps'])
 
 
@@ -155,7 +161,7 @@ def screen(root, begin):
         if source is None or source['status'] != 'audit_pending':
             smoke = dict(status='unavailable', note='candidate_original_unavailable')
         elif capable:
-            if (directory / f'smoke-{index:02d}.intent.json').exists() or _affordable(root, begin, limits['smoke_seconds'], protect_author=False):
+            if (directory / f'smoke-{index:02d}.intent.json').exists() or _affordable(root, begin, limits['smoke_seconds']):
                 outcome = _call(root, begin, index, 'smoke', source, limits['smoke_seconds'])
                 if outcome is None or not outcome['cleanup_confirmed']:
                     return 'selection_smoke_unknown'
@@ -175,7 +181,7 @@ def screen(root, begin):
             row['audit'] = dict(status='not_run', note='not_comparable' if row['rank'] is None else 'smoke_not_ok')
         elif found:
             row['audit'] = dict(status='not_run', note='below_audited_default')
-        elif (directory / f'audit-{index:02d}.intent.json').exists() or _affordable(root, begin, settings['delivery_policy']['submit_seconds'], protect_author=True):
+        elif (directory / f'audit-{index:02d}.intent.json').exists() or _affordable(root, begin, settings['delivery_policy']['submit_seconds']):
             outcome = _call(root, begin, index, 'audit', sources[cid], settings['delivery_policy']['submit_seconds'])
             if outcome is None or not outcome['cleanup_confirmed']:
                 return 'selection_audit_unknown'
@@ -193,6 +199,7 @@ def screen(root, begin):
     value = dict(version=1, shortlist_sha256=c.digest(path), closeout_begin=computed['closeout_begin'],
                  smoke_capability=capable, audit_configured=audit_on, rows=rows, receipts=receipts,
                  evaluation_key=computed.get('evaluation_key'), direction=computed.get('direction'),
+                 evaluation_groups_omitted_count=computed.get('evaluation_groups_omitted_count', 0),
                  default=selection.default_choice(rows, {row['candidate_id']: dict(smoke=row['smoke']['status'],
                      audit=row['audit']['status']) for row in rows}))
     _save(final, value)
@@ -226,6 +233,7 @@ def public_table(root, mark):
     value = _screen(root, mark)
     default = value['default']['candidate_id']
     return dict(evaluation_key=_clip(value['evaluation_key'], 96), direction=value['direction'],
+        evaluation_groups_omitted_count=value.get('evaluation_groups_omitted_count', 0),
         default=dict(candidate_id=default, basis=value['default']['basis']),
         rows=[dict(candidate_id=row['candidate_id'], public_metric=row['metric'], evaluation_version=_clip(row['evaluation_key'], 96),
                    comparable=row['rank'] is not None, rank=row['rank'], reasons=row['reasons'], smoke=row['smoke']['status'],

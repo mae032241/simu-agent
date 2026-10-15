@@ -36,12 +36,49 @@ def members(value):
 def test_shortlist_ranks_one_exact_version_and_ties_prefer_later_observation():
     records = [rec(1, 'H'), rec(2, 'W', [cand('run-1', .90), cand('run-2', .91), cand('run-3', .91), cand('run-4', .99, key='v0')]),
                rec(3, 'A', recommendation='run-1')]
-    value = selection.shortlist(records, 2)
+    value = selection.shortlist(records, 2, evaluation_key='v1')
     assert value['evaluation_key'] == 'v1' and value['ranked_count'] == 3 and value['latest_a_step'] == 3
     # Equal public metric: the later observed run ranks first, never the earliest incumbent.
     assert members(value) == [('run-3', ['top_k']), ('run-2', ['top_k']), ('run-1', ['a_recommended'])]
     assert [row['rank'] for row in value['members']] == [1, 2, 3] and value['boundary_ties_omitted'] == 0
-    assert selection.shortlist(records, 1)['boundary_ties_omitted'] == 1
+    assert selection.shortlist(records, 1, evaluation_key='v1')['boundary_ties_omitted'] == 1
+
+
+def test_multiple_versions_have_no_ranked_default_even_when_one_has_more_candidates():
+    records = [rec(2, 'W', [cand('majority-1', .9), cand('majority-2', .8), cand('other', .99, key='v0')])]
+    value = selection.shortlist(records, 3)
+    assert value['evaluation_key'] is None and value['direction'] is None and value['ranked_count'] == 0
+    assert members(value) == [('other', ['evaluation_group_best']), ('majority-1', ['evaluation_group_best'])]
+    assert all(row['rank'] is None for row in value['members'])
+    assert selection.default_choice(value['members'], screened((row['candidate_id'], 'ok', 'passed') for row in value['members']))['candidate_id'] is None
+    # Exact selection of the minority version is authoritative; prefixes never match.
+    chosen = selection.shortlist(records, 3, evaluation_key='v0')
+    assert members(chosen) == [('other', ['top_k', 'unassessed_best'])] and chosen['ranked_count'] == 1
+    assert selection.shortlist(records, 3, evaluation_key='v')['members'] == []
+
+
+def test_ambiguous_group_members_are_bounded_and_report_omissions():
+    value = selection.shortlist([rec(2, 'W', [cand(f'run-{i}', i, key=f'v{i}') for i in range(12)]),
+                                 rec(3, 'A', recommendation='run-9')], 2)
+    assert len(value['members']) == 3 and value['evaluation_groups_omitted_count'] == 9
+    assert value['members'][-1]['candidate_id'] == 'run-9' and value['ranked_count'] == 0
+
+
+@pytest.mark.parametrize('evaluation_key', [None, 'v1'])
+@pytest.mark.parametrize('status', ['ok', 'failed'])
+def test_conflicting_directions_never_produce_a_default(evaluation_key, status):
+    records = [rec(2, 'W', [cand('max', .9), dict(cand('min', .8, status=status), direction='min')])]
+    value = selection.shortlist(records, 3, evaluation_key=evaluation_key)
+    assert value['ranked_count'] == 0 and value['direction'] is None
+    assert all(row['rank'] is None for row in value['members'])
+
+
+@pytest.mark.parametrize('key', ['', 1, 'x' * 2049])
+def test_selection_policy_and_projection_reject_invalid_evaluation_keys(key):
+    with pytest.raises(ValueError, match='exact public version'):
+        selection.shortlist([], 3, evaluation_key=key)
+    with pytest.raises(ValueError, match='exact public version'):
+        shortlist.policy(dict(shortlist.DEFAULT, evaluation_key=key))
 
 
 def test_candidates_after_the_last_a_assessment_enter_the_shortlist():
@@ -70,7 +107,7 @@ def screened(rows):
 
 def test_default_excludes_failed_or_unknown_smoke_and_prefers_passed_audit():
     value = selection.shortlist([rec(2, 'W', [cand('run-16', .9112), cand('run-40', .9102), cand('run-34', .90), cand('old', .99, key='v0')]),
-                                 rec(3, 'A', recommendation='old')], 3)
+                                 rec(3, 'A', recommendation='old')], 3, evaluation_key='v1')
     rows = value['members']
     pick = lambda *statuses: selection.default_choice(rows, screened(statuses))
     # rootless-task-unit-cov-20261014: public best run-16 cannot predict; it is never the default.
@@ -146,12 +183,13 @@ def _adapter(tmp_path):
 
 
 @pytest.mark.parametrize('observer,audit,policy,expected', [
-    (True, True, shortlist.DEFAULT, shortlist.DEFAULT), (True, False, shortlist.DEFAULT, None), (False, True, shortlist.DEFAULT, None),
+    (True, True, shortlist.DEFAULT, None), (True, False, shortlist.DEFAULT, None), (False, True, shortlist.DEFAULT, None),
     (True, True, None, None), (True, False, dict(shortlist.DEFAULT, shortlist_k=5), dict(shortlist.DEFAULT, shortlist_k=5)),
+    (True, True, dict(shortlist.DEFAULT, evaluation_key='v1'), dict(shortlist.DEFAULT, evaluation_key='v1')),
     (False, True, dict(shortlist.DEFAULT), ValueError), (True, True, dict(shortlist.DEFAULT, shortlist_k=0), ValueError),
     (True, True, dict(shortlist.DEFAULT, extra=1), ValueError), (True, True, dict(shortlist.DEFAULT, version=2), ValueError),
 ])
-def test_prepare_defaults_selection_only_with_observer_audit_and_adapter(tmp_path, observer, audit, policy, expected):
+def test_prepare_selection_requires_explicit_policy_and_observer_adapter(tmp_path, observer, audit, policy, expected):
     public = tmp_path / 'public';public.mkdir();objective = public / 'objective.md';objective.write_text('Bounded objective')
     kwargs = dict(max_tokens=100_000, max_seconds=600, max_steps=12, model='no-model', reasoning_effort='high', search_policy=None,
                   node_budget_policy={role: dict(max_observed_tokens=2000, max_seconds=60) for role in 'HWAE'},
@@ -173,13 +211,27 @@ def test_cli_prepare_selection_policy_override_and_null(tmp_path):
                  observer=dict(adapter=str(OBSERVER), config=dict(runs='runs', evaluation_key='v1')), custom=dict(shortlist.DEFAULT, shortlist_k=2))
     for name, value in files.items():c.write(tmp_path / (name + '.json'), value)
     (tmp_path / 'off.json').write_text('null\n')
-    for name, extra, expected in (('d', [], shortlist.DEFAULT), ('c', ['--selection-policy', str(tmp_path / 'custom.json')], files['custom']),
+    for name, extra, expected in (('d', [], None), ('c', ['--selection-policy', str(tmp_path / 'custom.json')], files['custom']),
                                   ('o', ['--selection-policy', str(tmp_path / 'off.json')], None)):
         assert cli.main(['prepare', '--root', str(tmp_path / name), '--objective', str(objective), '--public-root', str(public),
             '--native-launcher-json', '["never"]', '--node-budget-policy', str(tmp_path / 'node.json'), '--enable-candidate-audit',
             '--delivery-policy', str(tmp_path / 'delivery.json'), '--history-observer-config', str(tmp_path / 'observer.json'),
             '--max-tokens', '1000000', '--max-seconds', '600', '--max-steps', '12', *extra]) == 0
         assert c.settings(tmp_path / name).get('selection_policy') == expected
+
+
+@pytest.mark.parametrize('mode', ['hard', 'soft'])
+@pytest.mark.parametrize('seconds,tokens,expected', [(110, 2010, False), (111, 2010, True), (111, 2009, False)])
+def test_smoke_preserves_author_time_tokens_and_execution_floor(tmp_path, monkeypatch, mode, seconds, tokens, expected):
+    settings = dict(node_budget_mode=mode, max_steps=10, delivery_policy=dict(adapter={},
+        closeout_a=dict(max_seconds=60, max_observed_tokens=2000), inflight_tokens=10,
+        cleanup_seconds=10, submit_seconds=10, confirm_seconds=10))
+    monkeypatch.setattr(c, 'settings', lambda root: settings)
+    monkeypatch.setattr(budget, 'execution_blocked', lambda root: False)
+    monkeypatch.setattr(budget, 'used_steps', lambda root: 0)
+    monkeypatch.setattr(budget, 'snapshot', lambda root: dict(seconds_remaining=seconds, max_tokens=tokens + 100))
+    monkeypatch.setattr(native, 'usage', lambda root: dict(unknown_steps=[], observed_tokens=100))
+    assert shortlist._affordable(tmp_path, dict(first_step=1, preparation_seconds=0), 20) is expected
 
 
 def science_python():
@@ -199,7 +251,7 @@ def scene(tmp_path, *, policy=shortlist.DEFAULT, metrics=(.9, .8, .7)):
     c.write(public / 'harness/meta.json', dict(mode='ok', target_cols=['x0', 'x1'], control_path=str(root / 'settings.json'), hidden_path=str(tmp_path / 'hidden.json')))
     c.write(tmp_path / 'hidden.json', dict(secret='Never an input'))
     objective = public / 'objective.md';objective.write_text('Deliver one exact public candidate; completion is not asserted.')
-    kwargs = {} if policy is shortlist.DEFAULT else dict(selection_policy=policy)
+    kwargs = dict(selection_policy=policy)
     controller.prepare(root, objective, public, ['fake-no-model'], max_tokens=100_000, max_seconds=600, max_steps=24, model='fixture',
         reasoning_effort='high', search_policy=None, node_budget_policy={role: dict(max_observed_tokens=2000, max_seconds=60) for role in 'HWAE'},
         delivery_policy=delivery_policy(descriptor(root, public, python=python)), candidate_audit_policy={'version': 1},

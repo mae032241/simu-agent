@@ -139,9 +139,8 @@ def _map(value, maps):
     return value
 
 
-# Optional frozen fields an older source predates; the gate adopts the candidate
-# default a new live prepare would freeze, and reports it instead of hiding it.
-ADOPTED = ('selection_policy',)
+# Reproduce policy opt-ins exactly; a gate must not silently enable a strategy.
+ADOPTED = ()  # Replay the exact policy, including disabled/missing policies.
 
 
 # Code/launcher identities and scratch paths are the only rebound settings.
@@ -209,9 +208,7 @@ def rebind(settings_path, launcher_path, work, scid_python, fault=None):
                 'portfolio_policy', 'worker_fragment_policy', 'lineage_projection_version', 'selection_protocol',
                 'handoff_authority_version', 'decision_contract_version', 'role_budget_policy', 'selection_policy'):
         kwargs[key] = settings.get(key)
-    from scidiscovery.research_loop import shortlist
-    adopted = [key for key in ADOPTED if key not in settings]
-    if 'selection_policy' in adopted:kwargs['selection_policy'] = shortlist.DEFAULT
+    adopted = []
     if settings.get('history_observer') is not None:
         observer = settings['history_observer']
         kwargs['history_observer'] = dict(adapter=str(Path(cov_lineage.__file__).resolve()), config=observer['config'],
@@ -268,21 +265,25 @@ def _checks(root, chain, result):
     checks['candidate_audits_audited'] = all(row is not None and row['result']['status'] == 'audited' for row in receipts)
     confirmed = result.get('last_confirmed') or {}
     screen = c.read(root / 'host-delivery/selection/screen.json') if (root / 'host-delivery/selection/screen.json').is_file() else None
-    default = (screen or {}).get('default', {}).get('candidate_id')
-    checks['delivered_closeout_choice'] = confirmed.get('candidate_id') == default == chain[6]['candidate'] and chain[7]['candidate'] is None
-    rows = (screen or {}).get('rows', [])
-    checks['selection_shortlist_frozen'] = bool(rows) and default is not None and any('a_recommended' in row['reasons'] for row in rows)
-    checks['selection_smoke_ok_with_leaf_output'] = bool(rows) and all(row['smoke']['status'] == 'ok' and c.read(
-        root / 'host-delivery/selection' / (row['smoke']['receipt'] + '.outcome.json'))['leaf_output'] for row in rows)
-    checks['selection_default_audited'] = any(row['candidate_id'] == default and row['audit']['status'] == 'passed' for row in rows)
-    final = c.read(execution.raw(root, chain[7]['step'])).get('candidate_comparison') or {}
-    checks['selection_comparison_sealed'] = [row['candidate_id'] for row in final.get('rows', [])] == [row['candidate_id'] for row in rows]
+    if c.settings(root).get('selection_policy') is not None:
+        default = (screen or {}).get('default', {}).get('candidate_id')
+        checks['delivered_closeout_choice'] = confirmed.get('candidate_id') == default == chain[6]['candidate'] and chain[7]['candidate'] is None
+        rows = (screen or {}).get('rows', [])
+        checks['selection_shortlist_frozen'] = bool(rows) and default is not None and any('a_recommended' in row['reasons'] for row in rows)
+        checks['selection_smoke_ok_with_leaf_output'] = bool(rows) and all(row['smoke']['status'] == 'ok' and c.read(
+            root / 'host-delivery/selection' / (row['smoke']['receipt'] + '.outcome.json'))['leaf_output'] for row in rows)
+        checks['selection_default_audited'] = any(row['candidate_id'] == default and row['audit']['status'] == 'passed' for row in rows)
+        final = c.read(execution.raw(root, chain[7]['step'])).get('candidate_comparison') or {}
+        checks['selection_comparison_sealed'] = [row['candidate_id'] for row in final.get('rows', [])] == [row['candidate_id'] for row in rows]
+    else:
+        checks['selection_disabled_preserved'] = screen is None
+        checks['delivered_closeout_choice'] = confirmed.get('candidate_id') == chain[6]['candidate'] == chain[7]['candidate']
     submitted = root / 'submission/model.pkl'
     checks['submission_bytes_match'] = submitted.is_file() and sha(submitted) == confirmed.get('artifact_sha256')
     checks['usage_known'] = native.usage(root)['unknown_steps'] == []
     leaf = root / 'host-delivery/leaf-output'
     phases = {path.name.split('-')[1] for path in leaf.glob('*.json')} if leaf.is_dir() else set()
-    checks['leaf_output_preserved'] = {'resolve', 'smoke', 'audit', 'promote', 'confirm'} <= phases
+    checks['leaf_output_preserved'] = ({'resolve', 'audit', 'promote', 'confirm'} | ({'smoke'} if screen else set())) <= phases
     checks['audit_receipts_reference_leaf_output'] = all(row and row.get('leaf_output') for row in receipts)
     checks['leaf_output_not_in_workspaces'] = not any(b'leaf-output' in path.read_bytes()
         for path in (root / 'project/nodes').rglob('*') if path.is_file() and not path.is_symlink() and path.stat().st_size < 1 << 20)

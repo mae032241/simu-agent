@@ -89,25 +89,14 @@ def record(root, step, code, focus_source=None):
 
 
 def effective_route(root, step, result, job, route):
-    """Redirect refused optional thinking to W on the current plan, else closeout."""
+    """Preserve required corrections; stop optional thinking without inventing work."""
     role, parents, instruction, evidence_return, current_h, current_w, correction_request, author = route
+    # Author corrections are mandatory control repairs, not optional thinking.
+    # Their existing finite correction allowance and global budget still apply.
+    if author is not None:
+        return (*route, None, None)
     code = reason(root, step, job, result, role, correction_request)
     if code is None:
         return (*route, None, None)
-    from . import search
-    protocol = job.get('handoff_protocol', 1)
-    seal = c.read(c.host_record(c.workspace(root, step)) / 'result-identity.json')
-    enabled = c.settings(root).get('search_policy') is not None
-    state = search.project(root, step + 1) if enabled else None
-    for source in (search.REDIRECTS if enabled else (None,)):
-        if source is not None and search.redirect_focus(state, source)[0] is None:
-            continue
-        planned = dict(step=step + 1, role='W', handoff_protocol=protocol,
-                       input_selection_status=seal.get('control_outcome', {}).get('selection_status', 'applied'),
-                       search=search.bind(root, step + 1, 'W', protocol, write_pages=False, state=state, unified=True, redirect=source))
-        if search.launch_reason(root, planned) is None:
-            instruction = ('Control did not dispatch the requested ' + role + ' node (' + code + '); '
-                           'this W stage continues the current frozen scientific plan.')
-            return ('W', list(dict.fromkeys(p for p in (current_h, current_w, step) if p is not None)), instruction, None,
-                    current_h, current_w, None, None, record(root, step, code, source), None)
+    # Insufficient allocation never authorizes another scientific task.
     return None, [], '', None, current_h, current_w, None, None, None, code

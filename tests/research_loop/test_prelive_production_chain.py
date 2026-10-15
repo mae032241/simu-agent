@@ -46,6 +46,9 @@ def test_latest_frozen_settings_drive_full_chain_to_confirmed_delivery(tmp_path)
     result,verdict=gate(tmp_path,settings,launcher)
     assert result.returncode==0 and verdict['passed'],(verdict.get('error'),{k:v for k,v in verdict['checks'].items() if not v},verdict.get('reason'))
     assert verdict['status']=='delivery_confirmed' and verdict['models_called']==0
+    assert verdict['adopted_defaults']==[]
+    if c.read(settings).get('selection_policy') is None:
+        assert verdict['checks']['selection_disabled_preserved']
     assert verdict['source_protocol']==verdict['current_protocol']==CURRENT and verdict['settings_differences']==[]
     assert [(row['role'],row['purpose'],row['route']) for row in verdict['chain']]==[('H',None,'experiment'),('W',None,'review'),
         ('A',None,'audit'),('A',None,'continue_w'),('W',None,'review'),('A',None,'finish'),('A','closeout','audit'),('A','closeout','finish')]

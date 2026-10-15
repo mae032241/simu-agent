@@ -64,7 +64,7 @@ def drive(monkeypatch, script):
 def test_prepare_freezes_default_only_with_node_targets_and_validates(tmp_path):
     root = scene(tmp_path / 'a')
     assert c.settings(root)['role_budget_policy'] == role_share.DEFAULT
-    assert 'role_budget_policy' not in c.settings(scene(tmp_path / 'b', node=False))
+    assert 'role_budget_policy' not in c.settings(scene(tmp_path / 'b', node=False, policy=None))
     with pytest.raises(ValueError, match='node budgets'):
         scene(tmp_path / 'c', node=False, policy=dict(role_share.DEFAULT))
     for bad in (dict(role_share.DEFAULT, min_w_share=.7), dict(role_share.DEFAULT, max_thinking_share=0),
@@ -122,49 +122,53 @@ def test_old_instance_without_policy_keeps_original_routes(tmp_path):
     assert role_share.effective_route(root, 3, ap, a, ('H', [1, 2, 3], 'x', None, 1, 2, None, None))[-2:] == (None, None)
 
 
-def test_controller_redirects_exhausted_revision_to_w_on_current_plan_and_replays(tmp_path, monkeypatch):
+def test_budget_refusal_never_substitutes_a_w_task(tmp_path, monkeypatch):
     root = scene(tmp_path)
     launched = drive(monkeypatch, {
-        1: dict(action='experiment', plan=PLAN, tokens=100_000), 2: dict(findings=FINDINGS, tokens=500_000),
-        3: dict(action='revise_h', tokens=3_300_000), 4: dict(findings=FINDINGS, tokens=600_000),
-        5: dict(action='finish', tokens=100_000)})
+        1: dict(action='experiment', plan=PLAN, tokens=100_000),
+        2: dict(findings=FINDINGS, tokens=500_000),
+        3: dict(action='revise_h', tokens=3_300_000)})
     result = controller.run(root)
-    assert result['status'] == 'finish' and launched == [(1, 'H'), (2, 'W'), (3, 'A'), (4, 'W'), (5, 'A')]
-    job = c.read(root / 'jobs/004.json')
-    assert job['role_budget'] == dict(version=1, reason='role_share_thinking_reached', source_step=3, focus_source='plan_screen',
-                                      thinking_observed_tokens=3_400_000, thinking_cap_tokens=3_500_000)
-    assert job['search']['focus'] == dict(mechanism_ref='h001.m1', action='screen') and parents(job) == [1, 2, 3]
-    assert 'role_share_thinking_reached' in job['instruction']
-    c.validate(c.workspace(root, 4))  # The routed search binding is reproducible from frozen facts.
-    before = sorted(path.name for path in (root / 'jobs').iterdir())
-    assert controller.run(root)['status'] == 'finish' and sorted(path.name for path in (root / 'jobs').iterdir()) == before
+    assert result['status'] == 'role_budget_stop'
+    assert result['reason'] == 'role_share_thinking_reached'
+    assert launched == [(1, 'H'), (2, 'W'), (3, 'A')]
+    assert not (root / 'jobs/004.json').exists()
+    before = list(launched)
+    assert controller.run(root)['status'] == 'role_budget_stop'
+    assert launched == before
 
 
-def test_controller_redirects_repeated_author_without_new_evidence(tmp_path, monkeypatch):
+def test_controller_preserves_required_author_correction(tmp_path, monkeypatch):
     root = scene(tmp_path)
     repair = dict(PLAN, focus=dict(label='Q', action='repair'))
-    launched = drive(monkeypatch, {1: dict(action='experiment', plan=repair, tokens=100_000),
-        2: dict(findings=FINDINGS, tokens=600_000), 3: dict(action='finish', tokens=100_000)})
+    corrected = dict(PLAN, commitments=[dict(item, existing_ref=f'h001.m{n}') for n, item in enumerate(PLAN['commitments'], 1)])
+    launched = drive(monkeypatch, {
+        1: dict(action='experiment', plan=repair, tokens=3_400_000),
+        2: dict(action='experiment', plan=corrected, tokens=100_000),
+        3: dict(findings=FINDINGS, tokens=600_000),
+        4: dict(action='finish', tokens=100_000)})
     result = controller.run(root)
-    assert result['status'] == 'finish' and launched == [(1, 'H'), (2, 'W'), (3, 'A')]
+    assert result['status'] == 'finish', result
+    assert launched == [(1, 'H'), (2, 'H'), (3, 'W'), (4, 'A')]
     job = c.read(root / 'jobs/002.json')
-    assert job['role_budget']['reason'] == 'role_repeat_without_evidence' and job['role_budget']['focus_source'] == 'plan_screen'
-    assert 'author_correction' not in job and job['search']['focus']['action'] == 'screen'
+    assert job['author_correction']['reason'] == 'search_repair_source_unavailable'
+    assert 'role_budget' not in job
 
 
-def test_retained_redirect_marker_cannot_be_rewritten(tmp_path, monkeypatch):
+def test_required_corrections_keep_the_original_retry_cap(tmp_path, monkeypatch):
     root = scene(tmp_path)
-    script = {1: dict(action='experiment', plan=PLAN, tokens=100_000), 2: dict(findings=FINDINGS, tokens=500_000),
-              3: dict(action='revise_h', tokens=3_300_000)}
-    def execute(root, step):
-        job = c.read(root / 'jobs' / f'{step:03d}.json')
-        if step == 4:raise KeyboardInterrupt
-        seal(root, step, job['role'], parents(job), **script[step])
-    monkeypatch.setattr(native, 'execute_native', execute)
-    with pytest.raises(KeyboardInterrupt):controller.run(root)
-    budget.inactive(root, 'fixture interruption')
-    job = c.read(root / 'jobs/004.json');job['role_budget']['reason'] = 'forged';c.write(root / 'jobs/004.json', job)
-    assert controller.run(root)['status'] == 'retained_job_conflict'
+    repair = dict(PLAN, focus=dict(label='Q', action='repair'))
+    revised = dict(repair, commitments=[dict(item, existing_ref=f'h001.m{n}') for n, item in enumerate(PLAN['commitments'], 1)])
+    launched = drive(monkeypatch, {
+        1: dict(action='experiment', plan=repair, tokens=3_400_000),
+        2: dict(action='experiment', plan=revised, tokens=100_000),
+        3: dict(action='experiment', plan=revised, tokens=100_000)})
+    result = controller.run(root)
+    assert result['status'] == 'semantic_correction_required', result
+    assert launched == [(1, 'H'), (2, 'H'), (3, 'H')]
+    before = list(launched)
+    assert controller.run(root)['status'] == 'semantic_correction_required'
+    assert launched == before
 
 
 def test_no_valid_w_stops_without_dispatching_thinking(tmp_path, monkeypatch):
@@ -235,7 +239,7 @@ def test_cli_prepare_freezes_explicit_or_default_role_shares(tmp_path, capsys):
     node = tmp_path / 'node.json';c.write(node, {role: dict(max_observed_tokens=500_000, max_seconds=60) for role in 'HWAE'})
     custom = tmp_path / 'share.json';c.write(custom, dict(role_share.DEFAULT, max_thinking_share=.3))
     off = tmp_path / 'off.json';off.write_text('null\n')
-    for name, extra, expected in (('d', [], role_share.DEFAULT), ('c', ['--role-budget-policy', str(custom)], dict(role_share.DEFAULT, max_thinking_share=.3)),
+    for name, extra, expected in (('d', [], None), ('c', ['--role-budget-policy', str(custom)], dict(role_share.DEFAULT, max_thinking_share=.3)),
                                   ('o', ['--role-budget-policy', str(off)], None)):
         assert cli.main(['prepare', '--root', str(tmp_path / name), '--objective', str(objective), '--public-root', str(public),
             '--native-launcher-json', '["never"]', '--node-budget-policy', str(node), '--max-tokens', '1000000',

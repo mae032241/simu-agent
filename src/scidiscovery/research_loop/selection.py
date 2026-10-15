@@ -219,16 +219,19 @@ def project(records, *, audits=(), delivery=None):
 
 SHORTLIST_RULE = ('Rank completed candidates of one exact evaluation version by the declared public metric; '
     'equal metric ranks the later observed candidate first. Members: top-k, the current A recommendation and '
-    'the best candidate first observed at or after the latest A assessment.')
+    'the best candidate first observed at or after the latest A assessment. Multiple versions require an explicit '
+    'evaluation key; conflicting directions never rank. Without a ranking, retain bounded group bests for A.')
 DEFAULT_RULE = ('Default: best-ranked comparable member whose smoke is ok and audit passed (or audit unconfigured); '
     'else, when no audit passed, the best-ranked smoke-ok member whose audit did not fail (the submit audit still gates promotion). '
     'Failed or unknown smoke and failed audit never become the default.')
 
 
-def shortlist(records, k):
+def shortlist(records, k, *, evaluation_key=None):
     """Control default inputs from public facts only; no target optimality claim."""
     if type(k) is not int or not 1 <= k <= 8:
         raise ValueError('Shortlist size must be a small positive integer')
+    if evaluation_key is not None and (not isinstance(evaluation_key, str) or not evaluation_key or len(evaluation_key.encode()) > 2048):
+        raise ValueError('Selection evaluation key must be an exact public version')
     project(records)  # Identical public validation: no hidden columns, stable identities.
     items, first, order = {}, {}, {}
     for record in sorted(records, key=lambda row: row['step']):
@@ -243,7 +246,10 @@ def shortlist(records, k):
     for item in items.values():
         if item['status'] == 'ok' and item['metric'] is not None and item['evaluation_key']:
             groups.setdefault((item['evaluation_key'], item['direction']), []).append(item['id'])
-    version = max(groups, key=lambda key: (len(groups[key]), max(order[cid] for cid in groups[key]))) if groups else None
+    versions = {item['evaluation_key'] for item in items.values() if item['evaluation_key']}
+    chosen_key = evaluation_key if evaluation_key is not None else next(iter(versions)) if len(versions) == 1 else None
+    directions = {item['direction'] for item in items.values() if item['evaluation_key'] == chosen_key}
+    version = (chosen_key, next(iter(directions))) if chosen_key is not None and len(directions) == 1 else None
     def rank(cid):
         item = items[cid]
         return (-item['metric'] if item['direction'] == 'max' else item['metric'], -order[cid])
@@ -251,6 +257,9 @@ def shortlist(records, k):
     reasons = {}
     for cid in ranked[:k]:
         reasons.setdefault(cid, []).append('top_k')
+    retained_groups = sorted(key for key in groups if evaluation_key is None or key[0] == evaluation_key) if version is None else []
+    for key in retained_groups[:k]:
+        reasons.setdefault(min(groups[key], key=rank), []).append('evaluation_group_best')
     if recommended is not None:
         reasons.setdefault(recommended, []).append('a_recommended')
     fresh = [cid for cid in ranked if assessed is None or first[cid] >= assessed]
@@ -260,9 +269,10 @@ def shortlist(records, k):
                     direction=items[cid]['direction'], status=items[cid]['status'], first_step=first[cid],
                     rank=ranked.index(cid) + 1 if cid in ranked else None, reasons=value) for cid, value in reasons.items()]
     tail = ranked[k:]
-    return dict(version=1, k=k, evaluation_key=version[0] if version else None, direction=version[1] if version else None,
+    return dict(version=1, k=k, evaluation_key=chosen_key, direction=version[1] if version else None,
                 candidate_count=len(items), ranked_count=len(ranked), latest_a_step=assessed, a_recommended=recommended,
                 unassessed_count=len(fresh), boundary_ties_omitted=sum(items[cid]['metric'] == items[ranked[k - 1]]['metric'] for cid in tail),
+                evaluation_groups_omitted_count=sum(not any(cid in reasons for cid in groups[key]) for key in retained_groups),
                 members=members, rule=SHORTLIST_RULE)
 
 

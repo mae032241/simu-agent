@@ -29,8 +29,8 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
             node_budget_mode: str = 'soft', candidate_audit_policy: dict | None = None,
             handoff_authority_version: int | None = 1, decision_contract_version: int | None = None,
             portfolio_policy: dict | None = None, exploration_order_version: int | None = None,
-            worker_fragment_policy: dict | None = None, role_budget_policy: dict | None = role_share.DEFAULT,
-            selection_policy: dict | None = shortlist.DEFAULT) -> dict:
+            worker_fragment_policy: dict | None = None, role_budget_policy: dict | None = None,
+            selection_policy: dict | None = None) -> dict:
     """Freeze an explicit goal and finite launch budgets in a fresh directory."""
     portfolio_limits = search.portfolio_policy(portfolio_policy) if portfolio_policy is not None else None
     if exploration_order_version is not None:
@@ -94,8 +94,6 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
             raise ValueError('W fragments require the complete stage-intent schema; protocol13 is not enabled')
     if resume_limits is not None and node_limits is None:
         raise ValueError('Continuation requires explicit original node budgets')
-    if role_budget_policy is role_share.DEFAULT and node_limits is None:
-        role_budget_policy = None  # Default shares accompany explicit original node targets.
     share_limits = role_share.policy(role_budget_policy) if role_budget_policy is not None else None
     if share_limits is not None and node_limits is None:
         raise ValueError('Role budget shares require explicit original node budgets')
@@ -111,8 +109,6 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
         if delivery_limits is None or delivery_limits['adapter'] is None:
             raise ValueError('Candidate audit requires an explicit isolated delivery adapter')
     production = delivery_limits is not None and delivery_limits['adapter'] is not None and observer is not None
-    if selection_policy is shortlist.DEFAULT and not (production and candidate_audit_policy is not None):
-        selection_policy = None  # The default accompanies the observer, audit and isolated delivery configuration.
     selection_limits = shortlist.policy(selection_policy) if selection_policy is not None else None
     if selection_limits is not None and not production:
         raise ValueError('Control selection requires a public metric observer and an isolated delivery adapter')
