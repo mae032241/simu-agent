@@ -215,3 +215,63 @@ def project(records, *, audits=(), delivery=None):
     if len(_bytes(value)) > MAX_BRIEF_BYTES:
         raise ValueError('Selection fixed fields exceed brief bound')
     return value
+
+
+SHORTLIST_RULE = ('Rank completed candidates of one exact evaluation version by the declared public metric; '
+    'equal metric ranks the later observed candidate first. Members: top-k, the current A recommendation and '
+    'the best candidate first observed at or after the latest A assessment.')
+DEFAULT_RULE = ('Default: best-ranked comparable member whose smoke is ok and audit passed (or audit unconfigured); '
+    'else, when no audit passed, the best-ranked smoke-ok member whose audit did not fail (the submit audit still gates promotion). '
+    'Failed or unknown smoke and failed audit never become the default.')
+
+
+def shortlist(records, k):
+    """Control default inputs from public facts only; no target optimality claim."""
+    if type(k) is not int or not 1 <= k <= 8:
+        raise ValueError('Shortlist size must be a small positive integer')
+    project(records)  # Identical public validation: no hidden columns, stable identities.
+    items, first, order = {}, {}, {}
+    for record in sorted(records, key=lambda row: row['step']):
+        for item in record['candidates']:
+            if item['id'] not in items:
+                items[item['id']], first[item['id']], order[item['id']] = item, record['step'], len(order)
+    reviews = [row for row in records if row['role'] == 'A']
+    authors = [row for row in reviews if not row.get('audit_request')]
+    assessed = max((row['step'] for row in reviews), default=None)
+    recommended = max(authors, key=lambda row: row['step'])['recommendation'] if authors else None
+    groups = {}
+    for item in items.values():
+        if item['status'] == 'ok' and item['metric'] is not None and item['evaluation_key']:
+            groups.setdefault((item['evaluation_key'], item['direction']), []).append(item['id'])
+    version = max(groups, key=lambda key: (len(groups[key]), max(order[cid] for cid in groups[key]))) if groups else None
+    def rank(cid):
+        item = items[cid]
+        return (-item['metric'] if item['direction'] == 'max' else item['metric'], -order[cid])
+    ranked = sorted(groups.get(version, []), key=rank)
+    reasons = {}
+    for cid in ranked[:k]:
+        reasons.setdefault(cid, []).append('top_k')
+    if recommended is not None:
+        reasons.setdefault(recommended, []).append('a_recommended')
+    fresh = [cid for cid in ranked if assessed is None or first[cid] >= assessed]
+    if fresh:
+        reasons.setdefault(fresh[0], []).append('unassessed_best')
+    members = [dict(candidate_id=cid, metric=items[cid]['metric'], evaluation_key=items[cid]['evaluation_key'],
+                    direction=items[cid]['direction'], status=items[cid]['status'], first_step=first[cid],
+                    rank=ranked.index(cid) + 1 if cid in ranked else None, reasons=value) for cid, value in reasons.items()]
+    tail = ranked[k:]
+    return dict(version=1, k=k, evaluation_key=version[0] if version else None, direction=version[1] if version else None,
+                candidate_count=len(items), ranked_count=len(ranked), latest_a_step=assessed, a_recommended=recommended,
+                unassessed_count=len(fresh), boundary_ties_omitted=sum(items[cid]['metric'] == items[ranked[k - 1]]['metric'] for cid in tail),
+                members=members, rule=SHORTLIST_RULE)
+
+
+def default_choice(members, statuses):
+    """Pre-registered default over screened members; statuses map id -> smoke/audit status."""
+    ranked = sorted((row for row in members if row['rank'] is not None), key=lambda row: row['rank'])
+    usable = [row for row in ranked if statuses[row['candidate_id']]['smoke'] == 'ok'
+              and statuses[row['candidate_id']]['audit'] != 'failed']
+    passed = [row for row in usable if statuses[row['candidate_id']]['audit'] in {'passed', 'unconfigured'}]
+    chosen, basis = ((passed[0], 'audit_passed' if statuses[passed[0]['candidate_id']]['audit'] == 'passed' else 'audit_unconfigured') if passed
+                     else (usable[0], 'submit_audit_pending') if usable else (None, 'none_qualified'))
+    return dict(candidate_id=chosen['candidate_id'] if chosen else None, basis=basis, rule=DEFAULT_RULE)

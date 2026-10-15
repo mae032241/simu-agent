@@ -3,7 +3,8 @@
 Re-prepares a fresh scratch scene from the exact frozen settings of a real run
 (read-only source), rebinding only paths and code identities, and drives the
 actual controller, rootless launcher/bwrap namespace, registered cov calls,
-candidate audit, closeout and isolated delivery leaf to a confirmed delivery.
+candidate audit, closeout control shortlist/smoke/audit and isolated delivery leaf to
+a confirmed delivery of the control default.
 Run with the candidate interpreter, e.g. ``venv/bin/python -I prelive_gate.py``.
 """
 from __future__ import annotations
@@ -87,7 +88,16 @@ else:
  parents=[json.loads(p.read_text()) for p in sorted((work/'inputs/parents').glob('*/conclusion.json'))]
  improved=any(row.get('summary')=='Synthetic pre-live improve contribution' for row in parents)
  none=dict(search_review=None,progress_assessment=None,decision_request=None,portfolio_review=None)
- if closeout is not None:
+ table=(closeout or {}).get('comparison')
+ if table is not None:
+  default=table['default']['candidate_id']
+  rows=[dict(candidate_id=row['candidate_id'],key_risk='Public validation only; fake transport, no target evidence.',
+   decision='keep' if row['candidate_id']==default else 'replace') for row in table['rows']]
+  # Audit the control default, then finish with null: the pre-registered default is delivered.
+  payload.update(none,next_action='finish' if audit else 'audit',candidate_recommendation=None if audit else default,
+   candidate_comparison=dict(rows=rows,override=None) if audit else None,
+   route_reason='Keep the control default after its receipt' if audit else 'Audit the control default before delivery')
+ elif closeout is not None:
   pending=[row['candidate_id'] for row in closeout['sources']['items'] if row['status']=='audit_pending']
   latest=max(pending,key=lambda value:int(value.split('-')[1]))
   payload.update(none,next_action='finish' if audit else 'audit',candidate_recommendation=audit['candidate_id'] if audit else latest,
@@ -127,6 +137,11 @@ def _map(value, maps):
         for old, new in maps:
             if value == old or value.startswith(old + '/'):return new + value[len(old):]
     return value
+
+
+# Optional frozen fields an older source predates; the gate adopts the candidate
+# default a new live prepare would freeze, and reports it instead of hiding it.
+ADOPTED = ('selection_policy',)
 
 
 # Code/launcher identities and scratch paths are the only rebound settings.
@@ -192,8 +207,11 @@ def rebind(settings_path, launcher_path, work, scid_python, fault=None):
         'max_output_item_bytes', 'max_output_total_bytes', 'node_budget_mode') if key in settings}
     for key in ('search_policy', 'correction_policy', 'node_budget_policy', 'role_guidance', 'candidate_audit_policy',
                 'portfolio_policy', 'worker_fragment_policy', 'lineage_projection_version', 'selection_protocol',
-                'handoff_authority_version', 'decision_contract_version', 'role_budget_policy'):
+                'handoff_authority_version', 'decision_contract_version', 'role_budget_policy', 'selection_policy'):
         kwargs[key] = settings.get(key)
+    from scidiscovery.research_loop import shortlist
+    adopted = [key for key in ADOPTED if key not in settings]
+    if 'selection_policy' in adopted:kwargs['selection_policy'] = shortlist.DEFAULT
     if settings.get('history_observer') is not None:
         observer = settings['history_observer']
         kwargs['history_observer'] = dict(adapter=str(Path(cov_lineage.__file__).resolve()), config=observer['config'],
@@ -210,7 +228,7 @@ def rebind(settings_path, launcher_path, work, scid_python, fault=None):
                 source_roots=_map(adapter['source_roots'], maps))
         kwargs['delivery_policy'] = policy
     launcher = [scid_python, str(LAUNCHER), '--config', str(work / 'launcher.json'), '--']
-    return settings, config, manifest, maps, dict(root=root, objective=objective, public_root=public, launcher=launcher,
+    return settings, config, manifest, maps, adopted, dict(root=root, objective=objective, public_root=public, launcher=launcher,
                                                   user_updates=updates or None, **kwargs)
 
 
@@ -249,13 +267,22 @@ def _checks(root, chain, result):
     receipts = [candidate_audit._outcome(root, chain[index]['step']) for index in (2, 6)]
     checks['candidate_audits_audited'] = all(row is not None and row['result']['status'] == 'audited' for row in receipts)
     confirmed = result.get('last_confirmed') or {}
-    checks['delivered_closeout_choice'] = confirmed.get('candidate_id') == chain[7]['candidate'] == chain[6]['candidate']
+    screen = c.read(root / 'host-delivery/selection/screen.json') if (root / 'host-delivery/selection/screen.json').is_file() else None
+    default = (screen or {}).get('default', {}).get('candidate_id')
+    checks['delivered_closeout_choice'] = confirmed.get('candidate_id') == default == chain[6]['candidate'] and chain[7]['candidate'] is None
+    rows = (screen or {}).get('rows', [])
+    checks['selection_shortlist_frozen'] = bool(rows) and default is not None and any('a_recommended' in row['reasons'] for row in rows)
+    checks['selection_smoke_ok_with_leaf_output'] = bool(rows) and all(row['smoke']['status'] == 'ok' and c.read(
+        root / 'host-delivery/selection' / (row['smoke']['receipt'] + '.outcome.json'))['leaf_output'] for row in rows)
+    checks['selection_default_audited'] = any(row['candidate_id'] == default and row['audit']['status'] == 'passed' for row in rows)
+    final = c.read(execution.raw(root, chain[7]['step'])).get('candidate_comparison') or {}
+    checks['selection_comparison_sealed'] = [row['candidate_id'] for row in final.get('rows', [])] == [row['candidate_id'] for row in rows]
     submitted = root / 'submission/model.pkl'
     checks['submission_bytes_match'] = submitted.is_file() and sha(submitted) == confirmed.get('artifact_sha256')
     checks['usage_known'] = native.usage(root)['unknown_steps'] == []
     leaf = root / 'host-delivery/leaf-output'
     phases = {path.name.split('-')[1] for path in leaf.glob('*.json')} if leaf.is_dir() else set()
-    checks['leaf_output_preserved'] = {'resolve', 'audit', 'promote', 'confirm'} <= phases
+    checks['leaf_output_preserved'] = {'resolve', 'smoke', 'audit', 'promote', 'confirm'} <= phases
     checks['audit_receipts_reference_leaf_output'] = all(row and row.get('leaf_output') for row in receipts)
     checks['leaf_output_not_in_workspaces'] = not any(b'leaf-output' in path.read_bytes()
         for path in (root / 'project/nodes').rglob('*') if path.is_file() and not path.is_symlink() and path.stat().st_size < 1 << 20)
@@ -320,10 +347,12 @@ def run_gate(settings_path, launcher_path, work, *, scid_python=None, fault=None
         verdict['seconds'] = round(time.monotonic() - started, 1)
         return verdict  # Fail fast: a live run from this source could not start or would not be current.
     try:
-        _, _, _, maps, kwargs = rebind(settings_path, launcher_path, work, scid_python, fault)
+        _, _, _, maps, adopted, kwargs = rebind(settings_path, launcher_path, work, scid_python, fault)
         controller.prepare(**kwargs)
         root = kwargs['root']
         diff = differences(normalized(settings, maps), normalized(json.loads((root / 'settings.json').read_bytes())))
+        verdict['adopted_defaults'] = ['/' + key for key in adopted]
+        diff = [path for path in diff if path not in verdict['adopted_defaults']]
         checks['settings_equal_except_rebound'] = not diff
         verdict['settings_differences'] = diff[:32];verdict['rebound'] = ['/'.join(path) for path in REBOUND]
         result = controller.run(root)

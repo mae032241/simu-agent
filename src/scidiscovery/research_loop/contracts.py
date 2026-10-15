@@ -97,7 +97,8 @@ def actions(role,protocol=CURRENT):
     return (*ACTIONS[role],'audit') if role=='A' else ACTIONS.get(role,())
 
 
-def result_schema(role: str,protocol=CURRENT):
+def result_schema(role: str,protocol=CURRENT,comparison=False):
+    """comparison: only a closeout A bound to a frozen control shortlist (job['selection'])."""
     from .protocol import _current
     _current(protocol,'Scientific result schema')
     if role not in ROLE_INSTRUCTIONS:raise ValueError('Unknown scientific role')
@@ -122,10 +123,13 @@ def result_schema(role: str,protocol=CURRENT):
             progress_assessment=correction.schema(),decision_request=decision.schema(),
             portfolio_review=dict(type=['string','null'],maxLength=1024,
                 description='When the configured overview requests it, explain scientific opportunity cost. Explicit justified selection may provide this reason; otherwise null.'))
+        if comparison:
+            from . import shortlist
+            properties['candidate_comparison']=shortlist.schema()
     return dict(type='object',properties=properties,required=list(properties),additionalProperties=False)
 
 
-def science_payload(path: Path, role: str, protocol=CURRENT):
+def science_payload(path: Path, role: str, protocol=CURRENT, comparison=False):
     import jsonschema
     from .output_repair import OutputRepairRequired
     original = regular(path, limit=MAX_RESULT_BYTES)
@@ -134,7 +138,7 @@ def science_payload(path: Path, role: str, protocol=CURRENT):
     except (json.JSONDecodeError, UnicodeDecodeError) as error:
         raise OutputRepairRequired('invalid_json', 'Return one valid JSON object matching final_response; completed experiments remain retained.') from error
     try:
-        jsonschema.validate(value, result_schema(role, protocol))
+        jsonschema.validate(value, result_schema(role, protocol, comparison))
     except jsonschema.ValidationError as error:
         location = '.'.join(map(str, error.absolute_path))[:128] or 'final response'
         raise OutputRepairRequired('invalid_fields', 'Correct required fields and types in ' + location + ' using final_response; do not repeat experiments.') from error
@@ -289,7 +293,7 @@ def _decision_context(root, job):
     if ref is None:
         return None
     source_job = read(regular(root / 'jobs' / f'{previous:03d}.json'))
-    source = science_payload(_execution_raw(root, previous), source_job['role'], source_job.get('handoff_protocol', 1))
+    source = science_payload(_execution_raw(root, previous), source_job['role'], source_job.get('handoff_protocol', 1), 'selection' in source_job)
     action = 'continue_w' if job['role'] == 'W' else 'revise_h'
     if (source_job['role'] != 'A' or source.get('next_action') != action
             or job['instruction'] != source.get('route_reason')):
@@ -356,6 +360,10 @@ def science_view(job, root=None):
         closeout = dict(source_cutoff=job['source_cutoff'],
             selection='Choose a frozen candidate ID for delivery; null means no decision, not retention. Report scientific reasoning and limitations.',
             sources=delivery.public_sources(job['delivery_sources']))
+        if job.get('selection') is not None:
+            from . import shortlist
+            closeout.update(selection='Compare every comparison row; null keeps the control default. Report scientific reasoning and limitations.',
+                            comparison=shortlist.public_table(root, job['selection']))
     priorities={
         'H':('A','E','H','W'), 'W':('H','A','W','E'),
         'A':('W','E','H','A'), 'E':('A','H','W','E')}
@@ -412,7 +420,7 @@ def science_view(job, root=None):
         **(dict(decision_request='For scientific continuation, declare the decision, question and result that would change it. '
                 'Exact completed requests without new bound evidence require clarification; this is not a scientific value judgment.')
            if protocol >= 10 and job['role'] == 'A' else {}),
-        'final_response': list(result_schema(job['role'], job.get('handoff_protocol', 1))['properties']),
+        'final_response': list(result_schema(job['role'], job.get('handoff_protocol', 1), 'selection' in job)['properties']),
         'outputs': 'artifacts/', 'scratch': 'work/',
     }.items() if value}
 
@@ -592,6 +600,11 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
     if purpose is not None:
         job.update(purpose=purpose, source_cutoff=source_cutoff, delivery_sources=delivery_sources,
                    closeout_begin=dict(seq=begin['seq'], sha256=digest(root / 'control-ledger' / f'{begin["seq"]:06d}.json')))
+        if policy.get('selection_policy') is not None:
+            from . import shortlist
+            mark = shortlist.marker(root)
+            if mark is not None:
+                job['selection'] = mark
     previous = read(host_record(workspace(root, step - 1)) / 'result-identity.json') if step - 1 in parents else {}
     job['input_selection_status'] = previous.get('control_outcome', {}).get('selection_status', 'applied')
     job['control_diagnostics'] = previous.get('control_outcome', {}).get('diagnostics', [])
@@ -638,7 +651,7 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
             job['decision_context'] = context
     for path, value in ((root / 'jobs' / f'{step:03d}.json', job),
                         (work / 'science-task.json', science_view(job, root)),
-                        (host_record(work) / 'science-result.schema.json', result_schema(role, protocol))):
+                        (host_record(work) / 'science-result.schema.json', result_schema(role, protocol, 'selection' in job))):
         if path.exists():
             if read(regular(path)) != value:
                 raise ValueError('Frozen scientific task changed')
@@ -665,7 +678,7 @@ def validate(work: Path):
             or seal['raw_sha256'] != digest(conclusion) or outcome.get('raw_sha256') != seal['raw_sha256']
             or read(regular(work / 'science-task.json')) != science_view(job, root)):
         raise ValueError('Scientific node identity changed')
-    payload = science_payload(raw, job['role'], job.get('handoff_protocol', 1))
+    payload = science_payload(raw, job['role'], job.get('handoff_protocol', 1), 'selection' in job)
     if seal.get('control_outcome') is not None:
         from . import semantic
         if seal['control_outcome'] != semantic.outcome(root, job, payload):
@@ -727,6 +740,9 @@ def _validate_inputs(root, work, job):
         first = root / 'jobs' / f'{begin["first_step"]:03d}.json'
         if job['step'] > begin['first_step'] and job['delivery_sources'] != read(regular(first))['delivery_sources']:
             raise ValueError('Closeout correction cannot resolve new candidate originals')
+        from . import shortlist
+        if job.get('selection') != (shortlist.marker(root) if policy.get('selection_policy') is not None else None):
+            raise ValueError('Closeout comparison differs from its frozen control screening')
     if job.get('role_budget') is not None and (job['role'] != 'W' or policy.get('role_budget_policy') is None):
         raise ValueError('Control role-budget routing differs from its frozen policy')
     from . import correction
@@ -807,7 +823,7 @@ def seal_result(root: Path, step: int):
     raw = regular(raw_path, limit=MAX_RESULT_BYTES)
     if outcome.get('raw_sha256') != digest(raw):
         raise ValueError('Terminal scientific output is unverified or changed')
-    value = envelope(job, science_payload(raw, job['role'], job.get('handoff_protocol', 1)))
+    value = envelope(job, science_payload(raw, job['role'], job.get('handoff_protocol', 1), 'selection' in job))
     if job['role']=='W':
         from . import worker_delivery
         if worker_delivery.applicable(job):

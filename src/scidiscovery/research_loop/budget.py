@@ -198,6 +198,10 @@ def execution_blocked(root, *, ignore_operation=None):
         from . import candidate_audit
         if candidate_audit.blocked(root):
             return True
+    if settings.get('selection_policy'):
+        from . import shortlist
+        if shortlist.blocked(root):
+            return True
     state = closeout_state(root)
     if state['begin'] is not None and state['begin']['stop_reason'] == 'delivery_cleanup_unknown':
         return True  # A read-only resolver can still leave unknown local work.
@@ -583,6 +587,9 @@ def used_steps(root):
     if contracts.settings(root).get('candidate_audit_policy'):
         from . import candidate_audit
         audits = sum(1 for _ in candidate_audit.facts(root))
+    if contracts.settings(root).get('selection_policy'):
+        from . import shortlist
+        audits += shortlist.calls(root)  # Control screening calls are bounded external actions too.
     return max(prepared, default=0) + continuations + len(closeout_state(root)['actions']) + audits
 
 

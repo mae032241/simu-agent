@@ -24,6 +24,7 @@ MAX_READ_BYTES = 128 * 1024 * 1024
 MAX_SOURCES = 128
 SOURCE_SECONDS = 5  # Mechanical transport safety, never a scientific cost estimate.
 MAX_LEAF_TAIL = 64 * 1024  # Host-only stream tail retained per isolated leaf call.
+CAPABILITIES = {'smoke'}  # Optional adapter phases a resolver may declare; absent means unavailable.
 
 
 class DeliveryUnresolved(ValueError):
@@ -245,7 +246,9 @@ def freeze_sources(root, source_nodes, *, candidate_id=None):
                        candidate_id=None, artifact_sha256=None, root=str(root), source_roots=spec['source_roots'],
                        candidates=candidates, inputs=spec['inputs'], config=spec['config'], target=spec['target'], stage=str(stage))
         value = _call(spec, request, deadline - time.clock_gettime(time.CLOCK_BOOTTIME), evidence=leaf_output(root))
-    if not isinstance(value, dict) or set(value) != {'items'} or not isinstance(value['items'], list):
+    declared = value.get('capabilities', []) if isinstance(value, dict) else None
+    if (not isinstance(value, dict) or set(value) - {'capabilities'} != {'items'} or not isinstance(value['items'], list)
+            or not isinstance(declared, list) or not all(isinstance(name, str) for name in declared) or not set(declared) <= CAPABILITIES):
         raise DeliveryUnresolved('delivery_resolver_unavailable')
     originals = {row['candidate_id']: row for row in candidates}
     items, seen = [], set()
@@ -298,7 +301,8 @@ def freeze_sources(root, source_nodes, *, candidate_id=None):
     for candidate in candidates:
         if candidate['candidate_id'] not in seen:
             items.append(dict(candidate_id=candidate['candidate_id'], status='unavailable', reason='delivery_source_unavailable'))
-    packed = dict(items=[], omitted_count=len(known) - len(candidates), source_nodes=list(source_nodes))
+    packed = dict(items=[], omitted_count=len(known) - len(candidates), source_nodes=list(source_nodes),
+                  **(dict(capabilities=sorted(set(declared))) if declared else {}))
     for item in items:
         if len(_bytes(dict(packed, items=[*packed['items'], item]))) > MAX_BYTES:
             packed['omitted_count'] += 1
@@ -355,6 +359,9 @@ def binding(root, job, result):
     chosen = result.get('candidate_recommendation')
     if chosen != raw.get('candidate_recommendation'):
         raise ValueError('Delivery choice differs from sealed original')
+    if job.get('selection') is not None and raw.get('next_action') == 'finish':
+        from . import shortlist
+        chosen = shortlist.choice(root, job, raw)  # Null keeps the pre-registered control default.
     if chosen is None or raw.get('next_action') != 'finish':
         raise DeliveryUnresolved('delivery_no_decision')
     rows = [row for row in job.get('delivery_sources', {}).get('items', []) if row['candidate_id'] == chosen]
@@ -436,10 +443,10 @@ def _call(spec, request, seconds, *, on_process=None, evidence=None):
     output, errors, totals = bytearray(), bytearray(), dict(stdout=0, stderr=0)
     def keep(outcome, returncode=None):
         streams = dict(stdout=(totals['stdout'], bytes(output[-MAX_LEAF_TAIL:])), stderr=(totals['stderr'], bytes(errors)))
-        if request.get('phase') == 'audit' and request.get('stage'):
+        if request.get('phase') in ('audit', 'smoke') and request.get('stage'):
             for name in ('stdout', 'stderr'):
-                found = _tail(Path(request['stage']) / 'scratch' / f'audit.{name}')
-                if found is not None:streams['audit.' + name] = found
+                found = _tail(Path(request['stage']) / 'scratch' / f"{request['phase']}.{name}")
+                if found is not None:streams[request['phase'] + '.' + name] = found
         _keep(evidence, request, outcome, returncode, streams)
     with tempfile.TemporaryFile() as input_file:
         input_file.write(data);input_file.seek(0)
@@ -495,6 +502,42 @@ def _call(spec, request, seconds, *, on_process=None, evidence=None):
     return value
 
 
+def _staged(root, spec, source, operation_id, stage):
+    """Copy exact frozen candidate objects into a fresh stage; the leaf mounts only these."""
+    (stage / 'inputs/harness').mkdir(parents=True)
+    (stage / 'scratch').mkdir()
+    for name, proof in source['objects'].items():
+        _label(name)
+        (stage / 'inputs' / name).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(_proof(root, proof), stage / 'inputs' / name)
+        (stage / 'inputs' / name).chmod(0o400)
+    return dict(scope=dict(handoff_protocol=c.settings(root)['handoff_protocol']), operation_id=operation_id, candidate_id=source['candidate_id'],
+                artifact_sha256=source['objects']['artifact']['sha256'], context=source['context'],
+                object_digests={name: proof['sha256'] for name, proof in source['objects'].items()},
+                inputs=spec['inputs'], config=spec['config'], target=spec['target'], stage=str(stage))
+
+
+def leaf_phase(root, source, operation_id, phase, seconds, *, on_process=None):
+    """One control screening phase on exact frozen originals; never promotes or confirms."""
+    from .protocol import require_current
+    require_current(root)
+    if (phase not in {'smoke', 'audit'} or source.get('status') != 'audit_pending'
+            or type(seconds) not in (int, float) or not 0 < seconds < float('inf')):
+        raise ValueError('Control screening requires an exact pending original and bounded phase')
+    spec = _adapter(Path(root).resolve())
+    with tempfile.TemporaryDirectory(prefix='scid-selection-') as directory:
+        request = dict(_staged(root, spec, source, operation_id, Path(directory)), phase=phase)
+        value = _call(spec, request, seconds, on_process=on_process, evidence=leaf_output(root))
+    if value is None:
+        return dict(status='failed' if phase == 'audit' else 'unknown', note='bounded_' + phase + '_unverified', cleanup_confirmed=True)
+    allowed = {'ok', 'failed', 'unknown'} if phase == 'smoke' else {'audited', 'failed', 'unknown'}
+    if (not isinstance(value, dict) or set(value) != {'status', 'operation_id', 'candidate_id', 'artifact_sha256', 'note'}
+            or any(value.get(key) != request[key] for key in ('operation_id', 'candidate_id', 'artifact_sha256'))
+            or value['status'] not in allowed or not isinstance(value['note'], str) or len(value['note'].encode()) > 1024):
+        return dict(status='failed' if phase == 'audit' else 'unknown', note='invalid_' + phase + '_result', cleanup_confirmed=True)
+    return dict(status=value['status'], note=value['note'], cleanup_confirmed=True)
+
+
 def invoke(root, intent, max_seconds, *, on_process=None, audit_only=False):
     """Caller already durably accepted this action; recovered submits never call here."""
     from .protocol import require_current
@@ -536,18 +579,7 @@ def invoke(root, intent, max_seconds, *, on_process=None, audit_only=False):
     if intent['action_kind'] not in (('audit',) if audit_only else ('submit', 'confirm')):
         raise ValueError('Unknown delivery action')
     with tempfile.TemporaryDirectory(prefix='scid-delivery-') as directory:
-        stage = Path(directory)
-        (stage / 'inputs/harness').mkdir(parents=True)
-        (stage / 'scratch').mkdir()
-        for name, proof in bound['source']['objects'].items():
-            _label(name)
-            (stage / 'inputs' / name).parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(_proof(root, proof), stage / 'inputs' / name)
-            (stage / 'inputs' / name).chmod(0o400)
-        request = dict(scope=dict(handoff_protocol=c.settings(root)['handoff_protocol']),operation_id=bound['operation_id'], candidate_id=bound['candidate_id'],
-                       artifact_sha256=bound['source']['objects']['artifact']['sha256'], context=bound['source']['context'],
-                       object_digests={name: proof['sha256'] for name, proof in bound['source']['objects'].items()},
-                       inputs=spec['inputs'], config=spec['config'], target=spec['target'], stage=str(stage))
+        request = _staged(root, spec, bound['source'], bound['operation_id'], Path(directory))
         phases = ('audit',) if audit_only else ('audit', 'promote') if intent['action_kind'] == 'submit' else ('confirm',)
         for phase in phases:
             remaining = deadline - time.clock_gettime(time.CLOCK_BOOTTIME)

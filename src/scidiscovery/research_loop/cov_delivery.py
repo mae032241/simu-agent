@@ -143,6 +143,49 @@ def _audit(value, run_id):
             and isinstance(value.get('audit_note'), str) and value['audit_note'].startswith('audit took '))
 
 
+# Smoke: the exact saved artifact loads and predicts public validation inputs in
+# the leaf, with the frozen task interpreter. No score, audit or target claim.
+SMOKE = r'''import importlib.util,json
+def stage(name,**extra):json.dump(dict(stage=name,**extra),open('/scratch/smoke.json','w'))
+stage('harness')
+import numpy as np,pandas as pd
+try:import cloudpickle as loader
+except ImportError:import pickle as loader
+spec=importlib.util.spec_from_file_location('scid_public_runner','/inputs/harness/runner.py')
+runner=importlib.util.module_from_spec(spec);spec.loader.exec_module(runner)
+meta=json.load(open('/inputs/harness/meta.json'));X,y,_=runner.split_X_y(pd.read_csv('/inputs/harness/val.csv'),meta)
+stage('model')
+with open('/inputs/artifact','rb') as f:model=loader.load(f)
+stage('predict')
+try:p=model.predict(X)
+except Exception:p=model.predict(X.values)
+p=np.asarray(p)
+stage('done',shape_ok=p.shape==np.shape(y),finite=bool(np.issubdtype(p.dtype,np.number) and np.isfinite(p).all()))
+'''
+
+
+def _smoke(request):
+    with Path('/scratch/smoke.stdout').open('wb') as out, Path('/scratch/smoke.stderr').open('wb') as err:
+        subprocess.run([request['config']['python'], '-I', '-c', SMOKE], env=dict(os.environ), cwd='/scratch', stdout=out, stderr=err)
+    try:
+        value = json.loads(_exact('/scratch/smoke.json', 4096).read_text())
+    except (OSError, ValueError):
+        value = {}
+    return _reply(request, *smoke_status(value))
+
+
+def smoke_status(value):
+    """Interpret the leaf-written stage record; a harness failure is unknown, not a model failure."""
+    stage = value.get('stage') if isinstance(value, dict) else None
+    if stage in (None, 'harness'):
+        return 'unknown', 'smoke_public_harness_unavailable'
+    if stage != 'done':
+        return 'failed', 'smoke_artifact_' + ('load' if stage == 'model' else 'predict') + '_failed'
+    if value.get('shape_ok') is not True or value.get('finite') is not True:
+        return 'failed', 'smoke_prediction_invalid'
+    return 'ok', 'smoke_artifact_loaded_and_predicted_public_inputs'
+
+
 def _reply(request, status, note):
     return dict(status=status, operation_id=request['operation_id'], candidate_id=request['candidate_id'],
                 artifact_sha256=request['artifact_sha256'], note=note)
@@ -207,7 +250,7 @@ def leaf(request):
             except (SourceUnavailable, FileNotFoundError):
                 pass
             items.append(item)
-        return dict(items=items)
+        return dict(items=items, capabilities=['smoke'])
     run_id = request['context']['row']['run_id']
     if request['candidate_id'] != f'run-{run_id}' or not re.fullmatch('[0-9a-f]{64}', request['operation_id']):
         raise ValueError('Exact operation and candidate required')
@@ -216,6 +259,8 @@ def leaf(request):
     for label, digest in request['object_digests'].items():
         if _sha(Path('/inputs') / label) != digest:raise ValueError('Frozen audit input changed')
     runs, submission = Path('/target/runs'), Path('/target/submission')
+    if phase == 'smoke':
+        return _smoke(request)
     if phase == 'audit':
         scratch = Path('/scratch/runs');scratch.mkdir()
         row = dict(request['context']['row'], model_path='/inputs/artifact', script='/inputs/source.py')
@@ -285,13 +330,13 @@ def isolate(request, adapter):
     args += ['--ro-bind', str(stage / 'inputs'), '/inputs', '--ro-bind', adapter, '/delivery.py']
     phase = request['phase']
     target(request['target'])
-    args += ['--bind' if phase in {'audit', 'resolve'} else '--ro-bind', str(stage / 'scratch'), '/scratch']
+    args += ['--bind' if phase in {'audit', 'resolve', 'smoke'} else '--ro-bind', str(stage / 'scratch'), '/scratch']
     if phase == 'resolve':
         for scope in request['source_roots']:
             path = Path(scope)
             if path.resolve() != path or not path.is_dir():raise ValueError('Original read scope missing or changed')
             args += ['--ro-bind', str(path), str(path)]
-    elif phase != 'audit':
+    elif phase not in {'audit', 'smoke'}:
         args += ['--dir', '/target']
         for key in ('runs', 'submission'):
             path = Path(request['target'][key])

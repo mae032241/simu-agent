@@ -58,7 +58,7 @@ def validate_intent(root, intent):
     if c.read(c.regular(path)) != {key: value for key, value in intent.items() if key != 'binding'}:
         raise ValueError('Candidate audit accepted identity changed')
     job = c.read(root / 'jobs' / f'{decision["step"]:03d}.json')
-    raw = c.science_payload(execution.raw(root, decision['step']), 'A', job['handoff_protocol'])
+    raw = c.science_payload(execution.raw(root, decision['step']), 'A', job['handoff_protocol'], 'selection' in job)
     if job.get('purpose') is not None:
         begin = budget.closeout_state(root)['begin']
         if (job['purpose'] != 'closeout' or begin is None or job['source_cutoff'] != begin['source_cutoff']

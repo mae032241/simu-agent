@@ -5,7 +5,7 @@ import argparse
 import json
 from pathlib import Path
 
-from . import budget, contracts, controller, native, runtime, search, correction, execution, feedback, history, role_share
+from . import budget, contracts, controller, native, runtime, search, correction, execution, feedback, history, role_share, shortlist
 
 
 def status(root: Path):
@@ -65,6 +65,7 @@ def main(argv=None):
     prepare.add_argument('--node-budget-policy', type=Path, help='Explicit H/W/A/E time/token targets; hard ceilings only with --node-budget-mode hard; no delivery guarantee')
     prepare.add_argument('--node-budget-mode', choices=['soft','hard'], default='soft', help='Scientific node targets are soft by default; shared authorization stays hard')
     prepare.add_argument('--role-budget-policy', type=Path, help='Frozen W/H+A token shares and H/A node target JSON (null disables); default shares accompany node budgets')
+    prepare.add_argument('--selection-policy', type=Path, help='Frozen closeout shortlist size and smoke ceiling JSON (null disables); default accompanies observer, candidate audit and delivery adapter')
     prepare.add_argument('--portfolio-review-after-cycles', type=int, help='Enable version2/protocol12 opportunity-cost review after this many unserved W+A cycles; recommended 3')
     prepare.add_argument('--decision-contract', action='store_true', help='Freeze protocol10 scientific A decision requests and exact repeat admission')
     prepare.add_argument('--enable-candidate-audit', action='store_true', help='Opt into protocol9 A audit requests; requires an isolated delivery adapter')
@@ -123,6 +124,8 @@ def main(argv=None):
                 worker_fragment_policy=dict(context=args.worker_context) if args.worker_context else None,
                 role_budget_policy=contracts.read(contracts.regular(args.role_budget_policy, limit=4096))
                     if args.role_budget_policy is not None else role_share.DEFAULT,
+                selection_policy=contracts.read(contracts.regular(args.selection_policy, limit=4096))
+                    if args.selection_policy is not None else shortlist.DEFAULT,
                 resume_policy=contracts.read(contracts.regular(args.worker_resume_policy, limit=4096))
                     if args.worker_resume_policy is not None else None,
                 history_observer=contracts.read(contracts.regular(args.history_observer_config, limit=64_000))

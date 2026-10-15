@@ -49,7 +49,7 @@ def validate_task(root, step):
     job = c.read(c.regular(root / 'jobs' / f'{step:03d}.json'))
     c._validate_inputs(root, c.workspace(root, step), job)
     schema = c.read(c.regular(execution.origin(root, step) / 'science-result.schema.json', limit=c.MAX_RESULT_BYTES))
-    if schema != c.result_schema(job['role'], job.get('handoff_protocol', 1)):
+    if schema != c.result_schema(job['role'], job.get('handoff_protocol', 1), 'selection' in job):
         raise ValueError('Original native output schema changed')
     return job
 
@@ -178,7 +178,7 @@ def output_request(root, step, record, *, source_attempt=None, verify_task=True)
         if c.digest(c.regular(raw, limit=c.MAX_RESULT_BYTES)) != outcome.get('raw_sha256'):
             raise ValueError('Original final output changed before repair')
         try:
-            science=c.science_payload(raw, job['role'], job.get('handoff_protocol', 1))
+            science=c.science_payload(raw, job['role'], job.get('handoff_protocol', 1), 'selection' in job)
             if job['role']=='W':
                 from . import worker_delivery
                 worker_delivery.require_delivery(root,job,science,record)

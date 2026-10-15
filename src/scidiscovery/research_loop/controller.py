@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import uuid
 
-from . import budget, contracts, history, native, runtime, search, correction, semantic, execution, continuation, guidance, checkpoint, role_share
+from . import budget, contracts, history, native, runtime, search, correction, semantic, execution, continuation, guidance, checkpoint, role_share, shortlist
 from .output_repair import OutputRepairRequired
 
 
@@ -29,7 +29,8 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
             node_budget_mode: str = 'soft', candidate_audit_policy: dict | None = None,
             handoff_authority_version: int | None = 1, decision_contract_version: int | None = None,
             portfolio_policy: dict | None = None, exploration_order_version: int | None = None,
-            worker_fragment_policy: dict | None = None, role_budget_policy: dict | None = role_share.DEFAULT) -> dict:
+            worker_fragment_policy: dict | None = None, role_budget_policy: dict | None = role_share.DEFAULT,
+            selection_policy: dict | None = shortlist.DEFAULT) -> dict:
     """Freeze an explicit goal and finite launch budgets in a fresh directory."""
     portfolio_limits = search.portfolio_policy(portfolio_policy) if portfolio_policy is not None else None
     if exploration_order_version is not None:
@@ -109,6 +110,12 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
             raise ValueError('Unsupported candidate audit policy')
         if delivery_limits is None or delivery_limits['adapter'] is None:
             raise ValueError('Candidate audit requires an explicit isolated delivery adapter')
+    production = delivery_limits is not None and delivery_limits['adapter'] is not None and observer is not None
+    if selection_policy is shortlist.DEFAULT and not (production and candidate_audit_policy is not None):
+        selection_policy = None  # The default accompanies the observer, audit and isolated delivery configuration.
+    selection_limits = shortlist.policy(selection_policy) if selection_policy is not None else None
+    if selection_limits is not None and not production:
+        raise ValueError('Control selection requires a public metric observer and an isolated delivery adapter')
     settings = dict(goal_id="scid-hwa-" + uuid.uuid4().hex[:12], objective=text,
         public_root=str(public_root.resolve()), native_launcher_argv=list(launcher),
         max_tokens=max_tokens, max_seconds=max_seconds, max_steps=max_steps, time_budget_basis="active",
@@ -149,6 +156,8 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
         settings['node_budget_policy'] = node_limits
     if share_limits is not None:
         settings['role_budget_policy'] = share_limits
+    if selection_limits is not None:
+        settings['selection_policy'] = selection_limits
     if observer is not None:
         settings['history_observer'] = observer
     if search_limits is not None:
@@ -511,6 +520,7 @@ def _closeout_result(root, status, *, reason=None, step=None, read_only=False):
                 closed.append(job['step'])
     cutoff = begin['source_cutoff'] if begin else 0
     previous = history.candidate_overview(history.rebuild(root, cutoff + 1, write_cache=False))
+    screened = shortlist.summary(root) if contracts.settings(root).get('selection_policy') else None
     last = max(closed, default=cutoff) or None
     confirmed = [row['outcome']['result'] for row in state['actions'] if row['outcome'] is not None
                  and row['intent']['action_kind'] == 'confirm' and row['outcome']['result']['status'] == 'confirmed']
@@ -527,6 +537,8 @@ def _closeout_result(root, status, *, reason=None, step=None, read_only=False):
         previous_submission_observation=previous['actual_submission'], existing_A_recommendation=previous['a_recommended'],
         last_confirmed=confirmed[-1] if confirmed else None,
         current_actual='unknown' if state['unresolved_operations'] or pending_confirmation else (confirmed[-1] if confirmed else None))
+    if screened is not None:
+        result['control_selection'] = screened
     if reason is not None:
         result['reason'] = reason
     if step is not None:
@@ -636,6 +648,10 @@ def _run_closeout(root):
         return _closeout_result(root, 'exported_unsubmitted', reason=begin['stop_reason'])
     if (root / 'pause.request').exists() or correction.gate(root, begin['source_cutoff']) is not None:
         return _closeout_result(root, 'closeout_blocked', reason='Original pause remains effective')
+    if contracts.settings(root).get('selection_policy') and not (root / 'jobs' / f'{begin["first_step"]:03d}.json').exists():
+        stopped = shortlist.screen(root, begin)  # Control shortlist, smoke and audit before the first closeout A.
+        if stopped is not None:
+            return _closeout_result(root, stopped)
     parents = []
     for role in ('H', 'W', 'A'):
         matching = [step for step in range(1, begin['source_cutoff'] + 1)
@@ -647,6 +663,12 @@ def _run_closeout(root):
         'Do not perform or manufacture mechanical audit qualification. '
         'Use candidate_recommendation, with null if no decision is justified. Explain science, limitations and unmet objectives. '
         'This closes exploration; requests for new H/W/E or waiting remain unresolved, not automatic dispatch.')
+    if contracts.settings(root).get('selection_policy') and shortlist.marker(root) is not None:
+        instruction = ('Compare every closeout.comparison row by the same fields and fill candidate_comparison. '
+            'Control pre-registered the default; candidate_recommendation null keeps it, another choice requires override. '
+            'Candidates without a passed audit are qualified only by the adapter public audit at submission. '
+            'Explain science, limitations and unmet objectives. '
+            'This closes exploration; requests for new H/W/E or waiting remain unresolved, not automatic dispatch.')
     author_request = None
     for attempt in range(3):
         step = begin['first_step'] + attempt
