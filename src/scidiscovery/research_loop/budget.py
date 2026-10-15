@@ -340,6 +340,9 @@ def node_limits(root, job):
         if delivery is None or job['role'] != 'A':
             raise ValueError('Unconfigured closeout node budget')
         limits = dict(delivery['closeout_a'])
+    elif job['role'] in ('H', 'A') and settings.get('role_budget_policy') is not None and settings.get('node_budget_mode', 'hard') == 'soft':
+        # A soft review/hint target only; hard mode keeps its explicit operator ceilings.
+        limits['max_observed_tokens'] = min(limits['max_observed_tokens'], settings['role_budget_policy']['thinking_node_target_tokens'])
     if job['role'] == 'W' and settings.get('search_policy') is not None:
         limits['max_seconds'] = min(limits['max_seconds'], settings['search_policy']['max_w_seconds'])
         limits['max_observed_tokens'] = min(limits['max_observed_tokens'], settings['search_policy']['max_w_observed_tokens'])

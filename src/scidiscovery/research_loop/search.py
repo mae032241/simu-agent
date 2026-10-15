@@ -284,10 +284,32 @@ def _breadth(root,state,limits,focus):
         grant=grant,prior_unknown=state['opportunity_unknown']))
 
 
-def bind(root,step,role,protocol=None,*,write_pages=True,state=None,unified=True):
+REDIRECTS=('current_focus','plan_screen','last_stage')
+
+
+def redirect_focus(state,source):
+    """Control-routed W keeps the current plan: valid author focus, unfinished screen, or the last local stage."""
+    usable=lambda ref:ref in state['authorized'] and state['mechanisms'][ref]['status']!='waived'
+    remaining=[item for item in state['order']['remaining'] if usable(item['mechanism_ref'])]
+    focus=None
+    if source=='current_focus':focus=copy.deepcopy(state['focus'])
+    elif source=='plan_screen' and remaining:focus=dict(mechanism_ref=remaining[0]['mechanism_ref'],action='screen')
+    elif source=='last_stage' and state['accepted_slices']:
+        last=state['accepted_slices'][-1]['focus']
+        if last and last['action'] in {'improve','validate'} and usable(last['mechanism_ref']):focus=dict(last)
+    elif source not in REDIRECTS:raise ValueError('Unknown control W redirect')
+    if focus is None:return None,None
+    if source=='current_focus':return focus,copy.deepcopy(state['order']['allocation'])
+    return focus,next((dict(item) for item in remaining if item['mechanism_ref']==focus['mechanism_ref']),None)
+
+
+def bind(root,step,role,protocol=None,*,write_pages=True,state=None,unified=True,redirect=None):
     limits=c.settings(root).get('search_policy')
     if limits is None:return None
     state=project(root,step) if state is None else state
+    if role=='W' and redirect is not None:
+        state=copy.deepcopy(state);state['order']['diagnostics']=[]
+        state['focus'],state['order']['allocation']=redirect_focus(state,redirect)
     focus=state['focus'] if role=='W' else None
     repair_root=repair_binding=None
     if focus is not None and focus['action']=='repair':

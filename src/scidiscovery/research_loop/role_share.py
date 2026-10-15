@@ -1,0 +1,113 @@
+"""Frozen role token shares derived from sealed meters; routing only, no new balance.
+
+Optional H/A thinking is refused once its sealed exploration usage plus one
+frozen node target of the proposed role would cross the frozen share, or when
+the same role repeats without new sealed W/E evidence or an audit receipt.
+Required reviews stay legal: A after W, A after an audit receipt, control
+correction review and closeout.
+"""
+from __future__ import annotations
+
+from . import contracts as c, execution
+
+DEFAULT = dict(version=1, min_w_share=.65, max_thinking_share=.35, thinking_node_target_tokens=250_000)
+THINKING = ('H', 'A')
+
+
+def policy(value):
+    if not isinstance(value, dict) or set(value) != set(DEFAULT) or type(value['version']) is not int or value['version'] != 1:
+        raise ValueError('Role budget policy requires version 1 shares and a thinking node target')
+    shares = value['min_w_share'], value['max_thinking_share']
+    if any(type(share) not in (int, float) or not 0 < share < 1 for share in shares) or sum(shares) > 1:
+        raise ValueError('Role budget shares must be in (0, 1) and fit one authorization')
+    if type(value['thinking_node_target_tokens']) is not int or value['thinking_node_target_tokens'] <= 0:
+        raise ValueError('Thinking node target must be a positive integer')
+    return dict(value)
+
+
+def configured(root):
+    value = c.settings(root).get('role_budget_policy')
+    return policy(value) if value is not None else None
+
+
+def usage(root, through_step):
+    """Sum original meters of steps 1..through_step only, so replay is exact."""
+    totals = dict(H=0, W=0, A=0, E=0, closeout=0)
+    unknown = []
+    for step in range(1, through_step + 1):
+        path = root / 'jobs' / f'{step:03d}.json'
+        if not path.exists():
+            break
+        job = c.read(c.regular(path))
+        key = 'closeout' if job.get('purpose') == 'closeout' else job['role']
+        for record in execution.records(root, step):
+            if not (record / 'native-intent.json').exists():
+                continue
+            if not (record / 'usage.json').exists():
+                unknown.append(step)
+                continue
+            meter = c.read(c.regular(record / 'usage.json'))
+            totals[key] += meter['input_tokens'] + meter['output_tokens']
+    return dict(totals, thinking=totals['H'] + totals['A'], unknown_steps=sorted(set(unknown)))
+
+
+def _required(root, step, job, result, role, correction_request):
+    if correction_request is not None or job['role'] == 'W' and role == 'A':
+        return True
+    if job['role'] == 'A' and role == 'A' and result.get('next_action') == 'audit' and c.settings(root).get('candidate_audit_policy'):
+        from . import candidate_audit
+        return candidate_audit.receipt_ref(root, step) is not None
+    return False
+
+
+def reason(root, step, job, result, role, correction_request=None):
+    """Why control refuses the proposed optional H/A node, or None."""
+    limits = configured(root)
+    if limits is None or role not in THINKING or job.get('purpose') == 'closeout':
+        return None
+    if _required(root, step, job, result, role, correction_request):
+        return None
+    if job['role'] == role:
+        return 'role_repeat_without_evidence'
+    from . import budget
+    # Project one frozen node target of the proposed role (soft: min(node budget, thinking target)).
+    meter, total = usage(root, step), c.settings(root)['max_tokens']
+    target = budget.node_limits(root, dict(step=step + 1, role=role))['max_observed_tokens']
+    if meter['unknown_steps']:
+        return 'role_share_usage_unknown'
+    if meter['thinking'] + target > limits['max_thinking_share'] * total:
+        return 'role_share_thinking_reached'
+    if meter['thinking'] + meter['E'] + target > (1 - limits['min_w_share']) * total:
+        return 'role_share_w_floor_reached'
+    return None
+
+
+def record(root, step, code, focus_source=None):
+    meter = usage(root, step)
+    return dict(version=1, reason=code, source_step=step, focus_source=focus_source, thinking_observed_tokens=meter['thinking'],
+                thinking_cap_tokens=int(configured(root)['max_thinking_share'] * c.settings(root)['max_tokens']))
+
+
+def effective_route(root, step, result, job, route):
+    """Redirect refused optional thinking to W on the current plan, else closeout."""
+    role, parents, instruction, evidence_return, current_h, current_w, correction_request, author = route
+    code = reason(root, step, job, result, role, correction_request)
+    if code is None:
+        return (*route, None, None)
+    from . import search
+    protocol = job.get('handoff_protocol', 1)
+    seal = c.read(c.host_record(c.workspace(root, step)) / 'result-identity.json')
+    enabled = c.settings(root).get('search_policy') is not None
+    state = search.project(root, step + 1) if enabled else None
+    for source in (search.REDIRECTS if enabled else (None,)):
+        if source is not None and search.redirect_focus(state, source)[0] is None:
+            continue
+        planned = dict(step=step + 1, role='W', handoff_protocol=protocol,
+                       input_selection_status=seal.get('control_outcome', {}).get('selection_status', 'applied'),
+                       search=search.bind(root, step + 1, 'W', protocol, write_pages=False, state=state, unified=True, redirect=source))
+        if search.launch_reason(root, planned) is None:
+            instruction = ('Control did not dispatch the requested ' + role + ' node (' + code + '); '
+                           'this W stage continues the current frozen scientific plan.')
+            return ('W', list(dict.fromkeys(p for p in (current_h, current_w, step) if p is not None)), instruction, None,
+                    current_h, current_w, None, None, record(root, step, code, source), None)
+    return None, [], '', None, current_h, current_w, None, None, None, code

@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import uuid
 
-from . import budget, contracts, history, native, runtime, search, correction, semantic, execution, continuation, guidance, checkpoint
+from . import budget, contracts, history, native, runtime, search, correction, semantic, execution, continuation, guidance, checkpoint, role_share
 from .output_repair import OutputRepairRequired
 
 
@@ -29,7 +29,7 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
             node_budget_mode: str = 'soft', candidate_audit_policy: dict | None = None,
             handoff_authority_version: int | None = 1, decision_contract_version: int | None = None,
             portfolio_policy: dict | None = None, exploration_order_version: int | None = None,
-            worker_fragment_policy: dict | None = None) -> dict:
+            worker_fragment_policy: dict | None = None, role_budget_policy: dict | None = role_share.DEFAULT) -> dict:
     """Freeze an explicit goal and finite launch budgets in a fresh directory."""
     portfolio_limits = search.portfolio_policy(portfolio_policy) if portfolio_policy is not None else None
     if exploration_order_version is not None:
@@ -93,6 +93,11 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
             raise ValueError('W fragments require the complete stage-intent schema; protocol13 is not enabled')
     if resume_limits is not None and node_limits is None:
         raise ValueError('Continuation requires explicit original node budgets')
+    if role_budget_policy is role_share.DEFAULT and node_limits is None:
+        role_budget_policy = None  # Default shares accompany explicit original node targets.
+    share_limits = role_share.policy(role_budget_policy) if role_budget_policy is not None else None
+    if share_limits is not None and node_limits is None:
+        raise ValueError('Role budget shares require explicit original node budgets')
     delivery_limits = None
     if delivery_policy is not None:
         from . import delivery
@@ -142,6 +147,8 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
         settings['resume_policy'] = resume_limits
     if node_limits is not None:
         settings['node_budget_policy'] = node_limits
+    if share_limits is not None:
+        settings['role_budget_policy'] = share_limits
     if observer is not None:
         settings['history_observer'] = observer
     if search_limits is not None:
@@ -234,7 +241,7 @@ def _finish(root, settings, status, completed, last, *, reason=None, next_role=N
     return result
 
 
-def _check_job(root, settings, step, role, parents, instruction, evidence_return, correction_request=None, author_correction=None):
+def _check_job(root, settings, step, role, parents, instruction, evidence_return, correction_request=None, author_correction=None, role_budget=None):
     """A retained node must be the exact job selected by its sealed predecessor."""
     job = contracts.read(root / "jobs" / f"{step:03d}.json")
     expected_refs = [dict(path=f"inputs/parents/{parent:03d}/conclusion.json",
@@ -247,7 +254,8 @@ def _check_job(root, settings, step, role, parents, instruction, evidence_return
             or job.get("instruction", "") != instruction
             or job.get("evidence_return") != evidence_return
             or job.get('correction_request') != correction_request
-            or job.get('author_correction') != author_correction):
+            or job.get('author_correction') != author_correction
+            or job.get('role_budget') != role_budget):
         raise ValueError("Retained job differs from the sealed scientific route")
     return job
 
@@ -340,7 +348,7 @@ def _run(root):
     if not started_path.exists():
         contracts.write(started_path, budget.clock_stamp())
     role, parents, instruction, evidence_return, correction_request = "H", [], "", None, None
-    author_correction = None
+    author_correction = role_budget = None
     current_h = current_w = last = None
     completed = 0
     for step in range(1, settings["max_steps"] + 1):
@@ -374,7 +382,7 @@ def _run(root):
                         reason="Retain the original native work; its terminal scientific output is unverified",
                         next_role=role)
                 try:
-                    _check_job(root, settings, step, role, parents, instruction, evidence_return, correction_request, author_correction)
+                    _check_job(root, settings, step, role, parents, instruction, evidence_return, correction_request, author_correction, role_budget)
                     continuation.seal_or_repair(root, step)
                 except continuation.ResumeUnavailable as error:
                     return _finish(root, settings, 'output_repair_unavailable', completed, last, reason=str(error), next_role=role)
@@ -410,13 +418,14 @@ def _run(root):
             if (root / 'jobs' / f'{step:03d}.json').exists():
                 try:
                     _check_job(root, settings, step, role, parents, instruction, evidence_return,
-                               correction_request, author_correction)
+                               correction_request, author_correction, role_budget)
                 except ValueError:
                     return _finish(root, settings, 'retained_job_conflict', completed, last,
                         reason='A prepared task differs from the exact retained scientific route', next_role=role)
             job = contracts.build_job(root, step, role, parents, instruction=instruction,
                                       evidence_return=evidence_return, correction_request=correction_request,
-                                      **(dict(author_correction=author_correction) if author_correction is not None else {}))
+                                      **(dict(author_correction=author_correction) if author_correction is not None else {}),
+                                      **(dict(role_budget=role_budget) if role_budget is not None else {}))
             search_limit = search.launch_reason(root, job)
             if search_limit:
                 return _finish(root, settings, 'search_pending', completed, last,
@@ -455,7 +464,7 @@ def _run(root):
             if (type(outcome.get("returncode")) is not int or outcome["returncode"] != 0 or outcome.get("stop_reason")
                     or outcome["usage"]["unknown_steps"]):
                 raise ValueError("Native outcome is ineligible for sealed continuation")
-            job = _check_job(root, settings, step, role, parents, instruction, evidence_return, correction_request, author_correction)
+            job = _check_job(root, settings, step, role, parents, instruction, evidence_return, correction_request, author_correction, role_budget)
             result = contracts.validate(work)
             if result["role"] != role:
                 raise ValueError("Sealed result role differs from its job")
@@ -469,17 +478,24 @@ def _run(root):
                 root, step, result, job, _route(root, step, role, result, job, current_h, current_w))
             next_role, next_parents, next_instruction, next_return, current_h, current_w, next_correction, next_author = semantic.effective_route(
                 root, step, result, job, (next_role, next_parents, next_instruction, next_return, current_h, current_w, next_correction))
+            (next_role, next_parents, next_instruction, next_return, current_h, current_w, next_correction, next_author,
+             next_budget, share_stop) = role_share.effective_route(root, step, result, job,
+                (next_role, next_parents, next_instruction, next_return, current_h, current_w, next_correction, next_author))
         except (KeyError, ValueError, OSError, TypeError) as error:
             return _finish(root, settings, "sealed_node_invalid", completed, last,
                 reason=f"Retained node is not eligible for routing ({type(error).__name__})", next_role=role)
         completed, last = step, result
+        if share_stop is not None:
+            if settings.get('delivery_policy') is not None:
+                return _start_closeout(root, completed, step + 1, share_stop)
+            return _finish(root, settings, 'role_budget_stop', completed, last, reason=share_stop)
         if next_role is None:
             if settings.get('delivery_policy') is not None and result.get('next_action') == 'finish':
                 return _start_closeout(root, completed, step + 1, 'scientific_finish')
             return _finish(root, settings, result["next_action"], completed, last,
                 reason="Scientific role suggestion; overall goal success is not asserted")
         role, parents, instruction, evidence_return, correction_request = next_role, next_parents, next_instruction, next_return, next_correction
-        author_correction = next_author
+        author_correction, role_budget = next_author, next_budget
     return _finish(root, settings, "bounded_steps_exhausted", completed, last, next_role=role)
 
 

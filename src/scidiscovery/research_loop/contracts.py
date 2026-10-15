@@ -498,9 +498,11 @@ def _copy_bound(source: Path, destination: Path, sha256: str):
 
 
 def build_job(root: Path, step: int, role: str, parents: list[int], instruction='', evidence_return=None,
-              correction_request=None, author_correction=None, *, purpose=None, source_cutoff=None, delivery_sources=None):
+              correction_request=None, author_correction=None, *, purpose=None, source_cutoff=None, delivery_sources=None, role_budget=None):
     if role not in ROLE_INSTRUCTIONS or type(step) is not int or step < 1:
         raise ValueError('Invalid scientific node')
+    if role_budget is not None and (role != 'W' or purpose is not None or settings(root).get('role_budget_policy') is None):
+        raise ValueError('Control role-budget routing binds only an ordinary W under its frozen policy')
     if len(parents) != len(set(parents)) or any(type(p) is not int or not 0 < p < step for p in parents):
         raise ValueError('Parents must be exact distinct preceding nodes')
     from .protocol import require_current
@@ -596,6 +598,8 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
     if role=='W':job['worker_fragment_policy']=policy.get('worker_fragment_policy')
     if author_correction is not None:
         job['author_correction'] = author_correction
+    if role_budget is not None:
+        job['role_budget'] = role_budget
     if protocol >= 9 and role == 'A' and step - 1 in parents:
         from . import candidate_audit
         receipt = candidate_audit.receipt_ref(root, step - 1)
@@ -616,7 +620,8 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
         lineage.bounded_brief(job['history']['view'])
     if purpose is None and protocol >= 5 and policy.get('search_policy') is not None:
         from . import search
-        job['search'] = search.bind(root, step, role, protocol, state=state, unified=projection_version == 1)
+        job['search'] = search.bind(root, step, role, protocol, state=state, unified=projection_version == 1,
+                                    redirect=(role_budget or {}).get('focus_source'))
     if retained is not None:
         if 'scientific_work_unit' in retained:job['scientific_work_unit']=retained['scientific_work_unit']
     elif role=='W':
@@ -722,13 +727,16 @@ def _validate_inputs(root, work, job):
         first = root / 'jobs' / f'{begin["first_step"]:03d}.json'
         if job['step'] > begin['first_step'] and job['delivery_sources'] != read(regular(first))['delivery_sources']:
             raise ValueError('Closeout correction cannot resolve new candidate originals')
+    if job.get('role_budget') is not None and (job['role'] != 'W' or policy.get('role_budget_policy') is None):
+        raise ValueError('Control role-budget routing differs from its frozen policy')
     from . import correction
     correction.validate_job(root, job)
     from . import semantic
     semantic.validate_job(root, job)
     if job.get('purpose') is None and job.get('handoff_protocol', 1) >= 5 and policy.get('search_policy') is not None:
         from . import search
-        if job.get('search') != search.bind(root, job['step'], job['role'], job['handoff_protocol'], unified=job.get('lineage_projection_version') == 1):
+        if job.get('search') != search.bind(root, job['step'], job['role'], job['handoff_protocol'], unified=job.get('lineage_projection_version') == 1,
+                                            redirect=(job.get('role_budget') or {}).get('focus_source')):
             raise ValueError('Frozen scientific search binding changed')
     from . import history
     history.validate(root, work, job['history'])
