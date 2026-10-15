@@ -8,7 +8,7 @@ import sys
 import pytest
 
 from execution_fixtures import execution_registry
-from scidiscovery.research_loop import audit_recovery, budget, contracts as c, cov_delivery, delivery, engineering
+from scidiscovery.research_loop import audit_recovery, budget, candidate_audit, contracts as c, cov_delivery, delivery, engineering
 from test_cov_delivery_lineage import managed_scene
 from test_cov_lineage import BACKEND
 from test_delivery import FAKE_HARNESS, prepare_fixture, closeout_decision, accepted
@@ -83,14 +83,21 @@ def cli(root,action='run',*extra):
     return json.loads(done.stdout)
 
 
-def repair_scene(tmp_path,*,ordinary=False,reason='dependency',always_fail=False,max_tokens=100000,crash=False,output_capacity=None):
+def repair_scene(tmp_path,*,ordinary=False,reason='dependency',always_fail=False,max_tokens=100000,crash=False,output_capacity=None,audit_after_repair=False,pause_after_author=False,deliver_after_unavailable=False):
     backend=tmp_path/'repair-backend.py';backend.write_text(BACKEND)
-    native=tmp_path/'native.py';native.write_text('FAIL_FIRST='+repr(crash)+'\nBACKEND='+repr(str(backend))+'\n'+NATIVE)
+    program=NATIVE
+    if audit_after_repair:
+        program=program.replace("next_action='deliver',candidate_recommendation='run-3'",
+            "next_action='deliver' if (task.get('candidate_audit') or {}).get('status') in "+repr(('audited','unavailable') if deliver_after_unavailable else ('audited',))+" else 'audit',candidate_recommendation='run-3'")
+    if pause_after_author:
+        program=program.replace("pathlib.Path(args[args.index('--output-last-message')+1]).write_text(json.dumps(payload))",
+            "pathlib.Path(args[args.index('--output-last-message')+1]).write_text(json.dumps(payload))\nif manifest['step']==5:(root/'pause.request').touch()")
+    native=tmp_path/'native.py';native.write_text('FAIL_FIRST='+repr(crash)+'\nBACKEND='+repr(str(backend))+'\n'+program)
     harness=FAKE_HARNESS.replace("mode=meta['mode']", "spec=json.loads(pathlib.Path('/inputs/source.py').read_text())\nmode='skip' if spec['revision']=='P' else 'ok'")
     if always_fail:harness=harness.replace("spec['revision']=='P'","spec['revision']!='Q'")
     note='audit failed during training: ModuleNotFoundError: No module named fixture_helper' if reason=='dependency' else 'audit timed out after 45s (audit exceeded 45s budget)'
     harness=harness.replace("else 'audit skipped'",'else '+repr(note))
-    root,*rest=managed_scene(tmp_path,launcher=[sys.executable,str(native)],harness=harness,audit=ordinary,max_tokens=max_tokens,output_capacity=output_capacity,resume_policy=dict(max_attempts=1,protocol='codex_exec_resume',usage_scope='turn',output_repair=False) if crash else None)
+    root,*rest=managed_scene(tmp_path,launcher=[sys.executable,str(native)],harness=harness,audit=ordinary or audit_after_repair,max_tokens=max_tokens,output_capacity=output_capacity,resume_policy=dict(max_attempts=1,protocol='codex_exec_resume',usage_scope='turn',output_repair=False) if crash else None)
     if ordinary:
         finish(root,3,'A',[1,2],action='audit',recommendation='run-1')
     else:
@@ -295,3 +302,109 @@ def test_original_input_capacity_blocks_preparation_and_status_without_a_worker(
     assert not (root/'native-evidence/004/native-intent.json').exists()
     assert cli(root,'status')['closeout']['status']==result['status']
     assert cli(root)['status']==result['status']
+
+
+def test_repaired_closeout_author_can_audit_then_deliver_and_resume(tmp_path):
+    root,_=repair_scene(tmp_path,audit_after_repair=True)
+    result=cli(root)
+    assert result['status']=='delivery_confirmed',result
+    assert [c.read(path)['role'] for path in sorted((root/'jobs').glob('*.json'))]==['H','W','A','W','A','A']
+    assert c.read(root/'native-evidence/005/science-output.json')['next_action']=='audit'
+    assert c.read(root/'native-evidence/006/science-output.json')['next_action']=='deliver'
+    receipt=candidate_audit._outcome(root,5)
+    assert receipt['result']['status']=='audited' and receipt['process_sha256']
+    assert (candidate_audit._directory(root,5)/'dispatch.json').is_file()
+    job=c.read(root/'jobs/005.json')
+    assert job['delivery_sources']==engineering.sources(root,5)
+    assert job['delivery_sources']!=budget.closeout_state(root)['begin']['delivery_sources']
+    steps=budget.used_steps(root)
+    assert cli(root)['status']=='delivery_confirmed' and budget.used_steps(root)==steps
+    assert cli(root,'status')['closeout']['status']=='delivery_confirmed'
+
+
+def _pending_repaired_audit(tmp_path,*,deliver_after_unavailable=False):
+    root,_=repair_scene(tmp_path,audit_after_repair=True,pause_after_author=True,deliver_after_unavailable=deliver_after_unavailable)
+    assert cli(root)['status']=='paused'
+    (root/'pause.request').unlink()
+    job=c.read(root/'jobs/005.json');payload=c.validate(c.workspace(root,5))
+    assert payload['next_action']=='audit'
+    return root,job,payload
+
+
+def _legacy_preflight(root,job):
+    # Exact three originals left by c5790ba's guard before staging/Popen.
+    directory=candidate_audit._directory(root,job['step'])
+    decision=candidate_audit._decision(root,job['step'])
+    operation=candidate_audit._operation(root,decision,'run-3')
+    intent=dict(action_id=operation,action_kind='audit',operation_id=operation,decision=decision,candidate_id='run-3',
+        max_seconds=c.settings(root)['delivery_policy']['submit_seconds'],advance_seconds=budget.snapshot(root)['advance_seconds'])
+    refs=delivery.selected_sources(root,job['delivery_sources'],'run-3',prepare=True)
+    rows=[row for row in refs['items'] if row['candidate_id']=='run-3' and row['status']=='audit_pending']
+    assert len(rows)==1
+    binding=dict(candidate_id='run-3',decision=decision,source=rows[0],target=delivery._adapter(root)['target'],operation_id=operation)
+    for name,value in [('intent.json',intent),('sources.json',refs),('binding.json',binding)]:candidate_audit._save(directory/name,value)
+    assert job['delivery_sources']!=budget.closeout_state(root)['begin']['delivery_sources']
+    return directory,intent,binding
+
+
+def test_invalid_closeout_source_preflight_does_not_accept_an_intent(tmp_path,monkeypatch):
+    root,job,payload=_pending_repaired_audit(tmp_path)
+    before=budget.used_steps(root)
+    with monkeypatch.context() as patch:
+        patch.setattr(engineering,'sources',lambda root,step:budget.closeout_state(root)['begin']['delivery_sources'])
+        with pytest.raises(ValueError,match='Candidate audit closeout boundary changed'):
+            candidate_audit.execute(root,job,payload)
+    assert not candidate_audit._directory(root,5).exists() and budget.used_steps(root)==before
+    assert cli(root)['status']=='delivery_confirmed'
+
+
+@pytest.mark.parametrize('partial_result',[False,True])
+def test_legacy_preflight_settles_without_replaying_old_audit_or_rewriting_science(tmp_path,partial_result):
+    root,job,payload=_pending_repaired_audit(tmp_path,deliver_after_unavailable=partial_result)
+    directory,intent,binding=_legacy_preflight(root,job)
+    originals={path:path.read_bytes() for path in [*directory.iterdir(),root/'jobs/005.json',root/'native-evidence/005/result-identity.json']}
+    before=budget.used_steps(root)
+    if partial_result:
+        candidate_audit._save(directory/'adapter-result.json',dict(status='unavailable',note='candidate_audit_legacy_preflight_not_dispatched',cleanup_confirmed=True,
+            operation_id=intent['operation_id'],candidate_id='run-3',artifact_sha256=binding['source']['objects']['artifact']['sha256']))
+    snapshot={p.name:p.read_bytes() for p in directory.iterdir()}
+    assert cli(root,'status')['closeout']['status']=='candidate_audit_unknown'
+    assert {p.name:p.read_bytes() for p in directory.iterdir()}==snapshot  # Queries never settle.
+    result=cli(root)
+    expected='delivery_confirmed' if partial_result else 'closeout_budget_unavailable'
+    assert result['status']==expected,result
+    assert all(path.read_bytes()==data for path,data in originals.items())
+    old=candidate_audit._outcome(root,5)
+    assert old['result']['status']=='unavailable' and old['process_sha256'] is None and old['leaf_output']==[]
+    assert candidate_audit.public_receipt(root,candidate_audit.receipt_ref(root,5))['qualification']=='not_completed'
+    assert not (directory/'dispatch.json').exists() and not list(delivery.leaf_output(root).glob(intent['operation_id']+'-*'))
+    assert c.read(root/'native-evidence/006/science-output.json')['next_action']==('deliver' if partial_result else 'audit')
+    if partial_result:
+        assert candidate_audit._outcome(root,6) is None
+        assert (root/'submission/model.pkl').is_file()  # New A authorizes; control really audits before promotion.
+    else:
+        assert candidate_audit._outcome(root,6)['result']['note']=='candidate_audit_reserve_unavailable'
+        assert not (root/'submission/model.pkl').exists()
+    assert budget.used_steps(root)>before
+    after=budget.used_steps(root)
+    assert cli(root)['status']==expected and budget.used_steps(root)==after
+
+
+@pytest.mark.parametrize('evidence',['dispatch','process','leaf','recovery'])
+def test_legacy_shaped_audit_with_execution_evidence_remains_unknown_without_replay(tmp_path,evidence):
+    root,job,payload=_pending_repaired_audit(tmp_path)
+    directory,intent,binding=_legacy_preflight(root,job)
+    if evidence=='dispatch':candidate_audit._save(directory/'dispatch.json',candidate_audit._dispatch_binding(root,intent))
+    elif evidence=='process':candidate_audit._save(directory/'process.json',dict(phase='audit'))
+    elif evidence=='leaf':
+        candidate_audit._save(delivery.leaf_output(root)/(intent['operation_id']+'-audit-1.json'),dict(preserved_execution_evidence=True))
+    else:
+        candidate_audit._save(root/'host-delivery/audit-recovery'/intent['operation_id']/'intent.json',dict(
+            settings_sha256=c.digest(root/'settings.json'),operation_id=intent['operation_id'],attempt=1,
+            reason='audit_source_missing',max_seconds=intent['max_seconds'],advance_seconds=intent['advance_seconds']))
+    original={p:p.read_bytes() for p in directory.iterdir()}
+    before=budget.used_steps(root)
+    assert cli(root,'status')['closeout']['status']=='candidate_audit_unknown'
+    for _ in range(2):assert cli(root)['status']=='candidate_audit_unknown'
+    assert not (directory/'outcome.json').exists() and not (directory/'adapter-result.json').exists()
+    assert all(p.read_bytes()==data for p,data in original.items()) and budget.used_steps(root)==before

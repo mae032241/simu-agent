@@ -1,0 +1,207 @@
+{
+  "base": "c5790ba83951684b9bc5d9d6bf7927ba2f56fbb9",
+  "scope": [
+    "src/scidiscovery/research_loop/candidate_audit.py",
+    "tests/research_loop/test_audit_engineering.py"
+  ],
+  "source_results": {
+    "initial": "1 passed, 7 failed: fixture direct-controller native subprocess lacked source metadata/path; not qualifying",
+    "recheck": "19 passed, 2 failed: legacy followup audit needs 13 steps but original fixture has 12; original reserve correctly refuses",
+    "budget_branches": "2 passed: original 12-step budget unchanged; explicit new A audit stops, explicit new A deliver performs control audit then confirms"
+  },
+  "resources": {
+    "initial": {
+      "returncode": 1,
+      "stop_reason": "exited",
+      "cleanup_complete": true,
+      "elapsed_seconds": 57.381,
+      "memory_stop_triggers": [],
+      "observed_tree_rss_high_water_bytes": 285310976
+    },
+    "source": {
+      "returncode": 1,
+      "stop_reason": "exited",
+      "cleanup_complete": true,
+      "elapsed_seconds": 184.096,
+      "memory_stop_triggers": [],
+      "observed_tree_rss_high_water_bytes": 312852480
+    },
+    "budget_branches": {
+      "returncode": 0,
+      "stop_reason": "exited",
+      "cleanup_complete": true,
+      "elapsed_seconds": 73.385,
+      "memory_stop_triggers": [],
+      "observed_tree_rss_high_water_bytes": 284672000
+    },
+    "build": {
+      "returncode": 0,
+      "stop_reason": "exited",
+      "cleanup_complete": true,
+      "elapsed_seconds": 2.591,
+      "memory_stop_triggers": [],
+      "observed_tree_rss_high_water_bytes": 109457408
+    },
+    "installed": {
+      "returncode": 0,
+      "stop_reason": "exited",
+      "cleanup_complete": true,
+      "elapsed_seconds": 84.671,
+      "memory_stop_triggers": [],
+      "observed_tree_rss_high_water_bytes": 266428416
+    },
+    "identity": {
+      "returncode": 0,
+      "stop_reason": "exited",
+      "cleanup_complete": true,
+      "elapsed_seconds": 0.085,
+      "memory_stop_triggers": [],
+      "observed_tree_rss_high_water_bytes": 23425024
+    }
+  },
+  "wheel_sha256": "7732118b797be109cf6d38c0221ac26d7b95d909c6da32e3aef6be60d346428d",
+  "installed_identity": {
+    "source_file_count": 239,
+    "source_manifest_sha256": "58c78496a1ce45a1e195b1a4d29dd91a10e72062976c76fdd6db64240cfbbea8",
+    "installed_package": "/tmp/protocol18-postrepair-installed/venv/lib/python3.12/site-packages/scidiscovery",
+    "mismatch": [],
+    "plugins": [
+      "builtin",
+      "general_science"
+    ],
+    "execution_interfaces": [
+      "cov_execution",
+      "local_execution"
+    ],
+    "sys_path": [
+      "/home/da/miniconda3/lib/python312.zip",
+      "/home/da/miniconda3/lib/python3.12",
+      "/home/da/miniconda3/lib/python3.12/lib-dynload",
+      "/tmp/protocol18-postrepair-installed/venv/lib/python3.12/site-packages"
+    ]
+  },
+  "installed_joint": {
+    "passed": true,
+    "models_called": 0,
+    "status": "delivery_confirmed",
+    "usage": {
+      "input_tokens": 42,
+      "cached_input_tokens": 12,
+      "output_tokens": 18,
+      "observed_tokens": 60,
+      "unknown_steps": []
+    },
+    "nodes": [
+      {
+        "step": 4,
+        "role": "W",
+        "profile": {
+          "model": "gpt-6.1-sol",
+          "reasoning_effort": "high",
+          "service_tier": "priority"
+        },
+        "metering": {
+          "source": "turn.completed",
+          "thread_id": "11111111-2222-4333-8444-555555555555",
+          "coverage": "terminal",
+          "reason": null,
+          "tokens": {
+            "input_tokens": 7,
+            "cached_input_tokens": 2,
+            "output_tokens": 3
+          },
+          "baseline_tokens": null,
+          "has_observation": true,
+          "unreported_usage": null,
+          "individual_request_usage": "unavailable",
+          "live_coverage": "live",
+          "live_reason": null,
+          "live_tokens": {
+            "input_tokens": 7,
+            "cached_input_tokens": 2,
+            "output_tokens": 3
+          },
+          "reconciliation": "matched"
+        },
+        "core": "/tmp/protocol18-postrepair-installed/venv/lib/python3.12/site-packages/scidiscovery/research_loop/__init__.py"
+      },
+      {
+        "step": 5,
+        "role": "A",
+        "profile": {
+          "model": "gpt-5.6-sol",
+          "reasoning_effort": "medium",
+          "service_tier": "default"
+        },
+        "metering": {
+          "source": "turn.completed",
+          "thread_id": null,
+          "coverage": "terminal",
+          "reason": null,
+          "tokens": {
+            "input_tokens": 7,
+            "cached_input_tokens": 2,
+            "output_tokens": 3
+          },
+          "baseline_tokens": null,
+          "has_observation": false,
+          "unreported_usage": null,
+          "individual_request_usage": "unavailable",
+          "live_coverage": "unknown",
+          "live_reason": "token_counter_unreported",
+          "live_tokens": {
+            "input_tokens": 0,
+            "cached_input_tokens": 0,
+            "output_tokens": 0
+          },
+          "reconciliation": "terminal_fallback"
+        },
+        "core": "/tmp/protocol18-postrepair-installed/venv/lib/python3.12/site-packages/scidiscovery/research_loop/__init__.py"
+      },
+      {
+        "step": 6,
+        "role": "A",
+        "profile": {
+          "model": "gpt-5.6-sol",
+          "reasoning_effort": "medium",
+          "service_tier": "default"
+        },
+        "metering": {
+          "source": "turn.completed",
+          "thread_id": null,
+          "coverage": "terminal",
+          "reason": null,
+          "tokens": {
+            "input_tokens": 7,
+            "cached_input_tokens": 2,
+            "output_tokens": 3
+          },
+          "baseline_tokens": null,
+          "has_observation": false,
+          "unreported_usage": null,
+          "individual_request_usage": "unavailable",
+          "live_coverage": "unknown",
+          "live_reason": "token_counter_unreported",
+          "live_tokens": {
+            "input_tokens": 0,
+            "cached_input_tokens": 0,
+            "output_tokens": 0
+          },
+          "reconciliation": "terminal_fallback"
+        },
+        "core": "/tmp/protocol18-postrepair-installed/venv/lib/python3.12/site-packages/scidiscovery/research_loop/__init__.py"
+      }
+    ],
+    "isolated_python": true
+  },
+  "installed_legacy_assertion": "joint.py calls the partial-result recovery test with explicit new-A deliver, preserving intent/job/seal and asserting old operation has no leaf",
+  "models_called": 0,
+  "budget_increased": false,
+  "real_instances_modified": false,
+  "independent_review": {
+    "status": "PASS",
+    "reviewer": "integration_fresh_review",
+    "source_sha256": "1f24a38aa90065e48681c4a710052b0939b7cbe015607aa6f2b2267b94e998b6",
+    "scope": "Exact P1 source/tests, truthful evidence, deterministic installed paths; not full suite, real models or arbitrary unknown recovery"
+  }
+}

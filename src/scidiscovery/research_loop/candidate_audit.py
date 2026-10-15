@@ -45,7 +45,7 @@ def _operation(root, decision, candidate):
         settings_sha256=c.digest(root / 'settings.json')))).hexdigest()
 
 
-def validate_intent(root, intent):
+def _validate_request(root, intent):
     decision = intent['decision']
     stored_fields = {'action_id', 'action_kind', 'operation_id', 'decision', 'candidate_id', 'max_seconds', 'advance_seconds'}
     if (set(intent) - {'binding'} != stored_fields or intent['action_kind'] != 'audit'
@@ -58,20 +58,44 @@ def validate_intent(root, intent):
         raise ValueError('Candidate audit accepted budget or identity changed')
     if decision != _decision(root, decision['step']):
         raise ValueError('Candidate audit scientific author changed')
-    path = _directory(root, decision['step']) / 'intent.json'
-    if c.read(c.regular(path)) != {key: value for key, value in intent.items() if key != 'binding'}:
-        raise ValueError('Candidate audit accepted identity changed')
     job = c.read(root / 'jobs' / f'{decision["step"]:03d}.json')
     raw = c.science_payload(execution.raw(root, decision['step']), 'A', job['handoff_protocol'], 'selection' in job)
     if job.get('purpose') is not None:
+        from . import engineering
         begin = budget.closeout_state(root)['begin']
         if (job['purpose'] != 'closeout' or begin is None or job['source_cutoff'] != begin['source_cutoff']
-                or job['delivery_sources'] != begin['delivery_sources']
+                or job['step'] < begin['first_step'] or job['delivery_sources'] != engineering.sources(root,job['step'])
                 or job['closeout_begin'] != dict(seq=begin['seq'], sha256=c.digest(root / 'control-ledger' / f'{begin["seq"]:06d}.json'))):
             raise ValueError('Candidate audit closeout boundary changed')
     if (job['role'] != 'A' or job['handoff_protocol'] < 9
             or raw['next_action'] != 'audit' or raw['candidate_recommendation'] != intent['candidate_id']):
         raise ValueError('Candidate audit differs from the original scientific request')
+
+
+def validate_intent(root, intent):
+    _validate_request(root, intent)
+    path = _directory(root, intent['decision']['step']) / 'intent.json'
+    if c.read(c.regular(path)) != {key: value for key, value in intent.items() if key != 'binding'}:
+        raise ValueError('Candidate audit accepted identity changed')
+    dispatch = path.with_name('dispatch.json')
+    if dispatch.exists() and c.read(c.regular(dispatch)) != _dispatch_binding(root,intent):
+        raise ValueError('Candidate audit dispatch identity changed')
+
+
+def _dispatch_binding(root,intent):
+    directory = _directory(root,intent['decision']['step'])
+    return dict(operation_id=intent['operation_id'],intent_sha256=c.digest(c.regular(directory/'intent.json')),
+        sources_sha256=c.digest(c.regular(directory/'sources.json')),binding_sha256=c.digest(c.regular(directory/'binding.json')))
+
+
+def _validate_objects(root, intent, binding, refs):
+    _validate_request(root, intent)
+    delivery.validate_sources(root, refs)
+    rows = [row for row in refs['items'] if row['candidate_id'] == intent['candidate_id']]
+    if (len(rows) != 1 or rows[0] != binding['source'] or binding['decision'] != intent['decision']
+            or binding['operation_id'] != intent['operation_id'] or binding['candidate_id'] != intent['candidate_id']
+            or binding['target'] != delivery._adapter(root)['target']):
+        raise ValueError('Candidate audit no longer binds its selected original')
 
 
 def validate_binding(root, intent):
@@ -81,12 +105,7 @@ def validate_binding(root, intent):
     if binding != intent['binding']:
         raise ValueError('Candidate audit object binding changed')
     refs = c.read(c.regular(directory / 'sources.json'))
-    delivery.validate_sources(root, refs)
-    rows = [row for row in refs['items'] if row['candidate_id'] == intent['candidate_id']]
-    if (len(rows) != 1 or rows[0] != binding['source'] or binding['decision'] != intent['decision']
-            or binding['operation_id'] != intent['operation_id'] or binding['candidate_id'] != intent['candidate_id']
-            or binding['target'] != delivery._adapter(root)['target']):
-        raise ValueError('Candidate audit no longer binds its selected original')
+    _validate_objects(root,intent,binding,refs)
 
 
 def _outcome(root, step):
@@ -176,16 +195,52 @@ def public_receipt(root, ref):
                 artifact_scope='exact frozen artifact; does not establish target performance')
 
 
+def _settle_legacy_preflight(root,intent):
+    """Settle c5790ba's impossible-to-dispatch boundary, never replay its intent.
+
+    Its old closeout guard necessarily raised before staging or Popen for this
+    expanded source set. Absence of a process record alone is never sufficient.
+    New calls additionally freeze dispatch.json before entering the adapter.
+    """
+    job=c.read(c.regular(root/'jobs'/f'{intent["decision"]["step"]:03d}.json'))
+    directory=_directory(root,job['step'])
+    begin=budget.closeout_state(root)['begin']
+    if (job.get('purpose')!='closeout' or begin is None
+            or job['delivery_sources']==begin['delivery_sources']
+            or not {'intent.json','sources.json','binding.json'} <= {p.name for p in directory.iterdir()}
+            or any(p.name not in {'intent.json','sources.json','binding.json','adapter-result.json'} for p in directory.iterdir())
+            or (root/'host-delivery/audit-recovery'/intent['operation_id']).exists()
+            or any(delivery.leaf_output(root).glob(intent['operation_id']+'-*'))):
+        return False
+    binding=c.read(c.regular(directory/'binding.json'))
+    validate_binding(root,dict(intent,binding=binding))
+    result=dict(status='unavailable',note='candidate_audit_legacy_preflight_not_dispatched',cleanup_confirmed=True,
+        operation_id=intent['operation_id'],candidate_id=intent['candidate_id'],
+        artifact_sha256=binding['source']['objects']['artifact']['sha256'])
+    result_path=directory/'adapter-result.json'
+    if result_path.exists():
+        if c.read(c.regular(result_path))!=result:raise ValueError('Candidate audit preflight recovery changed')
+    else:_save(result_path,result)
+    _save(directory/'outcome.json',dict(decision=intent['decision'],candidate_id=intent['candidate_id'],accepted=True,
+        result=result,intent_sha256=c.digest(directory/'intent.json'),binding_sha256=c.digest(directory/'binding.json'),
+        result_sha256=c.digest(result_path),process_sha256=None,leaf_output=[]))
+    return True
+
+
 def execute(root, job, payload):
     """Returns a blocking status, or None once an immutable receipt is available."""
     from .protocol import require_current
     require_current(root,job)
     step, chosen = job['step'], payload.get('candidate_recommendation')
+    if job!=c.read(c.regular(root/'jobs'/f'{step:03d}.json')):
+        raise ValueError('Candidate audit scientific task changed')
     directory = _directory(root, step)
     previous = _outcome(root, step)
     if previous is not None:
         return None if previous['result']['cleanup_confirmed'] else 'candidate_audit_unknown'
     if (directory / 'intent.json').exists():
+        if _settle_legacy_preflight(root,c.read(c.regular(directory/'intent.json'))):
+            return None
         return 'candidate_audit_unknown'  # Never repeat an uncertain accepted call.
     if (root / 'pause.request').exists():
         return 'paused'
@@ -238,23 +293,28 @@ def execute(root, job, payload):
     if (seconds_unavailable or tokens_unavailable
             or budget.used_steps(root) + 1 + reserve['steps'] > c.settings(root)['max_steps']):
         return finish('unavailable', 'candidate_audit_reserve_unavailable')
-    budget.transition(root, 'advance', 'candidate_audit')
     operation = _operation(root, decision, chosen)
     intent = dict(action_id=operation, action_kind='audit', operation_id=operation, decision=decision,
                   candidate_id=chosen, max_seconds=policy['submit_seconds'], advance_seconds=budget.snapshot(root)['advance_seconds'])
+    _validate_request(root,intent)
+    budget.transition(root, 'advance', 'candidate_audit')
+    intent['advance_seconds']=budget.snapshot(root)['advance_seconds']
     _save(directory / 'intent.json', intent)
     try:
         if not job.get('delivery_sources'):resolved = hashlib.sha256(delivery._bytes(job['history']['nodes'])).hexdigest()
         refs = (delivery.selected_sources(root, job['delivery_sources'], chosen, prepare=True)
             if job.get('delivery_sources') else delivery.freeze_sources(root, job['history']['nodes'], candidate_id=chosen))
-        _save(directory / 'sources.json', refs)
         rows = [row for row in refs['items'] if row['candidate_id'] == chosen and row['status'] == 'audit_pending']
         if len(rows) != 1:
+            _save(directory / 'sources.json', refs)
             return finish('unavailable', 'candidate_originals_unavailable')
         binding = dict(candidate_id=chosen, decision=decision, source=rows[0], target=policy['adapter']['target'], operation_id=operation)
+        _validate_objects(root,intent,binding,refs)
+        _save(directory / 'sources.json', refs)
         _save(directory / 'binding.json', binding)
         def process(phase, identity):
             _save(directory / 'process.json', dict(operation_id=operation, phase=phase, identity=identity))
+        _save(directory / 'dispatch.json',_dispatch_binding(root,intent))
         result = delivery.invoke(root, dict(intent, binding=binding), policy['submit_seconds'],
                                  on_process=process, audit_only=True)
         return finish(result['status'], result['note'], cleanup=result['cleanup_confirmed'], result=result)
