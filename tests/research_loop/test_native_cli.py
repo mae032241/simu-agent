@@ -4,10 +4,11 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 
 import pytest
 
-from scidiscovery.research_loop import contracts, controller, native
+from scidiscovery.research_loop import contracts, controller, execution, native, runtime
 from scidiscovery.research_loop.cli import main, status
 
 
@@ -76,6 +77,81 @@ def test_real_native_process_completes_without_root_or_loopx(instance):
         work = contracts.workspace(instance, step)
         assert contracts.validate(work)['role'] == ('H', 'W', 'A')[step-1]
     assert controller.run(instance) == result
+
+
+@pytest.mark.parametrize('reconnect', [False, True])
+def test_screen_waits_for_original_runner_after_outcome(instance, tmp_path, monkeypatch, reconnect):
+    """Hold the real W runner after outcome publication until control observes it."""
+    hook = tmp_path / 'hook'
+    hook.mkdir()
+    release = hook / 'release'
+    held = hook / 'held'
+    (hook / 'sitecustomize.py').write_text('''import os,pathlib,sys,time
+from scidiscovery.research_loop import contracts as c
+original=c.write
+def held_write(path,value):
+    hold='runner' in sys.argv and path.name=='native-outcome.json' and path.parent.name=='002'
+    if hold:pathlib.Path(os.environ['SCID_TEST_HELD']).touch()
+    original(path,value)
+    if hold:
+        deadline=time.monotonic()+10
+        while not pathlib.Path(os.environ['SCID_TEST_RELEASE']).exists():
+            if time.monotonic()>deadline:raise RuntimeError('Test controller did not observe original runner')
+            time.sleep(.01)
+c.write=held_write
+''')
+    monkeypatch.setenv('PYTHONPATH', os.pathsep.join([str(hook), str(Path(__file__).parents[2] / 'src')]))
+    monkeypatch.setenv('SCID_TEST_RELEASE', str(release))
+    monkeypatch.setenv('SCID_TEST_HELD', str(held))
+    record = execution.origin(instance, 2)
+    original_matches = runtime.process_matches
+    observed = []
+
+    def release_observed_writer(receipt, binding):
+        alive = original_matches(receipt, binding)
+        runner = record / 'runner-process.json'
+        if (alive and held.exists() and (record / 'native-outcome.json').exists()
+                and runner.exists() and receipt == contracts.read(runner)):
+            observed.append(receipt)
+            release.touch()
+        return alive
+
+    try:
+        if reconnect:
+            original_wait = native.wait_native
+
+            def detach_after_outcome(root, step):
+                if step != 2:
+                    return original_wait(root, step)
+                deadline = time.monotonic() + 8
+                while not (record / 'native-outcome.json').exists():
+                    assert time.monotonic() < deadline, 'Original W did not publish outcome'
+                    time.sleep(.01)
+                raise RuntimeError('Test controller detached after outcome publication')
+
+            monkeypatch.setattr(native, 'wait_native', detach_after_outcome)
+            assert controller.run(instance)['status'] == 'seal_pending'
+            monkeypatch.setattr(native, 'wait_native', original_wait)
+        monkeypatch.setattr(runtime, 'process_matches', release_observed_writer)
+        result = controller.run(instance)
+        assert result['status'] == 'finish', result
+        assert result['completed_steps'] == 3
+        assert observed, 'Control must observe the still-live original writer before sealing'
+        assert result['usage'] == dict(input_tokens=300, cached_input_tokens=240, output_tokens=15,
+                                      observed_tokens=315, unknown_steps=[])
+        assert len(list(instance.rglob('native-intent.json'))) == 3
+        assert len(list(instance.rglob('usage.json'))) == 3
+        assert not (record / 'continuations').exists()
+        assert controller.run(instance) == result
+    finally:
+        release.touch()
+        runner = record / 'runner-process.json'
+        if runner.exists():
+            receipt = contracts.read(runner)
+            deadline = time.monotonic() + 5
+            while original_matches(receipt, receipt['task_sha256']):
+                assert time.monotonic() < deadline, 'Released fixture runner did not exit'
+                time.sleep(.01)
 
 
 def test_cli_entrypoint_status_is_read_only(instance):

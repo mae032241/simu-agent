@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import uuid
 
-from . import budget, contracts, history, native, runtime, search, correction, semantic, execution, continuation, guidance, checkpoint, role_share, shortlist, engineering
+from . import budget, contracts, history, native, runtime, search, correction, semantic, execution, continuation, guidance, checkpoint, role_share, shortlist, engineering, worker_delivery
 from .output_repair import OutputRepairRequired
 
 
@@ -386,7 +386,8 @@ def _run(root):
                     return _finish(root, settings, "native_outcome_unsealed", completed, last,
                         reason="The original scientific job is missing; retained work is preserved without replay", next_role=role)
                 retained_job = contracts.read(job_path)
-                if runtime.node_state(root, step) == "running" or checkpoint.enabled(root, retained_job):
+                if (runtime.node_state(root, step) == "running" or checkpoint.enabled(root, retained_job)
+                        or worker_delivery.applicable(retained_job)):
                     try:
                         native.wait_native(root, step)
                     except continuation.ResumeUnavailable as error:

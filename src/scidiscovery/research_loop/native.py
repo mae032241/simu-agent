@@ -93,16 +93,19 @@ def wait_native(root: Path, step: int):
     while True:
         state = runtime.node_state(root, step)
         if state in {"terminal", "sealed"}:
-            from . import continuation
+            from . import continuation, worker_delivery
             job = read(root / 'jobs' / f'{step:03d}.json')
-            if state == 'terminal' and checkpoint.enabled(root, job) and not (record / 'checkpoint.json').exists():
-                # Outcome publication precedes the runner's checkpoint. Never
-                # capture live paths merely because their outcome is unknown.
+            fragments = checkpoint.enabled(root, job)
+            if (state == 'terminal' and not (record / 'checkpoint.json').exists()
+                    and (fragments or worker_delivery.applicable(job))):
+                # Outcome publication precedes the runner's final writes. Wait
+                # for this exact owner before capturing a delivery checkpoint.
                 runner = record / 'runner-process.json'
                 if runner.exists() and runtime.process_matches(read(runner), execution.identity(root, step)):
                     time.sleep(.1)
                     continue
-                raise continuation.ResumeUnavailable('worker_fragment_checkpoint_unavailable')
+                if fragments:
+                    raise continuation.ResumeUnavailable('worker_fragment_checkpoint_unavailable')
             result = continuation.seal_or_repair(root, step)
             if result.get('fragment_continuation') is True:
                 record = execution.record(root, step)

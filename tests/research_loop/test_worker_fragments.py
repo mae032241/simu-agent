@@ -199,8 +199,8 @@ def test_host_review_overrides_continuation_without_rewriting_science():
 # U3 freezes the complete current schema before exposing fragment preparation.
 SCHEMA_FIXTURE = '''from scidiscovery.research_loop import contracts as c
 original = c.result_schema
-def result_schema(role, protocol=1):
-    value = original(role, protocol)
+def result_schema(role, protocol=1, comparison=False):
+    value = original(role, protocol, comparison)
     if role == 'W' and 'stage_intent' not in value['properties']:
         value['properties']['stage_intent'] = {'type':'string','enum':['continue','review']}
         value['required'].append('stage_intent')
