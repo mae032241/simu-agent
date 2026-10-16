@@ -1,0 +1,79 @@
+"""Soft repair spends available balance while preserving required closeout."""
+from pathlib import Path
+
+import pytest
+
+from scidiscovery.research_loop import budget, contracts as c, controller, native
+from test_audit_engineering import cli, repair_scene
+from execution_fixtures import execution_registry
+
+
+def balances(monkeypatch,*,mode='soft',tokens=952486,seconds=717.075,steps=4,unknown=False,blocked=False):
+    settings=dict(node_budget_mode=mode,max_steps=20,node_budget_policy=dict(W=dict(max_observed_tokens=650000,max_seconds=480)),
+        delivery_policy=dict(closeout_a=dict(max_observed_tokens=150000,max_seconds=120),inflight_tokens=200000,
+            cleanup_seconds=60,submit_seconds=45,confirm_seconds=15,adapter={}))
+    monkeypatch.setattr(c,'settings',lambda root:settings)
+    monkeypatch.setattr(budget,'snapshot',lambda root:dict(max_tokens=2000000,seconds_remaining=seconds))
+    monkeypatch.setattr(native,'usage',lambda root:dict(observed_tokens=2000000-tokens,unknown_steps=[3] if unknown else []))
+    monkeypatch.setattr(budget,'used_steps',lambda root:20-steps)
+    monkeypatch.setattr(budget,'execution_blocked',lambda root:blocked)
+
+
+def test_actual_remaining_balance_allows_soft_repair_not_full_target_reservation(monkeypatch):
+    balances(monkeypatch)
+    assert controller._repair_funds(Path('/unused'))
+    balances(monkeypatch,mode='hard')
+    assert not controller._repair_funds(Path('/unused'))
+
+
+@pytest.mark.parametrize('tokens,seconds,steps,expected',[
+    (350001,240.001,4,True),
+    (350000,240.001,4,False),
+    (350001,240,4,False),
+    (350001,240.001,3,False),
+    (349999,240.001,4,False),
+    (350001,239.999,4,False),
+])
+def test_soft_reserve_requires_positive_worker_balance_and_all_followup_steps(monkeypatch,tokens,seconds,steps,expected):
+    balances(monkeypatch,tokens=tokens,seconds=seconds,steps=steps)
+    assert controller._repair_funds(Path('/unused')) is expected
+
+
+@pytest.mark.parametrize('mode',['soft','hard'])
+@pytest.mark.parametrize('fault',['unknown','blocked'])
+def test_uncertain_usage_or_external_action_never_becomes_repair_funds(monkeypatch,mode,fault):
+    balances(monkeypatch,mode=mode,tokens=2000000,seconds=1200,**{fault:True})
+    assert not controller._repair_funds(Path('/unused'))
+
+
+@pytest.mark.parametrize('tokens,seconds,expected',[(1000000,720,True),(999999,720,False),(1000000,719.999,False)])
+def test_hard_keeps_full_worker_author_floor_contract(monkeypatch,tokens,seconds,expected):
+    balances(monkeypatch,mode='hard',tokens=tokens,seconds=seconds)
+    assert controller._repair_funds(Path('/unused')) is expected
+
+
+@pytest.mark.parametrize('ordinary',[False,True])
+@pytest.mark.parametrize('crash',[False,True])
+def test_soft_repair_reaches_delivery_through_both_entries_and_continuation(tmp_path,monkeypatch,ordinary,crash):
+    prepare=controller.prepare
+    def soft_scene(*args,**kwargs):
+        kwargs.update(node_budget_mode='soft',max_seconds=720)
+        kwargs['node_budget_policy']['W']=dict(max_observed_tokens=650000,max_seconds=480)
+        kwargs['delivery_policy'].update(closeout_a=dict(max_observed_tokens=150000,max_seconds=120),
+            inflight_tokens=200000,cleanup_seconds=60,submit_seconds=45,confirm_seconds=15)
+        return prepare(*args,**kwargs)
+    monkeypatch.setattr(controller,'prepare',soft_scene)
+    root,_=repair_scene(tmp_path,ordinary=ordinary,max_tokens=1000000,crash=crash)
+    original={p:p.read_bytes() for p in (root/'native-evidence').glob('*/result-identity.json')}
+    first=cli(root)
+    if crash:
+        assert first['status'] in {'closeout_native_unsealed','native_stopped'},first
+        assert cli(root,'worker-resume','--step','4')['status']=='delivery_confirmed'
+    else:assert first['status']=='delivery_confirmed',first
+    repair=c.read(root/'jobs/004.json')
+    assert repair.get('purpose')==(None if ordinary else 'closeout')
+    assert repair['engineering_repair']['candidate_id']=='run-1'
+    assert all(p.read_bytes()==data for p,data in original.items())
+    assert len(list((c.workspace(root,4)/'work/lineage/calls').iterdir()))==1
+    assert c.settings(root)['max_tokens']==1000000 and c.settings(root)['max_seconds']==720
+    assert not any(c.read(p)['kind']=='budget_amend' for p in (root/'control-ledger').glob('*.json'))

@@ -780,6 +780,12 @@ def _repair_funds(root):
     if worker is None:return False
     policy=settings['delivery_policy'];author=policy['closeout_a']
     floor=budget.closeout_floor(settings)
+    if budget.node_mode(root)=='soft':
+        # W targets are advice: protect the subsequent A and execution floor,
+        # while allowing repair to use the positive balance above that reserve.
+        return (limits['max_tokens']-meter['observed_tokens'] > author['max_observed_tokens']+floor['tokens']
+            and limits['seconds_remaining'] > author['max_seconds']+floor['seconds']
+            and settings['max_steps']-budget.used_steps(root) >= 2+floor['steps'])
     return (limits['max_tokens']-meter['observed_tokens'] >= worker['max_observed_tokens']+author['max_observed_tokens']+floor['tokens']
         and limits['seconds_remaining'] >= worker['max_seconds']+author['max_seconds']+floor['seconds']
         and settings['max_steps']-budget.used_steps(root) >= 2+floor['steps'])
