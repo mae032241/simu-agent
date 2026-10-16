@@ -207,7 +207,7 @@ def _managed_outputs(interface, completed, observed):
 
 def managed_calls(root, job):
     """Capture small common receipts, independent of domain candidates or observers."""
-    from . import experiments, breadth
+    from . import experiments, breadth, generic_results
     records=experiments.Records(dict(record_dir=str(c.workspace(root,job['step'])/'work/lineage')))
     from .protocol import stage_scope
     scope=stage_scope(root,job);result=[]
@@ -230,8 +230,10 @@ def managed_calls(root, job):
             observed=c.read(c.regular(observed_path,limit=experiments.MAX_BYTES))
             extra=[observed[key] for key in ('accepted','completed','submission')]+observed['proofs']
             if 'native_terminal' in observed:extra.append(observed['native_terminal'])
-        outputs=_managed_outputs(_execution_interface(root,accepted),value,observed)
+        interface=_execution_interface(root,accepted)
+        outputs=_managed_outputs(interface,value,observed)
         row=dict(call_id=directory.name,scope=scope,mechanism_binding=binding,status=state,
+            result_protocol=generic_results.protocol(interface),
             accepted=_proof(root,accepted_path.relative_to(root).as_posix()),
             completed=_proof(root,completion.relative_to(root).as_posix()) if completion.exists() else None,terminal=terminal,
             **(dict(observation=_proof(root,observed_path.relative_to(root).as_posix())) if observed is not None else {}),
@@ -249,12 +251,12 @@ def managed_calls(root, job):
 
 
 def validate_managed(root, job, rows):
-    from . import breadth
+    from . import breadth, generic_results
     from .protocol import stage_scope
     if not isinstance(rows,list) or len(rows)>128:raise ObserverIntegrityError('Managed receipt capacity exceeded')
     scope=stage_scope(root,job);seen=set()
     for row in rows:
-        if set(row)-{'observation'} not in ({'call_id','scope','mechanism_binding','status','accepted','completed','terminal'}, {'call_id','scope','mechanism_binding','status','accepted','completed','terminal','originals','outputs','execution'}) or row['call_id'] in seen or row['scope']!=scope:
+        if set(row)-{'observation','result_protocol'} not in ({'call_id','scope','mechanism_binding','status','accepted','completed','terminal'}, {'call_id','scope','mechanism_binding','status','accepted','completed','terminal','originals','outputs','execution'}) or row['call_id'] in seen or row['scope']!=scope:
             raise ObserverIntegrityError('Managed receipt owner differs')
         seen.add(row['call_id'])
         for key in ('accepted','completed','terminal','observation'):
@@ -265,6 +267,8 @@ def validate_managed(root, job, rows):
         accepted=c.read(root/row['accepted']['snapshot'])
         if accepted.get('call_id')!=row['call_id'] or accepted.get('scope')!=scope or accepted.get('mechanism_binding')!=row['mechanism_binding']:
             raise ObserverIntegrityError('Managed receipt differs from accepted original')
+        if 'result_protocol' in row and row['result_protocol']!=generic_results.protocol(_execution_interface(root,accepted)):
+            raise ObserverIntegrityError('Managed result protocol differs from frozen host interface')
         breadth.check_binding((job.get('search') or {}).get('breadth'),row['mechanism_binding'],scope)
         for proof in [*row.get('originals',[]),*row.get('outputs',[])]:_validate_proof(root,proof)
         if 'execution' in row:
@@ -306,8 +310,10 @@ def _capture(root, job, payload, materials):
         else:
             rows=managed_calls(root,job)
             from . import generic_results
-            snapshot=dict(binding=binding,candidates=generic_results.candidates(rows),current_candidate=None,actual_submission=None,contexts=[],managed_calls=rows,
+            diagnostics=[]
+            snapshot=dict(binding=binding,candidates=generic_results.candidates(rows,diagnostics=diagnostics),current_candidate=None,actual_submission=None,contexts=[],managed_calls=rows,
                 coverage=dict(status='partial',note='Registered call originals and explicitly declared candidates only; scientific qualification is unobserved.'))
+            if diagnostics:snapshot['candidate_diagnostics']=diagnostics
             if len(_bytes(snapshot))>MAX_OBSERVER_BYTES:raise ObserverIntegrityError('Managed receipt capacity exceeded')
             c.write(path,snapshot)
         return dict(path=path.relative_to(root).as_posix(),sha256=c.digest(path))
@@ -405,9 +411,11 @@ def _capture(root, job, payload, materials):
     if _managed_config(job,root):
         from . import generic_results
         snapshot['managed_calls']=managed_calls(root,job)
-        for candidate in generic_results.candidates(snapshot['managed_calls']):
+        diagnostics=[]
+        for candidate in generic_results.candidates(snapshot['managed_calls'],diagnostics=diagnostics):
             if candidate['id'] in known | seen:raise ObserverIntegrityError('Managed candidate identity collides with observer facts')
             snapshot['candidates'].append(candidate)
+        if diagnostics:snapshot['candidate_diagnostics']=diagnostics
     if len(_bytes(snapshot)) > MAX_OBSERVER_BYTES:
         raise ValueError('Observer snapshot exceeds byte bound')
     c.write(path, snapshot)
@@ -445,7 +453,9 @@ def capture(root, job, payload, materials):
         if _managed_config(job,root):
             from . import generic_results
             value['managed_calls']=managed_calls(root,job)
-            value['candidates']=generic_results.candidates(value['managed_calls'])
+            diagnostics=[]
+            value['candidates']=generic_results.candidates(value['managed_calls'],diagnostics=diagnostics)
+            if diagnostics:value['candidate_diagnostics']=diagnostics
         if len(_bytes(value))>MAX_OBSERVER_BYTES:raise ObserverIntegrityError('Managed receipt capacity exceeded')
         c.write(path, value)
         return dict(path=path.relative_to(root).as_posix(), sha256=c.digest(path))

@@ -1,0 +1,159 @@
+"""Opaque private results and explicit async terminal reconciliation, without models."""
+import importlib.metadata
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+import pytest
+
+from scidiscovery.research_loop import contracts as c, controller, execution, experiments as e, history, native, search
+from test_history_handoff import finish
+
+
+@pytest.fixture
+def composed_registry(tmp_path,monkeypatch):
+    if list(importlib.metadata.entry_points().select(group='scidiscovery.execution_interfaces',name='composed_execution')):return
+    metadata=tmp_path/'registration/composed_contract.dist-info';metadata.mkdir(parents=True)
+    (metadata/'METADATA').write_text('Metadata-Version: 2.1\nName: composed-contract\nVersion: 0\n')
+    (metadata/'entry_points.txt').write_text('[scidiscovery.execution_interfaces]\ncomposed_execution = composed_execution_fixture:REGISTRATION\n')
+    monkeypatch.syspath_prepend(str(metadata.parent))
+    monkeypatch.setenv('PYTHONPATH',os.pathsep.join([str(metadata.parent),str(Path(__file__).parent),str(Path(e.__file__).parents[2])]))
+
+
+def case(tmp_path,options,observer=None):
+    public=tmp_path/'public';public.mkdir();goal=public/'objective.md';goal.write_text('Synthetic execution contract only.')
+    root=tmp_path/'instance'
+    extra={}
+    if observer:
+        adapter=tmp_path/'observer.py'
+        adapter.write_text('import json,sys\njson.load(sys.stdin)\n'+('print("invalid")\n' if observer=='broken' else
+            'print(json.dumps(dict(candidates=[],current_candidate=None,actual_submission=None,coverage=dict(status="complete",note="No domain claims"))))\n'))
+        extra['history_observer']=dict(adapter=str(adapter),config={})
+    controller.prepare(root,goal,public,['never-launched'],max_tokens=10000,max_seconds=120,max_steps=10,
+        model='no-model',reasoning_effort='high',node_budget_mode='hard',experiment_mode='external',**extra)
+    finish(root,1,'H',[],action='experiment',search_choice=dict(scope='Two synthetic mechanisms',commitments=[
+        dict(label=label,minimal_test='Read the exact backend observation',existing_ref=None) for label in ('P','Q')],
+        focus=dict(label=None,action='screen')))
+    job=c.build_job(root,2,'W',[1]);record=execution.record(root,2)
+    c.write(record/'native-intent.json',dict(task_sha256=c.digest(root/'jobs/002.json')))
+    path=c.workspace(root,2)/'work/config.json';config=e.configure(root,2,'composed_execution:fixture',options,path)
+    package=c.workspace(root,2)/'work/package';package.write_bytes(b'opaque original job package')
+    def cli(*args,expected=0):
+        isolated=['-I'] if os.environ.get('SCID_COMPOSED_INSTALLED')=='1' else []
+        reply=subprocess.run([sys.executable,*isolated,'-m','scidiscovery.research_loop.experiments','--config',str(path),*map(str,args)],capture_output=True,text=True)
+        assert reply.returncode==expected,(reply.stdout,reply.stderr)
+        return json.loads(reply.stdout)
+    started=cli('run','--payload',package,'--new-plan','--mechanism','P',expected=0 if options.get('synchronous') else 2)
+    return root,job,config,cli,started['call_id']
+
+
+def seal_and_read(root,job,observed=True):
+    finish(root,2,'W',[1],mechanism_findings=[
+        dict(mechanism='P',basis='observed' if observed else 'blocked',finding='Synthetic backend fact; no scientific qualification.'),
+        dict(mechanism='Q',basis='blocked',finding='Not executed in this fixture.')])
+    seal=c.read(execution.record(root,2)/'result-identity.json');fact=c.read(root/seal['observations']['path'])
+    a=c.build_job(root,3,'A',[1,2]);page=a['history']['view']['indexes'].get('experiments');calls=[]
+    while page:
+        index=c.read(c.workspace(root,3)/page);calls+=index['experiments'];page=index['next_page']
+    for row in calls:
+        for output in row['outputs']:assert (c.workspace(root,3)/output['path']).read_bytes()==b'opaque original job package'
+    return fact,calls
+
+
+@pytest.mark.parametrize('observer',[None,'empty','broken'])
+@pytest.mark.parametrize('private',[None,'native','local-like'])
+def test_opaque_private_remote_results_seal_and_read_without_candidate_inference(tmp_path,composed_registry,observer,private):
+    root,job,config,cli,call=case(tmp_path,dict(synchronous=True,private=private),observer)
+    assert config['execution_interface']['result_protocol'] is None
+    assert cli('query','--call-id',call)['state']=='succeeded'
+    fact,calls=seal_and_read(root,job)
+    assert fact['managed_calls'][0]['status']=='known_success' and fact['candidates']==[]
+    assert not fact.get('candidate_diagnostics')
+    completed=c.read(root/fact['managed_calls'][0]['completed']['snapshot'])
+    if private:assert completed['result']['candidate']
+    assert len(calls)==1 and len(calls[0]['outputs'])==1
+
+
+@pytest.mark.parametrize('observer',[None,'empty','broken'])
+@pytest.mark.parametrize('private',['native','local-like'])
+def test_explicit_bad_candidate_protocol_is_bounded_diagnostic_not_scientific_candidate(tmp_path,composed_registry,observer,private):
+    root,job,config,cli,call=case(tmp_path,dict(synchronous=True,private=private,result_protocol=e.LOCAL_RESULT_PROTOCOL),observer)
+    fact,calls=seal_and_read(root,job)
+    assert fact['managed_calls'][0]['status']=='known_success' and fact['candidates']==[]
+    assert fact['candidate_diagnostics']==[dict(call_id=call,code='declared_candidate_mapping_invalid')]
+
+
+@pytest.mark.parametrize('outcome,state',[('known_success','succeeded'),('known_failed','failed')])
+def test_async_without_collect_reconciles_same_call_before_seal(tmp_path,composed_registry,outcome,state):
+    root,job,config,cli,call=case(tmp_path,dict(collect=False,terminal_status=outcome))
+    help_reply=subprocess.run([sys.executable,'-m','scidiscovery.research_loop.experiments','--help'],capture_output=True,text=True)
+    assert help_reply.returncode==0 and 'reconcile' in help_reply.stdout and 'never submit' in help_reply.stdout
+    directory=e.Records(config).directory(call)
+    assert cli('reconcile','--call-id',call,expected=2)['status']=='unknown'
+    assert len(e.Records(config).calls())==1 and not (directory/'execution-observation.json').exists()
+    e.load(config).complete(call)
+    before={p:p.read_bytes() for p in directory.rglob('*') if p.is_file()}
+    assert cli('query','--call-id',call)['state']==state
+    assert cli('lookup','--call-id',call)['state']==state
+    assert before=={p:p.read_bytes() for p in directory.rglob('*') if p.is_file()}
+    assert cli('collect','--call-id',call,expected=2)['status']=='unavailable'
+    assert cli('reconcile','--call-id',call)['status']==outcome
+    observed=c.read(directory/'execution-observation.json')
+    assert observed['outputs']==[] and not (directory/'terminal.json').exists() and not (directory/'process.json').exists()
+    assert len(e.Records(config).calls())==1
+    fact,calls=seal_and_read(root,job)
+    assert fact['managed_calls'][0]['status']==outcome and fact['managed_calls'][0]['outputs']==[]
+    (e.Records(config).root/'forbid-backend-reads').write_text('Repeated reconciliation must reuse the original projection.')
+    before={p:p.read_bytes() for p in directory.rglob('*') if p.is_file()}
+    assert cli('reconcile','--call-id',call)['status']==outcome
+    c.validate(c.workspace(root,2));history.validate_managed(root,job,fact['managed_calls'])
+    assert before=={p:p.read_bytes() for p in directory.rglob('*') if p.is_file()}
+    # A evaluates the frozen fact; subsequent work can be admitted without replay.
+    record=execution.record(root,3)
+    payload=dict(summary='Assess original backend terminal',scientific_result='Synthetic facts only.',
+        limitations=['No scientific qualification.'],implementation_selection=None,candidate_recommendation=None,
+        progress_assessment=None,portfolio_review=None,search_review=dict(
+            dispositions=[dict(mechanism_ref='h001.m1',status='screened',reason='Exact completed observation')],
+            next_focus=dict(mechanism_ref='h001.m1',action='improve')),
+        next_action='continue_w',route_reason='Improve the observed mechanism',
+        decision_request=dict(decision='mechanism',question='What changes the mechanism choice?',change_criterion='A discriminating observation'))
+    c.write(record/'native-intent.json',dict(task_sha256=c.digest(root/'jobs/003.json')))
+    c.write(record/'science-output.json',payload);c.write(record/'usage.json',dict(input_tokens=7,cached_input_tokens=2,output_tokens=3))
+    c.write(record/'native-outcome.json',dict(returncode=0,stop_reason=None,usage=native.usage(root),raw_sha256=c.digest(record/'science-output.json')))
+    c.seal_result(root,3)
+    assert search.project(root,4)['mechanisms']['h001.m1']['status']=='screened'
+    c.build_job(root,4,'W',[1,2,3]);record=execution.record(root,4)
+    c.write(record/'native-intent.json',dict(task_sha256=c.digest(root/'jobs/004.json')))
+    successor=e.configure(root,4,'composed_execution:fixture',dict(synchronous=True),c.workspace(root,4)/'work/config.json')
+    assert not successor['breadth']['prior_unknown']
+    package=c.workspace(root,4)/'work/package';package.write_bytes(b'new opaque input')
+    assert e.dispatch(successor,package,new=True,mechanism='P')['status']=='known_success'
+
+
+def test_late_reconcile_preserves_old_sealed_unknown_as_known_g3_limit(tmp_path,composed_registry):
+    root,job,config,cli,call=case(tmp_path,dict(collect=False))
+    fact,_=seal_and_read(root,job,observed=False)
+    record=execution.record(root,2);seal_bytes=(record/'result-identity.json').read_bytes()
+    assert fact['managed_calls'][0]['status']=='unknown'
+    e.load(config).complete(call);assert cli('reconcile','--call-id',call)['status']=='known_success'
+    assert history.managed_calls(root,job)[0]['status']=='known_success'
+    c.validate(c.workspace(root,2))
+    assert (record/'result-identity.json').read_bytes()==seal_bytes
+    seal=c.read(record/'result-identity.json')
+    assert c.read(root/seal['observations']['path'])['managed_calls'][0]['status']=='unknown'
+
+
+@pytest.mark.parametrize('fault',['accepted-interface','external-id','backend-proof'])
+def test_reconcile_rejects_changed_original_identity_and_native_evidence(tmp_path,composed_registry,fault):
+    root,job,config,cli,call=case(tmp_path,dict(collect=False))
+    e.load(config).complete(call);directory=e.Records(config).directory(call)
+    path=directory/({'accepted-interface':'accepted.json','external-id':'submission.json','backend-proof':'backend-terminal.json'}[fault])
+    value=c.read(path)
+    if fault=='accepted-interface':value['interface']=dict(value['interface'],result_protocol=e.LOCAL_RESULT_PROTOCOL)
+    elif fault=='external-id':value['external_run_id']='remote-other'
+    else:value['scope']=dict(value['scope'],execution_key='f'*64)
+    c.write(path,value)
+    assert cli('reconcile','--call-id',call,expected=3)['status']=='integrity_error'
+    assert len(e.Records(config).calls())==1 and not (directory/'execution-observation.json').exists()

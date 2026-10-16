@@ -21,7 +21,7 @@ import time
 import uuid
 
 from scidiscovery.operations.execution import (ExecutionInterfaceRegistration,
-    LifecycleCapabilities, LocalFileDescriptor, MANAGED_METHODS, lifecycle_capabilities)
+    LifecycleCapabilities, LocalFileDescriptor, MANAGED_METHODS, lifecycle_capabilities, LOCAL_RESULT_PROTOCOL)
 from scidiscovery.operations.runtime_plugins import RuntimePluginContext, RuntimePluginContribution
 
 GROUP = 'scidiscovery.execution_interfaces'
@@ -160,9 +160,13 @@ def freeze(config, executor, *, path=None):
     assets = [Path(inspect.getfile(declared.factory.build)).resolve(),
               Path(inspect.getfile(type(adapter))).resolve(), Path(__file__).resolve(), Path(inspect.getfile(breadth)).resolve()]
     assets += [Path(item).resolve() for item in adapter.code_assets()]
+    result_protocol=getattr(adapter,'result_protocol',None)
+    if result_protocol is not None and (not isinstance(result_protocol,str) or not 0<len(result_protocol.encode())<=160):
+        raise ValueError('An execution result protocol requires an explicit bounded identifier')
     value['execution_interface'] = dict(version=VERSION, executor=executor, plugin_version=declared.version,
         observation_version=OBSERVATION_VERSION,
         terminal_evidence=getattr(adapter,'terminal_evidence_kind','adapter_result'),
+        result_protocol=result_protocol,
         config_sha256=hashlib.sha256(encoded(body)).hexdigest(),
         capabilities=asdict(lifecycle_capabilities(adapter)),
         code=[proof(item) for item in dict.fromkeys(assets)])
@@ -618,8 +622,9 @@ def main(argv=None):
     run.add_argument('--change-intent');run.add_argument('--mechanism')
     run.add_argument('arguments',nargs=argparse.REMAINDER,help='Script arguments after --; passed as argv, never shell text')
     sub.add_parser('lineage-status')
-    for name in ('query','lookup','collect','cancel'):
-        item=sub.add_parser(name);item.add_argument('--call-id',required=True)
+    for name in ('query','lookup','collect','cancel','reconcile'):
+        item=sub.add_parser(name,**(dict(help='Freeze the same original terminal facts using query and declared collection; never submit a new execution.') if name=='reconcile' else {}))
+        item.add_argument('--call-id',required=True)
     args=parser.parse_args(argv)
     try:
         config=json.loads(read(args.config))
@@ -627,7 +632,7 @@ def main(argv=None):
         scope=config.get('scope',{})
         if args.command=='lineage-status' and (type(scope.get('handoff_protocol')) is not int or scope['handoff_protocol']!=protocol.CURRENT):
             print(json.dumps(preserved_progress(config),allow_nan=False));return 0
-        if args.command in {'run','lookup','collect','cancel'}:
+        if args.command in {'run','lookup','collect','cancel','reconcile'}:
             from .protocol import require_scope
             require_scope(config.get('scope'))
         adapter=load(config,path=args.config)
@@ -640,10 +645,14 @@ def main(argv=None):
             code={'known_success':0,'known_failed':1}.get(result['status'],2)
         elif args.command=='lineage-status':result=progress(config);code=0
         else:
-            capability='lookup_submission' if args.command=='lookup' else 'query' if args.command=='query' else args.command
+            capability='lookup_submission' if args.command=='lookup' else 'query' if args.command in {'query','reconcile'} else args.command
             if not getattr(lifecycle_capabilities(adapter),capability):
                 raise UnsupportedExecution('Requested original execution operation unavailable')
             if args.command=='query':result=adapter.status_details(args.call_id)
+            elif args.command=='reconcile':
+                observed=record_observation(config,adapter,args.call_id)
+                result=dict(call_id=args.call_id,status=observed['status'] if observed is not None else 'unknown',
+                    note='Original terminal observation frozen; no new submission.' if observed is not None else 'Original execution has no verified terminal observation.')
             elif args.command=='lookup':
                 records=Records(config);accepted=records.accepted(args.call_id)
                 descriptor=LocalFileDescriptor.model_validate(accepted['prepared'])
@@ -660,7 +669,7 @@ def main(argv=None):
             elif args.command in {'query','lookup'} and result.get('state') in {'succeeded','failed'}:
                 if (Records(config).directory(args.call_id)/'execution-observation.json').exists():
                     record_observation(config,adapter,args.call_id)
-            code=0
+            code=2 if args.command=='reconcile' and result['status']=='unknown' else 0
         result['feedback']=dict(version=1,budget=feedback.budget_hint(Path(config['record_dir']).parent.parent),
             review=review_feedback(config),
             qualification='Execution metadata does not establish scientific or candidate qualification.')

@@ -6,6 +6,8 @@ from typing import Mapping, Protocol
 from scidiscovery.artifact_agent.schema.execution import LocalFileDescriptor
 from .runtime_plugins import RuntimePluginFactory
 
+LOCAL_RESULT_PROTOCOL = 'scidiscovery.local-result.v1'
+
 
 @dataclass(frozen=True)
 class AdapterCapability:
@@ -62,6 +64,10 @@ class ManagedExecutionInterface(ExecutionAdapter, Protocol):
     Scientific readers never re-query a backend. Local implementations declare
     terminal_evidence_kind='local_process' and retain cleanup/transport/exit proofs;
     other implementations use their own terminal evidence without POSIX receipts.
+    result_protocol is an optional explicit declaration frozen by control; private
+    result fields never imply the local result/candidate protocol. The CLI's
+    explicit reconcile action freezes an original async terminal observation using
+    query and optional declared collection; query itself does not collect or submit.
     """
     def lifecycle_capabilities(self) -> LifecycleCapabilities: ...
     def code_assets(self) -> tuple[str, ...]: ...

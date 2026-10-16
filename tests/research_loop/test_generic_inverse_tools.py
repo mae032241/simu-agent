@@ -91,6 +91,13 @@ def test_generic_inverse_default_local_cli_handoff_and_export(tmp_path, executio
     assert len(observation['candidates']) == 2
     assert len({candidate['id'] for candidate in observation['candidates']}) == 2
     assert {candidate['evaluation_key'] for candidate in observation['candidates']} == {'generic_inverse.v1/public_target_stress/latent_mse'}
+    # Old sealed rows omitted the projection marker; resolve from their host binding.
+    from scidiscovery.research_loop import generic_results
+    legacy = dict(observation, managed_calls=[{key:value for key,value in row.items() if key!='result_protocol'} for row in observation['managed_calls']])
+    for candidate in observation['candidates']:
+        assert generic_results.sources(root, legacy, candidate['id'])['candidate_id']==candidate['id']
+    assert generic_results.protocol(dict(executor='local_execution:command',version=1))=='scidiscovery.local-result.v1'
+    assert generic_results.protocol(dict(executor='composed_execution:fixture',version=1)) is None
     calls = observation['managed_calls']
     assert len(calls) == 3
     read_proofs = c.read(c.workspace(root, 3) / 'work/read-proof.json')
@@ -244,7 +251,7 @@ def test_generic_candidate_requires_explicit_scientific_metric_and_retained_arti
     result = LocalExecution.read_result(tmp_path, [dict(name='product.bin')])
     if declaration in {None, 'explicit'}:
         assert result['status'] == 'available'
-        row = dict(call_id='call-1', scope=dict(step=2, goal='original'), status='known_success',
+        row = dict(call_id='call-1', scope=dict(step=2, goal='original'), status='known_success',result_protocol='scidiscovery.local-result.v1',
             completed=dict(retention='archived'), execution=dict(result=result), outputs=[dict(name='product.bin')])
         candidates = generic_results.candidates([row])
         if declaration is None:assert candidates == []  # Two metrics do not silently select one.

@@ -1,5 +1,6 @@
 """Explicit local result declarations projected into existing candidate bindings."""
 import hashlib
+import math
 from pathlib import Path
 
 from . import contracts as c
@@ -10,15 +11,41 @@ def identity(row):
     return 'local-' + hashlib.sha256(e.encoded(dict(scope=row['scope'], call_id=row['call_id']))).hexdigest()
 
 
-def candidates(rows):
+def protocol(interface):
+    if 'result_protocol' in interface:return interface['result_protocol']
+    # Read-only compatibility for the exact previously published local binding.
+    if interface.get('executor')=='local_execution:command' and type(interface.get('version')) is int and interface['version']==1:
+        return e.LOCAL_RESULT_PROTOCOL
+    return None
+
+
+def candidates(rows, *, diagnostics=None):
     result = []
     for row in rows:
+        if row.get('result_protocol')!=e.LOCAL_RESULT_PROTOCOL:continue
         declared = row.get('execution', {}).get('result') or {}
+        if not isinstance(declared,dict):continue
         candidate = declared.get('candidate')
         if row['status'] != 'known_success' or declared.get('status') != 'available' or candidate is None:
             continue
-        metric = next(item for item in declared['metrics'] if item['name'] == candidate['metric'])
-        artifact = next(item for item in row['outputs'] if 'artifacts/' + item['name'] == candidate['artifact'])
+        metrics=declared.get('metrics');outputs=row.get('outputs')
+        valid=(isinstance(candidate,dict) and set(candidate)=={'label','metric','artifact'}
+            and all(isinstance(candidate.get(key),str) and 0<len(candidate[key].encode())<=160 for key in ('label','metric'))
+            and isinstance(candidate.get('artifact'),str) and isinstance(metrics,list) and isinstance(outputs,list))
+        matching_metrics=[item for item in metrics if isinstance(item,dict) and item.get('name')==candidate['metric']] if valid else []
+        matching_outputs=[item for item in outputs if isinstance(item,dict) and isinstance(item.get('name'),str)
+            and 'artifacts/'+item['name']==candidate['artifact']] if valid else []
+        metric=matching_metrics[0] if len(matching_metrics)==1 else {}
+        value=metric.get('value')
+        try:finite=type(value) in (int,float) and math.isfinite(value)
+        except OverflowError:finite=False
+        valid=(valid and len(matching_metrics)==len(matching_outputs)==1 and type(value) in (int,float)
+            and finite and metric.get('direction') in ('min','max')
+            and isinstance(metric.get('evaluation_key'),str) and 0<len(metric['evaluation_key'].encode())<=512)
+        if not valid:
+            if diagnostics is not None:diagnostics.append(dict(call_id=row['call_id'],code='declared_candidate_mapping_invalid'))
+            continue
+        artifact=matching_outputs[0]
         result.append(dict(id=identity(row), label=candidate['label'], implementation=None,
             evaluation_key=metric['evaluation_key'], metric=metric['value'], direction=metric['direction'], status='ok',
             evidence=[row['completed'], artifact]))
@@ -33,6 +60,10 @@ def sources(root, fact, candidate_id):
     if len(matches) != 1:
         raise ValueError('Managed candidate identity is ambiguous')
     row = matches[0]
+    if 'result_protocol' not in row:
+        from . import history
+        accepted=c.read(root/row['accepted']['snapshot'])
+        row=dict(row,result_protocol=protocol(history._execution_interface(root,accepted)))
     observed = [item for item in candidates([row]) if item['id'] == candidate_id]
     if len(observed) != 1 or observed[0] not in fact['candidates']:
         raise ValueError('Managed candidate differs from declared sealed result')

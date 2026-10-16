@@ -22,6 +22,7 @@ MAX_SCAN_ENTRIES = 1024
 
 class LocalExecution:
     terminal_evidence_kind = 'local_process'
+    result_protocol = e.LOCAL_RESULT_PROTOCOL
 
     def __init__(self, config):
         self.config=config
