@@ -60,7 +60,7 @@ def direct_materials(s,w,job_path):
     if p.parent!=root/'jobs' or p.is_relative_to(w):raise ValueError('operator_job_root_required')
     job=json.loads(regular(p));items=job.get('direct_materials',[])
     if not isinstance(items,list):raise ValueError('direct_material_list_required')
-    result=[];totals={};targets=set()
+    result=[];totals={};targets=set();managed={}
     for item in items:
         if not isinstance(item,dict) or set(item)!= {'source','path','sha256','size_bytes'}:
             raise ValueError('exact_direct_material_fields_required')
@@ -80,6 +80,28 @@ def direct_materials(s,w,job_path):
             if not (parts[0]=='artifacts' and len(parts)>1 or len(parts)==1 and parts[0] in ('conclusion.json','conclusion.md')):
                 raise ValueError('intermediate_material_not_exportable')
             exported=inner
+        elif (len(inner.parts)==6 and inner.parts[:3]==('work','lineage','calls')
+                and inner.parts[4]=='observed-originals' and inner.name==item['sha256']):
+            # Common execution outputs are content-addressed retained originals,
+            # not arbitrary work files. Reuse the sealed control observation and
+            # its descriptor validation; never rediscover a live backend here.
+            from scidiscovery.research_loop import contracts as c
+            if node not in managed:
+                parent=nodes/node;c.validate(parent)
+                seal=c.read(c.regular(c.host_record(parent)/'result-identity.json'))
+                receipt=seal.get('observations')
+                if receipt is None:raise ValueError('managed_material_observation_required')
+                observed=c.read(c.regular(root/receipt['path']))
+                managed[node]=(seal['materials'],observed['managed_calls'])
+            materials,calls=managed[node]
+            matching=[(call,output) for call in calls for output in call.get('outputs',[])
+                if call['call_id']==inner.parts[3] and root/output['path']==source
+                and output['sha256']==item['sha256'] and output['size_bytes']==item['size_bytes']
+                and dest==Path('inputs/parents')/node/'artifacts/experiments'/call['call_id']/'artifacts'/output['name']]
+            if item not in materials or len(matching)!=1:
+                raise ValueError('exact_managed_material_required')
+            call,output=matching[0]
+            exported=Path('experiments')/call['call_id']/'artifacts'/output['name']
         else:raise ValueError('intermediate_material_not_exportable')
         expected=Path('inputs/parents')/node/'artifacts'/exported
         if dest!=expected or dest.is_absolute() or '..' in dest.parts:
