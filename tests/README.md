@@ -1,69 +1,39 @@
-# 测试分层与运行
+# 测试分组与迁移规则
 
-测试按需要证明的边界划分。默认 `pytest` 仅选择源码层，`-m` 不会越过层选择；安装、进程、大文件和在线平台必须显式选层。资源敏感环境应始终使用下面的串行入口。
+当前优先保护薄层的真实职责：原调用身份、执行事实、恢复不重放、候选交付、预算与单写者。不要以旧测试数量或旧安装矩阵定义验收范围。
 
-| 层 | 选择参数 | 覆盖范围 |
+**2026-10-17：本次迁移仅静态修改与独立审查，未运行测试、构建或安装。** 资源事故后，硬资源隔离尚未验证；不能用采样监督器宣称不会OOM，也不能直接恢复重型验收。
+
+## 功能与安装分开
+
+| 组 | 选择 | 边界 |
 | --- | --- | --- |
-| 源码 | `--lane source` | 业务规则、合同、资格、审批、恢复、非法输入；允许小型本地命令，例如 `bash -n`。 |
-| 安装 | `--lane installed` | wheel 资源、依赖解析、真实 entry point、解释器隔离、一个代表性安装后完成链；不重跑源码业务矩阵。 |
-| 进程 | `--lane process` | 真实 daemon、Unix socket、跨进程重启和子进程生命周期。 |
-| 大输入 | `--lane stress` | 大文件、资源边界；按具体节点单独运行。 |
-| 在线平台 | `--lane live` | 需要真实平台或外部服务；选层不提供凭据或授权。 |
+| 功能源码 | `--lane source` | 语义、准入、原件及负控；不构建、不安装、不建venv。 |
+| 功能进程 | `--lane process` | 必要的真实CLI、子进程、锁竞争、恢复；不安装。 |
+| 大输入 | `--lane stress` | 仅按缺陷选择跨历史阈值的必要用例，不默认扩大数据量。 |
+| 在线平台 | `--lane live` | 明确外部资格与授权，选择组不授予预算或权限。 |
+| 独立安装 | `--lane installed` | 仅 `tests/installation/`，显式选择；只验证包装、入口发现与资源依赖。 |
 
-## 串行资源入口
+功能全量也不导入安装目录。显式把安装文件传给功能组（反之亦然）会报错；功能fixture若依赖旧安装fixture也报错，不再自动升级到安装组。根conftest在收集前隔离目录，不能靠执行阶段跳过来掩盖安装依赖。
 
-从仓库根目录运行；输出目录必须不存在。日志和结果建议放在 `/tmp`：
+安装组不运行科学实验、H/W/A、daemon业务、评分或恢复矩阵；这些检查回到对应功能组。一个选定cohort只建一次环境、安装一次，不切换环境删除后再重建。默认core，只有涉及TCAD交付元数据时显式选tcad；其余旧包装组合未验证，不构造新矩阵补齐。
 
-```bash
-python scripts/run_tests.py --lane source --per-file --output /tmp/scid-source
-python scripts/run_tests.py --lane source --output /tmp/scid-source-focused tests/operations/test_r3_catalog_authority.py
-python scripts/run_tests.py --lane installed --output /tmp/scid-installed
-python scripts/run_tests.py --lane process --per-file --output /tmp/scid-process
-python scripts/run_tests.py --lane installed --collect-only --output /tmp/scid-installed-collect
-```
+`tests/installation/check_source_release.py` 是**单独显式选择**的源码发布包检查，名称不匹配默认测试发现。它检查发布文件、原件hash与manifest，不运行发布包中的pytest或安装检查。源码发布与wheel是不同交付路径，不能以一个冒充另一个；不在默认安装烟顺带构建整份源码发布包。
 
-`--per-file` 逐文件启动新的 pytest 进程，避免全套运行长期保留模块和 catalog；失败或资源止损立即停止，不自动加额或重试。其他层文件全部被排除时允许 pytest 返回 5，但不会将收集错误视为通过。安装层不接受此选项，以保持一次 session 内的 wheel 复用。精确 `文件::测试名` 也可作为目标。
+## 选择与证据
 
-资源设置来自 [scripts/test_resources.json](../scripts/test_resources.json)，可用 `--config PATH` 提供完整配置或显式覆盖部分 `limits`：
+- 先查目标用例的传递fixture、子进程、数据规模，再决定是否运行。
+- 一个检查必须说明能证伪哪个生产故障。固定成功JSON只证明传输时，不得当作科学质量或执行成功证据。
+- 去掉无效常量补丁、固定文件数量断言和无必要笛卡尔积；保留不同副作用入口的真实负控。
+- 修正后只重测受影响路径，不重建环境重跑整组功能。
+- 独立审查默认只读，不另起验收批次。禁止并行测试/安装；必要锁竞争用例中的子进程不等于并行测试批次。
 
-- 不主动限制虚拟地址空间；整棵进程树 RSS 采样止损 1,500,000,000 B。
-- 系统可用内存至少 8 GiB、下降不超过 2 GB；Dirty 不超过 128 MiB。
-- 每批 300 秒；数值库线程固定为 1；输出日志预算 8 MiB。
-- 同一用户的所有此类测试共享 `/tmp/scid-tests-UID.lock`，拒绝并行；pytest 也拒绝 xdist 多 worker。
-- 主日志流式写入并严格截到上限；安装子命令日志落盘，由监督器采样总量止损，可能有一个采样周期的超量，不会全量读入内存。
-- 正常退出、超时、信号和监督异常均清理子进程组及已观测的后代。每批临时环境、pip 暂存目录随后删除，保留日志及 `result.json`。
+已有串行入口仍为 `scripts/run_tests.py`，没有新增运行器。未来获准执行且资源隔离就绪后，使用精确目标和仓库本地持久日志目录；不要再仅保存到会随重启消失的 `/tmp`。例如功能目标选择 `--lane source ... tests/research_loop/<文件>::<用例>`；独立安装选择 `--lane installed --installation-cohort core ...`。**这些是入口说明，不是本轮已运行或建议立即运行的命令。**
 
-这不是 cgroup 聚合硬隔离：RSS/系统内存都是采样保护；瞬间分配和在两次采样间脱离父进程组的未知后代仍有限制。不要据此承诺绝不 OOM。V8 等现代 runtime 会预留远大于实际 RSS 的稀疏虚拟地址范围，监督器不再设置 `RLIMIT_AS`，也不尝试突破外部父进程已施加的 OS 限额。旧 `--config` 中的 `limits.address_space_bytes` 明确警告后忽略，其余保护不变。当前 Linux 环境未发现可用的 `memory.max` 控制文件。
+`--per-file` 会重复启动解释器与session fixture，不作为默认全目录执行方式；安装组禁止该选项。数据/进程用例显式标记 `stress`/`process_e2e`。collect-only也会导入测试，不视为无成本静态检查。
 
-CI 使用单独的 [test_resources_ci.json](../scripts/test_resources_ci.json)，只将可用内存门槛显式设为 2 GiB，适配内存小于 8 GiB 的托管 runner；其他上限不变。源码、安装、进程层在每个 job 内顺序执行。不同 Python 版本的 CI job 属于独立主机。
+## 资源与支持边界
 
-## 标记与安装 fixture
+`scripts/run_tests.py` 现有RSS、可用内存采样和超时止损不是内核聚合硬内存限制。安装与功能分组不能替代资源隔离；本次没有声称修复OOM或完成资源域验证。监督、构建子进程和持久日志的后续修复见[事故记录](../docs/plans/evidence/TEST_RESOURCE_INCIDENT_20261017.zh-CN.md)。
 
-使用 `installed_probe` / `installed_environments` 的测试通过 fixture 依赖闭包自动归入安装层。其他自行构建或安装的测试使用 `@pytest.mark.installed`；真实生命周期使用 `@pytest.mark.process_e2e`；大输入和在线平台分别使用 `stress`、`live_platform`。复合测试选最高成本层：live → stress → installed → process → source。新测试应将收集阶段保持为声明，不在模块顶层启动进程或构建。
-
-`pytest --test-lane installed --collect-only` 可仅收集；真正运行重型层必须经过资源入口。不要将无界 subprocess、网络或安装伪装成普通源码测试。
-
-当前安装证据证明从暂存源码直接构建并安装 wheel。发布入口
-`scripts/build_git_release.py` 生成 Git 源码目录及规范化源码 tar.gz，
-`deploy/install.sh` 从源码目录安装；该 tar.gz 不是 Python sdist。
-当前发布文档没有声明 Python sdist 为交付入口，测试也不覆盖
-`sdist → 解包 → wheel → 安装`。不能用现有 wheel 或 Git 源码发布结果声称
-这条路径已经通过；若将来支持 sdist 交付，需要单独补充受限验证。
-
-安装 fixture 按需构建并缓存 wheel：
-
-- 从已声明的源码/资源根暂存，排除 build、dist、egg-info 和字节码。
-- 解释器使用链接，环境不 bootstrap pip；宿主 pip（22.3+，支持 `--python`）向隔离环境离线安装。
-- 运行依赖先按已安装 distribution 的 RECORD 复制到 session 缓存，各环境使用 hardlink；不能 hardlink 时复制。不会向宿主安装目录写入。
-- 环境保持 `system_site_packages=False`，既验证核心包路径也验证 Pillow 路径确实属于隔离环境。
-- 同时只保留一个安装环境。测试按环境连续组织，避免来回切换重装；多个不同环境的业务矩阵应回到源码层。
-
-历史 R3 精确节点脚本和配置已经被此入口替代。旧计划中的命令是当时的验收记录，不是当前可执行测试清单。运行验证结果由每次 `result.json` 和日志证明，本文不宣称全套已通过。
-
-## 当前覆盖与历史夹具
-
-`tests/research_loop/` 验证薄科研 CLI；`tests/operations/`、`tests/artifact_agent/` 等继续验证已发布的 MCP、插件、审批和执行接口。两套入口尚未合并，不能按目录年代删除其中一套覆盖。旧协议拒绝、历史原件只读和不确定执行不重放仍是当前回归要求。
-
-2026-10-16 清理删除无当前消费者的 R5 结构统计、R3 旧配置、退役 R5 case replay 插件及其自测，并移除死 helper。历史文件保留在 Git `5251ee0`，可用 `git show 5251ee0:<旧路径>` 查看；不再把旧资格 manifest 放在当前测试夹具中。仍有生产职责的 CLI 测试更新为当前角色结果，而不是删除失败用例。
-
-当前测试、发布与生产缺陷分别记录于[本轮清理与审查](../docs/plans/TEST_CORPUS_RECONCILIATION_20261016.zh-CN.md)。定向通过不等于整套通过；测试夹具修正后暴露的问题及后续修复状态以该清单为准，历史失败记录不改写。
+旧MCP、审批、远端执行等仍支持的入口保留其独特功能检查，不移植其Run/Artifact/session fixture作为薄层前提。只有明确退役消费者后才删除唯一保护。复用/改写/删除清单见[独立评审](../docs/plans/evidence/THIN_TEST_REUSE_REVIEW_20261017.zh-CN.md)。未运行的源码、安装、真实平台资格分别记为未验证，不将静态审查写成动态通过。

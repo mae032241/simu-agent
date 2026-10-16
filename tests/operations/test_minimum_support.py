@@ -694,77 +694,76 @@ def test_omitted_inventory_never_becomes_a_duplicate_display_representative(monk
     assert 'python tools/read_input.py SOURCE_NAME' in observed['omitted_read']
 
 
-def test_installed_m1_open_and_copied_input_and_reference_readers(installed_probe):
-    installed_probe('all_domains', r'''
-import json, tempfile, subprocess, sys, shlex
-from pathlib import Path
-from scidiscovery.artifact_agent.runtime import open_runtime
-from scidiscovery.artifact_agent.interfaces.mcp_root import RootMCPRouter, RootToolFacade
-from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter, WorkerToolError
-from scidiscovery.artifact_agent.schema.role_result import split_reference
-from scidiscovery.artifact_agent.service.worker_start import startup_document
-from scidiscovery.operations.tooling import operation_role_instructions
-root = Path(tempfile.mkdtemp()); project = root/'project'; project.mkdir()
-runtime = open_runtime(project_root=project, state_root=root/'state', worker_backend='local')
-catalog = runtime.operation_catalog
-instance = runtime.scheduler_bindings.create_instance(name='m1', title='M1 installed', objective='Read frozen originals.')
-router = RootMCPRouter(RootToolFacade(runtime.artifacts, runtime.intake, runs=runtime.runs,
-    approvals=runtime.approvals, executions=runtime.executions, bindings=runtime.scheduler_bindings,
-    instance=instance.instance_id, operation_catalog=catalog))
-original = 'Preserve original restrictions; target support remains unknown.'
-router.call_tool('artifact_ingest_text', dict(name='task', text=original))
-router.call_tool('operation_invoke', dict(name='H', operation_id='science.hypothesis.propose.v1',
-    inputs=[dict(port='subject', artifact_names=['task'])], instruction='Propose a bounded mechanism.'))
-run_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace='run', name='H')
-compiled = catalog.operation('science.hypothesis.propose.v1')
-identity = ('installed-m1-session', 'installed-m1-thread')
-runtime.runs.worker_connections.attach(run_id=run_id, platform_session=identity[0], thread_id=identity[1])
-worker = LocalWorkerMCPRouter(runtime.runs, operation_id=compiled.spec.operation_id,
-    operation_digest=compiled.digest, run_id=run_id, trusted_caller=identity)
-opened = worker.call_tool('worker_open_assignment', {})
-workspace = Path(opened['workspace_path']); frozen = Path(opened['assignment_path']).read_bytes()
-start = json.loads(Path(opened['start_here_path']).read_bytes())
-assert 'budget' not in opened and 'narrative_instruction' not in opened
-assert start['budget']['deadline_at'] == opened['deadline_at']
-context = json.loads((workspace/'worker-context.json').read_bytes())
-role_guide = next(item for item in start['guides'] if item['name'] == 'role_reference')
-guide_command = shlex.split(role_guide['read'])
-assert guide_command[:2] == ['python', 'tools/read_input.py']
-assert guide_command[-1].endswith('/SECTION')
-guides = json.loads((workspace/guide_command[2]).read_bytes())['guides']
-assignment = json.loads(frozen)
-assert 'guides' not in context
-assert split_reference(assignment['role_instructions']) == (start['role_instructions'], guides['role_reference'])
-def read(*args):
-    response = subprocess.check_output([sys.executable, '-I', 'tools/read_input.py', *args],
-        cwd=workspace, text=True, timeout=10)
-    return response.rsplit('\n[read_input: ', 1)[0]
-assert read('subject', '--full').strip() == original
-section = json.loads(read(*guide_command[2:-1], guide_command[-1].replace('/SECTION', '/h_understanding')))
-assert section == guides['role_reference']['h_understanding']
-outside = root/'outside.txt'; outside.write_text('not an assignment material')
-denied = subprocess.run([sys.executable, '-I', 'tools/read_input.py', str(outside), '--file'],
-    cwd=workspace, capture_output=True, text=True, timeout=10)
-assert denied.returncode != 0 and 'source must be a file within this workspace' in denied.stdout
-assert 'not an assignment material' not in denied.stdout
-worker.call_tool('worker_open_assignment', {})
-assert Path(opened['assignment_path']).read_bytes() == frozen
-impostor = LocalWorkerMCPRouter(runtime.runs, operation_id=compiled.spec.operation_id,
-    operation_digest=compiled.digest, run_id=run_id, trusted_caller=('other', 'other'))
-try:
-    impostor.call_tool('worker_open_assignment', {})
-except WorkerToolError:
-    pass
-else:
-    raise AssertionError('unattached caller opened an assignment')
-for operation in ('science.hypothesis.propose.v1', 'science.experiment.v1', 'science.result.analyze.v1'):
-    role = operation_role_instructions(catalog.operation(operation))
-    modern = startup_document(dict(role_instructions=role, inputs=[]), on_demand=True)
-    frozen_view = startup_document(dict(role_instructions=role, inputs=[]), reader_navigation=3)
-    assert frozen_view['role_instructions'] == role
-    assert 'role' in frozen_view['reading']
-    assert 'Safety (always)' in modern['role_instructions']
-    assert 'mechanism_coverage' not in role and 'handoff_delta' not in role
-    if operation == 'science.experiment.v1':
-        assert 'Native local execution' in modern['role_instructions'] or 'native' in modern['role_instructions']
-''')
+def test_source_m1_open_and_copied_input_and_reference_readers(source_catalog, tmp_path):
+    source_catalog()
+    import json, subprocess, sys, shlex
+    from pathlib import Path
+    from scidiscovery.artifact_agent.runtime import open_runtime
+    from scidiscovery.artifact_agent.interfaces.mcp_root import RootMCPRouter, RootToolFacade
+    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter, WorkerToolError
+    from scidiscovery.artifact_agent.schema.role_result import split_reference
+    from scidiscovery.artifact_agent.service.worker_start import startup_document
+    from scidiscovery.operations.tooling import operation_role_instructions
+    root = tmp_path; project = root/'project'; project.mkdir()
+    runtime = open_runtime(project_root=project, state_root=root/'state', worker_backend='local')
+    catalog = runtime.operation_catalog
+    instance = runtime.scheduler_bindings.create_instance(name='m1', title='M1 source', objective='Read frozen originals.')
+    router = RootMCPRouter(RootToolFacade(runtime.artifacts, runtime.intake, runs=runtime.runs,
+        approvals=runtime.approvals, executions=runtime.executions, bindings=runtime.scheduler_bindings,
+        instance=instance.instance_id, operation_catalog=catalog))
+    original = 'Preserve original restrictions; target support remains unknown.'
+    router.call_tool('artifact_ingest_text', dict(name='task', text=original))
+    router.call_tool('operation_invoke', dict(name='H', operation_id='science.hypothesis.propose.v1',
+        inputs=[dict(port='subject', artifact_names=['task'])], instruction='Propose a bounded mechanism.'))
+    run_id = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace='run', name='H')
+    compiled = catalog.operation('science.hypothesis.propose.v1')
+    identity = ('source-m1-session', 'source-m1-thread')
+    runtime.runs.worker_connections.attach(run_id=run_id, platform_session=identity[0], thread_id=identity[1])
+    worker = LocalWorkerMCPRouter(runtime.runs, operation_id=compiled.spec.operation_id,
+        operation_digest=compiled.digest, run_id=run_id, trusted_caller=identity)
+    opened = worker.call_tool('worker_open_assignment', {})
+    workspace = Path(opened['workspace_path']); frozen = Path(opened['assignment_path']).read_bytes()
+    start = json.loads(Path(opened['start_here_path']).read_bytes())
+    assert 'budget' not in opened and 'narrative_instruction' not in opened
+    assert start['budget']['deadline_at'] == opened['deadline_at']
+    context = json.loads((workspace/'worker-context.json').read_bytes())
+    role_guide = next(item for item in start['guides'] if item['name'] == 'role_reference')
+    guide_command = shlex.split(role_guide['read'])
+    assert guide_command[:2] == ['python', 'tools/read_input.py']
+    assert guide_command[-1].endswith('/SECTION')
+    guides = json.loads((workspace/guide_command[2]).read_bytes())['guides']
+    assignment = json.loads(frozen)
+    assert 'guides' not in context
+    assert split_reference(assignment['role_instructions']) == (start['role_instructions'], guides['role_reference'])
+    def read(*args):
+        response = subprocess.check_output([sys.executable, '-I', 'tools/read_input.py', *args],
+            cwd=workspace, text=True, timeout=10)
+        return response.rsplit('\n[read_input: ', 1)[0]
+    assert read('subject', '--full').strip() == original
+    section = json.loads(read(*guide_command[2:-1], guide_command[-1].replace('/SECTION', '/h_understanding')))
+    assert section == guides['role_reference']['h_understanding']
+    outside = root/'outside.txt'; outside.write_text('not an assignment material')
+    denied = subprocess.run([sys.executable, '-I', 'tools/read_input.py', str(outside), '--file'],
+        cwd=workspace, capture_output=True, text=True, timeout=10)
+    assert denied.returncode != 0 and 'source must be a file within this workspace' in denied.stdout
+    assert 'not an assignment material' not in denied.stdout
+    worker.call_tool('worker_open_assignment', {})
+    assert Path(opened['assignment_path']).read_bytes() == frozen
+    impostor = LocalWorkerMCPRouter(runtime.runs, operation_id=compiled.spec.operation_id,
+        operation_digest=compiled.digest, run_id=run_id, trusted_caller=('other', 'other'))
+    try:
+        impostor.call_tool('worker_open_assignment', {})
+    except WorkerToolError:
+        pass
+    else:
+        raise AssertionError('unattached caller opened an assignment')
+    for operation in ('science.hypothesis.propose.v1', 'science.experiment.v1', 'science.result.analyze.v1'):
+        role = operation_role_instructions(catalog.operation(operation))
+        modern = startup_document(dict(role_instructions=role, inputs=[]), on_demand=True)
+        frozen_view = startup_document(dict(role_instructions=role, inputs=[]), reader_navigation=3)
+        assert frozen_view['role_instructions'] == role
+        assert 'role' in frozen_view['reading']
+        assert 'Safety (always)' in modern['role_instructions']
+        assert 'mechanism_coverage' not in role and 'handoff_delta' not in role
+        if operation == 'science.experiment.v1':
+            assert 'Native local execution' in modern['role_instructions'] or 'native' in modern['role_instructions']

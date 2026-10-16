@@ -84,8 +84,8 @@ def _link_runtime_file(source, target):
     return target
 
 
-def create_environments(repository: Path, root: Path) -> dict[str, InstalledEnvironment]:
-    """Create lazy candidates under an existing private root; caller owns cleanup."""
+def _candidate_creator(repository: Path, root: Path):
+    """Share wheel construction between a single installation check and live probes."""
     dependency_cache = root / "runtime-dependencies"
     _supply_runtime_dependencies(dependency_cache)
     wheelhouse = root / "wheelhouse"
@@ -137,7 +137,7 @@ def create_environments(repository: Path, root: Path) -> dict[str, InstalledEnvi
             built[name] = next(path for path in wheelhouse.glob("*.whl") if path.name.startswith(prefix))
         return built[name]
 
-    def create_environment(name: str) -> InstalledEnvironment:
+    def create_environment(name: str, *, resolve_once: bool = False) -> InstalledEnvironment:
         if name not in selections:
             raise KeyError(name)
         selected = tuple(wheel(package) for package in selections[name])
@@ -147,19 +147,19 @@ def create_environments(repository: Path, root: Path) -> dict[str, InstalledEnvi
         shutil.copytree(dependency_cache, site_packages, dirs_exist_ok=True, copy_function=_link_runtime_file)
         python = environment_root / "bin/python"
         if name == "tcad_resolved":
-            selected = (wheel("core"),)
+            selected = (wheel("core"), wheel("tcad")) if resolve_once else (wheel("core"),)
         _run_logged(
             [
                 sys.executable, "-m", "pip", "--python", str(python),
                 "install", "--no-cache-dir", "--no-compile",
                 "--no-index",
-                "--no-deps",
+                *(["--find-links", str(wheelhouse)] if resolve_once else ["--no-deps"]),
                 *map(str, selected),
             ],
             cwd=root,
             timeout=180,
         )
-        if name == "tcad_resolved":
+        if name == "tcad_resolved" and not resolve_once:
             _run_logged(
                 [
                     sys.executable, "-m", "pip", "--python", str(python),
@@ -173,13 +173,28 @@ def create_environments(repository: Path, root: Path) -> dict[str, InstalledEnvi
         workdir.mkdir()
         return InstalledEnvironment(python=python, workdir=workdir)
 
+    return create_environment
+
+
+def create_environment(repository: Path, root: Path, *, cohort: str = "core") -> InstalledEnvironment:
+    """Build one explicitly selected cohort in one environment, with no pool."""
+    if cohort not in {"core", "tcad"}:
+        raise ValueError("installation cohort must be core or tcad")
+    create = _candidate_creator(repository, root)
+    return create("tcad_resolved" if cohort == "tcad" else "core", resolve_once=cohort == "tcad")
+
+
+def create_environments(repository: Path, root: Path) -> dict[str, InstalledEnvironment]:
+    """Legacy live-probe candidates; pytest installation checks use one cohort."""
+    create = _candidate_creator(repository, root)
+
     class LazyEnvironments(dict[str, InstalledEnvironment]):
         def __missing__(self, name: str) -> InstalledEnvironment:
             for previous in self.values():
                 shutil.rmtree(previous.python.parent.parent)
                 shutil.rmtree(previous.workdir)
             self.clear()
-            environment = create_environment(name)
+            environment = create(name)
             self[name] = environment
             return environment
 

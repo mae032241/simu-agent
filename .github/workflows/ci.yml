@@ -13,6 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
         python-version: ["3.10", "3.12"]
     steps:
@@ -31,14 +32,12 @@ jobs:
           python -m pip install -e plugins/curve_score
           python -m pip install -e plugins/curve_figure_evidence
       - name: Source tests
-        run: python scripts/run_tests.py --config scripts/test_resources_ci.json --lane source --per-file --output /tmp/scid-source-ci
-      - name: Installed boundary tests
-        run: python scripts/run_tests.py --config scripts/test_resources_ci.json --lane installed --output /tmp/scid-installed-ci
+        run: python scripts/run_tests.py --config scripts/test_resources_ci.json --lane source --per-file --output .test-evidence/ci-source
       - name: Process lifecycle tests
-        run: python scripts/run_tests.py --config scripts/test_resources_ci.json --lane process --per-file --output /tmp/scid-process-ci
+        run: python scripts/run_tests.py --config scripts/test_resources_ci.json --lane process --per-file --output .test-evidence/ci-process
       - name: Upload test logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: tests-${{ matrix.python-version }}
-          path: /tmp/scid-*-ci
+          path: .test-evidence/ci-*

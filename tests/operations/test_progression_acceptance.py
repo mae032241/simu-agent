@@ -1,67 +1,83 @@
-"""One retained installed core candidate and the shipped daemon/UI, without models."""
+"""Source service lifecycle and archive compatibility; no candidate installation."""
 import json
 import os
 from pathlib import Path
-import subprocess
+import sys
+import time
+from urllib.request import urlopen
 
 import pytest
 
-from scripts.probe_root_host_live import Host, prepare
+from scripts.probe_root_host_live import Host
 from scripts import run_tests as guard
 
 
-@pytest.mark.installed
-def test_retained_core_candidate_dormant_daemon_and_ui(tmp_path):
-    # Explicit path keeps the exact tested wheel available for the native journey.
-    root = Path(os.environ.get('SCID_B6_CANDIDATE', str(tmp_path / 'candidate')))
-    if not (root / 'candidate.json').exists():
-        root.mkdir(parents=True, exist_ok=False)
-        prepare(root)
-    config = json.loads((root / 'candidate.json').read_text())
-    result = subprocess.run([config['python'], '-I', '-c',
-        "import scidiscovery,sys;from pathlib import Path;"
-        "assert Path(scidiscovery.__file__).resolve().is_relative_to(Path(sys.prefix).resolve());"
-        "from scidiscovery.artifact_agent.service.runs import RunService;"
-        "assert callable(RunService.admission_matches);assert callable(RunService.native_identities)"],
-        cwd=config['project'], capture_output=True, timeout=15)
-    assert result.returncode == 0, result.stderr
-    Path(os.environ['SCID_TEST_LOG_DIR']).mkdir(parents=True, exist_ok=True)
-    host = Host(root, json.loads(guard.DEFAULT_CONFIG.read_text())['limits'])
+@pytest.mark.process_e2e
+def test_source_dormant_daemon_ui_and_restart(tmp_path, monkeypatch):
+    project = tmp_path / "project"
+    project.mkdir()
+    (tmp_path / "candidate.json").write_text(json.dumps({"python": sys.executable, "project": str(project)}))
+    secret = tmp_path / "approval-secret"
+    secret.write_bytes(b"a" * 32)
+    secret.chmod(0o600)
+    Path(os.environ["SCID_TEST_LOG_DIR"]).mkdir(parents=True, exist_ok=True)
+    # The existing Host lifecycle runs exactly its normal services, with source
+    # metadata instead of installed distributions. No native host is launched.
+    repository = Path(__file__).resolve().parents[2]
+    launcher = tmp_path / "source-service.py"
+    launcher.write_text("import sys; sys.path.insert(0, " + repr(str(repository / "src")) + ")\n" + r'''
+from importlib.metadata import EntryPoint, EntryPoints
+from scidiscovery.operations import catalog
+catalog.entry_points = lambda: EntryPoints((
+    EntryPoint(name="builtin", value="scidiscovery.builtin_plugin:CORE_PLUGIN", group="scidiscovery.plugins"),
+    EntryPoint(name="general_science", value="scidiscovery.general_science_plugin:PLUGIN", group="scidiscovery.plugins"),
+))
+import runpy
+module = sys.argv.pop(1)
+runpy.run_module(module, run_name="__main__")
+''')
+    host = Host(tmp_path, json.loads(guard.DEFAULT_CONFIG.read_text())["limits"])
+    launch = host.launch
+
+    def launch_source(command, name, pipe=False):
+        assert command[1] == "-m"
+        return launch([sys.executable, "-I", str(launcher), *command[2:]], name, pipe)
+
+    monkeypatch.setattr(host, "launch", launch_source)
+    from scidiscovery.plugin_runtime.transport import forward_request
+    request = dict(jsonrpc="2.0", id=1, method="initialize", params={},
+                   _scidiscovery_scheduler_proxy="sch_" + "a" * 32)
     try:
         host.start_services()
-        from urllib.request import urlopen
-        with urlopen(host.ui_url + '/static/style.css', timeout=5) as response:
+        with urlopen(host.ui_url + "/static/style.css", timeout=5) as response:
             assert response.status == 200
-        from scidiscovery.plugin_runtime.transport import forward_request
-        request = dict(jsonrpc='2.0', id=1, method='initialize', params={},
-            _scidiscovery_scheduler_proxy='sch_' + 'a' * 32)
-        assert 'result' in forward_request(root / 'control.sock', json.dumps(request).encode(), timeout=5)
-        assert not (root / 'state/progression-logs').exists()
-        # Restart exactly the installed service against its original state.
+        assert "result" in forward_request(tmp_path / "control.sock", json.dumps(request).encode(), timeout=5)
+        assert not (tmp_path / "state/progression-logs").exists()
         daemon = host.children[-1]
+        # Pass the normal service argv through the source launcher once again.
+        normal_command = [sys.executable, "-m", *daemon.args[3:]]
         daemon.terminate()
         daemon.wait(timeout=10)
-        host.launch(daemon.args, 'daemon-restarted')
-        import time
+        host.launch(normal_command, "daemon-restarted")
         deadline = time.monotonic() + 10
         while True:
             try:
-                assert 'result' in forward_request(root / 'control.sock', json.dumps(request).encode(), timeout=1)
+                assert "result" in forward_request(tmp_path / "control.sock", json.dumps(request).encode(), timeout=1)
                 break
             except (OSError, RuntimeError):
                 assert time.monotonic() < deadline
                 time.sleep(.05)
-        assert not (root / 'state/progression-logs').exists()
+        assert not (tmp_path / "state/progression-logs").exists()
     finally:
         host.close()
-    from scripts.installed_candidates import _run_logged
-    _run_logged([config['python'], '-I', '-c', r'''
-import json,tempfile
-from pathlib import Path
-from scidiscovery.artifact_agent.runtime import open_runtime
-from scidiscovery.artifact_agent.service.instance_archive import InstanceArchive
-with tempfile.TemporaryDirectory() as folder:
-    root=Path(folder);project=root/'project';project.mkdir()
+
+
+def test_source_archive_restore_retains_checkpoint_without_waking_runtime(source_catalog, tmp_path):
+    source_catalog()
+    import json
+    from scidiscovery.artifact_agent.runtime import open_runtime
+    from scidiscovery.artifact_agent.service.instance_archive import InstanceArchive
+    root=tmp_path;project=root/'project';project.mkdir()
     runtime=open_runtime(project_root=project,state_root=root/'state',worker_backend='local',
         approval_receipt_secret=b'a'*32)
     bindings=runtime.scheduler_bindings
@@ -93,4 +109,3 @@ with tempfile.TemporaryDirectory() as folder:
             after=json.loads(row['checkpoint_json'])
             for key in ('budget','usage_summary','report'):assert after[key]==before[key]
         else:assert bindings.progression_status(instance_id=identity)['state']=='idle'
-'''], cwd=Path(config['project']), env=dict(os.environ), timeout=60)

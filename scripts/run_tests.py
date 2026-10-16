@@ -291,7 +291,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--lane", choices=LANES, default="source")
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
-    parser.add_argument("--output", type=Path, required=True, help="new result directory, preferably /tmp")
+    parser.add_argument("--output", type=Path, required=True, help="new persistent result directory outside /tmp")
+    parser.add_argument("--installation-cohort", choices=("core", "tcad"), default="core")
     parser.add_argument("--collect-only", action="store_true")
     parser.add_argument("--per-file", action="store_true", help="fresh pytest process per test file; stops on failure")
     parser.add_argument("targets", nargs="*", help="pytest files or node IDs; defaults to tests")
@@ -313,19 +314,25 @@ def main():
     if config["numeric_threads"] != 1:
         parser.error("numeric_threads must be 1; concurrent test workers are unsupported")
     if args.per_file and args.lane == "installed":
-        parser.error("installed lane must share one session to reuse built wheels")
-    targets = args.targets or ["tests"]
+        parser.error("installation smoke uses one environment once; per-file installation is forbidden")
+    targets = args.targets or (["tests/installation"] if args.lane == "installed" else ["tests"])
+    installation = ROOT / "tests" / "installation"
     for target in targets:
         path = (ROOT / target.split("::", 1)[0]).resolve()
         if not path.is_relative_to(ROOT / "tests") or not path.exists():
             parser.error(f"target must exist under tests/: {target}")
+        if args.lane == "installed" and not path.is_relative_to(installation):
+            parser.error("installed lane accepts only tests/installation targets")
+        if args.lane != "installed" and path.is_relative_to(installation):
+            parser.error("functional lanes cannot target installation checks")
     batches = [targets]
     if args.per_file:
         expanded = []
         for target in targets:
             path = ROOT / target.split("::", 1)[0]
             if path.is_dir():
-                expanded.extend(str(p.relative_to(ROOT)) for p in sorted(path.rglob("test_*.py")))
+                expanded.extend(str(p.relative_to(ROOT)) for p in sorted(path.rglob("test_*.py"))
+                                if not p.is_relative_to(installation))
             else:
                 expanded.append(target)
         batches = [[target] for target in dict.fromkeys(expanded)]
@@ -359,6 +366,8 @@ def main():
                     SCID_TEST_LOG_BYTES=str(limits["log_bytes"]), MPLCONFIGDIR=str(batch_output / "matplotlib"))
                 command = [sys.executable, "-B", "-m", "pytest", "-q", "--tb=short", "-o", "addopts=",
                     "-p", "no:cacheprovider", "--test-lane", args.lane, "--basetemp", str(batch_output / "tmp")]
+                if args.lane == "installed":
+                    command.extend(["--installation-cohort", args.installation_cohort])
                 if args.collect_only:
                     command.append("--collect-only")
                 command.extend(batch)

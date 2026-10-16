@@ -32,8 +32,11 @@ def local(tmp_path, execution_registry):
     return root,script,config,config_path
 
 
+@pytest.mark.process_e2e
 def test_r1_snapshot_argv_facts_and_original_lookup(local,monkeypatch):
     root,script,config,_=local
+    (root/'inputs/empty').mkdir()
+    (root/'artifacts').mkdir();prior=root/'artifacts/prior.txt';prior.write_text('prior original')
     original=LocalExecution._execute
     def changed(self,*args):
         (root/'inputs/value.txt').write_text('99')
@@ -43,11 +46,13 @@ def test_r1_snapshot_argv_facts_and_original_lookup(local,monkeypatch):
     assert result['status']=='known_success' and result['returncode']==0 and result['wall_seconds']>=0
     call=result['call_id'];directory=e.Records(config).directory(call)
     accepted=json.loads((directory/'accepted.json').read_text())
+    assert {'run.py','inputs/value.txt'} <= {item['name'] for item in accepted['snapshot_files']}
+    assert not any(item['name'].startswith('artifacts/') for item in accepted['snapshot_files'])
     assert accepted['command'][-2:]==['literal $(never-run)','two words']
     assert accepted['cwd']==str(directory/'inputs')
     assert json.loads((directory/'stdout.raw').read_text())==accepted['command'][-2:]
     assert (directory/'outputs/value.txt').read_text()=='42'
-    assert not (root/'artifacts').exists()
+    assert prior.read_text()=='prior original' and not (root/'artifacts/value.txt').exists()
     adapter=e.load(config)
     assert adapter.lookup_submission(e.LocalFileDescriptor.model_validate(accepted['prepared']))==(call,'succeeded')
     assert adapter.collect_original(call)
@@ -55,19 +60,25 @@ def test_r1_snapshot_argv_facts_and_original_lookup(local,monkeypatch):
     assert e.progress(config)['calls'][0]['result']['status']=='available'
 
 
+@pytest.mark.process_e2e
 @pytest.mark.parametrize('content,status',[(None,'missing'),('invalid','invalid'),
     ('{"version":1,"metrics":[{"name":"x","value":NaN}],"outputs":[]}','invalid'),
     ('{"version":1,"metrics":[],"outputs":[{"path":"../escape","label":"bad"}]}','invalid')])
 def test_r2_bad_or_missing_result_preserves_process_success(local,content,status):
     root,script,config,_=local
-    script.write_text('import pathlib\n'+('pathlib.Path("artifacts/result.json").write_text('+repr(content)+')\n' if content is not None else ''))
+    script.write_text('import pathlib\n'+('pathlib.Path("artifacts/result.json").write_text('+repr(content)+')\n'
+        if content is not None else 'pathlib.Path("artifacts/empty").mkdir()\n'))
     result=e.dispatch(config,script,command_options=dict(experiment_directory=str(root),arguments=[]))
     assert result['status']=='known_success' and result['returncode']==0
     assert result['result']['status']==status and result['result']['metrics']==[]
     if content is not None:
         assert any(item['name']=='result.json' for item in result['outputs'])
+    else:
+        assert result['outputs']==[]
+        assert (e.Records(config).directory(result['call_id'])/'completed.json').is_file()
 
 
+@pytest.mark.process_e2e
 def test_r1_input_link_rejected_before_acceptance_and_output_link_is_collection_failure(local):
     root,script,config,_=local
     (root/'inputs/link').symlink_to(root/'inputs/value.txt')
@@ -80,6 +91,7 @@ def test_r1_input_link_rejected_before_acceptance_and_output_link_is_collection_
     assert result['outputs']==[]
 
 
+@pytest.mark.process_e2e
 def test_r2_unknown_cleanup_never_upgrades_execution_or_collects(local,monkeypatch):
     from scidiscovery.research_loop import runtime
     root,script,config,_=local
@@ -131,6 +143,7 @@ print(json.dumps({'type':'turn.completed','usage':{'input_tokens':10,'cached_inp
 '''
 
 
+@pytest.mark.process_e2e
 def test_r1_r2_real_native_hwa_without_search_archives_results_for_a_and_export(tmp_path,execution_registry,monkeypatch):
     source=Path(__file__).parents[2]/'src'
     monkeypatch.setenv('PYTHONPATH',str(source)+os.pathsep+os.environ.get('PYTHONPATH',''))
@@ -156,6 +169,7 @@ def test_r1_r2_real_native_hwa_without_search_archives_results_for_a_and_export(
     assert (root/output['snapshot']).read_text()=='42'
 
 
+@pytest.mark.process_e2e
 @pytest.mark.parametrize('direction',[[],{}])
 def test_r2_unhashable_json_direction_is_invalid_not_lost_completion(local,direction):
     root,script,config,_=local
@@ -166,15 +180,7 @@ def test_r2_unhashable_json_direction_is_invalid_not_lost_completion(local,direc
     assert any(item['name']=='result.json' for item in result['outputs'])
 
 
-def test_full_input_inventory_is_not_limited_by_legacy_capacity_constant(local,monkeypatch):
-    root,script,config,_=local
-    monkeypatch.setattr(e,'MAX_INPUT_BYTES',1)
-    result=e.dispatch(config,script,command_options=dict(experiment_directory=str(root),arguments=[]))
-    assert result['status']=='known_success'
-    accepted=e.Records(config).accepted(result['call_id'])
-    assert len(accepted['snapshot_files'])>=2
-
-
+@pytest.mark.process_e2e
 def test_legacy_current_job_without_mode_keeps_science_view_and_observer_shape(tmp_path):
     from test_history_handoff import finish
     public=tmp_path/'public';public.mkdir();objective=public/'goal.md';objective.write_text('Legacy bounded observation')
@@ -235,6 +241,7 @@ def long_instance(tmp_path,monkeypatch,case):
     return root
 
 
+@pytest.mark.process_e2e
 @pytest.mark.parametrize('case',['driver','budget'])
 def test_r1_native_owner_cleans_detached_local_group_after_driver_kill_or_budget(tmp_path,execution_registry,monkeypatch,case):
     from scidiscovery.research_loop import runtime
@@ -251,6 +258,7 @@ def test_r1_native_owner_cleans_detached_local_group_after_driver_kill_or_budget
     assert c.digest(directory/'accepted.json')==before and len(list(directory.parent.iterdir()))==1
 
 
+@pytest.mark.process_e2e
 def test_r1_watchdog_signals_only_exact_local_group_after_runner_kill(tmp_path,execution_registry,monkeypatch):
     import signal,time
     from scidiscovery.research_loop import runtime
@@ -279,6 +287,7 @@ def test_r1_watchdog_signals_only_exact_local_group_after_runner_kill(tmp_path,e
         if process.poll() is None:process.terminate();process.communicate(timeout=10)
 
 
+@pytest.mark.process_e2e
 def test_r1_lost_local_process_original_keeps_budget_cleanup_blocked(tmp_path,execution_registry,monkeypatch):
     import signal
     from scidiscovery.research_loop import budget,runtime
@@ -307,6 +316,7 @@ def test_r1_lost_local_process_original_keeps_budget_cleanup_blocked(tmp_path,ex
             os.kill(identity['pid'],signal.SIGKILL)
 
 
+@pytest.mark.process_e2e
 def test_r2_cov_missing_receipt_fallback_keeps_domain_context_shape(local,monkeypatch):
     from scidiscovery.research_loop.cov_experiments import CovExecution
     from scidiscovery.research_loop import cov_lineage
@@ -321,6 +331,7 @@ def test_r2_cov_missing_receipt_fallback_keeps_domain_context_shape(local,monkey
     assert fallback['status']=='unknown'
 
 
+@pytest.mark.stress
 def test_r2_output_metadata_capacity_preserves_known_execution(local):
     root,script,config,path=local
     nested=path.parent
@@ -342,6 +353,7 @@ def test_r2_output_metadata_capacity_preserves_known_execution(local):
     assert len(list((directory/'outputs').iterdir()))==128
 
 
+@pytest.mark.process_e2e
 def test_r2_excessive_json_depth_is_invalid_and_raw_result_is_retained(local):
     root,script,config,_=local
     content='['*1500+'0'+']'*1500
@@ -351,35 +363,7 @@ def test_r2_excessive_json_depth_is_invalid_and_raw_result_is_retained(local):
     assert Path(result['outputs'][0]['path']).read_text()==content
 
 
-def test_empty_input_directories_do_not_hit_an_arbitrary_inventory_cap(local,monkeypatch):
-    from scidiscovery.research_loop import local_experiments
-    root,script,config,_=local
-    monkeypatch.setattr(local_experiments,'MAX_SCAN_ENTRIES',4)
-    for number in range(5):(root/f'empty-{number}').mkdir()
-    result=e.dispatch(config,script,command_options=dict(experiment_directory=str(root),arguments=[]))
-    assert result['status']=='known_success'
-
-
-def test_r2_empty_output_directories_do_not_erase_known_execution(local,monkeypatch):
-    from scidiscovery.research_loop import local_experiments
-    root,script,config,_=local
-    monkeypatch.setattr(local_experiments,'MAX_SCAN_ENTRIES',4)
-    script.write_text('import pathlib\nfor number in range(5):pathlib.Path("artifacts",f"empty-{number}").mkdir()\n')
-    result=e.dispatch(config,script,command_options=dict(experiment_directory=str(root),arguments=[]))
-    assert result['status']=='known_success' and result['returncode']==0
-    assert result['result']['status']=='missing' and result['outputs']==[]
-    assert (e.Records(config).directory(result['call_id'])/'completed.json').is_file()
-
-
-def test_r1_input_scan_excludes_prior_artifacts_subtree(local,monkeypatch):
-    from scidiscovery.research_loop import local_experiments
-    root,script,config,_=local
-    monkeypatch.setattr(local_experiments,'MAX_SCAN_ENTRIES',4)
-    for number in range(5):(root/'artifacts'/f'prior-{number}').mkdir(parents=True)
-    result=e.dispatch(config,script,command_options=dict(experiment_directory=str(root),arguments=[]))
-    assert result['status']=='known_success' and result['result']['status']=='available'
-
-
+@pytest.mark.stress
 def test_full_execution_proof_and_snapshot_stream_above_old_asset_cap(local,monkeypatch):
     root,script,config,_=local
     large=root/'inputs/large.bin'

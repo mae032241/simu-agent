@@ -8,7 +8,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
-import venv
+import shlex
 from pathlib import Path
 
 import pytest
@@ -298,8 +298,12 @@ def test_figure_dependency_failure_precedes_install_transaction(tmp_path: Path, 
     else:
         from PIL import Image  # Only the operator environment supplies Pillow.
         assert Image
-        venv.EnvBuilder(with_pip=False, symlinks=True).create(tmp_path / "service-python")
-        environment["SCID_PYTHON"] = str(tmp_path / "service-python/bin/python")
+        # Exercise the real dependency preflight without building another environment.
+        # -S omits service site packages; the operator still has Pillow above.
+        service_python = tmp_path / "service-python"
+        service_python.write_text("#!/bin/sh\nexec " + shlex.quote(sys.executable) + ' -I -S "$@"\n')
+        service_python.chmod(0o700)
+        environment["SCID_PYTHON"] = str(service_python)
         expected = "No module named 'PIL'"
     completed = subprocess.run([
         "bash", "-c", '''source "$1"
@@ -1904,241 +1908,6 @@ def test_deployment_sources_are_machine_neutral() -> None:
     assert "-name build" in (project_root / "deploy/install.sh").read_text(
         encoding="utf-8"
     )
-
-
-@pytest.mark.installed
-def test_git_release_builder_emits_clean_manifested_source(tmp_path: Path) -> None:
-    project_root = Path(__file__).resolve().parents[2]
-    output = tmp_path / "scidiscovery-agent"
-    completed = subprocess.run(
-        [
-            sys.executable,
-            str(project_root / "scripts/build_git_release.py"),
-            "--source",
-            str(project_root),
-            "--output",
-            str(output),
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        timeout=30,
-        check=False,
-    )
-    assert completed.returncode == 0, completed.stderr
-    assert (output / "README.md").is_file()
-    assert (output / "README.zh-CN.md").is_file()
-    assert (output / "docs/INSTALL.md").is_file()
-    assert (output / "docs/INSTALL.zh-CN.md").is_file()
-    assert (output / "docs/TCAD_QUALIFICATION_STATUS.md").is_file()
-    assert not (output / "plugins/table_observation").exists()
-    assert {path.name for path in (output / "plugins").iterdir() if path.is_dir()} == {
-        "curve_score", "curve_figure_evidence", "tcad_artifact",
-    }
-    assert not (output / "deploy/apply_ingaas_fig4_profile.sh").exists()
-    assert not tuple(output.rglob("figure_geometry.json"))
-    assert not (
-        output / "src/scidiscovery/artifact_agent/service/agent_dispatch.py"
-    ).exists()
-    assert not (output / "src/scidiscovery/platforms/codex_worker.py").exists()
-    assert not (output / "experiments/worker_process_v2").exists()
-    # The release manifest is the explicit publication policy; archived research
-    # documents outside it must not leak into the generated repository.
-    import runpy
-    release = runpy.run_path(str(project_root / "scripts/build_git_release.py"))
-    assert {path.relative_to(output).as_posix()
-            for path in (output / "docs").rglob("*") if path.is_file()} == set(release["DOCUMENTS"])
-    assert (
-        output
-        / "docs/architecture/SCIENTIFIC_AGENT_DESIGN_CHARTER.zh-CN.md"
-    ).is_file()
-    assert (
-        output / "docs/architecture/SCIENTIFIC_AGENT_CONSTRAINTS.yaml"
-    ).is_file()
-    assert not (output / "docs/plans/README.md").exists()
-    assert not (
-        output / "docs/plans/TCAD_AGENT_REAUDIT_REMEDIATION_PLAN.zh-CN.md"
-    ).exists()
-    assert (output / "deploy/install_transaction.py").is_file()
-    assert (output / "deploy/init_workspace.sh").is_file()
-    assert (
-        output / "plugins/curve_figure_evidence/curve_figure_evidence/figure_worker_tool.py"
-    ).is_file()
-    assert (
-        output
-        / "plugins/curve_figure_evidence/curve_figure_evidence/plugin.py"
-    ).is_file()
-    assert not (output / "skills/scientific-paper-evidence").exists()
-    manual_root = output / "skills/sentaurus-tcad-code/references/manuals"
-    for relative, digest in (
-        (
-            "R-2020.09/sprocess_ug.pdf",
-            "bcaf5cfe87bd276a2068fa6681a0b62b2526512b65a710a660d892c45ceaf5d9",
-        ),
-        (
-            "R-2020.09/sdevice_ug.pdf",
-            "dae2c94b29c92705d3b8d6124c2f0ab595541ed48e4b220a425f72fac42794ce",
-        ),
-        (
-            "R-2020.09/sentaurus_relnote.pdf",
-            "0e6679154406b2d12356be28ab901a3786f48ca9b91b14f6769ada508bdbfbf9",
-        ),
-    ):
-        manual = manual_root / relative
-        assert manual.is_file()
-        assert hashlib.sha256(manual.read_bytes()).hexdigest() == digest
-    for name in ("manual_search.py", "manual_extract.py"):
-        helper = output / "skills/sentaurus-tcad-code/scripts" / name
-        assert helper.is_file()
-        assert helper.stat().st_mode & 0o111
-    assert not (output / "research").exists()
-    assert not (output / "archive").exists()
-    assert not (output / "workspace").exists()
-    assert not (output / "deliverables").exists()
-    assert not (output / "123").exists()
-    assert not (output / ".codex").exists()
-    assert not any(output.rglob("r5_g_*.py"))
-    assert not any(output.rglob("test_r5_g_*_runner.py"))
-    assert not any(output.rglob("__pycache__"))
-    manifest = output / "MANIFEST.sha256"
-    entries = {}
-    for line in manifest.read_text(encoding="utf-8").splitlines():
-        digest, relative = line.split("  ", 1)
-        entries[relative] = digest
-    readme = output / "README.md"
-    assert entries["README.md"] == hashlib.sha256(readme.read_bytes()).hexdigest()
-    assert set(entries) == {
-        path.relative_to(output).as_posix()
-        for path in output.rglob("*")
-        if path.is_file() and path != manifest
-    }
-    assert output.with_suffix(".tar.gz").is_file()
-    assert {path.relative_to(output / 'docs/plans').as_posix()
-            for path in (output / 'docs/plans').rglob('*') if path.is_file()} == {
-        'fixtures/rootless-selection-v1.json', 'fixtures/rootless-selection-actions-v1.json',
-        'search_mvp/native-payloads.json',
-    }
-    # Independent consumer requirements: do not derive these from the builder's
-    # own allowlists, which previously made missing CI/test inputs invisible.
-    required = (
-        "docs/PLUGIN_RUNTIME_API.md", "tests/conftest.py", "tests/operations/conftest.py",
-        "tests/fixtures/plugins/blind_csv_operation_plugin/blind_csv_plugin/plugin.py",
-        "tests/fixtures/plugins/architecture_operation_plugin/pyproject.toml",
-        "tests/fixtures/plugins/table_observation_plugin/pyproject.toml",
-        "scripts/run_tests.py", "scripts/test_resources.json", "scripts/test_resources_ci.json",
-        "scripts/installed_candidates.py", "scripts/probe_native_code_mode.py",
-        "scripts/probe_root_host.py", "scripts/probe_root_host_live.py",
-        "scripts/accept_progression.py", "scripts/accept_progression_recovery.py",
-        "scripts/accept_b6.py", "scripts/acceptance_native_cases.py",
-        "scripts/acceptance_managed.py", "scripts/b6_evidence.py", "scripts/acceptance/b6.json",
-        "docs/B6_ACCEPTANCE.zh-CN.md",
-        "scripts/root_host_upgrade.py",
-        "scripts/root_host_usage.py",
-        "scripts/probe_root_lifecycle.py", "scripts/root_host_resources.json",
-        "scripts/root_host_ws_client.py",
-        "scripts/compiled_worker_process_guard.py", "scripts/run_compiled_codex_worker.py",
-        "scripts/l4_live_tcad_revision_probe.py", "scripts/l4_live_tcad_agent_probe.py",
-        "scripts/l4_tcad_transport_fixture.py",
-        "docs/ROOTLESS_CLI.zh-CN.md",
-        "docs/plans/fixtures/rootless-selection-v1.json",
-        "docs/plans/fixtures/rootless-selection-actions-v1.json",
-        "scripts/acceptance/rootless_cov_launcher.py",
-        "scripts/acceptance/rootless_public_selection_replay.py",
-        "scripts/acceptance/behavior_card.py", "scripts/acceptance/prelive_gate.py",
-        "scripts/observe_covshift_candidates.py",
-        "docs/plans/search_mvp/native-payloads.json",
-        "scripts/s0_scoring.py", "scripts/prepare_covshift_local.py",
-        "scripts/prepare_covshift_pilot.py", "scripts/run_covshift_pilot.py",
-        "scripts/prepare_nbody_local.py", "scripts/probe_covshift_permissions.py",
-        "scripts/native_usage_audit.py",
-        "scripts/acceptance/fixtures/hourly_loop_memory/materials.json",
-        "scripts/acceptance/fixtures/covshift_permissions/canary.py",
-    )
-    assert all((output / relative).is_file() for relative in required)
-    expected_tests = {p.relative_to(project_root / "tests") for p in
-                      (project_root / "tests").rglob("*") if p.is_file()
-                      and not any(part in release["IGNORED_NAMES"] or
-                                  part.endswith(release["IGNORED_SUFFIXES"])
-                                  for part in p.relative_to(project_root / "tests").parts)}
-    assert {p.relative_to(output / "tests") for p in (output / "tests").rglob("*")
-            if p.is_file()} == expected_tests
-    for relative in ("docs/ARCHITECTURE.md", "docs/ARCHITECTURE.zh-CN.md",
-                     "docs/PLUGIN_RUNTIME_API.md", "docs/RELEASE.md", "docs/RELEASE.zh-CN.md",
-                     "docs/ROOTLESS_CLI.zh-CN.md"):
-        document = output / relative
-        text = document.read_text()
-        # Markdown examples name runtime artifacts, not release documents.
-        prose = re.sub(r'(?ms)^(`{3,}|~{3,})[^\n]*\n.*?^\1[ \t]*$', '', text)
-        prose = re.sub(r'(`+).*?\1', '', prose, flags=re.DOTALL)
-        for link in re.findall(r"\]\(([^)]+)\)", prose):
-            if "://" in link:
-                continue
-            target, _, anchor = link.partition("#")
-            linked = document.parent / target if target else document
-            assert linked.is_file(), (relative, link)
-            if anchor:
-                linked_text = linked.read_text()
-                headings = {re.sub(r'[^\w -]', '', heading.lower()).replace(' ', '-')
-                            for heading in re.findall(r'^#{1,6} +(.+?) *#*$', linked_text, re.MULTILINE)}
-                assert f'id="{anchor}"' in linked_text or anchor in headings, (relative, link)
-        assert "plans/RESEARCH_TASK_REFACTOR_R4" not in text
-
-    receipt_root = Path(os.environ["SCID_TEST_LOG_DIR"])
-    receipt_root.mkdir(parents=True, exist_ok=True)
-    (receipt_root / "release-manifest.log").write_text(manifest.read_text())
-
-    # The outer resource runner already holds the serial lock and supervises
-    # this entire descendant tree. Forward that lock, never nest another runner.
-    lock_fd = int(os.environ["SCID_TEST_LOCK_FD"])
-    def check_release(lane, *targets, collect=False):
-        command = [sys.executable, "-B", "-m", "pytest", "-q", "--tb=short",
-                   "-o", "addopts=", "-p", "no:cacheprovider", "--test-lane", lane]
-        if collect:
-            command.append("--collect-only")
-        command.extend(targets or ("tests",))
-        log_root = Path(os.environ["SCID_TEST_LOG_DIR"])
-        log_root.mkdir(parents=True, exist_ok=True)
-        group = '-research' if targets == ('tests/research_loop',) else '-main'
-        label = f"release-{lane}-{'collection' + group if collect else 'checks'}"
-        command.extend(["--basetemp", str(Path(os.environ["TMPDIR"]) / label)])
-        log_path = log_root / f"{label}.log"
-        # Stream under the outer runner's sampled fixture-log budget.
-        with log_path.open("wb") as log:
-            checked = subprocess.run(command, cwd=output, env=dict(os.environ),
-                                     pass_fds=(lock_fd,), stdout=log, stderr=subprocess.STDOUT,
-                                     timeout=120, check=False)
-        with log_path.open("rb") as log:
-            log.seek(max(0, log_path.stat().st_size - 4096))
-            diagnostic = log.read(4096).decode("utf-8", errors="replace")
-        # A fully collected group can have no tests selected for a heavy lane.
-        assert checked.returncode == 0 or (collect and checked.returncode == 5
-            and 'deselected' in diagnostic), diagnostic
-    # The two suites contain a same-named module and use sibling imports.
-    # Collect each complete group in its own process, retaining every test.
-    other_tests = tuple(str(path.relative_to(output)) for path in sorted((output / 'tests').iterdir())
-                        if path.name != 'research_loop' and path.name not in release['IGNORED_NAMES']
-                        and (path.is_dir() or (path.name.startswith('test_') and path.suffix == '.py')))
-    for lane in ("source", "installed", "process"):
-        check_release(lane, *other_tests, collect=True)
-        check_release(lane, 'tests/research_loop', collect=True)
-    check_release("source", "tests/operations/test_l4_live_tcad_revision_evidence.py",
-                  "tests/operations/test_plugin_canonical_identity.py",
-                  "tests/operations/test_codex_permission_profiles.py::test_host_preflight_uses_only_synthetic_inputs_and_arg0_runtime",
-                  "tests/research_loop/test_selection.py",
-                  "tests/research_loop/test_public_selection_replay.py::test_frozen_allowed_actions",
-                  "tests/research_loop/test_public_selection_replay.py::test_masked_inputs_are_noninterfering_and_unbound_audit_not_qualified",
-                  "tests/research_loop/test_public_selection_replay.py::test_normalized_hidden_field_is_rejected_without_action",
-                  "tests/research_loop/test_public_selection_replay.py::test_rule_hash_is_checked_before_opening_pool",
-                  "tests/research_loop/test_rootless_fragments.py::test_native_exp_warning_preserves_public_command_and_exit_status",
-                  "tests/research_loop/test_role_budget_share.py::test_behavior_card_is_read_only_public_and_replays_the_frozen_share",
-                  "tests/research_loop/test_prelive_production_chain.py::test_fake_closeout_author_uses_current_delivery_contract",
-                  "tests/research_loop/test_history.py::test_cov_adapter_uses_public_facts_and_keeps_unexported_code_unknown",
-                  "tests/research_loop/test_history.py::test_cov_adapter_new_record_bound_is_not_total_history_bound",
-                  "tests/research_loop/test_native_cli.py::test_cli_entrypoint_status_is_read_only")
-    check_release("installed",
-        "tests/operations/test_catalog_installed_entrypoint.py::test_clean_installed_core_compiles_only_the_single_plugin_group",
-        "tests/operations/test_catalog_installed_entrypoint.py::test_installed_figure_tool_executes_packaged_image_dependencies",
-        "tests/operations/test_catalog_installed_entrypoint.py::test_installed_tcad_resolves_its_declared_curve_dependency")
 
 
 @pytest.mark.parametrize('status,exit_code,accepted', [('200', 0, True), ('503', 0, False), ('000', 28, False)])

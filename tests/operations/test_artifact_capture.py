@@ -683,62 +683,58 @@ def test_workspace_preparation_does_not_follow_custom_root_symlink(tmp_path, mon
     assert list(outside.iterdir()) == [] and list((tmp_path/'backend/.bindings').iterdir()) == []
 
 
-def test_installed_capture_roots_and_stage_authoring_schema_preserve_sealed_contract(installed_probe):
-    installed_probe('core', r'''
-import json
-import tempfile
-from pathlib import Path
-from jsonschema import Draft202012Validator
-from pydantic import ValidationError
-from scidiscovery.artifact_agent.schema.common import canonical_json
-from scidiscovery.artifact_agent.schema.validation import ValidationCheckResult
-from scidiscovery.artifact_agent.service.local_workspace import LocalTrustedBackend
-from scidiscovery.artifact_agent.service.worker_start import write_worker_start
-from scidiscovery.artifact_agent.service import artifact_capture
-from scidiscovery.general_science_experiment_task import StageSubmission
-from scidiscovery.builtin_plugin import CORE_PLUGIN
-from scidiscovery.general_science_plugin import PLUGIN
-from scidiscovery.operations.catalog import compile_catalog, compile_installed_catalog
-from scidiscovery.operations.spec import ArtifactCaptureSpec
-catalog = compile_installed_catalog()
-stage = next(tool for tool in catalog.operation('science.experiment.v1').worker_tools if tool.name == 'worker_experiment_stage')
-old = 'file@tool_evidence_001:scratch/artifacts/result.csv'
-request = {'stage':'validity', 'conclusion':'Compare the exact old version.', 'comparison':{
-    'prediction':'tool_evidence_002', 'observations':[old], 'result':{
-        'check_key':'sum', 'status':'pass', 'evaluation_mode':'deterministic_threshold',
-        'observed_value':4.0, 'observed_text':'The retained sum is 4.', 'unit':'dimensionless',
-        'evidence_keys':[old], 'rationale':'Retain the declared criterion.'}}}
-Draft202012Validator(stage.input_model.model_json_schema()).validate(request)
-stage.input_model.model_validate_json(canonical_json(request), strict=True)
-assert ValidationCheckResult.model_json_schema()['properties']['evidence_keys']['items']['pattern'] == r'^[A-Za-z0-9][A-Za-z0-9_.:/-]*$'
-try:
-    StageSubmission.model_validate_json(canonical_json(request), strict=True)
-except ValidationError:
-    pass
-else:
-    raise AssertionError('sealed identifiers accepted raw file@ navigation')
-request['comparison']['result'].pop('unit')
-try:
+def test_source_capture_roots_and_stage_authoring_schema_preserve_sealed_contract(source_catalog, tmp_path):
+    source_catalog()
+    import json
+    from jsonschema import Draft202012Validator
+    from pydantic import ValidationError
+    from scidiscovery.artifact_agent.schema.common import canonical_json
+    from scidiscovery.artifact_agent.schema.validation import ValidationCheckResult
+    from scidiscovery.artifact_agent.service.local_workspace import LocalTrustedBackend
+    from scidiscovery.artifact_agent.service.worker_start import write_worker_start
+    from scidiscovery.general_science_experiment_task import StageSubmission
+    from scidiscovery.builtin_plugin import CORE_PLUGIN
+    from scidiscovery.general_science_plugin import PLUGIN
+    from scidiscovery.operations.catalog import compile_catalog, compile_installed_catalog
+    from scidiscovery.operations.spec import ArtifactCaptureSpec
+    catalog = compile_installed_catalog()
+    stage = next(tool for tool in catalog.operation('science.experiment.v1').worker_tools if tool.name == 'worker_experiment_stage')
+    old = 'file@tool_evidence_001:scratch/artifacts/result.csv'
+    request = {'stage':'validity', 'conclusion':'Compare the exact old version.', 'comparison':{
+        'prediction':'tool_evidence_002', 'observations':[old], 'result':{
+            'check_key':'sum', 'status':'pass', 'evaluation_mode':'deterministic_threshold',
+            'observed_value':4.0, 'observed_text':'The retained sum is 4.', 'unit':'dimensionless',
+            'evidence_keys':[old], 'rationale':'Retain the declared criterion.'}}}
+    Draft202012Validator(stage.input_model.model_json_schema()).validate(request)
     stage.input_model.model_validate_json(canonical_json(request), strict=True)
-except ValidationError:
-    pass
-else:
-    raise AssertionError('draft input lost scientific unit validation')
-roots = ('scratch/results', 'scratch/plots/data')
-operations = tuple(operation.model_copy(update={'artifact_capture':ArtifactCaptureSpec(roots=roots)})
-    if operation.operation_id == 'science.evidence.extract.v1' else operation for operation in PLUGIN.operations)
-compiled = compile_catalog((CORE_PLUGIN, PLUGIN.model_copy(update={'operations':operations}))).operation('science.evidence.extract.v1')
-assignment = {'inputs':[], 'tools':['worker_publish_files'],
-    'artifact_capture':{'directories':list(compiled.spec.artifact_capture.roots)}}
-backend = LocalTrustedBackend(Path(tempfile.mkdtemp())/'backend')
-workspace = backend.prepare(run_id='run_installed', inputs=(), assignment=canonical_json(assignment), result_schema=b'{}')
-start = json.loads(write_worker_start(workspace, assignment).read_bytes())
-assert start['artifact_capture'] == assignment['artifact_capture']
-assert 'scratch/artifacts' not in start['output']['attachments']
-assert 'file:scratch/results/path' in start['output']['attachments']
-assert all((workspace.root/root).is_dir() for root in roots)
-assert not (workspace.root/'scratch/artifacts').exists()
-''')
+    assert ValidationCheckResult.model_json_schema()['properties']['evidence_keys']['items']['pattern'] == r'^[A-Za-z0-9][A-Za-z0-9_.:/-]*$'
+    try:
+        StageSubmission.model_validate_json(canonical_json(request), strict=True)
+    except ValidationError:
+        pass
+    else:
+        raise AssertionError('sealed identifiers accepted raw file@ navigation')
+    request['comparison']['result'].pop('unit')
+    try:
+        stage.input_model.model_validate_json(canonical_json(request), strict=True)
+    except ValidationError:
+        pass
+    else:
+        raise AssertionError('draft input lost scientific unit validation')
+    roots = ('scratch/results', 'scratch/plots/data')
+    operations = tuple(operation.model_copy(update={'artifact_capture':ArtifactCaptureSpec(roots=roots)})
+        if operation.operation_id == 'science.evidence.extract.v1' else operation for operation in PLUGIN.operations)
+    compiled = compile_catalog((CORE_PLUGIN, PLUGIN.model_copy(update={'operations':operations}))).operation('science.evidence.extract.v1')
+    assignment = {'inputs':[], 'tools':['worker_publish_files'],
+        'artifact_capture':{'directories':list(compiled.spec.artifact_capture.roots)}}
+    backend = LocalTrustedBackend(tmp_path/'backend')
+    workspace = backend.prepare(run_id='run_source', inputs=(), assignment=canonical_json(assignment), result_schema=b'{}')
+    start = json.loads(write_worker_start(workspace, assignment).read_bytes())
+    assert start['artifact_capture'] == assignment['artifact_capture']
+    assert 'scratch/artifacts' not in start['output']['attachments']
+    assert 'file:scratch/results/path' in start['output']['attachments']
+    assert all((workspace.root/root).is_dir() for root in roots)
+    assert not (workspace.root/'scratch/artifacts').exists()
 
 
 @pytest.mark.parametrize('limit', ['index_item','deadline','empty_enumeration'])

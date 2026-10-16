@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-from scidiscovery.operations import catalog as catalog_module
 
 
 _SOURCE_FULL_PLUGINS = EntryPoints(
@@ -37,9 +36,13 @@ _SOURCE_FULL_PLUGINS = EntryPoints(
 
 
 @pytest.fixture(autouse=True)
-def _source_checkout_plugin_metadata(monkeypatch: pytest.MonkeyPatch):
+def _source_checkout_plugin_metadata(monkeypatch: pytest.MonkeyPatch, request):
     """Model the default full install without writing egg-info into the checkout."""
 
+    if Path(request.node.path).is_relative_to(Path(__file__).parent / "installation"):
+        yield
+        return
+    from scidiscovery.operations import catalog as catalog_module
     monkeypatch.setattr(catalog_module, "entry_points", lambda: _SOURCE_FULL_PLUGINS)
     catalog_module.compile_installed_catalog.cache_clear()
     yield
@@ -51,10 +54,21 @@ _LANES = {"installed": "installed", "process_e2e": "process", "stress": "stress"
 
 def pytest_addoption(parser):
     parser.addoption("--test-lane", choices=("source", "installed", "process", "stress", "live"),
-                     default="source", help="Explicit test layer; default source never runs marked heavy tests")
+                     default="source", help="Explicit test layer; installation is isolated from functional collection")
+    parser.addoption("--installation-cohort", choices=("core", "tcad"), default="core",
+                     help="One explicitly selected packaging cohort; used only by the installed lane")
 
 
 def pytest_configure(config):
+    # Explicit paths can bypass recursive ignore hooks. Reject before importing tests.
+    installation = Path(__file__).parent.resolve() / "installation"
+    installed = config.getoption("test_lane") == "installed"
+    for argument in config.args:
+        target = Path(str(argument).split("::", 1)[0]).resolve()
+        inside = target.is_relative_to(installation)
+        ancestor = installation.is_relative_to(target)
+        if (not installed and inside) or (installed and not (inside or ancestor)):
+            raise pytest.UsageError("installation and functional targets must be selected separately")
     if (config.getoption("numprocesses", default=0) not in (None, 0, "0")
             or "PYTEST_XDIST_WORKER" in os.environ):
         raise pytest.UsageError("xdist is disabled: use scripts/run_tests.py serially")
@@ -85,13 +99,27 @@ def pytest_unconfigure(config):
         lock.close()
 
 
+def pytest_ignore_collect(collection_path, config):
+    installation = Path(__file__).parent.resolve() / "installation"
+    path = Path(collection_path).resolve()
+    inside = path.is_relative_to(installation)
+    if config.getoption("test_lane") == "installed":
+        return not (inside or installation.is_relative_to(path))
+    return True if inside else None
+
+
 @pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(config, items):
     selected, deselected = [], []
     lane = config.getoption("test_lane")
     for item in items:
-        if {"installed_probe", "installed_environments"}.intersection(item.fixturenames):
+        in_installation = Path(item.path).resolve().is_relative_to(Path(__file__).parent.resolve() / "installation")
+        if not in_installation and {"installed_probe", "installed_environments", "installed_environment", "installation_environment"}.intersection(item.fixturenames):
+            raise pytest.UsageError("functional tests must not depend on installation fixtures")
+        if in_installation:
             item.add_marker(pytest.mark.installed)
+        elif item.get_closest_marker("installed") is not None:
+            raise pytest.UsageError("installation checks belong exclusively in tests/installation")
         # A stress/live test can also use installation; choose the strongest opt-in.
         marked = {marker.name for marker in item.iter_markers()}
         actual = next((_LANES[name] for name in ("live_platform", "stress", "installed", "process_e2e")

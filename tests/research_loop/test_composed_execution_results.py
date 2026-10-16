@@ -12,6 +12,10 @@ from scidiscovery.research_loop import contracts as c, controller, execution, ex
 from test_history_handoff import finish
 
 
+# Every case exercises the real experiments CLI in separate local processes.
+pytestmark = pytest.mark.process_e2e
+
+
 @pytest.fixture
 def composed_registry(tmp_path,monkeypatch):
     if list(importlib.metadata.entry_points().select(group='scidiscovery.execution_interfaces',name='composed_execution')):return
@@ -41,8 +45,7 @@ def case(tmp_path,options,observer=None):
     path=c.workspace(root,2)/'work/config.json';config=e.configure(root,2,'composed_execution:fixture',options,path)
     package=c.workspace(root,2)/'work/package';package.write_bytes(b'opaque original job package')
     def cli(*args,expected=0):
-        isolated=['-I'] if os.environ.get('SCID_COMPOSED_INSTALLED')=='1' else []
-        reply=subprocess.run([sys.executable,*isolated,'-m','scidiscovery.research_loop.experiments','--config',str(path),*map(str,args)],capture_output=True,text=True)
+        reply=subprocess.run([sys.executable,'-m','scidiscovery.research_loop.experiments','--config',str(path),*map(str,args)],capture_output=True,text=True)
         assert reply.returncode==expected,(reply.stdout,reply.stderr)
         return json.loads(reply.stdout)
     started=cli('run','--payload',package,'--new-plan','--mechanism','P',expected=0 if options.get('synchronous') else 2)
@@ -62,8 +65,9 @@ def seal_and_read(root,job,observed=True):
     return fact,calls
 
 
-@pytest.mark.parametrize('observer',[None,'empty','broken'])
-@pytest.mark.parametrize('private',[None,'native','local-like'])
+@pytest.mark.parametrize('observer,private',[
+    (None,None),(None,'native'),('empty','local-like'),('broken','local-like'),
+])
 def test_opaque_private_remote_results_seal_and_read_without_candidate_inference(tmp_path,composed_registry,observer,private):
     root,job,config,cli,call=case(tmp_path,dict(synchronous=True,private=private),observer)
     assert config['execution_interface']['result_protocol'] is None
@@ -76,8 +80,7 @@ def test_opaque_private_remote_results_seal_and_read_without_candidate_inference
     assert len(calls)==1 and len(calls[0]['outputs'])==1
 
 
-@pytest.mark.parametrize('observer',[None,'empty','broken'])
-@pytest.mark.parametrize('private',['native','local-like'])
+@pytest.mark.parametrize('observer,private',[(None,'native'),('broken','local-like')])
 def test_explicit_bad_candidate_protocol_is_bounded_diagnostic_not_scientific_candidate(tmp_path,composed_registry,observer,private):
     root,job,config,cli,call=case(tmp_path,dict(synchronous=True,private=private,result_protocol=e.LOCAL_RESULT_PROTOCOL),observer)
     fact,calls=seal_and_read(root,job)

@@ -259,66 +259,61 @@ def test_recovery_inherits_source_policy_and_revocation_blocks_new_read(tmp_path
     assert next(e for e in public['entries'] if e['path'].startswith('ledger:'))['reason'] == 'capture_authority_unavailable'
 
 
-def test_installed_configuration_contract_and_derived_projection(installed_probe):
-    installed_probe('core', r'''
-import hashlib
-import json
-import sys
-import tempfile
-import time
-from pathlib import Path
-from scidiscovery.agent_execution_settings import parse_settings, AttachmentSettings
-from scidiscovery.operations.spec import ArtifactCaptureSpec, json_projection
-from scidiscovery.operations.catalog import compile_installed_catalog
-from scidiscovery.artifact_agent.interfaces.mcp_root import OperationCallInput
-from scidiscovery.artifact_agent.service.artifact_capture import _LedgerFraming, _project_ledger, _Guard
-from scidiscovery.artifact_agent.service.attachments import snapshot_file
-from scidiscovery.operation_contract import ToolInputError
-import scidiscovery.artifact_agent.service.artifact_capture as module
-assert Path(module.__file__).resolve().is_relative_to(Path(sys.prefix).resolve())
-assert compile_installed_catalog().operation('science.evidence.extract.v1').spec.artifact_capture
-assert 'ledgers' not in json_projection(ArtifactCaptureSpec())
-assert 'capture_policy_digest' in OperationCallInput.model_json_schema()['properties']
-with tempfile.TemporaryDirectory() as directory:
-    path = Path(directory)/'input.jsonl'
-    raw = b'{"run_id":3,"ok":false,"val_score":-1.5,"script":"/home/' + b'fixture/private/a.py","model_path":"/opt/exp/private/a.bin"}\n'
-    path.write_bytes(raw)
-    settings = parse_settings({'capture':{'allowed_roots':[directory], 'tasks':{'probe':{
-        'operation_id':'science.evidence.extract.v1', 'ledgers':[{'logical_name':'results',
-        'path':str(path), 'name_field':'run_id', 'status_field':'ok',
-        'fields':{'run_id':'int','ok':'bool','val_score':'float'},
-        'redacted_fields':['script','model_path']}]}}}})
-    ledger = settings.capture.tasks['probe'].ledgers[0].model_dump(mode='json')
-    framing = _LedgerFraming(); framing.feed(raw)
-    target = Path(directory)/'view.jsonl'
-    evidence = _project_ledger(path, target, ledger, framing, [], 65536, time.monotonic()+5)
-    guard = _Guard('text/plain',65536); guard.feed(target.read_bytes()); guard.finish()
-    record = json.loads(target.read_bytes())
-    assert record['values'] == {'run_id':3,'ok':False,'val_score':-1.5}
-    assert record['raw_retained'] is False and record['representation'] == 'derived_projection'
-    assert evidence['physical_records'] == 1 and evidence['attempt_total'] == 'unknown'
-    assert b'/home/' not in target.read_bytes() and b'/opt/' not in target.read_bytes()
-    consumed = []
-    def charge(size):
-        consumed.append(size)
-        path.write_bytes(raw+b' ')
-    bounds = AttachmentSettings(max_item_bytes=512,max_total_bytes=len(raw)+32)
-    try:
-        with path.open('rb',buffering=0) as source:
-            snapshot_file(source,Path(directory)/'failed',bounds,lambda:None,on_read=charge)
-        raise AssertionError('Mutated source must be rejected')
-    except ToolInputError:
-        pass
-    assert len(raw) <= sum(consumed) <= bounds.max_total_bytes
-    second = Path(directory)/'second.jsonl'; second.write_bytes(raw)
-    try:
-        with second.open('rb',buffering=0) as source:
-            snapshot_file(source,Path(directory)/'second-view',bounds,lambda:None,
-                total=sum(consumed),on_read=consumed.append)
-        raise AssertionError('Failed observation must not refund consumed bytes')
-    except ToolInputError:
-        pass
-''')
+def test_source_configuration_contract_and_derived_projection(source_catalog):
+    source_catalog()
+    import json
+    import tempfile
+    import time
+    from pathlib import Path
+    from scidiscovery.agent_execution_settings import parse_settings, AttachmentSettings
+    from scidiscovery.operations.spec import ArtifactCaptureSpec, json_projection
+    from scidiscovery.operations.catalog import compile_installed_catalog
+    from scidiscovery.artifact_agent.interfaces.mcp_root import OperationCallInput
+    from scidiscovery.artifact_agent.service.artifact_capture import _LedgerFraming, _project_ledger, _Guard
+    from scidiscovery.artifact_agent.service.attachments import snapshot_file
+    from scidiscovery.operation_contract import ToolInputError
+    assert compile_installed_catalog().operation('science.evidence.extract.v1').spec.artifact_capture
+    assert 'ledgers' not in json_projection(ArtifactCaptureSpec())
+    assert 'capture_policy_digest' in OperationCallInput.model_json_schema()['properties']
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory)/'input.jsonl'
+        raw = b'{"run_id":3,"ok":false,"val_score":-1.5,"script":"/home/' + b'fixture/private/a.py","model_path":"/opt/exp/private/a.bin"}\n'
+        path.write_bytes(raw)
+        settings = parse_settings({'capture':{'allowed_roots':[directory], 'tasks':{'probe':{
+            'operation_id':'science.evidence.extract.v1', 'ledgers':[{'logical_name':'results',
+            'path':str(path), 'name_field':'run_id', 'status_field':'ok',
+            'fields':{'run_id':'int','ok':'bool','val_score':'float'},
+            'redacted_fields':['script','model_path']}]}}}})
+        ledger = settings.capture.tasks['probe'].ledgers[0].model_dump(mode='json')
+        framing = _LedgerFraming(); framing.feed(raw)
+        target = Path(directory)/'view.jsonl'
+        evidence = _project_ledger(path, target, ledger, framing, [], 65536, time.monotonic()+5)
+        guard = _Guard('text/plain',65536); guard.feed(target.read_bytes()); guard.finish()
+        record = json.loads(target.read_bytes())
+        assert record['values'] == {'run_id':3,'ok':False,'val_score':-1.5}
+        assert record['raw_retained'] is False and record['representation'] == 'derived_projection'
+        assert evidence['physical_records'] == 1 and evidence['attempt_total'] == 'unknown'
+        assert b'/home/' not in target.read_bytes() and b'/opt/' not in target.read_bytes()
+        consumed = []
+        def charge(size):
+            consumed.append(size)
+            path.write_bytes(raw+b' ')
+        bounds = AttachmentSettings(max_item_bytes=512,max_total_bytes=len(raw)+32)
+        try:
+            with path.open('rb',buffering=0) as source:
+                snapshot_file(source,Path(directory)/'failed',bounds,lambda:None,on_read=charge)
+            raise AssertionError('Mutated source must be rejected')
+        except ToolInputError:
+            pass
+        assert len(raw) <= sum(consumed) <= bounds.max_total_bytes
+        second = Path(directory)/'second.jsonl'; second.write_bytes(raw)
+        try:
+            with second.open('rb',buffering=0) as source:
+                snapshot_file(source,Path(directory)/'second-view',bounds,lambda:None,
+                    total=sum(consumed),on_read=consumed.append)
+            raise AssertionError('Failed observation must not refund consumed bytes')
+        except ToolInputError:
+            pass
 
 
 def test_stage_versions_and_negative_file_links_keep_exact_source_observation(tmp_path):
