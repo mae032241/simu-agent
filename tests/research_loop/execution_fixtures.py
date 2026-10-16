@@ -37,14 +37,27 @@ class DifferentExternalIdentity:
     def prepare(self,payload,**options):return payload
     def acceptance_metadata(self,payload,**options):return dict(parent=dict(candidate_id=None),change_intent=None)
     def dispatch_lease(self,accepted):self.accepted=accepted
+    def remote_path(self,call):
+        if self.config.get('proof_directory'):
+            root=Path(self.config['proof_directory']);root.mkdir(exist_ok=True)
+            return root/(call+'.json')
+        return self.records.directory(call)/'remote-terminal.json'
     def submit(self,descriptor):
         call=descriptor.name
         found=self.lookup_submission(descriptor)
         if found:return found
         assert self.accepted['call_id']==call
-        self.records.publish(call,'completed.json',dict(call_id=call,scope=self.config['scope'],status='known_success',
-            proofs=[e.proof(self.records.directory(call)/'accepted.json')],note='Synthetic external identity contract fixture'))
-        return 'remote-'+call,'succeeded'
+        status=self.config.get('outcome','known_success')
+        remote=dict(call_id=call,scope=self.config['scope'],external_run_id='remote-'+call,
+            mechanism_binding=self.accepted.get('mechanism_binding'),status=status)
+        e.write(self.remote_path(call),remote)
+        self.records.publish(call,'completed.json',dict(call_id=call,scope=self.config['scope'],status=status,
+            proofs=[e.proof(self.records.directory(call)/'accepted.json'),e.proof(self.remote_path(call))],
+            note='Synthetic external identity contract fixture',
+            **(dict(result=dict(status='available',metrics=[],outputs=[]),
+                outputs=[dict(e.proof(self.remote_path(call)),name='native-scientific-name')])
+               if self.config.get('include_result') else {})))
+        return 'remote-'+call,self.records.state(call)
     def lookup_submission(self,descriptor):
         if not (self.records.root/'calls'/descriptor.name/'completed.json').exists():return None
         assert self.records.accepted(descriptor.name)['prepared']==descriptor.model_dump(mode='json')
@@ -52,16 +65,28 @@ class DifferentExternalIdentity:
     def status(self,external_run_id):
         assert external_run_id.startswith('remote-')
         return self.records.state(external_run_id.removeprefix('remote-'))
-    def status_details(self,call_id):return dict(state=self.records.state(call_id),call_id=call_id)
-    def result(self,call_id):return json.loads(e.read(self.records.directory(call_id)/'completed.json'))
+    def status_details(self,call_id):
+        self.result(call_id)
+        return dict(state=self.records.state(call_id),call_id=call_id)
+    def result(self,call_id):
+        value=json.loads(e.read(self.records.directory(call_id)/'completed.json'))
+        accepted=self.records.accepted(call_id)
+        remote=json.loads(e.read(self.remote_path(call_id)))
+        if (remote['external_run_id']!='remote-'+call_id or remote['status']!=value['status']
+                or any(remote.get(key)!=accepted.get(key) for key in ('call_id','scope','mechanism_binding'))):
+            raise e.IntegrityError('Remote terminal binding changed')
+        for item in value['proofs']:
+            if e.proof(item['path'])!=item:raise e.IntegrityError('Remote terminal proof changed')
+        return value
     def public_result(self,result):return {key:result[key] for key in ('call_id','status','note')}
     def cancel(self,external_run_id):raise e.UnsupportedExecution('Fixture cancellation unavailable')
     def cancel_original(self,call_id):return self.cancel(self.records.external(call_id))
     def collect(self,external_run_id):
         assert external_run_id.startswith('remote-')
         path=self.records.directory(external_run_id.removeprefix('remote-'))/'source.py';item=e.proof(path)
-        return (LocalFileDescriptor(name='original',local_path=str(path),sha256=item['sha256'],
-            size_bytes=item['size_bytes'],media_type='application/octet-stream'),)
+        descriptor=LocalFileDescriptor(name=self.config.get('collect_name','original'),local_path=str(path),sha256=item['sha256'],
+            size_bytes=item['size_bytes'],media_type='application/octet-stream')
+        return (descriptor,descriptor) if self.config.get('duplicate_collection') else (descriptor,)
     def collect_original(self,call_id):return self.collect(self.records.external(call_id))
 
 
@@ -74,6 +99,8 @@ REMOTE_REGISTRATION=ExecutionInterfaceRegistration('remote_execution','1',Runtim
 
 @pytest.fixture
 def remote_registry(tmp_path,monkeypatch,execution_registry):
+    if list(importlib.metadata.entry_points().select(group='scidiscovery.execution_interfaces',name='remote_execution')):
+        return
     metadata=tmp_path/'remote-discovery/remote_execution_contract.dist-info';metadata.mkdir(parents=True)
     (metadata/'METADATA').write_text('Metadata-Version: 2.1\nName: remote-execution-contract\nVersion: 0\n')
     (metadata/'entry_points.txt').write_text('[scidiscovery.execution_interfaces]\nremote_execution = execution_fixtures:REMOTE_REGISTRATION\n')

@@ -503,15 +503,12 @@ def collect_materials(root: Path, step: int):
     artifacts(work / 'artifacts')
     experiments(work / 'experiments')
     job=read(root/'jobs'/f'{step:03d}.json')
-    if job.get('experiment_mode')=='local' and job['role']=='W':
-        from . import execution, experiments as managed
-        config_path=execution.record(root,step)/'experiment-config.json'
-        if config_path.exists():
-            config=read(regular(config_path));adapter=managed.load(config,path=config_path)
-            for directory in managed.Records(config).calls():
-                result=adapter.result(directory.name)
-                for item in result.get('outputs',[]):
-                    add(Path(item['path']),f'experiments/{directory.name}/artifacts/{item["name"]}')
+    if job['role']=='W':
+        from . import history
+        for call in history.managed_calls(root,job):
+            for item in call.get('outputs',[]):
+                if item.get('retention')!='archived':raise ValueError('Managed deliverable original unavailable')
+                add(root/item['path'],f'experiments/{call["call_id"]}/artifacts/{item["name"]}')
     if len({row['path'] for row in rows}) != len(rows):
         raise ValueError('Deliverable paths collide with nested experiment outputs')
     return sorted(rows, key=lambda row: row['path'])

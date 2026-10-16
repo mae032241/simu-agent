@@ -56,6 +56,12 @@ class ManagedExecutionInterface(ExecutionAdapter, Protocol):
 
     Descriptor inputs may be source files or opaque job packages. CLI --script is
     a convenience of the bundled local implementations, not a backend constraint.
+    status_details and result validate the backend's original terminal evidence;
+    result retains exact proof descriptors. Control freezes their consistent
+    terminal projection and collect_original descriptors before scientific sealing.
+    Scientific readers never re-query a backend. Local implementations declare
+    terminal_evidence_kind='local_process' and retain cleanup/transport/exit proofs;
+    other implementations use their own terminal evidence without POSIX receipts.
     """
     def lifecycle_capabilities(self) -> LifecycleCapabilities: ...
     def code_assets(self) -> tuple[str, ...]: ...

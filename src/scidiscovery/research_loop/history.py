@@ -163,6 +163,48 @@ def _managed_proof(root,path,original):
     return proof
 
 
+def _execution_interface(root, accepted):
+    """The host-frozen interface chooses authority, never worker-written markers."""
+    attempt=accepted.get('native_attempt') or {}
+    number=attempt.get('number',0)
+    path=execution.record(root,accepted['scope']['step'],number)/'experiment-config.json'
+    if not path.exists():raise ObserverIntegrityError('Managed host execution configuration missing')
+    config=c.read(c.regular(path))
+    if config.get('scope')!=accepted['scope'] or config.get('execution_interface')!=accepted.get('interface'):
+        raise ObserverIntegrityError('Managed interface differs from frozen host configuration')
+    return config['execution_interface']
+
+
+def managed_status(root, row):
+    """One immutable terminal authority shared with Worker delivery and history."""
+    from . import experiments
+    if row.get('completed') is None:return 'unknown'
+    accepted=c.read(root/row['accepted']['snapshot']);completed=c.read(root/row['completed']['snapshot'])
+    interface=_execution_interface(root,accepted)
+    observation=row.get('observation')
+    if observation is not None:
+        value=c.read(root/observation['snapshot'])
+        if (value['accepted']['sha256']!=row['accepted']['sha256']
+                or value['completed']['sha256']!=row['completed']['sha256']):
+            raise ObserverIntegrityError('Managed observation differs from archived call originals')
+        try:
+            return experiments.verify_observation(value,lambda proof:experiments.read(
+                root/'host-history/objects'/proof['sha256'],experiments.MAX_ASSET),interface=interface)
+        except (ValueError,OSError,KeyError,TypeError) as error:
+            raise ObserverIntegrityError('Managed execution observation original changed') from error
+    if interface.get('observation_version') is not None:return 'unknown'
+    # Compatibility is restricted to the existing local receipt contract.
+    if not ('local_observation_version' in accepted or 'receipt_transport' in accepted):return 'unknown'
+    terminal=c.read(root/row['terminal']['snapshot']) if row.get('terminal') is not None else None
+    return experiments.local_terminal_status(accepted,completed,terminal)
+
+
+def _managed_outputs(interface, completed, observed):
+    if observed is not None and interface.get('terminal_evidence')!='local_process':
+        return observed['outputs']
+    return completed.get('outputs',[]) if 'result' in completed else observed['outputs'] if observed is not None else []
+
+
 def managed_calls(root, job):
     """Capture small common receipts, independent of domain candidates or observers."""
     from . import experiments, breadth
@@ -180,23 +222,29 @@ def managed_calls(root, job):
             value=c.read(c.regular(completion,limit=experiments.MAX_BYTES))
             if value.get('call_id')!=directory.name or value.get('scope')!=scope or value.get('mechanism_binding')!=binding:
                 raise ObserverIntegrityError('Managed completion changed accepted mechanism')
-            # Known status is grounded in the same call's immutable terminal receipt.
             terminal_path=directory/'terminal.json'
             if terminal_path.exists():
-                transport=c.read(c.regular(terminal_path,limit=experiments.MAX_BYTES))
-                if (transport.get('call_id')==directory.name and transport.get('scope')==scope and transport.get('mechanism_binding')==binding
-                        and transport.get('cleanup_confirmed') is True and transport.get('transport_complete') is True
-                        and type(transport.get('returncode')) is int
-                        and value.get('status')==('known_success' if transport['returncode']==0 else 'known_failed')):
-                    state=value['status'];terminal=_proof(root,terminal_path.relative_to(root).as_posix())
-        result.append(dict(call_id=directory.name,scope=scope,mechanism_binding=binding,status=state,
+                terminal=_proof(root,terminal_path.relative_to(root).as_posix())
+        observed_path=directory/'execution-observation.json';observed=None;extra=[]
+        if observed_path.exists():
+            observed=c.read(c.regular(observed_path,limit=experiments.MAX_BYTES))
+            extra=[observed[key] for key in ('accepted','completed','submission')]+observed['proofs']
+            if 'native_terminal' in observed:extra.append(observed['native_terminal'])
+        outputs=_managed_outputs(_execution_interface(root,accepted),value,observed)
+        row=dict(call_id=directory.name,scope=scope,mechanism_binding=binding,status=state,
             accepted=_proof(root,accepted_path.relative_to(root).as_posix()),
             completed=_proof(root,completion.relative_to(root).as_posix()) if completion.exists() else None,terminal=terminal,
+            **(dict(observation=_proof(root,observed_path.relative_to(root).as_posix())) if observed is not None else {}),
             **(dict(originals=[_managed_proof(root,directory/'inputs'/item['name'],item) for item in accepted.get('snapshot_files',[])]
-                    +[_managed_proof(root,item['path'],item) for item in value.get('proofs',[])],
-                outputs=[dict(name=item['name'],**_managed_proof(root,item['path'],item)) for item in value.get('outputs',[])],
+                    +[_managed_proof(root,item['path'],item) for item in (extra if observed is not None else value.get('proofs',[]))],
+                outputs=[dict(name=item['name'],**_managed_proof(root,item['path'],item)) for item in outputs],
                 execution=dict(returncode=value.get('returncode'),wall_seconds=value.get('wall_seconds'),result=value.get('result')))
-               if 'result' in value else {})))
+               if 'result' in value or observed is not None else {}))
+        if observed is not None:
+            # Retain every collected descriptor even when local result outputs use scientific names.
+            for item in observed['outputs']:_managed_proof(root,item['path'],item)
+        row['status']=managed_status(root,row)
+        result.append(row)
     return result
 
 
@@ -206,11 +254,11 @@ def validate_managed(root, job, rows):
     if not isinstance(rows,list) or len(rows)>128:raise ObserverIntegrityError('Managed receipt capacity exceeded')
     scope=stage_scope(root,job);seen=set()
     for row in rows:
-        if set(row) not in ({'call_id','scope','mechanism_binding','status','accepted','completed','terminal'}, {'call_id','scope','mechanism_binding','status','accepted','completed','terminal','originals','outputs','execution'}) or row['call_id'] in seen or row['scope']!=scope:
+        if set(row)-{'observation'} not in ({'call_id','scope','mechanism_binding','status','accepted','completed','terminal'}, {'call_id','scope','mechanism_binding','status','accepted','completed','terminal','originals','outputs','execution'}) or row['call_id'] in seen or row['scope']!=scope:
             raise ObserverIntegrityError('Managed receipt owner differs')
         seen.add(row['call_id'])
-        for key in ('accepted','completed','terminal'):
-            proof=row[key]
+        for key in ('accepted','completed','terminal','observation'):
+            proof=row.get(key)
             if proof is not None:
                 if proof.get('retention')!='archived':raise ObserverIntegrityError('Managed receipt original unavailable')
                 _validate_proof(root,proof)
@@ -223,25 +271,24 @@ def validate_managed(root, job, rows):
             completed=c.read(root/row['completed']['snapshot'])
             if row['execution']!=dict(returncode=completed.get('returncode'),wall_seconds=completed.get('wall_seconds'),result=completed.get('result')):
                 raise ObserverIntegrityError('Managed results differ from completed original')
-            originals=[*accepted.get('snapshot_files',[]),*completed.get('proofs',[])]
+            originals=[*accepted.get('snapshot_files',[])]
+            observed=c.read(root/row['observation']['snapshot']) if row.get('observation') else None
+            if observed is not None:
+                originals.extend([observed[key] for key in ('accepted','completed','submission')]+observed['proofs'])
+                if 'native_terminal' in observed:originals.append(observed['native_terminal'])
+            else:originals.extend(completed.get('proofs',[]))
             if (len(row['originals'])!=len(originals) or any(any(proof[key]!=original[key] for key in ('sha256','size_bytes'))
                     for proof,original in zip(row['originals'],originals))):
                 raise ObserverIntegrityError('Managed input or log original changed')
-            if len(row['outputs'])!=len(completed.get('outputs',[])):
+            outputs=_managed_outputs(_execution_interface(root,accepted),completed,observed)
+            if len(row['outputs'])!=len(outputs):
                 raise ObserverIntegrityError('Managed outputs differ from completed original')
-            for proof,original in zip(row['outputs'],completed.get('outputs',[])):
+            for proof,original in zip(row['outputs'],outputs):
                 if any(proof[key]!=original[key] for key in ('name','sha256','size_bytes')):
                     raise ObserverIntegrityError('Managed output changed')
         if row['status'] not in {'known_success','known_failed','unknown'}:raise ObserverIntegrityError('Managed state differs')
-        if row['status']!='unknown':
-            if row['completed'] is None or row['terminal'] is None:raise ObserverIntegrityError('Managed terminal originals absent')
-            completed=c.read(root/row['completed']['snapshot']);terminal=c.read(root/row['terminal']['snapshot'])
-            if (completed.get('call_id')!=row['call_id'] or completed.get('scope')!=scope or completed.get('mechanism_binding')!=row['mechanism_binding']
-                    or completed.get('status')!=row['status'] or terminal.get('call_id')!=row['call_id'] or terminal.get('scope')!=scope
-                    or terminal.get('mechanism_binding')!=row['mechanism_binding'] or terminal.get('cleanup_confirmed') is not True
-                    or terminal.get('transport_complete') is not True or type(terminal.get('returncode')) is not int
-                    or row['status']!=('known_success' if terminal['returncode']==0 else 'known_failed')):
-                raise ObserverIntegrityError('Managed state differs from terminal original')
+        if row['status']!=managed_status(root,row):
+            raise ObserverIntegrityError('Managed state differs from verified execution observation')
 
 
 def _capture(root, job, payload, materials):

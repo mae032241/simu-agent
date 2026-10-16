@@ -21,6 +21,8 @@ MAX_SCAN_ENTRIES = 1024
 
 
 class LocalExecution:
+    terminal_evidence_kind = 'local_process'
+
     def __init__(self, config):
         self.config=config
         self.records=e.Records(config)

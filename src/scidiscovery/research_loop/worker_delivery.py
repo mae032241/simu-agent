@@ -34,16 +34,13 @@ def _original(root,path):
     return history._proof(root,Path(path).relative_to(root).as_posix())
 
 
-def _candidate(root,accepted,completed,terminal):
+def _candidate(root,accepted,completed,terminal,observation=None):
     """No live backend query; terminal bytes must agree with the accepted owner."""
-    if completed is None or terminal is None:return False
-    return (completed.get('call_id')==accepted.get('call_id') and completed.get('scope')==accepted.get('scope')
-        and completed.get('mechanism_binding')==accepted.get('mechanism_binding')
-        and terminal.get('call_id')==accepted.get('call_id') and terminal.get('scope')==accepted.get('scope')
-        and terminal.get('mechanism_binding')==accepted.get('mechanism_binding')
-        and terminal.get('cleanup_confirmed') is True and terminal.get('transport_complete') is True
-        and type(terminal.get('returncode')) is int
-        and completed.get('status')==('known_success' if terminal['returncode']==0 else 'known_failed'))
+    if observation is not None:return history.managed_status(root,observation)!='unknown'
+    if history._execution_interface(root,accepted).get('observation_version') is not None:return False
+    if not ('local_observation_version' in accepted or 'receipt_transport' in accepted):return False
+    from . import experiments
+    return experiments.local_terminal_status(accepted,completed,terminal)!='unknown'
 
 
 
@@ -96,28 +93,17 @@ def capture(root,job,record):
             if row.get('mechanism_binding') is None:continue
             ref=row['mechanism_binding']['mechanism_ref']
             if ref not in needed:continue
-            if row['status']!='unknown':rows.append(dict(mechanism_ref=ref,accepted=row['accepted'],completed=row['completed'],terminal=row['terminal']))
-    from . import experiments,breadth
-    scope=stage_scope(root,job)
-    records=experiments.Records(dict(record_dir=str(c.workspace(root,job['step'])/'work/lineage'),scope=scope,breadth=job['search']['breadth']))
-    for directory in records.calls():
-        accepted_path=directory/'accepted.json'
-        try:
-            accepted=records.accepted(directory.name)
-        except (FileNotFoundError,json.JSONDecodeError,UnicodeDecodeError):
-            unknown.append(dict(accepted=_original(root,accepted_path) if accepted_path.exists() else None,completed=None,terminal=None));continue
+            if row['status']!='unknown':rows.append(dict(mechanism_ref=ref,accepted=row['accepted'],completed=row['completed'],terminal=row['terminal'],
+                **(dict(observation=row['observation']) if 'observation' in row else {})))
+    for row in history.managed_calls(root,job):
+        accepted=c.read(root/row['accepted']['snapshot'])
         attempt=accepted.get('native_attempt')
         if not isinstance(attempt,dict) or type(attempt.get('number')) is not int:
             raise history.ObserverIntegrityError('Worker observation has no exact accepted native attempt')
         if attempt['number']>number:continue
-        comp=directory/'completed.json';term=directory/'terminal.json'
-        comp_proof=_original(root,comp) if comp.exists() else None
-        term_proof=_original(root,term) if term.exists() else None
-        proofs=dict(accepted=_original(root,accepted_path),completed=comp_proof,terminal=term_proof)
-        try:
-            completed=c.read(comp) if comp.exists() else None;terminal=c.read(term) if term.exists() else None
-        except (json.JSONDecodeError,UnicodeDecodeError):completed=terminal=None
-        if _candidate(root,accepted,completed,terminal):
+        proofs={key:row[key] for key in ('accepted','completed','terminal')}
+        if 'observation' in row:proofs['observation']=row['observation']
+        if row['status']!='unknown':
             ref=accepted['mechanism_binding']['mechanism_ref']
             if ref in needed:rows.append(dict(mechanism_ref=ref,**proofs))
         else:unknown.append(proofs)
@@ -145,14 +131,14 @@ def validate(root,job,record):
         source_attempt=execution.records(root,job['step']).index(record))
     if value.get('version')!=1 or value.get('binding')!=expected:raise history.ObserverIntegrityError('Worker fact snapshot binding changed')
     for row in [*value['evidence'],*value['unknown']]:
-        for key in ('accepted','completed','terminal'):
-            proof=row[key]
+        for key in ('accepted','completed','terminal','observation'):
+            proof=row.get(key)
             if proof is not None:history._validate_proof(root,proof)
         if 'mechanism_ref' in row:
-            if any(row[key] is None or row[key].get('retention')!='archived' for key in ('accepted','completed','terminal')):
+            if any(row[key] is None or row[key].get('retention')!='archived' for key in ('accepted','completed')):
                 raise history.ObserverIntegrityError('Worker known observation originals unavailable')
-            accepted=c.read(root/row['accepted']['snapshot']);completed=c.read(root/row['completed']['snapshot']);terminal=c.read(root/row['terminal']['snapshot'])
-            if not _candidate(root,accepted,completed,terminal):raise history.ObserverIntegrityError('Worker observation differs from accepted terminal originals')
+            accepted=c.read(root/row['accepted']['snapshot'])
+            if history.managed_status(root,row)=='unknown':raise history.ObserverIntegrityError('Worker observation differs from accepted terminal originals')
             ref=row['mechanism_ref'];target=next((item for item in job['search']['coverage_obligation'] if item['mechanism_ref']==ref),None)
             if target is None or any(accepted['mechanism_binding'].get(key)!=target[key] for key in ('mechanism_ref','source_h','source_h_sha256')):
                 raise history.ObserverIntegrityError('Worker observation differs from assigned H version')

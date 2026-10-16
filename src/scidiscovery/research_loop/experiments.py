@@ -26,6 +26,7 @@ from scidiscovery.operations.runtime_plugins import RuntimePluginContext, Runtim
 
 GROUP = 'scidiscovery.execution_interfaces'
 VERSION = 1
+OBSERVATION_VERSION = 1
 ADMISSION_VERSION = 1
 MAX_BYTES = 256_000
 MAX_ASSET = 32 * 1024 * 1024
@@ -160,6 +161,8 @@ def freeze(config, executor, *, path=None):
               Path(inspect.getfile(type(adapter))).resolve(), Path(__file__).resolve(), Path(inspect.getfile(breadth)).resolve()]
     assets += [Path(item).resolve() for item in adapter.code_assets()]
     value['execution_interface'] = dict(version=VERSION, executor=executor, plugin_version=declared.version,
+        observation_version=OBSERVATION_VERSION,
+        terminal_evidence=getattr(adapter,'terminal_evidence_kind','adapter_result'),
         config_sha256=hashlib.sha256(encoded(body)).hexdigest(),
         capabilities=asdict(lifecycle_capabilities(adapter)),
         code=[proof(item) for item in dict.fromkeys(assets)])
@@ -397,6 +400,131 @@ def dispatch(config, script, *, parent=None, new=False, change=None, mechanism=N
     return dispatch_descriptor(config,payload,parent=parent,new=new,change=change,mechanism=mechanism,command_options=command_options)
 
 
+def local_terminal_status(accepted, completed, terminal):
+    """Legacy local originals only; no fabricated POSIX receipts for other backends."""
+    if not isinstance(completed,dict) or not isinstance(terminal,dict):return 'unknown'
+    if any(value.get(key)!=accepted.get(key) for value in (completed,terminal)
+           for key in ('call_id','scope','mechanism_binding')):return 'unknown'
+    if (terminal.get('cleanup_confirmed') is not True or terminal.get('transport_complete') is not True
+            or type(terminal.get('returncode')) is not int):return 'unknown'
+    expected='known_success' if terminal['returncode']==0 else 'known_failed'
+    return expected if completed.get('status')==expected else 'unknown'
+
+
+def verify_observation(value, original, *, interface=None):
+    """Verify frozen control facts using exact bytes, never a live backend query."""
+    def bound(item):
+        data=original(item)
+        if hashlib.sha256(data).hexdigest()!=item['sha256'] or len(data)!=item['size_bytes']:
+            raise IntegrityError('Execution observation original changed')
+        return data
+    if not isinstance(value,dict) or value.get('version')!=OBSERVATION_VERSION:
+        raise IntegrityError('Execution observation version unavailable')
+    accepted=json.loads(bound(value['accepted']));completed=json.loads(bound(value['completed']))
+    submission=json.loads(bound(value['submission']))
+    if (value.get('interface')!=accepted.get('interface') or interface is not None and value.get('interface')!=interface
+            or value.get('status') not in {'known_success','known_failed'}
+            or value['status']!=completed.get('status')
+            or value.get('external_run_id')!=submission.get('external_run_id')
+            or not isinstance(value.get('external_run_id'),str)):
+        raise IntegrityError('Execution observation differs from accepted interface or terminal result')
+    for row in (accepted,completed,submission):
+        if any(row.get(key)!=value.get(key) for key in ('call_id','scope','mechanism_binding')):
+            raise IntegrityError('Execution observation escaped its accepted owner')
+    for item in [*value['proofs'],*value['outputs']]:
+        bound(item)
+        if any(item['source'][key]!=item[key] for key in ('sha256','size_bytes')):
+            raise IntegrityError('Collected observation differs from its declared descriptor')
+    if [item['source'] for item in value['proofs']]!=completed.get('proofs'):
+        raise IntegrityError('Retained backend proofs differ from the original completion descriptors')
+    for item in value['outputs']:
+        descriptor=LocalFileDescriptor.model_validate(item['descriptor'])
+        if (descriptor.name!=item['name'] or descriptor.local_path!=item['source']['path']
+                or descriptor.sha256!=item['sha256'] or descriptor.size_bytes!=item['size_bytes']):
+            raise IntegrityError('Retained collection differs from its original descriptor')
+    if value['interface'].get('terminal_evidence')=='local_process':
+        terminal=json.loads(bound(value['native_terminal']))
+        if local_terminal_status(accepted,completed,terminal)!=value['status']:
+            raise IntegrityError('Local observation lacks confirmed cleanup, transport or exit status')
+    elif value['interface'].get('terminal_evidence')!='adapter_result':
+        raise IntegrityError('Execution terminal evidence contract unavailable')
+    return value['status']
+
+
+def record_observation(config, adapter, call_id, *, collected=None):
+    """Freeze one backend-verified terminal projection while executing its protocol.
+
+    The adapter owns its native terminal evidence. In particular local adapters
+    validate cleanup, transport and exit code in status_details/result. Scientific
+    readers consume only this immutable projection and its retained originals.
+    """
+    records=Records(config);directory=records.directory(call_id)
+    path=directory/'execution-observation.json'
+    if path.exists():
+        value=json.loads(read(path));verify_observation(value,lambda item:read(item['path'],MAX_ASSET),
+            interface=config['execution_interface']);return value
+    accepted=records.accepted(call_id)
+    if accepted['interface']!=config['execution_interface']:
+        raise IntegrityError('Observation interface differs from accepted execution')
+    external=records.external(call_id)
+    if external is None:return None
+    details=adapter.status_details(call_id);state=details.get('state')
+    status={'succeeded':'known_success','failed':'known_failed'}.get(state)
+    if status is None:return None
+    result=adapter.result(call_id)
+    completed=json.loads(read(directory/'completed.json'))
+    if (result!=completed or completed.get('status')!=status
+            or any(completed.get(key)!=accepted.get(key) for key in ('call_id','scope','mechanism_binding'))):
+        raise IntegrityError('Adapter terminal projection differs from accepted completion')
+    proofs=result.get('proofs')
+    if not isinstance(proofs,list) or not proofs or len(proofs)>MAX_INPUT_FILES:
+        raise IntegrityError('Adapter terminal result requires bounded original proofs')
+    for item in proofs:
+        if proof(item['path'])!=item:raise IntegrityError('Adapter terminal original changed')
+    consumed=0
+    def retain(item):
+        nonlocal consumed
+        data=read(item['path'],MAX_ASSET);consumed+=len(data)
+        if consumed>MAX_INPUT_BYTES:raise IntegrityError('Execution observation collection capacity exceeded')
+        if hashlib.sha256(data).hexdigest()!=item['sha256'] or len(data)!=item['size_bytes']:
+            raise IntegrityError('Execution observation original changed during collection')
+        target=directory/'observed-originals'/item['sha256']
+        target.parent.mkdir(exist_ok=True)
+        if target.exists():
+            if read(target,MAX_ASSET)!=data:raise IntegrityError('Retained observation original changed')
+        else:
+            with target.open('xb') as stream:stream.write(data);stream.flush();os.fsync(stream.fileno())
+            target.chmod(0o400)
+        return dict(proof(target),source=item)
+    proofs=[retain(item) for item in proofs]
+    outputs=[];names=set()
+    if lifecycle_capabilities(adapter).collect:
+        descriptors=adapter.collect_original(call_id) if collected is None else collected
+        if len(descriptors)>MAX_INPUT_FILES:raise IntegrityError('Collected observation capacity exceeded')
+        for descriptor in descriptors:
+            name=Path(descriptor.name)
+            if (name.is_absolute() or '..' in name.parts or not name.parts or name.as_posix()!=descriptor.name
+                    or '\\' in descriptor.name or descriptor.name in names):
+                raise IntegrityError('Collected observation requires distinct canonical names')
+            names.add(descriptor.name)
+            item=proof(descriptor.local_path)
+            if item['sha256']!=descriptor.sha256 or item['size_bytes']!=descriptor.size_bytes:
+                raise IntegrityError('Collected observation original changed')
+            outputs.append(dict(retain(item),name=descriptor.name,descriptor=descriptor.model_dump(mode='json')))
+    value=dict(version=OBSERVATION_VERSION,call_id=call_id,scope=accepted['scope'],
+        mechanism_binding=accepted.get('mechanism_binding'),interface=accepted['interface'],
+        external_run_id=external,status=status,accepted=proof(directory/'accepted.json'),
+        completed=proof(directory/'completed.json'),submission=proof(directory/'submission.json'),proofs=proofs,outputs=outputs)
+    if config['execution_interface'].get('terminal_evidence')=='local_process':
+        value['native_terminal']=proof(directory/'terminal.json')
+    verify_observation(value,lambda item:read(item['path'],MAX_ASSET))
+    with records.lease('observation-'+call_id+'.lock'):
+        if path.exists():
+            if json.loads(read(path))!=value:raise IntegrityError('Frozen execution observation changed')
+        else:write(path,value)
+    return value
+
+
 def dispatch_descriptor(config, payload, *, parent=None, new=False, change=None, mechanism=None, command_options=None):
     try:return _dispatch_descriptor(config,payload,parent=parent,new=new,change=change,mechanism=mechanism,command_options=command_options)
     except BlockingIOError:return dict(status='unknown',note='Original accepted execution still owns its lease')
@@ -432,6 +560,7 @@ def _dispatch_descriptor(config, payload, *, parent=None, new=False, change=None
     adapter.dispatch_lease(accepted)
     external_id,state=adapter.submit(prepared)
     records.bind_external(call_id,external_id,state)
+    record_observation(config,adapter,call_id)
     return adapter.result(call_id)
 
 
@@ -523,8 +652,14 @@ def main(argv=None):
                 else:
                     records.bind_external(args.call_id,*found)
                     result=adapter.status_details(args.call_id)
-            elif args.command=='collect':result=dict(status='collected',outputs=[item.model_dump(mode='json') for item in adapter.collect_original(args.call_id)])
+            elif args.command=='collect':
+                descriptors=adapter.collect_original(args.call_id)
+                result=dict(status='collected',outputs=[item.model_dump(mode='json') for item in descriptors])
             else:result=dict(status=adapter.cancel_original(args.call_id))
+            if args.command=='collect':record_observation(config,adapter,args.call_id,collected=descriptors)
+            elif args.command in {'query','lookup'} and result.get('state') in {'succeeded','failed'}:
+                if (Records(config).directory(args.call_id)/'execution-observation.json').exists():
+                    record_observation(config,adapter,args.call_id)
             code=0
         result['feedback']=dict(version=1,budget=feedback.budget_hint(Path(config['record_dir']).parent.parent),
             review=review_feedback(config),
