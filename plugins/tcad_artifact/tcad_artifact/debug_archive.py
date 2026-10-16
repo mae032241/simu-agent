@@ -10,29 +10,25 @@ import re
 from scidiscovery.artifact_agent.schema.common import canonical_sha256
 from scidiscovery.operations.runtime_plugins import ArchiveStorage, ArchiveStorageSelection
 
-MAX_ENTRIES = 4096
-MAX_LEDGER_BYTES = 1024 * 1024
-
 
 def _children(path):
     result = []
     with os.scandir(path) as entries:
         for entry in entries:
-            if entry.is_symlink() or len(result) >= MAX_ENTRIES:
+            if entry.is_symlink():
                 raise ValueError("debug_storage_shape_unknown")
             result.append(Path(entry.path))
     return result
 
 
 def _json(path):
-    if path.resolve() != path or not path.is_file() or path.stat().st_size > MAX_LEDGER_BYTES:
+    if path.resolve() != path or not path.is_file():
         raise ValueError("debug_original_unavailable")
     return json.loads(path.read_bytes())
 
 
 def _verify(path, descriptor):
-    if (path.resolve() != path or not path.is_file() or path.stat().st_size != descriptor['size_bytes']
-            or path.stat().st_size > 64 * 1024 * 1024):
+    if (path.resolve() != path or not path.is_file() or path.stat().st_size != descriptor['size_bytes']):
         raise ValueError("debug_original_changed")
     digest = hashlib.sha256()
     with path.open('rb') as stream:
@@ -102,13 +98,11 @@ def _inspect(root, instance_id, run_ids, run_owner):
             fd = os.open(lock_path, os.O_RDONLY | os.O_NOFOLLOW)
             locks.callback(os.close, fd)
             fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
-            _json(path)  # Enforce bounded original reads before the domain parser.
+            _json(path)  # Verify original shape before the domain parser.
             ledger = _read_ledger(path)
             known_budget_files.update((path, lock_path))
             records = {key: value['record'] for key, value in ledger['reservations'].items()}
             records.update(ledger['runs'])
-            if len(records) > MAX_ENTRIES:
-                raise ValueError("debug_record_capacity")
             owners = {run_owner(record['run_id']) for record in records.values()}
             if not owners:
                 owners = {owner for owner in workspace_owners.values() if path.stem == canonical_sha256(
@@ -126,7 +120,7 @@ def _inspect(root, instance_id, run_ids, run_owner):
             if target:
                 selected.update((path.relative_to(root).as_posix(), lock_path.relative_to(root).as_posix()))
             for key, record in records.items():
-                if key in record_owners or len(record_owners) >= MAX_ENTRIES:
+                if key in record_owners:
                     raise ValueError("debug_record_identity_or_capacity")
                 record_owners[key] = owner
                 reservation = ledger['reservations'].get(key)
@@ -153,7 +147,7 @@ def _inspect(root, instance_id, run_ids, run_owner):
                 if (receipt['submission'] != submission or proof['run_id'] != record['run_id']
                         or proof['run_name'] != record['run_name'] or receipt['response'] != record.get('response')):
                     raise ValueError("debug_receipt_owner_mismatch")
-                if not isinstance(proof['files'], list) or len(proof['files']) > MAX_ENTRIES:
+                if not isinstance(proof['files'], list):
                     raise ValueError("debug_receipt_capacity")
                 for item in proof['files']:
                     if re.fullmatch(r'[0-9a-f]{64}', item['sha256']) is None:

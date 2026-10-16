@@ -4,6 +4,8 @@ import sqlite3
 
 import pytest
 
+from scidiscovery.operation_contract import DiagnosticError
+
 from scidiscovery.artifact_agent.schema.common import canonical_json
 from scidiscovery.artifact_agent.schema.refs import ArtifactRef
 from tests.operations.test_sealed_reference_replay import evidence_submission
@@ -93,9 +95,8 @@ def test_programming_error_keeps_technical_failure_identity(archive_system, monk
     assert runtime.approvals.status(requests[0]['approval_id']).status == 'pending'
 
 
-def test_dependency_count_does_not_replace_complete_proof_byte_budget(tmp_path):
+def test_complete_proof_preserves_large_transitive_dependencies(tmp_path):
     from scidiscovery.artifact_agent.service.reference_proofs import material_snapshot
-    from scidiscovery.operation_contract import DiagnosticError
     runs, owner, args = evidence_submission(tmp_path)
     runs.accept_tool_evidence(**args)
     template = runs.tool_evidence(owner.run_id)[0]
@@ -109,12 +110,10 @@ def test_dependency_count_does_not_replace_complete_proof_byte_budget(tmp_path):
         previous = alias
     complete = json.loads(material_snapshot(owner, records[-1], records, [], [], None))
     assert len(complete['bindings']) == 129
-    # Actual oversize still fails, without truncating any dependency.
     records[0]['metadata']['historical_notes'] = 'x' * (1024 * 1024)
-    with pytest.raises(DiagnosticError) as caught:
-        material_snapshot(owner, records[-1], records, [], [], None)
-    assert caught.value.details[0]['code'] == 'reference_proof_limit'
-    assert caught.value.details[0]['repairable'] is False
+    complete = json.loads(material_snapshot(owner, records[-1], records, [], [], None))
+    assert len(complete['bindings']) == 129
+    assert complete['records'][0]['metadata']['historical_notes'] == records[0]['metadata']['historical_notes']
 
 
 def test_recovered_calculation_retains_exact_attempt_and_sources(tmp_path, monkeypatch):
@@ -243,37 +242,27 @@ def test_legacy_large_recovery_proof_allows_tool_call_and_finalization(tmp_path)
     assert len(manifest['records']) == 1 and len(runs.tool_evidence(previous.run_id)) == 128
 
 
-def test_new_receipt_checks_complete_snapshot_budget_before_commit(tmp_path, monkeypatch):
+def test_cache_budget_does_not_block_new_receipt(tmp_path, monkeypatch):
     from scidiscovery.artifact_agent.service import reference_proofs
     runs, owner, args = evidence_submission(tmp_path)
     original = runs.accept_tool_evidence(**args)
-    limit = len(runs._evidence_snapshot(owner.run_id))
-    with monkeypatch.context() as patch:
-        patch.setattr(reference_proofs, 'MAX_SNAPSHOT_BYTES', limit)
-        with pytest.raises(reference_proofs.ReferenceProofError) as caught:
-            runs.accept_tool_evidence(**{**args, 'raw': b'new observation'})
-        assert caught.value.details[0]['code'] == 'reference_proof_limit'
-        assert len(runs.tool_evidence(owner.run_id)) == 1
-        assert runs.accept_tool_evidence(**args) == original
-    assert runs.accept_tool_evidence(**{**args, 'raw': b'new observation'})['alias'] == 'tool_evidence_002'
+    monkeypatch.setattr(reference_proofs, 'MAX_SNAPSHOT_BYTES', 1)
+    accepted = runs.accept_tool_evidence(**{**args, 'raw': b'new observation'})
+    assert accepted['alias'] == 'tool_evidence_002'
+    assert len(runs.tool_evidence(owner.run_id)) == 2
+    assert runs.accept_tool_evidence(**args) == original
 
 
-def test_final_submission_reports_control_proof_limit_and_retains_draft(tmp_path, monkeypatch):
+def test_final_submission_is_independent_of_cache_size(tmp_path, monkeypatch):
     from scidiscovery.artifact_agent.service import reference_proofs
     from tests.operations.test_analysis_claim_scope import generic_worker, submit
     from tests.operations.test_result_analysis_tool import limited_report
     worker, opened, system = generic_worker(tmp_path, return_system=True)
-    with monkeypatch.context() as patch:
-        patch.setattr(reference_proofs, 'MAX_SNAPSHOT_BYTES', 1)
-        result = submit(worker, opened, limited_report())
-    assert result['state'] == 'failed', result
-    assert 'reference_proof_limit' in json.dumps(result)
-    assert 'checker_failure' not in json.dumps(result)
-    stopped = system[1].runs.status(worker._run_id)
-    assert stopped.state == 'failed' and stopped.output_ref is None
-    assert stopped.recovery_draft['draft_digest']
-    assert stopped.recovery_draft['evidence_proof_unavailable'] == 'reference_proof_limit'
-    assert system[1].runs.diagnostic_summary(stopped)['failure']['category'] == 'runtime_failure'
+    monkeypatch.setattr(reference_proofs, 'MAX_SNAPSHOT_BYTES', 1)
+    result = submit(worker, opened, limited_report())
+    assert result['state'] == 'completed', result
+    sealed = system[1].runs.status(worker._run_id)
+    assert sealed.state == 'completed' and sealed.output_ref is not None
 
 
 def test_two_recoveries_keep_128_original_receipts_on_parent_nodes(tmp_path, monkeypatch):
@@ -451,7 +440,6 @@ def test_parent_payload_is_not_read_or_verified_before_io_admission(tmp_path, mo
         return verify(ref, *args, **kwargs)
     monkeypatch.setattr(runs.artifacts, 'read', forbidden_read)
     monkeypatch.setattr(runs.artifacts, 'verify', forbidden_verify)
-    from scidiscovery.operation_contract import DiagnosticError
     with pytest.raises(DiagnosticError) as caught:
         child.call_tool('worker_reference_read', dict(history_task='generic_analysis', action='read', reference=selected['reference'], delivery='file'))
     assert any(item['code'] == ('reference_file_limit' if fault == 'file_limit' else 'reference_io_limit') for item in caught.value.details)
@@ -500,7 +488,6 @@ def test_parent_reader_does_not_expose_hidden_ancillary_port(tmp_path):
     child.call_tool('worker_open_assignment', {})
     page = child.call_tool('worker_reference_read', dict(history_task='private_parent', action='list'))
     assert all(item.get('original_name') != result['calculation_ref'] for item in page['references'])
-    from scidiscovery.operation_contract import DiagnosticError
     with pytest.raises(DiagnosticError):
         child.call_tool('worker_reference_read', dict(history_task='private_parent', action='read', reference='ref_' + '0'*64))
     assert runs.reference_access_records(child._run_id) == []

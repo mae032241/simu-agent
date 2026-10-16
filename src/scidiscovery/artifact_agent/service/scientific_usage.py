@@ -140,7 +140,7 @@ class _Check:
         while self.owner_bytes + size > self.owner_limit:
             expired = next((key for key in self.owner_sizes if key != run_id), None)
             if expired is None:
-                raise ScientificProvenanceError('Scientific provenance exceeds its owner work-set byte bound.')
+                break  # One complete owner may exceed the optional cache target.
             self.owner_bytes -= self.owner_sizes.pop(expired)
             for cache in (self.producers, self.receipts, self.aliases):
                 cache.pop(expired, None)
@@ -165,14 +165,15 @@ class _Check:
                     raise RunNotFound('Run does not exist')
                 size = row['size']
                 self.budget(size)
-                if size > MAX_SNAPSHOT_BYTES:
-                    raise ScientificProvenanceError('Scientific provenance exceeds its owner projection byte bound.')
-                row = connection.execute("SELECT run_id,instance_id,operation_id,operation_version,"
-                    "operation_digest,state,output_ref_json,"
-                    "(SELECT json_group_array(json_object('source_name',json_extract(value,'$.source_name'),"
-                    "'port_name',json_extract(value,'$.port_name'),"
-                    "'artifact_ref',json(json_extract(value,'$.artifact_ref')))) FROM json_each(inputs_json)) "
-                    "AS inputs FROM runs WHERE run_id=?", (run_id,)).fetchone()
+                try:
+                    row = connection.execute("SELECT run_id,instance_id,operation_id,operation_version,"
+                        "operation_digest,state,output_ref_json,"
+                        "(SELECT json_group_array(json_object('source_name',json_extract(value,'$.source_name'),"
+                        "'port_name',json_extract(value,'$.port_name'),"
+                        "'artifact_ref',json(json_extract(value,'$.artifact_ref')))) FROM json_each(inputs_json)) "
+                        "AS inputs FROM runs WHERE run_id=?", (run_id,)).fetchone()
+                except sqlite3.Error as error:
+                    raise ScientificProvenanceError('Scientific source owner projection is malformed.') from error
             # Charge only the retained projection to the recent-owner cache. Its
             # full input carrier was bounded and reserved before SQL/JSON parsing.
             projected_size = sum(len(item.encode('utf-8')) if isinstance(item, str) else len(item)
@@ -200,8 +201,6 @@ class _Check:
             if not rows:
                 return None
             self.budget(rows[0]['size'])
-            if rows[0]['size'] > MAX_SNAPSHOT_BYTES:
-                raise ScientificProvenanceError('Scientific provenance exceeds its owner projection byte bound.')
             run_id = connection.execute("SELECT run_id FROM runs WHERE state='completed' "
                 "AND output_ref_json=? LIMIT 1", (ref.canonical_json(),)).fetchone()[0]
         producer = self.producer(run_id)
@@ -261,8 +260,10 @@ class _Check:
             raise ScientificProvenanceError('Scientific source edge check is unreadable.') from error
         if not rows:
             return None
-        if len(rows) != 1 or rows[0]['document'] is None:
-            raise ScientificProvenanceError('Scientific source edge check is ambiguous or oversized.')
+        if any(row['document'] is None for row in rows):
+            return None  # An oversized optional cache cannot reject the original evidence.
+        if len(rows) != 1:
+            raise ScientificProvenanceError('Scientific source edge check is ambiguous.')
         self.budget(rows[0]['size'])
         try:
             document = json.loads(rows[0]['document'])
@@ -296,8 +297,6 @@ def scientific_use_restricted(runs, references, *, ignore_labels=(), policy=None
         item = (ref, uncertain)
         if item not in seen and item not in scheduled:
             size = len(canonical_json({'ref': ref, 'uncertain': uncertain}))
-            if work_bytes + size > MAX_SNAPSHOT_BYTES:
-                raise ScientificProvenanceError('Scientific provenance exceeds its work-set byte bound.')
             work_bytes += size
             scheduled.add(item)
             pending.append((ref, uncertain, size))

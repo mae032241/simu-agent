@@ -393,11 +393,8 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
             "diagnostics":details,
         }))
         raw = canonical_json(record)
-        while len(raw) > 4096 and record.diagnostics:
-            record = record.model_copy(update={"diagnostics":record.diagnostics[:-1]})
-            raw = canonical_json(record)
-        if len(raw)>4096 or ((rejected or (not successful and result_status != "computed")) and not record.diagnostics):
-            raise RunCheckerError("tool attempt metadata exceeds its bound", category="checker_failure")
+        if (rejected or (not successful and result_status != "computed")) and not record.diagnostics:
+            raise RunCheckerError("failed tool attempt requires diagnostics", category="checker_failure")
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = self._row(connection, run_id)
@@ -419,8 +416,6 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
         record = {**attempt, "read_sources":sorted(sources),
                   "sources_digest":hashlib.sha256(canonical_json(sources)).hexdigest()}
         raw = canonical_json(ToolAttempt.model_validate_json(canonical_json(record)))
-        if len(raw) > 4096:
-            raise RunCheckerError("tool attempt read metadata exceeds its bound", category="checker_failure")
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = self._row(connection, run_id)
@@ -524,10 +519,8 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
         restricted = scientific_use_restricted(self, (*derived_refs, *((source_ref,) if source_ref else ()), *trusted_parent_refs),
             policy=reference_policy(compiled))
         port = ports['tool_evidence']
-        if len(raw) > min(port.max_item_bytes, 32 * 1024 * 1024):
+        if len(raw) > port.max_item_bytes:
             raise ValueError('file_bytes')
-        if len(canonical_json(metadata)) > (40 * 1024 if metadata.get("kind") in {"calculation_record", "figure_file"} else 8192):
-            raise ValueError('metadata_bytes')
         key_material = {'sha256':hashlib.sha256(raw).hexdigest(), 'metadata':metadata, 'source':source_ref.model_dump(mode='json') if source_ref is not None else None}
         if trusted_parent_refs:
             key_material['control_parents'] = [ref.model_dump(mode='json') for ref in trusted_parent_refs]
@@ -696,8 +689,6 @@ class ToolEvidenceMixin(ReferenceAccessMixin):
                     'The proof exceeds this task\'s frozen predecessor contract. Preserve its materials and explicitly recover to the current contract; do not rewrite the original task identity.')
         full_snapshot = raw
         raw = scientific_evidence_projection(raw)
-        if len(raw)>1024*1024:
-            raise RunCheckerError('tool evidence manifest exceeds limit')
         from .local_workspace import _validate_publication_content, WorkspaceOutputError
         try:
             _validate_publication_content('tool-evidence.json', raw, 'application/json')

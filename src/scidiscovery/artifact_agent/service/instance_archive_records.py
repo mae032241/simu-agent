@@ -48,7 +48,6 @@ CONTROL_PAYLOADS = {
 # exact copies for inspection and conflict-checked restoration.
 RETAINED_EXECUTION_TABLES = frozenset({"execution_budget_pools", "execution_budget_reservations", "execution_budget_estimates", "execution_budget_extensions"})
 
-MAX_RECORD_BYTES = 16 * 1024 * 1024
 MAX_CONTROL_PAYLOAD_BYTES = 16 * 1024 * 1024
 
 
@@ -306,7 +305,7 @@ def read_database(path, key):
         mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
         if str(mode).lower() != "delete":
             raise ArchiveError(f"{key} requires existing DELETE journal mode")
-        tables, size = {}, 0
+        tables = {}
         for table in info["tables"]:
             rows = []
             # Only activity needs its implicit identity restored. Other rows have
@@ -314,9 +313,6 @@ def read_database(path, key):
             select = "rowid AS __archive_rowid__,*" if table == "run_activity" else "*"
             for row in connection.execute(f"SELECT {select} FROM {quote(table)} ORDER BY rowid"):
                 value = dict(row)
-                size += sum(len(item) if isinstance(item, (str, bytes)) else 16 for item in value.values())
-                if size > MAX_RECORD_BYTES:
-                    raise ArchiveError(f"{key} inventory exceeds bounded record budget")
                 rows.append(value)
             tables[table] = rows
     return {"schema": info, "tables": tables}
@@ -424,8 +420,6 @@ class Records:
         with readonly(self.paths[database]) as connection:
             connection.execute("BEGIN")
             amount = connection.execute(f"SELECT coalesce(sum({size}),0) FROM {source}", tuple(parameters)).fetchone()[0]
-            if self._record_bytes + amount > self.TARGET_RECORD_BYTES:
-                raise ArchiveError("target control inventory exceeds bounded record budget")
             self._record_bytes += amount
             projection = "rowid AS __archive_rowid__,*" if table == "run_activity" else "*"
             return [dict(row) for row in connection.execute(f"SELECT {projection} FROM {source} ORDER BY rowid", tuple(parameters))]
@@ -566,8 +560,6 @@ class Records:
                 raise ArchiveError("retained controlled payload missing")
             self.gaps.append({"code": "controlled_payload_missing", "artifact_id": envelope["artifact_id"]})
             return
-        if path.stat().st_size > MAX_CONTROL_PAYLOAD_BYTES:
-            raise ArchiveError("controlled payload exceeds reference scan budget")
         raw = path.read_bytes()
         if hashlib.sha256(raw).hexdigest() != envelope["payload_sha256"]:
             raise ArchiveError("controlled payload hash mismatch")
@@ -575,11 +567,9 @@ class Records:
         if encoding == "gzip":
             import io
             with gzip.GzipFile(fileobj=io.BytesIO(raw)) as stream:
-                raw = stream.read(MAX_CONTROL_PAYLOAD_BYTES + 1)
+                raw = stream.read()
         elif encoding != "identity":
             raise ArchiveError("unsupported controlled payload encoding: " + str(encoding))
-        if len(raw) > MAX_CONTROL_PAYLOAD_BYTES:
-            raise ArchiveError("decoded control payload exceeds reference scan budget")
         yield from exact_refs(json_value(raw, envelope["artifact_id"]))
 
     def closure(self, roots, *, allowed=None):

@@ -117,7 +117,7 @@ def _write_control_file(workspace, relative_path, chunks, *, content, replace, m
             os.close(descriptor)
 
 def read_control_workspace_file(
-    workspace: Path, relative_path: Path, *, max_bytes: int
+    workspace: Path, relative_path: Path, *, max_bytes: int | None
 ) -> bytes:
     """Read one regular file without following any path-component symlink."""
 
@@ -127,12 +127,13 @@ def read_control_workspace_file(
         descriptor = os.open(relative_path.name, flags, dir_fd=parent)
         try:
             metadata = os.fstat(descriptor)
-            if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > max_bytes:
+            if not stat.S_ISREG(metadata.st_mode) or (max_bytes is not None and metadata.st_size > max_bytes):
                 raise WorkspaceError("workspace file exceeds its byte limit")
-            value = os.read(descriptor, max_bytes + 1)
+            with os.fdopen(os.dup(descriptor), "rb") as stream:
+                value = stream.read() if max_bytes is None else stream.read(max_bytes + 1)
         finally:
             os.close(descriptor)
-        if len(value) > max_bytes:
+        if max_bytes is not None and len(value) > max_bytes:
             raise WorkspaceError("workspace file exceeds its byte limit")
         return value
     except OSError as error:
@@ -258,13 +259,13 @@ def atomic_json(path: Path, value: dict, *, mode: int = 0o600) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def read_json(path: Path, *, max_bytes: int = 128 * 1024) -> dict:
+def read_json(path: Path, *, max_bytes: int | None = None) -> dict:
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(fd, "rb") as stream:
         if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
             raise ValueError("engineering record is not a regular file")
-        raw = stream.read(max_bytes + 1)
-    if len(raw) > max_bytes:
+        raw = stream.read() if max_bytes is None else stream.read(max_bytes + 1)
+    if max_bytes is not None and len(raw) > max_bytes:
         raise ValueError("engineering record exceeds its byte bound")
     value = json.loads(raw)
     if not isinstance(value, dict):

@@ -11,7 +11,6 @@ from pathlib import Path
 
 from .instance_archive_records import ArchiveError, exact_refs, json_value, readonly
 
-MAX_FILES = 50000
 _DIGEST = re.compile(r"[0-9a-f]{64}")
 RECOVERY_SCAN_BYTES = 64 * 1024
 
@@ -174,8 +173,6 @@ def workspace_refs(runtime, rows):
                 path = directory / name
                 if path.exists():
                     check_path(path)
-                    if path.stat().st_size > 16 * 1024 * 1024:
-                        raise ArchiveError("workspace control manifest exceeds reference scan budget")
                     result.extend(exact_refs(json_value(path.read_bytes(), "workspace control manifest")))
     return result
 
@@ -220,8 +217,6 @@ class Files:
             entry["shared"] |= previous["shared"]
             entry["restore"] &= previous["restore"]
         self.entries[archive] = entry
-        if len(self.entries) > MAX_FILES:
-            raise ArchiveError("file inventory exceeds bounded file budget")
         if kind == "directory":
             for child in path.iterdir():
                 history = (root_key == "executions/exchange" and child.name in {"request.json", "active.lock"}
@@ -315,7 +310,7 @@ class Files:
             key = "plugins/" + binding.replace(":", "/")
             selection = storage.inspect(self.instance_id, tuple(self.selected["run_ids"]), self.run_owner)
             if (not isinstance(selection, ArchiveStorageSelection) or not isinstance(selection.paths, tuple)
-                    or not isinstance(selection.unsupported, tuple) or len(selection.paths) > MAX_FILES
+                    or not isinstance(selection.unsupported, tuple)
                     or len(selection.unsupported) > 16 or type(selection.unowned) is not bool):
                 raise ArchiveError("plugin archive inventory exceeds its contract")
             for relative in selection.paths:
@@ -477,8 +472,6 @@ def _discard_restore_stage(stage):
                 files.append(path)
             else:
                 raise ArchiveError("private restore stage contains a special file")
-            if len(directories) + len(files) > MAX_FILES * 2 + 1:
-                raise ArchiveError("private restore stage exceeds its derived file budget")
     # A hard exit can leave a partial *.archive-copy. It is disposable only in
     # this exact private stage; the complete verified archive remains intact.
     for path in directories:

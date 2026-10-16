@@ -94,7 +94,7 @@ _SOURCE_CASE_PAIR_RULE = "source experiment_key and case_key must be declared to
 
 
 class CalculationRecord(SchemaModel):
-    """Bounded, replayable calculation evidence; never a scientific verdict."""
+    """Complete, replayable calculation evidence; never a scientific verdict."""
 
     record_key: Identifier
     request: dict[str, Any]
@@ -108,8 +108,6 @@ class CalculationRecord(SchemaModel):
 
     @model_validator(mode="after")
     def _bounded_status(self) -> CalculationRecord:
-        if len(canonical_json(self.model_dump(mode="json"))) > 32 * 1024:
-            raise ValueError("calculation record exceeds 32 KiB")
         if self.status == "computed":
             if self.result is None or self.reason_code is not None:
                 from ...operation_contract import declared_violation

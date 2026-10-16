@@ -1,4 +1,4 @@
-"""Bounded receipt dependency closure, without database or workspace reads."""
+"""Complete receipt dependency closure, without database or workspace reads."""
 from pydantic import ValidationError
 from ..schema.common import canonical_json
 from ..schema.tool_evidence import ToolEvidenceManifest
@@ -15,15 +15,12 @@ def proof_error(code, message):
         message=message),))
 
 
-# The existing sealed-manifest / workspace budget applies to every writer.
+# Optional acceleration cache size; never a sealed-manifest size limit.
 MAX_SNAPSHOT_BYTES = 1024 * 1024
 
 
 def encode_snapshot(document):
     raw = canonical_json(document)
-    if len(raw) > MAX_SNAPSHOT_BYTES:
-        raise proof_error('reference_proof_limit',
-            'The complete evidence proof exceeds its byte budget. Preserve the existing materials and continue in a new task with exact selected sources; unchanged retries cannot repair this limit.')
     try:
         ToolEvidenceManifest.model_validate_json(raw)
     except ValidationError as error:
@@ -119,13 +116,8 @@ def material_snapshot(value, selected, records, accesses, attempts, recovery):
             raise proof_error('reference_proof_incomplete', 'The calculation has no matching stored attempt; repair its original receipt before reuse.')
     recovery_values = [{**origin, 'attempts': list(origin['attempts'].values())}
         for origin in recovery_origins.values()]
-    if sum(len(o['attempts']) for o in recovery_values) + len(current_attempts) > 64:
-        raise proof_error('reference_proof_limit', 'Required recovery evidence exceeds the proof limits; automatic repair cannot truncate it. Publish a bounded material with complete required sources.')
     selected_accesses = [{k: v for k, v in r.items() if k != 'response'}
         for r in accesses if r['alias'] in needed]
-    if len(selected_accesses) > 32:
-        raise proof_error('reference_proof_limit',
-            'This material requires more than 32 reference accesses; automatic repair cannot truncate them.')
     document = {'schema_version': 1, 'bindings': {name: binding for name, binding in bindings.items() if name in needed},
         'records': [r for r in records if r['alias'] in needed],
         'accesses': selected_accesses,

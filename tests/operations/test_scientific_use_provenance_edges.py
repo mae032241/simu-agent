@@ -101,7 +101,7 @@ def test_actual_stage_final_admission_long_chain_cold_warm_restart(tmp_path, mon
         assert consume(root, prior, 'experiment', 'operation_invoke')['result']['state'] == 'queued'
 
 
-@pytest.mark.parametrize('budget', ['bytes', 'time', 'work'])
+@pytest.mark.parametrize('budget', ['bytes', 'time'])
 def test_cold_budget_exhaustion_never_claims_clear(tmp_path, monkeypatch, budget):
     from scidiscovery.artifact_agent.service import scientific_usage
     runtime, instance, root = system(tmp_path)
@@ -110,10 +110,8 @@ def test_cold_budget_exhaustion_never_claims_clear(tmp_path, monkeypatch, budget
     policy = ReferencePolicy()
     if budget == 'bytes':
         policy = replace(policy, max_unique_bytes=0)
-    elif budget == 'time':
-        policy = replace(policy, max_io_seconds=0)
     else:
-        monkeypatch.setattr(scientific_usage, 'MAX_SNAPSHOT_BYTES', 1)
+        policy = replace(policy, max_io_seconds=0)
     before = edges(runtime.runs)
     with pytest.raises(ScientificProvenanceError, match='bound'):
         scientific_use_restricted(runtime.runs, (ref,), policy=policy)
@@ -182,7 +180,7 @@ def test_ignore_labels_is_applied_per_invocation_not_cached_as_a_verdict(tmp_pat
 
 
 @pytest.mark.parametrize('fault', ['duplicate', 'oversized'])
-def test_unusable_internal_row_is_explicitly_unavailable(tmp_path, fault):
+def test_optional_cache_size_misses_but_ambiguous_identity_fails(tmp_path, fault):
     runtime, instance, root = system(tmp_path)
     setup(runtime, instance, root)
     ref = experiment(runtime, instance, root, 'damaged')
@@ -194,8 +192,11 @@ def test_unusable_internal_row_is_explicitly_unavailable(tmp_path, fault):
         else:
             connection.execute('UPDATE run_activity SET diagnostic_json=? WHERE rowid=?',
                                (b' ' * (1024 * 1024 + 1), row[0]))
-    with pytest.raises(ScientificProvenanceError, match='ambiguous or oversized'):
-        scientific_use_restricted(runtime.runs, (ref,))
+    if fault == 'duplicate':
+        with pytest.raises(ScientificProvenanceError, match='ambiguous'):
+            scientific_use_restricted(runtime.runs, (ref,))
+    else:
+        assert scientific_use_restricted(runtime.runs, (ref,)) is False
 
 
 
@@ -345,5 +346,5 @@ def test_owner_projection_guards_needed_bytes_without_hydrating_unrelated_carrie
     if carrier == 'unused':
         assert scientific_use_restricted(runtime.runs, (ref,)) is False
     else:
-        with pytest.raises(ScientificProvenanceError, match='owner projection byte bound'):
+        with pytest.raises(ScientificProvenanceError, match='owner projection is malformed'):
             _Check(runtime.runs, ReferencePolicy()).producer(run_id)

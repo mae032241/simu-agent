@@ -566,7 +566,7 @@ def write_worker_start(workspace, assignment: dict, *, startup_page_bytes=16384)
     domain = None
     if workspace.domain_workspace_path is not None:
         domain = json.loads(read_control_workspace_file(workspace.root,
-            Path('domain-workspace.json'), max_bytes=1024 * 1024))
+            Path('domain-workspace.json'), max_bytes=None))
     write_control_workspace_file(workspace.root, Path('tools/input-reader-settings.json'),
         canonical_json(dict(startup_page_bytes=startup_page_bytes)), replace=True, mode=0o400)
     # Existing workspaces retain their frozen helper bytes and compatible guidance.

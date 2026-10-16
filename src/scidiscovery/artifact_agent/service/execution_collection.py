@@ -475,7 +475,7 @@ def _child(request_path: Path) -> int:
             current = executions.status(request["execution_id"])
             checkpoint = directory / "outputs.json"
             if checkpoint.exists():
-                frozen = read_json(checkpoint, max_bytes=4 * 1024 * 1024)
+                frozen = read_json(checkpoint, max_bytes=None)
                 outputs = tuple(LocalFileDescriptor.model_validate(x) for x in frozen["outputs"])
             else:
                 runtime = load_runtime_plugin_contributions(compile_installed_catalog(),

@@ -42,10 +42,10 @@ class ToolAttempt(SchemaModel):
 
 class ToolAttemptProof(SchemaModel):
     # These combine separately bounded inputs, receipts and reference accesses.
-    # The control serializer bounds their complete encoded size; the per-call
+    # The complete proof is retained; the per-call
     # read_sources limit is not an aggregate Run binding limit.
     bindings: dict[str, ToolSourceBinding] = Field(default_factory=dict)
-    attempts: tuple[ToolAttempt, ...] = Field(default=(), max_length=64)
+    attempts: tuple[ToolAttempt, ...] = ()
 
 
 class ToolRecoveryOrigin(ToolAttemptProof):
@@ -57,10 +57,10 @@ class ToolRecoveryOrigin(ToolAttemptProof):
 class ToolRecoveryProof(ToolRecoveryOrigin):
     # Each origin keeps its own alias and attempt namespace. The existing total
     # attempt budget bounds this flat history; no recursive proof expansion.
-    ancestors: tuple[ToolRecoveryOrigin, ...] = Field(default=(), max_length=64)
+    ancestors: tuple[ToolRecoveryOrigin, ...] = ()
 
 
 class ToolEvidenceManifest(ToolAttemptProof):
-    records: tuple[dict[str, Any], ...] = Field(default=(), max_length=128)
-    accesses: tuple[dict[str, Any], ...] = Field(default=(), max_length=32)
+    records: tuple[dict[str, Any], ...] = ()
+    accesses: tuple[dict[str, Any], ...] = ()
     recovery: ToolRecoveryProof | None = None

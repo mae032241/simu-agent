@@ -44,11 +44,11 @@ def _now():
 
 
 def _read_json(path, limit=16 * 1024):
-    if path.is_symlink() or not path.is_file() or path.stat().st_size > limit:
+    if path.is_symlink() or not path.is_file() or (limit is not None and path.stat().st_size > limit):
         raise ValueError("observation unavailable")
     with path.open("rb") as stream:
-        raw = stream.read(limit + 1)
-    if len(raw) > limit:
+        raw = stream.read() if limit is None else stream.read(limit + 1)
+    if limit is not None and len(raw) > limit:
         raise ValueError("observation exceeds limit")
     return json.loads(raw)
 
@@ -66,7 +66,7 @@ def effective_timeout(workspace, requested, reserve):
     if not math.isfinite(requested) or requested <= 0 or not math.isfinite(reserve) or reserve < 0:
         raise ValueError("timeout must be positive and reserve nonnegative")
     try:
-        assignment = _read_json(workspace / "assignment.json", 1024 * 1024)
+        assignment = _read_json(workspace / "assignment.json", None)
         deadline = datetime.fromisoformat(assignment["budget"]["deadline_at"].replace("Z", "+00:00"))
         if deadline.tzinfo is None:
             raise ValueError("deadline has no timezone")

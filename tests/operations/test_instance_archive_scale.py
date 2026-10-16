@@ -155,16 +155,14 @@ def test_oversized_foreign_control_carrier_keeps_target_copies_with_explicit_gap
     assert run_fingerprint(runtime, "run_oversizedcarrier") == before
 
 
-def test_target_inventory_keeps_its_own_explicit_budget(scale_system):
+def test_complete_target_inventory_is_not_limited_by_display_size(scale_system):
     runtime, service, target, other = scale_system
     historical_run(runtime, target, "run_targettoolarge")
     with sqlite3.connect(runtime.runs.database_path) as connection:
         connection.execute("UPDATE runs SET instruction=zeroblob(?) WHERE run_id='run_targettoolarge'",
                            (33 * 1024 * 1024,))
     preview = service.preview(target)
-    assert not preview["ready"]
-    assert any("target control inventory exceeds bounded record budget" in item.get("detail", "")
-               for item in preview["unsupported"])
+    assert preview["ready"], preview
     # An instance with no artifact closure has no retention scan to perform.
     other_preview = service.preview(other)
     assert other_preview["ready"], other_preview

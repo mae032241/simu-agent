@@ -572,15 +572,13 @@ def test_new_recovery_owner_during_archive_preserves_whole_digest_tree(archive_s
     assert runtime.runs.status("run_draftfirst").state == "failed"
 
 
-def test_other_unowned_files_do_not_exhaust_target_file_budget(archive_system, monkeypatch):
-    from scidiscovery.artifact_agent.service import instance_archive_files
+def test_other_unowned_files_are_not_expanded_into_target_inventory(archive_system):
     runtime, service, first, _ = archive_system
     artifact(runtime, first, "small.target", b"one")
     other = runtime.artifacts.cas.root / "unowned"
     other.mkdir()
     for ordinal in range(20):
         (other / str(ordinal)).write_bytes(b"unowned")
-    monkeypatch.setattr(instance_archive_files, "MAX_FILES", 3)
     preview = service.preview(first)
     assert preview["ready"], preview
     assert preview["counts"]["files"] == 1
