@@ -17,7 +17,7 @@ import sqlite3
 import time
 import uuid
 
-from .instance_archive_files import (Files, check_path, cleanup, copy_verified, discard_restore_stages, durable_json,
+from .instance_archive_files import (Files, archive_file_roots, check_path, cleanup, copy_verified, discard_restore_stages, durable_json,
     finish_permissions, fsync_directory, hash_file, recovery_trees, retained_recovery_digests, restore_recovery_trees, roots, safe_id, verify_tree, verify_tree_inventory)
 from .instance_archive_records import (ArchiveError, Records, ReadTicket, build_database, canonical, decode,
     digest, encode, quote, readonly, row_where, transfer_records, attached, schema,
@@ -621,9 +621,12 @@ class InstanceArchive:
         package = self.root / index["instance_id"]
         configured_roots = {key: str(value) for key, value in roots(self.runtime, self._archive_storage()).items()}
         base_roots = set(roots(self.runtime))
+        # Old snapshots may declare an empty optional provider. Verify actual
+        # restore dependencies without changing their sealed bytes or journal.
+        required_roots = archive_file_roots(snapshot["roots"], snapshot["files"], snapshot["gaps"])
         if (snapshot["project_root"] != str(self.project_root) or snapshot["state_root"] != str(self.state_root)
-                or not base_roots <= set(snapshot["roots"])
-                or any(configured_roots.get(key) != value for key, value in snapshot["roots"].items())
+                or not base_roots <= set(required_roots)
+                or any(configured_roots.get(key) != value for key, value in required_roots.items())
                 or snapshot["backend_id"] != self.runtime.runs.backend.backend_id
                 or snapshot["backend_version"] != self.runtime.runs.backend.backend_version):
             raise ArchiveError("restore requires the original configured roots and backend")

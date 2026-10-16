@@ -96,6 +96,18 @@ def roots(runtime, archive_storage=None):
     return result
 
 
+def archive_file_roots(root_map, files, gaps):
+    """Plugin declarations alone do not create a restore dependency."""
+    used = {entry['root'] for entry in files}
+    if not used <= set(root_map):
+        raise ArchiveError("archive file refers to an undeclared root")
+    for gap in gaps:
+        path = gap.get('path')
+        if isinstance(path, str):
+            used.update(key for key in root_map if path.startswith(key + '/'))
+    return {key: value for key, value in root_map.items() if not key.startswith('plugins/') or key in used}
+
+
 def recovery_digests(row):
     found = []
     if row.get("recovery_candidate_digest"):
@@ -174,6 +186,14 @@ class Files:
         self.archive_storage = dict(archive_storage or {})
         self.roots = roots(runtime, self.archive_storage)
         self.entries, self.gaps, self.unowned, self.unsupported = {}, [], [], []
+
+    def run_owner(self, run_id, *, require_task_origin=False):
+        run = self.runtime.runs.status(run_id)
+        if require_task_origin:
+            lineage = self.runtime.runs.task_lineage(run_id)
+            if not lineage or lineage[-1].run_id != run_id or any(item.instance_id != run.instance_id for item in lineage):
+                raise ArchiveError("plugin workspace is not a controlled task origin")
+        return run.instance_id
 
     def add(self, root_key, path, *, shared=False, restore=True, expected=None, missing=True):
         root, path = check_path(self.roots[root_key]), check_path(path)
@@ -293,8 +313,7 @@ class Files:
         from ...operations.runtime_plugins import ArchiveStorageSelection
         for binding, storage in self.archive_storage.items():
             key = "plugins/" + binding.replace(":", "/")
-            selection = storage.inspect(self.instance_id, tuple(self.selected["run_ids"]),
-                lambda run_id: self.runtime.runs.status(run_id).instance_id)
+            selection = storage.inspect(self.instance_id, tuple(self.selected["run_ids"]), self.run_owner)
             if (not isinstance(selection, ArchiveStorageSelection) or not isinstance(selection.paths, tuple)
                     or not isinstance(selection.unsupported, tuple) or len(selection.paths) > MAX_FILES
                     or len(selection.unsupported) > 16 or type(selection.unowned) is not bool):
@@ -326,7 +345,8 @@ class Files:
                 continue
             self.unowned.append({"path": key, "reason": "unselected_remainder_retained", "expanded": False,
                                  "files": None, "bytes": None})
-        return {"roots": {key: str(value) for key, value in self.roots.items()},
+        selected_roots = archive_file_roots(self.roots, self.entries.values(), self.gaps)
+        return {"roots": {key: str(value) for key, value in selected_roots.items()},
                 "files": sorted(self.entries.values(), key=lambda item: item["archive_path"]),
                 "gaps": self.gaps, "unowned": self.unowned, "unsupported": self.unsupported}
 

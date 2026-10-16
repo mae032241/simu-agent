@@ -65,15 +65,33 @@ def _inspect(root, instance_id, run_ids, run_owner):
     if not top:
         return ArchiveStorageSelection()
     budgets = root / 'budgets'
-    if not budgets.is_dir():
+    if budgets.exists() and not budgets.is_dir():
         raise ValueError("debug_legacy_owner_unknown")
-    budget_files = _children(budgets)
+    budget_files = _children(budgets) if budgets.exists() else []
     ledgers = [path for path in budget_files if path.suffix == '.json']
     selected = set()
     exchanges = {}
     record_owners = {}
     known_budget_files = {budgets / 'receipts'}
     target_key = canonical_sha256({'subject': canonical_sha256({'instance': instance_id})})
+    workspaces = root / 'experiment-workspaces'
+    workspace_owners = {}
+    if workspaces.exists():
+        if not workspaces.is_dir():
+            raise ValueError("debug_workspace_shape_unknown")
+        for workspace in _children(workspaces):
+            if not workspace.is_dir():
+                raise ValueError("debug_workspace_shape_unknown")
+            # diagnostic_context reserves this complete namespace for a frozen
+            # task origin. Ownership comes from the control row and lineage.
+            owner = run_owner(workspace.name, require_task_origin=True)
+            if not isinstance(owner, str) or not owner:
+                raise ValueError("debug_workspace_owner_unknown")
+            workspace_owners[workspace.name] = owner
+            if owner == instance_id:
+                if workspace.name not in run_ids:
+                    raise ValueError("debug_workspace_outside_instance")
+                selected.add(workspace.relative_to(root).as_posix())
     # The same budget lock is held by run/cancel/collection. A read cannot grant
     # quiescence while one of those original writers owns it.
     with ExitStack() as locks:
@@ -93,9 +111,11 @@ def _inspect(root, instance_id, run_ids, run_owner):
                 raise ValueError("debug_record_capacity")
             owners = {run_owner(record['run_id']) for record in records.values()}
             if not owners:
-                if path.stem != target_key:
+                owners = {owner for owner in workspace_owners.values() if path.stem == canonical_sha256(
+                    {'subject': canonical_sha256({'instance': owner})})}
+                if not owners and path.stem != target_key:
                     raise ValueError("debug_empty_legacy_owner_unknown")
-                owners = {instance_id}
+                owners = owners or {instance_id}
             if len(owners) != 1 or not all(isinstance(owner, str) and owner for owner in owners):
                 raise ValueError("debug_mixed_owners")
             owner = next(iter(owners))
@@ -145,6 +165,7 @@ def _inspect(root, instance_id, run_ids, run_owner):
         receipts = budgets / 'receipts'
         if receipts.exists() and any(path.name not in record_owners for path in _children(receipts)):
             raise ValueError("debug_unowned_receipt")
-        if any(path.name != 'budgets' and path.name not in exchanges for path in top):
+        if any(path.name not in {'budgets', 'experiment-workspaces'} and path.name not in exchanges for path in top):
             raise ValueError("debug_unowned_exchange")
-    return ArchiveStorageSelection(paths=tuple(sorted(selected)), unowned=any(owner != instance_id for owner in record_owners.values()))
+    return ArchiveStorageSelection(paths=tuple(sorted(selected)), unowned=any(
+        owner != instance_id for owner in [*record_owners.values(), *workspace_owners.values()]))

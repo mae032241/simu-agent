@@ -17,10 +17,13 @@ class ArchiveStorageSelection:
 
 @dataclass(frozen=True, slots=True)
 class ArchiveStorage:
-    """Trusted plugin ownership projection; core retains all file/migration IO."""
+    """Trusted ownership projection; core retains all file/migration IO.
+
+    run_owner(id, require_task_origin=True) also verifies the frozen recovery root.
+    """
 
     root: Path
-    inspect: Callable[[str, tuple[str, ...], Callable[[str], str]], ArchiveStorageSelection]
+    inspect: Callable[[str, tuple[str, ...], Callable[..., str]], ArchiveStorageSelection]
 
 
 @dataclass(frozen=True, slots=True)
