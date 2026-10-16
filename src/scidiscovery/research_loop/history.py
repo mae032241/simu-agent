@@ -663,6 +663,15 @@ def bind(root,step,protocol=None,*,source_cutoff=None,extra_steps=()):
 
 
 def validate(root, work, binding):
+    from . import execution_recovery
+    recoveries=execution_recovery.validate(root,binding.get('execution_recoveries',[]))
+    if any(value['source_step'] not in {row['step'] for row in binding['nodes']} for value in recoveries):
+        raise ObserverIntegrityError('Execution recovery is outside the frozen scientific prefix')
+    for item in binding.get('execution_recovery_materials',[]):
+        path=work/item['path']
+        if (not item['path'].startswith('inputs/recovered/') or '..' in Path(item['path']).parts
+                or c.digest(c.regular(path,limit=MAX_HISTORY_BYTES))!=item['sha256'] or path.stat().st_size!=item['size_bytes']):
+            raise ObserverIntegrityError('Bound execution recovery material changed')
     if binding.get('audit_projection_version') == 1:
         from . import candidate_audit
         sources = [_source(root, row['step']) for row in binding['nodes']]

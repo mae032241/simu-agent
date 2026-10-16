@@ -103,6 +103,10 @@ def node_state(root, step):
     if (execution.origin(root, step) / 'result-identity.json').exists():
         return 'sealed'
     if (record / 'native-outcome.json').exists():
+        from . import managed_wait
+        if (record/managed_wait.NAME).exists():
+            managed_wait.validate(root,contracts.read(root/'jobs'/f'{step:03d}.json'),record)
+            return 'waiting'
         return 'terminal'
     if not (record / 'native-intent.json').exists():
         return 'unstarted'

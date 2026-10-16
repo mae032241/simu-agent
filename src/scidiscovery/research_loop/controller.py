@@ -9,6 +9,7 @@ import uuid
 
 from . import budget, contracts, history, native, runtime, search, correction, semantic, execution, continuation, guidance, checkpoint, role_share, shortlist, engineering, worker_delivery
 from .output_repair import OutputRepairRequired
+from . import managed_wait
 
 
 def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str], *,
@@ -406,10 +407,12 @@ def _run(root):
                     return _finish(root, settings, "native_outcome_unsealed", completed, last,
                         reason="The original scientific job is missing; retained work is preserved without replay", next_role=role)
                 retained_job = contracts.read(job_path)
-                if (runtime.node_state(root, step) == "running" or checkpoint.enabled(root, retained_job)
+                if (runtime.node_state(root, step) in {"running","waiting"} or checkpoint.enabled(root, retained_job)
                         or worker_delivery.applicable(retained_job)):
                     try:
                         native.wait_native(root, step)
+                    except managed_wait.ExecutionWaiting as error:
+                        return _finish(root,settings,'waiting_execution',completed,last,reason=error.reason,next_role=role)
                     except continuation.ResumeUnavailable as error:
                         return _finish(root, settings, 'output_repair_unavailable', completed, last, reason=str(error), next_role=role)
                     except OutputRepairRequired as error:
@@ -426,6 +429,8 @@ def _run(root):
                 try:
                     _check_job(root, settings, step, role, parents, instruction, evidence_return, correction_request, author_correction)
                     continuation.seal_or_repair(root, step)
+                except managed_wait.ExecutionWaiting as error:
+                    return _finish(root,settings,'waiting_execution',completed,last,reason=error.reason,next_role=role)
                 except continuation.ResumeUnavailable as error:
                     return _finish(root, settings, 'output_repair_unavailable', completed, last, reason=str(error), next_role=role)
                 except OutputRepairRequired as error:
@@ -486,6 +491,8 @@ def _run(root):
                 return _finish(root, settings, limit, completed, last, next_role=role)
             try:
                 native.execute_native(root, step)
+            except managed_wait.ExecutionWaiting as error:
+                return _finish(root,settings,'waiting_execution',completed,last,reason=error.reason,next_role=role)
             except budget.NodeBudgetUnavailable as error:
                 return _finish(root, settings, error.reason, completed, last, next_role=role)
             except continuation.ResumeUnavailable as error:
@@ -1020,3 +1027,13 @@ def worker_resume(root: Path, step: int):
         except (continuation.ResumeUnavailable, budget.NodeBudgetUnavailable) as error:
             budget.inactive(root, 'worker_resume_unavailable')
             return dict(status='worker_resume_unavailable', reason=getattr(error, 'reason', str(error)), usage=native.usage(root))
+
+
+def execution_recover(root: Path, step: int):
+    """Append verified same-call terminal evidence without changing old seals or jobs."""
+    from . import execution_recovery
+    root=Path(root).resolve()
+    with _writer(root),_inactive_on_error(root,'execution_recovery_failed'):
+        result=execution_recovery.create(root,step)
+        budget.inactive(root,'execution_recovery_complete')
+        return result

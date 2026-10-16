@@ -76,7 +76,7 @@ def main(argv=None):
     prepare.add_argument('--worker-context',choices=['same_session','new_context'],help='Qualified W fragments within the same stage; requires explicit resume policy and node budgets')
     prepare.add_argument('--worker-resume-policy', type=Path, help='Explicit qualified same-thread finite continuation policy JSON')
     prepare.add_argument('--max-tokens', type=int, required=True)
-    prepare.add_argument('--max-seconds', type=float, required=True, help='Maximum advancement seconds; explicit pauses do not consume this ceiling')
+    prepare.add_argument('--max-seconds', type=float, required=True, help='Maximum authorized runtime: advancement and accepted execution waiting; idle pauses do not consume this ceiling')
     prepare.add_argument('--max-steps', type=int, required=True)
     prepare.add_argument('--model', default='gpt-6.1-sol')
     prepare.add_argument('--reasoning-effort', default='high')
@@ -103,6 +103,9 @@ def main(argv=None):
     resume = commands.add_parser('worker-resume', help='Continue one known local failed node in its exact original thread')
     resume.add_argument('--root', type=Path, required=True)
     resume.add_argument('--step', type=int, required=True)
+    recover=commands.add_parser('execution-recover',help='Append same-call terminal evidence for a sealed unknown; new nodes freeze its recovery prefix')
+    recover.add_argument('--root',type=Path,required=True)
+    recover.add_argument('--step',type=int,required=True)
     args = parser.parse_args(argv)
     root = args.root.expanduser().resolve()
     try:
@@ -142,6 +145,8 @@ def main(argv=None):
                 history_observer=contracts.read(contracts.regular(args.history_observer_config, limit=64_000))
                     if args.history_observer_config is not None else None)
             result = dict(status='prepared', instance=str(root), goal_id=settings['goal_id'])
+        elif args.command == 'execution-recover':
+            result=controller.execution_recover(root,args.step)
         elif args.command == 'worker-resume':
             result = controller.worker_resume(root, args.step)
         elif args.command == 'status':
@@ -177,7 +182,7 @@ def main(argv=None):
         print(json.dumps(dict(status='error',error=str(error),**(dict(code=error.code) if isinstance(error,UnsupportedProtocol) else {})), ensure_ascii=False))
         return 1
     print(json.dumps(result, ensure_ascii=False))
-    return 0 if result.get('status') in {None, 'preserved_read_only', 'prepared', 'finish', 'wait', 'paused', 'pause_requested', 'budget_amended', 'delivery_confirmed', 'exported_unsubmitted'} else 2
+    return 0 if result.get('status') in {None, 'preserved_read_only', 'prepared', 'finish', 'wait', 'paused', 'pause_requested', 'budget_amended', 'delivery_confirmed', 'execution_recovered', 'exported_unsubmitted'} else 2
 
 
 if __name__ == '__main__':

@@ -102,7 +102,7 @@ def contexts(root, job, items, archive, previous=()):
 def build(root, before_step, *, sources=None, search_state=None):
     """Fold relations without rendering a default packet or updating authority."""
     sources=history.source_sequence(root,before_step) if sources is None else sources
-    state=search.fold(root,sources) if search_state is None else search_state
+    state=search.project(root,before_step) if search_state is None else search_state
     nodes=[];candidates={};edges=[];calls=set();coverage='complete';available={}
     for job,payload,seal,_ in sources:
         step=job['step']
@@ -210,10 +210,12 @@ def _clip(text, capacity):
 def project(root, before_step, *, source_cutoff=None, extra_steps=()):
     """One verified source collection feeds all derived scientific navigation."""
     sources=history.source_sequence(root,before_step,source_cutoff=source_cutoff,extra_steps=extra_steps)
-    records=history.records_from_sources(root,sources,write_cache=False)
-    state=search.fold(root,sources) if c.settings(root).get('search_policy') is not None else None
+    from . import execution_recovery
+    recovery_refs=execution_recovery.prefix(root,before_step)
+    records=execution_recovery.project_records(root,history.records_from_sources(root,sources,write_cache=False),recovery_refs)
+    state=search.fold(root,sources,recovery_refs=recovery_refs) if c.settings(root).get('search_policy') is not None else None
     graph=build(root,before_step,sources=sources,search_state=state)
-    return dict(sources=sources,records=records,search_state=state,graph=graph,candidates=candidate_view(records))
+    return dict(sources=sources,records=records,search_state=state,graph=graph,candidates=candidate_view(records),recovery_refs=recovery_refs)
 
 
 def brief(records, state, graph, candidates, indexes, *, selection_protocol=0):
@@ -364,7 +366,7 @@ def bind(root, step, role, protocol, *, source_cutoff=None, extra_steps=(), sele
     relations=paged(public_relations(projection['graph'],projection['sources']),16,'relations','inputs/lineage/relations','declared-not-proven-causality')
     indexes=dict(nodes=nodes[0] if nodes else None,candidates=candidates[0] if candidates else None,
                  mechanisms=mechanism_pages[0] if mechanism_pages else None,relations=relations[0] if relations else None)
-    experiments=[]
+    experiments=[];recovery_materials=[]
     for record in records:
         for call in (record.get('observation') or {}).get('managed_calls',[]):
             if 'execution' not in call:continue
@@ -372,12 +374,36 @@ def bind(root, step, role, protocol, *, source_cutoff=None, extra_steps=(), sele
             outputs=[dict(path=f'inputs/parents/{record["step"]:03d}/artifacts/experiments/{call["call_id"]}/artifacts/{item["name"]}',
                           historical=f'history/nodes/{record["step"]:03d}/artifacts/experiments/{call["call_id"]}/artifacts/{item["name"]}',
                           retention=item['retention']) for item in call.get('outputs',[])]
+            if call['call_id'] in record.get('recovered_calls',[]):
+                for output,item in zip(outputs,call.get('outputs',[])):
+                    output['path']=f'inputs/recovered/{record["step"]:03d}/{call["call_id"]}/{item["name"]}'
+                    output['historical']=output['path']
+                    limits=c.settings(root)
+                    if item['size_bytes']>limits['max_output_item_bytes'] or sum(row['size_bytes'] for row in recovery_materials)+item['size_bytes']>limits['max_output_total_bytes']:
+                        raise ValueError('Execution recovery materials exceed the original input bound')
+                    c._copy_bound(Path(root)/item['snapshot'],c.workspace(root,step)/output['path'],item['sha256'])
+                    recovery_materials.append(dict(path=output['path'],sha256=item['sha256'],size_bytes=item['size_bytes']))
+            native_originals=[]
+            if call['call_id'] in record.get('recovered_calls',[]):
+                observed=c.read(Path(root)/call['observation']['snapshot'])
+                for number,proof in enumerate(observed['proofs'],1):
+                    matches=[item for item in call['originals'] if Path(root)/item['path']==Path(proof['path']) and item['sha256']==proof['sha256']]
+                    if len(matches)!=1 or matches[0]['retention']!='archived':raise ValueError('Recovered native original is unavailable')
+                    item=matches[0];target=f'inputs/recovered/{record["step"]:03d}/{call["call_id"]}/originals/{number:03d}'
+                    limits=c.settings(root)
+                    if item['size_bytes']>limits['max_output_item_bytes'] or sum(row['size_bytes'] for row in recovery_materials)+item['size_bytes']>limits['max_output_total_bytes']:
+                        raise ValueError('Execution recovery originals exceed the original input bound')
+                    c._copy_bound(Path(root)/item['snapshot'],c.workspace(root,step)/target,item['sha256'])
+                    recovery_materials.append(dict(path=target,sha256=item['sha256'],size_bytes=item['size_bytes']))
+                    native_originals.append(dict(path=target))
+            native_pages=paged(native_originals,16,'originals',f'inputs/history/recoveries/{record["step"]:03d}/{call["call_id"]}','recovered-native-originals') if native_originals else []
             metrics=result.get('metrics',[])
             experiments.append(dict(step=record['step'],call_id=call['call_id'],execution_status=call['status'],
                 returncode=details.get('returncode'),wall_seconds=details.get('wall_seconds'),
                 result_status=result.get('status','unobserved'),diagnostic=result.get('diagnostic'),
                 metrics=metrics[:8],metrics_omitted_count=max(0,len(metrics)-8),
                 outputs=outputs[:8],outputs_omitted_count=max(0,len(outputs)-8),
+                **(dict(native_originals_index=native_pages[0],recovery_note='Appended original terminal facts; the prior sealed scientific conclusion is unchanged.') if native_pages else {}),
                 limitation='Declared metrics and retained files; candidate ranking, scientific validity and external submission are not established. Direct-parent paths are mounted only for bound parents; use historical handles for other nodes.'))
     experiment_pages=paged(experiments,2,'experiments','inputs/history/experiments','managed-local-observations')
     if experiment_pages:indexes['experiments']=experiment_pages[0]
@@ -419,5 +445,5 @@ def bind(root, step, role, protocol, *, source_cutoff=None, extra_steps=(), sele
         candidates_view.update(adapter_audits=audit_rows[:2], adapter_audits_omitted_count=max(0, len(audit_rows)-2),
             leakage_assessment='Unknown unless explicitly reported; adapter status does not establish leakage or target suitability.')
         bounded_brief(view)
-    return dict(**(dict(audit_projection_version=1, audit_receipts=audit_refs, adjacent_audit=adjacent_audit) if audit_projection_version == 1 else {}), nodes=[dict(step=row['step'],seal_sha256=row['seal_sha256']) for row in records],files=files,
+    return dict(**(dict(execution_recoveries=projection['recovery_refs'],execution_recovery_materials=recovery_materials) if projection['recovery_refs'] else {}),**(dict(audit_projection_version=1, audit_receipts=audit_refs, adjacent_audit=adjacent_audit) if audit_projection_version == 1 else {}), nodes=[dict(step=row['step'],seal_sha256=row['seal_sha256']) for row in records],files=files,
                 candidate_ids=[row['id'] for row in candidate_rows],view=view),state

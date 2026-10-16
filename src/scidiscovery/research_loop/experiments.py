@@ -550,7 +550,8 @@ def _dispatch_descriptor(config, payload, *, parent=None, new=False, change=None
     for path in before:
         details=adapter.status_details(path.name)
         if details['state'] in {'unknown', 'running','accepted','submitted'}:
-            return dict(status='unknown', note='Preserve original execution; query its identity instead of replay')
+            running=details['state']=='running' and records.external(path.name) is not None
+            return dict(status='running' if running else 'unknown',call_id=path.name, note='Preserve original execution; query its identity instead of replay')
     call_id = f'{len(before)+1:04d}-{uuid.uuid4().hex}'
     descriptor = payload.model_copy(update={'name':call_id})
     prepared = adapter.prepare(descriptor, preparation_profile='research_loop.v1', exchange_directory=records.root)
@@ -564,8 +565,11 @@ def _dispatch_descriptor(config, payload, *, parent=None, new=False, change=None
     adapter.dispatch_lease(accepted)
     external_id,state=adapter.submit(prepared)
     records.bind_external(call_id,external_id,state)
-    record_observation(config,adapter,call_id)
-    return adapter.result(call_id)
+    observed=record_observation(config,adapter,call_id)
+    result=adapter.result(call_id)
+    if observed is None and capabilities.query and adapter.status_details(call_id).get('state')=='running':
+        result=dict(result,status='running',note='Original execution accepted and running; control waits without resubmission.')
+    return result
 
 
 def progress(config):
@@ -651,8 +655,9 @@ def main(argv=None):
             if args.command=='query':result=adapter.status_details(args.call_id)
             elif args.command=='reconcile':
                 observed=record_observation(config,adapter,args.call_id)
-                result=dict(call_id=args.call_id,status=observed['status'] if observed is not None else 'unknown',
-                    note='Original terminal observation frozen; no new submission.' if observed is not None else 'Original execution has no verified terminal observation.')
+                running=observed is None and Records(config).external(args.call_id) is not None and adapter.status_details(args.call_id).get('state')=='running'
+                result=dict(call_id=args.call_id,status=observed['status'] if observed is not None else 'running' if running else 'unknown',
+                    note='Original terminal observation frozen; no new submission.' if observed is not None else 'Original accepted execution is running.' if running else 'Original execution has no verified terminal observation.')
             elif args.command=='lookup':
                 records=Records(config);accepted=records.accepted(args.call_id)
                 descriptor=LocalFileDescriptor.model_validate(accepted['prepared'])
@@ -669,7 +674,7 @@ def main(argv=None):
             elif args.command in {'query','lookup'} and result.get('state') in {'succeeded','failed'}:
                 if (Records(config).directory(args.call_id)/'execution-observation.json').exists():
                     record_observation(config,adapter,args.call_id)
-            code=2 if args.command=='reconcile' and result['status']=='unknown' else 0
+            code=2 if args.command=='reconcile' and result['status'] in {'unknown','running'} else 0
         result['feedback']=dict(version=1,budget=feedback.budget_hint(Path(config['record_dir']).parent.parent),
             review=review_feedback(config),
             qualification='Execution metadata does not establish scientific or candidate qualification.')

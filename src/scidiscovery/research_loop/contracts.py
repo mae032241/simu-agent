@@ -880,6 +880,8 @@ def seal_result(root: Path, step: int):
         raise ValueError('Terminal scientific output is unverified or changed')
     value = envelope(job, science_payload(raw, job['role'], job.get('handoff_protocol', 1), 'selection' in job))
     if job['role']=='W':
+        from . import managed_wait
+        managed_wait.before_seal(root,job,native_record)
         from . import worker_delivery
         if worker_delivery.applicable(job):
             from . import checkpoint

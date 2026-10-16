@@ -110,6 +110,9 @@ def seal_or_repair(root, step):
     require_current(root,_contracts.read(_contracts.regular(Path(root)/'jobs'/f'{step:03d}.json')))
     try:
         job = c.read(c.regular(root / 'jobs' / f'{step:03d}.json'))
+        if not (execution.origin(root,step)/'result-identity.json').exists():
+            from . import managed_wait
+            managed_wait.before_seal(root,job,execution.record(root,step))
         if checkpoint.enabled(root, job) and not (execution.origin(root, step) / 'result-identity.json').exists():
             record = execution.record(root, step)
             if (record / 'stage-end.json').exists():
@@ -345,7 +348,7 @@ def start(root, step):
     if (execution.origin(root, step) / 'result-identity.json').exists():
         return c.validate(c.workspace(root, step))
     paths = execution.records(root, step)
-    if runtime.node_state(root, step) == 'running' or (len(paths) > 1 and runtime.node_state(root, step) == 'unknown'):
+    if runtime.node_state(root, step) in {'running','waiting'} or (len(paths) > 1 and runtime.node_state(root, step) == 'unknown'):
         return native.wait_native(root, step)  # An accepted attempt is collected before cap checks.
     last = paths[-1]
     outcome = c.read(c.regular(last / 'native-outcome.json'))
@@ -404,3 +407,55 @@ def start(root, step):
         json.dump(intent, stream);stream.flush();os.fsync(stream.fileno())
     runtime.start(root, step, number)
     return native.wait_native(root, step)
+
+
+def validate_wake(root,step,intent,prior):
+    from . import managed_wait, experiments
+    job=c.read(root/'jobs'/f'{step:03d}.json')
+    managed_wait.validate(root,job,prior)
+    request=intent['execution_wake']
+    if request['waiting']!=experiments.proof(prior/managed_wait.NAME):
+        raise ValueError('Execution wake changed its original waiting checkpoint')
+    value=c.read(prior/managed_wait.NAME)
+    expected=[]
+    for item in value['calls']:
+        path=Path(item['accepted']['path']).parent/'execution-observation.json'
+        observed=c.read(c.regular(path))
+        accepted=c.read(Path(item['accepted']['path']));_,config=managed_wait._config(root,job,accepted)
+        experiments.verify_observation(observed,lambda proof:experiments.read(proof['path'],experiments.MAX_ASSET),interface=config['execution_interface'])
+        expected.append(experiments.proof(path))
+    if request['observations']!=expected:raise ValueError('Execution wake differs from the same original terminal observations')
+
+
+def wake_start(root,step,observations):
+    """Resume one successful suspended native turn, sharing original finite authorization."""
+    from . import managed_wait, experiments
+    limits=validate_launcher(root);job=validate_task(root,step);paths=execution.records(root,step);last=paths[-1]
+    if (execution.origin(root,step)/'result-identity.json').exists():raise ResumeUnavailable('execution_wake_stage_already_sealed')
+    if (root/'pause.request').exists() or budget.closeout_state(root)['begin'] is not None:
+        raise ResumeUnavailable('worker_resume_paused_or_closeout')
+    from . import correction
+    if correction.gate(root,step-1) is not None:raise ResumeUnavailable('worker_resume_correction_paused')
+    if any((execution.origin(root,later)/'native-intent.json').exists() for later in range(step+1,c.settings(root)['max_steps']+1)):
+        raise ResumeUnavailable('worker_resume_successor_present')
+    attempts=sum(c.read(path/'native-intent.json').get('continuation_kind','repair')!='fragment' for path in paths[1:])
+    if attempts>=limits['max_attempts']:raise ResumeUnavailable('worker_resume_limit')
+    _eligible_original(root,step,paths,successful=True,wait_runner=True)
+    session_ref=session(root,step,last)
+    from . import profiles
+    profile_binding=profiles.binding(c.settings(root),job)
+    profiles.validate_intent(c.settings(root),job,c.read(paths[0]/'native-intent.json'))
+    request=dict(waiting=experiments.proof(last/managed_wait.NAME),observations=observations)
+    number=len(paths)
+    budget.transition(root,'advance','accepted_execution_wake')
+    anchor=budget.accept_continuation(root,job,paths)
+    record=execution.origin(root,step)/'continuations'/f'{number:03d}'
+    record.mkdir(parents=True,exist_ok=True)
+    intent=dict(step=step,attempt=number,continuation_kind='execution_wake',**profile_binding,
+        task_sha256=c.digest(root/'jobs'/f'{step:03d}.json'),root_intent_sha256=c.digest(paths[0]/'native-intent.json'),
+        previous=execution.proof(last),session=session_ref,budget_slice=anchor,execution_wake=request)
+    validate_wake(root,step,intent,last)
+    with (record/'native-intent.json').open('x') as stream:
+        json.dump(intent,stream);stream.flush();os.fsync(stream.fileno())
+    runtime.start(root,step,number)
+    return intent

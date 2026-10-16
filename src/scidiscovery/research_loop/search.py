@@ -224,7 +224,9 @@ def apply_source(root,job,payload,seal,state):
         state['order']['diagnostics']=receipt['diagnostics']
 
 
-def fold(root,sources):
+def fold(root,sources,*,recovery_refs=()):
+    from . import execution_recovery
+    recovered=execution_recovery.resolved(root,list(recovery_refs))
     state=dict(opportunity_counts={},opportunity_grants={},opportunity_unknown=False,extra_grant=None,mechanisms={},current_h=None,scope=None,plan=None,authorized=set(),focus=None,accepted_slices=[],repairs={},
         order=dict(remaining=[],seen_w=set(),allocation=None,diagnostics=[]))
     if c.settings(root).get('portfolio_policy') is not None:
@@ -244,7 +246,7 @@ def fold(root,sources):
                 if grant:
                     key=(grant['source_a'],grant['source_a_sha256'])
                     state['opportunity_grants'][key]=state['opportunity_grants'].get(key,0)+1
-                if row['status']=='unknown':state['opportunity_unknown']=True
+                if row['status']=='unknown' and (job['step'],row['call_id']) not in recovered:state['opportunity_unknown']=True
         step=job['step'];intent=execution.record(root,step)/'native-intent.json'
         if job['role']=='W' and job.get('search') and intent.exists():
             value=c.read(c.regular(intent))
@@ -261,7 +263,8 @@ def fold(root,sources):
 
 
 def project(root,before_step):
-    return fold(root,history.source_sequence(root,before_step))
+    from . import execution_recovery
+    return fold(root,history.source_sequence(root,before_step),recovery_refs=execution_recovery.prefix(root,before_step))
 
 
 

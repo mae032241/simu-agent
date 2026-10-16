@@ -143,12 +143,14 @@ N1a 已增加本地持久 runner：前台控制器退出后，已接受的原生
 实际模型提交前再查预算；已确证未提交时记录 `native_not_submitted` 和零用量。
 控制层保留该节点及原意图，尚不支持对其再次发起首次模型提交；预算修订或重试不自动删除这些记录。
 暂停只阻止新节点，恢复时也允许原已接受节点完成和封存。
-本地完成通知限定为已启动 runner；科学角色的 `wait` 仍表示停止等待，不提供自动事件续接。
+科学角色的 `wait` 仍表示停止等待。W 已接受且同一 external execution 明确 running 时，控制在科学封存前保留原 checkpoint 并进入 `waiting`；默认 `run` 自动监控原 call，终态后 reconcile 并在合格的原会话中续接 W 消费原件，再封存。等待不调用模型、不增加 native dispatch 或 `advance_seconds`，但真实执行的 `waiting_seconds` 仍消耗原授权总运行时限；旧 elapsed 口径继续按总经过时间计量。暂停阻止唤醒的新 native turn，允许核对原终态；控制进程同 boot 重启后从原 waiting 恢复，未知提交不重放。续接仍受原预算/有限次数与冻结 launcher/session 能力约束；能力不足保留 checkpoint 并报告 unavailable。
+
+旧 W 已 sealed unknown 的事实保持不变。`scid-research execution-recover --root /absolute/path/instance --step N` 可对同 call 追加已验证终态；后继新 job 冻结其恢复事实前缀与材料，已准备 job 仍只读原输入。该动作不把旧科学结论改为 screened，也不重计机会、grant 或原 slice。
 
 新建实例的 `--max-seconds` 是推进启用时长上限：控制推进与原生执行重叠只计一次。
 暂停请求生效前已接受的工作和控制器断连后的原执行继续计时；无活动且进入暂停时停止消耗推进额度。
 身份或终态无法核实时保守计时，后续核实从当前时刻停表，不回填旧终态时间返还消费。
-`status.budget` 分别报告 `advance_seconds / paused_seconds / elapsed_seconds`，并显示有效上限、
+`status.budget` 分别报告 `advance_seconds / waiting_seconds / paused_seconds / elapsed_seconds`，并显示有效上限、
 `consumed_seconds / seconds_remaining` 和计时口径。`status` 只读，不追加计时事件；启动时钟倒退时拒绝推进和修订。
 新计时事实绑定系统启动标识与 `CLOCK_BOOTTIME`，同次启动的开放区间按该单调时钟计量；
 新 active 实例的 UTC 仅是展示时间，调速或回拨不停止计量，也不返还已按启动时钟消费的额度；账本按序号及同启动的单调时间排序。

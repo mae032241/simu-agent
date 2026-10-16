@@ -91,22 +91,28 @@ def wait_native(root: Path, step: int):
     record = execution.record(root, step)
     startup_until = time.monotonic() + 5
     while True:
+        from . import managed_wait
+        if (record/managed_wait.NAME).exists() and not (execution.origin(root,step)/'result-identity.json').exists():
+            managed_wait.wait_and_wake(root,step)
+            record=execution.record(root,step);startup_until=time.monotonic()+5
+            continue
         state = runtime.node_state(root, step)
         if state in {"terminal", "sealed"}:
             from . import continuation, worker_delivery
             job = read(root / 'jobs' / f'{step:03d}.json')
             fragments = checkpoint.enabled(root, job)
-            if (state == 'terminal' and not (record / 'checkpoint.json').exists()
-                    and (fragments or worker_delivery.applicable(job))):
+            if state == 'terminal' and job['role']=='W':
                 # Outcome publication precedes the runner's final writes. Wait
                 # for this exact owner before capturing a delivery checkpoint.
                 runner = record / 'runner-process.json'
                 if runner.exists() and runtime.process_matches(read(runner), execution.identity(root, step)):
                     time.sleep(.1)
                     continue
-                if fragments:
+                if fragments and not (record/'checkpoint.json').exists():
                     raise continuation.ResumeUnavailable('worker_fragment_checkpoint_unavailable')
-            result = continuation.seal_or_repair(root, step)
+            try:result = continuation.seal_or_repair(root, step)
+            except managed_wait.ExecutionWaiting:
+                continue
             if result.get('fragment_continuation') is True:
                 record = execution.record(root, step)
                 startup_until = time.monotonic() + 5
@@ -260,6 +266,14 @@ def run_native(root: Path, step: int, attempt=0):
                       'final_response contract. Controller diagnosis: '
                       + json.dumps({key: intent['output_repair'][key] for key in ('code', 'diagnostic')}, ensure_ascii=False)
                       + '\n' + prompt)
+    if intent.get('execution_wake'):
+        from . import managed_wait
+        from . import continuation
+        continuation.validate_wake(root,step,intent,execution.record(root,step,attempt-1))
+        managed_wait.wake_packet(root,job,intent)
+        prompt=('The original managed execution has finished. Read work/execution-results.json and its exact retained outputs. '
+            'Continue this same task/session from its checkpoint, interpret the results, and return your own scientific findings. '
+            'Do not rerun or resubmit the completed execution.\n'+prompt)
     if intent.get('work_repair'):
         request=intent['work_repair']
         prompt=('Complete the missing scientific delivery for this same assigned task/session. Keep the original task action. '

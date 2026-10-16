@@ -64,7 +64,7 @@ def _events(root, settings):
                     raise ValueError('Invalid audited budget ceilings')
             if not isinstance(event.get('authorization_note'), str) or not event['authorization_note'].strip():
                 raise ValueError('Budget amendment has no operator decision')
-        if event['kind'] == 'clock' and event.get('phase') not in {'advance', 'paused'}:
+        if event['kind'] == 'clock' and event.get('phase') not in {'advance', 'paused', 'waiting'}:
             raise ValueError('Unknown control clock phase')
         if event['kind'] == 'closeout_begin':
             if (type(event.get('source_cutoff')) is not int or event['source_cutoff'] < 0
@@ -140,7 +140,7 @@ def snapshot(root, settings=None, *, sample_stamp=None):
         interval(start, now)
     if basis == 'active' and start is not None and 'at_boottime' not in start:
         raise ValueError('Active clock requires its original boot anchor')
-    advance = paused = unclassified = 0.
+    advance = paused = unclassified = waiting = 0.
     phase, at = ('paused' if basis == 'active' else 'unclassified'), start
     for event in events:
         if event['kind'] != 'clock':
@@ -149,6 +149,8 @@ def snapshot(root, settings=None, *, sample_stamp=None):
             duration = interval(at, event)
             if phase == 'advance':
                 advance += duration
+            elif phase == 'waiting':
+                waiting += duration
             elif phase == 'paused':
                 paused += duration
             else:
@@ -157,6 +159,8 @@ def snapshot(root, settings=None, *, sample_stamp=None):
     if at is not None:
         if phase == 'advance':
             advance += interval(at, now)
+        elif phase == 'waiting':
+            waiting += interval(at, now)
         elif phase == 'paused':
             paused += interval(at, now)
         else:
@@ -164,8 +168,8 @@ def snapshot(root, settings=None, *, sample_stamp=None):
     elapsed = interval(start, now) if start is not None else 0.
     if basis == 'elapsed' and start is not None:
         elapsed = _duration(dict(at_unix=start['at_unix']), now)
-    consumed = advance if basis == 'active' else elapsed
-    return dict(**limits, time_budget_basis=basis, advance_seconds=advance,
+    consumed = advance + waiting if basis == 'active' else elapsed
+    return dict(**limits, time_budget_basis=basis, advance_seconds=advance, waiting_seconds=waiting,
                 paused_seconds=paused, unclassified_seconds=unclassified, elapsed_seconds=elapsed, consumed_seconds=consumed,
                 seconds_remaining=max(0., limits['max_seconds'] - consumed), clock_phase=phase,
                 ledger_events=len(events), historical_time='unknown_before_ledger' if basis == 'elapsed' else 'recorded')
@@ -175,7 +179,7 @@ def transition(root, phase, reason):
     """Caller owns the host writer lock; runner must obtain it too."""
     from .protocol import require_current
     require_current(root)
-    if phase not in {'advance', 'paused'}:
+    if phase not in {'advance', 'paused', 'waiting'}:
         raise ValueError('Unknown control clock phase')
     settings = contracts.settings(root)
     if not (root / 'host-started.json').exists():
@@ -192,7 +196,7 @@ def transition(root, phase, reason):
             _append(root, settings, events, parent, kind='clock', phase=phase, reason=reason)
 
 
-def execution_blocked(root, *, ignore_operation=None):
+def execution_blocked(root, *, ignore_operation=None, include_managed=True):
     """Unknown or live originals prohibit inactive time and amendments."""
     from . import runtime, execution
     settings = contracts.settings(root)
@@ -256,6 +260,9 @@ def execution_blocked(root, *, ignore_operation=None):
                     return True
         except (OSError, ValueError, KeyError, TypeError):
             return True
+    if include_managed:
+        from . import managed_wait
+        if managed_wait.pending(root):return True
     return False
 
 
@@ -279,10 +286,11 @@ def _delivery_group_live(identity):
 def inactive(root, reason):
     from .protocol import require_current
     require_current(root)
-    if execution_blocked(root):
+    if execution_blocked(root,include_managed=False):
         transition(root, 'advance', 'unknown_or_running_original')
     else:
-        transition(root, 'paused', reason)
+        from . import managed_wait
+        transition(root, 'waiting' if managed_wait.pending(root) else 'paused', reason)
 
 
 def amend(root, *, max_tokens=None, max_seconds=None, authorization_note):

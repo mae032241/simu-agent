@@ -91,7 +91,7 @@ def test_async_without_collect_reconciles_same_call_before_seal(tmp_path,compose
     help_reply=subprocess.run([sys.executable,'-m','scidiscovery.research_loop.experiments','--help'],capture_output=True,text=True)
     assert help_reply.returncode==0 and 'reconcile' in help_reply.stdout and 'never submit' in help_reply.stdout
     directory=e.Records(config).directory(call)
-    assert cli('reconcile','--call-id',call,expected=2)['status']=='unknown'
+    assert cli('reconcile','--call-id',call,expected=2)['status']=='running'
     assert len(e.Records(config).calls())==1 and not (directory/'execution-observation.json').exists()
     e.load(config).complete(call)
     before={p:p.read_bytes() for p in directory.rglob('*') if p.is_file()}
@@ -132,9 +132,13 @@ def test_async_without_collect_reconciles_same_call_before_seal(tmp_path,compose
     assert e.dispatch(successor,package,new=True,mechanism='P')['status']=='known_success'
 
 
-def test_late_reconcile_preserves_old_sealed_unknown_as_known_g3_limit(tmp_path,composed_registry):
+def test_late_reconcile_preserves_old_sealed_unknown_without_explicit_recovery(tmp_path,composed_registry,monkeypatch):
     root,job,config,cli,call=case(tmp_path,dict(collect=False))
-    fact,_=seal_and_read(root,job,observed=False)
+    from scidiscovery.research_loop import managed_wait
+    # Retained historical pre-wait seal: only the fixture bypasses the new seal gate.
+    with monkeypatch.context() as patch:
+        patch.setattr(managed_wait,'before_seal',lambda *args:None)
+        fact,_=seal_and_read(root,job,observed=False)
     record=execution.record(root,2);seal_bytes=(record/'result-identity.json').read_bytes()
     assert fact['managed_calls'][0]['status']=='unknown'
     e.load(config).complete(call);assert cli('reconcile','--call-id',call)['status']=='known_success'

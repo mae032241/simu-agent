@@ -88,8 +88,11 @@ def capture(root,job,record):
         observed_path=c.regular(root/observation['path'],limit=history.MAX_OBSERVER_BYTES)
         if c.digest(observed_path)!=observation['sha256']:raise history.ObserverIntegrityError('Worker observation original changed')
         observed=c.read(observed_path)
+        from . import execution_recovery
+        recovered=execution_recovery.resolved(root,job.get('history',{}).get('execution_recoveries',[]))
         if (source.get('search') or {}).get('breadth'):history.validate_managed(root,source,observed['managed_calls'])
         for row in observed.get('managed_calls',[]):
+            row=recovered.get((source['step'],row['call_id']),row)
             if row.get('mechanism_binding') is None:continue
             ref=row['mechanism_binding']['mechanism_ref']
             if ref not in needed:continue

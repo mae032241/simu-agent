@@ -46,9 +46,9 @@ def records(root, step):
                 or intent.get('root_intent_sha256') != c.digest(c.regular(first / 'native-intent.json'))):
             raise ValueError('Native continuation chain changed')
         kind = intent.get('continuation_kind', 'repair')
-        if kind not in {'repair', 'fragment'} or kind == 'fragment' and not fragments:
+        if kind not in {'repair', 'fragment', 'execution_wake'} or kind == 'fragment' and not fragments:
             raise ValueError('Native continuation kind differs from its frozen policy')
-        if kind == 'repair':
+        if kind in {'repair','execution_wake'}:
             repairs += 1
             if repairs > repair_limit:
                 raise ValueError('Native repair attempts exceed their original finite authorization')
@@ -126,3 +126,6 @@ def _terminal(root, step, chain, outcome):
     from . import continuation
     continuation.validate_repair_chain(root, step, chain)
     continuation.validate_fragment_chain(root, step, chain)
+    for number, path in enumerate(chain[1:],1):
+        intent=c.read(path/'native-intent.json')
+        if intent.get('continuation_kind')=='execution_wake':continuation.validate_wake(root,step,intent,chain[number-1])
