@@ -624,9 +624,14 @@ def _closeout_result(root, status, *, reason=None, step=None, read_only=False):
         if status in {'closeout_pending', 'closeout_correction_pending', 'candidate_audit_pending', 'delivery_reselect', 'selection_comparison_pending','engineering_repair_review_pending','candidate_audit_review_pending'} and not _closeout_funds(
                 root, preparation_seconds=begin['preparation_seconds'], step=step):
             status = 'closeout_budget_unavailable'
+    scientific_output_ref = str(execution.raw(root,last)) if last is not None else None
+    limitations = last_science['limitations'] if last_science is not None else []
+    shown_limitations, _ = contracts._whole_limitations(limitations)
+    shown_limitations = shown_limitations[:4]
     result = dict(status=status, goal_completion='not_asserted', objective_ref=str(root / 'project/global/objective.md'),
-        scientific_output_ref=str(execution.raw(root,last)) if last is not None else None,
-        scientific_limitations=last_science['limitations'][:4] if last_science is not None else [],
+        scientific_output_ref=scientific_output_ref, scientific_limitations=shown_limitations,
+        limitations_omitted_count=len(limitations)-len(shown_limitations),
+        limitations_ref=dict(path=scientific_output_ref,field='limitations') if scientific_output_ref is not None else None,
         source_cutoff=cutoff, last_step=last, completed_scientific_nodes=cutoff + len(closed),
         used_steps=budget.used_steps(root), usage=native.usage(root), budget=budget.snapshot(root),
         previous_submission_observation=previous['actual_submission'], existing_A_recommendation=latest['a_recommended'],

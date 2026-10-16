@@ -146,6 +146,7 @@ def run_native(root: Path, step: int, attempt=0):
     pending = record / 'result.pending.json'
     args = [*settings['native_launcher_argv'], 'exec', '--json', '--output-last-message', str(pending),
             '--model', profile['model'], '-c', f'model_reasoning_effort={json.dumps(profile["reasoning_effort"])}',
+            '-c', f'service_tier={json.dumps(profile["service_tier"])}',
             '--sandbox', 'workspace-write', '-C', str(work), '-']
     role_instruction = job.get('native_role_instruction', ROLE_INSTRUCTIONS[job['role']])
     # Raw Codex is supported as a local soft-isolation entry. Existing qualified
@@ -155,10 +156,7 @@ def run_native(root: Path, step: int, attempt=0):
                        '-c', 'project_doc_max_bytes=0', '-c', 'mcp_servers.scidiscovery.enabled=false',
                        '-c', 'features.multi_agent=false', '-c', 'features.fast_mode=false',
                        '-c', 'approval_policy="never"',
-                       '-c', 'developer_instructions=' + json.dumps(role_instruction),
-                       '-c', f'service_tier={json.dumps(profile["service_tier"])}']
-    elif settings.get('role_profiles') is not None:
-        args[-1:-1] = ['-c', f'service_tier={json.dumps(profile["service_tier"])}']
+                       '-c', 'developer_instructions=' + json.dumps(role_instruction)]
     if settings.get('resume_policy') is not None:
         from . import continuation
         continuation.validate_launcher(root)

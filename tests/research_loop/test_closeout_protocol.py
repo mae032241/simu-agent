@@ -39,7 +39,7 @@ if 'closeout' in job and 'catalogue' in job['closeout']['sources']:
  catalogue=json.loads((work/job['closeout']['sources']['catalogue']).read_text())
  assert any(r['candidate_id']==item['candidate'] for r in catalogue['items'])
 payload=dict(summary='A bounded choice',scientific_result='Exact public evidence; target performance remains unknown.',
- limitations=['Transport fixture; target performance unasserted'],implementation_selection=None,search_review=None,
+ limitations=item.get('limitations',['Transport fixture; target performance unasserted']),implementation_selection=None,search_review=None,
  progress_assessment=None,decision_request=None,portfolio_review=None,
  next_action=item['action'],candidate_recommendation=item.get('candidate'),route_reason='Scientific selection within original authorization')
 pathlib.Path(args[args.index('--output-last-message')+1]).write_text(json.dumps(payload))
@@ -90,6 +90,42 @@ def command(root, action='closeout', *extra):
         text=True,capture_output=True,timeout=60,env=env)
     assert result.returncode in (0,2),result.stdout+result.stderr
     return json.loads(result.stdout)
+
+
+@pytest.mark.parametrize('limitations,shown',[
+    ([],[]),
+    (['A whole caveat'],['A whole caveat']),
+    ([*['Caveat '+str(n) for n in range(1,5)],'Broader shifts remain unresolved',
+      'Required audited-score plateau remains unestablished'],['Caveat '+str(n) for n in range(1,5)]),
+    (['长限制'*400,'Escaped caveat: "quoted"\\newline\n',*['Later '+str(n) for n in range(5)]],
+     ['Escaped caveat: "quoted"\\newline\n',*['Later '+str(n) for n in range(3)]]),
+])
+def test_public_closeout_limitations_are_bounded_and_link_complete_original(tmp_path,limitations,shown):
+    root=scene(tmp_path,[dict(action='deliver',candidate='run-1',limitations=limitations)])
+    result=command(root)
+    assert result['status']=='delivery_confirmed',result
+    for view in (result,command(root,'status')['closeout'],command(root),command(root,'closeout','--export-only')):
+        assert view['scientific_limitations']==shown
+        assert view['limitations_omitted_count']==len(limitations)-len(shown)
+        assert len((json.dumps(view['scientific_limitations'],ensure_ascii=False,indent=2)+'\n').encode())<=1024
+        assert view['limitations_ref']==dict(path=view['scientific_output_ref'],field='limitations')
+        original=c.read(Path(view['limitations_ref']['path']))
+        assert original['limitations']==limitations
+        assert view['limitations_ref']['field'] in original
+        assert 'limitations_omitted_count' not in original and 'limitations_ref' not in original
+
+
+def test_empty_export_has_no_scientific_limitations_original(tmp_path):
+    public=tmp_path/'public';public.mkdir();goal=public/'goal';goal.write_text('Bounded export fixture.')
+    root=tmp_path/'instance'
+    controller.prepare(root,goal,public,['never-launched'],max_tokens=10000,max_seconds=120,max_steps=4,
+        model='no-model',reasoning_effort='high',search_policy=None,
+        node_budget_policy={role:dict(max_observed_tokens=1000,max_seconds=30) for role in 'HWAE'},
+        delivery_policy=dict(delivery_policy(None),submit_seconds=0,confirm_seconds=0))
+    result=command(root,'closeout','--export-only')
+    assert result['status']=='exported_unsubmitted'
+    assert result['scientific_limitations']==[] and result['limitations_omitted_count']==0
+    assert result['scientific_output_ref'] is None and result['limitations_ref'] is None
 
 
 @pytest.mark.parametrize('action',['extract','continue_w','revise_h'])

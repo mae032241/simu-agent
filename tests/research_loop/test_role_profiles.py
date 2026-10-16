@@ -105,12 +105,13 @@ def test_changed_profile_rejected_before_native_submission(tmp_path,monkeypatch,
     with pytest.raises(ValueError,match='profile changed'):native.run_native(root,1)
 
 
-@pytest.mark.parametrize('role,overrides',[(role,OVERRIDES) for role in 'HWAE'] +
-    [('A',{'A':dict(model='gpt-5.6-sol',reasoning_effort='medium',service_tier='priority')})])
-def test_actual_fresh_and_resumed_argv_keep_original_role_profile(tmp_path,monkeypatch,role,overrides):
+@pytest.mark.parametrize('role,overrides,tier',[(role,OVERRIDES,'default') for role in 'HWAE'] +
+    [('A',{'A':dict(model='gpt-5.6-sol',reasoning_effort='medium',service_tier='priority')},'default'),
+     ('H',None,'default'),('H',None,'priority')])
+def test_actual_fresh_and_resumed_argv_keep_original_role_profile(tmp_path,monkeypatch,role,overrides,tier):
     original=controller.prepare
     def configured(*args,**kwargs):
-        return original(*args,**dict(kwargs,**DEFAULTS,role_profiles=overrides))
+        return original(*args,**dict(kwargs,**dict(DEFAULTS,service_tier=tier),role_profiles=overrides))
     monkeypatch.setattr(controller,'prepare',configured)
     fake=resume.FAKE.replace("role!='A'","True").replace("with (work/'work/launches').open('a')",
         "with (work/'work/argv.jsonl').open('a') as log:log.write(json.dumps(args)+'\\n')\nwith (work/'work/launches').open('a')")
@@ -126,14 +127,48 @@ def test_actual_fresh_and_resumed_argv_keep_original_role_profile(tmp_path,monke
     assert continuation.start(root,1)['role']==role
     current=resume.wait_runner(root)
     expected=profiles.selected(c.settings(root),role)
-    assert c.read(first/'native-intent.json')['native_profile']==expected
-    assert c.read(current/'native-intent.json')['native_profile']==expected
+    for record in (first,current):
+        intent=c.read(record/'native-intent.json')
+        if overrides is None:
+            assert 'role_profiles' not in c.settings(root) and 'native_profile' not in intent
+        else:
+            assert intent['native_profile']==expected
     launches=[json.loads(line) for line in (c.workspace(root,1)/'work/argv.jsonl').read_text().splitlines()]
     assert len(launches)==2 and 'resume' not in launches[0] and 'resume' in launches[1]
     for args in launches:
         assert args[args.index('--model')+1]==expected['model']
         assert 'model_reasoning_effort='+json.dumps(expected['reasoning_effort']) in args
         assert 'service_tier='+json.dumps(expected['service_tier']) in args
+
+
+@pytest.mark.parametrize('tier',['default','priority'])
+@pytest.mark.parametrize('kind',['raw_codex','wrapper'])
+def test_global_configuration_reaches_actual_launcher_without_role_profiles(tmp_path,kind,tier):
+    public=tmp_path/'public';public.mkdir();goal=public/'goal';goal.write_text('Bounded transport fixture.')
+    script=tmp_path/('codex' if kind=='raw_codex' else 'wrapper.py')
+    script.write_text('#!'+sys.executable+'\n'+r'''import json,os,pathlib,sys
+args=sys.argv[1:];sys.stdin.read()
+work=pathlib.Path(os.environ['THIN_HWA_WORKSPACE'])
+(work/'work/argv.json').write_text(json.dumps(args))
+payload=dict(summary='Bounded fixture',scientific_result='No model called.',limitations=[],
+ implementation_selection=None,search_plan=None,next_action='wait',route_reason='Fixture complete')
+pathlib.Path(args[args.index('--output-last-message')+1]).write_text(json.dumps(payload))
+print(json.dumps(dict(type='turn.completed',usage=dict(input_tokens=7,output_tokens=3))),flush=True)
+''')
+    script.chmod(0o755)
+    launcher=[str(script)] if kind=='raw_codex' else [sys.executable,str(script)]
+    root=tmp_path/'instance'
+    controller.prepare(root,goal,public,launcher,max_tokens=1000,max_seconds=60,max_steps=2,
+        model='no-model',reasoning_effort='medium',service_tier=tier,search_policy=None)
+    assert controller.run(root)['status']=='wait'
+    assert 'role_profiles' not in c.settings(root)
+    args=c.read(c.workspace(root,1)/'work/argv.json')
+    configs=[args[i+1] for i,value in enumerate(args) if value=='-c']
+    assert args[args.index('--model')+1]=='no-model'
+    assert configs.count('model_reasoning_effort="medium"')==1
+    assert configs.count('service_tier='+json.dumps(tier))==1
+    assert ('--output-schema' in args)==(kind=='raw_codex')
+    assert ('mcp_servers.scidiscovery.enabled=false' in configs)==(kind=='raw_codex')
 
 
 def test_launcher_rejects_configuration_mismatch_before_writes(launcher,accepted):
