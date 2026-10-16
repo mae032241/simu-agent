@@ -38,11 +38,11 @@
 
 原始日志目录：`/tmp/scid-cleanup-operations-source-1016`、`/tmp/scid-tail-cursor-source-1016`、`/tmp/scid-cleanup-collect-consumers-1016`、`/tmp/scid-native-cli-process-1016`、`/tmp/scid-native-cli-source-1016-d`、`/tmp/scid-execution-log-cache-source-1016`。没有全库、安装包或真实模型通过结论。
 
-## 未解决的项目问题
+## 审计发现及后续修复状态
 
-- 原生结果写完但runner未退出时，普通W封存可返回seal_pending并提前结束一次run；这是保留测试暴露的生产时序缺陷，须单独修复。
-- 发布构建会误拦部分合成安全负例，并遗漏当前rootless测试所需脚本/数据/文档；必须修发布闭包，不能删有效测试令发布变绿。
+- W封存竞态已由 `4f77574` 修复，独审通过。上表保留修复前测试记录；新负控和修复验证见 [B3/B1评审](evidence/B3_B1_INDEPENDENT_REVIEW_20261016.zh-CN.md)。
+- 发布扫描误拦已由 `3d2cc89` 修复；依赖闭包由 `d2e29e2` 修复并独审通过，见 [B2评审](evidence/B2_RELEASE_CLOSURE_REVIEW_20261016.zh-CN.md)。初审发现的canary遗漏及文档断链也已关闭。生成树73项定向源码与3项离线安装通过，完整收集不等于全套执行通过。
 - 通用受管执行已支持，但通用指标没有自动成为具备评价口径和精确工件的候选；比较、短名单及交付链尚未完整。不能宣称通用科研插件平台已全部打通。
 - 其他未完成能力与未验证科学收益由独立项目报告列出，不与确定代码缺陷混合。
 
-后续顺序：封存时序 → 发布依赖与扫描边界 → 当前有效测试完整回归；通用候选闭环单独设计。清理完成不关闭这些问题。
+后续新增缺陷见[继续审计清单](REMAINING_FRAMEWORK_BUGS_20261016.zh-CN.md)；通用候选闭环单独设计。B1/B2/B3修复不等于其他问题关闭。

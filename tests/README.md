@@ -66,4 +66,4 @@ CI 使用单独的 [test_resources_ci.json](../scripts/test_resources_ci.json)�
 
 2026-10-16 清理删除无当前消费者的 R5 结构统计、R3 旧配置、退役 R5 case replay 插件及其自测，并移除死 helper。历史文件保留在 Git `5251ee0`，可用 `git show 5251ee0:<旧路径>` 查看；不再把旧资格 manifest 放在当前测试夹具中。仍有生产职责的 CLI 测试更新为当前角色结果，而不是删除失败用例。
 
-当前测试、发布与生产缺陷分别记录于[本轮清理与审查](../docs/plans/TEST_CORPUS_RECONCILIATION_20261016.zh-CN.md)。定向通过不等于整套通过；测试夹具修正后暴露的封存竞态与发布依赖缺口仍需单独修复。
+当前测试、发布与生产缺陷分别记录于[本轮清理与审查](../docs/plans/TEST_CORPUS_RECONCILIATION_20261016.zh-CN.md)。定向通过不等于整套通过；测试夹具修正后暴露的问题及后续修复状态以该清单为准，历史失败记录不改写。
