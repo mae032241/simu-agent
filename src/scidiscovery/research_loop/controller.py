@@ -206,12 +206,30 @@ def _writer(root):
         os.close(descriptor)
 
 
+@contextmanager
+def _inactive_on_error(root, reason='controller_failed'):
+    """Reconcile failed control while its caller still owns the writer."""
+    try:
+        yield
+    except BaseException as error:
+        try:
+            budget.inactive(root, reason)
+        except BaseException as stop_error:
+            try:
+                note = getattr(error, 'add_note', None)
+                if callable(note):
+                    note(f'Budget reconciliation failed ({type(stop_error).__name__}): {stop_error}')
+            except BaseException:
+                pass  # Optional diagnostics cannot replace the original failure.
+        raise
+
+
 def run(root: Path) -> dict:
     """Reconstruct routing from sealed nodes; never replay an uncertain launch."""
     from .protocol import require_current
     require_current(root)
     root = Path(root).resolve()
-    with _writer(root):
+    with _writer(root), _inactive_on_error(root):
         return _run(root)
 
 
@@ -428,7 +446,6 @@ def _run(root):
                 return _finish(root, settings, 'semantic_correction_required', completed, last,
                     reason='semantic_correction_limit', next_role=role)
             if role=='W' and parents:
-                from . import engineering
                 pending_repair=engineering.request(root,max(parents))
                 if pending_repair is not None and not _repair_funds(root):
                     return _finish(root,settings,'engineering_repair_budget_unavailable',completed,last,next_role='W')
@@ -503,7 +520,6 @@ def _run(root):
                 if audit_status is not None:
                     return _finish(root, settings, audit_status, step, result, next_role='A')
                 receipt=candidate_audit._outcome(root,step)['result']
-                from . import engineering
                 repair=engineering.request(root,step)
                 if repair is not None or receipt['status'] in {'engineering_error','unclassified'}:
                     if repair is None:
@@ -969,7 +985,7 @@ def closeout(root, *, export_only=False):
     from .protocol import require_current
     require_current(root)
     root = Path(root).resolve()
-    with _writer(root):
+    with _writer(root), _inactive_on_error(root):
         if budget.closeout_state(root)['begin'] is not None:
             return _closeout_result(root, 'exported_unsubmitted', reason='operator_export_only') if export_only else _run_closeout(root)
         cutoff = 0
@@ -992,7 +1008,7 @@ def worker_resume(root: Path, step: int):
     from .protocol import require_current
     require_current(root)
     root = Path(root).resolve()
-    with _writer(root):
+    with _writer(root), _inactive_on_error(root, 'worker_resume_failed'):
         settings = contracts.settings(root)
         try:
             if type(step) is not int or not 0 < step <= settings['max_steps']:
@@ -1002,6 +1018,3 @@ def worker_resume(root: Path, step: int):
         except (continuation.ResumeUnavailable, budget.NodeBudgetUnavailable) as error:
             budget.inactive(root, 'worker_resume_unavailable')
             return dict(status='worker_resume_unavailable', reason=getattr(error, 'reason', str(error)), usage=native.usage(root))
-        except Exception:
-            budget.inactive(root, 'worker_resume_failed')
-            raise

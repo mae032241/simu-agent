@@ -163,7 +163,7 @@ def main(argv=None):
         elif args.command == 'continue':
             # Clear the marker only after obtaining the same per-instance writer
             # lock as run. A second caller cannot cancel a live owner's pause.
-            with controller._writer(root):
+            with controller._writer(root), controller._inactive_on_error(root):
                 if args.ack_correction is not None:
                     correction.acknowledge(root, args.ack_correction, args.authorization_note)
                 elif args.authorization_note is not None:

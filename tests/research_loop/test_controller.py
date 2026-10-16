@@ -379,6 +379,7 @@ def test_real_sealing_and_materials_compose_with_controller(tmp_path, monkeypatc
             payload['portfolio_review'] = None
         if role == 'W':
             payload['stage_intent'] = 'review'
+            payload['mechanism_findings'] = None
         if role in {'H', 'A'}:
             payload['search_plan' if role == 'H' else 'search_review'] = None
         artifacts = work / "artifacts"
@@ -456,7 +457,8 @@ def test_nested_experiment_deliverables_exclude_scratch_and_need_no_manifest(rea
     assert view['global'] == dict(objective='inputs/global/objective.md',
         updates=['inputs/global/updates/001.md'])
     assert view['parents'] == [dict(conclusion='inputs/parents/001/conclusion.json',
-        artifacts='inputs/parents/001/artifacts')]
+        artifacts='inputs/parents/001/artifacts', role='H', limitations=['Scope is bounded'],
+        limitations_omitted_count=0)]
     assert 'materials' not in view and 'goal_text' not in view and 'result_schema' not in view
     assert 'sha256' not in json.dumps(view)
     assert [Path(row['path']).name for row in child['direct_materials']] == ['measurements.csv', 'conclusion.md']
@@ -472,7 +474,7 @@ def test_nested_experiment_deliverables_exclude_scratch_and_need_no_manifest(rea
         dict(task_sha256=n.contracts.digest(n.root / 'jobs/002.json')))
     n.contracts.write(child_record / 'science-output.json', dict(summary='Local W finding',
         scientific_result='No further selected output', limitations=['One experiment'],
-        implementation_selection=None, stage_intent='review'))
+        implementation_selection=None, stage_intent='review', mechanism_findings=None))
     n.contracts.write(child_record / 'native-outcome.json', dict(returncode=0, stop_reason=None,
         usage=dict(unknown_steps=[]), raw_sha256=n.contracts.digest(child_record / 'science-output.json')))
     n.contracts.seal_result(n.root, 2)

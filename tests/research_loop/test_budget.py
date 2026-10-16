@@ -157,6 +157,140 @@ def test_runner_inactive_append_holds_host_writer_until_finished(clocked, monkey
     assert budget.snapshot(root)['clock_phase'] == 'advance'
 
 
+@pytest.mark.parametrize('entry', ['run', 'continue'])
+def test_first_job_input_failure_preserves_error_and_stops_idle_clock(clocked, capsys, entry):
+    root, now = clocked
+    contracts.build_job(root, 1, 'H', [])
+    copied = contracts.workspace(root, 1) / 'inputs/global/objective.md'
+    copied.chmod(0o600)
+    copied.write_text('Changed bound input copy')
+    if entry == 'continue':
+        assert main(['continue', '--root', str(root)]) == 1
+        assert json.loads(capsys.readouterr().out)['error'] == 'Bound input copy changed'
+    else:
+        with pytest.raises(ValueError, match='Bound input copy changed'):
+            controller.run(root)
+    stopped = budget.snapshot(root)
+    assert stopped['clock_phase'] == 'paused'
+    now[0] = 150.
+    assert budget.snapshot(root)['advance_seconds'] == stopped['advance_seconds']
+    assert not list(root.glob('native-evidence/*/native-intent.json'))
+
+
+@pytest.mark.parametrize('entry', ['run', 'closeout', 'continue', 'worker_resume'])
+@pytest.mark.parametrize('original', ['absent', 'unknown', 'running'])
+@pytest.mark.parametrize('failure_type', [OSError, KeyboardInterrupt])
+def test_controller_exception_reconciles_clock_under_writer(clocked, monkeypatch, capsys, entry, original, failure_type):
+    root, now = clocked
+    frozen = (root / 'settings.json').read_bytes()
+    if original != 'absent':
+        record = original_intent(root)
+        if original == 'running':
+            contracts.write(record / 'native-outcome.json', dict(returncode=0, stop_reason=None))
+            contracts.write(record / 'native-process.json', dict(fixture='live original'))
+            monkeypatch.setattr(runtime, 'process_matches', lambda *args: True)
+    transition(root, 'advance')
+    now[0] = 104.
+    failure = failure_type('job construction failed before submission')
+    def fail(*args, **kwargs):
+        raise failure
+    monkeypatch.setattr(controller, '_start_closeout' if entry == 'closeout' else '_run', fail)
+    if entry == 'worker_resume':
+        monkeypatch.setattr(controller.continuation, 'start', lambda *args: None)
+    inactive = budget.inactive
+    reconciled = []
+    def check_lock(root, reason):
+        with pytest.raises(RuntimeError, match='running controller'):
+            with controller._writer(root):
+                pytest.fail('Exception reconciliation released the writer')
+        reconciled.append(reason)
+        inactive(root, reason)
+    monkeypatch.setattr(budget, 'inactive', check_lock)
+    def invoke():
+        if entry == 'continue':
+            return main(['continue', '--root', str(root)])
+        if entry == 'worker_resume':
+            return controller.worker_resume(root, 1)
+        return getattr(controller, entry)(root)
+    if entry == 'continue' and failure_type is OSError:
+        assert invoke() == 1
+        assert json.loads(capsys.readouterr().out)['error'] == str(failure)
+    else:
+        with pytest.raises(failure_type) as raised:
+            invoke()
+        assert raised.value is failure
+    assert reconciled == ['worker_resume_failed' if entry == 'worker_resume' else 'controller_failed']
+    stopped = budget.snapshot(root)
+    assert stopped['advance_seconds'] == 4
+    assert stopped['clock_phase'] == ('paused' if original == 'absent' else 'advance')
+    now[0] = 110.
+    assert budget.snapshot(root)['advance_seconds'] == (4 if original == 'absent' else 10)
+    assert (root / 'settings.json').read_bytes() == frozen
+    assert len(list(root.glob('native-evidence/*/native-intent.json'))) == int(original != 'absent')
+
+
+@pytest.mark.parametrize('notes', ['supported', 'absent', 'broken'])
+def test_failed_budget_reconciliation_preserves_original_error(clocked, monkeypatch, notes):
+    root, _ = clocked
+    class CustomError(ValueError):
+        def add_note(self, note):
+            raise RuntimeError('Optional note failed')
+    if notes == 'absent':
+        CustomError.add_note = None
+    failure = (ValueError if notes == 'supported' else CustomError)('Original invalid input')
+    def fail(*args, **kwargs):
+        raise failure
+    def fail_clock(*args, **kwargs):
+        raise OSError('Clock ledger unavailable')
+    monkeypatch.setattr(controller, '_run', fail)
+    monkeypatch.setattr(budget, 'inactive', fail_clock)
+    with pytest.raises(ValueError) as raised:
+        controller.run(root)
+    assert raised.value is failure
+    if notes == 'supported' and callable(getattr(failure, 'add_note', None)):
+        assert failure.__notes__ == ['Budget reconciliation failed (OSError): Clock ledger unavailable']
+    else:
+        assert not hasattr(failure, '__notes__')
+
+
+def test_continue_refusal_keeps_pause_and_stops_only_idle_clock(clocked, capsys):
+    root, now = clocked
+    contracts.write(root / 'pause.request', dict(reason='Original pause'))
+    frozen = (root / 'pause.request').read_bytes()
+    transition(root, 'advance')
+    now[0] = 104.
+    assert main(['continue', '--root', str(root), '--authorization-note', 'Missing exact trigger']) == 1
+    assert json.loads(capsys.readouterr().out)['error'] == 'An authorization note requires an exact correction trigger'
+    assert (root / 'pause.request').read_bytes() == frozen
+    now[0] = 110.
+    assert budget.snapshot(root)['clock_phase'] == 'paused'
+    assert budget.snapshot(root)['advance_seconds'] == 4
+    assert not (root / 'jobs').exists()
+
+
+@pytest.mark.parametrize('entry', ['run', 'continue'])
+def test_interrupt_during_real_job_input_copy_stops_idle_clock(clocked, monkeypatch, entry):
+    root, now = clocked
+    interrupted = KeyboardInterrupt('Interrupted while preparing bound input')
+    original = contracts._copy_bound
+    def copy_then_interrupt(*args):
+        original(*args)
+        now[0] = 104.
+        raise interrupted
+    monkeypatch.setattr(contracts, '_copy_bound', copy_then_interrupt)
+    with pytest.raises(KeyboardInterrupt) as raised:
+        if entry == 'continue':
+            main(['continue', '--root', str(root)])
+        else:
+            controller.run(root)
+    assert raised.value is interrupted
+    assert (contracts.workspace(root, 1) / 'inputs/global/objective.md').is_file()
+    assert budget.snapshot(root)['clock_phase'] == 'paused'
+    now[0] = 110.
+    assert budget.snapshot(root)['advance_seconds'] == 4
+    assert not list(root.glob('native-evidence/*/native-intent.json'))
+
+
 @pytest.mark.parametrize('action', ['snapshot', 'transition', 'amend'])
 def test_boot_clock_rollback_fails_closed_without_refunding_or_appending(clocked, monkeypatch, action):
     root, now = clocked
