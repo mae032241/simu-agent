@@ -72,6 +72,17 @@ def public_inputs(records):
     return result
 
 
+def recommendations(records):
+    """One latest authored judgment; a null choice clears the current slot."""
+    authors = sorted((row for row in records if row['role'] == 'A' and not row.get('audit_request')),
+                     key=lambda row: row['step'])
+    latest = authors[-1] if authors else None
+    old = next((row for row in reversed(authors[:-1]) if row['recommendation'] is not None), None)
+    return dict(latest_a_step=latest['step'] if latest else None,
+        a_recommended=dict(candidate_id=latest['recommendation'], author_step=latest['step']) if latest and latest['recommendation'] is not None else None,
+        historical_a_recommendation=dict(candidate_id=old['recommendation'], author_step=old['step']) if old else None)
+
+
 def project(records, *, audits=(), delivery=None):
     """Report observed comparisons and authored judgments, never target optimality."""
     if not isinstance(records, list) or not isinstance(audits, (list, tuple)):
@@ -171,7 +182,6 @@ def project(records, *, audits=(), delivery=None):
     if delivery['state'] == 'confirmed' and confirmed is None:
         raise ValueError('Confirmed delivery lacks verified candidate')
     latest = authors[-1] if authors else None
-    old = next((row for row in reversed(authors[:-1]) if row['recommendation'] is not None), None)
     actual = next((row for row in reversed(observations) if row['actual_submission'] is not None), None)
     alerts=[dict(candidate_id=item['id'],status=item['status']) for item in candidates.values() if item['status'] in {'failed','unknown'}]
     important=[latest['recommendation'] if latest else None,
@@ -192,9 +202,7 @@ def project(records, *, audits=(), delivery=None):
     value = dict(scope='observed_only', target_best=None,
         coverage='partial' if any(row['coverage'] != 'complete' for row in observations) else 'complete' if observations else 'unknown',
         candidate_count=len(candidates), current_candidate=observations[-1]['current_candidate'] if observations else None,
-        latest_a_step=latest['step'] if latest else None,
-        a_recommended=dict(candidate_id=latest['recommendation'], author_step=latest['step']) if latest and latest['recommendation'] is not None else None,
-        historical_a_recommendation=dict(candidate_id=old['recommendation'], author_step=old['step']) if old else None,
+        **recommendations(authors),
         observed_actual_submission=dict(actual['actual_submission'], observed_at=actual['step']) if actual else None,
         delivery=dict(state=delivery['state'], current_confirmed=confirmed if delivery['state']=='confirmed' else None, last_confirmed=confirmed),
         proxy_highest=proxy[:8], proxy_groups_omitted_count=max(0,len(proxy)-8),

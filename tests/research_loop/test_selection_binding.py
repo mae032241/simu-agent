@@ -34,8 +34,8 @@ def test_new_job_freezes_selection_and_null_a_is_not_an_old_recommendation(tmp_p
     assert view['selection_protocol']==1 and view['a_recommended'] is None
     assert view['historical_a_recommendation']['candidate_id']=='P'
     assert view['target_best'] is None and view['delivery']['state']=='unknown'
-    assert 'role_guidance' not in c.result_schema('A',8)['properties']
-    assert sum(len(text.encode()) for text in c.settings(root)['role_guidance'].values())<=2048
+    assert 'role_guidance' not in c.result_schema('A',job['handoff_protocol'])['properties']
+    assert sum(len(text.encode()) for text in c.settings(root)['role_guidance'].values())<=guidance.MAX_BYTES
 
 
 def test_old_t2_t3_job_marker_and_literal_do_not_follow_current_defaults(tmp_path,monkeypatch):

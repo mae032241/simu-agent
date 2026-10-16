@@ -143,7 +143,7 @@ def build(root, before_step, *, sources=None, search_state=None):
 
 
 def candidate_view(records):
-    candidates, current, actual, selected, coverage = {}, None, None, None, None
+    candidates, current, actual, coverage = {}, None, None, None
     for record in records:
         observation = record['observation']
         if observation is not None:
@@ -174,7 +174,6 @@ def candidate_view(records):
         if record['recommendation'] is not None:
             if record['recommendation'] not in candidates:
                 raise ValueError('A recommended an unknown candidate')
-            selected = dict(candidate_id=record['recommendation'], author_step=record['step'])
     best = {}
     for item in candidates.values():
         if item['status'] != 'ok' or item['metric'] is None:
@@ -194,9 +193,10 @@ def candidate_view(records):
             view['implementation'] = None
         view['details_in_index'] = True
         return view
+    from . import selection
     return dict(coverage=coverage, current_candidate=current, candidate_index=[public(row) for row in candidates.values()], proxy_highest=[compact(row) for row in list(best.values())[:8]],
                 proxy_groups_omitted_count=max(0, len(best) - 8),
-                a_recommended=selected, actual_submission=actual,
+                **selection.recommendations(records), actual_submission=actual,
                 recent_candidates=[compact(row) for row in list(candidates.values())[-16:]],
                 candidates_omitted_count=max(0, len(candidates) - 16),
                 limitation='Highest means highest observed metric only; candidate models are not retained unless a sealed artifact or explicit archived snapshot exists. Proxy groups use the frozen adapter evaluation_key and direction; they do not establish target optimality. Read each original scientific conclusion for applicability and blind spots. Null slots mean unknown, not agreement.')
@@ -233,7 +233,8 @@ def brief(records, state, graph, candidates, indexes, *, selection_protocol=0):
                         focus={k:v for k,v in focus.items() if k!='repair_source'} if focus else None),
         candidates=dict(count=len(candidates['candidate_index']),coverage=(dict(status=candidates['coverage']['status'],
             note=_clip(candidates['coverage']['note'],96),note_truncated=len(candidates['coverage']['note'].encode())>96) if candidates['coverage'] else None),
-            current=candidates['current_candidate'],a_recommended=candidates['a_recommended'],actual=candidates['actual_submission'],
+            current=candidates['current_candidate'],a_recommended=candidates['a_recommended'],
+            historical_a_recommendation=candidates.get('historical_a_recommendation'),actual=candidates['actual_submission'],
             proxy_highest=[{k:item[k] for k in ('id','evaluation_key','metric','direction')} for item in candidates['proxy_highest'][:2]],
             proxy_groups_omitted_count=candidates['proxy_groups_omitted_count']+max(0,len(candidates['proxy_highest'])-2)),
         relationships=dict(count=len(graph['relations']),coverage=graph['coverage'],scope='Declared derivation and reuse; support remains unknown without original scientific intent.'),
@@ -315,11 +316,14 @@ def bind(root, step, role, protocol, *, source_cutoff=None, extra_steps=(), sele
     projection=project(root,step,source_cutoff=source_cutoff,extra_steps=extra_steps)
     records,state=projection['records'],projection['search_state']
     add,paged,files=history.page_writer(c.workspace(root,step))
+    implementation_ids={}
     for record,source in zip(records,projection['sources']):
         job,_,seal,_=source
+        materials=sorted(seal['materials'],key=lambda row:row['path'])
         options=[dict(id=f'{job["role"]}{job["step"]:03d}-I{number:03d}',label=_clip(Path(item['path']).name,80),
                       label_truncated=len(Path(item['path']).name.encode())>80)
-                 for number,item in enumerate(sorted(seal['materials'],key=lambda row:row['path']),1)]
+                 for number,item in enumerate(materials,1)]
+        implementation_ids.update((history.handle(material),option['id']) for material,option in zip(materials,options))
         paths=paged(options,16,'implementations',f'inputs/history/implementations/{record["step"]:03d}','sealed-implementation-objects')
         view=record['view'];view['implementation_index']=paths[0] if paths else None
         view['implementations']=options[:16];view['implementations_omitted_count']=max(0,len(options)-16)
@@ -331,6 +335,9 @@ def bind(root, step, role, protocol, *, source_cutoff=None, extra_steps=(), sele
     nodes=paged([row['view'] for row in records],8,'records','inputs/history/pages','sealed-scientific-nodes')
     overview=projection['candidates'];candidate_rows=overview['candidate_index']
     for row in candidate_rows:
+        if row['implementation'] is not None and row['implementation'] not in implementation_ids:
+            raise ValueError('Candidate implementation is outside verified sealed sources')
+        row['implementation_id']=implementation_ids.get(row['implementation'])
         relation=projection['graph']['candidates'].get(row['id'],{})
         row.update(parent_candidate=relation.get('parent'),mechanism_ref=relation.get('mechanism_ref'),
                    derivation=relation.get('derivation','unknown'),support=relation.get('support','unknown'),

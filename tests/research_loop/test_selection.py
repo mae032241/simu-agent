@@ -127,13 +127,14 @@ def brief_fixture():
     return raw, lineage.candidate_view(raw), {'relations': [], 'coverage': 'complete'}, {'candidates': 'inputs/history/candidates/0001.json'}
 
 
-def test_single_brief_marker_preserves_legacy_and_clears_latest_a_null():
+def test_single_brief_marker_uses_one_current_recommendation_authority():
     from scidiscovery.research_loop import lineage
     records, candidates, graph, indexes = brief_fixture()
     default = lineage.brief(records, None, graph, candidates, indexes)
     explicit_old = lineage.brief(records, None, graph, candidates, indexes, selection_protocol=0)
     assert selection._bytes(default) == selection._bytes(explicit_old)
-    assert default['candidates']['a_recommended']['candidate_id'] == 'P'
+    assert default['candidates']['a_recommended'] is None
+    assert default['candidates']['historical_a_recommendation']['candidate_id'] == 'P'
     assert 'selection_protocol' not in default['candidates']
     new = lineage.brief(records, None, graph, candidates, indexes, selection_protocol=1)
     assert new['candidates']['a_recommended'] is None
