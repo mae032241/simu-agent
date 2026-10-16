@@ -199,11 +199,14 @@ def configure(root,step,executor,config,output):
         **(dict(engineering_repair=dict(candidate_id=job['engineering_repair']['candidate_id'])) if job.get('engineering_repair') else {}))
     value=freeze(value,executor,path=output)
     updates=[]
-    for path in (Path(output),record/'experiment-config.json'):
+    # This is the same configuration already exposed to this Worker, without
+    # native/session evidence. The existing control mount is read-only in-shell.
+    projection=root/'host-runtime/experiment-control'/value['scope']['job_sha256']/'interfaces'/f'{native_attempt["number"]:03d}.json'
+    for path in (Path(output),record/'experiment-config.json',projection):
         if path.exists():
             old=c.read(c.regular(path))
             if old==value:continue
-            if path==record/'experiment-config.json' or old.get('scope')!=value['scope']:
+            if path in (record/'experiment-config.json',projection) or old.get('scope')!=value['scope']:
                 raise IntegrityError('Frozen experiment configuration changed')
         updates.append(path)
     # Validate every immutable conflict before replacing the current pointer.
@@ -226,6 +229,43 @@ def load(config, *, path=None):
         raise IntegrityError('Frozen execution implementation or configuration changed')
     _, adapter, _ = _adapter(config, path or Path(config['record_dir']).parent / 'config.json')
     return adapter
+
+
+def original_configuration(config,call_id):
+    """Resolve one accepted call's exact configuration, never the latest attempt."""
+    accepted=Records(config).accepted(call_id)
+    if (accepted.get('native_attempt')==config.get('native_attempt')
+            and accepted.get('interface')==config['execution_interface']):
+        return config
+    attempt=accepted.get('native_attempt')
+    if (not isinstance(attempt,dict) or set(attempt)!={'number','execution_key'}
+            or type(attempt.get('number')) is not int or not 0<=attempt['number']<10000
+            or not isinstance(attempt.get('execution_key'),str)
+            or not re.fullmatch('[0-9a-f]{64}',attempt['execution_key'])):
+        raise IntegrityError('Original execution native attempt is unavailable')
+    directory=Path(config['record_dir'])
+    if len(directory.parents)<5:raise IntegrityError('Original execution namespace is unavailable')
+    root=directory.parents[4]
+    if directory!=root/'project/nodes'/f'{config["scope"]["step"]:03d}'/'work/lineage':
+        raise IntegrityError('Original execution namespace differs from its stage')
+    path=root/'host-runtime/experiment-control'/config['scope']['job_sha256']/'interfaces'/f'{attempt["number"]:03d}.json'
+    original=json.loads(read(path))
+    if (original.get('scope')!=config['scope'] or original.get('record_dir')!=config['record_dir']
+            or original.get('native_attempt')!=attempt or original.get('execution_interface')!=accepted.get('interface')):
+        raise IntegrityError('Original execution configuration differs from accepted binding')
+    return original
+
+
+def original_adapter(config,call_id,capability):
+    """Both the current permission and the original interface must allow an action."""
+    current=load(config)
+    if not getattr(lifecycle_capabilities(current),capability):
+        raise UnsupportedExecution('Requested original execution operation unavailable')
+    original=original_configuration(config,call_id)
+    adapter=current if original is config else load(original)
+    if not getattr(lifecycle_capabilities(adapter),capability):
+        raise UnsupportedExecution('Original execution operation unavailable')
+    return original,adapter
 
 
 class Records:
@@ -548,7 +588,8 @@ def _dispatch_descriptor(config, payload, *, parent=None, new=False, change=None
     records = Records(config)
     before=records.calls()
     for path in before:
-        details=adapter.status_details(path.name)
+        _,prior=original_adapter(config,path.name,'query')
+        details=prior.status_details(path.name)
         if details['state'] in {'unknown', 'running','accepted','submitted'}:
             running=details['state']=='running' and records.external(path.name) is not None
             return dict(status='running' if running else 'unknown',call_id=path.name, note='Preserve original execution; query its identity instead of replay')
@@ -581,7 +622,8 @@ def progress(config):
     for path in Records(config).calls():
         binding=None
         try:
-            details = adapter.status_details(path.name)
+            _,prior=original_adapter(config,path.name,'query')
+            details = prior.status_details(path.name)
             binding=Records(config).accepted(path.name).get('mechanism_binding')
         except (FileNotFoundError,json.JSONDecodeError,UnicodeDecodeError):
             details=dict(state='unknown')
@@ -631,7 +673,7 @@ def main(argv=None):
         item.add_argument('--call-id',required=True)
     args=parser.parse_args(argv)
     try:
-        config=json.loads(read(args.config))
+        config=json.loads(read(args.config));feedback_config=config
         from . import protocol
         scope=config.get('scope',{})
         if args.command=='lineage-status' and (type(scope.get('handoff_protocol')) is not int or scope['handoff_protocol']!=protocol.CURRENT):
@@ -652,6 +694,7 @@ def main(argv=None):
             capability='lookup_submission' if args.command=='lookup' else 'query' if args.command in {'query','reconcile'} else args.command
             if not getattr(lifecycle_capabilities(adapter),capability):
                 raise UnsupportedExecution('Requested original execution operation unavailable')
+            config,adapter=original_adapter(config,args.call_id,capability)
             if args.command=='query':result=adapter.status_details(args.call_id)
             elif args.command=='reconcile':
                 observed=record_observation(config,adapter,args.call_id)
@@ -675,8 +718,8 @@ def main(argv=None):
                 if (Records(config).directory(args.call_id)/'execution-observation.json').exists():
                     record_observation(config,adapter,args.call_id)
             code=2 if args.command=='reconcile' and result['status'] in {'unknown','running'} else 0
-        result['feedback']=dict(version=1,budget=feedback.budget_hint(Path(config['record_dir']).parent.parent),
-            review=review_feedback(config),
+        result['feedback']=dict(version=1,budget=feedback.budget_hint(Path(feedback_config['record_dir']).parent.parent),
+            review=review_feedback(feedback_config),
             qualification='Execution metadata does not establish scientific or candidate qualification.')
     except ReviewRequired as error:result=dict(status='review_required',reason=str(error),accepted=False);code=2
     except (IntegrityError,common.IntegrityError,feedback.history.ObserverIntegrityError) as error:result=dict(status='integrity_error',note=str(error));code=3
