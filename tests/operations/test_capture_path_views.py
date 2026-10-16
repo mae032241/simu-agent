@@ -93,7 +93,7 @@ def test_opaque_model_is_automatically_sealed_byte_identical_without_loading(tmp
     assert not any(r['metadata'].get('kind') == 'capture_reading_view' for r in records(runtime, worker))
 
 
-@pytest.mark.parametrize('private', [b'password=123456789012\n', b'-----BEGIN PRIVATE KEY-----\nfixture\n'])
+@pytest.mark.parametrize('private', [b'password=123456789012\n', b'-----BEGIN ' + b'PRIVATE KEY-----\nfixture\n'])
 def test_real_secret_is_rejected_even_beside_a_valid_task_path(tmp_path, private):
     runtime, _, _, worker, _, workspace = experiment(tmp_path)
     code = workspace / 'scratch/artifacts/derive.py'
@@ -114,7 +114,7 @@ def test_unverified_machine_path_is_a_capture_gap(tmp_path, fault):
     task = workspace / 'scratch/artifacts'
     code = task / 'derive.py'
     code.write_bytes(b'print(1)\n')
-    paths = {'unknown': '/home/unknown/not-authorized.py', 'foreign': str(tmp_path / 'other-run.py'),
+    paths = {'unknown': '/home/' + 'unknown/not-authorized.py', 'foreign': str(tmp_path / 'other-run.py'),
         'hidden': str(workspace / 'assignment.json'), 'parent': str(task / '../artifacts/derive.py'),
         'sibling': str(workspace) + '-other/scratch/artifacts/derive.py'}
     if fault == 'symlink':

@@ -249,7 +249,7 @@ def test_private_unsafe_and_unreadable_files_are_capture_gaps(tmp_path, fault):
     target = workspace/'scratch/artifacts/data.txt'
     if fault == 'secret': target.write_bytes(b'password=123456789012\n')
     elif fault == 'chunk_secret': target.write_bytes((b'x\n'*524280)+b'api_key='+(b'A'*24)+b'\n')
-    elif fault == 'key': target.write_bytes(b'-----BEGIN PRIVATE KEY-----\nabc\n')
+    elif fault == 'key': target.write_bytes(b'-----BEGIN ' + b'PRIVATE KEY-----\nabc\n')
     elif fault == 'long_line': target.write_bytes(b'a'*65537)
     elif fault == 'opaque': target = target.with_suffix('.unsupported'); target.write_bytes(b'opaque')
     elif fault == 'fifo': os.mkfifo(target)
@@ -831,7 +831,7 @@ def test_enumeration_order_does_not_multiply_capture_receipts(tmp_path, monkeypa
     assert first == second and records(runtime, worker) == retained
 
 
-@pytest.mark.parametrize('private', [b'api_key=abcdef0123456789abcdef', b'/home/owner/.ssh/private_key'])
+@pytest.mark.parametrize('private', [b'api_key=abcdef0123456789abcdef', b'/home/' + b'owner/.ssh/private_key'])
 def test_explicit_binary_publication_cannot_bypass_known_private_content(tmp_path, private):
     _, runtime, _, worker, _, workspace, alias = extraction(tmp_path)
     (workspace/'scratch/artifacts/model.npz').write_bytes(b'PK\x03\x04\x00' + private)

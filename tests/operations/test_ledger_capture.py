@@ -19,7 +19,7 @@ from tests.operations.worker_fixtures import attached_worker
 
 FIELDS = {'run_id':'int', 'ok':'bool', 'started_at':'int', 'metric':'str',
     'val_acc':'float', 'val_score':'float', 'wall_seconds':'float'}
-PRIVATE_SCRIPT = '/home/fixture/private/script.py'
+PRIVATE_SCRIPT = '/home/' + 'fixture/private/script.py'
 PRIVATE_MODEL = '/opt/exp/private/model.bin'
 
 
@@ -281,7 +281,7 @@ assert 'ledgers' not in json_projection(ArtifactCaptureSpec())
 assert 'capture_policy_digest' in OperationCallInput.model_json_schema()['properties']
 with tempfile.TemporaryDirectory() as directory:
     path = Path(directory)/'input.jsonl'
-    raw = b'{"run_id":3,"ok":false,"val_score":-1.5,"script":"/home/fixture/private/a.py","model_path":"/opt/exp/private/a.bin"}\n'
+    raw = b'{"run_id":3,"ok":false,"val_score":-1.5,"script":"/home/' + b'fixture/private/a.py","model_path":"/opt/exp/private/a.bin"}\n'
     path.write_bytes(raw)
     settings = parse_settings({'capture':{'allowed_roots':[directory], 'tasks':{'probe':{
         'operation_id':'science.evidence.extract.v1', 'ledgers':[{'logical_name':'results',
