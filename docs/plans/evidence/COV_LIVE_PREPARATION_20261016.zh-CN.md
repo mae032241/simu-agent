@@ -1,5 +1,7 @@
 # 2026-10-16 新 cov 场：准备与启动器合同检查
 
+当前状态：新 runtime-v2 的完整零模型生产配置链 PASS，真实实例 instance-03 已具备启动条件；尚未启动真实模型或评分。下文保留先前失败过程，不用局部通过覆盖旧失败。
+
 基线 `60b535c79d889f948cfb652736d5439fec6e38bf`；本场新目录为仓库 `.trial/cov_live_20261016`。用户授权此场 2,000,000 token／1,200 秒，另有独立 generic 场；根统一以一个 serial_lock/run_one 进程树监督并发，两场共用树 RSS 13GB／系统可用内存 1GB 保底，数值线程为 1，不主动限制虚拟地址空间。本文不记录认证信息或旧科学候选。
 
 ## 输入和角色
@@ -30,3 +32,20 @@
 ## 当前 native 引擎零模型检查
 
 根授权后，受管执行本场 `sidecar_managed.py`，调用仓库 `probe_native_code_mode.py` 并绑定上述精确 sidecar SHA；实际 connection/ready、session/open、算术 JavaScript 返回2，0 model requests。监督0.125秒，tree RSS45,502,464B，cleanup=true，无资源触发。原始监督记录 `sidecar-supervised/{pytest.log,resource.json}`、引擎事件 `sidecar-probe-artifacts/native-code-mode-events.log` 与结果 `sidecar-probe-result.json` 均在本场目录。仅证明当前打包引擎能够运行，不证明真实模型内工具、账户别名或整场科学资格。
+
+
+## 最终 runtime-v2 重冻与全链结果
+
+原 call 身份修补已经独立复审并提交为 `8ab844f422be16b5a5c9aa8a1876978af2426a90`。本场新 runtime-v2 准备时基线是 `0c435f87f1e361c44027b3b8919103af8f2498cf`＋当时的精确 core diff，现已与该提交逐字对应。236个 core Python 源码和安装文件全部逐字核同并纳入冻结，保留旧 runtime、instance 与失败 gate，不热修原失败现场。
+
+实际命令 `python -B .trial/cov_live_20261016/preflight_managed_v3.py`，自带原 serial_lock/run_one，先新建实际 instance-03，再在独立 preflight-scene-v3 使用 exact production config 与假 native transport 运行公开真实 exp：
+
+| 阶段 | 结果 |
+| --- | --- |
+| fresh prepare-v3 | exit0，1.474s，RSS64,372,736B，0模型，实际实例无科学 jobs。 |
+| production-config fullchain | **PASS / delivery_confirmed**，106.897s，RSS339,943,424B，cleanup=true、无资源触发。H→W→A audit→A→W两new_context fragments→A→closeout A audit→A deliver全部封存；旧call query、原件挂载、候选审计、短名单smoke、隔离resolve/audit/promote/confirm及最终字节校验均通过。 |
+| 最终只读 readiness | 9项检查全true：冻结hash、public whitelist、无jobs、无ledger、无submission、未started、完整零模型链通过、原2M/1200预算、236core一致。无剩余工程阻断，真实模型行为和目标效果仍待实际运行。 |
+
+原始监督日志/资源：`.trial/cov_live_20261016/preflight-r5-{prepare,namespace-fullchain}/{pytest.log,resource.json}`；汇总 `preflight-r5-result.json`。完整 gate verdict 为 `preflight-verdict-v3.json`，SHA `f58bacc0fd93a021b72e25f081c3af1abaadbdda19315a265d5297d1dad8551a`；实际运行冻结 manifest 为 `frozen-manifest-v3.json`，SHA `b15636aa9fa2912871d2f8574d75cde5863fa1b9abbbc49982132d69ff9a0684`。本场 `readiness.json` 保存精确启动argv，run_case.py自身不获取锁，必须由根的共享监督树启动。
+
+共享launcher独审PASS；core原call修补独审PASS。无模型全链是工程门禁，不能替代真实模型验收，也不证明未知在途计费绝不会越过授权。最后复核时原2M/1200s真实授权尚未消费；未自动启动、重试、扩额或进行隐藏评分。
