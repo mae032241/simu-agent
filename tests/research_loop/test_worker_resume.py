@@ -27,8 +27,13 @@ if 'resume' not in args and role!='A':
 if 'resume' in args:assert thread in args and (work/'work/checkpoint').read_text()=='original checkpoint'
 assert pathlib.Path(os.environ['CODEX_HOME'])==home
 payload={'summary':'Continued scientific finding','scientific_result':'Original checkpoint was retained.','limitations':['Fake transport only'],'implementation_selection':None}
+if role=='W':
+ payload.update(mechanism_findings=None,stage_intent='review')
+ task=json.loads((work/'science-task.json').read_text());assigned=task.get('lineage',{}).get('mechanisms',{})
+ if assigned.get('task_action')=='screen':
+  payload['mechanism_findings']=[dict(mechanism=row['label'],basis='blocked',finding='This transport fixture retains a checkpoint but does not perform the declared scientific measurement.') for row in assigned['overview']]
 if role=='H':payload.update(search_plan=None,next_action='wait',route_reason='Bounded contribution complete')
-if role=='A':payload.update(search_review=None,candidate_recommendation=None,progress_assessment=None,next_action='finish',route_reason='Independent fake conclusion')
+if role=='A':payload.update(search_review=None,candidate_recommendation=None,progress_assessment=None,decision_request=None,portfolio_review=None,next_action='finish',route_reason='Independent fake conclusion')
 print(json.dumps({'type':'turn.completed','usage':{'input_tokens':20,'cached_input_tokens':5,'output_tokens':2}}),flush=True)
 if (work/'work/fail-again').exists():sys.exit(7)
 pathlib.Path(args[args.index('--output-last-message')+1]).write_text(json.dumps(payload))
@@ -54,8 +59,9 @@ else:
 kind=(work/'work/output-kind').read_text()
 if kind!='unknown':print(json.dumps({'type':'turn.completed','usage':{'input_tokens':10,'cached_input_tokens':3,'output_tokens':4}}),flush=True)
 payload={'summary':'Retained finding','scientific_result':'Completed experiment retained.','limitations':[],'implementation_selection':None}
+if role=='W':payload.update(mechanism_findings=None,stage_intent='review')
 if role=='H':payload.update(search_plan=None,next_action='wait',route_reason='Bounded output repaired')
-if role=='A':payload.update(search_review=None,candidate_recommendation=None,progress_assessment=None,next_action='finish',route_reason='Bounded output repaired')
+if role=='A':payload.update(search_review=None,candidate_recommendation=None,progress_assessment=None,decision_request=None,portfolio_review=None,next_action='finish',route_reason='Bounded output repaired')
 destination=pathlib.Path(args[args.index('--output-last-message')+1])
 if resume and (not (work/'work/repeat-bad-output').exists() or
  (work/'work/valid-after-second').exists() and (work/'work/launches').read_text().count('resume\n')>=2):
@@ -502,3 +508,76 @@ def test_accepted_continuation_rechecks_task_and_schema_before_actual_popen(tmp_
     assert not (first/'result-identity.json').exists()
     assert len(execution.records(root,1))==2
     assert (c.workspace(root,1)/'work/launches').read_text()=='exec\n'
+
+
+
+def large_native_session_tree(root):
+    """Complete session originals, independent of optional live token discovery."""
+    directory=root/'native-homes/001/sessions'
+    original=directory/'rollout.jsonl'
+    value=json.loads(original.read_text());value['payload']['retained_metadata']='original metadata '*5000
+    original.write_text(json.dumps(value)+'\n')
+    assert original.stat().st_size>65536
+    for number in range(257):
+        other=dict(type='session_meta',payload=dict(id=f'{number:08d}-0000-4000-8000-000000000000',cwd=str(c.workspace(root,1))))
+        (directory/f'other-{number:03d}.jsonl').write_text(json.dumps(other)+'\n')
+    assert len(list(directory.glob('*.jsonl')))==258
+    return original
+
+
+def test_large_native_session_tree_and_header_resume_same_original(tmp_path):
+    root=instance(tmp_path);first=fail(root);session_file=large_native_session_tree(root)
+    import hashlib
+    reference=continuation.session(root,1,first)
+    assert reference['path']==str(session_file)
+    with session_file.open('rb') as stream:header=stream.readline()
+    assert reference['header_sha256']==hashlib.sha256(header).hexdigest()
+    result=controller.worker_resume(root,1)
+    assert result['status']=='wait'
+    accepted=c.read(execution.record(root,1)/'native-intent.json')
+    assert accepted['session']==reference
+    assert (c.workspace(root,1)/'work/launches').read_text()=='exec\nresume\n'
+    assert native.usage(root)['observed_tokens']==36
+
+
+def test_large_native_session_header_wrong_cwd_does_not_accept_resume(tmp_path):
+    root=instance(tmp_path);first=fail(root);session_file=large_native_session_tree(root)
+    value=json.loads(session_file.read_text());value['payload']['cwd']='/incorrect-workspace'
+    session_file.write_text(json.dumps(value)+'\n')
+    with pytest.raises(ValueError,match='Native session workspace changed'):controller.worker_resume(root,1)
+    assert not (first/'continuations/001/native-intent.json').exists()
+    assert (c.workspace(root,1)/'work/launches').read_text()=='exec\n'
+
+
+def test_large_native_session_header_hash_drift_cannot_launch_accepted_resume(tmp_path):
+    root=instance(tmp_path);first=fail(root);session_file=large_native_session_tree(root)
+    reference=continuation.session(root,1,first);job=c.read(root/'jobs/001.json')
+    budget.transition(root,'advance','exact original large-header negative control')
+    anchor=budget.accept_continuation(root,job,[first]);record=first/'continuations/001';record.mkdir(parents=True)
+    c.write(record/'native-intent.json',dict(step=1,attempt=1,task_sha256=c.digest(root/'jobs/001.json'),
+        root_intent_sha256=c.digest(first/'native-intent.json'),previous=execution.proof(first),
+        session=reference,budget_slice=anchor))
+    value=json.loads(session_file.read_text());value['payload']['retained_metadata']+='changed after acceptance'
+    session_file.write_text(json.dumps(value)+'\n')
+    with pytest.raises(ValueError,match='Original native session header changed'):native.run_native(root,1,1)
+    assert not (record/'native-process.json').exists()
+    assert not (first/'continuations/002').exists()
+    assert (c.workspace(root,1)/'work/launches').read_text()=='exec\n'
+
+
+@pytest.mark.parametrize('shape',['current','legacy16','legacy15','required_drift','other_field'])
+def test_resume_accepts_only_exact_published_original_schema_shapes(tmp_path,shape):
+    root=instance(tmp_path);job=c.build_job(root,1,'H',[])
+    path=execution.origin(root,1)/'science-result.schema.json'
+    schema=c.read(path)
+    if shape!='current':schema['properties']['implementation_selection']['maxItems']=16
+    if shape=='legacy15':schema['properties']['implementation_selection']['maxItems']=15
+    elif shape=='required_drift':schema['required'].remove('summary')
+    elif shape=='other_field':schema['properties']['scientific_result']['minLength']=2
+    c.write(path,schema)
+    originals={p:p.read_bytes() for p in (path,root/'jobs/001.json',c.workspace(root,1)/'science-task.json')}
+    if shape in {'current','legacy16'}:assert continuation.validate_task(root,1)==job
+    else:
+        with pytest.raises(ValueError,match='Original native output schema changed'):continuation.validate_task(root,1)
+    assert all(p.read_bytes()==data for p,data in originals.items())
+    assert not (execution.origin(root,1)/'native-intent.json').exists()

@@ -3,7 +3,6 @@ import json
 import hashlib
 import os
 import time
-from itertools import islice
 from pathlib import Path
 import uuid
 
@@ -48,9 +47,15 @@ def validate_launcher(root):
 def validate_task(root, step):
     job = c.read(c.regular(root / 'jobs' / f'{step:03d}.json'))
     c._validate_inputs(root, c.workspace(root, step), job)
-    schema = c.read(c.regular(execution.origin(root, step) / 'science-result.schema.json', limit=c.MAX_RESULT_BYTES))
-    if schema != c.result_schema(job['role'], job.get('handoff_protocol', 1), 'selection' in job):
-        raise ValueError('Original native output schema changed')
+    schema = c.read(c.regular(execution.origin(root, step) / 'science-result.schema.json', limit=None))
+    expected = c.result_schema(job['role'], job.get('handoff_protocol', 1), 'selection' in job)
+    if schema != expected:
+        # The previous same-protocol schema included this framework storage cap.
+        # Accept only that exact prior shape; retain the frozen schema bytes.
+        prior = json.loads(json.dumps(expected))
+        prior['properties']['implementation_selection']['maxItems'] = 16
+        if schema != prior:
+            raise ValueError('Original native output schema changed')
     return job
 
 def session(root, step, record):
@@ -62,10 +67,7 @@ def session(root, step, record):
         raise ResumeUnavailable('worker_resume_thread_unavailable')
     found = False
     with c.regular(record / 'native.jsonl').open('rb') as stream:
-        for _ in range(256):
-            line = stream.readline(65537)
-            if not line:break
-            if len(line) > 65536:raise ResumeUnavailable('worker_resume_thread_unavailable')
+        for line in stream:
             event = json.loads(line)
             if event.get('type') == 'thread.started':
                 if event.get('thread_id') != thread:raise ValueError('Native thread identity changed')
@@ -76,11 +78,9 @@ def session(root, step, record):
     home = execution.home(root, step, number)
     if home.resolve() != home:raise ValueError('Original native home changed')
     matches = []
-    for visited, path in enumerate(islice((home / 'sessions').rglob('*.jsonl'), 257), 1):
-        if visited > 256:raise ResumeUnavailable('worker_resume_session_capacity')
+    for path in (home / 'sessions').rglob('*.jsonl'):
         if path.resolve() != path:raise ValueError('Native session original changed')
-        with c.regular(path).open('rb') as stream:line = stream.readline(65537)
-        if len(line) > 65536:raise ResumeUnavailable('worker_resume_session_unavailable')
+        with c.regular(path).open('rb') as stream:line = stream.readline()
         event = json.loads(line)
         if event.get('type') == 'session_meta' and event.get('payload', {}).get('id') == thread:
             if event['payload'].get('cwd') != str(c.workspace(root, step)):
@@ -178,7 +178,7 @@ def output_request(root, step, record, *, source_attempt=None, verify_task=True)
             raise ValueError('Missing final output identity changed')
         error = OutputRepairRequired('missing_output', 'Return the required final scientific JSON; the completed work and checkpoints are already retained.')
     else:
-        if c.digest(c.regular(raw, limit=c.MAX_RESULT_BYTES)) != outcome.get('raw_sha256'):
+        if c.digest(c.regular(raw, limit=None)) != outcome.get('raw_sha256'):
             raise ValueError('Original final output changed before repair')
         try:
             science=c.science_payload(raw, job['role'], job.get('handoff_protocol', 1), 'selection' in job)
@@ -422,7 +422,7 @@ def validate_wake(root,step,intent,prior):
         path=Path(item['accepted']['path']).parent/'execution-observation.json'
         observed=c.read(c.regular(path))
         accepted=c.read(Path(item['accepted']['path']));_,config=managed_wait._config(root,job,accepted)
-        experiments.verify_observation(observed,lambda proof:experiments.read(proof['path'],experiments.MAX_ASSET),interface=config['execution_interface'])
+        experiments.verify_observation(observed,lambda proof:Path(proof['path']),interface=config['execution_interface'])
         expected.append(experiments.proof(path))
     if request['observations']!=expected:raise ValueError('Execution wake differs from the same original terminal observations')
 

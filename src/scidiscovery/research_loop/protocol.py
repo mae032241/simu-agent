@@ -79,17 +79,17 @@ def archive_status(root):
     jobs=sorted((root/'jobs').glob('*.json'))
     omitted_nodes=max(0,len(jobs)-256)
     for path in jobs[:256]:
-        job=c.read(c.regular(path,limit=c.MAX_RESULT_BYTES))
+        job=c.read(c.regular(path,limit=None))
         step=job['step'];record=c.host_record(c.workspace(root,step))
         state='prepared';seal=record/'result-identity.json'
         if seal.exists():
-            identity=c.read(c.regular(seal,limit=c.MAX_RESULT_BYTES))
+            identity=c.read(c.regular(seal,limit=None))
             attempt=(identity.get('execution_ref') or {}).get('attempt',0)
             if type(attempt) is not int or attempt<0:raise ValueError('Preserved native reference is malformed')
             terminal=record/'continuations'/f'{attempt:03d}' if attempt else record
             if (c.digest(c.regular(path))!=identity['job_sha256']
                     or c.digest(c.regular(record/'result.json'))!=identity['sha256']
-                    or c.digest(c.regular(terminal/'science-output.json',limit=c.MAX_RESULT_BYTES))!=identity['raw_sha256']):
+                    or c.digest(c.regular(terminal/'science-output.json',limit=None))!=identity['raw_sha256']):
                 raise ValueError('Preserved scientific originals changed')
             state='seal_present_originals_verified'
         elif (record/'native-outcome.json').exists():state='native_outcome_unsealed'

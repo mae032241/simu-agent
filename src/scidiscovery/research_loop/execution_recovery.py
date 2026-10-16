@@ -12,18 +12,17 @@ def prefix(root,step):
     path=Path(root)/'jobs'/f'{step:03d}.json'
     if path.exists():return c.read(c.regular(path)).get('history',{}).get('execution_recoveries',[])
     paths=sorted((Path(root)/DIRECTORY).glob('*/*.json'))
-    if len(paths)>128:raise ValueError('Execution recovery prefix capacity exceeded')
     return [dict(path=path.relative_to(root).as_posix(),sha256=c.digest(c.regular(path))) for path in paths]
 
 
 def validate(root,refs):
-    if not isinstance(refs,list) or len(refs)>128:raise ValueError('Execution recovery prefix capacity exceeded')
+    if not isinstance(refs,list):raise ValueError('Execution recovery prefix must be a list')
     values=[];seen=set()
     for ref in refs:
         if set(ref)!={'path','sha256'}:raise ValueError('Execution recovery prefix is malformed')
         path=Path(root)/ref['path']
         if (path.resolve()!=path or not path.is_relative_to(Path(root)/DIRECTORY)
-                or c.digest(c.regular(path,limit=history.MAX_OBSERVER_BYTES))!=ref['sha256']):
+                or c.digest(c.regular(path,limit=None))!=ref['sha256']):
             raise history.ObserverIntegrityError('Frozen execution recovery original changed')
         value=c.read(path);step=value['source_step'];call=value['row']['call_id'];key=(step,call)
         if key in seen or path!=Path(root)/DIRECTORY/f'{step:03d}'/(call+'.json'):

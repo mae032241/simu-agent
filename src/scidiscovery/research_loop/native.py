@@ -179,7 +179,7 @@ def run_native(root: Path, step: int, attempt=0):
                 or not Path(session['path']).is_relative_to(Path(session['home']) / 'sessions')):
             raise ValueError('Original native session binding changed')
         with regular(Path(session['path'])).open('rb') as stream:
-            header = stream.readline(65537)
+            header = stream.readline()
         import hashlib
         if hashlib.sha256(header).hexdigest() != intent['session']['header_sha256']:
             raise ValueError('Original native session header changed')

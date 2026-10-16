@@ -26,14 +26,14 @@ def _config(root,job,accepted):
 
 
 def validate(root,job,record):
-    value=c.read(c.regular(record/NAME,limit=checkpoint.MAX_BYTES))
+    value=c.read(c.regular(record/NAME,limit=None))
     if (value['job_sha256']!=c.digest(root/'jobs'/f'{job["step"]:03d}.json')
             or value['checkpoint_sha256']!=c.digest(c.regular(record/'checkpoint.json'))
             or value['outcome_sha256']!=c.digest(c.regular(record/'native-outcome.json'))):
         raise e.IntegrityError('Execution waiting checkpoint changed')
     checkpoint.validate(root,job,record)
-    if not value['calls'] or len(value['calls'])>e.MAX_INPUT_FILES:
-        raise e.IntegrityError('Execution waiting calls exceed their original bound')
+    if not isinstance(value['calls'],list) or not value['calls']:
+        raise e.IntegrityError('Execution waiting requires original calls')
     seen=set()
     for item in value['calls']:
         for key in ('accepted','submission','config'):
@@ -68,7 +68,7 @@ def before_seal(root,job,record):
         if external is None:continue
         observed=directory/'execution-observation.json'
         if observed.exists():
-            e.verify_observation(c.read(observed),lambda item:e.read(item['path'],e.MAX_ASSET),interface=config['execution_interface'])
+            e.verify_observation(c.read(observed),lambda item:Path(item['path']),interface=config['execution_interface'])
             continue
         if not config['execution_interface']['capabilities']['query']:continue
         adapter=e.load(config)
@@ -100,7 +100,7 @@ def pending(root):
             path=Path(item['accepted']['path']).parent/'execution-observation.json'
             if not path.exists():return True
             accepted=c.read(Path(item['accepted']['path']));_,config=_config(root,job,accepted)
-            e.verify_observation(c.read(path),lambda proof:e.read(proof['path'],e.MAX_ASSET),interface=config['execution_interface'])
+            e.verify_observation(c.read(path),lambda proof:Path(proof['path']),interface=config['execution_interface'])
     return False
 
 
@@ -114,7 +114,7 @@ def wait_and_wake(root,step):
             accepted=c.read(Path(item['accepted']['path']));_,config=_config(root,job,accepted)
             path=Path(item['accepted']['path']).parent/'execution-observation.json'
             if path.exists():
-                e.verify_observation(c.read(path),lambda proof:e.read(proof['path'],e.MAX_ASSET),interface=config['execution_interface'])
+                e.verify_observation(c.read(path),lambda proof:Path(proof['path']),interface=config['execution_interface'])
             else:
                 adapter=e.load(config)
                 if not config['execution_interface']['capabilities']['query']:
