@@ -51,7 +51,7 @@ PLUGIN = PluginDefinition(
         ComponentSpec("runtime_attestation_schema", "resource", "tcad_artifact.plugin:RUNTIME_ATTESTATION_SCHEMA"),
         ComponentSpec("parameter_requirements_schema", "resource", "tcad_artifact.plugin:PARAMETER_REQUIREMENTS_SCHEMA"),
         ComponentSpec("runtime_configuration_schema", "resource", "tcad_artifact.runtime_plugin:CONFIGURATION_SCHEMA"),
-        ComponentSpec("runtime_factory", "runtime_factory", "tcad_artifact.runtime_plugin:RUNTIME_FACTORY", configuration_identity="tcad.runtime-factory.v3:run-local-tool-service"),
+        ComponentSpec("runtime_factory", "runtime_factory", "tcad_artifact.runtime_plugin:RUNTIME_FACTORY", configuration_identity="tcad.runtime-factory.v4:scoped-debug-archive"),
         ComponentSpec("study_execute", "effect", "tcad_artifact.runtime_plugin:EXECUTE_EFFECT", configuration_identity="tcad.execution-adapter:tcad:execution-package.v2"),
         ComponentSpec("execution_projector", "projector", "tcad_artifact.runtime_plugin:EXECUTION_PROJECTOR"),
         ComponentSpec("execution_request_schema", "resource", "tcad_artifact.plugin:EXECUTION_REQUEST_SCHEMA"),

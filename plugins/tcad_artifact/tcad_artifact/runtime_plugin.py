@@ -235,7 +235,15 @@ _config_schema["$id"] = "tcad.runtime-plugin-config.v1"
 CONFIGURATION_SCHEMA = json.dumps(
     _config_schema, ensure_ascii=False, separators=(",", ":"), sort_keys=True
 )
-RUNTIME_FACTORY = RuntimePluginFactory(build_runtime)
+def archive_storage(context):
+    # Configuration validation only: archive previews never instantiate an
+    # executor, create directories, query a solver or reconcile submissions.
+    TCADRuntimeConfig.model_validate_json(context.config_bytes, strict=True)
+    from .debug_archive import storage
+    return {"debug": storage(context.state_root / "local-tcad-debug")}
+
+
+RUNTIME_FACTORY = RuntimePluginFactory(build_runtime, archive_storage=archive_storage)
 EXECUTE_EFFECT = CallableComponent("effect", execute_effect)
 EXECUTION_PROJECTOR = CallableComponent("projector", execution_projector)
 

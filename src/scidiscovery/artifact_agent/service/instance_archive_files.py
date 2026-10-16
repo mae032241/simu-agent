@@ -75,13 +75,25 @@ def durable_json(path, value):
     fsync_directory(path.parent)
 
 
-def roots(runtime):
+def roots(runtime, archive_storage=None):
     state = Path(runtime.state_root)
     backend = getattr(runtime, "local_backend", None)
     local = Path(backend.root) if backend is not None else Path(runtime.project_root) / ".scidiscovery-runs"
-    return {"objects": Path(runtime.artifacts.cas.root), "workspaces/local": local,
+    result = {"objects": Path(runtime.artifacts.cas.root), "workspaces/local": local,
             "workspaces/hardened": state / "hardened-runs", "executions/exchange": state / "execution-exchange",
             "executions/results": state / "executor-results", "diagnostics": state / "engineering-diagnostics"}
+    for binding, storage in (archive_storage or {}).items():
+        if not isinstance(binding, str) or re.fullmatch(r"[a-z][a-z0-9_.-]{0,127}:[a-z][a-z0-9_.-]{0,127}", binding) is None:
+            raise ArchiveError("plugin archive binding is invalid")
+        key = "plugins/" + binding.replace(":", "/")
+        if not Path(storage.root).is_absolute():
+            raise ArchiveError("plugin archive root must be absolute")
+        path = check_path(storage.root)
+        if path.resolve() != path or not path.is_relative_to(state) or path == state or any(
+                path == root or path.is_relative_to(root) or root.is_relative_to(path) for root in result.values()):
+            raise ArchiveError("plugin archive root overlaps managed storage")
+        result[key] = path
+    return result
 
 
 def recovery_digests(row):
@@ -157,9 +169,10 @@ def workspace_refs(runtime, rows):
 
 
 class Files:
-    def __init__(self, runtime, records, selected, instance_id):
+    def __init__(self, runtime, records, selected, instance_id, *, archive_storage=None):
         self.runtime, self.records, self.selected, self.instance_id = runtime, records, selected, instance_id
-        self.roots = roots(runtime)
+        self.archive_storage = dict(archive_storage or {})
+        self.roots = roots(runtime, self.archive_storage)
         self.entries, self.gaps, self.unowned, self.unsupported = {}, [], [], []
 
     def add(self, root_key, path, *, shared=False, restore=True, expected=None, missing=True):
@@ -277,8 +290,33 @@ class Files:
                 except (ValueError, UnicodeError):
                     if len(self.unowned) < 100:
                         self.unowned.append({"path": "diagnostics/" + path.name, "reason": "diagnostic_scope_unavailable"})
+        from ...operations.runtime_plugins import ArchiveStorageSelection
+        for binding, storage in self.archive_storage.items():
+            key = "plugins/" + binding.replace(":", "/")
+            selection = storage.inspect(self.instance_id, tuple(self.selected["run_ids"]),
+                lambda run_id: self.runtime.runs.status(run_id).instance_id)
+            if (not isinstance(selection, ArchiveStorageSelection) or not isinstance(selection.paths, tuple)
+                    or not isinstance(selection.unsupported, tuple) or len(selection.paths) > MAX_FILES
+                    or len(selection.unsupported) > 16 or type(selection.unowned) is not bool):
+                raise ArchiveError("plugin archive inventory exceeds its contract")
+            for relative in selection.paths:
+                if not isinstance(relative, str):
+                    raise ArchiveError("plugin archive path is not a string")
+                path = Path(relative)
+                if (not path.parts or path.is_absolute()
+                        or ".." in path.parts or path.as_posix() != relative):
+                    raise ArchiveError("plugin archive path is not relative and canonical")
+                self.add(key, self.roots[key] / path)
+            for reason in selection.unsupported:
+                if not isinstance(reason, str) or not 0 < len(reason) <= 160:
+                    raise ArchiveError("plugin archive diagnostic is invalid")
+                self.unsupported.append({"code": "plugin_storage_unavailable", "provider": binding, "reason": reason})
+            if selection.unowned:
+                self.unowned.append({"path": key, "reason": "unselected_plugin_state_retained", "expanded": False})
+        # Historical state without its installed ownership provider remains
+        # unsupported. Disabling a plugin cannot silently grant migration.
         debug = Path(self.runtime.state_root) / "local-tcad-debug"
-        if debug.exists() and any(debug.iterdir()):
+        if debug not in [item.root for item in self.archive_storage.values()] and debug.exists() and any(debug.iterdir()):
             self.unsupported.append({"code": "local_debug_ownership_and_writer_unknown", "path": "local-tcad-debug"})
         # System-wide residual trees are outside this exact instance selection.
         # Do not recursively inventory other instances merely to archive a small

@@ -76,7 +76,7 @@ class InstanceArchive:
         instance = selected["databases"]["scheduler"]["tables"]["scheduler_instances"]
         if len(instance) != 1:
             raise ArchiveError("research instance does not exist")
-        files = Files(self.runtime, records, selected, instance_id).collect()
+        files = Files(self.runtime, records, selected, instance_id, archive_storage=self._archive_storage()).collect()
         files["unsupported"].extend(self._plugin_scope(selected))
         return {"version": 1, "state_format": STATE_FORMAT, "instance_id": instance_id, "project_root": str(self.project_root),
                 "state_root": str(self.state_root), "backend_id": self.runtime.runs.backend.backend_id,
@@ -84,6 +84,10 @@ class InstanceArchive:
                 "database_paths": {key: str(path) for key, path in records.paths.items()},
                 **selected, **{key: value for key, value in files.items() if key != "gaps"},
                 "gaps": selected["gaps"] + files["gaps"]}
+
+    def _archive_storage(self):
+        from ..runtime_plugin_bindings import load_archive_storage
+        return load_archive_storage(self.runtime.operation_catalog, self.plugin_configs, self.state_root)
 
     def _plugin_scope(self, selected):
         executions = selected["databases"].get("executions", {}).get("tables", {}).get("executions", [])
@@ -615,8 +619,11 @@ class InstanceArchive:
         if capture_objects is not None:
             capture_objects.update(manifest=manifest, snapshot=snapshot)
         package = self.root / index["instance_id"]
+        configured_roots = {key: str(value) for key, value in roots(self.runtime, self._archive_storage()).items()}
+        base_roots = set(roots(self.runtime))
         if (snapshot["project_root"] != str(self.project_root) or snapshot["state_root"] != str(self.state_root)
-                or snapshot["roots"] != {key: str(value) for key, value in roots(self.runtime).items()}
+                or not base_roots <= set(snapshot["roots"])
+                or any(configured_roots.get(key) != value for key, value in snapshot["roots"].items())
                 or snapshot["backend_id"] != self.runtime.runs.backend.backend_id
                 or snapshot["backend_version"] != self.runtime.runs.backend.backend_version):
             raise ArchiveError("restore requires the original configured roots and backend")

@@ -9,6 +9,21 @@ from typing import Any, Callable, Literal, Mapping
 
 
 @dataclass(frozen=True, slots=True)
+class ArchiveStorageSelection:
+    paths: tuple[str, ...] = ()
+    unsupported: tuple[str, ...] = ()
+    unowned: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ArchiveStorage:
+    """Trusted plugin ownership projection; core retains all file/migration IO."""
+
+    root: Path
+    inspect: Callable[[str, tuple[str, ...], Callable[[str], str]], ArchiveStorageSelection]
+
+
+@dataclass(frozen=True, slots=True)
 class RuntimePluginContext:
     """Startup context for installed trusted control-runtime code."""
 
@@ -44,13 +59,18 @@ class RuntimePluginFactory:
     """One installed, trusted startup factory; not an Agent capability."""
 
     build: Callable[[RuntimePluginContext], RuntimePluginContribution]
+    archive_storage: Callable[[RuntimePluginContext], Mapping[str, ArchiveStorage]] | None = None
     def __post_init__(self) -> None:
         if not callable(self.build):
             raise TypeError("runtime plugin factory must be callable")
+        if self.archive_storage is not None and not callable(self.archive_storage):
+            raise TypeError("runtime plugin archive storage factory must be callable")
 
 
 __all__ = [
     "RuntimePluginContext",
     "RuntimePluginContribution",
     "RuntimePluginFactory",
+    "ArchiveStorage",
+    "ArchiveStorageSelection",
 ]

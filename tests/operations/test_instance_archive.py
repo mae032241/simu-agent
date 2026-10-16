@@ -125,7 +125,7 @@ def test_pausing_client_does_not_allow_archiving_queued_or_running_work(tmp_path
     for expected in ('queued','running'):
         view=service.preview(instance.instance_id)
         assert not view['ready'] and any(x.get('reason')=='run_nonterminal' for x in view['busy'])
-        assert root.call_tool('run_status',{'name':'still_active','output_paths':[]})['state']==expected
+        assert root.call_tool('run_status',{'name':'still_active'})['state']==expected
         if expected=='queued':
             worker=_worker(catalog,runtime)
             worker.call_tool('worker_open_assignment',{})
@@ -344,7 +344,7 @@ def test_failed_recovery_pending_workspace_quarantine_and_shared_draft_preserved
     os.chmod(draft / "result.json", 0o400)
     source = failed_run(runtime, first, "run_failedone", draft_digest=draft_digest)
     failed_run(runtime, second, "run_failedtwo", draft_digest=draft_digest)
-    (source / "scratch").mkdir()
+    (source / "scratch").mkdir(exist_ok=True)
     (source / "scratch" / "attempt.cmd").write_bytes(b"original attempt")
     quarantine = runtime.runs.backend.root / "quarantine" / source.name
     quarantine.mkdir()

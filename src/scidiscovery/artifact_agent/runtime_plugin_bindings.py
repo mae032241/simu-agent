@@ -160,6 +160,27 @@ def load_runtime_plugin_contributions(
     )
 
 
+def load_archive_storage(catalog, assignments, state_root):
+    """Read ownership declarations without constructing adapters or Worker services."""
+    from scidiscovery.operations.runtime_plugins import ArchiveStorage
+    if set(assignments) - set(catalog.runtime_plugin_ids()):
+        raise ValueError("archive plugin configuration is not installed")
+    result = {}
+    for plugin_id, path in assignments.items():
+        factory = catalog.runtime_factory(plugin_id)
+        if factory.archive_storage is None:
+            continue
+        raw = _read_config(path)
+        contribution = factory.archive_storage(RuntimePluginContext(plugin_id, "control", Path(path), raw, Path(state_root)))
+        if not isinstance(contribution, Mapping) or len(contribution) > 16:
+            raise ValueError("plugin archive storage contribution is invalid")
+        for name, storage in contribution.items():
+            if not isinstance(name, str) or _LOCAL_BINDING.fullmatch(name) is None or not isinstance(storage, ArchiveStorage):
+                raise ValueError("plugin archive storage binding is invalid")
+            result[f"{plugin_id}:{name}"] = storage
+    return result
+
+
 def runtime_process_summary(
     catalog: Any,
     contribution: LoadedRuntimePlugins,
