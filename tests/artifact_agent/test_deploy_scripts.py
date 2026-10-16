@@ -2013,7 +2013,11 @@ def test_git_release_builder_emits_clean_manifested_source(tmp_path: Path) -> No
         if path.is_file() and path != manifest
     }
     assert output.with_suffix(".tar.gz").is_file()
-    assert not (output / "docs/plans").exists()
+    assert {path.relative_to(output / 'docs/plans').as_posix()
+            for path in (output / 'docs/plans').rglob('*') if path.is_file()} == {
+        'fixtures/rootless-selection-v1.json', 'fixtures/rootless-selection-actions-v1.json',
+        'search_mvp/native-payloads.json',
+    }
     # Independent consumer requirements: do not derive these from the builder's
     # own allowlists, which previously made missing CI/test inputs invisible.
     required = (
@@ -2035,6 +2039,20 @@ def test_git_release_builder_emits_clean_manifested_source(tmp_path: Path) -> No
         "scripts/compiled_worker_process_guard.py", "scripts/run_compiled_codex_worker.py",
         "scripts/l4_live_tcad_revision_probe.py", "scripts/l4_live_tcad_agent_probe.py",
         "scripts/l4_tcad_transport_fixture.py",
+        "docs/ROOTLESS_CLI.zh-CN.md",
+        "docs/plans/fixtures/rootless-selection-v1.json",
+        "docs/plans/fixtures/rootless-selection-actions-v1.json",
+        "scripts/acceptance/rootless_cov_launcher.py",
+        "scripts/acceptance/rootless_public_selection_replay.py",
+        "scripts/acceptance/behavior_card.py", "scripts/acceptance/prelive_gate.py",
+        "scripts/observe_covshift_candidates.py",
+        "docs/plans/search_mvp/native-payloads.json",
+        "scripts/s0_scoring.py", "scripts/prepare_covshift_local.py",
+        "scripts/prepare_covshift_pilot.py", "scripts/run_covshift_pilot.py",
+        "scripts/prepare_nbody_local.py", "scripts/probe_covshift_permissions.py",
+        "scripts/native_usage_audit.py",
+        "scripts/acceptance/fixtures/hourly_loop_memory/materials.json",
+        "scripts/acceptance/fixtures/covshift_permissions/canary.py",
     )
     assert all((output / relative).is_file() for relative in required)
     expected_tests = {p.relative_to(project_root / "tests") for p in
@@ -2045,17 +2063,24 @@ def test_git_release_builder_emits_clean_manifested_source(tmp_path: Path) -> No
     assert {p.relative_to(output / "tests") for p in (output / "tests").rglob("*")
             if p.is_file()} == expected_tests
     for relative in ("docs/ARCHITECTURE.md", "docs/ARCHITECTURE.zh-CN.md",
-                     "docs/PLUGIN_RUNTIME_API.md", "docs/RELEASE.md", "docs/RELEASE.zh-CN.md"):
+                     "docs/PLUGIN_RUNTIME_API.md", "docs/RELEASE.md", "docs/RELEASE.zh-CN.md",
+                     "docs/ROOTLESS_CLI.zh-CN.md"):
         document = output / relative
         text = document.read_text()
-        for link in re.findall(r"\]\(([^)]+)\)", text):
+        # Markdown examples name runtime artifacts, not release documents.
+        prose = re.sub(r'(?ms)^(`{3,}|~{3,})[^\n]*\n.*?^\1[ \t]*$', '', text)
+        prose = re.sub(r'(`+).*?\1', '', prose, flags=re.DOTALL)
+        for link in re.findall(r"\]\(([^)]+)\)", prose):
             if "://" in link:
                 continue
             target, _, anchor = link.partition("#")
             linked = document.parent / target if target else document
             assert linked.is_file(), (relative, link)
             if anchor:
-                assert f'id="{anchor}"' in linked.read_text(), (relative, link)
+                linked_text = linked.read_text()
+                headings = {re.sub(r'[^\w -]', '', heading.lower()).replace(' ', '-')
+                            for heading in re.findall(r'^#{1,6} +(.+?) *#*$', linked_text, re.MULTILINE)}
+                assert f'id="{anchor}"' in linked_text or anchor in headings, (relative, link)
         assert "plans/RESEARCH_TASK_REFACTOR_R4" not in text
 
     receipt_root = Path(os.environ["SCID_TEST_LOG_DIR"])
@@ -2073,7 +2098,8 @@ def test_git_release_builder_emits_clean_manifested_source(tmp_path: Path) -> No
         command.extend(targets or ("tests",))
         log_root = Path(os.environ["SCID_TEST_LOG_DIR"])
         log_root.mkdir(parents=True, exist_ok=True)
-        label = f"release-{lane}-{'collection' if collect else 'checks'}"
+        group = '-research' if targets == ('tests/research_loop',) else '-main'
+        label = f"release-{lane}-{'collection' + group if collect else 'checks'}"
         command.extend(["--basetemp", str(Path(os.environ["TMPDIR"]) / label)])
         log_path = log_root / f"{label}.log"
         # Stream under the outer runner's sampled fixture-log budget.
@@ -2084,11 +2110,31 @@ def test_git_release_builder_emits_clean_manifested_source(tmp_path: Path) -> No
         with log_path.open("rb") as log:
             log.seek(max(0, log_path.stat().st_size - 4096))
             diagnostic = log.read(4096).decode("utf-8", errors="replace")
-        assert checked.returncode == 0, diagnostic
+        # A fully collected group can have no tests selected for a heavy lane.
+        assert checked.returncode == 0 or (collect and checked.returncode == 5
+            and 'deselected' in diagnostic), diagnostic
+    # The two suites contain a same-named module and use sibling imports.
+    # Collect each complete group in its own process, retaining every test.
+    other_tests = tuple(str(path.relative_to(output)) for path in sorted((output / 'tests').iterdir())
+                        if path.name != 'research_loop' and path.name not in release['IGNORED_NAMES']
+                        and (path.is_dir() or (path.name.startswith('test_') and path.suffix == '.py')))
     for lane in ("source", "installed", "process"):
-        check_release(lane, collect=True)
+        check_release(lane, *other_tests, collect=True)
+        check_release(lane, 'tests/research_loop', collect=True)
     check_release("source", "tests/operations/test_l4_live_tcad_revision_evidence.py",
-                  "tests/operations/test_plugin_canonical_identity.py")
+                  "tests/operations/test_plugin_canonical_identity.py",
+                  "tests/operations/test_codex_permission_profiles.py::test_host_preflight_uses_only_synthetic_inputs_and_arg0_runtime",
+                  "tests/research_loop/test_selection.py",
+                  "tests/research_loop/test_public_selection_replay.py::test_frozen_allowed_actions",
+                  "tests/research_loop/test_public_selection_replay.py::test_masked_inputs_are_noninterfering_and_unbound_audit_not_qualified",
+                  "tests/research_loop/test_public_selection_replay.py::test_normalized_hidden_field_is_rejected_without_action",
+                  "tests/research_loop/test_public_selection_replay.py::test_rule_hash_is_checked_before_opening_pool",
+                  "tests/research_loop/test_rootless_fragments.py::test_native_exp_warning_preserves_public_command_and_exit_status",
+                  "tests/research_loop/test_role_budget_share.py::test_behavior_card_is_read_only_public_and_replays_the_frozen_share",
+                  "tests/research_loop/test_prelive_production_chain.py::test_fake_closeout_author_uses_current_delivery_contract",
+                  "tests/research_loop/test_history.py::test_cov_adapter_uses_public_facts_and_keeps_unexported_code_unknown",
+                  "tests/research_loop/test_history.py::test_cov_adapter_new_record_bound_is_not_total_history_bound",
+                  "tests/research_loop/test_native_cli.py::test_cli_entrypoint_status_is_read_only")
     check_release("installed",
         "tests/operations/test_catalog_installed_entrypoint.py::test_clean_installed_core_compiles_only_the_single_plugin_group",
         "tests/operations/test_catalog_installed_entrypoint.py::test_installed_figure_tool_executes_packaged_image_dependencies",

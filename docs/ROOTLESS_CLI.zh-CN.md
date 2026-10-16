@@ -306,6 +306,7 @@ completed meter 且清理可确认的已知本地故障；缺 session/thread/met
 原执行名额、保留交付预留。合法总额修订不自动扩节点 cap；命令没有续额参数。
 受管理执行按原 ID 恢复，不重发不确定提交；普通 shell 仍由角色判断 checkpoint，不承诺任意脚本幂等。
 
-源码、独立审查与最终 fake/installed 零模型门禁已通过；实际 Codex 同线程有效性、增量用量
-与权限尚未验证。范围见[原线程续接设计](plans/evidence/ROOTLESS_WORKER_RESUME_DESIGN_20261012.zh-CN.md)，
-测试快照与失败保留见[验收记录](plans/evidence/ROOTLESS_N6C_WORKER_RESUME_20261012.zh-CN.md)。
+本节的恢复边界由上述冻结策略、原件身份、累计用量和拒绝条件共同限定。源码审查与
+fake/installed 零模型门禁仅验证本地输运及拒绝路径；实际 Codex 同线程有效性、增量用量
+与权限尚未验证。零模型检查不能授予实际 native 恢复资格，也不证明任意科学工作能够
+安全续接。具体运行仍须保留原 attempt 记录、失败及未决限制，按该运行的实际证据判断。
