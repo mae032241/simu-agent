@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import os
 from pathlib import Path
@@ -24,12 +25,9 @@ def _directory(root, step):
 
 def _save(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
-    data = delivery._bytes(value)
-    if len(data) > delivery.MAX_BYTES:
-        raise ValueError('Candidate audit original exceeds byte bound')
-    with path.open('xb') as stream:
-        stream.write(data)
-        stream.flush()
+    with path.open('x',encoding='utf-8') as stream:
+        json.dump(value,stream,ensure_ascii=False,allow_nan=False,sort_keys=True)
+        stream.write('\n');stream.flush()
         os.fsync(stream.fileno())
     path.chmod(0o400)
 
@@ -227,6 +225,19 @@ def _settle_legacy_preflight(root,intent):
     return True
 
 
+def _unavailable_input(root,job,chosen,rows):
+    """Identity of the exact candidate's sealed originals, independent of later A nodes."""
+    from . import history
+    sources=[]
+    for receipt in job['history']['nodes']:
+        _,_,seal,seal_sha=history._source(root,receipt['step'])
+        observed=seal.get('observations')
+        if observed is not None and any(row['id']==chosen for row in c.read(root/observed['path'])['candidates']):
+            sources.append(dict(step=receipt['step'],seal_sha256=seal_sha,observation=observed))
+    return hashlib.sha256(delivery._bytes(dict(settings_sha256=c.digest(root/'settings.json'),
+        candidate_id=chosen,sources=sources,unavailable=rows))).hexdigest()
+
+
 def execute(root, job, payload):
     """Returns a blocking status, or None once an immutable receipt is available."""
     from .protocol import require_current
@@ -237,6 +248,7 @@ def execute(root, job, payload):
     directory = _directory(root, step)
     previous = _outcome(root, step)
     if previous is not None:
+        if previous['result']['note']=='candidate_audit_unchanged_originals_unavailable':return 'candidate_audit_originals_unavailable'
         return None if previous['result']['cleanup_confirmed'] else 'candidate_audit_unknown'
     if (directory / 'intent.json').exists():
         if _settle_legacy_preflight(root,c.read(c.regular(directory/'intent.json'))):
@@ -251,12 +263,14 @@ def execute(root, job, payload):
     intent = None
     binding = None
     resolved = None
+    unavailable_input=None
     def finish(status, note, *, cleanup=True, result=None):
         result = result or dict(status=status, note=note, cleanup_confirmed=cleanup)
         if intent is not None and 'operation_id' not in result:
             result.update(operation_id=intent['operation_id'], candidate_id=chosen,
                           artifact_sha256=binding['source']['objects']['artifact']['sha256'] if binding else None)
         value = dict(decision=decision, candidate_id=chosen, accepted=intent is not None, result=result)
+        if unavailable_input is not None:value['unavailable_input_sha256']=unavailable_input
         if intent is not None:
             _save(directory / 'adapter-result.json', result)
             value.update(intent_sha256=c.digest(directory / 'intent.json'),
@@ -265,6 +279,7 @@ def execute(root, job, payload):
                          process_sha256=c.digest(directory / 'process.json') if (directory / 'process.json').exists() else None,
                          leaf_output=(delivery.leaf_refs(root, resolved) if resolved else []) + delivery.leaf_refs(root, intent['operation_id']))
         _save(directory / 'outcome.json', value)
+        if note=='candidate_audit_unchanged_originals_unavailable':return 'candidate_audit_originals_unavailable'
         return None if cleanup else 'candidate_audit_unknown'
     if not enabled(c.settings(root)):
         return finish('unavailable', 'candidate_audit_disabled')
@@ -305,9 +320,21 @@ def execute(root, job, payload):
         refs = (delivery.selected_sources(root, job['delivery_sources'], chosen, prepare=True)
             if job.get('delivery_sources') else delivery.freeze_sources(root, job['history']['nodes'], candidate_id=chosen))
         rows = [row for row in refs['items'] if row['candidate_id'] == chosen and row['status'] == 'audit_pending']
-        if len(rows) != 1:
-            _save(directory / 'sources.json', refs)
-            return finish('unavailable', 'candidate_originals_unavailable')
+        if len(rows)!=1:
+            _save(directory/'sources.json',refs)
+            failed=[row for row in refs['items'] if row['candidate_id']==chosen]
+            unavailable_input=_unavailable_input(root,job,chosen,failed)
+            unchanged=False
+            for previous_job in sorted((root/'jobs').glob('*.json')):
+                prior_step=int(previous_job.stem)
+                if prior_step>=step:break
+                old=_outcome(root,prior_step)
+                if (old is not None and old['result']['status']=='unavailable'
+                        and old.get('unavailable_input_sha256')==unavailable_input):unchanged=True;break
+            note='candidate_audit_unchanged_originals_unavailable' if unchanged else 'candidate_originals_unavailable'
+            detail=next((row.get('reason') for row in failed if row.get('reason')),'delivery_source_unavailable')
+            return finish('unavailable',note,result=dict(status='unavailable',note=note,cleanup_confirmed=True,
+                diagnostic='Exact candidate originals unavailable: '+detail+'. Repair the original binding or choose another candidate; unchanged inputs are not retried.'))
         binding = dict(candidate_id=chosen, decision=decision, source=rows[0], target=policy['adapter']['target'], operation_id=operation)
         _validate_objects(root,intent,binding,refs)
         _save(directory / 'sources.json', refs)

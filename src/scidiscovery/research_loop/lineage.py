@@ -42,8 +42,8 @@ def _parent_original(root, item, available):
 
 def contexts(root, job, items, archive, previous=()):
     """Validate plugin v2 against the actual frozen task/attempt before sealing."""
-    if not isinstance(items,list) or len(items)>MAX_CONTEXTS:
-        raise ValueError('Bounded execution contexts required')
+    if not isinstance(items,list):
+        raise ValueError('Execution context list required')
     from .protocol import stage_scope
     expected_scope=stage_scope(root,job)
     result=[];seen=set();available={item['candidate_id']:item for item in previous if item['status']=='known_success'}
@@ -63,7 +63,7 @@ def contexts(root, job, items, archive, previous=()):
                 or parent['source'] not in {'sealed','same_node_completed_call','none'}
                 or (parent['status']=='declared')!=(parent['candidate_id'] is not None)):
             raise ValueError('Declared parent choice differs from contract2')
-        if not isinstance(item['proofs'],list) or not 1<=len(item['proofs'])<=9:
+        if not isinstance(item['proofs'],list) or not item['proofs']:
             raise ValueError('Context originals are missing')
         proofs=[]
         for proof in item['proofs']:
@@ -164,8 +164,6 @@ def candidate_view(records):
                 if previous and {k: previous[k] for k in candidate} != candidate:
                     raise ValueError('Observed candidate identity changed')
                 candidates.setdefault(candidate['id'], item)
-                if len(candidates) > 4096:
-                    raise ValueError('Historical candidate count exceeds bound')
             current = (dict(candidate_id=observation['current_candidate']['candidate_id'], observed_at=record['step'])
                        if observation.get('current_candidate') is not None else None)
             if observation['actual_submission'] is not None:
@@ -290,7 +288,19 @@ def bounded_brief(value):
         value['candidates']['proxy_highest'].pop();value['candidates']['proxy_groups_omitted_count']+=1
     while size()>history.MAX_BRIEF_BYTES and value.get('implementation_options'):
         value['implementation_options'].pop();value['implementation_options_omitted_count']+=1
-    if size()>history.MAX_BRIEF_BYTES:raise ValueError('Unified lineage brief metadata exceeds its frozen byte bound')
+    if size()>history.MAX_BRIEF_BYTES:
+        # This is a disposable navigation view; source rows and indexes remain
+        # authoritative. Oversized optional metadata must not reject a seal.
+        original=value['candidates']
+        value.update(recent=[],recent_omitted_count=value['node_count'],view_omitted=True,
+            omission_reason='Navigation metadata exceeds the compact view; read indexes for original facts.',
+            mechanisms=dict(availability=value['mechanisms']['availability'],count=value['mechanisms']['count'],
+                pending_count=value['mechanisms']['pending_count'],focus=None),
+            candidates=dict(count=original.get('count',original.get('candidate_count',0)),coverage=None,
+                current=None,a_recommended=None,historical_a_recommendation=None,actual=None,
+                proxy_highest=[],proxy_groups_omitted_count=original.get('proxy_groups_omitted_count',0),
+                selection_protocol=original.get('selection_protocol',0),public_audits=[],
+                audits_omitted_count=original.get('audits_omitted_count',0)+len(original.get('public_audits',[]))))
     return value
 
 
@@ -379,7 +389,7 @@ def bind(root, step, role, protocol, *, source_cutoff=None, extra_steps=(), sele
                     output['path']=f'inputs/recovered/{record["step"]:03d}/{call["call_id"]}/{item["name"]}'
                     output['historical']=output['path']
                     limits=c.settings(root)
-                    if item['size_bytes']>limits['max_output_item_bytes'] or sum(row['size_bytes'] for row in recovery_materials)+item['size_bytes']>limits['max_output_total_bytes']:
+                    if c.output_quota_exceeded(limits,(row['size_bytes'] for row in [*recovery_materials,item])):
                         raise ValueError('Execution recovery materials exceed the original input bound')
                     c._copy_bound(Path(root)/item['snapshot'],c.workspace(root,step)/output['path'],item['sha256'])
                     recovery_materials.append(dict(path=output['path'],sha256=item['sha256'],size_bytes=item['size_bytes']))
@@ -391,7 +401,7 @@ def bind(root, step, role, protocol, *, source_cutoff=None, extra_steps=(), sele
                     if len(matches)!=1 or matches[0]['retention']!='archived':raise ValueError('Recovered native original is unavailable')
                     item=matches[0];target=f'inputs/recovered/{record["step"]:03d}/{call["call_id"]}/originals/{number:03d}'
                     limits=c.settings(root)
-                    if item['size_bytes']>limits['max_output_item_bytes'] or sum(row['size_bytes'] for row in recovery_materials)+item['size_bytes']>limits['max_output_total_bytes']:
+                    if c.output_quota_exceeded(limits,(row['size_bytes'] for row in [*recovery_materials,item])):
                         raise ValueError('Execution recovery originals exceed the original input bound')
                     c._copy_bound(Path(root)/item['snapshot'],c.workspace(root,step)/target,item['sha256'])
                     recovery_materials.append(dict(path=target,sha256=item['sha256'],size_bytes=item['size_bytes']))

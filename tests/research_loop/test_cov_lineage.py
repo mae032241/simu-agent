@@ -204,14 +204,12 @@ def test_incomplete_transport_rejects_even_exact_successful_receipt(wrapper):
 
 
 @pytest.mark.parametrize('mode', ['stdout_overflow', 'stderr_overflow'])
-def test_stdio_overflow_cannot_be_accepted_as_known_completion(wrapper, mode):
-    result = wrapper.run('over-bound', mode, '--new-plan', expected=2)
-    assert result['status'] == 'unknown' and result['candidate_id'] is None
+def test_large_stdio_is_fully_retained_without_losing_known_completion(wrapper, mode):
+    result=wrapper.run('over-bound',mode,'--new-plan')
+    assert result['status']=='known_success' and result['candidate_id'] is not None
     directory = wrapper.directory(result)
-    assert (directory / 'stdout.raw').stat().st_size + (directory / 'stderr.raw').stat().st_size <= cov_lineage.MAX_BYTES
-    before = wrapper.calls()
-    assert wrapper.run('overflow-not-replayed', expected=2)['status'] == 'unknown'
-    assert wrapper.calls() == before
+    assert (directory/'stdout.raw').stat().st_size+(directory/'stderr.raw').stat().st_size>cov_lineage.MAX_BYTES
+    assert next(row for row in wrapper.cli('lineage-status')['calls'] if row['call_id']==result['call_id'])['status']=='known_success'
 
 
 @pytest.mark.parametrize('mode',['noise','json_shaped_logs'])

@@ -39,23 +39,21 @@ def _finite(value):
         return False
 
 
-def _read(path, limit=MAX_BYTES):
+def _read(path, limit=None):
     path = Path(path)
-    if path.resolve() != path or not path.is_file() or path.stat().st_size > limit:
+    if path.resolve() != path or not path.is_file() or limit is not None and path.stat().st_size > limit:
         raise IntegrityError('Exact bounded original required')
     return path.read_bytes()
 
 
 def _write(path, value):
-    data = _bytes(value)
-    if len(data) > MAX_BYTES:raise ValueError('Call record capacity exceeded')
-    with Path(path).open('xb') as stream:
-        stream.write(data);stream.flush();os.fsync(stream.fileno())
+    with Path(path).open('x',encoding='utf-8') as stream:
+        json.dump(value,stream,ensure_ascii=False,allow_nan=False,sort_keys=True);stream.write('\n');stream.flush();os.fsync(stream.fileno())
 
 
-def _proof(path, limit=MAX_ASSET):
-    data = _read(path, limit)
-    return dict(path=str(path), sha256=hashlib.sha256(data).hexdigest(), size_bytes=len(data))
+def _proof(path, limit=None):
+    from scidiscovery.research_loop import experiments
+    return experiments.proof(path,limit)
 
 
 def _check(proof):
@@ -65,8 +63,11 @@ def _check(proof):
 
 
 def _rows(path):
-    data = _read(path, MAX_SCAN) if Path(path).exists() else b''
-    rows = [json.loads(line) for line in data.splitlines() if line.strip()]
+    path=Path(path);rows=[]
+    if path.exists():
+        from scidiscovery.research_loop import contracts as c
+        with c.regular(path).open(encoding='utf-8') as stream:
+            rows=[json.loads(line) for line in stream if line.strip()]
     ids = [row['run_id'] for row in rows]
     if any(type(i) is not int or i < 1 for i in ids) or len(set(ids)) != len(ids):
         raise IntegrityError('Public ledger run identities are ambiguous')
@@ -87,7 +88,7 @@ def _config(path):
         raise ValueError('Exact frozen scientific execution scope required')
     for key in ('job_sha256','execution_key'):
         if not isinstance(scope[key],str) or len(scope[key]) != 64:raise ValueError('Execution digest required')
-    if not isinstance(value['parents'],list) or len(value['parents']) > 4096:
+    if not isinstance(value['parents'],list):
         raise ValueError('Bounded frozen parents required')
     for key in ('record_dir','runs_root'):
         p = Path(value[key])
@@ -142,7 +143,6 @@ def _calls(config):
     if root.resolve() != root:
         raise IntegrityError('Call namespace directory changed')
     paths = sorted(root.iterdir()) if root.exists() else []
-    if len(paths) > MAX_CALLS:raise ValueError('Call observation capacity exceeded')
     for path in paths:
         if path.resolve() != path or not path.is_dir():raise IntegrityError('Call directory changed')
     return paths
@@ -198,10 +198,10 @@ def _receipt(directory, accepted, rows, returncode, cleanup, transport_complete=
         path = Path(row.get('model_path',''))
         if path != Path(accepted['runs_root'])/f'model_run{row["run_id"]}.pkl':
             raise IntegrityError('Returned artifact is outside the public run scope')
-        data = _read(path,MAX_ASSET);archive = directory/'model.pkl'
-        if not archive.exists():archive.write_bytes(data);archive.chmod(0o400)
-        model = _proof(archive)
-        if model['sha256'] != hashlib.sha256(data).hexdigest():raise IntegrityError('Retained model changed')
+        from scidiscovery.research_loop import contracts as c
+        original=_proof(path);archive=directory/'model.pkl'
+        c._copy_bound(path,archive,original['sha256'])
+        model=_proof(archive)
     if not (directory/'row.json').exists():_write(directory/'row.json',row)
     proofs = [_proof(directory/name) for name in ('accepted.json','source.py','stdout.raw','stderr.raw','receipt.json','row.json','terminal.json')]
     if model:proofs.append(model)
@@ -333,12 +333,10 @@ def observe(request):
             for proof in result['proofs']:proof['path']=str(Path(proof['path']).relative_to(root))
             if result['model']:result['model']['path']=str(Path(result['model']['path']).relative_to(root))
             contexts.append(result)
-    if len(contexts)>MAX_CALLS:raise ValueError('Observer new context capacity exceeded')
     candidates=[];partial=False
     for row in rows:
         cid=f'run-{row["run_id"]}'
         if cid in known:continue
-        if len(candidates)>=MAX_CALLS:partial=True;break
         candidates.append(dict(id=cid,label=f'Public experiment {row["run_id"]}',implementation=None,evaluation_key=config['evaluation_key'],
             metric=row.get('val_score'),direction='max',status='ok' if row.get('ok') is True else 'failed',evidence=[str(Path(config['runs'])/'results.jsonl')]))
     bound={item['candidate_id'] for item in contexts if item['candidate_id']}
@@ -413,7 +411,7 @@ def public_feedback(config, result, *, include_model=False):
 
 def main(argv=None):
     if argv is None and len(sys.argv)==1:
-        try:print(json.dumps(observe(json.loads(sys.stdin.buffer.read(MAX_BYTES+1))),allow_nan=False))
+        try:print(json.dumps(observe(json.load(sys.stdin)),allow_nan=False))
         except IntegrityError as error:print(json.dumps(dict(integrity_error=str(error))))
         return 0
     if argv is None and len(sys.argv)>1 and sys.argv[1]=='configure':

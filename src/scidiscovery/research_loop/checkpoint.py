@@ -101,7 +101,7 @@ def capture(root, job, record):
         if not path.exists() and not path.is_symlink():
             missing.append(name)
             continue
-        original = c.regular(path, limit=MAX_BYTES)
+        original = c.regular(path)
         originals.append(dict(path=original.relative_to(root).as_posix(),
                               sha256=c.digest(original), size_bytes=original.stat().st_size))
     science, _ = _science(root, job, originals)
@@ -115,7 +115,7 @@ def capture(root, job, record):
         material_status, material_diagnostic = 'unavailable', str(error)[:256]
     work = c.workspace(root, job['step'])
     materials = []
-    for row in direct[:MAX_MATERIALS]:
+    for row in direct:
         source = Path(row['source'])
         snapshot = history._proof(root, source.relative_to(root).as_posix())
         materials.append(dict(name=source.relative_to(work).as_posix(), original=snapshot))
@@ -124,8 +124,6 @@ def capture(root, job, record):
                  material_status=material_status, material_diagnostic=material_diagnostic,
                  omitted_materials=max(0, len(direct) - len(materials)),
                  scope='Checkpoint originals only; not a stage seal, scientific qualification or restart permission.')
-    if len(_bytes(value)) > MAX_BYTES:
-        raise ValueError('Fragment checkpoint exceeds its byte capacity')
     c.write(destination, value)
     destination.chmod(0o400)
     return validate(root, job, record)
@@ -134,13 +132,13 @@ def capture(root, job, record):
 def validate(root, job, record):
     """Verify this attempt and its immutable snapshots without reading later work."""
     root, record = Path(root), Path(record)
-    value = c.read(c.regular(record / 'checkpoint.json', limit=MAX_BYTES))
+    value = c.read(c.regular(record / 'checkpoint.json'))
     if value.get('version') != VERSION or value.get('binding') != _binding(root, job, record):
         raise ValueError('Fragment checkpoint binding changed')
     for row in value['originals']:
         path = root / row['path']
         if (path.parent != record or path.name not in NATIVE_ORIGINALS
-                or c.digest(c.regular(path, limit=MAX_BYTES)) != row['sha256']
+                or c.digest(c.regular(path)) != row['sha256']
                 or path.stat().st_size != row['size_bytes']):
             raise ValueError('Fragment native original changed')
     expected, _ = _science(root, job, value['originals'])
@@ -151,7 +149,7 @@ def validate(root, job, record):
         if original['retention'] == 'archived':
             path = root / original['snapshot']
             if (path.resolve() != path or not path.is_relative_to(root / 'host-history/objects')
-                    or c.digest(c.regular(path, limit=history.MAX_HISTORY_BYTES)) != original['sha256']
+                    or c.digest(c.regular(path)) != original['sha256']
                     or path.stat().st_size != original['size_bytes']):
                 raise ValueError('Fragment direct-deliverable snapshot changed')
     return value
@@ -186,7 +184,7 @@ def end_stage(root, job, record, reason, *, work_exit=None):
 
 def stage_end(root, job, record):
     root, record = Path(root), Path(record)
-    value = c.read(c.regular(record / 'stage-end.json', limit=MAX_BYTES))
+    value = c.read(c.regular(record / 'stage-end.json'))
     if (value.get('version') != VERSION or value.get('binding') != _binding(root, job, record)
             or value.get('checkpoint_sha256') != c.digest(c.regular(record / 'checkpoint.json'))
             or value.get('raw_sha256') != c.digest(c.regular(record / 'science-output.json'))
@@ -236,8 +234,8 @@ def brief(root, job, record):
         while len(_bytes(result)) > MAX_BRIEF_BYTES and result[field]:
             result[field] = _clip(result[field], len(result[field].encode()) // 2)[0]
             result['truncated'] = True
-    if len(_bytes(result)) > MAX_BRIEF_BYTES:
-        raise ValueError('Fragment resume brief exceeds its byte capacity')
+    while len(_bytes(result)) > MAX_BRIEF_BYTES and result['limitations']:
+        result['limitations'].pop();result['omitted_limitations']+=1;result['truncated']=True
     return result
 
 

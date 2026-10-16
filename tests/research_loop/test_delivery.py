@@ -335,3 +335,27 @@ def test_actual_public_harness_audit_completion_controls_promotion(tmp_path, mod
         assert result['status'] == 'engineering_error' and result['note']=='audit_interface_missing', result
         assert not (root / 'submission/model.pkl').exists()
         assert not (root / 'runs/submitted.json').exists()
+
+
+def test_complete_delivery_sources_exceed_old_byte_and_candidate_caps(tmp_path):
+    root,_,nodes=prepare_fixture(tmp_path,candidate_count=140)
+    catalogue=delivery.catalogue_sources(root,nodes)
+    assert len(catalogue['items'])==140 and catalogue['omitted_count']==0
+    refs=delivery.freeze_sources(root,nodes)
+    assert len(refs['items'])==140 and refs['omitted_count']==0
+    assert len(delivery._bytes(refs))>delivery.MAX_BYTES
+    path=root/'full-delivery-sources.json';c.write(path,refs)
+    assert delivery.validate_sources(root,c.read(c.regular(path)))==refs
+    view=delivery.public_sources(refs)
+    assert len(delivery._bytes(view))<=4096 and view['omitted_count']>0
+    selected=delivery.selected_sources(root,catalogue,'run-140',prepare=True)
+    assert selected['items'][0]['candidate_id']=='run-140'
+
+
+def test_complete_internal_adapter_reply_is_spooled_without_byte_truncation(tmp_path):
+    script=tmp_path/'adapter.py'
+    script.write_text('import json,sys\nrequest=json.load(sys.stdin)\njson.dump({"items":request["items"]},sys.stdout)\n')
+    rows=[dict(label='item-'+str(i),data='x'*2048) for i in range(160)]
+    result=delivery._call(dict(launcher_argv=[sys.executable,str(script)],adapter=str(script)),
+        dict(phase='resolve',operation_id='f'*64,items=rows),10)
+    assert result==dict(items=rows) and len(delivery._bytes(result))>delivery.MAX_BYTES

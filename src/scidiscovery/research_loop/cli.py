@@ -75,6 +75,8 @@ def main(argv=None):
     prepare.add_argument('--delivery-policy', type=Path, help='Explicit frozen closeout reserve and isolated delivery adapter JSON')
     prepare.add_argument('--worker-context',choices=['same_session','new_context'],help='Qualified W fragments within the same stage; requires explicit resume policy and node budgets')
     prepare.add_argument('--worker-resume-policy', type=Path, help='Explicit qualified same-thread finite continuation policy JSON')
+    prepare.add_argument('--max-output-item-bytes', type=int, help='Optional explicit per-file storage quota; default has no storage size cap')
+    prepare.add_argument('--max-output-total-bytes', type=int, help='Optional explicit total deliverable storage quota; default has no storage size cap')
     prepare.add_argument('--max-tokens', type=int, required=True)
     prepare.add_argument('--max-seconds', type=float, required=True, help='Maximum authorized runtime: advancement and accepted execution waiting; idle pauses do not consume this ceiling')
     prepare.add_argument('--max-steps', type=int, required=True)
@@ -120,7 +122,7 @@ def main(argv=None):
                     raise ValueError('Role profiles file must contain a JSON object')
             settings = controller.prepare(root, args.objective, args.public_root,
                 json.loads(args.native_launcher_json), max_tokens=args.max_tokens, max_seconds=args.max_seconds,
-                max_steps=args.max_steps, model=args.model, reasoning_effort=args.reasoning_effort, node_budget_mode=args.node_budget_mode,
+                max_steps=args.max_steps, max_output_item_bytes=args.max_output_item_bytes, max_output_total_bytes=args.max_output_total_bytes, model=args.model, reasoning_effort=args.reasoning_effort, node_budget_mode=args.node_budget_mode,
                 service_tier=args.service_tier, user_updates=args.user_update,
                 role_profiles=role_profiles,
                 experiment_mode=args.experiment_mode,

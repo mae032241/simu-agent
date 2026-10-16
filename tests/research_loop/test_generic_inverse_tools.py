@@ -289,3 +289,35 @@ def test_generic_candidates_are_registered_independently_of_optional_domain_obse
     assert len(fact['managed_calls']) == 3 and len(fact['candidates']) == 2
     assert {row['label'] for row in fact['candidates']} == {'source_linear', 'operator_ridge'}
     if observer == 'unavailable':assert fact['coverage']['status'] == 'unavailable'
+
+
+def test_generic_isolated_delivery_keeps_large_manifest_and_all_objects(tmp_path):
+    from scidiscovery.research_loop import protocol
+    if shutil.which('bwrap') is None:pytest.skip('Actual namespace required')
+    stage=tmp_path/'stage';inputs=stage/'inputs';inputs.mkdir(parents=True)
+    target=tmp_path/'target';target.mkdir()
+    source=Path(protocol.__file__).resolve();shutil.copyfile(source,inputs/'scid-current-protocol')
+    artifact=inputs/'artifact';artifact.write_bytes(b'exact managed artifact')
+    objects={'artifact':c.digest(artifact)}
+    for index in range(150):
+        name='outputs/'+str(index)+'x'*170
+        item=inputs/name;item.parent.mkdir(exist_ok=True);item.write_text('exact output '+str(index))
+        objects[name]=c.digest(item)
+    python=Path(sys.executable);module=Path(generic_delivery.__file__).resolve()
+    request=dict(phase='promote',scope=dict(handoff_protocol=protocol.CURRENT),stage=str(stage),
+        operation_id='e'*64,candidate_id='local-explicit',artifact_sha256=objects['artifact'],
+        config=dict(python=str(python)),target=dict(directory=str(target)),object_digests=objects,
+        context=dict(kind='managed_local_result',retained_metadata='x'*280000),
+        inputs=[dict(label='scid-current-protocol',sha256=c.digest(source),size_bytes=source.stat().st_size),
+            dict(label='runtime-python',invoked_path=str(python.absolute()),path=str(python.resolve()),sha256=c.digest(python.resolve()))])
+    spec=dict(launcher_argv=[sys.executable,str(module),'--isolate'],adapter=str(module))
+    promoted=delivery._call(spec,request,10)
+    assert promoted['status']=='confirmed'
+    saved=target/request['operation_id'];manifest=saved/'manifest.json'
+    assert manifest.stat().st_size>256000
+    assert c.read(manifest)['objects']==objects
+    assert all(c.digest(saved/name)==digest for name,digest in objects.items())
+    repeated=delivery._call(spec,dict(request,phase='confirm'),10)
+    assert repeated['status']=='confirmed'
+    (saved/next(name for name in objects if name.startswith('outputs/'))).write_text('tampered')
+    assert delivery._call(spec,dict(request,phase='confirm'),10)['status']=='unknown'

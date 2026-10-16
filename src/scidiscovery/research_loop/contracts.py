@@ -94,6 +94,17 @@ def regular(path: Path, *, limit=None):
     return path
 
 
+def output_quota_exceeded(policy, sizes):
+    """Only an explicitly frozen storage quota can restrict complete materials."""
+    item_limit,total_limit=policy.get('max_output_item_bytes'),policy.get('max_output_total_bytes')
+    total=0
+    for size in sizes:
+        if type(size) is not int or size<0:raise ValueError('Original material size must be a nonnegative integer')
+        if item_limit is not None and size>item_limit:return True
+        total+=size
+    return total_limit is not None and total>total_limit
+
+
 def actions(role,protocol=CURRENT,*,audit_enabled=True):
     from .protocol import _current
     _current(protocol,'Scientific result schema')
@@ -107,7 +118,7 @@ def result_schema(role: str,protocol=CURRENT,comparison=False):
     if role not in ROLE_INSTRUCTIONS:raise ValueError('Unknown scientific role')
     properties=dict(summary=dict(type='string',minLength=1),scientific_result=dict(type='string',minLength=1),
         limitations=dict(type='array',items=dict(type='string')),
-        implementation_selection=dict(type=['array','null'],maxItems=MAX_REUSED_INPUTS,
+        implementation_selection=dict(type=['array','null'],
             items=dict(type='string',minLength=1,maxLength=80),
             description='Null retains the selected implementation; [] clears it; listed scientific object IDs replace it. No paths, hashes or handoff markers.'))
     if role in ACTIONS:
@@ -141,7 +152,7 @@ def result_schema(role: str,protocol=CURRENT,comparison=False):
 def science_payload(path: Path, role: str, protocol=CURRENT, comparison=False):
     import jsonschema
     from .output_repair import OutputRepairRequired
-    original = regular(path, limit=MAX_RESULT_BYTES)
+    original = regular(path)
     try:
         value = read(original)
     except (json.JSONDecodeError, UnicodeDecodeError) as error:
@@ -181,7 +192,7 @@ def _parent_view(job, ref, root=None, *, limitation_bytes=1024):
         if len(entries) > 16:
             view['evidence_omitted_count'] = len(entries) - 16
     if root is not None:
-        path=regular(workspace(Path(root),job['step'])/ref['path'],limit=MAX_RESULT_BYTES)
+        path=regular(workspace(Path(root),job['step'])/ref['path'])
         if digest(path)!=ref['sha256']:
             raise ValueError('Direct scientific original changed')
         payload=read(path)
@@ -284,8 +295,7 @@ def selected_inputs(work, payload, job, diagnostics=None):
                 or digest(regular(source)) != row['sha256'] or source.stat().st_size != row['size_bytes']):
             raise ValueError('Selected original implementation changed or is not sealed')
         total += row['size_bytes']
-        if (len(selected) >= MAX_REUSED_INPUTS or row['size_bytes'] > policy['max_output_item_bytes']
-                or total > policy['max_output_total_bytes']):
+        if output_quota_exceeded(policy,(entry['material']['size_bytes'] for entry in [*selected,dict(material=row)])):
             raise ValueError('Selected implementations exceed the frozen handoff bound')
         selected.append(dict(label=label[:160], origin_step=origin_step,
                              origin_result_sha256=identity['sha256'], material=row))
@@ -461,11 +471,11 @@ def collect_materials(root: Path, step: int):
         nonlocal total
         path = regular(path)
         size = path.stat().st_size
-        if size > policy['max_output_item_bytes']:
+        if policy.get('max_output_item_bytes') is not None and size > policy['max_output_item_bytes']:
             raise ValueError(f'Deliverable {relative!r} exceeds item byte budget '
                              f'({size} > {policy["max_output_item_bytes"]})')
         total += size
-        if total > policy['max_output_total_bytes']:
+        if policy.get('max_output_total_bytes') is not None and total > policy['max_output_total_bytes']:
             raise ValueError(f'Deliverable {relative!r} exhausts total byte budget '
                              f'({total} > {policy["max_output_total_bytes"]})')
         rows.append(dict(source=str(path), path=f'inputs/parents/{step:03d}/artifacts/{relative}',
@@ -597,15 +607,13 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
             raise ValueError('Selected input paths conflict')
         unique[item['path']] = item
     materials = list(unique.values())
-    if protocol >= 2 and (any(row['size_bytes'] > policy['max_output_item_bytes'] for row in materials)
-            or sum(row['size_bytes'] for row in materials) > policy['max_output_total_bytes']):
+    if protocol >= 2 and output_quota_exceeded(policy,(row['size_bytes'] for row in materials)):
         raise ValueError('Combined input materials exceed the frozen handoff bound')
     reused = {}
     for row in selected:
         reused.setdefault(row['material']['path'], row)
     selected = list(reused.values())
-    if (len(selected) > MAX_REUSED_INPUTS
-            or sum(row['material']['size_bytes'] for row in selected) > policy['max_output_total_bytes']):
+    if output_quota_exceeded(policy,(row['material']['size_bytes'] for row in selected)):
         raise ValueError('Selected implementations exceed the frozen handoff bound')
     for item in materials:
         _copy_bound(Path(item['source']), work / item['path'], item['sha256'])
@@ -723,9 +731,9 @@ def validate(work: Path):
     native_record = execution.record(root, job['step'])
     intent = read(regular(native_record / 'native-intent.json'))
     outcome = read(regular(native_record / 'native-outcome.json'))
-    raw = regular(native_record / 'science-output.json', limit=MAX_RESULT_BYTES)
-    result = regular(record / 'result.json', limit=MAX_RESULT_BYTES * 2)
-    conclusion = regular(work / 'conclusion.json', limit=MAX_RESULT_BYTES)
+    raw = regular(native_record / 'science-output.json')
+    result = regular(record / 'result.json')
+    conclusion = regular(work / 'conclusion.json')
     if (seal['job_sha256'] != digest(job_path) or intent['task_sha256'] != digest(job_path)
             or seal['raw_sha256'] != digest(raw) or seal['sha256'] != digest(result)
             or seal['raw_sha256'] != digest(conclusion) or outcome.get('raw_sha256') != seal['raw_sha256']
@@ -811,9 +819,7 @@ def _validate_inputs(root, work, job):
             raise ValueError('Frozen scientific search binding changed')
     from . import history
     history.validate(root, work, job['history'])
-    if job.get('handoff_protocol', 1) >= 2 and (
-            any(row['size_bytes'] > policy['max_output_item_bytes'] for row in job['direct_materials'])
-            or sum(row['size_bytes'] for row in job['direct_materials']) > policy['max_output_total_bytes']):
+    if job.get('handoff_protocol', 1) >= 2 and output_quota_exceeded(policy,(row['size_bytes'] for row in job['direct_materials'])):
         raise ValueError('Combined input materials exceed the frozen handoff bound')
     expected = []
     previous = f'inputs/parents/{job["step"] - 1:03d}/conclusion.json'
@@ -875,7 +881,7 @@ def seal_result(root: Path, step: int):
             raise ValueError('Missing final output identity changed')
         from .output_repair import OutputRepairRequired
         raise OutputRepairRequired('missing_output', 'Return the required final scientific JSON; the completed work and checkpoints are already retained.')
-    raw = regular(raw_path, limit=MAX_RESULT_BYTES)
+    raw = regular(raw_path)
     if outcome.get('raw_sha256') != digest(raw):
         raise ValueError('Terminal scientific output is unverified or changed')
     value = envelope(job, science_payload(raw, job['role'], job.get('handoff_protocol', 1), 'selection' in job))

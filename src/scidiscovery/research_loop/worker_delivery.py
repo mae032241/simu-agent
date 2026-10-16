@@ -8,7 +8,6 @@ from pathlib import Path
 from . import contracts as c, history, execution
 from .output_repair import WorkRepairRequired
 
-MAX_BYTES = 64_000
 FACT_NAME = 'work-evidence.json'
 
 
@@ -72,7 +71,7 @@ def capture(root,job,record):
     root,record=Path(root),Path(record);path=record/FACT_NAME
     number=execution.records(root,job['step']).index(record)
     binding=dict(job_sha256=c.digest(root/'jobs'/f'{job["step"]:03d}.json'),
-        raw_sha256=c.digest(c.regular(record/'science-output.json',limit=c.MAX_RESULT_BYTES)),source_attempt=number)
+        raw_sha256=c.digest(c.regular(record/'science-output.json',limit=None)),source_attempt=number)
     if path.exists():return validate(root,job,record)
     writers_stopped(root,job,record)
     needed={row['mechanism_ref'] for row in job['search']['coverage_obligation']}
@@ -85,7 +84,7 @@ def capture(root,job,record):
         seal=c.read(seal_path);observation=seal.get('observations')
         if observation is None:continue
         source=c.read(c.regular(root/'jobs'/f'{receipt["step"]:03d}.json'))
-        observed_path=c.regular(root/observation['path'],limit=history.MAX_OBSERVER_BYTES)
+        observed_path=c.regular(root/observation['path'],limit=None)
         if c.digest(observed_path)!=observation['sha256']:raise history.ObserverIntegrityError('Worker observation original changed')
         observed=c.read(observed_path)
         from . import execution_recovery
@@ -119,18 +118,14 @@ def capture(root,job,record):
         if all(mechanism.get(key)==expected[key] for key in ('mechanism_ref','source_h','source_h_sha256')):selected[ref]=row
     value=dict(version=1,binding=binding,evidence=list(selected.values()),unknown=unknown,
         prior_unknown=job['search']['breadth']['prior_unknown'],capacity=capacity,omitted_evidence=0,omitted_unknown=0)
-    while len(_bytes(value))>MAX_BYTES and value['evidence']:
-        value['evidence'].pop();value['omitted_evidence']+=1;value['capacity']=True
-    while len(_bytes(value))>MAX_BYTES and value['unknown']:
-        value['unknown'].pop();value['omitted_unknown']+=1;value['capacity']=True
     c.write(path,value);path.chmod(0o400)
     return validate(root,job,record)
 
 
 def validate(root,job,record):
-    value=c.read(c.regular(record/FACT_NAME,limit=MAX_BYTES))
+    value=c.read(c.regular(record/FACT_NAME,limit=None))
     expected=dict(job_sha256=c.digest(root/'jobs'/f'{job["step"]:03d}.json'),
-        raw_sha256=c.digest(c.regular(record/'science-output.json',limit=c.MAX_RESULT_BYTES)),
+        raw_sha256=c.digest(c.regular(record/'science-output.json',limit=None)),
         source_attempt=execution.records(root,job['step']).index(record))
     if value.get('version')!=1 or value.get('binding')!=expected:raise history.ObserverIntegrityError('Worker fact snapshot binding changed')
     for row in [*value['evidence'],*value['unknown']]:

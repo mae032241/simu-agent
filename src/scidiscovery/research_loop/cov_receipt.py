@@ -25,17 +25,17 @@ def encoded(value):
     return (json.dumps(value,ensure_ascii=False,sort_keys=True,allow_nan=False)+'\n').encode()
 
 
-def original(path,limit=MAX_BYTES):
+def original(path,limit=None):
     path=Path(path)
     if not path.is_absolute() or path.resolve()!=path or not path.is_file():
         raise ValueError('Cov receipt requires an exact original executable source')
     size=path.stat().st_size
-    if size>limit:raise ValueError('Cov receipt original exceeds its existing read bound')
+    if limit is not None and size>limit:raise ValueError('Cov receipt original exceeds its existing read bound')
     digest=hashlib.sha256();observed=0
     with path.open('rb') as stream:
         for chunk in iter(lambda:stream.read(1024*1024),b''):
             observed+=len(chunk)
-            if observed>limit:raise ValueError('Cov receipt original exceeds its existing read bound')
+            if limit is not None and observed>limit:raise ValueError('Cov receipt original exceeds its existing read bound')
             digest.update(chunk)
     if observed!=size:raise ValueError('Cov receipt original changed while being read')
     return dict(path=str(path),sha256=digest.hexdigest(),size_bytes=size)
@@ -98,7 +98,6 @@ def _runner(accepted,directory):
             row=frame.f_locals.get('rec')
             if not isinstance(row,dict):raise ValueError('Public runner output has no actual record object')
             data=encoded(envelope(accepted,row))
-            if len(data)>MAX_BYTES:raise ValueError('Public runner receipt exceeds its transport bound')
             pending=directory/'receipt.pending'
             with pending.open('xb') as stream:
                 stream.write(data);stream.flush();os.fsync(stream.fileno())
@@ -121,7 +120,7 @@ def main():
         raise ValueError('Receipt transport changed its accepted call')
     if proof['sha256']!=hashlib.sha256(encoded(accepted)).hexdigest():
         raise ValueError('Receipt transport acceptance is not canonical')
-    source=original(accepted['source_script'],MAX_SOURCE_BYTES)
+    source=original(accepted['source_script'])
     if (source['sha256']!=accepted['prepared']['sha256'] or source['sha256']!=accepted['script']['sha256']
             or source['size_bytes']!=accepted['prepared']['size_bytes'] or source['size_bytes']!=accepted['script']['size_bytes']):
         raise ValueError('Receipt transport source changed before execution')

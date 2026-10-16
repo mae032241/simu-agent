@@ -178,8 +178,7 @@ def bind_inputs(root, job):
     policy=c.settings(root)
     repair=job['engineering_repair']
     proofs=[repair['objects'][name] for name in ('source.py','artifact') if name in repair['objects']]
-    if (any(proof['size_bytes']>policy['max_output_item_bytes'] for proof in proofs)
-            or sum(proof['size_bytes'] for proof in proofs)+sum(row['size_bytes'] for row in job['direct_materials'])>policy['max_output_total_bytes']):
+    if c.output_quota_exceeded(policy,(proof['size_bytes'] for proof in [*proofs,*job['direct_materials']])):
         from .candidate_audit import _save
         path=_blocked_path(root,repair)
         if not path.exists():_save(path,dict(repair_sha256=path.stem,reason='engineering_repair_input_capacity'))

@@ -14,7 +14,7 @@ MAX_SCAN_BYTES = 4 * 1024 * 1024
 
 
 def read(path):
-    if path.is_symlink() or path.resolve() != path or not path.is_file() or path.stat().st_size > MAX_INPUT:
+    if path.is_symlink() or path.resolve() != path or not path.is_file():
         raise ValueError('Exact bounded public run original required')
     return path.read_text()
 
@@ -35,20 +35,10 @@ def observe(request):
         if results.is_symlink() or results.resolve() != results:
             raise ValueError('Public run ledger must be an original')
         with results.open('rb') as stream:
-            while True:
-                line = stream.readline(MAX_INPUT + 1)
-                if not line:
-                    break
-                scanned += len(line)
-                if len(line) > MAX_INPUT or scanned > MAX_SCAN_BYTES:
-                    partial = True;break
-                if not line.strip():
-                    continue
-                row = json.loads(line)
-                if f'run-{row["run_id"]}' not in known:
-                    if len(rows) >= MAX_ROWS:
-                        partial = True;break
-                    rows.append(row)
+            for line in stream:
+                if not line.strip():continue
+                row=json.loads(line)
+                if f'run-{row["run_id"]}' not in known:rows.append(row)
     ids, candidates = set(), []
     known = set(request.get('known_candidates', []))
     for row in rows:
@@ -91,7 +81,4 @@ def observe(request):
 
 
 if __name__ == '__main__':
-    data = sys.stdin.buffer.read(MAX_INPUT + 1)
-    if len(data) > MAX_INPUT:
-        raise ValueError('Observer input exceeds bound')
-    print(json.dumps(observe(json.loads(data)), allow_nan=False))
+    json.dump(observe(json.load(sys.stdin)),sys.stdout,allow_nan=False)

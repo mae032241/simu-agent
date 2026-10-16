@@ -103,17 +103,12 @@ class LocalExecution:
                             raise ValueError('Managed artifacts output must be an original directory')
                         continue
                     scanned+=1
-                    if scanned>MAX_SCAN_ENTRIES:
-                        raise ValueError('Managed directory entry capacity exceeded')
                     path=Path(entry.path);name=path.relative_to(root).as_posix()
                     if entry.is_symlink():raise ValueError('Managed directories cannot contain links')
-                    if len(name.encode())>512:raise ValueError('Managed file path capacity exceeded')
                     if entry.is_dir(follow_symlinks=False):
                         pending.append(path);continue
                     item=e.proof(path);total+=item['size_bytes']
                     files.append(dict(item,name=name))
-                    if len(files)>e.MAX_INPUT_FILES or total>e.MAX_INPUT_BYTES:
-                        raise ValueError('Managed file capacity exceeded')
         return sorted(files,key=lambda item:item['name'])
 
     def dispatch_lease(self,accepted):
@@ -197,9 +192,8 @@ class LocalExecution:
                         chunk=os.read(key.fileobj.fileno(),65536)
                         if not chunk:selector.unregister(key.fileobj);continue
                         count+=len(chunk)
-                        if count>e.MAX_BYTES:transport_complete=False;break
                         sink=out if key.fileobj is process.stdout else err;sink.write(chunk);sink.flush()
-                    if count>e.MAX_BYTES or time.monotonic()>=deadline:
+                    if time.monotonic()>=deadline:
                         transport_complete=False
                         if runtime.process_matches(identity,identity['task_sha256']):os.killpg(identity['pgid'],signal.SIGTERM)
                         break
@@ -241,10 +235,6 @@ class LocalExecution:
         completed=dict(original,
             outputs=outputs,result=result,wall_seconds=terminal.get('wall_seconds'),returncode=returncode,
             note='Observed local command and declared results; external imports/environment and scientific validity are not qualified')
-        if len(e.encoded(completed))>e.MAX_BYTES:
-            retained=[item for item in outputs if item['name']=='result.json']
-            completed.update(outputs=retained,result=dict(status='unavailable',metrics=[],outputs=[],
-                diagnostic='managed_output_metadata_capacity',outputs_omitted_count=len(outputs)-len(retained)))
         return completed
 
     @staticmethod
@@ -252,11 +242,11 @@ class LocalExecution:
         path=directory/'result.json'
         if not path.exists():return dict(status='missing',metrics=[],outputs=[])
         try:
-            value=json.loads(e.read(path,64_000))
+            value=json.loads(e.read(path))
             if (not isinstance(value,dict) or set(value)-{'candidate'}!={'version','metrics','outputs'}
                     or type(value['version']) is not int or value['version']!=1
-                    or not isinstance(value['metrics'],list) or len(value['metrics'])>32
-                    or not isinstance(value['outputs'],list) or len(value['outputs'])>128):
+                    or not isinstance(value['metrics'],list)
+                    or not isinstance(value['outputs'],list)):
                 raise ValueError('Expected version 1 metrics and outputs')
             seen=set()
             for metric in value['metrics']:
@@ -322,7 +312,7 @@ class LocalExecution:
             if result['status']=='unknown':state='unknown'
         return dict(state=state,call_id=external_run_id,candidate_id=None,evaluation_key=None,metric=None,
             direction=None,wall_seconds=result.get('wall_seconds'),returncode=result.get('returncode'),
-            result=result.get('result'),parent_candidate=None)
+            result=self.public_result(result).get('result'),parent_candidate=None)
 
     def cancel(self,external_run_id):
         raise e.UnsupportedExecution('Original command cancellation is not declared')
@@ -349,7 +339,18 @@ class LocalExecution:
 
     @staticmethod
     def public_result(result):
-        return {key:result[key] for key in ('call_id','status','note','returncode','wall_seconds','result') if key in result}
+        view={key:result[key] for key in ('call_id','status','note','returncode','wall_seconds') if key in result}
+        if 'result' in result:
+            original=result['result'];compact={key:value for key,value in original.items() if key not in {'metrics','outputs'}}
+            for name in ('metrics','outputs'):
+                compact[name]=[];rows=original.get(name,[])
+                for row in rows:
+                    trial=dict(compact,**{name:[*compact[name],row]})
+                    if len(e.encoded(trial))>16_000:break
+                    compact[name].append(row)
+                if len(compact[name])<len(rows):compact[name+'_omitted_count']=len(rows)-len(compact[name])
+            view['result']=compact
+        return view
 
 
 def build(context):

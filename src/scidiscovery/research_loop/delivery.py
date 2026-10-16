@@ -41,7 +41,7 @@ def _bytes(value):
     return (json.dumps(value, ensure_ascii=False, allow_nan=False, sort_keys=True) + '\n').encode()
 
 
-def _file(path, limit=MAX_ASSET_BYTES):
+def _file(path, limit=None):
     path = Path(path).absolute()
     if path.resolve() != path:
         raise ValueError('Delivery requires an exact original, without symbolic links')
@@ -73,7 +73,7 @@ def policy(value):
             or any(not isinstance(name,str) or name not in CAPABILITIES for name in adapter['capabilities'])
             or len(adapter['capabilities']) != len(set(adapter['capabilities']))):
         raise ValueError('Adapter capabilities must explicitly name supported optional phases')
-    script = _file(adapter['adapter'], MAX_BYTES)
+    script = _file(adapter['adapter'])
     argv = adapter['launcher_argv']
     if not isinstance(argv, list) or not argv or any(not isinstance(s, str) or not s for s in argv):
         raise ValueError('An explicit isolating launcher argv is required')
@@ -82,14 +82,14 @@ def policy(value):
         path = Path(arg)
         if path.is_file():
             path = path.resolve()
-            launcher_files.append(dict(path=str(_file(path, 128 * 1024 * 1024)), invoked_path=str(Path(arg).absolute()), sha256=c.digest(path)))
+            launcher_files.append(dict(path=str(_file(path)), invoked_path=str(Path(arg).absolute()), sha256=c.digest(path)))
     if not launcher_files or not Path(argv[0]).is_absolute():
         raise ValueError('Launcher executable and original files must be frozen')
     if not isinstance(adapter['config'], dict) or not isinstance(adapter['target'], dict):
         raise ValueError('Adapter configuration and target must be bounded objects')
     inputs = adapter['inputs']
     roots = adapter['source_roots']
-    if not isinstance(inputs, list) or len(inputs) > 16 or not isinstance(roots, list) or not 1 <= len(roots) <= 8:
+    if not isinstance(inputs,list) or not isinstance(roots,list) or not roots:
         raise ValueError('Explicit bounded provider input and read scope required')
     frozen_inputs, labels = [], set()
     for item in inputs:
@@ -109,13 +109,11 @@ def policy(value):
                   launcher_files=launcher_files, config=adapter['config'], target=adapter['target'],
                   inputs=frozen_inputs, source_roots=list(roots))
     if 'capabilities' in adapter:frozen['capabilities']=list(adapter['capabilities'])
-    if len(_bytes(frozen)) > MAX_BYTES:
-        raise ValueError('Delivery descriptor exceeds byte capacity')
     return {**value, 'closeout_a': dict(a), 'adapter': frozen}
 
 
 def _label(label):
-    if (not isinstance(label, str) or not label or len(label.encode()) > 160
+    if (not isinstance(label,str) or not label
             or Path(label).is_absolute() or '..' in Path(label).parts
             or '\\' in label or Path(label).as_posix() != label):
         raise ValueError('Canonical bounded provider object label required')
@@ -128,7 +126,7 @@ def _adapter(root):
     for proof in [dict(path=spec['adapter'], sha256=spec['adapter_sha256']), *spec['launcher_files'], *spec['inputs']]:
         if 'invoked_path' in proof and Path(proof['invoked_path']).resolve() != Path(proof['path']):
             raise ValueError('Frozen executable or input path now names another original')
-        if c.digest(_file(proof['path'], 128 * 1024 * 1024)) != proof['sha256']:
+        if c.digest(_file(proof['path'])) != proof['sha256']:
             raise ValueError('Frozen delivery executable or public harness changed')
     from . import generic_delivery
     if Path(spec['adapter']) == Path(generic_delivery.__file__).resolve():
@@ -159,7 +157,7 @@ def catalogue_sources(root, source_nodes):
         observation = seal.get('observations')
         if observation is None:
             continue
-        path = _file(root / observation['path'], MAX_BYTES)
+        path = _file(root / observation['path'])
         if c.digest(path) != observation['sha256']:
             raise ValueError('Delivery observer original changed')
         fact = c.read(path)
@@ -171,8 +169,6 @@ def catalogue_sources(root, source_nodes):
             known.add(candidate['id'])
             items.append(dict(candidate_id=candidate['id'], status='available', source_step=receipt['step']))
     result = dict(catalogue=True, items=items, omitted_count=0, source_nodes=list(source_nodes))
-    if len(_bytes(result)) > MAX_BYTES:
-        raise DeliveryUnresolved('delivery_catalogue_capacity')
     return result
 
 
@@ -199,7 +195,7 @@ def selected_sources(root, refs, candidate_id, *, prepare=False):
             raise
         c.write(path, value)
         path.chmod(0o400)
-    value = c.read(c.regular(path, limit=MAX_BYTES))
+    value = c.read(c.regular(path, limit=None))
     if value['source_nodes'] != refs['source_nodes'] or any(row['candidate_id'] != candidate_id for row in value['items']):
         raise ValueError('Selected delivery originals differ from their catalogue')
     return validate_sources(root, value)
@@ -237,40 +233,31 @@ def freeze_sources(root, source_nodes, *, candidate_id=None):
     if allowance <= 0:
         raise DeliveryUnresolved('delivery_source_preparation_unavailable')
     deadline = time.clock_gettime(time.CLOCK_BOOTTIME) + allowance
-    consumed, cache = 0, {}
+    cache={}
     def freeze(path):
-        nonlocal consumed
-        path = _file(path)
+        path=_file(path)
         if path in cache:return cache[path]
-        size = path.stat().st_size
-        if consumed + size > MAX_READ_BYTES:
-            raise DeliveryUnresolved('delivery_source_capacity')
-        data = bytearray()
-        with path.open('rb') as stream:
-            while block := stream.read(65536):
-                if time.clock_gettime(time.CLOCK_BOOTTIME) >= deadline:
-                    raise DeliveryUnresolved('delivery_source_time_limit')
-                data.extend(block)
-                if len(data) > MAX_ASSET_BYTES:
-                    raise DeliveryUnresolved('delivery_source_capacity')
-        consumed += len(data)
-        digest = hashlib.sha256(data).hexdigest()
-        objects = root / 'host-delivery/objects'
-        if objects.resolve() != objects:
-            raise ValueError('Delivery archive location changed')
-        objects.mkdir(parents=True, exist_ok=True)
-        saved = objects / digest
-        if saved.exists() or saved.is_symlink():
-            if c.digest(_file(saved)) != digest:
-                raise ValueError('Frozen delivery object changed')
-        else:
-            if sum(path.stat().st_size for path in objects.iterdir()) + len(data) > MAX_READ_BYTES:
-                raise DeliveryUnresolved('delivery_source_capacity')
-            with saved.open('xb') as stream:
-                stream.write(data);stream.flush();os.fsync(stream.fileno())
-            saved.chmod(0o400)
-        cache[path] = dict(path=saved.relative_to(root).as_posix(), sha256=digest, size_bytes=len(data))
-        return cache[path]
+        objects=root/'host-delivery/objects'
+        if objects.resolve()!=objects:raise ValueError('Delivery archive location changed')
+        objects.mkdir(parents=True,exist_ok=True)
+        temporary=None
+        try:
+            with tempfile.NamedTemporaryFile(dir=objects,prefix='.freeze-',delete=False) as out,path.open('rb') as stream:
+                temporary=Path(out.name);digest=hashlib.sha256();size=0
+                while block:=stream.read(1024*1024):
+                    if time.clock_gettime(time.CLOCK_BOOTTIME)>=deadline:
+                        raise DeliveryUnresolved('delivery_source_time_limit')
+                    out.write(block);digest.update(block);size+=len(block)
+                out.flush();os.fsync(out.fileno())
+            digest=digest.hexdigest();saved=objects/digest
+            if saved.exists() or saved.is_symlink():
+                if c.digest(_file(saved))!=digest:raise ValueError('Frozen delivery object changed')
+            else:
+                temporary.chmod(0o400);os.link(temporary,saved)
+            cache[path]=dict(path=saved.relative_to(root).as_posix(),sha256=digest,size_bytes=size)
+            return cache[path]
+        finally:
+            if temporary is not None:temporary.unlink(missing_ok=True)
     candidates, known, evidence, contexts, direct = [], set(), {}, {}, []
     managed = c.settings(root).get('history_observer', {}).get('contract_version') == 2
     for receipt in source_nodes:
@@ -280,7 +267,7 @@ def freeze_sources(root, source_nodes, *, candidate_id=None):
         observation = seal.get('observations')
         if observation is None:
             continue
-        path = _file(root / observation['path'], MAX_BYTES)
+        path = _file(root / observation['path'])
         if c.digest(path) != observation['sha256']:
             raise ValueError('Delivery observer original changed')
         fact = c.read(path)
@@ -296,7 +283,6 @@ def freeze_sources(root, source_nodes, *, candidate_id=None):
             if candidate['id'] in known:
                 raise ValueError('Delivery candidate identity is ambiguous')
             known.add(candidate['id'])
-            if len(candidates) + len(direct) >= MAX_SOURCES:continue
             from . import generic_results
             resolved = generic_results.sources(root, fact, candidate['id'])
             if resolved is not None:
@@ -339,15 +325,8 @@ def freeze_sources(root, source_nodes, *, candidate_id=None):
                 proofs=[execution_proof(proof) for proof in context['proofs']],
                 model=execution_proof(context['model']) if context.get('model') is not None else None)
                 for context in contexts.get(candidate['candidate_id'], [])]
-    if sum(proof['size_bytes'] for proof in evidence.values()) > MAX_READ_BYTES:
-        raise DeliveryUnresolved('delivery_source_capacity')
     if not candidates:
-        packed = dict(items=[], omitted_count=len(known)-len(direct), source_nodes=list(source_nodes),
-            capabilities=spec.get('capabilities', []))
-        for item in direct:
-            if len(_bytes(dict(packed, items=[*packed['items'], item]))) > MAX_BYTES:packed['omitted_count'] += 1
-            else:packed['items'].append(item)
-        return packed
+        return dict(items=direct,omitted_count=0,source_nodes=list(source_nodes),capabilities=spec.get('capabilities',[]))
     with tempfile.TemporaryDirectory(prefix='scid-resolve-') as directory:
         stage = Path(directory)
         (stage / 'inputs').mkdir();(stage / 'scratch').mkdir()
@@ -387,7 +366,7 @@ def freeze_sources(root, source_nodes, *, candidate_id=None):
             raise ValueError('Resolver used another candidate original')
         objects = dict(static)
         try:
-            if not isinstance(item.get('objects'), list) or len(item['objects']) > 16 or not isinstance(item.get('context'), dict):
+            if not isinstance(item.get('objects'),list) or not isinstance(item.get('context'),dict):
                 raise ValueError('Resolver objects require bounded references and context')
             for obj in item['objects']:
                 if not isinstance(obj, dict):raise ValueError('Resolver object fields changed')
@@ -411,7 +390,6 @@ def freeze_sources(root, source_nodes, *, candidate_id=None):
                     raise ValueError('Resolver object changed before freezing')
                 objects[obj['label']] = proof
             if 'artifact' not in objects:raise DeliveryUnresolved('delivery_artifact_unavailable')
-            if len(_bytes(item['context'])) > 8192:raise ValueError('Resolver context exceeds byte bound')
             items.append(dict(candidate_id=item['candidate_id'], status='audit_pending',
                               context=item['context'], ledger=evidence[evidence_label], objects=objects,
                               **(dict(audit_required='audit' in spec['capabilities']) if 'capabilities' in spec else {})))
@@ -420,14 +398,8 @@ def freeze_sources(root, source_nodes, *, candidate_id=None):
     for candidate in candidates:
         if candidate['candidate_id'] not in seen:
             items.append(dict(candidate_id=candidate['candidate_id'], status='unavailable', reason='delivery_source_unavailable'))
-    packed = dict(items=[], omitted_count=len(known) - len(candidates) - len(direct), source_nodes=list(source_nodes),
-                  **(dict(capabilities=sorted(set(declared))) if declared else {}))
-    for item in items:
-        if len(_bytes(dict(packed, items=[*packed['items'], item]))) > MAX_BYTES:
-            packed['omitted_count'] += 1
-        else:
-            packed['items'].append(item)
-    return packed
+    return dict(items=items,omitted_count=0,source_nodes=list(source_nodes),
+        **(dict(capabilities=sorted(set(declared))) if declared else {}))
 
 
 def public_sources(refs, audits=()):
@@ -613,8 +585,6 @@ def _keep(evidence, request, outcome, returncode, streams):
 
 def _call(spec, request, seconds, *, on_process=None, evidence=None):
     if seconds <= 0:return None
-    data = _bytes(request)
-    if len(data) > MAX_BYTES:raise ValueError('Delivery request exceeds byte bound')
     runtime._subreaper()  # Same actual ownership cleanup used by native runners.
     output, errors, totals = bytearray(), bytearray(), dict(stdout=0, stderr=0)
     def keep(outcome, returncode=None):
@@ -624,8 +594,8 @@ def _call(spec, request, seconds, *, on_process=None, evidence=None):
                 found = _tail(Path(request['stage']) / 'scratch' / f"{request['phase']}.{name}")
                 if found is not None:streams[request['phase'] + '.' + name] = found
         _keep(evidence, request, outcome, returncode, streams)
-    with tempfile.TemporaryFile() as input_file:
-        input_file.write(data);input_file.seek(0)
+    with tempfile.TemporaryFile(mode='w+',encoding='utf-8') as input_file, tempfile.TemporaryFile() as output_file:
+        json.dump(request,input_file,ensure_ascii=False,allow_nan=False,sort_keys=True);input_file.flush();input_file.seek(0)
         try:
             process = subprocess.Popen([*spec['launcher_argv'], spec['adapter']], stdin=input_file,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, env={'PATH': os.defpath}, start_new_session=True)
@@ -655,9 +625,9 @@ def _call(spec, request, seconds, *, on_process=None, evidence=None):
                     block = os.read(key.fileobj.fileno(), 65536)
                     if not block:selector.unregister(key.fileobj);continue
                     total += len(block)
-                    if key.fileobj is process.stdout:output.extend(block);totals['stdout'] += len(block)
+                    if key.fileobj is process.stdout:
+                        output_file.write(block);output.extend(block);del output[:-MAX_LEAF_TAIL];totals['stdout']+=len(block)
                     else:errors.extend(block);del errors[:-MAX_LEAF_TAIL];totals['stderr'] += len(block)
-                    if total > MAX_BYTES:failed = True;break
                 if failed:break
         if failed:
             if runtime.process_matches(identity, identity['task_sha256']):
@@ -668,21 +638,19 @@ def _call(spec, request, seconds, *, on_process=None, evidence=None):
             if runtime.cleanup_owned_group(identity) != 'observed_group_cleaned':
                 raise DeliveryUnresolved('delivery_cleanup_unknown')
             if request.get('phase') == 'audit':
-                raise DeliveryUnresolved('delivery_audit_capacity' if total > MAX_BYTES else 'delivery_audit_timeout')
+                raise DeliveryUnresolved('delivery_audit_timeout')
             return None
         process.wait(timeout=5)
         process.stdout.close();process.stderr.close()
         keep('exited', process.returncode)
         if runtime.cleanup_owned_group(identity) != 'observed_group_cleaned':
             raise DeliveryUnresolved('delivery_cleanup_unknown')
-    if process.returncode:
-        if request.get('phase') == 'audit':raise DeliveryUnresolved('delivery_audit_process_failed')
-        return None
-    try:
-        value = json.loads(output)
-    except (ValueError, UnicodeDecodeError):
-        return None
-    return value
+        if process.returncode:
+            if request.get('phase')=='audit':raise DeliveryUnresolved('delivery_audit_process_failed')
+            return None
+        output_file.seek(0)
+        try:return json.load(output_file)
+        except (ValueError,UnicodeDecodeError):return None
 
 
 def _staged(root, spec, source, operation_id, stage):

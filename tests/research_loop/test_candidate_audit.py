@@ -246,3 +246,51 @@ def test_closeout_audit_keeps_exact_prefix_returns_a_without_promotion(tmp_path,
     before=budget.used_steps(root)
     assert controller.run(root)['status']=='delivery_confirmed'
     assert calls==[4] and budget.used_steps(root)==before
+
+
+def test_unchanged_unavailable_candidate_stops_repeated_audit_route(tmp_path,monkeypatch):
+    root=audit_fixture(tmp_path)
+    job,payload=request(root)
+    calls=[]
+    def unavailable(root,nodes,*,candidate_id=None):
+        calls.append(candidate_id)
+        return dict(items=[dict(candidate_id=candidate_id,status='unavailable',reason='delivery_managed_original_missing_or_ambiguous')],
+            omitted_count=0,source_nodes=nodes)
+    monkeypatch.setattr(delivery,'freeze_sources',unavailable)
+    assert candidate_audit.execute(root,job,payload) is None
+    first=candidate_audit._outcome(root,3)
+    assert first['result']['note']=='candidate_originals_unavailable'
+    assert 'Repair the original binding' in first['result']['diagnostic']
+    c.build_job(root,4,'A',[1,2,3],instruction=payload['route_reason'])
+    finish(root,4,'A',[1,2,3],action='audit',recommendation='run-1',progress={'verdict':'no_progress'})
+    job=c.read(root/'jobs/004.json');payload=c.validate(c.workspace(root,4))
+    assert candidate_audit.execute(root,job,payload)=='candidate_audit_originals_unavailable'
+    second=candidate_audit._outcome(root,4)
+    assert second['unavailable_input_sha256']==first['unavailable_input_sha256']
+    assert second['result']['note']=='candidate_audit_unchanged_originals_unavailable'
+    before=len(calls)
+    assert candidate_audit.execute(root,job,payload)=='candidate_audit_originals_unavailable'
+    assert len(calls)==before
+    assert not (candidate_audit._directory(root,4)/'dispatch.json').exists()
+    monkeypatch.setattr(native,'execute_native',lambda *a:pytest.fail('Unchanged unavailable audit must not launch another A'))
+    result=controller.run(root)
+    assert result['status']=='candidate_audit_originals_unavailable'
+    assert 'Repair the original binding' in result['reason']
+    assert not (root/'jobs/005.json').exists()
+
+
+def test_unavailable_audit_does_not_block_a_different_exact_candidate(tmp_path,monkeypatch):
+    root=audit_fixture(tmp_path,candidate_count=2)
+    job,payload=request(root)
+    def unavailable(root,nodes,*,candidate_id=None):
+        return dict(items=[dict(candidate_id=candidate_id,status='unavailable',reason='delivery_code_source_unavailable')],
+            omitted_count=0,source_nodes=nodes)
+    monkeypatch.setattr(delivery,'freeze_sources',unavailable)
+    assert candidate_audit.execute(root,job,payload) is None
+    c.build_job(root,4,'A',[1,2,3],instruction=payload['route_reason'])
+    finish(root,4,'A',[1,2,3],action='audit',recommendation='run-2',progress={'verdict':'no_progress'})
+    job=c.read(root/'jobs/004.json');payload=c.validate(c.workspace(root,4))
+    assert candidate_audit.execute(root,job,payload) is None
+    first,second=candidate_audit._outcome(root,3),candidate_audit._outcome(root,4)
+    assert first['unavailable_input_sha256']!=second['unavailable_input_sha256']
+    assert second['result']['note']=='candidate_originals_unavailable'

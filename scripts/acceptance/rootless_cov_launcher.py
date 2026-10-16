@@ -2,15 +2,15 @@
 from pathlib import Path
 import argparse, hashlib, json, os, shlex, shutil, sys
 
-def regular(p, bound=4*1024*1024):
+def regular(p, bound=None):
     p=Path(p).absolute()
-    if p.is_symlink() or not p.is_file() or p.resolve()!=p or p.stat().st_size>bound:
+    if p.is_symlink() or not p.is_file() or p.resolve()!=p or bound is not None and p.stat().st_size>bound:
         raise ValueError('regular_bounded_file_required')
     return p.read_bytes()
 
 def file_digest(p):
     p=Path(p).absolute()
-    if p.is_symlink() or not p.is_file() or p.resolve()!=p or p.stat().st_size>512*1024*1024:
+    if p.is_symlink() or not p.is_file() or p.resolve()!=p:
         raise ValueError('bounded_native_binary_required')
     h=hashlib.sha256()
     with p.open('rb') as f:
@@ -106,11 +106,11 @@ def direct_materials(s,w,job_path):
         expected=Path('inputs/parents')/node/'artifacts'/exported
         if dest!=expected or dest.is_absolute() or '..' in dest.parts:
             raise ValueError('exact_parent_artifact_path_required')
-        if type(item['size_bytes']) is not int or not 0<=item['size_bytes']<=32*1024*1024:
+        if type(item['size_bytes']) is not int or item['size_bytes']<0:
             raise ValueError('direct_material_file_bound')
-        data=regular(source,32*1024*1024);totals[node]=totals.get(node,0)+len(data)
-        if totals[node]>64*1024*1024:raise ValueError('direct_material_parent_total_bound')
-        if len(data)!=item['size_bytes'] or hashlib.sha256(data).hexdigest()!=item['sha256']:
+        if source.is_symlink() or not source.is_file() or source.resolve()!=source:
+            raise ValueError('regular_original_file_required')
+        if source.stat().st_size!=item['size_bytes'] or file_digest(source)!=item['sha256']:
             raise ValueError('direct_material_digest_mismatch')
         target=w/dest
         if str(target) in targets:raise ValueError('duplicate_direct_material_target')

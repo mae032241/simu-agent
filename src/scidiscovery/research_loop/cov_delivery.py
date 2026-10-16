@@ -19,15 +19,18 @@ BOUND = 32 * 1024 * 1024
 FILES = ('exp_cli.py', 'runner.py', 'train.csv', 'val.csv', 'meta.json')
 
 
-def _exact(path, limit=BOUND):
+def _exact(path, limit=None):
     path = Path(path).absolute()
-    if path.resolve() != path or not path.is_file() or path.stat().st_size > limit:
+    if path.resolve() != path or not path.is_file() or limit is not None and path.stat().st_size > limit:
         raise ValueError('Exact bounded delivery original required')
     return path
 
 
 def _sha(path):
-    return hashlib.sha256(_exact(path).read_bytes()).hexdigest()
+    digest=hashlib.sha256()
+    with _exact(path).open('rb') as stream:
+        for block in iter(lambda:stream.read(1024*1024),b''):digest.update(block)
+    return digest.hexdigest()
 
 
 def target(value):
@@ -60,7 +63,6 @@ def original(root, candidate, cfg, ledger_cache):
             indexed = {}
             for line in data.splitlines():
                 if not line.strip():continue
-                if len(line) > 256_000:raise ValueError('Public run row exceeds byte bound')
                 row = json.loads(line)
                 if type(row.get('run_id')) is int:indexed.setdefault(row['run_id'], []).append(row)
             ledger_cache[proof['sha256']] = indexed
@@ -197,7 +199,7 @@ def _smoke(request):
     with Path('/scratch/smoke.stdout').open('wb') as out, Path('/scratch/smoke.stderr').open('wb') as err:
         subprocess.run([request['config']['python'], '-I', '-c', SMOKE], env=dict(os.environ), cwd='/scratch', stdout=out, stderr=err)
     try:
-        value = json.loads(_exact('/scratch/smoke.json', 4096).read_text())
+        value = json.loads(_exact('/scratch/smoke.json').read_text())
     except (OSError, ValueError):
         value = {}
     return _reply(request, *smoke_status(value))
@@ -238,13 +240,10 @@ def _current_guard(request):
     import runpy
     host=Path(__file__).with_name('protocol.py')
     source=host if host.is_file() else Path('/inputs/scid-current-protocol')
-    with _exact(source,256_000).open('rb') as stream:
-        data=stream.read(256_001)
-    if len(data)>256_000:
-        raise ValueError('Exact bounded delivery original required')
+    source=_exact(source)
     if source!=host:
         proof=next((item for item in request.get('inputs',[]) if item.get('label')=='scid-current-protocol'),None)
-        if proof is None or hashlib.sha256(data).hexdigest()!=proof['sha256'] or len(data)!=proof['size_bytes']:
+        if proof is None or _sha(source)!=proof['sha256'] or source.stat().st_size!=proof['size_bytes']:
             raise ValueError('Frozen current protocol original differs')
     runpy.run_path(str(source))['require_scope'](request.get('scope'))
 
@@ -309,7 +308,7 @@ def leaf(request):
             return _reply(request, 'unclassified', 'audit_receipt_missing')
         value=None
         try:
-            value=json.loads(_exact(proof, 256_000).read_text())
+            value=json.loads(_exact(proof).read_text())
             status, note = audit_status(value, run_id)
         except (OSError, ValueError):
             status, note = 'unclassified', 'audit_receipt_invalid'
@@ -324,14 +323,19 @@ def leaf(request):
             return reply
         return _reply(request, 'audited', 'public_audit_completed_nonleaking')
     if phase == 'promote':
-        audit = json.loads(_exact('/scratch/runs/submitted.json', 256_000).read_text())
+        audit = json.loads(_exact('/scratch/runs/submitted.json').read_text())
         if not _audit(audit, run_id) or _sha('/scratch/runs/submitted_model.pkl') != request['artifact_sha256']:
             return _reply(request, 'failed', 'audit_not_completed')
-        data = _exact('/inputs/artifact').read_bytes()
+        artifact=_exact('/inputs/artifact')
         # A multi-file commit can be interrupted. The marker is written last;
         # anything partial stays unknown and is queried without resubmission.
         for path in (runs / 'submitted_model.pkl', submission / 'model.pkl'):
-            _replace(path, data)
+            pending=path.with_name(path.name+'.rootless-pending')
+            if pending.exists() or pending.is_symlink():raise ValueError('Uncertain delivery target temporary exists')
+            with artifact.open('rb') as source,pending.open('xb') as sink:
+                shutil.copyfileobj(source,sink,1024*1024);sink.flush();os.fsync(sink.fileno())
+            if _sha(pending)!=request['artifact_sha256']:raise ValueError('Delivery artifact changed during copy')
+            os.replace(pending,path)
         audit['model_path'] = str(Path(request['target']['runs']) / 'submitted_model.pkl')
         _replace(runs / 'submitted.json', (json.dumps(audit, allow_nan=False) + '\n').encode())
         marker = dict(operation_id=request['operation_id'], candidate_id=request['candidate_id'],
@@ -340,8 +344,8 @@ def leaf(request):
     elif phase != 'confirm':
         raise ValueError('Unknown delivery phase')
     try:
-        marker = json.loads(_exact(runs / 'rootless-delivery-operation.json', 256_000).read_text())
-        actual = json.loads(_exact(runs / 'submitted.json', 256_000).read_text())
+        marker = json.loads(_exact(runs/'rootless-delivery-operation.json').read_text())
+        actual = json.loads(_exact(runs/'submitted.json').read_text())
         if (all(marker.get(key) == request[key] for key in ('operation_id', 'candidate_id', 'artifact_sha256'))
                 and _audit(actual, run_id) and _sha(runs / 'submitted.json') == marker['audit_sha256']
                 and _sha(runs / 'submitted_model.pkl') == request['artifact_sha256']
@@ -396,14 +400,12 @@ def isolate(request, adapter):
 
 
 if __name__ == '__main__':
-    data = sys.stdin.buffer.read(256_001)
-    if len(data) > 256_000:raise ValueError('Delivery input exceeds byte bound')
-    request = json.loads(data)
+    request=json.load(sys.stdin)
     if sys.argv[1] == '--isolate':
         # Recreate a finite stdin after parsing the launcher request.
         import tempfile
-        with tempfile.TemporaryFile() as stream:
-            stream.write(data);stream.seek(0);os.dup2(stream.fileno(), 0)
+        with tempfile.TemporaryFile(mode='w+',encoding='utf-8') as stream:
+            json.dump(request,stream,allow_nan=False);stream.flush();stream.seek(0);os.dup2(stream.fileno(),0)
             isolate(request, str(Path(sys.argv[2]).resolve()))
     elif sys.argv[1:] == ['--leaf']:
         print(json.dumps(leaf(request), allow_nan=False))

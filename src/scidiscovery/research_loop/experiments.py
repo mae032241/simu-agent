@@ -90,24 +90,23 @@ def encoded(value):
     return (json.dumps(value, ensure_ascii=False, sort_keys=True, allow_nan=False) + '\n').encode()
 
 
-def read(path, limit=MAX_BYTES):
+def read(path, limit=None):
     path = Path(path)
-    if path.resolve() != path or not path.is_file() or path.stat().st_size > limit:
+    if path.resolve() != path or not path.is_file() or limit is not None and path.stat().st_size > limit:
         raise IntegrityError('Exact bounded execution original required')
     return path.read_bytes()
 
 
-def proof(path, limit=MAX_ASSET):
-    data = read(path, limit)
-    return dict(path=str(path), sha256=hashlib.sha256(data).hexdigest(), size_bytes=len(data))
+def proof(path, limit=None):
+    from . import contracts as c
+    path=c.regular(Path(path),limit=limit)
+    return dict(path=str(path),sha256=c.digest(path),size_bytes=path.stat().st_size)
 
 
 def write(path, value):
-    data = encoded(value)
-    if len(data) > MAX_BYTES:
-        raise ValueError('Execution record capacity exceeded')
-    with Path(path).open('xb') as stream:
-        stream.write(data);stream.flush();os.fsync(stream.fileno())
+    with Path(path).open('x',encoding='utf-8') as stream:
+        json.dump(value,stream,ensure_ascii=False,sort_keys=True,allow_nan=False)
+        stream.write('\n');stream.flush();os.fsync(stream.fileno())
 
 
 @lru_cache(maxsize=32)
@@ -281,8 +280,6 @@ class Records:
         if root.resolve() != root:
             raise IntegrityError('Execution call namespace changed')
         paths = sorted(root.iterdir()) if root.exists() else []
-        if len(paths) > MAX_CALLS:
-            raise ValueError('Execution call capacity exceeded')
         if any(path.resolve() != path or not path.is_dir() for path in paths):
             raise IntegrityError('Execution call directory changed')
         return paths
@@ -317,16 +314,15 @@ class Records:
         """Short admission linearization point. No solver or domain IO under lock."""
         from .protocol import require_scope
         require_scope(self.config['scope'])
-        data = read(descriptor.local_path, MAX_ASSET)
-        if hashlib.sha256(data).hexdigest() != descriptor.sha256 or len(data) != descriptor.size_bytes:
+        from . import contracts as c
+        original=proof(descriptor.local_path)
+        if original['sha256']!=descriptor.sha256 or original['size_bytes']!=descriptor.size_bytes:
             raise IntegrityError('Prepared execution input changed')
-        if len(self.calls()) >= MAX_CALLS:
-            raise ValueError('Execution call capacity exceeded')
         import shutil,tempfile
         self.root.mkdir(parents=True,exist_ok=True)
         directory=Path(tempfile.mkdtemp(prefix='.prepared-',dir=self.root))
         source = directory / 'source.py'
-        source.write_bytes(data);source.chmod(0o400)
+        c._copy_bound(Path(descriptor.local_path),source,descriptor.sha256)
         destination=self.root/'calls'/descriptor.name
         source_proof=proof(source);source_proof['path']=str(destination/'source.py')
         accepted = dict(metadata, call_id=descriptor.name, scope=self.config['scope'],
@@ -334,25 +330,19 @@ class Records:
             prepared=descriptor.model_dump(mode='json'), interface=interface)
         try:
             files = metadata.get('snapshot_files', [])
-            if not isinstance(files, list) or len(files) > MAX_INPUT_FILES:
-                raise ValueError('Managed input file capacity exceeded')
-            total = 0; seen = set()
+            if not isinstance(files,list):raise ValueError('Managed input inventory required')
+            seen = set()
             for item in files:
                 name = item['name']; relative = Path(name)
                 if (not isinstance(name, str) or relative.is_absolute() or '..' in relative.parts
                         or relative.as_posix() != name or not relative.parts or name in seen):
                     raise ValueError('Managed input path is not canonical')
                 seen.add(name)
-                content = read(item['path'], MAX_ASSET); total += len(content)
-                if total > MAX_INPUT_BYTES:
-                    raise ValueError('Managed input byte capacity exceeded')
-                if hashlib.sha256(content).hexdigest() != item['sha256'] or len(content) != item['size_bytes']:
+                original=proof(item['path'])
+                if any(original[key]!=item[key] for key in ('sha256','size_bytes')):
                     raise IntegrityError('Managed input changed before acceptance')
-                target = directory / 'inputs' / relative
-                target.parent.mkdir(parents=True, exist_ok=True)
-                with target.open('xb') as stream:
-                    stream.write(content); stream.flush(); os.fsync(stream.fileno())
-                target.chmod(0o400)
+                target=directory/'inputs'/relative
+                c._copy_bound(Path(item['path']),target,item['sha256'])
             with self.lease():
                 if expected_calls is not None and [path.name for path in self.calls()]!=expected_calls:
                     raise ConcurrentExecution('Another original execution was accepted; query its identity')
@@ -459,13 +449,21 @@ def verify_observation(value, original, *, interface=None):
     """Verify frozen control facts using exact bytes, never a live backend query."""
     def bound(item):
         data=original(item)
-        if hashlib.sha256(data).hexdigest()!=item['sha256'] or len(data)!=item['size_bytes']:
-            raise IntegrityError('Execution observation original changed')
+        if isinstance(data,Path):
+            valid=proof(data)
+            changed=any(valid[key]!=item[key] for key in ('sha256','size_bytes'))
+        else:changed=hashlib.sha256(data).hexdigest()!=item['sha256'] or len(data)!=item['size_bytes']
+        if changed:raise IntegrityError('Execution observation original changed')
         return data
+    def decoded(item):
+        data=bound(item)
+        if isinstance(data,Path):
+            with data.open(encoding='utf-8') as stream:return json.load(stream)
+        return json.loads(data)
     if not isinstance(value,dict) or value.get('version')!=OBSERVATION_VERSION:
         raise IntegrityError('Execution observation version unavailable')
-    accepted=json.loads(bound(value['accepted']));completed=json.loads(bound(value['completed']))
-    submission=json.loads(bound(value['submission']))
+    accepted=decoded(value['accepted']);completed=decoded(value['completed'])
+    submission=decoded(value['submission'])
     if (value.get('interface')!=accepted.get('interface') or interface is not None and value.get('interface')!=interface
             or value.get('status') not in {'known_success','known_failed'}
             or value['status']!=completed.get('status')
@@ -487,7 +485,7 @@ def verify_observation(value, original, *, interface=None):
                 or descriptor.sha256!=item['sha256'] or descriptor.size_bytes!=item['size_bytes']):
             raise IntegrityError('Retained collection differs from its original descriptor')
     if value['interface'].get('terminal_evidence')=='local_process':
-        terminal=json.loads(bound(value['native_terminal']))
+        terminal=decoded(value['native_terminal'])
         if local_terminal_status(accepted,completed,terminal)!=value['status']:
             raise IntegrityError('Local observation lacks confirmed cleanup, transport or exit status')
     elif value['interface'].get('terminal_evidence')!='adapter_result':
@@ -505,7 +503,7 @@ def record_observation(config, adapter, call_id, *, collected=None):
     records=Records(config);directory=records.directory(call_id)
     path=directory/'execution-observation.json'
     if path.exists():
-        value=json.loads(read(path));verify_observation(value,lambda item:read(item['path'],MAX_ASSET),
+        value=json.loads(read(path));verify_observation(value,lambda item:Path(item['path']),
             interface=config['execution_interface']);return value
     accepted=records.accepted(call_id)
     if accepted['interface']!=config['execution_interface']:
@@ -521,30 +519,22 @@ def record_observation(config, adapter, call_id, *, collected=None):
             or any(completed.get(key)!=accepted.get(key) for key in ('call_id','scope','mechanism_binding'))):
         raise IntegrityError('Adapter terminal projection differs from accepted completion')
     proofs=result.get('proofs')
-    if not isinstance(proofs,list) or not proofs or len(proofs)>MAX_INPUT_FILES:
+    if not isinstance(proofs,list) or not proofs:
         raise IntegrityError('Adapter terminal result requires bounded original proofs')
     for item in proofs:
         if proof(item['path'])!=item:raise IntegrityError('Adapter terminal original changed')
-    consumed=0
     def retain(item):
-        nonlocal consumed
-        data=read(item['path'],MAX_ASSET);consumed+=len(data)
-        if consumed>MAX_INPUT_BYTES:raise IntegrityError('Execution observation collection capacity exceeded')
-        if hashlib.sha256(data).hexdigest()!=item['sha256'] or len(data)!=item['size_bytes']:
+        from . import contracts as c
+        source=Path(item['path']);original=proof(source)
+        if any(original[key]!=item[key] for key in ('sha256','size_bytes')):
             raise IntegrityError('Execution observation original changed during collection')
         target=directory/'observed-originals'/item['sha256']
-        target.parent.mkdir(exist_ok=True)
-        if target.exists():
-            if read(target,MAX_ASSET)!=data:raise IntegrityError('Retained observation original changed')
-        else:
-            with target.open('xb') as stream:stream.write(data);stream.flush();os.fsync(stream.fileno())
-            target.chmod(0o400)
+        c._copy_bound(source,target,item['sha256'])
         return dict(proof(target),source=item)
     proofs=[retain(item) for item in proofs]
     outputs=[];names=set()
     if lifecycle_capabilities(adapter).collect:
         descriptors=adapter.collect_original(call_id) if collected is None else collected
-        if len(descriptors)>MAX_INPUT_FILES:raise IntegrityError('Collected observation capacity exceeded')
         for descriptor in descriptors:
             name=Path(descriptor.name)
             if (name.is_absolute() or '..' in name.parts or not name.parts or name.as_posix()!=descriptor.name
@@ -561,7 +551,7 @@ def record_observation(config, adapter, call_id, *, collected=None):
         completed=proof(directory/'completed.json'),submission=proof(directory/'submission.json'),proofs=proofs,outputs=outputs)
     if config['execution_interface'].get('terminal_evidence')=='local_process':
         value['native_terminal']=proof(directory/'terminal.json')
-    verify_observation(value,lambda item:read(item['path'],MAX_ASSET))
+    verify_observation(value,lambda item:Path(item['path']))
     with records.lease('observation-'+call_id+'.lock'):
         if path.exists():
             if json.loads(read(path))!=value:raise IntegrityError('Frozen execution observation changed')
@@ -725,6 +715,14 @@ def main(argv=None):
     except (IntegrityError,common.IntegrityError,feedback.history.ObserverIntegrityError) as error:result=dict(status='integrity_error',note=str(error));code=3
     except OSError:result=dict(status='integrity_error',note='Execution original cannot be read');code=3
     except ValueError as error:result=dict(status='unavailable' if isinstance(error,(UnsupportedExecution,common.UnsupportedExecution)) else 'unresolved',note=str(error));code=2
+    # CLI is a compact model view; the complete collection is already durable.
+    if isinstance(result.get('outputs'),list):
+        original=result['outputs'];result=dict(result,outputs=[])
+        for item in original:
+            proposed=dict(result,outputs=[*result['outputs'],item])
+            if len(encoded(proposed))>16_000:break
+            result['outputs'].append(item)
+        if len(result['outputs'])<len(original):result['outputs_omitted_count']=len(original)-len(result['outputs'])
     print(json.dumps(result,allow_nan=False));return code
 
 

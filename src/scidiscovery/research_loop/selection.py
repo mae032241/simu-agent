@@ -2,8 +2,6 @@
 import json
 import math
 
-MAX_CANDIDATES = 4096
-MAX_INPUT_BYTES = 4 * 1024 * 1024
 MAX_BRIEF_BYTES = 4096
 RECORD_FIELDS = {'step', 'role', 'recommendation', 'coverage', 'candidates', 'current_candidate', 'actual_submission'}
 CANDIDATE_FIELDS = {'id', 'label', 'evaluation_key', 'metric', 'direction', 'status'}
@@ -94,8 +92,6 @@ def project(records, *, audits=(), delivery=None):
     _public_keys(records)
     _public_keys(list(audits))
     _public_keys(delivery)
-    if len(_bytes(dict(records=records, audits=list(audits), delivery=delivery))) > MAX_INPUT_BYTES:
-        raise ValueError('Public selection inputs exceed bound')
     candidates, steps, observations, authors = {}, set(), [], []
     for record in sorted(records, key=lambda row: row['step']):
         _record(record)
@@ -118,8 +114,6 @@ def project(records, *, audits=(), delivery=None):
             if item['id'] in candidates and candidates[item['id']] != item:
                 raise ValueError('Observed candidate identity changed')
             candidates.setdefault(item['id'], dict(item))
-        if len(candidates) > MAX_CANDIDATES:
-            raise ValueError('Candidate count exceeds bound')
         for field in ('current_candidate', 'actual_submission'):
             value = record[field]
             if value is not None:
@@ -221,7 +215,16 @@ def project(records, *, audits=(), delivery=None):
         value['candidate_alerts'].pop()
         value['candidate_alerts_omitted_count']+=1
     if len(_bytes(value)) > MAX_BRIEF_BYTES:
-        raise ValueError('Selection fixed fields exceed brief bound')
+        return dict(scope='observed_only', coverage=value['coverage'], candidate_count=len(candidates),
+            target_best=None, view_status='details_omitted', current_candidate=None,
+            latest_a_step=None, a_recommended=None, historical_a_recommendation=None,
+            observed_actual_submission=None, delivery=dict(state='unknown', current_confirmed=None, last_confirmed=None),
+            proxy_highest=[], proxy_groups_omitted_count=len(proxy),
+            unranked_ids=[], unranked_omitted_count=len(unranked),
+            public_audits=[], audits_omitted_count=len(candidates),
+            candidate_alerts=[], candidate_alerts_omitted_count=len(alerts),
+            failed_candidate_count=value['failed_candidate_count'], unknown_candidate_count=value['unknown_candidate_count'],
+            limitation='Selection details omitted, not absent. Read existing history indexes for complete original facts.')
     return value
 
 

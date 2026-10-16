@@ -160,7 +160,7 @@ def test_selected_copy_cannot_follow_destination_directory_link(scene, tmp_path)
 
 def test_final_input_bound_includes_new_outputs_and_selected_old_files(scene):
     source(scene, {'candidate.py': 'x' * 48})
-    finish(scene, 3, 'A', [2], text=MARKED)
+    finish(scene, 3, 'A', [2], text=MARKED, selection=['W002-I001'])
     finish(scene, 4, 'H', [3], text=MARKED, files={'revision.txt': 'y' * 64})
     with pytest.raises(ValueError, match='Combined input materials'):
         contracts.build_job(scene, 5, 'W', [4])

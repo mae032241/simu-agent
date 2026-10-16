@@ -166,12 +166,13 @@ def test_r2_unhashable_json_direction_is_invalid_not_lost_completion(local,direc
     assert any(item['name']=='result.json' for item in result['outputs'])
 
 
-def test_r1_input_capacity_rejected_without_acceptance(local,monkeypatch):
+def test_full_input_inventory_is_not_limited_by_legacy_capacity_constant(local,monkeypatch):
     root,script,config,_=local
     monkeypatch.setattr(e,'MAX_INPUT_BYTES',1)
-    with pytest.raises(ValueError,match='capacity'):
-        e.dispatch(config,script,command_options=dict(experiment_directory=str(root),arguments=[]))
-    assert e.Records(config).calls()==[]
+    result=e.dispatch(config,script,command_options=dict(experiment_directory=str(root),arguments=[]))
+    assert result['status']=='known_success'
+    accepted=e.Records(config).accepted(result['call_id'])
+    assert len(accepted['snapshot_files'])>=2
 
 
 def test_legacy_current_job_without_mode_keeps_science_view_and_observer_shape(tmp_path):
@@ -333,10 +334,11 @@ def test_r2_output_metadata_capacity_preserves_known_execution(local):
         'pathlib.Path("artifacts/result.json").write_text(\'{"version":1,"metrics":[],"outputs":[]}\')\n')
     result=e.dispatch(config,script,command_options=dict(experiment_directory=str(root),arguments=[]))
     assert result['status']=='known_success' and result['returncode']==0
-    assert result['result']==dict(status='unavailable',metrics=[],outputs=[],diagnostic='managed_output_metadata_capacity',outputs_omitted_count=127)
-    assert [item['name'] for item in result['outputs']]==['result.json']
+    assert result['result']['status']=='available'
+    assert len(result['outputs'])==128
     directory=e.Records(config).directory(result['call_id'])
-    assert len((directory/'completed.json').read_bytes())<=e.MAX_BYTES
+    assert (directory/'completed.json').stat().st_size>e.MAX_BYTES
+    assert len(e.encoded(LocalExecution.public_result(result)))<20_000
     assert len(list((directory/'outputs').iterdir()))==128
 
 
@@ -349,14 +351,13 @@ def test_r2_excessive_json_depth_is_invalid_and_raw_result_is_retained(local):
     assert Path(result['outputs'][0]['path']).read_text()==content
 
 
-def test_r1_empty_input_directories_are_bounded_before_acceptance(local,monkeypatch):
+def test_empty_input_directories_do_not_hit_an_arbitrary_inventory_cap(local,monkeypatch):
     from scidiscovery.research_loop import local_experiments
     root,script,config,_=local
     monkeypatch.setattr(local_experiments,'MAX_SCAN_ENTRIES',4)
     for number in range(5):(root/f'empty-{number}').mkdir()
-    with pytest.raises(ValueError,match='directory entry capacity'):
-        e.dispatch(config,script,command_options=dict(experiment_directory=str(root),arguments=[]))
-    assert e.Records(config).calls()==[]
+    result=e.dispatch(config,script,command_options=dict(experiment_directory=str(root),arguments=[]))
+    assert result['status']=='known_success'
 
 
 def test_r2_empty_output_directories_do_not_erase_known_execution(local,monkeypatch):
@@ -366,7 +367,7 @@ def test_r2_empty_output_directories_do_not_erase_known_execution(local,monkeypa
     script.write_text('import pathlib\nfor number in range(5):pathlib.Path("artifacts",f"empty-{number}").mkdir()\n')
     result=e.dispatch(config,script,command_options=dict(experiment_directory=str(root),arguments=[]))
     assert result['status']=='known_success' and result['returncode']==0
-    assert result['result']['status']=='unavailable' and result['outputs']==[]
+    assert result['result']['status']=='missing' and result['outputs']==[]
     assert (e.Records(config).directory(result['call_id'])/'completed.json').is_file()
 
 
@@ -377,3 +378,20 @@ def test_r1_input_scan_excludes_prior_artifacts_subtree(local,monkeypatch):
     for number in range(5):(root/'artifacts'/f'prior-{number}').mkdir(parents=True)
     result=e.dispatch(config,script,command_options=dict(experiment_directory=str(root),arguments=[]))
     assert result['status']=='known_success' and result['result']['status']=='available'
+
+
+def test_full_execution_proof_and_snapshot_stream_above_old_asset_cap(local,monkeypatch):
+    root,script,config,_=local
+    large=root/'inputs/large.bin'
+    with large.open('wb') as stream:stream.truncate(33*1024*1024)
+    original_read=Path.read_bytes
+    def forbid_read_bytes(path):
+        if path.stat().st_size>32*1024*1024:raise AssertionError('Complete original must be hashed/copied as a stream')
+        return original_read(path)
+    monkeypatch.setattr(Path,'read_bytes',forbid_read_bytes)
+    result=e.dispatch(config,script,command_options=dict(experiment_directory=str(root),arguments=[]))
+    assert result['status']=='known_success'
+    accepted=e.Records(config).accepted(result['call_id'])
+    item=next(item for item in accepted['snapshot_files'] if item['name']=='inputs/large.bin')
+    frozen=e.Records(config).directory(result['call_id'])/'inputs'/item['name']
+    assert frozen.stat().st_size==33*1024*1024 and c.digest(frozen)==item['sha256']

@@ -26,9 +26,12 @@ def descriptor(directory, *, python=sys.executable):
 
 def _sha(path):
     path = Path(path)
-    if path.resolve() != path or not path.is_file() or path.stat().st_size > 32 * 1024 * 1024:
+    if path.resolve() != path or not path.is_file() :
         raise ValueError('Exact bounded delivery file required')
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    digest=hashlib.sha256()
+    with path.open('rb') as stream:
+        for block in iter(lambda:stream.read(1024*1024),b''):digest.update(block)
+    return digest.hexdigest()
 
 
 def _guard(request):
@@ -74,9 +77,11 @@ def leaf(request):
         for name in manifest['objects']:
             path = pending / name
             path.parent.mkdir(parents=True, exist_ok=True)
-            _write(path, (Path('/inputs') / name).read_bytes())
+            with (Path('/inputs')/name).open('rb') as source,path.open('xb') as sink:
+                shutil.copyfileobj(source,sink,1024*1024);sink.flush();os.fsync(sink.fileno())
             if _sha(path) != manifest['objects'][name]:raise ValueError('Delivered object changed')
-        _write(pending / 'manifest.json', (json.dumps(manifest, sort_keys=True, allow_nan=False) + '\n').encode())
+        with (pending/'manifest.json').open('x',encoding='utf-8') as stream:
+            json.dump(manifest,stream,sort_keys=True,allow_nan=False);stream.write('\n');stream.flush();os.fsync(stream.fileno())
         os.rename(pending, destination)
         descriptor = os.open('/target', os.O_RDONLY | os.O_DIRECTORY)
         try:os.fsync(descriptor)
@@ -85,7 +90,7 @@ def leaf(request):
         raise ValueError('Directory adapter provides promotion and confirmation only')
     try:
         original = destination / 'manifest.json'
-        if original.stat().st_size > 256_000 or original.resolve() != original:raise ValueError('Exact bounded delivery manifest required')
+        if original.resolve()!=original:raise ValueError('Exact bounded delivery manifest required')
         actual = json.loads(original.read_text())
         if actual == manifest and all(_sha(destination / name) == digest for name, digest in manifest['objects'].items()):
             return dict(reply, status='confirmed', note='exact_local_directory_delivery_confirmed')
@@ -122,12 +127,10 @@ def isolate(request, adapter):
 
 
 if __name__ == '__main__':
-    data = sys.stdin.buffer.read(256_001)
-    if len(data) > 256_000:raise ValueError('Bounded delivery request required')
-    request = json.loads(data)
+    request=json.load(sys.stdin)
     if sys.argv[1] == '--isolate':
-        with tempfile.TemporaryFile() as stream:
-            stream.write(data);stream.seek(0);os.dup2(stream.fileno(), 0)
+        with tempfile.TemporaryFile(mode='w+',encoding='utf-8') as stream:
+            json.dump(request,stream,allow_nan=False);stream.flush();stream.seek(0);os.dup2(stream.fileno(),0)
             isolate(request, str(Path(sys.argv[2]).resolve()))
     elif sys.argv[1:] == ['--leaf']:
         print(json.dumps(leaf(request), allow_nan=False))

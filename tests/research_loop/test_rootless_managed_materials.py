@@ -52,3 +52,21 @@ def test_managed_exports_reject_unbound_or_changed_originals(tmp_path,monkeypatc
     c.write(root/'jobs/003.json',job)
     with pytest.raises((ValueError,OSError)):
         launcher.direct_materials(dict(scene_root=str(root)),c.workspace(root,3),root/'jobs/003.json')
+
+
+def test_launcher_reads_full_control_job_and_streams_large_material_digest(tmp_path,monkeypatch):
+    import json
+    spec=importlib.util.spec_from_file_location('large_control_launcher',Path(__file__).resolve().parents[2]/'scripts/acceptance/rootless_cov_launcher.py')
+    launcher=importlib.util.module_from_spec(spec);spec.loader.exec_module(launcher)
+    job=tmp_path/'job.json';value=dict(direct_materials=[],full_control_metadata='x'*(5*1024*1024))
+    with job.open('w') as stream:json.dump(value,stream)
+    assert json.loads(launcher.regular(job))==value
+    asset=tmp_path/'asset.bin'
+    with asset.open('wb') as stream:stream.truncate(33*1024*1024)
+    digest=c.digest(asset)
+    original=Path.read_bytes
+    def no_large_read(path):
+        if path==asset:raise AssertionError('Material digest must stream')
+        return original(path)
+    monkeypatch.setattr(Path,'read_bytes',no_large_read)
+    assert launcher.file_digest(asset)==digest

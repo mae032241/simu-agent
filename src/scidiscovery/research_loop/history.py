@@ -9,7 +9,6 @@ import math
 import os
 from pathlib import Path
 import re
-import resource
 import subprocess
 import sys
 import tempfile
@@ -48,9 +47,9 @@ def observer_config(value):
             or not isinstance(value['config'],dict) or 'contract_version' in value and (type(value['contract_version']) is not int or value['contract_version'] != 2)):
         raise ValueError('Observer requires an exact adapter and configuration')
     path = Path(value['adapter']).absolute()
-    if path.resolve() != path or len(_bytes(value['config'])) > MAX_PAGE_BYTES:
-        raise ValueError('Observer requires an original bounded configuration')
-    c.regular(path, limit=MAX_OBSERVER_BYTES)
+    if path.resolve() != path:
+        raise ValueError('Observer requires an original configuration')
+    c.regular(path)
     return dict(adapter=str(path), adapter_sha256=c.digest(path), config=value['config'],
                 **(dict(contract_version=2) if value.get('contract_version') == 2 else {}))
 
@@ -84,7 +83,7 @@ def resolve(root, target, receipts, *, current=None):
     return row
 
 
-def _proof(root, source, read_limit=MAX_OBJECT_BYTES):
+def _proof(root, source):
     from .protocol import require_current
     require_current(root)
     if not isinstance(source, str):
@@ -94,55 +93,41 @@ def _proof(root, source, read_limit=MAX_OBJECT_BYTES):
         raise ObserverIntegrityError('Observer evidence must be an exact instance original')
     c.regular(path)
     size = path.stat().st_size
-    if size > min(MAX_HISTORY_BYTES, read_limit):
-        return dict(path=source, sha256=None, size_bytes=size, retention='unavailable', reason='read_capacity')
-    data = path.read_bytes()
-    if len(data) > MAX_HISTORY_BYTES:
-        raise ValueError('Observer source exceeded its read capacity')
-    sha = hashlib.sha256(data).hexdigest()
+    sha = c.digest(path)
     objects = root / 'host-history/objects'
     snapshot = objects / sha
     if objects.resolve() != objects or snapshot.is_symlink():
         raise ObserverIntegrityError('Observer archive must contain original files')
     if snapshot.exists():
-        if not snapshot.is_file() or c.digest(c.regular(snapshot, limit=MAX_HISTORY_BYTES)) != sha:
+        if not snapshot.is_file() or c.digest(c.regular(snapshot)) != sha:
             raise ObserverIntegrityError('Archived observer original changed')
     else:
-        total = sum(row.stat().st_size for row in objects.iterdir()) if objects.exists() else 0
-        if total + len(data) > MAX_OBJECT_BYTES:
-            return dict(path=source, sha256=sha, size_bytes=len(data), retention='digest_only', reason='total_capacity')
         objects.mkdir(parents=True, exist_ok=True)
         if objects.resolve() != objects:
             raise ObserverIntegrityError('Observer archive must be an original directory')
         temporary = objects / (sha + '.tmp')
         if temporary.exists() or temporary.is_symlink():
             raise ObserverIntegrityError('Observer archive has an uncertain temporary original')
-        with temporary.open('xb') as stream:
-            stream.write(data);stream.flush();os.fsync(stream.fileno())
-        temporary.chmod(0o400);temporary.replace(snapshot)
-    return dict(path=source, sha256=sha, size_bytes=len(data), retention='archived',
+        c._copy_bound(path,temporary,sha)
+        with temporary.open('rb') as stream:os.fsync(stream.fileno())
+        temporary.replace(snapshot)
+    return dict(path=source, sha256=sha, size_bytes=size, retention='archived',
                 snapshot=snapshot.relative_to(root).as_posix())
 
 
 def read_adapter(config, request):
-    """The existing bounded, trusted, synchronous observation transport."""
-    adapter = c.regular(Path(config['adapter']), limit=MAX_OBSERVER_BYTES)
+    """The trusted synchronous observation transport carries complete records."""
+    adapter = c.regular(Path(config['adapter']))
     if adapter.resolve() != adapter or c.digest(adapter) != config['adapter_sha256']:
         raise ObserverIntegrityError('Frozen observer adapter changed')
-    if len(_bytes(request)) > MAX_OBSERVER_BYTES:
-        raise ValueError('Observer input exceeds byte bound')
-    def bound_output():
-        resource.setrlimit(resource.RLIMIT_FSIZE, (MAX_OBSERVER_BYTES, MAX_OBSERVER_BYTES))
-    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
-        result = subprocess.run([sys.executable, '-I', str(adapter)], input=_bytes(request),
-            stdout=out, stderr=err, timeout=OBSERVER_SECONDS, env={'PATH': os.defpath}, preexec_fn=bound_output)
+    with tempfile.TemporaryFile(mode='w+') as request_file, tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+        json.dump(request,request_file,ensure_ascii=False,allow_nan=False)
+        request_file.seek(0)
+        result = subprocess.run([sys.executable, '-I', str(adapter)], stdin=request_file,
+            stdout=out, stderr=err, timeout=OBSERVER_SECONDS, env={'PATH': os.defpath})
+        if result.returncode:raise ValueError('Observer adapter failed')
         out.seek(0)
-        data = out.read(MAX_OBSERVER_BYTES + 1)
-    if result.returncode:
-        raise ValueError('Observer output capacity exceeded' if result.returncode == -25 else 'Observer adapter failed')
-    if len(data) > MAX_OBSERVER_BYTES:
-        raise ValueError('Observer output capacity exceeded')
-    value = json.loads(data)
+        value = json.load(out)
     if config.get('contract_version') == 2 and isinstance(value, dict) and set(value) == {'integrity_error'}:
         raise ObserverIntegrityError(str(value['integrity_error']))
     return value
@@ -188,8 +173,8 @@ def managed_status(root, row):
                 or value['completed']['sha256']!=row['completed']['sha256']):
             raise ObserverIntegrityError('Managed observation differs from archived call originals')
         try:
-            return experiments.verify_observation(value,lambda proof:experiments.read(
-                root/'host-history/objects'/proof['sha256'],experiments.MAX_ASSET),interface=interface)
+            return experiments.verify_observation(value,lambda proof:
+                root/'host-history/objects'/proof['sha256'],interface=interface)
         except (ValueError,OSError,KeyError,TypeError) as error:
             raise ObserverIntegrityError('Managed execution observation original changed') from error
     if interface.get('observation_version') is not None:return 'unknown'
@@ -213,13 +198,13 @@ def managed_calls(root, job):
     scope=stage_scope(root,job);result=[]
     for directory in records.calls():
         accepted_path=directory/'accepted.json'
-        accepted=c.read(c.regular(accepted_path,limit=experiments.MAX_BYTES))
+        accepted=c.read(c.regular(accepted_path))
         if accepted.get('scope')!=scope or accepted.get('call_id')!=directory.name:
             raise ObserverIntegrityError('Managed original escaped its stage owner')
         binding=breadth.check_binding((job.get('search') or {}).get('breadth'),accepted.get('mechanism_binding'),scope)
         completion=directory/'completed.json';state='unknown';terminal=None;value={}
         if completion.exists():
-            value=c.read(c.regular(completion,limit=experiments.MAX_BYTES))
+            value=c.read(c.regular(completion))
             if value.get('call_id')!=directory.name or value.get('scope')!=scope or value.get('mechanism_binding')!=binding:
                 raise ObserverIntegrityError('Managed completion changed accepted mechanism')
             terminal_path=directory/'terminal.json'
@@ -227,7 +212,7 @@ def managed_calls(root, job):
                 terminal=_proof(root,terminal_path.relative_to(root).as_posix())
         observed_path=directory/'execution-observation.json';observed=None;extra=[]
         if observed_path.exists():
-            observed=c.read(c.regular(observed_path,limit=experiments.MAX_BYTES))
+            observed=c.read(c.regular(observed_path))
             extra=[observed[key] for key in ('accepted','completed','submission')]+observed['proofs']
             if 'native_terminal' in observed:extra.append(observed['native_terminal'])
         interface=_execution_interface(root,accepted)
@@ -253,7 +238,7 @@ def managed_calls(root, job):
 def validate_managed(root, job, rows):
     from . import breadth, generic_results
     from .protocol import stage_scope
-    if not isinstance(rows,list) or len(rows)>128:raise ObserverIntegrityError('Managed receipt capacity exceeded')
+    if not isinstance(rows,list):raise ObserverIntegrityError('Managed receipt list required')
     scope=stage_scope(root,job);seen=set()
     for row in rows:
         if set(row)-{'observation','result_protocol'} not in ({'call_id','scope','mechanism_binding','status','accepted','completed','terminal'}, {'call_id','scope','mechanism_binding','status','accepted','completed','terminal','originals','outputs','execution'}) or row['call_id'] in seen or row['scope']!=scope:
@@ -301,11 +286,11 @@ def _capture(root, job, payload, materials):
     if config is None:
         config=_managed_config(job,root)
         if config is None:return None
-        raw_sha=c.digest(c.regular(execution.raw(root,job['step']),limit=c.MAX_RESULT_BYTES))
+        raw_sha=c.digest(c.regular(execution.raw(root,job['step'])))
         path=root/'host-history/observations'/f'{job["step"]:03d}.json'
         binding=_observer_binding(raw_sha,config)
         if path.exists():
-            if c.read(c.regular(path,limit=MAX_OBSERVER_BYTES)).get('binding')!=binding:
+            if c.read(c.regular(path)).get('binding')!=binding:
                 raise ObserverIntegrityError('Retained managed snapshot binding changed')
         else:
             rows=managed_calls(root,job)
@@ -314,18 +299,17 @@ def _capture(root, job, payload, materials):
             snapshot=dict(binding=binding,candidates=generic_results.candidates(rows,diagnostics=diagnostics),current_candidate=None,actual_submission=None,contexts=[],managed_calls=rows,
                 coverage=dict(status='partial',note='Registered call originals and explicitly declared candidates only; scientific qualification is unobserved.'))
             if diagnostics:snapshot['candidate_diagnostics']=diagnostics
-            if len(_bytes(snapshot))>MAX_OBSERVER_BYTES:raise ObserverIntegrityError('Managed receipt capacity exceeded')
             c.write(path,snapshot)
         return dict(path=path.relative_to(root).as_posix(),sha256=c.digest(path))
-    adapter = c.regular(Path(config['adapter']), limit=MAX_OBSERVER_BYTES)
+    adapter = c.regular(Path(config['adapter']))
     if adapter.resolve() != adapter or c.digest(adapter) != config['adapter_sha256']:
         raise ObserverIntegrityError('Frozen observer adapter changed')
     raw = execution.raw(root, job['step'])
-    source_sha = c.digest(c.regular(raw, limit=c.MAX_RESULT_BYTES))
+    source_sha = c.digest(c.regular(raw))
     path = root / 'host-history/observations' / f'{job["step"]:03d}.json'
     binding = _observer_binding(source_sha, config)
     if path.exists():
-        stored = c.read(c.regular(path, limit=MAX_OBSERVER_BYTES))
+        stored = c.read(c.regular(path))
         if stored.get('binding') != binding:
             raise ObserverIntegrityError('Retained observer snapshot binding changed')
         return dict(path=path.relative_to(root).as_posix(), sha256=c.digest(path))
@@ -335,7 +319,7 @@ def _capture(root, job, payload, materials):
         observation = old_seal.get('observations')
         if observation:
             old_path = root / observation['path']
-            if c.digest(c.regular(old_path, limit=MAX_OBSERVER_BYTES)) != observation['sha256']:
+            if c.digest(c.regular(old_path)) != observation['sha256']:
                 raise ObserverIntegrityError('Sealed observer snapshot changed')
             prior = c.read(old_path)
             known.update(row['id'] for row in prior['candidates'])
@@ -349,20 +333,17 @@ def _capture(root, job, payload, materials):
     if config.get('contract_version') == 2:expected.add('contexts')
     if not isinstance(value, dict) or set(value) != expected:
         raise ValueError('Observer must return candidates and actual_submission separately')
-    if not isinstance(value['candidates'], list) or len(value['candidates']) > MAX_CANDIDATES:
-        raise ValueError('Observer candidate count exceeds bound')
+    if not isinstance(value['candidates'], list):
+        raise ValueError('Observer candidate list required')
     coverage = value['coverage']
-    if not isinstance(coverage, dict) or set(coverage) != {'status', 'note'} or coverage['status'] not in ('complete', 'partial', 'unavailable') or not isinstance(coverage['note'], str) or len(coverage['note']) > 256:
-        raise ValueError('Observer coverage requires an explicit bounded status')
-    proof_cache, read_bytes = {}, 0
+    if not isinstance(coverage, dict) or set(coverage) != {'status', 'note'} or coverage['status'] not in ('complete', 'partial', 'unavailable') or not isinstance(coverage['note'], str):
+        raise ValueError('Observer coverage requires an explicit status')
+    proof_cache = {}
     def proof(name):
-        nonlocal read_bytes
         if not isinstance(name, str):
             raise ValueError('Observer original path is not a string')
         if name not in proof_cache:
-            item = _proof(root, name, MAX_OBJECT_BYTES - read_bytes)
-            if item['sha256'] is not None:
-                read_bytes += item['size_bytes']
+            item = _proof(root, name)
             proof_cache[name] = item
         return proof_cache[name]
     candidates, seen = [], set()
@@ -371,8 +352,8 @@ def _capture(root, job, payload, materials):
         if not isinstance(item, dict) or set(item) != {'id', 'label', 'implementation', 'evaluation_key', 'metric', 'direction', 'status', 'evidence'}:
             raise ValueError('Observer candidate fields differ from the interface')
         if (not isinstance(item['id'], str) or not ID.fullmatch(item['id']) or item['id'] in seen or item['id'] in known
-                or not isinstance(item['label'], str) or len(item['label']) > 160
-                or not isinstance(item['evaluation_key'], str) or len(item['evaluation_key']) > 512
+                or not isinstance(item['label'], str)
+                or not isinstance(item['evaluation_key'], str)
                 or item['direction'] not in ('max', 'min') or item['status'] not in ('ok', 'failed', 'unknown')
                 or (item['metric'] is not None and (type(item['metric']) not in (int, float) or not math.isfinite(item['metric'])))):
             raise ValueError('Observer candidate identity or metric is invalid')
@@ -380,23 +361,21 @@ def _capture(root, job, payload, materials):
         implementation = item['implementation']
         if implementation is not None:
             resolve(root, implementation, receipts, current=dict(step=job['step'], materials=materials))
-        if not isinstance(item['evidence'], list) or not 1 <= len(item['evidence']) <= 8:
-            raise ValueError('Observer candidates require bounded original evidence')
+        if not isinstance(item['evidence'], list) or not item['evidence']:
+            raise ValueError('Observer candidates require original evidence')
         candidates.append({**item, 'evidence': [proof(name) for name in item['evidence']]})
-    if len(known | seen) > 4096:
-        raise ValueError('Historical candidate count exceeds observation capacity')
     current = value['current_candidate']
     if current is not None:
         if (not isinstance(current, dict) or set(current) != {'candidate_id', 'evidence'}
                 or current['candidate_id'] not in seen | known
-                or not isinstance(current['evidence'], list) or not 1 <= len(current['evidence']) <= 8):
+                or not isinstance(current['evidence'], list) or not current['evidence']):
             raise ValueError('Current candidate requires a known identity and original evidence')
         current = dict(candidate_id=current['candidate_id'], evidence=[proof(name) for name in current['evidence']])
     actual = value['actual_submission']
     if actual is not None:
         if (not isinstance(actual, dict) or set(actual) != {'candidate_id', 'artifact', 'evidence'}
                 or (actual['candidate_id'] is not None and actual['candidate_id'] not in seen | known)
-                or not isinstance(actual['evidence'], list) or not 1 <= len(actual['evidence']) <= 8):
+                or not isinstance(actual['evidence'], list) or not actual['evidence']):
             raise ValueError('Actual submission requires an original artifact and evidence')
         actual = dict(candidate_id=actual['candidate_id'], artifact=proof(actual['artifact']),
                       evidence=[proof(name) for name in actual['evidence']])
@@ -416,20 +395,18 @@ def _capture(root, job, payload, materials):
             if candidate['id'] in known | seen:raise ObserverIntegrityError('Managed candidate identity collides with observer facts')
             snapshot['candidates'].append(candidate)
         if diagnostics:snapshot['candidate_diagnostics']=diagnostics
-    if len(_bytes(snapshot)) > MAX_OBSERVER_BYTES:
-        raise ValueError('Observer snapshot exceeds byte bound')
     c.write(path, snapshot)
     return dict(path=path.relative_to(root).as_posix(), sha256=c.digest(path))
 
 
 def capture(root, job, payload, materials):
-    """Optional capacity/availability failures never discard original science."""
+    """Optional adapter failures never discard original science."""
     from .protocol import require_current
     require_current(root,job)
     config = c.settings(root).get('history_observer')
     if config is None:
         return _capture(root,job,payload,materials) if _managed_config(job,root) else None
-    adapter = c.regular(Path(config['adapter']), limit=MAX_OBSERVER_BYTES)
+    adapter = c.regular(Path(config['adapter']))
     if adapter.resolve() != adapter or c.digest(adapter) != config['adapter_sha256']:
         raise ObserverIntegrityError('Frozen observer adapter changed')
     path = root / 'host-history/observations' / f'{job["step"]:03d}.json'
@@ -445,10 +422,10 @@ def capture(root, job, payload, materials):
                 'capacity' if 'capacity' in str(error) or 'bound' in str(error) else
                 'adapter_io' if isinstance(error, OSError) else 'invalid_output')
         raw = execution.raw(root, job['step'])
-        value = dict(binding=_observer_binding(c.digest(c.regular(raw,limit=c.MAX_RESULT_BYTES)),config),
+        value = dict(binding=_observer_binding(c.digest(c.regular(raw)),config),
                      candidates=[], current_candidate=None, actual_submission=None,
                      **(dict(contexts=[]) if config.get('contract_version') == 2 else {}),
-                     coverage=dict(status='unavailable', note='Observer returned no verified bounded facts; original science is retained.'),
+                     coverage=dict(status='unavailable', note='Observer returned no verified facts; original science is retained.'),
                      diagnostic=dict(failure_type=type(error).__name__, error_code=code))
         if _managed_config(job,root):
             from . import generic_results
@@ -456,7 +433,6 @@ def capture(root, job, payload, materials):
             diagnostics=[]
             value['candidates']=generic_results.candidates(value['managed_calls'],diagnostics=diagnostics)
             if diagnostics:value['candidate_diagnostics']=diagnostics
-        if len(_bytes(value))>MAX_OBSERVER_BYTES:raise ObserverIntegrityError('Managed receipt capacity exceeded')
         c.write(path, value)
         return dict(path=path.relative_to(root).as_posix(), sha256=c.digest(path))
 
@@ -465,7 +441,7 @@ def _source(root, step):
     record = c.host_record(c.workspace(root, step))
     seal_path = c.regular(record / 'result-identity.json')
     seal = c.read(seal_path)
-    raw = c.regular(execution.raw(root, step), limit=c.MAX_RESULT_BYTES)
+    raw = c.regular(execution.raw(root, step))
     job_path = c.regular(root / 'jobs' / f'{step:03d}.json')
     if (c.digest(raw) != seal['raw_sha256'] or c.digest(job_path) != seal['job_sha256']
             or c.digest(c.regular(record / 'result.json')) != seal['sha256']):
@@ -574,7 +550,7 @@ def records_from_sources(root, sources, *, write_cache=True):
             h_scope=current_h, h_parents=h_parents, implementations=entries,
             implementations_omitted_count=len(paths) - len(entries),
             conclusion_pages=[])
-        # Source authors retain the complete bounded original scientific fields.
+        # Source authors retain the complete original scientific fields.
         # Only the index excerpt is shortened; current roles can read text pages.
         text = json.dumps(payload, ensure_ascii=False)
         detail = [dict(step=step, role=job['role'], source='node:%03d/scientific-output' % step,
@@ -586,7 +562,7 @@ def records_from_sources(root, sources, *, write_cache=True):
         observation = None
         if seal.get('observations'):
             receipt = seal['observations'];path = root / receipt['path']
-            if c.digest(c.regular(path, limit=MAX_OBSERVER_BYTES)) != receipt['sha256']:
+            if c.digest(c.regular(path)) != receipt['sha256']:
                 raise ObserverIntegrityError('Sealed observer snapshot changed')
             observation = c.read(path)
             if observation['binding']['source_sha256'] != seal['raw_sha256']:
@@ -617,13 +593,15 @@ def candidate_overview(records):
 def page_writer(work):
     from .protocol import require_current
     require_current(Path(work).parents[2])
-    files, total = [], 0
+    files = []
+    def omitted(row):
+        identity={key:row[key] for key in ('id','step','role','call_id','source','part','parts') if key in row and isinstance(row[key],(int,str)) and len(str(row[key]).encode())<512}
+        return dict(**identity,view_omitted=True,omission_reason='Oversized navigation record; consult retained original sources.')
     def add(path, value):
-        nonlocal total
         data = _bytes(value)
-        total += len(data)
-        if len(data) > MAX_PAGE_BYTES or total > MAX_HISTORY_BYTES:
-            raise ValueError('Scientific history exceeds its bounded page capacity')
+        if len(data) > MAX_PAGE_BYTES:
+            value=omitted(value)
+            data=_bytes(value)
         destination = work / path
         # _copy_bound checks existing data and all destination directory symlinks.
         with tempfile.TemporaryDirectory() as temporary:
@@ -643,7 +621,7 @@ def page_writer(work):
                 groups.append(group);group = []
             group.append(row)
             if len(_bytes(value(group, maximum_next, len(rows)))) > MAX_PAGE_BYTES:
-                raise ValueError('One scientific history record exceeds page capacity')
+                group[-1]=omitted(row)
         if group:
             groups.append(group)
         paths, remaining = [], len(rows)
@@ -670,7 +648,7 @@ def validate(root, work, binding):
     for item in binding.get('execution_recovery_materials',[]):
         path=work/item['path']
         if (not item['path'].startswith('inputs/recovered/') or '..' in Path(item['path']).parts
-                or c.digest(c.regular(path,limit=MAX_HISTORY_BYTES))!=item['sha256'] or path.stat().st_size!=item['size_bytes']):
+                or c.digest(c.regular(path))!=item['sha256'] or path.stat().st_size!=item['size_bytes']):
             raise ObserverIntegrityError('Bound execution recovery material changed')
     if binding.get('audit_projection_version') == 1:
         from . import candidate_audit
@@ -707,7 +685,7 @@ def validate_observation(root, job, seal):
         raise ValueError('Configured observer snapshot missing from scientific seal')
     path = root / receipt['path']
     expected = root / 'host-history/observations' / f'{job["step"]:03d}.json'
-    if path != expected or c.digest(c.regular(path, limit=MAX_OBSERVER_BYTES)) != receipt['sha256']:
+    if path != expected or c.digest(c.regular(path)) != receipt['sha256']:
         raise ObserverIntegrityError('Sealed observer snapshot changed')
     value = c.read(path)
     if value['binding'] != _observer_binding(seal['raw_sha256'], config):
@@ -732,7 +710,7 @@ def _validate_proof(root, proof):
     if proof.get('retention') != 'archived':
         return
     expected = 'host-history/objects/' + proof['sha256']
-    if proof.get('snapshot') != expected or c.digest(c.regular(root / expected, limit=MAX_HISTORY_BYTES)) != proof['sha256']:
+    if proof.get('snapshot') != expected or c.digest(c.regular(root / expected)) != proof['sha256']:
         raise ObserverIntegrityError('Archived observer original changed')
 
 
@@ -748,7 +726,8 @@ def refresh(root, before_step):
         overview = candidate_overview(rebuild(root, before_step))
     overview.pop('candidate_index')
     if len(_bytes(overview)) > MAX_PAGE_BYTES:
-        raise ValueError('Candidate overview exceeds its bounded projection capacity')
+        overview=dict(coverage=dict(status='partial',note='Read complete observation originals for coverage.'),view_omitted=True,
+            omission_reason='Overview exceeds compact capacity; complete observations and candidate indexes remain retained.')
     c.write(root / 'host-history/overview.json', overview)
 
 

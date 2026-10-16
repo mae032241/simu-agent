@@ -15,8 +15,8 @@ from . import managed_wait
 def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str], *,
             max_tokens: int, max_seconds: float, max_steps: int,
             model: str, reasoning_effort: str, service_tier: str = "default",
-            max_output_item_bytes: int = 32 * 1024 * 1024,
-            max_output_total_bytes: int = 64 * 1024 * 1024,
+            max_output_item_bytes: int | None = None,
+            max_output_total_bytes: int | None = None,
             user_updates: list[Path] | None = None,
             history_observer: dict | None = None,
             search_policy: dict | None = search.DEFAULT_POLICY,
@@ -52,14 +52,15 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
     if node_budget_mode not in ('soft', 'hard'):
         raise ValueError('Node budget mode must be soft or hard')
     root, objective, public_root = map(Path, (root, objective, public_root))
-    for name, value in (("max_tokens", max_tokens), ("max_steps", max_steps),
-                        ("max_output_item_bytes", max_output_item_bytes),
-                        ("max_output_total_bytes", max_output_total_bytes)):
+    for name, value in (("max_tokens", max_tokens), ("max_steps", max_steps)):
         if type(value) is not int or value <= 0:
             raise ValueError(f"{name} must be a positive integer")
     if (type(max_seconds) not in (int, float) or not 0 < max_seconds < float("inf")):
         raise ValueError("max_seconds must be positive and finite")
-    if max_output_item_bytes > max_output_total_bytes:
+    for name,value in (("max_output_item_bytes",max_output_item_bytes),("max_output_total_bytes",max_output_total_bytes)):
+        if value is not None and (type(value) is not int or value<=0):
+            raise ValueError(f"{name} must be a positive integer or null")
+    if max_output_item_bytes is not None and max_output_total_bytes is not None and max_output_item_bytes > max_output_total_bytes:
         raise ValueError("Output item capacity exceeds total capacity")
     if not all(isinstance(value, str) and value.strip()
                for value in (model, reasoning_effort, service_tier)):
@@ -527,7 +528,9 @@ def _run(root):
                 from . import candidate_audit
                 audit_status = candidate_audit.execute(root, job, result)
                 if audit_status is not None:
-                    return _finish(root, settings, audit_status, step, result, next_role='A')
+                    detail=(candidate_audit._outcome(root,step)['result'].get('diagnostic')
+                        if audit_status=='candidate_audit_originals_unavailable' else None)
+                    return _finish(root,settings,audit_status,step,result,reason=detail,next_role='A')
                 receipt=candidate_audit._outcome(root,step)['result']
                 repair=engineering.request(root,step)
                 if repair is not None or receipt['status'] in {'engineering_error','unclassified'}:
@@ -635,7 +638,8 @@ def _closeout_result(root, status, *, reason=None, step=None, read_only=False):
                 receipt=candidate_audit._outcome(root,last)
                 if receipt is not None:
                     kind=receipt['result']['status']
-                    status='candidate_audit_'+kind if kind in {'engineering_error','unclassified'} else 'candidate_audit_review_pending'
+                    status=('candidate_audit_originals_unavailable' if receipt['result']['note']=='candidate_audit_unchanged_originals_unavailable'
+                        else 'candidate_audit_'+kind if kind in {'engineering_error','unclassified'} else 'candidate_audit_review_pending')
         screening=shortlist.pending_status(root) if contracts.settings(root).get('selection_policy') is not None else None
         if screening is not None and not pending and not state['unresolved_operations'] and not candidate_audit.blocked(root):
             status=screening
@@ -943,7 +947,9 @@ def _run_closeout(root):
             if screened_failure is None:
                 audit_status = candidate_audit.execute(root, job, result)
                 if audit_status is not None:
-                    return _closeout_result(root, audit_status, step=step)
+                    detail=(candidate_audit._outcome(root,step)['result'].get('diagnostic')
+                        if audit_status=='candidate_audit_originals_unavailable' else None)
+                    return _closeout_result(root,audit_status,reason=detail,step=step)
                 receipt=candidate_audit._outcome(root,step)['result']
             else:receipt=screened_failure[0]
             repair=engineering.request(root,step)
