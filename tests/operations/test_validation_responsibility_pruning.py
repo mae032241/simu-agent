@@ -10,7 +10,7 @@ from scidiscovery.artifact_agent.schema.experiment_intent import (
 from scidiscovery.artifact_agent.schema.research_objective import ResearchObjectiveContract
 from scidiscovery.operation_contract import SemanticRuleViolation
 from tests.operations.test_agent_contract_alignment import (
-    experiment_case, _experiment_run, _experiment_envelope,
+    experiment_case, _experiment_run,
 )
 from tests.operations.test_hypothesis_review_routing import _critic
 

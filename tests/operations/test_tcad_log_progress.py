@@ -1,5 +1,4 @@
 """Bounded server observations survive transport, author and scheduler handoffs."""
-import json
 import os
 
 import pytest
@@ -19,14 +18,6 @@ def server_job(tmp_path, monkeypatch):
     (directory / "work/main.log").write_text("PATH=/private/runtime/bin\ncredential = do-not-expose\nNewton iteration 3\n")
     monkeypatch.setattr(server, "_timestamp", lambda: "2026-09-13T00:00:12.000000Z")
     return run_id, directory, {"result_root": str(tmp_path)}
-
-
-def finish_job(directory):
-    manifest = {"terminal_state": "failed", "exit_code": 1, "error": "fixture solver failure", "outputs": [],
-                "started_at": "2026-09-13T00:00:00Z", "completed_at": "2026-09-13T00:00:12Z"}
-    (directory / "output_manifest.json").write_text(json.dumps(manifest))
-    (directory / "diagnostic.log").write_text("Error: fixture convergence failure\nLast solver step: Newton 3\n")
-    (directory / "done").touch()
 
 
 def test_local_adapter_and_root_status_refresh_optional_progress(tmp_path, monkeypatch):
@@ -85,26 +76,24 @@ def test_actual_runner_tail_cursor_reads_appends_and_marks_replacement(tmp_path,
     monkeypatch.setattr(adapter, 'status_details', lambda _: {
         'state':'running', 'progress':server._job_progress(str(directory))}, raising=False)
     root.call_tool('execution_status', {'name':'log-cursor'}, surface='execution')
-    first = root.call_tool('execution_logs', {'name':'log-cursor'}, surface='execution')
+    assert 'text' not in root.call_tool('execution_logs', {'name':'log-cursor'}, surface='execution')
+    first = root.facade.execution_logs(name='log-cursor')
     assert first['text'] == 'first line\n'
     with log.open('a') as stream:
         stream.write('new 日志\n')
     root.call_tool('execution_status', {'name':'log-cursor'}, surface='execution')
-    newer = root.call_tool('execution_logs', {'name':'log-cursor', 'direction':'after',
-        'cursor':first['after']}, surface='execution')
+    newer = root.facade.execution_logs(name='log-cursor', direction='after', cursor=first['after'])
     assert newer['text'] == 'new 日志\n' and newer['gap'] is None
     # Same source name, new file identity. Never infer append from matching text.
     log.rename(directory / 'worker-old.log')
     log.write_text('first line\nnew 日志\nrotated\n')
     root.call_tool('execution_status', {'name':'log-cursor'}, surface='execution')
-    rotated = root.call_tool('execution_logs', {'name':'log-cursor', 'direction':'after',
-        'cursor':newer['after']}, surface='execution')
+    rotated = root.facade.execution_logs(name='log-cursor', direction='after', cursor=newer['after'])
     assert rotated['gap'] == 'snapshot_replaced' and rotated['text'].endswith('rotated\n')
     # Cache window overflow is explicit, without a remote read from execution_logs.
     with log.open('a') as stream:
         stream.write('bulk logs\n' * 500)
     root.call_tool('execution_status', {'name':'log-cursor'}, surface='execution')
     monkeypatch.setattr(adapter, 'status_details', lambda _: pytest.fail('log read queried remote'))
-    overflow = root.call_tool('execution_logs', {'name':'log-cursor', 'direction':'after',
-        'cursor':rotated['after']}, surface='execution')
+    overflow = root.facade.execution_logs(name='log-cursor', direction='after', cursor=rotated['after'])
     assert overflow['gap'] == 'snapshot_replaced' and overflow['source_truncated'] is True

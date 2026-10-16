@@ -3,16 +3,6 @@ from scidiscovery.artifact_agent.schema.common import canonical_json
 from scidiscovery.artifact_agent.schema.experiment_intent import ExperimentDesignIntent
 
 
-def _review() -> bytes:
-    return canonical_json(
-        {
-            "review_target": "domain_contract",
-            "verdict": "pass",
-            "summary": "The frozen deterministic fixture is internally consistent.",
-        }
-    )
-
-
 def _engineering_intent() -> bytes:
     return ExperimentDesignIntent.model_validate_json(
         canonical_json(

@@ -31,24 +31,26 @@ assert 'Do not build attachment indexes' in prompt
 assert 'inputs/global/objective.md' == job['global']['objective']
 output=pathlib.Path(args[args.index('--output-last-message')+1])
 payload={'summary':role+' bounded finding','scientific_result':'Evidence in artifacts/observation.txt',
-         'limitations':['Only a deterministic test; no science validation.']}
+         'limitations':['Only a deterministic test; no science validation.'],
+         'implementation_selection':None}
 if role in {'H','A'}:
     payload.update(next_action='experiment' if role=='H' else 'finish',route_reason='Exact test direction')
+if role == 'W':
+    payload.update(stage_intent='review',mechanism_findings=[{'mechanism':'Fixture mechanism',
+      'basis':'blocked','finding':'No managed scientific observation in this transport fixture.'}])
 if role == 'A':
     payload['candidate_recommendation'] = None
     payload['progress_assessment'] = None
+    payload['decision_request'] = None
+    payload['portfolio_review'] = None
     mechanisms=json.loads((work/job['lineage']['indexes']['mechanisms']).read_text())
     ref=mechanisms['mechanisms'][0]['mechanism_ref']
-    payload['search_review']={'dispositions':[{'mechanism_ref':ref,'status':'screened',
-      'reason':'Fixture screen evidence','evidence':['inputs/parents/002/conclusion.json']}], 'next_focus':None}
+    payload['search_review']={'dispositions':[{'mechanism_ref':ref,'status':'pending',
+      'reason':'No managed scientific observation in this transport fixture.'}], 'next_focus':None}
 if role == 'H':
     payload['search_plan']={'scope':'Fixture scope','commitments':[{'label':'Fixture mechanism',
       'minimal_test':'Fixture measurement','existing_ref':None}],
-      'focus':{'label':'Fixture mechanism','action':'screen','repair_source':None}}
-if 'implementation_selection' in job['final_response']:
-    payload['implementation_selection'] = None
-    if role == 'H': payload['search_plan']['focus'].pop('repair_source')
-    if role == 'A': payload['search_review']['dispositions'][0].pop('evidence')
+      'focus':{'label':'Fixture mechanism','action':'screen'}}
 (work/'artifacts'/'observation.txt').write_text(role+' observation')
 output.write_text(json.dumps(payload))
 print(json.dumps({'type':'thread.started','thread_id':'native-'+role}),flush=True)
@@ -101,14 +103,16 @@ def test_pause_and_continue_between_nodes(instance, capsys):
 
 def test_role_route_is_exact_enum_not_prose(tmp_path):
     path = tmp_path / 'raw.json'
-    path.write_text(json.dumps(dict(summary='A', scientific_result='Observed', limitations=[],
-                                   next_action='continue_w: more experiments', route_reason='A reason')))
-    with pytest.raises(ValueError):
-        contracts.science_payload(path, 'A')
-    value = json.loads(path.read_text())
-    value['next_action'] = 'continue_w'
+    value = dict(summary='A', scientific_result='Observed', limitations=[],
+                 implementation_selection=None, candidate_recommendation=None,
+                 progress_assessment=None, decision_request=None, portfolio_review=None,
+                 search_review=None, next_action='continue_w', route_reason='A reason')
     path.write_text(json.dumps(value))
     assert contracts.science_payload(path, 'A')['route_reason'] == 'A reason'
+    value['next_action'] = 'continue_w: more experiments'
+    path.write_text(json.dumps(value))
+    with pytest.raises(ValueError, match='next_action'):
+        contracts.science_payload(path, 'A')
 
 
 def test_native_without_usage_is_not_replayed(instance):
@@ -123,7 +127,8 @@ def test_native_without_usage_is_not_replayed(instance):
 
 
 def test_tampered_direct_result_never_reaches_next_role(instance):
-    controller.run(instance)
+    result = controller.run(instance)
+    assert result['status'] == 'finish', result
     work = contracts.workspace(instance, 3)
     (work / 'inputs/parents/002/conclusion.json').chmod(0o600)
     (work / 'inputs/parents/002/conclusion.json').write_text('{}')
@@ -131,7 +136,8 @@ def test_tampered_direct_result_never_reaches_next_role(instance):
 
 
 def test_actual_material_copy_cannot_change_while_parent_stays_valid(instance):
-    controller.run(instance)
+    result = controller.run(instance)
+    assert result['status'] == 'finish', result
     work = contracts.workspace(instance, 3)
     original = work / 'inputs/parents/002/artifacts/observation.txt'
     original.chmod(0o600)
@@ -143,12 +149,15 @@ def test_actual_material_copy_cannot_change_while_parent_stays_valid(instance):
 
 
 def test_next_role_receives_science_without_parent_bindings(instance):
-    controller.run(instance)
+    result = controller.run(instance)
+    assert result['status'] == 'finish', json.dumps(result)
     work = contracts.workspace(instance, 3)
     value = contracts.read(work / 'inputs/parents/002/conclusion.json')
-    assert set(value) == {'summary', 'scientific_result', 'limitations', 'implementation_selection'}
+    assert set(value) == {'summary', 'scientific_result', 'limitations', 'implementation_selection',
+                          'stage_intent', 'mechanism_findings'}
     task = contracts.read(work / 'science-task.json')
-    assert all(set(item) == {'conclusion', 'artifacts'} for item in task['parents'])
+    assert all(set(item) == {'conclusion', 'artifacts', 'role', 'limitations', 'limitations_omitted_count'}
+               for item in task['parents'])
     assert 'sha256' not in json.dumps(task)
     assert not (work / 'inputs/parents/001/inputs').exists()
 

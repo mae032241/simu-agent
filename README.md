@@ -11,6 +11,13 @@ placing VM, SSH, license, or job-lifecycle concerns inside scientific Agents.
 This repository is an engineering prototype. A successful run establishes only
 the claims explicitly registered by its experiment and validation contracts.
 
+## Entry points and scope
+
+- **Thin research CLI:** `scid-research` runs H/W/A/E without a Root model; `scid-experiment` records managed experiments. See [the CLI contract](docs/ROOTLESS_CLI.zh-CN.md) for local execution, optional adapters, recovery and delivery limits.
+- **MCP service:** `scid` retains the scheduler, daemon, approval UI and existing TCAD plugin path described below. These capabilities have not all migrated to the thin CLI. Installing an MCP plugin does not automatically register a CLI execution adapter.
+
+Both entrances are still shipped. Their protocols, persistence and qualification evidence are distinct; tests for either entrance are not obsolete merely because the other exists. The architecture and installation sections below describe the MCP service unless stated otherwise.
+
 ## Why It Exists
 
 Long scientific tasks fail when one conversational Agent must remember every

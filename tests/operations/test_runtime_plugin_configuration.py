@@ -1,20 +1,14 @@
 from __future__ import annotations
 
 import hashlib
-import http.client
 import json
 import os
 from pathlib import Path
-from urllib.parse import parse_qs, urlencode, urlparse
 
 import pytest
 
-from scidiscovery.artifact_agent.approval_ui import ApprovalUI
 from scidiscovery.artifact_agent.approval_ui.render import render_review
-from scidiscovery.artifact_agent.execution_bridge import (
-    AdapterCapability,
-    ExecutionBridge,
-)
+from scidiscovery.artifact_agent.execution_bridge import ExecutionBridge
 from scidiscovery.artifact_agent.schema.approval import (
     ApprovalRequest,
     CompiledApprovalIdentity,
@@ -29,10 +23,7 @@ from scidiscovery.artifact_agent.interfaces.mcp_root import (
 )
 from scidiscovery.artifact_agent.runtime import open_runtime
 from scidiscovery.artifact_agent.schema.common import canonical_json
-from scidiscovery.artifact_agent.schema.execution import (
-    ExecutionRequest,
-    LocalFileDescriptor,
-)
+from scidiscovery.artifact_agent.schema.execution import ExecutionRequest
 from scidiscovery.artifact_agent.schema.refs import ArtifactRef
 from scidiscovery.artifact_agent.service.executions import ExecutionServiceError
 from scidiscovery.builtin_plugin import CORE_PLUGIN
@@ -71,114 +62,6 @@ from tcad_artifact.project_packager import (
     TCADRuntimeManifest,
     attest_runtime_contract,
 )
-
-
-class _CapabilityAdapter:
-    def supports_preparation_profile(self, value: str) -> bool:
-        return value == "tcad.execution-package.v2"
-
-    def validate_preparation_payload(
-        self, raw: bytes, *, preparation_profile: str
-    ) -> None:
-        if preparation_profile != "tcad.execution-package.v2":
-            raise ValueError("unexpected synthetic execution package")
-        ExecutionPackage.model_validate_json(raw, strict=True)
-
-    def capabilities(self) -> tuple[AdapterCapability, ...]:
-        content = (
-            b'{"capability_sha256":"' + b"0" * 64
-            + b'","fixed_arguments":[],"launch_name":"sdevice",'
-            b'"private_fixed_argument_count":0,"profile_id":"configured-sdevice",'
-            b'"public_arguments":[],"public_release_label":"Synthetic",'
-            b'"schema_version":2,"solver_kind":"sdevice"}'
-        )
-        return (
-            AdapterCapability(
-                key="configured-sdevice",
-                kind="solver_capability",
-                schema_id="tcad.solver-capability.v2",
-                payload_schema_version=2,
-                media_type="application/json",
-                content=content,
-                public_summary={"profile": "configured-sdevice"},
-            ),
-        )
-
-
-class _CollectingTCADAdapter:
-    def __init__(self) -> None:
-        self.exchange: Path | None = None
-        self.submission: tuple[str, str] | None = None
-
-    @staticmethod
-    def supports_preparation_profile(value: str) -> bool:
-        return value == "tcad.execution-package.v2"
-
-    def validate_preparation_payload(
-        self, raw: bytes, *, preparation_profile: str
-    ) -> None:
-        assert preparation_profile == "tcad.execution-package.v2"
-        ExecutionPackage.model_validate_json(raw, strict=True)
-
-    def prepare(
-        self,
-        payload: LocalFileDescriptor,
-        *,
-        preparation_profile: str,
-        exchange_directory: Path,
-    ) -> LocalFileDescriptor:
-        self.validate_preparation_payload(
-            Path(payload.local_path).read_bytes(),
-            preparation_profile=preparation_profile,
-        )
-        self.exchange = exchange_directory
-        return payload
-
-    def submit(self, submission: LocalFileDescriptor) -> tuple[str, str]:
-        assert Path(submission.local_path).is_file()
-        self.submission = ("r4b-runtime-run", "accepted")
-        return self.submission
-
-    def lookup_submission(
-        self, submission: LocalFileDescriptor
-    ) -> tuple[str, str] | None:
-        assert Path(submission.local_path).is_file()
-        return self.submission
-
-    @staticmethod
-    def status(external_run_id: str) -> str:
-        assert external_run_id == "r4b-runtime-run"
-        return "succeeded"
-
-    @staticmethod
-    def cancel(external_run_id: str) -> str:
-        assert external_run_id == "r4b-runtime-run"
-        return "cancelled"
-
-    def collect(self, external_run_id: str) -> tuple[LocalFileDescriptor, ...]:
-        assert external_run_id == "r4b-runtime-run"
-        assert self.exchange is not None
-        raw = canonical_json(
-            TCADRuntimeManifest(
-                started_at="2026-08-29T00:00:00Z",
-                completed_at="2026-08-29T00:00:01Z",
-                terminal_state="succeeded",
-                exit_code=0,
-                error="",
-                outputs=(),
-            ).model_dump(mode="json")
-        )
-        path = self.exchange / "runtime-manifest.json"
-        path.write_bytes(raw)
-        return (
-            LocalFileDescriptor(
-                name="tcad_manifest",
-                local_path=str(path),
-                sha256=hashlib.sha256(raw).hexdigest(),
-                size_bytes=len(raw),
-                media_type="application/json",
-            ),
-        )
 
 
 def _catalog():
@@ -264,46 +147,6 @@ def _execution_package(resolved_input_count: int = 0) -> bytes:
             resolved_inputs=resolved_inputs,
         ).model_dump(mode="json")
     )
-
-
-def _authorize_through_local_ui(runtime, approval_id: str) -> None:
-    launch = runtime.approvals.status(approval_id)
-    assert launch.review_path is not None
-    query = parse_qs(urlparse(launch.review_path).query)
-    review = runtime.approvals.review(
-        approval_id, access_token=query["token"][0]
-    )
-    ui = ApprovalUI(runtime.approvals)
-    base = ui.start()
-    try:
-        parsed = urlparse(base)
-        connection = http.client.HTTPConnection(
-            parsed.hostname, parsed.port, timeout=5
-        )
-        connection.request(
-            "POST",
-            f"/review/{approval_id}/decision",
-            body=urlencode(
-                {
-                    "token": query["token"][0],
-                    "csrf": review.csrf_token,
-                    "nonce": review.decision_nonce,
-                    "selected_option": "authorize_execution",
-                    "rationale": "",
-                    "confirm": "confirm",
-                }
-            ),
-            headers={
-                "Origin": base,
-                "Content-Type": "application/x-www-form-urlencoded",
-            },
-        )
-        response = connection.getresponse()
-        response.read()
-        assert response.status == 303
-        connection.close()
-    finally:
-        ui.stop()
 
 
 def test_abandoned_execution_manifest_remains_attestable(tmp_path: Path) -> None:

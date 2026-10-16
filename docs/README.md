@@ -2,11 +2,12 @@
 
 - 原生模型测试执行者：[复用已验证的启动路径](NATIVE_TRIAL_LAUNCH.zh-CN.md)。
 
-当前行为以编译合同和下列实现文档为准。验证结论必须绑定具体源码与环境；历史通过记录不自动证明当前部署或科学模型有效。
+MCP 服务行为以编译合同为准；薄科研 CLI 以其冻结实例配置、角色协议和 CLI 文档为准。验证结论必须绑定具体源码与环境；历史通过记录不自动证明当前部署或科学模型有效。
 
 | 用途 | 文档 |
 | --- | --- |
-| 架构与责任边界 | [中文](ARCHITECTURE.zh-CN.md) · [English](ARCHITECTURE.md) |
+| 薄 H/W/A/E CLI 与受管实验 | [当前入口及支持边界](ROOTLESS_CLI.zh-CN.md)；与 MCP 服务能力尚未统一 |
+| MCP 服务架构与责任边界 | [中文](ARCHITECTURE.zh-CN.md) · [English](ARCHITECTURE.md) |
 | 设计原则与待复核约束 | [设计宪章](architecture/SCIENTIFIC_AGENT_DESIGN_CHARTER.zh-CN.md) · [约束登记](architecture/SCIENTIFIC_AGENT_CONSTRAINTS.yaml) |
 | 安装 | [中文](INSTALL.zh-CN.md) · [English](INSTALL.md) |
 | 发布与验证边界 | [中文](RELEASE.zh-CN.md) · [English](RELEASE.md) |
@@ -24,7 +25,7 @@
 
 ## 历史材料
 
-实施流水、过期计划、重复审查、原始日志、截图和源码备份已退出当前树；不再另外维护一份 archive。
+此前一轮清理移除了当时的实施流水和重复材料；后来保留的 `plans/evidence/` 是绑定具体版本的审查与验收记录，不是现行协议。当前工作入口见 `plans/README.md`，不能把历史 PASS 当作当前全库通过。
 清理前完整树为 `5a90f3fa33135c8b151a547e2eceed0d102eea95`，可用
 `git show 5a90f3f:docs/plans/HISTORY.md` 查旧索引，再按原路径读取具体记录。
 删除过程文件不表示其中未关闭问题已经解决。未来原始验收输出写入仓库外，当前文档只保留结论、候选身份、验证范围和必要引用。

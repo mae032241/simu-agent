@@ -1,0 +1,38 @@
+{
+  "head": "5251ee05c029774200d77a07bb9f69e403dc22bf",
+  "patch_sha256": "036eb467dd632780b72f2dc9197debcf948eae18b6fe383c42a3cd0b11d6f37b",
+  "test_counts": [
+    3127,
+    3126
+  ],
+  "removed_tests": [
+    "tests/operations/test_e54_plugin_removal.py::test_historical_replay_fixture_uses_generic_curve_contracts"
+  ],
+  "added_tests": [],
+  "removed_helpers": [
+    "tests/operations/science_fixtures.py::_review",
+    "tests/operations/tcad_policy_fixtures.py::PreparationOnlyAdapter",
+    "tests/operations/test_agent_contract_alignment.py::_experiment_envelope",
+    "tests/operations/test_agent_contract_alignment.py::_validate_experiment_submission",
+    "tests/operations/test_hypothesis_review_routing.py::_critic_bytes",
+    "tests/operations/test_hypothesis_review_routing.py::_revision_foundation_bytes",
+    "tests/operations/test_hypothesis_review_routing.py::_revision_portfolio_bytes",
+    "tests/operations/test_m2_curve_analysis_boundary.py::_register_inputs",
+    "tests/operations/test_runtime_plugin_configuration.py::_CapabilityAdapter",
+    "tests/operations/test_runtime_plugin_configuration.py::_CollectingTCADAdapter",
+    "tests/operations/test_runtime_plugin_configuration.py::_authorize_through_local_ui",
+    "tests/operations/test_tcad_log_progress.py::finish_job"
+  ],
+  "changed_operations_tests": [
+    "tests/operations/test_tcad_log_progress.py::test_actual_runner_tail_cursor_reads_appends_and_marks_replacement",
+    "tests/operations/test_execution_log_cache.py::test_exact_execution_cache_collection_failure_cleanup_and_late_refresh"
+  ],
+  "patch_path": "/tmp/scid-cleanup-final-v2-1016.patch",
+  "increment_path": "/tmp/scid-execution-log-cache-increment-1016.patch",
+  "increment_sha256": "c5342975fa0bc0811a788334027cbd6168b5451dd9194c2ec5806328c31e02d2",
+  "verification_addendum": {
+    "command": "python scripts/run_tests.py --lane source --output /tmp/scid-execution-log-cache-source-1016 tests/operations/test_execution_log_cache.py",
+    "outcome": "4 passed in 5.09s",
+    "log": "/tmp/scid-execution-log-cache-source-1016/batch-001/pytest.log"
+  }
+}

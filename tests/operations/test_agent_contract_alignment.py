@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 from dataclasses import replace
 from pathlib import Path
@@ -16,12 +15,7 @@ from scidiscovery.artifact_agent.schema.research_cycle import ScientificIntake
 from scidiscovery.artifact_agent.schema.research_objective import (
     ObjectiveClosureRequirement,
 )
-from scidiscovery.artifact_agent.service.local_workspace import SealedFile, SealedWorkspace
-from scidiscovery.artifact_agent.service.run_outputs import (
-    RunCheckerError,
-    RunOutputError,
-    validate_run_output,
-)
+from scidiscovery.artifact_agent.service.run_outputs import RunCheckerError, RunOutputError
 from scidiscovery.builtin_plugin import CORE_PLUGIN
 from scidiscovery.general_science_experiment_components import _experiment_context
 from scidiscovery.general_science_plugin import PLUGIN as GENERAL_PLUGIN
@@ -613,30 +607,6 @@ def _experiment_run(tmp_path, sources):
     _, workspace = runtime.runs.open(operation_id=compiled.spec.operation_id,
                                      operation_digest=compiled.digest)
     return runtime, run_id, workspace.output_directory / "result.json"
-
-
-def _experiment_envelope(intent):
-    return canonical_json({
-        "schema_version": 1,
-        "payload": intent,
-        "handoff": {"verdict": "pass", "summary": "One bounded design."},
-    })
-
-
-def _validate_experiment_submission(tmp_path, intent, sources, *, compiled=None):
-    content = _experiment_envelope(intent)
-    (tmp_path / "result.json").write_bytes(content)
-    digest = hashlib.sha256(content).hexdigest()
-    sealed = SealedWorkspace(
-        backend="test", backend_version="1", run_id="experiment-contract",
-        digest=digest, root=tmp_path,
-        files=(SealedFile(relative_path="result.json", media_type="application/json",
-                          size_bytes=len(content), sha256=digest),),
-    )
-    return validate_run_output(
-        compiled or _catalog().operation("science.experiment.design.v1"), sealed,
-        input_source_ports={name: name for name in sources}, input_bytes=sources,
-    )
 
 
 def test_experiment_context_does_not_reclassify_invalid_inputs() -> None:

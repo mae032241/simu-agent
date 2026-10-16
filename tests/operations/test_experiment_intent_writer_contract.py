@@ -13,7 +13,7 @@ from scidiscovery.artifact_agent.schema.experiment_intent import (
 )
 from scidiscovery.operations.spec import json_projection
 from tests.operations.test_agent_contract_alignment import (
-    experiment_case, _catalog, _experiment_envelope, _experiment_run, _partial_experiment,
+    experiment_case, _catalog, _experiment_run, _partial_experiment,
 )
 from tests.operations.test_general_transform_operations import _register, _root
 

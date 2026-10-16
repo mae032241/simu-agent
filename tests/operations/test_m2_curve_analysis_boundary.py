@@ -29,7 +29,6 @@ from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerM
 from scidiscovery.artifact_agent.interfaces.mcp_root import RootMCPRouter, RootToolFacade
 from scidiscovery.artifact_agent.operation_tool_context import OperationToolContext
 from scidiscovery.artifact_agent.runtime import open_runtime
-from scidiscovery.artifact_agent.schema.artifact import ArtifactRegistration
 from scidiscovery.artifact_agent.schema.common import canonical_json, canonical_sha256
 from scidiscovery.artifact_agent.schema.experiment import ExperimentPortfolio
 from scidiscovery.artifact_agent.schema.layered_diagnosis import LayeredDiagnosisReport
@@ -965,44 +964,6 @@ def _root(tmp_path: Path):
         )
     )
     return catalog, runtime, instance, root
-
-
-def _register_inputs(runtime, instance, payloads: dict[str, bytes]) -> None:
-    schemas = {
-        "experiment_plan": "scidiscovery.experiment-portfolio.v1",
-        "experiment_review": "scidiscovery.scientific-review.v1",
-        "curve_contract": "scidiscovery.curve-experiment-contract.v1",
-        "curve_contract_review": "scidiscovery.scientific-review.v1",
-        "metric_report": "scidiscovery.curve-consistency-report.v1",
-        "curve_bundle": "scidiscovery.curve-bundle.v1",
-    }
-    for name, content in payloads.items():
-        envelope = runtime.artifacts.register(
-            content,
-            ArtifactRegistration(
-                kind=name,
-                schema_id=schemas[name],
-                payload_schema_version=1,
-                media_type="application/json",
-                creator=runtime.actor,
-                labels={"scientific_claim_admissible": "true"},
-            ),
-            idempotency_key=f"m2-02:{name}",
-        )
-        runtime.scheduler_bindings.bind(
-            instance=instance.instance_id,
-            namespace="artifact",
-            name=name,
-            object_id=envelope.artifact_id,
-        )
-
-
-
-
-
-
-
-
 
 
 def test_obsolete_curve_analysis_worker_tool_is_removed() -> None:

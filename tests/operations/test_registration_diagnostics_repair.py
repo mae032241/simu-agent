@@ -16,7 +16,7 @@ from scidiscovery.artifact_agent.schema.research_objective import ResearchObject
 from scidiscovery.artifact_agent.service.run_outputs import RunOutputError
 from scidiscovery.operation_contract import contract_diagnostic
 from tests.operations.test_agent_contract_alignment import (
-    experiment_case, _experiment_run, _experiment_envelope,
+    experiment_case, _experiment_run,
 )
 from tests.operations.test_tcad_result_analysis import (
     analysis_system, open_analysis, analysis_report, write_analysis,

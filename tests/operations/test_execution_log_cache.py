@@ -33,7 +33,8 @@ def test_exact_execution_cache_collection_failure_cleanup_and_late_refresh(tmp_p
     monkeypatch.setattr(adapter, 'status_details', lambda _: pytest.fail('cache read queried remote'))
     for name in ids:
         page = root.call_tool('execution_logs', {'name':name}, surface='execution')
-        assert page['text'] == name + ': 日志\n'
+        assert 'text' not in page
+        assert root.facade.execution_logs(name=name)['text'] == name + ': 日志\n'
         assert page['source_truncated'] is True and page['observed_at']
         assert page['before'] is None and page['after']
     a = ids['job-a']
@@ -46,7 +47,7 @@ def test_exact_execution_cache_collection_failure_cleanup_and_late_refresh(tmp_p
     with pytest.raises(CASIntegrityError):
         executions.ingest_result(execution_id=a, external_run_id='remote-job-a',
             outputs=(descriptor.model_copy(update={'sha256':'0'*64}),))
-    assert root.call_tool('execution_logs', {'name':'job-a'}, surface='execution')['text'] == 'job-a: 日志\n'
+    assert root.facade.execution_logs(name='job-a')['text'] == 'job-a: 日志\n'
     executions.ingest_result(execution_id=a, external_run_id='remote-job-a', outputs=(descriptor,))
     assert root.call_tool('execution_logs', {'name':'job-a'}, surface='execution')['cache_state'] == 'released'
     assert 'tail' not in executions.observation(a)['progress']['log_tails'][0]
@@ -54,7 +55,7 @@ def test_exact_execution_cache_collection_failure_cleanup_and_late_refresh(tmp_p
     executions.save_observation(a, snapshots['job-a'])
     assert 'tail' not in executions.observation(a)['progress']['log_tails'][0]
     assert executions.observation(ids['job-b']) == snapshots['job-b']
-    assert root.call_tool('execution_logs', {'name':'job-b'}, surface='execution')['text'] == 'job-b: 日志\n'
+    assert root.facade.execution_logs(name='job-b')['text'] == 'job-b: 日志\n'
     output = executions.outputs(a)[0]
     assert output.logical_name == 'tcad_log'
     assert runtime.artifacts.read(runtime.artifacts.get_by_id(output.artifact_id).ref) == raw
