@@ -116,10 +116,12 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
             raise ValueError('Unsupported candidate audit policy')
         if delivery_limits is None or delivery_limits['adapter'] is None:
             raise ValueError('Candidate audit requires an explicit isolated delivery adapter')
-    production = delivery_limits is not None and delivery_limits['adapter'] is not None and observer is not None
+        if 'audit' not in delivery_limits['adapter'].get('capabilities', ['audit']):
+            raise ValueError('Candidate audit was required but the adapter declares no audit capability')
+    production = delivery_limits is not None and delivery_limits['adapter'] is not None and (observer is not None or experiment_mode == 'local')
     selection_limits = shortlist.policy(selection_policy) if selection_policy is not None else None
     if selection_limits is not None and not production:
-        raise ValueError('Control selection requires a public metric observer and an isolated delivery adapter')
+        raise ValueError('Control selection requires public observations and an isolated delivery adapter')
     settings = dict(goal_id="scid-hwa-" + uuid.uuid4().hex[:12], objective=text,
         public_root=str(public_root.resolve()), native_launcher_argv=list(launcher),
         max_tokens=max_tokens, max_seconds=max_seconds, max_steps=max_steps, time_budget_basis="active",
@@ -801,7 +803,7 @@ def _run_closeout(root):
         if matching:
             parents.append(matching[-1])
     instruction = ('Choose a scientifically justified frozen candidate to retain or replace for delivery within the remaining authorization. '
-        'Candidates marked audit_pending are not qualified: the adapter performs the public audit after your choice and permits delivery only if it passes. '
+        'Candidate availability is not scientific qualification. Declared required adapter audits gate delivery; absent optional audit/smoke capabilities provide no qualification. '
         'Do not perform or manufacture mechanical audit qualification. '
         'Use next_action=deliver to explicitly authorize adapter delivery and candidate_recommendation for its exact candidate. '
         'Use finish to decline delivery or wait to pause. Neither delivery nor finish asserts global goal completion. '
@@ -810,7 +812,7 @@ def _run_closeout(root):
     if contracts.settings(root).get('selection_policy') and shortlist.marker(root) is not None:
         instruction = ('Compare every closeout.comparison row by the same fields and fill candidate_comparison. '
             'Control pre-registered the default; candidate_recommendation null keeps it, another choice requires override. '
-            'Candidates without a passed audit are qualified only by the adapter public audit at submission. '
+            'Declared required adapter audits gate delivery; absent optional audit/smoke capabilities provide no qualification. '
             'Use next_action=deliver to explicitly authorize adapter delivery, finish to decline, or wait to pause. '
             'Explain science, limitations and unmet objectives; global completion remains unasserted. '
             'E extracts scientific evidence only. Exploration is closed; new H/W/E requests require bounded clarification.')

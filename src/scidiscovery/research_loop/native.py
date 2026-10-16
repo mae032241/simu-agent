@@ -236,6 +236,7 @@ def run_native(root: Path, step: int, attempt=0):
             'The copied script runs with that snapshot as cwd and writes artifacts/; original directories are unchanged. '
             'Control retains exit/time/logs/inputs/outputs. Optional artifacts/result.json is version 1 JSON with metrics '
             '(name,value; optional unit,evaluation_key,direction) and outputs (path relative to the experiment root, label). '
+            'Optional candidate (label,metric,artifact) names one declared metric with explicit evaluation_key/direction and one declared output path; control assigns its identity and delivers its retained inputs/results after A chooses it. '
             'Use finite metric values; control does not infer metric meaning, candidate ranking or qualification. '
             'Do not write hashes or identities. Native shell remains available for scratch. Query lineage-status for original calls; never repeat an unknown call.\n')
     if checkpoint.enabled(root, job):

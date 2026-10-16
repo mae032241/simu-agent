@@ -1,0 +1,135 @@
+"""Isolated delivery of exact managed results to an explicitly configured directory.
+
+This adapter confirms local directory delivery only. It makes no external service,
+scientific audit, smoke, or goal completion claim.
+"""
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import runpy
+import shutil
+import sys
+import tempfile
+
+
+def descriptor(directory, *, python=sys.executable):
+    directory = Path(directory).absolute()
+    if directory.resolve() != directory or not directory.is_dir():
+        raise ValueError('Delivery requires an explicit original target directory')
+    module = str(Path(__file__).resolve())
+    return dict(adapter=module, launcher_argv=[python, module, '--isolate'],
+        config=dict(python=python), target=dict(directory=str(directory)), capabilities=[],
+        inputs=[dict(label='runtime-python', path=python)], source_roots=[str(directory)])
+
+
+def _sha(path):
+    path = Path(path)
+    if path.resolve() != path or not path.is_file() or path.stat().st_size > 32 * 1024 * 1024:
+        raise ValueError('Exact bounded delivery file required')
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _guard(request):
+    source = Path('/inputs/scid-current-protocol')
+    proof = next(item for item in request['inputs'] if item['label'] == 'scid-current-protocol')
+    if _sha(source) != proof['sha256'] or source.stat().st_size != proof['size_bytes']:
+        raise ValueError('Frozen delivery protocol changed')
+    runpy.run_path(str(source))['require_scope'](request['scope'])
+
+
+def _manifest(request):
+    if (not re.fullmatch('[0-9a-f]{64}', request['operation_id'])
+            or request['context'].get('kind') != 'managed_local_result'):
+        raise ValueError('Exact managed local delivery required')
+    objects = {name: digest for name, digest in request['object_digests'].items()
+        if name == 'artifact' or name.startswith(('inputs/', 'outputs/'))}
+    if objects.get('artifact') != request['artifact_sha256']:raise ValueError('Declared artifact identity changed')
+    for name, digest in objects.items():
+        if (Path(name).is_absolute() or '..' in Path(name).parts or '\\' in name
+                or Path(name).as_posix() != name or _sha(Path('/inputs') / name) != digest):
+            raise ValueError('Managed delivery object changed')
+    return dict(version=1, operation_id=request['operation_id'], candidate_id=request['candidate_id'],
+        artifact_sha256=request['artifact_sha256'], objects=objects, result=request['context'],
+        qualification='Exact local directory delivery only; no scientific or external submission qualification.')
+
+
+def _write(path, data):
+    with path.open('xb') as stream:
+        stream.write(data);stream.flush();os.fsync(stream.fileno())
+
+
+def leaf(request):
+    _guard(request)
+    manifest = _manifest(request)
+    destination = Path('/target') / request['operation_id']
+    reply = dict(operation_id=request['operation_id'], candidate_id=request['candidate_id'],
+        artifact_sha256=request['artifact_sha256'])
+    if request['phase'] == 'promote':
+        if destination.exists() or destination.is_symlink():
+            raise ValueError('Existing delivery requires confirmation, never another promotion')
+        pending = Path('/target') / ('.pending-' + request['operation_id'])
+        pending.mkdir()  # An uncertain previous attempt must not be overwritten.
+        for name in manifest['objects']:
+            path = pending / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            _write(path, (Path('/inputs') / name).read_bytes())
+            if _sha(path) != manifest['objects'][name]:raise ValueError('Delivered object changed')
+        _write(pending / 'manifest.json', (json.dumps(manifest, sort_keys=True, allow_nan=False) + '\n').encode())
+        os.rename(pending, destination)
+        descriptor = os.open('/target', os.O_RDONLY | os.O_DIRECTORY)
+        try:os.fsync(descriptor)
+        finally:os.close(descriptor)
+    elif request['phase'] != 'confirm':
+        raise ValueError('Directory adapter provides promotion and confirmation only')
+    try:
+        original = destination / 'manifest.json'
+        if original.stat().st_size > 256_000 or original.resolve() != original:raise ValueError('Exact bounded delivery manifest required')
+        actual = json.loads(original.read_text())
+        if actual == manifest and all(_sha(destination / name) == digest for name, digest in manifest['objects'].items()):
+            return dict(reply, status='confirmed', note='exact_local_directory_delivery_confirmed')
+    except (OSError, ValueError):
+        pass
+    return dict(reply, status='unknown', note='exact_local_directory_delivery_not_confirmed')
+
+
+def isolate(request, adapter):
+    stage = Path(request['stage'])
+    if stage.resolve() != stage or not stage.is_dir() or request['phase'] not in {'promote', 'confirm'}:
+        raise ValueError('Exact isolated directory delivery stage required')
+    if set(request['target']) != {'directory'} or set(request['config']) != {'python'}:
+        raise ValueError('Explicit directory target and runtime required')
+    target = Path(request['target']['directory'])
+    if target.resolve() != target or not target.is_dir():raise ValueError('Delivery target changed')
+    python = Path(request['config']['python'])
+    proof = next(item for item in request['inputs'] if item['label'] == 'runtime-python')
+    if (str(python.absolute()) != proof['invoked_path'] or str(python.resolve()) != proof['path']
+            or _sha(python.resolve()) != proof['sha256']):
+        raise ValueError('Frozen delivery runtime changed')
+    bwrap = shutil.which('bwrap')
+    if bwrap is None:raise ValueError('Directory delivery requires the qualified namespace launcher')
+    args = [bwrap, '--unshare-user', '--unshare-pid', '--unshare-net', '--unshare-ipc', '--unshare-uts',
+        '--die-with-parent', '--new-session', '--clearenv', '--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp']
+    base = python.resolve().parent.parent
+    for path in dict.fromkeys(['/usr', '/bin', '/lib', '/lib64', str(python.parent.parent),
+            str(base / 'bin'), str(base / 'lib')]):
+        if Path(path).exists():args += ['--ro-bind', path, path]
+    args += ['--ro-bind', str(stage / 'inputs'), '/inputs', '--ro-bind', adapter, '/delivery.py',
+        '--bind' if request['phase'] == 'promote' else '--ro-bind', str(target), '/target',
+        '--setenv', 'PATH', os.defpath, '--chdir', '/tmp', '--', str(python), '-I', '/delivery.py', '--leaf']
+    os.execv(bwrap, args)
+
+
+if __name__ == '__main__':
+    data = sys.stdin.buffer.read(256_001)
+    if len(data) > 256_000:raise ValueError('Bounded delivery request required')
+    request = json.loads(data)
+    if sys.argv[1] == '--isolate':
+        with tempfile.TemporaryFile() as stream:
+            stream.write(data);stream.seek(0);os.dup2(stream.fileno(), 0)
+            isolate(request, str(Path(sys.argv[2]).resolve()))
+    elif sys.argv[1:] == ['--leaf']:
+        print(json.dumps(leaf(request), allow_nan=False))
+    else:
+        raise ValueError('Directory delivery requires its isolated entry')

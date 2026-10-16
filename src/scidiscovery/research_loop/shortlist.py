@@ -212,7 +212,7 @@ def screen(root, begin, before_step=None):
     prior = _prior_audits(root, sources) if audit_on else {}
     found = False
     for index, row in sorted(enumerate(rows), key=lambda pair: (pair[1]['rank'] is None, pair[1]['rank'] or 0)):
-        if not audit_on:
+        if not audit_on or not sources.get(row['candidate_id'], {}).get('audit_required', True):
             continue
         cid = row['candidate_id']
         if cid in prior:

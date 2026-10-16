@@ -39,7 +39,8 @@ artifacts.mkdir(exist_ok=True)
 (artifacts / 'method.json').write_text(json.dumps(dict(method=args.method, dimension=dimension,
     training_split='source_train', dataset_sha256=hashlib.sha256(raw).hexdigest(),
     target_labels_used_for_fit=False, all_evaluation_labels_public=True), sort_keys=True) + '\n')
-(artifacts / 'result.json').write_text(json.dumps(dict(version=1, metrics=metrics, outputs=[
+(artifacts / 'result.json').write_text(json.dumps(dict(version=1, metrics=metrics,
+    candidate=dict(label=args.method, metric='public_target_stress_mse', artifact='artifacts/predictions.json'), outputs=[
     dict(path='artifacts/predictions.json', label='Public validation and stress reconstructions'),
     dict(path='artifacts/method.json', label='Mechanism and exact dataset identity'),
 ]), sort_keys=True, allow_nan=False) + '\n')

@@ -15,7 +15,7 @@ isolated = ['-I'] if os.environ.get('SCID_GENERIC_INSTALLED') == '1' else []
 payload = dict(summary=role + ' generic inverse tool acceptance',
                scientific_result='Scripted public fixture; no scientific qualification.',
                limitations=['All evaluation labels are public.', 'No model reasoning or hidden reward.',
-                            'Generic candidate selection, shortlist and external audit remain untested.'],
+                            'Selection is scripted; optional domain audit and smoke are not provided.'],
                implementation_selection=None)
 if role == 'H':
     payload.update(next_action='experiment', route_reason='Compare two explicit inverse mechanisms', search_plan=None)
@@ -47,6 +47,10 @@ if role == 'W':
     (work / 'work/cli-receipts.json').write_text(json.dumps(receipts, indent=2))
     payload.update(stage_intent='review', mechanism_findings=None)
 if role == 'A':
+    payload.update(next_action='finish', route_reason='Retain the bound public observations and limitations',
+        candidate_recommendation=None, search_review=None, progress_assessment=None,
+        decision_request=None, portfolio_review=None)
+if role == 'A' and any(parent['role'] == 'W' for parent in task['parents']):
     page = task['lineage']['indexes']['experiments']
     calls = []
     while page:
@@ -82,6 +86,24 @@ if role == 'A':
                    candidate_recommendation=None, search_review=None, progress_assessment=None,
                    decision_request=None, portfolio_review=None,
                    scientific_result='Read both public MSE measurements and exact reconstruction artifacts; tool acceptance only.')
+if role == 'A' and os.environ.get('SCID_GENERIC_DELIVERY') == '1':
+    page = task['lineage']['indexes']['candidates']
+    candidates = []
+    while page:
+        index = json.loads((work / page).read_text())
+        candidates.extend(index['candidates']);page = index['next_page']
+    assert len(candidates) == 2
+    chosen = min(candidates, key=lambda candidate: candidate['metric'])['id']
+    payload.update(next_action='deliver', candidate_recommendation=chosen,
+        route_reason='Deliver exact retained reconstructions using the declared public stress MSE')
+    comparison = task.get('closeout', {}).get('comparison')
+    if comparison:
+        default = comparison['default']['candidate_id']
+        payload['candidate_comparison'] = dict(rows=[dict(candidate_id=row['candidate_id'],
+            key_risk='Public stress metric only; no hidden evaluation or scientific qualification.',
+            decision='keep' if row['candidate_id'] == chosen else 'replace') for row in comparison['rows']],
+            override=None if chosen == default else dict(default_candidate=default, chosen_candidate=chosen,
+                reason='Use the explicitly declared stress metric', evidence_steps=[2]))
 args = sys.argv[1:]
 Path(args[args.index('--output-last-message') + 1]).write_text(json.dumps(payload))
 print(json.dumps(dict(type='thread.started', thread_id='generic-inverse-fixture-' + role)), flush=True)

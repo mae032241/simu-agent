@@ -24,7 +24,7 @@ MAX_READ_BYTES = 128 * 1024 * 1024
 MAX_SOURCES = 128
 SOURCE_SECONDS = 5  # Mechanical transport safety, never a scientific cost estimate.
 MAX_LEAF_TAIL = 64 * 1024  # Host-only stream tail retained per isolated leaf call.
-CAPABILITIES = {'smoke'}  # Optional adapter phases a resolver may declare; absent means unavailable.
+CAPABILITIES = {'smoke', 'audit'}  # Explicit optional adapter phases; legacy adapters require audit.
 
 
 class DeliveryUnresolved(ValueError):
@@ -67,8 +67,12 @@ def policy(value):
         return {**value, 'closeout_a': dict(a)}
     if value['submit_seconds'] <= 0 or value['confirm_seconds'] <= 0:
         raise ValueError('An adapter requires positive submit and confirm ceilings')
-    if not isinstance(adapter, dict) or set(adapter) != {'adapter', 'launcher_argv', 'config', 'target', 'inputs', 'source_roots'}:
+    if not isinstance(adapter, dict) or set(adapter)-{'capabilities'} != {'adapter', 'launcher_argv', 'config', 'target', 'inputs', 'source_roots'}:
         raise ValueError('Adapter requires exact code, launcher, scoped inputs, configuration and target')
+    if 'capabilities' in adapter and (not isinstance(adapter['capabilities'],list)
+            or any(not isinstance(name,str) or name not in CAPABILITIES for name in adapter['capabilities'])
+            or len(adapter['capabilities']) != len(set(adapter['capabilities']))):
+        raise ValueError('Adapter capabilities must explicitly name supported optional phases')
     script = _file(adapter['adapter'], MAX_BYTES)
     argv = adapter['launcher_argv']
     if not isinstance(argv, list) or not argv or any(not isinstance(s, str) or not s for s in argv):
@@ -104,6 +108,7 @@ def policy(value):
     frozen = dict(adapter=str(script), adapter_sha256=c.digest(script), launcher_argv=list(argv),
                   launcher_files=launcher_files, config=adapter['config'], target=adapter['target'],
                   inputs=frozen_inputs, source_roots=list(roots))
+    if 'capabilities' in adapter:frozen['capabilities']=list(adapter['capabilities'])
     if len(_bytes(frozen)) > MAX_BYTES:
         raise ValueError('Delivery descriptor exceeds byte capacity')
     return {**value, 'closeout_a': dict(a), 'adapter': frozen}
@@ -125,6 +130,11 @@ def _adapter(root):
             raise ValueError('Frozen executable or input path now names another original')
         if c.digest(_file(proof['path'], 128 * 1024 * 1024)) != proof['sha256']:
             raise ValueError('Frozen delivery executable or public harness changed')
+    from . import generic_delivery
+    if Path(spec['adapter']) == Path(generic_delivery.__file__).resolve():
+        target = Path(spec['target']['directory'])
+        if Path(root).resolve().is_relative_to(target):
+            raise ValueError('Directory delivery target must not expose the control root')
     from . import protocol
     source=Path(protocol.__file__).resolve()
     if any(item['label']=='scid-current-protocol' for item in spec['inputs']):raise ValueError('Reserved current protocol input label')
@@ -261,7 +271,7 @@ def freeze_sources(root, source_nodes, *, candidate_id=None):
             saved.chmod(0o400)
         cache[path] = dict(path=saved.relative_to(root).as_posix(), sha256=digest, size_bytes=len(data))
         return cache[path]
-    candidates, known, evidence, contexts = [], set(), {}, {}
+    candidates, known, evidence, contexts, direct = [], set(), {}, {}, []
     managed = c.settings(root).get('history_observer', {}).get('contract_version') == 2
     for receipt in source_nodes:
         _, _, seal, seal_sha = history._source(root, receipt['step'])
@@ -286,7 +296,20 @@ def freeze_sources(root, source_nodes, *, candidate_id=None):
             if candidate['id'] in known:
                 raise ValueError('Delivery candidate identity is ambiguous')
             known.add(candidate['id'])
-            if len(candidates) >= MAX_SOURCES:continue
+            if len(candidates) + len(direct) >= MAX_SOURCES:continue
+            from . import generic_results
+            resolved = generic_results.sources(root, fact, candidate['id'])
+            if resolved is not None:
+                resolved['audit_required'] = 'audit' in spec.get('capabilities', ['audit'])
+                resolved['ledger'] = freeze(_proof(root, resolved['ledger']))
+                resolved['objects'] = {label: freeze(_proof(root, proof)) for label, proof in resolved['objects'].items()}
+                for proof in spec['inputs']:
+                    if proof['label'] in resolved['objects']:raise ValueError('Provider input collides with candidate original')
+                    frozen = freeze(proof['path'])
+                    if frozen['sha256'] != proof['sha256']:raise ValueError('Frozen provider input changed before snapshot')
+                    resolved['objects'][proof['label']] = frozen
+                direct.append(resolved)
+                continue
             proofs = []
             for proof in candidate['evidence']:
                 if proof.get('retention') != 'archived':continue
@@ -318,6 +341,13 @@ def freeze_sources(root, source_nodes, *, candidate_id=None):
                 for context in contexts.get(candidate['candidate_id'], [])]
     if sum(proof['size_bytes'] for proof in evidence.values()) > MAX_READ_BYTES:
         raise DeliveryUnresolved('delivery_source_capacity')
+    if not candidates:
+        packed = dict(items=[], omitted_count=len(known)-len(direct), source_nodes=list(source_nodes),
+            capabilities=spec.get('capabilities', []))
+        for item in direct:
+            if len(_bytes(dict(packed, items=[*packed['items'], item]))) > MAX_BYTES:packed['omitted_count'] += 1
+            else:packed['items'].append(item)
+        return packed
     with tempfile.TemporaryDirectory(prefix='scid-resolve-') as directory:
         stage = Path(directory)
         (stage / 'inputs').mkdir();(stage / 'scratch').mkdir()
@@ -339,7 +369,7 @@ def freeze_sources(root, source_nodes, *, candidate_id=None):
             or not isinstance(declared, list) or not all(isinstance(name, str) for name in declared) or not set(declared) <= CAPABILITIES):
         raise DeliveryUnresolved('delivery_resolver_unavailable')
     originals = {row['candidate_id']: row for row in candidates}
-    items, seen = [], set()
+    items, seen = list(direct), set()
     static = {}
     for proof in spec['inputs']:
         frozen = freeze(proof['path'])
@@ -383,13 +413,14 @@ def freeze_sources(root, source_nodes, *, candidate_id=None):
             if 'artifact' not in objects:raise DeliveryUnresolved('delivery_artifact_unavailable')
             if len(_bytes(item['context'])) > 8192:raise ValueError('Resolver context exceeds byte bound')
             items.append(dict(candidate_id=item['candidate_id'], status='audit_pending',
-                              context=item['context'], ledger=evidence[evidence_label], objects=objects))
+                              context=item['context'], ledger=evidence[evidence_label], objects=objects,
+                              **(dict(audit_required='audit' in spec['capabilities']) if 'capabilities' in spec else {})))
         except DeliveryUnresolved as error:
             items.append(dict(candidate_id=item['candidate_id'], status='unavailable', reason=error.code))
     for candidate in candidates:
         if candidate['candidate_id'] not in seen:
             items.append(dict(candidate_id=candidate['candidate_id'], status='unavailable', reason='delivery_source_unavailable'))
-    packed = dict(items=[], omitted_count=len(known) - len(candidates), source_nodes=list(source_nodes),
+    packed = dict(items=[], omitted_count=len(known) - len(candidates) - len(direct), source_nodes=list(source_nodes),
                   **(dict(capabilities=sorted(set(declared))) if declared else {}))
     for item in items:
         if len(_bytes(dict(packed, items=[*packed['items'], item]))) > MAX_BYTES:
@@ -736,7 +767,8 @@ def invoke(root, intent, max_seconds, *, on_process=None, audit_only=False):
         raise ValueError('Unknown delivery action')
     with tempfile.TemporaryDirectory(prefix='scid-delivery-') as directory:
         request = _staged(root, spec, bound['source'], bound['operation_id'], Path(directory))
-        phases = ('audit',) if audit_only else ('audit', 'promote') if intent['action_kind'] == 'submit' else ('confirm',)
+        phases = ('audit',) if audit_only else (('audit', 'promote') if bound['source'].get('audit_required', True)
+            else ('promote',)) if intent['action_kind'] == 'submit' else ('confirm',)
         for phase in phases:
             remaining = deadline - time.clock_gettime(time.CLOCK_BOOTTIME)
             if phase == 'audit':

@@ -258,8 +258,9 @@ def _capture(root, job, payload, materials):
                 raise ObserverIntegrityError('Retained managed snapshot binding changed')
         else:
             rows=managed_calls(root,job)
-            snapshot=dict(binding=binding,candidates=[],current_candidate=None,actual_submission=None,contexts=[],managed_calls=rows,
-                coverage=dict(status='partial',note='Registered call originals only; domain candidates and scientific qualification are unobserved.'))
+            from . import generic_results
+            snapshot=dict(binding=binding,candidates=generic_results.candidates(rows),current_candidate=None,actual_submission=None,contexts=[],managed_calls=rows,
+                coverage=dict(status='partial',note='Registered call originals and explicitly declared candidates only; scientific qualification is unobserved.'))
             if len(_bytes(snapshot))>MAX_OBSERVER_BYTES:raise ObserverIntegrityError('Managed receipt capacity exceeded')
             c.write(path,snapshot)
         return dict(path=path.relative_to(root).as_posix(),sha256=c.digest(path))
@@ -354,7 +355,12 @@ def _capture(root, job, payload, materials):
             coverage = dict(status='partial',note='Original execution contexts include unknown outcomes.')
     snapshot = dict(binding=binding, candidates=candidates, current_candidate=current, actual_submission=actual, coverage=coverage,
                     **(dict(contexts=contexts) if contexts is not None else {}))
-    if _managed_config(job,root):snapshot['managed_calls']=managed_calls(root,job)
+    if _managed_config(job,root):
+        from . import generic_results
+        snapshot['managed_calls']=managed_calls(root,job)
+        for candidate in generic_results.candidates(snapshot['managed_calls']):
+            if candidate['id'] in known | seen:raise ObserverIntegrityError('Managed candidate identity collides with observer facts')
+            snapshot['candidates'].append(candidate)
     if len(_bytes(snapshot)) > MAX_OBSERVER_BYTES:
         raise ValueError('Observer snapshot exceeds byte bound')
     c.write(path, snapshot)
@@ -389,7 +395,10 @@ def capture(root, job, payload, materials):
                      **(dict(contexts=[]) if config.get('contract_version') == 2 else {}),
                      coverage=dict(status='unavailable', note='Observer returned no verified bounded facts; original science is retained.'),
                      diagnostic=dict(failure_type=type(error).__name__, error_code=code))
-        if _managed_config(job,root):value['managed_calls']=managed_calls(root,job)
+        if _managed_config(job,root):
+            from . import generic_results
+            value['managed_calls']=managed_calls(root,job)
+            value['candidates']=generic_results.candidates(value['managed_calls'])
         if len(_bytes(value))>MAX_OBSERVER_BYTES:raise ObserverIntegrityError('Managed receipt capacity exceeded')
         c.write(path, value)
         return dict(path=path.relative_to(root).as_posix(), sha256=c.digest(path))

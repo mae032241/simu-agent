@@ -250,7 +250,7 @@ class LocalExecution:
         if not path.exists():return dict(status='missing',metrics=[],outputs=[])
         try:
             value=json.loads(e.read(path,64_000))
-            if (not isinstance(value,dict) or set(value)!={'version','metrics','outputs'}
+            if (not isinstance(value,dict) or set(value)-{'candidate'}!={'version','metrics','outputs'}
                     or type(value['version']) is not int or value['version']!=1
                     or not isinstance(value['metrics'],list) or len(value['metrics'])>32
                     or not isinstance(value['outputs'],list) or len(value['outputs'])>128):
@@ -273,7 +273,17 @@ class LocalExecution:
                         or not isinstance(item['label'],str) or not 0<len(item['label'].encode())<=160):
                     raise ValueError('Result outputs require unique retained artifacts paths and labels')
                 seen.add(item['path'])
-            return dict(status='available',metrics=value['metrics'],outputs=value['outputs'])
+            if 'candidate' in value:
+                candidate=value['candidate']
+                if (not isinstance(candidate,dict) or set(candidate)!={'label','metric','artifact'}
+                        or not isinstance(candidate['label'],str) or not 0<len(candidate['label'].encode())<=160
+                        or not isinstance(candidate['metric'],str) or not isinstance(candidate['artifact'],str)
+                        or candidate['metric'] not in {item['name'] for item in value['metrics']
+                            if item.get('evaluation_key') and item.get('direction')}
+                        or candidate['artifact'] not in {item['path'] for item in value['outputs']}):
+                    raise ValueError('Candidate requires an explicit comparable metric and declared artifact')
+            return dict(status='available',metrics=value['metrics'],outputs=value['outputs'],
+                **(dict(candidate=value['candidate']) if 'candidate' in value else {}))
         except (OSError,ValueError,OverflowError,RecursionError) as error:
             return dict(status='invalid',metrics=[],outputs=[],diagnostic='result_io' if isinstance(error,OSError) else 'result_json_invalid')
 
