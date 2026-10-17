@@ -25,6 +25,9 @@ class LocalExecution:
     result_protocol = e.LOCAL_RESULT_PROTOCOL
 
     def __init__(self, config):
+        argv=config.get('run_argv')
+        if not isinstance(argv,list) or not argv or not all(isinstance(item,str) and item for item in argv):
+            raise ValueError('Explicit local command argv required')
         self.config=config
         self.records=e.Records(config)
         self._lease=None
@@ -366,9 +369,13 @@ def cleanup(root,job,*,watchdog=False):
     if job.get('experiment_mode')!='local' or job['role']!='W':return 'not_applicable'
     path=execution.record(root,job['step'])/'experiment-config.json'
     if not path.exists():return 'not_configured'
-    config=c.read(c.regular(path));e.load(config,path=path)
-    if config['scope']!=protocol.stage_scope(root,job) or config['execution_interface']['executor']!='local_execution:command':
+    config=c.read(c.regular(path))
+    selected=c.settings(root).get('execution_config')
+    expected=selected['executor'] if selected is not None else 'local_execution:command'
+    if config['scope']!=protocol.stage_scope(root,job) or config['execution_interface']['executor']!=expected:
         raise e.IntegrityError('Local cleanup escaped its frozen native owner')
+    if expected!='local_execution:command':return 'not_applicable'
+    e.load(config,path=path)
     result='observed_group_cleaned'
     records=e.Records(config)
     for directory in records.calls():

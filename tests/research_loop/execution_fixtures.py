@@ -23,7 +23,7 @@ def execution_registry(tmp_path,monkeypatch):
 
 
 # Contract fixture only: no solver, native process or scientific result claim.
-from scidiscovery.operations.execution import ExecutionInterfaceRegistration, LifecycleCapabilities, LocalFileDescriptor
+from scidiscovery.operations.execution import AdapterCapability, ExecutionInterfaceRegistration, LifecycleCapabilities, LocalFileDescriptor
 from scidiscovery.operations.runtime_plugins import RuntimePluginContribution, RuntimePluginFactory
 from scidiscovery.research_loop import experiments as e
 import json
@@ -32,9 +32,17 @@ import json
 class DifferentExternalIdentity:
     def __init__(self,config):self.records=e.Records(config);self.config=config;self.accepted=None
     def lifecycle_capabilities(self):return LifecycleCapabilities(lookup_submission=True,query=True,collect=True,atomic_admission=True)
-    def capabilities(self):return ()
+    def capabilities(self):
+        schema=dict(type='object',properties=dict(message=dict(type='string',const='remote-original')),required=['message'],additionalProperties=False)
+        detail='x'*self.config.get('contract_padding',0)
+        if detail:schema['description']=detail
+        return (AdapterCapability('opaque_input','execution','fixture.remote-input.v1',1,'application/schema+json',e.encoded(schema),dict(input='JSON object matching the public schema',detail=detail)),)
     def code_assets(self):return [__file__]
-    def prepare(self,payload,**options):return payload
+    def prepare(self,payload,**options):
+        if self.config.get('require_contract'):
+            import jsonschema
+            jsonschema.validate(json.loads(e.read(payload.local_path)),json.loads(self.capabilities()[0].content))
+        return payload
     def acceptance_metadata(self,payload,**options):return dict(parent=dict(candidate_id=None),change_intent=None)
     def dispatch_lease(self,accepted):self.accepted=accepted
     def remote_path(self,call):

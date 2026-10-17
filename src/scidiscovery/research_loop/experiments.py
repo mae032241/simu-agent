@@ -5,12 +5,13 @@ No model execution, domain parser, subprocess launch or Artifact service lives h
 from __future__ import annotations
 
 import argparse
+from collections.abc import Mapping
 from contextlib import contextmanager
 from dataclasses import asdict
-from functools import lru_cache
 import fcntl
 import hashlib
 import importlib.metadata
+import importlib
 import inspect
 import json
 import os
@@ -20,7 +21,7 @@ import sys
 import time
 import uuid
 
-from scidiscovery.operations.execution import (ExecutionInterfaceRegistration,
+from scidiscovery.operations.execution import (AdapterCapability, ExecutionInterfaceRegistration,
     LifecycleCapabilities, LocalFileDescriptor, MANAGED_METHODS, lifecycle_capabilities, LOCAL_RESULT_PROTOCOL)
 from scidiscovery.operations.runtime_plugins import RuntimePluginContext, RuntimePluginContribution
 
@@ -109,18 +110,88 @@ def write(path, value):
         stream.write('\n');stream.flush();os.fsync(stream.fileno())
 
 
-@lru_cache(maxsize=32)
 def registration(executor):
+    if not isinstance(executor,str):raise ValueError('Exact registered executor key required')
     plugin, separator, binding = executor.partition(':')
     if not separator or not ID.fullmatch(plugin) or not ID.fullmatch(binding):
         raise ValueError('Exact registered executor key required')
     matches = list(importlib.metadata.entry_points().select(group=GROUP, name=plugin))
     if len(matches) != 1:
         raise UnsupportedExecution('Registered execution implementation unavailable')
-    value = matches[0].load()
+    try:value = matches[0].load()
+    except (ImportError,AttributeError) as exc:
+        raise UnsupportedExecution('Registered execution implementation cannot be loaded') from exc
     if not isinstance(value, ExecutionInterfaceRegistration) or value.plugin_id != plugin:
         raise ValueError('Execution registration identity differs from its entry point')
     return value, binding
+
+
+HOST_CONFIGURATION_FIELDS = frozenset({'scope','record_dir','native_attempt','admission','breadth',
+    'engineering_repair','execution_interface','registered_implementation'})
+
+
+def operator_configuration(value):
+    """Freeze public operator settings without constructing an adapter or fake task."""
+    if not isinstance(value,dict) or set(value)!={'executor','configuration'} or not isinstance(value['configuration'],dict):
+        raise ValueError('Execution config requires exactly executor and configuration objects')
+    if HOST_CONFIGURATION_FIELDS.intersection(value['configuration']):
+        raise ValueError('Operator execution configuration cannot supply host identity or admission fields')
+    # Round-trip also rejects non-JSON/nonfinite settings before creating an instance.
+    body=json.loads(encoded(value))
+    body['implementation']=registration_identity(body['executor'])
+    return body
+
+
+def _registration_assets(factory):
+    module=importlib.import_module(factory.__module__.partition('.')[0])
+    if not getattr(module,'__file__',None) or Path(inspect.getfile(factory)).suffix!='.py':
+        raise UnsupportedExecution('Execution factory requires an inspectable regular Python package')
+    paths=list(getattr(module,'__path__',()))
+    if paths:
+        if len(paths)!=1:raise UnsupportedExecution('Execution factory requires one exact Python package root')
+        root=Path(paths[0]).absolute()
+        if root.resolve()!=root:raise IntegrityError('Execution implementation package root changed')
+        entries=sorted(root.rglob('*'))
+        if any(path.is_symlink() for path in entries):raise IntegrityError('Registered package contains a symbolic link')
+        assets=[path for path in entries if path.suffix=='.py']
+    else:
+        assets=[Path(inspect.getfile(factory)).absolute()]
+    if not assets or any(path.suffix!='.py' for path in assets):
+        raise UnsupportedExecution('Execution factory requires inspectable Python source')
+    return assets
+
+
+def registration_identity(executor):
+    """Bind registered plugin Python package code; no factory build or backend IO.
+
+    Namespace/multi-root and extension factories are unsupported here. This is not
+    an identity for third-party dependencies or dynamically accessed resources.
+    The real adapter's declared assets/capabilities are additionally frozen later.
+    """
+    declared,_=registration(executor)
+    factory=declared.factory.build
+    return dict(plugin_version=declared.version,factory=factory.__module__+':'+factory.__qualname__,
+        code=[proof(path) for path in _registration_assets(factory)])
+
+
+def validate_operator_configuration(value):
+    if not isinstance(value,dict) or set(value)!={'executor','configuration','implementation'}:
+        raise IntegrityError('Frozen operator execution configuration is malformed')
+    if operator_configuration({key:value[key] for key in ('executor','configuration')})!=value:
+        raise IntegrityError('Frozen registered execution implementation or operator configuration changed')
+    return value
+
+
+def _validate_registered_implementation(value,executor):
+    """Compare the package path set, then hash each frozen original once."""
+    declared,_=registration(executor);factory=declared.factory.build
+    if (not isinstance(value,dict) or set(value)!={'plugin_version','factory','code'}
+            or value['plugin_version']!=declared.version
+            or value['factory']!=factory.__module__+':'+factory.__qualname__
+            or not isinstance(value['code'],list) or not value['code']
+            or [str(path) for path in _registration_assets(factory)]!=[item['path'] for item in value['code']]
+            or [proof(item['path']) for item in value['code']]!=value['code']):
+        raise IntegrityError('Frozen registered package implementation changed')
 
 
 def _adapter(config, path):
@@ -137,11 +208,32 @@ def _adapter(config, path):
     return declared, adapter, body
 
 
+def _public_capabilities(adapter):
+    result=[]
+    for item in adapter.capabilities():
+        if (not isinstance(item,AdapterCapability) or not isinstance(item.key,str) or not ID.fullmatch(item.key)
+                or any(not isinstance(value,str) or not value
+                       for value in (item.kind,item.schema_id,item.media_type))
+                or type(item.payload_schema_version) is not int or item.payload_schema_version<=0
+                or not isinstance(item.content,bytes) or not isinstance(item.public_summary,Mapping)
+                or any(previous['key']==item.key for previous in result)):
+            raise IntegrityError('Registered public capability contract is malformed')
+        result.append(dict(key=item.key,kind=item.kind,schema_id=item.schema_id,
+            payload_schema_version=item.payload_schema_version,media_type=item.media_type,
+            public_summary=dict(item.public_summary),sha256=hashlib.sha256(item.content).hexdigest(),size_bytes=len(item.content)))
+    try:encoded(result)
+    except (ValueError,TypeError) as exc:
+        raise IntegrityError('Registered public capability metadata is not finite JSON') from exc
+    return result
+
+
 def freeze(config, executor, *, path=None):
     """Host preparation only: freeze selected factory, code, configuration and flags."""
     from .protocol import require_scope
     require_scope(config.get('scope'))
     value = dict(config)
+    if 'registered_implementation' in value:
+        _validate_registered_implementation(value['registered_implementation'],executor)
     from . import breadth
     breadth.validate(value.get('breadth'))
     value.setdefault('admission',dict(version=ADMISSION_VERSION,mode='unavailable'))
@@ -171,6 +263,8 @@ def freeze(config, executor, *, path=None):
         config_sha256=hashlib.sha256(encoded(body)).hexdigest(),
         capabilities=asdict(lifecycle_capabilities(adapter)),
         code=[proof(item) for item in dict.fromkeys(assets)])
+    if 'registered_implementation' in value:
+        value['execution_interface']['public_capabilities']=_public_capabilities(adapter)
     return value
 
 
@@ -193,9 +287,18 @@ def configure(root,step,executor,config,output):
     if c.read(c.regular(record/'native-intent.json')).get('task_sha256')!=c.digest(root/'jobs'/f'{step:03d}.json'):
         raise IntegrityError('Host configuration has no exact accepted scientific task')
     native_attempt=dict(number=len(execution.records(root,step))-1,execution_key=execution.identity(root,step))
+    selected=c.settings(root).get('execution_config')
+    implementation={}
+    if selected is not None:
+        expected=dict(selected['configuration'])
+        if executor=='local_execution:command':expected.setdefault('cwd',str(c.workspace(root,step)))
+        if executor!=selected['executor'] or config!=selected['configuration']:
+            raise IntegrityError('Host execution configuration differs from the frozen operator selection')
+        config=expected
+        implementation=dict(registered_implementation=selected['implementation'])
     admission=budget.review_configuration(root,job)
     from .protocol import stage_scope
-    value=dict(config,record_dir=str(c.workspace(root,step)/'work/lineage'),native_attempt=native_attempt,admission=admission,
+    value=dict(config,**implementation,record_dir=str(c.workspace(root,step)/'work/lineage'),native_attempt=native_attempt,admission=admission,
         scope=stage_scope(root,job),breadth=(job.get('search') or {}).get('breadth'),
         **(dict(engineering_repair=dict(candidate_id=job['engineering_repair']['candidate_id'])) if job.get('engineering_repair') else {}))
     value=freeze(value,executor,path=output)
@@ -663,6 +766,11 @@ def main(argv=None):
     run.add_argument('--change-intent');run.add_argument('--mechanism')
     run.add_argument('arguments',nargs=argparse.REMAINDER,help='Script arguments after --; passed as argv, never shell text')
     sub.add_parser('lineage-status')
+    capabilities=sub.add_parser('capabilities',help='Read compact declared public input contracts and lifecycle support')
+    capabilities.add_argument('--start',type=int,default=0)
+    describe=sub.add_parser('describe',help='Copy one complete declared public contract to an explicit new file')
+    describe.add_argument('--key',required=True);describe.add_argument('--output',type=Path,required=True)
+    describe.add_argument('--metadata',action='store_true',help='Copy complete public contract metadata instead of its content')
     for name in ('query','lookup','collect','cancel','reconcile'):
         item=sub.add_parser(name,**(dict(help='Freeze the same original terminal facts using query and declared collection; never submit a new execution.') if name=='reconcile' else {}))
         item.add_argument('--call-id',required=True)
@@ -677,7 +785,38 @@ def main(argv=None):
             from .protocol import require_scope
             require_scope(config.get('scope'))
         adapter=load(config,path=args.config)
-        if args.command=='run':
+        if args.command in {'capabilities','describe'}:
+            declared=_public_capabilities(adapter)
+            frozen=config['execution_interface'].get('public_capabilities')
+            if frozen is not None and declared!=frozen:raise IntegrityError('Frozen public execution contract changed')
+            if args.command=='capabilities':
+                if not 0<=args.start<=len(declared):raise ValueError('Exact capability continuation position required')
+                result=dict(executor=config['execution_interface']['executor'],lifecycle=config['execution_interface']['capabilities'],contracts=[])
+                for item in declared[args.start:]:
+                    compact=dict(item)
+                    if len(encoded(compact))>8000:compact['public_summary']=dict(view_status='details_omitted')
+                    if len(encoded(compact))>8000:
+                        compact={key:item[key] for key in ('key','sha256','size_bytes','payload_schema_version')}
+                        compact['metadata_view_status']='details_omitted; describe --metadata'
+                    if len(encoded(dict(result,contracts=[*result['contracts'],compact])))>14_000:break
+                    result['contracts'].append(compact)
+                position=args.start+len(result['contracts'])
+                result.update(start=args.start,omitted_count=len(declared)-len(result['contracts']),
+                    next_start=position if position<len(declared) else None)
+                result['read_contract']='describe --key <key> --output <new scratch file>; add --metadata for full public metadata'
+            else:
+                items=[item for item in adapter.capabilities() if item.key==args.key]
+                if len(items)!=1:raise UnsupportedExecution('Exact declared public capability key unavailable')
+                item=items[0];expected=next(row for row in declared if row['key']==args.key)
+                if hashlib.sha256(item.content).hexdigest()!=expected['sha256'] or len(item.content)!=expected['size_bytes']:
+                    raise IntegrityError('Public execution contract changed while reading')
+                output=args.output.absolute()
+                if output.resolve()!=output or not output.parent.is_dir():raise IntegrityError('Exact new public contract output path required')
+                with output.open('xb') as stream:
+                    stream.write(encoded(expected) if args.metadata else item.content);stream.flush();os.fsync(stream.fileno())
+                result=dict(key=item.key,contract=proof(output),kind='public_metadata' if args.metadata else 'public_contract')
+            code=0
+        elif args.command=='run':
             arguments=args.arguments[1:] if args.arguments[:1]==['--'] else args.arguments
             options=dict(arguments=arguments,experiment_directory=str(args.experiment_dir.absolute()) if args.experiment_dir else None)
             result=dispatch(config,args.script or args.payload,parent=args.parent_plan,new=args.new_plan,change=args.change_intent,mechanism=args.mechanism,

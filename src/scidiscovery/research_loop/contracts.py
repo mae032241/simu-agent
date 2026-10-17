@@ -454,7 +454,7 @@ def science_view(job, root=None):
                 'Exact completed requests without new bound evidence require clarification; this is not a scientific value judgment.')
            if protocol >= 10 and job['role'] == 'A' else {}),
         'final_response': list(result_schema(job['role'], job.get('handoff_protocol', 1), 'selection' in job)['properties']),
-        **(dict(experiment_execution=('Managed local W commands are available; only calls through the provided experiment command are recorded. Native scratch shell remains available.'
+        **(dict(experiment_execution=('Host-configured registered W execution is available; only calls through the provided experiment command are recorded. Native scratch shell remains available.'
             if job['experiment_mode'] == 'local' else 'External launcher owns experiment configuration; native shell commands are not automatically recorded.'))
             if 'experiment_mode' in job else {}),
         'outputs': 'artifacts/', 'scratch': 'work/',
@@ -635,6 +635,8 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
         job['managed_admission_version'] = 1
     if policy.get('experiment_mode') is not None:
         job['experiment_mode'] = policy['experiment_mode']
+    if policy.get('execution_config') is not None:
+        job['execution_config_sha256']=hashlib.sha256(json.dumps(policy['execution_config'],sort_keys=True).encode()).hexdigest()
     advice = retained.get('role_guidance') if retained is not None else policy.get('role_guidance', {}).get(role)
     if advice is not None:
         job['role_guidance'] = advice
@@ -770,6 +772,9 @@ def validate(work: Path):
 def _validate_inputs(root, work, job):
     if job.get('experiment_mode')!=settings(root).get('experiment_mode'):
         raise ValueError('Frozen experiment mode differs from its original settings')
+    selected=settings(root).get('execution_config')
+    if job.get('execution_config_sha256')!=(hashlib.sha256(json.dumps(selected,sort_keys=True).encode()).hexdigest() if selected is not None else None):
+        raise ValueError('Frozen execution selection differs from its original settings')
     if job['role']=='W' and job.get('worker_fragment_policy')!=settings(root).get('worker_fragment_policy'):
         raise ValueError('Frozen W continuation configuration differs from its original settings')
     if job.get('audit_projection_version') == 1:

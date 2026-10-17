@@ -32,7 +32,7 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
             portfolio_policy: dict | None = None, exploration_order_version: int | None = None,
             worker_fragment_policy: dict | None = None, role_budget_policy: dict | None = None,
             selection_policy: dict | None = None, role_profiles: dict | None = None,
-            experiment_mode: str | None = None) -> dict:
+            experiment_mode: str | None = None, execution_config: dict | None = None) -> dict:
     """Freeze an explicit goal and finite launch budgets in a fresh directory."""
     portfolio_limits = search.portfolio_policy(portfolio_policy) if portfolio_policy is not None else None
     if exploration_order_version is not None:
@@ -71,10 +71,20 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
     if (not isinstance(launcher, list) or not launcher
             or not all(isinstance(item, str) and item.strip() for item in launcher)):
         raise ValueError("An explicit native launcher argument list is required")
+    if execution_config is not None and experiment_mode=='external':
+        raise ValueError('Execution config conflicts with external launcher-owned execution')
+    if execution_config is not None and experiment_mode is None:
+        experiment_mode='local'
     if experiment_mode is None:
         experiment_mode = 'local' if len(launcher) == 1 and Path(launcher[0]).name == 'codex' else 'external'
     if experiment_mode not in {'local', 'external'}:
         raise ValueError('Experiment mode must be local or external')
+    frozen_execution=None
+    if experiment_mode=='local':
+        from . import experiments
+        import sys
+        frozen_execution=experiments.operator_configuration(execution_config if execution_config is not None else
+            dict(executor='local_execution:command',configuration=dict(run_argv=[sys.executable],max_seconds=min(65,max_seconds))))
     if root.exists() or root.is_symlink():
         raise ValueError("Preparation requires a fresh directory")
     if not objective.is_file() or not public_root.is_dir():
@@ -140,6 +150,8 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
     settings['experiment_interface_version'] = 1
     settings['managed_admission_version'] = 1
     settings['experiment_mode'] = experiment_mode
+    if frozen_execution is not None:
+        settings['execution_config']=frozen_execution
     if handoff_authority_version is not None:
         settings['handoff_authority_version'] = handoff_authority_version
     if decision_contract_version is not None:

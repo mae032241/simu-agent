@@ -197,6 +197,8 @@ def test_legacy_current_job_without_mode_keeps_science_view_and_observer_shape(t
     finish(root,2,'W',[1])
     a=c.build_job(root,3,'A',[2])
     before={p:p.read_bytes() for p in [root/'jobs/002.json',root/'jobs/003.json',record/'result-identity.json',c.workspace(root,2)/'science-task.json']}
+    from scidiscovery.research_loop.cli import status
+    assert 'execution' not in status(root)['nodes'][1]
     assert 'experiment_execution' not in c.science_view(w,root)
     assert 'experiments' not in a['history']['view']['indexes']
     observed=c.read(root/c.read(record/'result-identity.json')['observations']['path'])

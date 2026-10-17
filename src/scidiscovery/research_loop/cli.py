@@ -30,6 +30,11 @@ def status(root: Path):
             if outcome.get('native_started') is False:
                 state = 'native_not_submitted'
         node = dict(step=step, role=job['role'], state=state)
+        config_path=execution.record(root,step)/'experiment-config.json'
+        if config_path.exists() and 'experiment_mode' in job:
+            selected=contracts.read(contracts.regular(config_path))['execution_interface']
+            node['execution']=dict(executor=selected['executor'],capabilities=selected['capabilities'],
+                result_protocol=selected['result_protocol'])
         if settings.get('node_budget_policy') is not None:
             record = execution.record(root, step)
             intent = contracts.read(record / 'native-intent.json') if (record / 'native-intent.json').exists() else {}
@@ -62,7 +67,8 @@ def main(argv=None):
     prepare.add_argument('--public-root', type=Path, required=True)
     prepare.add_argument('--native-launcher-json', required=True, help='An argv JSON array, e.g. ["codex"]')
     prepare.add_argument('--history-observer-config', type=Path, help='Optional trusted host adapter/config JSON; frozen at preparation')
-    prepare.add_argument('--experiment-mode', choices=['local', 'external'], help='Managed local W experiments or launcher-owned execution; standard codex defaults to local, custom launchers to external')
+    prepare.add_argument('--experiment-mode', choices=['local', 'external'], help='Host-configured W execution (local) or launcher-owned execution (external); standard codex defaults to local, custom launchers to external')
+    prepare.add_argument('--execution-config',type=Path,help='Public executor/configuration JSON for registered host-configured execution; no credentials or host identity fields; conflicts with external mode')
     prepare.add_argument('--search-policy', type=Path, help='Frozen W time/token targets (hard in hard mode) and hard requested-repair count')
     prepare.add_argument('--correction-policy', type=Path, help='Explicitly enable N4 with review_after/pause_after JSON thresholds (defaults 3/2)')
     prepare.add_argument('--node-budget-policy', type=Path, help='Explicit H/W/A/E time/token targets; hard ceilings only with --node-budget-mode hard; no delivery guarantee')
@@ -126,6 +132,7 @@ def main(argv=None):
                 service_tier=args.service_tier, user_updates=args.user_update,
                 role_profiles=role_profiles,
                 experiment_mode=args.experiment_mode,
+                execution_config=contracts.read(contracts.regular(args.execution_config)) if args.execution_config is not None else None,
                 candidate_audit_policy={'version':1} if args.enable_candidate_audit else None,
                 decision_contract_version=1 if args.decision_contract else None,
                 portfolio_policy=dict(review_after_cycles=args.portfolio_review_after_cycles) if args.portfolio_review_after_cycles is not None else None,
@@ -147,6 +154,9 @@ def main(argv=None):
                 history_observer=contracts.read(contracts.regular(args.history_observer_config, limit=64_000))
                     if args.history_observer_config is not None else None)
             result = dict(status='prepared', instance=str(root), goal_id=settings['goal_id'])
+            if settings.get('execution_config') is not None:
+                result['execution']=dict(executor=settings['execution_config']['executor'],
+                    capabilities_status='awaiting_host_task_configuration')
         elif args.command == 'execution-recover':
             result=controller.execution_recover(root,args.step)
         elif args.command == 'worker-resume':

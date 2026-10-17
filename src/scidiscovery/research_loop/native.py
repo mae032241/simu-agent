@@ -143,11 +143,17 @@ def run_native(root: Path, step: int, attempt=0):
     profile = profiles.validate_intent(settings, job, intent)
     if job.get('experiment_mode') != settings.get('experiment_mode'):
         raise ValueError('Frozen experiment mode changed')
+    experiment_config=None
     if job['role']=='W' and job.get('experiment_mode')=='local':
         from . import experiments
-        experiments.configure(root,step,'local_execution:command',
-            dict(run_argv=[sys.executable],max_seconds=min(65,settings['max_seconds']),cwd=str(work)),
-            work/'work/experiment-config.json')
+        selected=settings.get('execution_config')
+        if selected is None:  # Exact pre-selection instances retain the original default.
+            executor='local_execution:command'
+            configuration=dict(run_argv=[sys.executable],max_seconds=min(65,settings['max_seconds']),cwd=str(work))
+        else:
+            experiments.validate_operator_configuration(selected)
+            executor=selected['executor'];configuration=selected['configuration']
+        experiment_config=experiments.configure(root,step,executor,configuration,work/'work/experiment-config.json')
     if attempt:
         profiles.validate_intent(settings, job, read(execution.origin(root, step) / 'native-intent.json'))
     # W statistics reuse this exact node anchor, never a second acceptance clock.
@@ -235,7 +241,17 @@ def run_native(root: Path, step: int, attempt=0):
         prompt += ('\nNode and search limits are soft targets, not renewed grants. Between bounded actions read work/budget-status.json when available. '
                    'Near/reached targets or delivery reserve: preserve useful results and return your scientific JSON promptly. '
                    'This file is advisory and usage can be unknown; shared hard limits still apply. \n')
-    if job['role']=='W' and job.get('experiment_mode')=='local':
+    if experiment_config is not None:
+        selected=experiment_config['execution_interface']
+        prompt += ('\nManaged registered experiments: '+json.dumps(dict(
+            command=[sys.executable,'-m','scidiscovery.research_loop.experiments','--config','work/experiment-config.json'],
+            actions=['capabilities','describe --key <key> --output <new scratch file>','run --payload <original>','lineage-status'],
+            lifecycle=selected['capabilities'],result_protocol=selected['result_protocol']),ensure_ascii=False)
+            +'. First read capabilities and the relevant complete public input contract with describe; do not invent an opaque payload format. '
+            'If no input contract is declared, use an already bound original payload or report unsupported. '
+            'Use only declared lifecycle operations on original call IDs. Unavailable optional capabilities are unsupported, never a passing verdict. '
+            'Native shell remains available for scratch; only managed calls are recorded. Never repeat an unknown submission.\n')
+    if experiment_config is not None and experiment_config['execution_interface']['executor']=='local_execution:command':
         prompt += ('\nManaged local experiments: run '+json.dumps([sys.executable,'-m','scidiscovery.research_loop.experiments',
             '--config','work/experiment-config.json','run','--experiment-dir','experiments/<name>','--script','experiments/<name>/run.py','--','<script args>'])
             +'. Use real paths/arguments. Only the chosen directory is snapshotted, excluding its artifacts/. '
