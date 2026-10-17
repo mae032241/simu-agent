@@ -1,3 +1,7 @@
+## 当前功能与完成度复审（2026-10-17）
+
+[功能复审](evidence/THIN_FUNCTIONAL_REAUDIT_20261017.zh-CN.md)与[原计划完成度](evidence/THIN_PLAN_COMPLETION_REAUDIT_20261017.zh-CN.md)：P1–P5尚未整体完成。未提交调用导致的W封存失败已修复并通过定向链路，P4科学浏览已提交 `537a483` 并通过7项增量检查；P3受管输入来源映射、P4可写恢复与P5全部退役仍有明确缺口。具体当前顺序由[迁移主计划](THIN_CAPABILITY_MIGRATION_20261016.zh-CN.md)负责，历史报告不改写为最新资格。
+
 ## 当前新增修复提案（2026-10-17）
 
 [授权边界、正式审查与工程检查修复](THIN_AUTHORITY_REVIEW_REMEDIATION_20261017.zh-CN.md)：A0/A1限定可信Worker软边界，强隔离暂缓；A2续行与A4检查预留并行，A3审查输入接续A2 → A5集成验收。A0/A1软边界文档已独审提交，A2–A4实现已独审提交及定向验收，[A5有限结果](evidence/A5_AUTHORITY_REMEDIATION_ACCEPTANCE_20261017.zh-CN.md)汇总21个独立用例（含增量复测）；接管能力迁移计划中这四项缺口，不改变既有测试报告范围。
