@@ -393,6 +393,8 @@ def configure(root, step, run_argv, runs_root, output, *, receipt_channel='publi
 def public_feedback(config, result, *, include_model=False):
     value={key:result[key] for key in ('call_id','status','candidate_id','run_id','parent','change_intent','note')}
     if include_model:value['model']={'retained':True} if result['model'] else None
+    from . import replay_check
+    value['engineering_check'] = replay_check.public(config, result['call_id'])
     if result['status'] in {'known_success','known_failed'}:
         path=Path(config['record_dir'])/'calls'/result['call_id']/'row.json'
         data=_read(path)

@@ -14,6 +14,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 
 BOUND = 32 * 1024 * 1024
 FILES = ('exp_cli.py', 'runner.py', 'train.csv', 'val.csv', 'meta.json')
@@ -26,10 +27,17 @@ def _exact(path, limit=None):
     return path
 
 
-def _sha(path):
+def _sha(path, *, deadline=None):
     digest=hashlib.sha256()
     with _exact(path).open('rb') as stream:
-        for block in iter(lambda:stream.read(1024*1024),b''):digest.update(block)
+        while True:
+            if deadline is not None and time.clock_gettime(time.CLOCK_BOOTTIME) >= deadline:
+                raise TimeoutError('Original engineering check deadline reached')
+            block=stream.read(1024*1024)
+            if not block:break
+            digest.update(block)
+    if deadline is not None and time.clock_gettime(time.CLOCK_BOOTTIME) >= deadline:
+        raise TimeoutError('Original engineering check deadline reached')
     return digest.hexdigest()
 
 
@@ -195,6 +203,66 @@ stage('done',shape_ok=p.shape==np.shape(y),finite=bool(np.issubdtype(p.dtype,np.
 '''
 
 
+# This is a bounded engineering sample, not the public audit or a training verdict.
+REPLAY = r'''import importlib.util,json,sys
+from pathlib import Path
+record=dict(status='inconclusive',note='sample_replay_not_completed',diagnostic='',samples={},stage='harness')
+def save():Path('/scratch/replay.json').write_text(json.dumps(record,allow_nan=False))
+save()
+try:
+    import numpy as np,pandas as pd
+    spec=importlib.util.spec_from_file_location('scid_replay_runner','/inputs/harness/runner.py')
+    runner=importlib.util.module_from_spec(spec);sys.modules[spec.name]=runner;spec.loader.exec_module(runner)
+    meta=json.load(open('/inputs/harness/meta.json'))
+    sampled_train=pd.read_csv('/inputs/harness/train.csv',nrows=32)
+    sampled_val=pd.read_csv('/inputs/harness/val.csv',nrows=8)
+    record['samples']=dict(selection='first rows in frozen CSV order',train_rows=len(sampled_train),
+        validation_rows=len(sampled_val),available_train_rows=None,available_validation_rows=None,
+        remaining_rows='not_scanned')
+    record['stage']='source_import';save()
+    spec=importlib.util.spec_from_file_location('scid_replay_candidate','/inputs/source.py')
+    source=importlib.util.module_from_spec(spec);sys.modules[spec.name]=source;spec.loader.exec_module(source)
+    record['stage']='sample_train';save()
+    model=source.train(sampled_train,sampled_val)
+    record['stage']='sample_predict';save()
+    X,y,_=runner.split_X_y(sampled_val,meta)
+    try:p=model.predict(X)
+    except ModuleNotFoundError:raise
+    except Exception:p=model.predict(X.values)
+    p=np.asarray(p)
+    if p.shape!=np.shape(y) or not np.issubdtype(p.dtype,np.number) or not np.isfinite(p).all():
+        raise ValueError('Sample prediction shape, type or finiteness is incompatible')
+    record.update(status='sample_replay_ok',note='only_declared_sample_import_train_predict_completed')
+except (ModuleNotFoundError,FileNotFoundError) as error:
+    record.update(status='inconclusive' if record['stage']=='harness' else 'dependency_error',
+        note='public_harness_unavailable' if record['stage']=='harness' else 'dependency_unavailable_in_declared_sample_scope',
+        diagnostic=type(error).__name__+': '+str(error))
+except Exception as error:
+    record.update(status='inconclusive',note='sample_or_harness_path_failed_without_full_training_verdict',
+        diagnostic=type(error).__name__+': '+str(error))
+save()
+'''
+
+
+def _replay(request):
+    Path('/scratch/runs').mkdir()
+    env = dict(os.environ, EXP_HARNESS='/inputs/harness', EXP_RUN_DIR='/scratch/runs',
+        EXP_TRAIN='/inputs/harness/train.csv', EXP_VAL='/inputs/harness/val.csv',
+        EXP_META='/inputs/harness/meta.json', EXP_RUNNER='/inputs/harness/runner.py')
+    with Path('/scratch/replay.stdout').open('wb') as out, Path('/scratch/replay.stderr').open('wb') as err:
+        process = subprocess.run([request['config']['python'], '-I', '-c', REPLAY],
+            env=env, cwd='/scratch', stdout=out, stderr=err)
+    try:
+        value = json.loads(_exact('/scratch/replay.json').read_text())
+    except (OSError, ValueError):
+        value = {}
+    if process.returncode or value.get('status') not in {'sample_replay_ok', 'dependency_error', 'inconclusive'}:
+        value = dict(status='inconclusive', note='check_did_not_complete', diagnostic='', samples={})
+    raw = value['diagnostic'].encode()
+    return dict(_reply(request, value['status'], value['note']), diagnostic=raw[:1024].decode(errors='ignore'),
+        diagnostic_omitted_bytes=max(0, len(raw)-1024), samples=value['samples'], stage=value.get('stage'))
+
+
 def _smoke(request):
     with Path('/scratch/smoke.stdout').open('wb') as out, Path('/scratch/smoke.stderr').open('wb') as err:
         subprocess.run([request['config']['python'], '-I', '-c', SMOKE], env=dict(os.environ), cwd='/scratch', stdout=out, stderr=err)
@@ -243,7 +311,7 @@ def _current_guard(request):
     source=_exact(source)
     if source!=host:
         proof=next((item for item in request.get('inputs',[]) if item.get('label')=='scid-current-protocol'),None)
-        if proof is None or _sha(source)!=proof['sha256'] or source.stat().st_size!=proof['size_bytes']:
+        if proof is None or _sha(source, deadline=request.get('deadline_boottime') if request.get('phase')=='replay' else None)!=proof['sha256'] or source.stat().st_size!=proof['size_bytes']:
             raise ValueError('Frozen current protocol original differs')
     runpy.run_path(str(source))['require_scope'](request.get('scope'))
 
@@ -281,6 +349,11 @@ def leaf(request):
                 item['reason']='delivery_original_missing'
             items.append(item)
         return dict(items=items, capabilities=['smoke'])
+    if phase == 'replay':
+        for label, digest in request['object_digests'].items():
+            if _sha(Path('/inputs') / label, deadline=request['deadline_boottime']) != digest:
+                raise ValueError('Frozen replay input changed')
+        return _replay(request)
     run_id = request['context']['row']['run_id']
     if request['candidate_id'] != f'run-{run_id}' or not re.fullmatch('[0-9a-f]{64}', request['operation_id']):
         raise ValueError('Exact operation and candidate required')
@@ -364,7 +437,10 @@ def isolate(request, adapter):
         raise ValueError('Exact delivery stage required')
     python = Path(request['config']['python'])
     runtime = next((proof for proof in request['inputs'] if proof['label'] == 'runtime-python'), None)
-    if runtime is None or python.absolute() != Path(runtime['invoked_path']) or python.resolve() != Path(runtime['path']) or hashlib.sha256(python.resolve().read_bytes()).hexdigest() != runtime['sha256']:
+    deadline = request.get('deadline_boottime') if request['phase']=='replay' else None
+    if request['phase']=='replay' and (type(deadline) not in (int,float) or not 0 < deadline < float('inf')):
+        raise ValueError('Replay requires its original absolute deadline')
+    if runtime is None or python.absolute() != Path(runtime['invoked_path']) or python.resolve() != Path(runtime['path']) or _sha(python.resolve(), deadline=deadline) != runtime['sha256']:
         raise ValueError('Frozen task interpreter changed')
     bwrap = shutil.which('bwrap')
     if bwrap is None:
@@ -376,17 +452,19 @@ def isolate(request, adapter):
     # never search an operator home for a compatible Python or package cache.
     for path in dict.fromkeys(['/usr', '/bin', '/lib', '/lib64', str(python.parent.parent),
                                str(base / 'bin'), str(base / 'lib')]):
+        if request['phase'] == 'replay':
+            if Path(path) == Path.home():raise ValueError('Replay runtime must not expose the user home')
         if Path(path).exists():args += ['--ro-bind', path, path]
     args += ['--ro-bind', str(stage / 'inputs'), '/inputs', '--ro-bind', adapter, '/delivery.py']
     phase = request['phase']
-    target(request['target'])
-    args += ['--bind' if phase in {'audit', 'resolve', 'smoke'} else '--ro-bind', str(stage / 'scratch'), '/scratch']
+    if phase != 'replay':target(request['target'])
+    args += ['--bind' if phase in {'audit', 'resolve', 'smoke', 'replay'} else '--ro-bind', str(stage / 'scratch'), '/scratch']
     if phase == 'resolve':
         for scope in request['source_roots']:
             path = Path(scope)
             if path.resolve() != path or not path.is_dir():raise ValueError('Original read scope missing or changed')
             args += ['--ro-bind', str(path), str(path)]
-    elif phase not in {'audit', 'smoke'}:
+    elif phase not in {'audit', 'smoke', 'replay'}:
         args += ['--dir', '/target']
         for key in ('runs', 'submission'):
             path = Path(request['target'][key])

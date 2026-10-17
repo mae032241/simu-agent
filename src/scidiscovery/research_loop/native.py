@@ -245,6 +245,11 @@ def run_native(root: Path, step: int, attempt=0):
             'Optional candidate (label,metric,artifact) names one declared metric with explicit evaluation_key/direction and one declared output path; control assigns its identity and delivers its retained inputs/results after A chooses it. '
             'Use finite metric values; control does not infer metric meaning, candidate ranking or qualification. '
             'Do not write hashes or identities. Native shell remains available for scratch. Query lineage-status for original calls; never repeat an unknown call.\n')
+    if job['role'] == 'W':
+        prompt += ('\nAn optional engineering_check may follow a confirmed managed call while you remain in this task. Read its compact feedback and repair source in this same session when useful. '
+            'sample_replay_ok covers only its declared sample path, never full training or audit qualification. Small-sample or bounded-check failures may be inconclusive. '
+            'An isolated replay sees only frozen submitted source and declared public inputs plus the task runtime dependencies; sibling scratch helpers and your home are absent. '
+            'Do not package dependencies or write hashes/manifests; make the submitted implementation self-contained or use an explicitly supported dependency input.\n')
     if checkpoint.enabled(root, job):
         prompt += ('\nA native turn can be a fragment of this same scientific stage. Give your current understanding, '
                    'unresolved questions and scientific next intent. stage_intent=continue requests more work in the assigned task; '

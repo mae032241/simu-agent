@@ -159,6 +159,8 @@ def freeze(config, executor, *, path=None):
     assets = [Path(inspect.getfile(declared.factory.build)).resolve(),
               Path(inspect.getfile(type(adapter))).resolve(), Path(__file__).resolve(), Path(inspect.getfile(breadth)).resolve()]
     assets += [Path(item).resolve() for item in adapter.code_assets()]
+    from . import replay_check
+    assets.append(Path(replay_check.__file__).resolve())
     result_protocol=getattr(adapter,'result_protocol',None)
     if result_protocol is not None and (not isinstance(result_protocol,str) or not 0<len(result_protocol.encode())<=160):
         raise ValueError('An execution result protocol requires an explicit bounded identifier')
@@ -592,11 +594,14 @@ def _dispatch_descriptor(config, payload, *, parent=None, new=False, change=None
     except TypeError as error:
         if options:raise UnsupportedExecution('Selected executor does not support local command options') from error
         raise
+    from . import replay_check
+    metadata['engineering_check'] = replay_check.acceptance(config, adapter)
     accepted = records.accept(prepared, metadata, config['execution_interface'],expected_calls=[path.name for path in before],mechanism=mechanism)
     adapter.dispatch_lease(accepted)
     external_id,state=adapter.submit(prepared)
     records.bind_external(call_id,external_id,state)
     observed=record_observation(config,adapter,call_id)
+    replay_check.complete(config, adapter, call_id, observed)
     result=adapter.result(call_id)
     if observed is None and capabilities.query and adapter.status_details(call_id).get('state')=='running':
         result=dict(result,status='running',note='Original execution accepted and running; control waits without resubmission.')
@@ -688,6 +693,8 @@ def main(argv=None):
             if args.command=='query':result=adapter.status_details(args.call_id)
             elif args.command=='reconcile':
                 observed=record_observation(config,adapter,args.call_id)
+                from . import replay_check
+                replay_check.complete(config, adapter, args.call_id, observed)
                 running=observed is None and Records(config).external(args.call_id) is not None and adapter.status_details(args.call_id).get('state')=='running'
                 result=dict(call_id=args.call_id,status=observed['status'] if observed is not None else 'running' if running else 'unknown',
                     note='Original terminal observation frozen; no new submission.' if observed is not None else 'Original accepted execution is running.' if running else 'Original execution has no verified terminal observation.')
@@ -708,6 +715,10 @@ def main(argv=None):
                 if (Records(config).directory(args.call_id)/'execution-observation.json').exists():
                     record_observation(config,adapter,args.call_id)
             code=2 if args.command=='reconcile' and result['status'] in {'unknown','running'} else 0
+        call_id = result.get('call_id', getattr(args, 'call_id', None))
+        if call_id is not None:
+            from . import replay_check
+            result['engineering_check'] = replay_check.public(config, call_id)
         result['feedback']=dict(version=1,budget=feedback.budget_hint(Path(feedback_config['record_dir']).parent.parent),
             review=review_feedback(feedback_config),
             qualification='Execution metadata does not establish scientific or candidate qualification.')

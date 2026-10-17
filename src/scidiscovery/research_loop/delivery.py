@@ -585,17 +585,27 @@ def _keep(evidence, request, outcome, returncode, streams):
 
 def _call(spec, request, seconds, *, on_process=None, evidence=None):
     if seconds <= 0:return None
+    replay_deadline = None
+    if request.get('phase') == 'replay':
+        bound = request.get('deadline_boottime')
+        if type(bound) not in (int, float) or not 0 < bound < float('inf'):
+            return None
+        now = time.clock_gettime(time.CLOCK_BOOTTIME)
+        replay_deadline = min(bound, now + seconds)
+        if replay_deadline <= now:return None
     runtime._subreaper()  # Same actual ownership cleanup used by native runners.
     output, errors, totals = bytearray(), bytearray(), dict(stdout=0, stderr=0)
     def keep(outcome, returncode=None):
         streams = dict(stdout=(totals['stdout'], bytes(output[-MAX_LEAF_TAIL:])), stderr=(totals['stderr'], bytes(errors)))
-        if request.get('phase') in ('audit', 'smoke') and request.get('stage'):
+        if request.get('phase') in ('audit', 'smoke', 'replay') and request.get('stage'):
             for name in ('stdout', 'stderr'):
                 found = _tail(Path(request['stage']) / 'scratch' / f"{request['phase']}.{name}")
                 if found is not None:streams[request['phase'] + '.' + name] = found
         _keep(evidence, request, outcome, returncode, streams)
     with tempfile.TemporaryFile(mode='w+',encoding='utf-8') as input_file, tempfile.TemporaryFile() as output_file:
         json.dump(request,input_file,ensure_ascii=False,allow_nan=False,sort_keys=True);input_file.flush();input_file.seek(0)
+        if replay_deadline is not None and time.clock_gettime(time.CLOCK_BOOTTIME) >= replay_deadline:
+            return None
         try:
             process = subprocess.Popen([*spec['launcher_argv'], spec['adapter']], stdin=input_file,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, env={'PATH': os.defpath}, start_new_session=True)
@@ -613,7 +623,7 @@ def _call(spec, request, seconds, *, on_process=None, evidence=None):
                 if runtime.cleanup_owned_group(identity) != 'observed_group_cleaned':
                     raise DeliveryUnresolved('delivery_cleanup_unknown')
                 raise
-        deadline = time.clock_gettime(time.CLOCK_BOOTTIME) + seconds
+        deadline = replay_deadline if replay_deadline is not None else time.clock_gettime(time.CLOCK_BOOTTIME) + seconds
         total, failed = 0, False
         with selectors.DefaultSelector() as selector:
             selector.register(process.stdout, selectors.EVENT_READ)
@@ -647,6 +657,8 @@ def _call(spec, request, seconds, *, on_process=None, evidence=None):
             raise DeliveryUnresolved('delivery_cleanup_unknown')
         if process.returncode:
             if request.get('phase')=='audit':raise DeliveryUnresolved('delivery_audit_process_failed')
+            return None
+        if replay_deadline is not None and time.clock_gettime(time.CLOCK_BOOTTIME) >= replay_deadline:
             return None
         output_file.seek(0)
         try:return json.load(output_file)
