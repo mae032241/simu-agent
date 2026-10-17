@@ -68,8 +68,8 @@ class TCADRuntimeConfig(BaseModel):
         return self
 
 
-def build_runtime(context: RuntimePluginContext) -> RuntimePluginContribution:
-    config = TCADRuntimeConfig.model_validate_json(context.config_bytes, strict=True)
+def build_adapter(config: TCADRuntimeConfig, *, state_root: Path):
+    """Construct the existing transport without contacting a remote service."""
     if config.transport == "socket":
         from .execution_adapter import TCADExecutorAdapter
 
@@ -81,8 +81,14 @@ def build_runtime(context: RuntimePluginContext) -> RuntimePluginContribution:
         assert config.command_config_path is not None
         adapter = CommandTCADExecutorAdapter.from_file(
             config.command_config_path,
-            local_result_root=context.state_root / "executor-results",
+            local_result_root=state_root / "executor-results",
         )
+    return adapter
+
+
+def build_runtime(context: RuntimePluginContext) -> RuntimePluginContribution:
+    config = TCADRuntimeConfig.model_validate_json(context.config_bytes, strict=True)
+    adapter = build_adapter(config, state_root=context.state_root)
     if context.mode == "control":
         return RuntimePluginContribution(execution_adapters={"tcad": adapter})
     if context.mode != "local_worker":

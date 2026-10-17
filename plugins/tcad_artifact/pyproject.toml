@@ -23,6 +23,9 @@ tcad_artifact = "tcad_artifact.plugin:PLUGIN"
 [project.entry-points."scidiscovery.instance_views"]
 tcad_artifact = "tcad_artifact.instance_views:build_presentation"
 
+[project.entry-points."scidiscovery.execution_interfaces"]
+tcad_execution = "tcad_artifact.managed_execution:REGISTRATION"
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["tcad_artifact*"]

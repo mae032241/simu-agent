@@ -320,3 +320,249 @@ def test_tcad_prepare_adapters_use_exact_input_callbacks(tmp_path: Path, monkeyp
         assert Path(submission.local_path).is_file()
         assert commands == ([] if index == 0 else ["prepare"])
 
+
+class _ManagedTCADBackend:
+    """Trusted dependency stand-in only; no transport, process or solver."""
+    def __init__(self, root):
+        self.root, self.events = root, []
+        self.state, self.found, self.lost = 'accepted', None, False
+
+    def prepare(self, payload, *, preparation_profile, exchange_directory, **callbacks):
+        from tcad_artifact.project_packager import package_execution_package_json, validate_execution_package_json
+        self.events.append('prepare')
+        assert preparation_profile == 'tcad.execution-package.v2'
+        raw = Path(payload.local_path).read_bytes()
+        inputs = materialize_execution_inputs(validate_execution_package_json(raw), None,
+            exchange_directory, 1, **callbacks)
+        package = package_execution_package_json(raw, input_payloads=inputs,
+            output_root=exchange_directory / 'prepared')
+        from scidiscovery.artifact_agent.schema.execution import LocalFileDescriptor
+        return LocalFileDescriptor.model_validate(package.job_spec_file.model_dump(mode='json'))
+
+    def lookup_submission(self, descriptor):
+        self.events.append('lookup')
+        if self.found is not None:
+            assert descriptor.sha256 == self.prepared_sha256
+            return self.found, self.state
+        return None
+
+    def submit(self, descriptor, *, authorization):
+        self.events.append('submit')
+        self.prepared_sha256 = descriptor.sha256
+        if self.lost:
+            raise RuntimeError('synthetic lost response')
+        self.found = 'run_0123456789abcdef0123456789abcdef'
+        return self.found, self.state
+
+    def status_details(self, external):
+        self.events.append('query')
+        assert external == self.found
+        return dict(state=self.state, run_id=external)
+
+    def collect_with_budget(self, external, *, context):
+        from scidiscovery.artifact_agent.schema.execution import LocalFileDescriptor
+        self.events.append('collect')
+        assert external == self.found
+        context.remaining_seconds()
+        rows = [('tcad_log', b'synthetic native log\n', 'text/plain')]
+        manifest = dict(started_at=None, completed_at='2026-10-17T00:00:00Z',
+            terminal_state=self.state, exit_code=130 if self.state == 'cancelled' else 0,
+            error='synthetic terminal', outputs=[])
+        rows.append(('tcad_manifest', canonical_json(manifest), 'application/json'))
+        outputs = []
+        for name, raw, media in rows:
+            path = self.root / name
+            path.write_bytes(raw)
+            outputs.append(LocalFileDescriptor(name=name, local_path=str(path),
+                sha256=hashlib.sha256(raw).hexdigest(), size_bytes=len(raw), media_type=media))
+        return tuple(outputs)
+
+    def cancel(self, external):
+        self.events.append('cancel')
+        assert external == self.found
+        self.state = 'cancelling'
+        return self.state
+
+
+def _managed_tcad_case(tmp_path):
+    from scidiscovery.artifact_agent.schema.execution import ExecutionAdmission, LocalFileDescriptor
+    from scidiscovery.plugin_runtime.collection import CollectionContext
+    from scidiscovery.research_loop import experiments as e
+    from scidiscovery.research_loop.protocol import CURRENT
+    from tcad_artifact.managed_execution import TCADManagedExecution
+
+    scope = dict(step=1, role='W', job_sha256='1' * 64, execution_key='2' * 64,
+        mechanism_ref=None, handoff_protocol=CURRENT)
+    config = dict(transport='socket', socket_path=str(tmp_path / 'unused.socket'),
+        scope=scope, record_dir=str(tmp_path / 'records'), native_attempt=dict(number=0),
+        admission=dict(version=1, mode='hard'), execution_interface=dict(
+            observation_version=1, terminal_evidence='adapter_result', result_protocol=None))
+    raw = canonical_json(_small_resolved_execution_package().model_dump(mode='json'))
+    source = tmp_path / 'execution-package.json'
+    source.write_bytes(raw)
+    payload = LocalFileDescriptor(name='0001-original', local_path=str(source),
+        sha256=hashlib.sha256(raw).hexdigest(), size_bytes=len(raw), media_type='application/json')
+    owner = tmp_path / 'trusted-owner-original.json'
+    e.write(owner, dict(call_id=payload.name, scope=scope, payload=payload.model_dump(mode='json')))
+    receipt = e.proof(owner)
+    admission = ExecutionAdmission(outcome='policy', policy_digest='3' * 64, policy={},
+        budget=dict(max_storage_bytes=2_000_000_000, wall_time_seconds=60),
+        allowance=dict(max_storage_bytes=2_000_000_000, wall_time_seconds=60),
+        outside_allowance='deny', budget_key='4' * 64, reason='synthetic trusted dependency only')
+    control = SimpleNamespace(phases=[], collect=True, context=CollectionContext.for_seconds(60))
+
+    def gate(phase, **bound):
+        control.phases.append(phase)
+        assert bound['scope'] == scope and bound['call_id'] == payload.name
+        assert bound['payload'] == payload
+        assert bound['target']['transport']['socket_path'] == config['socket_path']
+        if phase == 'collect' and not control.collect:
+            raise e.UnsupportedExecution('synthetic original collection unavailable')
+        return dict(receipt=receipt, authorization=admission, context=control.context)
+
+    backend = _ManagedTCADBackend(tmp_path)
+    wrapper = TCADManagedExecution(config, backend, gate=gate,
+        input_metadata=lambda item: (item.size_bytes, item.media_type),
+        open_input=lambda _: io.BytesIO(b'{}'))
+    prepared = wrapper.prepare(payload, preparation_profile='research_loop.v1',
+        exchange_directory=wrapper.records.root)
+    assert prepared.name == payload.name  # The native package's own name is not a second call.
+    accepted = wrapper.records.accept(prepared, wrapper.acceptance_metadata(prepared), config['execution_interface'])
+    wrapper.dispatch_lease(accepted)
+    return config, wrapper, backend, control, payload, prepared
+
+
+def test_managed_tcad_default_factory_blocks_before_any_backend_call(tmp_path, monkeypatch):
+    from scidiscovery.operations.runtime_plugins import RuntimePluginContext
+    from scidiscovery.research_loop import experiments as e
+    import tcad_artifact.managed_execution as managed
+
+    config, wrapper, _, _, payload, _ = _managed_tcad_case(tmp_path)
+    backend = _ManagedTCADBackend(tmp_path)
+    monkeypatch.setattr(managed, 'build_adapter', lambda *args, **kwargs: backend)
+    contribution = managed.build_managed_runtime(RuntimePluginContext('tcad_execution', 'local_worker',
+        tmp_path / 'config.json', e.encoded({key: value for key, value in config.items()
+            if key != 'execution_interface'}), wrapper.records.root))
+    actual = contribution.execution_adapters['tcad']
+    with pytest.raises(e.UnsupportedExecution, match='production blocked'):
+        actual.prepare(payload, preparation_profile='research_loop.v1', exchange_directory=actual.records.root)
+    assert backend.events == []
+    assert actual.result_protocol is None
+    with pytest.raises(ValueError, match='undeclared'):
+        managed.build_managed_runtime(RuntimePluginContext('tcad_execution', 'local_worker',
+            tmp_path / 'config.json', e.encoded(dict(config, gate='allow')), wrapper.records.root))
+
+
+def test_managed_tcad_retains_cancelled_original_without_requery(tmp_path):
+    from scidiscovery.research_loop import experiments as e
+    config, wrapper, backend, control, payload, prepared = _managed_tcad_case(tmp_path)
+    external, state = wrapper.submit(prepared)
+    assert state == 'accepted'
+    wrapper.records.bind_external(payload.name, external, state)
+    backend.state = 'queued'
+    assert wrapper.status_details(payload.name)['state'] == 'queued'
+    backend.found = 'run_changed'
+    with pytest.raises(e.IntegrityError, match='external identity'):
+        wrapper.status_details(payload.name)
+    backend.found = external
+    assert wrapper.cancel_original(payload.name) == 'cancelling'
+    assert wrapper.status_details(payload.name)['state'] == 'cancelling'
+    backend.state = 'cancelled'
+    observed = e.record_observation(config, wrapper, payload.name)
+    assert observed['native_state'] == 'cancelled' and observed['status'] == 'known_failed'
+    assert observed['external_run_id'] == external
+    assert {item['name'] for item in observed['outputs']} == {'tcad_log', 'tcad_manifest'}
+    calls = list(backend.events)
+    assert e.record_observation(config, wrapper, payload.name) == observed
+    assert wrapper.result(payload.name)['native_state'] == 'cancelled'
+    assert backend.events == calls and backend.events.count('submit') == 1
+    assert control.phases == ['prepare', 'submit', 'cancel', 'collect']
+    binding = wrapper.records.directory(payload.name) / 'tcad-backend-binding.json'
+    value = json.loads(binding.read_bytes()); value['prepared_sha256'] = '0' * 64
+    binding.write_bytes(e.encoded(value))
+    with pytest.raises(e.IntegrityError):
+        wrapper.result(payload.name)
+
+
+def test_managed_tcad_unknown_and_unverified_terminal_block_new_call(tmp_path, monkeypatch):
+    from scidiscovery.research_loop import experiments as e
+    config, wrapper, backend, control, payload, prepared = _managed_tcad_case(tmp_path)
+    backend.lost = True
+    with pytest.raises(e.UnsupportedExecution, match='response is unknown'):
+        wrapper.submit(prepared)
+    with pytest.raises(e.UnsupportedExecution, match='without resubmission'):
+        wrapper.submit(prepared)
+    assert backend.events.count('submit') == 1
+    backend.found = 'run_0123456789abcdef0123456789abcdef'
+    wrapper.records.bind_external(payload.name, *wrapper.lookup_submission(prepared))
+    backend.state = 'succeeded'; control.collect = False
+    assert e.record_observation(config, wrapper, payload.name) is None
+    directory = wrapper.records.directory(payload.name)
+    assert not (directory / 'completed.json').exists()
+    monkeypatch.setattr(e, 'load', lambda _: wrapper)
+    monkeypatch.setattr(e, 'original_adapter', lambda *args: (config, wrapper))
+    before = list(backend.events)
+    result = e.dispatch_descriptor(config, payload)
+    assert result['status'] == 'unknown' and result['call_id'] == payload.name
+    assert backend.events.count('submit') == 1 and backend.events.count('prepare') == 1
+    assert 'collect' not in backend.events[len(before):]
+    # An existing canonical completion cannot be hidden behind a neutral result.
+    e.write(directory / 'completed.json', dict(status='known_success'))
+    monkeypatch.setattr(wrapper, 'status_details', lambda _: dict(state='succeeded'))
+    monkeypatch.setattr(wrapper, 'result', lambda _: dict(status='unknown'))
+    with pytest.raises(e.IntegrityError):
+        e.record_observation(config, wrapper, payload.name)
+
+
+def test_managed_tcad_collection_expiry_preserves_unknown_and_partial(tmp_path, monkeypatch):
+    from scidiscovery.research_loop import experiments as e
+    import tcad_artifact.managed_execution as managed
+    config, wrapper, backend, control, payload, prepared = _managed_tcad_case(tmp_path)
+    wrapper.records.bind_external(payload.name, *wrapper.submit(prepared))
+    backend.state = 'succeeded'
+    original_copy = managed._copy_original
+
+    def expire_during_local_retention(descriptor, target, context):
+        assert context is control.context
+        context.deadline_monotonic = 0
+        return original_copy(descriptor, target, context)
+
+    monkeypatch.setattr(managed, '_copy_original', expire_during_local_retention)
+    assert e.record_observation(config, wrapper, payload.name) is None
+    directory = wrapper.records.directory(payload.name)
+    assert not (directory / 'completed.json').exists()
+    assert list((directory / 'tcad-originals').glob('.*.partial'))
+    assert (tmp_path / 'tcad_log').read_bytes() == b'synthetic native log\n'
+    assert e.record_observation(config, wrapper, payload.name) is None
+    assert backend.events.count('collect') == 1  # The same expired authority is not reset.
+
+
+def test_managed_tcad_collected_crash_window_revalidates_retained_facts(tmp_path, monkeypatch):
+    from scidiscovery.research_loop import experiments as e
+    config, wrapper, backend, _, payload, prepared = _managed_tcad_case(tmp_path)
+    wrapper.records.bind_external(payload.name, *wrapper.submit(prepared))
+    backend.state = 'succeeded'
+    publish = wrapper.records.publish
+
+    def stop_before_completed(call, filename, value):
+        if filename == 'completed.json':
+            raise OSError('synthetic crash before canonical completion')
+        return publish(call, filename, value)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(wrapper.records, 'publish', stop_before_completed)
+        with pytest.raises(OSError, match='synthetic crash'):
+            wrapper.result(payload.name)
+    directory = wrapper.records.directory(payload.name)
+    retained = directory / 'collected.json'
+    original = retained.read_bytes()
+    value = json.loads(original); value['native_state'] = 'failed'
+    retained.write_bytes(e.encoded(value))
+    before = list(backend.events)
+    with pytest.raises(e.IntegrityError, match='terminal state'):
+        wrapper.result(payload.name)
+    assert not (directory / 'completed.json').exists()
+    retained.write_bytes(original)
+    assert wrapper.result(payload.name)['status'] == 'known_success'
+    assert backend.events == before  # Reentry consumes retained facts, without remote re-collection.
+

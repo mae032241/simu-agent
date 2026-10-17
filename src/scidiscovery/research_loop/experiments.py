@@ -632,6 +632,8 @@ def record_observation(config, adapter, call_id, *, collected=None):
     status=execution_status(state)
     if status not in {'known_success','known_failed'}:return None
     result=adapter.result(call_id)
+    completion=directory/'completed.json'
+    if result.get('status')=='unknown' and not completion.exists() and not completion.is_symlink():return None
     completed=json.loads(read(directory/'completed.json'))
     if (result!=completed or completed.get('status')!=status
             or any(completed.get(key)!=accepted.get(key) for key in ('call_id','scope','mechanism_binding'))):
@@ -705,10 +707,12 @@ def _dispatch_descriptor(config, payload, *, parent=None, new=False, change=None
         if state not in {'known_success','known_failed'} or records.external(path.name) is None:
             return dict(status=state if state in PENDING_EXECUTION_STATES and records.external(path.name) is not None else 'unknown',
                 call_id=path.name,note='Preserve original execution; query its identity instead of replay')
-        if details.get('state')=='cancelled':
-            observed=record_observation(original,prior,path.name)
-            if observed is None or observed.get('native_state')!='cancelled':
-                raise IntegrityError('Original cancellation has no bound native terminal observation')
+        observed=record_observation(original,prior,path.name)
+        if observed is None:
+            return dict(status='unknown',call_id=path.name,
+                note='Original terminal execution has no verified observation; preserve its identity.')
+        if details.get('state')=='cancelled' and observed.get('native_state')!='cancelled':
+            raise IntegrityError('Original cancellation has no bound native terminal observation')
     call_id = f'{len(before)+1:04d}-{uuid.uuid4().hex}'
     descriptor = payload.model_copy(update={'name':call_id})
     prepared = adapter.prepare(descriptor, preparation_profile='research_loop.v1', exchange_directory=records.root)
