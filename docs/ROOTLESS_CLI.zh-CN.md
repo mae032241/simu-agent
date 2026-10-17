@@ -67,7 +67,7 @@ scid-research serve-ui --root /absolute/path/instance \
 
 资源账复用原 control ledger，换候选/重试不重置消耗。`budget-amend --execution-wall-seconds N --execution-storage-bytes N --authorization-note ...` 仅修订有限资源上限，不代替精确调用的执行决定；不得和科学token/时间修订参数混用。未知调用不退款、不重发，已接受调用的查询/取消不因W结束而被当成新提交拒绝。
 
-TCAD 的可选编译→精确封存→正式审查→后继执行非空输入已静态接通（4399149）；这些代码接缝不证明新TCAD链已可生产使用。完整范围及未验收项以[迁移计划](plans/THIN_CAPABILITY_MIGRATION_20261016.zh-CN.md)和对应独审报告为准；不从旧实例静默升级或复制预算。当前不运行安装矩阵、真实模型/solver或HTTP验收。
+TCAD 的可选编译→精确封存→正式审查→后继执行非空输入已静态接通（4399149）；这些代码接缝不证明新TCAD链已可生产使用。完整范围及未验收项以[迁移计划](plans/THIN_CAPABILITY_MIGRATION_20261016.zh-CN.md)和对应独审报告为准；不从旧实例静默升级或复制预算。普通功能验收不运行安装矩阵；真实模型/solver资格单独记录，本机HTTP与浏览器检查不替代远端资格。
 
 ### 原调用恢复与只读归档
 
@@ -75,9 +75,24 @@ TCAD 的可选编译→精确封存→正式审查→后继执行非空输入已
 
 `archive-export --root ... --output ...` 仅在可证明静止时导出到新的只读目录包；不会取消活动作业或创建可推进副本。`archive-inspect --package ... --after N --limit N` 检查包并分页展示清单，也可用 `--section dependencies` 查看范围缺口；每页仍验证全包，不应当作廉价轮询。原件流式保留，`native-homes` 与审批密钥/私有定位文件按范围排除，缺外部依赖明确标注。这两个入口不提供可写恢复资格。
 
-`archive-restore-material --root ... --package ... --step N --index N` 只把一个缺失的普通封存成果恢复到原实例的原位置；index 取该节点科学资料页的封存成员序号。须保留当前 settings、job/科学原文/result/seal、ledger、审批与调用证据，且所有原 owner 静止；包须包含同一当前 producer seal 与精确路径/hash/大小的成果。仅支持普通 artifacts 和 nested experiment 成果，已有相同字节幂等，不同文件或链接拒绝；不修 call/control/managed 证据，不新建实例、不覆盖旧消费、不自动继续或续权，也不替代后续预算/资格准入。完整灾备、跨路径/宿主可推进恢复仍未实现；跨 boot 补回字节也不解除原 clock 或 unknown 限制。
+`archive-restore-material --root ... --package ... --step N --index N` 只把一个缺失的普通封存成果恢复到原实例的原位置；index 取该节点科学资料页的封存成员序号。须保留当前 settings、job/科学原文/result/seal、ledger、审批与调用证据，且所有原 owner 静止；包须包含同一当前 producer seal 与精确路径/hash/大小的成果。仅支持普通 artifacts 和 nested experiment 成果，已有相同字节幂等，不同文件或链接拒绝；不修 call/control/managed 证据，不新建实例、不覆盖旧消费、不自动继续或续权，也不替代后续预算/资格准入。该命令本身不提供完整灾备或可推进恢复；跨 boot 补回字节也不解除原 clock 或 unknown 限制。
 
-上述恢复及归档代码分别见 `9405b03`、`799036e`，仅完成独立静态审查，真实迟批、并发、掉电、跨 boot 和远端执行未验证。
+`execution-resume ... --maintenance query|collect|cancel` 为已经 accepted 的原调用提供有限的宿主维护窗口，须给 `--max-seconds` 和 `--authorization-note`。即使原科学时钟跨 boot 无法继续，也可查询、取消或收集同一调用；此模式不能准备、提交、新建授权请求或增加额度，不能与 `--request-valid-seconds` 合用。精确终态由既有资源账本结算；暂不能结算时不生成退款或新额度。
+
+### 显式同宿主冷 checkpoint
+
+仅用于原实例完全静止、active 时间预算已暂停的情况：
+
+```bash
+scid-research checkpoint-enroll --root /absolute/instance --anchor-directory /absolute/owner-anchors
+scid-research checkpoint-export --root /absolute/instance --output /absolute/checkpoint
+# 保管外部 owner anchor；明确移动旧根到备份位置后，才恢复到原绝对路径。
+scid-research checkpoint-restore --root /absolute/instance --package /absolute/checkpoint
+```
+
+anchor 目录须已存在、独立于实例。export 冻结旧写者；restore 不覆盖/删除旧根，不复制密钥或 native sessions，不自动继续。恢复保留原 settings、账本和资源消耗，新 generation 成为唯一写者并保持暂停；跨 boot 已证实的暂停间隔标为未测量，不伪造墙钟耗时。成功恢复后的重复命令只确认原事务，不再次暂停已经继续运行的实例。恢复中断保持 fenced，可重试同一事务。
+
+普通只读包不能追认恢复权限；跨宿主、外部 anchor 丢失、缺少必要实现依赖、未知执行或未清理的 native 进程不能自动变成可推进恢复。这里提供同宿主冷恢复，不承诺任意灾备。具体验收和未验证范围以[迁移计划](plans/THIN_CAPABILITY_MIGRATION_20261016.zh-CN.md)及当次报告为准；本地过程测试不证明真实掉电或远端 solver。
 
 ## 受管本地实验
 

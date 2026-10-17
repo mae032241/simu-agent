@@ -15,9 +15,10 @@ import stat
 import tempfile
 
 from scidiscovery import archive_io as files
+from .instance_owner import effect as owner_effect
 
 FORMAT = 'scidiscovery.instance-readonly-archive.v1'
-ROOT_FILES = {'settings.json', 'settings-identity.json', 'host-started.json', 'pause.request'}
+ROOT_FILES = {'settings.json', 'settings-identity.json', 'host-started.json', 'pause.request', 'instance-owner.json'}
 ROOT_DIRS = {'jobs', 'project', 'control-ledger', 'correction-ledger', 'native-evidence',
              'host-runtime', 'host-history', 'host-delivery', 'source-provenance',
              'qualification', 'execution-authority'}
@@ -89,7 +90,7 @@ def _inventory(root):
             source_stat=[info.st_dev, info.st_ino, info.st_mtime_ns, info.st_ctime_ns])
         unknown = (parts[0] not in ROOT_FILES | ROOT_DIRS
             or len(parts) == 2 and parts[0] == 'project' and parts[1] not in {'global', 'nodes'}
-            or len(parts) == 2 and parts[0] == 'host-runtime' and parts[1] != 'experiment-control')
+            or len(parts) == 2 and parts[0] == 'host-runtime' and parts[1] not in {'experiment-control', 'restore'})
         if unknown:
             yield dict(path=name, kind='gap', reason='unrecognized_framework_ownership_not_traversed', **identity)
             return
@@ -294,6 +295,12 @@ def _publish(stage, output):
 
 
 def archive_export(root, output):
+    from .instance_owner import lease
+    with lease(root):
+        return _export(root, output)
+
+
+def _export(root, output, *, on_locked=None):
     from . import contracts as c
     root = files.check_path(Path(root).expanduser().absolute())
     output = files.check_path(Path(output).expanduser().absolute())
@@ -309,6 +316,8 @@ def archive_export(root, output):
     with ExitStack() as locks:
         _owner_locks(locks, root)
         _quiescent(root)
+        if on_locked is not None:
+            on_locked(settings)
         stage = Path(tempfile.mkdtemp(prefix='.' + output.name + '-archive-', dir=output.parent))
         try:
             (stage / 'blobs').mkdir()
@@ -442,6 +451,7 @@ def archive_inspect(package, *, after=0, limit=20, section='manifest'):
         total_entries=total, **counts, external_dependencies=metadata['dependencies'], limitations=LIMITATIONS)
 
 
+@owner_effect
 def archive_restore_material(root, package, *, step, index):
     """Restore one missing ordinary sealed file, never control or call originals."""
     from . import contracts as c, instance_science as science
@@ -537,3 +547,258 @@ def archive_restore_material(root, package, *, step, index):
             return dict(status='material_restored', **result)
         finally:
             shutil.rmtree(stage)
+
+
+def checkpoint_enroll(root, anchor_directory):
+    from . import instance_owner as owner
+    root = files.check_path(Path(root).absolute())
+    owner.repair_enrollment(root, anchor_directory)
+    with ExitStack() as locks:
+        _owner_locks(locks, root)
+        _quiescent(root)
+        value = owner.enroll(root, anchor_directory)
+    return dict(status='checkpoint_enrolled', generation=value['generation'], root=str(root))
+
+
+def _json_identity(path):
+    """Decode and identify the same stable descriptor, not a second pathname read."""
+    files.check_path(path)
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    try:
+        before = os.fstat(fd)
+        if not stat.S_ISREG(before.st_mode):
+            raise files.ArchiveError('Checkpoint metadata must be a regular file')
+        with os.fdopen(fd, 'rb', closefd=False) as stream:
+            raw = stream.read()
+        after = os.fstat(fd)
+        if ((before.st_dev,before.st_ino,before.st_size,before.st_mtime_ns,before.st_ctime_ns)
+                != (after.st_dev,after.st_ino,after.st_size,after.st_mtime_ns,after.st_ctime_ns)):
+            raise files.ArchiveError('Checkpoint metadata changed while reading')
+        return json.loads(raw), dict(sha256=hashlib.sha256(raw).hexdigest(), size_bytes=len(raw), mode=stat.S_IMODE(before.st_mode))
+    finally:
+        os.close(fd)
+
+
+def _checkpoint(package, *, with_proof=False):
+    package = files.check_path(Path(package).absolute())
+    value, proof = _json_identity(package / 'checkpoint.json')
+    if value.get('version') != 1 or value.get('kind') != 'cold_checkpoint':
+        raise files.ArchiveError('Only an explicitly enrolled cold checkpoint can restore an instance')
+    metadata, actual = _json_identity(package / 'payload/archive.json')
+    if (value['payload_ref']['path'] != 'payload/archive.json'
+            or any(value['payload_ref'][key] != actual[key] for key in ('sha256','size_bytes'))):
+        raise files.ArchiveError('Cold checkpoint payload identity changed')
+    archive_inspect(package / 'payload', limit=1)
+    after = files.hash_file(package / 'payload/archive.json')
+    if any(after[key] != actual[key] for key in ('sha256','size_bytes','mode')):
+        raise files.ArchiveError('Checkpoint payload metadata changed during inspection')
+    if (metadata['gaps'] or value['instance_id'] != metadata['instance_id']
+            or value['settings_ref']['sha256'] != metadata['settings_sha256']):
+        raise files.ArchiveError('Cold checkpoint lost its complete exact instance payload')
+    return (value,proof,metadata) if with_proof else value
+
+
+def _checkpoint_entries(package, metadata):
+    """Bind the actual copy/activation iteration to the verified manifest bytes."""
+    path = package / 'payload/manifest.jsonl'; files.check_path(path)
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    try:
+        before = os.fstat(fd)
+        if not stat.S_ISREG(before.st_mode):
+            raise files.ArchiveError('Checkpoint manifest is not regular')
+        digest = hashlib.sha256(); size = 0
+        with os.fdopen(fd, 'rb', closefd=False) as stream:
+            for line in stream:
+                digest.update(line); size += len(line)
+                entry = json.loads(line); _path(entry['path'])
+                if entry['kind'] == 'file' and entry['blob'] != f'blobs/{entry["index"]:012d}':
+                    raise files.ArchiveError('Checkpoint copy blob identity changed')
+                yield entry
+        after = os.fstat(fd)
+        if (digest.hexdigest() != metadata['manifest']['sha256'] or size != metadata['manifest']['size_bytes']
+                or (before.st_dev,before.st_ino,before.st_size,before.st_mtime_ns,before.st_ctime_ns)
+                != (after.st_dev,after.st_ino,after.st_size,after.st_mtime_ns,after.st_ctime_ns)):
+            raise files.ArchiveError('Checkpoint manifest changed during consumption')
+    finally:
+        os.close(fd)
+
+
+def checkpoint_export(root, output):
+    from . import budget, instance_owner as owner, qualification as q
+    root, output = Path(root).absolute(), files.check_path(Path(output).absolute())
+    if output.resolve() != output or not output.parent.is_dir() or output.is_relative_to(root) or root.is_relative_to(output):
+        raise files.ArchiveError('Explicit separate checkpoint destination required')
+    with owner.exclusive(root) as (directory, anchor, binding):
+        if anchor['state'] == 'frozen':
+            if anchor.get('output') != str(output):
+                raise files.ArchiveError('Resume the original frozen checkpoint transaction')
+            if output.exists():
+                value, checkpoint_proof, _ = _checkpoint(output, with_proof=True)
+                if (value['transaction'] != anchor['transaction']
+                        or anchor.get('checkpoint_sha256') != checkpoint_proof['sha256']):
+                    raise files.ArchiveError('Published checkpoint belongs to another transaction')
+                anchor['checkpoint_sha256'] = checkpoint_proof['sha256']
+                files.durable_json(directory / 'owner.json', anchor)
+                return dict(status='checkpoint_exported', package=str(output), generation=binding['generation'], frozen=True)
+        elif anchor['state'] != 'active' or anchor['generation'] != binding['generation']:
+            raise files.ArchiveError('Original owner is unavailable for checkpoint')
+        else:
+            owner._active(root, binding)
+            if output.exists():
+                raise files.ArchiveError('Checkpoint destination already exists')
+        transaction = anchor.get('transaction') if anchor['state'] == 'frozen' else os.urandom(16).hex()
+        stage = Path(tempfile.mkdtemp(prefix='.' + output.name + '-checkpoint-', dir=output.parent))
+        captured = {}
+        try:
+            def freeze(settings):
+                if any(row['kind'] == 'gap' for row in _inventory(root)):
+                    raise files.ArchiveError('Cold checkpoint has unsupported framework storage ownership')
+                captured.update(budget.paused_checkpoint(root))
+                anchor.update(state='frozen', transaction=transaction, output=str(output))
+                files.durable_json(directory / 'owner.json', anchor)
+            _export(root, stage / 'payload', on_locked=freeze)
+            payload = files.hash_file(stage / 'payload/archive.json')
+            value = dict(version=1, kind='cold_checkpoint', transaction=transaction,
+                instance_id=binding['instance_id'], settings_ref=q._ref(root, root / 'settings.json'),
+                original_root=str(root), host=binding['host'], anchor_id=binding['anchor_id'],
+                source_generation=binding['generation'], binding=binding,
+                payload_ref=dict(path='payload/archive.json', **{key:payload[key] for key in ('sha256','size_bytes')}),
+                budget=captured)
+            files.durable_json(stage / 'checkpoint.json', value)
+            _checkpoint(stage)
+            anchor['checkpoint_sha256'] = files.hash_file(stage / 'checkpoint.json')['sha256']
+            files.durable_json(directory / 'owner.json', anchor)
+            _publish(stage, output)
+            return dict(status='checkpoint_exported', package=str(output), generation=binding['generation'], frozen=True)
+        finally:
+            if stage.exists():
+                shutil.rmtree(stage)
+
+
+def _restore_dependencies(settings):
+    """Current implementation/config dependencies; historical sessions are optional."""
+    configured = settings.get('execution_config')
+    for proof in (configured or {}).get('implementation', {}).get('code', []):
+        actual = files.hash_file(proof['path'])
+        if any(actual[key] != proof[key] for key in ('sha256','size_bytes')):
+            raise files.ArchiveError('Current execution implementation dependency changed')
+    argv = settings['native_launcher_argv']
+    if not argv or shutil.which(argv[0]) is None:
+        raise files.ArchiveError('Current native launcher is unavailable; no automatic installation')
+
+
+def _validate_restored_payload(root, package, checkpoint, restored, metadata):
+    """A pending transfer cannot repair overwritten control originals by retry."""
+    expected = set()
+    for entry in _checkpoint_entries(package, metadata):
+        name = entry['path']; expected.add(name)
+        if entry['kind'] == 'file':
+            if name == 'instance-owner.json':
+                if (_read(root / name) not in (checkpoint['binding'], restored)
+                        or stat.S_IMODE((root/name).stat().st_mode) != entry['mode']):
+                    raise files.ArchiveError('Pending restore owner binding changed')
+                continue
+            if name == 'pause.request' and _read(root / name) == dict(reason='cold_checkpoint_restored'):
+                continue
+            actual = files.hash_file(root / name)
+            if any(actual[key] != entry[key] for key in ('sha256','size_bytes','mode')):
+                raise files.ArchiveError('Pending restore original changed: ' + name)
+        elif entry['kind'] == 'directory':
+            if not (root/name).is_dir() or stat.S_IMODE((root/name).stat().st_mode) != entry['mode']:
+                raise files.ArchiveError('Pending restore directory is unavailable or changed: ' + name)
+    prefix = 'host-runtime/restore/' + checkpoint['transaction']
+    extra = {'pause.request','host-runtime','host-runtime/restore',prefix,
+        prefix+'/checkpoint.json',prefix+'/transfer.json'}
+    for entry in _inventory(root):
+        name = entry['path']
+        if name == 'pause.request' and name not in expected and _read(root/name) != dict(reason='cold_checkpoint_restored'):
+            raise files.ArchiveError('Pending restore gained an unrecognized pause original')
+        if name in expected or name in extra or entry['kind'] == 'excluded':
+            continue
+        if entry['kind'] == 'file' and name.startswith('control-ledger/'):
+            event = _read(root / name); marker = event.get('reanchor', {})
+            if (event.get('kind') == 'clock' and event.get('phase') == 'paused'
+                    and marker.get('checkpoint',{}).get('path') == prefix+'/checkpoint.json'
+                    and marker.get('transfer',{}).get('path') == prefix+'/transfer.json'):
+                continue  # The budget owner verifies the full same-transfer event.
+        raise files.ArchiveError('Pending restore gained an unrecognized original: ' + name)
+
+
+def checkpoint_restore(root, package):
+    from . import budget, contracts as c, instance_owner as owner, qualification as q
+    root, package = files.check_path(Path(root).absolute()), files.check_path(Path(package).absolute())
+    checkpoint, checkpoint_proof, metadata = _checkpoint(package, with_proof=True); binding = checkpoint['binding']
+    if (str(root) != checkpoint['original_root'] or root.resolve() != root or owner._host() != checkpoint['host']
+            or root == package or root.is_relative_to(package) or package.is_relative_to(root)):
+        raise files.ArchiveError('Cold restore supports only the same host and exact original absolute root')
+    digest = checkpoint_proof['sha256']
+    with owner.exclusive(root, binding=binding) as (directory, anchor, _):
+        if (anchor.get('transaction') != checkpoint['transaction'] or anchor.get('checkpoint_sha256') != digest
+                or anchor['generation'] not in {binding['generation'], binding['generation']+1}):
+            raise files.ArchiveError('Cold checkpoint is stale or unregistered at its original anchor')
+        if anchor['state'] == 'active':
+            current = dict(binding, generation=binding['generation']+1)
+            owner._active(root, current)
+            if owner._binding(root) != current:
+                raise files.ArchiveError('Completed restore root lost its current generation')
+            return dict(status='checkpoint_restore_already_completed', root=str(root),
+                generation=current['generation'], paused=(root/'pause.request').exists())
+        if anchor['state'] == 'frozen':
+            if root.exists() or root.is_symlink():
+                raise files.ArchiveError('Move the original root aside explicitly; cold restore never deletes or overwrites it')
+            anchor.update(state='restore_pending', generation=binding['generation']+1, root_identity=None)
+            files.durable_json(directory / 'owner.json', anchor)
+        elif anchor['state'] not in {'restore_pending','active'}:
+            raise files.ArchiveError('Original anchor has no matching cold restore transaction')
+        if not root.exists():
+            if anchor['state'] != 'restore_pending' or not root.parent.is_dir():
+                raise files.ArchiveError('Original restore destination parent is unavailable')
+            stage = Path(tempfile.mkdtemp(prefix='.' + root.name + '-restore-', dir=root.parent))
+            try:
+                directories = []
+                for entry in _checkpoint_entries(package, metadata):
+                    target = stage / _path(entry['path'])
+                    if entry['kind'] == 'file':
+                        files.copy_verified(package / 'payload' / entry['blob'], target, entry)
+                    elif entry['kind'] == 'directory':
+                        target.mkdir(parents=True, exist_ok=True); directories.append((target,entry['mode']))
+                    elif entry['kind'] == 'gap':
+                        raise files.ArchiveError('Unsupported checkpoint storage gap')
+                for target, mode in reversed(directories):
+                    target.chmod(mode)
+                # Rename preserves this inode. Commit it before publication so
+                # a crash after rename cannot strand an otherwise exact root.
+                anchor['root_identity'] = owner._identity(stage)
+                files.durable_json(directory / 'owner.json', anchor)
+                _publish(stage, root)
+            finally:
+                if stage.exists():
+                    shutil.rmtree(stage)
+        elif anchor.get('root_identity') != owner._identity(root):
+            raise files.ArchiveError('Existing restore root has an unrecognized owner')
+        restored = dict(binding, generation=anchor['generation'])
+        _validate_restored_payload(root, package, checkpoint, restored, metadata)
+        files.durable_json(root / owner.BINDING, restored)
+        receipt = root / 'host-runtime/restore' / checkpoint['transaction']
+        receipt.mkdir(parents=True, exist_ok=True)
+        source = package / 'checkpoint.json'
+        files.copy_verified(source, receipt / 'checkpoint.json', dict(kind='file', **checkpoint_proof))
+        checkpoint_ref = q._ref(root, receipt / 'checkpoint.json')
+        transfer = dict(version=1, kind='owner_restore', transaction=checkpoint['transaction'],
+            checkpoint_ref=checkpoint_ref, instance_id=binding['instance_id'], original_root=str(root),
+            anchor_id=binding['anchor_id'], host=binding['host'], from_generation=binding['generation'],
+            to_generation=anchor['generation'], root_identity=anchor['root_identity'])
+        path = receipt / 'transfer.json'
+        if path.exists() and _read(path) != transfer:
+            raise files.ArchiveError('Original restore transfer receipt changed')
+        if not path.exists():files.durable_json(path, transfer)
+        owner.verify_transition(root, checkpoint_ref, q._ref(root, path))
+        _restore_dependencies(c.settings(root))
+        budget.reanchor_paused_checkpoint(root, checkpoint_ref=checkpoint_ref, transfer_ref=q._ref(root, path))
+        if anchor['state'] != 'active':
+            files.durable_json(root / 'pause.request', dict(reason='cold_checkpoint_restored'))
+            anchor['state'] = 'active'
+            files.durable_json(directory / 'owner.json', anchor)
+        return dict(status='checkpoint_restored', root=str(root), generation=anchor['generation'], paused=True,
+            limitations=['Original native sessions and host credentials are not restored; their optional capabilities require the original dependencies.',
+                'No automatic scientific advance, replay, new execution permission or resource grant.'])

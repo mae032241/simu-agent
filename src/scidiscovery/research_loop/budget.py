@@ -37,6 +37,37 @@ def _duration(before, after, *, legacy_elapsed=False):
     return elapsed
 
 
+def _paused_checkpoint(root, settings, events):
+    from . import qualification as q
+    phase = next((event['phase'] for event in reversed(events) if event['kind'] == 'clock'), 'paused')
+    if settings.get('time_budget_basis') != 'active' or phase != 'paused':
+        raise ValueError('Cold clock continuation requires an active budget already paused')
+    started = Path(root) / 'host-started.json'
+    head = (dict(seq=events[-1]['seq'], ref=q._ref(root, Path(root) / 'control-ledger' / f'{events[-1]["seq"]:06d}.json'))
+            if events else None)
+    return dict(version=1, basis='active', phase='paused', head=head,
+                started=q._ref(root, started) if started.exists() else None)
+
+
+def _verify_reanchor(root, settings, event, previous):
+    """Historical receipt relations only; later restores may advance the owner."""
+    from . import instance_owner, qualification as q
+    marker = event.get('reanchor')
+    if (event['kind'] != 'clock' or event.get('phase') != 'paused'
+            or not isinstance(marker, dict) or set(marker) != {'version', 'checkpoint', 'transfer'}
+            or type(marker['version']) is not int or marker['version'] != 1):
+        raise ValueError('Invalid cold clock continuation event')
+    value = instance_owner.read_transition(root, marker['checkpoint'], marker['transfer'])
+    checkpoint = value['checkpoint']
+    if (checkpoint['instance_id'] != settings['goal_id']
+            or checkpoint['settings_ref'] != q._ref(root, Path(root) / 'settings.json')
+            or checkpoint['budget'] != _paused_checkpoint(root, settings, previous)):
+        raise ValueError('Cold clock continuation lost its original ledger or settings')
+    before = previous[-1] if previous else contracts.read(Path(root) / 'host-started.json') if checkpoint['budget']['started'] else None
+    if before is None or before['boot_id'] == event['boot_id']:
+        raise ValueError('Cold clock continuation must bridge an original paused boot')
+
+
 def _events(root, settings, *, resources=False):
     events, parent, origins = [], None, {}
     identity = contracts.digest(root / 'settings.json')
@@ -54,7 +85,9 @@ def _events(root, settings, *, resources=False):
                 or event.get('kind') not in {'clock', 'budget_amend', 'closeout_begin', 'action_intent', 'action_outcome',
                     'resource_grant', 'resource_reserve', 'resource_rebind', 'resource_bind', 'resource_settle', 'resource_release'}):
             raise ValueError('Control ledger identity, sequence or time changed')
-        if events:
+        if 'reanchor' in event:
+            _verify_reanchor(root, settings, event, events)
+        elif events:
             _duration(events[-1], event, legacy_elapsed=settings.get('time_budget_basis', 'elapsed') == 'elapsed')
         if event['kind'] == 'budget_amend':
             for limits in (event.get('before'), event.get('after')):
@@ -420,31 +453,67 @@ def execution_available(root, job, limits, usage):
 @contextmanager
 def _ledger_writer(root, *, context=None):
     from .protocol import require_current
-    require_current(root)
-    fd = os.open(root / 'control-ledger.lock', os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
-    try:
-        if context is None:fcntl.flock(fd, fcntl.LOCK_EX)
-        else:
-            while True:
-                context.remaining_seconds()
-                try:
-                    fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB);break
-                except BlockingIOError:time.sleep(min(.05,context.remaining_seconds()))
-        yield
-    finally:
-        os.close(fd)
+    from . import instance_owner
+    with instance_owner.lease(root):
+        require_current(root)
+        fd = os.open(root / 'control-ledger.lock', os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
+        try:
+            if context is None:fcntl.flock(fd, fcntl.LOCK_EX)
+            else:
+                while True:
+                    context.remaining_seconds()
+                    try:
+                        fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB);break
+                    except BlockingIOError:time.sleep(min(.05,context.remaining_seconds()))
+            yield
+        finally:
+            os.close(fd)
 
 
 def _append(root, settings, events, parent, **fields):
     from .protocol import require_current
     require_current(root)
     stamp = clock_stamp()
-    if events:
-        _duration(events[-1], stamp, legacy_elapsed=settings.get('time_budget_basis', 'elapsed') == 'elapsed')
     event = dict(seq=len(events) + 1, parent_sha256=parent,
                  settings_sha256=contracts.digest(root / 'settings.json'), **stamp, **fields)
+    if 'reanchor' in event:
+        _verify_reanchor(root, settings, event, events)
+    elif events:
+        _duration(events[-1], stamp, legacy_elapsed=settings.get('time_budget_basis', 'elapsed') == 'elapsed')
     contracts.write(root / 'control-ledger' / f'{event["seq"]:06d}.json', event)
     return event
+
+
+def paused_checkpoint(root):
+    """Freeze only original paused ledger identity, never a second balance."""
+    root = Path(root).resolve(); settings = contracts.settings(root)
+    events, _ = _events(root, settings)
+    return _paused_checkpoint(root, settings, events)
+
+
+def reanchor_paused_checkpoint(root, checkpoint_ref, transfer_ref):
+    """Only the exclusive cold owner can bridge a proven paused active clock."""
+    from . import instance_owner
+    root = Path(root).resolve()
+    with _ledger_writer(root):
+        value = instance_owner.verify_transition(root, checkpoint_ref, transfer_ref)
+        settings = contracts.settings(root); events, parent = _events(root, settings)
+        marker = dict(version=1, checkpoint=checkpoint_ref, transfer=transfer_ref)
+        stamp = clock_stamp()
+        for event in events:
+            if event.get('reanchor') == marker:
+                if event['boot_id'] != stamp['boot_id']:
+                    raise ValueError('A cold clock transition cannot be reused on another boot')
+                return dict(status='clock_already_reanchored', seq=event['seq'])
+        if value['checkpoint']['budget'] != _paused_checkpoint(root, settings, events):
+            raise ValueError('Cold checkpoint does not preserve the current original budget')
+        started = Path(root) / 'host-started.json'
+        before = events[-1] if events else contracts.read(started) if started.exists() else None
+        if before is None or before['boot_id'] == stamp['boot_id']:
+            return dict(status='clock_reanchor_not_needed')
+        event = _append(root, settings, events, parent, kind='clock', phase='paused',
+                        reason='verified_cold_checkpoint_restore', reanchor=marker)
+        return dict(status='clock_reanchored', seq=event['seq'])
 
 
 def snapshot(root, settings=None, *, sample_stamp=None):
@@ -469,14 +538,22 @@ def snapshot(root, settings=None, *, sample_stamp=None):
     start = contracts.read(started) if started.exists() else None
     if events:
         interval(events[-1], now)
-    if start is not None:
+    bridged = any('reanchor' in event for event in events)
+    if start is not None and not bridged:
         interval(start, now)
     if basis == 'active' and start is not None and 'at_boottime' not in start:
         raise ValueError('Active clock requires its original boot anchor')
     advance = paused = unclassified = waiting = 0.
     phase, at = ('paused' if basis == 'active' else 'unclassified'), start
-    for event in events:
+    for index, event in enumerate(events):
         if event['kind'] != 'clock':
+            continue
+        if 'reanchor' in event:
+            # Its predecessor phase is verified paused by _events. The idle
+            # cross-boot gap is unmeasured, never refunded advancement/waiting.
+            if at is not None and index:
+                paused += interval(at, events[index - 1])
+            at, phase = event, 'paused'
             continue
         if at is not None:
             duration = interval(at, event)
@@ -498,14 +575,16 @@ def snapshot(root, settings=None, *, sample_stamp=None):
             paused += interval(at, now)
         else:
             unclassified += interval(at, now)
-    elapsed = interval(start, now) if start is not None else 0.
+    elapsed = None if bridged else interval(start, now) if start is not None else 0.
     if basis == 'elapsed' and start is not None:
         elapsed = _duration(dict(at_unix=start['at_unix']), now)
     consumed = advance + waiting if basis == 'active' else elapsed
     return dict(**limits, time_budget_basis=basis, advance_seconds=advance, waiting_seconds=waiting,
                 paused_seconds=paused, unclassified_seconds=unclassified, elapsed_seconds=elapsed, consumed_seconds=consumed,
                 seconds_remaining=max(0., limits['max_seconds'] - consumed), clock_phase=phase,
-                ledger_events=len(events), historical_time='unknown_before_ledger' if basis == 'elapsed' else 'recorded')
+                ledger_events=len(events), historical_time='unknown_before_ledger' if basis == 'elapsed' else
+                'recorded_active_with_unmeasured_paused_gap' if bridged else 'recorded',
+                **(dict(unmeasured_paused_gap=True) if bridged else {}))
 
 
 def transition(root, phase, reason, *, operation_context=None):

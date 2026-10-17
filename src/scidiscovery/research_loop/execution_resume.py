@@ -350,6 +350,130 @@ class _RecoveryAdmission:
             call_identity=lambda *_:self.call,implementation_inputs=NativeInputHost(self.config),operation_context=self.context)
 
 
+class _MaintenanceWindow:
+    """Current finite control IO, without authority to start scientific execution."""
+    def __init__(self, root, config, call, action, *, max_seconds, note):
+        from . import budget, experiments as e, execution_authority as authority
+        from scidiscovery.plugin_runtime.collection import CollectionContext
+        if (type(max_seconds) not in (int, float) or not math.isfinite(max_seconds) or max_seconds <= 0
+                or not isinstance(note, str) or not note.strip()):
+            raise ValueError('Finite maintenance seconds and explicit operator audit note required')
+        self.root, self.config, self.call, self.action = root, config, call, action
+        self._collection = None
+        records = e.Records(config); directory = records.directory(call); accepted = records.accepted(call)
+        self.authority = accepted['execution_authority']
+        self.permit = authority._permit(root, self.authority, config, accepted['execution_target'], call,
+                                       None, authority.host_secret(root))
+        stamp = budget.clock_stamp()
+        operations = directory / 'maintenance-operations'
+        number = len(list(operations.glob('*/intent.json'))) + 1
+        self.directory = operations / f'{number:06d}'
+        self.operation = q._save(root, self.directory / 'intent.json', dict(version=1, kind='original_call_maintenance',
+            call_id=call, action=action, accepted=q._ref(root, directory / 'accepted.json'), authority=self.authority,
+            scope=config['scope'], native_attempt=config['native_attempt'], boot_id=stamp['boot_id'],
+            started_boottime=stamp['at_boottime'], deadline_boottime=stamp['at_boottime'] + max_seconds,
+            authorization_note=note))
+        self.receipt = q._read(root, self.operation)
+        remaining = self.check()[1]; end = time.monotonic() + remaining
+        self.context = CollectionContext(end, end, file_timeout_seconds=remaining,
+            idle_timeout_seconds=remaining, stopped=self.expired)
+
+    def expired(self):
+        from . import budget
+        stamp = budget.clock_stamp()
+        return stamp['boot_id'] != self.receipt['boot_id'] or stamp['at_boottime'] >= self.receipt['deadline_boottime']
+
+    def check(self):
+        from . import budget
+        stamp = budget.clock_stamp()
+        if q._read(self.root, self.operation) != self.receipt or self.expired():
+            raise ValueError('Original maintenance window expired or changed')
+        return stamp, self.receipt['deadline_boottime'] - stamp['at_boottime']
+
+    def collection(self, original):
+        if self.action != 'collect' or original != self.permit:
+            raise q.IntegrityError('Maintenance cannot change its original action or permit')
+        self.check(); self.context.remaining_seconds()
+        if self._collection is None:
+            from scidiscovery.plugin_runtime.collection import CollectionContext
+            runner = original['admission']['policy']['runner']
+            remaining = min(self.context.remaining_seconds(), runner['collection_total_seconds'])
+            end = time.monotonic() + remaining
+            self._collection = CollectionContext(end - min(2., remaining * .1), end,
+                file_timeout_seconds=min(remaining, runner['collection_file_seconds']),
+                idle_timeout_seconds=min(remaining, runner['collection_idle_seconds']), stopped=self.expired)
+        self._collection.remaining_seconds()
+        return self._collection
+
+    def services(self):
+        from . import experiments as e, execution_authority as authority
+        from scidiscovery.operations.runtime_plugins import ExecutionHostServices
+        def gate(provider):
+            def bound(phase, **kwargs):
+                self.check()
+                if (phase != self.action or phase not in {'collect', 'cancel'}
+                        or kwargs.get('call_id') != self.call or kwargs.get('prior_receipt') != self.authority):
+                    raise e.UnsupportedExecution('Maintenance cannot prepare, submit or change the original call')
+                return authority._gate(self.config, provider, phase, recovery=self, **kwargs)
+            return bound
+        def no_dispatch(*args, **kwargs):
+            raise e.UnsupportedExecution('Maintenance has no new execution identity or dispatch authority')
+        return ExecutionHostServices(gate=gate, call_identity=no_dispatch, operation_context=self.context)
+
+
+def maintain(root, step, call_id, *, action, max_seconds, authorization_note):
+    """Maintain only an existing accepted call, independently of scientific clocks."""
+    from . import experiments as e, execution_authority as authority, instance_owner
+    root = Path(root).resolve()
+    if action not in {'query', 'collect', 'cancel'} or not e.ID.fullmatch(call_id):
+        raise ValueError('Exact original call and supported maintenance action required')
+    with instance_owner.lease(root):
+        directory = c.workspace(root, step) / 'work/lineage/calls' / call_id
+        if directory.resolve() != directory:
+            raise e.IntegrityError('Original maintenance call namespace changed')
+        if not (directory / 'accepted.json').exists():
+            return dict(status='unknown', call_id=call_id, note='No original accepted call; maintenance cannot prepare or submit.')
+        accepted = c.read(c.regular(directory / 'accepted.json'))
+        attempt = accepted['native_attempt']['number']
+        config = c.read(c.regular(execution.record(root, step, attempt) / 'experiment-config.json'))
+        actual_root, job, _ = authority._host_context(config)
+        if actual_root != root or job['step'] != step:
+            raise q.IntegrityError('Maintenance configuration escaped its original task')
+        config = e.original_configuration(config, call_id)
+        window = _MaintenanceWindow(root, config, call_id, action, max_seconds=max_seconds, note=authorization_note)
+        try:
+            adapter = e.load(config, host_services=window.services())
+            if not getattr(e.lifecycle_capabilities(adapter), 'query' if action == 'collect' else action):
+                raise e.UnsupportedExecution('Requested original maintenance operation is unavailable')
+            window.check(); window.context.remaining_seconds()
+            records = e.Records(config)
+            if records.external(call_id) is None and e.lifecycle_capabilities(adapter).lookup_submission:
+                descriptor = e.LocalFileDescriptor.model_validate(records.accepted(call_id)['prepared'])
+                found = adapter.lookup_submission(descriptor)
+                if found is not None:
+                    window.context.remaining_seconds(); records.bind_external(call_id, *found)
+            if action == 'query':
+                result = dict(adapter.status_details(call_id))
+                if result.get('call_id', call_id) != call_id:
+                    raise e.IntegrityError('Maintenance reply changed its original call')
+                result['call_id'] = call_id
+            elif action == 'cancel':
+                result = dict(call_id=call_id, status=adapter.cancel_original(call_id))
+            else:
+                if not e.lifecycle_capabilities(adapter).collect:
+                    raise e.UnsupportedExecution('Original collection is unavailable')
+                observed = e.record_observation(config, adapter, call_id, operation_context=window.context)
+                result = dict(call_id=call_id, status=observed['status'] if observed is not None else 'unknown',
+                    **(dict(native_state=observed['native_state']) if observed is not None and 'native_state' in observed else {}),
+                    note='Original terminal facts retained; no new submission.' if observed is not None else 'No verified original terminal observation.')
+        except Exception as error:
+            q._save(root, window.directory / 'outcome.json', dict(operation=window.operation,
+                status='unknown', error_type=type(error).__name__, diagnostic=str(error)))
+            raise
+        q._save(root, window.directory / 'outcome.json', dict(operation=window.operation, result=result))
+        return result
+
+
 def resume(root,step,call_id,*,max_seconds,authorization_note,request_valid_seconds=None):
     """Explicit host entry. Caller must hold the existing controller writer."""
     from . import history,experiments as e,execution_recovery as recovery,budget,execution_authority as authority

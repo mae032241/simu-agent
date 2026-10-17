@@ -124,6 +124,10 @@ def node_state(root, step):
     return 'unknown'
 
 
+from .instance_owner import effect as owner_effect
+
+
+@owner_effect
 def _spawn(root, step, mode, attempt=0):
     from .protocol import require_current
     require_current(root)
@@ -147,6 +151,7 @@ def start(root, step, attempt=0):
     return _spawn(root, step, 'runner', attempt)
 
 
+@owner_effect
 def _watch(root, step, attempt=0):
     from .protocol import require_current
     require_current(root)
@@ -219,6 +224,7 @@ def _complete_clock(root):
         pass  # A live controller owns accepted work and the clock transition.
 
 
+@owner_effect
 def _run(root, step, attempt=0):
     from .protocol import require_current
     require_current(root)

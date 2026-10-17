@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Mapping
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
 from dataclasses import asdict
 import fcntl
 import hashlib
@@ -20,6 +20,9 @@ import re
 import sys
 import time
 import uuid
+from functools import wraps
+
+from . import instance_owner
 
 from scidiscovery.operations.execution import (AdapterCapability, ExecutionInterfaceRegistration,
     LifecycleCapabilities, LocalFileDescriptor, MANAGED_METHODS, lifecycle_capabilities, LOCAL_RESULT_PROTOCOL,
@@ -62,6 +65,16 @@ class ReviewRequired(ValueError):
 
 class ConcurrentExecution(ValueError):
     pass
+
+
+def _configuration_effect(function):
+    @wraps(function)
+    def guarded(*args, **kwargs):
+        first = args[0] if args else kwargs['config']
+        config = first.config if isinstance(first, Records) else first
+        with instance_owner.lease_for_configuration(config):
+            return function(*args, **kwargs)
+    return guarded
 
 
 def review_status(config):
@@ -281,6 +294,7 @@ def freeze(config, executor, *, path=None):
     assets += [Path(item).resolve() for item in adapter.code_assets()]
     from . import replay_check
     assets.append(Path(replay_check.__file__).resolve())
+    assets.append(Path(instance_owner.__file__).resolve())
     if value.get('host_execution_authority') is not None:
         from . import execution_authority
         assets.extend(Path(item['path']) for item in execution_authority.implementation())
@@ -300,6 +314,7 @@ def freeze(config, executor, *, path=None):
     return value
 
 
+@instance_owner.effect
 def configure(root,step,executor,config,output):
     """Freeze a host-bound interface before the Worker enters its existing namespace."""
     from .protocol import require_current
@@ -464,6 +479,7 @@ class Records:
         finally:
             os.close(fd)
 
+    @_configuration_effect
     def accept(self, descriptor, metadata, interface, *, expected_calls=None, mechanism=None, recovery_admission=None, operation_context=None):
         """Short admission linearization point. No solver or domain IO under lock."""
         from .protocol import require_scope
@@ -517,6 +533,7 @@ class Records:
             if directory.exists():shutil.rmtree(directory)
         return accepted
 
+    @_configuration_effect
     def publish(self, call_id, filename, value):
         from .protocol import require_scope
         require_scope(self.config['scope'])
@@ -550,6 +567,7 @@ class Records:
             raise IntegrityError('Published execution parent is malformed')
         return value
 
+    @_configuration_effect
     def bind_external(self,call_id,external_id,state):
         if not isinstance(external_id,str) or not ID.fullmatch(external_id):
             raise IntegrityError('Submitted external execution identity is invalid')
@@ -589,6 +607,7 @@ class Records:
         return {'known_success':'succeeded','known_failed':'failed','unknown':'unknown'}.get(completed.get('status'),'unknown')
 
 
+@_configuration_effect
 def dispatch(config, script, *, parent=None, new=False, change=None, mechanism=None, command_options=None):
     """Convenience input path; neutral callers may provide a descriptor directly."""
     source=Path(script).resolve();item=proof(source)
@@ -761,6 +780,7 @@ def retirement(config,call_id):
     return value
 
 
+@_configuration_effect
 def retire_original(config,adapter,call_id):
     capability=_retirement_capability(config['execution_interface'])
     matches=[item for item in adapter.capabilities() if item.key==RETIREMENT_KEY]
@@ -798,6 +818,7 @@ def retire_original(config,adapter,call_id):
         return dict(call_id=call_id,status='unknown',note='Original submission or retirement still owns its call lease')
 
 
+@_configuration_effect
 def record_observation(config, adapter, call_id, *, collected=None, operation_context=None):
     """Freeze one backend-verified terminal projection while executing its protocol.
 
@@ -874,6 +895,7 @@ def record_observation(config, adapter, call_id, *, collected=None, operation_co
     return value
 
 
+@_configuration_effect
 def dispatch_descriptor(config, payload, *, parent=None, new=False, change=None, mechanism=None, command_options=None):
     from . import execution_authority
     try:return _dispatch_descriptor(config,payload,parent=parent,new=new,change=change,mechanism=mechanism,command_options=command_options)
@@ -956,6 +978,7 @@ def _dispatch_descriptor(config, payload, *, parent=None, new=False, change=None
     return result
 
 
+@_configuration_effect
 def progress(config):
     adapter = load(config)
     if not lifecycle_capabilities(adapter).query:
@@ -1002,6 +1025,7 @@ def preserved_progress(config):
     return dict(calls=rows[-16:],counts=counts,omitted_count=max(0,len(rows)-16),coverage='preserved_originals_only')
 
 
+@_configuration_effect
 def compile_implementation(config, adapter, source, aliases, output):
     """Optional registered authoring; this does not dispatch or grant execution."""
     capabilities = [item for item in _public_capabilities(adapter) if item['key'] == 'implementation_authoring']
@@ -1038,12 +1062,14 @@ def main(argv=None):
         item=sub.add_parser(name,**(dict(help='Freeze the same original terminal facts using query and declared collection; never submit a new execution.') if name=='reconcile' else {}))
         item.add_argument('--call-id',required=True)
     args=parser.parse_args(argv)
+    owner_lease = ExitStack()
     try:
         config=json.loads(read(args.config));feedback_config=config
         from . import protocol
         scope=config.get('scope',{})
         if args.command=='lineage-status' and (type(scope.get('handoff_protocol')) is not int or scope['handoff_protocol']!=protocol.CURRENT):
             print(json.dumps(preserved_progress(config),allow_nan=False));return 0
+        owner_lease.enter_context(instance_owner.lease_for_configuration(config))
         if args.command in {'run','compile','lookup','collect','cancel','reconcile','retire'}:
             from .protocol import require_scope
             require_scope(config.get('scope'))
@@ -1137,6 +1163,7 @@ def main(argv=None):
     except (IntegrityError,common.IntegrityError,feedback.history.ObserverIntegrityError) as error:result=dict(status='integrity_error',note=str(error));code=3
     except OSError:result=dict(status='integrity_error',note='Execution original cannot be read');code=3
     except ValueError as error:result=dict(status='unavailable' if isinstance(error,(UnsupportedExecution,common.UnsupportedExecution)) else 'unresolved',note=str(error));code=2
+    finally:owner_lease.close()
     # CLI is a compact model view; the complete collection is already durable.
     if isinstance(result.get('outputs'),list):
         original=result['outputs'];result=dict(result,outputs=[])

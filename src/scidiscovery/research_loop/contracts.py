@@ -18,6 +18,7 @@ MAX_REUSED_INPUTS = 16
 MAX_UNRESOLVED_LINKS = 16
 REUSE_FRAGMENT = 'reuse-implementation'
 from .protocol import CURRENT
+from .instance_owner import effect as owner_effect
 HANDOFF_PROTOCOL = CURRENT
 AUDIT_PROJECTION_VERSION = 1
 ACTIONS = {
@@ -587,6 +588,7 @@ def _copy_bound(source: Path, destination: Path, sha256: str, *, context=None):
         raise ValueError('Bound input copy changed')
 
 
+@owner_effect
 def build_job(root: Path, step: int, role: str, parents: list[int], instruction='', evidence_return=None,
               correction_request=None, author_correction=None, *, purpose=None, source_cutoff=None, delivery_sources=None, engineering_repair=None):
     if role not in ROLE_INSTRUCTIONS or type(step) is not int or step < 1:
@@ -940,6 +942,7 @@ def _validate_inputs(root, work, job):
             raise ValueError('The direct material actually read by this role changed')
 
 
+@owner_effect
 def seal_result(root: Path, step: int):
     from .protocol import require_current
     require_current(root,read(regular(Path(root)/'jobs'/f'{step:03d}.json')))

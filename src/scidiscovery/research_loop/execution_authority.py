@@ -39,6 +39,8 @@ def implementation():
         'contracts.py', 'formal_review.py', 'qualification.py', 'execution.py', 'budget.py', 'experiments.py',
         'runtime.py', 'native.py', 'search.py', 'execution_inputs.py')]
     paths += [directory / 'instance_control.py']
+    from . import instance_owner
+    paths += [Path(instance_owner.__file__).resolve()]
     from .execution_resume import capture_pending, verify_pending_set, resume
     from .execution_recovery import call_view
     from .history import validate_managed
@@ -70,24 +72,26 @@ def contract(root):
 
 @contextmanager
 def writer(root, *, context=None, blocking=True):
+    from . import instance_owner
     root = Path(root).resolve()
-    contract(root)
-    path = root / 'execution-authority'
-    fd = os.open(path / 'writer.lock', os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
-    try:
-        if context is None and blocking:
-            fcntl.flock(fd, fcntl.LOCK_EX)
-        else:
-            while True:
-                if context is not None:context.remaining_seconds()
-                try:
-                    fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB);break
-                except BlockingIOError:
-                    if not blocking:raise
-                    time.sleep(min(.05,context.remaining_seconds()))
-        yield
-    finally:
-        os.close(fd)
+    with instance_owner.lease(root):
+        contract(root)
+        path = root / 'execution-authority'
+        fd = os.open(path / 'writer.lock', os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
+        try:
+            if context is None and blocking:
+                fcntl.flock(fd, fcntl.LOCK_EX)
+            else:
+                while True:
+                    if context is not None:context.remaining_seconds()
+                    try:
+                        fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB);break
+                    except BlockingIOError:
+                        if not blocking:raise
+                        time.sleep(min(.05,context.remaining_seconds()))
+            yield
+        finally:
+            os.close(fd)
 
 
 def bind_secret(root, secret, *, source=None):

@@ -42,6 +42,8 @@ def require_current(root, job=None):
 
     root = Path(root)
     settings = c.settings(root)
+    from .instance_owner import require_owner
+    require_owner(root)
     _current(settings.get('handoff_protocol'), 'Instance')
     if job is not None:
         if not isinstance(job, dict):

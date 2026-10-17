@@ -79,6 +79,7 @@ def main(argv=None):
     execution_resume.add_argument('--max-seconds',type=float,required=True,help='Current finite control operation window; does not extend solver or shared authorization')
     execution_resume.add_argument('--authorization-note',required=True,help='Operator audit note only; not an execution decision')
     execution_resume.add_argument('--request-valid-seconds',type=float,help='Explicit finite replacement request validity when old request expired; no new execution allowance')
+    execution_resume.add_argument('--maintenance',choices=['query','collect','cancel'],help='Maintain one existing accepted call within a current finite operation window; never prepare, submit or renew')
     serve = commands.add_parser('serve-ui', help='Serve this explicit instance status and controls, with optional execution approval pages')
     serve.add_argument('--root', type=Path, required=True)
     serve.add_argument('--approval-secret-file', type=Path, required=True, help='Operator-owned regular 0600 browser host key; approval routes additionally require frozen authority')
@@ -96,11 +97,20 @@ def main(argv=None):
     restore.add_argument('--package', type=Path, required=True)
     restore.add_argument('--step', type=int, required=True)
     restore.add_argument('--index', type=int, required=True, help='Exact member index from the sealed scientific materials page')
+    enroll = commands.add_parser('checkpoint-enroll', help='Explicitly bind a quiescent instance to an external same-host cold-transfer anchor')
+    enroll.add_argument('--root', type=Path, required=True)
+    enroll.add_argument('--anchor-directory', type=Path, required=True)
+    cold = commands.add_parser('checkpoint-export', help='Freeze this enrolled generation and export its complete cold state; never delete the source root')
+    cold.add_argument('--root', type=Path, required=True)
+    cold.add_argument('--output', type=Path, required=True)
+    resume_cold = commands.add_parser('checkpoint-restore', help='Restore a registered cold checkpoint only to its absent original same-host root; no automatic continuation')
+    resume_cold.add_argument('--root', type=Path, required=True)
+    resume_cold.add_argument('--package', type=Path, required=True)
     args = parser.parse_args(argv)
-    root = (args.root.expanduser().absolute() if args.command in {'archive-export', 'archive-restore-material'} else
+    root = (args.root.expanduser().absolute() if args.command in {'archive-export', 'archive-restore-material','checkpoint-enroll','checkpoint-export','checkpoint-restore'} else
             args.root.expanduser().resolve()) if args.command != 'archive-inspect' else None
     try:
-        if args.command not in {'prepare','status','archive-inspect'}:
+        if args.command not in {'prepare','status','archive-inspect','checkpoint-enroll','checkpoint-export','checkpoint-restore'}:
             from .protocol import require_current
             require_current(root)
         if args.command == 'prepare':
@@ -158,11 +168,20 @@ def main(argv=None):
         elif args.command == 'archive-restore-material':
             from .instance_archive import archive_restore_material
             result = archive_restore_material(root, args.package, step=args.step, index=args.index)
+        elif args.command == 'checkpoint-enroll':
+            from .instance_archive import checkpoint_enroll
+            result = checkpoint_enroll(root,args.anchor_directory)
+        elif args.command == 'checkpoint-export':
+            from .instance_archive import checkpoint_export
+            result = checkpoint_export(root,args.output)
+        elif args.command == 'checkpoint-restore':
+            from .instance_archive import checkpoint_restore
+            result = checkpoint_restore(root,args.package)
         elif args.command == 'execution-recover':
             result=controller.execution_recover(root,args.step)
         elif args.command == 'execution-resume':
             result=controller.execution_resume(root,args.step,args.call_id,max_seconds=args.max_seconds,
-                authorization_note=args.authorization_note,request_valid_seconds=args.request_valid_seconds)
+                authorization_note=args.authorization_note,request_valid_seconds=args.request_valid_seconds,maintenance=args.maintenance)
         elif args.command == 'worker-resume':
             result = controller.worker_resume(root, args.step)
         elif args.command == 'status':
@@ -195,7 +214,7 @@ def main(argv=None):
         print(json.dumps(dict(status='error',error=str(error),**(dict(code=error.code) if isinstance(error,UnsupportedProtocol) else {})), ensure_ascii=False))
         return 1
     print(json.dumps(result, ensure_ascii=False))
-    return 0 if result.get('status') in {None, 'preserved_read_only', 'prepared', 'finish', 'wait', 'paused', 'pause_requested', 'budget_amended', 'delivery_confirmed', 'execution_recovered', 'execution_resume_recorded', 'exported_unsubmitted', 'ui_stopped', 'archive_exported', 'archive_inspected', 'material_restored', 'material_already_present'} else 2
+    return 0 if result.get('status') in {None, 'preserved_read_only', 'prepared', 'finish', 'wait', 'paused', 'pause_requested', 'budget_amended', 'delivery_confirmed', 'execution_recovered', 'execution_resume_recorded', 'exported_unsubmitted', 'ui_stopped', 'archive_exported', 'archive_inspected', 'material_restored', 'material_already_present','checkpoint_enrolled','checkpoint_exported','checkpoint_restored','checkpoint_restore_already_completed','execution_maintained'} else 2
 
 
 if __name__ == '__main__':

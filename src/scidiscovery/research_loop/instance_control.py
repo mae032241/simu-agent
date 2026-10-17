@@ -2,6 +2,7 @@
 from pathlib import Path
 
 from . import budget, contracts, controller, native, runtime, correction, execution, feedback, history
+from .instance_owner import effect as owner_effect
 
 
 def status(root: Path, *, after=0, limit=None, live_feedback=True):
@@ -68,6 +69,7 @@ def status(root: Path, *, after=0, limit=None, live_feedback=True):
                 closeout=controller._closeout_result(root, 'closeout_status', read_only=True) if closeout['begin'] else None, **page)
 
 
+@owner_effect
 def request_pause(root):
     root = Path(root).resolve()
     from .protocol import require_current

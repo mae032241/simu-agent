@@ -17,6 +17,7 @@ import tempfile
 import time
 
 from . import budget, contracts as c, history, runtime
+from .instance_owner import effect as owner_effect
 
 MAX_BYTES = 256_000
 MAX_ASSET_BYTES = 32 * 1024 * 1024
@@ -140,6 +141,7 @@ def _adapter(root):
     return dict(spec,inputs=[*spec['inputs'],item])
 
 
+@owner_effect
 def catalogue_sources(root, source_nodes):
     """Discover every exact candidate without opening executable/model originals.
 
@@ -222,6 +224,7 @@ def preparation_blocked(root):
         for path in (root / 'host-delivery/preparation').glob('*.json'))
 
 
+@owner_effect
 def freeze_sources(root, source_nodes, *, candidate_id=None):
     """Freeze readable objects before A; no model load, audit or qualification claim."""
     from .protocol import require_current
@@ -680,6 +683,7 @@ def _staged(root, spec, source, operation_id, stage):
                 inputs=spec['inputs'], config=spec['config'], target=spec['target'], stage=str(stage))
 
 
+@owner_effect
 def leaf_phase(root, source, operation_id, phase, seconds, *, on_process=None):
     """One control screening phase on exact frozen originals; never promotes or confirms."""
     from .protocol import require_current
@@ -705,6 +709,7 @@ def leaf_phase(root, source, operation_id, phase, seconds, *, on_process=None):
     return dict(status=value['status'], note=value['note'], cleanup_confirmed=True)
 
 
+@owner_effect
 def invoke(root, intent, max_seconds, *, on_process=None, audit_only=False):
     """Caller already durably accepted this action; recovered submits never call here."""
     from .protocol import require_current

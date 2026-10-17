@@ -230,6 +230,13 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
 
 @contextmanager
 def _writer(root):
+    from .instance_owner import lease
+    with lease(root), _local_writer(root):
+        yield
+
+
+@contextmanager
+def _local_writer(root):
     from .protocol import require_current
     require_current(root)
     descriptor = os.open(root / "host-run.lock",
@@ -1097,10 +1104,16 @@ def execution_recover(root: Path, step: int):
 
 
 def execution_resume(root: Path, step: int, call_id: str, *, max_seconds,
-                     authorization_note, request_valid_seconds=None):
+                     authorization_note, request_valid_seconds=None, maintenance=None):
     """Finite operator progress of the same call; never restart its scientific author."""
     from . import execution_resume as recovery
     root=Path(root).resolve()
+    if maintenance is not None:
+        if request_valid_seconds is not None:
+            raise ValueError('Maintenance cannot renew or dispatch an execution request')
+        with _writer(root):
+            return recovery.maintain(root,step,call_id,action=maintenance,max_seconds=max_seconds,
+                authorization_note=authorization_note)
     with _writer(root),_inactive_on_error(root,'execution_resume_failed'):
         result=recovery.resume(root,step,call_id,max_seconds=max_seconds,
             authorization_note=authorization_note,request_valid_seconds=request_valid_seconds)
