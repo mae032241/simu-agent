@@ -11,6 +11,11 @@ from . import cov_lineage as cov, experiments as e, cov_receipt
 
 
 class CovExecution(LocalExecution):
+    def __init__(self, config):
+        super().__init__(config)
+        from . import replay_check
+        replay_check.reserve_seconds(config)
+
     @staticmethod
     def code_assets():
         from . import local_experiments, cov_delivery, delivery
@@ -21,14 +26,30 @@ class CovExecution(LocalExecution):
         original = super().capabilities()
         if self.config.get('receipt_channel') != 'public_runner_main':
             return original
-        policy = dict(max_seconds=10, feedback_seconds=2,
+        from . import replay_check
+        policy = dict(max_seconds=10, feedback_seconds=2, supports_time_reservation=True,
             check_scope=dict(source='exact accepted source.py',
                 inputs='exact accepted public runner/train.csv/val.csv/meta.json and task runtime',
                 selection='first rows in frozen CSV order', train_rows_max=32, validation_rows_max=8,
                 coverage='source import, one sampled train() call and sampled predict; installed runtime dependencies only',
                 limitation='Unexecuted paths, full-data training and public audit are untested. Installed libraries are shared, not individually frozen. Pre-acceptance input hash/copy costs belong to the original task, outside this diagnostic ceiling; no scientific qualification.'))
+        summary = dict(policy['check_scope'], total_call_seconds=self.config['max_seconds'],
+            requested_reserve_seconds=replay_check.reserve_seconds(self.config), feedback_seconds=policy['feedback_seconds'],
+            time_rule='Positive reserve includes check and feedback and shortens the experiment before dispatch; zero is best effort. Accepted originals retain their frozen deadlines.')
         return (*original, AdapterCapability('isolated_replay', 'engineering', 'scidiscovery.engineering-replay.v1', 1,
-            'application/json', e.encoded(policy), policy['check_scope']))
+            'application/json', e.encoded(policy), summary))
+
+    def _execution_deadline(self, accepted):
+        bound = accepted.get('engineering_check') or {}
+        allocation = bound.get('time_allocation') or {}
+        if allocation.get('status') != 'reserved':
+            return super()._execution_deadline(accepted)
+        from . import budget
+        monotonic = time.monotonic(); stamp = budget.clock_stamp()
+        remaining = allocation['experiment_deadline_boottime'] - stamp['at_boottime']
+        if bound['boot_id'] != stamp['boot_id'] or remaining <= 0:
+            raise TimeoutError('Original reserved experiment window unavailable; no new time grant')
+        return monotonic + remaining
 
     def _replay_inputs(self, transport):
         """Freeze only the known public harness layout before the original call."""

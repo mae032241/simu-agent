@@ -98,11 +98,16 @@ def replay_scene(tmp_path, monkeypatch, execution_registry):
 
 def test_train_only_dependency_is_reported_before_w_returns_and_can_be_repaired(replay_scene):
     config, _, source, _ = replay_scene
+    config = e.freeze(dict(config, engineering_check_reserve_seconds=12), 'cov_execution:experiment')
     path = source('from fixture_helper import train_dependency; train_dependency()')
     original = e.dispatch(config, path, new=True)
     assert original['status'] == 'known_success'
     directory = e.Records(config).directory(original['call_id'])
     completed = (directory / 'completed.json').read_bytes()
+    bound = e.Records(config).accepted(original['call_id'])['engineering_check']
+    assert bound['time_allocation']['status'] == 'reserved'
+    assert bound['time_allocation']['experiment_deadline_boottime'] == bound['deadline_boottime'] - 12
+    assert bound['time_allocation']['check_deadline_boottime'] == bound['deadline_boottime'] - 2
     feedback = cov_lineage.public_feedback(config, original)['engineering_check']
     assert feedback['status'] == 'dependency_error'
     assert feedback['stage'] == 'sample_train' and 'fixture_helper' in feedback['diagnostic']
@@ -212,3 +217,35 @@ def test_preparation_uses_the_original_deadline_and_never_starts_a_fresh_leaf(re
     feedback = replay_check.public(config, original['call_id'])
     assert feedback['status'] == 'not_run'
     assert feedback['note'] == 'original_engineering_preparation_deadline_reached'
+
+
+def test_reserved_window_expires_after_acceptance_without_launch_or_repeated_submit(replay_scene, monkeypatch):
+    from scidiscovery.research_loop import local_experiments
+    config, _, source, _ = replay_scene
+    config = e.freeze(dict(config, engineering_check_reserve_seconds=12), 'cov_execution:experiment')
+    original_deadline = cov_experiments.CovExecution._execution_deadline
+
+    def expired_after_acceptance(self, accepted):
+        stamp = replay_check.budget.clock_stamp()
+        cutoff = accepted['engineering_check']['time_allocation']['experiment_deadline_boottime']
+        monkeypatch.setattr(replay_check.budget, 'clock_stamp', lambda:dict(stamp, at_boottime=cutoff+1))
+        return original_deadline(self, accepted)
+
+    def no_launch(*args, **kwargs):
+        pytest.fail('Expired accepted call must not start or repeat its original process')
+
+    monkeypatch.setattr(cov_experiments.CovExecution, '_execution_deadline', expired_after_acceptance)
+    monkeypatch.setattr(local_experiments.subprocess, 'Popen', no_launch)
+    with pytest.raises(TimeoutError, match='no new time grant'):
+        e.dispatch(config, source(), new=True)
+    records = e.Records(config); directories = records.calls()
+    assert len(directories) == 1 and not (directories[0]/'process.json').exists()
+    assert not (directories[0]/'terminal.json').exists() and not (directories[0]/'completed.json').exists()
+    call = directories[0].name; accepted = records.accepted(call)
+    adapter = e.load(config)
+    descriptor = e.LocalFileDescriptor.model_validate(accepted['prepared'])
+    assert adapter.submit(descriptor) == (call, 'unknown')
+    assert adapter.submit(descriptor) == (call, 'unknown')
+    assert adapter.status_details(call)['state'] == 'unknown'
+    assert replay_check.public(config, call)['status'] == 'not_run'
+    assert not (directories[0]/replay_check.INTENT).exists()

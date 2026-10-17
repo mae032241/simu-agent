@@ -15,6 +15,14 @@ OUTCOME = 'engineering-check.outcome.json'
 STATES = {'sample_replay_ok', 'dependency_error', 'inconclusive', 'unsupported', 'not_run', 'unknown'}
 
 
+def reserve_seconds(config):
+    """An operator-selected share of the existing call window, never a new grant."""
+    seconds = config.get('engineering_check_reserve_seconds', 0)
+    if type(seconds) not in (int, float) or not 0 <= seconds < float('inf'):
+        raise ValueError('Engineering check reserve must be finite nonnegative seconds')
+    return seconds
+
+
 def acceptance(config, adapter):
     """Bind an optional declaration and the original call's deadline before submit."""
     matches = [item for item in adapter.capabilities() if item.key == KEY]
@@ -31,15 +39,30 @@ def acceptance(config, adapter):
         raise e.IntegrityError('Invalid optional engineering replay declaration')
     stamp = budget.clock_stamp()
     seconds = config.get('max_seconds')
-    return dict(version=1, capability=dict(key=item.key, schema_id=item.schema_id,
+    bound = dict(version=1, capability=dict(key=item.key, schema_id=item.schema_id,
         payload_schema_version=item.payload_schema_version, media_type=item.media_type,
         sha256=hashlib.sha256(item.content).hexdigest(), policy=policy),
         boot_id=stamp['boot_id'], deadline_boottime=(stamp['at_boottime'] + seconds
             if type(seconds) in (int, float) and 0 < seconds < float('inf') else None))
+    reserve = reserve_seconds(config)
+    if reserve:
+        deadline = _call_deadline(config, bound, stamp)
+        allocation = dict(requested_seconds=reserve, status='unavailable',
+            note='original_window_cannot_fit_check_and_feedback')
+        if policy.get('supports_time_reservation') is not True:
+            allocation.update(status='unsupported', note='adapter_does_not_partition_execution_window')
+        elif (deadline is not None and reserve > policy['feedback_seconds']
+                and deadline - stamp['at_boottime'] > reserve):
+            bound['deadline_boottime'] = deadline
+            allocation.update(status='reserved', note='experiment_and_check_share_original_deadline',
+                experiment_deadline_boottime=deadline-reserve,
+                check_deadline_boottime=deadline-policy['feedback_seconds'],
+                check_seconds=min(policy['max_seconds'], reserve-policy['feedback_seconds']))
+        bound['time_allocation'] = allocation
+    return bound
 
 
-def _deadline(config, bound):
-    stamp = budget.clock_stamp()
+def _call_deadline(config, bound, stamp):
     deadline = bound.get('deadline_boottime')
     if (bound.get('boot_id') != stamp['boot_id'] or type(deadline) not in (int, float)
             or not 0 < deadline < float('inf')):
@@ -52,8 +75,20 @@ def _deadline(config, bound):
         deadline = min(deadline, review['deadline_boottime'])
     elif mode != 'hard':
         return None
+    return deadline
+
+
+def _deadline(config, bound):
+    stamp = budget.clock_stamp()
+    deadline = _call_deadline(config, bound, stamp)
+    if deadline is None:
+        return None
+    allocation = bound.get('time_allocation', {})
+    if allocation.get('status') == 'unavailable':
+        return None
     policy = bound['capability']['policy']
-    deadline = min(stamp['at_boottime'] + policy['max_seconds'], deadline - policy['feedback_seconds'])
+    check_seconds = allocation.get('check_seconds', policy['max_seconds'])
+    deadline = min(stamp['at_boottime'] + check_seconds, deadline - policy['feedback_seconds'])
     return deadline if deadline > stamp['at_boottime'] else None
 
 
@@ -65,6 +100,9 @@ def _preview(directory, accepted):
         return bound
     scope = bound['capability']['policy']['check_scope']
     result = dict(status='not_run', note='engineering_check_not_observed', check_scope=scope)
+    result['time_allocation'] = bound.get('time_allocation',
+        dict(status='not_reserved', requested_seconds=0, note='best_effort_within_original_deadline'))
+    result['original_deadline_boottime'] = bound['deadline_boottime']
     if (directory / INTENT).exists():
         result.update(status='unknown', note='accepted_engineering_check_has_no_verified_outcome')
         if (directory / OUTCOME).exists():

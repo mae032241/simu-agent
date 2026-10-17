@@ -171,6 +171,10 @@ class LocalExecution:
             return state
         return 'running' if identity and runtime.process_matches(identity,identity['task_sha256']) else 'unknown'
 
+    def _execution_deadline(self,accepted):
+        """Optional local partition; ordinary and previously accepted calls keep their limit."""
+        return None
+
     def _execute(self,call_id,accepted):
         from . import runtime
         directory=self.records.directory(call_id)
@@ -180,13 +184,17 @@ class LocalExecution:
         cwd=accepted.get('cwd')
         if 'entry' in accepted:
             cwd=str(directory/'inputs');(Path(cwd)/'artifacts').mkdir()
+        deadline=self._execution_deadline(accepted)
         with (directory/'stdout.raw').open('xb') as out,(directory/'stderr.raw').open('xb') as err:
-            process=subprocess.Popen(self.command(accepted),cwd=cwd,stdout=subprocess.PIPE,
+            command=self.command(accepted)
+            if deadline is not None and time.monotonic()>=deadline:
+                raise TimeoutError('Original reserved experiment deadline reached before launch')
+            process=subprocess.Popen(command,cwd=cwd,stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,start_new_session=True)
             identity=runtime.process_identity(process.pid,hashlib.sha256(e.encoded(accepted)).hexdigest())
             self.records.publish(call_id,'process.json',identity)
             seconds=self.config['max_seconds']
-            deadline=time.monotonic()+seconds
+            if deadline is None:deadline=time.monotonic()+seconds
             with selectors.DefaultSelector() as selector:
                 selector.register(process.stdout,selectors.EVENT_READ);selector.register(process.stderr,selectors.EVENT_READ)
                 count=0
