@@ -59,8 +59,11 @@ def test_ordinary_science_has_no_authority_or_approval_requirement(tmp_path):
     assert c.validate(c.workspace(root, 2))['scientific_result'] == 'pass, approved, authorized'
     assert 'execution_authority' not in c.read(root / 'jobs/002.json')
     assert 'execution_qualifications' not in c.read(record / 'result-identity.json')
+    ui = InstanceUI(root, secret_file=secret); ui.host = '127.0.0.1:18750'
+    _, _, headers = ui.get('/manage?' + urlencode({'token': ui.management_token}), host=ui.host)
+    assert ui.get('/', host=ui.host, cookie=headers['Set-Cookie'])[0] == 200
     with pytest.raises(ValueError, match='unavailable'):
-        InstanceUI(root, secret_file=secret)
+        ui.get('/requests', host=ui.host, cookie=headers['Set-Cookie'])
 
 
 def test_loopback_host_rejects_origin_and_old_boot_without_http(tmp_path):

@@ -5,56 +5,8 @@ import argparse
 import json
 from pathlib import Path
 
-from . import budget, contracts, controller, native, runtime, search, correction, execution, feedback, history, role_share, shortlist
-
-
-def status(root: Path):
-    root = root.resolve()
-    settings = contracts.settings(root)
-    from . import protocol
-    if type(settings.get('handoff_protocol')) is not int or settings['handoff_protocol']!=protocol.CURRENT:
-        return protocol.archive_status(root)
-    nodes = []
-    for step in range(1, settings['max_steps'] + 1):
-        job_path = root / 'jobs' / f'{step:03d}.json'
-        if not job_path.exists():
-            break
-        job = contracts.read(job_path)
-        state = runtime.node_state(root, step)
-        state = {'sealed': 'seal_present_unverified', 'terminal': 'native_outcome_unsealed',
-                 'unstarted': 'prepared'}.get(state, state)
-        if state == 'native_outcome_unsealed':
-            outcome = contracts.read(execution.record(root, step) / 'native-outcome.json')
-            if not isinstance(outcome, dict):
-                raise history.ObserverIntegrityError('Native status original outcome is malformed')
-            if outcome.get('native_started') is False:
-                state = 'native_not_submitted'
-        node = dict(step=step, role=job['role'], state=state)
-        config_path=execution.record(root,step)/'experiment-config.json'
-        if config_path.exists() and 'experiment_mode' in job:
-            selected=contracts.read(contracts.regular(config_path))['execution_interface']
-            node['execution']=dict(executor=selected['executor'],capabilities=selected['capabilities'],
-                result_protocol=selected['result_protocol'])
-        if settings.get('node_budget_policy') is not None:
-            record = execution.record(root, step)
-            intent = contracts.read(record / 'native-intent.json') if (record / 'native-intent.json').exists() else {}
-            outcome = contracts.read(record / 'native-outcome.json') if (record / 'native-outcome.json').exists() else {}
-            if not isinstance(intent, dict) or not isinstance(outcome, dict):
-                raise history.ObserverIntegrityError('Native budget status originals are malformed')
-            node.update(**(dict(node_budget_mode='soft') if budget.node_mode(root)=='soft' else {}), budget_slice=intent.get('budget_slice'), budget_report=outcome.get('budget_slice'), stop_reason=outcome.get('stop_reason'))
-        if settings.get('resume_policy') is not None:
-            node['continuations'] = len(execution.records(root, step)) - 1
-        if job.get('live_feedback_version') == 1 and state != 'seal_present_unverified':
-            node['live_feedback'] = feedback.live(root, job)
-        nodes.append(node)
-    closeout = budget.closeout_state(root)
-    from . import delivery
-    return dict(instance=str(root), goal_id=settings['goal_id'], objective=settings['objective'],
-                paused=(root / 'pause.request').exists(), nodes=nodes, usage=native.usage(root),
-                goal_completion='not_asserted', budget=budget.snapshot(root),
-                correction=correction.project(root, before_step=closeout['begin']['source_cutoff'] + 1 if closeout['begin'] else None),
-                closeout_preparation=delivery.preparation_status(root),
-                closeout=controller._closeout_result(root, 'closeout_status', read_only=True) if closeout['begin'] else None)
+from . import budget, contracts, controller, search
+from .instance_control import status, request_pause, continue_instance
 
 
 def main(argv=None):
@@ -120,9 +72,9 @@ def main(argv=None):
     recover=commands.add_parser('execution-recover',help='Append same-call terminal evidence for a sealed unknown; new nodes freeze its recovery prefix')
     recover.add_argument('--root',type=Path,required=True)
     recover.add_argument('--step',type=int,required=True)
-    serve = commands.add_parser('serve-ui', help='Serve this explicit instance local approval pages; recording a decision does not execute work')
+    serve = commands.add_parser('serve-ui', help='Serve this explicit instance status and controls, with optional execution approval pages')
     serve.add_argument('--root', type=Path, required=True)
-    serve.add_argument('--approval-secret-file', type=Path, required=True, help='Operator-owned regular 0600 host key; never a Worker configuration field')
+    serve.add_argument('--approval-secret-file', type=Path, required=True, help='Operator-owned regular 0600 browser host key; approval routes additionally require frozen authority')
     serve.add_argument('--port', type=int, default=0, help='Loopback port; default selects an available port')
     args = parser.parse_args(argv)
     root = args.root.expanduser().resolve()
@@ -199,24 +151,10 @@ def main(argv=None):
                 result = budget.amend(root, max_tokens=args.max_tokens, max_seconds=args.max_seconds,
                                       authorization_note=args.authorization_note)
         elif args.command == 'pause':
-            contracts.read(root / 'settings.json')
-            contracts.write(root / 'pause.request', dict(reason='user_pause_at_next_node'))
-            try:
-                with controller._writer(root):
-                    budget.inactive(root, 'operator_pause')
-            except RuntimeError:
-                pass  # Accepted work retains advance time; its owner will pause.
-            result = dict(status='pause_requested', accepted_work='allowed_to_finish_and_seal')
+            result = request_pause(root)
         elif args.command == 'continue':
-            # Clear the marker only after obtaining the same per-instance writer
-            # lock as run. A second caller cannot cancel a live owner's pause.
-            with controller._writer(root), controller._inactive_on_error(root):
-                if args.ack_correction is not None:
-                    correction.acknowledge(root, args.ack_correction, args.authorization_note)
-                elif args.authorization_note is not None:
-                    raise ValueError('An authorization note requires an exact correction trigger')
-                (root / 'pause.request').unlink(missing_ok=True)
-                result = controller._run(root)
+            result = continue_instance(root, ack_correction=args.ack_correction,
+                                       authorization_note=args.authorization_note)
         else:
             result = controller.run(root)
     except (OSError, ValueError, RuntimeError) as error:

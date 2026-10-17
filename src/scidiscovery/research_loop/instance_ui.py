@@ -1,8 +1,4 @@
-"""One explicit instance's loopback host; P3c serves execution decisions only.
-
-P4 adds instance pages to this same server/session. No HTTP route dispatches
-science, execution, cancellation or a resource amendment.
-"""
+"""One explicit instance's loopback status, controls and optional decision host."""
 from __future__ import annotations
 
 from contextlib import contextmanager
@@ -15,16 +11,18 @@ import os
 from pathlib import Path
 import secrets
 import shutil
+import threading
 from urllib.parse import parse_qs, urlsplit
 import uuid
 
 from scidiscovery.browser_access import BrowserAccessService, access_cookie, cookie_name
 from scidiscovery import execution_security as security
-from . import contracts as c, execution_authority as authority
+from . import contracts as c, execution_authority as authority, instance_control as control
 
 
 @contextmanager
 def _host_lock(root):
+    (root / 'execution-authority').mkdir(exist_ok=True)
     fd = os.open(root / 'execution-authority/ui.lock',
                  os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
     try:
@@ -40,17 +38,25 @@ def _host_lock(root):
 class InstanceUI:
     def __init__(self, root, *, secret_file):
         self.root = Path(root).resolve()
-        authority.contract(self.root)
-        self.secret = security.read_secret_file(secret_file, label='approval receipt')
-        authority.bind_secret(self.root, self.secret, source=secret_file)
-        self.instance = c.settings(self.root)['goal_id']
+        settings = c.settings(self.root)
+        self.approvals = settings.get('execution_authority_policy') is not None
+        self.secret = security.read_secret_file(secret_file, label='instance UI')
+        if self.approvals:
+            authority.contract(self.root)
+            authority.bind_secret(self.root, self.secret, source=secret_file)
+        self.instance = settings['goal_id']
         self.boot = uuid.uuid4().hex
         self.browser = BrowserAccessService(secret=self.secret, ui_session_id=self.boot)
         self.management_token = secrets.token_urlsafe(32)
+        self.read_token = secrets.token_urlsafe(32)
+        self.control_nonce = secrets.token_urlsafe(32)
+        self.control_lock = threading.Lock()
+        self.control_thread = None
+        self.control_result = None
         self.host = None
 
-    def _browser(self, cookie):
-        self.browser.from_cookie(cookie, instance_id=self.instance, scope='maintenance')
+    def _browser(self, cookie, *, scope='maintenance'):
+        self.browser.from_cookie(cookie, instance_id=self.instance, scope=scope)
         from http.cookies import SimpleCookie
         parsed = SimpleCookie(); parsed.load(cookie)
         return parsed[cookie_name(self.instance)].value
@@ -60,21 +66,116 @@ class InstanceUI:
                 + html.escape(title) + '</title><h1>' + html.escape(title) + '</h1>'
                 + body + '</html>').encode('utf-8')
 
+    def _csrf(self, browser_token, action, nonce):
+        return security.receipt_hmac(self.secret, security.canonical(
+            ['scidiscovery.instance-control.v1', self.instance, self.boot, browser_token, action, nonce]))
+
+    def _control_form(self, browser_token, action, *, correction_trigger=None):
+        with self.control_lock:
+            nonce = self.control_nonce
+        body = ('<form method="post" action="/control/' + action + '">'
+            '<input type="hidden" name="nonce" value="' + nonce + '">'
+            '<input type="hidden" name="csrf" value="' + self._csrf(browser_token, action, nonce) + '">')
+        if action == 'continue':
+            body += ('<input type="hidden" name="ack_correction" value="'
+                + html.escape(correction_trigger or '', quote=True) + '">')
+            body += ('<label>Reason for continuing after the correction pause '
+                '<textarea name="authorization_note" required></textarea></label>' if correction_trigger else
+                '<input type="hidden" name="authorization_note" value="">')
+        return body + '<button type="submit">' + action.capitalize() + '</button></form>'
+
+    def _continue(self, **options):
+        """One non-daemon advancement owner, no queue and no server-stop cancel."""
+        def work():
+            try:
+                value = control.continue_instance(self.root, **options)
+                result = dict(action='continue', state='finished', status=value.get('status'),
+                    note=str(value.get('reason', '')))
+            except Exception as error:
+                result = dict(action='continue', state='failed', note=str(error))
+            note = result['note']
+            result.update(note=note[:512], note_omitted_characters=max(0, len(note) - 512))
+            with self.control_lock:
+                self.control_result = result
+        if self.control_thread is not None and self.control_thread.is_alive():
+            raise RuntimeError('This instance UI already has an ongoing continue request; no request queued')
+        self.control_result = dict(action='continue', state='running')
+        self.control_thread = threading.Thread(target=work, name='scid-instance-continue', daemon=False)
+        self.control_thread.start()
+
+    @staticmethod
+    def _node_view(node):
+        value = {key: str(node[key])[:300] if isinstance(node[key], str) else node[key]
+                for key in ('step', 'role', 'state', 'stop_reason', 'returncode', 'continuations') if key in node}
+        if isinstance(node.get('stop_reason'), str):
+            value['stop_reason_omitted_characters'] = max(0, len(node['stop_reason']) - 300)
+        return value
+
+    def _instance_page(self, browser_token, *, after=0, step=None):
+        view = control.status(self.root, after=step - 1 if step is not None else after,
+                              limit=1 if step is not None else 20, live_feedback=False)
+        if step is not None and not view['nodes']:
+            raise ValueError('This instance node does not exist')
+        manager = 'maintenance' in self.browser.verify(browser_token, instance_id=self.instance).scopes
+        limits, usage = view['budget'], view['usage']
+        summary = dict(instance=self.instance, paused=view['paused'],
+            budget={key: limits[key] for key in ('max_tokens', 'max_seconds', 'seconds_remaining',
+                'clock_phase', 'advance_seconds', 'waiting_seconds')},
+            observed_tokens=usage['observed_tokens'], tokens_remaining_from_observed_usage=max(0, limits['max_tokens'] - usage['observed_tokens']),
+            unknown_usage_nodes=len(usage['unknown_steps']),
+            correction_trigger=(view['correction'].get('current_pause') or {}).get('trigger_id'))
+        with self.control_lock:
+            summary['last_control_request'] = self.control_result
+        body = '<nav><a href="/">Instance</a> | ' + ('<a href="/requests">Execution requests</a>'
+            if self.approvals else 'Execution approval routes unavailable') + '</nav>'
+        body += '<pre>' + html.escape(json.dumps(summary, ensure_ascii=False, indent=2)) + '</pre>'
+        body += '<p><a href="/">Refresh status</a></p>'
+        body += '<p>Pause lets accepted work finish. Continue uses the original authorization and does not replay unknown work.</p>'
+        if manager:
+            body += self._control_form(browser_token, 'pause') + self._control_form(browser_token, 'continue',
+                correction_trigger=summary['correction_trigger'])
+        else:
+            body += '<p>Read access only. Open the local management link to use controls.</p>'
+        body += '<h2>Nodes</h2><ul>'
+        for node in view['nodes']:
+            body += ('<li><a href="/nodes/' + str(node['step']) + '">Node ' + str(node['step'])
+                + '</a><pre>' + html.escape(json.dumps(self._node_view(node), ensure_ascii=False)) + '</pre></li>')
+        body += '</ul>'
+        if step is None and view.get('next_after') is not None:
+            body += '<a href="/?after=' + str(view['next_after']) + '">Next nodes</a>'
+        return 200, self._page('Instance status', body), {}
+
     def get(self, target, *, host, cookie=None):
         if host != self.host:
             raise PermissionError('Exact local Host required')
         parsed = urlsplit(target)
         if parsed.scheme or parsed.netloc or parsed.fragment:
             raise PermissionError('Local relative request target required')
-        if parsed.path == '/manage':
+        if parsed.path in {'/manage', '/view'}:
             query = parse_qs(parsed.query, strict_parsing=True)
             values = query.get('token', [])
-            if set(query) != {'token'} or len(values) != 1 or not hmac.compare_digest(values[0], self.management_token):
+            expected = self.management_token if parsed.path == '/manage' else self.read_token
+            if set(query) != {'token'} or len(values) != 1 or not hmac.compare_digest(values[0], expected):
                 raise PermissionError('Local management link is invalid')
-            token = self.browser.issue(self.instance, maintenance=True)
+            token = self.browser.issue(self.instance, maintenance=parsed.path == '/manage')
             return 303, b'', {'Location': '/', 'Set-Cookie': access_cookie(self.instance, token)}
-        browser_token = self._browser(cookie)
+        browser_token = self._browser(cookie, scope='read')
         if parsed.path == '/':
+            query = parse_qs(parsed.query, strict_parsing=True) if parsed.query else {}
+            if set(query) - {'after'} or any(len(values) != 1 for values in query.values()):
+                raise ValueError('Exact node continuation required')
+            after = query.get('after', ['0'])[0]
+            if not after.isascii() or not after.isdecimal():
+                raise ValueError('Invalid node continuation')
+            return self._instance_page(browser_token, after=int(after))
+        if parsed.path.startswith('/nodes/'):
+            number = parsed.path.removeprefix('/nodes/')
+            if parsed.query or not number.isascii() or not number.isdecimal() or int(number) <= 0:
+                raise ValueError('Exact instance node required')
+            return self._instance_page(browser_token, step=int(number))
+        if not self.approvals:
+            raise ValueError('Execution approval routes are unavailable for this instance; status and controls remain available')
+        if parsed.path == '/requests':
             query = parse_qs(parsed.query, strict_parsing=True) if parsed.query else {}
             if set(query) - {'after'} or any(len(values) != 1 for values in query.values()):
                 raise ValueError('Exact request continuation required')
@@ -85,8 +186,8 @@ class InstanceUI:
             paths = sorted(directory.iterdir()) if directory.exists() else []
             ids = [path.name for path in paths if authority.ID.fullmatch(path.name) and path.name > after]
             links = ''.join('<li><a href="/requests/' + key + '">' + key + '</a></li>' for key in ids[:20])
-            more = ('<a href="/?after=' + ids[19] + '">Next requests</a>') if len(ids) > 20 else ''
-            return 200, self._page('Execution requests', '<p>Decisions grant no execution or additional budget by themselves.</p><ul>' + links + '</ul>' + more), {}
+            more = ('<a href="/requests?after=' + ids[19] + '">Next requests</a>') if len(ids) > 20 else ''
+            return 200, self._page('Execution requests', '<a href="/">Instance</a><p>Decisions grant no execution or additional budget by themselves.</p><ul>' + links + '</ul>' + more), {}
         parts = parsed.path.strip('/').split('/')
         if parsed.query or len(parts) not in (2, 3) or parts[0] != 'requests':
             raise ValueError('Unknown instance UI path')
@@ -105,7 +206,8 @@ class InstanceUI:
             expires_at=value['expires_at'], scope=authority.SCOPE)
         body = '<pre>' + html.escape(json.dumps(compact, ensure_ascii=False, indent=2)) + '</pre>'
         body += '<p><a href="/requests/' + request_id + '/original">Complete frozen request</a></p>'
-        if state['state'] == 'pending':
+        manager = 'maintenance' in self.browser.verify(browser_token, instance_id=self.instance).scopes
+        if manager and state['state'] == 'pending':
             options = ''.join('<option value="' + item + '">' + item + '</option>' for item in value['options'])
             body += ('<form method="post" action="/requests/' + request_id + '/decision">'
                 '<input type="hidden" name="nonce" value="' + tokens['nonce'] + '">'
@@ -113,7 +215,7 @@ class InstanceUI:
                 '<label>Decision <select name="selected_option">' + options + '</select></label>'
                 '<label>Reason <textarea name="rationale" required></textarea></label>'
                 '<button type="submit">Record decision</button></form>')
-        if state['state'] in {'pending', 'decided'}:
+        if manager and state['state'] in {'pending', 'decided'}:
             body += ('<form method="post" action="/requests/' + request_id + '/revoke">'
                 '<input type="hidden" name="nonce" value="' + tokens['nonce'] + '">'
                 '<input type="hidden" name="csrf" value="' + tokens['csrf'] + '">'
@@ -126,6 +228,30 @@ class InstanceUI:
         browser_token = self._browser(cookie)
         parsed = urlsplit(target)
         parts = parsed.path.strip('/').split('/')
+        if (parsed.scheme or parsed.netloc or parsed.query or parsed.fragment
+                or content_type != 'application/x-www-form-urlencoded'):
+            raise ValueError('Exact instance control or decision form required')
+        if len(parts) == 2 and parts[0] == 'control' and parts[1] in {'pause', 'continue'}:
+            form = parse_qs(body.decode('utf-8'), keep_blank_values=True, strict_parsing=True)
+            fields = {'nonce', 'csrf'} | ({'ack_correction', 'authorization_note'} if parts[1] == 'continue' else set())
+            if set(form) != fields or any(len(values) != 1 for values in form.values()):
+                raise ValueError('Control form contains missing or duplicate fields')
+            form = {key: values[0] for key, values in form.items()}
+            with self.control_lock:
+                if (not hmac.compare_digest(form['nonce'], self.control_nonce) or not hmac.compare_digest(
+                        form['csrf'], self._csrf(browser_token, parts[1], form['nonce']))):
+                    raise PermissionError('Instance control CSRF or nonce mismatch')
+                if parts[1] == 'continue':
+                    self._continue(ack_correction=form['ack_correction'] or None,
+                                   authorization_note=form['authorization_note'] or None)
+                else:
+                    # Pause is an immediate marker, never a second advancement
+                    # owner, and must remain usable during a live continue.
+                    control.request_pause(self.root)
+                self.control_nonce = secrets.token_urlsafe(32)
+            return 303, b'', {'Location': '/'}
+        if not self.approvals:
+            raise ValueError('Execution approval routes are unavailable for this instance')
         if (parsed.scheme or parsed.netloc or parsed.query or parsed.fragment or len(parts) != 3
                 or parts[0] != 'requests' or parts[2] not in {'decision', 'revoke'}
                 or content_type != 'application/x-www-form-urlencoded'):
@@ -175,8 +301,9 @@ def serve(root, *, secret_file, port=0):
                         cookie=self.headers.get('Cookie'), content_type=self.headers.get('Content-Type'),
                         body=self.rfile.read(int(length)))
                 status, body, headers = result
-            except (PermissionError, ValueError, OSError, KeyError, TypeError) as error:
-                status, body, headers = 403, ui._page('Request unavailable', '<p>' + html.escape(str(error)) + '</p>'), {}
+            except (PermissionError, ValueError, OSError, KeyError, TypeError, RuntimeError) as error:
+                status, body, headers = (409 if isinstance(error, RuntimeError) else 403), ui._page(
+                    'Request unavailable', '<p>' + html.escape(str(error)) + '</p>'), {}
             self.send_response(status)
             self.send_header('Content-Type', headers.pop('Content-Type', 'text/html; charset=utf-8'))
             for key, value in {'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer',
@@ -199,15 +326,18 @@ def serve(root, *, secret_file, port=0):
 
     with _host_lock(root), ThreadingHTTPServer(('127.0.0.1', port), Handler) as server:
         ui.host = '127.0.0.1:' + str(server.server_port)
-        endpoint = dict(instance=ui.instance, boot=ui.boot, origin='http://' + ui.host)
-        endpoint['receipt_hmac'] = security.receipt_hmac(ui.secret, security.canonical(endpoint))
-        c.write(root / 'execution-authority/ui-endpoint.json', endpoint)
+        if ui.approvals:
+            endpoint = dict(instance=ui.instance, boot=ui.boot, origin='http://' + ui.host)
+            endpoint['receipt_hmac'] = security.receipt_hmac(ui.secret, security.canonical(endpoint))
+            c.write(root / 'execution-authority/ui-endpoint.json', endpoint)
         print(json.dumps(dict(status='ui_listening', instance=ui.instance,
-            management_url='http://' + ui.host + '/manage?token=' + ui.management_token), ensure_ascii=False), flush=True)
+            management_url='http://' + ui.host + '/manage?token=' + ui.management_token,
+            read_url='http://' + ui.host + '/view?token=' + ui.read_token), ensure_ascii=False), flush=True)
         try:
             server.serve_forever(poll_interval=.5)
         except KeyboardInterrupt:
             pass
         finally:
-            (root / 'execution-authority/ui-endpoint.json').unlink(missing_ok=True)
+            if ui.approvals:
+                (root / 'execution-authority/ui-endpoint.json').unlink(missing_ok=True)
     return dict(status='ui_stopped')

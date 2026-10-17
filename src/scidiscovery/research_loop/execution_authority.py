@@ -37,6 +37,7 @@ def implementation():
     paths = [directory / name for name in ('execution_authority.py', 'instance_ui.py',
         'contracts.py', 'formal_review.py', 'qualification.py', 'execution.py', 'budget.py', 'experiments.py',
         'runtime.py', 'native.py', 'search.py')]
+    paths += [directory / 'instance_control.py']
     paths += [directory.parent / 'execution_security.py', directory.parent / 'browser_access.py',
               directory.parent / 'operations/provenance_rules.py', directory.parent / 'operations/runtime_plugins.py',
               directory.parent / 'plugin_runtime/collection.py']
