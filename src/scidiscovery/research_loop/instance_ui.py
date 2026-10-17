@@ -12,12 +12,13 @@ from pathlib import Path
 import secrets
 import shutil
 import threading
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 import uuid
 
 from scidiscovery.browser_access import BrowserAccessService, access_cookie, cookie_name
 from scidiscovery import execution_security as security
 from . import contracts as c, execution_authority as authority, instance_control as control
+from . import instance_science as science
 
 
 @contextmanager
@@ -141,9 +142,24 @@ class InstanceUI:
             body += ('<li><a href="/nodes/' + str(node['step']) + '">Node ' + str(node['step'])
                 + '</a><pre>' + html.escape(json.dumps(self._node_view(node), ensure_ascii=False)) + '</pre></li>')
         body += '</ul>'
+        if step is not None and view['nodes'][0]['state']=='seal_present_unverified':
+            body += ('<p><a href="/nodes/'+str(step)+'/science">Complete sealed scientific conclusion</a> | '
+                '<a href="/nodes/'+str(step)+'/materials">Sealed scientific deliverables</a></p>'
+                '<p>Original bytes are checked only when opened. Sealing does not establish scientific validity or execution permission.</p>')
         if step is None and view.get('next_after') is not None:
             body += '<a href="/?after=' + str(view['next_after']) + '">Next nodes</a>'
         return 200, self._page('Instance status', body), {}
+
+    def _materials_page(self, step, after):
+        page=science.materials(self.root,step,after=after)
+        body='<nav><a href="/nodes/'+str(step)+'">Node '+str(step)+'</a></nav><ul>'
+        for item in page['items']:
+            body += ('<li><a href="/nodes/'+str(step)+'/materials/'+str(item['index'])+'">'
+                +html.escape(item['name'])+'</a> ('+str(item['size_bytes'])+' bytes)</li>')
+        body+='</ul><p>'+str(page['total'])+' sealed deliverables. '+html.escape(page['scope'])+'</p>'
+        if page['next_after'] is not None:
+            body += '<a href="/nodes/'+str(step)+'/materials?after='+str(page['next_after'])+'">Next deliverables</a>'
+        return 200,self._page('Sealed scientific deliverables',body),{}
 
     def get(self, target, *, host, cookie=None):
         if host != self.host:
@@ -169,10 +185,30 @@ class InstanceUI:
                 raise ValueError('Invalid node continuation')
             return self._instance_page(browser_token, after=int(after))
         if parsed.path.startswith('/nodes/'):
-            number = parsed.path.removeprefix('/nodes/')
-            if parsed.query or not number.isascii() or not number.isdecimal() or int(number) <= 0:
+            parts = parsed.path.removeprefix('/nodes/').split('/')
+            number = parts[0]
+            if not number.isascii() or not number.isdecimal() or int(number)<=0:
                 raise ValueError('Exact instance node required')
-            return self._instance_page(browser_token, step=int(number))
+            step=int(number)
+            if len(parts)==1 and not parsed.query:
+                return self._instance_page(browser_token,step=step)
+            if parts[1:]==['science'] and not parsed.query:
+                return 200,science.science(self.root,step),{'Content-Type':'application/json; charset=utf-8'}
+            if parts[1:]==['materials']:
+                query=parse_qs(parsed.query,strict_parsing=True) if parsed.query else {}
+                if set(query)-{'after'} or any(len(values)!=1 for values in query.values()):
+                    raise ValueError('Exact scientific deliverable continuation required')
+                after=query.get('after',['0'])[0]
+                if not after.isascii() or not after.isdecimal():
+                    raise ValueError('Exact scientific deliverable continuation required')
+                return self._materials_page(step,int(after))
+            if len(parts)==3 and parts[1]=='materials' and not parsed.query:
+                if not parts[2].isascii() or not parts[2].isdecimal() or int(parts[2])<=0:
+                    raise ValueError('Exact scientific deliverable index required')
+                original,name=science.artifact(self.root,step,int(parts[2]))
+                return 200,original,{'Content-Type':'application/octet-stream',
+                    'Content-Disposition':"attachment; filename=scientific-deliverable; filename*=UTF-8''"+quote(name,safe='')}
+            raise ValueError('Exact instance node required')
         if not self.approvals:
             raise ValueError('Execution approval routes are unavailable for this instance; status and controls remain available')
         if parsed.path == '/requests':
@@ -289,6 +325,7 @@ def serve(root, *, secret_file, port=0):
             pass  # Never copy capability URLs/cookies into logs.
 
         def handle_request(self, method):
+            body=None
             try:
                 fields = ('Host', 'Cookie') + (('Origin', 'Content-Length', 'Content-Type') if method == 'POST' else ())
                 if self.headers.get('Transfer-Encoding') or any(len(self.headers.get_all(name, [])) > 1 for name in fields):
@@ -304,22 +341,31 @@ def serve(root, *, secret_file, port=0):
                         cookie=self.headers.get('Cookie'), content_type=self.headers.get('Content-Type'),
                         body=self.rfile.read(int(length)))
                 status, body, headers = result
+                if isinstance(body,science.Original):
+                    body.check()
             except (PermissionError, ValueError, OSError, KeyError, TypeError, RuntimeError) as error:
+                if isinstance(body,science.Original):body.close()
                 status, body, headers = (409 if isinstance(error, RuntimeError) else 403), ui._page(
                     'Request unavailable', '<p>' + html.escape(str(error)) + '</p>'), {}
-            self.send_response(status)
-            self.send_header('Content-Type', headers.pop('Content-Type', 'text/html; charset=utf-8'))
-            for key, value in {'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer',
-                    'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy':
-                    "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'", **headers}.items():
-                self.send_header(key, value)
-            self.send_header('Content-Length', str(body.stat().st_size if isinstance(body, Path) else len(body)))
-            self.end_headers()
-            if isinstance(body, Path):
-                with c.regular(body).open('rb') as stream:
-                    shutil.copyfileobj(stream, self.wfile)
-            else:
-                self.wfile.write(body)
+            try:
+                self.send_response(status)
+                self.send_header('Content-Type', headers.pop('Content-Type', 'text/html; charset=utf-8'))
+                for key, value in {'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer',
+                        'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy':
+                        "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'", **headers}.items():
+                    self.send_header(key, value)
+                length=body.size if isinstance(body,science.Original) else body.stat().st_size if isinstance(body,Path) else len(body)
+                self.send_header('Content-Length',str(length))
+                self.end_headers()
+                if isinstance(body,science.Original):
+                    body.copy_to(self.wfile)
+                elif isinstance(body,Path):
+                    with c.regular(body).open('rb') as stream:
+                        shutil.copyfileobj(stream,self.wfile)
+                else:
+                    self.wfile.write(body)
+            finally:
+                if isinstance(body,science.Original):body.close()
 
         def do_GET(self):
             self.handle_request('GET')

@@ -111,3 +111,72 @@ def test_single_continue_owner_still_allows_immediate_pause(tmp_path, monkeypatc
         release.set(); ui.control_thread.join(5)
     assert not ui.control_thread.is_alive() and ui.control_result['status'] == 'wait'
     assert (root / 'pause.request').exists() and not list(root.glob('**/accepted.json'))
+
+
+def test_read_cookie_opens_only_sealed_science_and_attachment_members(tmp_path,monkeypatch):
+    from test_instance_science import read
+    root,key=prepare(tmp_path,enabled=False)
+    finish(root,1,'H',[],action='analyze',files={'report.html':'<script>untrusted authored file</script>'})
+    ui,_=session(root,key)
+    _,_,headers=ui.get('/view?'+urlencode({'token':ui.read_token}),host=ui.host)
+    cookie=headers['Set-Cookie']
+    page=ui.get('/nodes/1',host=ui.host,cookie=cookie)[1]
+    assert b'/nodes/1/science' in page and b'/nodes/1/materials' in page
+    assert b'untrusted authored file' not in page
+    def no_live_status(*args,**kwargs):
+        pytest.fail('Original reading must not depend on live status/clock')
+    monkeypatch.setattr(control,'status',no_live_status)
+    status,body,headers=ui.get('/nodes/1/science',host=ui.host,cookie=cookie)
+    assert status==200 and headers['Content-Type'].startswith('application/json')
+    assert read(body)==(root/'native-evidence/001/science-output.json').read_bytes()
+    page=ui.get('/nodes/1/materials',host=ui.host,cookie=cookie)[1]
+    assert b'/nodes/1/materials/1' in page and b'<script>' not in page
+    _,body,headers=ui.get('/nodes/1/materials/1',host=ui.host,cookie=cookie)
+    assert headers['Content-Disposition'].startswith('attachment;')
+    assert read(body)==b'<script>untrusted authored file</script>'
+    for target in ('/nodes/1/science?path=operator.key','/nodes/1/materials/../../operator.key',
+                   '/nodes/1/materials/1?path=native-homes','/nodes/1/materials?after=0&after=1'):
+        with pytest.raises(ValueError):ui.get(target,host=ui.host,cookie=cookie)
+    with pytest.raises(PermissionError):ui.get('/nodes/1/science',host=ui.host)
+    with pytest.raises(PermissionError):ui.get('/nodes/1/materials/1',host='other.invalid',cookie=cookie)
+
+
+@pytest.mark.process_e2e
+def test_loopback_science_download_uses_existing_browser_scope_and_safe_headers(tmp_path,monkeypatch):
+    import http.client
+    from scidiscovery.research_loop import instance_ui
+    root,key=prepare(tmp_path,enabled=False)
+    authored=b'<svg onload="never execute"/>'
+    finish(root,1,'H',[],action='analyze',files={'figure.svg':authored.decode()})
+    ui=InstanceUI(root,secret_file=key);ready=threading.Event();servers=[];errors=[]
+    server_type=instance_ui.ThreadingHTTPServer
+    class Server(server_type):
+        def serve_forever(self,**options):
+            servers.append(self);ready.set();super().serve_forever(**options)
+    monkeypatch.setattr(instance_ui,'ThreadingHTTPServer',Server)
+    monkeypatch.setattr(instance_ui,'InstanceUI',lambda *args,**options:ui)
+    monkeypatch.setattr(instance_ui,'print',lambda *args,**options:None,raising=False)
+    def serve():
+        try:instance_ui.serve(root,secret_file=key)
+        except BaseException as error:errors.append(error);ready.set()
+    worker=threading.Thread(target=serve);worker.start();connection=None
+    try:
+        assert ready.wait(5) and not errors
+        connection=http.client.HTTPConnection('127.0.0.1',servers[0].server_port,timeout=5)
+        connection.request('GET','/nodes/1/science')
+        response=connection.getresponse();assert response.status==403;response.read()
+        connection.request('GET','/view?'+urlencode({'token':ui.read_token}))
+        response=connection.getresponse();assert response.status==303
+        cookie=response.getheader('Set-Cookie').split(';',1)[0];response.read()
+        connection.request('GET','/nodes/1/materials/1',headers={'Cookie':cookie})
+        response=connection.getresponse()
+        assert response.status==200 and response.getheader('Content-Disposition').startswith('attachment;')
+        assert response.getheader('Content-Type')=='application/octet-stream'
+        assert response.getheader('X-Content-Type-Options')=='nosniff'
+        assert "default-src 'none'" in response.getheader('Content-Security-Policy')
+        assert response.read()==authored
+    finally:
+        if connection is not None:connection.close()
+        if servers:servers[0].shutdown()
+        worker.join(5)
+    assert not worker.is_alive() and not errors
