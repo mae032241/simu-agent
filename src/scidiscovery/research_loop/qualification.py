@@ -207,7 +207,7 @@ def _restriction(root, document, active, memo, sources):
                 states.append('unknown')
                 continue
             proof = _read(root, ref)
-            expected = _output(root, parent, seal)
+            expected = _output(root, parent, seal, managed_coverage=proof.get('managed_input_coverage'))
             if proof != expected:
                 raise IntegrityError('Source proof differs from its original producer')
             inputs = parent.get('source_provenance')
@@ -233,7 +233,7 @@ def validate_inputs(root, job):
         raise IntegrityError('Frozen direct source binding changed')
 
 
-def _output(root, job, seal):
+def _output(root, job, seal, *, managed_coverage=None):
     additional_inputs = False
     if seal.get('observations') is not None:
         root = Path(root).resolve()
@@ -242,11 +242,14 @@ def _output(root, job, seal):
         if receipt['path'] != path.relative_to(root).as_posix() or c.digest(_file(path)) != receipt['sha256']:
             raise IntegrityError('Source observation receipt changed')
         observation = c.read(path)
-        # Only read the owner's exact observation, never rehash managed logs or
-        # parse accepted records here. A zero-call registered
-        # capture adds no input; interpreting any actual call's sources needs
-        # a future trusted adapter contract, not another accepted-record parser.
         additional_inputs = bool(observation.get('managed_calls')) or c.settings(root).get('history_observer') is not None
+        if managed_coverage is not None:
+            from . import history
+            history.validate_input_coverage(root, job, observation.get('managed_calls', []), managed_coverage)
+            additional_inputs = (not all(row['complete'] for row in managed_coverage)
+                or c.settings(root).get('history_observer') is not None)
+    elif managed_coverage is not None:
+        raise IntegrityError('Managed input coverage has no original observation')
     return dict(version=1, step=job['step'], job_sha256=seal['job_sha256'],
                 result_sha256=seal['sha256'], raw_sha256=seal['raw_sha256'],
                 materials_sha256=hashlib.sha256(json.dumps(seal['materials'], sort_keys=True,
@@ -255,18 +258,30 @@ def _output(root, job, seal):
                 observations=seal.get('observations'),
                 additional_input_restriction='unknown' if additional_inputs else 'clear',
                 missing_reason='observation_input_provenance_unsupported' if additional_inputs else None,
+                **(dict(managed_input_coverage=managed_coverage) if managed_coverage is not None else {}),
                 scope=SCOPE)
 
 
 def seal_outputs(root, job, seal):
     root = Path(root).resolve()
-    return _save(root, c.host_record(c.workspace(root, job['step'])) / 'provenance.json', _output(root, job, seal))
+    path = c.host_record(c.workspace(root, job['step'])) / 'provenance.json'
+    coverage = None
+    if path.exists():
+        coverage = c.read(_file(path)).get('managed_input_coverage')
+    elif seal.get('observations') is not None:
+        from . import history
+        observation = history.read_observation(root, job, seal)
+        if observation.get('managed_calls'):
+            coverage = history.managed_input_coverage(root, job, observation['managed_calls'])
+    return _save(root, path, _output(root, job, seal, managed_coverage=coverage))
 
 
 def validate_outputs(root, job, seal):
     ref = seal.get('source_provenance')
-    if ref is not None and _read(root, ref) != _output(root, job, seal):
-        raise IntegrityError('Frozen output source proof changed')
+    if ref is not None:
+        proof = _read(root, ref)
+        if proof != _output(root, job, seal, managed_coverage=proof.get('managed_input_coverage')):
+            raise IntegrityError('Frozen output source proof changed')
     if job.get('source_provenance') is not None and ref is None:
         raise IntegrityError('Output source proof is missing')
 

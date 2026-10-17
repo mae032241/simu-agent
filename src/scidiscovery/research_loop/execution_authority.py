@@ -584,6 +584,86 @@ def _permit(root, ref, config, target, call, payload, secret):
     return value
 
 
+def _accepted_input_subject(root, job, accepted, secret):
+    """Exact historical relations, without current review/source/clock gates."""
+    root = Path(root).resolve()
+    ref = accepted.get('execution_authority')
+    if ref is None:
+        return None
+    attempt = accepted.get('native_attempt') or {}
+    number = attempt.get('number')
+    if type(number) is not int or number < 0:
+        raise q.IntegrityError('Managed source has no exact native attempt')
+    config = c.read(c.regular(execution.record(root, job['step'], number) / 'experiment-config.json'))
+    q._check(ref); authorization = c.read(Path(ref['path']))
+    request_ref = authorization['request']; request_value = q._read(root, request_ref)
+    request_id = Path(request_ref['path']).parent.name
+    directory = _directory(root, request_id)
+    body = {key:value for key,value in request_value.items() if key != 'nonce_hash'}
+    if (request_ref != q._ref(root, directory / 'request.json')
+            or Path(ref['path']) != directory / 'authorization.json'
+            or hashlib.sha256(security.canonical(body)).hexdigest() != request_id):
+        raise q.IntegrityError('Managed source request original changed')
+    allocation_ref = authorization['allocation']; allocation = q._read(root, allocation_ref)
+    decision_ref = authorization['decision']; decided = q._read(root, decision_ref)
+    call = accepted['call_id']; target = accepted.get('execution_target')
+    binding = allocation['binding']; subject = request_value['subject']
+    alias = request_value.get('payload_alias', request_value['payload'])
+    if (config.get('scope') != accepted['scope'] or config.get('native_attempt') != attempt
+            or config.get('execution_interface') != accepted['interface']
+            or accepted['scope']['job_sha256'] != c.digest(root / 'jobs' / f'{job["step"]:03d}.json')
+            or request_value['job'] != q._ref(root, root / 'jobs' / f'{job["step"]:03d}.json')
+            or allocation_ref != q._ref(root, root / 'execution-authority/calls' / call / 'allocation.json')
+            or allocation['call_id'] != call or binding['scope'] != accepted['scope']
+            or binding['native_attempt'] != attempt or binding['interface'] != accepted['interface']
+            or binding['subject'] != subject or binding['review'] != request_value['review']
+            or binding['payload_alias'] != alias or request_value['call_id'] != call
+            or authorization['scope'] != accepted['scope'] or authorization['native_attempt'] != attempt
+            or authorization['interface'] != accepted['interface'] or authorization['call_id'] != call
+            or authorization['target'] != target or request_value['target'] != target
+            or authorization['payload_alias'] != alias
+            or allocation['native_intent'] != request_value['native_intent']
+            or request_value['native_intent'] != q._ref(root, execution.record(root, job['step'], number) / 'native-intent.json')
+            or q._read(root, request_value['native_intent'])['task_sha256'] != request_value['job']['sha256']
+            or decision_ref != q._ref(root, directory / 'decision.json')
+            or decided['request'] != request_ref or decided['nonce_hash'] != request_value['nonce_hash']
+            or not security.decision_authorizes(request_value['kind'], decided['selected_option'], request_value['options'])):
+        raise q.IntegrityError('Managed source differs from its exact authorized call')
+    if secret is not None:
+        for signed in (authorization, decided):
+            signed_body = {key:value for key,value in signed.items() if key != 'receipt_hmac'}
+            if not hmac.compare_digest(signed.get('receipt_hmac', ''), security.receipt_hmac(secret, security.canonical(signed_body))):
+                raise q.IntegrityError('Managed source host signature changed')
+    seal = q._read(root, subject['producer_seal']); material = subject['material']
+    if (subject['producer_seal'] != q._ref(root, c.host_record(c.workspace(root, subject['producer_step'])) / 'result-identity.json')
+            or material not in seal['materials'] or request_value['payload'] != q._identity(material['source'])
+            or alias['path'] not in {material['source'], str(c.workspace(root, job['step']) / material['path'])}
+            or alias != q._identity(alias['path'])
+            or any(alias[key] != request_value['payload'][key] for key in ('sha256','size_bytes'))):
+        raise q.IntegrityError('Managed source payload or exact producer changed')
+    prepared = accepted['prepared']; script = accepted['script']
+    q._check(script)
+    q._check(dict(path=prepared['local_path'], sha256=prepared['sha256'], size_bytes=prepared['size_bytes']))
+    if any(script[key] != prepared[key] for key in ('sha256','size_bytes')):
+        raise q.IntegrityError('Managed source prepared bytes differ from accepted original')
+    return dict(subject=subject, authority=q._ref(root, Path(ref['path'])), request=request_ref,
+                decision=decision_ref, allocation=allocation_ref)
+
+
+def accepted_input_subject(root, job, accepted):
+    """First publication checks the original host signatures; no new admission."""
+    if (accepted.get('execution_authority') is None
+            or not (Path(root) / 'execution-authority/host-key-source.json').exists()):
+        return None
+    return _accepted_input_subject(root, job, accepted, host_secret(root))
+
+
+def validate_accepted_input_subject(root, job, accepted, published):
+    """Read only an already sealed binding; no key, promotion or re-signing."""
+    if _accepted_input_subject(root, job, accepted, None) != published:
+        raise q.IntegrityError('Sealed managed source authority binding changed')
+
+
 def _gate(config, provider, phase, *, scope, call_id, payload, target, prepared=None, prior_receipt=None, recovery=None):
     from . import budget
     from scidiscovery.artifact_agent.schema.execution import ExecutionAdmission

@@ -20,12 +20,12 @@ P5本轮精确进展：旧live环境池的唯一消费者已迁至现有单环�
 
 [独立功能复审](evidence/THIN_FUNCTIONAL_REAUDIT_20261017.zh-CN.md)与[计划完成度复审](evidence/THIN_PLAN_COMPLETION_REAUDIT_20261017.zh-CN.md)以 `73f57c6` 为基线。原 P1–P5 **尚未整体完成**：已有定向通过不能替代尚缺的生产接缝或真实平台资格。
 
-- P3 尚缺受管实验额外输入的可信来源/贡献者映射，导致后继正式审查不可用。不能直接删掉 unknown 门禁；须由现有观察/编译 owner 提供准确直接来源，再分别判定作者完整性与来源限制。该实现尚未完成。
+- P3/F1 精确 native/compiler 子范围已通过实施、独审和4个增量目标：受管终态→新成果封存→精确独立审查→后继准入，见[实施与验收](evidence/F1_NATIVE_INPUT_COVERAGE_IMPLEMENTATION_20261017.zh-CN.md)。仅用已有输入/编译边证明覆盖，不删除 unknown 门禁；Local、opaque、外部 observer 的额外来源/贡献者覆盖仍未闭合，完整 F1 不称完成。
 - W 把永久未提交调用误计为已完成观察，导致封存失败；已修复，并补齐退役读取时遗漏的原机制绑定。真实退役→部分封存→A不得伪造筛选的单项链路通过，见[修复与验收](evidence/F2_WORKER_DELIVERY_RETIREMENT_IMPLEMENTATION_20261017.zh-CN.md)，不改科研判断权限。
 - P4 基线缺少科学原文和成果浏览，已补齐独立读取入口并提交 `537a483`；[7项定向增量验收](evidence/P4_SEALED_SCIENCE_BROWSING_IMPLEMENTATION_20261017.zh-CN.md)含真实本机HTTP，不含浏览器验证。可写归档恢复仍受原 P4c2 阻断，不以浏览实现冒称恢复完成。
 - P5 旧 CLI/MCP/SQL 仍有实际消费者。失效 L4 探针及独占测试/发布清单已由 `513a7b0` 精确退役，3项初始化契约检查迁至实际契约owner并通过，见[实施记录](evidence/P5_OBSOLETE_L4_PROBE_RETIREMENT_IMPLEMENTATION_20261017.zh-CN.md)；不删除仍有用途的共享能力，也不恢复安装矩阵。
 
-后续顺序：修复真实封存阻断及完成 P4 科学浏览 → 可信来源 owner 的窄设计/独审 → P5 已失效消费者逐项退役。真实模型、TCAD solver、跨宿主恢复及强隔离不在本轮有限验收范围。
+本轮封存阻断、P4科学浏览及精确native来源子链已收口；P5另有失效hypothesis A/B case已由 `f9c7f10` 退役。剩余项按[最小交接表](evidence/THIN_REMAINING_WORK_HANDOFF_20261017.zh-CN.md)区分实际部署验收与明确后置设计，该表F1在途描述属于其 `ad89b41` 截面。真实模型、TCAD solver、跨宿主恢复及强隔离不在本轮有限验收范围。
 
 ## 当前能力核对
 

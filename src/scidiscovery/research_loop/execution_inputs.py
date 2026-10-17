@@ -141,6 +141,41 @@ def validate_seal(root, job, seal):
         raise q.IntegrityError('Sealed compiler originals changed')
 
 
+def execution_input_coverage(root, job, subject):
+    """Prove coverage by existing selected/compiler edges, without adding edges."""
+    root = Path(root).resolve()
+    seal = q._read(root, subject['producer_seal'])
+    selected = [row for row in job.get('selected_inputs', [])
+        if row['origin_step'] == subject['producer_step'] and row['material'] == subject['material']
+        and row['origin_result_sha256'] == seal['sha256']]
+    if not selected:
+        return None
+    found = [row for row in seal.get('compiled_implementations', []) if row['material'] == subject['material']]
+    if len(found) != 1:
+        return None
+    compiler = verify_compilation(root, found[0]['compiler'], material=subject['material'])
+    compiler_job = q._read(root, compiler['job'])
+
+    def covers(owner, originals):
+        if owner.get('source_provenance') is None:
+            return False
+        q.validate_inputs(root, owner)
+        edges = q._read(root, owner['source_provenance'])['edges']
+        return all(any(edge['kind'] == 'producer' and edge['step'] == original['producer_step']
+            and edge['seal'] == original['producer_seal'] for edge in edges) for original in originals)
+
+    if not covers(job, [subject]):
+        return None
+    originals = [row['original'] for row in compiler['inputs']]
+    if compiler.get('author_input') is not None:
+        originals.append(compiler['author_input'])
+    # These same originals are already traversed by authors(compiler producer).
+    # verify_compilation proves their exact membership in compiler_job.
+    if not covers(compiler_job, originals):
+        return None
+    return found[0]['compiler']
+
+
 class NativeInputHost:
     """A non-JSON service created only after the original host context is checked."""
 

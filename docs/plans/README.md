@@ -1,10 +1,10 @@
 ## 最新小修（2026-10-17）
 
-审查不可用请求不再累计触发整场收口（`ad89b41`）；Cov薄启动器启用原调用内检查预留（`a9c3a91`）。规则与验收范围见[授权/审查计划](THIN_AUTHORITY_REVIEW_REMEDIATION_20261017.zh-CN.md)。失效L4探针已精确退役（`513a7b0`）；其余P5消费者保留，来源闭环仍按[迁移计划](THIN_CAPABILITY_MIGRATION_20261016.zh-CN.md)推进。
+审查不可用请求不再累计触发整场收口（`ad89b41`）；Cov薄启动器启用原调用内检查预留（`a9c3a91`）。规则与验收范围见[授权/审查计划](THIN_AUTHORITY_REVIEW_REMEDIATION_20261017.zh-CN.md)。失效L4探针已精确退役（`513a7b0`）；其余P5消费者保留，精确native来源子链已通过4个定向增量目标；Local/opaque等剩余覆盖仍按[迁移计划](THIN_CAPABILITY_MIGRATION_20261016.zh-CN.md)推进。
 
 ## 当前功能与完成度复审（2026-10-17）
 
-[功能复审](evidence/THIN_FUNCTIONAL_REAUDIT_20261017.zh-CN.md)与[原计划完成度](evidence/THIN_PLAN_COMPLETION_REAUDIT_20261017.zh-CN.md)：P1–P5尚未整体完成。未提交调用导致的W封存失败已修复并通过定向链路，P4科学浏览已提交 `537a483` 并通过7项增量检查；P3受管输入来源映射、P4可写恢复与P5全部退役仍有明确缺口。具体当前顺序由[迁移主计划](THIN_CAPABILITY_MIGRATION_20261016.zh-CN.md)负责，历史报告不改写为最新资格。
+[功能复审](evidence/THIN_FUNCTIONAL_REAUDIT_20261017.zh-CN.md)与[原计划完成度](evidence/THIN_PLAN_COMPLETION_REAUDIT_20261017.zh-CN.md)：P1–P5尚未整体完成。未提交调用导致的W封存失败已修复并通过定向链路，P4科学浏览已提交 `537a483` 并通过7项增量检查；P3已补精确native/compiler来源子链；其余输入覆盖、P4可写恢复与P5全部退役仍有明确缺口。具体当前顺序由[迁移主计划](THIN_CAPABILITY_MIGRATION_20261016.zh-CN.md)负责，历史报告不改写为最新资格。
 
 ## 当前新增修复提案（2026-10-17）
 

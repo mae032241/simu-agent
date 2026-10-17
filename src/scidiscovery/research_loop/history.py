@@ -323,6 +323,63 @@ def validate_managed(root, job, rows, *, context=None):
             raise ObserverIntegrityError('Managed state differs from verified execution observation')
 
 
+def managed_input_coverage(root, job, rows):
+    """Capture coverage by existing input edges after validating original calls."""
+    from . import execution_authority as authority, execution_inputs, qualification as q
+    root = Path(root).resolve()
+    validate_managed(root, job, rows)
+    result = []; memo = {}
+    for row in rows:
+        accepted = c.read(root / row['accepted']['snapshot'])
+        bound = (authority.accepted_input_subject(root, job, accepted)
+            if row['status'] in {'known_success','known_failed'} else None)
+        compiler = None
+        if bound is not None:
+            key = json.dumps(bound['subject'], sort_keys=True)
+            if key not in memo:
+                memo[key] = execution_inputs.execution_input_coverage(root, job, bound['subject'])
+            compiler = memo[key]
+        complete = compiler is not None
+        result.append(dict(call_id=row['call_id'], accepted_ref=q._ref(root, root / row['accepted']['snapshot']),
+            complete=complete, missing_reason=None if complete else 'managed_inputs_not_covered_by_frozen_edges',
+            **(dict(binding=bound, compiler_ref=compiler) if complete else {})))
+    return result
+
+
+def validate_input_coverage(root, job, rows, published):
+    """Validate sealed refs/relations only; never recapture or upgrade coverage."""
+    from . import execution_authority as authority, execution_inputs, qualification as q
+    root = Path(root).resolve()
+    if not isinstance(published, list) or len(published) != len(rows):
+        raise q.IntegrityError('Sealed managed input coverage omitted a call')
+    verified_compilers = set()
+    for row, value in zip(rows, published):
+        _validate_proof(root, row['accepted'])
+        if (value.get('call_id') != row['call_id']
+                or value.get('accepted_ref') != q._ref(root, root / row['accepted']['snapshot'])
+                or type(value.get('complete')) is not bool):
+            raise q.IntegrityError('Sealed managed input coverage differs from accepted original')
+        if not value['complete']:
+            if set(value) != {'call_id','accepted_ref','complete','missing_reason'} or value['missing_reason'] != 'managed_inputs_not_covered_by_frozen_edges':
+                raise q.IntegrityError('Unsupported managed input coverage changed')
+            continue
+        if set(value) != {'call_id','accepted_ref','complete','missing_reason','binding','compiler_ref'} or value['missing_reason'] is not None:
+            raise q.IntegrityError('Sealed managed input coverage shape changed')
+        if row['status'] not in {'known_success','known_failed'}:
+            raise q.IntegrityError('Nonterminal or not-submitted inputs have no complete coverage')
+        accepted = c.read(root / row['accepted']['snapshot'])
+        authority.validate_accepted_input_subject(root, job, accepted, value['binding'])
+        subject = value['binding']['subject']; seal = q._read(root, subject['producer_seal'])
+        if [item for item in seal.get('compiled_implementations', []) if item['material'] == subject['material']] != [dict(material=subject['material'], compiler=value['compiler_ref'])]:
+            raise q.IntegrityError('Sealed managed compiler no longer names its exact payload')
+        # The prior coverage fact is immutable. Recheck its compiler originals,
+        # not qualification/coverage generation or the current operator key.
+        key = json.dumps(dict(compiler=value['compiler_ref'], material=subject['material']), sort_keys=True)
+        if key not in verified_compilers:
+            execution_inputs.verify_compilation(root, value['compiler_ref'], material=subject['material'])
+            verified_compilers.add(key)
+
+
 def _capture(root, job, payload, materials):
     """Snapshot mechanical adapter facts once, before the scientific seal."""
     config = c.settings(root).get('history_observer')
@@ -718,7 +775,9 @@ def validate_recommendation(job, payload):
         raise ValueError('A recommendation requires one frozen listed candidate')
 
 
-def validate_observation(root, job, seal):
+def read_observation(root, job, seal):
+    """Read the owner's path/hash receipt and verify its exact source binding."""
+    root = Path(root).resolve()
     if job.get('formal_review'):
         if seal.get('observations') is not None:raise ValueError('Formal review has an ordinary observer snapshot')
         return
@@ -737,6 +796,14 @@ def validate_observation(root, job, seal):
     value = c.read(path)
     if value['binding'] != _observer_binding(seal['raw_sha256'], config):
         raise ValueError('Observer snapshot source binding changed')
+    return value
+
+
+def validate_observation(root, job, seal):
+    value = read_observation(root, job, seal)
+    if value is None:
+        return
+    config = c.settings(root).get('history_observer') or _managed_config(job,root)
     if _managed_config(job,root):
         validate_managed(root,job,value['managed_calls'])
     proofs = [proof for row in value['candidates'] for proof in row['evidence']]

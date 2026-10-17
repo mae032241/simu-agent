@@ -141,8 +141,16 @@ def authors(root, step, active=None, memo=None):
     people = {tuple(row) for row in own['participants']}
     complete = own['complete']
     source = seal.get('source_provenance')
-    if source is not None and q._read(root, source).get('missing_reason') is not None:
-        complete = False  # No trusted authorship adapter for observed call inputs.
+    if source is not None:
+        proof = q._read(root, source)
+        coverage = proof.get('managed_input_coverage')
+        if coverage is not None:
+            q.validate_outputs(root, job, seal)
+            complete = complete and all(row['complete'] for row in coverage)
+            if c.settings(root).get('history_observer') is not None:
+                complete = False  # This observer's additional contributors remain unknown.
+        elif proof.get('missing_reason') is not None:
+            complete = False  # Legacy/opaque call inputs have no trusted coverage.
     if not job.get('formal_review'):
         contributions = list(job.get('selected_inputs', []))
         from . import execution_inputs

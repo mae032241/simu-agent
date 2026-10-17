@@ -24,6 +24,7 @@ from test_history_handoff import finish
 class InputBackend:
     def __init__(self):
         self.prepared = []; self.submits = 0; self.policy_reads = 0
+        self.state = 'queued'; self.submissions = {}
 
     def execution_admission(self, raw, *, preparation_profile):
         self.policy_reads += 1
@@ -38,21 +39,39 @@ class InputBackend:
         self.prepared.append({name: path.read_bytes() for name, path in resolved.items()})
         packed = package_execution_package_json(raw, preparation_profile=preparation_profile,
             input_payloads=resolved, output_root=exchange_directory / 'physical')
+        self.output_root = exchange_directory / 'backend-output'
         return LocalFileDescriptor.model_validate(packed.job_spec_file.model_dump(mode='json'), strict=True)
 
     def lookup_submission(self, prepared):
-        return ('native-remote-id', 'queued') if self.submits else None
+        external = self.submissions.get(prepared.sha256)
+        return (external, self.state) if external is not None else None
 
     def submit(self, prepared, *, authorization):
         self.submits += 1
-        return 'native-remote-id', 'queued'
+        external = 'native-remote-id' if self.submits == 1 else f'native-remote-id-{self.submits}'
+        self.submissions[prepared.sha256] = external
+        return external, self.state
 
     def status_details(self, external):
-        return dict(state='queued', run_id=external)
+        return dict(state=self.state, run_id=external)
+
+    def collect_with_budget(self, external, *, context):
+        assert external in self.submissions.values()
+        context.remaining_seconds()
+        self.output_root.mkdir(parents=True, exist_ok=True)
+        manifest = dict(started_at=None, completed_at='2026-10-17T00:00:00Z',
+            terminal_state=self.state, exit_code=0, error='', outputs=[])
+        result = []
+        for name, raw, media in [('tcad_log', b'synthetic input-chain terminal\n', 'text/plain'),
+                ('tcad_manifest', e.encoded(manifest), 'application/json')]:
+            path = self.output_root / name; path.write_bytes(raw)
+            result.append(LocalFileDescriptor(name=name, local_path=str(path),
+                sha256=hashlib.sha256(raw).hexdigest(), size_bytes=len(raw), media_type=media))
+        return tuple(result)
 
 
 @pytest.fixture
-def chain(tmp_path, monkeypatch):
+def chain(tmp_path, monkeypatch, request):
     old = json.loads((Path(__file__).parents[1] / 'fixtures/tcad_analysis_package.json').read_bytes())
     snapshot = tmp_path / 'operator-capability.json'; c.write(snapshot, old['capability'])
     launcher = tmp_path / 'codex'; launcher.write_text('# synthetic identity files only; never executed\n'); launcher.chmod(0o700)
@@ -64,11 +83,12 @@ def chain(tmp_path, monkeypatch):
     options = dict(transport='socket', socket_path=str(tmp_path / 'unused.sock'),
         implementation_compilation=dict(capability_snapshot_path=str(snapshot)))
     controller.prepare(root, objective, public, [str(launcher)], max_tokens=4000, max_seconds=1000,
-        max_steps=8, model='fixture', reasoning_effort='high', search_policy=None, experiment_mode='local',
+        max_steps=12, model='fixture', reasoning_effort='high', search_policy=None, experiment_mode='local',
         node_budget_mode='hard', execution_config=dict(executor='tcad_execution:tcad', configuration=options),
         formal_review_policy={'version': 1}, execution_authority_policy={'version': 1},
         execution_resource_policy=dict(version=1, allowance=dict(wall_time_seconds=100, max_storage_bytes=1000000)),
-        source_restrictions=[dict(source=str(objective), sha256=c.digest(objective), restriction='clear')])
+        source_restrictions=[] if getattr(request, 'param', None) == 'unknown_source' else [
+            dict(source=str(objective), sha256=c.digest(objective), restriction='clear')])
     # Only the native scheduling/identity boundary is synthetic. Source binding,
     # compiler proofs, formal qualification rules, gate and resource ledger run
     # through their actual production functions if this test is later authorized.
@@ -146,6 +166,113 @@ def test_public_compile_exact_review_and_existing_run_keep_native_original(chain
     assert e.main(['--config', str(active), 'run', '--payload', str(output)]) == 2
     assert json.loads(capsys.readouterr().out)['call_id'] == result['call_id'] and backend.submits == 1
     assert output.read_bytes() == before
+
+
+def test_native_observation_new_subject_review_and_next_run_use_covered_inputs(chain, capsys):
+    from copy import deepcopy
+    from scidiscovery.research_loop import history, qualification as q
+    root, backend, output, active, current, _ = _reviewed_execution(chain, capsys)
+    assert e.main(['--config', str(active), 'run', '--payload', str(output)]) == 2
+    call = json.loads(capsys.readouterr().out)['call_id']
+    job_before = c.read(root / 'jobs/006.json')
+    unknown = history.managed_input_coverage(root, job_before, history.managed_calls(root, job_before))
+    assert len(unknown) == 1 and unknown[0]['complete'] is False
+    backend.state = 'succeeded'
+    assert e.main(['--config', str(active), 'reconcile', '--call-id', call]) == 0
+    capsys.readouterr()
+    assert backend.submits == 1 and backend.prepared == [{'mesh': b'mesh'}]
+    work = c.workspace(root, 6); authored = work / 'work/revised.json'
+    author = c.read(chain[5]); author['input_slots'] = []
+    author['files'][0]['content'] = 'Solve { Coupled { Poisson } }\n'
+    c.write(authored, author)
+    revised = work / 'artifacts/revised-package.json'
+    e.compile_implementation(current, e.load(current), authored, {}, revised)
+    finish(root, 6, 'W', [5])
+    record = c.host_record(work); seal = c.read(record / 'result-identity.json')
+    proof = q._read(root, seal['source_provenance'])
+    assert len(proof['managed_input_coverage']) == 1
+    coverage = proof['managed_input_coverage'][0]
+    assert coverage['call_id'] == call and coverage['complete'] is True
+    assert proof['additional_input_restriction'] == 'clear'
+    rows = history.read_observation(root, job_before, seal)['managed_calls']
+    for state in ('unknown', 'not_submitted'):
+        with pytest.raises(q.IntegrityError, match='no complete coverage'):
+            history.validate_input_coverage(root, job_before, [dict(rows[0], status=state)], proof['managed_input_coverage'])
+    assert q.output_status(root, 6)['restriction'] == 'clear'
+    assert review.authors(root, 6)['complete'] is True
+    expected_authors = {tuple(row) for row in review.authors(root, 2)['participants']}
+    assert expected_authors <= {tuple(row) for row in review.authors(root, 6)['participants']}
+    # A changed ref cannot reuse the coverage fact; no extra backend action.
+    changed = deepcopy(proof['managed_input_coverage'])
+    changed[0]['binding']['request']['sha256'] = 'b' * 64
+    with pytest.raises(q.IntegrityError, match='binding changed'):
+        q._output(root, c.read(root / 'jobs/006.json'), seal, managed_coverage=changed)
+    original_job = c.read(root / 'jobs/006.json')
+    accepted = e.Records(current).accepted(call)
+    assert authority.accepted_input_subject(root, original_job,
+        {key:value for key,value in accepted.items() if key != 'execution_authority'}) is None
+    subject = coverage['binding']['subject']
+    assert inputs.execution_input_coverage(root, dict(original_job, selected_inputs=[]), subject) is None
+    wrong = dict(subject, producer_step=1)
+    assert inputs.execution_input_coverage(root, original_job, wrong) is None
+    # Legacy bytes without a projection keep the former conservative meaning.
+    legacy = q._output(root, original_job, seal)
+    assert 'managed_input_coverage' not in legacy
+    assert legacy['additional_input_restriction'] == 'unknown'
+    selecting = c.build_job(root, 7, 'A', [6])
+    material = next(item for item in seal['materials'] if item['source'] == str(revised))
+    choices = [item['id'] for item in history.implementation_options(root, 6)
+        if item['label'] == revised.name
+        and history.resolve_implementation(root, item['id'], selecting['history']['nodes']) == material]
+    assert len(choices) == 1, choices
+    job, _, routed = finish(root, 7, 'A', [6], action='formal_review', selection=choices)
+    role, parents, instruction, back = review.request_route(root, job, c.read(routed / 'result.json'), [7])
+    assert back['kind'] == 'formal_review'
+    assert q._read(root, back['request'])['subject']['material'] == material
+    reviewed = c.build_job(root, 8, role, parents, instruction, back)
+    review_record = c.host_record(c.workspace(root, 8))
+    c.write(review_record / 'native-intent.json', dict(task_sha256=c.digest(root / 'jobs/008.json')))
+    c.write(review_record / 'science-output.json', dict(verdict='pass', summary='Exact revised fixture',
+        scientific_result='Declared input/author coverage only.', limitations=['Synthetic transport and native identities.']))
+    c.write(review_record / 'usage.json', dict(input_tokens=1, cached_input_tokens=0, output_tokens=1))
+    c.write(review_record / 'native-outcome.json', dict(returncode=0, stop_reason=None,
+        usage=native.usage(root), raw_sha256=c.digest(review_record / 'science-output.json')))
+    c.seal_result(root, 8)
+    qualification = q._read(root, c.read(review_record / 'result-identity.json')['formal_review'])
+    assert qualification['status'] == 'passed' and qualification['independence'] == 'independent'
+    assert qualification['subject']['material'] == material
+    _, parents, instruction, back = review.return_route(root, reviewed, [6, 7, 8])
+    returning = c.build_job(root, 9, 'A', parents, instruction, back)
+    assert history.resolve_implementation(root, choices[0], returning['history']['nodes']) == material
+    finish(root, 9, 'A', parents, selection=choices)
+    c.build_job(root, 10, 'W', [9]); later = c.host_record(c.workspace(root, 10))
+    c.write(later / 'native-intent.json', dict(task_sha256=c.digest(root / 'jobs/010.json')))
+    config_path = c.workspace(root, 10) / 'work/execution.json'
+    e.configure(root, 10, 'tcad_execution:tcad', chain[2], config_path)
+    backend.state = 'queued'
+    assert e.main(['--config', str(config_path), 'run', '--payload', str(revised)]) == 2
+    result = json.loads(capsys.readouterr().out)
+    assert result['status'] == 'queued', result
+    assert backend.submits == 2
+    assert backend.prepared == [{'mesh': b'mesh'}, {}]
+    # Live qualification revalidation gains no dependency on the private key.
+    original_bytes = (record / 'provenance.json').read_bytes(), (record / 'result-identity.json').read_bytes()
+    (root / 'operator.key').unlink()
+    assert q.output_status(root, 6)['restriction'] == 'clear'
+    assert review.authors(root, 6)['complete'] is True
+    history._source(root, 6)
+    assert ((record / 'provenance.json').read_bytes(), (record / 'result-identity.json').read_bytes()) == original_bytes
+
+
+@pytest.mark.parametrize('chain', ['unknown_source'], indirect=True)
+def test_known_native_authors_with_unknown_restrictions_can_review_but_not_execute(chain, capsys):
+    from scidiscovery.research_loop import qualification as q
+    root, backend, output, active, _, _ = _reviewed_execution(chain, capsys)
+    assert review.authors(root, 2)['complete'] is True
+    assert q.output_status(root, 2)['restriction'] == 'unknown'
+    assert e.main(['--config', str(active), 'run', '--payload', str(output)]) == 2
+    assert 'unknown' in json.loads(capsys.readouterr().out)['note']
+    assert backend.submits == 0 and backend.prepared == [] and backend.policy_reads == 0
 
 
 def test_unbound_alias_and_author_read_race_reject_before_gate(chain, monkeypatch):
