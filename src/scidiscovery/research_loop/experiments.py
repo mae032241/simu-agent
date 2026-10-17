@@ -295,6 +295,9 @@ def freeze(config, executor, *, path=None):
     from . import replay_check
     assets.append(Path(replay_check.__file__).resolve())
     assets.append(Path(instance_owner.__file__).resolve())
+    if any(getattr(item,'key',None)==INPUT_SOURCES_KEY for item in adapter.capabilities()):
+        from . import execution_inputs, qualification
+        assets.extend([Path(execution_inputs.__file__).resolve(), Path(qualification.__file__).resolve()])
     if value.get('host_execution_authority') is not None:
         from . import execution_authority
         assets.extend(Path(item['path']) for item in execution_authority.implementation())
@@ -950,13 +953,15 @@ def _dispatch_descriptor(config, payload, *, parent=None, new=False, change=None
     source_contracts=[item for item in adapter.capabilities() if item.key==INPUT_SOURCES_KEY]
     if len(source_contracts)>1:raise IntegrityError('Ambiguous managed input source declaration')
     if source_contracts:
+        from . import execution_inputs
         item=source_contracts[0]
         actual=[row for row in _public_capabilities(adapter) if row['key']==INPUT_SOURCES_KEY]
         frozen=[row for row in config['execution_interface'].get('public_capabilities',[]) if row['key']==INPUT_SOURCES_KEY]
         if frozen!=actual:raise IntegrityError('Managed input source capability differs from frozen interface')
-        if (item.kind=='source_provenance' and item.schema_id==INPUT_SOURCES_SCHEMA
-                and item.payload_schema_version==1 and item.media_type=='application/json'
-                and item.content==encoded(INPUT_SOURCES_CONTRACT)):
+        local_contract = (item.schema_id==INPUT_SOURCES_SCHEMA and item.content==encoded(INPUT_SOURCES_CONTRACT))
+        exact_contract = (item.schema_id==execution_inputs.SOURCE_SCHEMA and item.content==encoded(execution_inputs.SOURCE_CONTRACT))
+        if (item.kind=='source_provenance' and (local_contract or exact_contract)
+                and item.payload_schema_version==1 and item.media_type=='application/json'):
             method=getattr(adapter,'input_sources',None)
             metadata['input_sources']=dict(contract=dict(key=item.key,kind=item.kind,schema_id=item.schema_id,
                 payload_schema_version=item.payload_schema_version,media_type=item.media_type,

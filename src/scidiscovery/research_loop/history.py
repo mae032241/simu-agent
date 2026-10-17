@@ -44,15 +44,52 @@ def _bytes(value):
 
 def observer_config(value):
     """Freeze a trusted synchronous, side-effect-free external adapter."""
-    if (not isinstance(value, dict) or set(value) not in ({'adapter','config'},{'adapter','config','contract_version'})
+    if (not isinstance(value, dict) or not {'adapter','config'} <= set(value)
+            or set(value) - {'adapter','config','contract_version','source_contract'}
             or not isinstance(value['config'],dict) or 'contract_version' in value and (type(value['contract_version']) is not int or value['contract_version'] != 2)):
         raise ValueError('Observer requires an exact adapter and configuration')
     path = Path(value['adapter']).absolute()
     if path.resolve() != path:
         raise ValueError('Observer requires an original configuration')
     c.regular(path)
-    return dict(adapter=str(path), adapter_sha256=c.digest(path), config=value['config'],
-                **(dict(contract_version=2) if value.get('contract_version') == 2 else {}))
+    result = dict(adapter=str(path), adapter_sha256=c.digest(path), config=value['config'],
+                  **(dict(contract_version=2) if value.get('contract_version') == 2 else {}))
+    if 'source_contract' in value:
+        from . import execution_inputs, qualification, formal_review
+        if value['source_contract'] != execution_inputs.SOURCE_CONTRACT:
+            raise ValueError('Observer source contract must explicitly cover all declared inputs and contributors')
+        result['source_contract'] = dict(contract=execution_inputs.source_contract(),
+            implementation=[qualification._identity(Path(module.__file__).resolve())
+                for module in (execution_inputs, qualification, formal_review, sys.modules[__name__])])
+    return result
+
+
+def observer_input_sources(root, job, observation):
+    """Only the retained trusted contract/view; display coverage grants nothing."""
+    from . import execution_inputs, qualification as q
+    config = c.settings(root).get('history_observer')
+    original = observation.get('input_sources')
+    if config is None or config.get('source_contract') is None:
+        if original is not None:
+            raise q.IntegrityError('Observer input sources have no frozen trusted contract')
+        return None
+    contract = config['source_contract']
+    if contract['contract'] != execution_inputs.source_contract():
+        raise q.IntegrityError('Observer source contract changed')
+    if c.digest(c.regular(Path(config['adapter']))) != config['adapter_sha256']:
+        raise q.IntegrityError('Observer source implementation changed')
+    for identity in contract['implementation']:
+        q._check(identity)
+    if original is None:
+        return None  # Optional adapter failure remains unknown, never implicit empty.
+    raw = Path(c._execution_raw(root, job['step']))
+    if (not isinstance(original, dict) or set(original) != {'contract','job','raw','view'}
+            or original['contract'] != contract
+            or original['job'] != q._ref(root, Path(root) / 'jobs' / f'{job["step"]:03d}.json')
+            or q._read(root, original['job']) != job or original['raw'] != q._ref(root, raw)
+            or original['raw']['sha256'] != observation['binding']['source_sha256']):
+        raise q.IntegrityError('Observer source view differs from its original task')
+    return execution_inputs.validate_source_view(root, job, original['view'])
 
 
 def handle(row):
@@ -323,6 +360,12 @@ def validate_managed(root, job, rows, *, context=None):
             raise ObserverIntegrityError('Managed state differs from verified execution observation')
 
 
+def _check_source_subject(declared, binding):
+    if binding is not None and not any(row['origin_step'] == binding['subject']['producer_step']
+            and row['material'] == binding['subject']['material'] for row in declared['contributions']):
+        raise ObserverIntegrityError('Managed declared inputs omitted their exact authorized package')
+
+
 def managed_input_coverage(root, job, rows):
     """Capture coverage by existing input edges after validating original calls."""
     from . import execution_authority as authority, execution_inputs, qualification as q
@@ -332,10 +375,19 @@ def managed_input_coverage(root, job, rows):
     for row in rows:
         accepted = c.read(root / row['accepted']['snapshot'])
         if row['status'] in {'known_success','known_failed'} and accepted.get('input_sources') is not None:
-            inputs = execution_inputs.validate_local_input_sources(root, job, accepted)
-            if inputs is not None:
+            inputs = execution_inputs.managed_source_contributions(root, job, accepted)
+            if inputs is not None and not inputs['complete']:
                 result.append(dict(call_id=row['call_id'],accepted_ref=q._ref(root, root / row['accepted']['snapshot']),
-                    complete=True,missing_reason=None,input_sources=accepted['input_sources']['contract']['sha256']))
+                    complete=False,missing_reason='managed_inputs_not_covered_by_frozen_edges'))
+                continue  # An explicit incomplete view cannot fall back to broader compiler coverage.
+            if inputs is not None and inputs['complete']:
+                bound = authority.accepted_input_subject(root, job, accepted) if accepted.get('execution_authority') is not None else None
+                if accepted.get('execution_authority') is not None and bound is None:
+                    raise q.IntegrityError('Declared managed input has no verified original authority')
+                _check_source_subject(inputs, bound)
+                result.append(dict(call_id=row['call_id'],accepted_ref=q._ref(root, root / row['accepted']['snapshot']),
+                    complete=True,missing_reason=None,input_sources=accepted['input_sources']['contract']['sha256'],
+                    **(dict(binding=bound) if bound is not None else {})))
                 continue
         bound = (authority.accepted_input_subject(root, job, accepted)
             if row['status'] in {'known_success','known_failed'} else None)
@@ -373,10 +425,17 @@ def validate_input_coverage(root, job, rows, published):
             raise q.IntegrityError('Nonterminal or not-submitted inputs have no complete coverage')
         accepted = c.read(root / row['accepted']['snapshot'])
         if 'input_sources' in value:
-            if (set(value) != {'call_id','accepted_ref','complete','missing_reason','input_sources'}
+            keys = {'call_id','accepted_ref','complete','missing_reason','input_sources'}
+            declared = execution_inputs.managed_source_contributions(root, job, accepted)
+            if accepted.get('execution_authority') is not None:
+                keys.add('binding')
+                authority.validate_accepted_input_subject(root, job, accepted, value.get('binding'))
+                if declared is not None:
+                    _check_source_subject(declared, value['binding'])
+            if (set(value) != keys
                     or value['missing_reason'] is not None or accepted.get('input_sources') is None
                     or value['input_sources'] != accepted['input_sources']['contract']['sha256']
-                    or execution_inputs.validate_local_input_sources(root, job, accepted) is None):
+                    or not (declared or {}).get('complete')):
                 raise q.IntegrityError('Sealed managed input contract or view changed')
             continue
         if set(value) != {'call_id','accepted_ref','complete','missing_reason','binding','compiler_ref'} or value['missing_reason'] is not None:
@@ -441,9 +500,14 @@ def _capture(root, job, payload, materials):
     request = dict(root=str(root), step=job['step'], config=config['config'], materials=materials,
                    known_candidates=sorted(known),
                    **(dict(known_contexts=sorted(known_contexts)) if config.get('contract_version') == 2 else {}))
+    if config.get('source_contract') is not None:
+        from . import execution_inputs
+        request['input_sources'] = dict(contract=execution_inputs.SOURCE_CONTRACT,
+            available=execution_inputs.declared_sources(root, job))
     value = read_adapter(config, request)
     expected = {'candidates','current_candidate','actual_submission','coverage'}
     if config.get('contract_version') == 2:expected.add('contexts')
+    if config.get('source_contract') is not None:expected.add('input_sources')
     if not isinstance(value, dict) or set(value) != expected:
         raise ValueError('Observer must return candidates and actual_submission separately')
     if not isinstance(value['candidates'], list):
@@ -500,6 +564,11 @@ def _capture(root, job, payload, materials):
             coverage = dict(status='partial',note='Original execution contexts include unknown outcomes.')
     snapshot = dict(binding=binding, candidates=candidates, current_candidate=current, actual_submission=actual, coverage=coverage,
                     **(dict(contexts=contexts) if contexts is not None else {}))
+    if config.get('source_contract') is not None:
+        from . import qualification as q
+        snapshot['input_sources'] = dict(contract=config['source_contract'],
+            job=q._ref(root, root / 'jobs' / f'{job["step"]:03d}.json'), raw=q._ref(root, raw), view=value['input_sources'])
+        observer_input_sources(root, job, snapshot)
     if _managed_config(job,root):
         from . import generic_results
         snapshot['managed_calls']=managed_calls(root,job)
@@ -816,6 +885,7 @@ def validate_observation(root, job, seal):
     value = read_observation(root, job, seal)
     if value is None:
         return
+    observer_input_sources(root, job, value)
     config = c.settings(root).get('history_observer') or _managed_config(job,root)
     if _managed_config(job,root):
         validate_managed(root,job,value['managed_calls'])
@@ -863,4 +933,6 @@ def refresh(root, before_step):
 
 def _observer_binding(source_sha, config):
     return dict(source_sha256=source_sha,adapter_sha256=config['adapter_sha256'],
-                **(dict(contract_version=2) if config.get('contract_version') == 2 else {}))
+                **(dict(contract_version=2) if config.get('contract_version') == 2 else {}),
+                **(dict(source_contract_sha256=hashlib.sha256(_bytes(config['source_contract'])).hexdigest())
+                   if config.get('source_contract') is not None else {}))

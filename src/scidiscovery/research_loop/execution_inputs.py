@@ -8,6 +8,121 @@ from pathlib import Path
 
 from . import contracts as c, qualification as q, execution
 
+SOURCE_SCHEMA = 'scidiscovery.declared-input-sources.v1'
+SOURCE_CONTRACT = dict(version=1, coverage='all_adapter_declared_inputs_and_contributors',
+    origins=['global', 'producer', 'current_author', 'unknown'],
+    scope='framework_declared_inputs_only')
+
+
+def source_contract():
+    """One optional interpretation, distinct from Local's snapshot contract."""
+    from . import experiments as e
+    raw = e.encoded(SOURCE_CONTRACT)
+    return dict(key=e.INPUT_SOURCES_KEY, kind='source_provenance', schema_id=SOURCE_SCHEMA,
+        payload_schema_version=1, media_type='application/json', content=raw.decode('utf-8'),
+        sha256=hashlib.sha256(raw).hexdigest(), size_bytes=len(raw))
+
+
+def declared_sources(root, job):
+    """Only immediate frozen inputs; a trusted adapter selects from this inventory."""
+    rows = [dict(name=row['path'], origin=dict(kind='global', material=row)) for row in job['global_materials']]
+    seen = set()
+    for material in _bound(job):
+        key = json.dumps(material, sort_keys=True)
+        if key not in seen:
+            rows.append(dict(name=material['path'], origin=dict(kind='producer', original=_producer(root, material))))
+            seen.add(key)
+    rows.append(dict(name='current_scientific_author', origin=dict(kind='current_author', step=job['step'])))
+    return rows
+
+
+def validate_source_view(root, job, view):
+    """Verified direct edges and contributor membership, never an adapter call."""
+    if (not isinstance(view, dict) or set(view) != {'version','complete','sources'}
+            or type(view['version']) is not int or view['version'] != 1
+            or type(view['complete']) is not bool or not isinstance(view['sources'], list)):
+        raise q.IntegrityError('Declared source view has no exact coverage contract')
+    q.validate_inputs(root, job)
+    if job.get('source_provenance') is None:
+        return dict(complete=False, contributions=[])
+    edges = q._read(root, job['source_provenance'])['edges']
+    complete = view['complete']; contributions = []; seen = set()
+    for origin in view['sources']:
+        if not isinstance(origin, dict):
+            raise q.IntegrityError('Declared input origin is malformed')
+        key = json.dumps(origin, sort_keys=True)
+        if key in seen:
+            raise q.IntegrityError('Declared input origin is duplicated')
+        seen.add(key)
+        if origin.get('kind') == 'producer' and set(origin) == {'kind','original'}:
+            original = origin['original']; material = resolve_native_original(root, original, compiler_job=job)
+            if not any(edge['kind'] == 'producer' and edge['step'] == original['producer_step']
+                    and edge['seal'] == original['producer_seal'] for edge in edges):
+                raise q.IntegrityError('Declared producer is absent from frozen source edges')
+            seal = q._read(root, original['producer_seal'])
+            contributions.append(dict(origin_step=original['producer_step'], origin_result_sha256=seal['sha256'], material=material))
+        elif origin.get('kind') == 'global' and set(origin) == {'kind','material'}:
+            if not any(edge['kind'] == 'global' and edge['material'] == origin['material'] for edge in edges):
+                raise q.IntegrityError('Declared global is absent from frozen source edges')
+            material = origin['material']
+            if c.digest(c.regular(Path(root) / material['source'])) != material['sha256']:
+                raise q.IntegrityError('Declared global original changed')
+        elif origin.get('kind') == 'current_author' and set(origin) == {'kind','step'}:
+            if type(origin['step']) is not int or origin['step'] != job['step']:
+                raise q.IntegrityError('Declared current author belongs to another job')
+        elif origin == {'kind':'unknown'}:
+            complete = False
+        else:
+            raise q.IntegrityError('Declared input origin is unsupported')
+    return dict(complete=complete, contributions=contributions)
+
+
+def validate_exact_input_sources(root, job, accepted):
+    """Consume an actual adapter's frozen source view without parsing its domain."""
+    from . import experiments as e
+    original = accepted.get('input_sources')
+    if original is None or original.get('contract') != source_contract():
+        return None
+    declared = [row for row in accepted['interface'].get('public_capabilities', []) if row['key'] == e.INPUT_SOURCES_KEY]
+    contract = source_contract()
+    if len(declared) != 1 or any(declared[0].get(key) != contract[key] for key in
+            ('key','kind','schema_id','payload_schema_version','media_type','sha256','size_bytes')):
+        raise q.IntegrityError('Declared input view has no unique frozen capability')
+    view = original['view']
+    if view is None:
+        return None
+    if not isinstance(view, dict) or set(view) != {'job','configuration','native_intent','prepared','evidence','sources'}:
+        raise q.IntegrityError('Declared input view changed its host owner')
+    root = Path(root).resolve(); attempt = accepted.get('native_attempt') or {}
+    projection = root / 'host-runtime/experiment-control' / accepted['scope']['job_sha256'] / 'interfaces' / f'{attempt["number"]:03d}.json'
+    config = q._read(root, view['configuration'])
+    if (view['job'] != q._ref(root, root / 'jobs' / f'{job["step"]:03d}.json')
+            or q._read(root, view['job']) != job or job['role'] != 'W'
+            or view['configuration'] != q._ref(root, projection)
+            or config['scope'] != accepted['scope'] or config['native_attempt'] != attempt
+            or config['execution_interface'] != accepted['interface']
+            or view['prepared'] != accepted['prepared']
+            or view['native_intent'] != q._ref(root, execution.record(root, job['step'], attempt['number']) / 'native-intent.json')
+            or q._read(root, view['native_intent'])['task_sha256'] != view['job']['sha256']
+            or accepted['interface']['config_sha256'] != hashlib.sha256(e.encoded({key:value for key,value in config.items() if key != 'execution_interface'})).hexdigest()):
+        raise q.IntegrityError('Declared input view differs from its original native owner')
+    for asset in accepted['interface']['code']:
+        q._check(asset)
+    if not isinstance(view['evidence'], list) or not view['evidence']:
+        raise q.IntegrityError('Declared input view omitted its actual preparation evidence')
+    for ref in view['evidence']:
+        if Path(ref['path']).is_absolute() or q._ref(root, root / ref['path']) != ref:
+            raise q.IntegrityError('Declared preparation original changed')
+    return validate_source_view(root, job, view['sources'])
+
+
+def managed_source_contributions(root, job, accepted):
+    value = validate_exact_input_sources(root, job, accepted)
+    if value is not None:
+        return value
+    local = validate_local_input_sources(root, job, accepted)
+    return None if local is None else dict(complete=True, contributions=local)
+
 
 def _bound(job):
     return [*job['direct_materials'], *[row['material'] for row in job.get('selected_inputs', [])]]

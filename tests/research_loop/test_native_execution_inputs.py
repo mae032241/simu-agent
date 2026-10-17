@@ -121,18 +121,29 @@ def chain(tmp_path, monkeypatch, request):
     return root, backend, options, config, config_path, author, aliases
 
 
-def _reviewed_execution(chain, capsys):
+def _reviewed_execution(chain, capsys, *, opaque=False):
     root, backend, options, config, config_path, author, aliases = chain
     output = c.workspace(root, 2) / 'artifacts/package.json'
-    assert e.main(['--config', str(config_path), 'compile', '--implementation', str(author),
-        '--scientific-files', str(aliases), '--output', str(output)]) == 0
-    compiled = json.loads(capsys.readouterr().out)
-    assert compiled['status'] == 'compiled' and not backend.prepared and not backend.policy_reads
+    if opaque:
+        from scidiscovery.artifact_agent.schema.common import canonical_json
+        from tcad_artifact.project_packager import ExecutionPackage
+        old = json.loads((Path(__file__).parents[1] / 'fixtures/tcad_analysis_package.json').read_bytes())
+        old['project']['resource_limits'] = c.read(author)['resource_limits']
+        package = ExecutionPackage.model_validate_json(json.dumps(dict(project=old['project'], capability=old['capability'])),strict=True)
+        output.write_bytes(canonical_json(package.model_dump(mode='json')))
+    else:
+        assert e.main(['--config', str(config_path), 'compile', '--implementation', str(author),
+            '--scientific-files', str(aliases), '--output', str(output)]) == 0
+        compiled = json.loads(capsys.readouterr().out)
+        assert compiled['status'] == 'compiled' and not backend.prepared and not backend.policy_reads
     before = output.read_bytes(); finish(root, 2, 'W', [1])
     seal = c.read(c.host_record(c.workspace(root, 2)) / 'result-identity.json')
-    assert len(seal['compiled_implementations']) == 1
-    assert ('codex_exec', str(uuid.uuid5(uuid.NAMESPACE_URL, 'native-input-fixture-1'))) in {
-        tuple(row) for row in review.authors(root, 2)['participants']}
+    if opaque:
+        assert 'compiled_implementations' not in seal
+    else:
+        assert len(seal['compiled_implementations']) == 1
+        assert ('codex_exec', str(uuid.uuid5(uuid.NAMESPACE_URL, 'native-input-fixture-1'))) in {
+            tuple(row) for row in review.authors(root, 2)['participants']}
     job, _, record = finish(root, 3, 'A', [2], action='formal_review', selection=['W002-I001'])
     role, parents, instruction, back = review.request_route(root, job, c.read(record / 'result.json'), [3])
     review_job = c.build_job(root, 4, role, parents, instruction, back)
@@ -166,6 +177,55 @@ def test_public_compile_exact_review_and_existing_run_keep_native_original(chain
     assert e.main(['--config', str(active), 'run', '--payload', str(output)]) == 2
     assert json.loads(capsys.readouterr().out)['call_id'] == result['call_id'] and backend.submits == 1
     assert output.read_bytes() == before
+
+
+def test_self_contained_v2_terminal_keeps_exact_inputs_and_next_subject_review(chain, capsys):
+    from copy import deepcopy
+    from scidiscovery.research_loop import history, qualification as q
+    root, backend, output, active, current, _ = _reviewed_execution(chain, capsys, opaque=True)
+    assert e.main(['--config', str(active), 'run', '--payload', str(output)]) == 2
+    call = json.loads(capsys.readouterr().out)['call_id']
+    job = c.read(root / 'jobs/006.json')
+    accepted = e.Records(current).accepted(call)
+    assert backend.submits == 1 and backend.prepared == [{}]
+    assert 'config_sha256' not in accepted  # Local metadata is not a generic accepted field.
+    assert accepted['interface']['config_sha256'] == current['execution_interface']['config_sha256']
+    assert inputs.managed_source_contributions(root, job, accepted)['complete']
+    assert history.managed_input_coverage(root, job, history.managed_calls(root, job))[0]['complete'] is False
+    backend.state = 'succeeded'
+    assert e.main(['--config', str(active), 'reconcile', '--call-id', call]) == 0
+    capsys.readouterr()
+    finish(root, 6, 'W', [5], files={'revised.txt':'A derivative of the exact opaque package.'})
+    record = c.host_record(c.workspace(root, 6)); seal = c.read(record / 'result-identity.json')
+    proof = q._read(root, seal['source_provenance'])
+    covered = proof['managed_input_coverage'][0]
+    assert covered['complete'] and covered['binding']['subject']['producer_step'] == 2
+    assert 'compiler_ref' not in covered and 'compiled_implementations' not in seal
+    assert q.output_status(root, 6)['restriction'] == 'clear' and review.authors(root, 6)['complete']
+    assert set(map(tuple,review.authors(root,2)['participants'])) <= set(map(tuple,review.authors(root,6)['participants']))
+    selecting = c.build_job(root, 7, 'A', [6])
+    material = next(row for row in seal['materials'] if row['source'].endswith('/revised.txt'))
+    choices = [row['id'] for row in history.implementation_options(root, 6) if row['label']=='revised.txt'
+        and history.resolve_implementation(root,row['id'],selecting['history']['nodes'])==material]
+    assert len(choices)==1
+    requested,_,request_record=finish(root,7,'A',[6],action='formal_review',selection=choices)
+    _,_,_,back=review.request_route(root,requested,c.read(request_record/'result.json'),[7])
+    assert back['kind']=='formal_review' and q._read(root,back['request'])['subject']['material']==material
+    changed=deepcopy(accepted);changed['input_sources']['view']['sources']['sources'][0]['original']['producer_step']=1
+    with pytest.raises(q.IntegrityError,match='frozen compiler source'):
+        inputs.managed_source_contributions(root,job,changed)
+    changed=deepcopy(accepted);changed['input_sources']['view']['sources']['complete']=False
+    assert inputs.managed_source_contributions(root,job,changed)['complete'] is False
+    changed=deepcopy(accepted);changed['interface']['config_sha256']='0'*64
+    with pytest.raises(q.IntegrityError,match='original native owner'):
+        inputs.managed_source_contributions(root,job,changed)
+    legacy={key:value for key,value in accepted.items() if key!='input_sources'}
+    assert inputs.managed_source_contributions(root,job,legacy) is None
+    archive=root/accepted['input_sources']['view']['evidence'][1]['path']
+    archive.chmod(0o600);archive.write_bytes(b'changed actual prepared archive')
+    with pytest.raises(q.IntegrityError,match='preparation original changed'):
+        inputs.managed_source_contributions(root,job,accepted)
+    assert backend.submits==1
 
 
 def test_native_observation_new_subject_review_and_next_run_use_covered_inputs(chain, capsys):

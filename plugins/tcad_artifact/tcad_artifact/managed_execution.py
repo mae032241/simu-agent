@@ -161,12 +161,16 @@ class TCADManagedExecution:
                                      collect=True, atomic_admission=True)
 
     def capabilities(self):
+        from scidiscovery.research_loop import execution_inputs
         compilation = () if self.compilation_original is None else (AdapterCapability(
             'implementation_authoring', 'implementation', 'tcad.native-implementation.v1', 1,
             'application/schema+json', e.encoded(dict(implementation_schema=TCADImplementation.model_json_schema(),
                 capability=self.compilation_capability.model_dump(mode='json'))),
             dict(action='Optional local compile; scientific slot names select exact bound input aliases; no execution permission')),)
-        return compilation + (AdapterCapability('execution_package', 'execution', 'tcad.execution-package.v2', 2,
+        return compilation + (AdapterCapability(e.INPUT_SOURCES_KEY, 'source_provenance', execution_inputs.SOURCE_SCHEMA, 1,
+            'application/json', e.encoded(execution_inputs.SOURCE_CONTRACT),
+            dict(scope='Exact declared self-contained V2 package only; V3 uses compiler coverage; arbitrary solver reads are outside this proof')),
+            AdapterCapability('execution_package', 'execution', 'tcad.execution-package.v2', 2,
             'application/schema+json', e.encoded(ExecutionPackage.model_json_schema(mode='validation')),
             dict(input='Exact TCAD execution package', result_protocol=None,
                  production='blocked_pending_trusted_gate' if self.gate is None else 'trusted_host_gate_required')),
@@ -280,6 +284,56 @@ class TCADManagedExecution:
             execution_authority=value['authority'], execution_target=value['target'],
             **(dict(execution_reservation=value['reservation']) if value.get('reservation') is not None else {}),
             submission_intent_path=str(self.records.root / 'calls' / payload.name / 'tcad-dispatch.json'))
+
+    def input_sources(self, payload, metadata):
+        """Actual package/physical inventory, never merely an empty slot label."""
+        import tarfile
+        from scidiscovery.research_loop import execution_inputs, execution_authority as authority, qualification as q
+        from .execution_control import TCADJobSpec
+        value = self._preparation(payload)
+        raw = Path(value['retained_payload']['local_path']).read_bytes()
+        package = validate_execution_package_json(raw, preparation_profile=_package_profile(raw))
+        if not isinstance(package, ExecutionPackage) or package.resolved_inputs or package.project.input_slots:
+            return None  # Native V3 retains its compiler; nonempty V2 has no native mapping.
+        spec = TCADJobSpec.model_validate_json(Path(payload.local_path).read_bytes(), strict=True)
+        expected = {item.relative_path:item.content.encode('utf-8') for item in package.project.files}
+        inventory = {item.relative_path:(item.sha256,item.size_bytes) for item in spec.archive_entries}
+        if (inventory != {name:(hashlib.sha256(raw).hexdigest(),len(raw)) for name,raw in expected.items()}
+                or spec.arguments != (package.project.entrypoint, *package.project.arguments)
+                or spec.tool_profile != package.project.tool_profile or spec.solver_kind != package.project.solver_kind
+                or spec.capability_sha256 != package.capability.capability_sha256):
+            raise e.IntegrityError('TCAD declared sources differ from actual prepared package')
+        _verify_descriptor(spec.input_archive,self.operation_context)
+        seen = set()
+        with tarfile.open(spec.input_archive.local_path, mode='r|') as archive:
+            for member in archive:
+                if not member.isfile() or member.name not in expected or member.name in seen:
+                    raise e.IntegrityError('TCAD prepared archive contains undeclared scientific inputs')
+                stream = archive.extractfile(member)
+                digest = hashlib.sha256(); size = 0
+                for block in iter(lambda:stream.read(1024*1024), b''):
+                    if self.operation_context is not None:
+                        self.operation_context.remaining_seconds()
+                    digest.update(block); size += len(block)
+                if (digest.hexdigest(),size) != inventory[member.name]:
+                    raise e.IntegrityError('TCAD embedded source differs from prepared archive')
+                seen.add(member.name)
+        if seen != set(expected):
+            raise e.IntegrityError('TCAD prepared archive omitted declared scientific inputs')
+        archive_proof = _verify_descriptor(spec.input_archive,self.operation_context)
+        package_proof = _verify_descriptor(LocalFileDescriptor.model_validate(value['retained_payload']),self.operation_context)
+        root, job, intent = authority._host_context(self.config)
+        authorization = q._read(root, {**value['authority'], 'path':str(Path(value['authority']['path']).relative_to(root))})
+        subject = q._read(root, authorization['request'])['subject']
+        original = execution_inputs._producer(root, subject['material'])
+        if original['producer_step'] != subject['producer_step'] or original['producer_seal'] != subject['producer_seal']:
+            raise e.IntegrityError('TCAD input does not name its original reviewed producer')
+        attempt = self.config['native_attempt']['number']
+        projection = root / 'host-runtime/experiment-control' / self.config['scope']['job_sha256'] / 'interfaces' / f'{attempt:03d}.json'
+        return dict(job=q._ref(root,root/'jobs'/f'{job["step"]:03d}.json'),
+            configuration=q._ref(root,projection), native_intent=intent, prepared=payload.model_dump(mode='json'),
+            evidence=[dict(item,path=Path(item['path']).relative_to(root).as_posix()) for item in (package_proof,archive_proof)],
+            sources=dict(version=1,complete=True,sources=[dict(kind='producer',original=original)]))
 
     def _bound(self, call):
         accepted = self.records.accepted(call)

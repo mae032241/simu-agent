@@ -148,8 +148,6 @@ def authors(root, step, active=None, memo=None):
         if coverage is not None:
             q.validate_outputs(root, job, seal)
             complete = complete and all(row['complete'] for row in coverage)
-            if c.settings(root).get('history_observer') is not None:
-                complete = False  # This observer's additional contributors remain unknown.
         elif proof.get('missing_reason') is not None:
             complete = False  # Legacy/opaque call inputs have no trusted coverage.
     if not job.get('formal_review'):
@@ -166,8 +164,15 @@ def authors(root, step, active=None, memo=None):
         # actual input contributions join the existing traversal, not all parents.
         for value in coverage or []:
             if value['complete'] and 'input_sources' in value:
-                view = q._read(root, value['accepted_ref'])['input_sources']['view']
-                originals.extend(item['origin']['original'] for item in view['files'] if item['origin']['kind'] == 'producer')
+                declared = execution_inputs.managed_source_contributions(root, job, q._read(root, value['accepted_ref']))
+                contributions.extend(declared['contributions'])
+        if c.settings(root).get('history_observer') is not None:
+            from . import history
+            observation = history.read_observation(root, job, seal)
+            declared = history.observer_input_sources(root, job, observation) if observation is not None else None
+            complete = complete and declared is not None and declared['complete']
+            if declared is not None:
+                contributions.extend(declared['contributions'])
         for original in originals:
             origin_seal = q._read(root, original['producer_seal'])
             contributions.append(dict(origin_step=original['producer_step'],

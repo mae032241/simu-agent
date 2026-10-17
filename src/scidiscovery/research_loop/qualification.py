@@ -242,12 +242,16 @@ def _output(root, job, seal, *, managed_coverage=None):
         if receipt['path'] != path.relative_to(root).as_posix() or c.digest(_file(path)) != receipt['sha256']:
             raise IntegrityError('Source observation receipt changed')
         observation = c.read(path)
-        additional_inputs = bool(observation.get('managed_calls')) or c.settings(root).get('history_observer') is not None
+        observer_unknown = False
+        if c.settings(root).get('history_observer') is not None:
+            from . import history
+            covered = history.observer_input_sources(root, job, observation)
+            observer_unknown = covered is None or not covered['complete']
+        additional_inputs = bool(observation.get('managed_calls')) or observer_unknown
         if managed_coverage is not None:
             from . import history
             history.validate_input_coverage(root, job, observation.get('managed_calls', []), managed_coverage)
-            additional_inputs = (not all(row['complete'] for row in managed_coverage)
-                or c.settings(root).get('history_observer') is not None)
+            additional_inputs = not all(row['complete'] for row in managed_coverage) or observer_unknown
     elif managed_coverage is not None:
         raise IntegrityError('Managed input coverage has no original observation')
     return dict(version=1, step=job['step'], job_sha256=seal['job_sha256'],
