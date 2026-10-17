@@ -146,35 +146,6 @@ def test_remote_runtime_cli_composes_transport_and_transaction(tmp_path):
     assert runner.read_bytes()==SOURCE.read_bytes()
 
 
-@pytest.mark.parametrize('fail_phase',['prepare','activate',None])
-def test_main_installer_never_starts_local_services_after_remote_failure(tmp_path,fail_phase):
-    log=tmp_path/'phases'
-    script=r'''
-source "$1"
-TCAD_ENABLED=1
-for fn in require_root validate_source validate_base_python validate_figure_dependencies install_packages \
- begin_install_transaction retire_old_deployment retire_inactive_tcad_surfaces activate_packages \
- create_local_workspace_root create_instance_archive_root normalize_database_ownership ensure_secret \
- ensure_agent_settings configure_tcad_runtime install_units configure_platform verify_installation; do
- eval "$fn() { :; }"
-done
-install() { :; }
-remote_tcad_runtime() { printf '%s\n' "$1" >> "$PHASE_LOG"; [[ "$1" != "$FAIL_PHASE" ]]; }
-systemctl() { printf 'local_service_action\n' >> "$PHASE_LOG"; }
-complete_install_transaction() { remote_tcad_runtime finish; }
-install_all
-'''
-    completed=subprocess.run(['bash','-c',script,'bash',str(PROJECT/'deploy/install.sh')],
-        capture_output=True,text=True,timeout=10,env={**os.environ,'SCID_WORKSPACE':str(tmp_path),
-            'SCID_TCAD_COMMAND_CONFIG':str(tmp_path/'command.json'),'PHASE_LOG':str(log),'FAIL_PHASE':fail_phase or ''})
-    phases=log.read_text().splitlines()
-    assert (completed.returncode==0)==(fail_phase is None),completed.stderr
-    if fail_phase:
-        assert 'local_service_action' not in phases and 'finish' not in phases
-    else:
-        assert phases.index('prepare')<phases.index('activate')<phases.index('local_service_action')<phases.index('finish')
-
-
 def test_upgrade_adds_configured_cumulative_limit_and_preserves_single_limit(tmp_path):
     module, request, runner, config = setup(tmp_path)
     prior = json.loads(config.read_bytes())

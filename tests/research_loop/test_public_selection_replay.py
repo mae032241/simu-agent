@@ -11,7 +11,7 @@ from scidiscovery.research_loop import guidance, selection
 ROOT=Path(__file__).resolve().parents[2]
 spec=importlib.util.spec_from_file_location('public_selection_replay',ROOT/'scripts/acceptance/rootless_public_selection_replay.py')
 replay=importlib.util.module_from_spec(spec);spec.loader.exec_module(replay)
-FIXTURE=json.loads((ROOT/'docs/plans/fixtures/rootless-selection-actions-v1.json').read_text())
+FIXTURE=json.loads((ROOT/'scripts/acceptance/fixtures/rootless_selection/actions.json').read_text())
 
 
 @pytest.mark.parametrize('case',FIXTURE['cases'],ids=lambda case:case['name'])
@@ -28,12 +28,14 @@ def test_frozen_allowed_actions(case):
     assert case==original
 
 
-def test_a_guidance_is_bounded_conditional_and_scientific():
-    assert sum(len(text.encode()) for text in guidance.DEFAULT.values())<=2048
-    advice=guidance.DEFAULT['A']
-    assert 'If audit action is available' in advice and 'not a final recommendation' in advice
-    assert 'not target evidence' in advice and 'not failed or qualified' in advice
-    assert 'must not force candidate swaps or elimination' in advice
+def test_default_guidance_satisfies_frozen_policy_and_rejects_oversize():
+    assert set(guidance.DEFAULT)==set('HWAE')
+    assert all(isinstance(text,str) and text.strip() for text in guidance.DEFAULT.values())
+    assert sum(len(text.encode()) for text in guidance.DEFAULT.values())<=guidance.MAX_BYTES
+    assert guidance.policy(guidance.DEFAULT)==guidance.DEFAULT
+    oversized=dict(guidance.DEFAULT)
+    oversized['A']+='x'*guidance.MAX_BYTES
+    with pytest.raises(ValueError,match='frozen byte bound'):guidance.policy(oversized)
 
 
 def public_manifest(tmp_path):
@@ -74,3 +76,36 @@ def test_rule_hash_is_checked_before_opening_pool(monkeypatch,tmp_path):
         '--rules-sha256','0'*64,'--output',str(tmp_path/'out')])
     with pytest.raises(ValueError,match='Freeze rule source hash'):replay.main()
     assert not (tmp_path/'out').exists()
+
+
+@pytest.mark.parametrize('case',[
+    'relative_manifest','changed_ledger','symlink_ledger','non_regular_ledger','non_regular_manifest'])
+def test_main_reads_exact_public_originals(monkeypatch,tmp_path,case):
+    manifest=public_manifest(tmp_path)
+    ledger=Path(manifest['groups']['fixture']['instance'])/'runs/results.jsonl'
+    pool=tmp_path/'pool.json';pool.write_text(json.dumps(manifest))
+    error=None
+    if case=='changed_ledger':
+        ledger.write_text(ledger.read_text()+'\n')
+        error='Frozen public ledger changed'
+    elif case=='symlink_ledger':
+        original=ledger.with_suffix('.original.jsonl');ledger.rename(original)
+        ledger.symlink_to(original)
+        error='Exact original public ledger required'
+    elif case=='non_regular_ledger':
+        ledger.unlink();ledger.mkdir()
+        error='Exact original public ledger required'
+    elif case=='non_regular_manifest':
+        pool.unlink();pool.mkdir()
+        error='Exact original pool manifest required'
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr('sys.argv',['replay','--pool-manifest','pool.json',
+        '--rules-sha256',replay.sha(replay.__file__),'--output','out'])
+    if error:
+        with pytest.raises(ValueError,match=error):replay.main()
+        assert not (tmp_path/'out').exists()
+    else:
+        replay.main()
+        report=json.loads((tmp_path/'out/report.json').read_text())
+        assert report['passed'] is True and report['model_requests']==0
+        assert report['candidates']==1 and report['choices_generated']==report['rewards_generated']==0

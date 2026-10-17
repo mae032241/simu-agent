@@ -31,18 +31,6 @@ def test_curve_contract_pair_is_checked_at_admission():
         _curve_contract_context(invalid.model_dump(mode='json'), sources, {})
 
 
-def test_analysis_submission_does_not_requalify_the_bound_package(tmp_path, monkeypatch):
-    from tests.operations.test_tcad_result_analysis import analysis_system, open_analysis, write_analysis, analysis_report
-    import tcad_artifact.project_packager as packager
-    system = analysis_system(tmp_path)
-    worker, opened = open_analysis(system)
-    def forbidden(*args, **kwargs):
-        pytest.fail('record reading reran project qualification')
-    monkeypatch.setattr(packager, 'validate_deck_review_against_project', forbidden)
-    write_analysis(opened, analysis_report())
-    assert worker.call_tool('worker_submit_result', {})['state'] == 'completed'
-
-
 def test_unresolved_figure_retains_source_and_partial_fields_without_recovery():
     from curve_figure_evidence.figure_digitization_contract import FigureDigitizationRequest
     from curve_figure_evidence.figure_digitization_contract import materialize_figure_request
@@ -126,8 +114,6 @@ def test_figure_draft_materializes_recovered_metadata_and_retains_image_choice()
     FigureDigitizationRequest.model_validate_json(canonical_json(result)).require_ready()
 
 
-
-
 def test_runtime_collection_mismatch_is_an_input_failure():
     from tcad_artifact.operation_transforms import runtime_inputs
     from tests.operations.test_tcad_result_analysis import analysis_materials
@@ -150,20 +136,3 @@ def test_execution_package_does_not_reintroduce_optional_review_as_a_gate():
     assert validate_execution_package_json(raw).review.verdict == 'blocked'
     value['review'] = None
     assert validate_execution_package_json(canonical_json(value)).review is None
-
-
-
-
-
-
-def test_actual_finalizer_timeout_is_not_reported_as_checker_failure(tmp_path, monkeypatch):
-    from tests.operations.test_tcad_result_analysis import analysis_system, open_analysis, write_analysis, analysis_report
-    system = analysis_system(tmp_path)
-    worker, opened = open_analysis(system)
-    write_analysis(opened, analysis_report())
-    def timeout(*args, **kwargs):
-        raise TimeoutError('fixture image recovery timeout')
-    runs = system[1].runs
-    monkeypatch.setattr(runs, '_finalize_workspace', timeout)
-    assert worker.call_tool('worker_submit_result', {})['state'] == 'failed'
-    assert runs.diagnostic_summary(runs.status(worker._run_id))['failure']['category'] == 'tool_timeout'

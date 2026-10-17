@@ -2,32 +2,16 @@ from __future__ import annotations
 
 import hashlib
 import sys
-from types import SimpleNamespace
 
 import pytest
 
 from scidiscovery.artifact_agent.schema.execution import LocalFileDescriptor
-from scidiscovery.artifact_agent.service import local_pdf_tool
 
 
 def _descriptor(name, path, media):
     raw = path.read_bytes()
     return LocalFileDescriptor(name=name, local_path=str(path), media_type=media,
                                size_bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest())
-
-
-def test_pdf_stderr_file_keeps_error_outside_display_tail(tmp_path, monkeypatch):
-    raw = b"FIRST ACTIONABLE ERROR\n" + b"trailing noise\n" * 1000
-    monkeypatch.setattr(local_pdf_tool.subprocess, "run", lambda *a, **k:
-                        SimpleNamespace(returncode=1, stdout=b"", stderr=raw))
-    context = SimpleNamespace(workspace=tmp_path, remaining_seconds=60,
-                              input_media_type=lambda _: "application/pdf",
-                              input_path=lambda _: tmp_path / "input.pdf")
-    parsed = SimpleNamespace(name="paper", first_page=1, last_page=None)
-    with pytest.raises(ValueError, match="stderr log"):
-        local_pdf_tool.extract_pdf_text_local(parsed, context)
-    logs = tuple((tmp_path / ".operation-tools/pdf").glob("stderr_*.log"))
-    assert len(logs) == 1 and logs[0].read_bytes() == raw
 
 
 @pytest.mark.parametrize("returncode", [0, 1])

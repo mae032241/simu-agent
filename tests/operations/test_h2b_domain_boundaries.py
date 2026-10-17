@@ -1,10 +1,6 @@
 from __future__ import annotations
 
-import json
-import os
-from pathlib import Path
 
-import pytest
 from curve_score.plugin import PLUGIN as CURVE_PLUGIN
 from curve_figure_evidence.plugin import PLUGIN as FIGURE_PLUGIN
 from curve_score.schema import (
@@ -12,9 +8,6 @@ from curve_score.schema import (
     validate_curve_experiment_contract,
 )
 from scidiscovery.artifact_agent.schema.experiment import ExperimentPortfolio
-from scidiscovery.artifact_agent.interfaces.mcp_root import RootMCPRouter, RootToolFacade
-from scidiscovery.artifact_agent.runtime import open_runtime
-from scidiscovery.artifact_agent.schema.artifact import ArtifactRegistration
 from scidiscovery.artifact_agent.schema.common import canonical_json
 from scidiscovery.builtin_plugin import CORE_PLUGIN
 from scidiscovery.general_science_plugin import PLUGIN as GENERAL_PLUGIN

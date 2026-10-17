@@ -6,12 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
 from scidiscovery.artifact_agent.schema.artifact import ArtifactRegistration
 from scidiscovery.artifact_agent.schema.common import canonical_json
-from tests.operations.test_tcad_result_analysis import (
-    analysis_report, analysis_system, open_analysis, write_analysis,
-)
 
 
 USER_TEXT = "  用户补充：请结合原任务评估这项建议。\r\n保留适用范围与不确定性。𐀀\n "
@@ -54,84 +50,6 @@ def _context_entry(opened, *, origin):
         assert original not in start_raw
     return assignment, original
 
-
-@pytest.mark.parametrize("reuse_worker", [False, True])
-def test_new_and_reused_local_workers_open_new_context_assignment(tmp_path, reuse_worker):
-    system = analysis_system(tmp_path)
-    catalog, runtime, root, request, _, _ = system
-    # Old records without the new marker, or with another origin, are not relabeled
-    # merely because the scheduler binds them through user_context.
-    labels = {"private_annotation": "private-label-marker"}
-    if reuse_worker:
-        labels["source_origin"] = "fixture_import"
-    legacy_text = "旧补充原文：仅作为本轮背景。\n".encode()
-    legacy = runtime.artifacts.register(legacy_text, ArtifactRegistration(
-        kind="source_text", schema_id="opaque", payload_schema_version=1,
-        media_type="text/plain", creator=runtime.actor, labels=labels),
-        idempotency_key="legacy_context")
-    runtime.scheduler_bindings.bind(instance=root.facade.instance, namespace="artifact",
-        name="legacy_context", object_id=legacy.artifact_id)
-    request["inputs"].append(dict(port="user_context", artifact_names=["legacy_context"]))
-    worker, opened = open_analysis(system)
-    _, original = _context_entry(opened, origin=None)
-    assert original == legacy_text
-    old_assignment = Path(opened["assignment_path"]).read_bytes()
-    write_analysis(opened, analysis_report())
-    assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
-    old_status = root.call_tool("run_status", {'name': "analysis", "intent": 'full'})
-
-    registered = root.call_tool("artifact_ingest_text", dict(name="supplement", text=USER_TEXT))
-    following = deepcopy(request)
-    following["name"] = "analysis_with_supplement"
-    next(item for item in following["inputs"] if item["port"] == "user_context")[
-        "artifact_names"] = [registered["name"]]
-    following["inputs"].append(dict(port="current_progress",
-        artifact_names=[old_status["output_artifact_name"]]))
-    checked = root.call_tool("operation_preflight", following)
-    assert checked["admissible"], checked
-    root.call_tool("operation_invoke", following)
-    if not reuse_worker:
-        compiled = catalog.operation(following["operation_id"])
-        worker = LocalWorkerMCPRouter(runtime.runs, operation_id=compiled.spec.operation_id,
-            operation_digest=compiled.digest)
-    new_opened = worker.call_tool("worker_open_assignment", {})
-    assert new_opened["assignment_path"] != opened["assignment_path"]
-    _, original = _context_entry(new_opened, origin="user_via_scheduler")
-    assert original == USER_TEXT.encode("utf-8")
-    assert Path(opened["assignment_path"]).read_bytes() == old_assignment
-    assert runtime.artifacts.read(legacy.ref) == legacy_text
-    write_analysis(new_opened, analysis_report())
-    assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
-    assert root.call_tool("run_status", {'name': "analysis", "intent": 'full'})["sealed_output"] == old_status["sealed_output"]
-
-
-def test_local_assignment_preserves_user_context_original(tmp_path):
-    from blind_csv_plugin.plugin import PLUGIN as BLIND
-    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
-    from tests.operations.test_local_worker_contracts import _system
-
-    # The existing MCP-only fixture isolates assignment transport; production TCAD
-    # analysis still requires its declared native and collection capabilities.
-    author, reviewer = BLIND.operations
-    transport = BLIND.model_copy(update={"operations": (
-        author.model_copy(update={"review": None}), reviewer)})
-    catalog, runtime, _, root = _system(tmp_path, blind_plugin=transport)
-    registered = root.call_tool("artifact_ingest_text", dict(name="supplement", text=USER_TEXT))
-    request = dict(name="context_transport", operation_id="blind.csv.observe.v1",
-        instruction="Read the exact bound originals.", inputs=[
-            dict(port="source_table", artifact_names=["source_csv"]),
-            dict(port="user_context", artifact_names=[registered["name"]])])
-    checked = root.call_tool("operation_preflight", request)
-    assert checked["admissible"], checked
-    root.call_tool("operation_invoke", request)
-    compiled = catalog.operation(request["operation_id"])
-    worker = LocalWorkerMCPRouter(runtime.runs, operation_id=compiled.spec.operation_id,
-        operation_digest=compiled.digest)
-    opened = worker.call_tool("worker_open_assignment", {})
-    assert Path(opened["start_here_path"]).is_file()
-    assignment, original = _context_entry(opened, origin="user_via_scheduler")
-    assert original == USER_TEXT.encode("utf-8")
-    assert set(assignment["tools"]) == {tool["name"] for tool in worker.list_tools()}
 
 def test_full_analysis_index_keeps_original_context_reachable(tmp_path):
     from curve_score.analysis_workspace import _start_file

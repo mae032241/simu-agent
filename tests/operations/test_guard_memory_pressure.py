@@ -103,14 +103,3 @@ def test_guard_process_limits_remain_effective(tmp_path,monkeypatch,scenario):
         assert result['stop_reason']=={'rss':'observed_tree_rss_limit','timeout':'timeout','log':'log_limit'}[scenario]
         assert result['memory_stop_triggers']==[]
         if scenario=='log':assert (tmp_path/'pytest.log').stat().st_size==64
-
-
-
-def test_resource_configuration_is_part_of_acceptance_fingerprint(tmp_path,monkeypatch):
-    from scripts import accept_b6
-    for name in ('test_resources.json','root_host_resources.json'):
-        (tmp_path/name).write_text('{}')
-    monkeypatch.setattr(accept_b6,'SCRIPTS',tmp_path)
-    original=accept_b6.harness_digest()
-    (tmp_path/'test_resources.json').write_text('{"limits":{"timeout_seconds":10}}')
-    assert accept_b6.harness_digest()!=original

@@ -9,25 +9,26 @@ Before publishing a release, verify that it contains none of the following:
 - `/var/lib/scidiscovery` databases or CAS payloads;
 - generated `.codex` configuration;
 - SSH identities, known-host databases, real host/IP data, or VM paths;
-- Sentaurus licenses, proprietary binaries, manuals, or customer decks;
+- Sentaurus licenses, proprietary binaries, or customer decks;
 - research inputs or results that are not approved for disclosure.
 
-The loopback approval UI is designed for a trusted local user and must not be
+Release-matched Sentaurus manuals bundled with the TCAD skill are identified in
+[NOTICE.md](NOTICE.md). Their third-party distribution rights are separate from
+the project's license status.
+
+The loopback instance UI is designed for a trusted local user and must not be
 exposed to an untrusted network without a separate authentication and transport
 security layer.
 
-The default `LocalTrustedBackend` assumes cooperative local Agents and a trusted
-host user. Root/Worker routing uses client-supplied platform metadata: a native
-shell that can reach the control socket can forge Root metadata. The default
-installer runs control, UI and the local TCAD service under the same service UID,
-normally the installing user's UID. A Worker with that UID and filesystem access
-can also read or modify control databases, CAS and the approval receipt secret.
-Separate daemons do not isolate these credentials. A same-UID peer credential or
-a token stored with mode `0600` does not distinguish Root from Worker.
+The thin research CLI assumes cooperative Workers and a trusted host user. The
+installer publishes command wrappers and creates no control/UI/TCAD service, SQL
+state, Root profile or credential. Legacy Root/MCP/UI entrances are retired.
+Instance UI and execution gates bind exact requests, but a Worker with the same
+OS permissions may read or modify instance control files and approval secrets.
+Independent processes, hidden paths and mode `0600` do not isolate same-UID peers.
 
 Binding, qualification, approval and budget gates constrain normal interface use;
-they do not contain a hostile same-UID shell. `SEC-002` remains open. Stronger
-isolation requires an independently trusted launcher to bind caller identity and
+they do not contain a hostile same-UID shell. Stronger isolation requires an independently trusted launcher to bind caller identity and
 an OS/sandbox boundary that denies Workers access to control sockets, state and
 secrets. Existing native sandbox restrictions may narrow access but are not a
 framework guarantee of that boundary.

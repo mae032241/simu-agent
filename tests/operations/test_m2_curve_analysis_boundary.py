@@ -1,49 +1,25 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
 
-from curve_score.analysis import (
-    CurveDiagnosticAnalysisPackage,
-    validate_curve_error_plot_collection,
-)
-from curve_score.curve_contract_compiler import (
-    CURVE_CONTRACT_COMPILER_TOOL,
-    CurveContractCompileInput,
-    compile_curve_contract,
-    validate_compiled_curve_contract,
-)
+from curve_score.curve_contract_compiler import CurveContractCompileInput, compile_curve_contract, validate_compiled_curve_contract
 from curve_score.plugin import PLUGIN as CURVE_PLUGIN
-from curve_score.objective import evaluate_objective_coverage
 from curve_score.schema import (
     CurveBundle,
     CurveExperimentContract,
     evaluate_curve_consistency,
     validate_curve_experiment_contract,
 )
-from curve_score.science_operations import Components, Resources, _validate_diagnosis_against
-from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
-from scidiscovery.artifact_agent.interfaces.mcp_root import RootMCPRouter, RootToolFacade
-from scidiscovery.artifact_agent.operation_tool_context import OperationToolContext
-from scidiscovery.artifact_agent.runtime import open_runtime
+from curve_score.science_operations import _validate_diagnosis_against
 from scidiscovery.artifact_agent.schema.common import canonical_json, canonical_sha256
 from scidiscovery.artifact_agent.schema.experiment import ExperimentPortfolio
 from scidiscovery.artifact_agent.schema.layered_diagnosis import LayeredDiagnosisReport
 from scidiscovery.artifact_agent.schema.research_objective import (
     ResearchObjectiveContract,
 )
-from scidiscovery.artifact_agent.schema.role_result import parse_role_result
-from scidiscovery.artifact_agent.service.local_workspace import LocalTrustedBackend
-from scidiscovery.builtin_plugin import CORE_PLUGIN
-from scidiscovery.general_science_plugin import PLUGIN as GENERAL_PLUGIN
-from scidiscovery.operations.catalog import compile_catalog
-from scidiscovery.operations.tooling import operation_local_worker_tool_names
 from scidiscovery.operation_contract import SemanticRuleViolation
-
-
 
 
 def _plan() -> ExperimentPortfolio:
@@ -831,8 +807,6 @@ def test_curve_contract_compiler_respects_exclusions_without_valid_intervals() -
     ) == ((0.0, 0.4, 2), (0.6, 1.0, 2))
 
 
-
-
 @pytest.mark.parametrize(
     ("defect", "message"),
     (
@@ -909,8 +883,6 @@ def test_curve_contract_without_eligible_checks_rejects_explicit_check_bindings(
                    for comparison in contract.comparison_spec.comparisons for operator in comparison.operators)
 
 
-
-
 def test_legacy_curve_diagnosis_accepts_exact_partial_curve_coverage() -> None:
     plan = _plan_with_non_curve_check()
     contract = _contract()
@@ -934,36 +906,6 @@ def test_legacy_curve_diagnosis_does_not_derive_verdict_from_uncovered_checks() 
     )
     _validate_diagnosis_against(_passing_diagnosis(), plan, contract, report)
     assert report.covered_validation_check_keys == ("profile_rms",)
-
-
-def _root(tmp_path: Path):
-    catalog = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN))
-    project = tmp_path / "project"
-    project.mkdir()
-    runtime = open_runtime(
-        project_root=project,
-        state_root=tmp_path / "state",
-        worker_backend="local",
-    )
-    runtime.runs.operation_catalog = catalog
-    instance = runtime.scheduler_bindings.create_instance(
-        name="curve_analysis_boundary",
-        title="Curve analysis boundary",
-        objective="Separate deterministic curve analysis from scientific diagnosis.",
-    )
-    root = RootMCPRouter(
-        RootToolFacade(
-            runtime.artifacts,
-            runtime.intake,
-            runs=runtime.runs,
-            approvals=runtime.approvals,
-            executions=runtime.executions,
-            bindings=runtime.scheduler_bindings,
-            instance=instance.instance_id,
-            operation_catalog=catalog,
-        )
-    )
-    return catalog, runtime, instance, root
 
 
 def test_obsolete_curve_analysis_worker_tool_is_removed() -> None:

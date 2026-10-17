@@ -1,31 +1,26 @@
-# SciDiscovery 文档入口
+# SciDiscovery 文档 / Documentation
 
-- 原生模型测试执行者：[复用已验证的启动路径](NATIVE_TRIAL_LAUNCH.zh-CN.md)。
+当前应用由 `scid-research`、`scid-experiment` 与显式启动的实例 UI 提供。
+科学 Worker 负责结论，控制层负责精确身份、冻结输入、预算和授权。
+Current references describe the supported commands, reusable contracts and their limits.
 
-MCP 服务行为以编译合同为准；薄科研 CLI 以其冻结实例配置、角色协议和 CLI 文档为准。验证结论必须绑定具体源码与环境；历史通过记录不自动证明当前部署或科学模型有效。
-
-| 用途 | 文档 |
+| 用途 / Purpose | 当前文档 / Current reference |
 | --- | --- |
-| 薄 H/W/A/E CLI 与受管实验 | [当前入口及支持边界](ROOTLESS_CLI.zh-CN.md)；与 MCP 服务能力尚未统一 |
-| MCP 服务架构与责任边界 | [中文](ARCHITECTURE.zh-CN.md) · [English](ARCHITECTURE.md) |
-| 设计原则与待复核约束 | [设计宪章](architecture/SCIENTIFIC_AGENT_DESIGN_CHARTER.zh-CN.md) · [约束登记](architecture/SCIENTIFIC_AGENT_CONSTRAINTS.yaml) |
-| 安装 | [中文](INSTALL.zh-CN.md) · [English](INSTALL.md) |
-| 发布与验证边界 | [中文](RELEASE.zh-CN.md) · [English](RELEASE.md) |
-| 插件接口 | [Plugin runtime API](PLUGIN_RUNTIME_API.md) |
-| Worker 文件交付 | [角色结果 JSON 协议](role-result-json-protocol-v1.md) |
-| TCAD 执行与调试 | [传输合同](tcad_transport_contract.md) · [插件说明](../plugins/tcad_artifact/README.zh-CN.md) |
-| 图证据与评分 | [图插件](../plugins/curve_figure_evidence/README.zh-CN.md) · [评分插件](../plugins/curve_score/README.zh-CN.md) |
-| 后续工作 | [当前待办](plans/README.md) |
+| 开始使用 / Getting started | [中文 README](../README.zh-CN.md) · [English README](../README.md) |
+| 运行、结果、批准与恢复 / CLI, results, approval and recovery | [CLI 指南](ROOTLESS_CLI.zh-CN.md) |
+| 控制层架构 / Architecture | [中文](ARCHITECTURE.zh-CN.md) · [English](ARCHITECTURE.md) |
+| 安装与卸载 / Installation | [中文](INSTALL.zh-CN.md) · [English](INSTALL.md) |
+| 发布与验证范围 / Publication and validation scope | [中文](RELEASE.zh-CN.md) · [English](RELEASE.md) |
+| 安全与信任 / Security and trust | [Security](../SECURITY.md) |
+| 插件与共享合同 / Plugins and shared contracts | [Plugin API](PLUGIN_RUNTIME_API.md) · [角色输出 / Role output](role-result-json-protocol-v1.md) |
+| TCAD 执行 / TCAD execution | [传输合同 / Transport](tcad_transport_contract.md) · [中文插件说明](../plugins/tcad_artifact/README.zh-CN.md) · [English plugin reference](../plugins/tcad_artifact/README.md) |
+| TCAD 资格边界 / TCAD qualification limits | [中文](TCAD_QUALIFICATION_STATUS.zh-CN.md) · [English](TCAD_QUALIFICATION_STATUS.md) |
+| 图证据 / Figure evidence | [中文](../plugins/curve_figure_evidence/README.zh-CN.md) · [English](../plugins/curve_figure_evidence/README.md) |
+| 曲线评分 / Curve analysis | [中文](../plugins/curve_score/README.zh-CN.md) · [English](../plugins/curve_score/README.md) |
+| 原生试验准备 / Native trial preparation | [启动与资源指南](NATIVE_TRIAL_LAUNCH.zh-CN.md) |
+| 源码检查 / Source checks | [测试分组](../tests/README.md) · [Contributing](../CONTRIBUTING.md) |
 
-## 有独立价值的研究与资格记录
-
-- [TCAD 历史资格记录（中文）](TCAD_QUALIFICATION_STATUS.zh-CN.md) / [English](TCAD_QUALIFICATION_STATUS.md)：仅适用于记录时的候选与环境。
-- [论文图证据资格记录](SCIENTIFIC_PAPER_EVIDENCE_QUALIFICATION.zh-CN.md)：结论限于声明的样本与实现。
-- [Fig.4 模型评估](FIG4_DIFFUSION_MODEL_ASSESSMENT_2026-09-14.zh-CN.md)：保留模型适用性讨论及其直接引用的两份原始快照，不作为新执行授权。
-
-## 历史材料
-
-此前一轮清理移除了当时的实施流水和重复材料；后来保留的 `plans/evidence/` 是绑定具体版本的审查与验收记录，不是现行协议。当前工作入口见 `plans/README.md`，不能把历史 PASS 当作当前全库通过。
-清理前完整树为 `5a90f3fa33135c8b151a547e2eceed0d102eea95`，可用
-`git show 5a90f3f:docs/plans/HISTORY.md` 查旧索引，再按原路径读取具体记录。
-删除过程文件不表示其中未关闭问题已经解决。未来原始验收输出写入仓库外，当前文档只保留结论、候选身份、验证范围和必要引用。
+计划、审计、阶段验收、交接和旧规范快照是本地维护资料，不定义现行功能，也不随源码发布。
+资格结论必须绑定精确实现、原件和环境；历史通过记录不授予当前实现资格。
+Plans, audits, handoffs and superseded snapshots remain local working records.
+Qualification applies only to its exact implementation, original inputs and environment.

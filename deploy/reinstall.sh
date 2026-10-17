@@ -2,124 +2,30 @@
 set -Eeuo pipefail
 
 readonly SOURCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-readonly DEPLOY_MODE="${SCID_DEPLOY_MODE:-thin}"
-readonly WORKSPACE="${SCID_WORKSPACE:-${SOURCE_ROOT}/workspace/default}"
-readonly CODEX_LAUNCH_ROOT="${SCID_CODEX_LAUNCH_ROOT:-}"
-readonly PYTHON="${SCID_PYTHON:-$(command -v python3 || true)}"
-readonly CODEX_EXECUTABLE="${SCID_CODEX_EXECUTABLE:-$(command -v codex || true)}"
-readonly SERVICE_USER="${SCID_SERVICE_USER:-$(id -un)}"
-readonly SERVICE_GROUP="${SCID_SERVICE_GROUP:-$(id -gn)}"
-readonly PLATFORM="${SCID_PLATFORM:-codex}"
-readonly WORKER_BACKEND="${SCID_WORKER_BACKEND:-local}"
-readonly PLUGINS="${SCID_PLUGINS:-}"
-readonly COMMAND_CONFIG="${SCID_TCAD_COMMAND_CONFIG:-}"
-readonly REMOTE_RUNNER_CONFIG="${SCID_REMOTE_RUNNER_CONFIG:-}"
-if [[ "$DEPLOY_MODE" == thin ]]; then
-    DEFAULT_INSTALL_ROOT=/opt/scidiscovery-thin
-    DEFAULT_BACKUP_ROOT=/var/backups/scidiscovery-thin
-else
-    DEFAULT_INSTALL_ROOT=/opt/scidiscovery
-    DEFAULT_BACKUP_ROOT=/var/backups/scidiscovery
-fi
-readonly INSTALL_ROOT="${SCID_INSTALL_ROOT:-$DEFAULT_INSTALL_ROOT}"
-readonly STATE_ROOT="${SCID_STATE_ROOT:-/var/lib/scidiscovery}"
-readonly TCAD_STATE_ROOT_VALUE="${TCAD_STATE_ROOT:-${STATE_ROOT}/tcad}"
-readonly CONFIG_ROOT="${SCID_CONFIG_ROOT:-/etc/scidiscovery}"
-readonly BACKUP_ROOT="${SCID_BACKUP_ROOT:-$DEFAULT_BACKUP_ROOT}"
-readonly APPROVAL_PORT="${SCID_APPROVAL_PORT:-8765}"
-readonly CODEX_SKILL_ROOT="${SCID_CODEX_SKILL_ROOT:-}"
-readonly CLI_ROOT="${SCID_BIN_ROOT:-/usr/local/bin}"
 readonly MODE="${1:-install}"
-
-die() {
-    printf 'ERROR: %s\n' "$*" >&2
+[[ "$#" -le 1 ]] || { printf 'Usage: %s [--dry-run|install|reinstall|status]\n' "${0##*/}" >&2; exit 2; }
+if [[ "${SCID_DEPLOY_MODE:-thin}" != thin ]]; then
+    printf 'ERROR: legacy service deployment is retired; use the thin CLI.\n' >&2
+    exit 2
+fi
+case "$MODE" in
+    status|--dry-run) exec "$SOURCE_ROOT/deploy/install.sh" "$MODE" ;;
+    install|reinstall) ;;
+    *) printf 'Usage: %s [--dry-run|install|reinstall|status]\n' "${0##*/}" >&2; exit 2 ;;
+esac
+[[ "$(id -u)" -ne 0 ]] || {
+    printf 'ERROR: run this wrapper as the operator; it invokes sudo itself.\n' >&2
     exit 1
 }
-
-validate_worker_backend() {
-    [[ "$WORKER_BACKEND" != "hardened" ]] || die "hardened Worker backend has been retired; finish or archive existing runs on the previous release, then explicitly configure local and regenerate profiles. Local retains native permissions; migration is not automatic."
-    [[ "$WORKER_BACKEND" == "local" ]] || die "SCID_WORKER_BACKEND must be local"
+command -v sudo >/dev/null || { printf 'ERROR: sudo is unavailable.\n' >&2; exit 1; }
+readonly PYTHON="${SCID_PYTHON:-$(command -v python3 || true)}"
+[[ "$PYTHON" = /* && -x "$PYTHON" ]] || {
+    printf 'ERROR: SCID_PYTHON must resolve to an executable absolute path.\n' >&2
+    exit 1
 }
-
-usage() {
-    printf 'Usage: %s [--dry-run|install|reinstall|status]\n' "${0##*/}" >&2
-}
-
-[[ "$#" -le 1 ]] || { usage; exit 2; }
-[[ "$DEPLOY_MODE" == thin || "$DEPLOY_MODE" == legacy ]] || die "SCID_DEPLOY_MODE must be thin or legacy"
-case "$MODE" in
-    status)
-        exec "$SOURCE_ROOT/deploy/install.sh" status
-        ;;
-    --dry-run|install|reinstall) ;;
-    *) usage; exit 2 ;;
-esac
-
-if [[ "$DEPLOY_MODE" == legacy ]]; then
-    validate_worker_backend
-    [[ -d "$WORKSPACE" && ! -L "$WORKSPACE" ]] || \
-        die "workspace not found: ${WORKSPACE}; set SCID_WORKSPACE"
-    [[ -n "$PYTHON" && -x "$PYTHON" ]] || die "base Python not found: ${PYTHON}"
-    if [[ -n "$COMMAND_CONFIG" ]]; then
-        [[ -f "$COMMAND_CONFIG" && ! -L "$COMMAND_CONFIG" ]] || \
-            die "TCAD command adapter config not found: ${COMMAND_CONFIG}"
-    fi
-    if [[ -n "$REMOTE_RUNNER_CONFIG" ]]; then
-        [[ -f "$REMOTE_RUNNER_CONFIG" && ! -L "$REMOTE_RUNNER_CONFIG" ]] || \
-            die "remote runner configuration must be a regular file"
-    fi
-fi
-[[ -n "$PYTHON" && -x "$PYTHON" ]] || die "base Python not found: ${PYTHON}"
-if [[ "$MODE" != "--dry-run" ]]; then
-    [[ "$(id -u)" -ne 0 ]] || \
-        die "run this wrapper as the service user; it invokes sudo itself"
-    command -v sudo >/dev/null || die "sudo is unavailable"
-fi
-
-printf '%s\n' \
-    "Deployment mode: ${DEPLOY_MODE}" \
-    "Source: ${SOURCE_ROOT}" \
-    "Workspace: ${WORKSPACE}" \
-    "Codex launch root: ${CODEX_LAUNCH_ROOT:-source/workspace only}" \
-    "Python: ${PYTHON}" \
-    "Platform: ${PLATFORM}" \
-    "Worker backend: ${WORKER_BACKEND}" \
-    "Plugins: ${PLUGINS}" \
-    "TCAD adapter: ${COMMAND_CONFIG:-local socket}"
-
-declare -a INSTALL_ENV=(
-    "SCID_DEPLOY_MODE=${DEPLOY_MODE}"
-    "SCID_BIN_ROOT=${CLI_ROOT}"
-    "SCID_WORKSPACE=${WORKSPACE}"
-    "SCID_PYTHON=${PYTHON}"
-    "SCID_CODEX_EXECUTABLE=${CODEX_EXECUTABLE}"
-    "SCID_SERVICE_USER=${SERVICE_USER}"
-    "SCID_SERVICE_GROUP=${SERVICE_GROUP}"
-    "SCID_PLATFORM=${PLATFORM}"
-    "SCID_WORKER_BACKEND=${WORKER_BACKEND}"
-    "SCID_PLUGINS=${PLUGINS}"
-    "SCID_INSTALL_ROOT=${INSTALL_ROOT}"
-    "SCID_STATE_ROOT=${STATE_ROOT}"
-    "TCAD_STATE_ROOT=${TCAD_STATE_ROOT_VALUE}"
-    "SCID_CONFIG_ROOT=${CONFIG_ROOT}"
-    "SCID_BACKUP_ROOT=${BACKUP_ROOT}"
-    "SCID_APPROVAL_PORT=${APPROVAL_PORT}"
-)
-if [[ -n "$COMMAND_CONFIG" ]]; then
-    INSTALL_ENV+=("SCID_TCAD_COMMAND_CONFIG=${COMMAND_CONFIG}")
-fi
-if [[ -n "$REMOTE_RUNNER_CONFIG" ]]; then
-    INSTALL_ENV+=("SCID_REMOTE_RUNNER_CONFIG=${REMOTE_RUNNER_CONFIG}")
-fi
-if [[ -n "$CODEX_SKILL_ROOT" ]]; then
-    INSTALL_ENV+=("SCID_CODEX_SKILL_ROOT=${CODEX_SKILL_ROOT}")
-fi
-if [[ -n "$CODEX_LAUNCH_ROOT" ]]; then
-    INSTALL_ENV+=("SCID_CODEX_LAUNCH_ROOT=${CODEX_LAUNCH_ROOT}")
-fi
-readonly -a INSTALL_ENV
-
-if [[ "$MODE" == "--dry-run" ]]; then
-    exec env "${INSTALL_ENV[@]}" "$SOURCE_ROOT/deploy/install.sh" --dry-run
-fi
+# Pass only the supported installer settings, never the whole login environment.
+declare -a INSTALL_ENV=("SCID_PYTHON=$PYTHON")
+for name in SCID_BIN_ROOT SCID_PLUGINS SCID_INSTALL_ROOT SCID_BACKUP_ROOT; do
+    [[ ! -v "$name" ]] || INSTALL_ENV+=("$name=${!name}")
+done
 exec sudo env "${INSTALL_ENV[@]}" "$SOURCE_ROOT/deploy/install.sh" install

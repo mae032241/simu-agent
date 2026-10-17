@@ -14,7 +14,6 @@ from importlib.metadata import distribution
 from pathlib import Path
 
 
-
 @dataclass(frozen=True)
 class InstalledEnvironment:
     python: Path
@@ -114,7 +113,7 @@ def _candidate_creator(repository: Path, root: Path):
                 stage.mkdir(parents=True)
                 for relative in ("pyproject.toml", "README.md"):
                     shutil.copy2(source / relative, stage / relative)
-                for relative in ("src", "roles", "deploy/systemd"):
+                for relative in ("src",):
                     shutil.copytree(source / relative, stage / relative, ignore=ignored)
             else:
                 shutil.copytree(source, stage, ignore=ignored)

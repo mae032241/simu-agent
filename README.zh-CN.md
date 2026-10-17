@@ -2,152 +2,61 @@
 
 简体中文 | [English](README.md)
 
-SciDiscovery 是面向 Codex 的科学发现编排服务。它将科学推理、
-不可变证据、人工审批、确定性变换和外部仿真执行相互分离。仓库内的 TCAD 插件
-可以管理经过独立审查的 Synopsys Sentaurus 工程，同时避免把 VM、SSH、许可证和
-作业生命周期混入科学 Agent 的职责。
+SciDiscovery 是面向 Codex 的科研框架。它围绕明确目标与冻结输入运行原生 H/W/A/E
+线程，提供有限共享预算、科学结果封存及原调用恢复。科学 Worker 负责模型选择与结论；
+确定性控制负责身份、输入绑定、资格校验、预算和执行权限。
 
-当前版本是工程原型。一次任务运行成功，只能支持实验与验证合同中明确声明的结论。
+当前是工程原型。命令或求解器运行成功，只支持其精确输入、实验和验证合同实际建立的结论。
 
-## 入口与适用范围
+## 可以做什么
 
-- **薄科研 CLI：** `scid-research` 无 Root 模型运行 H/W/A/E，`scid-experiment` 记录受管实验。本地执行、可选适配器、恢复与交付限制见 [CLI 合同](docs/ROOTLESS_CLI.zh-CN.md)。
-- **MCP 服务：** `scid` 保留下文的调度器、daemon、审批 UI 和现有 TCAD 插件路径。这些能力尚未全部迁入薄 CLI；安装 MCP 插件不会自动注册 CLI 执行适配器。
-
-新项目默认使用薄 CLI，旧服务部署须显式选择。两个入口目前都随包发布，协议、持久化和验证证据各有范围；不能仅因存在另一入口就判定相关测试过时。下文架构说明保留旧 MCP 服务范围；快速安装使用薄 CLI。
-
-## 设计目标
-
-长程科学任务不应由单个对话 Agent 同时记忆论文事实、产生假设、编写仿真代码、
-管理作业并审查自己的结论。SciDiscovery 将这些职责拆开：
-
-1. **信息解析**生成有来源、范围受限的科学基础资料。
-2. **科学角色**分别负责假设、批判、证据审计、实验设计和结果诊断。
-3. **领域作者与审查者**生成并独立审查可执行工程。
-4. **确定性代码**负责 Schema 校验、补丁应用、工程 diff、打包和结果注册。
-5. **控制面**负责上下文隔离、不可变记录、最小 Run 生命周期以及精确的人工审批。
-6. **执行适配器**只执行已经授权的外部副作用。
-
-主 Agent 只负责调度。科学内容来自具有明确边界的角色 Worker；身份和生命周期状态
-始终由控制面管理。
-
-## 工程组成
-
-| 目录 | 职责 |
+| 入口 | 用途 |
 | --- | --- |
-| `src/scidiscovery/` | 通用 Artifact、调度、审批、MCP、Worker 协议、Schema、平台生成器和执行桥 |
-| `roles/` | 交互式根调度器提示；科学 Worker 角色由插件中的 OperationSpec 编译生成 |
-| `plugins/tcad_artifact/` | TCAD 工程 Schema、作者/审查角色、确定性打包器、执行策略、SSH 通道和 VM Runner |
-| `plugins/curve_score/` | 曲线契约、规范曲线、确定性校验、一致性评分与诊断 |
-| `plugins/curve_figure_evidence/` | 可选论文曲线图证据提取/审查入口；复用曲线插件的确定性算法 |
-| `skills/sentaurus-tcad-code/` | SProcess/SDevice 代码规范、精确版本用户手册 reference、有界检索与静态校验 |
-| `deploy/` | Linux/WSL systemd 安装和远端 Runner 部署 |
-| `tests/` | 单元、故障注入、并发、平台、MCP 和闭环测试 |
+| `scid-research` | 准备实例，运行、查看、暂停和继续研究，收束并导出结果。 |
+| `scid-research serve-ui` | 显式启动一个实例的页面，提供实例控制和封存结果分页。 |
+| `scid-research archive-*` / `checkpoint-*` | 导出和核验原件、恢复指定材料，或执行限定的同宿主冷迁移。 |
+| `scid-experiment` | 使用受管本地实验或声明的领域执行接口。 |
 
-安装器在框架根目录生成的 `.codex` 和 `AGENTS.md`、socket、数据库、审批记录、
-研究数据、Solver 输出和凭据都是运行时信息，不属于源码。
+可选 TCAD adapter 通过有界传输提供 detached solver 执行；曲线插件提供确定性评分和论文图
+证据能力。安装插件只注册其声明能力，不提供 solver、许可证或科学资格。插件声明也可按
+[Plugin API](docs/PLUGIN_RUNTIME_API.md)作为库使用。
 
-## 总体架构
+## 安装与开始使用
 
-```text
-用户
-  |  本地审批网页
-  v
-Codex 主调度 Agent
-  |  Root MCP（只使用语义名称）
-  v
-SciDiscovery 控制面
-  |-- 不可变 Artifact 与来源关系
-  |-- ResearchInstance 绑定
-  |-- Run、current 与受限 Operation 上下文
-  |-- 审批与执行状态
-  |
-  +--> 编译 Operation --> 科学角色 Agent --> 校验并封存的文件结果
-  |
-  +--> 确定性变换 --> 审查包 / diff / 指标
-  |
-  +--> 执行桥 --> TCAD 适配器 --> 本地或远端仿真器
-                                  |
-                                  +--> 终态记录与输出文件
-```
+提供 Python 3.10+ 和 [pyproject.toml](pyproject.toml) 声明的运行、构建依赖，离线安装应用：
 
-依赖关系只表示输入是否就绪，不构成固定流程图。主调度器应依据当前科学矛盾选择
-最短且可辩护的角色拓扑。
-
-科研保留假设形成、实验和结果分析节点。原题可以直接交给假设 Worker，由其承担科学理解
-和可检验假设；Root 判断证据提取或检索是否有价值，不强制 intake 或外部搜索。实验必须绑定精确封存的非空假设组合，围绕该
-有界科学问题完成设计、实现、执行和有效性判断，再由独立的结果分析任务解释观察。
-已有证据与科学对象充分时直接复用，缺材料时准备，不要求每轮重新 intake 或独立审查。
-控制层拒绝缺少上游假设的实验任务和新的远端执行请求。原生 shell 仍采用软权限边界，
-一般分析计算可以继续。关键信息缺失或环境不可用时明确交付 blocked 或 inconclusive。
-
-详细说明见[架构文档](docs/ARCHITECTURE.zh-CN.md)。
-
-## 快速安装
-
-新项目默认使用薄 CLI。先提供 Python 3.10+ 和 [pyproject.toml](pyproject.toml)
-声明的应用依赖，再离线安装本仓库应用：
-
-```bash
-SCID_PYTHON="$(command -v python3)" deploy/install.sh --dry-run
-sudo SCID_PYTHON="$(command -v python3)" deploy/install.sh install
+```sh
+SCID_PYTHON=/absolute/python deploy/install.sh --dry-run
+sudo SCID_PYTHON=/absolute/python deploy/install.sh install
 scid-research --help
 ```
 
-默认 `SCID_DEPLOY_MODE=thin` 从全新 `/opt/scidiscovery-thin/site` 发布
-`scid-research`、`scid-experiment`；不创建科研实例、预算、数据库、Root 配置、
-daemon 或 systemd 服务。按 [CLI 合同](docs/ROOTLESS_CLI.zh-CN.md)明确指定原文、
-实例目录和有限预算后才运行。可选页面仍是同一实例的 `scid-research serve-ui`，
-安装不自动开展科研。
+安装发布 `scid-research`、`scid-experiment`，要求使用新安装前缀。通过 `SCID_PLUGINS`
+明确选择可选插件；依赖、路径设置与卸载见[安装指南](docs/INSTALL.zh-CN.md)。
 
-已有应用 site 目录或薄命令 wrapper 会明确拒绝覆盖；旧服务、SQL、配置和 `scid` 不变。
-旧服务安装必须显式 `SCID_DEPLOY_MODE=legacy`，其依赖、升级限制与旧资料入口见
-[中文安装教程](docs/INSTALL.zh-CN.md)及 [Installation](docs/INSTALL.md)。
-首版薄部署不提供自动就地升级、SQL 迁移或重建可推进副本的完整灾备恢复。
+开始研究时，为新实例提供目标文件、公开输入、明确的原生 launcher，以及有限的 token、
+时间和步数上限，再运行和查看该精确实例。[CLI 指南](docs/ROOTLESS_CLI.zh-CN.md)
+包含命令、策略示例、结果读取与恢复规则。执行另需冻结配置及授权；科研预算、独立审查和
+用户陈述均不授予执行权限。
 
-## TCAD 边界
+## 文档与开发
 
-本工程不分发 Sentaurus、许可证、专有说明书或虚拟机。TCAD 插件接收已经审查的
-`DeckProject`，生成受限作业包，并调用白名单工具配置。远端 VM 场景中，SSH 仅
-执行短时的上传、提交、状态、取消和收集操作；VM Runner 负责后台进程和持久终态
-标记。
+[文档入口](docs/README.md) · [当前架构](docs/ARCHITECTURE.zh-CN.md) ·
+[发布范围](docs/RELEASE.zh-CN.md) · [安全边界](SECURITY.md) · [贡献指南](CONTRIBUTING.md)
 
-机器相关路径应写入 `plugins/tcad_artifact/config/` 示例文件的本地副本，并安装到
-`/etc/scidiscovery`。私钥、许可证、实际 IP 和服务密钥不得提交到 Git。
+现行控制器位于 `src/scidiscovery/research_loop/`，领域算法、合同与 adapter 位于 `plugins/`。
+按[测试分组](tests/README.md)串行、受监督运行精确目标；功能测试不构建或安装包。
+`scripts/build_git_release.py` 从显式选择的源码、当前参考文档、工具和功能 fixture
+生成源码包及逐文件 SHA256 manifest。
 
-## 开发测试
+开发计划、审计、交接与试验输出作为本地工作资料保存，不进入长期源码跟踪或源码发布。
+当前用法和行为由代码及当前参考文档定义。
 
-```bash
-python3 -m pip install -e '.[test]'
-python3 -m pip install -e plugins/tcad_artifact
-python3 -m pip install -e plugins/curve_score
-python3 -m pip install -e plugins/curve_figure_evidence  # 可选自动图提取；离线依赖见安装教程
-python scripts/run_tests.py --lane source --per-file --output /tmp/scid-source
-```
+## 支持边界
 
-安装层、进程层和资源限额见[测试运行说明](tests/README.md)。
+当前信任 Worker 与宿主同权限进程，控制层属于软边界。浏览器、真实原生线程续接、TCAD
+solver 和实际掉电恢复需要精确候选及环境的证据；源码测试不能建立这些资格。
+跨宿主完整灾备不在支持范围。冻结实例保留原实现身份；未知外部提交须先按原调用身份核对。
 
-发布前必须运行 hermetic 测试。真实平台和真实 Solver 测试依赖外部配置，不能由
-单元测试通过来替代。
-
-## 生成干净 Git 仓库
-
-发布脚本只复制源码边界，清理缓存和构建产物，扫描机器信息，生成 SHA-256 清单，
-并可初始化新 Git 仓库：
-
-```bash
-python3 scripts/build_git_release.py \
-  --output dist/scidiscovery-agent \
-  --init-git
-```
-
-添加远端前应人工检查输出。脚本会排除研究数据库、仿真结果、论文 PDF、VM 数据、
-生成的平台配置和凭据。
-
-## 当前限制
-
-- 审批网页和生产 TCAD 能力仍需在目标设备上做部署验证；当前工程/真实资格边界见
-  [TCAD 资格状态](docs/TCAD_QUALIFICATION_STATUS.zh-CN.md)。
-- 框架可以验证证据和实现合同，但不能令缺乏依据的物理模型自动变得正确。
-- 当前基线只支持 Codex。
-- 当前源码未指定软件许可证；公开发布前必须由项目所有者选择并加入许可证。
+受支持的应用入口为上述两个命令。旧 `scid`、Root/MCP 应用、平台角色生成及 legacy systemd
+应用安装不可用。分发源码包前，按[分发声明](NOTICE.md)核对软件许可和随附参考资料限制。

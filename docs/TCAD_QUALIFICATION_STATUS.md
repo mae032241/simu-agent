@@ -2,40 +2,50 @@
 
 English | [简体中文](TCAD_QUALIFICATION_STATUS.zh-CN.md)
 
-Recorded on 2026-08-08.
+This page owns the current TCAD qualification boundary. The [architecture](ARCHITECTURE.md)
+owns control responsibilities; the [transport contract](tcad_transport_contract.md)
+owns domain execution and collection behavior.
 
-## Completed engineering qualification
+## Implemented engineering scope
 
-- Hermetic suite: `322 passed`.
-- Unit conversion, unified claim projection, reviewed-package v2, and solver
-  capability drift rejection.
-- Case realization/execution DAGs, control-owned snapshot materialization, and
-  control-equivalence comparison.
-- Digest-, size-, media-type-, target-path-, and byte-exact validation for
-  ArtifactRef-bound binary inputs.
-- Column, row-count, and finite-value gates for synthetic PLX/PLT text fixtures;
-  empty, truncated, non-finite, and descriptor-substituted inputs fail closed.
-- Install transaction rollback coverage for the site, launchers, systemd units,
-  configuration, platform skills, and SQLite state.
+The thin research loop can freeze a selected TCAD managed execution interface,
+retain exact prepared inputs and collected originals, request independent review
+of an exact subject, bind execution permission and account for finite resources.
+Optional native implementation compilation supplies nonempty input chains.
+Self-contained V2 packages and declared observer sources can contribute verified
+input bindings and authorship within their frozen declared scope. Missing or
+incomplete source declarations retain uncertainty; they do not establish that
+arbitrary native or solver file reads are closed.
 
-These results qualify schemas, deterministic transforms, state machines, and
-license-free fixtures. They do not qualify Synopsys Sentaurus or a physical
-model.
+Focused source, synthetic-process and loopback HTTP checks cover selected binding,
+review, budget, original-call recovery and collection paths. They do not qualify
+all combinations, installed solver behavior, physical models or scientific claims.
+Removing the old Run/SQL host and checking wheel/source packaging adds no solver
+qualification.
 
-## Outstanding live qualification
+## Live qualification remains unestablished
 
-This host exposes neither an `sprocess` nor an `sdevice` executable. No license,
-administrator-qualified release capability, or external real PLX/PLT/TDR/log
-qualification bundle was supplied. Consequently:
+The current qualification record does not establish a real Sentaurus SProcess or
+SDevice execution/collection/parser loop, a qualified TDR metadata provider, or a
+Fig.4 scientific claim. This is an evidence boundary, not a current probe of this
+host's executables, licenses or remote runners. Mock outputs, synthetic PLX/PLT
+fixtures, historical solver results and passing engineering test counts cannot
+establish those qualifications.
 
-- the approved real SProcess execution/collection/parser loop is
-  `unqualified / capability unavailable`;
-- real SDevice and a TDR metadata provider are
-  `unqualified / capability unavailable`;
-- no Fig.4 or other scientific claim may be accepted from mock/fixture tests.
+Promotion requires evidence bound to the exact candidate and controlled runner:
 
-The release gate must bind an exact `SolverCapability` on a controlled runner,
-complete one human-approved real SProcess smoke, and retain input/output
-digests, release evidence, and parser results. SDevice may be promoted only
-when a license, a real TDR fixture, and a qualified metadata provider are all
-available.
+- Provide a usable solver license and freeze the solver capability, release evidence,
+  approved executable/arguments,
+  environment and exact input package; reject capability drift before execution.
+- Complete an authorized real SProcess smoke through execution, collection and
+  parsing. Retain input/output digests, original logs, release and parser evidence,
+  failures, limitations and the independent review required by the selected contract.
+- Qualify SDevice separately with a usable license, real TDR evidence and a qualified
+  metadata provider. SProcess success does not supply this qualification.
+- Assess any physical-model or figure claim from the exact scientific evidence and
+  its applicability conditions; execution success and parser acceptance alone do
+  not establish scientific correctness.
+
+Execution permission follows the frozen policy or exact human decision. Scientific
+review, solver qualification and execution authorization remain separate. The
+[release scope](RELEASE.md) describes other unqualified deployment and recovery paths.

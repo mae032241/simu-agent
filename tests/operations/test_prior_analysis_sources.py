@@ -103,8 +103,6 @@ def test_wrong_pair_never_falls_back_or_matches_only_digest(defect, legacy):
     assert expected in message
 
 
-
-
 @pytest.mark.parametrize("defect", ["explicit_empty_bindings", "incomplete_identity", "missing_alias"])
 def test_legacy_records_cannot_supply_a_missing_or_overridden_identity(defect):
     contents, descriptors = bindings(legacy=True)
@@ -145,8 +143,8 @@ def test_shared_original_recovery_uses_frozen_port_not_alias_order(legacy):
 
 
 def test_recovered_calculation_resolves_shared_original_by_receipt_port():
-    from scidiscovery.artifact_agent.service.calculation_proof import ControlledCalculationRecord
-    from scidiscovery.artifact_agent.service.tool_evidence import calculation_sources
+    from scidiscovery.operations.calculation_proof import ControlledCalculationRecord
+    from scidiscovery.operations.calculation_proof import calculation_sources
     contents, descriptors = bindings()
     original = descriptors["new_curve"]
     record = ControlledCalculationRecord(record_key="interrupted", request={}, algorithm_version="fixture-v1",

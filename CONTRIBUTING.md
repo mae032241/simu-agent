@@ -9,13 +9,14 @@
   to unreleased `dev` features stay on `dev`. / 影响 main 的缺陷先在 main 修复，再同步到 dev；仅涉及 dev 未发布功能的问题在 dev 修复。
 - Keep unrelated feature changes out of routine bug-fix synchronization. / 日常修复同步不得将无关新功能带入 main。
 
-1. Keep generic control-plane changes separate from domain plugins.
+1. Keep research control changes separate from domain algorithms and adapters.
+   Preserve exact input/implementation identities, consumed budgets and original-call recovery.
 2. Do not place control identifiers or lifecycle fields in role prompts or role
    payloads.
 3. Add deterministic code for mechanical transformations; use Agents only for
    scientific judgment or simulator authoring/review.
 4. Add focused tests for behavior changes. Run them through
-   `python scripts/run_tests.py --lane source --output /tmp/scid-focused tests/path.py`;
+   `python scripts/run_tests.py --lane source --output .trial/focused-check tests/path.py`;
    choose installed/process checks as described in [tests/README.md](tests/README.md).
 5. Keep tracked examples free of credentials, licenses, live hosts, and
    machine-specific absolute paths.
@@ -24,3 +25,8 @@
 
 Real TCAD output is evidence only for the exact reviewed project and execution
 contract. Unit tests and mock adapters do not qualify scientific claims.
+
+Keep current usage and boundary rules in maintained reference documents. Development
+plans, audits, handoffs and run evidence remain local ignored records. Functional
+fixtures belong under tests or acceptance tools, with their consumers and release
+manifest updated together. Source maintenance does not require a research instance.

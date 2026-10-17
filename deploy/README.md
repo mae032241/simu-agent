@@ -1,48 +1,12 @@
-# Deployment Entry Points
+# Application deployment
 
-[简体中文](README.zh-CN.md) | English
+`install.sh` publishes `scid-research` and `scid-experiment` from local source and
+selected plugins. It requires a fresh prefix and creates no instance, budget or
+service. `SCID_DEPLOY_MODE` accepts only `thin`.
+See [installation](../docs/INSTALL.md) for dependencies, settings, prefix protection,
+transaction rollback and removal. `reinstall.sh` is an operator sudo wrapper with
+the same fresh-prefix requirement.
 
-New projects default to `SCID_DEPLOY_MODE=thin`: install only the application and
-`scid-research` / `scid-experiment` wrappers into a fresh prefix. No workspace,
-Root configuration, SQL, credentials or services are created. Existing site or
-wrapper collisions are rejected; old live services are not stopped. See
-[the default installation path](../docs/INSTALL.md#default-thin-cli-for-new-projects).
-The service/transaction/state-format description below applies only to explicit
-`SCID_DEPLOY_MODE=legacy`. Old data is preserved; rebuilding a legacy SQL reader is not a prerequisite for
-the thin CLI. Historical data migration is optional work when actually needed.
-
-- `install.sh`: installs, verifies, reports, or removes the Linux/WSL services.
-- `reinstall.sh`: generic, transactional, maintained reinstall entrypoint.
-- `install_ssh_tcad_runner.sh`: installs the dependency-free runner through an
-  existing SSH connection; it can also reuse the active transport for a full
-  runner/config update or a current-schema code-only upgrade.
-- `init_workspace.sh`: initializes a source-separated research workspace with
-  `0750` permissions.
-- `install_transaction.py`: snapshots and rolls back the site, units, config,
-  skills, launchers, and SQLite state as one install transaction.
-- `systemd/*.service.in`: rendered service templates; do not edit generated
-  units under `/etc/systemd/system` directly.
-
-The installer builds and validates the release site offline before stopping
-services, then activates it transactionally. A failed health check restores the
-previous files, databases, and service state. The installer infers the
-repository root from its own location. Machine values
-are supplied through `SCID_*` environment variables and private copies of the
-JSON examples. See [the complete installation guide](../docs/INSTALL.md).
-
-For automatic figures, explicitly select `tcad_artifact,curve_score,curve_figure_evidence`
-and preinstall the offline tools and default `eng` data described in that guide.
-Both dry-run and installation discover versions and validate actual capabilities
-under the service identity before any transaction; no figure identity inputs are needed.
-No paper-specific installation wrapper or manual geometry skill is installed.
-
-No deployment command installs Sentaurus, a license, a VM, or an SSH key.
-The installer passes the same selected TCAD socket or command-adapter
-configuration to both control and worker daemons. This enables bounded
-development debug without exposing the private solver profile to a worker;
-actual `sprocess`/`sdevice` runs still require the administrator-provided
-solver, license, and transport configuration.
-
-## State format for this release
-
-This is a breaking upgrade. Set `SCID_STATE_ROOT` to a **new empty directory**. An existing store must carry this release's `.scidiscovery-state.json` marker. The installer checks before building or stopping services; control, Worker, UI and collection entry points also check. Nonempty unmarked stores, incompatible formats and damaged markers are rejected. Old data is neither migrated nor deleted; do not add a marker manually. First initialization writes it automatically, and current-format stores support normal restarts. Installed-release qualification remains a separate acceptance step.
+`install_ssh_tcad_runner.sh` deploys the independent domain execution backend.
+It requires separate administrator configuration and deployment authorization;
+see the [transport contract](../docs/tcad_transport_contract.md).

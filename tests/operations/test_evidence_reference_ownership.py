@@ -7,13 +7,7 @@ from scidiscovery.artifact_agent.schema.common import canonical_json
 from scidiscovery.artifact_agent.schema.cognitive import EvidenceAudit, HypothesisProposal
 from scidiscovery.artifact_agent.schema.research_cycle import ScientificReview
 from scidiscovery.artifact_agent.schema.scientific_foundation import ScientificFoundation
-from scidiscovery.artifact_agent.service.run_outputs import _validation_details
 from scidiscovery.operation_contract import SemanticRuleViolation, validate_evidence_source_aliases, validation_diagnostics
-from tests.operations.test_agent_contract_alignment import (
-    experiment_case, _partial_experiment,
-)
-
-
 
 
 @pytest.mark.parametrize(('model', 'payload'), [
@@ -42,12 +36,6 @@ def test_plain_model_relationship_diagnostic_retains_reason():
     details = validation_diagnostics(caught.value, schema=CurveInterval.model_json_schema())
     assert details[0]['message'] == 'curve interval stop must exceed start'
     assert details[0]['phase'] == 'tool_arguments'
-
-
-def test_declared_context_rejection_retains_reason_without_details():
-    details = _validation_details(SemanticRuleViolation('review target must match the bound object'), phase='output_context')
-    assert details[0]['message'] == 'review target must match the bound object'
-    assert details[0]['phase'] == 'output_context'
 
 
 def test_analysis_reference_does_not_require_duplicated_citation_or_locator_prefix():
@@ -118,27 +106,8 @@ def test_parameter_sources_need_neither_unused_sources_nor_a_second_foundation_l
     assert caught.value.details[0]['path'] == '$.source_catalog.sources[0].source_key'
 
 
-def test_context_error_preserves_outer_reason_without_leaking_engineering_cause():
-    error = SemanticRuleViolation('Reference must resolve within its bound source.')
-    error.__cause__ = RuntimeError('internal storage path /private/state')
-    details = _validation_details(error, phase='output_context')
-    assert details[0]['message'] == str(error)
-    assert 'private' not in str(details)
-
-
-def test_runtime_owned_file_diagnostic_survives_sanitizing():
-    from scidiscovery.artifact_agent.service.run_outputs import _with_rule
-    from scidiscovery.operation_contract import sanitize_diagnostic_details
-    details = _with_rule(({'path': '$.files', 'message': 'unexpected output file set', 'type': 'value_error'},),
-        'runtime.files', frozenset({'runtime.files'}))
-    saved = sanitize_diagnostic_details(details, schema={}, rules={'runtime.files'})
-    assert saved[0]['path'] == '$.files'
-    assert saved[0]['message'] == 'unexpected output file set'
-
-
 def test_optional_metric_input_mismatch_is_an_admission_error_only():
     from curve_score.science_operations import _diagnosis_inputs, validate_analysis_report
-    from scidiscovery.artifact_agent.schema.layered_diagnosis import LayeredDiagnosisReport
     from scidiscovery.operations.input_validation import OperationInvocationError
     from tests.operations.test_m2_curve_analysis_boundary import _inputs, _plan, _diagnosis
     from curve_score.schema import CurveConsistencyReport
@@ -151,26 +120,6 @@ def test_optional_metric_input_mismatch_is_an_admission_error_only():
     # A pure output check cannot turn an unused input defect into output refusal.
     diagnosis = _diagnosis().model_copy(update={'objective_assessment': None})
     validate_analysis_report(diagnosis, _plan(), report)
-
-
-@pytest.mark.parametrize('cite_subject', [False, True])
-def test_general_qualification_accepts_direct_citations_through_complete_control_path(tmp_path, monkeypatch, cite_subject):
-    from tests.operations import test_completed_science_compatibility as fixture
-    complete = fixture._complete
-    def without_ledger(runtime, root, name, operation_id, inputs, payload):
-        if operation_id == 'science.evidence.extract.v1':
-            payload['scientific_foundation']['evidence'] = []
-        if operation_id == 'science.evidence.audit.intake.v1':
-            payload.pop('evidence', None)
-            if cite_subject:
-                payload['checks'][0]['evidence_keys'].append('scientific_intake')
-                payload['evidence'] = [{'source_key': 'scientific_intake', 'source_type': 'frozen_input',
-                                        'locator': '/scientific_foundation'}]
-        return complete(runtime, root, name, operation_id, inputs, payload)
-    monkeypatch.setattr(fixture, '_complete', without_ledger)
-    _, runtime, instance, _, _ = fixture._qualified_foundation(tmp_path)
-    approval = runtime.scheduler_bindings.resolve(instance=instance.instance_id, namespace='approval', name='qualification')
-    assert runtime.approvals.status(approval).status == 'decided'
 
 
 def test_precomputed_analysis_can_cite_its_bound_plot_without_package_pointer():

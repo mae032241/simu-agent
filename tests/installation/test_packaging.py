@@ -32,7 +32,6 @@ for module in (scidiscovery, Image, jsonschema, pydantic, cryptography):
 package = distribution("scidiscovery")
 assert package.version
 for script, target in {
-    "scid": "scidiscovery.artifact_agent.interfaces.cli:main",
     "scid-research": "scidiscovery.research_loop.cli:main",
     "scid-experiment": "scidiscovery.research_loop.experiments:main",
 }.items():
@@ -58,12 +57,14 @@ for entry in plugins:
 root = resources.files("scidiscovery")
 assert root.joinpath("default_agent_settings.json").read_bytes()
 assert any(item.name.endswith(".sql") for item in resources.files("scidiscovery.artifact_agent.storage").joinpath("migrations").iterdir())
-for name in ("style.css", "app.js"):
-    assert resources.files("scidiscovery.artifact_agent.approval_ui").joinpath("static", name).read_bytes()
-from scidiscovery.platforms.scheduler_prompt import load_common_prompt, load_scheduler_guides, load_scheduler_prompt
-assert load_common_prompt() and load_scheduler_prompt()
-assert load_scheduler_guides()
-assert tuple((prefix / "share/scidiscovery/deploy/systemd").glob("*.in"))
+assert {entry.name for entry in package.entry_points if entry.group == "console_scripts"} == {"scid-research", "scid-experiment"}
+assert not resources.files("scidiscovery.artifact_agent").joinpath("interfaces").is_dir()
+assert not resources.files("scidiscovery.artifact_agent").joinpath("approval_ui").is_dir()
+assert not resources.files("scidiscovery.artifact_agent").joinpath("service").is_dir()
+for name in ("runtime", "execution_bridge", "runtime_plugin_bindings", "worker_services", "state_format", "portable_bundle"):
+    assert not resources.files("scidiscovery.artifact_agent").joinpath(name + ".py").is_file()
+assert not (prefix / "share/scidiscovery/roles").exists()
+assert not (prefix / "share/scidiscovery/deploy/systemd").exists()
 
 if cohort == "core":
     for name in ("tcad-artifact", "scidiscovery-curve-score", "scidiscovery-curve-figure-evidence"):

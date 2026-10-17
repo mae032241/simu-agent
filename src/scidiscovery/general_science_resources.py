@@ -8,11 +8,15 @@ from .artifact_agent.schema.role_result import BOUNDARY_GUIDANCE, reference_sect
 from .artifact_agent.schema.cognitive import CriticReview, EvidenceAudit, HypothesisProposal
 from .artifact_agent.schema.research_cycle import ProblemFrame, ScientificFoundation, ScientificIntake
 from .artifact_agent.schema.scientific_foundation import FOUNDATION_RULES
+from .artifact_agent.schema.tool_evidence import ToolEvidenceManifest
 from .operation_declaration import (
     OPERATION_AGENT_PREAMBLE,
     schema_resource,
     scientific_semantic_contract,
 )
+
+TOOL_EVIDENCE_SCHEMA = schema_resource(ToolEvidenceManifest, "scidiscovery.tool-evidence-manifest.v1")
+
 
 EVIDENCE_PROMPT = """Return exactly one RoleResultEnvelope whose payload is the
 ScientificIntake required by the schema identified by assignment.output.schema_path. Build a bounded ProblemFrame

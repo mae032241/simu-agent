@@ -49,9 +49,12 @@ def test_git_release_builder_emits_clean_manifested_source(tmp_path: Path) -> No
     }
     assert not (output / "deploy/apply_ingaas_fig4_profile.sh").exists()
     assert not tuple(output.rglob("figure_geometry.json"))
-    assert not (
-        output / "src/scidiscovery/artifact_agent/service/agent_dispatch.py"
-    ).exists()
+    assert not (output / "src/scidiscovery/artifact_agent/service").exists()
+    for name in ("runtime", "execution_bridge", "runtime_plugin_bindings", "worker_services",
+                 "state_format", "portable_bundle"):
+        assert not (output / f"src/scidiscovery/artifact_agent/{name}.py").exists()
+    for name in ("analysis_artifacts", "calculation_proof", "pdf_tool"):
+        assert (output / f"src/scidiscovery/operations/{name}.py").is_file()
     assert not (output / "src/scidiscovery/platforms/codex_worker.py").exists()
     assert not (output / "experiments/worker_process_v2").exists()
     # The release manifest is the explicit publication policy; archived research
@@ -60,19 +63,17 @@ def test_git_release_builder_emits_clean_manifested_source(tmp_path: Path) -> No
     release = runpy.run_path(str(project_root / "scripts/build_git_release.py"))
     assert {path.relative_to(output).as_posix()
             for path in (output / "docs").rglob("*") if path.is_file()} == set(release["DOCUMENTS"])
-    assert (
-        output
-        / "docs/architecture/SCIENTIFIC_AGENT_DESIGN_CHARTER.zh-CN.md"
-    ).is_file()
-    assert (
-        output / "docs/architecture/SCIENTIFIC_AGENT_CONSTRAINTS.yaml"
-    ).is_file()
-    assert not (output / "docs/plans/README.md").exists()
-    assert not (
-        output / "docs/plans/TCAD_AGENT_REAUDIT_REMEDIATION_PLAN.zh-CN.md"
-    ).exists()
+    # Process records and superseded architecture snapshots are local archives.
+    for relative in ("docs/plans", "docs/history", "docs/architecture",
+                                  "docs/SCIENTIFIC_PAPER_EVIDENCE_QUALIFICATION.zh-CN.md",
+                     ".trial", "AGENTS.md"):
+        assert not (output / relative).exists()
     assert (output / "deploy/install_transaction.py").is_file()
-    assert (output / "deploy/init_workspace.sh").is_file()
+    assert not (output / "deploy/init_workspace.sh").exists()
+    assert not (output / "deploy/systemd").exists()
+    assert not (output / "roles").exists()
+    assert not (output / "src/scidiscovery/artifact_agent/interfaces").exists()
+    assert not (output / "src/scidiscovery/artifact_agent/approval_ui").exists()
     assert (
         output / "plugins/curve_figure_evidence/curve_figure_evidence/figure_worker_tool.py"
     ).is_file()
@@ -125,11 +126,6 @@ def test_git_release_builder_emits_clean_manifested_source(tmp_path: Path) -> No
         if path.is_file() and path != manifest
     }
     assert output.with_suffix(".tar.gz").is_file()
-    assert {path.relative_to(output / 'docs/plans').as_posix()
-            for path in (output / 'docs/plans').rglob('*') if path.is_file()} == {
-        'fixtures/rootless-selection-v1.json', 'fixtures/rootless-selection-actions-v1.json',
-        'search_mvp/native-payloads.json',
-    }
     # Independent consumer requirements: do not derive these from the builder's
     # own allowlists, which previously made missing CI/test inputs invisible.
     required = (
@@ -139,27 +135,17 @@ def test_git_release_builder_emits_clean_manifested_source(tmp_path: Path) -> No
         "tests/fixtures/plugins/table_observation_plugin/pyproject.toml",
         "scripts/run_tests.py", "scripts/test_resources.json", "scripts/test_resources_ci.json",
         "scripts/installed_candidates.py", "scripts/probe_native_code_mode.py",
-        "scripts/probe_root_host.py", "scripts/probe_root_host_live.py",
-        "scripts/accept_progression.py", "scripts/accept_progression_recovery.py",
-        "scripts/accept_b6.py", "scripts/acceptance_native_cases.py",
-        "scripts/acceptance_managed.py", "scripts/b6_evidence.py", "scripts/acceptance/b6.json",
-        "docs/B6_ACCEPTANCE.zh-CN.md",
-        "scripts/root_host_upgrade.py",
-        "scripts/root_host_usage.py",
-        "scripts/probe_root_lifecycle.py", "scripts/root_host_resources.json",
-        "scripts/root_host_ws_client.py",
-        "scripts/compiled_worker_process_guard.py", "scripts/run_compiled_codex_worker.py",
+        "scripts/compiled_worker_process_guard.py",
         "docs/ROOTLESS_CLI.zh-CN.md",
-        "docs/plans/fixtures/rootless-selection-v1.json",
-        "docs/plans/fixtures/rootless-selection-actions-v1.json",
+        "scripts/acceptance/fixtures/rootless_selection/selection.json",
+        "scripts/acceptance/fixtures/rootless_selection/actions.json",
         "scripts/acceptance/rootless_cov_launcher.py",
         "scripts/acceptance/rootless_public_selection_replay.py",
         "scripts/acceptance/behavior_card.py", "scripts/acceptance/prelive_gate.py",
         "scripts/observe_covshift_candidates.py",
-        "docs/plans/search_mvp/native-payloads.json",
-        "scripts/s0_scoring.py", "scripts/prepare_covshift_local.py",
-        "scripts/prepare_covshift_pilot.py", "scripts/run_covshift_pilot.py",
-        "scripts/prepare_nbody_local.py", "scripts/probe_covshift_permissions.py",
+        "scripts/acceptance/fixtures/search_mvp/native-payloads.json",
+         "scripts/prepare_covshift_local.py",
+        "scripts/prepare_nbody_local.py",
         "scripts/native_usage_audit.py",
         "scripts/acceptance/fixtures/hourly_loop_memory/materials.json",
         "scripts/acceptance/fixtures/covshift_permissions/canary.py",
@@ -172,9 +158,15 @@ def test_git_release_builder_emits_clean_manifested_source(tmp_path: Path) -> No
                                   for part in p.relative_to(project_root / "tests").parts)}
     assert {p.relative_to(output / "tests") for p in (output / "tests").rglob("*")
             if p.is_file()} == expected_tests
-    for relative in ("docs/ARCHITECTURE.md", "docs/ARCHITECTURE.zh-CN.md",
-                     "docs/PLUGIN_RUNTIME_API.md", "docs/RELEASE.md", "docs/RELEASE.zh-CN.md",
-                     "docs/ROOTLESS_CLI.zh-CN.md"):
+    current_references = (
+        "README.md", "README.zh-CN.md", "CHANGELOG.md", "CONTRIBUTING.md", "NOTICE.md",
+        "SECURITY.md", "deploy/README.md", "deploy/README.zh-CN.md", "tests/README.md",
+        "plugins/tcad_artifact/README.md", "plugins/tcad_artifact/README.zh-CN.md",
+        "plugins/curve_score/README.md", "plugins/curve_score/README.zh-CN.md",
+        "plugins/curve_figure_evidence/README.md", "plugins/curve_figure_evidence/README.zh-CN.md",
+        *release["DOCUMENTS"],
+    )
+    for relative in current_references:
         document = output / relative
         text = document.read_text()
         # Markdown examples name runtime artifacts, not release documents.

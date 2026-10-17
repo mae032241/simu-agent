@@ -10,7 +10,7 @@ import stat
 import threading
 from pathlib import Path
 
-from scidiscovery.artifact_agent.execution_bridge import ExecutionAdapter
+from scidiscovery.operations.execution import ExecutionAdapter
 from scidiscovery.artifact_agent.schema.execution import LocalFileDescriptor
 from .debug_contract import (
     DEVELOPMENT_ARTIFACT_LIMIT_BYTES,

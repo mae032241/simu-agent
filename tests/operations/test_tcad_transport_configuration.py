@@ -136,37 +136,3 @@ def test_bundled_command_requires_unambiguous_absolute_config(arguments):
     with pytest.raises(ValueError):
         validate_command_configuration(CommandAdapterConfig(
             executable="/usr/local/bin/scidiscovery-tcad-transport", arguments=arguments))
-
-
-@pytest.mark.process_e2e
-def test_preparation_bridge_preserves_configuration_failure(tmp_path):
-    from types import SimpleNamespace
-    from scidiscovery.artifact_agent.execution_bridge import ExecutionBridge
-    adapter = CommandTCADExecutorAdapter(command_config(transport_config(tmp_path, transfer_chunk_bytes=0)),
-        local_result_root=tmp_path / "results")
-    boundary = SimpleNamespace(lookup_submission=lambda _: None,
-        validate_preparation_payload=lambda *args, **kwargs: adapter.capabilities())
-    bridge = ExecutionBridge(None, adapters={"fixture": boundary})
-    with pytest.raises(DiagnosticError) as caught:
-        bridge.validate_request(executor="fixture", preparation_profile="fixture", payload=b"{}")
-    assert caught.value.details[0]["code"] == "tcad_transport_configuration_invalid"
-
-
-@pytest.mark.process_e2e
-def test_worker_retains_configuration_repair_without_private_values(tmp_path):
-    from tcad_artifact.output_recovery import OutputInspectionService
-    from tests.operations.test_analysis_evidence_recovery import recovery_system
-    system, worker, _, _ = recovery_system(tmp_path)
-    adapter = CommandTCADExecutorAdapter(command_config(transport_config(tmp_path, transfer_chunk_bytes=0)),
-        local_result_root=tmp_path / "results")
-    class BrokenAdapter:
-        def inspect_outputs(self, *args, **kwargs):
-            return adapter.capabilities()
-    worker.tool_services["tcad_artifact:tcad.output_inspection"] = OutputInspectionService(BrokenAdapter())
-    with pytest.raises(DiagnosticError) as caught:
-        worker.call_tool("worker_tcad_inspect_outputs", {"relative_path": "A_actual.plx"})
-    public = str(caught.value) + json.dumps(caught.value.details) + json.dumps(caught.value.public_engineering)
-    assert "tcad_transport_configuration_invalid" in public and "administrator" in public
-    assert "/private" not in public and str(tmp_path) not in public
-    assert "identity_file" not in public and "private-host" not in public
-    assert system[1].runs.status(worker._run_id).state == "running"

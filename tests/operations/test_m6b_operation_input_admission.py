@@ -6,9 +6,6 @@ from unittest.mock import Mock
 import pytest
 
 from curve_score.plugin import PLUGIN as CURVE_PLUGIN
-from scidiscovery.artifact_agent.interfaces.mcp_root_operation_routes import (
-    RootOperationRoutes,
-)
 from scidiscovery.builtin_plugin import CORE_PLUGIN
 from scidiscovery.general_science_plugin import PLUGIN as GENERAL_PLUGIN
 from scidiscovery.operations.catalog import CatalogCompileError, compile_catalog
@@ -194,40 +191,3 @@ def _bound(operation, present_ports: tuple[str, ...]):
         for name in present_ports
     )
     return SimpleNamespace(compiled=operation, inputs=inputs)
-
-
-def test_root_consumes_compiled_member_and_subject_sets_without_reaggregation() -> None:
-    operation = _full_catalog().operation("science.hypothesis.propose.v1")
-    admission = operation.spec.input_admission
-    assert admission is not None
-    approvals = Mock()
-    approvals.are_subjects_approved_by_provider.return_value = True
-    routes = object.__new__(RootOperationRoutes)
-    routes.approvals = approvals
-
-    routes._validate_compiled_input_admission(
-        _bound(operation, admission.member_ports)
-    )
-
-    call = approvals.are_subjects_approved_by_provider.call_args
-    assert call.args[0] == tuple(
-        f"ref:{name}" for name in admission.approval_subject_ports
-    )
-    assert call.kwargs["kind"] == admission.approval_kind
-    assert call.kwargs["accepted_options"] == admission.accepted_options
-    assert len(call.kwargs["accepted_providers"]) == 1
-
-
-def test_root_preserves_fail_closed_approval_behavior_after_structural_binding() -> None:
-    operation = _full_catalog().operation("science.hypothesis.propose.v1")
-    admission = operation.spec.input_admission
-    assert admission is not None
-    routes = object.__new__(RootOperationRoutes)
-    routes.approvals = Mock()
-    routes.approvals.are_subjects_approved_by_provider.return_value = False
-
-    with pytest.raises(OperationInvocationError) as unapproved:
-        routes._validate_compiled_input_admission(
-            _bound(operation, admission.member_ports)
-        )
-    assert unapproved.value.reason_code == "input_cohort_approval_missing"

@@ -95,7 +95,7 @@ class CompiledCatalog:
         return "current" if compiled.digest == self.operation(operation_id).digest else "supported_historical"
 
     def can_recover(self, operation_id: str, source_digest: str, target_digest: str) -> bool:
-        # Only the explicitly reconstructed reader/evidence-limit predecessors may
+        # Only explicitly reconstructed resource/reader/evidence-limit predecessors may
         # advance to today's contract. No arbitrary digest aliases or downgrade.
         return (source_digest == target_digest or
             ((operation_id, source_digest) in self._historical_operations
@@ -1026,11 +1026,25 @@ def compile_catalog(plugins: Iterable[PluginDefinition], *, capability_selection
                 ComponentRef(component.spec.component_id), "experiment_capability")
     approval_provider_ids = _validate_review_graph(plugin_map, components, compiled_parts, used)
     current = _build_compiled_catalog(plugin_map, components, compiled_parts, approval_provider_ids, runtime_factories, runtime_configuration_digests, runtime_identity_digests, used)
+    # Reconstruct the pre-extraction Spec, not an alias for today's digest.
+    # Only the resource owner moved; its schema bytes remain unchanged. The
+    # old current contract and its two existing predecessors retain their exact
+    # implementation paths in immutable historical component specifications.
+    historical_components = dict(components)
+    for key, component in components.items():
+        if component.spec.implementation == 'scidiscovery.general_science_resources:TOOL_EVIDENCE_SCHEMA':
+            old_spec = component.spec.model_copy(update={
+                'implementation': 'scidiscovery.artifact_agent.service.tool_evidence:TOOL_EVIDENCE_SCHEMA'})
+            historical_components[key] = replace(component, spec=old_spec)
+    historical_current = _build_compiled_catalog(plugin_map, historical_components, compiled_parts,
+        approval_provider_ids, runtime_factories, runtime_configuration_digests, runtime_identity_digests, used)
+    historical = {(key, historical_current.operation(key).digest): historical_current.operation(key)
+        for key in current.operation_ids() if current.operation(key).digest != historical_current.operation(key).digest}
     # Retain the exact pre-parent-reader contract and its already supported
     # binding-limit predecessor. Reconstruct resources, never alias digests.
     from ..reference_tools import LEGACY_REFERENCE_HISTORY_DESCRIPTION
-    legacy_components = dict(components)
-    for key, component in components.items():
+    legacy_components = dict(historical_components)
+    for key, component in historical_components.items():
         tool = component.implementation
         if component.spec.kind != 'worker_tool' or tool.name != 'worker_reference_read':
             continue
@@ -1041,8 +1055,8 @@ def compile_catalog(plugins: Iterable[PluginDefinition], *, capability_selection
             resource_digest=_resource_digest(component.spec, legacy_tool, component.plugin_id))
     legacy = _build_compiled_catalog(plugin_map, legacy_components, compiled_parts, approval_provider_ids,
         runtime_factories, runtime_configuration_digests, runtime_identity_digests, used)
-    historical = {(key, legacy.operation(key).digest): legacy.operation(key) for key in current.operation_ids()
-        if current.operation(key).digest != legacy.operation(key).digest}
+    historical.update({(key, legacy.operation(key).digest): legacy.operation(key) for key in current.operation_ids()
+        if current.operation(key).digest != legacy.operation(key).digest})
     previous_components = dict(legacy_components)
     changed = False
     for key, component in legacy_components.items():

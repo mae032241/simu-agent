@@ -17,14 +17,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-host-probe = ["aiohttp>=3.10,<4"]
 test = [
   "PyYAML>=6,<7",
   "pytest>=8,<10",
 ]
 
 [project.scripts]
-scid = "scidiscovery.artifact_agent.interfaces.cli:main"
 scid-research = "scidiscovery.research_loop.cli:main"
 scid-experiment = "scidiscovery.research_loop.experiments:main"
 
@@ -36,21 +34,12 @@ general_science = "scidiscovery.general_science_plugin:PLUGIN"
 local_execution = "scidiscovery.research_loop.local_experiments:REGISTRATION"
 cov_execution = "scidiscovery.research_loop.cov_experiments:REGISTRATION"
 
-[project.entry-points."scidiscovery.instance_views"]
-general_science = "scidiscovery.general_science_views:build_presentation"
-
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
 "scidiscovery" = ["default_agent_settings.json"]
 "scidiscovery.artifact_agent.storage" = ["migrations/*.sql"]
-"scidiscovery.artifact_agent.approval_ui" = ["static/*.css", "static/*.js"]
-
-[tool.setuptools.data-files]
-"share/scidiscovery/roles" = ["roles/scheduler.md", "roles/common.md"]
-"share/scidiscovery/roles/scheduler" = ["roles/scheduler/*.md"]
-"share/scidiscovery/deploy/systemd" = ["deploy/systemd/*.in"]
 
 [tool.pytest.ini_options]
 addopts = "--strict-markers"

@@ -80,6 +80,7 @@ def test_compiled_agent_authority_is_exact_and_default_deny() -> None:
     )
     assert tuple(tool.name for tool in authority.lifecycle.tools) == (
         "worker_open_assignment",
+        "worker_read_history",
         "worker_heartbeat",
         "worker_submit_result",
     )

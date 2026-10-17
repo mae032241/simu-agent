@@ -99,44 +99,6 @@ def _register_copy(runtime, instance, name, source):
     return copied
 
 
-@pytest.mark.parametrize("case", ["revise", "blocked", "other_subject", "restricted_source", "copied_labels"])
-def test_exact_review_resolves_only_provenance_backed_producer_restriction(tmp_path, case):
-    from scidiscovery.artifact_agent.interfaces.mcp_root import RootToolError
-    catalog, runtime, instance, root = lifecycle._system(
-        tmp_path, catalog=_claim_catalog(explore=case in {"restricted_source", "copied_labels"}))
-    subject = lifecycle._complete_author(catalog, runtime, root,
-        instruction="Record bounded facts and withhold the claim.", conflict="reject",
-        verdict="revise" if case == "revise" else "blocked")
-    original = _bound_artifact(runtime, instance, subject)
-    original_bytes = runtime.artifacts.read(original.ref)
-    assert lifecycle._consumer_preflight(root, subject, None)["reason_code"] == "input_scientific_claim_forbidden"
-    if case == "restricted_source":
-        assert original.labels["scientific_claim_admissible"] == "false"
-    review_subject = subject
-    if case == "other_subject":
-        review_subject = lifecycle._complete_author(catalog, runtime, root,
-            instruction="Record a distinct observation.", conflict="create_revision", verdict="blocked")
-    elif case == "copied_labels":
-        _register_copy(runtime, instance, "copied", original)
-        subject = "copied"
-    review = lifecycle._complete_review(catalog, runtime, root, name="review", subject_name=review_subject)
-    result = lifecycle._consumer_preflight(root, subject, review)
-    request = {"name": "consume", "operation_id": "blind.csv.consume.v1",
-        "instruction": "Consume only a scientifically admissible observation.", "inputs": [
-            {"port": "source_table", "artifact_names": ["source_csv"]},
-            {"port": "csv_observation", "artifact_names": [subject]},
-            {"port": "independent_review", "artifact_names": [review]}]}
-    if case in {"revise", "blocked"}:
-        assert result["admissible"], result
-        assert root.call_tool("operation_invoke", request)["result"]["state"] == "queued"
-    else:
-        assert result["reason_code"] == "input_scientific_claim_forbidden", result
-        with pytest.raises(RootToolError, match="input_scientific_claim_forbidden"):
-            root.call_tool("operation_invoke", request)
-    assert runtime.artifacts.read(original.ref) == original_bytes
-    assert runtime.artifacts.catalog(original.ref).labels == original.labels
-
-
 def test_compiler_merges_declared_independent_subject_with_review_edge():
     reviewer = REVIEWER.model_copy(update={"independent_review_ports": ("csv_observation",)})
     plugin = PLUGIN.model_copy(update={"operations": (AUTHOR, reviewer)})

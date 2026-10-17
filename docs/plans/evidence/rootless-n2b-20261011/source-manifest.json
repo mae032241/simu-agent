@@ -1,9 +1,0 @@
-{
-  "src/scidiscovery/research_loop/history.py": "78688ece6cf683f2c258ea45dd96b021352507dfa5691fd9eb1980306fe7edf5",
-  "src/scidiscovery/research_loop/contracts.py": "99ea63f92ec6f3dc3b4f4b9f036d302c1d3f0528dcc0052cb4a5ee796729a4d9",
-  "src/scidiscovery/research_loop/controller.py": "aa0bec3d49537c0b93b9287ea4dca50b7afca2dc4328519042d98db541c06b86",
-  "src/scidiscovery/research_loop/cli.py": "db1d626195dbc17174c64b2928c07300138127e624f156f572bc232805dd436d",
-  "scripts/observe_covshift_candidates.py": "ce5f9bf8aa18e470ad25fa983ae99fbe2223146a63153be19798fec02ce0bbc3",
-  "tests/research_loop/test_history.py": "4397a55af77d6114fa7ce0dd02f4c5f60cf51b65c8ec20c8bc178c0075066b68",
-  "tests/research_loop/test_history_handoff.py": "fbbb03cbbee17fcc1d8c74de7ccc3df8a6b6219003adb50b3c0a0c5133249b55"
-}

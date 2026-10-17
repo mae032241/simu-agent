@@ -1,6 +1,6 @@
 """Development-only public action constraints, never an A or candidate chooser."""
 from pathlib import Path
-import argparse,hashlib,json,math
+import argparse,hashlib,json,math,os
 from scidiscovery.research_loop import selection
 
 
@@ -42,7 +42,7 @@ def export_public(manifest):
     groups={}
     for group,meta in manifest['groups'].items():
         root=Path(meta['instance']);ledger=root/'runs/results.jsonl'
-        if ledger.is_symlink() or ledger.resolve()!=ledger or ledger.stat().st_size>selection.MAX_INPUT_BYTES:raise ValueError('Bounded original public ledger required')
+        if ledger.is_symlink() or ledger.resolve()!=ledger or not ledger.is_file():raise ValueError('Exact original public ledger required')
         data=ledger.read_bytes()
         if hashlib.sha256(data).hexdigest()!=meta['ledger_sha256']:raise ValueError('Frozen public ledger changed')
         rows=[json.loads(line) for line in data.splitlines() if line.strip()]
@@ -91,8 +91,9 @@ def main():
     p=argparse.ArgumentParser();p.add_argument('--pool-manifest',type=Path,required=True)
     p.add_argument('--rules-sha256',required=True);p.add_argument('--output',type=Path,required=True);args=p.parse_args()
     if sha(__file__)!=args.rules_sha256:raise ValueError('Freeze rule source hash before opening development pool')
-    if args.pool_manifest.stat().st_size>selection.MAX_INPUT_BYTES:raise ValueError('Bounded pool manifest required')
-    manifest_data=args.pool_manifest.read_bytes();public=export_public(json.loads(manifest_data))
+    pool_manifest=Path(os.path.abspath(args.pool_manifest))
+    if pool_manifest.is_symlink() or pool_manifest.resolve()!=pool_manifest or not pool_manifest.is_file():raise ValueError('Exact original pool manifest required')
+    manifest_data=pool_manifest.read_bytes();public=export_public(json.loads(manifest_data))
     args.output.mkdir(parents=True,exist_ok=False);write(args.output/'public-inputs.json',public)
     result=replay(public);write(args.output/'replay.json',result)
     report=dict(passed=True,rules_sha256=args.rules_sha256,manifest_sha256=hashlib.sha256(manifest_data).hexdigest(),model_requests=0,

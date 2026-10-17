@@ -5,18 +5,10 @@ from pathlib import Path
 
 import pytest
 
-from scidiscovery.artifact_agent.service.reference_proofs import encode_snapshot
 from scidiscovery.artifact_agent.schema.layered_diagnosis import CalculationRecord
 from scidiscovery.plugin_runtime.workspace import read_json, read_control_workspace_file
 from scidiscovery.plugin_runtime.observation import effective_timeout
 from scidiscovery.research_loop import selection
-
-
-def test_complete_manifest_exceeds_old_size_and_collection_caps():
-    document=dict(records=[dict(note='x'*9000) for _ in range(140)], accesses=[dict(alias=str(i)) for i in range(40)])
-    raw=encode_snapshot(document)
-    assert len(raw)>1024*1024
-    assert json.loads(raw)==document
 
 
 def test_complete_calculation_preserves_large_result_and_semantics():
@@ -53,20 +45,6 @@ def test_full_candidate_history_exceeds_input_caps_but_view_is_small():
     assert view['proxy_highest'][0]['candidate_ids']==['c5999']
 
 
-def test_material_closure_preserves_more_than_32_accesses(tmp_path):
-    from scidiscovery.artifact_agent.service.reference_proofs import material_snapshot, ReferenceProofError
-    from tests.operations.test_sealed_reference_replay import evidence_submission
-    runs, owner, args = evidence_submission(tmp_path)
-    runs.accept_tool_evidence(**args)
-    original = runs.tool_evidence(owner.run_id)[0]
-    accesses = [dict(alias=f'ref_{i}',artifact_ref=original['artifact_ref']) for i in range(40)]
-    selected = dict(original,metadata=dict(derived_from=[row['alias'] for row in accesses]))
-    document = json.loads(material_snapshot(owner,selected,[selected],accesses,[],None))
-    assert len(document['accesses']) == 40
-    with pytest.raises(ReferenceProofError):
-        material_snapshot(owner,selected,[selected],accesses[:-1],[],None)
-
-
 def test_selection_omission_preserves_downstream_shape(monkeypatch):
     from scidiscovery.research_loop import lineage
     # Force the optional projection fallback; original records remain untouched.
@@ -80,26 +58,3 @@ def test_selection_omission_preserves_downstream_shape(monkeypatch):
     assert view['audits_omitted_count']==1 and view['public_audits']==[]
     brief=dict(node_count=0,recent=[],candidates=dict(view,selection_protocol=1),mechanisms={})
     assert lineage.bounded_brief(brief)['candidates']['proxy_highest']==[]
-
-
-def test_large_calculation_metadata_is_registered_without_truncation(tmp_path):
-    from types import SimpleNamespace
-    from scidiscovery.artifact_agent.schema.refs import ArtifactRef
-    from scidiscovery.artifact_agent.service.analysis_artifacts import retain_calculation
-    from tests.operations.test_sealed_reference_replay import evidence_submission
-    runs, owner, args=evidence_submission(tmp_path)
-    values=list(range(20000))
-    response=dict(record_key='large',request={},algorithm_version='fixture-v1',
-        status='computed',input_digests={},result={'values':values})
-    workspace=tmp_path/'calculation';workspace.mkdir()
-    context=SimpleNamespace(workspace=workspace,
-        input_names_for_port=lambda port:args['derived_from'],
-        accept_evidence=lambda **kwargs:runs.accept_tool_evidence(**dict(args,**kwargs)))
-    result=retain_calculation(context,response,summary=True)
-    saved=next(row for row in runs.tool_evidence(owner.run_id) if row['alias']==result['calculation_ref'])
-    assert saved['metadata']['calculation_proof']['result']['values']==values
-    assert saved['metadata']['derived_from']==list(args['derived_from'])
-    original=json.loads(runs.artifacts.read(ArtifactRef.model_validate(saved['artifact_ref'])))
-    assert original['result']['values']==values
-    assert json.loads(runs._evidence_snapshot(owner.run_id))['records'][0]['metadata']==saved['metadata']
-    assert 'values' not in json.dumps(result)  # Compact response does not copy the full calculation.

@@ -16,7 +16,7 @@ from urllib.parse import urljoin, urlsplit
 from pydantic import Field
 
 from .artifact_agent.schema.common import SchemaModel
-from .artifact_agent.service.local_workspace import write_control_workspace_file
+from .plugin_runtime.workspace import write_control_workspace_file
 from .operations.tooling import WorkerToolDefinition
 
 MAX_SOURCE_BYTES = 16 * 1024 * 1024

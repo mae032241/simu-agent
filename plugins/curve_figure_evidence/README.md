@@ -1,5 +1,10 @@
 # Optional paper-figure evidence plugin
 
+The Operations and Worker-tool names below describe reusable plugin library
+contracts. The thin CLI does not provide the former Run/Artifact host or an
+Operation scheduler; consult the [Plugin API](../../docs/PLUGIN_RUNTIME_API.md)
+for integration ownership.
+
 The optional plugin exposes one complete author task, independent audit, and a
 normalization consumer. It is not part of the default TCAD installation.
 
@@ -102,3 +107,13 @@ Input diagnostics identify the scientific field to correct. A generated family
 that fails its own integrity checks returns `figure_generation_inconsistent` as a
 program defect, without asking the author to invent mechanical shared fields.
 Mechanical integrity and faithful audit do not grant a scientific conclusion.
+
+## Evidence limits
+
+Matching pixel colors does not establish series identity. PDF page and embedded
+object provenance must be checked during source recovery. Source-column gaps and
+point-index gaps must remain gaps, without renumbering or invented connecting lines.
+Real occlusion retains unresolved observations. Box plots are outside the declared
+curve-extraction capability; they cannot be represented as qualified continuous
+curves. Historical results on selected images do not qualify a changed implementation,
+general chart understanding, a scientific conclusion or a TCAD experiment.

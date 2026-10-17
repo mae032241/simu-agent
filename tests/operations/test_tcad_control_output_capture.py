@@ -74,38 +74,6 @@ def test_capture_conflicts_rejected_before_execution(change):
         DeckProjectDraft.model_validate_json(canonical_json(body), strict=True)
 
 
-def test_author_schema_and_real_prepare_delegate_all_output_capture(tmp_path, monkeypatch):
-    from tests.operations.test_experiment_approval_handoff import experiment, start, decide
-    from tcad_artifact.command_adapter import CommandTCADExecutorAdapter
-    from tests.operations.tcad_policy_fixtures import policy_snapshot
-    f = experiment(tmp_path, monkeypatch)
-    schema = f.worker.call_tool('worker_experiment_prepare', {'action': 'schema'})['implementation_schema']
-    assert not {'expected_outputs', 'collect_generated_outputs'} & schema['properties'].keys()
-    assert '.scid-capture' not in json.dumps(schema)
-    # Keep the real command-adapter preparation; replace only the external transport.
-    adapter = object.__new__(CommandTCADExecutorAdapter)
-    adapter.local_result_root = tmp_path / 'results'
-    monkeypatch.setattr(adapter, 'execution_policy', policy_snapshot)
-    monkeypatch.setattr(adapter, '_require_active_capability', lambda _: None)
-    calls = []
-    def transport(action, payload):
-        calls.append(action)
-        assert action == 'prepare'
-        job = json.loads(Path(payload['job_spec']['local_path']).read_bytes())
-        runner._validate_job(job)
-        assert job['collect_generated_outputs'] is True
-        assert job['expected_outputs'][0]['relative_path'] == PROCESS_LOG_PATH
-        return {'submission': {'schema_version': 1, **payload['job_spec']}}
-    monkeypatch.setattr(adapter, '_call', transport)
-    monkeypatch.setattr(f.adapter, 'prepare', adapter.prepare)
-    first = start(f)
-    assert first['state'] == 'awaiting_authorization' and not calls
-    decide(f, first, 'authorize_execution')
-    for _ in range(2):
-        assert f.worker.call_tool('worker_experiment_execute', {'action': 'advance'})['state'] == 'running'
-    assert calls == ['prepare'] and f.adapter.submits == 1
-
-
 def test_collected_process_log_enters_analysis_with_same_transport_mapping(tmp_path, monkeypatch):
     from tests.operations import test_tcad_result_analysis as fixture
     original = fixture.analysis_materials

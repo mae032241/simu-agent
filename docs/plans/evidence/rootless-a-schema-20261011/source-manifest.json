@@ -1,8 +1,0 @@
-{
-  "src/scidiscovery/research_loop/contracts.py": "df2f3169cffffddea5e88de607b275ea0dc3bf06f0926b78f924a011702f90a8",
-  "tests/research_loop/test_result_schema.py": "863ea6f54d63adbf03ce9274b90d3ff6d5275d3f80fc4c321ffbbb6c8c461769",
-  "tests/research_loop/test_controller.py": "bad192f588d3e477438585866330e6de8817ca51304bf6455e2cf6e5e72d786d",
-  "tests/research_loop/test_history.py": "a638280018d8e3d0a0721a4c41ad0012d9a51896693f3d910b6029a930ef079c",
-  "tests/research_loop/test_history_handoff.py": "4751948d017cf1734c276bf74e2786135970032e6394a0ea7533fbe0067acc6d",
-  "tests/research_loop/test_native_cli.py": "f2a37c7cb2505dd1f460e527cd4e3424e0256091d51f30713a84516f7b473013"
-}

@@ -1,21 +1,11 @@
 from __future__ import annotations
 
 import json
-import os
-import sqlite3
 
 import pytest
 
 from curve_score.plugin import PLUGIN as CURVE_PLUGIN
-from scidiscovery.artifact_agent.interfaces.mcp_root import (
-    RootMCPRouter,
-    RootToolError,
-    RootToolFacade,
-)
-from scidiscovery.artifact_agent.runtime import open_runtime
-from scidiscovery.artifact_agent.schema.artifact import ArtifactRegistration
 from scidiscovery.artifact_agent.schema.common import canonical_json
-from scidiscovery.artifact_agent.schema.execution_context import ExecutionContext
 from tcad_artifact.device_parameters import (
     DeviceParameterCoverageReport,
     DeviceParameterRequirementSet,
@@ -30,7 +20,7 @@ from scidiscovery.general_science_control_operations import INTAKE_SPLIT_OPERATI
 from tcad_artifact.plugin import PLUGIN as TCAD_PLUGIN
 from tcad_artifact.execution_control import SolverCapabilitySnapshot
 from tcad_artifact.operation_transforms import EXECUTION_CONTEXT_OPERATION
-from scidiscovery.operations.catalog import CatalogCompileError, compile_catalog
+from scidiscovery.operations.catalog import compile_catalog
 from scidiscovery.operations.invoke import (
     InvocationArtifact,
     OperationEngineeringError,
@@ -40,7 +30,6 @@ from scidiscovery.operations.invoke import (
 )
 
 
-EXPERIMENT_MATERIALIZE_OPERATION = "science.experiment.materialize.v1"
 OBJECTIVE_PROJECT_OPERATION = "science.objective.project.v1"
 GENERAL_TRANSFORM_OPERATION_IDS = {
     INTAKE_SPLIT_OPERATION,
@@ -184,70 +173,6 @@ def _invocation_artifact(
     )
 
 
-def _root(tmp_path, *, catalog=None):
-    project = tmp_path / "project"
-    project.mkdir()
-    runtime = open_runtime(
-        project_root=project,
-        state_root=tmp_path / "state",
-        approval_receipt_secret=os.urandom(32),
-    )
-    instance = runtime.scheduler_bindings.create_instance(
-        name="r3_transform",
-        title="R3 deterministic transform operations",
-        objective="Verify catalog-owned deterministic transforms.",
-    )
-    facade = RootToolFacade(
-        runtime.artifacts,
-        runtime.intake,
-        runs=runtime.runs,
-        approvals=runtime.approvals,
-        executions=runtime.executions,
-        bindings=runtime.scheduler_bindings,
-        instance=instance.instance_id,
-        operation_catalog=catalog or _catalog(),
-    )
-    return runtime, instance, RootMCPRouter(facade)
-
-
-def _register(
-    runtime,
-    instance,
-    *,
-    name: str,
-    raw: bytes,
-    kind: str,
-    schema: str,
-    media_type: str = "application/json",
-    parents: tuple[ArtifactRef, ...] = (),
-    provisional: bool = False,
-):
-    envelope = runtime.artifacts.register(
-        raw,
-        ArtifactRegistration(
-            kind=kind,
-            schema_id=schema,
-            payload_schema_version=1,
-            media_type=media_type,
-            creator=runtime.actor,
-            parent_refs=parents,
-            labels=(
-                {"scientific_claim_admissible": "false"}
-                if provisional
-                else {}
-            ),
-        ),
-        idempotency_key=f"r3-transform:{name}",
-    )
-    runtime.scheduler_bindings.bind(
-        instance=instance.instance_id,
-        namespace="artifact",
-        name=name,
-        object_id=envelope.artifact_id,
-    )
-    return envelope
-
-
 def test_general_plugin_compiles_only_its_domain_neutral_transform_set() -> None:
     catalog = compile_catalog((BUILTIN_PLUGIN, GENERAL_PLUGIN))
     actual = {
@@ -305,80 +230,6 @@ def test_tcad_execution_context_projection_rejects_non_snapshot_content() -> Non
     assert error.value.reason_code == "executor_component_failed"
 
 
-def test_root_projects_execution_context_idempotently_with_exact_parent(tmp_path) -> None:
-    runtime, instance, root = _root(tmp_path)
-    snapshot = _solver_capability_snapshot()
-    raw = json.dumps(snapshot.model_dump(mode="json"), indent=2).encode("utf-8")
-    capability = _register(
-        runtime,
-        instance,
-        name="solver_capability",
-        raw=raw,
-        kind="solver_capability",
-        schema="tcad.solver-capability.v2",
-    )
-    request = {
-        "name": "execution_context",
-        "operation_id": EXECUTION_CONTEXT_OPERATION,
-        "inputs": [
-            {"port": "capability", "artifact_names": ["solver_capability"]}
-        ],
-    }
-    assert root.call_tool("operation_preflight", request)["admissible"] is True
-    first = root.call_tool("operation_invoke", request)
-    assert root.call_tool("operation_invoke", request) == first
-    output_name = first["result"]["outputs"][0]["artifact_name"]
-    artifact_id = runtime.scheduler_bindings.resolve(
-        instance=instance.instance_id,
-        namespace="artifact",
-        name=output_name,
-    )
-    envelope = runtime.artifacts.get_by_id(artifact_id)
-    assert envelope.parent_refs == (capability.ref,)
-    assert envelope.schema_id == "scidiscovery.execution-context.v1"
-    context = ExecutionContext.model_validate_json(
-        runtime.artifacts.read(envelope.ref), strict=True
-    )
-    assert context.domain == "tcad"
-    assert context.implementation_backend == "sprocess"
-
-    reordered_raw = json.dumps(
-        dict(reversed(tuple(snapshot.model_dump(mode="json").items()))),
-        separators=(",", ":"),
-    ).encode("utf-8")
-    reordered_capability = _register(
-        runtime,
-        instance,
-        name="solver_capability_reordered",
-        raw=reordered_raw,
-        kind="solver_capability",
-        schema="tcad.solver-capability.v2",
-    )
-    reordered_request = {
-        "name": "execution_context_reordered",
-        "operation_id": EXECUTION_CONTEXT_OPERATION,
-        "inputs": [
-            {
-                "port": "capability",
-                "artifact_names": ["solver_capability_reordered"],
-            }
-        ],
-    }
-    reordered_result = root.call_tool("operation_invoke", reordered_request)
-    reordered_name = reordered_result["result"]["outputs"][0]["artifact_name"]
-    reordered_id = runtime.scheduler_bindings.resolve(
-        instance=instance.instance_id,
-        namespace="artifact",
-        name=reordered_name,
-    )
-    reordered_envelope = runtime.artifacts.get_by_id(reordered_id)
-    assert reordered_envelope.parent_refs == (reordered_capability.ref,)
-    assert reordered_envelope.ref != envelope.ref
-    assert runtime.artifacts.read(reordered_envelope.ref) == runtime.artifacts.read(
-        envelope.ref
-    )
-
-
 @pytest.mark.parametrize("raw, reason", (
     (b'{"objective_contract":null}', "input_required_field_missing"),
     (b'{}', "input_required_field_missing"),
@@ -395,36 +246,6 @@ def test_declared_input_presence_fails_during_pure_preflight(raw, reason) -> Non
         )
     assert error.value.reason_code == reason
     assert error.value.port == "scientific_foundation"
-
-
-def test_objective_projection_preflight_and_invoke_reject_null_at_root(tmp_path) -> None:
-    runtime, instance, root = _root(tmp_path)
-    catalog = root.call_tool("operation_catalog", {"scope": "support", "view": "detail", "operation_id": OBJECTIVE_PROJECT_OPERATION})
-    operation = next(item for item in catalog["operations"] if item["operation_id"] == OBJECTIVE_PROJECT_OPERATION)
-    assert operation["inputs"][0]["required_non_null_fields"] == ["objective_contract"]
-    foundation = _intake().scientific_foundation
-    assert foundation.objective_contract is None
-    _register(runtime, instance, name="foundation", raw=foundation.canonical_json(),
-              kind="scientific_foundation", schema="scidiscovery.scientific-foundation.v1")
-    request = {
-        "name": "objective", "operation_id": OBJECTIVE_PROJECT_OPERATION,
-        "inputs": [{"port": "scientific_foundation", "artifact_names": ["foundation"]}],
-    }
-    def snapshot():
-        values = {}
-        for path in (runtime.state_root / "database").glob("*.sqlite3"):
-            with sqlite3.connect(path) as connection:
-                values[path.name] = tuple(connection.iterdump())
-        return values
-
-    before = snapshot()
-    result = root.call_tool("operation_preflight", request)
-    assert result["admissible"] is False
-    assert result["reason_code"] == "input_required_field_missing"
-    assert result["port"] == "scientific_foundation"
-    with pytest.raises(RootToolError, match="input_required_field_missing"):
-        root.call_tool("operation_invoke", request)
-    assert snapshot() == before
 
 
 def test_objective_projection_reads_exact_bound_content_and_preserves_objective() -> None:
@@ -598,66 +419,3 @@ def test_wildcard_schema_is_limited_to_read_only_evidence_ports() -> None:
         and port.usage == "evidence_inventory"
         for port in wildcard_ports
     )
-
-
-def test_catalog_transform_split_is_idempotent_and_preserves_provisional_state(
-    tmp_path,
-) -> None:
-    runtime, instance, root = _root(tmp_path)
-    intake = _register(
-        runtime,
-        instance,
-        name="scientific_intake",
-        raw=_intake().canonical_json(),
-        kind="scientific_intake",
-        schema="scidiscovery.scientific-intake.v1",
-        provisional=True,
-    )
-    audit = _register(
-        runtime,
-        instance,
-        name="evidence_audit",
-        raw=b"{}",
-        kind="evidence_audit",
-        schema="scidiscovery.evidence-audit.v1",
-    )
-    request = {
-        "name": "problem_frame",
-        "operation_id": INTAKE_SPLIT_OPERATION,
-        "inputs": [
-            {"port": "scientific_intake", "artifact_names": ["scientific_intake"]},
-            {"port": "evidence_audit", "artifact_names": ["evidence_audit"]},
-        ],
-    }
-    first = root.call_tool("operation_invoke", request)
-    assert root.call_tool("operation_invoke", request) == first
-    assert [item["output_label"] for item in first["result"]["outputs"]] == [
-        "primary",
-        "scientific_foundation",
-    ]
-    assert [item["artifact_name"] for item in first["result"]["outputs"]] == [
-        "problem_frame",
-        "problem_frame.scientific_foundation",
-    ]
-    for name in ("problem_frame", "problem_frame.scientific_foundation"):
-        artifact_id = runtime.scheduler_bindings.resolve(
-            instance=instance.instance_id, namespace="artifact", name=name
-        )
-        envelope = runtime.artifacts.get_by_id(artifact_id)
-        assert envelope.parent_refs == (intake.ref, audit.ref)
-        assert envelope.labels["operation_id"] == INTAKE_SPLIT_OPERATION
-        assert envelope.labels["scientific_claim_admissible"] == "false"
-    with pytest.raises(RootToolError, match="interface is not available on research surface"):
-        root.call_tool(
-            "artifact_transform",
-            {
-                "name": "legacy_split",
-                "profile": "scidiscovery.scientific-intake-split.v1",
-                "inputs": [
-                    {
-                        "source_name": "scientific_intake",
-                        "artifact_name": "scientific_intake",
-                    }
-                ],
-            },
-        )

@@ -3,51 +3,13 @@ from __future__ import annotations
 import hashlib
 import io
 import json
-import os
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from scidiscovery.artifact_agent.approval_ui.render import render_review
-from scidiscovery.artifact_agent.execution_bridge import ExecutionBridge
-from scidiscovery.artifact_agent.schema.approval import (
-    ApprovalRequest,
-    CompiledApprovalIdentity,
-    LocalIdentityRef,
-    ReviewDocument,
-)
-from scidiscovery.artifact_agent.schema.artifact import ArtifactRegistration
-from scidiscovery.artifact_agent.interfaces.mcp_root import (
-    RootMCPRouter,
-    RootToolError,
-    RootToolFacade,
-)
-from scidiscovery.artifact_agent.runtime import open_runtime
 from scidiscovery.artifact_agent.schema.common import canonical_json
-from scidiscovery.artifact_agent.schema.execution import ExecutionRequest
 from scidiscovery.artifact_agent.schema.refs import ArtifactRef
-from scidiscovery.artifact_agent.service.executions import ExecutionServiceError
-from scidiscovery.builtin_plugin import CORE_PLUGIN
-from scidiscovery.general_science_plugin import PLUGIN as SCIENCE_PLUGIN
-from curve_score.plugin import PLUGIN as CURVE_PLUGIN
-from scidiscovery.operations.catalog import compile_catalog
-from scidiscovery.operations.invoke import (
-    ApprovalProjectorContext,
-    ApprovalSubjectSnapshot,
-    effect_operation_plan,
-)
-from scidiscovery.artifact_agent.runtime_plugin_bindings import (
-    load_runtime_plugin_contributions,
-    parse_plugin_config_assignments,
-)
-from scidiscovery.operations.spec import (
-    ComponentRef,
-    ComponentSpec,
-    PluginDefinition,
-)
-from scidiscovery.operations.tooling import operation_worker_tools
-from tcad_artifact.plugin import PLUGIN as TCAD_PLUGIN
 from tcad_artifact.execution_control import (
     SolverCapability,
     _write_abandoned_terminal,
@@ -66,10 +28,6 @@ from tcad_artifact.project_packager import (
     PackagerError,
     materialize_execution_inputs,
 )
-
-
-def _catalog():
-    return compile_catalog((CORE_PLUGIN, SCIENCE_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN))
 
 
 def _execution_package(resolved_input_count: int = 0) -> bytes:
@@ -728,4 +686,3 @@ def test_retirement_archive_and_recovery_share_original_validator(tmp_path, monk
     with pytest.raises(history.ObserverIntegrityError):
         execution_recovery.validate(tmp_path, [ref])
     assert old_path.read_bytes() == old_bytes  # No old scientific seal or accepted count is rewritten.
-

@@ -1,5 +1,4 @@
 """Small real local processes and files; no TCAD binary, installer, or SSH host."""
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -108,75 +107,6 @@ def test_real_runner_enforces_shared_limits_and_reaps_children(tmp_path, mode):
                 os.killpg(int(pid_file.read_text()), signal.SIGKILL)
             except ProcessLookupError:
                 pass
-
-
-def test_budget_reservations_and_settlement_survive_process_restart(tmp_path):
-    script = '''
-import json,sys
-from pathlib import Path
-from scidiscovery.artifact_agent.service.executions import ExecutionService
-from tcad_artifact.execution_policy import ExecutionPolicySnapshot
-root=Path(sys.argv[1]); phase=sys.argv[2]
-service=ExecutionService(artifacts=None, approvals=None, database_path=root/'execution.sqlite', exchange_root=root/'exchange',service_actor=None)
-policy=ExecutionPolicySnapshot.model_validate_json((root/'policy.json').read_text(),strict=True)
-admission=policy.admission(budget={'max_storage_bytes':300,'wall_time_seconds':3},budget_key='a'*64)
-if phase=='reserve':
-    with service._connect() as connection:
-        # A terminal execution whose usage receipt has not yet been observed.
-        connection.execute("INSERT INTO executions (execution_id,executor,request_ref_json,payload_ref_json,state,created_at) VALUES ('first','fixture','{}','{}','failed','fixture')")
-        service._reserve_budget(connection,'first','fixture',admission)
-else:
-    with service._connect() as connection:
-        before=service._budget_remaining(connection,'fixture',admission)
-    assert before=={'max_storage_bytes':700,'wall_time_seconds':1},before
-    service.settle_budget('first',{'max_storage_bytes':100,'wall_time_seconds':1})
-    # Repeated terminal observation cannot refund settled usage.
-    service.settle_budget('first',{'max_storage_bytes':0,'wall_time_seconds':0})
-    with service._connect() as connection:
-        after=service._budget_remaining(connection,'fixture',admission)
-    assert after=={'max_storage_bytes':900,'wall_time_seconds':3},after
-    print(json.dumps(after))
-'''
-    fields = policy_fields()
-    fields["agent_execution_policy"].update(max_storage_bytes=1000, max_wall_time_seconds=4, max_total_wall_time_seconds=4)
-    (tmp_path / "policy.json").write_text(json.dumps(fields))
-    environment = {**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)}
-    for phase in ("reserve", "settle"):
-        completed = subprocess.run([sys.executable, "-c", script, str(tmp_path), phase],
-            env=environment, capture_output=True, text=True, timeout=15)
-        assert completed.returncode == 0, completed.stderr
-    assert json.loads(completed.stdout) == {"max_storage_bytes": 900, "wall_time_seconds": 3}
-
-
-def test_control_ingests_and_reads_file_reference_without_whole_file_read(tmp_path, monkeypatch):
-    from scidiscovery.artifact_agent.schema.artifact import ArtifactRegistration
-    from scidiscovery.artifact_agent.schema.refs import ActorRef
-    from scidiscovery.artifact_agent.service.artifacts import ArtifactService
-    source = tmp_path / "grid.bin"
-    digest = hashlib.sha256()
-    with source.open("wb") as stream:
-        for _ in range(512):
-            chunk = b"grid" * 1024
-            digest.update(chunk)
-            stream.write(chunk)
-    service = ArtifactService.open(cas_root=tmp_path / "cas", database_path=tmp_path / "artifacts.sqlite")
-    original_read_bytes = Path.read_bytes
-    def bounded_only(path):
-        if path == source or path.is_relative_to(tmp_path / "cas"):
-            pytest.fail("binary ingestion must stream rather than read_bytes")
-        return original_read_bytes(path)
-    monkeypatch.setattr(Path, "read_bytes", bounded_only)
-    artifact = service.register_file(source, ArtifactRegistration(kind="grid",schema_id="opaque",
-        payload_schema_version=1, media_type="application/octet-stream",
-        creator=ActorRef(actor_id="fixture", actor_type="service")),
-        expected_sha256=digest.hexdigest(), expected_size=source.stat().st_size,
-        idempotency_key="streamed-grid")
-    monkeypatch.setattr(service.cas, "read", lambda *_: pytest.fail("original delivery must stream"))
-    observed = hashlib.sha256()
-    with service.open_original(artifact.ref) as stream:
-        for chunk in iter(lambda: stream.read(1024), b""):
-            observed.update(chunk)
-    assert artifact.size_bytes == 2097152 and observed.hexdigest() == digest.hexdigest()
 
 
 # These tests exercise real supervised child lifecycle and restart behavior.

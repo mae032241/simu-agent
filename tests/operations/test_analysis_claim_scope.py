@@ -9,8 +9,6 @@ import pytest
 from curve_score.schema import CurveBundle, CurveComparisonSpec, CurveConsistencyReport, evaluate_curve_consistency
 from curve_score.analysis_tool import evaluate_analysis_request
 from curve_score.science_operations import Components, Resources, _validate_diagnosis_against
-from scidiscovery.artifact_agent.interfaces.mcp import MCPRouter
-from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
 from scidiscovery.artifact_agent.schema.artifact import ArtifactRegistration
 from scidiscovery.artifact_agent.schema.common import canonical_json, canonical_sha256
 from scidiscovery.artifact_agent.schema.experiment import ExperimentPortfolio
@@ -18,7 +16,6 @@ from scidiscovery.artifact_agent.schema.layered_diagnosis import LayeredDiagnosi
 from scidiscovery.operation_contract import SemanticRuleViolation
 from tests.operations import test_m2_curve_analysis_boundary as curve
 from tests.operations.test_result_analysis_tool import score_inputs
-from tests.operations.test_tcad_result_analysis import analysis_system
 
 
 def test_local_objective_and_observation_are_not_erased_by_missing_numerical_evidence():
@@ -141,31 +138,3 @@ def test_precomputed_status_does_not_override_scientific_verdict(status):
     raw = curve._passing_diagnosis().model_dump(mode='json')
     raw['evidence'][0]['locator'] = 'curve_analysis_package:/metric_report'
     _validate_diagnosis_against(LayeredDiagnosisReport.model_validate_json(canonical_json(raw)), plan, contract, metric)
-
-
-def mcp_call(worker, name, arguments):
-    return MCPRouter(worker, name='analysis-scope').handle({'jsonrpc': '2.0', 'id': 1,
-        'method': 'tools/call', 'params': {'name': name, 'arguments': arguments}})
-
-
-def submit(worker, opened, report):
-    Path(opened['output_directory'], 'result.json').write_bytes(canonical_json(dict(schema_version=1,
-        handoff=dict(verdict='blocked', summary='Bounded evidence; remaining scope is explicit.'), payload=report)))
-    return mcp_call(worker, 'worker_submit_result', {})['result']['structuredContent']
-
-
-def generic_worker(tmp_path, *, plan=None, return_system=False):
-    system = analysis_system(tmp_path, plan=plan)
-    catalog, runtime, root, _, artifacts, register = system
-    bundle = curve._bundle().model_dump(mode='json')
-    bundle['series'][1]['points'] = deepcopy(bundle['series'][0]['points'])
-    register('generic_results', b'Execution finished with the bounded output.', 'opaque', parents=(artifacts['plan'].ref,))
-    register('generic_bundle', canonical_json(bundle), 'scidiscovery.curve-bundle.v1', parents=(artifacts['plan'].ref,))
-    root.call_tool('operation_invoke', dict(name='generic_analysis', operation_id='science.result.diagnose.v1',
-        instruction='Analyze only the exact bound plan, execution evidence, and optional curve calculations.', inputs=[
-        dict(port='experiment_plan', artifact_names=['plan']),
-        dict(port='experiment_results', artifact_names=['generic_results']), dict(port='curve_bundle', artifact_names=['generic_bundle'])]))
-    compiled = catalog.operation('science.result.diagnose.v1')
-    worker = LocalWorkerMCPRouter(runtime.runs, operation_id=compiled.spec.operation_id, operation_digest=compiled.digest)
-    opened = worker.call_tool('worker_open_assignment', {})
-    return (worker, opened, system) if return_system else (worker, opened)

@@ -23,9 +23,6 @@ from tcad_artifact.project_packager import validate_project_case_controls
 from tests.operations.test_agent_contract_alignment import experiment_case
 from tests.operations.test_m2_parameter_package import _package
 from tests.operations.test_minimal_figure_extraction import _png, _request
-from tests.operations.test_tcad_result_analysis import (
-    analysis_report, analysis_system, open_analysis, raw_request, write_analysis,
-)
 
 
 def _plan(experiment_case):
@@ -35,8 +32,6 @@ def _plan(experiment_case):
         ExperimentDesignIntent.model_validate_json(canonical_json(intent)),
         ResearchObjectiveContract.model_validate_json(sources['research_objective']),
     ).model_dump(mode='json')
-
-
 
 
 def test_parameter_family_preserves_repeated_citations_without_overwriting_types():
@@ -90,19 +85,6 @@ def test_partial_comparison_retains_valid_refs_and_exact_case_controls(tmp_path,
         invalid['proposals'][0]['comparison_contract'][field].append(missing)
         with pytest.raises(ValidationError):
             ExperimentPortfolio.model_validate_json(canonical_json(invalid))
-
-
-def test_curve_subset_keeps_actual_reference_and_operator_checks():
-    raw = raw_request()['comparison_spec']
-    raw['reference_dispositions'] = [{'series_key': 'missing', 'disposition': 'compare', 'rationale': 'Not present.'}]
-    with pytest.raises(ValidationError, match='not actually compared'):
-        CurveComparisonSpec.model_validate_json(canonical_json(raw))
-    raw['reference_dispositions'] = []
-    raw['comparisons'][0]['reference_series'] = 'missing'
-    with pytest.raises(ValidationError, match='undeclared series'):
-        CurveComparisonSpec.model_validate_json(canonical_json(raw))
-    with pytest.raises(ValidationError, match='require a level'):
-        CurveOperatorSpec.model_validate_json(canonical_json({'operator_key': 'a', 'kind': 'crossing_shift'}))
 
 
 @pytest.mark.parametrize('keep', ['plot_bbox', 'axis_calibration', 'series', 'all'])
@@ -166,17 +148,3 @@ def test_curve_compiler_deduplicates_references_without_policing_case_roles():
     assert len(contract.comparison_spec.comparisons) == 1
     operators = contract.comparison_spec.comparisons[0].operators
     assert len(operators) == 1 and operators[0].validation_check_key == 'profile_rms'
-
-
-@pytest.mark.parametrize('mapped', [False, True])
-def test_tcad_local_locator_survives_submission_and_wrong_alias_still_rejects(tmp_path, mapped):
-    worker, opened = open_analysis(analysis_system(tmp_path))
-    report = analysis_report(alias='solver_outputs_001', output_name='A', mapped=mapped)
-    report['evidence'][0]['locator'] = 'lines-1-3'
-    report['source_references'][0]['input_alias'] = 'unbound_alias'
-    write_analysis(opened, report)
-    assert worker.call_tool('worker_submit_result', {})['state'] == 'rejected'
-    report['source_references'][0]['input_alias'] = 'solver_outputs_001'
-    write_analysis(opened, report)
-    result = worker.call_tool('worker_submit_result', {})
-    assert result['state'] == 'completed', result

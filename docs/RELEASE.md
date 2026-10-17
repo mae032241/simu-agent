@@ -1,125 +1,58 @@
-# Release Procedure
+# Release and qualification scope
 
 [简体中文](RELEASE.zh-CN.md) | English
 
 <a id="current-status"></a>
-## Current implementation and validation status
+## Supported scope
 
-The current platform exposes the generic plugin runtime API, explicit Root reading
-intents, and LocalTrusted execution. See [Architecture](ARCHITECTURE.md),
-[Plugin runtime API](PLUGIN_RUNTIME_API.md), and [Security](../SECURITY.md).
-LocalTrusted assumes cooperative local Agents and the host user; it does not isolate
-hostile processes sharing the control user's OS identity.
+The application provides `scid-research`, `scid-experiment` and an on-demand
+instance UI. The research controller uses native scientific threads, explicit
+instance roots, frozen inputs and finite budgets. Reusable Operation/compiler
+declarations, schemas, callbacks and domain adapters remain library surfaces;
+the [Plugin API](PLUGIN_RUNTIME_API.md) identifies their current owners.
+[Architecture](ARCHITECTURE.md) and the [CLI guide](ROOTLESS_CLI.zh-CN.md)
+define behavior, permission and recovery boundaries.
 
-Current Operation ABI is 23. Source node `775b3e8` and merge node `5a90f3f`
-have identical trees. The recorded approval-fix verification for that source was
-1593 source cases passed (70 cases in other lanes deselected), with a 2,000,000,000
-byte address-space cap and an observed process-tree RSS peak of 304,713,728 bytes.
-Focused checks covered 49 cases, including actual local HTTP approval routes with
-a test execution adapter and an isolated replay of the original approval receipt.
-These are prior candidate results, not tests rerun by this documentation cleanup.
-Raw receipts remain outside the source release; this summary is not a replacement
-for those receipts or proof that the current installation contains the fix.
-
-Open limits:
-
-- SEC-002 remains open: LocalTrusted does not isolate processes sharing its UID.
-- Earlier live figure and short SProcess initialization checks do not establish a
-  complete Fig.4 research result, H0/H1 verdict, or full SDevice realization.
-- Root/Worker/helper token savings have not been established by a controlled
-  comparison. Helper use alone is not evidence of lower total cost.
-- Source checks do not qualify installed/process/live lanes for newer bytes.
-  Instance archive/restore requires verified writer quiescence; real deployment,
-  systemd and scientific continuation checks remain candidate-specific.
-- Pending and known-issue entries in the architecture constraint registry remain
-  open for reassessment. Removing historical reports does not close them.
-
-Run the relevant checks below for each release candidate and retain its emitted
-`result.json`, logs and source identity outside the source tree.
+Source, HTTP and synthetic-process checks establish only the behavior they exercise.
+They do not qualify real native continuation, browsers, TCAD solvers, actual power
+loss or cross-host recovery. Workers and same-user host processes are trusted.
+[Security](../SECURITY.md) describes that soft boundary; [TCAD qualification](TCAD_QUALIFICATION_STATUS.md)
+describes domain limits. A qualification decision applies to exact implementation,
+inputs and environment. New code cannot inherit a historical verdict.
 
 <a id="publication-scope"></a>
-## Source publication scope
+## Source publication
 
-`scripts/build_git_release.py` uses explicit source/document/tool allowlists. It
-includes the current hermetic test tree, fixture packages, serial resource runner,
-CI configurations, and scripts imported or launched by those tests. The retired
-`test_native_worker_usage.py` tested only a private historical measurement script;
-it was removed after confirming no production consumer. No test is silently
-excluded to hide a missing private dependency.
+`scripts/build_git_release.py` is the explicit source-publication allowlist. It
+copies current source, deployment tools, supported plugin trees, functional tests
+and fixtures, current reference documents and selected developer tools. It normalizes
+text and modes, scans the result, then writes `MANIFEST.sha256` and a deterministic
+`.tar.gz` archive. An existing output requires an explicit `--force`; use a fresh
+output directory when preserving a candidate.
 
-Process documents, raw acceptance output, duplicate reviews and source backups
-have been removed from the current tree. Their original content remains in Git at
-`5a90f3fa33135c8b151a547e2eceed0d102eea95`; for example, use
-`git show 5a90f3f:docs/plans/HISTORY.md` to locate old records. This does not rewrite
-Git history or erase unresolved findings. The retained Fig.4 discussion and its two
-direct source snapshots are research references, excluded from the release.
+Plans, audits, stage results, handoffs, superseded specifications and trial outputs
+are local records outside long-term tracking and source publication. Functional
+fixtures live under `tests/fixtures/` or `scripts/acceptance/fixtures/` and are
+published with their consumers. Research databases, credentials, private datasets,
+generated platform profiles and local agent instructions are excluded. Bundled
+reference manuals have separate distribution restrictions; see [NOTICE](../NOTICE.md).
+The release scan and checksum manifest do not establish redistribution rights.
 
-Published architecture, installation and plugin documents link directly to these
-status/scope sections. The builder copies the maintained text without a second set
-of editorial replacements. `MANIFEST.sha256` hashes the generated release bytes.
+## Checks and preservation
 
-## Historical compatibility break: 2026-09-24
+Select checks for the exact diff under the serial supervisor in
+[tests/README.md](../tests/README.md). The explicit source-release check is
+`tests/installation/check_source_release.py`; it checks files, references and the
+manifest without installing the application or running the packaged functional
+suite. Wheel packaging and installed entry points require their own selected
+checks when affected. A source archive does not prove wheel completeness.
 
-That revision introduced Operation ABI 19 (the current ABI is 23). The UI no longer reads Task-era databases or old Artifact
-envelopes containing `task_ref`. Removed formats include experiment-intent `validation_plan`,
-`next_action_kind` / `recommended_task_mode` / `accepts_actions`, the
-`scid_describe.representation` parameter, and the five-column SProcess CSV fallback.
-Use Runs, strict Artifact envelopes, `validation_intent`, compact invoke contracts,
-and `SCID_CURVE_V1` logs. Original data is retained; recreate current-format inputs
-without inheriting old approvals or scientific qualification. Keep the old installation
-for reading old data, and retain environment/data copies before updating.
-That cleanup was checked statically at the time. Later validation is described
-in the current status above; no existing deployment is updated by this procedure.
+Run model, browser and solver checks only with their own scope, environment and
+budget. Sampled RSS/time stops do not provide kernel-enforced aggregate isolation.
+Keep verification evidence bound to the exact candidate and retain unverified
+boundaries. Do not combine passing counts across revisions into whole-suite qualification.
 
-The TCAD job payload is now v4 (policy digest, cumulative resource enforcement and file-reference transport). Removed compatibility includes the unused
-`max_processes` hint, automatic smoke-policy migration, historical serialization,
-and sprocess v1 repackaging. Update control and remote runners together.
-Use declared-source v2 projects with complete case anchors and exact rematerialization.
-
-## Release steps
-
-1. Run bounded tests serially from the source workspace:
-
-   ```bash
-   python scripts/run_tests.py --lane source --per-file --output /tmp/scid-source
-   python scripts/run_tests.py --lane installed --output /tmp/scid-installed
-   python scripts/run_tests.py --lane process --per-file --output /tmp/scid-process
-   ```
-
-   See [test lanes and limits](../tests/README.md). Output directories must be new.
-2. Build a clean repository:
-
-   ```bash
-   python3 scripts/build_git_release.py \
-     --output git_release/scidiscovery-agent \
-     --force \
-     --init-git
-   ```
-
-3. Verify `MANIFEST.sha256` from the generated directory:
-
-   ```bash
-   cd git_release/scidiscovery-agent
-   sha256sum --check MANIFEST.sha256
-   git status --short
-   ```
-
-4. Review the staged file list. Confirm there are no research inputs, outputs,
-   databases, generated platform files, host paths, credentials, licenses, or
-   proprietary documents.
-5. Add a software license before a public release.
-6. Create the initial commit using the repository owner's identity:
-
-   ```bash
-   git commit -m "Initial SciDiscovery Agent release"
-   git remote add origin <repository-url>
-   git push -u origin main
-   ```
-
-7. On a clean Linux/WSL target, follow `docs/INSTALL.md` and verify at least the
-   local deployment-smoke mode, install transaction evidence, and rollback
-   fault matrix. Real TCAD qualification is a separate release gate; see
-   [TCAD_QUALIFICATION_STATUS.md](TCAD_QUALIFICATION_STATUS.md).
-
-The sibling `scidiscovery-agent.tar.gz` is a normalized source archive. It does
-not include `.git`.
+See [installation](INSTALL.md) for publication, rollback and removal boundaries.
+Frozen implementations retain their identities; uncertain submissions require
+same-call reconciliation. Restore never resets consumed budgets or replaces
+external effects with an earlier ledger snapshot.

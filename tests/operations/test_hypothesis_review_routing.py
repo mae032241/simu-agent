@@ -1,78 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import replace
 
-import json
-from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import Mock
-
-import pytest
-
-from scidiscovery.artifact_agent.interfaces.mcp_root_operation_routes import (
-    RootOperationRoutes,
-)
-from scidiscovery.artifact_agent.interfaces.mcp_root import (
-    RootMCPRouter,
-    RootToolFacade,
-)
-from scidiscovery.artifact_agent.interfaces.mcp_root_shared import RootToolError
-from scidiscovery.artifact_agent.interfaces.mcp_local_worker import (
-    LocalWorkerMCPRouter,
-)
-from scidiscovery.artifact_agent.runtime import open_runtime
-from scidiscovery.artifact_agent.schema.artifact import ArtifactRegistration
 from scidiscovery.artifact_agent.schema.cognitive import (
     CriticReview,
     HypothesisReviewForm,
 )
 from scidiscovery.artifact_agent.schema.common import canonical_json
-from scidiscovery.artifact_agent.schema.refs import ArtifactRef
-from scidiscovery.artifact_agent.schema.run_signal import SchedulerSignal
-from scidiscovery.artifact_agent.service.run_records import RunSlotBusy
-from scidiscovery.builtin_plugin import CORE_PLUGIN
 from scidiscovery.general_science_components import _critic_portfolio_context
-from scidiscovery.general_science_experiment_components import _object_review_context
-from scidiscovery.general_science_plugin import PLUGIN as GENERAL_PLUGIN
-from scidiscovery.operations.catalog import compile_catalog
-from scidiscovery.operations.invoke import (
-    InvocationArtifact,
-    OperationInvocationError,
-    preflight_operation,
-)
-
-
-def _catalog():
-    return compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN))
-
-
-def _ref(name: str, kind: str, schema: str) -> ArtifactRef:
-    return ArtifactRef(
-        artifact_id=f"art_{name}",
-        sha256=(name.encode().hex() + "0" * 64)[:64],
-        kind=kind,
-        schema_id=schema,
-    )
-
-
-def _artifact(
-    name: str,
-    schema: str,
-    *,
-    kind: str = "scientific_object",
-    parents: tuple[ArtifactRef, ...] = (),
-    verdict: str | None = None,
-    media_type: str = "application/json",
-) -> InvocationArtifact:
-    return InvocationArtifact(
-        artifact_name=name,
-        ref=_ref(name, kind, schema),
-        schema_id=schema,
-        media_type=media_type,
-        size_bytes=32,
-        parent_refs=parents,
-        handoff_verdict=verdict,
-    )
 
 
 def _critic(

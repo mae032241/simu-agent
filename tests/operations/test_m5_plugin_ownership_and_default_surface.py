@@ -59,37 +59,6 @@ def test_project_and_execution_resource_contracts_share_one_type() -> None:
     assert ProjectResourceLimits is ResourceLimits
 
 
-def test_default_imports_do_not_load_optional_runtime_products() -> None:
-    source = """
-import sys
-from scidiscovery.artifact_agent.interfaces import cli
-from scidiscovery.artifact_agent import runtime
-from scidiscovery.platforms import codex
-from scidiscovery.builtin_plugin import CORE_PLUGIN
-from scidiscovery.general_science_plugin import PLUGIN as GENERAL_PLUGIN
-from curve_score.plugin import PLUGIN as CURVE_PLUGIN
-from tcad_artifact.plugin import PLUGIN as TCAD_PLUGIN
-from scidiscovery.operations.catalog import compile_catalog
-compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN))
-for name in (
-    'scidiscovery.artifact_agent.portable_bundle',
-    'tcad_artifact.command_adapter',
-    'tcad_artifact.execution_adapter',
-    'tcad_artifact.execution_daemon',
-    'tcad_artifact.ssh_transport',
-):
-    assert name not in sys.modules, name
-"""
-    completed = subprocess.run(
-        [sys.executable, "-c", source],
-        check=False,
-        capture_output=True,
-        text=True,
-        env={**os.environ, "PYTHONPATH": os.pathsep.join(sys.path)},
-    )
-    assert completed.returncode == 0, completed.stderr
-
-
 def test_tcad_runtime_loads_only_the_selected_transport(tmp_path: Path) -> None:
     command_config = tmp_path / "command.json"
     command_config.write_text(

@@ -1,41 +1,9 @@
-# 部署入口
+# 应用部署
 
-简体中文 | [English](README.md)
+`install.sh` 从本地源码与选定插件发布 `scid-research`、`scid-experiment`，要求新前缀，
+不创建实例、预算或服务。`SCID_DEPLOY_MODE` 仅接受 `thin`。
+依赖、参数、前缀保护、事务回退与卸载见[安装指南](../docs/INSTALL.zh-CN.md)。
+`reinstall.sh` 是操作员 sudo 包装，同样要求新前缀。
 
-## 默认薄 CLI 部署
-
-新项目默认 `SCID_DEPLOY_MODE=thin`：只向全新 site 安装应用并发布
-`scid-research` / `scid-experiment`。不要求旧 workspace/launch-root，
-不创建 Root 配置、SQL、密钥或服务。已有 site/wrapper 碰撞明确拒绝，
-不停止旧 live 服务。见[默认安装路径](../docs/INSTALL.zh-CN.md#新项目默认薄-cli)。
-失败回滚和卸载仅处理匹配本配置的薄 wrapper；代码 prefix 与原实例保留，
-外来 wrapper 不删除，冲突时明确 rollback incomplete。
-
-## 显式旧服务部署
-
-下文服务、事务和状态格式说明仅适用于显式 `SCID_DEPLOY_MODE=legacy`。
-旧数据保留；新薄层不依赖重建旧 SQL reader，历史读取/迁移仅在实际需要时另议。
-
-- `install.sh`：安装、验证、查看或移除 Linux/WSL 服务。
-- `reinstall.sh`：通用、事务化的长期重装入口。
-- `install_ssh_tcad_runner.sh`：通过已有 SSH 连接安装 Runner；也可复用运行态 transport
-  完整更新 Runner 与私有配置，或在当前 schema 上仅升级代码。
-- `init_workspace.sh`：以 `0750` 权限初始化与源码分离的研究 workspace。
-- `install_transaction.py`：为 site、unit、配置、skill、launcher 和 SQLite 状态生成
-  精确事务快照，并在安装失败时回滚。
-- `systemd/*.service.in`：服务模板；不要直接修改 `/etc/systemd/system` 下的生成文件。
-
-安装器先离线构建并验证 release site，随后才停止服务和事务化激活；健康检查失败会
-恢复安装前文件、数据库和服务状态。安装器会根据自身位置推导仓库根目录。机器相关信息通过 `SCID_*` 环境变量和 JSON
-示例的私有副本提供。完整步骤见[中文安装教程](../docs/INSTALL.zh-CN.md)。
-
-自动图提取须显式选择 `tcad_artifact,curve_score,curve_figure_evidence`，按该教程离线
-预装工具和默认 `eng` 数据。dry-run 和安装均在事务前以服务身份自动记录版本并验证
-真实能力，不要求 figure 身份输入，不安装论文专用
-wrapper 或人工几何技能。
-
-部署命令不会安装 Sentaurus、许可证、虚拟机或 SSH key。
-
-## 本版状态格式
-
-本版为破坏性升级。部署时将 `SCID_STATE_ROOT` 指向**新的空目录**；已有目录须带有本版 `.scidiscovery-state.json` 标记。安装器会在构建和停服务前检查，控制服务、Worker、UI 和收集入口也会检查。非空无标记、旧格式或损坏标记会拒绝；不自动迁移或清除旧数据，也不要手工补标记。首次初始化自动写入标记，本版状态支持正常重启。正式安装资格仍按发布验收执行。
+`install_ssh_tcad_runner.sh` 独立部署领域执行后端，另需明确管理员配置与部署授权；
+见[传输合同](../docs/tcad_transport_contract.md)。

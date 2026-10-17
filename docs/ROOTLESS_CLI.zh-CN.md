@@ -1,7 +1,7 @@
 # 无 Root 的科研 CLI
 
 `scid-research` 直接启动新的 H/W/A/证据原生线程；控制程序执行科学角色选择的路由。
-不依赖 LoopX，不启动 Root 模型，不需要 MCP 管理页绑定。已提供实例 UI、可选来源/正式审查与执行授权接缝；TCAD 非空输入链已静态接通，长时人工等待恢复也已静态接通，旧 daemon 不迁入。当前迁移节点仅通过静态独审，未验证真实远端执行。
+控制程序拥有原件绑定、预算和执行权限，H/W/A/E 拥有科学判断。实例 UI 复用原实例状态；来源声明、正式审查和执行授权按准备配置启用。当前能力与资格边界见[架构](ARCHITECTURE.zh-CN.md)和[TCAD 资格](TCAD_QUALIFICATION_STATUS.zh-CN.md)。
 
 ## 安装入口
 
@@ -17,8 +17,7 @@ MCP/Root 角色、systemd 服务或默认实例。已有 site 或任一薄 wrapp
 `uninstall` 仅删除匹配本配置的两个 wrapper，保留代码 prefix、实例及旧状态，
 不能把卸载命令等同于所有 native/外部作业已停止。升级/旧代码回收须另行确认原写者。
 
-旧服务仍须显式 `SCID_DEPLOY_MODE=legacy`，旧 SQL 的独立只读出口迁移尚未完成；
-旧 `scid`/UI 不因此变成只读。安装不会自动运行以下命令或增加任何预算。
+`SCID_DEPLOY_MODE=legacy` 已退役并在修改文件前拒绝。当前不提供旧 SQL reader 或协议迁移。安装不会自动运行以下命令或增加任何预算。
 
 ## 创建与运行
 
@@ -50,7 +49,7 @@ scid-research run --root /absolute/path/new-instance
 rootless cov launcher 的 operator 配置应声明相同全局值与 `role_profiles`（可为等价的稀疏配置）；它核对冻结实例，再生成匹配的 CODEX_HOME 配置，拒绝不一致的 model/effort/tier 参数。
 这些记录证明请求参数一致，不代替服务端实际模型或计费观测。
 
-## 插件选择与实例管理（迁移中的能力）
+## 插件选择与实例管理
 
 `prepare --execution-config /path/config.json` 显式选择已注册执行器，配置形状为 `{"executor":"plugin:binding","configuration":{...}}`。仅用于宿主配置的 `--experiment-mode local`；这里 local 表示配置归属，不表示只支持本机计算。不传时沿用默认本地执行器。公开配置不接受控制层 scope、预算、原件身份或凭据；能力和实现身份随实例冻结。
 
@@ -61,13 +60,15 @@ scid-research serve-ui --root /absolute/path/instance \
   --approval-secret-file /absolute/path/operator-owned.key
 ```
 
-密钥由操作者提供，须为现有普通文件、权限0600且至少32字节。命令监听 loopback 并输出独立只读/管理链接，重启后旧浏览凭据失效。普通本地实例无需启用正式审查或执行审批，也能查看节点状态、请求暂停和继续。暂停只阻止下一节点；已接受工作继续完成。继续复用原实例写锁，服务只允许一个进行中的推进请求。页面当前展示状态元数据，不提供任意路径或完整私有会话读取。
+密钥由操作者提供，须为现有普通文件、权限0600且至少32字节。命令监听 loopback 并输出独立只读/管理链接，重启后旧浏览凭据失效。普通本地实例无需启用正式审查或执行审批，也能查看节点状态、请求暂停和继续。暂停只阻止下一节点；已接受工作继续完成。继续复用原实例写锁，服务只允许一个进行中的推进请求。页面提供实例状态、精确封存科学原文和成果入口，不提供任意路径或完整私有会话读取。
+
+`/results?after=N` 每页列20个封存节点，`/results/<step>` 显示精确结果；原科学 JSON 与附件入口保留。排名使用该节点输入时冻结的候选摘要，不代表当前全局排名；本节点 A 推荐为 null 时不回填旧推荐。HTML/SVG 成果仍下载，不内嵌执行。
 
 准备实例时可选 `--source-restrictions` 冻结来源声明、`--enable-formal-review` 启用精确对象独立审查。正式审查不等于执行授权。另启 `--enable-execution-authority` 与 `--execution-resource-policy` 才接资源准入：资源策略显式声明 `{"version":1,"allowance":{"wall_time_seconds":N,"max_storage_bytes":N}}`（N为正整数），执行器必须支持冻结的授权合同；不支持不能静默绕过。人工决定在同一实例页面作出，浏览权限本身不授执行额度。
 
 资源账复用原 control ledger，换候选/重试不重置消耗。`budget-amend --execution-wall-seconds N --execution-storage-bytes N --authorization-note ...` 仅修订有限资源上限，不代替精确调用的执行决定；不得和科学token/时间修订参数混用。未知调用不退款、不重发，已接受调用的查询/取消不因W结束而被当成新提交拒绝。
 
-TCAD 的可选编译→精确封存→正式审查→后继执行非空输入已静态接通（4399149）；这些代码接缝不证明新TCAD链已可生产使用。完整范围及未验收项以[迁移计划](plans/THIN_CAPABILITY_MIGRATION_20261016.zh-CN.md)和对应独审报告为准；不从旧实例静默升级或复制预算。普通功能验收不运行安装矩阵；真实模型/solver资格单独记录，本机HTTP与浏览器检查不替代远端资格。
+TCAD 支持可选编译、精确封存、正式审查与后继执行的非空输入绑定。工程接缝存在不证明真实 solver 已取得资格；所需证据见[TCAD 资格](TCAD_QUALIFICATION_STATUS.zh-CN.md)。旧实例不会静默升级或复制预算，本机 HTTP 与浏览器检查不能替代远端资格。
 
 ### 原调用恢复与只读归档
 
@@ -92,14 +93,14 @@ scid-research checkpoint-restore --root /absolute/instance --package /absolute/c
 
 anchor 目录须已存在、独立于实例。export 冻结旧写者；restore 不覆盖/删除旧根，不复制密钥或 native sessions，不自动继续。恢复保留原 settings、账本和资源消耗，新 generation 成为唯一写者并保持暂停；跨 boot 已证实的暂停间隔标为未测量，不伪造墙钟耗时。成功恢复后的重复命令只确认原事务，不再次暂停已经继续运行的实例。恢复中断保持 fenced，可重试同一事务。
 
-普通只读包不能追认恢复权限；跨宿主、外部 anchor 丢失、缺少必要实现依赖、未知执行或未清理的 native 进程不能自动变成可推进恢复。这里提供同宿主冷恢复，不承诺任意灾备。具体验收和未验证范围以[迁移计划](plans/THIN_CAPABILITY_MIGRATION_20261016.zh-CN.md)及当次报告为准；本地过程测试不证明真实掉电或远端 solver。
+普通只读包不能追认恢复权限；跨宿主、外部 anchor 丢失、缺少必要实现依赖、未知执行或未清理的 native 进程不能自动变成可推进恢复。这里提供同宿主冷恢复，不承诺任意灾备。支持边界见[当前架构](ARCHITECTURE.zh-CN.md)；本地过程测试不证明真实掉电或远端 solver。
 
 ## 受管本地实验
 
 标准单项 `codex` launcher 新建实例默认冻结 `--experiment-mode local`，W 启动前由控制层准备本地执行配置。
 自定义 launcher 省略此参数时按兼容规则冻结 `external`，其执行配置由 launcher 提供；任务简报会说明普通 shell 命令没有自动记录。
 自定义本地 launcher 可显式传 `--experiment-mode local`；已有 cov launcher 使用 `external`，不会被默认 local 配置覆盖。
-新复制的 `scripts/acceptance/rootless_cov_launcher.py` 在其 operator JSON 中默认选择 `cov_engineering_check_reserve_seconds=15`，可显式设为 `0` 关闭预留。它经原 `cov_lineage.configure` 冻结到 Cov 执行配置；不修改私有历史准备脚本、旧 launcher 副本或已接受调用。原单调用65秒不增加：支持 `public_runner_main` 的新调用请求实验至多50秒、检查至多10秒、反馈留2秒，原任务剩余窗口还可进一步裁剪；`exp run` 前的短提示仅说明请求上界，实际是否 `reserved` 及原绝对截止仍看回包的 `engineering_check.time_allocation`。仅接受0或大于2且小于65的有限秒数；`backend_file` 无该检查能力时明确不承诺切分。默认通用 Local 不受此 launcher 配置影响。
+`scripts/acceptance/rootless_cov_launcher.py` 在其 operator JSON 中默认选择 `cov_engineering_check_reserve_seconds=15`，可显式设为 `0` 关闭预留。它经原 `cov_lineage.configure` 冻结到 Cov 执行配置；配置只影响新调用，不改变已接受调用。原单调用65秒不增加：支持 `public_runner_main` 的新调用请求实验至多50秒、检查至多10秒、反馈留2秒，原任务剩余窗口还可进一步裁剪；`exp run` 前的短提示仅说明请求上界，实际是否 `reserved` 及原绝对截止仍看回包的 `engineering_check.time_allocation`。仅接受0或大于2且小于65的有限秒数；`backend_file` 无该检查能力时明确不承诺切分。默认通用 Local 不受此 launcher 配置影响。
 模式在 settings/job 中冻结，恢复沿用原选择；已有实例缺少此字段时保持原配置路径。
 原生 shell 和权限照常可用，临时分析无需逐项受管。
 
@@ -140,7 +141,6 @@ scid-experiment --config work/experiment-config.json run \
 无外部交付 adapter 时可使用 `scid-research closeout --root /path/to/instance --export-only` 保留成果及限制，状态为 `exported_unsubmitted`。
 本地成果封存及交接不产生 cov 审计资格或外部提交确认。
 显式配置通用目录交付 adapter 后，A 的 `deliver` 可授权控制层解析精确输入和成果、封装并确认目标目录；该确认只证明本地目录交付。
-默认本地工具的两候选、A 选择、目录交付及独立重放已有[通用逆问题真实模型报告](plans/evidence/GENERIC_INVERSE_LIVE_RESULT_20261016.zh-CN.md)；该场为本地同步任务，不代表 TCAD 或异步执行验收。
 
 ## 文件与职责
 
@@ -244,7 +244,7 @@ runner 收养主进程退出后的普通子进程，并按真实归属和启动�
 runner 意外退出时，本地 watchdog 仅清理能精确核对的标准进程组成员；无法核对时保留 `cleanup_unknown`。
 启动器应自行保证脱离进程组的后代清理；现有隔离启动器的原权限和配置协议保持原样。
 
-## 可选的全角色节点预算（N6a）
+## 可选的全角色节点预算
 
 新实例可在 `prepare` 添加 `--node-budget-policy /absolute/path/node-policy.json`。
 JSON 必须恰有 `H/W/A/E` 四个对象，每个对象恰有正整数 `max_observed_tokens`
@@ -272,9 +272,9 @@ input+output 阈值即请求终止；cached input 已包含在 input 内，不�
 
 launcher 使用 argv，不拼接 shell。可复用经过验证的外部隔离启动器，但须适配上述目录和私有 schema。
 直接 `codex` 是软隔离：关闭项目 AGENTS 自动加载、旧 scidiscovery MCP、native 子 Agent 和 fast。
-当前执行审批信任 Worker 及其本地进程：HMAC、精确调用绑定、有效期和预算用于防误操作与状态混淆，不阻止同权限进程读取密钥或伪造批准。密钥路径不显示、0600或另起同用户进程均不构成强隔离；本轮不新增授权服务。需要防恶意 Worker 的部署仍须单独建立真实权限边界。
+当前执行审批信任 Worker 及其本地进程：HMAC、精确调用绑定、有效期和预算用于防误操作与状态混淆，不阻止同权限进程读取密钥或伪造批准。密钥路径不显示、0600或另起同用户进程均不构成强隔离。需要防恶意 Worker 的部署仍须单独建立真实权限边界。
 其他配置仍可能继承本机环境；涉及隐藏基准资料应使用已经验证的隔离启动器。
-注册功能插件与 CLI 实例 UI/端口已接入；旧入口完整退役和可写归档恢复尚未完成。未知原生结果仍须人工核实，不能自动重放。
+注册功能插件与 CLI 实例 UI/端口已接入，旧入口已退役。支持上文限定的同宿主冷 checkpoint 恢复；跨宿主完整灾备仍不支持。未知原生结果须核对原调用，不能自动重放。
 
 ## 可选候选事实观察
 
@@ -297,7 +297,7 @@ A 可在新协议最终科学 JSON 可选填写 `candidate_recommendation`（已
 最后一个节点也更新 `host-history/overview.json` 投影；投影删失可由封存科学原件和观察快照重建，观察快照不是可删除缓存。
 
 
-## 可选的预算内收口（N6b）
+## 可选的预算内收口
 
 新实例可在 `prepare` 同时冻结 `--node-budget-policy` 和 `--delivery-policy`。
 交付策略包含 `closeout_a` 的 token/秒上限、`inflight_tokens`、`cleanup_seconds`、
@@ -345,11 +345,11 @@ scid-research closeout --root /绝对路径/实例 --export-only
 ### 恢复能力的区别
 
 控制器退出后可以重接仍活着的原 Worker；Worker 成功结束但未封存时，可以补封存原结果。
-本节的硬停收口转交 A，并不是续跑已停止的 Worker。原线程续接见下节 N6c，源码与零模型安装已验收；
+本节的硬停收口转交 A，并不是续跑已停止的 Worker。原线程续接见下节；
 实际 Codex 同线程恢复仍未验证。任意本地 shell 仍是软隔离；
 框架管理的外部执行应按原执行身份恢复，不重发不确定提交。
 
-## 可选的 Worker 原线程续接（N6c）
+## 可选的 Worker 原线程续接
 
 新 `prepare` 可同时传 `--node-budget-policy /绝对路径/node.json` 和
 `--worker-resume-policy /绝对路径/resume.json`，后者无默认值，格式为：
@@ -368,7 +368,7 @@ scid-research worker-resume --root /绝对路径/实例 --step 2
 
 命令继续同一科学节点、真实 thread、home 和 workspace，追加 attempt 原件，保留 checkpoint；
 原 job、初次 intent/outcome/usage/raw 不覆盖。已接受续接先收集原工作，重复命令不重派；
-成功但未封存的输出优先补原 seal。首版仅接受非零数字 returncode、无 stop_reason、有效
+成功但未封存的输出优先补原 seal。仅接受非零数字 returncode、无 stop_reason、有效
 completed meter 且清理可确认的已知本地故障；缺 session/thread/meter、执行或清理 unknown、
 身份失配、原 pause 均不放行；收口继续阻止普通探索任务续接，但允许对该收口 A 的已知故障使用同一 `worker-resume --step` 和原 session。原模型、launcher、权限、attempt 上限、累计用量及交付底线均保留，不将预算硬停止当可无额续接。
 
@@ -377,6 +377,6 @@ completed meter 且清理可确认的已知本地故障；缺 session/thread/met
 受管理执行按原 ID 恢复，不重发不确定提交；普通 shell 仍由角色判断 checkpoint，不承诺任意脚本幂等。
 
 本节的恢复边界由上述冻结策略、原件身份、累计用量和拒绝条件共同限定。源码审查与
-fake/installed 零模型门禁仅验证本地输运及拒绝路径；实际 Codex 同线程有效性、增量用量
+合成进程和零模型打包检查仅验证所选本地输运及拒绝路径；实际 Codex 同线程有效性、增量用量
 与权限尚未验证。零模型检查不能授予实际 native 恢复资格，也不证明任意科学工作能够
 安全续接。具体运行仍须保留原 attempt 记录、失败及未决限制，按该运行的实际证据判断。

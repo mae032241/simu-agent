@@ -83,7 +83,7 @@ class ValidationSources(dict[str, bytes]):
 
     def verified_calculations(self, report):
         """Read-only calculation view; core retains receipt and origin verification."""
-        from ..artifact_agent.service.analysis_artifacts import verified_calculations
+        from .analysis_artifacts import verified_calculations
         return verified_calculations(report, self)
 
     def controlled_reference_calculation(self, alias, artifact_ref):

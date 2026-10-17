@@ -6,6 +6,12 @@ from .operation_contract import DiagnosticError, ToolInputError
 from .plugin_runtime.workspace import WorkspaceError
 
 
+MATERIAL_FILE_READING = (
+    "For ordinary text, code and logs, use native read/search tools on bounded ranges of RETURNED_PATH. "
+    "JSON may also use native tools. Expand decisive original context when needed "
+    "and keep each display bounded.")
+
+
 class AttachmentFile(BaseModel):
     model_config = ConfigDict(extra="forbid")
     path: str = Field(min_length=1, max_length=1024,
@@ -48,7 +54,6 @@ def materialize_input(request, context):
         context.input_ref(request.source_name)  # Reject paths and undeclared sources.
     except ValueError as error:
         raise ToolInputError("material_source_unknown", "Choose an exact input source_name from the assignment or a tool-returned material reference.", path="$.source_name") from error
-    from .artifact_agent.service.input_reader import MATERIAL_FILE_READING
     path = context.input_path(request.source_name)
     return {"source_name": request.source_name, "relative_path": str(path.relative_to(context.workspace)),
             "size_bytes": path.stat().st_size, "state": "available",

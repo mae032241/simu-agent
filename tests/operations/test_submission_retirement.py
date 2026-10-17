@@ -4,63 +4,6 @@ import threading
 
 import pytest
 
-from tests.operations.test_experiment_approval_handoff import experiment, start
-from tests.operations.test_approval_wait_recovery import execution
-
-
-def test_worker_can_retire_unknown_submission_and_release_reservation(tmp_path, monkeypatch):
-    f = experiment(tmp_path, monkeypatch, seconds=60)
-    def rejected(*args, **kwargs):
-        raise RuntimeError("submission rejected before creation")
-    monkeypatch.setattr(f.adapter, "submit", rejected)
-    retired = []
-    monkeypatch.setattr(f.adapter, "retire_submission", lambda descriptor: retired.append(descriptor.sha256), raising=False)
-    first = start(f)
-    assert first["submission"]["state"] == "unknown"
-    eid = execution(f).object_id
-    assert f.runtime.executions.budget_needs_settlement(eid)
-    result = f.worker.call_tool("worker_experiment_execute", {"action": "cancel"})
-    assert result["state"] == "abandoned"
-    assert result["submission"]["state"] == "not_submitted"
-    assert len(retired) == 1
-    accounting = f.runtime.executions.budget_accounting(eid)
-    assert accounting["actual"] == {key: 0 for key in accounting["requested"]}
-    assert not accounting["unsettled_reservation"]
-    monkeypatch.setattr(f.adapter, "retire_submission", lambda *_: pytest.fail("already retired"))
-    assert f.worker.call_tool("worker_experiment_execute", {"action": "cancel"})["state"] == "abandoned"
-
-
-def test_retirement_failure_preserves_identity_and_budget(tmp_path, monkeypatch):
-    f = experiment(tmp_path, monkeypatch, seconds=60)
-    def unavailable(*args, **kwargs):
-        raise TimeoutError("remote unavailable")
-    monkeypatch.setattr(f.adapter, "submit", unavailable)
-    monkeypatch.setattr(f.adapter, "retire_submission", unavailable, raising=False)
-    assert start(f)["submission"]["state"] == "unknown"
-    eid = execution(f).object_id
-    before = f.runtime.executions.budget_accounting(eid)
-    with pytest.raises(Exception):
-        f.worker.call_tool("worker_experiment_execute", {"action": "cancel"})
-    assert f.runtime.executions.status(eid).state == "authorized"
-    assert f.runtime.executions.budget_accounting(eid) == before
-
-
-def test_retirement_that_finds_job_cancels_without_refunding_unknown_usage(tmp_path, monkeypatch):
-    f = experiment(tmp_path, monkeypatch, seconds=60)
-    def unavailable(*args, **kwargs):
-        raise TimeoutError("response lost")
-    monkeypatch.setattr(f.adapter, "submit", unavailable)
-    monkeypatch.setattr(f.adapter, "retire_submission", lambda _: ("accepted", "running"), raising=False)
-    cancelled = []
-    monkeypatch.setattr(f.adapter, "cancel", lambda external: cancelled.append(external) or "cancelled", raising=False)
-    assert start(f)["submission"]["state"] == "unknown"
-    eid = execution(f).object_id
-    f.coordinator.bridge.cancel(execution_id=eid)
-    assert cancelled == ["accepted"]
-    assert f.runtime.executions.status(eid).external_run_id == "accepted"
-    assert f.runtime.executions.status(eid).state == "cancelled"
-    assert f.runtime.executions.budget_accounting(eid)["actual"] == {}
-
 
 def test_remote_retirement_fences_submit_still_validating(tmp_path, monkeypatch):
     from tcad_artifact import remote_runner_py36 as runner
@@ -127,27 +70,6 @@ def test_local_retirement_survives_service_reopen(tmp_path):
     assert first.tcad_retire_submission(submission_sha256="a"*64) == expected
     second = TCADExecutionFacade(policy=policy, state_root=tmp_path)
     assert second.tcad_retire_submission(submission_sha256="a"*64) == expected
-
-
-def test_legacy_unknown_cannot_gain_retirement_from_adapter_upgrade(tmp_path, monkeypatch):
-    import json
-    from scidiscovery.artifact_agent.service.engineering_diagnostics import atomic_json
-    f = experiment(tmp_path, monkeypatch, seconds=60)
-    def unavailable(*args, **kwargs):
-        raise TimeoutError("old remote acceptance unknown")
-    monkeypatch.setattr(f.adapter, "submit", unavailable)
-    assert start(f)["submission"]["state"] == "unknown"
-    eid = execution(f).object_id
-    path = f.runtime.executions.exchange_root / eid / "submission.json"
-    value = json.loads(path.read_bytes())
-    value.pop("retirement_supported")
-    atomic_json(path, value)
-    monkeypatch.setattr(f.adapter, "retire_submission", lambda *_: pytest.fail("unsafe retroactive retirement"), raising=False)
-    before = f.runtime.executions.budget_accounting(eid)
-    with pytest.raises(Exception):
-        f.worker.call_tool("worker_experiment_execute", {"action": "cancel"})
-    assert f.runtime.executions.budget_accounting(eid) == before
-    assert f.runtime.executions.status(eid).state == "authorized"
 
 
 @pytest.mark.parametrize("command", [False, True])

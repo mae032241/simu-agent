@@ -7,7 +7,7 @@ import pytest
 
 from scidiscovery.research_loop import selection
 
-FIXTURE = Path(__file__).resolve().parents[2] / 'docs/plans/fixtures/rootless-selection-v1.json'
+FIXTURE = Path(__file__).resolve().parents[2] / 'scripts/acceptance/fixtures/rootless_selection/selection.json'
 
 
 @pytest.mark.parametrize('case', json.loads(FIXTURE.read_text())['cases'], ids=lambda case: case['name'])

@@ -4,6 +4,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
+
 
 SCRIPT = Path(__file__).resolve().parents[2] / 'deploy/install.sh'
 
@@ -119,4 +121,39 @@ uninstall_services
     assert result.returncode==0,result.stderr
     assert not (binary/'scid-research').exists() and not (binary/'scid-experiment').exists()
     assert (prefix/'retained').read_bytes()==b'Do not remove code used by existing processes.'
+    assert_preserved(originals)
+
+
+@pytest.mark.parametrize('script', ['install.sh', 'reinstall.sh'])
+@pytest.mark.parametrize('action', ['--dry-run', 'install', 'status', 'uninstall'])
+def test_retired_service_deployment_is_rejected_before_any_mutation(tmp_path, script, action):
+    environment, originals = scene(tmp_path)
+    environment['SCID_DEPLOY_MODE'] = 'legacy'
+    result = subprocess.run(['bash', str(SCRIPT.with_name(script)), action],
+        env=environment, capture_output=True, text=True, timeout=10, check=False)
+    assert result.returncode == 2
+    assert 'legacy service deployment is retired' in result.stderr
+    assert not Path(environment['SCID_INSTALL_ROOT']).exists()
+    assert not Path(environment['SCID_BACKUP_ROOT']).exists()
+    assert_preserved(originals)
+
+
+def test_reinstaller_passes_operator_python_and_selected_plugins_as_data(tmp_path):
+    environment, originals = scene(tmp_path)
+    binary = Path(environment['SCID_BIN_ROOT'])
+    for name, body in {'id': 'printf "1000\\n"', 'sudo': 'printf "%s\\n" "$@"'}.items():
+        command = binary / name
+        command.write_text('#!/bin/sh\n' + body + '\n')
+        command.chmod(0o755)
+    environment['PATH'] = str(binary) + os.pathsep + environment['PATH']
+    environment['SCID_PLUGINS'] = 'tcad_artifact,curve_score'
+    result = subprocess.run(['bash', str(SCRIPT.with_name('reinstall.sh')), 'reinstall'],
+        env=environment, capture_output=True, text=True, timeout=10, check=False)
+    assert result.returncode == 0, result.stderr
+    arguments = result.stdout.splitlines()
+    assert arguments[0] == 'env'
+    assert 'SCID_PYTHON=' + sys.executable in arguments
+    assert 'SCID_PLUGINS=tcad_artifact,curve_score' in arguments
+    assert not any(value.startswith(('SCID_WORKSPACE=', 'SCID_STATE_ROOT=')) for value in arguments)
+    assert arguments[-2:] == [str(SCRIPT), 'install']
     assert_preserved(originals)

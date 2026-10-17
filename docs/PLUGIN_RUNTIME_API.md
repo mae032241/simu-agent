@@ -1,66 +1,52 @@
 # Plugin runtime boundary
 
-This reference owns the supported plugin runtime boundary. `scidiscovery.operations`
+This reference owns the supported shared plugin-library boundary. The old Root/MCP/UI
+applications are retired; these declarations do not expose a replacement scheduler
+or require the thin CLI to use the legacy Run protocol. `scidiscovery.operations`
 continues to own stable declarations. There is one compiler/catalog and no runtime
 API registry. Catalog ABI/digests, configuration identity, public/support/internal
 visibility and versioned schema IDs remain necessary platform contracts.
+The old Run/SQL service stack, runtime loader and standalone collection helpers are
+deleted. Retained callbacks consume injected capabilities; their declarations do
+not install an Operation-tool host in the current thin loop.
 
 ## Declaration and injected callback contracts
+
+These are retained library contracts for callers that supply a trusted host and
+its declared capabilities. They do not make the named Operation Worker tools,
+Run lifecycle or loader available in the thin CLI. Thin execution discovery uses
+`scidiscovery.execution_interfaces`; its frozen instances, provenance, review,
+authorization and budgets follow the [current architecture](ARCHITECTURE.md).
 
 Support is attached to the values and callbacks below, at their existing import
 paths. It does not cover every symbol in their containing packages. Source type
 annotations and compiled schemas are authoritative; this reference does not define
 parallel types. Current plugin protocol is `1`, Operation ABI is `26`, and component
-protocol versions are declared independently. Changing an implementation or resource
-still changes compiled identity.
+protocol versions are declared independently. Compiled identity covers declared
+component/resource metadata; arbitrary handler
+source edits are not automatically included unless their declaration binds that
+identity. Consumers must freeze the actual implementation they execute.
 
-`OperationSpec.scientific_progress` optionally declares `ScientificProgressSpec`:
-preparation/experiment outputs await interpretation; analysis closes the exact
-declared `subject_port`. The declaration imposes no task DAG. Analysis may be a
-standalone evidence task. Its existing `projector` component receives the sealed
-payload and `ValidationSources` (all exact descriptors, bytes only for declared
-`source_ports`, at most 128 KiB). It returns
-`artifact_agent.schema.scientific_progress.ScientificProgressProjection`, copying
-Worker judgments, the answered question, answer, remaining question, evidence
-aliases and stable scientific changes from the report and frozen inputs. Control
-binds the `objective_port`, exact subject/cycle and source identities; plugin names
-and schema families grant no progress authority. An advance requires bound evidence
-and a new objective/dimension/outcome family. Each change must cite the exact
-interpreted subject or its published output materials; original goals, hypotheses
-and conditions can be co-cited but cannot be the sole progress anchor. Analysis
-attachments and reference accesses are resolved from the exact completed output's
-paired sealed manifest, without reading attachment bytes for progress. This
-projection conservatively requires an original subject/output alias as well as
-any analysis attachment: a valid attachment-only scientific citation remains
-unknown progress, without rejecting the scientific report. Objective content
-identity (kind/schema/digest), rather than a new artifact ID, defines the family.
-New report/file identities or threshold
-changes alone cannot renew it. Source-bound Worker assessments remain distinct from
-the stronger deterministic/review test proofs and confer no qualification.
+`OperationSpec.scientific_progress` optionally declares `ScientificProgressSpec`,
+including the objective/subject/source ports and a projector component reference.
+The schema value `artifact_agent.schema.scientific_progress.ScientificProgressProjection`
+and the generic analysis projector retain a pure projection contract: copy the
+Worker's answered question, conclusion, remaining question, evidence aliases and
+assessed scientific changes from the supplied report and sources. A declared
+`progress_assessment` may preserve `no_progress` or `unknown`. Projection neither
+proves novelty nor grants scientific qualification.
 
-The generic analysis projection reuses hypothesis assessments and remaining
-contradiction. Optional `progress_assessment` describes the increment to the
-research decision: repeated support/refutation can explicitly be `no_progress`,
-and `unknown` remains uncertainty. No extra Root form is required. Unsupported or
-missing projections remain unknown and can require observation confirmation.
-Each exact interpreted subject counts once, across delivery/restart/goal revisions;
-repeated analyses and completed work left uninterpreted have separate bounded
-observation signals. Waiting for accepted work/approval/external execution creates
-no consumption. Exact pending experiment interpretation and requested independent
-review retain accepted-work authority and the existing budget limits during a
-scientific pause. Stable keys do not prove semantic novelty across renamed
-hypotheses or independent native execution truth.
+A consuming host must resolve exact sources, bind objective and subject identities,
+verify attachment membership, enforce source-byte limits and decide whether a
+projected change may count as progress. The retained declaration/projector does not
+provide that lifecycle, family deduplication, advance admission or recovery service.
 
-`OperationSpec.independent_review_ports` declares exact subjects whose authors
-must be verified by control before preflight/invoke can admit independent review.
-The public Operation view projects this requirement. Reviewer attachment checks
-that the native reviewer differs from all participating authors, including helpers
-and recovery ancestors. Deterministic projections explicitly retain contributors
-with `authorship_source_ports`; ABI 25 validates these as unique transform input
-ports and includes them in compiled identity. Optional absent inputs add no contributors;
-at least one verified contributor is needed for independent review. Control follows verified producer
-families and these declared edges; copied labels, arbitrary parents and raw user
-text do not establish authorship. Agent callers supply scientific names only.
+`OperationSpec.independent_review_ports` declares exact review subjects;
+`authorship_source_ports` declares transform input edges that contribute authorship
+and participates in compiled identity. A consuming host must verify contributors
+and reject a reviewer who participated in the exact subject. Copied labels,
+arbitrary parent links and raw user text do not establish independent authorship.
+The declaration does not attach reviewers or implement a review host.
 
 `InputPortSpec.derivation` also owns the public `source_requirements` projection.
 Requirements are attached to the visible anchor input; derived port names and
@@ -71,73 +57,51 @@ input admission errors, not engineering failures. Originals can be passed direct
 to a source-based scientific task; copying them does not manufacture a required
 scientific result or its provenance.
 
-`InputDerivationSpec(anchor_port=..., select="parents")` resolves only the selected
-anchor's immutable direct parents matching the hidden port's concrete schema.
+`InputDerivationSpec(anchor_port=..., select="parents")` declares selection from only
+the anchor's immutable direct parents matching the hidden port's concrete schema.
 Missing or multiple matching parents fail admission. It does not search by name,
 recency, bytes or unrelated artifacts. TCAD analysis uses this edge to obtain its
 control-owned package from the selected runtime manifest; Workers receive a
 read-only scientific projection, without execution credentials or transport fields.
 
 `InputPortSpec.exposure="material"` declares a paired wildcard evidence inventory
-(`schema="*"`, `media_types=("*/*",)`). Control applies `AgentSettings.input_materials`
-to stored sizes, delivers small text on demand, and freezes larger or binary inputs
-as `file_reference`. A file reference may declare concrete MIME/schema constraints
-or the same paired wildcard inventory; it is not restricted to octet-stream.
-Its bytes are absent from in-memory validation mappings. Tools use
-`OperationToolContext.input_path(source_name)` for bounded streaming. Scientific Agent tasks with native shell access expose `worker_materialize_input` so Workers can request a native-readable
-path without handling private identities. Material limits are shown in Root's
-contract and frozen in the Run; they do not authorize solver execution or qualify
-scientific claims. Other input ports retain their declared semantic/content limits.
+(`schema="*"`, `media_types=("*/*",)`). A file reference may instead declare concrete
+MIME/schema constraints. The consuming host must enforce its frozen
+`AgentSettings.input_materials` limits, provide only declared validation bytes and
+resolve bounded `OperationToolContext.input_path(source_name)` requests. A material
+reference does not authorize solver execution or qualify a scientific claim.
 
 ABI 24 permits `max_item_bytes=None` only for wildcard material/file-reference
 inputs and control-owned attachments, whose collection also declares
-`max_total_bytes=None`. This means the existing frozen `input_materials` or
-`attachments` settings own the byte budget; it never means unlimited bytes.
-Root contracts project effective input limits and Worker startup includes frozen
-budgets. Static attachment contracts identify their settings source. Ordinary
-scientific ports still require positive declared limits. No new plugin callback
-or Agent field is introduced; older compiled identities remain distinct.
+`max_total_bytes=None`. This selects the declared `input_materials` or `attachments`
+settings as the byte-budget owner; it does not mean unlimited bytes. Ordinary
+scientific ports still require positive declared limits. The consumer must project
+and enforce the effective budget; older compiled identities remain distinct.
 
-Scientific Agent tasks with native shell access declared through `with_reference_access` also expose
-`worker_publish_files(files=[{path, purpose}], source_aliases=[...])`. Files live
-under `scratch/`; `output/` remains the primary `result.json` plus control receipts.
-Control snapshots and streams files, infers MIME types, assigns references, and seals
-an independent `attachments` collection. No hashes, ports or manifest rows are
-Agent-authored. Publication does not imply execution, qualification or review.
-Domain tool evidence (for example, calibrated figure families) remains separate.
+`with_reference_access` can add declared reference/publication tools and evidence
+ports to an Operation. For example, `worker_publish_files` accepts scientific file
+paths and source aliases rather than Agent-authored references or manifest rows.
+A host must supply the corresponding `OperationToolContext` callbacks, snapshot
+and stream files, assign identities and seal collections. Declaring tools does not
+implement this host or make them thin CLI tools. Domain tool evidence, such as
+calibrated figure families, remains separate.
 
-Automatic task-local capture records `provenance_basis="task_scope"` for a task
-association or `"author_declared"` for the author's source declaration. Both describe
-an association; neither verifies that those inputs actually produced the file.
-`provenance_status="known"` means the stated bindings resolve to exact originals,
-not that the file or its scientific claims have been independently verified.
-Capture conservatively propagates restrictions from all exact current task inputs,
-even when the author declares only clean sources. That restriction scope does not
-add every input to the adopted-source graph. `scientific_claim_admissible` reflects
-this restriction gate and unconfirmed provenance; it is not qualification or review.
-Legacy automatic receipts lacking the control scope check remain readable but
-cannot support a new claim directly; resealing requires the authorized original
-input context. Recovery of automatic files also retains that complete context,
-including legacy receipts whose scientific scope has not yet been confirmed.
-Explicit `worker_publish_files` keeps its declared `source_aliases` policy; this
-automatic task-context restriction does not verify the author's declaration or
-cover sources omitted from explicit publication. Such declarations remain subject
-to scientific assessment; publication itself grants no qualification.
+Source declarations describe associations; they do not prove that the stated
+inputs produced a file. Publication and matching source identities do not establish
+scientific correctness, qualification or independent review. A consuming host must
+implement any automatic capture, restriction propagation, receipt verification and
+recovery policy it offers. `OperationToolContext.capture_science` is an optional
+injected callback; its fallback returns the supplied value and provides no such
+pipeline. Explicit publication likewise requires a host implementation of the
+injected publication capability and its source policy.
 
-`AgentSettings.attachments` configures `max_item_bytes`, `max_total_bytes`, `max_files`
+`AgentSettings.attachments` declares `max_item_bytes`, `max_total_bytes`, `max_files`
 and `chunk_bytes` (defaults: 2,000,000,000 bytes per file and total, 64 files, 1 MiB
-chunks). Settings are frozen per Run, inherited on recovery and shown in startup
-budgets. Identical publication retries reuse receipts. Downstream Workers can list
-attachments through `worker_reference_read` on the exact bound main output, then
-read selected fragments or request streamed file delivery under `input_materials`.
-The UI renders verified attachments as downloads, with PNG/JPEG previews. Reference
-file delivery and finalization do not bulk-load attachment bytes.
-An explicitly bound sealed stage or tool original is also readable while its
-producer is running or failed, including after its contract becomes historical.
-Control freezes a private receipt snapshot for the read; only declared source
-edges are traversable, never the producer's workspace or unrelated later files.
-Diagnosis views display exact frozen input PNG/JPEG images without requiring a
-Worker to copy them into a new output or fill a separate visualization form.
+chunks). These are configuration values, not an installed task host. A consumer
+owns freezing settings, enforcing cumulative bounds, retaining publication receipts
+and resolving authorized references. The reference tools forward requests to the
+injected `read_reference` callback; they supply no artifact resolver, UI preview,
+running-stage read service or recovery implementation on their own.
 
 | Owner | Supported extension contract |
 | --- | --- |
@@ -145,9 +109,9 @@ Worker to copy them into a new output or fill a separate visualization form.
 | `operations.tooling` | `WorkerToolDefinition`: a typed `input_model`, either `handler(request)` or `contextual_handler(request, context)`, and optional `local_contextual_handler`. Declared required/optional services, evidence ports, network/reference permissions, attempt recording and owner restriction determine the supplied capability. Compiler caches and router helpers are internal. |
 | `operations.input_validation` | `OperationInvocationError`, `BoundSourceError`, `parse_bound_json`, `InputBindingDescriptor`, supplied `ValidationSources` and `prior_analysis_sources`. Validators receive bound bytes plus read-only source descriptors and verified calculation values; they do not assemble control proofs. |
 | `operations.invoke` | Effect executors return `EffectExecutorPlan(executor, preparation_profile, payload_port, budget_subject_schemas)`. Approval projectors receive `ApprovalProjectorContext` with immutable `ApprovalSubjectSnapshot` and supplied producer-family/source/input projections, and return `schema.approval.ReviewDocument`. These are trusted callback data, not Agent output. Preflight, bound-call construction, invocation and execution orchestration remain control-owned. |
-| `operations.runtime_plugins` | `RuntimePluginFactory.build(RuntimePluginContext) -> RuntimePluginContribution`. The frozen startup context supplies `plugin_id`, `mode` (`control` or `local_worker`), exact `config_path`/`config_bytes`, and `state_root`. Contributions bind named `execution_adapters`, named `tool_services`, and control-managed `reconcilers`. This is installed trusted startup code, not a Worker capability or a second registry. |
-| `operations.workspace` | `WorkspaceMaterializer(request) -> WorkspaceMaterializationResult`, `WorkspaceFilePolicy(WorkspaceFileRequest) -> WorkspaceFileRule | None`, finalizer callables `(WorkspaceFinalizationRequest) -> bytes`, `WorkspaceSnapshotter(Path) -> tuple[WorkspaceSnapshotFile, ...]`, and `WorkspaceProtocolError`. A finalizer that removes control-owned fields from the authoring schema uses `WorkspaceFinalizer(implementation, draft_schema, projection_version)` to pair that projection with its deterministic completion; the version participates in compiled identity. An optional `draft_input_ports` tuple requests a fourth `draft_schema` argument containing only those frozen input bytes, keyed by task alias; control supplies the same inputs at creation and schema refresh, including explicitly requested hidden inputs. These bytes and aliases are control-only callback data: the hook may emit scientific choices and safe projection paths, but must not publish private aliases or bindings in the authoring form. Use this for scientific choices that depend on the bound materials, and bump `projection_version` when changing the projection. Plain callables retain the complete output schema. Requests carry only supplied paths, limits, binding descriptors and frozen input bytes; private `input_contents`, trusted tool records and Run identity must not be materialized for Agents. Control resolves hooks and seals results. |
-| `operations.experiment` | `ExperimentCapability(tools, instructions, execution_operation, execution_package_schema_version, output_inventory_name=None)` implements `scidiscovery.complete-experiment.v1`. The package version is required and participates in identity; configuration selects the contribution. An optional collected JSON inventory contains `outputs[{name, relative_path, sha256, size_bytes, media_type}]`. Control verifies it against collected originals and exposes solver-relative filenames, without revealing transport paths or asking Workers to build a mapping table. |
+| `operations.runtime_plugins` | `RuntimePluginFactory.build(RuntimePluginContext) -> RuntimePluginContribution`. The frozen startup context supplies `plugin_id`, `mode` (`control` or `local_worker`), exact `config_path`/`config_bytes`, and `state_root`. Contributions bind named `execution_adapters`, named `tool_services`, and control-managed `reconcilers`. A trusted consumer constructs this context; the declaration supplies no runtime loader or Worker capability. |
+| `operations.workspace` | `WorkspaceMaterializer(request) -> WorkspaceMaterializationResult`, `WorkspaceFilePolicy(WorkspaceFileRequest) -> WorkspaceFileRule | None`, finalizer callables `(WorkspaceFinalizationRequest) -> bytes`, `WorkspaceSnapshotter(Path) -> tuple[WorkspaceSnapshotFile, ...]`, and `WorkspaceProtocolError`. A finalizer that removes control-owned fields from the authoring schema uses `WorkspaceFinalizer(implementation, draft_schema, projection_version)` to pair that projection with its deterministic completion; the version participates in compiled identity. An optional `draft_input_ports` tuple requests a fourth `draft_schema` argument containing only those frozen input bytes, keyed by task alias; the consuming host must supply the same frozen inputs whenever it invokes the projection, including explicitly requested hidden inputs. These bytes and aliases are control-only callback data: the hook may emit scientific choices and safe projection paths, but must not publish private aliases or bindings in the authoring form. Use this for scientific choices that depend on the bound materials, and bump `projection_version` when changing the projection. Plain callables retain the complete output schema. Requests carry only supplied paths, limits, binding descriptors and frozen input bytes; private `input_contents`, trusted tool records and Run identity must not be materialized for Agents. The consuming host resolves hooks and seals results. |
+| `operations.experiment` | `ExperimentCapability(tools, instructions, execution_operation, execution_package_schema_version, output_inventory_name=None)` implements `scidiscovery.complete-experiment.v1`. The package version is required and participates in identity; configuration selects the contribution. An optional collected JSON inventory contains `outputs[{name, relative_path, sha256, size_bytes, media_type}]`. A consuming host must verify it against collected originals before exposing solver-relative filenames, without revealing transport paths or asking Workers to build a mapping table. |
 
 The actual tool callback object is
 [`OperationToolContext`](../src/scidiscovery/artifact_agent/operation_tool_context.py),
@@ -182,39 +146,33 @@ Agent-authored paths. Returned references retain diagnostic scope; publication i
 not formal execution or scientific qualification. The tool declares `attachments`
 in its evidence ports to use this delivery capability.
 `ExperimentMethod` supplies `key`/`content`; `SealedImplementation` supplies exact
-`artifact_ref`/`content`. Commands still pass the task's frozen execution and budget
-gates; these callbacks cannot bind another Run or expose the coordinator.
-The host constructs one coordinator when it creates its RunService, with the
-operation-service loader supplied at construction. Root facades and gateways do
-not replace it. Runtime/daemon and standalone Worker assembly use this same owner
-for cancellation and finalization; the plugin continues to receive only the
-existing scoped `ExperimentTools` protocol.
+`artifact_ref`/`content`. The supplying host must bind commands to the task's frozen execution and budget
+gates and deny cross-task access to its coordinator.
+A caller supplying this retained callback protocol owns its coordinator, frozen
+inputs, execution authority and cancellation. The old RunService assembly and
+operation-service loader are deleted. The current thin loop uses its registered
+managed execution interfaces; it does not instantiate this historical host.
 
-A requested implementation review records an exact dependency on the existing
-owner Run. Background scheduling admits that review while the owner waits, charges
-it to the frozen task budget, and wakes Root for its sealed outcome rather than
-queue/heartbeat changes. The existing Worker `review` action reads the bounded
-sealed scientific review form; Root need not transcribe it. Waiting never grants
-execution permission: a required review must pass for the exact implementation.
+A caller implementing requested review must bind its exact subject and verified
+contributors. Waiting for review never grants execution permission.
 
 `progress_summary(progress)` projects executor timing and up to two log metadata
 records, without log text. Only UI callers opt into redacted, bounded last-line
 previews with `include_log_text=True`. Missing timing is not estimated. This projection carries
 operational observations, never a completion percentage or scientific verdict.
-`read_implementation` accepts exact implementations created in or explicitly bound
-to the task, retaining original receipts. `source_alias` resolves an immutable file
-reference to a currently available alias; previous-task aliases are never identities.
-Output validators may use `ValidationSources.sealed_material_record(alias)` for a
-control-verified receipt of a current or explicitly bound material. Its original
-source-reference namespace and author are retained; an interrupted author's sealed
-material is not invalidated by the author's later Run state. This callback exposes
-control provenance to validators, not additional Worker form fields or file bytes.
+A supplied `read_implementation` must accept only exact implementations created
+in or explicitly bound to its task. `source_alias` must resolve a current alias
+from an immutable reference, not treat a previous-task alias as an identity.
+`ValidationSources.sealed_material_record(alias)` delegates to an optional host
+resolver; without one it supplies no sealed-material receipt. The host owns
+receipt authenticity, source namespace, authorship and interrupted-producer policy.
+The callback returns validator data, not additional Worker fields or file bytes.
 
 ## Execution adapter boundary
 
-[`ExecutionAdapter` and `AdapterCapability`](../src/scidiscovery/artifact_agent/execution_bridge.py)
-remain at their existing import path. Only these protocol/value types are supported
-plugin contracts in that module; `ExecutionBridge` is a control implementation.
+[`ExecutionAdapter` and `AdapterCapability`](../src/scidiscovery/operations/execution.py)
+are shared protocol/value types owned by `operations.execution`. Use that module directly; an adapter consumer owns admission, collection and
+recovery rather than relying on a shared bridge service.
 
 An adapter implements `capabilities() -> tuple[AdapterCapability, ...]`,
 `prepare(payload: LocalFileDescriptor, *, preparation_profile: str,
@@ -236,17 +194,17 @@ TCAD adapters submit through `submit_retirable` / `tcad_submit_retirable`; old
 transports/runners reject these entry points before accepting work. They must not
 fall back to the old submit endpoint, whose in-flight processes may ignore fencing.
 TCAD also implements `validate_submission_protocol()`, a side-effect-free check the
-bridge calls before admission/reservation. Local method presence is not proof of
+consumer calls before admission/reservation. Local method presence is not proof of
 remote protocol support. The transport's `submission_protocol` maps to
 `tcad_submission_protocol`; version 1 advertises the exact submit and retire names.
 
 `AdapterCapability` contains `key`, `kind`, `schema_id`,
 `payload_schema_version`, `media_type`, exact `content: bytes`, and
 `public_summary: Mapping[str, object]`. Keys must be unique in a nonempty capability
-set; the bridge bounds each content value to 1 MiB. The port/schema declarations
-own payload validation and version identity.
+set. The consuming contract owns content limits; port/schema declarations own
+payload validation and version identity.
 
-The bridge also consumes optional adapter hooks already used by production TCAD:
+TCAD adapter consumers may use the following optional hooks:
 `supports_preparation_profile(profile)`,
 `validate_preparation_payload(raw, *, preparation_profile)`,
 `execution_admission(raw, *, preparation_profile) -> ExecutionAdmission`, and
@@ -283,12 +241,9 @@ from Operation versions, plugin protocol/ABI, and a port's versioned schema ID.
 | `role_result` | `RoleHandoff`, `RoleResultEnvelope`, `parse_role_result`; envelope version `1`, handoff has no separate version |
 | `cognitive` | `EvidenceAudit`, payload version `1` |
 
-Historical importability is not a stability promise. The retired
-`artifact_agent.schema.comparison` realization/equivalence evaluator and
-`tcad_artifact.project_materializer` author workflow have been removed after checking
-production imports, registered component resources and entry points. Their dedicated
-legacy tests were removed; current experiment comparison and domain-neutral artifact
-kind contracts remain supported. No old author/materialize Operation is restored.
+Importability alone is not a stability promise. Current experiment comparison
+and domain-neutral artifact-kind contracts remain supported; absent authoring or
+materialization workflows are not supplied by these schema values.
 
 ## Canonical identities
 
@@ -296,9 +251,8 @@ kind contracts remain supported. No old author/materialize Operation is restored
 mapping keys and finite numbers, and emits sorted compact UTF-8 bytes without ASCII
 escaping. It supports `SchemaModel` and rejects arbitrary model/dataclass values;
 `canonical_sha256` hashes those exact bytes. The figure validator's bundle fingerprint
-now uses this helper on its locally built list of string-keyed records containing
-strings and integer byte counts. Frozen pre-change byte/hash vectors cover that
-migration. Non-string Python mapping keys are outside this JSON input contract.
+uses this helper on its locally built list of string-keyed records containing
+strings and integer byte counts. Non-string Python mapping keys are outside this JSON input contract.
 
 Other similarly named encoders have different owners and remain separate:
 
@@ -324,12 +278,12 @@ Other similarly named encoders have different owners and remain separate:
 | `scidiscovery.plugin_runtime.collection` | Supplied `CollectionContext` deadlines/cancellation/progress, bounded streaming `run_bounded`, owned-child parent watch | Execution supervisor, grants, cancellation decisions, Run lifecycle, DB and leases |
 | `scidiscovery.plugin_runtime.diagnostics` | Redacted bounded exception facts and declared failure value types | Diagnostic storage, host traceback capture, qualification and retry decisions |
 | `scidiscovery.plugin_runtime.results` | Mechanical draft copies and handoff projections on the supplied workspace request | Final output validation, sealing and lifecycle |
-| `scidiscovery.plugin_runtime.transport` | Generic `MCPRouter`, JSON-RPC parsing/error values, bounded Unix socket client/daemon | Root/Worker routers, tools/registration, authentication and compiled action authority |
+| `scidiscovery.plugin_runtime.transport` | Generic `MCPRouter`, JSON-RPC parsing/error values, bounded Unix socket client/daemon | Domain transport callers, authentication, tool registration and compiled action authority |
 | `scidiscovery.plugin_runtime.observation` | `RECORD_DIR`, `normalize_log`, `materialize_launcher` for the optional Worker-executed stdlib launcher | Launch/stop authorization, Run lifecycle and interpretation of observations; other module functions are implementation details |
 | `scidiscovery.plugin_runtime.presentation` | Pure JSON field/section/gap/source/parameter/citation constructors, bounded row windows and ancestry within the supplied cohort | Authorized input cohort, provider discovery, output/source validation, aggregate bounds and rendering |
 
 The runtime package performs no imports of service, interfaces or approval UI modules.
-Figure, curve and TCAD are migrated consumers. All three production plugin packages
+Figure, curve and TCAD consume these modules. All three production plugin packages
 and plugin_runtime have no imports of service, interfaces or approval UI. Domain
 SSH/solver, packager and numerical behavior remain in their plugins.
 The full tool manifest models live in the core schema layer for control use, **not**
@@ -348,7 +302,7 @@ adoption still go through the task's existing controlled tool context.
 
 Presentation helpers accept only the already authorized records supplied by the UI.
 They cannot load artifacts, expand a cohort, grant qualification or return executable
-HTML. The UI still validates every source and caps the combined response. Domain
+HTML. A consuming UI must validate every source and cap the combined response. Domain
 providers retain interpretation and layout of their own scientific fields.
 
 ## Calculations and checkpoints
@@ -366,22 +320,19 @@ protocols without a second service registry.
 by a registered evaluator tool, using an already bound `ExperimentPortfolio`, frozen
 applicability conditions and exact result source aliases. It carries existing
 `ValidationCheckResult` values; it is not an Agent authoring field or a qualification.
-Control resolves originals from actual read receipts and the paired final manifest,
-requires criteria and conditions sealed before measured bytes, checks finite values,
-units and thresholds, and counts only the first resolution of the same scientific
-check. Fresh artifact identities or repeated results do not renew progress. The curve
-adapter supports an exactly matching prebound curve contract; other tools may omit
-this value and remain usable with progress unknown. Relative improvement is not
-supported. Absent validation is omitted from serialized results, retaining existing
-receipt bytes. Numerical replay remains separate from this optional projection.
+The consuming host must supply authentic read receipts and the paired manifest,
+verify that criteria and conditions preceded measurements, and bind any claimed
+progress to the exact scientific check. The retained value does not implement
+progress deduplication or admission. The curve evaluator checks an exactly matching
+prebound curve contract, finite values, units and thresholds; other tools may omit
+this optional validation. Relative improvement is not supported. Absent validation
+is omitted from serialized results. Numerical replay remains separate from it.
 
-Independent `ExperimentReview.scientific_test` may optionally record an explicit
-`ReviewedTestConclusion` using existing scientific plan/check names and
-`ValidationCheckResult`. Control requires the exact independent subject, a prior
-unambiguous qualitative check and the same conclusion. A general quality pass,
-missing field or mismatched subject/plan remains progress unknown; normal review
-submission stays available. These scientific fields appear in the complete Worker
-authoring form and can be read with existing named output-field selection.
+`ExperimentReview.scientific_test` may optionally hold a `ReviewedTestConclusion`
+using scientific plan/check names and `ValidationCheckResult`. This is a schema
+value, not proof that an independent review occurred or that a host admitted a
+scientific advance. The host must bind the exact independent subject and prior
+check; a general quality pass cannot replace that evidence.
 
 `publish_analysis_file` registers immutable bytes and a task-local preview.
 `publish_calculation_checkpoint` accepts checkpoint bytes, algorithm/record identity,
@@ -409,77 +360,48 @@ implementation functions. Pure values/functions can move to their owning public
 module; stateful powers use a narrow injected capability with one control-side owner.
 No plugin acquires lifecycle or approval authority by importing this API. Experiment
 services expose a per-Run adapter, never the coordinator. Shared startup bindings are
-scoped by the Local Worker tool host without changing cached Run identity;
-TCAD receives exact implementation values and a derived diagnostic workspace.
+part of the deleted Local Worker host, rather than a current thin assembly path.
+A caller supplying these callback contracts must supply exact implementation
+values and a derived diagnostic workspace.
 
-## Retired Worker file transport
+## Diagnostics and host obligations
 
-Only Local executes Workers. Builtin `file_write_begin_tool`, `file_write_chunk_tool`,
-`file_write_commit_tool`, `file_apply_patch_tool`, `file_json_patch_tool`,
-`file_move_tool` and `file_delete_tool` are removed. Plugins must remove those
-references and retain their declared native permission policy; current Local
-previously excluded those tools from its executable projection. Recompilation
-changes Operation digests, so historical Runs retain their frozen identities and
-cannot be resumed under a different backend or a newly compiled contract.
+Compiled authoring schemas, declared semantic rules and validators must describe
+the same scientific contract. A validator must not introduce a scientific rule
+that was absent from the Worker's authoring contract. Bound semantic checkers use
+`scidiscovery.operation_contract.SemanticRuleViolation` for an intentional,
+Worker-correctable rejection. Undeclared rules, missing required context and other
+checker exceptions are engineering faults; they must not become automatic
+scientific retries. Optional missing inputs cannot silently become mandatory.
 
 Tool handlers declare safe caller corrections with
 `scidiscovery.operation_contract.ToolInputError(code, message, path=...)` or explicit
 `DiagnosticError`/`contract_diagnostic` details. Messages must be authored explanations,
 not raw exception strings or echoed input. Unexpected component/transport failures
 remain engineering failures. Control stores sanitized diagnostic details with an
-internal format version; caller-supplied flags never confer trust. Root can explicitly
-page saved diagnostics while a task is running without reading its draft output.
+internal format version; caller-supplied flags never confer trust.
 
 Experiment services may implement `experiment_pending_diagnostics(run_ids, inputs)`
 to return bounded, owner-declared diagnostics identifying outstanding named jobs and
 their status/cancel calls. The existing `experiment_activity` callback remains the
 fallback and cancellation hook. Neither callback grants execution authority.
 
-## Root consumer boundary
-
-Normal Root calls use the research surface. Standalone Effect plugins and historical
-execution recovery select `surface="execution"` on all three gateway methods
-(`scid_catalog` also needs `kind="interfaces"`). Interface declarations own this
-projection; it does not authorize internal Operations or task-managed execution.
-Execution services, exact approval, budgets and idempotency remain control-owned.
-
-Root `run_status` uses `intent="decision"` by default for a compact sealed owner
-handoff. `intent="status"` reads lifecycle and safe saved diagnostics;
-`intent="navigation"` discovers exact scientific source names and metadata.
-Explicit index/stage pagination and omission markers retain their bounds. Root's
-research interface does not accept `intent="full"`, `output_paths` or the retired
-profile/view/mode/full-output flags or legacy `output_fields` selectors. Decision
-responses contain the declared compact fields; they do not grant a full scientific
-payload read. UI and control retain private recovery and engineering records.
-
-Plugin consumers that previously read complete results through Root should bind
-the exact returned `output_artifact_name` to their declared scientific input and
-read the original in that Worker. Workers retain their plugin's native permissions:
-an authorized native Worker uses `tools/read_input.py SOURCE --full` for the complete
-sealed source or explicit `--pointer` selections, preserving page budgets and
-returned continuations. When reference access is declared, `worker_reference_read`
-also reads authorized originals and attachments. Trusted plugin callbacks use their
-injected `read_input`/`input_path` capabilities for declared inputs. A plugin with no
-native shell does not acquire one through this migration. Root's compact view does
-not remove the exact sealed scientific input or authorize another source; retain
-limitations and provenance when interpreting it.
-
 ## Validation status
 
-See the [release validation status](RELEASE.md#current-status) for candidate-bound
+See the [release validation scope](RELEASE.md) for candidate-bound
 results and open acceptance limits. Plugin API declarations and focused source
 checks do not establish live model, solver or deployed-service qualification.
 
-### Worker startup and authoring visibility
+### Workspace and authoring visibility
 
-Control derives `worker-start.json` from the frozen assignment and workspace manifest.
-Plugins put domain read/edit rules and report guidance in their existing
-`WorkspaceMaterializationResult`; optional navigation files should not repeat the
-task, role, tool-contract map or output contract. Helpers receive their selected
-subtask materials instead. No new plugin hook or registration is required.
+`WorkspaceMaterializationResult` lets a plugin return domain read/edit rules and
+report guidance on a supplied workspace request. A consuming host must materialize
+the exact assignment, preserve its frozen contract and provide any startup or
+navigation records. These hooks do not generate `worker-start.json` or implement
+assignment delivery on their own.
 
-The paired `WorkspaceFinalizer` still owns which fields control completes. The
-Worker form preserves scientific rules, source aliases and byte limits while
-omitting input admission metadata, internal port/checker dependencies and Operation
-identity. Full form reading never switches to the sealed artifact schema. Plain
-finalizers retain the fields they have not declared and implemented as derived.
+A paired `WorkspaceFinalizer` declares which fields its deterministic callback
+completes. The consumer must deliver the paired authoring schema and only the
+explicitly declared frozen input bytes. Scientific rules and source choices must
+remain visible to the Worker; internal bindings and receipts must remain under
+host control. A plain finalizer supplies no projection that hides control fields.

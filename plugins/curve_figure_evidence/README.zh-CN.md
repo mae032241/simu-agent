@@ -1,5 +1,8 @@
 # 可选论文图证据插件
 
+下列 Operation 与 Worker 工具名称描述可复用插件库合同；薄 CLI 不提供旧 Run/Artifact
+宿主或 Operation 调度器。集成职责见[Plugin API](../../docs/PLUGIN_RUNTIME_API.md)。
+
 插件提供一个完整作者任务、独立审查和规范化消费者；默认 TCAD 安装不包含此插件。
 
 - `science.evidence.extract.figure.v3`：一个作者在同一工作区查看精确栅格或 PDF、描述可见图框/标定/身份、预览提取、显式保存选定证据族、自检并提交 ScientificIntake。
@@ -67,3 +70,10 @@ manifest 各曲线记录全局与接收方合并后的有效 `exclusion_regions`
 输入诊断指出可修改的科学字段。程序生成的图族无法通过自身完整性校验时，
 返回 `figure_generation_inconsistent`，明确是程序缺陷，不要求作者编造机械共享字段。
 机械完整性或忠实性审查不产生科学结论。
+
+## 证据边界
+
+像素颜色吻合不证明系列身份；PDF 页码与嵌入图 object 来源须在原图恢复步骤核验。
+源列和 point index 的间隙须保持，不能重编号或补造连线；真实遮挡保留 unresolved 观测。
+箱线图不在已声明曲线提取能力内，不得伪装成已获资格的连续曲线。
+历史特定图像结果不证明变更后的实现、通用图表理解、科学结论或 TCAD 实验资格。

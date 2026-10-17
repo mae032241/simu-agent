@@ -1,35 +1,11 @@
 from __future__ import annotations
 
+
 import hashlib
-import json
-from pathlib import Path
 
 import pytest
 
-from blind_csv_plugin.contracts import (
-    CSV_SCHEMA_PROBE,
-    CsvObservation,
-    CsvReview,
-    summarize_csv,
-)
-from blind_csv_plugin.plugin import (
-    AUTHOR,
-    FILE_TOOLS,
-    JSON_CODEC,
-    OBSERVATION,
-    PLUGIN,
-    REVIEWER,
-    TABLE,
-    WORKSPACE,
-)
-from scidiscovery.artifact_agent.interfaces.mcp_local_worker import (
-    LocalWorkerMCPRouter,
-)
-from scidiscovery.artifact_agent.interfaces.mcp_root import RootMCPRouter, RootToolFacade
-from scidiscovery.artifact_agent.runtime import open_runtime
-from scidiscovery.artifact_agent.schema.artifact import ArtifactRegistration
-from scidiscovery.artifact_agent.schema.common import canonical_json
-from scidiscovery.artifact_agent.service.runs import _revision_workspace_mode
+from blind_csv_plugin.plugin import AUTHOR, FILE_TOOLS, JSON_CODEC, OBSERVATION, PLUGIN, REVIEWER, TABLE, WORKSPACE
 from scidiscovery.builtin_plugin import CORE_PLUGIN
 from scidiscovery.general_science_plugin import PLUGIN as GENERAL_PLUGIN
 from scidiscovery.operation_declaration import scientific_agent_operation
@@ -38,17 +14,7 @@ from scidiscovery.operations.invoke import (
     active_direct_revision_ports,
     direct_revision_ports,
 )
-from scidiscovery.operations.spec import (
-    CallableComponent,
-    ComponentRef,
-    ComponentSpec,
-    InputAdmissionSpec,
-    InputPortSpec,
-    ReviewSpec,
-)
-
-
-RAW = b"sample,value\na,1\nb,3\n"
+from scidiscovery.operations.spec import CallableComponent, ComponentRef, ComponentSpec, InputAdmissionSpec, InputPortSpec, ReviewSpec
 
 
 def _input(
@@ -74,6 +40,11 @@ def _input(
         usage=usage,
         exposure="full",
     )
+
+def _blind_progress_fingerprint(raw: bytes) -> str:
+    return hashlib.sha256(raw).hexdigest()
+
+BLIND_PROGRESS = CallableComponent("transform", _blind_progress_fingerprint)
 
 
 REVISION = scientific_agent_operation(
@@ -126,11 +97,6 @@ REVISION = scientific_agent_operation(
 )
 
 
-def _blind_progress_fingerprint(raw: bytes) -> str:
-    return hashlib.sha256(raw).hexdigest()
-
-
-BLIND_PROGRESS = CallableComponent("transform", _blind_progress_fingerprint)
 OPTIONAL_REVISION_INPUTS = (
     _input(
         "prior_draft",
@@ -181,24 +147,6 @@ DUAL_AUTHOR = scientific_agent_operation(
 )
 
 
-def _catalog(*, reviewer=REVIEWER, revision=REVISION):
-    operations = (DUAL_AUTHOR, reviewer)
-    plugin = PLUGIN.model_copy(
-        update={
-            "components": (
-                *PLUGIN.components,
-                ComponentSpec(
-                    "blind_progress",
-                    "transform",
-                    "tests.operations.test_incremental_revision_runtime:BLIND_PROGRESS",
-                ),
-            ),
-            "operations": (*operations, revision),
-        }
-    )
-    return compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, plugin))
-
-
 def _optional_catalog(operation=DUAL_AUTHOR):
     plugin = PLUGIN.model_copy(
         update={
@@ -214,147 +162,6 @@ def _optional_catalog(operation=DUAL_AUTHOR):
         }
     )
     return compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, plugin))
-
-
-def _envelope(payload: object, *, verdict: str, summary: str) -> bytes:
-    return canonical_json(
-        {
-            "schema_version": 1,
-            "handoff": {"verdict": verdict, "summary": summary},
-            "payload": payload,
-        }
-    )
-
-
-def _worker(catalog, runtime, operation_id: str):
-    compiled = catalog.operation(operation_id)
-    router = LocalWorkerMCPRouter
-    from scidiscovery.artifact_agent.service.worker_connections import WorkerConnections
-    instance = runtime.scheduler_bindings.select_instance(name="incremental_revision")
-    value, = [item for item in runtime.runs.list(instance_id=instance.instance_id)
-              if item.operation_id == operation_id and item.state in {"queued", "running"}]
-    caller = ("revision-session", "worker-" + value.run_id)
-    WorkerConnections(runtime.runs).attach(run_id=value.run_id, platform_session=caller[0], thread_id=caller[1])
-    return router(runtime.runs, operation_id=operation_id, operation_digest=compiled.digest,
-                  run_id=value.run_id, trusted_caller=caller)
-
-
-def _system(tmp_path: Path, *, worker_backend: str = "local"):
-    catalog = _catalog()
-    project = tmp_path / "project"
-    project.mkdir()
-    runtime = open_runtime(
-        project_root=project,
-        state_root=tmp_path / "state",
-        worker_backend=worker_backend,
-        local_workspace_root=project / ".scidiscovery-runs",
-    )
-    runtime.runs.operation_catalog = catalog
-    instance = runtime.scheduler_bindings.create_instance(
-        name="incremental_revision",
-        title="Incremental revision",
-        objective="Prove copy-on-write revision semantics.",
-    )
-    source = runtime.artifacts.register(
-        RAW,
-        ArtifactRegistration(
-            kind="blind_csv_input",
-            schema_id="blind.opaque.v1",
-            payload_schema_version=1,
-            media_type="text/csv",
-            creator=runtime.actor,
-        ),
-        idempotency_key="incremental:source",
-    )
-    runtime.scheduler_bindings.bind(
-        instance=instance.instance_id,
-        namespace="artifact",
-        name="source_csv",
-        object_id=source.artifact_id,
-    )
-    root = RootMCPRouter(
-        RootToolFacade(
-            runtime.artifacts,
-            runtime.intake,
-            runs=runtime.runs,
-            approvals=runtime.approvals,
-            executions=runtime.executions,
-            bindings=runtime.scheduler_bindings,
-            instance=instance.instance_id,
-            operation_catalog=catalog,
-        )
-    )
-    return catalog, runtime, instance, root
-
-
-def _create_reviewed_base(
-    catalog, runtime, instance, root
-) -> tuple[bytes, CsvObservation]:
-    root.call_tool(
-        "operation_invoke",
-        {
-            "name": "base",
-            "operation_id": "blind.csv.observe.v1",
-            "inputs": [{"port": "source_table", "artifact_names": ["source_csv"]}],
-            "instruction": "Create one bounded observation.",
-        },
-    )
-    author = _worker(catalog, runtime, "blind.csv.observe.v1")
-    opened = author.call_tool("worker_open_assignment", {})
-    assignment = json.loads(Path(opened["assignment_path"]).read_text("utf-8"))
-    assert assignment["revision"] is None
-    assert not Path(opened["output_directory"], "result.json").exists()
-    observation = CsvObservation(
-        schema_probe=CSV_SCHEMA_PROBE,
-        structure=summarize_csv(RAW),
-        interpretation="The bounded arithmetic mean is two.",
-        limitations=("Two rows do not establish causality.",),
-    )
-    Path(opened["output_directory"], "result.json").write_bytes(
-        _envelope(
-            observation.model_dump(mode="json"),
-            verdict="pass",
-            summary="Initial bounded observation.",
-        )
-    )
-    assert author.call_tool("worker_submit_result", {})["state"] == "completed"
-    base_ref = runtime.artifacts.get_by_id(
-        runtime.scheduler_bindings.resolve(
-            instance=instance.instance_id,
-            namespace="artifact",
-            name="base.output",
-        )
-    ).ref
-    base_content = runtime.artifacts.read(base_ref)
-
-    root.call_tool(
-        "operation_invoke",
-        {
-            "name": "review",
-            "operation_id": "blind.csv.review.v1",
-            "inputs": [
-                {"port": "source_table", "artifact_names": ["source_csv"]},
-                {"port": "csv_observation", "artifact_names": ["base.output"]},
-            ],
-            "instruction": "Request one bounded wording correction.",
-        },
-    )
-    reviewer = _worker(catalog, runtime, "blind.csv.review.v1")
-    opened = reviewer.call_tool("worker_open_assignment", {})
-    review = CsvReview(
-        subject_sha256=hashlib.sha256(base_content).hexdigest(),
-        verdict="revise",
-        rationale="Clarify that the interpretation is descriptive only.",
-    )
-    Path(opened["output_directory"], "result.json").write_bytes(
-        _envelope(
-            review.model_dump(mode="json"),
-            verdict="blocked",
-            summary="One bounded correction is required.",
-        )
-    )
-    assert reviewer.call_tool("worker_submit_result", {})["state"] == "completed"
-    return base_content, observation
 
 
 def test_optional_direct_revision_shape_is_one_bounded_operation() -> None:
@@ -464,304 +271,6 @@ def test_optional_direct_revision_shape_fails_closed_at_compile(operation) -> No
         _optional_catalog(operation)
 
 
-def _revision_request(name: str, *, resume_from: str | None = None):
-    request = {
-        "name": name,
-        "operation_id": "blind.csv.revise.v1",
-        "inputs": [
-            {"port": "prior_draft", "artifact_names": ["base.output"]},
-            {"port": "change_request", "artifact_names": ["review.output"]},
-            {"port": "source_table", "artifact_names": ["source_csv"]},
-        ],
-        "instruction": "Apply only the exact reviewed correction.",
-    }
-    if resume_from is not None:
-        request["resume_from"] = resume_from
-    return request
-
-
-def _invoke_revision(root, name: str, *, resume_from: str | None = None):
-    return root.call_tool(
-        "operation_invoke", _revision_request(name, resume_from=resume_from)
-    )
-
-
-def test_revision_workspace_is_copy_on_write_and_publishes_new_snapshot(
-    tmp_path: Path,
-) -> None:
-    catalog, runtime, instance, root = _system(tmp_path)
-    base_content, observation = _create_reviewed_base(
-        catalog, runtime, instance, root
-    )
-    assert catalog.operation("blind.csv.revise.v1").spec.limits.max_attempts == 2
-    _invoke_revision(root, "revision")
-    worker = _worker(catalog, runtime, "blind.csv.revise.v1")
-    opened = worker.call_tool("worker_open_assignment", {})
-    assignment = json.loads(Path(opened["assignment_path"]).read_text("utf-8"))
-    assert assignment["revision"] == {
-        "mode": "copy_on_write",
-        "base_source_name": "prior_draft",
-        "editable_target": "output/result.json",
-        "publication": "complete_immutable_snapshot",
-    }
-    output = Path(opened["output_directory"], "result.json")
-    draft = json.loads(output.read_text("utf-8"))
-    assert draft["payload"] == observation.model_dump(mode="json")
-    assert draft["handoff"] == {"summary": "", "verdict": ""}
-
-    draft["handoff"] = {
-        "verdict": "pass",
-        "summary": "Revision handoff authored by the Worker.",
-    }
-    output.write_text(
-        json.dumps(draft, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    unchanged = worker.call_tool("worker_submit_result", {})
-    assert unchanged["state"] == "rejected"
-    assert len(unchanged["diagnostics"]) == 1
-    diagnostic = unchanged["diagnostics"][0]
-    assert (diagnostic["path"], diagnostic["type"], diagnostic["rule_id"]) == (
-        "$.payload", "revision_unchanged", "runtime.revision",
-    )
-    assert diagnostic["code"] == "output_invalid" and diagnostic["phase"] == "output_payload"
-
-    draft["payload"]["interpretation"] = (
-        "The bounded arithmetic mean is two; this is descriptive, not causal."
-    )
-    output.write_text(
-        json.dumps(draft, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
-    revised_name = root.call_tool("run_status", {"name": "revision"})[
-        "output_artifact_name"
-    ]
-    revised_ref = runtime.artifacts.get_by_id(
-        runtime.scheduler_bindings.resolve(
-            instance=instance.instance_id,
-            namespace="artifact",
-            name=revised_name,
-        )
-    ).ref
-    revised = json.loads(runtime.artifacts.read(revised_ref))
-    assert revised["structure"] == observation.structure.model_dump(mode="json")
-    assert revised["limitations"] == list(observation.limitations)
-    assert revised["interpretation"].endswith("not causal.")
-    base_ref = runtime.artifacts.get_by_id(
-        runtime.scheduler_bindings.resolve(
-            instance=instance.instance_id,
-            namespace="artifact",
-            name="base.output",
-        )
-    ).ref
-    assert runtime.artifacts.read(base_ref) == base_content
-
-
-def test_same_operation_revises_its_own_created_output(tmp_path: Path) -> None:
-    catalog, runtime, instance, root = _system(tmp_path)
-    base_content, observation = _create_reviewed_base(
-        catalog, runtime, instance, root
-    )
-    request = {
-        "name": "same_operation_revision",
-        "operation_id": "blind.csv.observe.v1",
-        "inputs": [
-            {"port": "source_table", "artifact_names": ["source_csv"]},
-            {"port": "prior_draft", "artifact_names": ["base.output"]},
-            {"port": "change_request", "artifact_names": ["review.output"]},
-        ],
-        "instruction": "Revise only the exact independently reviewed wording.",
-    }
-    assert root.call_tool("operation_preflight", request)["admissible"] is True
-    root.call_tool("operation_invoke", request)
-    worker = _worker(catalog, runtime, "blind.csv.observe.v1")
-    opened = worker.call_tool("worker_open_assignment", {})
-    assignment = json.loads(Path(opened["assignment_path"]).read_text("utf-8"))
-    assert assignment["revision"] == {
-        "mode": "copy_on_write",
-        "base_source_name": "prior_draft",
-        "editable_target": "output/result.json",
-        "publication": "complete_immutable_snapshot",
-    }
-    output = Path(opened["output_directory"], "result.json")
-    draft = json.loads(output.read_text("utf-8"))
-    assert draft["payload"] == observation.model_dump(mode="json")
-    draft["handoff"] = {
-        "verdict": "pass",
-        "summary": "One bounded wording correction was applied.",
-    }
-    draft["payload"]["interpretation"] = (
-        "The bounded arithmetic mean is two; this is descriptive only."
-    )
-    output.write_text(
-        json.dumps(draft, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    assert worker.call_tool("worker_submit_result", {})["state"] == "completed"
-    status = root.call_tool("run_status", {"name": "same_operation_revision"})
-    revised = runtime.artifacts.get_by_id(
-        runtime.scheduler_bindings.resolve(
-            instance=instance.instance_id,
-            namespace="artifact",
-            name=status["output_artifact_name"],
-        )
-    )
-    base = runtime.artifacts.get_by_id(
-        runtime.scheduler_bindings.resolve(
-            instance=instance.instance_id,
-            namespace="artifact",
-            name="base.output",
-        )
-    )
-    review = runtime.artifacts.get_by_id(
-        runtime.scheduler_bindings.resolve(
-            instance=instance.instance_id,
-            namespace="artifact",
-            name="review.output",
-        )
-    )
-    assert revised.ref != base.ref
-    assert {base.ref, review.ref} <= set(revised.parent_refs)
-    assert runtime.artifacts.read(base.ref) == base_content
-
-
-def test_same_operation_revision_context_is_all_or_none(tmp_path: Path) -> None:
-    catalog, runtime, instance, root = _system(tmp_path)
-    _create_reviewed_base(catalog, runtime, instance, root)
-    before_runs = len(
-        runtime.scheduler_bindings.list(
-            instance=instance.instance_id, namespace="run"
-        )
-    )
-    for port, name in (
-        ("prior_draft", "base.output"),
-        ("change_request", "review.output"),
-    ):
-        request = {
-            "name": f"half_revision_{port}",
-            "operation_id": "blind.csv.observe.v1",
-            "inputs": [
-                {"port": "source_table", "artifact_names": ["source_csv"]},
-                {"port": port, "artifact_names": [name]},
-            ],
-            "instruction": "This incomplete revision context must be rejected.",
-        }
-        result = root.call_tool("operation_preflight", request)
-        assert result["admissible"] is False
-        assert result["reason_code"] == "input_cohort_incomplete"
-    assert len(
-        runtime.scheduler_bindings.list(
-            instance=instance.instance_id, namespace="run"
-        )
-    ) == before_runs
-
-
-def test_revision_recovery_status_matches_exact_resume_preflight(tmp_path: Path) -> None:
-    catalog, runtime, instance, root = _system(tmp_path)
-    _create_reviewed_base(catalog, runtime, instance, root)
-    _invoke_revision(root, "failed_revision")
-    worker = _worker(catalog, runtime, "blind.csv.revise.v1")
-    worker.call_tool("worker_open_assignment", {})
-    before = root.call_tool("run_status", {"name": "failed_revision"})
-    root.call_tool(
-        "run_record_failure",
-        {
-            "name": "failed_revision",
-            "reason": "bounded recovery probe",
-            "expected_state": "running",
-            "expected_last_activity_at": before["last_activity_at"],
-        },
-    )
-    failed = root.call_tool("run_status", {"name": "failed_revision"})
-    assert failed["state"] == "failed"
-    assert failed["recovery_available"] is True
-    resumed = _invoke_revision(
-        root, "resumed_revision", resume_from="failed_revision"
-    )
-    assert resumed["result"]["state"] == "queued"
-    resumed_worker = _worker(catalog, runtime, "blind.csv.revise.v1")
-    resumed_worker.call_tool("worker_open_assignment", {})
-    before = root.call_tool("run_status", {"name": "resumed_revision"})
-    root.call_tool(
-        "run_record_failure",
-        {
-            "name": "resumed_revision",
-            "reason": "bounded recovery attempt exhausted",
-            "expected_state": "running",
-            "expected_last_activity_at": before["last_activity_at"],
-        },
-    )
-    exhausted = root.call_tool("run_status", {"name": "resumed_revision"})
-    assert exhausted["state"] == "failed"
-    assert exhausted["recovery_available"] is False
-    preflight = root.call_tool(
-        "operation_preflight",
-        {
-            "name": "exhausted_revision",
-            "operation_id": "blind.csv.revise.v1",
-            "inputs": [
-                {"port": "prior_draft", "artifact_names": ["base.output"]},
-                {"port": "change_request", "artifact_names": ["review.output"]},
-                {"port": "source_table", "artifact_names": ["source_csv"]},
-            ],
-            "instruction": "Apply only the exact reviewed correction.",
-            "resume_from": "resumed_revision",
-        },
-    )
-    assert preflight["admissible"] is False
-    assert preflight["reason_code"] == "recovery_attempt_limit_reached"
-
-
-def test_revision_recovery_is_unavailable_after_backend_change(tmp_path: Path) -> None:
-    catalog, runtime, instance, root = _system(tmp_path)
-    _create_reviewed_base(catalog, runtime, instance, root)
-    _invoke_revision(root, "failed_before_backend_change")
-    worker = _worker(catalog, runtime, "blind.csv.revise.v1")
-    worker.call_tool("worker_open_assignment", {})
-    before = root.call_tool(
-        "run_status", {"name": "failed_before_backend_change"}
-    )
-    root.call_tool(
-        "run_record_failure",
-        {
-            "name": "failed_before_backend_change",
-            "reason": "bounded backend identity probe",
-            "expected_state": "running",
-            "expected_last_activity_at": before["last_activity_at"],
-        },
-    )
-    assert root.call_tool(
-        "run_status", {"name": "failed_before_backend_change"}
-    )["recovery_available"] is True
-    runtime.runs.backend.backend_version = "retired-version"
-    assert root.call_tool(
-        "run_status", {"name": "failed_before_backend_change"}
-    )["recovery_available"] is False
-
-
-
-
-def test_materializer_without_finalizer_keeps_the_generic_revision_draft() -> None:
-    from scidiscovery.operations.invoke import direct_revision_ports
-
-    compiled = _catalog().operation("blind.csv.revise.v1")
-    direct = direct_revision_ports(compiled)
-    assert direct is not None
-    assert _revision_workspace_mode(
-        direct, {"workspace_materializer": object()}
-    ) == "result_copy"
-    assert _revision_workspace_mode(
-        direct,
-        {
-            "workspace_materializer": object(),
-            "workspace_finalizer": object(),
-        },
-    ) == "domain_workspace"
-
-
-
-
 def test_revision_base_must_be_materializable() -> None:
     hidden_base = REVISION.inputs[0].model_copy(update={"exposure": "handoff_only"})
     hidden_revision = REVISION.model_copy(
@@ -773,31 +282,3 @@ def test_revision_base_must_be_materializable() -> None:
     with pytest.raises(CatalogCompileError) as caught:
         compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, hidden_plugin))
     assert caught.value.reason_code == "direct_revision_contract_invalid"
-
-@pytest.mark.parametrize("change, reason", [
-    ("review_contract", "input_revision_review_contract_mismatch"),
-    ("reviewer_version", "input_independent_review_incompatible"),
-])
-def test_direct_revision_public_admission_rejects_incompatible_review(tmp_path, change, reason):
-    from scidiscovery.artifact_agent.interfaces.mcp_root import RootToolError
-    catalog, runtime, instance, root = _system(tmp_path)
-    _create_reviewed_base(catalog, runtime, instance, root)
-    request = _revision_request("revision")
-    assert root.call_tool("operation_preflight", request)["admissible"]
-    if change == "review_contract":
-        revised = REVISION.model_copy(update={"review": REVISION.review.model_copy(
-            update={"accepted_verdicts": ("pass", "inconclusive")})})
-        changed_catalog = _catalog(revision=revised)
-    else:
-        changed_catalog = _catalog(reviewer=REVIEWER.model_copy(update={"version": "2"}))
-    runtime.runs.operation_catalog = changed_catalog
-    changed_root = RootMCPRouter(RootToolFacade(
-        runtime.artifacts, runtime.intake, runs=runtime.runs, approvals=runtime.approvals,
-        executions=runtime.executions, bindings=runtime.scheduler_bindings,
-        instance=instance.instance_id, operation_catalog=changed_catalog))
-    rejected = changed_root.call_tool("operation_preflight", request)
-    assert rejected["reason_code"] == reason, rejected
-    with pytest.raises(RootToolError, match=reason):
-        changed_root.call_tool("operation_invoke", request)
-    runtime.runs.operation_catalog = catalog
-    assert root.call_tool("operation_invoke", request)["result"]["state"] == "queued"

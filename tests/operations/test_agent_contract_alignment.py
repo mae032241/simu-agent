@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import replace
-from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -15,20 +13,13 @@ from scidiscovery.artifact_agent.schema.research_cycle import ScientificIntake
 from scidiscovery.artifact_agent.schema.research_objective import (
     ObjectiveClosureRequirement,
 )
-from scidiscovery.artifact_agent.service.run_outputs import RunCheckerError, RunOutputError
 from scidiscovery.builtin_plugin import CORE_PLUGIN
 from scidiscovery.general_science_experiment_components import _experiment_context
 from scidiscovery.general_science_plugin import PLUGIN as GENERAL_PLUGIN
 from scidiscovery.general_science_resources import Resources
 from scidiscovery.operation_contract import SemanticRuleViolation
-from scidiscovery.operations import catalog as catalog_module
 from scidiscovery.operations.catalog import compile_catalog
-from scidiscovery.operations.invoke import (
-    InvocationArtifact,
-    operation_port_json_schema,
-    operation_primary_output,
-    preflight_operation,
-)
+from scidiscovery.operations.invoke import operation_port_json_schema, operation_primary_output
 from tcad_artifact.plugin import PLUGIN as TCAD_PLUGIN
 from tcad_artifact.parameter_operations import ParameterEvidencePackage
 from curve_figure_evidence.figure_science_operations import AUDIT_PROMPT as FIGURE_AUDIT_PROMPT
@@ -38,172 +29,6 @@ def _catalog():
     return compile_catalog(
         (CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN)
     )
-
-
-def test_all_backend_tool_contracts_equal_actual_mcp_schemas_and_resolve_refs():
-    from types import SimpleNamespace
-    from jsonschema import Draft202012Validator
-    from curve_figure_evidence.plugin import PLUGIN as FIGURE
-    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
-    from scidiscovery.artifact_agent.service.local_workspace import LocalTrustedBackend
-    from scidiscovery.operations.tooling import operation_tool_contracts
-    catalog = compile_catalog((CORE_PLUGIN, GENERAL_PLUGIN, CURVE_PLUGIN, TCAD_PLUGIN, FIGURE))
-    checked = set()
-    for key in catalog.operation_ids():
-        compiled = catalog.operation(key)
-        if compiled.spec.executor.kind != 'agent':
-            continue
-        for backend, router_type in ((LocalTrustedBackend, LocalWorkerMCPRouter),):
-            router = router_type(SimpleNamespace(operation_catalog=catalog, backend=backend, worker_connections=SimpleNamespace()),
-                operation_id=key, operation_digest=compiled.digest)
-            contracts = operation_tool_contracts(compiled, backend.assignment_tool_names(compiled))
-            assert contracts == {tool['name']: {k: tool[k] for k in ('description', 'inputSchema')}
-                                 for tool in router.list_tools()}
-            for name, contract in contracts.items():
-                schema = contract['inputSchema']
-                Draft202012Validator.check_schema(schema)
-                def check_refs(node):
-                    if isinstance(node, dict):
-                        if '$ref' in node:
-                            assert node['$ref'].startswith('#/')
-                            target = schema
-                            for token in node['$ref'][2:].split('/'):
-                                target = target[token.replace('~1', '/').replace('~0', '~')]
-                        for child in node.values(): check_refs(child)
-                    elif isinstance(node, list):
-                        for child in node: check_refs(child)
-                check_refs(schema)
-                checked.add(name)
-    assert {'worker_curve_score', 'worker_tcad_curve_score', 'worker_curve_figure_preview'} <= checked
-
-
-@pytest.mark.parametrize('backend_kind', ['local'])
-@pytest.mark.parametrize('legacy', [False, True])
-def test_open_delivers_frozen_contracts_and_same_identity_legacy_fallback(tmp_path, monkeypatch, backend_kind, legacy):
-    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import LocalWorkerMCPRouter
-    from scidiscovery.artifact_agent.service import runs as runs_module
-    from scidiscovery.operations.tooling import operation_tool_contracts
-    from tests.operations.test_tcad_result_analysis import analysis_system
-    router_type = LocalWorkerMCPRouter
-    catalog, runtime, root, request, _, _ = analysis_system(tmp_path)
-    if legacy:
-        original = runs_module.assignment_json
-        def old_assignment(*args, **kwargs):
-            value = json.loads(original(*args, **kwargs))
-            del value['tool_contracts']
-            return canonical_json(value)
-        monkeypatch.setattr(runs_module, 'assignment_json', old_assignment)
-    root.call_tool('operation_invoke', request)
-    compiled = catalog.operation(request['operation_id'])
-    worker = router_type(runtime.runs, operation_id=compiled.spec.operation_id, operation_digest=compiled.digest)
-    opened = worker.call_tool('worker_open_assignment', {})
-    path = Path(opened['assignment_path'])
-    frozen = path.read_bytes()
-    assignment = json.loads(frozen)
-    assert all("port" not in item and "artifact_ref" not in item for item in assignment["inputs"])
-    contracts = json.loads(Path(opened['tool_contracts_path']).read_bytes())
-    if opened['tool_contracts_pointer']:
-        contracts = contracts['tool_contracts']
-    if backend_kind == 'local' and not legacy:
-        assert 'tool_contracts' not in opened
-        assert opened['tool_contracts_pointer'] == '/tool_contracts'
-        assert Path(opened['start_here_path']).is_file()
-    assert contracts == operation_tool_contracts(compiled, runtime.runs.backend.assignment_tool_names(compiled))
-    assert set(contracts) == set(assignment['tools'])
-    if legacy:
-        assert 'tool_contracts' not in assignment
-    else:
-        assert assignment['tool_contracts'] == contracts
-    request_schema = contracts['worker_tcad_curve_score']['inputSchema']
-    assert request_schema['$defs']['AnalysisCurveComparison']['properties']['evaluation_points']['maximum'] == 4096
-    assert '12288' in request_schema['$defs']['TCADScoreRequest']['description']
-    reopened = worker.call_tool('worker_open_assignment', {})
-    assert reopened['tool_contracts_path'] == opened['tool_contracts_path']
-    assert path.read_bytes() == frozen
-    if backend_kind == 'local' and legacy:
-        from scidiscovery.artifact_agent.interfaces.mcp_worker_protocol import WorkerToolError
-        original_operation = type(catalog).operation
-        def new_contract(self, name):
-            item = original_operation(self, name)
-            return replace(item, digest='f' * 64) if name == compiled.spec.operation_id else item
-        monkeypatch.setattr(type(catalog), 'operation', new_contract)
-        with pytest.raises(WorkerToolError):
-            worker.call_tool('worker_open_assignment', {})
-        assert path.read_bytes() == frozen
-
-
-def test_one_tool_field_change_reaches_compiled_mcp_assignment_and_execution(tmp_path, monkeypatch):
-    from pydantic import Field, create_model
-    import tcad_artifact.result_analysis as analysis
-    from scidiscovery.artifact_agent.interfaces.mcp import MCPRouter
-    from scidiscovery.operations.tooling import operation_agent_type
-    from tests.operations.test_tcad_result_analysis import analysis_system, open_analysis, raw_request
-
-    original = analysis.TOOL
-    identities = []
-    for limit in (4, 8):
-        # One provider declaration changes; every consumer must see the new
-        # field bound and the real Worker must enforce it before computation.
-        model = create_model('ChangedScoreInput', __base__=analysis.TCADScoreInput,
-                             record_key=(str, Field(min_length=1, max_length=limit)))
-        monkeypatch.setattr(analysis, 'TOOL', replace(original, input_model=model))
-        directory = tmp_path / str(limit)
-        directory.mkdir()
-        system = analysis_system(directory)
-        worker, opened = open_analysis(system)
-        compiled = system[0].operation('tcad.result.analyze.v1')
-        identities.append((compiled.digest, operation_agent_type(compiled)))
-        declared = next(tool for tool in compiled.worker_tools if tool.name == original.name).schema()
-        actual = next(tool for tool in worker.list_tools() if tool['name'] == original.name)
-        assert actual == declared
-        contract = {key: actual[key] for key in ('description', 'inputSchema')}
-        assert json.loads(Path(opened['tool_contracts_path']).read_bytes())['tool_contracts'][original.name] == contract
-        assert json.loads(Path(opened['assignment_path']).read_bytes())['tool_contracts'][original.name] == contract
-        assert contract['inputSchema']['properties']['record_key']['maxLength'] == limit
-        router = MCPRouter(worker, name='declaration-change')
-        call = dict(jsonrpc='2.0', id=1, method='tools/call', params=dict(
-            name=original.name, arguments=dict(record_key='probe', request=raw_request())))
-        reply = router.handle(call)
-        if limit == 4:
-            detail = reply['error']['data']['diagnostics'][0]
-            assert detail['path'] == '$.record_key' and '4' in detail['message']
-            call['params']['arguments']['record_key'] = 'ok'
-            reply = router.handle(call)
-        assert json.loads(reply['result']['content'][0]['text'])['status'] == 'computed'
-    assert identities[0][0] != identities[1][0]
-    assert identities[0][1] == identities[1][1]  # shared native profile; contract digest still changes
-
-
-def test_root_parameters_and_catalog_inputs_share_declared_constraints():
-    from types import MappingProxyType
-    from jsonschema import Draft202012Validator
-    from scidiscovery.artifact_agent.interfaces.mcp_root import OperationCallInput
-    from scidiscovery.operations.invoke import OperationInvocationError
-    from scidiscovery.operations.spec import scheduler_operation_view
-    schema = OperationCallInput.model_json_schema()
-    validator = Draft202012Validator(schema)
-    compiled = _catalog().operation('science.result.diagnose.v1')
-    payload = dict(name='parameters', operation_id=compiled.spec.operation_id, inputs=[], instruction='Check parameters.')
-    for parameters in (None, {}, {'unexpected': 1}):
-        request = payload if parameters is None else {**payload, 'parameters': parameters}
-        if parameters:
-            assert list(validator.iter_errors(request))
-            with pytest.raises(ValidationError):
-                OperationCallInput.model_validate_json(canonical_json(request))
-        else:
-            validator.validate(request)
-            assert OperationCallInput.model_validate_json(canonical_json(request)).parameters == {}
-    with pytest.raises(OperationInvocationError) as caught:
-        preflight_operation(compiled, name='parameters', instruction='Check parameters.',
-            artifacts_by_port={p.name: () for p in compiled.spec.inputs}, parameters=MappingProxyType({'unexpected': 1}))
-    assert caught.value.reason_code == 'parameters_not_declared'
-    view = scheduler_operation_view(compiled.spec).model_dump(mode='json', by_alias=True)
-    keys = ('usage', 'exposure', 'require_current', 'media_types', 'max_item_bytes')
-    for projected in view['inputs']:
-        port = next(p for p in compiled.spec.inputs if p.name == projected['name'])
-        expected = port.model_dump(mode='json')
-        assert {k: projected[k] for k in keys} == {k: expected[k] for k in keys}
-    assert all(not set(keys).intersection(port) for port in view['outputs'])
 
 
 def test_declared_output_relationship_reports_the_visible_rule_and_missing_field():
@@ -493,14 +318,6 @@ def _partial_experiment(experiment_case):
     return intent, sources
 
 
-
-
-
-
-
-
-
-
 @pytest.mark.parametrize("global_already_present", (False, True))
 def test_materialization_and_revision_preserve_goal_text_and_rationales(
     experiment_case, global_already_present,
@@ -568,45 +385,6 @@ def engineering_case(experiment_case):
                     identifiability_claims=[], prediction_tests=[])
     ExperimentDesignIntent.model_validate_json(canonical_json(intent), strict=True)
     return intent, sources
-
-
-def _experiment_run(tmp_path, sources):
-    from tests.operations.test_general_transform_operations import _intake, _register, _root
-
-    catalog = _catalog()
-    compiled = catalog.operation("science.experiment.design.v1")
-    runtime, instance, _ = _root(tmp_path, catalog=catalog)
-    runtime.runs.operation_catalog = catalog
-    content = {"scientific_foundation": _intake().scientific_foundation.canonical_json(), **sources}
-    envelopes = {}
-    artifacts = {}
-    for port in compiled.spec.inputs:
-        if port.min_items == 0 and port.name not in content:
-            artifacts[port.name] = ()
-            continue
-        parents = (() if port.name == "scientific_foundation" else
-                   (envelopes["scientific_foundation"].ref,))
-        if port.name == "critic_review":
-            parents += (envelopes["hypothesis_portfolio"].ref,)
-        envelope = _register(runtime, instance, name=port.name, raw=content[port.name],
-                             kind=port.name, schema=port.schema_id, parents=parents)
-        envelopes[port.name] = envelope
-        artifacts[port.name] = (InvocationArtifact(
-            artifact_name=port.name, ref=envelope.ref, schema_id=envelope.schema_id,
-            media_type=envelope.media_type, size_bytes=envelope.size_bytes,
-            parent_refs=envelope.parent_refs,
-        ),)
-    bound = preflight_operation(compiled, name="experiment", artifacts_by_port=artifacts,
-                                instruction="Check the exact experiment output contract.", read_artifact=runtime.artifacts.read)
-    # Exercise the real Run submission lifecycle independently of UI admission.
-    run_id = runtime.runs.schedule(
-        bound, instance_id=instance.instance_id, output_binding_name="experiment",
-        output_logical_name="experiment", output_revision=1,
-        output_binding_fingerprint="a" * 64,
-    )
-    _, workspace = runtime.runs.open(operation_id=compiled.spec.operation_id,
-                                     operation_digest=compiled.digest)
-    return runtime, run_id, workspace.output_directory / "result.json"
 
 
 def test_experiment_context_does_not_reclassify_invalid_inputs() -> None:
@@ -774,18 +552,3 @@ def test_empty_optional_inventory_still_allows_citing_the_bound_review_subject()
     validator.validate(payload)
     payload["evidence"][0]["source_key"] = "unbound_source"
     assert list(validator.iter_errors(payload))
-
-
-def test_corrupt_assignment_does_not_fall_back_to_a_new_tool_contract(tmp_path, monkeypatch):
-    from scidiscovery.artifact_agent.interfaces.mcp_local_worker import WorkerToolError
-    from tests.operations.test_tcad_result_analysis import analysis_system, open_analysis
-    worker, opened = open_analysis(analysis_system(tmp_path))
-    path = Path(opened['assignment_path'])
-    path.chmod(0o600)
-    path.write_text('{broken assignment')
-    def forbidden():
-        pytest.fail('corrupt assignment was silently replaced by a contract fallback')
-    monkeypatch.setattr(worker, '_assignment_tool_contracts', forbidden)
-    with pytest.raises(WorkerToolError) as error:
-        worker.call_tool('worker_open_assignment', {})
-    assert 'JSONDecodeError' in str(error.value.engineering)

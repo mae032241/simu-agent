@@ -124,8 +124,6 @@ def _intake_source_context(
     validate_evidence_source_aliases(payload, sources)
 
 
-
-
 def _hypothesis_objective_context(
     payload: dict[str, Any], sources: dict[str, bytes], handoff: dict[str, Any]
 ) -> None:
@@ -456,12 +454,12 @@ def component_specs() -> tuple[ComponentSpec, ...]:
     values.append(ComponentSpec(
         "pdf_extract_tool",
         "worker_tool",
-        "scidiscovery.artifact_agent.interfaces.mcp_worker_protocol:EXTRACT_PDF_TEXT_TOOL",
+        "scidiscovery.operations.worker_protocol:EXTRACT_PDF_TEXT_TOOL",
         public=True,
     ))
     values.extend((
         ComponentSpec("source_capture_tool", "worker_tool", "scidiscovery.source_capture:SOURCE_CAPTURE_TOOL"),
-        ComponentSpec("tool_evidence_schema", "resource", "scidiscovery.artifact_agent.service.tool_evidence:TOOL_EVIDENCE_SCHEMA", public=True),
+        ComponentSpec("tool_evidence_schema", "resource", "scidiscovery.general_science_resources:TOOL_EVIDENCE_SCHEMA", public=True),
     ))
     for name in (
         "opaque_schema", "intake_semantic_contract", "hypothesis_semantic_contract",
