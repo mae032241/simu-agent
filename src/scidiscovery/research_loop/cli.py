@@ -76,10 +76,19 @@ def main(argv=None):
     serve.add_argument('--root', type=Path, required=True)
     serve.add_argument('--approval-secret-file', type=Path, required=True, help='Operator-owned regular 0600 browser host key; approval routes additionally require frozen authority')
     serve.add_argument('--port', type=int, default=0, help='Loopback port; default selects an available port')
+    export = commands.add_parser('archive-export', help='Copy quiescent framework originals to a new inert read-only directory package; no writable restore')
+    export.add_argument('--root', type=Path, required=True)
+    export.add_argument('--output', type=Path, required=True)
+    inspect = commands.add_parser('archive-inspect', help='Verify a read-only package and page its complete manifest without running code or importing plugins')
+    inspect.add_argument('--package', type=Path, required=True)
+    inspect.add_argument('--after', type=int, default=0, help='Exact prior entry index; default starts at the first entry')
+    inspect.add_argument('--limit', type=int, default=20, help='Returned page size; all package bytes are still verified')
+    inspect.add_argument('--section', choices=['manifest', 'dependencies'], default='manifest')
     args = parser.parse_args(argv)
-    root = args.root.expanduser().resolve()
+    root = (args.root.expanduser().absolute() if args.command == 'archive-export' else
+            args.root.expanduser().resolve()) if args.command != 'archive-inspect' else None
     try:
-        if args.command not in {'prepare','status'}:
+        if args.command not in {'prepare','status','archive-inspect'}:
             from .protocol import require_current
             require_current(root)
         if args.command == 'prepare':
@@ -128,6 +137,12 @@ def main(argv=None):
                 raise ValueError('UI port must be between 0 and 65535')
             from . import instance_ui
             result = instance_ui.serve(root, secret_file=args.approval_secret_file, port=args.port)
+        elif args.command == 'archive-export':
+            from .instance_archive import archive_export
+            result = archive_export(root, args.output)
+        elif args.command == 'archive-inspect':
+            from .instance_archive import archive_inspect
+            result = archive_inspect(args.package, after=args.after, limit=args.limit, section=args.section)
         elif args.command == 'execution-recover':
             result=controller.execution_recover(root,args.step)
         elif args.command == 'worker-resume':
@@ -162,7 +177,7 @@ def main(argv=None):
         print(json.dumps(dict(status='error',error=str(error),**(dict(code=error.code) if isinstance(error,UnsupportedProtocol) else {})), ensure_ascii=False))
         return 1
     print(json.dumps(result, ensure_ascii=False))
-    return 0 if result.get('status') in {None, 'preserved_read_only', 'prepared', 'finish', 'wait', 'paused', 'pause_requested', 'budget_amended', 'delivery_confirmed', 'execution_recovered', 'exported_unsubmitted', 'ui_stopped'} else 2
+    return 0 if result.get('status') in {None, 'preserved_read_only', 'prepared', 'finish', 'wait', 'paused', 'pause_requested', 'budget_amended', 'delivery_confirmed', 'execution_recovered', 'exported_unsubmitted', 'ui_stopped', 'archive_exported', 'archive_inspected'} else 2
 
 
 if __name__ == '__main__':

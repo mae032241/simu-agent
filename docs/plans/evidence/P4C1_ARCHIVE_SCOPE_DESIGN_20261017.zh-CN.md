@@ -17,6 +17,7 @@
 | settings.json、settings-identity.json、host-started.json、pause.request | controller/contracts；完整原件，暂停标记仅历史事实。 |
 | jobs/、project/global/、project/nodes/ | controller/contracts；含原始目标、节点成果与受管 work/lineage/calls 原件；不按附件数量裁剪。 |
 | control-ledger/ | budget；完整追加事件，含科学及执行资源账；只读包不授预算。 |
+| correction-ledger/ | correction；实施前全模块写入点扫描补全，保留原触发/ack追加事实，不复制新许可。 |
 | native-evidence/ | native/runtime/execution；原 intent/outcome/process/continuation/封存证据；不据缺失原生环境声称可续接。 |
 | host-runtime/experiment-control/ | budget/experiments；原 interface projection、准入窗口与accept记录，不能因为名称runtime就漏掉。 |
 | host-history/ | history/qualification/execution_recovery；观察原件和追加恢复ref。 |

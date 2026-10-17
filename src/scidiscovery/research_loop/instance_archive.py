@@ -1,0 +1,442 @@
+"""Stream framework originals into an inert read-only package, never a live root."""
+from __future__ import annotations
+
+from contextlib import ExitStack
+import ctypes
+import errno
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path, PurePosixPath
+import re
+import shutil
+import stat
+import tempfile
+
+from scidiscovery import archive_io as files
+
+FORMAT = 'scidiscovery.instance-readonly-archive.v1'
+ROOT_FILES = {'settings.json', 'settings-identity.json', 'host-started.json', 'pause.request'}
+ROOT_DIRS = {'jobs', 'project', 'control-ledger', 'correction-ledger', 'native-evidence',
+             'host-runtime', 'host-history', 'host-delivery', 'source-provenance',
+             'qualification', 'execution-authority'}
+AUTHORITY_EXCLUDED = {'host-key-source.json', 'ui-endpoint.json', 'ui.lock', 'writer.lock'}
+CALL_LOCKS = ('node.lock', 'accept.lock')
+CALL_LEASES = ('tcad-submission-', 'tcad-binding-', 'tcad-collect-', 'observation-', 'engineering-')
+LIMITATIONS = ['Framework-owned originals only; undeclared external inputs/stores are not covered.',
+    'Native homes, session caches and credentials are excluded; native continuation is not established.',
+    'Historical decisions and resource events are bytes, not renewed permissions, budgets or signature verification.',
+    'No writable restoration or protection against arbitrary same-uid shell writers.']
+
+
+def _read(path):
+    files.check_path(path)
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    with os.fdopen(descriptor, 'r', encoding='utf-8') as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise files.ArchiveError('Archive metadata must be a regular file')
+        return json.load(stream)
+
+
+def _path(value):
+    if (not isinstance(value, str) or not value or '\\' in value or '\x00' in value
+            or PurePosixPath(value).is_absolute() or '..' in PurePosixPath(value).parts
+            or PurePosixPath(value).as_posix() != value or value == '.'):
+        raise files.ArchiveError('Archive logical path is not canonical')
+    return PurePosixPath(value)
+
+
+def _excluded(root, parts):
+    if parts[0] == 'native-homes':
+        return 'native_environment_sessions_caches_and_credentials'
+    if len(parts) == 1 and parts[0] in {'host-run.lock', 'control-ledger.lock'}:
+        return 'controller_or_budget_lock'
+    if len(parts) == 2 and parts[0] == 'execution-authority' and parts[1] in AUTHORITY_EXCLUDED:
+        return 'private_key_locator_or_transient_ui_or_authority_lock'
+    if (parts[0] == 'native-evidence' and parts[-1] == 'runner.lock'
+            and (len(parts) == 3 and parts[1].isdecimal() or len(parts) == 5
+                 and parts[1].isdecimal() and parts[2] == 'continuations' and parts[3].isdecimal())):
+        return 'native_runner_lease'
+    if (len(parts) == 4 and parts[:2] == ('host-runtime', 'experiment-control')
+            and re.fullmatch('[0-9a-f]{64}', parts[2]) and parts[3] == 'accept.lock'):
+        return 'managed_admission_lease'
+    if (len(parts) == 6 and parts[0:2] == ('project', 'nodes') and parts[2].isdecimal()
+            and parts[3:5] == ('work', 'lineage')):
+        name = parts[5]
+        if name in CALL_LOCKS or any(name.startswith(prefix) and name.endswith('.lock')
+                and (root.joinpath(*parts[:5]) / 'calls' / name[len(prefix):-5] / 'accepted.json').is_file()
+                for prefix in CALL_LEASES):
+            return 'managed_records_lease'
+    return None
+
+
+def _inventory(root):
+    """Walk only explicit owning namespaces; unknown roots are gaps, not trees."""
+    def walk(path, parts):
+        name = '/'.join(parts)
+        _path(name)
+        reason = _excluded(root, parts)
+        if reason:
+            yield dict(path=name, kind='excluded', reason=reason)
+            return
+        info = path.lstat()
+        if stat.S_ISLNK(info.st_mode):
+            raise files.ArchiveError('Symbolic link in declared archive scope: ' + name)
+        if not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode)):
+            raise files.ArchiveError('Special file in archive scope: ' + name)
+        identity = dict(mode=stat.S_IMODE(info.st_mode),
+            source_stat=[info.st_dev, info.st_ino, info.st_mtime_ns, info.st_ctime_ns])
+        unknown = (parts[0] not in ROOT_FILES | ROOT_DIRS
+            or len(parts) == 2 and parts[0] == 'project' and parts[1] not in {'global', 'nodes'}
+            or len(parts) == 2 and parts[0] == 'host-runtime' and parts[1] != 'experiment-control')
+        if unknown:
+            yield dict(path=name, kind='gap', reason='unrecognized_framework_ownership_not_traversed', **identity)
+            return
+        if len(parts) == 1 and (parts[0] in ROOT_FILES) != stat.S_ISREG(info.st_mode):
+            raise files.ArchiveError('Framework archive root has the wrong file type: ' + name)
+        if stat.S_ISREG(info.st_mode):
+            yield dict(path=name, kind='file', **files.hash_file(path))
+        else:
+            yield dict(path=name, kind='directory', **identity)
+            for child in sorted(path.iterdir(), key=lambda item: item.name):
+                yield from walk(child, (*parts, child.name))
+    for child in sorted(root.iterdir(), key=lambda item: item.name):
+        yield from walk(child, (child.name,))
+
+
+def _lock(stack, path):
+    files.check_path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(path, os.O_RDONLY | os.O_CREAT | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
+    stack.callback(os.close, descriptor)
+    if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+        raise files.ArchiveError('Archive owner lock is not a regular file')
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError as error:
+        raise files.ArchiveError('Original owner is active; archive was not created') from error
+
+
+def _managed_roots(root):
+    for node in sorted((root / 'project/nodes').glob('*')):
+        path = node / 'work/lineage'
+        if path.exists():
+            files.check_path(path)
+            if not path.is_dir() or not node.name.isdecimal():
+                raise files.ArchiveError('Unknown managed records namespace')
+            yield path
+
+
+def _owner_locks(stack, root):
+    # Production nested order: Records node→accept, TCAD submission→binding,
+    # then authority→ledger. Runner completion probes controller nonblocking.
+    # All exporter acquisitions are nonblocking; no high-level owner reentry.
+    from . import controller
+    stack.enter_context(controller._writer(root))
+    _lock(stack, root / 'execution-authority/ui.lock')
+    for path in sorted((root / 'native-evidence').glob('*/**/native-intent.json')):
+        _lock(stack, path.parent / 'runner.lock')
+    for records in _managed_roots(root):
+        for name in CALL_LOCKS:
+            _lock(stack, records / name)
+        for call in sorted((records / 'calls').glob('*')):
+            if not call.is_dir() or not re.fullmatch('[A-Za-z0-9._-]{1,128}', call.name):
+                raise files.ArchiveError('Unknown managed call identity')
+            for prefix in CALL_LEASES:
+                _lock(stack, records / (prefix + call.name + '.lock'))
+    for path in sorted((root / 'host-runtime/experiment-control').glob('*/accept.lock')):
+        _lock(stack, path)
+    _lock(stack, root / 'execution-authority/writer.lock')
+    _lock(stack, root / 'control-ledger.lock')
+
+
+def _dead(identity, binding):
+    from . import runtime
+    if (not isinstance(binding, str) or not re.fullmatch('[0-9a-f]{64}', binding)
+            or not isinstance(identity, dict) or identity.get('task_sha256') != binding
+            or any(type(identity.get(key)) is not int or identity[key] <= 0
+                   for key in ('pid', 'start_ticks', 'pgid', 'sid')) or not identity.get('boot_id')):
+        raise files.ArchiveError('Original process identity is incomplete')
+    if runtime.process_matches(identity, binding):
+        raise files.ArchiveError('An original process is still active')
+
+
+def _quiescent(root):
+    """Only retained original facts; no plugin factory, query, snapshot or grant."""
+    from . import budget, contracts as c, experiments as e
+    for name in ('runner-process.json', 'native-process.json', 'watchdog-process.json'):
+        for path in (root / 'native-evidence').glob('*/**/' + name):
+            if not path.with_name('native-intent.json').exists():
+                raise files.ArchiveError('Native writer has no accepted intent original')
+    for path in sorted((root / 'native-evidence').glob('*/**/native-intent.json')):
+        record = path.parent; relative = record.relative_to(root / 'native-evidence')
+        if (len(relative.parts) not in (1, 3) or not relative.parts[0].isdecimal()
+                or len(relative.parts) == 3 and (relative.parts[1] != 'continuations' or not relative.parts[2].isdecimal())):
+            raise files.ArchiveError('Unrecognized native attempt owner')
+        job = root / 'jobs' / (relative.parts[0] + '.json')
+        intent = _read(path)
+        if intent.get('task_sha256') != c.digest(c.regular(job)):
+            raise files.ArchiveError('Native intent lost its exact task')
+        outcome_path = record / 'native-outcome.json'
+        if not outcome_path.exists():
+            raise files.ArchiveError('Native outcome is absent; writer state is unknown')
+        outcome = _read(outcome_path)
+        if (outcome.get('native_started') is not False
+                and (type(outcome.get('returncode')) is not int or outcome.get('cleanup') != 'observed_group_cleaned')):
+            raise files.ArchiveError('Native cleanup is unconfirmed')
+        binding = c.digest(job) if len(relative.parts) == 1 else c.digest(path)
+        for name in ('runner-process.json', 'native-process.json', 'watchdog-process.json'):
+            process = record / name
+            if process.exists():
+                _dead(_read(process), binding)
+        cleanup = record / 'runner-cleanup.json'
+        if cleanup.exists() and _read(cleanup).get('status') != 'observed_group_cleaned':
+            raise files.ArchiveError('Native watchdog retained unknown cleanup')
+    for records in _managed_roots(root):
+        if any(records.glob('.prepared-*')):
+            raise files.ArchiveError('Original preparation has not completed acceptance')
+        for call in sorted((records / 'calls').glob('*')):
+            accepted = _read(call / 'accepted.json'); interface = accepted['interface']
+            if (call / 'submission-retirement.json').exists():
+                verified = e.verify_retirement(_read(call / 'submission-retirement.json'),
+                    lambda item: Path(item['path']), interface=interface)
+            elif (call / 'execution-observation.json').exists():
+                verified = _read(call / 'execution-observation.json')
+                e.verify_observation(verified, lambda item: Path(item['path']), interface=interface)
+            else:
+                raise files.ArchiveError('Managed execution has no verified terminal or permanent retirement original')
+            if (verified.get('call_id') != call.name or verified.get('scope') != accepted.get('scope')
+                    or verified.get('accepted') != e.proof(call / 'accepted.json')):
+                raise files.ArchiveError('Terminal original belongs to another managed call')
+            if interface.get('terminal_evidence') == 'local_process' and (call / 'process.json').exists():
+                _dead(_read(call / 'process.json'), hashlib.sha256(e.encoded(accepted)).hexdigest())
+            replay = call / 'engineering-check.intent.json'
+            if replay.exists():
+                result = _read(call / 'engineering-check.outcome.json')
+                if result.get('intent_sha256') != c.digest(replay) or result.get('result', {}).get('cleanup_confirmed') is not True:
+                    raise files.ArchiveError('Engineering replay has unconfirmed cleanup')
+    for path in (root / 'execution-authority/calls').glob('*/prepare-intent.json'):
+        allocation = _read(path.with_name('allocation.json'))
+        step = allocation['binding']['scope']['step']
+        if not (root / f'project/nodes/{step:03d}/work/lineage/calls' / allocation['call_id'] / 'accepted.json').exists():
+            raise files.ArchiveError('Pre-accept preparation cannot be proved inactive')
+    state = budget.closeout_state(root)  # Pure retained-ledger fold, no lock or current clock.
+    if (state['unresolved_operations'] or state['begin'] is not None
+            and state['begin']['stop_reason'] == 'delivery_cleanup_unknown'
+            or any(row['outcome'] is None or row['outcome']['result'].get('cleanup_confirmed') is not True
+                   for row in state['actions'])):
+        raise files.ArchiveError('Delivery owner is unresolved')
+    pairs = [(path, path.with_name('outcome.json'))
+             for path in (root / 'host-delivery/audit-recovery').glob('*/intent.json')]
+    pairs += [(path, path.with_name(path.name.replace('.intent.json', '.outcome.json')))
+              for path in (root / 'host-delivery/selection').rglob('*.intent.json')]
+    pairs += [(path, path.with_name('outcome.json'))
+              for path in (root / 'native-evidence').glob('*/candidate-audit/intent.json')]
+    for intent, outcome in pairs:
+        if not outcome.exists():
+            raise files.ArchiveError('Accepted delivery/audit intent has no outcome')
+        value = _read(outcome)
+        if value.get('intent_sha256', c.digest(intent)) != c.digest(intent) or value.get('result', value).get('cleanup_confirmed') is not True:
+            raise files.ArchiveError('Delivery/audit cleanup is unconfirmed')
+    for path in (root / 'host-delivery/preparation').glob('*.json'):
+        if _read(path).get('cleanup_confirmed') is not True:
+            raise files.ArchiveError('Delivery source preparation cleanup is unknown')
+    process_paths = list((root / 'host-delivery/action-processes').glob('*.json'))
+    process_paths += list((root / 'host-delivery/audit-recovery').glob('*/process.json'))
+    process_paths += list((root / 'native-evidence').glob('*/candidate-audit/process.json'))
+    process_paths += list((root / 'project/nodes').glob('*/work/lineage/calls/*/engineering-check.process.json'))
+    for path in process_paths:
+        identity = _read(path)['identity']
+        _dead(identity, identity.get('task_sha256'))
+
+
+def _dependencies(settings):
+    yield dict(owner='public_root', reference=settings['public_root'], coverage='external_tree_not_copied')
+    yield dict(owner='native_launcher', reference=settings['native_launcher_argv'], coverage='runtime_not_copied')
+    for key in ('history_observer', 'delivery_policy'):
+        value = settings.get(key)
+        if value is not None:
+            yield dict(owner=key, reference=value.get('adapter'), coverage='external_adapter_dependencies_not_copied')
+    configured = settings.get('execution_config')
+    if configured is not None:
+        for proof in configured['implementation']['code']:
+            yield dict(owner='registered_execution_code', reference=proof, coverage='no_separate_external_copy')
+        yield dict(owner='registered_plugin_storage', reference=configured['executor'],
+                   coverage='unsupported_without_frozen_storage_ownership')
+    yield dict(owner='native_sessions', reference='native-homes', coverage='credentials_caches_and_unretained_sessions_excluded')
+    yield dict(owner='approval_receipt_key', reference=None, coverage='key_and_private_locator_excluded_no_signature_authority')
+
+
+def _stream(path, values):
+    count = 0
+    with path.open('xb') as stream:
+        for count, value in enumerate(values, 1):
+            stream.write(files.canonical(dict(index=count, **value)) + b'\n')
+        stream.flush(); os.fsync(stream.fileno())
+    return count
+
+
+def _publish(stage, output):
+    # Linux, like the original runtime. No replacement fallback if unsupported.
+    libc = ctypes.CDLL(None, use_errno=True)
+    function = getattr(libc, 'renameat2', None)
+    if function is None:
+        raise files.ArchiveError('Atomic no-replacement directory publication is unavailable')
+    function.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+    function.restype = ctypes.c_int
+    if function(-100, os.fsencode(stage), -100, os.fsencode(output), 1):
+        error = ctypes.get_errno()
+        if error == errno.EEXIST:
+            raise files.ArchiveError('Archive destination already exists')
+        raise OSError(error, os.strerror(error))
+    files.fsync_directory(output.parent)
+
+
+def archive_export(root, output):
+    from . import contracts as c
+    root = files.check_path(Path(root).expanduser().absolute())
+    output = files.check_path(Path(output).expanduser().absolute())
+    if root.resolve() != root or output.resolve() != output:
+        raise files.ArchiveError('Archive source and destination must be canonical paths')
+    if root == output or output.is_relative_to(root) or root.is_relative_to(output):
+        raise files.ArchiveError('Archive destination must be separate from the original instance')
+    if output.exists():
+        raise files.ArchiveError('Archive destination already exists')
+    if not output.parent.is_dir():
+        raise files.ArchiveError('Explicit archive destination parent must exist')
+    settings = c.settings(root)
+    with ExitStack() as locks:
+        _owner_locks(locks, root)
+        _quiescent(root)
+        stage = Path(tempfile.mkdtemp(prefix='.' + output.name + '-archive-', dir=output.parent))
+        try:
+            (stage / 'blobs').mkdir()
+            counts = dict(files=0, directories=0, gaps=0, excluded=0, bytes=0)
+            def originals():
+                for index, entry in enumerate(_inventory(root), 1):
+                    if entry['kind'] == 'file':
+                        entry['blob'] = f'blobs/{index:012d}'
+                        files.copy_verified(root / entry['path'], stage / entry['blob'], entry)
+                        counts['files'] += 1; counts['bytes'] += entry['size_bytes']
+                    else:
+                        counts[{'directory': 'directories', 'gap': 'gaps', 'excluded': 'excluded'}[entry['kind']]] += 1
+                    yield entry
+            entries = _stream(stage / 'manifest.jsonl', originals())
+            dependencies = _stream(stage / 'dependencies.jsonl', _dependencies(settings))
+            metadata = dict(format=FORMAT, instance_id=settings['goal_id'], settings_sha256=c.digest(root / 'settings.json'),
+                restorable=False, limitations=LIMITATIONS, entries=entries, dependencies=dependencies, **counts,
+                manifest={key: value for key, value in files.hash_file(stage / 'manifest.jsonl').items() if key in {'sha256', 'size_bytes'}},
+                dependency_manifest={key: value for key, value in files.hash_file(stage / 'dependencies.jsonl').items() if key in {'sha256', 'size_bytes'}})
+            files.durable_json(stage / 'archive.json', metadata)
+            with (stage / 'manifest.jsonl').open('rb') as stream:
+                for index, current in enumerate(_inventory(root), 1):
+                    line = stream.readline()
+                    if not line:
+                        raise files.ArchiveError('Original archive scope gained entries before publication')
+                    expected = json.loads(line)
+                    expected.pop('blob', None)
+                    if expected != dict(index=index, **current):
+                        raise files.ArchiveError('Original archive scope changed before publication')
+                if stream.read(1):
+                    raise files.ArchiveError('Original archive scope lost entries before publication')
+            files.fsync_directory(stage / 'blobs'); files.fsync_directory(stage)
+            _publish(stage, output)
+            return dict(status='archive_exported', package=str(output), instance_id=settings['goal_id'],
+                        restorable=False, **counts, external_dependencies=dependencies, limitations=LIMITATIONS)
+        finally:
+            if stage.exists():
+                shutil.rmtree(stage)
+
+
+def archive_inspect(package, *, after=0, limit=20, section='manifest'):
+    """Verify every blob/line without importing framework plugins or writing files."""
+    package = files.check_path(Path(package).expanduser().absolute())
+    if package.resolve() != package:
+        raise files.ArchiveError('Read-only archive path must be canonical')
+    if (type(after) is not int or after < 0 or type(limit) is not int or limit <= 0
+            or section not in {'manifest', 'dependencies'}):
+        raise files.ArchiveError('Exact positive archive page and continuation required')
+    if {path.name for path in package.iterdir()} != {'archive.json', 'manifest.jsonl', 'dependencies.jsonl', 'blobs'}:
+        raise files.ArchiveError('Read-only package layout changed')
+    metadata = _read(package / 'archive.json')
+    counters = {'entries', 'dependencies', 'files', 'directories', 'gaps', 'excluded', 'bytes'}
+    fields = counters | {'format', 'instance_id', 'settings_sha256', 'restorable', 'limitations', 'manifest', 'dependency_manifest'}
+    if (not isinstance(metadata, dict) or set(metadata) != fields or metadata.get('format') != FORMAT
+            or metadata.get('restorable') is not False
+            or any(type(metadata[key]) is not int or metadata[key] < 0 for key in counters)
+            or not isinstance(metadata['instance_id'], str) or not metadata['instance_id']
+            or not isinstance(metadata['settings_sha256'], str) or not re.fullmatch('[0-9a-f]{64}', metadata['settings_sha256'])):
+        raise files.ArchiveError('Unsupported read-only archive format')
+    counts = dict(files=0, directories=0, gaps=0, excluded=0, bytes=0)
+    selected, last, total = [], None, 0
+    settings_blob = identity_blob = None
+    files.check_path(package / 'blobs')
+    for name, proof in (('manifest', metadata['manifest']), ('dependencies', metadata['dependency_manifest'])):
+        if (not isinstance(proof, dict) or set(proof) != {'sha256', 'size_bytes'}
+                or not isinstance(proof['sha256'], str) or not re.fullmatch('[0-9a-f]{64}', proof['sha256'])
+                or type(proof['size_bytes']) is not int or proof['size_bytes'] < 0):
+            raise files.ArchiveError('Malformed archive manifest identity')
+        source = package / (name + '.jsonl')
+        before = files.hash_file(source)
+        if any(before[key] != proof[key] for key in ('sha256', 'size_bytes')):
+            raise files.ArchiveError('Archive manifest changed')
+        number = 0; previous = None
+        with source.open('rb') as stream:
+            for number, line in enumerate(stream, 1):
+                entry = json.loads(line)
+                if not isinstance(entry, dict) or type(entry.get('index')) is not int or entry['index'] != number:
+                    raise files.ArchiveError('Archive entry sequence changed')
+                if name == 'manifest':
+                    kind = entry.get('kind')
+                    fields = {'index', 'path', 'kind'}
+                    fields |= ({'blob', 'size_bytes', 'sha256', 'mode', 'source_stat'} if kind == 'file' else
+                        {'mode', 'source_stat'} if kind == 'directory' else
+                        {'reason', 'mode', 'source_stat'} if kind == 'gap' else {'reason'} if kind == 'excluded' else set())
+                    if not isinstance(kind, str) or set(entry) != fields or kind not in {'file', 'directory', 'gap', 'excluded'}:
+                        raise files.ArchiveError('Malformed archive entry')
+                    logical = _path(entry['path'])
+                    if previous is not None and logical.parts <= previous:
+                        raise files.ArchiveError('Duplicate or unordered archive logical path')
+                    previous = logical.parts
+                    if kind == 'file':
+                        if entry.get('blob') != f'blobs/{number:012d}':
+                            raise files.ArchiveError('Archive blob path changed')
+                        actual = files.hash_file(package / entry['blob'])
+                        if any(actual[key] != entry[key] for key in ('sha256', 'size_bytes', 'mode')):
+                            raise files.ArchiveError('Archive blob changed')
+                        if entry['path'] == 'settings.json':
+                            if entry['sha256'] != metadata['settings_sha256']:
+                                raise files.ArchiveError('Archive instance settings identity changed')
+                            settings_blob = package / entry['blob']
+                        elif entry['path'] == 'settings-identity.json':
+                            identity_blob = package / entry['blob']
+                        counts['files'] += 1; counts['bytes'] += entry['size_bytes']
+                    elif kind in {'directory', 'gap', 'excluded'}:
+                        counts[{'directory': 'directories', 'gap': 'gaps', 'excluded': 'excluded'}[kind]] += 1
+                    else:
+                        raise files.ArchiveError('Unknown archive entry kind')
+                elif set(entry) != {'index', 'owner', 'reference', 'coverage'}:
+                    raise files.ArchiveError('Malformed archive dependency reference')
+                if name == section and number > after and len(selected) < limit:
+                    selected.append(entry); last = number
+        if files.hash_file(source) != before:
+            raise files.ArchiveError('Archive manifest changed during inspection')
+        expected = metadata['entries'] if name == 'manifest' else metadata['dependencies']
+        if number != expected:
+            raise files.ArchiveError('Archive manifest count changed')
+        if name == section:
+            total = number
+    if any(counts[key] != metadata[key] for key in counts):
+        raise files.ArchiveError('Archive summary changed')
+    if sum(1 for _ in (package / 'blobs').iterdir()) != counts['files']:
+        raise files.ArchiveError('Archive has unlisted blob entries')
+    settings = _read(settings_blob) if settings_blob is not None else None
+    identity = _read(identity_blob) if identity_blob is not None else None
+    if (not isinstance(settings, dict) or not isinstance(identity, dict)
+            or settings.get('goal_id') != metadata['instance_id']
+            or identity.get('sha256') != metadata['settings_sha256']):
+        raise files.ArchiveError('Read-only package lost its original instance identity')
+    return dict(status='archive_inspected', instance_id=metadata['instance_id'], restorable=False,
+        section=section, entries=selected, next_after=last if last is not None and last < total else None,
+        total_entries=total, **counts, external_dependencies=metadata['dependencies'], limitations=LIMITATIONS)

@@ -1,0 +1,139 @@
+"""Small original/package negatives; no model, HTTP, backend or writable restore."""
+import json
+
+import pytest
+
+from scidiscovery.research_loop import contracts as c, controller, cli
+from scidiscovery.research_loop import instance_archive as archive
+
+
+def scene(tmp_path):
+    public = tmp_path / 'public'; public.mkdir()
+    objective = public / 'objective.md'; objective.write_text('Preserve exact original bytes and limitations.')
+    root = tmp_path / 'instance'
+    controller.prepare(root, objective, public, ['fixture-not-executed'], max_tokens=1000,
+        max_seconds=60, max_steps=3, model='fixture', reasoning_effort='high',
+        search_policy=None, experiment_mode='external')
+    material = root / 'project/nodes/001/work/artifacts/writer.lock'
+    material.parent.mkdir(parents=True); material.write_bytes(b'An ordinary scientific filename, not an owner lock.\n')
+    return root, material
+
+
+def entries(package):
+    return [json.loads(line) for line in (package / 'manifest.jsonl').read_bytes().splitlines()]
+
+
+def rewrite_manifest(package, values):
+    # Update the outer hash so the real semantic/path consumer, rather than only
+    # the manifest checksum, must reject the deliberate malformed package.
+    (package / 'manifest.jsonl').write_bytes(b''.join(archive.files.canonical(value) + b'\n' for value in values))
+    meta = json.loads((package / 'archive.json').read_bytes())
+    proof = archive.files.hash_file(package / 'manifest.jsonl')
+    meta['manifest'] = {key: proof[key] for key in ('sha256', 'size_bytes')}
+    archive.files.durable_json(package / 'archive.json', meta)
+
+
+def test_export_retains_scope_and_gaps_without_live_layout_or_credentials(tmp_path, capsys):
+    root, material = scene(tmp_path)
+    # These are archival bytes, not asserted valid correction/approval facts.
+    c.write(root / 'correction-ledger/000001.json', {'historical_fixture_only': True})
+    c.write(root / 'execution-authority/host-key-source.json', {'private_locator_fixture': 'never-copy-this'})
+    private = root / 'native-homes/001/cache/credentials'; private.parent.mkdir(parents=True)
+    private.write_bytes(b'never-copy-native-credential')
+    unknown = root / 'undeclared-store/secret'; unknown.parent.mkdir()
+    unknown.write_bytes(b'never-recursively-copy-unknown-store')
+    # public_root may be unavailable; its original reference stays explicit.
+    for source in (tmp_path / 'public').iterdir():
+        source.unlink()
+    (tmp_path / 'public').rmdir()
+    package = tmp_path / 'archive'
+    result = archive.archive_export(root, package)
+    assert result['restorable'] is False and result['gaps'] == 1
+    rows = entries(package); by_path = {row['path']: row for row in rows}
+    name = material.relative_to(root).as_posix()
+    assert by_path[name]['kind'] == 'file' and (package / by_path[name]['blob']).read_bytes() == material.read_bytes()
+    assert by_path['correction-ledger/000001.json']['kind'] == 'file'
+    assert by_path['native-homes']['kind'] == 'excluded'
+    assert by_path['execution-authority/host-key-source.json']['kind'] == 'excluded'
+    assert by_path['undeclared-store']['kind'] == 'gap' and 'undeclared-store/secret' not in by_path
+    assert not (package / 'settings.json').exists() and not (package / 'jobs').exists()
+    before = {path.name for path in package.iterdir()}
+    with pytest.raises((OSError, ValueError)):
+        controller.run(package)
+    assert {path.name for path in package.iterdir()} == before
+    first = archive.archive_inspect(package, limit=1)
+    assert first['entries'][0]['index'] == 1 and first['next_after'] == 1
+    second = archive.archive_inspect(package, after=first['next_after'], limit=1)
+    assert second['entries'][0]['index'] == 2
+    dependencies = archive.archive_inspect(package, section='dependencies')['entries']
+    assert any(row['owner'] == 'public_root' and row['coverage'] == 'external_tree_not_copied' for row in dependencies)
+    assert cli.main(['archive-inspect', '--package', str(package), '--limit', '1']) == 0
+    assert json.loads(capsys.readouterr().out)['restorable'] is False
+    unchanged = (package / 'manifest.jsonl').read_bytes()
+    with pytest.raises(archive.files.ArchiveError, match='already exists'):
+        archive.archive_export(root, package)
+    assert (package / 'manifest.jsonl').read_bytes() == unchanged
+
+
+def test_active_writer_and_unknown_native_preserve_originals_without_export(tmp_path):
+    root, material = scene(tmp_path); package = tmp_path / 'archive'
+    original = material.read_bytes()
+    with controller._writer(root):
+        with pytest.raises(RuntimeError, match='running controller'):
+            archive.archive_export(root, package)
+    from scidiscovery.research_loop.instance_ui import _host_lock
+    with _host_lock(root):
+        with pytest.raises(archive.files.ArchiveError, match='owner is active'):
+            archive.archive_export(root, package)
+    from scidiscovery.research_loop.experiments import Records
+    with Records(dict(record_dir=str(root / 'project/nodes/001/work/lineage'))).lease():
+        with pytest.raises(archive.files.ArchiveError, match='owner is active'):
+            archive.archive_export(root, package)
+    assert not package.exists() and material.read_bytes() == original
+    c.build_job(root, 1, 'H', [])
+    c.write(root / 'native-evidence/001/native-intent.json', dict(task_sha256=c.digest(root / 'jobs/001.json')))
+    with pytest.raises(archive.files.ArchiveError, match='outcome is absent'):
+        archive.archive_export(root, package)
+    assert not package.exists() and material.read_bytes() == original
+
+
+def test_copy_race_never_publishes_or_rolls_back_original_changes(tmp_path, monkeypatch):
+    root, material = scene(tmp_path); package = tmp_path / 'archive'
+    copy = archive.files.copy_verified
+
+    def concurrent_write(source, destination, entry):
+        copy(source, destination, entry)
+        if source == material:
+            source.write_bytes(b'Concurrent original writer changed these bytes.\n')
+            (source.parent / 'new-original.txt').write_bytes(b'New original must not disappear silently.\n')
+
+    monkeypatch.setattr(archive.files, 'copy_verified', concurrent_write)
+    with pytest.raises(archive.files.ArchiveError, match='scope changed|scope gained'):
+        archive.archive_export(root, package)
+    assert not package.exists() and material.read_bytes().startswith(b'Concurrent original')
+    assert (material.parent / 'new-original.txt').exists()
+    assert not list(tmp_path.glob('.archive-archive-*'))
+
+
+def test_inspect_rejects_traversal_duplicate_blob_changes_and_symlinks(tmp_path):
+    root, _ = scene(tmp_path); package = tmp_path / 'archive'
+    archive.archive_export(root, package)
+    original = entries(package)
+    bad = [dict(row) for row in original]; bad[0]['path'] = '../../outside'
+    rewrite_manifest(package, bad)
+    with pytest.raises(archive.files.ArchiveError, match='canonical'):
+        archive.archive_inspect(package)
+    bad = [dict(row) for row in original]; bad[1]['path'] = bad[0]['path']
+    rewrite_manifest(package, bad)
+    with pytest.raises(archive.files.ArchiveError, match='Duplicate'):
+        archive.archive_inspect(package)
+    rewrite_manifest(package, original)
+    row = next(row for row in original if row['kind'] == 'file')
+    blob = package / row['blob']; raw = blob.read_bytes(); blob.chmod(0o600)
+    blob.write_bytes(b'Corrupted blob')
+    blob.chmod(row['mode'])
+    with pytest.raises(archive.files.ArchiveError, match='blob changed'):
+        archive.archive_inspect(package)
+    blob.unlink(); outside = tmp_path / 'outside'; outside.write_bytes(raw); blob.symlink_to(outside)
+    with pytest.raises(archive.files.ArchiveError, match='symbolic links'):
+        archive.archive_inspect(package)
