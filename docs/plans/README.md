@@ -1,8 +1,14 @@
-## 最新小修（2026-10-17）
+## 当前：P1–P5 增量收口与 main 评估（2026-10-17）
+
+`c59e4b6` 补齐 P2 原调用维护与 P4 同宿主冷恢复，`e7e8bb1` 补齐 P3 自包含 opaque/opt-in observer 声明来源；默认薄部署为 `86e1683`。[有限验收](evidence/P_FINAL_INCREMENTAL_ACCEPTANCE_20261017.zh-CN.md)记录13个不同功能目标增量通过及全部失败/修正。浏览器受 RSS 止损，真实远端 solver/掉电资格未完成；旧入口按实际消费者保留，未称全部退役或生产验收通过。
+
+[main 整合评估](evidence/MAIN_THIN_INTEGRATION_ASSESSMENT_20261017.zh-CN.md)：只读核对本地 main 提交和未提交修改，建议独立移植曲线算法及适配薄层 UI，未整包合并旧 SQL/Root/MCP。以下内容保留先前截面，当前状态以本段及[迁移计划](THIN_CAPABILITY_MIGRATION_20261016.zh-CN.md)为准。
+
+## 先前小修（2026-10-17）
 
 审查不可用请求不再累计触发整场收口（`ad89b41`）；Cov薄启动器启用原调用内检查预留（`a9c3a91`）。规则与验收范围见[授权/审查计划](THIN_AUTHORITY_REVIEW_REMEDIATION_20261017.zh-CN.md)。失效L4探针已精确退役（`513a7b0`）；其余P5消费者保留，精确native来源子链已通过4个定向增量目标；Local/opaque等剩余覆盖仍按[迁移计划](THIN_CAPABILITY_MIGRATION_20261016.zh-CN.md)推进。
 
-## 当前功能与完成度复审（2026-10-17）
+## 先前功能与完成度复审（2026-10-17）
 
 [功能复审](evidence/THIN_FUNCTIONAL_REAUDIT_20261017.zh-CN.md)与[原计划完成度](evidence/THIN_PLAN_COMPLETION_REAUDIT_20261017.zh-CN.md)：P1–P5尚未整体完成。未提交调用导致的W封存失败已修复并通过定向链路，P4科学浏览已提交 `537a483` 并通过7项增量检查；P3已补精确native/compiler来源子链；其余输入覆盖、P4可写恢复与P5全部退役仍有明确缺口。具体当前顺序由[迁移主计划](THIN_CAPABILITY_MIGRATION_20261016.zh-CN.md)负责，历史报告不改写为最新资格。
 
