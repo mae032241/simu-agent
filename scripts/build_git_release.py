@@ -99,9 +99,6 @@ TOOLS = (
     "scripts/test_resources_ci.json",
     "scripts/compiled_worker_process_guard.py",
     "scripts/run_compiled_codex_worker.py",
-    "scripts/l4_live_tcad_revision_probe.py",
-    "scripts/l4_live_tcad_agent_probe.py",
-    "scripts/l4_tcad_transport_fixture.py",
     "scripts/evaluate_tcad_skill_ab.py",
     "scripts/evaluate_tcad_skill_ab_holdout.py",
 )

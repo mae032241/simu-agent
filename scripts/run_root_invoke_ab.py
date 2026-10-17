@@ -25,9 +25,6 @@ CASES = {
                ("research_objective", "prior_draft", "change_request")),
     "hypothesis": ("science.hypothesis.revise.v1",
                    ("experiment_results", "current_progress")),
-    "tcad_revision": ("tcad.deck.author.revise.v1",
-                      ("device_grid", "current_progress", "experiment_plan",
-                       "curve_contract", "user_context")),
 }
 ORDER = ("A1", "B1", "B2", "A2")
 

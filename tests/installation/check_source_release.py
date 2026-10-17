@@ -149,8 +149,6 @@ def test_git_release_builder_emits_clean_manifested_source(tmp_path: Path) -> No
         "scripts/probe_root_lifecycle.py", "scripts/root_host_resources.json",
         "scripts/root_host_ws_client.py",
         "scripts/compiled_worker_process_guard.py", "scripts/run_compiled_codex_worker.py",
-        "scripts/l4_live_tcad_revision_probe.py", "scripts/l4_live_tcad_agent_probe.py",
-        "scripts/l4_tcad_transport_fixture.py",
         "docs/ROOTLESS_CLI.zh-CN.md",
         "docs/plans/fixtures/rootless-selection-v1.json",
         "docs/plans/fixtures/rootless-selection-actions-v1.json",

@@ -4,18 +4,52 @@ import json
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from scidiscovery.artifact_agent.schema.common import canonical_json
 from tcad_artifact.execution_control import SolverCapabilitySnapshot
 from tcad_artifact.native_implementation import compile_native_implementation
 from tcad_artifact.project_packager import (
-    ExecutionPackage, NativeExecutionPackage, NativeResolvedProjectInput,
+    DeckProjectDraft, ExecutionPackage, NativeExecutionPackage, NativeResolvedProjectInput,
+    ProjectInitializationAttestation,
     ScientificDeckImplementation, validate_execution_package_json,
 )
 
 
 def _old_document():
     return json.loads((Path(__file__).parents[1] / 'fixtures/tcad_analysis_package.json').read_bytes())
+
+
+def _initialization_report():
+    # Fixed source vector: main.cmd + NUL + "Solve {}\n" + NUL. This digest
+    # predates these tests in the legacy package fixture, not a production helper.
+    return dict(schema_version=1,profile='tcad.project-initialization.v1',
+        source_tree_sha256='60d208f572fb4e121c3aba93250a1bd6017ea8999e97ac17ddadb2a43b499b0d',
+        mode='initialization',terminal_state='succeeded',exit_code=0,
+        diagnostic_layer='complete',qualified=True,summary='Exact source-bound initialization fixture')
+
+
+def test_initialization_attestation_accepts_exact_project_source():
+    project=_old_document()['project']
+    assert project['files']==[dict(relative_path='main.cmd',content='Solve {}\n')]
+    report=ProjectInitializationAttestation.model_validate_json(canonical_json(_initialization_report()),strict=True)
+    project['initialization_attestation']=report.model_dump(mode='json')
+    validated=DeckProjectDraft.model_validate_json(canonical_json(project),strict=True)
+    assert validated.initialization_attestation==report
+    assert validated.initialization_attestation.qualified is True
+
+
+def test_initialization_attestation_rejects_preflight_report():
+    preflight=dict(_initialization_report(),profile='tcad.project-preflight.v1',mode='preflight')
+    with pytest.raises(ValidationError,match='literal_error'):
+        ProjectInitializationAttestation.model_validate_json(canonical_json(preflight),strict=True)
+
+
+def test_initialization_attestation_rejects_stale_project_source():
+    project=_old_document()['project']
+    project['initialization_attestation']=dict(_initialization_report(),source_tree_sha256='b'*64)
+    with pytest.raises(ValidationError,match='debug attestation source digest differs'):
+        DeckProjectDraft.model_validate_json(canonical_json(project),strict=True)
 
 
 def test_v2_keeps_fixed_legacy_package_bytes():
