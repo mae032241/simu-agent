@@ -225,7 +225,8 @@ def managed_calls(root, job):
             **(dict(originals=[_managed_proof(root,directory/'inputs'/item['name'],item) for item in accepted.get('snapshot_files',[])]
                     +[_managed_proof(root,item['path'],item) for item in (extra if observed is not None else value.get('proofs',[]))],
                 outputs=[dict(name=item['name'],**_managed_proof(root,item['path'],item)) for item in outputs],
-                execution=dict(returncode=value.get('returncode'),wall_seconds=value.get('wall_seconds'),result=value.get('result')))
+                execution=dict(returncode=value.get('returncode'),wall_seconds=value.get('wall_seconds'),result=value.get('result'),
+                    **(dict(native_state=value['native_state']) if 'native_state' in value else {})))
                if 'result' in value or observed is not None else {}))
         if observed is not None:
             # Retain every collected descriptor even when local result outputs use scientific names.
@@ -258,7 +259,8 @@ def validate_managed(root, job, rows):
         for proof in [*row.get('originals',[]),*row.get('outputs',[])]:_validate_proof(root,proof)
         if 'execution' in row:
             completed=c.read(root/row['completed']['snapshot'])
-            if row['execution']!=dict(returncode=completed.get('returncode'),wall_seconds=completed.get('wall_seconds'),result=completed.get('result')):
+            if row['execution']!=dict(returncode=completed.get('returncode'),wall_seconds=completed.get('wall_seconds'),result=completed.get('result'),
+                    **(dict(native_state=completed['native_state']) if 'native_state' in completed else {})):
                 raise ObserverIntegrityError('Managed results differ from completed original')
             originals=[*accepted.get('snapshot_files',[])]
             observed=c.read(root/row['observation']['snapshot']) if row.get('observation') else None

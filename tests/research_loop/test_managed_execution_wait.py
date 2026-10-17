@@ -13,6 +13,8 @@ from test_composed_execution_results import composed_registry
 from test_history_handoff import finish
 from scidiscovery.research_loop import budget, contracts as c, controller, execution, experiments as e, history
 
+pytestmark = pytest.mark.process_e2e
+
 LAUNCHER = r'''import json,os,pathlib,subprocess,sys
 from scidiscovery.research_loop import experiments as e
 args=sys.argv[1:];prompt=sys.stdin.read();work=pathlib.Path(os.environ['THIN_HWA_WORKSPACE'])
@@ -35,7 +37,7 @@ if role=='W':
    command[-1]='Q'
   reply=subprocess.run(command,capture_output=True,text=True)
   assert reply.returncode==2,(reply.stdout,reply.stderr)
-  result=json.loads(reply.stdout);assert result['status']==('running' if options.get('query_state','running')=='running' else 'unknown'),result
+  result=json.loads(reply.stdout);assert result['status']==options.get('query_state','running'),result
   (work/'work/original-call').write_text(result['call_id'])
  else:
   assert thread in args and (work/'work/original-call').exists()
@@ -45,6 +47,7 @@ if role=='W':
   assert any(json.loads((work/path).read_text()).get('native_payload')=='retained-native-terminal-only' for path in packet['executions'][0]['native_originals'])
   for item in packet['executions'][0]['outputs']:assert (work/item['path']).read_bytes()==b'opaque original job package'
   (work/'work/consumed-result').write_text(packet['executions'][0]['status'])
+  if 'native_state' in packet['executions'][0]:(work/'work/consumed-native-state').write_text(packet['executions'][0]['native_state'])
  payload.update(stage_intent='review' if resume else options.get('stage_intent','review'),mechanism_findings=[dict(mechanism='P',basis='observed' if resume else 'blocked',finding='Read exact original terminal' if resume else 'Original accepted execution still running'),dict(mechanism='Q',basis='blocked',finding='No Q experiment requested in this fixture')])
 elif role=='A':
  payload.update(candidate_recommendation=None,progress_assessment=None,portfolio_review=None,search_review=dict(dispositions=[dict(mechanism_ref='h001.m1',status='screened',reason='Review original W result')],next_focus=dict(mechanism_ref='h001.m1',action='improve')),next_action='wait',route_reason='Bounded engineering test complete',decision_request=dict(decision='mechanism',question='What changes the mechanism?',change_criterion='A discriminating observation'))
@@ -72,9 +75,16 @@ def run_cli(root):
     return subprocess.run([sys.executable,'-m','scidiscovery.research_loop.cli','run','--root',str(root)],capture_output=True,text=True,timeout=35)
 
 
-@pytest.mark.parametrize('outcome,fragment,multicall',[('known_success',False,False),('known_failed',False,False),('known_success',True,False),('known_success',False,True)])
-def test_one_run_waits_without_llm_then_automatically_wakes_same_session_and_seals(tmp_path,composed_registry,outcome,fragment,multicall):
-    root=instance(tmp_path,dict(collect=outcome=='known_success',terminal_status=outcome,stage_intent='continue' if fragment else 'review',synchronous_first=multicall),fragment=fragment)
+@pytest.mark.parametrize('outcome,fragment,multicall,query_state,terminal_state',[
+    ('known_success',False,False,'running',None),('known_failed',False,False,'running',None),
+    ('known_success',True,False,'running',None),('known_success',False,True,'running',None),
+    ('known_failed',False,False,'queued','cancelled'),
+])
+def test_one_run_waits_without_llm_then_automatically_wakes_same_session_and_seals(tmp_path,composed_registry,outcome,fragment,multicall,query_state,terminal_state):
+    options=dict(collect=outcome=='known_success',terminal_status=outcome,query_state=query_state,
+        stage_intent='continue' if fragment else 'review',synchronous_first=multicall)
+    if terminal_state:options['terminal_state']=terminal_state
+    root=instance(tmp_path,options,fragment=fragment)
     observed={};errors=[]
     def backend_event():
         try:
@@ -83,6 +93,7 @@ def test_one_run_waits_without_llm_then_automatically_wakes_same_session_and_sea
                 assert time.monotonic()<deadline
                 time.sleep(.03)
             value=c.read(wait);config=c.read(Path(value['calls'][0]['config']['path']))
+            assert value['calls'][0]['observed_state']==query_state
             call=c.read(Path(value['calls'][0]['accepted']['path']))['call_id']
             assert not (root/'native-evidence/002/result-identity.json').exists()
             assert (c.workspace(root,2)/'work/launches').read_text()=='exec\n'
@@ -92,6 +103,12 @@ def test_one_run_waits_without_llm_then_automatically_wakes_same_session_and_sea
             assert observed['before']['clock_phase']=='waiting'
             assert observed['before']['waiting_seconds']>.1
             assert (c.workspace(root,2)/'work/launches').read_text()=='exec\n'
+            if terminal_state=='cancelled':
+                path=e.Records(config).directory(call)/'backend-accepted.json';backend=c.read(path)
+                backend['state']='cancelling';c.write(path,backend)
+                time.sleep(1.2)
+                assert not (root/'native-evidence/002/result-identity.json').exists()
+                assert (c.workspace(root,2)/'work/launches').read_text()=='exec\n'
             e.load(config).complete(call)
         except BaseException as error:errors.append(error)
     thread=threading.Thread(target=backend_event);thread.start()
@@ -109,6 +126,10 @@ def test_one_run_waits_without_llm_then_automatically_wakes_same_session_and_sea
     assert intent['continuation_kind']=='execution_wake' and intent['session']['thread_id']=='11111111-2222-4333-8444-555555555555'
     seal=c.read(chain[0]/'result-identity.json');fact=c.read(root/seal['observations']['path'])
     assert fact['managed_calls'][-1]['status']==outcome and observed['calls']==(2 if multicall else 1)
+    if terminal_state=='cancelled':
+        assert (c.workspace(root,2)/'work/consumed-native-state').read_text()=='cancelled'
+        assert fact['managed_calls'][-1]['execution']['native_state']=='cancelled'
+        assert fact['candidates']==[]
     assert not (Path(intent['execution_wake']['observations'][0]['path']).parent/'terminal.json').exists()
     c.validate(c.workspace(root,2));c.validate(c.workspace(root,3))
     before={p:p.read_bytes() for p in root.rglob('*') if p.is_file() and p.name not in {'host-run.lock','control-ledger.lock'}}
@@ -153,9 +174,8 @@ def test_wait_restart_pause_and_same_call_terminal_notification_wakes_once(tmp_p
     c.validate(c.workspace(root,2))
 
 
-@pytest.mark.parametrize('query_state',['unknown','accepted','submitted'])
-def test_uncertain_execution_is_not_running_or_replayed(tmp_path,composed_registry,query_state):
-    root=instance(tmp_path,dict(collect=False,query_state=query_state))
+def test_uncertain_execution_is_not_running_or_replayed(tmp_path,composed_registry):
+    root=instance(tmp_path,dict(collect=False,query_state='unknown'))
     reply=run_cli(root)
     assert reply.returncode==0,(reply.stdout,reply.stderr)
     record=execution.origin(root,2);assert not (record/'execution-wait.json').exists()

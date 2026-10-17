@@ -2,6 +2,7 @@
 from pathlib import Path
 import time
 
+from scidiscovery.operations.execution import PENDING_EXECUTION_STATES, execution_status
 from . import budget, contracts as c, execution, experiments as e, checkpoint
 
 POLL_SECONDS = 1.
@@ -9,7 +10,7 @@ NAME = 'execution-wait.json'
 
 
 class ExecutionWaiting(Exception):
-    def __init__(self, reason='managed_execution_running'):
+    def __init__(self, reason='managed_execution_pending'):
         self.reason=reason
         super().__init__(reason)
 
@@ -48,7 +49,7 @@ def validate(root,job,record):
 
 
 def before_seal(root,job,record):
-    """Only a real accepted/running observation can suspend a successful W turn."""
+    """Only original bound execution facts may suspend a successful W turn."""
     if job['role']!='W':return
     outcome=c.read(c.regular(record/'native-outcome.json'))
     raw=record/'science-output.json'
@@ -73,9 +74,10 @@ def before_seal(root,job,record):
         if not config['execution_interface']['capabilities']['query']:continue
         adapter=e.load(config)
         details=adapter.status_details(directory.name)
-        if details.get('state') not in {'running','succeeded','failed'}:continue
+        state=execution_status(details.get('state'))
+        if state not in PENDING_EXECUTION_STATES and state not in {'known_success','known_failed'}:continue
         # A terminal first seen after this native turn also needs W consumption.
-        if details['state']!='running':e.record_observation(config,adapter,directory.name)
+        if state not in PENDING_EXECUTION_STATES and e.record_observation(config,adapter,directory.name) is None:continue
         calls.append(dict(accepted=e.proof(directory/'accepted.json'),submission=e.proof(directory/'submission.json'),
             config=e.proof(path),external_run_id=external,observed_state=details['state']))
     if not calls:return
@@ -109,7 +111,7 @@ def wait_and_wake(root,step):
     root=Path(root);job=c.read(root/'jobs'/f'{step:03d}.json');record=execution.record(root,step)
     value=validate(root,job,record)
     while True:
-        terminals=[];running=False
+        terminals=[];has_pending=False
         for item in value['calls']:
             accepted=c.read(Path(item['accepted']['path']));_,config=_config(root,job,accepted)
             path=Path(item['accepted']['path']).parent/'execution-observation.json'
@@ -119,19 +121,19 @@ def wait_and_wake(root,step):
                 adapter=e.load(config)
                 if not config['execution_interface']['capabilities']['query']:
                     raise ExecutionWaiting('managed_execution_query_unavailable')
-                state=adapter.status_details(accepted['call_id']).get('state')
-                if state=='running':running=True;continue
-                if state not in {'succeeded','failed'}:raise ExecutionWaiting('managed_execution_status_unknown')
+                state=execution_status(adapter.status_details(accepted['call_id']).get('state'))
+                if state in PENDING_EXECUTION_STATES:has_pending=True;continue
+                if state not in {'known_success','known_failed'}:raise ExecutionWaiting('managed_execution_status_unknown')
                 if e.record_observation(config,adapter,accepted['call_id']) is None:
                     raise ExecutionWaiting('managed_execution_terminal_unverified')
             terminals.append(e.proof(path))
         if (root/'pause.request').exists():raise ExecutionWaiting('paused_before_execution_wake')
         if budget.snapshot(root)['seconds_remaining']<=0:raise ExecutionWaiting('managed_execution_wait_deadline')
-        if not running:
+        if not has_pending:
             from . import continuation
             continuation.wake_start(root,step,terminals)
             return
-        budget.transition(root,'waiting','managed_execution_running')
+        budget.transition(root,'waiting','managed_execution_pending')
         time.sleep(min(POLL_SECONDS,budget.snapshot(root)['seconds_remaining']))
 
 
@@ -151,6 +153,7 @@ def wake_packet(root,job,intent):
         for index,item in enumerate(observed['proofs'],1):
             target=prefix+f'/originals/{index:03d}'
             c._copy_bound(Path(item['path']),work/target,item['sha256']);originals.append(target)
-        rows.append(dict(status=observed['status'],original=prefix+'/result.json',outputs=outputs,native_originals=originals))
+        rows.append(dict(status=observed['status'],original=prefix+'/result.json',outputs=outputs,native_originals=originals,
+            **(dict(native_state=observed['native_state']) if 'native_state' in observed else {})))
     c.write(work/'work/execution-results.json',dict(executions=rows,
         limitation='Original execution facts only; interpret their scientific meaning and limitations. Do not resubmit these executions.'))

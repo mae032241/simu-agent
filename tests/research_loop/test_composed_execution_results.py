@@ -88,9 +88,11 @@ def test_explicit_bad_candidate_protocol_is_bounded_diagnostic_not_scientific_ca
     assert fact['candidate_diagnostics']==[dict(call_id=call,code='declared_candidate_mapping_invalid')]
 
 
-@pytest.mark.parametrize('outcome,state',[('known_success','succeeded'),('known_failed','failed')])
+@pytest.mark.parametrize('outcome,state',[('known_success','succeeded'),('known_failed','failed'),('known_failed','cancelled')])
 def test_async_without_collect_reconciles_same_call_before_seal(tmp_path,composed_registry,outcome,state):
-    root,job,config,cli,call=case(tmp_path,dict(collect=False,terminal_status=outcome))
+    options=dict(collect=False,terminal_status=outcome)
+    if state=='cancelled':options['terminal_state']=state
+    root,job,config,cli,call=case(tmp_path,options)
     help_reply=subprocess.run([sys.executable,'-m','scidiscovery.research_loop.experiments','--help'],capture_output=True,text=True)
     assert help_reply.returncode==0 and 'reconcile' in help_reply.stdout and 'never submit' in help_reply.stdout
     directory=e.Records(config).directory(call)
@@ -105,9 +107,17 @@ def test_async_without_collect_reconciles_same_call_before_seal(tmp_path,compose
     assert cli('reconcile','--call-id',call)['status']==outcome
     observed=c.read(directory/'execution-observation.json')
     assert observed['outputs']==[] and not (directory/'terminal.json').exists() and not (directory/'process.json').exists()
+    if state=='cancelled':
+        assert observed['native_state']=='cancelled'
+        for changed in (dict(observed,native_state='failed'),{key:value for key,value in observed.items() if key!='native_state'}):
+            with pytest.raises(e.IntegrityError,match='native terminal state'):
+                e.verify_observation(changed,lambda item:Path(item['path']))
     assert len(e.Records(config).calls())==1
     fact,calls=seal_and_read(root,job)
     assert fact['managed_calls'][0]['status']==outcome and fact['managed_calls'][0]['outputs']==[]
+    if state=='cancelled':
+        assert fact['managed_calls'][0]['execution']['native_state']==calls[0]['native_state']=='cancelled'
+        assert fact['candidates']==[]
     (e.Records(config).root/'forbid-backend-reads').write_text('Repeated reconciliation must reuse the original projection.')
     before={p:p.read_bytes() for p in directory.rglob('*') if p.is_file()}
     assert cli('reconcile','--call-id',call)['status']==outcome
@@ -152,15 +162,40 @@ def test_late_reconcile_preserves_old_sealed_unknown_without_explicit_recovery(t
     assert c.read(root/seal['observations']['path'])['managed_calls'][0]['status']=='unknown'
 
 
-@pytest.mark.parametrize('fault',['accepted-interface','external-id','backend-proof'])
+@pytest.mark.parametrize('fault',['accepted-interface','external-id','backend-proof','backend-acceptance'])
 def test_reconcile_rejects_changed_original_identity_and_native_evidence(tmp_path,composed_registry,fault):
     root,job,config,cli,call=case(tmp_path,dict(collect=False))
     e.load(config).complete(call);directory=e.Records(config).directory(call)
-    path=directory/({'accepted-interface':'accepted.json','external-id':'submission.json','backend-proof':'backend-terminal.json'}[fault])
+    path=directory/({'accepted-interface':'accepted.json','external-id':'submission.json','backend-proof':'backend-terminal.json','backend-acceptance':'backend-accepted.json'}[fault])
     value=c.read(path)
     if fault=='accepted-interface':value['interface']=dict(value['interface'],result_protocol=e.LOCAL_RESULT_PROTOCOL)
     elif fault=='external-id':value['external_run_id']='remote-other'
-    else:value['scope']=dict(value['scope'],execution_key='f'*64)
+    elif fault=='backend-proof':value['scope']=dict(value['scope'],execution_key='f'*64)
+    else:value['prepared_sha256']='f'*64
     c.write(path,value)
     assert cli('reconcile','--call-id',call,expected=3)['status']=='integrity_error'
     assert len(e.Records(config).calls())==1 and not (directory/'execution-observation.json').exists()
+
+
+def test_pending_and_unknown_originals_block_new_calls_without_fabricated_running(tmp_path,composed_registry):
+    root,job,config,cli,call=case(tmp_path,dict(collect=False,query_state='queued'))
+    directory=e.Records(config).directory(call);accepted=c.read(directory/'accepted.json')
+    source=tmp_path/'second';source.write_bytes(b'no second submission')
+    for state in ('accepted','submitted','queued','running','cancelling','unknown','unrecognized'):
+        path=directory/'backend-accepted.json';backend=c.read(path);backend['state']=state;c.write(path,backend)
+        before={p:p.read_bytes() for p in directory.rglob('*') if p.is_file()}
+        expected='unknown' if state in {'unknown','unrecognized'} else state
+        result=e.dispatch(config,source,new=True,mechanism='Q')
+        assert result['call_id']==call and result['status']==expected
+        progress=e.progress(config)
+        assert progress['counts'][expected]==1 and progress['calls'][0]['status']==expected
+        if state in {'queued','cancelling'}:
+            assert cli('run','--payload',source,'--new-plan','--mechanism','Q',expected=2)['status']==state
+            assert cli('reconcile','--call-id',call,expected=2)['status']==state
+        assert accepted==c.read(directory/'accepted.json') and len(e.Records(config).calls())==1
+        assert before=={p:p.read_bytes() for p in directory.rglob('*') if p.is_file()}
+    # A pending string without the original external binding is still unknown.
+    backend['state']='queued';c.write(path,backend);(directory/'submission.json').unlink()
+    assert e.dispatch(config,source,new=True,mechanism='Q')['status']=='unknown'
+    assert cli('reconcile','--call-id',call,expected=2)['status']=='unknown'
+    assert len(e.Records(config).calls())==1

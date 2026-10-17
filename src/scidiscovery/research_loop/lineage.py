@@ -410,6 +410,7 @@ def bind(root, step, role, protocol, *, source_cutoff=None, extra_steps=(), sele
             metrics=result.get('metrics',[])
             experiments.append(dict(step=record['step'],call_id=call['call_id'],execution_status=call['status'],
                 returncode=details.get('returncode'),wall_seconds=details.get('wall_seconds'),
+                **(dict(native_state=details['native_state']) if 'native_state' in details else {}),
                 result_status=result.get('status','unobserved'),diagnostic=result.get('diagnostic'),
                 metrics=metrics[:8],metrics_omitted_count=max(0,len(metrics)-8),
                 outputs=outputs[:8],outputs_omitted_count=max(0,len(outputs)-8),

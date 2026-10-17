@@ -7,6 +7,16 @@ from scidiscovery.artifact_agent.schema.execution import LocalFileDescriptor
 from .runtime_plugins import RuntimePluginFactory
 
 LOCAL_RESULT_PROTOCOL = 'scidiscovery.local-result.v1'
+PENDING_EXECUTION_STATES = frozenset({'accepted', 'submitted', 'queued', 'running', 'cancelling'})
+
+
+def execution_status(state):
+    """Preserve native pending states; cancellation is engineering failure only."""
+    if not isinstance(state, str):
+        return 'unknown'
+    if state in PENDING_EXECUTION_STATES:
+        return state
+    return {'succeeded': 'known_success', 'failed': 'known_failed', 'cancelled': 'known_failed'}.get(state, 'unknown')
 
 
 @dataclass(frozen=True)
@@ -58,8 +68,11 @@ class ManagedExecutionInterface(ExecutionAdapter, Protocol):
 
     Descriptor inputs may be source files or opaque job packages. CLI --script is
     a convenience of the bundled local implementations, not a backend constraint.
-    status_details and result validate the backend's original terminal evidence;
-    result retains exact proof descriptors. Control freezes their consistent
+    status_details validates the original call/prepared and any known external
+    binding for pending and terminal states; result validates native terminal evidence.
+    Cancelled completion retains native_state='cancelled' alongside engineering
+    status='known_failed'; control never interprets cancellation scientifically.
+    Result retains exact proof descriptors. Control freezes their consistent
     terminal projection and collect_original descriptors before scientific sealing.
     Scientific readers never re-query a backend. Local implementations declare
     terminal_evidence_kind='local_process' and retain cleanup/transport/exit proofs;

@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 from scidiscovery.research_loop import experiments as e
-from scidiscovery.operations.execution import AdapterCapability, ExecutionInterfaceRegistration, LifecycleCapabilities, LocalFileDescriptor
+from scidiscovery.operations.execution import AdapterCapability, ExecutionInterfaceRegistration, LifecycleCapabilities, LocalFileDescriptor, execution_status
 from scidiscovery.operations.runtime_plugins import RuntimePluginContribution, RuntimePluginFactory
 
 
@@ -31,14 +31,16 @@ class Remote:
         return 'remote-' + descriptor.name, self.status_details(descriptor.name)['state']
     def submit(self, descriptor):
         assert self.accepted['call_id'] == descriptor.name
-        e.write(self.records.directory(descriptor.name) / 'backend-accepted.json', dict(external_run_id='remote-' + descriptor.name))
+        e.write(self.records.directory(descriptor.name) / 'backend-accepted.json', dict(external_run_id='remote-' + descriptor.name,
+            call_id=descriptor.name,scope=self.accepted['scope'],prepared_sha256=descriptor.sha256,state=self.config.get('query_state','running')))
         if self.config.get('synchronous') or self.config.get('synchronous_first') and len(self.records.calls())==1: self.complete(descriptor.name)
         return 'remote-' + descriptor.name, self.status_details(descriptor.name)['state']
     def complete(self, call):
         accepted = self.records.accepted(call)
         directory = self.records.directory(call)
-        e.write(directory / 'backend-terminal.json', dict(call_id=call, scope=accepted['scope'], status=self.config.get('terminal_status','known_success'),native_payload='retained-native-terminal-only'))
-        value = dict(status=self.config.get('terminal_status','known_success'), proofs=[e.proof(directory / 'backend-terminal.json')], note='Synthetic backend terminal')
+        native=dict(native_state=self.config['terminal_state']) if self.config.get('terminal_state') else {}
+        e.write(directory / 'backend-terminal.json', dict(call_id=call, scope=accepted['scope'], status=self.config.get('terminal_status','known_success'),native_payload='retained-native-terminal-only',**native))
+        value = dict(status=self.config.get('terminal_status','known_success'), proofs=[e.proof(directory / 'backend-terminal.json')], note='Synthetic backend terminal',**native)
         private = self.config.get('private')
         if private == 'native':
             value['result'] = dict(status='available', metrics=[], candidate=dict(native_model_id='opaque-model-1'))
@@ -53,6 +55,7 @@ class Remote:
         value = json.loads(e.read(path))
         terminal = json.loads(e.read(self.records.directory(call) / 'backend-terminal.json'))
         if (terminal['call_id'] != call or terminal['scope'] != self.config['scope'] or terminal['status'] != value['status']
+            or terminal.get('native_state')!=value.get('native_state')
             or ((self.records.directory(call)/'submission.json').exists() and self.records.external(call) != json.loads(e.read(self.records.directory(call)/'backend-accepted.json'))['external_run_id'])):
             raise e.IntegrityError('Original backend terminal binding changed')
         for proof in value['proofs']:
@@ -60,20 +63,27 @@ class Remote:
         return value
     def status_details(self, call):
         if (self.records.root/'forbid-backend-reads').exists():raise e.IntegrityError('Fixture forbids another native query')
+        accepted=self.records.accepted(call)
+        backend=json.loads(e.read(self.records.directory(call)/'backend-accepted.json'))
+        if (backend.get('call_id')!=call or backend.get('scope')!=accepted['scope']
+                or backend.get('prepared_sha256')!=accepted['prepared']['sha256']
+                or backend.get('external_run_id')!='remote-'+call):
+            raise e.IntegrityError('Original backend acceptance binding changed')
         value = self.result(call)
-        return dict(state={'known_success':'succeeded','known_failed':'failed'}.get(value['status'],self.config.get('query_state','running')), call_id=call)
+        return dict(state=value.get('native_state') or {'known_success':'succeeded','known_failed':'failed'}.get(value['status'],backend['state']), call_id=call)
     def status(self, external): return self.status_details(external.removeprefix('remote-'))['state']
     def collect(self, external):
         if not self.config.get('collect', True): raise e.UnsupportedExecution('Backend does not declare collection')
         call = external.removeprefix('remote-')
-        assert self.status(external) in {'succeeded','failed'}
+        assert execution_status(self.status(external)) in {'known_success','known_failed'}
         path = self.records.directory(call) / 'source.py'
         proof = e.proof(path)
         return (LocalFileDescriptor(name='original', local_path=str(path), sha256=proof['sha256'], size_bytes=proof['size_bytes'], media_type='application/octet-stream'),)
     def collect_original(self, call): return self.collect(self.records.external(call))
     def cancel(self, external): raise e.UnsupportedExecution('Cancellation is not declared')
     def cancel_original(self, call): return self.cancel(self.records.external(call))
-    def public_result(self, result): return {key: result[key] for key in ('call_id', 'status', 'note')}
+    def public_result(self, result):
+        return {key: result[key] for key in ('call_id','status','note','native_state') if key in result}
 
 
 def factory(context):

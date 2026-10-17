@@ -22,7 +22,8 @@ import time
 import uuid
 
 from scidiscovery.operations.execution import (AdapterCapability, ExecutionInterfaceRegistration,
-    LifecycleCapabilities, LocalFileDescriptor, MANAGED_METHODS, lifecycle_capabilities, LOCAL_RESULT_PROTOCOL)
+    LifecycleCapabilities, LocalFileDescriptor, MANAGED_METHODS, lifecycle_capabilities, LOCAL_RESULT_PROTOCOL,
+    PENDING_EXECUTION_STATES, execution_status)
 from scidiscovery.operations.runtime_plugins import RuntimePluginContext, RuntimePluginContribution
 
 GROUP = 'scidiscovery.execution_interfaces'
@@ -249,7 +250,8 @@ def freeze(config, executor, *, path=None):
     value['execution_interface'] = dict(executor=executor)
     declared, adapter, body = _adapter(value, path or Path(config['record_dir']).parent / 'config.json')
     assets = [Path(inspect.getfile(declared.factory.build)).resolve(),
-              Path(inspect.getfile(type(adapter))).resolve(), Path(__file__).resolve(), Path(inspect.getfile(breadth)).resolve()]
+              Path(inspect.getfile(type(adapter))).resolve(), Path(__file__).resolve(), Path(inspect.getfile(breadth)).resolve(),
+              Path(inspect.getfile(execution_status)).resolve()]
     assets += [Path(item).resolve() for item in adapter.code_assets()]
     from . import replay_check
     assets.append(Path(replay_check.__file__).resolve())
@@ -528,6 +530,12 @@ class Records:
         completed=json.loads(read(path))
         if not isinstance(completed,dict) or completed.get('call_id')!=call_id or completed.get('scope')!=self.config['scope']:
             raise IntegrityError('Completed execution binding changed')
+        if 'native_state' in completed:
+            state=completed['native_state']
+            if (not isinstance(state,str) or state not in {'succeeded','failed','cancelled'}
+                    or execution_status(state)!=completed.get('status')):
+                raise IntegrityError('Completed execution native terminal state changed')
+            return state
         return {'known_success':'succeeded','known_failed':'failed','unknown':'unknown'}.get(completed.get('status'),'unknown')
 
 
@@ -575,6 +583,11 @@ def verify_observation(value, original, *, interface=None):
             or value.get('external_run_id')!=submission.get('external_run_id')
             or not isinstance(value.get('external_run_id'),str)):
         raise IntegrityError('Execution observation differs from accepted interface or terminal result')
+    if ('native_state' in completed or 'native_state' in value):
+        state=completed.get('native_state')
+        if (not isinstance(state,str) or state not in {'succeeded','failed','cancelled'} or value.get('native_state')!=state
+                or execution_status(state)!=value['status']):
+            raise IntegrityError('Execution observation differs from the native terminal state')
     for row in (accepted,completed,submission):
         if any(row.get(key)!=value.get(key) for key in ('call_id','scope','mechanism_binding')):
             raise IntegrityError('Execution observation escaped its accepted owner')
@@ -616,13 +629,15 @@ def record_observation(config, adapter, call_id, *, collected=None):
     external=records.external(call_id)
     if external is None:return None
     details=adapter.status_details(call_id);state=details.get('state')
-    status={'succeeded':'known_success','failed':'known_failed'}.get(state)
-    if status is None:return None
+    status=execution_status(state)
+    if status not in {'known_success','known_failed'}:return None
     result=adapter.result(call_id)
     completed=json.loads(read(directory/'completed.json'))
     if (result!=completed or completed.get('status')!=status
             or any(completed.get(key)!=accepted.get(key) for key in ('call_id','scope','mechanism_binding'))):
         raise IntegrityError('Adapter terminal projection differs from accepted completion')
+    if (state=='cancelled' or 'native_state' in completed) and completed.get('native_state')!=state:
+        raise IntegrityError('Adapter completion must retain its native terminal state')
     proofs=result.get('proofs')
     if not isinstance(proofs,list) or not proofs:
         raise IntegrityError('Adapter terminal result requires bounded original proofs')
@@ -654,6 +669,7 @@ def record_observation(config, adapter, call_id, *, collected=None):
         mechanism_binding=accepted.get('mechanism_binding'),interface=accepted['interface'],
         external_run_id=external,status=status,accepted=proof(directory/'accepted.json'),
         completed=proof(directory/'completed.json'),submission=proof(directory/'submission.json'),proofs=proofs,outputs=outputs)
+    if 'native_state' in completed:value['native_state']=completed['native_state']
     if config['execution_interface'].get('terminal_evidence')=='local_process':
         value['native_terminal']=proof(directory/'terminal.json')
     verify_observation(value,lambda item:Path(item['path']))
@@ -683,11 +699,16 @@ def _dispatch_descriptor(config, payload, *, parent=None, new=False, change=None
     records = Records(config)
     before=records.calls()
     for path in before:
-        _,prior=original_adapter(config,path.name,'query')
+        original,prior=original_adapter(config,path.name,'query')
         details=prior.status_details(path.name)
-        if details['state'] in {'unknown', 'running','accepted','submitted'}:
-            running=details['state']=='running' and records.external(path.name) is not None
-            return dict(status='running' if running else 'unknown',call_id=path.name, note='Preserve original execution; query its identity instead of replay')
+        state=execution_status(details.get('state'))
+        if state not in {'known_success','known_failed'} or records.external(path.name) is None:
+            return dict(status=state if state in PENDING_EXECUTION_STATES and records.external(path.name) is not None else 'unknown',
+                call_id=path.name,note='Preserve original execution; query its identity instead of replay')
+        if details.get('state')=='cancelled':
+            observed=record_observation(original,prior,path.name)
+            if observed is None or observed.get('native_state')!='cancelled':
+                raise IntegrityError('Original cancellation has no bound native terminal observation')
     call_id = f'{len(before)+1:04d}-{uuid.uuid4().hex}'
     descriptor = payload.model_copy(update={'name':call_id})
     prepared = adapter.prepare(descriptor, preparation_profile='research_loop.v1', exchange_directory=records.root)
@@ -706,8 +727,10 @@ def _dispatch_descriptor(config, payload, *, parent=None, new=False, change=None
     observed=record_observation(config,adapter,call_id)
     replay_check.complete(config, adapter, call_id, observed)
     result=adapter.result(call_id)
-    if observed is None and capabilities.query and adapter.status_details(call_id).get('state')=='running':
-        result=dict(result,status='running',note='Original execution accepted and running; control waits without resubmission.')
+    if observed is None and capabilities.query and records.external(call_id) is not None:
+        state=execution_status(adapter.status_details(call_id).get('state'))
+        if state in PENDING_EXECUTION_STATES:
+            result=dict(result,status=state,note='Original execution is '+state+'; preserve its identity without resubmission.')
     return result
 
 
@@ -716,7 +739,7 @@ def progress(config):
     if not lifecycle_capabilities(adapter).query:
         raise UnsupportedExecution('Execution query unavailable')
     rows = []
-    counts = dict.fromkeys(('accepted', 'running', 'known_success', 'known_failed', 'unknown'), 0)
+    counts = dict.fromkeys(('accepted', 'submitted', 'queued', 'running', 'cancelling', 'known_success', 'known_failed', 'unknown'), 0)
     for path in Records(config).calls():
         binding=None
         try:
@@ -729,13 +752,12 @@ def progress(config):
             raise
         except (OSError,KeyError,TypeError,AttributeError,RecursionError) as error:
             raise IntegrityError('Published execution metadata is malformed or unavailable') from error
-        state = {'succeeded':'known_success', 'failed':'known_failed'}.get(details['state'], details['state'])
-        if state not in counts:
-            state = 'unknown'
+        state = execution_status(details.get('state'))
         counts[state] += 1
         rows.append(dict(call_id=path.name, **(dict(mechanism_ref=binding['mechanism_ref']) if binding else {}), status=state, candidate_id=details.get('candidate_id'),
             evaluation_key=details.get('evaluation_key'), metric=details.get('metric'), direction=details.get('direction'),
             wall_seconds=details.get('wall_seconds'), parent_candidate=details.get('parent_candidate'),
+            **(dict(native_state='cancelled') if details.get('state')=='cancelled' else {}),
             **(dict(returncode=details['returncode'],result=details['result']) if details.get('result') is not None else {})))
     return dict(version=1, calls=rows[-16:], counts=counts, omitted_count=max(0, len(rows)-16),
         coverage='partial' if counts['unknown'] else 'complete', observed_at=time.time())
@@ -834,9 +856,11 @@ def main(argv=None):
                 observed=record_observation(config,adapter,args.call_id)
                 from . import replay_check
                 replay_check.complete(config, adapter, args.call_id, observed)
-                running=observed is None and Records(config).external(args.call_id) is not None and adapter.status_details(args.call_id).get('state')=='running'
-                result=dict(call_id=args.call_id,status=observed['status'] if observed is not None else 'running' if running else 'unknown',
-                    note='Original terminal observation frozen; no new submission.' if observed is not None else 'Original accepted execution is running.' if running else 'Original execution has no verified terminal observation.')
+                state=execution_status(adapter.status_details(args.call_id).get('state')) if observed is None and Records(config).external(args.call_id) is not None else 'unknown'
+                pending=state in PENDING_EXECUTION_STATES
+                result=dict(call_id=args.call_id,status=observed['status'] if observed is not None else state if pending else 'unknown',
+                    **(dict(native_state=observed['native_state']) if observed is not None and 'native_state' in observed else {}),
+                    note='Original terminal observation frozen; no new submission.' if observed is not None else 'Original accepted execution is '+state+'.' if pending else 'Original execution has no verified terminal observation.')
             elif args.command=='lookup':
                 records=Records(config);accepted=records.accepted(args.call_id)
                 descriptor=LocalFileDescriptor.model_validate(accepted['prepared'])
@@ -850,10 +874,10 @@ def main(argv=None):
                 result=dict(status='collected',outputs=[item.model_dump(mode='json') for item in descriptors])
             else:result=dict(status=adapter.cancel_original(args.call_id))
             if args.command=='collect':record_observation(config,adapter,args.call_id,collected=descriptors)
-            elif args.command in {'query','lookup'} and result.get('state') in {'succeeded','failed'}:
+            elif args.command in {'query','lookup'} and execution_status(result.get('state')) in {'known_success','known_failed'}:
                 if (Records(config).directory(args.call_id)/'execution-observation.json').exists():
                     record_observation(config,adapter,args.call_id)
-            code=2 if args.command=='reconcile' and result['status'] in {'unknown','running'} else 0
+            code=2 if args.command=='reconcile' and result['status'] not in {'known_success','known_failed'} else 0
         call_id = result.get('call_id', getattr(args, 'call_id', None))
         if call_id is not None:
             from . import replay_check
