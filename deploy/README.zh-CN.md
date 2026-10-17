@@ -2,6 +2,20 @@
 
 简体中文 | [English](README.md)
 
+## 默认薄 CLI 部署
+
+新项目默认 `SCID_DEPLOY_MODE=thin`：只向全新 site 安装应用并发布
+`scid-research` / `scid-experiment`。不要求旧 workspace/launch-root，
+不创建 Root 配置、SQL、密钥或服务。已有 site/wrapper 碰撞明确拒绝，
+不停止旧 live 服务。见[默认安装路径](../docs/INSTALL.zh-CN.md#新项目默认薄-cli)。
+失败回滚和卸载仅处理匹配本配置的薄 wrapper；代码 prefix 与原实例保留，
+外来 wrapper 不删除，冲突时明确 rollback incomplete。
+
+## 显式旧服务部署
+
+下文服务、事务和状态格式说明仅适用于显式 `SCID_DEPLOY_MODE=legacy`。
+旧数据保留；新薄层不依赖重建旧 SQL reader，历史读取/迁移仅在实际需要时另议。
+
 - `install.sh`：安装、验证、查看或移除 Linux/WSL 服务。
 - `reinstall.sh`：通用、事务化的长期重装入口。
 - `install_ssh_tcad_runner.sh`：通过已有 SSH 连接安装 Runner；也可复用运行态 transport

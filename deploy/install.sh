@@ -2,16 +2,29 @@
 set -Eeuo pipefail
 
 readonly SOURCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly DEPLOY_MODE="${SCID_DEPLOY_MODE:-thin}"
+if [[ "$DEPLOY_MODE" == thin ]]; then
+    DEFAULT_INSTALL_ROOT=/opt/scidiscovery-thin
+    DEFAULT_BACKUP_ROOT=/var/backups/scidiscovery-thin
+else
+    DEFAULT_INSTALL_ROOT=/opt/scidiscovery
+    DEFAULT_BACKUP_ROOT=/var/backups/scidiscovery
+fi
+readonly CLI_ROOT="${SCID_BIN_ROOT:-/usr/local/bin}"
 readonly WORKSPACE="${SCID_WORKSPACE:-${SOURCE_ROOT}/workspace/default}"
 readonly CODEX_LAUNCH_ROOT="${SCID_CODEX_LAUNCH_ROOT:-}"
 readonly PYTHON="${SCID_PYTHON:-$(command -v python3 || true)}"
 readonly CODEX_EXECUTABLE="${SCID_CODEX_EXECUTABLE:-$(command -v codex || true)}"
 readonly SERVICE_USER="${SCID_SERVICE_USER:-${SUDO_USER:-$(id -un)}}"
-readonly SERVICE_GROUP="${SCID_SERVICE_GROUP:-$(id -gn "$SERVICE_USER")}"
+if [[ "$DEPLOY_MODE" == thin ]]; then
+    readonly SERVICE_GROUP="${SCID_SERVICE_GROUP:-$(id -gn)}"
+else
+    readonly SERVICE_GROUP="${SCID_SERVICE_GROUP:-$(id -gn "$SERVICE_USER")}"
+fi
 readonly PLATFORM="${SCID_PLATFORM:-codex}"
 readonly WORKER_BACKEND="${SCID_WORKER_BACKEND:-local}"
 readonly PLUGIN_SPECIFICATION="${SCID_PLUGINS:-}"
-readonly INSTALL_ROOT="${SCID_INSTALL_ROOT:-/opt/scidiscovery}"
+readonly INSTALL_ROOT="${SCID_INSTALL_ROOT:-$DEFAULT_INSTALL_ROOT}"
 readonly SITE_ROOT="${INSTALL_ROOT}/site"
 readonly SCID_STATE="${SCID_STATE_ROOT:-/var/lib/scidiscovery}"
 readonly LOCAL_WORKSPACE_ROOT="${WORKSPACE}/.scidiscovery-runs"
@@ -19,7 +32,7 @@ readonly INSTANCE_ARCHIVE_ROOT="${WORKSPACE}/.scidiscovery-archive/instances"
 readonly PRESENTATION_ROOT="${WORKSPACE}/.scidiscovery-ui"
 readonly TCAD_STATE="${TCAD_STATE_ROOT:-${SCID_STATE}/tcad}"
 readonly CONFIG_ROOT="${SCID_CONFIG_ROOT:-/etc/scidiscovery}"
-readonly BACKUP_ROOT="${SCID_BACKUP_ROOT:-/var/backups/scidiscovery}"
+readonly BACKUP_ROOT="${SCID_BACKUP_ROOT:-$DEFAULT_BACKUP_ROOT}"
 readonly CONTROL_SOCKET="/run/scidiscovery/control.sock"
 readonly TCAD_SOCKET="/run/scidiscovery-tcad/control.sock"
 readonly TCAD_COMMAND_CONFIG="${SCID_TCAD_COMMAND_CONFIG:-}"
@@ -141,7 +154,47 @@ validate_worker_backend() {
     [[ "$WORKER_BACKEND" == "local" ]] || die "SCID_WORKER_BACKEND must be local"
 }
 
+validate_thin_paths() {
+    local path
+    for path in "$INSTALL_ROOT" "$CLI_ROOT" "$BACKUP_ROOT"; do
+        [[ "$path" = /* && "$(realpath -m -- "$path")" == "$path" ]] || die "thin deployment paths must be absolute and canonical"
+    done
+    [[ -d "$CLI_ROOT" && ! -L "$CLI_ROOT" ]] || die "SCID_BIN_ROOT must be an existing directory"
+    [[ -n "$PYTHON" && "$PYTHON" = /* && -x "$PYTHON" ]] || die "base Python is unavailable: ${PYTHON}"
+}
+
+require_thin_sources() {
+    local path plugin_ids plugin_distributions
+    validate_thin_paths
+    for path in pyproject.toml README.md deploy/plugin_selection.py deploy/install_transaction.py src/scidiscovery/research_loop/cli.py; do
+        [[ -f "$SOURCE_ROOT/$path" ]] || die "missing thin source: ${path}"
+    done
+    if [[ -n "$PLUGIN_SPECIFICATION" ]]; then
+        plugin_ids="$("$PYTHON" "$SOURCE_ROOT/deploy/plugin_selection.py" --source-root "$SOURCE_ROOT" --plugins "$PLUGIN_SPECIFICATION" --field id)" || die "SCID_PLUGINS validation failed"
+        plugin_distributions="$("$PYTHON" "$SOURCE_ROOT/deploy/plugin_selection.py" --source-root "$SOURCE_ROOT" --plugins "$PLUGIN_SPECIFICATION" --field distribution)" || die "SCID_PLUGINS distribution resolution failed"
+        mapfile -t SELECTED_PLUGINS <<<"$plugin_ids"
+        mapfile -t SELECTED_PLUGIN_DISTRIBUTIONS <<<"$plugin_distributions"
+    fi
+}
+
+validate_thin_targets() {
+    local path
+    # No inference about live writers: code is published only into a new prefix.
+    for path in "$SITE_ROOT" "$CLI_ROOT/scid-research" "$CLI_ROOT/scid-experiment"; do
+        [[ ! -e "$path" && ! -L "$path" ]] || die "thin target already exists; preserve the existing deployment: ${path}"
+    done
+}
+
+thin_deployment_lock() {
+    local path="$CLI_ROOT/.scidiscovery-thin-install.lock"
+    [[ ! -L "$path" && ( ! -e "$path" || -f "$path" ) ]] || die "unsafe thin deployment lock"
+    exec 9>"$path"
+    flock -n 9 || die "another thin deployment owns these command paths"
+}
+
 require_sources() {
+    [[ "$DEPLOY_MODE" == thin || "$DEPLOY_MODE" == legacy ]] || die "SCID_DEPLOY_MODE must be thin or legacy"
+    if [[ "$DEPLOY_MODE" == thin ]]; then require_thin_sources; return; fi
     validate_worker_backend
     local path plugin_ids plugin_distributions
     local -a deployment_paths=(
@@ -252,6 +305,10 @@ validate_source() {
     for plugin in "${SELECTED_PLUGINS[@]}"; do
         pythonpath+=":${SOURCE_ROOT}/plugins/${plugin}"
     done
+    if [[ "$DEPLOY_MODE" == thin ]]; then
+        PYTHONNOUSERSITE=1 PYTHONPATH="$pythonpath" "$PYTHON" -c 'import scidiscovery.research_loop.cli, scidiscovery.research_loop.experiments'
+        return
+    fi
     (
         cd "$WORKSPACE"
         PYTHONNOUSERSITE=1 PYTHONPATH="$pythonpath" "$PYTHON" - <<'PY'
@@ -435,6 +492,11 @@ render_units() {
 }
 
 preview() {
+    if [[ "$DEPLOY_MODE" == thin ]]; then
+        validate_thin_targets
+        printf 'Thin deployment: stage packages at %s; publish scid-research/scid-experiment at %s.\nNo legacy state, credentials, Codex profiles or services will be changed.\n' "$SITE_ROOT" "$CLI_ROOT"
+        return
+    fi
     local stage plugin pythonpath="${SOURCE_ROOT}/src" launch_is_distinct=0
     for plugin in "${SELECTED_PLUGINS[@]}"; do
         pythonpath+=":${SOURCE_ROOT}/plugins/${plugin}"
@@ -590,7 +652,9 @@ install_packages() {
     stage="${INSTALL_ROOT}/.site.new.$$"
     source_stage="$(mktemp -d)"
     source_root="${source_stage}/scidiscovery"
-    install -d -o root -g root -m 0755 "$INSTALL_ROOT"
+    if [[ "$DEPLOY_MODE" != thin || ! -d "$INSTALL_ROOT" ]]; then
+        install -d -o root -g root -m 0755 "$INSTALL_ROOT"
+    fi
     rm -rf "$stage"
     install -d "$source_root/src"
     cp -a "$SOURCE_ROOT/pyproject.toml" "$SOURCE_ROOT/README.md" \
@@ -626,6 +690,9 @@ PY
     fi
     selected_distributions="$(IFS=,; printf '%s' "${SELECTED_PLUGIN_DISTRIBUTIONS[*]}")"
     validate_distribution_cohort "$stage"
+    if [[ "$DEPLOY_MODE" == thin ]]; then
+        probe_thin_package "$stage"
+    else
     SCID_SELECTED_DISTRIBUTIONS="$selected_distributions" \
         PYTHONNOUSERSITE=1 PYTHONPATH="$stage" "$PYTHON" - <<'PY'
 import os
@@ -670,6 +737,7 @@ assert all(item.surface == 'execution' for item in ROOT_TOOLS if item.name.start
 assert 'producer_inputs' in ArtifactCatalogInput.model_json_schema()['properties']['view']['enum']
 print('installed package probe: pass')
 PY
+    fi
     PYTHONNOUSERSITE=1 PYTHONPATH="$stage" "$PYTHON" -m \
         scidiscovery.runtime_identity write \
         --manifest "$stage/runtime-identity.json"
@@ -679,10 +747,57 @@ PY
     PACKAGE_STAGE="$stage"
 }
 
+probe_thin_package() {
+    PYTHONNOUSERSITE=1 PYTHONPATH="$1" "$PYTHON" - <<'PY'
+from importlib.metadata import distribution
+scripts = [entry for entry in distribution('scidiscovery').entry_points if entry.group == 'console_scripts']
+for name, target in (('scid-research', 'scidiscovery.research_loop.cli:main'),
+                     ('scid-experiment', 'scidiscovery.research_loop.experiments:main')):
+    matches = [entry for entry in scripts if entry.name == name]
+    if len(matches) != 1 or matches[0].value != target or not callable(matches[0].load()):
+        raise SystemExit('thin console entry point missing or ambiguous: ' + name)
+print('thin package entry points: pass')
+PY
+}
+
+thin_cli_wrapper() {
+    local quoted_python quoted_site
+    printf -v quoted_python '%q' "$PYTHON"
+    printf -v quoted_site '%q' "$SITE_ROOT"
+    cat <<EOF
+#!/usr/bin/env bash
+env PYTHONNOUSERSITE=1 PYTHONPATH=${quoted_site} ${quoted_python} -m scidiscovery.runtime_identity verify --manifest ${quoted_site}/runtime-identity.json || exit
+exec env PYTHONNOUSERSITE=1 PYTHONPATH=${quoted_site} ${quoted_python} -m $1 "\$@"
+EOF
+}
+
+publish_thin_cli() {
+    local temporary
+    temporary="$(mktemp "$CLI_ROOT/.thin-cli.XXXXXX")"
+    thin_cli_wrapper "$2" > "$temporary"
+    chmod 0755 "$temporary"
+    if ! ln -- "$temporary" "$CLI_ROOT/$1"; then
+        rm -f -- "$temporary"
+        die "thin command appeared during publication: $1"
+    fi
+    rm -- "$temporary"
+}
+
 activate_packages() {
     local replaced quoted_python quoted_site_root quoted_tcad_result_root
     [[ -n "$PACKAGE_STAGE" && -d "$PACKAGE_STAGE" ]] || \
         die "validated package stage is unavailable"
+    if [[ "$DEPLOY_MODE" == thin ]]; then
+        validate_thin_targets
+        mv -T -n -- "$PACKAGE_STAGE" "$SITE_ROOT"
+        [[ ! -e "$PACKAGE_STAGE" ]] || die "thin prefix appeared during publication; preserve it: ${SITE_ROOT}"
+        PACKAGE_STAGE=""
+        chmod -R a-w "$SITE_ROOT"
+        find "$SITE_ROOT" -type d -exec chmod a+rx {} +
+        publish_thin_cli scid-research scidiscovery.research_loop.cli
+        publish_thin_cli scid-experiment scidiscovery.research_loop.experiments
+        return
+    fi
     replaced="${INSTALL_ROOT}/.site.replaced.$$"
     rm -rf "$replaced"
     [[ ! -e "$SITE_ROOT" ]] || mv "$SITE_ROOT" "$replaced"
@@ -1250,6 +1365,16 @@ begin_install_transaction() {
     local -a command units database_names
     timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
     TRANSACTION_ROOT="${BACKUP_ROOT}/.transaction-${timestamp}-$$"
+    if [[ "$DEPLOY_MODE" == thin ]]; then
+        [[ -d "$BACKUP_ROOT" ]] || install -d -m 0700 "$BACKUP_ROOT"
+        "$PYTHON" "${SOURCE_ROOT}/deploy/install_transaction.py" begin --root "$TRANSACTION_ROOT" \
+            --target "scid-research=${CLI_ROOT}/scid-research" \
+            --target "scid-experiment=${CLI_ROOT}/scid-experiment"
+        ROLLBACK_ARMED=1
+        trap 'rollback_install $?' ERR
+        trap 'rollback_install 130' INT TERM
+        return
+    fi
     install -d -o root -g root -m 0700 "$BACKUP_ROOT"
     service_home="$(getent passwd "$SERVICE_USER" | cut -d: -f6)"
     [[ -n "$service_home" && "$service_home" = /* ]] || \
@@ -1332,6 +1457,26 @@ rollback_install() {
     trap - ERR INT TERM
     set +e
     ROLLBACK_ARMED=0
+    if [[ "$DEPLOY_MODE" == thin ]]; then
+        local name module safe=1
+        for name in scid-research scid-experiment; do
+            module=scidiscovery.research_loop.cli
+            [[ "$name" != scid-experiment ]] || module=scidiscovery.research_loop.experiments
+            if [[ -e "$CLI_ROOT/$name" || -L "$CLI_ROOT/$name" ]]; then
+                [[ -f "$CLI_ROOT/$name" && ! -L "$CLI_ROOT/$name" ]] && cmp -s <(thin_cli_wrapper "$module") "$CLI_ROOT/$name" || safe=0
+            fi
+        done
+        if [[ -n "$TRANSACTION_ROOT" && -f "${TRANSACTION_ROOT}/manifest.json" ]]; then
+            if [[ "$safe" -eq 1 ]]; then
+                "$PYTHON" "${SOURCE_ROOT}/deploy/install_transaction.py" rollback --root "$TRANSACTION_ROOT"
+            else
+                printf 'Thin rollback incomplete: an unexpected command owner was preserved; inspect transaction %s.\n' "$TRANSACTION_ROOT" >&2
+            fi
+        fi
+        [[ -z "$PACKAGE_STAGE" ]] || rm -rf "$PACKAGE_STAGE"
+        printf 'Thin rollback retained the package prefix; legacy services and state were untouched.\n' >&2
+        exit "$status"
+    fi
     if [[ -n "$TRANSACTION_ROOT" && -f "${TRANSACTION_ROOT}/remote-tcad.json" ]]; then
         remote_tcad_runtime rollback || printf '%s\n' \
             'ERROR: remote TCAD rollback could not be confirmed; preserve the transaction receipt for recovery.' >&2
@@ -1373,7 +1518,7 @@ rollback_install() {
 
 complete_install_transaction() {
     local destination
-    remote_tcad_runtime finish
+    if [[ "$DEPLOY_MODE" == legacy ]]; then remote_tcad_runtime finish; fi
     destination="${BACKUP_ROOT}/transactions/${TRANSACTION_ROOT##*/.transaction-}"
     "$PYTHON" "${SOURCE_ROOT}/deploy/install_transaction.py" seal \
         --root "$TRANSACTION_ROOT" --destination "$destination"
@@ -1420,6 +1565,19 @@ PYSETTINGS
 
 install_all() {
     require_root
+    if [[ "$DEPLOY_MODE" == thin ]]; then
+        thin_deployment_lock
+        validate_thin_targets
+        validate_source
+        validate_base_python
+        install_packages
+        begin_install_transaction
+        activate_packages
+        probe_thin_package "$SITE_ROOT"
+        complete_install_transaction
+        printf 'Thin commands installed: %s/scid-research and %s/scid-experiment\nNo instance, budget, legacy state or service was created.\nUse scid-research prepare with an explicit root, objective and budgets, then run/serve-ui for that root.\n' "$CLI_ROOT" "$CLI_ROOT"
+        return
+    fi
     printf '[1/6] Validating source and selected base Python...\n'
     validate_source
     validate_base_python
@@ -1474,6 +1632,20 @@ install_all() {
 }
 
 status() {
+    if [[ "$DEPLOY_MODE" == thin ]]; then
+        validate_thin_paths
+        local name module
+        for name in scid-research scid-experiment; do
+            module=scidiscovery.research_loop.cli
+            [[ "$name" != scid-experiment ]] || module=scidiscovery.research_loop.experiments
+            if [[ -f "$CLI_ROOT/$name" && ! -L "$CLI_ROOT/$name" ]] && cmp -s <(thin_cli_wrapper "$module") "$CLI_ROOT/$name"; then
+                printf '%s: wrapper matches configured prefix %s\n' "$name" "$SITE_ROOT"
+            else
+                printf '%s: absent or owned by another configuration\n' "$name"
+            fi
+        done
+        return
+    fi
     systemctl --no-pager --full status \
         scidiscovery-control.service \
         scidiscovery-approval-ui.service \
@@ -1485,6 +1657,21 @@ status() {
 
 uninstall_services() {
     require_root
+    if [[ "$DEPLOY_MODE" == thin ]]; then
+        validate_thin_paths
+        thin_deployment_lock
+        local name module
+        for name in scid-research scid-experiment; do
+            module=scidiscovery.research_loop.cli
+            [[ "$name" != scid-experiment ]] || module=scidiscovery.research_loop.experiments
+            if [[ -e "$CLI_ROOT/$name" || -L "$CLI_ROOT/$name" ]]; then
+                [[ -f "$CLI_ROOT/$name" && ! -L "$CLI_ROOT/$name" ]] && cmp -s <(thin_cli_wrapper "$module") "$CLI_ROOT/$name" || die "refusing to remove another deployment's command: $name"
+            fi
+        done
+        rm -f -- "$CLI_ROOT/scid-research" "$CLI_ROOT/scid-experiment"
+        printf 'Thin command wrappers removed. Package prefix retained for existing processes; instances and legacy services/state were untouched.\n'
+        return
+    fi
     local unit
     for unit in \
         scidiscovery-control.service \
@@ -1505,8 +1692,9 @@ uninstall_services() {
 }
 
 main() {
+    [[ "$DEPLOY_MODE" == thin || "$DEPLOY_MODE" == legacy ]] || die "SCID_DEPLOY_MODE must be thin or legacy"
     case "${1:---dry-run}" in
-        --dry-run) require_sources; validate_source; validate_base_python; validate_figure_dependencies; preview ;;
+        --dry-run) require_sources; validate_source; validate_base_python; if [[ "$DEPLOY_MODE" == legacy ]]; then validate_figure_dependencies; fi; preview ;;
         install) require_sources; install_all ;;
         status) status ;;
         uninstall) uninstall_services ;;

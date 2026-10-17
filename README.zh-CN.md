@@ -14,7 +14,7 @@ SciDiscovery 是面向 Codex 的科学发现编排服务。它将科学推理、
 - **薄科研 CLI：** `scid-research` 无 Root 模型运行 H/W/A/E，`scid-experiment` 记录受管实验。本地执行、可选适配器、恢复与交付限制见 [CLI 合同](docs/ROOTLESS_CLI.zh-CN.md)。
 - **MCP 服务：** `scid` 保留下文的调度器、daemon、审批 UI 和现有 TCAD 插件路径。这些能力尚未全部迁入薄 CLI；安装 MCP 插件不会自动注册 CLI 执行适配器。
 
-两个入口目前都随包发布，协议、持久化和验证证据各有范围；不能仅因存在另一入口就判定相关测试过时。下文架构与安装章节除特别说明外描述 MCP 服务。
+新项目默认使用薄 CLI，旧服务部署须显式选择。两个入口目前都随包发布，协议、持久化和验证证据各有范围；不能仅因存在另一入口就判定相关测试过时。下文架构说明保留旧 MCP 服务范围；快速安装使用薄 CLI。
 
 ## 设计目标
 
@@ -85,44 +85,25 @@ SciDiscovery 控制面
 
 ## 快速安装
 
-支持带 systemd 的 Linux 和 WSL2，要求 Python 3.10 及以上。
+新项目默认使用薄 CLI。先提供 Python 3.10+ 和 [pyproject.toml](pyproject.toml)
+声明的应用依赖，再离线安装本仓库应用：
 
 ```bash
-sudo apt-get update
-sudo apt-get install -y python3 python3-pip poppler-utils bubblewrap curl openssh-client
-
-git clone <你的仓库地址> scidiscovery-agent
-cd scidiscovery-agent
-
-deploy/init_workspace.sh my-project
-export SCID_WORKSPACE="$PWD/workspace/my-project"
-
-# 预检；全新 Python 环境也可以直接执行正式安装。
-SCID_WORKSPACE="$SCID_WORKSPACE" \
-  SCID_PYTHON="$(command -v python3)" deploy/install.sh --dry-run
-
-# 默认生成 Codex 配置。
-sudo SCID_PYTHON="$(command -v python3)" \
-  SCID_WORKSPACE="$SCID_WORKSPACE" \
-  SCID_SERVICE_USER="$USER" \
-  SCID_PLATFORM=codex \
-  deploy/install.sh install
-
-# 可从框架根目录直接启动；其下的 workspace 会继承同一套 MCP 和角色。
-codex -C "$PWD"
+SCID_PYTHON="$(command -v python3)" deploy/install.sh --dry-run
+sudo SCID_PYTHON="$(command -v python3)" deploy/install.sh install
+scid-research --help
 ```
 
-安装器会创建控制服务和审批 UI 服务，并在
-<http://127.0.0.1:8765> 启动仅监听本机的审批页面。未配置 TCAD command
-adapter 时，只会安装 `/bin/true` 部署冒烟配置，不代表真实 Solver 可用。
+默认 `SCID_DEPLOY_MODE=thin` 从全新 `/opt/scidiscovery-thin/site` 发布
+`scid-research`、`scid-experiment`；不创建科研实例、预算、数据库、Root 配置、
+daemon 或 systemd 服务。按 [CLI 合同](docs/ROOTLESS_CLI.zh-CN.md)明确指定原文、
+实例目录和有限预算后才运行。可选页面仍是同一实例的 `scid-research serve-ui`，
+安装不自动开展科研。
 
-Codex 的 MCP、角色和通用 scheduler 生成在框架根目录；项目 workspace 只保存
-项目专用约束与研究数据。安装后需要完全重启 Codex。
-
-完整教程：
-
-- [中文安装教程](docs/INSTALL.zh-CN.md)
-- [Installation](docs/INSTALL.md)
+已有应用 site 目录或薄命令 wrapper 会明确拒绝覆盖；旧服务、SQL、配置和 `scid` 不变。
+旧服务安装必须显式 `SCID_DEPLOY_MODE=legacy`，其依赖、升级限制与旧资料入口见
+[中文安装教程](docs/INSTALL.zh-CN.md)及 [Installation](docs/INSTALL.md)。
+首版薄部署不提供自动就地升级、SQL 迁移或重建可推进副本的完整灾备恢复。
 
 ## TCAD 边界
 

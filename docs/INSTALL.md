@@ -2,6 +2,54 @@
 
 [简体中文](INSTALL.zh-CN.md) | English
 
+## Default: thin CLI for new projects
+
+`SCID_DEPLOY_MODE=thin` is the default for `deploy/install.sh` and `deploy/reinstall.sh`.
+Use an existing Python 3.10+ with the application dependencies from `pyproject.toml`;
+packages are built offline with no dependency installation or new environment.
+
+```bash
+SCID_PYTHON="$(command -v python3)" deploy/install.sh --dry-run
+sudo SCID_PYTHON="$(command -v python3)" deploy/install.sh install
+```
+
+This publishes `scid-research` and `scid-experiment` from a fresh
+`/opt/scidiscovery-thin/site` into `/usr/local/bin`. Optional `SCID_INSTALL_ROOT`
+and `SCID_BIN_ROOT` must be absolute canonical paths; the bin directory must exist.
+No systemd, workspace, Root profile, legacy SQL, key or research instance is required
+or created. Choose the explicit instance/objective/budgets and optional UI using
+[the CLI guide](ROOTLESS_CLI.zh-CN.md). Installed domain packages do not configure
+or authorize a remote backend.
+
+Existing site or either wrapper is rejected, even when the other targets are absent.
+No legacy service is stopped. A failed activation rolls back only its new wrappers;
+the immutable code prefix is retained. If either wrapper changes to an unexpected
+owner during failure handling, rollback preserves the commands and reports
+`rollback incomplete`; it does not delete unknown files. A failure while staging, before the transaction,
+may leave a private `.site.new.*` directory; it has no published command or execution
+permission. `status` reports wrapper ownership without loading an instance;
+`uninstall` only removes wrappers matching this exact Python/site configuration and
+retains the code, instances and legacy services. This is not automatic in-place
+upgrade or proof that old processes have stopped.
+
+## Explicit legacy service deployment
+
+**The remaining sections describe the old SQL/MCP/systemd deployment.** Set
+`SCID_DEPLOY_MODE=legacy` explicitly for each existing install/reinstall/status/uninstall
+command (including through sudo); for example:
+
+```bash
+export SCID_DEPLOY_MODE=legacy
+sudo SCID_DEPLOY_MODE=legacy SCID_PYTHON="$(command -v python3)" \
+  SCID_WORKSPACE=/absolute/existing-workspace deploy/install.sh install
+```
+
+Legacy data and installed services are preserved, not silently converted or removed.
+The old UI and most administrative `scid` commands open the runtime and are not a
+read-only replacement. Offline `active-bundle-verify` remains available; active bundle
+export covers selected scientific Artifacts, not a whole SQL/control-state migration.
+A dedicated legacy read/export cutoff is a separate migration node.
+
 ## 1. Supported Environment
 
 - Linux or WSL2 with systemd
@@ -65,6 +113,7 @@ executable path.
 ```bash
 export SCID_PYTHON=/absolute/path/to/service/python
 "$SCID_PYTHON" -m pip install --no-index --find-links /srv/scid-offline/wheels 'Pillow>=10.0,<13.0'
+export SCID_DEPLOY_MODE=legacy
 export SCID_PLUGINS=tcad_artifact,curve_score,curve_figure_evidence
 export SCID_PLATFORM=codex SCID_WORKER_BACKEND=local
 export SCID_WORKSPACE=/srv/scid-project
@@ -174,7 +223,7 @@ PYTHON="$(command -v python3)"
 SCID_WORKSPACE="$SCID_WORKSPACE" \
   SCID_PYTHON="$PYTHON" deploy/install.sh --dry-run
 
-sudo SCID_PYTHON="$PYTHON" \
+sudo SCID_DEPLOY_MODE=legacy SCID_PYTHON="$PYTHON" \
   SCID_WORKSPACE="$SCID_WORKSPACE" \
   SCID_SERVICE_USER="$USER" \
   SCID_SERVICE_GROUP="$(id -gn)" \
@@ -341,7 +390,7 @@ Install the services with the external adapter selected:
 
 ```bash
 PYTHON="$(command -v python3)"
-sudo SCID_PYTHON="$PYTHON" \
+sudo SCID_DEPLOY_MODE=legacy SCID_PYTHON="$PYTHON" \
   SCID_WORKSPACE="$SCID_WORKSPACE" \
   SCID_SERVICE_USER="$USER" \
   SCID_SERVICE_GROUP="$(id -gn)" \
@@ -481,7 +530,7 @@ atomically and the previous configuration is backed up under
 `/var/backups/scidiscovery`.
 
 ```bash
-sudo deploy/install.sh uninstall
+sudo SCID_DEPLOY_MODE=legacy deploy/install.sh uninstall
 ```
 
 Uninstall removes services but preserves state, configuration, and backups.

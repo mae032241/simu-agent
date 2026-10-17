@@ -16,7 +16,7 @@ the claims explicitly registered by its experiment and validation contracts.
 - **Thin research CLI:** `scid-research` runs H/W/A/E without a Root model; `scid-experiment` records managed experiments. See [the CLI contract](docs/ROOTLESS_CLI.zh-CN.md) for local execution, optional adapters, recovery and delivery limits.
 - **MCP service:** `scid` retains the scheduler, daemon, approval UI and existing TCAD plugin path described below. These capabilities have not all migrated to the thin CLI. Installing an MCP plugin does not automatically register a CLI execution adapter.
 
-Both entrances are still shipped. Their protocols, persistence and qualification evidence are distinct; tests for either entrance are not obsolete merely because the other exists. The architecture and installation sections below describe the MCP service unless stated otherwise.
+New projects default to the thin CLI; legacy service deployment is explicit. Both entrances are still shipped. Their protocols, persistence and qualification evidence are distinct; tests for either entrance are not obsolete merely because the other exists. The architecture discussion below describes the legacy MCP service; Quick Start uses the thin CLI.
 
 ## Why It Exists
 
@@ -99,45 +99,27 @@ See [Architecture](docs/ARCHITECTURE.md) for ownership and data-flow details.
 
 ## Quick Start
 
-Supported hosts are Linux and WSL2 with systemd and Python 3.10 or newer.
+New projects use the thin CLI. Provide Python 3.10+ and the application dependencies
+listed in [pyproject.toml](pyproject.toml), then install the application offline:
 
 ```bash
-sudo apt-get update
-sudo apt-get install -y python3 python3-pip poppler-utils bubblewrap curl openssh-client
-
-git clone <your-repository-url> scidiscovery-agent
-cd scidiscovery-agent
-
-deploy/init_workspace.sh my-project
-export SCID_WORKSPACE="$PWD/workspace/my-project"
-
-# Preview. On a fresh Python installation, run the full install directly.
-SCID_WORKSPACE="$SCID_WORKSPACE" \
-  SCID_PYTHON="$(command -v python3)" deploy/install.sh --dry-run
-
-# Codex is the default platform.
-sudo SCID_PYTHON="$(command -v python3)" \
-  SCID_WORKSPACE="$SCID_WORKSPACE" \
-  SCID_SERVICE_USER="$USER" \
-  SCID_PLATFORM=codex \
-  deploy/install.sh install
-
-# Start from the framework root; nested workspaces inherit its MCP and roles.
-codex -C "$PWD"
+SCID_PYTHON="$(command -v python3)" deploy/install.sh --dry-run
+sudo SCID_PYTHON="$(command -v python3)" deploy/install.sh install
+scid-research --help
 ```
 
-The installer creates the control and approval-UI services and a loopback-only approval
-UI at <http://127.0.0.1:8765>. Without a TCAD command-adapter configuration it
-installs a local `/bin/true` deployment-smoke profile only.
+The default `SCID_DEPLOY_MODE=thin` publishes `scid-research` and `scid-experiment`
+from a fresh `/opt/scidiscovery-thin/site`. It creates no research instance,
+budget, database, Codex Root profile, daemon or systemd service. Start research
+with an explicit root, objective and finite budgets using [the CLI guide](docs/ROOTLESS_CLI.zh-CN.md).
+The same instance's optional UI is `scid-research serve-ui`; installation never starts science.
 
-Codex MCP, role, and generic scheduler configuration is generated at the
-framework root; project workspaces contain only project-specific constraints
-and research data. Restart Codex after installation.
-
-Full instructions:
-
-- [Installation](docs/INSTALL.md)
-- [安装教程](docs/INSTALL.zh-CN.md)
+Existing package sites or thin command wrappers are rejected without replacement.
+Existing legacy services, SQL, profiles and `scid` remain untouched. Legacy service
+installation requires explicit `SCID_DEPLOY_MODE=legacy`; its prerequisites,
+upgrade limits and old records are covered by [Installation](docs/INSTALL.md)
+and [安装教程](docs/INSTALL.zh-CN.md). This first thin deployment path does not
+provide automatic in-place upgrades, SQL migration or full disaster recovery into a writable clone.
 
 ## TCAD Boundary
 

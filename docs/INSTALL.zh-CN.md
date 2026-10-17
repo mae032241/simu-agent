@@ -2,6 +2,47 @@
 
 简体中文 | [English](INSTALL.md)
 
+## 新项目默认：薄 CLI
+
+`deploy/install.sh` 与 `deploy/reinstall.sh` 默认 `SCID_DEPLOY_MODE=thin`。
+先提供 Python 3.10+ 及 `pyproject.toml` 声明的应用依赖；应用离线构建，
+不安装第三方依赖、不建新环境。
+
+```bash
+SCID_PYTHON="$(command -v python3)" deploy/install.sh --dry-run
+sudo SCID_PYTHON="$(command -v python3)" deploy/install.sh install
+```
+
+从全新 `/opt/scidiscovery-thin/site` 向 `/usr/local/bin` 发布 `scid-research`、
+`scid-experiment`。可选 `SCID_INSTALL_ROOT` / `SCID_BIN_ROOT` 须为绝对 canonical
+路径，bin 目录须已存在；无需 systemd、旧 workspace、Root 配置、SQL、密钥或实例，
+也不自动创建它们。按 [CLI 合同](ROOTLESS_CLI.zh-CN.md)明确选择实例、原文、预算和
+可选实例 UI；安装领域插件不配置或授权远端执行。
+
+已有 site 或任一薄 wrapper 均拒绝覆盖，即使其它目标为空；不停止旧服务。
+激活失败仅尝试回滚本次匹配的 wrapper，保留不可变代码 prefix；若失败处理中
+发现外来 wrapper，整个命令事务保留并报告 rollback incomplete，不删除未知文件。
+事务前 staging 失败可能
+留下私有 `.site.new.*` 目录；它没有已发布命令或执行权。`status` 只核 wrapper
+归属，不加载实例；`uninstall` 只删匹配本解释器/site 配置的 wrapper，保留代码、
+实例与旧服务。这不是自动就地升级，也不证明旧写者已停止。
+
+## 显式旧服务部署
+
+**下文为旧 SQL/MCP/systemd 部署教程。** 原安装、重装、status/uninstall 的每次
+命令都须显式传 `SCID_DEPLOY_MODE=legacy`（包括经 sudo 传递），例如：
+
+```bash
+export SCID_DEPLOY_MODE=legacy
+sudo SCID_DEPLOY_MODE=legacy SCID_PYTHON="$(command -v python3)" \
+  SCID_WORKSPACE=/absolute/existing-workspace deploy/install.sh install
+```
+
+保留旧数据和现有服务，不静默转换或删除。旧 UI 和多数 `scid` 管理命令会打开
+runtime，不能冒称只读出口；离线 `active-bundle-verify` 仍可用，active bundle
+export 只覆盖选定科学 Artifact，不是整个 SQL/控制状态迁移。独立旧档案读取/导出
+及停写接缝属于下一迁移节点。
+
 ## 1. 支持环境
 
 - 带 systemd 的 Linux 或 WSL2
@@ -58,6 +99,7 @@ Pillow 和 Poppler `pdfimages`。坐标轴、刻度和科学身份由智能体�
 ```bash
 export SCID_PYTHON=/absolute/path/to/service/python
 "$SCID_PYTHON" -m pip install --no-index --find-links /srv/scid-offline/wheels 'Pillow>=10.0,<13.0'
+export SCID_DEPLOY_MODE=legacy
 export SCID_PLUGINS=tcad_artifact,curve_score,curve_figure_evidence
 export SCID_PLATFORM=codex SCID_WORKER_BACKEND=local
 export SCID_WORKSPACE=/srv/scid-project
@@ -148,7 +190,7 @@ PYTHON="$(command -v python3)"
 SCID_WORKSPACE="$SCID_WORKSPACE" \
   SCID_PYTHON="$PYTHON" deploy/install.sh --dry-run
 
-sudo SCID_PYTHON="$PYTHON" \
+sudo SCID_DEPLOY_MODE=legacy SCID_PYTHON="$PYTHON" \
   SCID_WORKSPACE="$SCID_WORKSPACE" \
   SCID_SERVICE_USER="$USER" \
   SCID_SERVICE_GROUP="$(id -gn)" \
@@ -305,7 +347,7 @@ WSL 调用 Windows OpenSSH 时，常见 executable 是
 
 ```bash
 PYTHON="$(command -v python3)"
-sudo SCID_PYTHON="$PYTHON" \
+sudo SCID_DEPLOY_MODE=legacy SCID_PYTHON="$PYTHON" \
   SCID_WORKSPACE="$SCID_WORKSPACE" \
   SCID_SERVICE_USER="$USER" \
   SCID_SERVICE_GROUP="$(id -gn)" \
@@ -414,7 +456,7 @@ Runner 安装脚本还支持 `SCID_SSH_*`、`SCID_VMRUN_*` 和 `SCID_REMOTE_*` �
 `/var/backups/scidiscovery`。
 
 ```bash
-sudo deploy/install.sh uninstall
+sudo SCID_DEPLOY_MODE=legacy deploy/install.sh uninstall
 ```
 
 卸载只移除服务，保留状态、配置和备份。只有在完成归档决策后才应手动删除它们。

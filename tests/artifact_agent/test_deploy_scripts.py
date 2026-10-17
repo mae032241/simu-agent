@@ -22,6 +22,13 @@ from deploy.install_transaction import (
     rollback_transaction,
 )
 
+
+@pytest.fixture(autouse=True)
+def legacy_service_deployment(monkeypatch):
+    """These existing cases exercise the explicitly selected legacy services."""
+    monkeypatch.setenv("SCID_DEPLOY_MODE", "legacy")
+
+
 def test_primary_installer_has_valid_shell_syntax() -> None:
     project_root = Path(__file__).resolve().parents[2]
     completed = subprocess.run(

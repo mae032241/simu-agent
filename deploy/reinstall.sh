@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 
 readonly SOURCE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly DEPLOY_MODE="${SCID_DEPLOY_MODE:-thin}"
 readonly WORKSPACE="${SCID_WORKSPACE:-${SOURCE_ROOT}/workspace/default}"
 readonly CODEX_LAUNCH_ROOT="${SCID_CODEX_LAUNCH_ROOT:-}"
 readonly PYTHON="${SCID_PYTHON:-$(command -v python3 || true)}"
@@ -13,13 +14,21 @@ readonly WORKER_BACKEND="${SCID_WORKER_BACKEND:-local}"
 readonly PLUGINS="${SCID_PLUGINS:-}"
 readonly COMMAND_CONFIG="${SCID_TCAD_COMMAND_CONFIG:-}"
 readonly REMOTE_RUNNER_CONFIG="${SCID_REMOTE_RUNNER_CONFIG:-}"
-readonly INSTALL_ROOT="${SCID_INSTALL_ROOT:-/opt/scidiscovery}"
+if [[ "$DEPLOY_MODE" == thin ]]; then
+    DEFAULT_INSTALL_ROOT=/opt/scidiscovery-thin
+    DEFAULT_BACKUP_ROOT=/var/backups/scidiscovery-thin
+else
+    DEFAULT_INSTALL_ROOT=/opt/scidiscovery
+    DEFAULT_BACKUP_ROOT=/var/backups/scidiscovery
+fi
+readonly INSTALL_ROOT="${SCID_INSTALL_ROOT:-$DEFAULT_INSTALL_ROOT}"
 readonly STATE_ROOT="${SCID_STATE_ROOT:-/var/lib/scidiscovery}"
 readonly TCAD_STATE_ROOT_VALUE="${TCAD_STATE_ROOT:-${STATE_ROOT}/tcad}"
 readonly CONFIG_ROOT="${SCID_CONFIG_ROOT:-/etc/scidiscovery}"
-readonly BACKUP_ROOT="${SCID_BACKUP_ROOT:-/var/backups/scidiscovery}"
+readonly BACKUP_ROOT="${SCID_BACKUP_ROOT:-$DEFAULT_BACKUP_ROOT}"
 readonly APPROVAL_PORT="${SCID_APPROVAL_PORT:-8765}"
 readonly CODEX_SKILL_ROOT="${SCID_CODEX_SKILL_ROOT:-}"
+readonly CLI_ROOT="${SCID_BIN_ROOT:-/usr/local/bin}"
 readonly MODE="${1:-install}"
 
 die() {
@@ -37,6 +46,7 @@ usage() {
 }
 
 [[ "$#" -le 1 ]] || { usage; exit 2; }
+[[ "$DEPLOY_MODE" == thin || "$DEPLOY_MODE" == legacy ]] || die "SCID_DEPLOY_MODE must be thin or legacy"
 case "$MODE" in
     status)
         exec "$SOURCE_ROOT/deploy/install.sh" status
@@ -45,19 +55,21 @@ case "$MODE" in
     *) usage; exit 2 ;;
 esac
 
-validate_worker_backend
-
-[[ -d "$WORKSPACE" && ! -L "$WORKSPACE" ]] || \
-    die "workspace not found: ${WORKSPACE}; set SCID_WORKSPACE"
+if [[ "$DEPLOY_MODE" == legacy ]]; then
+    validate_worker_backend
+    [[ -d "$WORKSPACE" && ! -L "$WORKSPACE" ]] || \
+        die "workspace not found: ${WORKSPACE}; set SCID_WORKSPACE"
+    [[ -n "$PYTHON" && -x "$PYTHON" ]] || die "base Python not found: ${PYTHON}"
+    if [[ -n "$COMMAND_CONFIG" ]]; then
+        [[ -f "$COMMAND_CONFIG" && ! -L "$COMMAND_CONFIG" ]] || \
+            die "TCAD command adapter config not found: ${COMMAND_CONFIG}"
+    fi
+    if [[ -n "$REMOTE_RUNNER_CONFIG" ]]; then
+        [[ -f "$REMOTE_RUNNER_CONFIG" && ! -L "$REMOTE_RUNNER_CONFIG" ]] || \
+            die "remote runner configuration must be a regular file"
+    fi
+fi
 [[ -n "$PYTHON" && -x "$PYTHON" ]] || die "base Python not found: ${PYTHON}"
-if [[ -n "$COMMAND_CONFIG" ]]; then
-    [[ -f "$COMMAND_CONFIG" && ! -L "$COMMAND_CONFIG" ]] || \
-        die "TCAD command adapter config not found: ${COMMAND_CONFIG}"
-fi
-if [[ -n "$REMOTE_RUNNER_CONFIG" ]]; then
-    [[ -f "$REMOTE_RUNNER_CONFIG" && ! -L "$REMOTE_RUNNER_CONFIG" ]] || \
-        die "remote runner configuration must be a regular file"
-fi
 if [[ "$MODE" != "--dry-run" ]]; then
     [[ "$(id -u)" -ne 0 ]] || \
         die "run this wrapper as the service user; it invokes sudo itself"
@@ -65,6 +77,7 @@ if [[ "$MODE" != "--dry-run" ]]; then
 fi
 
 printf '%s\n' \
+    "Deployment mode: ${DEPLOY_MODE}" \
     "Source: ${SOURCE_ROOT}" \
     "Workspace: ${WORKSPACE}" \
     "Codex launch root: ${CODEX_LAUNCH_ROOT:-source/workspace only}" \
@@ -75,6 +88,8 @@ printf '%s\n' \
     "TCAD adapter: ${COMMAND_CONFIG:-local socket}"
 
 declare -a INSTALL_ENV=(
+    "SCID_DEPLOY_MODE=${DEPLOY_MODE}"
+    "SCID_BIN_ROOT=${CLI_ROOT}"
     "SCID_WORKSPACE=${WORKSPACE}"
     "SCID_PYTHON=${PYTHON}"
     "SCID_CODEX_EXECUTABLE=${CODEX_EXECUTABLE}"

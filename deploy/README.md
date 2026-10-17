@@ -2,6 +2,15 @@
 
 [简体中文](README.zh-CN.md) | English
 
+New projects default to `SCID_DEPLOY_MODE=thin`: install only the application and
+`scid-research` / `scid-experiment` wrappers into a fresh prefix. No workspace,
+Root configuration, SQL, credentials or services are created. Existing site or
+wrapper collisions are rejected; old live services are not stopped. See
+[the default installation path](../docs/INSTALL.md#default-thin-cli-for-new-projects).
+The service/transaction/state-format description below applies only to explicit
+`SCID_DEPLOY_MODE=legacy`. Old data is preserved; rebuilding a legacy SQL reader is not a prerequisite for
+the thin CLI. Historical data migration is optional work when actually needed.
+
 - `install.sh`: installs, verifies, reports, or removes the Linux/WSL services.
 - `reinstall.sh`: generic, transactional, maintained reinstall entrypoint.
 - `install_ssh_tcad_runner.sh`: installs the dependency-free runner through an

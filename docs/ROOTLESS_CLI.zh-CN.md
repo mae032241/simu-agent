@@ -3,6 +3,23 @@
 `scid-research` 直接启动新的 H/W/A/证据原生线程；控制程序执行科学角色选择的路由。
 不依赖 LoopX，不启动 Root 模型，不需要 MCP 管理页绑定。已提供实例 UI、可选来源/正式审查与执行授权接缝；TCAD 非空输入链已静态接通，长时人工等待恢复也已静态接通，旧 daemon 不迁入。当前迁移节点仅通过静态独审，未验证真实远端执行。
 
+## 安装入口
+
+新部署默认 `SCID_DEPLOY_MODE=thin`：`deploy/install.sh --dry-run` 只预检，
+`sudo SCID_PYTHON=/absolute/python deploy/install.sh install` 离线安装应用，
+发布 `scid-research` / `scid-experiment`。默认 prefix 为 `/opt/scidiscovery-thin`，
+`SCID_BIN_ROOT` 为已存在的 `/usr/local/bin`；可显式换成其它绝对 canonical 目录。
+基础 Python 及应用第三方依赖由操作者预装；不创建 venv、不解析联网依赖。
+
+薄安装不要求旧 `SCID_WORKSPACE`/`SCID_CODEX_LAUNCH_ROOT`，不初始化旧 SQL、密钥、
+MCP/Root 角色、systemd 服务或默认实例。已有 site 或任一薄 wrapper 会拒绝覆盖，
+不停止旧 live 服务，也不更新已冻结实例。`status` 只核本配置 wrapper 归属；
+`uninstall` 仅删除匹配本配置的两个 wrapper，保留代码 prefix、实例及旧状态，
+不能把卸载命令等同于所有 native/外部作业已停止。升级/旧代码回收须另行确认原写者。
+
+旧服务仍须显式 `SCID_DEPLOY_MODE=legacy`，旧 SQL 的独立只读出口迁移尚未完成；
+旧 `scid`/UI 不因此变成只读。安装不会自动运行以下命令或增加任何预算。
+
 ## 创建与运行
 
 ```sh
