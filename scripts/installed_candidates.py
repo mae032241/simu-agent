@@ -85,32 +85,20 @@ def _link_runtime_file(source, target):
 
 
 def _candidate_creator(repository: Path, root: Path):
-    """Share wheel construction between a single installation check and live probes."""
+    """Construct only the wheel closure of one explicitly selected environment."""
     dependency_cache = root / "runtime-dependencies"
     _supply_runtime_dependencies(dependency_cache)
     wheelhouse = root / "wheelhouse"
     wheelhouse.mkdir()
-    fixture_plugins = repository / "tests/fixtures/plugins"
     sources = {
         "core": (repository, "scidiscovery-"),
         "tcad": (repository / "plugins/tcad_artifact", "tcad_artifact-"),
         "curve": (repository / "plugins/curve_score", "scidiscovery_curve_score-"),
         "figure": (repository / "plugins/curve_figure_evidence", "scidiscovery_curve_figure_evidence-"),
-        "architecture": (fixture_plugins / "architecture_operation_plugin", "scidiscovery_architecture_operation_test_plugin-"),
-        "blind_csv": (fixture_plugins / "blind_csv_operation_plugin", "scidiscovery_blind_csv_test_plugin-"),
-        "m7_effect": (fixture_plugins / "m7_effect_operation_plugin", "scidiscovery_m7_effect_test_plugin-"),
-        "broken": (fixture_plugins / "broken_operation_plugin", "scidiscovery_broken_operation_test_plugin-"),
-        "invalid_unicode": (fixture_plugins / "invalid_unicode_operation_plugin", "scidiscovery_invalid_unicode_operation_test_plugin-"),
     }
     selections = {
         "core": ("core",),
-        "curve": ("core", "curve"),
-        "architecture": ("core", "architecture"),
-        "blind_csv": ("core", "blind_csv"),
-        "m7_effect": ("core", "m7_effect"),
         "all_domains": ("core", "tcad", "curve", "figure"),
-        "broken": ("core", "broken"),
-        "invalid_unicode": ("core", "invalid_unicode"),
         "tcad_resolved": ("core", "curve", "tcad"),
     }
     built = {}
@@ -137,7 +125,7 @@ def _candidate_creator(repository: Path, root: Path):
             built[name] = next(path for path in wheelhouse.glob("*.whl") if path.name.startswith(prefix))
         return built[name]
 
-    def create_environment(name: str, *, resolve_once: bool = False) -> InstalledEnvironment:
+    def create_environment(name: str) -> InstalledEnvironment:
         if name not in selections:
             raise KeyError(name)
         selected = tuple(wheel(package) for package in selections[name])
@@ -146,8 +134,9 @@ def _candidate_creator(repository: Path, root: Path):
         site_packages = environment_root / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages"
         shutil.copytree(dependency_cache, site_packages, dirs_exist_ok=True, copy_function=_link_runtime_file)
         python = environment_root / "bin/python"
+        resolve_once = name == "tcad_resolved"
         if name == "tcad_resolved":
-            selected = (wheel("core"), wheel("tcad")) if resolve_once else (wheel("core"),)
+            selected = (wheel("core"), wheel("tcad"))
         _run_logged(
             [
                 sys.executable, "-m", "pip", "--python", str(python),
@@ -159,16 +148,6 @@ def _candidate_creator(repository: Path, root: Path):
             cwd=root,
             timeout=180,
         )
-        if name == "tcad_resolved" and not resolve_once:
-            _run_logged(
-                [
-                    sys.executable, "-m", "pip", "--python", str(python),
-                    "install", "--no-index", "--no-cache-dir", "--no-compile",
-                    "--find-links", str(wheelhouse), str(wheel("tcad")),
-                ],
-                cwd=root,
-                timeout=180,
-            )
         workdir = root / f"{name}-workdir"
         workdir.mkdir()
         return InstalledEnvironment(python=python, workdir=workdir)
@@ -177,25 +156,8 @@ def _candidate_creator(repository: Path, root: Path):
 
 
 def create_environment(repository: Path, root: Path, *, cohort: str = "core") -> InstalledEnvironment:
-    """Build one explicitly selected cohort in one environment, with no pool."""
-    if cohort not in {"core", "tcad"}:
-        raise ValueError("installation cohort must be core or tcad")
+    """Build one explicit environment; all_domains is the existing live option."""
+    if cohort not in {"core", "tcad", "all_domains"}:
+        raise ValueError("candidate cohort must be core, tcad or all_domains")
     create = _candidate_creator(repository, root)
-    return create("tcad_resolved" if cohort == "tcad" else "core", resolve_once=cohort == "tcad")
-
-
-def create_environments(repository: Path, root: Path) -> dict[str, InstalledEnvironment]:
-    """Legacy live-probe candidates; pytest installation checks use one cohort."""
-    create = _candidate_creator(repository, root)
-
-    class LazyEnvironments(dict[str, InstalledEnvironment]):
-        def __missing__(self, name: str) -> InstalledEnvironment:
-            for previous in self.values():
-                shutil.rmtree(previous.python.parent.parent)
-                shutil.rmtree(previous.workdir)
-            self.clear()
-            environment = create(name)
-            self[name] = environment
-            return environment
-
-    return LazyEnvironments()
+    return create("tcad_resolved" if cohort == "tcad" else cohort)

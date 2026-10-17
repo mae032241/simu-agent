@@ -209,10 +209,15 @@ def test_new_candidate_root_does_not_inherit_personal_worker_model(tmp_path, mon
     candidate.mkdir()
     project = tmp_path/'project'
     project.mkdir()
-    monkeypatch.setattr(live, 'create_environments', lambda *args: {'core':SimpleNamespace(python=Path(sys.executable), workdir=project)})
+    requested=[]
+    def candidate_environment(*args,cohort):
+        requested.append(cohort)
+        return SimpleNamespace(python=Path(sys.executable),workdir=project)
+    monkeypatch.setattr(live, 'create_environment', candidate_environment)
     monkeypatch.setattr(live, '_run_logged', lambda *args, **kwargs: None)
     monkeypatch.setattr(live.subprocess, 'check_output', lambda *args, **kwargs: 'test-head')
     live.prepare(candidate)
+    assert requested==['core']
     manifest = json.loads((candidate/'candidate.json').read_text())
     settings = json.loads((candidate/'agent-settings.json').read_text())
     assert manifest['profile'] == {'model':'gpt-5.6-sol', 'model_reasoning_effort':'high'}

@@ -34,12 +34,12 @@ from urllib.parse import urlsplit, parse_qs
 try:
     from scripts import run_tests as guard
     from scripts.probe_native_code_mode import probe as probe_native_code_mode
-    from scripts.installed_candidates import create_environments, _run_logged
+    from scripts.installed_candidates import create_environment, _run_logged
     from scripts.probe_root_host import preflight, thread_start_params, rpc_diagnostic, config_flags
 except ModuleNotFoundError:
     import run_tests as guard
     from probe_native_code_mode import probe as probe_native_code_mode
-    from installed_candidates import create_environments, _run_logged
+    from installed_candidates import create_environment, _run_logged
     from probe_root_host import preflight, thread_start_params, rpc_diagnostic, config_flags
 
 from scidiscovery.platforms.codex_app_server import AppServer, HostLimits
@@ -142,7 +142,7 @@ def prepare(root: Path, *, distribution="core", plugin_configs=None, task=None):
                         for argument in ("--plugin-config", name + "=" + path)]
     build = root / "build"
     build.mkdir()
-    installed = create_environments(guard.ROOT, build)[distribution]
+    installed = create_environment(guard.ROOT, build, cohort=distribution)
     project = installed.workdir
     environment = dict(os.environ)
     environment.pop("PYTHONPATH", None)
