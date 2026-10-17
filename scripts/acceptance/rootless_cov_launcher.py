@@ -2,6 +2,23 @@
 from pathlib import Path
 import argparse, hashlib, json, os, shlex, shutil, sys
 
+def engineering_reserve(s):
+    # New launcher copies opt in; preserved launcher/config originals are untouched.
+    seconds=s.get('cov_engineering_check_reserve_seconds',15)
+    if type(seconds) not in (int,float) or not (seconds==0 or 2<seconds<65):
+        raise ValueError('cov_check_reserve_requires_zero_or_seconds_between_2_and_65')
+    return seconds
+
+def engineering_notice(s):
+    reserve=engineering_reserve(s)
+    prefix=f'Cov original call window: 65s total; requested engineering reserve {reserve:g}s. '
+    if s.get('cov_receipt_channel','public_runner_main')!='public_runner_main':
+        return prefix+'This receipt channel has no isolated check capability; no partition is promised.'
+    if not reserve:
+        return prefix+'No reserved check window; checking is best effort within the original deadline.'
+    return prefix+(f'Experiment at most {65-reserve:g}s; check at most {min(10,reserve-2):g}s; feedback 2s. '
+        'Remaining task time may shorten these windows. Actual reservation is in engineering_check.time_allocation; no extra time is granted.')
+
 def regular(p, bound=None):
     p=Path(p).absolute()
     if p.is_symlink() or not p.is_file() or p.resolve()!=p or bound is not None and p.stat().st_size>bound:
@@ -19,6 +36,7 @@ def file_digest(p):
 
 def load(p):
     s=json.loads(regular(p));public=Path(s['public_root'])
+    engineering_reserve(s)
     if s.get('cov_receipt_channel','public_runner_main') not in {'public_runner_main','backend_file'}:
         raise ValueError('explicit_cov_receipt_channel_required')
     if not public.is_absolute() or public.resolve()!=public:
@@ -134,7 +152,8 @@ def exp_wrapper(s,w):
     warning = ('Historical cross-node delivery: use A next_action=deliver and the controller adapter. '
         'Native exp submit uses the paths declared in the run and does not resolve archived historical originals.')
     public = 'exec ' + shlex.quote(s['task_python']) + ' -I /opt/exp/exp_cli.py "$@"'
-    return ('#!/bin/sh\ncase "$1" in\nrun|lineage-status|query|collect|cancel) exec '
+    notice='if [ "$1" = run ]; then printf \'%s\\n\' '+shlex.quote(engineering_notice(s))+' >&2; fi\n'
+    return ('#!/bin/sh\n'+notice+'case "$1" in\nrun|lineage-status|query|collect|cancel) exec '
         + shlex.quote(s['scid_python']) + ' -I -m scidiscovery.research_loop.experiments --config '
         + shlex.quote(str(w/'work/lineage-config.json')) + ' "$@";;\nsubmit|--help|-h|help) printf \'%s\\n\' '
         + shlex.quote(warning) + ' >&2; ' + public + ';;\n*) ' + public + ';;\nesac\n')
@@ -347,7 +366,9 @@ def main():
     job=json.loads(regular(os.environ['THIN_HWA_JOB_MANIFEST']))
     configured=Path(s['scene_root'])/'host-runtime'/('lineage-'+w.name+'.json')
     configure(Path(s['scene_root']),job['step'],[s['task_python'],'-I','/opt/exp/exp_cli.py'],Path(s['runs_dir']),configured,
-        receipt_channel=s.get('cov_receipt_channel','public_runner_main'))
+        receipt_channel=s.get('cov_receipt_channel','public_runner_main'),
+        engineering_check_reserve_seconds=engineering_reserve(s))
+    print(engineering_notice(s),file=sys.stderr,flush=True)
     (w/'work/lineage-config.json').touch(exist_ok=True)
     command=outer(s,w,h,[s['native'],*args],materials);os.execv(command[0],command)
 

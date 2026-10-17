@@ -81,8 +81,11 @@ def _config(path):
     if 'breadth' in value:keys.add('breadth')
     if 'engineering_repair' in value:keys.add('engineering_repair')
     if 'receipt_channel' in value:keys.add('receipt_channel')
+    if 'engineering_check_reserve_seconds' in value:keys.add('engineering_check_reserve_seconds')
     if set(value) != keys or value['contract_version'] != 2 or value['feedback_version'] != 1:
         raise ValueError('Explicit wrapper contract2 configuration required')
+    from . import replay_check
+    replay_check.reserve_seconds(value)
     scope = value['scope']
     if set(scope) != ({'step','role','job_sha256','execution_key','mechanism_ref','handoff_protocol'} if 'handoff_protocol' in scope else {'step','role','job_sha256','execution_key','mechanism_ref'}) or type(scope['step']) is not int or scope['step'] <= 0 or scope['role'] not in {'H','W','A','E'}:
         raise ValueError('Exact frozen scientific execution scope required')
@@ -360,7 +363,7 @@ def observe(request):
 
 
 
-def configure(root, step, run_argv, runs_root, output, *, receipt_channel='public_runner_main'):
+def configure(root, step, run_argv, runs_root, output, *, receipt_channel='public_runner_main', engineering_check_reserve_seconds=0):
     """Trusted launcher's host-side preparation, before entering its namespace."""
     from .protocol import require_current
     require_current(root)
@@ -386,6 +389,10 @@ def configure(root, step, run_argv, runs_root, output, *, receipt_channel='publi
     value=dict(contract_version=2,feedback_version=1,record_dir=str(c.workspace(root,step)/'work/lineage'),runs_root=str(runs_root),run_argv=run_argv,
         scope=stage_scope(root,job),receipt_channel=receipt_channel,
         parents=parents,evaluation_key='covshift-public-val-v1')
+    from . import replay_check
+    replay_check.reserve_seconds(dict(engineering_check_reserve_seconds=engineering_check_reserve_seconds))
+    if engineering_check_reserve_seconds!=0:
+        value['engineering_check_reserve_seconds']=engineering_check_reserve_seconds
     from scidiscovery.research_loop import experiments
     value=experiments.configure(root,step,'cov_execution:experiment',value,output)
     return dict(status='configured',config=str(output))

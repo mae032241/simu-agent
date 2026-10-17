@@ -9,6 +9,7 @@ import sys
 
 import pytest
 
+from execution_fixtures import execution_registry
 from scidiscovery.research_loop import budget,checkpoint,contracts as c,continuation,controller,execution,native,runtime
 
 
@@ -75,6 +76,43 @@ def arguments(root,record):
 
 
 def spec(root):return dict(scene_root=str(root),model='no-model',reasoning_effort='high')
+
+
+@pytest.mark.parametrize('operator,expected',[({},15),({'cov_engineering_check_reserve_seconds':0},0)])
+def test_cov_launcher_reserve_reaches_real_frozen_configuration(launcher,accepted,execution_registry,operator,expected):
+    """Host-only prepare/freeze: no launcher, namespace, experiment or model starts."""
+    from scidiscovery.research_loop import cov_lineage,experiments as e
+    root,job,record=accepted
+    output=root/'host-runtime/lineage-001.json'
+    cov_lineage.configure(root,job['step'],[sys.executable],root/'runs',output,
+        engineering_check_reserve_seconds=launcher.engineering_reserve(operator))
+    config=c.read(output)
+    assert config['max_seconds']==65
+    if expected:
+        assert config['engineering_check_reserve_seconds']==15
+    else:
+        assert 'engineering_check_reserve_seconds' not in config
+    adapter=e.load(config,path=output)
+    check=next(item for item in adapter.capabilities() if item.key=='isolated_replay')
+    assert check.public_summary['requested_reserve_seconds']==expected
+    assert check.public_summary['total_call_seconds']==65
+    assert c.read(record/'experiment-config.json')==config
+    assert not (c.workspace(root,job['step'])/'work/lineage/calls').exists()
+    wrapper=launcher.exp_wrapper(dict(operator,task_python='/task/python',scid_python='/host/python'),c.workspace(root,job['step']))
+    assert launcher.engineering_notice(operator) in wrapper
+    if expected:
+        assert 'Experiment at most 50s; check at most 10s; feedback 2s.' in wrapper
+    else:
+        assert 'No reserved check window' in wrapper
+
+
+def test_cov_launcher_rejects_unusable_reserve_and_keeps_unsupported_channel_neutral(launcher):
+    for value in (True,False,-1,2,65,66,float('inf'),float('nan')):
+        with pytest.raises(ValueError,match='cov_check_reserve_requires'):
+            launcher.engineering_reserve(dict(cov_engineering_check_reserve_seconds=value))
+    notice=launcher.engineering_notice(dict(cov_receipt_channel='backend_file'))
+    assert 'no isolated check capability; no partition is promised' in notice
+    assert 'Experiment at most' not in notice
 
 
 def next_context(root,job,first,monkeypatch):

@@ -65,6 +65,7 @@ TCAD 的可选编译→精确封存→正式审查→后继执行非空输入已
 标准单项 `codex` launcher 新建实例默认冻结 `--experiment-mode local`，W 启动前由控制层准备本地执行配置。
 自定义 launcher 省略此参数时按兼容规则冻结 `external`，其执行配置由 launcher 提供；任务简报会说明普通 shell 命令没有自动记录。
 自定义本地 launcher 可显式传 `--experiment-mode local`；已有 cov launcher 使用 `external`，不会被默认 local 配置覆盖。
+新复制的 `scripts/acceptance/rootless_cov_launcher.py` 在其 operator JSON 中默认选择 `cov_engineering_check_reserve_seconds=15`，可显式设为 `0` 关闭预留。它经原 `cov_lineage.configure` 冻结到 Cov 执行配置；不修改私有历史准备脚本、旧 launcher 副本或已接受调用。原单调用65秒不增加：支持 `public_runner_main` 的新调用请求实验至多50秒、检查至多10秒、反馈留2秒，原任务剩余窗口还可进一步裁剪；`exp run` 前的短提示仅说明请求上界，实际是否 `reserved` 及原绝对截止仍看回包的 `engineering_check.time_allocation`。仅接受0或大于2且小于65的有限秒数；`backend_file` 无该检查能力时明确不承诺切分。默认通用 Local 不受此 launcher 配置影响。
 模式在 settings/job 中冻结，恢复沿用原选择；已有实例缺少此字段时保持原配置路径。
 原生 shell 和权限照常可用，临时分析无需逐项受管。
 
