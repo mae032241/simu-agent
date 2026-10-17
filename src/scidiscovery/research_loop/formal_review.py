@@ -141,6 +141,7 @@ def authors(root, step, active=None, memo=None):
     people = {tuple(row) for row in own['participants']}
     complete = own['complete']
     source = seal.get('source_provenance')
+    coverage = None
     if source is not None:
         proof = q._read(root, source)
         coverage = proof.get('managed_input_coverage')
@@ -155,16 +156,23 @@ def authors(root, step, active=None, memo=None):
         contributions = list(job.get('selected_inputs', []))
         from . import execution_inputs
         execution_inputs.validate_seal(root, job, seal)
+        originals = []
         for row in seal.get('compiled_implementations', []):
             compiler = execution_inputs.verify_compilation(root, row['compiler'], material=row['material'])
-            originals = [item['original'] for item in compiler['inputs']]
+            originals.extend(item['original'] for item in compiler['inputs'])
             if compiler.get('author_input') is not None:
                 originals.append(compiler['author_input'])
-            for original in originals:
-                origin_seal = q._read(root, original['producer_seal'])
-                contributions.append(dict(origin_step=original['producer_step'],
-                    origin_result_sha256=origin_seal['sha256'], material=execution_inputs.resolve_native_original(
-                        root, original, compiler_job=job)))
+        # q.validate_outputs above verified this immutable accepted view. Only
+        # actual input contributions join the existing traversal, not all parents.
+        for value in coverage or []:
+            if value['complete'] and 'input_sources' in value:
+                view = q._read(root, value['accepted_ref'])['input_sources']['view']
+                originals.extend(item['origin']['original'] for item in view['files'] if item['origin']['kind'] == 'producer')
+        for original in originals:
+            origin_seal = q._read(root, original['producer_seal'])
+            contributions.append(dict(origin_step=original['producer_step'],
+                origin_result_sha256=origin_seal['sha256'], material=execution_inputs.resolve_native_original(
+                    root, original, compiler_job=job)))
         for selected in contributions:
             origin = selected['origin_step']
             origin_seal = c.read(c.regular(c.host_record(c.workspace(root, origin)) / 'result-identity.json'))

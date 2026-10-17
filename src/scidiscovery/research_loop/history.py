@@ -331,6 +331,12 @@ def managed_input_coverage(root, job, rows):
     result = []; memo = {}
     for row in rows:
         accepted = c.read(root / row['accepted']['snapshot'])
+        if row['status'] in {'known_success','known_failed'} and accepted.get('input_sources') is not None:
+            inputs = execution_inputs.validate_local_input_sources(root, job, accepted)
+            if inputs is not None:
+                result.append(dict(call_id=row['call_id'],accepted_ref=q._ref(root, root / row['accepted']['snapshot']),
+                    complete=True,missing_reason=None,input_sources=accepted['input_sources']['contract']['sha256']))
+                continue
         bound = (authority.accepted_input_subject(root, job, accepted)
             if row['status'] in {'known_success','known_failed'} else None)
         compiler = None
@@ -363,11 +369,18 @@ def validate_input_coverage(root, job, rows, published):
             if set(value) != {'call_id','accepted_ref','complete','missing_reason'} or value['missing_reason'] != 'managed_inputs_not_covered_by_frozen_edges':
                 raise q.IntegrityError('Unsupported managed input coverage changed')
             continue
-        if set(value) != {'call_id','accepted_ref','complete','missing_reason','binding','compiler_ref'} or value['missing_reason'] is not None:
-            raise q.IntegrityError('Sealed managed input coverage shape changed')
         if row['status'] not in {'known_success','known_failed'}:
             raise q.IntegrityError('Nonterminal or not-submitted inputs have no complete coverage')
         accepted = c.read(root / row['accepted']['snapshot'])
+        if 'input_sources' in value:
+            if (set(value) != {'call_id','accepted_ref','complete','missing_reason','input_sources'}
+                    or value['missing_reason'] is not None or accepted.get('input_sources') is None
+                    or value['input_sources'] != accepted['input_sources']['contract']['sha256']
+                    or execution_inputs.validate_local_input_sources(root, job, accepted) is None):
+                raise q.IntegrityError('Sealed managed input contract or view changed')
+            continue
+        if set(value) != {'call_id','accepted_ref','complete','missing_reason','binding','compiler_ref'} or value['missing_reason'] is not None:
+            raise q.IntegrityError('Sealed managed input coverage shape changed')
         authority.validate_accepted_input_subject(root, job, accepted, value['binding'])
         subject = value['binding']['subject']; seal = q._read(root, subject['producer_seal'])
         if [item for item in seal.get('compiled_implementations', []) if item['material'] == subject['material']] != [dict(material=subject['material'], compiler=value['compiler_ref'])]:

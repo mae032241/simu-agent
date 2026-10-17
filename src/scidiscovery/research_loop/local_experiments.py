@@ -24,19 +24,20 @@ class LocalExecution:
     terminal_evidence_kind = 'local_process'
     result_protocol = e.LOCAL_RESULT_PROTOCOL
 
-    def __init__(self, config):
+    def __init__(self, config, *, frozen_interface=None):
         argv=config.get('run_argv')
         if not isinstance(argv,list) or not argv or not all(isinstance(item,str) and item for item in argv):
             raise ValueError('Explicit local command argv required')
         self.config=config
         self.records=e.Records(config)
+        self.frozen_interface=frozen_interface
         self._lease=None
 
     @staticmethod
     def code_assets():
-        from . import runtime
+        from . import runtime, execution_inputs, history, qualification
         from scidiscovery.operations import execution
-        return [runtime.__file__, execution.__file__]
+        return [runtime.__file__, execution.__file__, execution_inputs.__file__, history.__file__, qualification.__file__]
 
     @staticmethod
     def lifecycle_capabilities():
@@ -46,7 +47,14 @@ class LocalExecution:
     def capabilities():
         content=e.encoded(dict(kind='local_command',domain_metrics=False))
         return (AdapterCapability('local_command','execution','scidiscovery.local-command.v1',1,
-            'application/json',content,dict(kind='local_command')),)
+            'application/json',content,dict(kind='local_command')),
+            AdapterCapability(e.INPUT_SOURCES_KEY,'source_provenance',e.INPUT_SOURCES_SCHEMA,1,
+                'application/json',e.encoded(e.INPUT_SOURCES_CONTRACT),
+                dict(scope='Explicit current-job experiments/<name> authoring snapshots and exact bound input copies only; not arbitrary shell reads.')))
+
+    def input_sources(self, payload, metadata):
+        from . import execution_inputs
+        return execution_inputs.local_input_sources(self.config,self.frozen_interface,payload,metadata)
 
     def prepare(self,payload,*,preparation_profile,exchange_directory):
         if preparation_profile!='research_loop.v1' or Path(exchange_directory)!=self.records.root:
@@ -365,7 +373,8 @@ class LocalExecution:
 
 
 def build(context):
-    return RuntimePluginContribution(execution_adapters={'command':LocalExecution(json.loads(context.config_bytes))})
+    return RuntimePluginContribution(execution_adapters={'command':LocalExecution(json.loads(context.config_bytes),
+        frozen_interface=context.frozen_execution_interface)})
 
 
 REGISTRATION=ExecutionInterfaceRegistration('local_execution','1',RuntimePluginFactory(build))

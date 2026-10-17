@@ -176,6 +176,144 @@ def execution_input_coverage(root, job, subject):
     return found[0]['compiler']
 
 
+def _local_source(root, job, item, authoring):
+    """Exact aliases first; remaining declared authoring bytes belong to this W."""
+    source = Path(item['path']); work = c.workspace(root, job['step'])
+    matches = {}
+    for material in job['global_materials']:
+        if source in {root / material['source'], work / material['path']}:
+            origin = dict(kind='global', material=material)
+            matches[json.dumps(origin, sort_keys=True)] = origin
+    for material in _bound(job):
+        if source in {Path(material['source']), work / material['path']}:
+            origin = dict(kind='producer', original=_producer(root, material))
+            matches[json.dumps(origin, sort_keys=True)] = origin
+    if len(matches) > 1:
+        raise q.IntegrityError('Local input has ambiguous exact origins')
+    if matches:
+        origin = next(iter(matches.values()))
+        material = origin.get('material', origin.get('original'))
+        if any(item[key] != material[key] for key in ('sha256','size_bytes')):
+            raise q.IntegrityError('Local read copy differs from its exact original')
+        return origin
+    if authoring is not None and source.is_relative_to(authoring):
+        return dict(kind='author', step=job['step'])
+    return dict(kind='unknown')
+
+
+def _local_authoring(work, directory):
+    directory = Path(directory)
+    try:
+        relative = directory.relative_to(work / 'experiments')
+    except ValueError:
+        return None
+    return directory if len(relative.parts) == 1 and directory.resolve() == directory else None
+
+
+def local_input_sources(config, interface, payload, metadata):
+    """Called by the actual adapter before acceptance; no scientific inference."""
+    from . import experiments as e
+    record = Path(config['record_dir'])
+    if (not isinstance(interface, dict) or interface.get('version') != e.VERSION
+            or not interface.get('code') or len(record.parents) < 5 or 'entry' not in metadata):
+        return None
+    root = record.parents[4]; step = config['scope']['step']; work = c.workspace(root, step)
+    if record != work / 'work/lineage' or not (root / 'jobs' / f'{step:03d}.json').is_file():
+        return None  # Standalone commands have no current scientific-task owner.
+    job = c.read(c.regular(root / 'jobs' / f'{step:03d}.json'))
+    attempt = config.get('native_attempt') or {}
+    if type(attempt.get('number')) is not int:
+        return None
+    projection = root / 'host-runtime/experiment-control' / config['scope']['job_sha256'] / 'interfaces' / f'{attempt["number"]:03d}.json'
+    frozen = q._read(root, q._ref(root, projection))
+    from .protocol import stage_scope
+    if (job['role'] != 'W' or config['scope'] != stage_scope(root, job)
+            or frozen != dict(config, execution_interface=interface)):
+        raise q.IntegrityError('Local authoring differs from its frozen host task')
+    intent = q._ref(root, execution.record(root, step, attempt['number']) / 'native-intent.json')
+    if q._read(root, intent)['task_sha256'] != c.digest(root / 'jobs' / f'{step:03d}.json'):
+        raise q.IntegrityError('Local authoring has no exact native intent')
+    directory = Path(metadata['experiment_directory']); authoring = _local_authoring(work, directory)
+    return dict(job=q._ref(root, root / 'jobs' / f'{step:03d}.json'), native_intent=intent,
+        configuration=q._ref(root, projection), prepared=payload.model_dump(mode='json'),
+        files=[dict(name=item['name'], origin=_local_source(root, job, item, authoring))
+               for item in metadata['snapshot_files']])
+
+
+def validate_local_input_sources(root, job, accepted):
+    """Only the frozen view/retained bytes; never construct or call an adapter."""
+    from . import experiments as e
+    original = accepted.get('input_sources')
+    if original is None:
+        return None
+    expected = dict(key=e.INPUT_SOURCES_KEY,kind='source_provenance',schema_id=e.INPUT_SOURCES_SCHEMA,
+        payload_schema_version=1,media_type='application/json',content=e.encoded(e.INPUT_SOURCES_CONTRACT).decode('utf-8'),
+        sha256=hashlib.sha256(e.encoded(e.INPUT_SOURCES_CONTRACT)).hexdigest(),size_bytes=len(e.encoded(e.INPUT_SOURCES_CONTRACT)))
+    if original['contract'] != expected:
+        return None  # Another contract has no implicit interpretation here.
+    declared=[item for item in accepted['interface'].get('public_capabilities',[]) if item['key']==e.INPUT_SOURCES_KEY]
+    if (len(declared)!=1 or any(declared[0].get(key)!=expected[key] for key in
+            ('key','kind','schema_id','payload_schema_version','media_type','sha256','size_bytes'))):
+        raise q.IntegrityError('Local input view has no unique frozen source capability')
+    view = original['view']
+    if view is None:
+        return None
+    root = Path(root).resolve(); work = c.workspace(root, job['step'])
+    config = q._read(root, view['configuration']); attempt = accepted.get('native_attempt') or {}
+    projection = root / 'host-runtime/experiment-control' / accepted['scope']['job_sha256'] / 'interfaces' / f'{attempt["number"]:03d}.json'
+    if (set(view) != {'job','native_intent','configuration','prepared','files'}
+            or view['job'] != q._ref(root, root / 'jobs' / f'{job["step"]:03d}.json')
+            or q._read(root, view['job']) != job or job['role'] != 'W'
+            or view['configuration'] != q._ref(root, projection)
+            or config['scope'] != accepted['scope'] or config['native_attempt'] != attempt
+            or config['execution_interface'] != accepted['interface']
+            or accepted.get('local_observation_version') != 1
+            or view['prepared'] != accepted['prepared']
+            or view['native_intent'] != q._ref(root, execution.record(root, job['step'], attempt['number']) / 'native-intent.json')
+            or q._read(root, view['native_intent'])['task_sha256'] != view['job']['sha256']
+            or accepted['config_sha256'] != hashlib.sha256(e.encoded({key:value for key,value in config.items() if key != 'execution_interface'})).hexdigest()):
+        raise q.IntegrityError('Local input view lost its exact host owner')
+    for asset in accepted['interface']['code']:
+        q._check(asset)
+    directory = Path(accepted['experiment_directory']); authoring = _local_authoring(work, directory)
+    snapshot = work / 'work/lineage/calls' / accepted['call_id']
+    if (accepted.get('cwd') != str(snapshot / 'inputs')
+            or Path(accepted['source_script']) != directory / accepted['entry']
+            or accepted['script']['path'] != str(snapshot / 'source.py')
+            or len(view['files']) != len(accepted['snapshot_files'])):
+        raise q.IntegrityError('Local input view changed its snapshot inventory')
+    q._check(accepted['script']); complete = True; contributions = []
+    q.validate_inputs(root, job)
+    edges = q._read(root, job['source_provenance'])['edges']
+    seen = set()
+    for declared, item in zip(view['files'], accepted['snapshot_files']):
+        name = item['name']; relative = Path(name)
+        if (set(declared) != {'name','origin'} or relative.is_absolute() or '..' in relative.parts or relative.as_posix() != name
+                or name in seen or declared['name'] != name or Path(item['path']) != directory / relative):
+            raise q.IntegrityError('Local input view changed a declared file')
+        seen.add(name)
+        q._check(dict(path=str(snapshot / 'inputs' / relative), sha256=item['sha256'], size_bytes=item['size_bytes']))
+        origin = declared['origin']
+        # Verify the published classification, not a fresh adapter-generated view.
+        if origin != _local_source(root, job, item, authoring):
+            raise q.IntegrityError('Local input source differs from its frozen exact origin')
+        if origin['kind'] == 'producer':
+            native = origin['original']; material = resolve_native_original(root, native, compiler_job=job)
+            if not any(edge['kind'] == 'producer' and edge['step'] == native['producer_step']
+                    and edge['seal'] == native['producer_seal'] for edge in edges):
+                raise q.IntegrityError('Local input producer is absent from original source edges')
+            seal = q._read(root, native['producer_seal'])
+            contributions.append(dict(origin_step=native['producer_step'], origin_result_sha256=seal['sha256'], material=material))
+        elif origin['kind'] == 'global':
+            if not any(edge['kind'] == 'global' and edge['material'] == origin['material'] for edge in edges):
+                raise q.IntegrityError('Local global input is absent from original source edges')
+        elif origin['kind'] == 'unknown':
+            complete = False
+    if accepted['entry'] not in seen:
+        raise q.IntegrityError('Local input view omitted its entrypoint')
+    return contributions if complete else None
+
+
 class NativeInputHost:
     """A non-JSON service created only after the original host context is checked."""
 

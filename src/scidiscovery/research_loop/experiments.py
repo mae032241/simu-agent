@@ -41,6 +41,11 @@ RETIREMENT_KEY = 'original_submission_retirement'
 RETIREMENT_SCHEMA = 'scidiscovery.permanent-submission-retirement.v1'
 RETIREMENT_CONTRACT = dict(version=1, identity='original_prepared_sha256',
     absent='permanent_not_submitted', invocation='context_manager', refunds=False)
+INPUT_SOURCES_KEY = 'managed_input_sources'
+INPUT_SOURCES_SCHEMA = 'scidiscovery.managed-input-sources.v1'
+INPUT_SOURCES_CONTRACT = dict(version=1, view='exact_snapshot_sources',
+    authoring='current_job_experiment_directory', inputs='frozen_job_originals_and_read_copies',
+    scope='framework_declared_inputs_only')
 
 
 class IntegrityError(ValueError):
@@ -289,7 +294,8 @@ def freeze(config, executor, *, path=None):
         config_sha256=hashlib.sha256(encoded(body)).hexdigest(),
         capabilities=asdict(lifecycle_capabilities(adapter)),
         code=[proof(item) for item in dict.fromkeys(assets)])
-    if 'registered_implementation' in value:
+    if ('registered_implementation' in value
+            or any(getattr(item,'key',None)==INPUT_SOURCES_KEY for item in adapter.capabilities())):
         value['execution_interface']['public_capabilities']=_public_capabilities(adapter)
     return value
 
@@ -919,6 +925,21 @@ def _dispatch_descriptor(config, payload, *, parent=None, new=False, change=None
     except TypeError as error:
         if options:raise UnsupportedExecution('Selected executor does not support local command options') from error
         raise
+    source_contracts=[item for item in adapter.capabilities() if item.key==INPUT_SOURCES_KEY]
+    if len(source_contracts)>1:raise IntegrityError('Ambiguous managed input source declaration')
+    if source_contracts:
+        item=source_contracts[0]
+        actual=[row for row in _public_capabilities(adapter) if row['key']==INPUT_SOURCES_KEY]
+        frozen=[row for row in config['execution_interface'].get('public_capabilities',[]) if row['key']==INPUT_SOURCES_KEY]
+        if frozen!=actual:raise IntegrityError('Managed input source capability differs from frozen interface')
+        if (item.kind=='source_provenance' and item.schema_id==INPUT_SOURCES_SCHEMA
+                and item.payload_schema_version==1 and item.media_type=='application/json'
+                and item.content==encoded(INPUT_SOURCES_CONTRACT)):
+            method=getattr(adapter,'input_sources',None)
+            metadata['input_sources']=dict(contract=dict(key=item.key,kind=item.kind,schema_id=item.schema_id,
+                payload_schema_version=item.payload_schema_version,media_type=item.media_type,
+                content=item.content.decode('utf-8'),sha256=hashlib.sha256(item.content).hexdigest(),size_bytes=len(item.content)),
+                view=method(prepared,metadata) if callable(method) else None)
     from . import replay_check
     metadata['engineering_check'] = replay_check.acceptance(config, adapter)
     accepted = records.accept(prepared, metadata, config['execution_interface'],expected_calls=[path.name for path in before],mechanism=mechanism)
