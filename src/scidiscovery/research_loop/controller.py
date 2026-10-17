@@ -494,17 +494,8 @@ def _run(root):
             if (root / "pause.request").exists():
                 return _finish(root, settings, "paused", completed, last,
                     reason="User pause.request prevents further native launches", next_role=role)
-            if author_correction is not None and role in {'H', 'A'} and semantic.accepted(root, author_correction, step) >= semantic.MAX_AUTHOR_CORRECTIONS:
-                if author_correction['reason']=='formal_review_unavailable':
-                    if settings.get('delivery_policy') is not None:
-                        return _start_closeout(root,completed,step,'formal_review_unavailable_correction_limit')
-                    from . import formal_review
-                    blocked=_finish(root,settings,'formal_review_blocked',completed,last,
-                        reason='formal_review_unavailable_correction_limit',next_role=role)
-                    blocked['formal_review_feedback']=formal_review.feedback(root,dict(evidence_return=evidence_return))
-                    blocked['recovery_conditions']=['A different exact subject or newly verifiable identity evidence is required for another formal-review request; unchanged replay does not grant more corrections.',
-                        'Existing operator closeout can retain an incomplete report; it grants no missing review or execution permission.']
-                    return blocked
+            if (author_correction is not None and author_correction['reason']!='formal_review_unavailable'
+                    and role in {'H', 'A'} and semantic.accepted(root, author_correction, step) >= semantic.MAX_AUTHOR_CORRECTIONS):
                 return _finish(root, settings, 'semantic_correction_required', completed, last,
                     reason='semantic_correction_limit', next_role=role)
             if role=='W' and parents:

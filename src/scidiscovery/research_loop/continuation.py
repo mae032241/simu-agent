@@ -193,6 +193,8 @@ def output_request(root, step, record, *, source_attempt=None, verify_task=True)
             raise ValueError('Original final output changed before repair')
         try:
             science=c.science_payload(raw, job['role'], job.get('handoff_protocol', 1), 'selection' in job,**c.response_options(job))
+            from . import formal_review
+            formal_review.validate_choice(root,job,science)
             if job['role']=='W':
                 from . import worker_delivery
                 worker_delivery.require_delivery(root,job,science,record)

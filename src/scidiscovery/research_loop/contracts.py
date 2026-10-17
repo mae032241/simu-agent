@@ -113,7 +113,7 @@ def actions(role,protocol=CURRENT,*,audit_enabled=True,review_enabled=False):
 
 
 def response_options(job):
-    return dict(formal_review=bool(job.get('formal_review')), review_enabled=job.get('formal_review_version')==1)
+    return dict(formal_review=bool(job.get('formal_review')), review_enabled=job.get('formal_review_version')==1 and job.get('formal_review_choices',{}).get('launcher_supported',True))
 
 
 def result_schema(role: str,protocol=CURRENT,comparison=False,*,formal_review=False,review_enabled=False):
@@ -136,7 +136,7 @@ def result_schema(role: str,protocol=CURRENT,comparison=False,*,formal_review=Fa
                 'finish ends scientific exploration without granting delivery or asserting global completion. '
                 'extract requests scientific evidence from E, never copying, packaging, path resolution or submission. '
                 'audit is optional: check audit_capability.available; a disabled request returns unavailable without execution. '
-                'formal_review, when enabled, is conditional: unchanged unavailable subject/identity receives finite author clarification, not a formal reviewer. A changed exact selection or newly verifiable identity may request it again. '
+                'formal_review, when enabled, is conditional: unchanged unavailable subject/identity is rejected before sealing for same-session output repair, not another A turn. A changed exact selection or newly verifiable identity may request it again. '
                 'During closeout use deliver, audit, finish or wait; other actions receive bounded clarification because exploration is closed.')
     if role=='W':
         from . import worker_delivery
@@ -423,7 +423,8 @@ def science_view(job, root=None):
     return {key: value for key, value in {
         'role': job['role'], 'question': question,
         **(dict(formal_review_capability=dict(enabled=True,
-            instruction='formal_review requests an independent assessment of the single implementation selected through the existing scientific selection. Check formal_review_feedback for the current restriction and ordinary alternatives. The schema retains formal_review for a changed exact subject or newly verifiable identity; unchanged failure consumes finite author clarification. Control binds subject and identity; an unavailable response grants no qualification.'),
+            choices=formal_review.public_choices(root,job),
+            instruction='formal_review requests an independent assessment of the single implementation selected through the existing scientific selection. Check formal_review_feedback for the current restriction and ordinary alternatives. The schema retains formal_review for a changed exact subject or newly verifiable identity; unchanged failure requires same-session output repair without sealing or dispatching another A. Control binds subject and identity; an unavailable response grants no qualification.'),
             formal_review_feedback=formal_review.feedback(root,job))
            if job.get('formal_review_version')==1 else {}),
         **(dict(source_restrictions=job['source_restrictions']) if 'source_restrictions' in job else {}),
@@ -765,6 +766,10 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
         else:
             write(catalogue_path, catalogue)
             catalogue_path.chmod(0o400)
+    if role=='A' and job.get('formal_review_version')==1 and not job.get('formal_review') and (retained is None or 'formal_review_choices' in retained):
+        from . import formal_review
+        job['formal_review_choices']=formal_review.choice_constraints(root,job,
+            retained['formal_review_choices']['unavailable'] if retained is not None else None)
     # Retained legacy jobs keep their exact identity and remain unqualified.
     if retained is None or 'source_provenance' in retained:
         from . import qualification

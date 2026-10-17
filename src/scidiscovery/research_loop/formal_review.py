@@ -184,29 +184,37 @@ def _subject(root, selected):
     return dict(producer_step=step, producer_seal=q._ref(root, path), material=item['material'])
 
 
-def request_route(root, job, payload, parents):
-    root = Path(root).resolve()
+def _request_value(root, selected):
     current = contract(root)
-    seal_path = c.host_record(c.workspace(root, job['step'])) / 'result-identity.json'
-    seal = c.read(c.regular(seal_path))
-    selected = seal.get('selected_inputs', [])
     subject = _subject(root, selected)
     identity = authors(root, subject['producer_step']) if subject else dict(complete=False, participants=[])
     launcher = c.settings(root)['native_launcher_argv']
     reason = ('formal_review_subject_missing_or_ambiguous' if subject is None else
               'subject_authorship_unsupported' if not identity['complete'] else
               'reviewer_identity_unsupported' if len(launcher)!=1 or Path(launcher[0]).name!='codex' else None)
-    value = dict(contract=current, question=QUESTION, requester_rationale=payload['route_reason'], subject=subject,
-                 authors=identity, unresolved_selection=selected if subject is None else None, reason=reason)
+    return dict(contract=current, question=QUESTION, subject=subject,
+                authors=identity, unresolved_selection=selected if subject is None else None, reason=reason)
+
+
+def _failure_key(value):
+    return {key:value[key] for key in ('contract','subject','authors','unresolved_selection','reason')}
+
+
+def request_route(root, job, payload, parents):
+    root = Path(root).resolve()
+    seal_path = c.host_record(c.workspace(root, job['step'])) / 'result-identity.json'
+    seal = c.read(c.regular(seal_path))
+    value = dict(_request_value(root,seal.get('selected_inputs', [])), requester_rationale=payload['route_reason'])
+    reason=value['reason']
     requester = dict(step=job['step'], seal=q._ref(root, seal_path))
     record = c.host_record(c.workspace(root, job['step']))
     if reason is not None:
-        failure_key={key:value[key] for key in ('contract','subject','authors','unresolved_selection','reason')}
+        failure_key=_failure_key(value)
         ref = q._save(root, record / 'formal-review-unavailable.json', dict(requester=requester, failure=value,failure_key=failure_key))
         return ('A', sorted(set([*parents,job['step']])), 'Choose a scientific next action; formal review is unavailable: '+reason,
                 dict(kind='formal_review_unavailable', unavailable=ref))
     ref = q._save(root, record / 'formal-review-request.json', dict(requester=requester, **value))
-    return 'A', [subject['producer_step']], value['question'], dict(kind='formal_review', request=ref)
+    return 'A', [value['subject']['producer_step']], value['question'], dict(kind='formal_review', request=ref)
 
 
 def input_binding(root, reference):
@@ -240,11 +248,67 @@ def unavailable(root, step):
 
 
 def unavailable_attempts(root, step, *, before_step=None):
-    """Reuse failure originals across E/other routes, without another retry ledger."""
+    """Validate historical finite-correction originals; new routes never count these."""
     key=unavailable(root,step)['failure_key']
     stop=before_step if before_step is not None else step+1
     steps=sorted(int(path.parent.name) for path in (Path(root)/'native-evidence').glob('*/formal-review-unavailable.json'))
     return [prior for prior in steps if prior<stop and unavailable(root,prior)['failure_key']==key]
+
+
+def choice_constraints(root, job, references=None):
+    """Freeze existing failures, not a retry allowance or a second history store."""
+    launcher=c.settings(root)['native_launcher_argv']
+    if references is None:
+        paths=sorted((Path(root)/'native-evidence').glob('*/formal-review-unavailable.json'),key=lambda path:int(path.parent.name))
+        references=[q._ref(root,path) for path in paths if int(path.parent.name)<job['step']]
+    for reference in references:
+        value=q._read(root,reference)
+        step=value['requester']['step']
+        if (not 0<step<job['step'] or reference!=q._ref(root,c.host_record(c.workspace(root,step))/'formal-review-unavailable.json')
+                or value!=unavailable(root,step)):
+            raise q.IntegrityError('Review choice constraint lost its exact unavailable original')
+    return dict(launcher_supported=len(launcher)==1 and Path(launcher[0]).name=='codex', unavailable=references)
+
+
+def validate_choice(root, job, payload):
+    """A known unavailable request is an output repair, never another A dispatch."""
+    choices=job.get('formal_review_choices')
+    if choices is None or payload.get('next_action')!='formal_review':
+        return
+    from .output_repair import OutputRepairRequired
+    selected=c.selected_inputs(c.workspace(root,job['step']),payload,job)
+    value=_request_value(root,selected)
+    if value['subject'] is None:
+        raise OutputRepairRequired('formal_review_unavailable',
+            'Select exactly one resolvable scientific implementation for formal_review, or choose another scientific action. No review was dispatched; do not repeat experiments.')
+    for reference in choices['unavailable']:
+        failure=q._read(root,reference)
+        if _failure_key(value)==failure['failure_key']:
+            raise OutputRepairRequired('formal_review_unavailable',
+                'Formal review of this exact subject and identity evidence is unavailable. Choose another scientific action or select a different exact subject in this same response. Rewording grants no qualification; do not repeat experiments.')
+
+
+def public_choices(root, job):
+    choices=job.get('formal_review_choices')
+    if choices is None:
+        return None
+    rows=[];seen=set()
+    for reference in choices['unavailable']:
+        failure=q._read(root,reference)['failure'];subject=failure['subject']
+        object_id=None
+        if subject is not None:
+            seal=q._read(root,subject['producer_seal'])
+            materials=sorted(seal['materials'],key=lambda row:row['path'])
+            if subject['material'] not in materials:
+                raise q.IntegrityError('Unavailable subject differs from its producer original')
+            role=c.read(c.regular(Path(root)/'jobs'/f'{subject["producer_step"]:03d}.json'))['role']
+            object_id=f'{role}{subject["producer_step"]:03d}-I{materials.index(subject["material"])+1:03d}'
+        key=(object_id,failure['reason'])
+        if key not in seen:
+            seen.add(key);rows.append(dict(subject=object_id,reason=failure['reason']))
+    return dict(launcher_supported=choices['launcher_supported'], unavailable=rows[:8],omitted_count=max(0,len(rows)-8),
+        scope='Each restriction applies only while its exact subject, review contract and verified identity evidence remain unchanged.',
+        enforcement='Control rejects unchanged unavailable requests before sealing, using same-session output repair. A different exact singleton may be selected in the same response; ordinary scientific actions retain their own checks.')
 
 
 def bind_job(root, job):
@@ -281,6 +345,8 @@ def validate_job(root, job):
         if ((work/'inputs/history').exists() or (work/'inputs/history').is_symlink()
                 or any((work/'inputs/parents').glob('*/conclusion.json'))):
             raise q.IntegrityError('Formal review retained default historical or requester conclusions')
+    if 'formal_review_choices' in job and job['formal_review_choices']!=choice_constraints(root,job,job['formal_review_choices']['unavailable']):
+        raise q.IntegrityError('Frozen formal review choice constraints changed')
     if job.get('formal_review_version')==1 and contract(root) is None:
         raise q.IntegrityError('Formal review task lost its operator contract')
 
@@ -294,7 +360,7 @@ def feedback(root, job):
                     alternatives_scope='Examples only; each schema action retains its own capability, scientific-decision, budget and closeout checks.',
                     formal_review=dict(available=False,scope='Unchanged subject and identity evidence',
                         recovery='Select a different exact subject or supply the missing verifiable identity evidence.'),
-                    instruction='Choose another scientific action. formal_review remains a conditional schema choice for a changed subject or identity; rewording the same request consumes the existing finite author corrections and never dispatches an unavailable review.')
+                    instruction='Choose another scientific action. formal_review remains a conditional schema choice for a changed subject or identity; an unchanged request is rejected before sealing for same-session output repair, never another review or automatic A turn. Other scientific actions remain available under their own checks.')
     if back.get('kind')=='formal_review_return':
         proof=q._read(root,back['review'])
         return dict(status=proof['status'],verdict=proof['verdict'],independence=proof['independence'],

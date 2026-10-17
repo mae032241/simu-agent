@@ -13,6 +13,8 @@ def outcome(root,job,payload):
     from .protocol import CURRENT
     if type(job.get('handoff_protocol')) is not int or job['handoff_protocol']!=CURRENT:
         raise ValueError('Current scientific interpretation required')
+    from . import formal_review
+    formal_review.validate_choice(root,job,payload)
     enabled=c.settings(root).get('search_policy') is not None and not job.get('formal_review')
     interpretation=search.interpret(root,job,payload) if enabled else dict(focus=None,allocation=None,diagnostics=[])
     diagnostics=interpretation['diagnostics']
@@ -181,21 +183,16 @@ def effective_route(root, step, result, job, route):
     role, parents, instruction, evidence_return, current_h, current_w, correction_request = route
     request = None
     previous = job.get('author_correction')
-    # A legal scientific alternative releases this routing correction, not its
-    # immutable failure history. A later unchanged request finds the same root.
+    # Historical review-only corrections do not constrain ordinary science.
+    # Exact unavailable originals now constrain the request before sealing.
     if previous is not None and previous['reason']=='formal_review_unavailable':
         previous=None
     seal = c.read(c.host_record(c.workspace(root, step)) / 'result-identity.json')
     from . import decision
     decision_code = decision.reason(root, job, result)
     if (evidence_return or {}).get('kind')=='formal_review_unavailable':
-        from . import formal_review
-        source=_source(root,step)
         if previous is not None:
-            request=dict(previous,source=source)
-        else:
-            first=formal_review.unavailable_attempts(root,step)[0]
-            request=dict(root=_source(root,first),source=source,reason='formal_review_unavailable')
+            request=dict(previous,source=_source(root,step))
     elif decision_code is not None:
         source = _source(root, step)
         request = dict(root=previous['root'] if previous else source, source=source,

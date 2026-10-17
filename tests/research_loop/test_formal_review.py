@@ -37,7 +37,7 @@ else:
   value.update(stage_intent='review',mechanism_findings=None)
  if role=='A':
   mode=os.environ.get('REVIEW_UNAVAILABLE_ROUTE','finish')
-  request=step==3 or bool(os.environ.get('REVIEW_MISSING_AUTHOR')) and (step<5 or mode!='finish')
+  request=step==3 or bool(os.environ.get('REVIEW_MISSING_AUTHOR')) and mode=='repeat'
   value.update(next_action='extract' if step==4 and mode=='extract' else 'formal_review' if request else 'finish',route_reason='Assess the selected implementation '+str(step),candidate_recommendation=None,search_review=None,progress_assessment=None,decision_request=None,portfolio_review=None)
   if request:value['implementation_selection']=['W002-I001']
   if step==3:value.update(summary=anchor,scientific_result=anchor,route_reason=anchor)
@@ -119,91 +119,121 @@ def test_native_author_session_cannot_review_itself_even_with_pass(tmp_path,monk
 
 
 @pytest.mark.process_e2e
-def test_unknown_identity_preserves_science_and_rewording_cannot_repeat_unavailable(tmp_path,monkeypatch):
+def test_unknown_identity_preserves_science_and_allows_ordinary_finish(tmp_path,monkeypatch):
     root,_=scripted(tmp_path,monkeypatch,missing=True)
     result=controller.run(root)
-    assert result['status']=='finish' and result['completed_steps']==5
-    assert not any((c.host_record(c.workspace(root,step))/'formal-review.json').exists() for step in range(1,6))
+    assert result['status']=='finish' and result['completed_steps']==4,result
     assert c.validate(c.workspace(root,3))['next_action']=='formal_review'
-    assert c.validate(c.workspace(root,3))['route_reason']!=c.validate(c.workspace(root,4))['route_reason']
-    assert review.unavailable(root,3)['failure_key']==review.unavailable(root,4)['failure_key']
-    view=c.read(c.workspace(root,5)/'science-task.json')
+    assert review.unavailable(root,3)['failure']['reason']=='subject_authorship_unsupported'
+    view=c.read(c.workspace(root,4)/'science-task.json')
     assert view['formal_review_feedback']['status']=='unavailable'
-    assert view['formal_review_feedback']['formal_review']['available'] is False
-    assert 'finish' in view['formal_review_feedback']['alternative_examples']
-    assert view['control_request']['remaining_author_corrections']==1
-    assert 'formal_review' in c.result_schema('A',**c.response_options(c.read(root/'jobs/005.json')))['properties']['next_action']['enum']
+    assert view['formal_review_capability']['choices']['unavailable']==[
+        dict(subject='W002-I001',reason='subject_authorship_unsupported')]
+    assert 'control_request' not in view
+    assert 'author_correction' not in c.read(root/'jobs/004.json')
+    assert not list((root/'native-evidence').glob('*/formal-review.json'))
 
 
 @pytest.mark.process_e2e
-def test_unavailable_failure_allowance_survives_extraction_and_restart(tmp_path,monkeypatch):
-    root,_=scripted(tmp_path,monkeypatch,missing=True,unavailable_route='extract')
-    settings_original=(root/'settings.json').read_bytes()
+def test_reworded_unavailable_request_needs_original_output_repair_not_another_a(tmp_path,monkeypatch):
+    root,_=scripted(tmp_path,monkeypatch,missing=True,unavailable_route='repeat')
     result=controller.run(root)
-    assert result['status']=='formal_review_blocked' and result['completed_steps']==7,result
-    assert result['reason']=='formal_review_unavailable_correction_limit' and result['recovery_conditions']
-    assert result['goal_completion']=='not_asserted'
-    assert [c.read(root/'jobs'/f'{step:03d}.json')['role'] for step in (4,5,6,7)]==['A','E','A','A']
-    assert review.unavailable_attempts(root,7)==[3,6,7]
-    correction=c.read(root/'jobs/007.json')['author_correction']
-    assert correction['root']['step']==3 and semantic.accepted(root,correction,8)==semantic.MAX_AUTHOR_CORRECTIONS
-    assert not (root/'jobs/008.json').exists()
-    assert result['usage']['observed_tokens']==7*15 and budget.used_steps(root)==7
+    # This launcher has no authorized resume policy. The invalid output remains
+    # repairable work, rather than a sealed failure consuming new A turns.
+    assert result['status']=='output_repair_required' and result['completed_steps']==3,result
+    assert c.read(c.host_record(c.workspace(root,3))/'science-output.json')['route_reason']!=c.read(
+        c.host_record(c.workspace(root,4))/'science-output.json')['route_reason']
+    assert not (c.host_record(c.workspace(root,4))/'result-identity.json').exists()
+    assert not (root/'jobs/005.json').exists()
+    assert review.unavailable(root,4) is None
+    assert budget.closeout_state(root)['begin'] is None
+    assert budget.snapshot(root)['max_tokens']==2000 and budget.snapshot(root)['max_seconds']==60
+    assert result['usage']['observed_tokens']==60 and budget.used_steps(root)==4
+    originals={path:path.read_bytes() for path in (root/'native-evidence').glob('*/formal-review-unavailable.json')}
+    assert controller.run(root)['status']=='output_repair_required'
+    assert all(path.read_bytes()==data for path,data in originals.items())
+    assert not (root/'jobs/005.json').exists()
+
+
+@pytest.mark.process_e2e
+def test_unavailable_review_does_not_force_delivery_closeout_across_extraction(tmp_path,monkeypatch):
+    policy=dict(closeout_a=dict(max_observed_tokens=30,max_seconds=1),inflight_tokens=0,
+        cleanup_seconds=0,submit_seconds=0,confirm_seconds=0,adapter=None)
+    root,_=scripted(tmp_path,monkeypatch,missing=True,unavailable_route='extract',delivery_policy=policy)
+    result=controller.run(root)
+    assert result['status']=='exported_unsubmitted',result
+    assert [c.validate(c.workspace(root,step))['role'] for step in range(1,7)]==['H','W','A','A','E','A']
+    assert [c.read(root/'jobs'/f'{step:03d}.json')['role'] for step in (4,5,6)]==['A','E','A']
+    state=budget.closeout_state(root)
+    assert state['begin']['stop_reason']=='scientific_finish' and state['begin']['source_cutoff']==6
+    assert state['actions']==[] and not (root/'jobs/007.json').exists()
+    job=c.read(root/'jobs/006.json')
+    assert job['formal_review_choices']['unavailable']==c.read(root/'jobs/004.json')['formal_review_choices']['unavailable']
+    assert 'author_correction' not in job
+    science=c.validate(c.workspace(root,6))
+    from scidiscovery.research_loop.output_repair import OutputRepairRequired
+    with pytest.raises(OutputRepairRequired,match='exact subject and identity'):
+        review.validate_choice(root,job,dict(science,next_action='formal_review',implementation_selection=['W002-I001']))
     limits=budget.snapshot(root)
     assert limits['max_tokens']==2000 and limits['max_seconds']==60
     assert limits['consumed_seconds']>0 and limits['seconds_remaining']<60
     assert not list((root/'native-evidence').glob('*/formal-review.json'))
-    originals={path:path.read_bytes() for path in [*(root/'jobs').glob('*.json'),
-        *(root/'native-evidence').glob('*/formal-review-unavailable.json')]}
-    used=budget.used_steps(root)
-    again=controller.run(root)
-    assert again['status']==result['status'] and again['recovery_conditions']==result['recovery_conditions']
-    assert budget.used_steps(root)==used and all(path.read_bytes()==raw for path,raw in originals.items())
-    assert again['usage']==result['usage'] and (root/'settings.json').read_bytes()==settings_original
-    assert budget.snapshot(root)['consumed_seconds']>=limits['consumed_seconds']
-    assert not (root/'jobs/008.json').exists()
 
 
-@pytest.mark.process_e2e
-def test_exhausted_unavailable_review_enters_existing_export_closeout(tmp_path,monkeypatch):
-    policy=dict(closeout_a=dict(max_observed_tokens=30,max_seconds=1),inflight_tokens=0,
-        cleanup_seconds=0,submit_seconds=0,confirm_seconds=0,adapter=None)
-    root,_=scripted(tmp_path,monkeypatch,missing=True,unavailable_route='repeat',delivery_policy=policy)
-    result=controller.run(root)
-    assert result['status']=='exported_unsubmitted' and result['goal_completion']=='not_asserted',result
-    state=budget.closeout_state(root)
-    assert state['begin']['stop_reason']=='formal_review_unavailable_correction_limit'
-    assert state['begin']['source_cutoff']==5 and state['actions']==[]
-    assert result['current_actual'] is None and not (root/'jobs/006.json').exists()
-    before={path:path.read_bytes() for path in (root/'control-ledger').glob('*.json')}
-    assert controller.run(root)['status']=='exported_unsubmitted'
-    assert budget.closeout_state(root)['begin']==state['begin']
-    assert all(path.read_bytes()==raw for path,raw in before.items())
-
-
-@pytest.mark.parametrize('selection,reason',[
-    ([], 'formal_review_subject_missing_or_ambiguous'),
-    (['W002-I001'], 'reviewer_identity_unsupported'),
-])
-def test_unavailable_subject_or_launcher_returns_ordinary_author_not_qualification(tmp_path,monkeypatch,selection,reason):
-    root=prepare(tmp_path,['unsupported-launcher'])
+def test_review_choice_rejects_known_failure_but_new_subject_can_use_same_output(tmp_path,monkeypatch):
+    from scidiscovery.research_loop import continuation
+    from scidiscovery.research_loop.output_repair import OutputRepairRequired
+    root=prepare(tmp_path,['codex'])
     finish(root,1,'H',[],action='experiment')
-    finish(root,2,'W',[1],files={'model.txt':'a scientific implementation','other.txt':'a different exact subject'})
-    job,_,_=finish(root,3,'A',[1,2],action='formal_review',selection=selection)
-    # Isolate the launcher-rejection branch; this stand-in grants no native identity/review.
-    monkeypatch.setattr(review,'authors',lambda *args:dict(complete=True,participants=[dict(engine='fixture',session='author')]))
+    finish(root,2,'W',[1],files={'model.txt':'first exact subject','other.txt':'second exact subject'})
+    job,_,_=finish(root,3,'A',[1,2],action='formal_review',selection=['W002-I001'])
     route=review.request_route(root,job,c.validate(c.workspace(root,3)),[1,2,3])
-    assert route[0]=='A' and route[3]['kind']=='formal_review_unavailable'
-    assert review.unavailable(root,3)['failure']['reason']==reason
     route8=semantic.effective_route(root,3,c.validate(c.workspace(root,3)),job,(*route,1,2,None))
-    child=c.build_job(root,4,'A',route8[1],instruction=route8[2],evidence_return=route8[3],author_correction=route8[7])
-    assert child.get('purpose') is None and not child.get('formal_review')
-    assert not (c.host_record(c.workspace(root,4))/'formal-review.json').exists()
+    assert route8[7] is None
+    child=c.build_job(root,4,'A',route8[1],instruction=route8[2],evidence_return=route8[3])
+    with pytest.raises(OutputRepairRequired,match='exact subject and identity'):
+        finish(root,4,'A',route8[1],action='formal_review',selection=['W002-I001'])
+    record=c.host_record(c.workspace(root,4))
+    assert not (record/'result-identity.json').exists()
+    repair=continuation.output_request(root,4,record)
+    assert repair['code']=='formal_review_unavailable'
+    for selection in (None,[],['W002-I001','W002-I002'],['W999-I001']):
+        with pytest.raises(OutputRepairRequired):
+            review.validate_choice(root,child,dict(next_action='formal_review',implementation_selection=selection))
+    # Isolate key comparison only: newly verified identity is a changed fact,
+    # not qualification. No fake identity is persisted into a native receipt.
+    with monkeypatch.context() as changed_identity:
+        changed_identity.setattr(review,'authors',lambda *args:dict(complete=True,participants=[['fixture','new-identity']]))
+        review.validate_choice(root,child,dict(next_action='formal_review',implementation_selection=['W002-I001']))
+    # Same frozen job and same output fields: a different exact material may
+    # request review. It still has no verified author and grants no qualification.
     child,_,_=finish(root,4,'A',route8[1],action='formal_review',selection=['W002-I002'])
     changed=review.request_route(root,child,c.validate(c.workspace(root,4)),[1,2,4])
-    changed8=semantic.effective_route(root,4,c.validate(c.workspace(root,4)),child,(*changed,1,2,None))
+    assert changed[3]['kind']=='formal_review_unavailable'
     assert review.unavailable(root,3)['failure_key']!=review.unavailable(root,4)['failure_key']
-    assert changed8[7]['root']['step']==4 and semantic.accepted(root,changed8[7],5)==0
+    assert child['formal_review_choices']['unavailable']==c.read(root/'jobs/004.json')['formal_review_choices']['unavailable']
+    assert len(child['formal_review_choices']['unavailable'])==1 # Future failure never changes old job.
+    reference=child['formal_review_choices']['unavailable'][0]
+    original=(root/reference['path']).read_bytes()
+    (root/reference['path']).chmod(0o600) # Deliberate test-only mutation of a frozen original.
+    (root/reference['path']).write_bytes(original+b' ')
+    with pytest.raises(ValueError):
+        c._validate_inputs(root,c.workspace(root,4),child)
+
+
+def test_unsupported_launcher_removes_review_action_without_blocking_science(tmp_path):
+    from scidiscovery.research_loop.output_repair import OutputRepairRequired
+    root=prepare(tmp_path,['unsupported-launcher'])
+    finish(root,1,'H',[],action='experiment')
+    finish(root,2,'W',[1],files={'model.txt':'scientific implementation'})
+    job=c.build_job(root,3,'A',[1,2])
+    schema=c.result_schema('A',**c.response_options(job))
+    assert 'formal_review' not in schema['properties']['next_action']['enum']
+    with pytest.raises(OutputRepairRequired,match='Correct required fields'):
+        finish(root,3,'A',[1,2],action='formal_review',selection=['W002-I001'])
+    finish(root,3,'A',[1,2],action='finish',selection=['W002-I001'])
+    assert c.validate(c.workspace(root,3))['next_action']=='finish'
+    assert review.unavailable(root,3) is None
 
 
 def test_ordinary_a_and_pass_text_do_not_gain_formal_qualification(tmp_path):
@@ -268,7 +298,7 @@ def test_review_subject_from_requester_keeps_artifact_but_not_its_conclusion(tmp
 
 
 def test_unavailable_review_preserves_existing_nonreview_author_correction(tmp_path):
-    root=prepare(tmp_path,['unsupported-launcher'],decision_contract_version=1)
+    root=prepare(tmp_path,['codex'],decision_contract_version=1)
     finish(root,1,'H',[],action='experiment')
     finish(root,2,'W',[1],files={'model.txt':'a scientific implementation'})
     job,_,_=finish(root,3,'A',[1,2],action='continue_w',selection=['W002-I001'])
