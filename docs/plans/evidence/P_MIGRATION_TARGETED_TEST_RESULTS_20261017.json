@@ -1,0 +1,408 @@
+{
+  "base_commit": "8e29d07",
+  "note": "Includes initial failures and targeted retests; do not sum passing counts as unique cases.",
+  "limits": {
+    "numeric_threads": 1,
+    "limits": {
+      "observed_tree_rss_stop_bytes": 805306368,
+      "minimum_available_bytes": 10737418240,
+      "available_drop_stop_bytes": 1073741824,
+      "timeout_seconds": 120,
+      "sample_interval_seconds": 0.1,
+      "termination_grace_seconds": 2,
+      "log_bytes": 2097152
+    }
+  },
+  "batches": [
+    {
+      "batch_group": "capacity",
+      "targets": [
+        "tests/research_loop/test_full_history_records.py"
+      ],
+      "lane": "source",
+      "summary": "10 passed in 10.26s",
+      "returncode": 0,
+      "elapsed_seconds": 10.442,
+      "tree_rss_high_water_bytes": 110436352,
+      "stop_reason": "exited",
+      "cleanup_complete": true,
+      "memory_stop_triggers": [],
+      "log": ".trial/p_migration_validation_20261017/capacity/batch-001/pytest.log"
+    },
+    {
+      "batch_group": "p1_large_contract",
+      "targets": [
+        "tests/research_loop/test_execution_configuration.py::test_describe_retains_complete_large_public_contract"
+      ],
+      "lane": "stress",
+      "summary": "1 passed in 0.36s",
+      "returncode": 0,
+      "elapsed_seconds": 0.542,
+      "tree_rss_high_water_bytes": 59871232,
+      "stop_reason": "exited",
+      "cleanup_complete": true,
+      "memory_stop_triggers": [],
+      "log": ".trial/p_migration_validation_20261017/p1_large_contract/batch-001/pytest.log"
+    },
+    {
+      "batch_group": "p1_process",
+      "targets": [
+        "tests/research_loop/test_execution_configuration.py"
+      ],
+      "lane": "process",
+      "summary": "4 passed, 23 deselected in 5.93s",
+      "returncode": 0,
+      "elapsed_seconds": 6.12,
+      "tree_rss_high_water_bytes": 254808064,
+      "stop_reason": "exited",
+      "cleanup_complete": true,
+      "memory_stop_triggers": [],
+      "log": ".trial/p_migration_validation_20261017/p1_process/batch-001/pytest.log"
+    },
+    {
+      "batch_group": "p1_source",
+      "targets": [
+        "tests/research_loop/test_execution_configuration.py"
+      ],
+      "lane": "source",
+      "summary": "22 passed, 5 deselected in 1.08s",
+      "returncode": 0,
+      "elapsed_seconds": 1.282,
+      "tree_rss_high_water_bytes": 62337024,
+      "stop_reason": "exited",
+      "cleanup_complete": true,
+      "memory_stop_triggers": [],
+      "log": ".trial/p_migration_validation_20261017/p1_source/batch-001/pytest.log"
+    },
+    {
+      "batch_group": "p2_composed_retest",
+      "targets": [
+        "tests/research_loop/test_composed_execution_results.py::test_late_reconcile_preserves_old_sealed_unknown_without_explicit_recovery"
+      ],
+      "lane": "process",
+      "summary": "1 passed in 1.13s",
+      "returncode": 0,
+      "elapsed_seconds": 1.311,
+      "tree_rss_high_water_bytes": 106373120,
+      "stop_reason": "exited",
+      "cleanup_complete": true,
+      "memory_stop_triggers": [],
+      "log": ".trial/p_migration_validation_20261017/p2_composed_retest/batch-001/pytest.log"
+    },
+    {
+      "batch_group": "p2_process",
+      "targets": [
+        "tests/research_loop/test_composed_execution_results.py"
+      ],
+      "lane": "process",
+      "summary": "1 failed, 14 passed in 15.40s",
+      "returncode": 1,
+      "elapsed_seconds": 15.59,
+      "tree_rss_high_water_bytes": 108945408,
+      "stop_reason": "exited",
+      "cleanup_complete": true,
+      "memory_stop_triggers": [],
+      "log": ".trial/p_migration_validation_20261017/p2_process/batch-001/pytest.log"
+    },
+    {
+      "batch_group": "p2_source",
+      "targets": [
+        "tests/operations/test_runtime_plugin_configuration.py"
+      ],
+      "lane": "source",
+      "summary": "14 passed in 1.69s",
+      "returncode": 0,
+      "elapsed_seconds": 2.086,
+      "tree_rss_high_water_bytes": 112422912,
+      "stop_reason": "exited",
+      "cleanup_complete": true,
+      "memory_stop_triggers": [],
+      "log": ".trial/p_migration_validation_20261017/p2_source/batch-001/pytest.log"
+    },
+    {
+      "batch_group": "p2_source",
+      "targets": [
+        "tests/research_loop/test_composed_execution_results.py"
+      ],
+      "lane": "source",
+      "summary": "15 deselected in 0.26s",
+      "returncode": 5,
+      "elapsed_seconds": 0.417,
+      "tree_rss_high_water_bytes": 58658816,
+      "stop_reason": "exited",
+      "cleanup_complete": true,
+      "memory_stop_triggers": [],
+      "log": ".trial/p_migration_validation_20261017/p2_source/batch-002/pytest.log"
+    },
+    {
+      "batch_group": "p2_source",
+      "targets": [
+        "tests/research_loop/test_nonlocal_execution_observation.py"
+      ],
+      "lane": "source",
+      "summary": "22 passed in 13.34s",
+      "returncode": 0,
+      "elapsed_seconds": 13.506,
+      "tree_rss_high_water_bytes": 115343360,
+      "stop_reason": "exited",
+      "cleanup_complete": true,
+      "memory_stop_triggers": [],
+      "log": ".trial/p_migration_validation_20261017/p2_source/batch-003/pytest.log"
+    },
+    {
+      "batch_group": "p2_source",
+      "targets": [
+        "tests/research_loop/test_original_call_configuration.py"
+      ],
+      "lane": "source",
+      "summary": "13 passed in 14.90s",
+      "returncode": 0,
+      "elapsed_seconds": 15.074,
+      "tree_rss_high_water_bytes": 141574144,
+      "stop_reason": "exited",
+      "cleanup_complete": true,
+      "memory_stop_triggers": [],
+      "log": ".trial/p_migration_validation_20261017/p2_source/batch-004/pytest.log"
+    },
+    {
+      "batch_group": "p2_wait_p3_process",
+      "targets": [
+        "tests/research_loop/test_managed_execution_wait.py"
+      ],
+      "lane": "process",
+      "summary": "20 passed in 70.54s (0:01:10)",
+      "returncode": 0,
+      "elapsed_seconds": 70.738,
+      "tree_rss_high_water_bytes": 280727552,
+      "stop_reason": "exited",
+      "cleanup_complete": true,
+      "memory_stop_triggers": [],
+      "log": ".trial/p_migration_validation_20261017/p2_wait_p3_process/batch-001/pytest.log"
+    },
+    {
+      "batch_group": "p2_wait_p3_process",
+      "targets": [
+        "tests/research_loop/test_formal_review.py"
+      ],
+      "lane": "process",
+      "summary": "3 passed, 2 deselected in 7.35s",
+      "returncode": 0,
+      "elapsed_seconds": 7.512,
+      "tree_rss_high_water_bytes": 143896576,
+      "stop_reason": "exited",
+      "cleanup_complete": true,
+      "memory_stop_triggers": [],
+      "log": ".trial/p_migration_validation_20261017/p2_wait_p3_process/batch-002/pytest.log"
+    },
+    {
+      "batch_group": "p2_wait_p3_process",
+      "targets": [
+        "tests/research_loop/test_execution_authority.py"
+      ],
+      "lane": "process",
+      "summary": "1 passed, 4 deselected in 5.38s",
+      "returncode": 0,
+      "elapsed_seconds": 5.554,
+      "tree_rss_high_water_bytes": 134594560,
+      "stop_reason": "exited",
+      "cleanup_complete": true,
+      "memory_stop_triggers": [],
+      "log": ".trial/p_migration_validation_20261017/p2_wait_p3_process/batch-003/pytest.log"
+    },
+    {
+      "batch_group": "p2_wait_p3_process",
+      "targets": [
+        "tests/research_loop/test_execution_resources.py"
+      ],
+      "lane": "process",
+      "summary": "1 passed, 2 deselected in 3.56s",
+      "returncode": 0,
+      "elapsed_seconds": 3.733,
+      "tree_rss_high_water_bytes": 140718080,
+      "stop_reason": "exited",
+      "cleanup_complete": true,
+      "memory_stop_triggers": [],
+      "log": ".trial/p_migration_validation_20261017/p2_wait_p3_process/batch-004/pytest.log"
+    },
+    {
+      "batch_group": "p3",
+      "targets": [
+        "tests/research_loop/test_source_qualification.py"
+      ],
+      "lane": "source",
+      "summary": "9 passed in 1.24s",
+      "returncode": 0,
+      "elapsed_seconds": 1.425,
+      "tree_rss_high_water_bytes": 61267968,
+      "stop_reason": "exited",
+      "cleanup_complete": true,
+      "memory_stop_triggers": [],
+      "log": ".trial/p_migration_validation_20261017/p3/batch-001/pytest.log"
+    },
+    {
+      "batch_group": "p3",
+      "targets": [
+        "tests/research_loop/test_formal_review.py"
+      ],
+      "lane": "source",
+      "summary": "2 passed, 3 deselected in 0.38s",
+      "returncode": 0,
+      "elapsed_seconds": 0.537,
+      "tree_rss_high_water_bytes": 60567552,
+      "stop_reason": "exited",
+      "cleanup_complete": true,
+      "memory_stop_triggers": [],
+      "log": ".trial/p_migration_validation_20261017/p3/batch-002/pytest.log"
+    },
+    {
+      "batch_group": "p3",
+      "targets": [
+        "tests/research_loop/test_execution_authority.py"
+      ],
+      "lane": "source",
+      "summary": "4 passed, 1 deselected in 0.53s",
+      "returncode": 0,
+      "elapsed_seconds": 0.698,
+      "tree_rss_high_water_bytes": 64696320,
+      "stop_reason": "exited",
+      "cleanup_complete": true,
+      "memory_stop_triggers": [],
+      "log": ".trial/p_migration_validation_20261017/p3/batch-003/pytest.log"
+    },
+    {
+      "batch_group": "p3",
+      "targets": [
+        "tests/research_loop/test_execution_resources.py"
+      ],
+      "lane": "source",
+      "summary": "2 passed, 1 deselected in 0.52s",
+      "returncode": 0,
+      "elapsed_seconds": 0.676,
+      "tree_rss_high_water_bytes": 61681664,
+      "stop_reason": "exited",
+      "cleanup_complete": true,
+      "memory_stop_triggers": [],
+      "log": ".trial/p_migration_validation_20261017/p3/batch-004/pytest.log"
+    },
+    {
+      "batch_group": "p3",
+      "targets": [
+        "tests/research_loop/test_native_execution_inputs.py"
+      ],
+      "lane": "source",
+      "summary": "5 failed, 3 passed in 25.35s",
+      "returncode": 1,
+      "elapsed_seconds": 25.555,
+      "tree_rss_high_water_bytes": 93171712,
+      "stop_reason": "exited",
+      "cleanup_complete": true,
+      "memory_stop_triggers": [],
+      "log": ".trial/p_migration_validation_20261017/p3/batch-005/pytest.log"
+    },
+    {
+      "batch_group": "p3_late_final",
+      "targets": [
+        "tests/research_loop/test_native_execution_inputs.py::test_late_decision_public_resume_preserves_call_pending_prefix_and_cancelled"
+      ],
+      "lane": "source",
+      "summary": "1 passed, 1 warning in 6.89s",
+      "returncode": 0,
+      "elapsed_seconds": 7.12,
+      "tree_rss_high_water_bytes": 83718144,
+      "stop_reason": "exited",
+      "cleanup_complete": true,
+      "memory_stop_triggers": [],
+      "log": ".trial/p_migration_validation_20261017/p3_late_final/batch-001/pytest.log"
+    },
+    {
+      "batch_group": "p3_late_retest",
+      "targets": [
+        "tests/research_loop/test_native_execution_inputs.py"
+      ],
+      "lane": "source",
+      "summary": "1 failed, 7 passed in 37.26s",
+      "returncode": 1,
+      "elapsed_seconds": 37.483,
+      "tree_rss_high_water_bytes": 85704704,
+      "stop_reason": "exited",
+      "cleanup_complete": true,
+      "memory_stop_triggers": [],
+      "log": ".trial/p_migration_validation_20261017/p3_late_retest/batch-001/pytest.log"
+    },
+    {
+      "batch_group": "p4_p5",
+      "targets": [
+        "tests/research_loop/test_instance_ui.py"
+      ],
+      "lane": "source",
+      "summary": "2 passed in 0.54s",
+      "returncode": 0,
+      "elapsed_seconds": 0.731,
+      "tree_rss_high_water_bytes": 65011712,
+      "stop_reason": "exited",
+      "cleanup_complete": true,
+      "memory_stop_triggers": [],
+      "log": ".trial/p_migration_validation_20261017/p4_p5/batch-001/pytest.log"
+    },
+    {
+      "batch_group": "p4_p5",
+      "targets": [
+        "tests/research_loop/test_instance_archive.py"
+      ],
+      "lane": "source",
+      "summary": "4 passed in 0.49s",
+      "returncode": 0,
+      "elapsed_seconds": 0.677,
+      "tree_rss_high_water_bytes": 61775872,
+      "stop_reason": "exited",
+      "cleanup_complete": true,
+      "memory_stop_triggers": [],
+      "log": ".trial/p_migration_validation_20261017/p4_p5/batch-002/pytest.log"
+    },
+    {
+      "batch_group": "p4_p5",
+      "targets": [
+        "tests/operations/test_root_host_live.py::test_new_candidate_root_does_not_inherit_personal_worker_model"
+      ],
+      "lane": "source",
+      "summary": "1 passed in 0.11s",
+      "returncode": 0,
+      "elapsed_seconds": 0.363,
+      "tree_rss_high_water_bytes": 53161984,
+      "stop_reason": "exited",
+      "cleanup_complete": true,
+      "memory_stop_triggers": [],
+      "log": ".trial/p_migration_validation_20261017/p4_p5/batch-003/pytest.log"
+    },
+    {
+      "batch_group": "p5_install_core",
+      "targets": [
+        "tests/installation/test_packaging.py"
+      ],
+      "lane": "installed",
+      "summary": "1 passed in 4.02s",
+      "returncode": 0,
+      "elapsed_seconds": 4.164,
+      "tree_rss_high_water_bytes": 152195072,
+      "stop_reason": "exited",
+      "cleanup_complete": true,
+      "memory_stop_triggers": [],
+      "log": ".trial/p_migration_validation_20261017/p5_install_core/batch-001/pytest.log"
+    },
+    {
+      "batch_group": "r0",
+      "targets": [
+        "tests/research_loop/test_early_replay.py"
+      ],
+      "lane": "process",
+      "summary": "5 failed in 1.02s",
+      "returncode": 1,
+      "elapsed_seconds": 1.301,
+      "tree_rss_high_water_bytes": 58945536,
+      "stop_reason": "exited",
+      "cleanup_complete": true,
+      "memory_stop_triggers": [],
+      "log": ".trial/p_migration_validation_20261017/r0/batch-001/pytest.log"
+    }
+  ]
+}

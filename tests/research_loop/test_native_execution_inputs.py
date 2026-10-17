@@ -232,6 +232,8 @@ def test_late_decision_public_resume_preserves_call_pending_prefix_and_cancelled
     from scidiscovery.research_loop import cli,execution_recovery as recovery,history,search
     root,backend,config,call,request,seal_bytes=late_call
     _approve(root,request)
+    records=e.Records(config);call_directory=records.root/'calls'/call
+    assert not call_directory.exists()
     # An already frozen A continues to see the old zero-accepted prefix.
     old_job=c.build_job(root,7,'A',[6]);old_job_bytes=(root/'jobs/007.json').read_bytes()
     backend.state='queued'
@@ -240,9 +242,11 @@ def test_late_decision_public_resume_preserves_call_pending_prefix_and_cancelled
           '--max-seconds','20','--authorization-note','Explicit finite fixture window']
     assert cli.main(args)==0
     assert json.loads(capsys.readouterr().out)['call_id']==call and backend.submits==1
+    assert records.directory(call)==call_directory
     accepted=e.Records(config).accepted(call);reservation=accepted['execution_reservation']
     assert accepted['execution_authority']['path'].endswith('/authorization.json')
-    assert recovery.prefix(root,7)==old_job['history']['execution_recoveries']==[]
+    assert recovery.prefix(root,7)==[]
+    assert 'execution_recoveries' not in old_job['history']
     refs=recovery.prefix(root,9);view=recovery.call_view(root,[],refs)
     assert view[(6,call)]['native_state']=='queued' and view[(6,call)]['row']['status']=='unknown'
     assert recovery.resolved(root,refs)=={} and recovery.pending(root) and not recovery.pending(root,unknown_only=True)
@@ -314,11 +318,12 @@ def test_missing_positive_cleanup_and_contradictory_prepare_never_dispatch(late_
 
 def test_interrupted_resume_intent_never_regains_fresh_dispatch(late_call,monkeypatch):
     from scidiscovery.research_loop import execution_recovery as recovery
-    root,backend,_,call,request,_=late_call;_approve(root,request)
+    root,backend,config,call,request,_=late_call;_approve(root,request)
     original=backend.prepare
     monkeypatch.setattr(backend,'prepare',lambda *args,**kwargs:(_ for _ in ()).throw(TimeoutError('synthetic uncertain prepare')))
     with pytest.raises(TimeoutError):_resume(root,call)
     assert recovery.call_view(root,[],recovery.prefix(root,9))[(6,call)]['phase']=='resume_intent'
+    assert not (e.Records(config).root/'calls'/call).exists()
     monkeypatch.setattr(backend,'prepare',original)
     assert _resume(root,call)['status']=='unknown' and backend.submits==0 and not backend.prepared
 

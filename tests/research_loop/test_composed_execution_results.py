@@ -61,6 +61,10 @@ def seal_and_read(root,job,observed=True):
     while page:
         index=c.read(c.workspace(root,3)/page);calls+=index['experiments'];page=index['next_page']
     for row in calls:
+        if 'outputs' not in row:
+            assert row['execution_status']=='unknown'
+            assert 'result_status' not in row
+            continue
         for output in row['outputs']:assert (c.workspace(root,3)/output['path']).read_bytes()==b'opaque original job package'
     return fact,calls
 
@@ -151,15 +155,27 @@ def test_late_reconcile_preserves_old_sealed_unknown_without_explicit_recovery(t
     # Retained historical pre-wait seal: only the fixture bypasses the new seal gate.
     with monkeypatch.context() as patch:
         patch.setattr(managed_wait,'before_seal',lambda *args:None)
-        fact,_=seal_and_read(root,job,observed=False)
+        fact,calls=seal_and_read(root,job,observed=False)
     record=execution.record(root,2);seal_bytes=(record/'result-identity.json').read_bytes()
-    assert fact['managed_calls'][0]['status']=='unknown'
+    assert len(fact['managed_calls'])==len(calls)==1
+    original=fact['managed_calls'][0]
+    assert original['call_id']==calls[0]['call_id']==call
+    assert original['status']=='unknown' and original['completed'] is None and original['terminal'] is None
+    assert not {'execution','outputs','observation'} & original.keys()
+    assert calls[0]['execution_status']=='unknown' and 'outputs' not in calls[0]
+    seal=c.read(record/'result-identity.json');fact_path=root/seal['observations']['path']
+    fact_bytes=fact_path.read_bytes()
+    successor=c.read(root/'jobs/003.json')
+    page_path=c.workspace(root,3)/successor['history']['view']['indexes']['experiments']
+    page_bytes=page_path.read_bytes();page=json.loads(page_bytes)
+    assert page['experiments']==calls and page['next_page'] is None
     e.load(config).complete(call);assert cli('reconcile','--call-id',call)['status']=='known_success'
     assert history.managed_calls(root,job)[0]['status']=='known_success'
     c.validate(c.workspace(root,2))
     assert (record/'result-identity.json').read_bytes()==seal_bytes
-    seal=c.read(record/'result-identity.json')
-    assert c.read(root/seal['observations']['path'])['managed_calls'][0]['status']=='unknown'
+    assert fact_path.read_bytes()==fact_bytes and page_path.read_bytes()==page_bytes
+    assert c.read(fact_path)['managed_calls'][0]['status']=='unknown'
+    assert c.read(page_path)['experiments'][0]['execution_status']=='unknown'
 
 
 @pytest.mark.parametrize('fault',['accepted-interface','external-id','backend-proof','backend-acceptance'])

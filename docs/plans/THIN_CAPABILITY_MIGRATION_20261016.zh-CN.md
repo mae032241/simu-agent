@@ -4,7 +4,9 @@
 
 审查：[P0计划独立审查](evidence/THIN_CAPABILITY_MIGRATION_REVIEW_20261016.zh-CN.md)。该报告冻结审批前草案，后续状态更新不改实施边界。
 
-P5本轮精确进展：旧live环境池的唯一消费者已迁至现有单环境入口，删除池及不可达构建选择，实现独审静态通过，待提交，见[实施账](evidence/P5_SINGLE_CANDIDATE_RETIREMENT_IMPLEMENTATION_20261017.zh-CN.md)。pytest仍只允许显式core/tcad，live原all_domains保留；安装和测试未运行，其余旧生产入口尚有消费者，未退役。
+P5本轮精确进展：旧live环境池的唯一消费者已迁至现有单环境入口，删除池及不可达构建选择，实现独审静态通过，待提交，见[实施账](evidence/P5_SINGLE_CANDIDATE_RETIREMENT_IMPLEMENTATION_20261017.zh-CN.md)。pytest仍只允许显式core/tcad，live原all_domains保留；P5实现独审阶段安装和测试未运行，后续有限动态结果见下一段；其余旧生产入口尚有消费者，未退役。
+
+本轮动态增补：用户授权的分环节串行验收已执行；159 项最终通过，R0 的 5 项因科学依赖缺失等前提尚未验证通过。迟批目录生命周期缺陷与两处测试合同断言已修复并定向复测；仅一次 core 安装冒烟，不运行全量/模型/远端。见[完整结果及内存边界](evidence/P_MIGRATION_TARGETED_TEST_REPORT_20261017.zh-CN.md)。本文此前 static-only 文字记录事故后的历史限制，本轮仅解除该报告列出的明确检查范围。
 
 ## 目标与边界
 

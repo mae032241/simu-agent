@@ -371,11 +371,16 @@ def resume(root,step,call_id,*,max_seconds,authorization_note,request_valid_seco
         return dict(status='execution_resume_recorded',call_id=call_id,note='Verified original terminal fact is already retained; no dispatch occurred.')
     if budget.execution_blocked(root,include_managed=False,ignore_recovery=(step,call_id)):
         raise ValueError('Another live or unknown original owner blocks host recovery')
-    records=e.Records(config);directory=records.directory(call_id)
+    records=e.Records(config)
     budget.transition(root,'advance','execution_resume',operation_context=operation.context)
     if prior is not None or row['disposition']!='unprepared':
+        # Allocation precedes preparation; only accepted calls have a canonical directory.
+        directory=records.root/'calls'/call_id
+        if directory.resolve()!=directory:
+            raise e.IntegrityError('Execution call namespace changed')
         if not (directory/'accepted.json').exists():
             return dict(status='unknown',call_id=call_id,note='Preparation or recovery intent may have started; no fresh dispatch is permitted.')
+        records.directory(call_id)
         adapter=e.load(config,host_services=operation.services())
         if prior is None:
             accepted=records.accepted(call_id)
