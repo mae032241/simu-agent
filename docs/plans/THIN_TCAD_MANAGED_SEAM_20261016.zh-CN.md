@@ -1,6 +1,6 @@
 # TCAD managed 执行薄接缝建议
 
-状态：**待独立设计审查，未实施**。依据[已审批迁移计划](THIN_CAPABILITY_MIGRATION_20261016.zh-CN.md)的 P2/P3；本次仅静态读取代码，不运行 pytest、模型、SSH、许可证检查或 solver，不读取凭据及隐藏评分。P1 的并行实现不由本文修改。
+状态：**设计独审通过（a1d37aa），P2a已开始实施，真实TCAD未验收**。依据[已审批迁移计划](THIN_CAPABILITY_MIGRATION_20261016.zh-CN.md)的 P2/P3；本次仅静态读取代码，不运行 pytest、模型、SSH、许可证检查或 solver，不读取凭据及隐藏评分。P1 的并行实现不由本文修改。
 
 ## 1. 唯一状态归属
 
