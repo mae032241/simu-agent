@@ -78,6 +78,6 @@ P2 可先用无真实远端副作用的 fixture；**真实 TCAD 生产执行必�
 - **P2 恢复负控**：提交响应丢失/lookup None不重派；原 digest retire 与 submit 并发只有一个结果；重复收集/通知/wake、同 boot 控制器重启、原配置或 proof 篡改、取消处理中、已 sealed unknown 恢复前缀；复用既有 G3/原call测试，仅新增 TCAD 映射断点。
 - **P3 gate**：受限材料经 H/W/E、reading view、计算/成果复制仍受限；自审/共同作者/身份未知拒绝；subject或合同/预算/目标改变使旧授权失效；UI重复决定幂等、过期/撤销拒绝；policy累计余额不足与未知用量不放行；普通无资格要求任务仍可完成。
 
-另列未验收：真实 SSH、许可证、solver、跨 boot、真实平台同session唤醒、领域候选/重放/交付映射。旧 command transport 仍有完整 stdout 8MiB 检查，TCAD manifest 等仍有领域清单上限；接入时须区分显式资源配额/紧凑预览与完整内部记录，不能把这些旧机械限制带入新完整记录路径，也不在本文冒称已解除。
+另列未验收：真实 SSH、许可证、solver、跨 boot、真实平台同session唤醒、领域候选/重放/交付映射。设计只读核查发现的完整 transport/manifest 机械容量漏项已单列[容量补修及证据](evidence/FULL_TRANSPORT_RECORD_CAPACITY_FIX_20261016.zh-CN.md)，不作为可延后到P2的领域限制；该修复须独立审查，不包含在本文设计PASS中。管理员显式执行/传输policy与紧凑预览另行保留。
 
 只读设计准备不授予远端执行权限；实施前先独立审查本接口及 P3 gate 的确切绑定。

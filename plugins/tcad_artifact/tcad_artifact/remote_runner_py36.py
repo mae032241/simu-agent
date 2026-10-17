@@ -45,9 +45,9 @@ def main(argv=None):
     if args.worker:
         return _run_worker(config, os.path.abspath(args.worker))
     try:
-        header = sys.stdin.buffer.readline(HEADER_LIMIT + 1)
-        if not header or len(header) > HEADER_LIMIT:
-            raise ValueError("remote runner request header is missing or too large")
+        header = sys.stdin.buffer.readline()
+        if not header:
+            raise ValueError("remote runner request header is missing")
         request = json.loads(header.decode("utf-8"))
         _handle(config, request, sys.stdin.buffer, sys.stdout.buffer)
         return 0

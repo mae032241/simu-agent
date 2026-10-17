@@ -87,8 +87,7 @@ class SSHRemoteClient:
                 kwargs["timeout"] = min(kwargs.get("timeout", self.context.remaining_seconds()), self.context.remaining_seconds())
             return run_bounded(command, input=kwargs.get("input", b""), env=kwargs.get("env"),
                 timeout=kwargs["timeout"], context=self.context,
-                input_stream=kwargs.get("input_stream"), transfer_chunk_bytes=self.config.transfer_chunk_bytes,
-                max_output_bytes=8 * 1024 * 1024)
+                input_stream=kwargs.get("input_stream"), transfer_chunk_bytes=self.config.transfer_chunk_bytes)
         except subprocess.TimeoutExpired as error:
             if self.diagnostic_root is not None:
                 preserve_log(self.diagnostic_root, "ssh-stderr", error.stderr or b"")
@@ -250,8 +249,6 @@ class SSHRemoteClient:
                     if parsed is None:
                         prefix, separator, body = raw.partition(b"\n")
                         header.extend(prefix)
-                        if len(header) > 1024 * 1024:
-                            raise RuntimeError("VM download header exceeds its bound")
                         if not separator:
                             return
                         parsed = json.loads(header)
@@ -308,8 +305,8 @@ class SSHRemoteClient:
             suffix = f": {detail}" if detail else ""
             raise RuntimeError(f"VM transport command failed{suffix}")
         header, separator, trailing = completed.stdout.partition(b"\n")
-        if not separator or len(header) > 1024 * 1024:
-            raise RuntimeError("VM transport returned no bounded header")
+        if not separator:
+            raise RuntimeError("VM transport returned no header")
         response = json.loads(header)
         if not isinstance(response, dict):
             raise RuntimeError("VM transport response is not an object")
@@ -753,9 +750,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     operation = "unknown"
     try:
-        raw = sys.stdin.buffer.read(1024 * 1024 + 1)
-        if not raw or len(raw) > 1024 * 1024:
-            raise ValueError("transport request is missing or too large")
+        raw = sys.stdin.buffer.read()
+        if not raw:
+            raise ValueError("transport request is missing")
         request = json.loads(raw)
         if request.get("schema_version") != 1 or not isinstance(request.get("payload"), dict):
             raise ValueError("transport request envelope is invalid")

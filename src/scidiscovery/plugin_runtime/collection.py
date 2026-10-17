@@ -19,10 +19,10 @@ IDLE_SECONDS = 30.0
 _OWNED_GROUP_ENV = "_SCID_COLLECTION_PROCESS_GROUP"
 
 def run_bounded(command, *, input: bytes, timeout: float, env=None, sink=None,
-                idle_seconds=None, max_output_bytes=8 * 1024 * 1024, context=None, process_group=True,
+                idle_seconds=None, max_output_bytes=None, context=None, process_group=True,
                 timeout_kind="operation_total", pass_fds=(), input_stream=None,
                 transfer_chunk_bytes=1024 * 1024):
-    """Drain both pipes, bound retained bytes, and reap this call's process group."""
+    """Drain full pipes unless an explicit quota is supplied; reap the call group."""
     # A private collector already owns the whole transfer tree. Nested command
     # transports must stay in that group so forced exit cannot orphan writers.
     private_group = os.environ.get(_OWNED_GROUP_ENV) == str(os.getpgrp())
@@ -35,7 +35,7 @@ def run_bounded(command, *, input: bytes, timeout: float, env=None, sink=None,
     process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
         stderr=subprocess.PIPE, env=env, start_new_session=process_group, pass_fds=pass_fds)
     try:
-        # Header bytes stay bounded; an optional scientific body is streamed.
+        # An optional scientific body is streamed independently of the JSON request.
         os.set_blocking(process.stdin.fileno(), False)
         pending = memoryview(input)
         with selectors.DefaultSelector() as selector:
@@ -82,11 +82,11 @@ def run_bounded(command, *, input: bytes, timeout: float, env=None, sink=None,
                         if sink is not None:
                             sink(raw)
                         else:
-                            if len(stdout) + len(raw) > max_output_bytes:
+                            if max_output_bytes is not None and len(stdout) + len(raw) > max_output_bytes:
                                 raise ValueError("transport response exceeds its byte bound")
                             stdout.extend(raw)
                     else:
-                        stderr.extend(raw[:max(0, max_output_bytes - len(stderr))])
+                        stderr.extend(raw if max_output_bytes is None else raw[:max(0, max_output_bytes - len(stderr))])
         return subprocess.CompletedProcess(command, process.wait(), bytes(stdout), bytes(stderr))
     except BaseException as error:
         # Preserve bytes already observed even when parsing or the sink failed.

@@ -353,8 +353,6 @@ class CommandTCADExecutorAdapter:
             error = subprocess.CalledProcessError(completed.returncode, "TCAD transport",
                 output=completed.stdout, stderr=completed.stderr)
             raise RuntimeError(f"TCAD transport operation failed; stderr log: {stderr_log}") from error
-        if len(completed.stdout) > 8 * 1024 * 1024:
-            raise RuntimeError("TCAD transport response exceeds its byte limit")
         try:
             response = json.loads(completed.stdout)
         except json.JSONDecodeError as error:

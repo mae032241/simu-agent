@@ -953,13 +953,13 @@ class RuntimeOutputRecord(StrictModel):
 class TCADRuntimeManifest(StrictModel):
     resource_usage: dict[str, Any] = Field(default_factory=dict)
     solver_exit_code: int | None = None
-    collection_errors: tuple[str, ...] = Field(default=(), max_length=4096)
+    collection_errors: tuple[str, ...] = ()
     started_at: str | None = Field(min_length=1, max_length=128)
     completed_at: str = Field(min_length=1, max_length=128)
     terminal_state: Literal["succeeded", "failed", "cancelled"]
     exit_code: int
-    error: str = Field(max_length=8192)
-    outputs: tuple[RuntimeOutputRecord, ...] = Field(max_length=4096)
+    error: str
+    outputs: tuple[RuntimeOutputRecord, ...]
 
     @model_validator(mode="after")
     def _outputs_are_unique(self) -> TCADRuntimeManifest:
@@ -977,7 +977,7 @@ class RuntimeContractCheck(StrictModel):
         pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:/-]*$",
     )
     status: Literal["pass", "fail"]
-    rationale: str = Field(min_length=1, max_length=4096)
+    rationale: str = Field(min_length=1)
     gate_kind: Literal["transport", "format", "numeric", "runtime_contract"] = (
         "runtime_contract"
     )
@@ -989,11 +989,11 @@ class RuntimeAttestation(StrictModel):
     verdict: Literal["pass", "fail"]
     terminal_state: Literal["succeeded", "failed", "cancelled"]
     exit_code: int
-    checks: tuple[RuntimeContractCheck, ...] = Field(min_length=1, max_length=8192)
-    missing_required_outputs: tuple[str, ...] = Field(default=(), max_length=4096)
-    solver_native_output_count: int = Field(ge=0, le=4096)
-    transport_derived_output_count: int = Field(ge=0, le=4096)
-    parser_derived_output_count: int = Field(ge=0, le=4096)
+    checks: tuple[RuntimeContractCheck, ...] = Field(min_length=1)
+    missing_required_outputs: tuple[str, ...] = ()
+    solver_native_output_count: int = Field(ge=0)
+    transport_derived_output_count: int = Field(ge=0)
+    parser_derived_output_count: int = Field(ge=0)
     scope: Literal["execution_contract_only"] = "execution_contract_only"
     rationale: str = Field(min_length=1, max_length=4096)
 
