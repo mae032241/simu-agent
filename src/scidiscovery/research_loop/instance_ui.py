@@ -17,8 +17,9 @@ import uuid
 
 from scidiscovery.browser_access import BrowserAccessService, access_cookie, cookie_name
 from scidiscovery import execution_security as security
-from . import contracts as c, execution_authority as authority, instance_control as control
+from . import contracts as c, execution, execution_authority as authority, instance_control as control
 from . import instance_science as science
+from . import instance_render as render
 
 
 @contextmanager
@@ -63,9 +64,7 @@ class InstanceUI:
         return parsed[cookie_name(self.instance)].value
 
     def _page(self, title, body):
-        return ('<!doctype html><html lang="en"><meta charset="utf-8"><title>'
-                + html.escape(title) + '</title><h1>' + html.escape(title) + '</h1>'
-                + body + '</html>').encode('utf-8')
+        return render.page(title,body)
 
     def _csrf(self, browser_token, action, nonce):
         return security.receipt_hmac(self.secret, security.canonical(
@@ -127,7 +126,7 @@ class InstanceUI:
             correction_trigger=(view['correction'].get('current_pause') or {}).get('trigger_id'))
         with self.control_lock:
             summary['last_control_request'] = self.control_result
-        body = '<nav><a href="/">Instance</a> | ' + ('<a href="/requests">Execution requests</a>'
+        body = '<nav><a href="/">Instance</a> | <a href="/results">Scientific results</a> | ' + ('<a href="/requests">Execution requests</a>'
             if self.approvals else 'Execution approval routes unavailable') + '</nav>'
         body += '<pre>' + html.escape(json.dumps(summary, ensure_ascii=False, indent=2)) + '</pre>'
         body += '<p><a href="/">Refresh status</a></p>'
@@ -143,7 +142,7 @@ class InstanceUI:
                 + '</a><pre>' + html.escape(json.dumps(self._node_view(node), ensure_ascii=False)) + '</pre></li>')
         body += '</ul>'
         if step is not None and view['nodes'][0]['state']=='seal_present_unverified':
-            body += ('<p><a href="/nodes/'+str(step)+'/science">Complete sealed scientific conclusion</a> | '
+            body += ('<p><a href="/results/'+str(step)+'">Scientific result page</a> | <a href="/nodes/'+str(step)+'/science">Complete sealed scientific conclusion</a> | '
                 '<a href="/nodes/'+str(step)+'/materials">Sealed scientific deliverables</a></p>'
                 '<p>Original bytes are checked only when opened. Sealing does not establish scientific validity or execution permission.</p>')
         if step is None and view.get('next_after') is not None:
@@ -161,6 +160,31 @@ class InstanceUI:
             body += '<a href="/nodes/'+str(step)+'/materials?after='+str(page['next_after'])+'">Next deliverables</a>'
         return 200,self._page('Sealed scientific deliverables',body),{}
 
+    def _results_page(self, after):
+        maximum=c.settings(self.root)['max_steps']
+        steps=sorted(int(path.stem) for path in (self.root/'jobs').glob('*.json')
+            if path.stem.isascii() and path.stem.isdecimal() and path.stem==f'{int(path.stem):03d}'
+            and after<int(path.stem)<=maximum)
+        found=[]
+        for step in steps:
+            record=execution.origin(self.root,step)/'result-identity.json'
+            if record.exists() or record.is_symlink():found.append(step)
+            if len(found)==21:break
+        body='<nav><a href="/">Instance status</a></nav><p>Sealed records are listed here. Original identity is verified when opened; this list does not establish scientific acceptance.</p><ul>'
+        for step in found[:20]:body+='<li><a href="/results/'+str(step)+'">Scientific result · Node '+str(step)+'</a></li>'
+        body+='</ul>'
+        if not found:body+='<p>No further sealed scientific records are present.</p>'
+        if len(found)>20:body+='<a href="/results?after='+str(found[19])+'">Next scientific results</a>'
+        return 200,self._page('Scientific results',body),{}
+
+    def _result_page(self, step):
+        _,seal,raw,proof=science._sealed(self.root,step)
+        job_path=self.root/'jobs'/f'{step:03d}.json'
+        job=science._json(job_path,science._proof(job_path,seal['job_sha256']))
+        with science.Original(raw,proof) as original:
+            payload=json.load(original.stream);original.check()
+        return 200,render.result(step,job,payload,seal),{}
+
     def get(self, target, *, host, cookie=None):
         if host != self.host:
             raise PermissionError('Exact local Host required')
@@ -176,6 +200,18 @@ class InstanceUI:
             token = self.browser.issue(self.instance, maintenance=parsed.path == '/manage')
             return 303, b'', {'Location': '/', 'Set-Cookie': access_cookie(self.instance, token)}
         browser_token = self._browser(cookie, scope='read')
+        if parsed.path=='/results':
+            query=parse_qs(parsed.query,strict_parsing=True) if parsed.query else {}
+            if set(query)-{'after'} or any(len(values)!=1 for values in query.values()):
+                raise ValueError('Exact scientific result continuation required')
+            after=query.get('after',['0'])[0]
+            if not after.isascii() or not after.isdecimal():raise ValueError('Exact scientific result continuation required')
+            return self._results_page(int(after))
+        if parsed.path.startswith('/results/'):
+            number=parsed.path.removeprefix('/results/')
+            if parsed.query or not number.isascii() or not number.isdecimal() or int(number)<=0:
+                raise ValueError('Exact sealed scientific result required')
+            return self._result_page(int(number))
         if parsed.path == '/':
             query = parse_qs(parsed.query, strict_parsing=True) if parsed.query else {}
             if set(query) - {'after'} or any(len(values) != 1 for values in query.values()):
@@ -352,7 +388,7 @@ def serve(root, *, secret_file, port=0):
                 self.send_header('Content-Type', headers.pop('Content-Type', 'text/html; charset=utf-8'))
                 for key, value in {'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer',
                         'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy':
-                        "default-src 'none'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'", **headers}.items():
+                        render.CSP, **headers}.items():
                     self.send_header(key, value)
                 length=body.size if isinstance(body,science.Original) else body.stat().st_size if isinstance(body,Path) else len(body)
                 self.send_header('Content-Length',str(length))

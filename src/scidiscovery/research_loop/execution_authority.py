@@ -35,7 +35,7 @@ def configuration(value):
 
 def implementation():
     directory = Path(__file__).resolve().parent
-    paths = [directory / name for name in ('execution_authority.py', 'instance_ui.py',
+    paths = [directory / name for name in ('execution_authority.py', 'instance_ui.py', 'instance_render.py',
         'contracts.py', 'formal_review.py', 'qualification.py', 'execution.py', 'budget.py', 'experiments.py',
         'runtime.py', 'native.py', 'search.py', 'execution_inputs.py')]
     paths += [directory / 'instance_control.py']

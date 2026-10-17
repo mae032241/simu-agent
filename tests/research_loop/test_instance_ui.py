@@ -168,6 +168,13 @@ def test_loopback_science_download_uses_existing_browser_scope_and_safe_headers(
         connection.request('GET','/view?'+urlencode({'token':ui.read_token}))
         response=connection.getresponse();assert response.status==303
         cookie=response.getheader('Set-Cookie').split(';',1)[0];response.read()
+        connection.request('GET','/results/1',headers={'Cookie':cookie})
+        response=connection.getresponse()
+        from scidiscovery.research_loop import instance_render
+        assert response.status==200 and instance_render.STYLE_SOURCE in response.getheader('Content-Security-Policy')
+        result_page=response.read()
+        assert b'/nodes/1/science' in result_page and b'<details>' in result_page
+        assert b'<svg' not in result_page and b'<script' not in result_page
         connection.request('GET','/nodes/1/materials/1',headers={'Cookie':cookie})
         response=connection.getresponse()
         assert response.status==200 and response.getheader('Content-Disposition').startswith('attachment;')
