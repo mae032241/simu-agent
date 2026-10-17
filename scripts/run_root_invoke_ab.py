@@ -23,8 +23,6 @@ SOURCE_SITE = REPO / "src"
 CASES = {
     "figure": ("science.evidence.extract.figure.v3",
                ("research_objective", "prior_draft", "change_request")),
-    "hypothesis": ("science.hypothesis.revise.v1",
-                   ("experiment_results", "current_progress")),
 }
 ORDER = ("A1", "B1", "B2", "A2")
 
