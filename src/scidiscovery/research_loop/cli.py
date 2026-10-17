@@ -67,6 +67,7 @@ def main(argv=None):
     prepare.add_argument('--public-root', type=Path, required=True)
     prepare.add_argument('--source-restrictions', type=Path, help='Operator source declarations JSON array: exact absolute source, sha256, restriction (clear/restricted); source restrictions only, not review or execution permission')
     prepare.add_argument('--enable-formal-review', action='store_true', help='Allow an explicit A formal_review request for one selected scientific object; requires complete real native participant identities and grants no execution permission')
+    prepare.add_argument('--enable-execution-authority', action='store_true', help='Freeze the optional execution request/decision contract; requires formal review and does not enable the pending production resource gate')
     prepare.add_argument('--native-launcher-json', required=True, help='An argv JSON array, e.g. ["codex"]')
     prepare.add_argument('--history-observer-config', type=Path, help='Optional trusted host adapter/config JSON; frozen at preparation')
     prepare.add_argument('--experiment-mode', choices=['local', 'external'], help='Host-configured W execution (local) or launcher-owned execution (external); standard codex defaults to local, custom launchers to external')
@@ -116,6 +117,10 @@ def main(argv=None):
     recover=commands.add_parser('execution-recover',help='Append same-call terminal evidence for a sealed unknown; new nodes freeze its recovery prefix')
     recover.add_argument('--root',type=Path,required=True)
     recover.add_argument('--step',type=int,required=True)
+    serve = commands.add_parser('serve-ui', help='Serve this explicit instance local approval pages; recording a decision does not execute work')
+    serve.add_argument('--root', type=Path, required=True)
+    serve.add_argument('--approval-secret-file', type=Path, required=True, help='Operator-owned regular 0600 host key; never a Worker configuration field')
+    serve.add_argument('--port', type=int, default=0, help='Loopback port; default selects an available port')
     args = parser.parse_args(argv)
     root = args.root.expanduser().resolve()
     try:
@@ -137,6 +142,7 @@ def main(argv=None):
                 execution_config=contracts.read(contracts.regular(args.execution_config)) if args.execution_config is not None else None,
                 source_restrictions=contracts.read(contracts.regular(args.source_restrictions)) if args.source_restrictions is not None else None,
                 formal_review_policy=dict(version=1) if args.enable_formal_review else None,
+                execution_authority_policy=dict(version=1) if args.enable_execution_authority else None,
                 candidate_audit_policy={'version':1} if args.enable_candidate_audit else None,
                 decision_contract_version=1 if args.decision_contract else None,
                 portfolio_policy=dict(review_after_cycles=args.portfolio_review_after_cycles) if args.portfolio_review_after_cycles is not None else None,
@@ -161,6 +167,11 @@ def main(argv=None):
             if settings.get('execution_config') is not None:
                 result['execution']=dict(executor=settings['execution_config']['executor'],
                     capabilities_status='awaiting_host_task_configuration')
+        elif args.command == 'serve-ui':
+            if not 0 <= args.port <= 65535:
+                raise ValueError('UI port must be between 0 and 65535')
+            from . import instance_ui
+            result = instance_ui.serve(root, secret_file=args.approval_secret_file, port=args.port)
         elif args.command == 'execution-recover':
             result=controller.execution_recover(root,args.step)
         elif args.command == 'worker-resume':
@@ -198,7 +209,7 @@ def main(argv=None):
         print(json.dumps(dict(status='error',error=str(error),**(dict(code=error.code) if isinstance(error,UnsupportedProtocol) else {})), ensure_ascii=False))
         return 1
     print(json.dumps(result, ensure_ascii=False))
-    return 0 if result.get('status') in {None, 'preserved_read_only', 'prepared', 'finish', 'wait', 'paused', 'pause_requested', 'budget_amended', 'delivery_confirmed', 'execution_recovered', 'exported_unsubmitted'} else 2
+    return 0 if result.get('status') in {None, 'preserved_read_only', 'prepared', 'finish', 'wait', 'paused', 'pause_requested', 'budget_amended', 'delivery_confirmed', 'execution_recovered', 'exported_unsubmitted', 'ui_stopped'} else 2
 
 
 if __name__ == '__main__':

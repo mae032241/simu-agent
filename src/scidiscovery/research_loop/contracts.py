@@ -426,6 +426,12 @@ def science_view(job, root=None):
             formal_review_feedback=formal_review.feedback(root,job))
            if job.get('formal_review_version')==1 else {}),
         **(dict(source_restrictions=job['source_restrictions']) if 'source_restrictions' in job else {}),
+        **(dict(execution_authority=dict(status='authority_only_production_gate_unavailable',
+            qualified_materials=[read(Path(root) / ref['path'])['subject']['material']['path']
+                                 for ref in job.get('execution_qualifications', [])[:3]],
+            qualified_materials_omitted_count=max(0, len(job.get('execution_qualifications', [])) - 3),
+            instruction='Choose scientific materials through the existing selection. Control binds exact review and execution identities; ordinary pass text grants nothing. Decisions alone do not dispatch or add budget.'))
+           if job.get('execution_authority') is not None else {}),
         **(dict(engineering_repair=engineering.public(job['engineering_repair'])) if job.get('engineering_repair') else {}),
         **(dict(stage_continuation=dict(status='configured' if job.get('worker_fragment_policy') else 'unavailable',
             context=(job.get('worker_fragment_policy') or {}).get('context'),
@@ -738,6 +744,8 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
         from . import qualification
         job['source_provenance'] = qualification.bind_inputs(root, job)
         job['source_restrictions'] = qualification.status(root, job)
+    from . import execution_authority
+    execution_authority.bind_job(root, job)
     for path, value in ((root / 'jobs' / f'{step:03d}.json', job),
                         (work / 'science-task.json', science_view(job, root)),
                         (host_record(work) / 'science-result.schema.json', result_schema(role, protocol, 'selection' in job,**response_options(job)))):
@@ -802,6 +810,8 @@ def validate(work: Path):
 def _validate_inputs(root, work, job):
     from . import formal_review
     formal_review.validate_job(root,job)
+    from . import execution_authority
+    execution_authority.validate_job(root, job)
     from . import qualification
     qualification.validate_inputs(root, job)
     if 'source_provenance' in job and job.get('source_restrictions') != qualification.status(root, job):

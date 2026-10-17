@@ -8,6 +8,7 @@ import json
 import secrets
 import sqlite3
 import uuid
+from scidiscovery.execution_security import receipt_hmac
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -749,9 +750,7 @@ class ApprovalService:
                     **({"additional_wall_time_seconds": additional_wall_time_seconds} if additional_wall_time_seconds else {}),
                 }
             )
-            receipt = hmac.new(
-                self._receipt_secret, receipt_payload, hashlib.sha256
-            ).hexdigest()
+            receipt = receipt_hmac(self._receipt_secret, receipt_payload)
             decision = HumanDecision(
                 decision_id=f"decision_{request.nonce_hash[:32]}",
                 approval_request_ref=request_ref,

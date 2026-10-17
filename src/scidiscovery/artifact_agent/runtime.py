@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import stat
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -189,19 +188,8 @@ def open_runtime(
 
 
 def read_secret_file(path: Path | str, *, label: str) -> bytes:
-    source = Path(path).expanduser().absolute()
-    try:
-        metadata = os.lstat(source)
-    except FileNotFoundError as error:
-        raise RuntimeConfigurationError(f"{label} secret file does not exist") from error
-    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
-        raise RuntimeConfigurationError(f"{label} secret must be a regular non-symlink file")
-    if stat.S_IMODE(metadata.st_mode) & 0o077:
-        raise RuntimeConfigurationError(f"{label} secret file must have mode 0600")
-    raw = source.read_bytes()
-    if len(raw) < 32:
-        raise RuntimeConfigurationError(f"{label} secret must contain at least 32 bytes")
-    return raw
+    from scidiscovery.execution_security import read_secret_file as read_host_secret
+    return read_host_secret(path, label=label, error_type=RuntimeConfigurationError)
 
 
 def _validate_state_root(project: Path, state: Path) -> None:
