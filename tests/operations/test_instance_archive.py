@@ -914,6 +914,8 @@ def test_full_ownership_scans_and_payload_hashes_stay_outside_global_exclusive(a
     monkeypatch.setattr(Records, "select", tracked_select)
     monkeypatch.setattr(instance_archive, "hash_file", tracked_hash)
     monkeypatch.setattr(instance_archive_files, "hash_file", tracked_hash)
+    from scidiscovery import archive_io
+    monkeypatch.setattr(archive_io, "hash_file", tracked_hash)
     save_archive(service, first)
     restore_archive(service, first)
 

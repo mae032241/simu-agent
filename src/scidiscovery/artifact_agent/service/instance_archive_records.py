@@ -7,6 +7,7 @@ round trip. Only the declared control carriers grant artifact reachability.
 from __future__ import annotations
 
 from copy import deepcopy
+from ...archive_io import ArchiveError, canonical
 from ...agent_execution_settings import EXECUTION_SETTINGS_COLUMNS
 from .run_records import RUN_READ_COLUMNS
 from .run_attention import NOTICE_SCHEMA
@@ -49,14 +50,6 @@ CONTROL_PAYLOADS = {
 RETAINED_EXECUTION_TABLES = frozenset({"execution_budget_pools", "execution_budget_reservations", "execution_budget_estimates", "execution_budget_extensions"})
 
 MAX_CONTROL_PAYLOAD_BYTES = 16 * 1024 * 1024
-
-
-class ArchiveError(RuntimeError):
-    pass
-
-
-def canonical(value):
-    return json.dumps(value, ensure_ascii=True, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
 
 
 def digest(value):
