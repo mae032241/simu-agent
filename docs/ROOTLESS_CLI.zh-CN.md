@@ -1,7 +1,7 @@
 # 无 Root 的科研 CLI
 
 `scid-research` 直接启动新的 H/W/A/证据原生线程；控制程序执行科学角色选择的路由。
-不依赖 LoopX，不启动 Root 模型，不需要 MCP 管理页绑定。已提供实例 UI、可选来源/正式审查与执行授权接缝；TCAD 非空输入链已静态接通，长时人工等待恢复尚未完成，旧 daemon 不迁入。当前迁移节点仅通过静态独审，未验证真实远端执行。
+不依赖 LoopX，不启动 Root 模型，不需要 MCP 管理页绑定。已提供实例 UI、可选来源/正式审查与执行授权接缝；TCAD 非空输入链已静态接通，长时人工等待恢复也已静态接通，旧 daemon 不迁入。当前迁移节点仅通过静态独审，未验证真实远端执行。
 
 ## 创建与运行
 
@@ -51,6 +51,14 @@ scid-research serve-ui --root /absolute/path/instance \
 资源账复用原 control ledger，换候选/重试不重置消耗。`budget-amend --execution-wall-seconds N --execution-storage-bytes N --authorization-note ...` 仅修订有限资源上限，不代替精确调用的执行决定；不得和科学token/时间修订参数混用。未知调用不退款、不重发，已接受调用的查询/取消不因W结束而被当成新提交拒绝。
 
 TCAD 的可选编译→精确封存→正式审查→后继执行非空输入已静态接通（4399149）；这些代码接缝不证明新TCAD链已可生产使用。完整范围及未验收项以[迁移计划](plans/THIN_CAPABILITY_MIGRATION_20261016.zh-CN.md)和对应独审报告为准；不从旧实例静默升级或复制预算。当前不运行安装矩阵、真实模型/solver或HTTP验收。
+
+### 原调用恢复与只读归档
+
+`execution-resume --root ... --step N --call-id ... --max-seconds N --authorization-note ...` 显式推进一个原 W 调用；操作窗口不增加原科学或 solver 额度。只有原封存已记录完整的未准备证据，才能首次准备；可能提交过的调用只查询/核验，不能重放。仍有效的精确决定复用；过期时可显式给 `--request-valid-seconds N` 创建有限的新请求，再由原审批入口决定，不能借续接绕过批准。旧封存缺证据、清理不完整或余额不足不自动补造/续额。
+
+`archive-export --root ... --output ...` 仅在可证明静止时导出到新的只读目录包；不会取消活动作业或创建可推进副本。`archive-inspect --package ... --after N --limit N` 检查包并分页展示清单，也可用 `--section dependencies` 查看范围缺口；每页仍验证全包，不应当作廉价轮询。原件流式保留，`native-homes` 与审批密钥/私有定位文件按范围排除，缺外部依赖明确标注。这两个入口不提供可写恢复资格。
+
+上述恢复及归档代码分别见 `9405b03`、`799036e`，仅完成独立静态审查，真实迟批、并发、掉电、跨 boot 和远端执行未验证。
 
 ## 受管本地实验
 
@@ -230,7 +238,7 @@ input+output 阈值即请求终止；cached input 已包含在 input 内，不�
 launcher 使用 argv，不拼接 shell。可复用经过验证的外部隔离启动器，但须适配上述目录和私有 schema。
 直接 `codex` 是软隔离：关闭项目 AGENTS 自动加载、旧 scidiscovery MCP、native 子 Agent 和 fast。
 其他配置仍可能继承本机环境；涉及隐藏基准资料应使用已经验证的隔离启动器。
-本入口尚未完成统一功能插件、CLI 管理 UI/端口、旧入口退役。未知原生结果仍须人工核实，不能自动重放。
+注册功能插件与 CLI 实例 UI/端口已接入；旧入口完整退役和可写归档恢复尚未完成。未知原生结果仍须人工核实，不能自动重放。
 
 ## 可选候选事实观察
 
