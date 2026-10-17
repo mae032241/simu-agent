@@ -10,6 +10,7 @@ from contextlib import contextmanager
 import fcntl
 import hashlib
 import hmac
+import inspect
 import math
 import os
 from pathlib import Path
@@ -38,10 +39,15 @@ def implementation():
         'contracts.py', 'formal_review.py', 'qualification.py', 'execution.py', 'budget.py', 'experiments.py',
         'runtime.py', 'native.py', 'search.py', 'execution_inputs.py')]
     paths += [directory / 'instance_control.py']
+    from .execution_resume import capture_pending, verify_pending_set, resume
+    from .execution_recovery import call_view
+    from .history import validate_managed
+    paths += [Path(inspect.getfile(function)).resolve() for function in
+              (capture_pending, verify_pending_set, resume, call_view, validate_managed)]
     paths += [directory.parent / 'execution_security.py', directory.parent / 'browser_access.py',
               directory.parent / 'operations/provenance_rules.py', directory.parent / 'operations/runtime_plugins.py',
               directory.parent / 'plugin_runtime/collection.py']
-    return [q._identity(path) for path in paths]
+    return [q._identity(path) for path in dict.fromkeys(paths)]
 
 
 def freeze_configuration(root):
@@ -63,13 +69,22 @@ def contract(root):
 
 
 @contextmanager
-def writer(root):
+def writer(root, *, context=None, blocking=True):
     root = Path(root).resolve()
     contract(root)
     path = root / 'execution-authority'
     fd = os.open(path / 'writer.lock', os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
+        if context is None and blocking:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        else:
+            while True:
+                if context is not None:context.remaining_seconds()
+                try:
+                    fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB);break
+                except BlockingIOError:
+                    if not blocking:raise
+                    time.sleep(min(.05,context.remaining_seconds()))
         yield
     finally:
         os.close(fd)
@@ -205,7 +220,7 @@ def _validate_binding(root, value):
 
 
 def create_request(root, *, step, native_intent, call_id, subject, review_ref,
-                   target, policy, resources, grant_revision, expires_at, secret, payload_alias=None):
+                   target, policy, resources, grant_revision, expires_at, secret, payload_alias=None, supersedes=None, operation_context=None):
     """Trusted host seam for P3d; there is deliberately no JSON/CLI writer.
 
     This only freezes an authorization request. It performs no prepare, resource
@@ -231,11 +246,19 @@ def create_request(root, *, step, native_intent, call_id, subject, review_ref,
         options=list(OPTIONS), scope=SCOPE)
     if payload_alias is not None:
         value['payload_alias'] = payload_alias
+    if supersedes is not None:
+        old=q._read(root,supersedes)
+        for key in ('job','native_intent','call_id','subject','review','payload','payload_alias','target','resources'):
+            if old.get(key)!=value.get(key):raise q.IntegrityError('Renewal changed the original execution subject')
+        value['supersedes']=supersedes
     _validate_binding(root, value)
     request_id = hashlib.sha256(security.canonical(value)).hexdigest()
     value['nonce_hash'] = security.secret_hash(security.token(secret, 'request-nonce', request_id))
-    with writer(root):
-        return q._save(root, _directory(root, request_id) / 'request.json', value)
+    with writer(root,context=operation_context):
+        ref=q._save(root, _directory(root, request_id) / 'request.json', value)
+        if supersedes is not None:
+            q._save(root,(Path(root)/supersedes['path']).parent/'successor.json',dict(previous=supersedes,successor=ref))
+        return ref
 
 
 def request(root, request_id):
@@ -247,6 +270,18 @@ def request(root, request_id):
         raise q.IntegrityError('Execution request identity changed')
     _validate_binding(root, value)
     return value, q._ref(root, path)
+
+
+def request_successor(root,ref):
+    path=(Path(root)/ref['path']).parent/'successor.json'
+    if not path.exists():return None
+    value=q._read(root,q._ref(root,path));next_ref=value['successor']
+    old=q._read(root,ref);new,actual=request(root,Path(next_ref['path']).parent.name)
+    if value['previous']!=ref or new.get('supersedes')!=ref or actual!=next_ref:
+        raise q.IntegrityError('Execution request successor changed its explicit chain')
+    for key in ('job','native_intent','call_id','subject','review','payload','payload_alias','target','resources'):
+        if old.get(key)!=new.get(key):raise q.IntegrityError('Execution request successor changed its original subject')
+    return next_ref
 
 
 def form_tokens(root, request_id, *, secret, boot, browser_token):
@@ -295,10 +330,10 @@ def record_decision(root, request_id, *, secret, boot, browser_token, nonce, csr
         return q._save(root, path, body)
 
 
-def record_policy_decision(root, request_id, *, secret):
+def record_policy_decision(root, request_id, *, secret, operation_context=None):
     """Trusted provider consumer seam; no public operation accepts policy JSON."""
     _secret(root, secret)
-    with writer(root):
+    with writer(root,context=operation_context):
         value, ref = request(root, request_id)
         if value['policy']['outcome'] != 'policy' or time.time() >= value['expires_at']:
             raise ValueError('Exact request is not eligible for current policy authorization')
@@ -478,12 +513,15 @@ def _remaining(root, config, allocation=None):
     return stamp, seconds
 
 
-def _allocate_call(config, payload, ordinal):
-    from . import budget, native
+def _allocate_call(config, payload, ordinal, mechanism=None):
+    from . import budget, native, breadth, experiments as e
     root, job, intent = _host_context(config)
     subject, ref, alias = _selected_subject(root, job, payload)
     body = dict(scope=config['scope'], native_attempt=config['native_attempt'], interface=config['execution_interface'],
                 subject=subject, review=ref, payload_alias=alias, ordinal=ordinal)
+    mechanism_binding = breadth.admit(config.get('breadth'), mechanism, config['scope'],
+        [e.Records(config).accepted(path.name) for path in e.Records(config).calls()])
+    body['mechanism_binding'] = mechanism_binding
     call = f'{ordinal:04d}-' + hashlib.sha256(security.canonical(body)).hexdigest()[:32]
     path = root / 'execution-authority/calls' / call / 'allocation.json'
     with writer(root):
@@ -546,7 +584,7 @@ def _permit(root, ref, config, target, call, payload, secret):
     return value
 
 
-def _gate(config, provider, phase, *, scope, call_id, payload, target, prepared=None, prior_receipt=None):
+def _gate(config, provider, phase, *, scope, call_id, payload, target, prepared=None, prior_receipt=None, recovery=None):
     from . import budget
     from scidiscovery.artifact_agent.schema.execution import ExecutionAdmission
     from scidiscovery.plugin_runtime.collection import CollectionContext
@@ -558,6 +596,7 @@ def _gate(config, provider, phase, *, scope, call_id, payload, target, prepared=
         raise q.IntegrityError('Execution gate escaped its accepted scope')
     allocation_path = root / 'execution-authority/calls' / call_id / 'allocation.json'
     allocation = q._read(root, q._ref(root, allocation_path))
+    remaining = (lambda: _remaining(root,config,allocation)) if recovery is None else recovery.check
     if (allocation['call_id'] != call_id or allocation['binding']['scope'] != scope
             or allocation['binding']['native_attempt'] != config['native_attempt']
             or allocation['binding']['interface'] != config['execution_interface']
@@ -570,6 +609,8 @@ def _gate(config, provider, phase, *, scope, call_id, payload, target, prepared=
             # source qualification, clock snapshot or resource amendment is issued.
             return dict(receipt=prior_receipt)
         if phase == 'collect':
+            if recovery is not None:
+                return dict(receipt=prior_receipt,context=recovery.collection(original))
             stamp = budget.clock_stamp()
             if stamp['boot_id'] != allocation['boot_id']:
                 raise ValueError('Original collection deadline is unverifiable across boot')
@@ -602,17 +643,18 @@ def _gate(config, provider, phase, *, scope, call_id, payload, target, prepared=
     if (allocation['binding']['subject'] != subject or allocation['binding']['review'] != review_ref
             or allocation['binding']['payload_alias'] != alias):
         raise q.IntegrityError('Execution allocation changed its selected input')
-    _remaining(root, config, allocation)
+    remaining()
     # Only now may the installed trusted factory provider query active capability/policy.
     admission = provider(c.regular(Path(payload.local_path)).read_bytes())
     if not isinstance(admission, ExecutionAdmission):
         raise ValueError('Trusted policy provider returned no execution admission')
-    stamp, _ = _remaining(root, config, allocation)
-    grant = budget.execution_grant(root)
+    stamp, _ = remaining()
+    grant = budget.execution_grant(root,operation_context=recovery.context if recovery is not None else None)
     admission = admission.model_copy(update={'budget_key': grant['owner']['key']})
     from . import native
-    job_remaining = min(allocation['job_deadline_boottime'] - stamp['at_boottime'],
+    job_remaining = (min(allocation['job_deadline_boottime'] - stamp['at_boottime'],
         budget.execution_available(root, job, budget.snapshot(root), native.usage(root))['seconds'])
+        if recovery is None else recovery.job_remaining())
     if (hashlib.sha256(security.canonical(admission.policy)).hexdigest() != admission.policy_digest
             or admission.budget.get('wall_time_seconds', float('inf')) > job_remaining):
         raise ValueError('Policy identity or requested job runtime exceeds the original shared authorization')
@@ -623,21 +665,21 @@ def _gate(config, provider, phase, *, scope, call_id, payload, target, prepared=
             raise ValueError('Current policy or resource grant revision differs from the prepared authorization')
         request_ref = original['request']
     else:
-        request_ref = create_request(root, step=job['step'], native_intent=intent, call_id=call_id,
+        request_ref = recovery.request(admission,target) if recovery is not None else create_request(root, step=job['step'], native_intent=intent, call_id=call_id,
             subject=subject, review_ref=review_ref, payload_alias=alias, target=target,
             policy=admission.model_dump(mode='json'), resources=dict(admission.budget),
             grant_revision=grant['ref'], expires_at=allocation['expires_at'], secret=secret)
     request_id = Path(request_ref['path']).parent.name
     if admission.outcome == 'policy':
-        record_policy_decision(root, request_id, secret=secret)
+        record_policy_decision(root, request_id, secret=secret,operation_context=recovery.context if recovery is not None else None)
     current = status(root, request_id, secret=secret)
     if current['state'] != 'decided' or not security.decision_authorizes('execution_authorization',
             current['selected_option'], OPTIONS):
         raise AuthorityRequired(dict(status='authorization_required', call_id=call_id,
             authorization_request=request_ref, review_url=review_url(root, request_id, secret),
             note='Exact execution decision required; preserve this payload and retry only within the original task authorization. This check did not prepare or reserve resources.'))
-    with writer(root):
-        if _revoked(root, request_id, secret) or time.time() >= allocation['expires_at']:
+    with writer(root,context=recovery.context if recovery is not None else None):
+        if _revoked(root, request_id, secret) or time.time() >= q._read(root,request_ref)['expires_at']:
             raise ValueError('Original execution decision has expired or been revoked')
         authorization = dict(version=1, scope=config['scope'], native_attempt=config['native_attempt'],
             interface=config['execution_interface'], call_id=call_id, request=request_ref,
@@ -653,9 +695,11 @@ def _gate(config, provider, phase, *, scope, call_id, payload, target, prepared=
                        interface=config['execution_interface'], authority=receipt)
         reservation = budget.reserve_execution(root, binding=binding, request_ref=request_ref,
             decision_ref=authorization['decision'], budget=dict(admission.budget), grant_revision=grant['ref'],
-            effective_allowance=dict(admission.allowance))
-        _remaining(root, config, allocation)
+            effective_allowance=dict(admission.allowance),
+            **(dict(unprepared_recovery=recovery.proof,operation_context=recovery.context) if recovery is not None else {}))
+        remaining()
         if phase == 'prepare':
+            if recovery is not None:recovery.begin(request_ref,authorization['decision'])
             prepare_intent = allocation_path.parent / 'prepare-intent.json'
             if prepare_intent.exists():
                 raise ValueError('Original preparation may have started; preserve its reservation without replay')
@@ -663,10 +707,13 @@ def _gate(config, provider, phase, *, scope, call_id, payload, target, prepared=
                 note='Preparation may follow this original; absence of accepted is not proof of no side effect'))
         if phase == 'submit':
             accepted = q._ref(root, Path(config['record_dir']) / 'calls' / call_id / 'accepted.json')
-            budget.bind_execution(root, reservation=reservation, accepted=accepted, prepared=prepared.model_dump(mode='json'))
-            stamp, _ = _remaining(root, config, allocation)
-            if admission.budget['wall_time_seconds'] > min(allocation['job_deadline_boottime'] - stamp['at_boottime'],
-                    budget.execution_available(root, job, budget.snapshot(root), native.usage(root))['seconds']):
+            budget.bind_execution(root, reservation=reservation, accepted=accepted, prepared=prepared.model_dump(mode='json'),
+                                  operation_context=recovery.context if recovery is not None else None)
+            stamp, _ = remaining()
+            seconds=(min(allocation['job_deadline_boottime'] - stamp['at_boottime'],
+                    budget.execution_available(root, job, budget.snapshot(root), native.usage(root))['seconds'])
+                    if recovery is None else recovery.job_remaining())
+            if admission.budget['wall_time_seconds'] > seconds:
                 raise ValueError('Preparation consumed the remaining authorization; original submission remains blocked')
     return dict(receipt=receipt, authorization=admission, reservation=reservation)
 
@@ -678,11 +725,11 @@ def host_services(config):
     from scidiscovery.operations.runtime_plugins import ExecutionHostServices
     from .execution_inputs import NativeInputHost
     return ExecutionHostServices(gate=lambda provider: lambda phase, **kwargs: _gate(config, provider, phase, **kwargs),
-                                 call_identity=lambda payload, ordinal: _allocate_call(config, payload, ordinal),
+                                 call_identity=lambda payload, ordinal, mechanism=None: _allocate_call(config, payload, ordinal, mechanism),
                                  implementation_inputs=NativeInputHost(config))
 
 
-def reconcile_resources(config, adapter, call_id, *, observation=None):
+def reconcile_resources(config, adapter, call_id, *, observation=None, operation_context=None):
     """Consume verified original execution facts; accounting never rewrites science.
 
     An unreadable/cross-boot ledger keeps the reservation. In particular a
@@ -700,7 +747,7 @@ def reconcile_resources(config, adapter, call_id, *, observation=None):
         if reservation is None:
             raise ValueError('Original execution has no bound resource reservation')
         _permit(root, accepted['execution_authority'], config, accepted['execution_target'], call_id, None, host_secret(root))
-        budget.bind_execution(root, reservation=reservation, accepted=accepted_ref, prepared=accepted['prepared'])
+        budget.bind_execution(root, reservation=reservation, accepted=accepted_ref, prepared=accepted['prepared'],operation_context=operation_context)
         if (directory / 'submission-retirement.json').exists():
             # P2d's single validator and its immutable accepted/prepared/authority
             # binding are rechecked by the unique budget owner before release.

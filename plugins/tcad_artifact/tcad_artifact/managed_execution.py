@@ -118,12 +118,13 @@ class TCADManagedExecution:
     terminal_evidence_kind = 'adapter_result'
     result_protocol = None
 
-    def __init__(self, config, adapter, *, gate=None, input_metadata=None, open_input=None, implementation_inputs=None):
+    def __init__(self, config, adapter, *, gate=None, input_metadata=None, open_input=None, implementation_inputs=None, operation_context=None):
         self.config, self.adapter = config, adapter
         self.records = e.Records(config)
         self.gate = gate
         self.input_metadata, self.open_input = input_metadata, open_input
         self.implementation_inputs = implementation_inputs
+        self.operation_context = operation_context
         self.compilation_capability = self.compilation_original = None
         self._lease = None
         transport = {key: config[key] for key in TCADRuntimeConfig.model_fields if key in config}
@@ -227,7 +228,7 @@ class TCADManagedExecution:
         self._original_interface()
         if preparation_profile != 'research_loop.v1' or Path(exchange_directory) != self.records.root:
             raise ValueError('Exact managed TCAD preparation context required')
-        _verify_descriptor(payload)
+        _verify_descriptor(payload,self.operation_context)
         raw = Path(payload.local_path).read_bytes(); profile = _package_profile(raw)
         reviewed = validate_execution_package_json(raw, preparation_profile=profile)
         metadata, opener = self.input_metadata, self.open_input
@@ -241,12 +242,12 @@ class TCADManagedExecution:
         permit = self._check('prepare', payload.name, payload)
         stage = _directory(self._stage(payload.name))
         source = stage / 'package.json'
-        c._copy_bound(Path(payload.local_path), source, payload.sha256)
+        c._copy_bound(Path(payload.local_path), source, payload.sha256,context=self.operation_context)
         original = payload.model_copy(update={'local_path': str(source)})
         prepared = self.adapter.prepare(original, preparation_profile=profile,
             exchange_directory=stage, input_metadata=metadata, open_input=opener)
         prepared = prepared.model_copy(update={'name': payload.name})
-        _verify_descriptor(prepared)
+        _verify_descriptor(prepared,self.operation_context)
         binding = dict(payload=payload.model_dump(mode='json'), retained_payload=original.model_dump(mode='json'),
             prepared=prepared.model_dump(mode='json'),
             target=self.target, authority=permit['receipt'],
@@ -261,12 +262,12 @@ class TCADManagedExecution:
         value = json.loads(e.read(self._stage(descriptor.name) / 'binding.json'))
         if value.get('prepared') != descriptor.model_dump(mode='json') or value.get('target') != self.target:
             raise e.IntegrityError('Original TCAD preparation target or descriptor changed')
-        _verify_descriptor(descriptor)
+        _verify_descriptor(descriptor,self.operation_context)
         payload = LocalFileDescriptor.model_validate(value['payload'])
         retained = LocalFileDescriptor.model_validate(value['retained_payload'])
         if retained.model_copy(update={'local_path': payload.local_path}) != payload:
             raise e.IntegrityError('TCAD retained package differs from its original descriptor')
-        _verify_descriptor(retained)
+        _verify_descriptor(retained,self.operation_context)
         _verify_proof(value['authority'])
         return value
 
@@ -294,7 +295,7 @@ class TCADManagedExecution:
                 or accepted.get('execution_target') != self.target
                 or accepted.get('tcad') != self._preparation(descriptor)):
             raise e.IntegrityError('TCAD call differs from its original acceptance')
-        _verify_proof(accepted['script'])
+        _verify_proof(accepted['script'],self.operation_context)
         return accepted, descriptor
 
     def _original_interface(self):
@@ -472,8 +473,8 @@ class TCADManagedExecution:
                 or value.get('status') != execution_status(value['native_state'])):
             raise e.IntegrityError('TCAD completion differs from the original call')
         for original in value['proofs']:
-            _verify_proof(original)
-        self._collection(call, value['native_state'])
+            _verify_proof(original,self.operation_context)
+        self._collection(call, value['native_state'],self.operation_context)
         return value
 
     def _collection(self, call, native, context=None):
@@ -638,7 +639,7 @@ class TCADManagedExecution:
         completed = self._completed(call)
         collected = json.loads(e.read(self.records.directory(call) / 'collected.json'))
         outputs = tuple(LocalFileDescriptor.model_validate(item) for item in collected['outputs'])
-        manifest = self._inventory(outputs, completed['native_state'])
+        manifest = self._inventory(outputs, completed['native_state'],context=self.operation_context)
         return _consumed_budget(manifest.model_dump(mode='json')) or {}
 
     @staticmethod
@@ -658,6 +659,7 @@ def build_managed_runtime(context):
         key: body[key] for key in TCADRuntimeConfig.model_fields if key in body}), strict=True)
     adapter = build_adapter(transport, state_root=context.state_root)
     services = getattr(context, 'execution_host_services', None)
+    adapter.operation_context = getattr(services, 'operation_context', None)
     gate = services.gate(lambda raw: adapter.execution_admission(raw,
         preparation_profile=_package_profile(raw))) if services is not None else None
     # Gate and exact-input services are host objects; JSON cannot supply either.
@@ -665,7 +667,8 @@ def build_managed_runtime(context):
     if selected is not None:
         body = dict(body, execution_interface=dict(selected))
     return RuntimePluginContribution(execution_adapters={'tcad': TCADManagedExecution(body, adapter, gate=gate,
-        implementation_inputs=getattr(services, 'implementation_inputs', None))})
+        implementation_inputs=getattr(services, 'implementation_inputs', None),
+        operation_context=getattr(services, 'operation_context', None))})
 
 
 REGISTRATION = ExecutionInterfaceRegistration('tcad_execution', '1', RuntimePluginFactory(build_managed_runtime))

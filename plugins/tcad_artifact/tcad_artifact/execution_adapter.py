@@ -100,7 +100,7 @@ class TCADExecutorAdapter:
         reviewed = validate_execution_package_json(raw, preparation_profile=preparation_profile)
         inputs = (materialize_execution_inputs(reviewed, artifacts, exchange_directory,
             self.execution_policy().runner.transfer_chunk_bytes,
-            input_metadata=input_metadata, open_input=open_input)
+            input_metadata=input_metadata, open_input=open_input,context=getattr(self,'operation_context',None))
             if reviewed.resolved_inputs or artifacts is not None
             or input_metadata is not None or open_input is not None else {})
         packaged = package_execution_package_json(
@@ -108,6 +108,7 @@ class TCADExecutorAdapter:
             output_root=exchange_directory / "prepared",
             input_payloads=inputs,
             preparation_profile=preparation_profile,
+            context=getattr(self,'operation_context',None),
         )
         return LocalFileDescriptor.model_validate(
             packaged.job_spec_file.model_dump(mode="python"), strict=True
@@ -222,6 +223,9 @@ class TCADExecutorAdapter:
         deadline = (arguments.get("collection") or {}).get("deadline_monotonic",
             arguments.get("deadline_monotonic", time.monotonic() + (min(QUERY_SECONDS, self.timeout)
                 if tool in {"tcad_status", "tcad_capabilities", "tcad_execution_policy"} else self.timeout)))
+        context=getattr(self,'operation_context',None)
+        if context is not None:
+            deadline=min(deadline,time.monotonic()+context.remaining_seconds())
         def remaining():
             seconds = deadline - time.monotonic()
             if seconds <= 0:

@@ -52,7 +52,7 @@ def _events(root, settings, *, resources=False):
                 or not math.isfinite(event['at_boottime']) or event['at_boottime'] < 0
                 or not isinstance(event.get('boot_id'), str) or not event['boot_id']
                 or event.get('kind') not in {'clock', 'budget_amend', 'closeout_begin', 'action_intent', 'action_outcome',
-                    'resource_grant', 'resource_reserve', 'resource_bind', 'resource_settle', 'resource_release'}):
+                    'resource_grant', 'resource_reserve', 'resource_rebind', 'resource_bind', 'resource_settle', 'resource_release'}):
             raise ValueError('Control ledger identity, sequence or time changed')
         if events:
             _duration(events[-1], event, legacy_elapsed=settings.get('time_budget_basis', 'elapsed') == 'elapsed')
@@ -175,7 +175,16 @@ def _resource_state(root, settings, events, origins):
         original = reservations.get(identity)
         if original is None or event.get('reservation') != original['ref'] or original['released']:
             raise ValueError('Execution resource event lost its original reservation')
-        if kind == 'resource_bind':
+        if kind == 'resource_rebind':
+            binding=event.get('binding');proof=event.get('proof')
+            if (original['bound'] is not None or original['actual'] or event.get('before')!=original['binding']
+                    or not isinstance(binding,dict) or set(binding)!=set(original['binding'])
+                    or any(binding.get(key)!=original['binding'].get(key) for key in ('call_id','scope','native_attempt','interface'))
+                    or not isinstance(proof,dict) or set(proof)!={'seal','allocation','pending_set'}
+                    or any(not isinstance(ref,dict) or set(ref)!={'path','sha256','size_bytes'} for ref in proof.values())):
+                raise ValueError('Only the exact never-prepared reservation can change authority')
+            original['binding']=binding
+        elif kind == 'resource_bind':
             binding = event.get('accepted_binding')
             if original['bound'] is not None or not isinstance(binding, dict) or set(binding) != {'accepted', 'prepared'}:
                 raise ValueError('Execution accepted resource binding changed')
@@ -194,11 +203,11 @@ def _resource_state(root, settings, events, origins):
     return grants, reservations
 
 
-def execution_grant(root):
+def execution_grant(root, *, operation_context=None):
     """Seed exactly the operator's frozen ceiling in the existing ledger."""
     root = Path(root).resolve(); settings = contracts.settings(root)
     owner = _resource_owner(settings)
-    with _ledger_writer(root):
+    with _ledger_writer(root,context=operation_context):
         events, parent, (grants, _) = _events(root, settings, resources=True)
         if owner['key'] not in grants:
             event = _append(root, settings, events, parent, kind='resource_grant', owner=owner,
@@ -225,7 +234,7 @@ def amend_execution_grant(root, *, allowance, authorization_note):
         return dict(owner=owner, ref=_resource_ref(root, event), allowance=allowance)
 
 
-def reserve_execution(root, *, binding, request_ref, decision_ref, budget, grant_revision, effective_allowance):
+def reserve_execution(root, *, binding, request_ref, decision_ref, budget, grant_revision, effective_allowance, unprepared_recovery=None, operation_context=None):
     """Atomic reservation before prepare/upload; revisions never create a pool."""
     from . import qualification as q
     root = Path(root).resolve(); settings = contracts.settings(root); owner = _resource_owner(settings)
@@ -233,19 +242,46 @@ def reserve_execution(root, *, binding, request_ref, decision_ref, budget, grant
     binding = dict(binding, request=request_ref, decision=decision_ref)
     identity = hashlib.sha256(json.dumps(dict(owner=owner, binding=binding), sort_keys=True, separators=(',', ':')).encode()).hexdigest()
     q._read(root, request_ref); q._read(root, decision_ref)
-    with _ledger_writer(root):
+    verified_rebind=None
+    if unprepared_recovery is not None:
+        from .execution_resume import verify_rebind
+        for original in execution_accounting(root)['reservations']:
+            if (original['binding']['call_id']==binding['call_id'] and original['binding']['scope']==binding['scope']
+                    and original['binding']!=binding):
+                verify_rebind(root,unprepared_recovery,original['binding'],binding)
+                verified_rebind=(original['ref'],original['binding'])
+    with _ledger_writer(root,context=operation_context):
         events, parent, (grants, reservations) = _events(root, settings, resources=True)
         grant = grants.get(owner['key'])
         if grant is None or grant_revision != grant['ref']:
             raise ValueError('Execution resource authorization revision changed')
         if identity in reservations:
             original = reservations[identity]
-            if original['budget'] != budget or original['released']:
+            if original['budget'] != budget or original['released'] or original['binding']!=binding:
                 raise ValueError('Original execution reservation cannot be replaced')
             return original['ref']
-        if any(row['binding']['call_id'] == binding['call_id'] and row['binding']['scope'] == binding['scope']
-               for row in reservations.values()):
-            raise ValueError('Original call already owns another exact reservation')
+        same=[(key,row) for key,row in reservations.items() if row['binding']['call_id']==binding['call_id']
+              and row['binding']['scope']==binding['scope']]
+        if same:
+            from .execution_resume import verify_rebind
+            if len(same)!=1:
+                raise ValueError('Original call already owns another exact reservation')
+            original_id,original=same[0]
+            if original['released'] or original['budget']!=budget:
+                raise ValueError('Original reservation cannot be replaced or refunded')
+            if original['binding']==binding:return original['ref']
+            if unprepared_recovery is None or original['bound'] is not None or original['actual']:
+                raise ValueError('Accepted reservation cannot change authority')
+            total={key:sum(({**item['budget'],**item['actual']}).get(key,0) for item in reservations.values() if not item['released']) for key in budget}
+            if any(total[key]>min(effective_allowance[key],grant['allowance'][key]) for key in budget):
+                raise ValueError('Current cumulative resource allowance cannot authorize the held reservation')
+            if verified_rebind!=(original['ref'],original['binding']):
+                raise ValueError('Original reservation changed after exact rebind verification')
+            if original['binding']!=binding:
+                _append(root,settings,events,parent,kind='resource_rebind',owner=owner,
+                    reservation_id=original_id,reservation=original['ref'],before=original['binding'],
+                    binding=binding,proof=unprepared_recovery)
+            return original['ref']
         remaining = {key: min(effective_allowance[key], grant['allowance'][key]) for key in budget}
         for original in reservations.values():
             if not original['released']:
@@ -267,12 +303,12 @@ def _reserved(state, reservation):
     return matches[0]
 
 
-def bind_execution(root, *, reservation, accepted, prepared):
+def bind_execution(root, *, reservation, accepted, prepared, operation_context=None):
     from . import qualification as q
     root = Path(root).resolve(); settings = contracts.settings(root)
     value = q._read(root, accepted)
     original = dict(accepted=accepted, prepared=prepared)
-    with _ledger_writer(root):
+    with _ledger_writer(root,context=operation_context):
         events, parent, state = _events(root, settings, resources=True); identity, row = _reserved(state, reservation)
         binding = row['binding']
         if (row['released'] or value.get('call_id') != binding['call_id'] or value.get('scope') != binding['scope']
@@ -382,12 +418,18 @@ def execution_available(root, job, limits, usage):
 
 
 @contextmanager
-def _ledger_writer(root):
+def _ledger_writer(root, *, context=None):
     from .protocol import require_current
     require_current(root)
     fd = os.open(root / 'control-ledger.lock', os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
+        if context is None:fcntl.flock(fd, fcntl.LOCK_EX)
+        else:
+            while True:
+                context.remaining_seconds()
+                try:
+                    fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB);break
+                except BlockingIOError:time.sleep(min(.05,context.remaining_seconds()))
         yield
     finally:
         os.close(fd)
@@ -466,7 +508,7 @@ def snapshot(root, settings=None, *, sample_stamp=None):
                 ledger_events=len(events), historical_time='unknown_before_ledger' if basis == 'elapsed' else 'recorded')
 
 
-def transition(root, phase, reason):
+def transition(root, phase, reason, *, operation_context=None):
     """Caller owns the host writer lock; runner must obtain it too."""
     from .protocol import require_current
     require_current(root)
@@ -478,7 +520,7 @@ def transition(root, phase, reason):
             raise ValueError('Advance clock requires an original host start')
         snapshot(root, settings)
         return
-    with _ledger_writer(root):
+    with _ledger_writer(root,context=operation_context):
         events, parent = _events(root, settings)
         # Check rollback even when the phase is unchanged.
         snapshot(root, settings)
@@ -487,10 +529,12 @@ def transition(root, phase, reason):
             _append(root, settings, events, parent, kind='clock', phase=phase, reason=reason)
 
 
-def execution_blocked(root, *, ignore_operation=None, include_managed=True):
+def execution_blocked(root, *, ignore_operation=None, include_managed=True, ignore_recovery=None):
     """Unknown or live originals prohibit inactive time and amendments."""
     from . import runtime, execution
     settings = contracts.settings(root)
+    from . import execution_recovery
+    if execution_recovery.pending(root,unknown_only=not include_managed,ignore=ignore_recovery):return True
     from . import delivery
     from . import audit_recovery
     if audit_recovery.blocked(root):

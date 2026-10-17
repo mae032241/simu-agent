@@ -210,7 +210,7 @@ def project(root, before_step, *, source_cutoff=None, extra_steps=()):
     sources=history.source_sequence(root,before_step,source_cutoff=source_cutoff,extra_steps=extra_steps)
     from . import execution_recovery
     recovery_refs=execution_recovery.prefix(root,before_step)
-    records=execution_recovery.project_records(root,history.records_from_sources(root,sources,write_cache=False),recovery_refs)
+    records=execution_recovery.project_records(root,history.records_from_sources(root,sources,write_cache=False),recovery_refs,sources=sources)
     state=search.fold(root,sources,recovery_refs=recovery_refs) if c.settings(root).get('search_policy') is not None else None
     graph=build(root,before_step,sources=sources,search_state=state)
     return dict(sources=sources,records=records,search_state=state,graph=graph,candidates=candidate_view(records),recovery_refs=recovery_refs)
@@ -378,6 +378,11 @@ def bind(root, step, role, protocol, *, source_cutoff=None, extra_steps=(), sele
                  mechanisms=mechanism_pages[0] if mechanism_pages else None,relations=relations[0] if relations else None)
     experiments=[];recovery_materials=[]
     for record in records:
+        resumes={row['call_id']:row for row in record.get('execution_resumes',[])}
+        for resumed in resumes.values():
+            if resumed['phase'] in {'resume_intent','original_prepare_unknown'}:
+                experiments.append(dict(step=record['step'],call_id=resumed['call_id'],execution_status='unknown',
+                    limitation='Original preparation may have started; no accepted execution or scientific result is claimed. Preserve the original identity.'))
         for call in (record.get('observation') or {}).get('managed_calls',[]):
             if call.get('retirement') is not None:
                 original=c.read(Path(root)/call['retirement']['snapshot'])
@@ -401,7 +406,11 @@ def bind(root, step, role, protocol, *, source_cutoff=None, extra_steps=(), sele
                     retirement_proof=f'{prefix}/retirement.json',native_originals=[f'{prefix}/{name}' for _,name in retained[1:]],
                     limitation='Permanent non-submission of the original call only; no scientific verdict, candidate or new execution allowance.'))
                 continue
-            if 'execution' not in call:continue
+            if 'execution' not in call:
+                experiments.append(dict(step=record['step'],call_id=call['call_id'],execution_status='unknown',
+                    native_state=(resumes.get(call['call_id']) or {}).get('native_state'),
+                    limitation='Original accepted execution is pending or unverified; preserve its identity and reservation.'))
+                continue
             details=call.get('execution') or {};result=details.get('result') or {}
             outputs=[dict(path=f'inputs/parents/{record["step"]:03d}/artifacts/experiments/{call["call_id"]}/artifacts/{item["name"]}',
                           historical=f'history/nodes/{record["step"]:03d}/artifacts/experiments/{call["call_id"]}/artifacts/{item["name"]}',

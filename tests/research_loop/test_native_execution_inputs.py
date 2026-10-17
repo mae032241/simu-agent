@@ -4,6 +4,7 @@ Native session files and scheduling eligibility are synthetic trusted fixture
 inputs. This is not real platform independence, backend or solver qualification.
 """
 import json
+import hashlib
 from pathlib import Path
 import uuid
 
@@ -100,7 +101,7 @@ def chain(tmp_path, monkeypatch):
     return root, backend, options, config, config_path, author, aliases
 
 
-def test_public_compile_exact_review_and_existing_run_keep_native_original(chain, capsys):
+def _reviewed_execution(chain, capsys):
     root, backend, options, config, config_path, author, aliases = chain
     output = c.workspace(root, 2) / 'artifacts/package.json'
     assert e.main(['--config', str(config_path), 'compile', '--implementation', str(author),
@@ -131,6 +132,11 @@ def test_public_compile_exact_review_and_existing_run_keep_native_original(chain
     active = work / 'work/execution.json'; current = e.configure(root, 6, 'tcad_execution:tcad', options, active)
     secret = root / 'operator.key'; secret.write_bytes(b'x' * 32); secret.chmod(0o600)
     authority.bind_secret(root, b'x' * 32, source=secret)
+    return root,backend,output,active,current,before
+
+
+def test_public_compile_exact_review_and_existing_run_keep_native_original(chain, capsys):
+    root,backend,output,active,current,before=_reviewed_execution(chain,capsys)
     assert e.main(['--config', str(active), 'run', '--payload', str(output)]) == 2
     result = json.loads(capsys.readouterr().out)
     assert result['status'] == 'queued' and backend.prepared == [{'mesh': b'mesh'}] and backend.submits == 1
@@ -177,3 +183,165 @@ def test_same_hash_wrong_origin_and_changed_package_cannot_reuse_compiler_proof(
         finish(root, 2, 'W', [1])
     assert not (c.host_record(c.workspace(root, 2)) / 'result-identity.json').exists()
     assert not backend.policy_reads and not backend.prepared
+
+
+@pytest.fixture
+def late_call(chain,capsys,monkeypatch):
+    """Synthetic owner cleanup only; actual seal/gate/ledger/factory stay in path."""
+    from scidiscovery.research_loop import execution,runtime
+    root,backend,output,active,config,_=_reviewed_execution(chain,capsys)
+    admission=backend.execution_admission
+    monkeypatch.setattr(backend,'execution_admission',lambda *a,**kw:admission(*a,**kw).model_copy(
+        update={'outcome':'require_human_approval'}))
+    c.write(root/'host-started.json',budget.clock_stamp())
+    assert e.main(['--config',str(active),'run','--payload',str(output)])==2
+    pending=json.loads(capsys.readouterr().out)
+    assert pending['status']=='authorization_required' and backend.submits==0 and not backend.prepared
+    call=pending['call_id'];original_seal=c.seal_result
+
+    def cleaned(root,step):
+        if step==6:
+            record=execution.record(root,step)
+            outcome=c.read(record/'native-outcome.json');outcome['cleanup']='observed_group_cleaned'
+            c.write(record/'native-outcome.json',outcome)
+            owner=dict(pid=999999999,start_ticks=1,pgid=999999999,sid=999999999,
+                boot_id='synthetic-original-boot',task_sha256=execution.identity(root,step))
+            for name in ('runner-process.json','native-process.json'):c.write(record/name,owner)
+        return original_seal(root,step)
+
+    monkeypatch.setattr(c,'seal_result',cleaned)
+    monkeypatch.setattr(runtime,'process_matches',lambda *args:False)
+    finish(root,6,'W',[5])
+    seal_path=c.host_record(c.workspace(root,6))/'result-identity.json'
+    assert c.read(root/c.read(seal_path)['pending_executions']['path'])['complete'] is True
+    return root,backend,config,call,pending['authorization_request'],seal_path.read_bytes()
+
+
+def _approve(root,ref):
+    key=Path(ref['path']).parent.name
+    tokens=authority.form_tokens(root,key,secret=b'x'*32,boot='fixture-ui',browser_token='fixture-browser')
+    return authority.record_decision(root,key,secret=b'x'*32,boot='fixture-ui',browser_token='fixture-browser',
+        **tokens,selected_option=authority.OPTIONS[0],rationale='Explicit synthetic exact decision')
+
+
+def _resume(root,call,**options):
+    return controller.execution_resume(root,6,call,max_seconds=20,authorization_note='Explicit finite host recovery',**options)
+
+
+def test_late_decision_public_resume_preserves_call_pending_prefix_and_cancelled(late_call,monkeypatch,capsys):
+    from scidiscovery.research_loop import cli,execution_recovery as recovery,history,search
+    root,backend,config,call,request,seal_bytes=late_call
+    _approve(root,request)
+    # An already frozen A continues to see the old zero-accepted prefix.
+    old_job=c.build_job(root,7,'A',[6]);old_job_bytes=(root/'jobs/007.json').read_bytes()
+    backend.state='queued'
+    monkeypatch.setattr(backend,'status_details',lambda external:dict(state=backend.state,run_id=external))
+    args=['execution-resume','--root',str(root),'--step','6','--call-id',call,
+          '--max-seconds','20','--authorization-note','Explicit finite fixture window']
+    assert cli.main(args)==0
+    assert json.loads(capsys.readouterr().out)['call_id']==call and backend.submits==1
+    accepted=e.Records(config).accepted(call);reservation=accepted['execution_reservation']
+    assert accepted['execution_authority']['path'].endswith('/authorization.json')
+    assert recovery.prefix(root,7)==old_job['history']['execution_recoveries']==[]
+    refs=recovery.prefix(root,9);view=recovery.call_view(root,[],refs)
+    assert view[(6,call)]['native_state']=='queued' and view[(6,call)]['row']['status']=='unknown'
+    assert recovery.resolved(root,refs)=={} and recovery.pending(root) and not recovery.pending(root,unknown_only=True)
+    count=len(refs);assert _resume(root,call)['status']=='execution_resume_recorded'
+    assert len(recovery.prefix(root,9))==count and backend.submits==1
+    backend.state='cancelling';_resume(root,call)
+    assert recovery.call_view(root,[],recovery.prefix(root,9))[(6,call)]['native_state']=='cancelling'
+    backend.state='cancelled'
+
+    def collect(external,*,context):
+        context.remaining_seconds();directory=root/'synthetic-terminal';directory.mkdir(exist_ok=True)
+        rows=[]
+        for name,data,media in [('tcad_log',b'cancelled\n','text/plain'),('tcad_manifest',json.dumps(dict(
+                started_at=None,completed_at='2026-10-17T00:00:00Z',terminal_state='cancelled',
+                exit_code=130,error='synthetic cancellation',outputs=[])).encode(),'application/json')]:
+            path=directory/name;path.write_bytes(data)
+            rows.append(LocalFileDescriptor(name=name,local_path=str(path),sha256=hashlib.sha256(data).hexdigest(),size_bytes=len(data),media_type=media))
+        return tuple(rows)
+
+    monkeypatch.setattr(backend,'collect_with_budget',collect,raising=False)
+    _resume(root,call)
+    refs=recovery.prefix(root,9);latest=recovery.call_view(root,[],refs)[(6,call)]
+    assert latest['phase']=='terminal' and latest['row']['status']=='known_failed'
+    assert latest['row']['execution']['native_state']=='cancelled' and not recovery.pending(root)
+    sources=history.source_sequence(root,7)
+    projected=recovery.project_records(root,history.records_from_sources(root,sources,write_cache=False),refs)
+    assert len(projected[-1]['observation']['managed_calls'])==1
+    assert projected[-1]['observation']['managed_calls'][0]['accepted']==latest['row']['accepted']
+    assert search.fold(root,sources,recovery_refs=[])['opportunity_unknown'] is False
+    assert budget.execution_reservation(root,reservation)['released'] is False
+    assert (root/'jobs/007.json').read_bytes()==old_job_bytes
+    assert (c.host_record(c.workspace(root,6))/'result-identity.json').read_bytes()==seal_bytes
+
+
+def test_expired_request_requires_explicit_successor_without_retry_ttl_refresh(late_call,monkeypatch):
+    from scidiscovery.research_loop import execution_recovery as recovery
+    root,backend,_,call,original,_=late_call
+    old_bytes=(root/original['path']).read_bytes();old=c.read(root/original['path'])
+    monkeypatch.setattr(authority.time,'time',lambda:old['expires_at']+1)
+    assert _resume(root,call)['status']=='authorization_renewal_required'
+    first=_resume(root,call,request_valid_seconds=30)
+    assert first['status']=='authorization_required' and not recovery.prefix(root,9)
+    new=first['authorization_request'];new_bytes=(root/new['path']).read_bytes()
+    assert c.read(root/new['path'])['supersedes']==original and authority.request_successor(root,original)==new
+    again=_resume(root,call,request_valid_seconds=30)
+    assert again['authorization_request']==new and (root/new['path']).read_bytes()==new_bytes
+    with pytest.raises(ValueError,match='expired'):_approve(root,original)
+    _approve(root,new);assert _resume(root,call)['status']=='execution_resume_recorded'
+    assert backend.submits==1 and (root/original['path']).read_bytes()==old_bytes
+
+
+def test_missing_positive_cleanup_and_contradictory_prepare_never_dispatch(late_call,monkeypatch):
+    from scidiscovery.research_loop import execution_resume as resume,qualification as q,runtime
+    root,backend,_,call,request,_=late_call
+    _approve(root,request)
+    seal=c.read(c.host_record(c.workspace(root,6))/'result-identity.json')
+    allocation=q._ref(root,root/'execution-authority/calls'/call/'allocation.json')
+    with pytest.raises(ValueError,match='no positive'):resume.verify_pending_set(root,dict(seal,pending_executions=None),allocation)
+    proof=root/seal['pending_executions']['path'];before=proof.read_bytes();proof.chmod(0o600);proof.write_bytes(before+b' ')
+    with pytest.raises(ValueError):_resume(root,call)
+    proof.write_bytes(before);proof.chmod(0o400)
+    monkeypatch.setattr(runtime,'process_matches',lambda *args:True)
+    with pytest.raises(ValueError,match='live or unknown'):_resume(root,call)
+    monkeypatch.setattr(runtime,'process_matches',lambda *args:False)
+    c.write(root/'execution-authority/calls'/call/'prepare-intent.json',dict(note='uncertain original side effect'))
+    with pytest.raises(ValueError,match='contradict'):_resume(root,call)
+    assert backend.submits==0 and not backend.prepared
+
+
+def test_interrupted_resume_intent_never_regains_fresh_dispatch(late_call,monkeypatch):
+    from scidiscovery.research_loop import execution_recovery as recovery
+    root,backend,_,call,request,_=late_call;_approve(root,request)
+    original=backend.prepare
+    monkeypatch.setattr(backend,'prepare',lambda *args,**kwargs:(_ for _ in ()).throw(TimeoutError('synthetic uncertain prepare')))
+    with pytest.raises(TimeoutError):_resume(root,call)
+    assert recovery.call_view(root,[],recovery.prefix(root,9))[(6,call)]['phase']=='resume_intent'
+    monkeypatch.setattr(backend,'prepare',original)
+    assert _resume(root,call)['status']=='unknown' and backend.submits==0 and not backend.prepared
+
+
+def test_reservation_gap_renews_authority_without_second_reservation_or_refund(late_call,monkeypatch):
+    from scidiscovery.research_loop import execution_resume as resume,execution_recovery as recovery
+    root,backend,config,call,request,_=late_call;_approve(root,request)
+    begin=resume._RecoveryAdmission.begin
+    monkeypatch.setattr(resume._RecoveryAdmission,'begin',lambda *args:(_ for _ in ()).throw(TimeoutError('after reserve before prepare boundary')))
+    with pytest.raises(TimeoutError):_resume(root,call)
+    held=budget.execution_accounting(root)['reservations']
+    assert len(held)==1 and held[0]['bound'] is None and not recovery.prefix(root,9)
+    reservation=held[0]['ref'];remaining=budget.execution_accounting(root)['remaining']
+    monkeypatch.setattr(resume._RecoveryAdmission,'begin',begin)
+    expires=c.read(root/request['path'])['expires_at']
+    monkeypatch.setattr(authority.time,'time',lambda:expires+1)
+    renewal=_resume(root,call,request_valid_seconds=30)
+    assert renewal['status']=='authorization_required' and not recovery.prefix(root,9)
+    _approve(root,renewal['authorization_request'])
+    assert _resume(root,call)['status']=='execution_resume_recorded' and backend.submits==1
+    assert e.Records(config).accepted(call)['execution_reservation']==reservation
+    events=budget._events(root,c.settings(root))[0]
+    assert sum(row['kind']=='resource_reserve' for row in events)==1
+    assert sum(row['kind']=='resource_rebind' for row in events)==1
+    assert not any(row['kind']=='resource_release' for row in events)
+    assert budget.execution_accounting(root)['remaining']==remaining

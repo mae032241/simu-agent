@@ -226,27 +226,26 @@ def apply_source(root,job,payload,seal,state):
 
 def fold(root,sources,*,recovery_refs=()):
     from . import execution_recovery
-    recovered=execution_recovery.resolved(root,list(recovery_refs))
+    sources=list(sources)
+    all_refs={ref['path']:ref for ref in recovery_refs}
+    for job,_,_,_ in sources:
+        for ref in job.get('history',{}).get('execution_recoveries',[]):
+            prior=all_refs.setdefault(ref['path'],ref)
+            if prior!=ref:raise ValueError('Frozen execution recovery prefixes disagree')
+    ordered=sorted(all_refs.values(),key=lambda ref:ref['path'])
+    checked=execution_recovery.validate(root,ordered)
+    cache={ref['path']:value for ref,value in zip(ordered,checked)}
     state=dict(opportunity_counts={},opportunity_grants={},opportunity_unknown=False,extra_grant=None,mechanisms={},current_h=None,scope=None,plan=None,authorized=set(),focus=None,accepted_slices=[],repairs={},
         order=dict(remaining=[],seen_w=set(),allocation=None,diagnostics=[]))
     if c.settings(root).get('portfolio_policy') is not None:
         state['portfolio']=dict(invested={},deferred={},seen_w=set(),pending_w=None,last_branch=None,last_review=None)
     enabled=c.settings(root).get('search_policy') is not None
+    original_rows={}
     for job,payload,seal,seal_sha in sources:
+        # Scientific claims see exactly their own frozen mechanical input prefix.
+        _execution_opportunities(root,state,original_rows,job.get('history',{}).get('execution_recoveries',[]),cache)
         if enabled:apply_source(root,job,payload,seal,state)
         if 'portfolio' in state:_portfolio_update(root,job,payload,seal,state,seal_sha)
-        if seal.get('observations'):
-            observation=c.read(root/seal['observations']['path'])
-            for row in observation.get('managed_calls',[]):
-                binding=row.get('mechanism_binding')
-                if binding is None:continue
-                ref=binding['mechanism_ref']
-                state['opportunity_counts'][ref]=state['opportunity_counts'].get(ref,0)+1
-                grant=binding['grant']
-                if grant:
-                    key=(grant['source_a'],grant['source_a_sha256'])
-                    state['opportunity_grants'][key]=state['opportunity_grants'].get(key,0)+1
-                if row['status']=='unknown' and (job['step'],row['call_id']) not in recovered:state['opportunity_unknown']=True
         step=job['step'];intent=execution.record(root,step)/'native-intent.json'
         if job['role']=='W' and job.get('search') and intent.exists():
             value=c.read(c.regular(intent))
@@ -259,7 +258,31 @@ def fold(root,sources,*,recovery_refs=()):
             focus=job['search']['focus']
             if focus and focus['action']=='repair':
                 repair_root=job['search']['repair_root'];state['repairs'][repair_root]=state['repairs'].get(repair_root,0)+1
+        observed=c.read(root/seal['observations']['path']) if seal.get('observations') else {}
+        original_rows.update(execution_recovery.sealed_pending_rows(root,[(job,payload,seal,seal_sha)]))
+        for row in observed.get('managed_calls',[]):
+            original_rows[(job['step'],row['call_id'])]=dict(row=row,phase='original',native_state=None)
+    _execution_opportunities(root,state,original_rows,list(recovery_refs),cache)
     return state
+
+
+def _execution_opportunities(root,state,original_rows,refs,cache):
+    from . import execution_recovery
+    state['opportunity_counts']={};state['opportunity_grants']={};state['opportunity_unknown']=False
+    for value in execution_recovery.call_view(root,[],refs,original_rows=original_rows,
+            validated=[cache[ref['path']] for ref in refs]).values():
+        row=value.get('row')
+        if row is None:
+            state['opportunity_unknown']=True;continue
+        binding=row.get('mechanism_binding')
+        if binding is None:continue
+        ref=binding['mechanism_ref']
+        state['opportunity_counts'][ref]=state['opportunity_counts'].get(ref,0)+1
+        grant=binding['grant']
+        if grant:
+            key=(grant['source_a'],grant['source_a_sha256'])
+            state['opportunity_grants'][key]=state['opportunity_grants'].get(key,0)+1
+        if row['status']=='unknown':state['opportunity_unknown']=True
 
 
 def project(root,before_step):

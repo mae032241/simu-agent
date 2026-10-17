@@ -1193,6 +1193,7 @@ def package_deck_project(
     resolved_inputs: tuple[ResolvedProjectInput | NativeResolvedProjectInput, ...] = (),
     input_payloads: Mapping[str, bytes | Path] | None = None,
     output_root: Path | str,
+    context=None,
 ) -> PackagedTCADProject:
     """Create one reproducible package without interpreting its physics."""
 
@@ -1230,7 +1231,7 @@ def package_deck_project(
             raise PackagerError("resolved execution input differs from its project slot")
         raw = payloads[name]
         if isinstance(raw, Path):
-            digest, size = _file_identity(raw)
+            digest, size = _file_identity(raw,context)
         elif type(raw) is bytes:
             digest, size = hashlib.sha256(raw).hexdigest(), len(raw)
         else:
@@ -1254,13 +1255,14 @@ def package_deck_project(
     try:
         assert temporary is not None
         archive_path = temporary / "project.tar"
-        entries = _write_archive(project.files, binary_files, archive_path)
+        entries = _write_archive(project.files, binary_files, archive_path,context=context)
         final_archive_path = target / archive_path.name
         archive_descriptor = _descriptor(
             "input_archive",
             archive_path,
             "application/x-tar",
             reported_path=final_archive_path,
+            context=context,
         )
         job = TCADJobSpec(
             execution_purpose="production",
@@ -1280,7 +1282,7 @@ def package_deck_project(
         os.chmod(job_path, 0o440)
 
         if target.exists():
-            if not _same_package(temporary, target):
+            if not _same_package(temporary, target,context=context):
                 raise PackagerError("existing package differs from deterministic build")
         else:
             os.replace(temporary, target)
@@ -1291,9 +1293,9 @@ def package_deck_project(
         return PackagedTCADProject(
             project_sha256=project_sha256,
             package_directory=target,
-            archive=_descriptor("input_archive", final_archive, "application/x-tar"),
+            archive=_descriptor("input_archive", final_archive, "application/x-tar",context=context),
             job_spec_file=_descriptor(
-                "execution_payload", final_job, "application/json"
+                "execution_payload", final_job, "application/json",context=context
             ),
             job_spec=job,
         )
@@ -1308,6 +1310,7 @@ def package_execution_package_json(
     input_payloads: Mapping[str, bytes | Path] | None = None,
     output_root: Path | str,
     preparation_profile: str = 'tcad.execution-package.v2',
+    context=None,
 ) -> PackagedTCADProject:
     """Validate one canonical execution package before preparing execution."""
 
@@ -1318,6 +1321,7 @@ def package_execution_package_json(
         resolved_inputs=reviewed.resolved_inputs,
         input_payloads=input_payloads,
         output_root=output_root,
+        context=context,
     )
 
 
@@ -2018,12 +2022,13 @@ def _finite_number(value: str) -> bool:
         return False
 
 
-def _file_identity(path: Path) -> tuple[str, int]:
+def _file_identity(path: Path,context=None) -> tuple[str, int]:
     if path.is_symlink() or not path.is_file():
         raise PackagerError("execution input must be a regular file")
     digest, size = hashlib.sha256(), 0
     with path.open("rb") as source:
         for block in iter(lambda: source.read(1024 * 1024), b""):
+            if context is not None:context.remaining_seconds()
             size += len(block)
             digest.update(block)
     return digest.hexdigest(), size
@@ -2037,6 +2042,7 @@ def materialize_execution_inputs(
     *,
     input_metadata: Callable[[ResolvedProjectInput | NativeResolvedProjectInput], tuple[int, str]] | None = None,
     open_input: Callable[[ResolvedProjectInput | NativeResolvedProjectInput], ContextManager[BinaryIO]] | None = None,
+    context=None,
 ) -> dict[str, Path]:
     """Copy exact originals; the host owns frozen bindings, not source discovery."""
     if type(chunk_bytes) is not int or chunk_bytes <= 0:
@@ -2076,6 +2082,7 @@ def materialize_execution_inputs(
         raise PackagerError("scientific inputs are outside the execution exchange")
     inputs = {}
     for item in reviewed.resolved_inputs:
+        if context is not None:context.remaining_seconds()
         size_bytes, media_type = input_metadata(item)
         if (type(size_bytes) is not int or not isinstance(media_type, str)
                 or size_bytes != item.size_bytes or media_type != item.media_type):
@@ -2086,7 +2093,7 @@ def materialize_execution_inputs(
             if target.is_symlink() or not target.is_file():
                 raise PackagerError("execution input must be a regular file")
             if (target.stat().st_size != item.size_bytes
-                    or _file_identity(target) != (expected_sha256, item.size_bytes)):
+                    or _file_identity(target,context) != (expected_sha256, item.size_bytes)):
                 raise PackagerError("cached input differs from exact original")
             os.chmod(target, 0o440)
         else:
@@ -2096,6 +2103,7 @@ def materialize_execution_inputs(
                 with open_input(item) as source, target.open("xb") as output:
                     created = True
                     for block in iter(lambda: source.read(chunk_bytes), b""):
+                        if context is not None:context.remaining_seconds()
                         actual_size += len(block)
                         if actual_size > item.size_bytes:
                             raise PackagerError("original exceeds its declared input size")
@@ -2118,6 +2126,7 @@ def _write_archive(
     files: tuple[DeckFile, ...],
     binary_files: Mapping[str, bytes | Path],
     archive_path: Path,
+    *, context=None,
 ) -> tuple[ArchiveEntry, ...]:
     entries: list[ArchiveEntry] = []
     contents = {
@@ -2127,7 +2136,7 @@ def _write_archive(
     with tarfile.open(archive_path, "w", format=tarfile.USTAR_FORMAT) as archive:
         for relative_path, raw in sorted(contents.items()):
             info = tarfile.TarInfo(relative_path)
-            digest, size = _file_identity(raw) if isinstance(raw, Path) else (hashlib.sha256(raw).hexdigest(), len(raw))
+            digest, size = _file_identity(raw,context) if isinstance(raw, Path) else (hashlib.sha256(raw).hexdigest(), len(raw))
             info.size = size
             info.mode = 0o440
             info.uid = 0
@@ -2136,7 +2145,7 @@ def _write_archive(
             info.gname = ""
             info.mtime = 0
             with (raw.open("rb") if isinstance(raw, Path) else io.BytesIO(raw)) as source:
-                archive.addfile(info, fileobj=source)
+                archive.addfile(info, fileobj=_ContextReader(source,context) if context is not None else source)
             entries.append(
                 ArchiveEntry(
                     relative_path=relative_path,
@@ -2147,7 +2156,16 @@ def _write_archive(
     return tuple(entries)
 
 
-def _same_package(candidate: Path, existing: Path) -> bool:
+class _ContextReader:
+    def __init__(self,source,context):self.source,self.context=source,context
+    def read(self,size=-1):
+        self.context.remaining_seconds()
+        value=self.source.read(size)
+        self.context.remaining_seconds()
+        return value
+
+
+def _same_package(candidate: Path, existing: Path, *, context=None) -> bool:
     names = ("job.json", "project.tar")
     if existing.is_symlink() or not existing.is_dir():
         return False
@@ -2156,7 +2174,7 @@ def _same_package(candidate: Path, existing: Path) -> bool:
     return all(
         not (existing / name).is_symlink()
         and (existing / name).is_file()
-        and _file_identity(candidate / name) == _file_identity(existing / name)
+        and _file_identity(candidate / name,context) == _file_identity(existing / name,context)
         for name in names
     )
 
@@ -2167,8 +2185,9 @@ def _descriptor(
     media_type: str,
     *,
     reported_path: Path | None = None,
+    context=None,
 ) -> FileDescriptor:
-    digest, size = _file_identity(path)
+    digest, size = _file_identity(path,context)
     return FileDescriptor(
         name=name,
         local_path=str(reported_path or path),

@@ -557,10 +557,24 @@ def global_materials(root: Path):
     return rows
 
 
-def _copy_bound(source: Path, destination: Path, sha256: str):
+def _copy_bound(source: Path, destination: Path, sha256: str, *, context=None):
     if any(parent.is_symlink() for parent in destination.parents):
         raise ValueError('Bound input directories must not be links')
     destination.parent.mkdir(parents=True, exist_ok=True)
+    if context is not None:
+        context.remaining_seconds()
+        if not destination.exists() and not destination.is_symlink():
+            with regular(source,limit=None).open('rb') as stream, destination.open('xb') as output:
+                for block in iter(lambda:stream.read(1024*1024),b''):
+                    context.remaining_seconds();output.write(block)
+            destination.chmod(0o400)
+        digest_value=hashlib.sha256()
+        with regular(destination,limit=None).open('rb') as stream:
+            for block in iter(lambda:stream.read(1024*1024),b''):
+                context.remaining_seconds();digest_value.update(block)
+        context.remaining_seconds()
+        if digest_value.hexdigest()!=sha256:raise ValueError('Bound input copy changed')
+        return
     if destination.exists() or destination.is_symlink():
         if digest(regular(destination)) != sha256:
             raise ValueError('Bound input copy changed')
@@ -796,6 +810,9 @@ def validate(work: Path):
     _validate_inputs(root, work, job)
     from . import execution_inputs
     execution_inputs.validate_seal(root, job, seal)
+    if 'pending_executions' in seal:
+        from .execution_resume import verify_pending_set
+        verify_pending_set(root, seal)
     from . import qualification
     qualification.validate_outputs(root, job, seal)
     from . import formal_review
@@ -976,6 +993,10 @@ def seal_result(root: Path, step: int):
     compiled = execution_inputs.capture(root, job, materials)
     if compiled:
         seal['compiled_implementations'] = compiled
+    from .execution_resume import capture_pending
+    pending_executions = capture_pending(root, job)
+    if pending_executions is not None:
+        seal['pending_executions'] = pending_executions
     if 'source_provenance' in job:
         from . import qualification
         seal['source_provenance'] = qualification.seal_outputs(root, job, seal)

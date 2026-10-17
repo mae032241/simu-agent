@@ -206,6 +206,9 @@ class InstanceUI:
             expires_at=value['expires_at'], scope=authority.SCOPE)
         body = '<pre>' + html.escape(json.dumps(compact, ensure_ascii=False, indent=2)) + '</pre>'
         body += '<p><a href="/requests/' + request_id + '/original">Complete frozen request</a></p>'
+        successor=authority.request_successor(self.root,ref)
+        if successor is not None:
+            body += '<p><a href="/requests/' + Path(successor['path']).parent.name + '">Explicit replacement request</a> (the original request and decision remain unchanged).</p>'
         manager = 'maintenance' in self.browser.verify(browser_token, instance_id=self.instance).scopes
         if manager and state['state'] == 'pending':
             options = ''.join('<option value="' + item + '">' + item + '</option>' for item in value['options'])

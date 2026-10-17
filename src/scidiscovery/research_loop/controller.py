@@ -1091,3 +1091,15 @@ def execution_recover(root: Path, step: int):
         result=execution_recovery.create(root,step)
         budget.inactive(root,'execution_recovery_complete')
         return result
+
+
+def execution_resume(root: Path, step: int, call_id: str, *, max_seconds,
+                     authorization_note, request_valid_seconds=None):
+    """Finite operator progress of the same call; never restart its scientific author."""
+    from . import execution_resume as recovery
+    root=Path(root).resolve()
+    with _writer(root),_inactive_on_error(root,'execution_resume_failed'):
+        result=recovery.resume(root,step,call_id,max_seconds=max_seconds,
+            authorization_note=authorization_note,request_valid_seconds=request_valid_seconds)
+        budget.inactive(root,'execution_resume_complete')
+        return result

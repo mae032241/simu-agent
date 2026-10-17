@@ -17,6 +17,12 @@
 
 这些是实现审查约束，不是已存在的能力。新链是现有 recovery owner 必要的原件投影扩展；若实现另建可变调度状态、按事件名字自证成功、改旧 prefix 或用 JSON allow/resume 注入权限，应退回设计而非顺手扩协议。
 
+### 实施期第三行清阻范围补充
+
+root 已明确批准：原 seal 的 pending-set 若记录 possibly_prepared 且尚无 accepted，同一 call_view 须将其派生为 unknown 阻塞；不能因没有新 resume 事件就消失。clock 可显式发现当前封存控制元数据，科学 history/search 只用已绑定 source seals 与 caller prefix，不隐式灌入未来节点。
+
+同一 version2 ref 链可声明 origin=sealed_preparation_unknown，消费同 allocation/call 后来**已存在且验证过**的 accepted/status/统一 terminal 或 P2d 永久 fence 原件，以解除对应旧 unknown。此 origin 不允许 fresh prepare/submit，不用 lookup None 造未提交，不另建恢复 owner/状态账；无证明仍 unknown。accepted 只计一次，旧 A prefix 不改，退款仍仅原 ledger owner 消费统一 validator。该补充只有设计范围批准，代码须最终定点独审。
+
 ## 仍未验收
 
 无代码通过结论；跨 boot/掉电、实际 UI 迟批、真实 native/TCAD、资源事件与旧 clock/search 交错均未动态验证。后续只写能保护上述真实失败模式的最小负控，不安装、不运行。历史无正向 pending receipt 的实例保持 unavailable；不能为迁移完成补造原件。

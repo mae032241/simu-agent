@@ -39,8 +39,9 @@ class ExecutionHostServices:
     """
 
     gate: Callable[[Callable[..., Any]], Callable[..., Mapping[str, Any]]]
-    call_identity: Callable[[Any, int], str]
+    call_identity: Callable[..., str]
     implementation_inputs: Any | None = None
+    operation_context: Any | None = None
 
 
 @dataclass(frozen=True, slots=True)

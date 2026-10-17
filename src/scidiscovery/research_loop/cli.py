@@ -72,6 +72,13 @@ def main(argv=None):
     recover=commands.add_parser('execution-recover',help='Append same-call terminal evidence for a sealed unknown; new nodes freeze its recovery prefix')
     recover.add_argument('--root',type=Path,required=True)
     recover.add_argument('--step',type=int,required=True)
+    execution_resume=commands.add_parser('execution-resume',help='Explicit finite host progress of one original sealed W call; never replay uncertain preparation')
+    execution_resume.add_argument('--root',type=Path,required=True)
+    execution_resume.add_argument('--step',type=int,required=True)
+    execution_resume.add_argument('--call-id',required=True)
+    execution_resume.add_argument('--max-seconds',type=float,required=True,help='Current finite control operation window; does not extend solver or shared authorization')
+    execution_resume.add_argument('--authorization-note',required=True,help='Operator audit note only; not an execution decision')
+    execution_resume.add_argument('--request-valid-seconds',type=float,help='Explicit finite replacement request validity when old request expired; no new execution allowance')
     serve = commands.add_parser('serve-ui', help='Serve this explicit instance status and controls, with optional execution approval pages')
     serve.add_argument('--root', type=Path, required=True)
     serve.add_argument('--approval-secret-file', type=Path, required=True, help='Operator-owned regular 0600 browser host key; approval routes additionally require frozen authority')
@@ -145,6 +152,9 @@ def main(argv=None):
             result = archive_inspect(args.package, after=args.after, limit=args.limit, section=args.section)
         elif args.command == 'execution-recover':
             result=controller.execution_recover(root,args.step)
+        elif args.command == 'execution-resume':
+            result=controller.execution_resume(root,args.step,args.call_id,max_seconds=args.max_seconds,
+                authorization_note=args.authorization_note,request_valid_seconds=args.request_valid_seconds)
         elif args.command == 'worker-resume':
             result = controller.worker_resume(root, args.step)
         elif args.command == 'status':
@@ -177,7 +187,7 @@ def main(argv=None):
         print(json.dumps(dict(status='error',error=str(error),**(dict(code=error.code) if isinstance(error,UnsupportedProtocol) else {})), ensure_ascii=False))
         return 1
     print(json.dumps(result, ensure_ascii=False))
-    return 0 if result.get('status') in {None, 'preserved_read_only', 'prepared', 'finish', 'wait', 'paused', 'pause_requested', 'budget_amended', 'delivery_confirmed', 'execution_recovered', 'exported_unsubmitted', 'ui_stopped', 'archive_exported', 'archive_inspected'} else 2
+    return 0 if result.get('status') in {None, 'preserved_read_only', 'prepared', 'finish', 'wait', 'paused', 'pause_requested', 'budget_amended', 'delivery_confirmed', 'execution_recovered', 'execution_resume_recorded', 'exported_unsubmitted', 'ui_stopped', 'archive_exported', 'archive_inspected'} else 2
 
 
 if __name__ == '__main__':

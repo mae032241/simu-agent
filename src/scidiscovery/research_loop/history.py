@@ -12,6 +12,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import uuid
 from urllib.parse import unquote, urlsplit
 
 from . import contracts as c
@@ -83,7 +84,7 @@ def resolve(root, target, receipts, *, current=None):
     return row
 
 
-def _proof(root, source):
+def _proof(root, source, *, context=None):
     from .protocol import require_current
     require_current(root)
     if not isinstance(source, str):
@@ -93,23 +94,29 @@ def _proof(root, source):
         raise ObserverIntegrityError('Observer evidence must be an exact instance original')
     c.regular(path)
     size = path.stat().st_size
-    sha = c.digest(path)
+    from . import experiments
+    sha = c.digest(path) if context is None else experiments.proof(path,context=context)['sha256']
     objects = root / 'host-history/objects'
     snapshot = objects / sha
     if objects.resolve() != objects or snapshot.is_symlink():
         raise ObserverIntegrityError('Observer archive must contain original files')
     if snapshot.exists():
-        if not snapshot.is_file() or c.digest(c.regular(snapshot)) != sha:
+        if not snapshot.is_file():raise ObserverIntegrityError('Archived observer original changed')
+        actual=c.digest(c.regular(snapshot)) if context is None else experiments.proof(snapshot,context=context)['sha256']
+        if actual != sha:
             raise ObserverIntegrityError('Archived observer original changed')
     else:
         objects.mkdir(parents=True, exist_ok=True)
         if objects.resolve() != objects:
             raise ObserverIntegrityError('Observer archive must be an original directory')
-        temporary = objects / (sha + '.tmp')
+        # A timed-out bounded copy must not poison the next explicit operation.
+        # Keep its partial; a later operation verifies the original anew.
+        temporary = objects / (sha + ('.'+uuid.uuid4().hex if context is not None else '') + '.tmp')
         if temporary.exists() or temporary.is_symlink():
             raise ObserverIntegrityError('Observer archive has an uncertain temporary original')
-        c._copy_bound(path,temporary,sha)
+        c._copy_bound(path,temporary,sha,context=context)
         with temporary.open('rb') as stream:os.fsync(stream.fileno())
+        if context is not None:context.remaining_seconds()
         temporary.replace(snapshot)
     return dict(path=source, sha256=sha, size_bytes=size, retention='archived',
                 snapshot=snapshot.relative_to(root).as_posix())
@@ -142,8 +149,8 @@ def _managed_config(job,root=None):
     return dict(adapter_sha256='registered-originals-v1') if configured else None
 
 
-def _managed_proof(root,path,original):
-    proof=_proof(root,Path(path).relative_to(root).as_posix())
+def _managed_proof(root,path,original,*,context=None):
+    proof=_proof(root,Path(path).relative_to(root).as_posix(),context=context)
     if any(proof[key]!=original[key] for key in ('sha256','size_bytes')):
         raise ObserverIntegrityError('Managed file differs from completed original')
     return proof
@@ -161,7 +168,7 @@ def _execution_interface(root, accepted):
     return config['execution_interface']
 
 
-def managed_status(root, row):
+def managed_status(root, row, *, context=None):
     """One immutable terminal authority shared with Worker delivery and history."""
     from . import experiments
     if row.get('retirement') is not None:
@@ -173,7 +180,7 @@ def managed_status(root, row):
             raise ObserverIntegrityError('Retirement differs from the archived accepted call')
         try:
             experiments.verify_retirement(value,lambda item:root/'host-history/objects'/item['sha256'],
-                interface=_execution_interface(root,accepted))
+                interface=_execution_interface(root,accepted),context=context)
         except (ValueError,OSError,KeyError,TypeError) as error:
             raise ObserverIntegrityError('Archived permanent retirement proof changed') from error
         return 'not_submitted'
@@ -188,7 +195,7 @@ def managed_status(root, row):
             raise ObserverIntegrityError('Managed observation differs from archived call originals')
         try:
             return experiments.verify_observation(value,lambda proof:
-                root/'host-history/objects'/proof['sha256'],interface=interface)
+                root/'host-history/objects'/proof['sha256'],interface=interface,context=context)
         except (ValueError,OSError,KeyError,TypeError) as error:
             raise ObserverIntegrityError('Managed execution observation original changed') from error
     if interface.get('observation_version') is not None:return 'unknown'
@@ -204,7 +211,7 @@ def _managed_outputs(interface, completed, observed):
     return completed.get('outputs',[]) if 'result' in completed else observed['outputs'] if observed is not None else []
 
 
-def managed_calls(root, job):
+def managed_calls(root, job, *, context=None):
     """Capture small common receipts, independent of domain candidates or observers."""
     from . import experiments, breadth, generic_results
     records=experiments.Records(dict(record_dir=str(c.workspace(root,job['step'])/'work/lineage')))
@@ -223,7 +230,7 @@ def managed_calls(root, job):
                 raise ObserverIntegrityError('Managed completion changed accepted mechanism')
             terminal_path=directory/'terminal.json'
             if terminal_path.exists():
-                terminal=_proof(root,terminal_path.relative_to(root).as_posix())
+                terminal=_proof(root,terminal_path.relative_to(root).as_posix(),context=context)
         observed_path=directory/'execution-observation.json';observed=None;extra=[]
         if observed_path.exists():
             observed=c.read(c.regular(observed_path))
@@ -235,32 +242,32 @@ def managed_calls(root, job):
             value=experiments.retirement(dict(record_dir=str(records.root),scope=scope,execution_interface=interface),directory.name)
             originals=experiments.retirement_originals(value,accepted)
             row=dict(call_id=directory.name,scope=scope,mechanism_binding=binding,status='not_submitted',
-                result_protocol=generic_results.protocol(interface),accepted=_proof(root,accepted_path.relative_to(root).as_posix()),
-                completed=None,terminal=None,retirement=_proof(root,retired_path.relative_to(root).as_posix()),
-                originals=[_managed_proof(root,item['path'],item) for item in originals])
-            row['status']=managed_status(root,row);result.append(row)
+                result_protocol=generic_results.protocol(interface),accepted=_proof(root,accepted_path.relative_to(root).as_posix(),context=context),
+                completed=None,terminal=None,retirement=_proof(root,retired_path.relative_to(root).as_posix(),context=context),
+                originals=[_managed_proof(root,item['path'],item,context=context) for item in originals])
+            row['status']=managed_status(root,row,context=context);result.append(row)
             continue
         outputs=_managed_outputs(interface,value,observed)
         row=dict(call_id=directory.name,scope=scope,mechanism_binding=binding,status=state,
             result_protocol=generic_results.protocol(interface),
-            accepted=_proof(root,accepted_path.relative_to(root).as_posix()),
-            completed=_proof(root,completion.relative_to(root).as_posix()) if completion.exists() else None,terminal=terminal,
-            **(dict(observation=_proof(root,observed_path.relative_to(root).as_posix())) if observed is not None else {}),
-            **(dict(originals=[_managed_proof(root,directory/'inputs'/item['name'],item) for item in accepted.get('snapshot_files',[])]
-                    +[_managed_proof(root,item['path'],item) for item in (extra if observed is not None else value.get('proofs',[]))],
-                outputs=[dict(name=item['name'],**_managed_proof(root,item['path'],item)) for item in outputs],
+            accepted=_proof(root,accepted_path.relative_to(root).as_posix(),context=context),
+            completed=_proof(root,completion.relative_to(root).as_posix(),context=context) if completion.exists() else None,terminal=terminal,
+            **(dict(observation=_proof(root,observed_path.relative_to(root).as_posix(),context=context)) if observed is not None else {}),
+            **(dict(originals=[_managed_proof(root,directory/'inputs'/item['name'],item,context=context) for item in accepted.get('snapshot_files',[])]
+                    +[_managed_proof(root,item['path'],item,context=context) for item in (extra if observed is not None else value.get('proofs',[]))],
+                outputs=[dict(name=item['name'],**_managed_proof(root,item['path'],item,context=context)) for item in outputs],
                 execution=dict(returncode=value.get('returncode'),wall_seconds=value.get('wall_seconds'),result=value.get('result'),
                     **(dict(native_state=value['native_state']) if 'native_state' in value else {})))
                if 'result' in value or observed is not None else {}))
         if observed is not None:
             # Retain every collected descriptor even when local result outputs use scientific names.
-            for item in observed['outputs']:_managed_proof(root,item['path'],item)
-        row['status']=managed_status(root,row)
+            for item in observed['outputs']:_managed_proof(root,item['path'],item,context=context)
+        row['status']=managed_status(root,row,context=context)
         result.append(row)
     return result
 
 
-def validate_managed(root, job, rows):
+def validate_managed(root, job, rows, *, context=None):
     from . import breadth, generic_results
     from .protocol import stage_scope
     if not isinstance(rows,list):raise ObserverIntegrityError('Managed receipt list required')
@@ -276,14 +283,14 @@ def validate_managed(root, job, rows):
             proof=row.get(key)
             if proof is not None:
                 if proof.get('retention')!='archived':raise ObserverIntegrityError('Managed receipt original unavailable')
-                _validate_proof(root,proof)
+                _validate_proof(root,proof,context=context)
         accepted=c.read(root/row['accepted']['snapshot'])
         if accepted.get('call_id')!=row['call_id'] or accepted.get('scope')!=scope or accepted.get('mechanism_binding')!=row['mechanism_binding']:
             raise ObserverIntegrityError('Managed receipt differs from accepted original')
         if 'result_protocol' in row and row['result_protocol']!=generic_results.protocol(_execution_interface(root,accepted)):
             raise ObserverIntegrityError('Managed result protocol differs from frozen host interface')
         breadth.check_binding((job.get('search') or {}).get('breadth'),row['mechanism_binding'],scope)
-        for proof in [*row.get('originals',[]),*row.get('outputs',[])]:_validate_proof(root,proof)
+        for proof in [*row.get('originals',[]),*row.get('outputs',[])]:_validate_proof(root,proof,context=context)
         if 'execution' in row:
             completed=c.read(root/row['completed']['snapshot'])
             if row['execution']!=dict(returncode=completed.get('returncode'),wall_seconds=completed.get('wall_seconds'),result=completed.get('result'),
@@ -312,7 +319,7 @@ def validate_managed(root, job, rows):
                     for key in ('sha256','size_bytes')) for item,original in zip(row['originals'],originals))):
                 raise ObserverIntegrityError('Retirement native originals differ from the frozen receipt')
         if row['status'] not in {'known_success','known_failed','not_submitted','unknown'}:raise ObserverIntegrityError('Managed state differs')
-        if row['status']!=managed_status(root,row):
+        if row['status']!=managed_status(root,row,context=context):
             raise ObserverIntegrityError('Managed state differs from verified execution observation')
 
 
@@ -746,11 +753,14 @@ def validate_observation(root, job, seal):
         _validate_proof(root, proof)
 
 
-def _validate_proof(root, proof):
+def _validate_proof(root, proof, *, context=None):
     if proof.get('retention') != 'archived':
         return
     expected = 'host-history/objects/' + proof['sha256']
-    if proof.get('snapshot') != expected or c.digest(c.regular(root / expected)) != proof['sha256']:
+    if proof.get('snapshot')!=expected:raise ObserverIntegrityError('Archived observer original changed')
+    from . import experiments
+    actual=c.digest(c.regular(root/expected)) if context is None else experiments.proof(root/expected,context=context)['sha256']
+    if actual != proof['sha256']:
         raise ObserverIntegrityError('Archived observer original changed')
 
 

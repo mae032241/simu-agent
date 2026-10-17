@@ -167,7 +167,7 @@ class CommandTCADExecutorAdapter:
         reviewed = validate_execution_package_json(raw, preparation_profile=preparation_profile)
         inputs = (materialize_execution_inputs(reviewed, artifacts, exchange_directory,
             self.execution_policy().runner.transfer_chunk_bytes,
-            input_metadata=input_metadata, open_input=open_input)
+            input_metadata=input_metadata, open_input=open_input,context=getattr(self,'operation_context',None))
             if reviewed.resolved_inputs or artifacts is not None
             or input_metadata is not None or open_input is not None else {})
         packaged = package_execution_package_json(
@@ -175,6 +175,7 @@ class CommandTCADExecutorAdapter:
             output_root=exchange_directory / "prepared",
             input_payloads=inputs,
             preparation_profile=preparation_profile,
+            context=getattr(self,'operation_context',None),
         )
         value = self._call(
             "prepare",
@@ -327,12 +328,18 @@ class CommandTCADExecutorAdapter:
 
     def _call(self, operation: str, payload: dict[str, Any], *, context=None) -> dict[str, Any]:
         deadline = payload.get("deadline_monotonic")
+        operation_context=getattr(self,'operation_context',None)
+        if operation_context is not None:
+            deadline=min(deadline if deadline is not None else float('inf'),
+                         time.monotonic()+operation_context.remaining_seconds())
         if operation in {"status", "capabilities", "execution_policy"}:
             # Bound the whole command locally without changing its business
             # payload: discovery transports require an empty object.
             query_deadline = time.monotonic() + self.config.query_timeout_seconds
             deadline = min(deadline, query_deadline) if deadline is not None else query_deadline
         timeout = context.remaining_seconds() if context is not None else max(.001, deadline - time.monotonic()) if deadline is not None else self.config.operation_timeout_seconds
+        if operation_context is not None:
+            timeout=min(timeout,operation_context.remaining_seconds(),self.config.operation_timeout_seconds)
         if deadline is not None and deadline <= time.monotonic():
             raise TimeoutError("TCAD transport request deadline exhausted before start")
         request = _canonical(
@@ -350,8 +357,13 @@ class CommandTCADExecutorAdapter:
             **self.config.environment,
         }
         try:
+            active_context=context
+            if operation_context is not None:
+                timeout=min(timeout,operation_context.remaining_seconds(),deadline-time.monotonic())
+                if active_context is None or operation_context.deadline_monotonic<active_context.deadline_monotonic:
+                    active_context=operation_context
             completed = run_bounded([self.config.executable, *self.config.arguments],
-                input=request, env=environment, timeout=timeout, context=context)
+                input=request, env=environment, timeout=timeout, context=active_context)
         except subprocess.TimeoutExpired as error:
             log = preserve_log(self.local_result_root, "stderr", error.stderr or b"")
             preserve_log(self.local_result_root, "stdout", error.stdout or b"")

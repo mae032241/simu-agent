@@ -1,6 +1,6 @@
 # P3d2-b：迟批后的原 call 有限恢复
 
-状态：**补充候选设计，待独审，未实施。** P3d1 `c03d0c3`、P3d2-a `4399149` 已独审提交。此处仅细化[主计划](../THIN_CAPABILITY_MIGRATION_20261016.zh-CN.md)与[已审 TCAD seam](../THIN_TCAD_MANAGED_SEAM_20261016.zh-CN.md)的授权/恢复边界，不增加 session/任务/预算体系。先提交设计独审，再实施。
+状态：**设计独审 PASS；实现待代码独审，动态未验收。** [独立设计审查](P3D2B_LATE_DECISION_RECOVERY_DESIGN_REVIEW_20261017.zh-CN.md)、[实施账](P3D2B_LATE_DECISION_RECOVERY_IMPLEMENTATION_20261017.zh-CN.md)。P3d1 `c03d0c3`、P3d2-a `4399149` 已独审提交。此处仅细化[主计划](../THIN_CAPABILITY_MIGRATION_20261016.zh-CN.md)与[已审 TCAD seam](../THIN_TCAD_MANAGED_SEAM_20261016.zh-CN.md)的授权/恢复边界，不增加 session/任务/预算体系。
 
 ## 最短公共链与权限
 
@@ -51,6 +51,8 @@ receipt 含：原 job、全部 attempt 的 intent/outcome/process/cleanup proofs
 | `terminal` / `not_submitted` | 仅引用现有 `verify_observation` 或 P2d `verify_retirement` 认可的原件；不自造工程终态。更新该 call 的派生投影、清除对应 pending/unknown 阻塞，accepted/机会计数不减少。settle/release 仍仅 budget owner消费原 reservation。 |
 
 统一 `execution_recovery.call_view(root, sources, prefix)` 按完整链取得每个 `(source_step,call_id)` 的最新事实；旧 `resolved` 只返回 verified terminal/not_submitted，**不能把一个 pending key 当已解除 unknown**。`project_records` 对原 unknown row精确替换；对原零 accepted 的 sealed W，在派生 copy 中加入新的真实 accepted row，并单列无 accepted 的 resume-intent。原 observation/seal 不改。`history`/`lineage`/A实验页消费同一 view，pending 不再因无 execution/completed 而被跳过；native originals仍用已有归档原件/明确配额路径，没有第二状态账。
+
+实施期经 root/独审确认第三行的必要清阻：原 seal 的 `possibly_prepared` 且无 accepted，由同 view 种入 unknown，不编造 accepted 或派发 intent。后继若已有同 allocation/call/authority 的真实 accepted，可在同 version2 链以 `origin=sealed_preparation_unknown` 追加 accepted/status/统一 terminal/P2d retirement；该 origin 永远不进入 fresh prepare/submit。lookup None/缺原件继续 unknown。clock 显式发现当前 sealed 控制元数据；科学 view 仅使用调用者绑定的 source seals/prefix，不把未来事实灌回旧 A。没有新恢复 owner/余额或假未提交证明。
 
 `search.fold` 的 opportunity/grant counts 与 unknown 从该同一 call view 推导，按原 accepted identity **去重一次**；terminal/status后继不再加 count，resume-intent 无 accepted 不计机会但保留阻塞。每条已封存科学 source 的 `apply_source` 先使用**该 job 当时冻结的 recovery prefix**恢复机械计数；fold末尾才叠加调用者请求的 prefix供后继准入，不能把迟到 accepted 回填到更早 A 的科学解释。`_managed_refs/_screen_refs` 不自动把旧 W 当时等待改成已完成科学判断；新 A 只读取追加原始事实作自己的结论。旧 W 的 node/slice/repair/portfolio 投入不重新计一次。
 

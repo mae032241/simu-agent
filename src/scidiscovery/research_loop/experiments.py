@@ -104,10 +104,16 @@ def read(path, limit=None):
     return path.read_bytes()
 
 
-def proof(path, limit=None):
+def proof(path, limit=None, *, context=None):
     from . import contracts as c
     path=c.regular(Path(path),limit=limit)
-    return dict(path=str(path),sha256=c.digest(path),size_bytes=path.stat().st_size)
+    if context is None:return dict(path=str(path),sha256=c.digest(path),size_bytes=path.stat().st_size)
+    digest=hashlib.sha256()
+    with path.open('rb') as stream:
+        for block in iter(lambda:stream.read(1024*1024),b''):
+            context.remaining_seconds();digest.update(block)
+    context.remaining_seconds()
+    return dict(path=str(path),sha256=digest.hexdigest(),size_bytes=path.stat().st_size)
 
 
 def write(path, value):
@@ -201,12 +207,12 @@ def _validate_registered_implementation(value,executor):
         raise IntegrityError('Frozen registered package implementation changed')
 
 
-def _adapter(config, path):
+def _adapter(config, path, *, host_services=None):
     selected = config['execution_interface']
     declared, binding = registration(selected['executor'])
     body = {key: value for key, value in config.items() if key != 'execution_interface'}
     from . import execution_authority
-    services = execution_authority.host_services(config)
+    services = host_services if host_services is not None else execution_authority.host_services(config)
     contribution = declared.factory.build(RuntimePluginContext(declared.plugin_id, 'local_worker',
         Path(path), encoded(body), Path(config['record_dir']), execution_host_services=services,
         frozen_execution_interface=selected))
@@ -342,7 +348,7 @@ def configure(root,step,executor,config,output):
     return value
 
 
-def load(config, *, path=None):
+def load(config, *, path=None, host_services=None):
     from .protocol import require_scope
     require_scope(config.get('scope') if isinstance(config,dict) else None)
     if not isinstance(config,dict):
@@ -357,7 +363,7 @@ def load(config, *, path=None):
         execution_authority.host_services(config)
     if freeze({key: value for key, value in config.items() if key != 'execution_interface'}, selected['executor'], path=path) != config:
         raise IntegrityError('Frozen execution implementation or configuration changed')
-    _, adapter, _ = _adapter(config, path or Path(config['record_dir']).parent / 'config.json')
+    _, adapter, _ = _adapter(config, path or Path(config['record_dir']).parent / 'config.json',host_services=host_services)
     return adapter
 
 
@@ -429,12 +435,18 @@ class Records:
         return path
 
     @contextmanager
-    def lease(self, name='node.lock'):
+    def lease(self, name='node.lock', *, context=None):
         if name=='accept.lock' and self.config.get('admission',{}).get('mode')=='soft':
             path=Path(self.config['admission']['directory'])/'accept.lock'
             fd=os.open(path,os.O_RDONLY|os.O_CLOEXEC|os.O_NOFOLLOW)
             try:
-                fcntl.flock(fd,fcntl.LOCK_EX)
+                if context is None:fcntl.flock(fd,fcntl.LOCK_EX)
+                else:
+                    while True:
+                        context.remaining_seconds()
+                        try:
+                            fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB);break
+                        except BlockingIOError:time.sleep(min(.05,context.remaining_seconds()))
                 yield
             finally:os.close(fd)
             return
@@ -446,21 +458,21 @@ class Records:
         finally:
             os.close(fd)
 
-    def accept(self, descriptor, metadata, interface, *, expected_calls=None, mechanism=None):
+    def accept(self, descriptor, metadata, interface, *, expected_calls=None, mechanism=None, recovery_admission=None, operation_context=None):
         """Short admission linearization point. No solver or domain IO under lock."""
         from .protocol import require_scope
         require_scope(self.config['scope'])
         from . import contracts as c
-        original=proof(descriptor.local_path)
+        original=proof(descriptor.local_path,context=operation_context)
         if original['sha256']!=descriptor.sha256 or original['size_bytes']!=descriptor.size_bytes:
             raise IntegrityError('Prepared execution input changed')
         import shutil,tempfile
         self.root.mkdir(parents=True,exist_ok=True)
         directory=Path(tempfile.mkdtemp(prefix='.prepared-',dir=self.root))
         source = directory / 'source.py'
-        c._copy_bound(Path(descriptor.local_path),source,descriptor.sha256)
+        c._copy_bound(Path(descriptor.local_path),source,descriptor.sha256,context=operation_context)
         destination=self.root/'calls'/descriptor.name
-        source_proof=proof(source);source_proof['path']=str(destination/'source.py')
+        source_proof=proof(source,context=operation_context);source_proof['path']=str(destination/'source.py')
         accepted = dict(metadata, call_id=descriptor.name, scope=self.config['scope'],
             source_script=descriptor.local_path, script=source_proof,native_attempt=self.config.get('native_attempt'),
             prepared=descriptor.model_dump(mode='json'), interface=interface)
@@ -474,17 +486,20 @@ class Records:
                         or relative.as_posix() != name or not relative.parts or name in seen):
                     raise ValueError('Managed input path is not canonical')
                 seen.add(name)
-                original=proof(item['path'])
+                original=proof(item['path'],context=operation_context)
                 if any(original[key]!=item[key] for key in ('sha256','size_bytes')):
                     raise IntegrityError('Managed input changed before acceptance')
                 target=directory/'inputs'/relative
-                c._copy_bound(Path(item['path']),target,item['sha256'])
+                c._copy_bound(Path(item['path']),target,item['sha256'],context=operation_context)
             with self.lease():
                 if expected_calls is not None and [path.name for path in self.calls()]!=expected_calls:
                     raise ConcurrentExecution('Another original execution was accepted; query its identity')
-                with self.lease('accept.lock'):
-                    review=review_status(self.config)
-                    if review['requested']:raise ReviewRequired(review['reason'])
+                with self.lease('accept.lock',context=operation_context):
+                    if recovery_admission is None:
+                        review=review_status(self.config)
+                        if review['requested']:raise ReviewRequired(review['reason'])
+                    else:
+                        recovery_admission()
                     from . import breadth
                     binding=breadth.admit(self.config.get('breadth'),mechanism,self.config['scope'],
                         [self.accepted(path.name) for path in self.calls()])
@@ -587,12 +602,12 @@ def local_terminal_status(accepted, completed, terminal):
     return expected if completed.get('status')==expected else 'unknown'
 
 
-def verify_observation(value, original, *, interface=None):
+def verify_observation(value, original, *, interface=None, context=None):
     """Verify frozen control facts using exact bytes, never a live backend query."""
     def bound(item):
         data=original(item)
         if isinstance(data,Path):
-            valid=proof(data)
+            valid=proof(data,context=context)
             changed=any(valid[key]!=item[key] for key in ('sha256','size_bytes'))
         else:changed=hashlib.sha256(data).hexdigest()!=item['sha256'] or len(data)!=item['size_bytes']
         if changed:raise IntegrityError('Execution observation original changed')
@@ -660,13 +675,13 @@ def _retirement_contract(contract,capability):
     return contract
 
 
-def verify_retirement(value, original, *, interface=None):
+def verify_retirement(value, original, *, interface=None, context=None):
     """Verify an independent never-submitted fact, without a backend or budget IO."""
     def bound(item):
         data=original(item)
         if isinstance(data,Path):
             if data.resolve()!=data:raise IntegrityError('Retirement original path changed')
-            actual=proof(data)
+            actual=proof(data,context=context)
             if any(actual[key]!=item[key] for key in ('sha256','size_bytes')):
                 raise IntegrityError('Retirement original changed')
             data=data.read_bytes()
@@ -777,7 +792,7 @@ def retire_original(config,adapter,call_id):
         return dict(call_id=call_id,status='unknown',note='Original submission or retirement still owns its call lease')
 
 
-def record_observation(config, adapter, call_id, *, collected=None):
+def record_observation(config, adapter, call_id, *, collected=None, operation_context=None):
     """Freeze one backend-verified terminal projection while executing its protocol.
 
     The adapter owns its native terminal evidence. In particular local adapters
@@ -788,9 +803,9 @@ def record_observation(config, adapter, call_id, *, collected=None):
     path=directory/'execution-observation.json'
     if path.exists():
         value=json.loads(read(path));verify_observation(value,lambda item:Path(item['path']),
-            interface=config['execution_interface'])
+            interface=config['execution_interface'],context=operation_context)
         from . import execution_authority
-        execution_authority.reconcile_resources(config,adapter,call_id,observation=value)
+        execution_authority.reconcile_resources(config,adapter,call_id,observation=value,operation_context=operation_context)
         return value
     accepted=records.accepted(call_id)
     if accepted['interface']!=config['execution_interface']:
@@ -813,15 +828,15 @@ def record_observation(config, adapter, call_id, *, collected=None):
     if not isinstance(proofs,list) or not proofs:
         raise IntegrityError('Adapter terminal result requires bounded original proofs')
     for item in proofs:
-        if proof(item['path'])!=item:raise IntegrityError('Adapter terminal original changed')
+        if proof(item['path'],context=operation_context)!=item:raise IntegrityError('Adapter terminal original changed')
     def retain(item):
         from . import contracts as c
-        source=Path(item['path']);original=proof(source)
+        source=Path(item['path']);original=proof(source,context=operation_context)
         if any(original[key]!=item[key] for key in ('sha256','size_bytes')):
             raise IntegrityError('Execution observation original changed during collection')
         target=directory/'observed-originals'/item['sha256']
-        c._copy_bound(source,target,item['sha256'])
-        return dict(proof(target),source=item)
+        c._copy_bound(source,target,item['sha256'],context=operation_context)
+        return dict(proof(target,context=operation_context),source=item)
     proofs=[retain(item) for item in proofs]
     outputs=[];names=set()
     if lifecycle_capabilities(adapter).collect:
@@ -832,7 +847,7 @@ def record_observation(config, adapter, call_id, *, collected=None):
                     or '\\' in descriptor.name or descriptor.name in names):
                 raise IntegrityError('Collected observation requires distinct canonical names')
             names.add(descriptor.name)
-            item=proof(descriptor.local_path)
+            item=proof(descriptor.local_path,context=operation_context)
             if item['sha256']!=descriptor.sha256 or item['size_bytes']!=descriptor.size_bytes:
                 raise IntegrityError('Collected observation original changed')
             outputs.append(dict(retain(item),name=descriptor.name,descriptor=descriptor.model_dump(mode='json')))
@@ -843,13 +858,13 @@ def record_observation(config, adapter, call_id, *, collected=None):
     if 'native_state' in completed:value['native_state']=completed['native_state']
     if config['execution_interface'].get('terminal_evidence')=='local_process':
         value['native_terminal']=proof(directory/'terminal.json')
-    verify_observation(value,lambda item:Path(item['path']))
+    verify_observation(value,lambda item:Path(item['path']),context=operation_context)
     with records.lease('observation-'+call_id+'.lock'):
         if path.exists():
             if json.loads(read(path))!=value:raise IntegrityError('Frozen execution observation changed')
         else:write(path,value)
     from . import execution_authority
-    execution_authority.reconcile_resources(config,adapter,call_id,observation=value)
+    execution_authority.reconcile_resources(config,adapter,call_id,observation=value,operation_context=operation_context)
     return value
 
 
@@ -864,6 +879,11 @@ def dispatch_descriptor(config, payload, *, parent=None, new=False, change=None,
 def _dispatch_descriptor(config, payload, *, parent=None, new=False, change=None, mechanism=None, command_options=None):
     from .protocol import require_scope
     require_scope(config.get('scope'))
+    if config.get('host_execution_authority') is not None:
+        from . import execution_authority,execution_recovery
+        root,_,_=execution_authority._host_context(config)
+        if execution_recovery.pending(root):
+            return dict(status='unknown',note='Original host execution recovery is unresolved; preserve its identity without a new call.')
     repair=config.get('engineering_repair')
     if repair is not None and (parent!=repair['candidate_id'] or new or not change or Records(config).calls()):
         raise ValueError('Engineering repair allows one exact parent candidate call with a declared change')
@@ -890,7 +910,7 @@ def _dispatch_descriptor(config, payload, *, parent=None, new=False, change=None
     call_id = f'{len(before)+1:04d}-{uuid.uuid4().hex}'
     if config.get('host_execution_authority') is not None:
         from . import execution_authority
-        call_id=execution_authority.host_services(config).call_identity(payload,len(before)+1)
+        call_id=execution_authority.host_services(config).call_identity(payload,len(before)+1,mechanism)
     descriptor = payload.model_copy(update={'name':call_id})
     prepared = adapter.prepare(descriptor, preparation_profile='research_loop.v1', exchange_directory=records.root)
     options = dict(command_options=command_options) if command_options is not None else {}

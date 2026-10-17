@@ -92,6 +92,8 @@ def before_seal(root,job,record):
 
 def pending(root):
     """Read-only clock classification; no backend query and no new authority."""
+    from . import execution_recovery
+    if execution_recovery.pending(root):return True
     for path in (Path(root)/'native-evidence').glob('*/**/'+NAME):
         record=path.parent
         step=int(record.relative_to(Path(root)/"native-evidence").parts[0])

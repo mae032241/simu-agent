@@ -1,0 +1,443 @@
+"""Host recovery of an original call; execution authority and ledger keep ownership.
+
+The seal records positive namespace/cleanup evidence before any late dispatch.
+No current missing file or PID is interpreted as proof of non-submission.
+"""
+from pathlib import Path
+import hashlib
+import math
+import time
+
+from . import contracts as c, execution, qualification as q
+
+
+def capture_pending(root, job):
+    """Optional evidence failure never discards a valid scientific conclusion."""
+    from . import execution_authority as authority
+    root=Path(root).resolve()
+    if job['role']!='W' or not job.get('execution_authority'):return None
+    path=execution.origin(root,job['step'])/'pending-execution-set.json'
+    if path.exists():return q._ref(root,path)
+    try:
+        return _capture_pending(root,job)
+    except (OSError,ValueError,KeyError,TypeError) as error:
+        return q._save(root,path,dict(version=1,job=q._ref(root,root/'jobs'/f'{job["step"]:03d}.json'),
+                contract=authority.contract(root),attempts=[],allocations=[],calls_namespace=[],complete=False,
+                unavailable_reason='Pending namespace or owner evidence could not be captured: '+type(error).__name__))
+
+
+def _capture_pending(root, job):
+    from . import execution_authority as authority
+    root = Path(root).resolve()
+    if job['role'] != 'W' or not job.get('execution_authority'):
+        return None
+    path = execution.origin(root, job['step']) / 'pending-execution-set.json'
+    if path.exists():
+        return q._ref(root, path)
+    with authority.writer(root,blocking=False):
+        allocations = []; complete = True
+        job_ref=q._ref(root,root/'jobs'/f'{job["step"]:03d}.json')
+        records=c.workspace(root,job['step'])/'work/lineage/calls'
+        namespace=sorted(item.name for item in records.iterdir()) if records.exists() else []
+        if records.resolve()!=records:complete=False
+        calls=[]
+        for directory in sorted((root/'execution-authority/calls').glob('*')):
+            original=directory/'allocation.json'
+            if not original.exists():complete=False;continue
+            allocation=c.read(c.regular(original))
+            if allocation['binding']['scope']['job_sha256']==job_ref['sha256']:
+                calls.append((directory,allocation))
+        # No pending authority allocation means no new attempt/request history IO.
+        if not calls and not namespace:return None
+        requests = {}
+        for directory in sorted((root / 'execution-authority/requests').glob('*')):
+            item=directory/'request.json'
+            if directory.resolve()!=directory or not directory.is_dir() or not item.exists():
+                complete=False;continue
+            value = c.read(c.regular(item))
+            if value['job'] == job_ref:
+                requests.setdefault(value['call_id'], []).append(q._ref(root, item))
+        attempts = []
+        for record in execution.records(root, job['step']):
+            proofs = {}
+            for name in ('native-intent.json', 'native-outcome.json', 'runner-process.json', 'native-process.json'):
+                if (record / name).exists():
+                    proofs[name] = q._ref(root, record / name)
+                else:
+                    complete = False
+            outcome = c.read(record / 'native-outcome.json') if 'native-outcome.json' in proofs else {}
+            if (outcome.get('cleanup') != 'observed_group_cleaned'
+                    or type(outcome.get('returncode')) is not int):
+                complete = False
+            binding=execution.identity(root,job['step'],len(attempts))
+            for name in ('runner-process.json','native-process.json'):
+                if name in proofs:
+                    process=q._read(root,proofs[name])
+                    if (process.get('task_sha256')!=binding or not process.get('boot_id')
+                            or any(type(process.get(key)) is not int or process[key]<=0 for key in ('pid','start_ticks','pgid','sid'))):
+                        complete=False
+            attempts.append(proofs)
+        for directory,allocation in calls:
+            original = directory / 'allocation.json'
+            call = allocation['call_id']
+            if directory.name != call or directory.resolve() != directory:
+                complete = False
+            prepare = directory / 'prepare-intent.json'
+            accepted = records / call / 'accepted.json'
+            refs = dict(prepare_intent=q._ref(root, prepare) if prepare.exists() else None,
+                        accepted=q._ref(root, accepted) if accepted.exists() else None)
+            for name in ('submission.json','tcad-dispatch.json','tcad-backend-binding.json','completed.json','submission-retirement.json'):
+                file=records/call/name
+                refs[name]=q._ref(root,file) if file.exists() else None
+            allocations.append(dict(call_id=call, allocation=q._ref(root, original),
+                requests=requests.pop(call, []), **refs,
+                disposition='unprepared' if not prepare.exists() and call not in namespace else 'possibly_prepared'))
+        if requests or any(name not in {row['call_id'] for row in allocations} for name in namespace):
+            complete = False
+        # Partial preparation directories also make absence unprovable.
+        lineage = records.parent
+        if lineage.exists() and any(item.name.startswith('.prepared-') for item in lineage.iterdir()):
+            complete = False
+        return q._save(root, path, dict(version=1, job=q._ref(root, root / 'jobs' / f'{job["step"]:03d}.json'),
+            contract=authority.contract(root), attempts=attempts, allocations=allocations,
+            calls_namespace=namespace, complete=complete))
+
+
+def verify_pending_set(root, seal, allocation_ref=None, *, unprepared=False, require_complete=True, context=None):
+    """Check frozen positive facts; mutable absence is only an extra contradiction check."""
+    from . import execution_authority as authority
+    root = Path(root).resolve()
+    ref = seal.get('pending_executions')
+    if ref is None:
+        raise ValueError('Original seal has no positive pending execution evidence')
+    value = q._read(root, ref)
+    job = q._read(root, value['job'])
+    if (value.get('version') != 1 or value['job']['sha256'] != seal['job_sha256']
+            or type(value.get('complete')) is not bool
+            or ref['path'] != (execution.origin(root, job['step']) / 'pending-execution-set.json').relative_to(root).as_posix()
+            or value['contract'] != authority.contract(root)):
+        raise q.IntegrityError('Pending execution evidence differs from its original seal')
+    for proofs in value['attempts']:
+        for proof in proofs.values():
+            q._read(root, proof)
+    checked_code=set()
+    for row in value['allocations']:
+        if context is not None:context.remaining_seconds()
+        allocation = q._read(root, row['allocation'])
+        if allocation['call_id'] != row['call_id'] or allocation['binding']['scope']['job_sha256'] != seal['job_sha256']:
+            raise q.IntegrityError('Pending allocation escaped its original job')
+        for identity in allocation['binding']['interface']['code']:
+            key=(identity['path'],identity['sha256'],identity['size_bytes'])
+            if key in checked_code:continue
+            if context is None:q._check(identity)
+            else:
+                from . import experiments
+                if experiments.proof(identity['path'],context=context)!=identity:
+                    raise q.IntegrityError('Pending implementation original changed')
+            checked_code.add(key)
+        for proof in row['requests']:
+            request = q._read(root, proof)
+            if request['call_id'] != row['call_id'] or request['job'] != value['job']:
+                raise q.IntegrityError('Pending request escaped its original allocation')
+        for key in ('prepare_intent','accepted','submission.json','tcad-dispatch.json','tcad-backend-binding.json','completed.json','submission-retirement.json'):
+            if row[key] is not None:
+                q._read(root, row[key])
+    if allocation_ref is None:
+        return value
+    matches = [row for row in value['allocations'] if row['allocation'] == allocation_ref]
+    if len(matches) != 1 or require_complete and not value['complete']:
+        raise ValueError('Original pending execution set is incomplete or has no exact allocation')
+    if not require_complete:
+        if unprepared:raise ValueError('Fresh dispatch always requires complete positive evidence')
+        return matches[0]
+    records = execution.records(root, job['step'])
+    if len(records) != len(value['attempts']):
+        raise q.IntegrityError('Original pending attempt set changed')
+    for number,(record, proofs) in enumerate(zip(records, value['attempts'])):
+        if (set(proofs) != {'native-intent.json', 'native-outcome.json', 'runner-process.json', 'native-process.json'}
+                or any(proof != q._ref(root, record / name) for name, proof in proofs.items())
+                or q._read(root, proofs['native-outcome.json']).get('cleanup') != 'observed_group_cleaned'):
+            raise q.IntegrityError('Original positive cleanup evidence is incomplete')
+        for name in ('runner-process.json','native-process.json'):
+            process=q._read(root,proofs[name])
+            if (process.get('task_sha256')!=execution.identity(root,job['step'],number) or not process.get('boot_id')
+                    or any(type(process.get(key)) is not int or process[key]<=0 for key in ('pid','start_ticks','pgid','sid'))):
+                raise q.IntegrityError('Original cleanup has no exact process owner')
+    row = matches[0]
+    if unprepared:
+        if row['disposition'] != 'unprepared' or row['prepare_intent'] is not None or row['accepted'] is not None:
+            raise ValueError('Original preparation may have started; only same-call reconciliation is allowed')
+        allocation = q._read(root, allocation_ref)
+        prepare = root / allocation_ref['path']; call = allocation['call_id']
+        if ((prepare.parent / 'prepare-intent.json').exists()
+                or (c.workspace(root, job['step']) / 'work/lineage/calls' / call).exists()):
+            raise q.IntegrityError('New call artifacts contradict the sealed unprepared evidence')
+    return row
+
+
+def verify_rebind(root, proof, before, after):
+    """Ledger's only authority-rebind proof: same positively never-prepared call."""
+    seal=q._read(root,proof['seal'])
+    row=verify_pending_set(root,seal,proof['allocation'],unprepared=True)
+    if row['disposition']!='unprepared' or proof['pending_set']!=seal['pending_executions']:
+        raise q.IntegrityError('Reservation rebind lacks positive original non-preparation evidence')
+    for key in ('call_id','scope','native_attempt','interface'):
+        if before[key]!=after[key]:raise q.IntegrityError('Reservation rebind changed original execution identity')
+    old=q._read(root,before['request']);new=q._read(root,after['request'])
+    for key in ('job','native_intent','call_id','subject','review','payload','payload_alias','target','resources'):
+        if old.get(key)!=new.get(key):raise q.IntegrityError('Reservation rebind changed its exact scientific request')
+    cursor=after['request'];seen=set()
+    while cursor!=before['request']:
+        if cursor['path'] in seen:raise q.IntegrityError('Request successor chain is cyclic')
+        seen.add(cursor['path']);value=q._read(root,cursor)
+        cursor=value.get('supersedes')
+        if cursor is None:raise q.IntegrityError('Reservation authority has no exact original request chain')
+    if q._read(root,after['decision'])['request']!=after['request']:
+        raise q.IntegrityError('Reservation rebind decision changed request')
+    from . import execution_authority as authority
+    allocation=q._read(root,proof['allocation'])
+    config=c.read(c.regular(execution.record(root,before['scope']['step'],before['native_attempt']['number'])/'experiment-config.json'))
+    if allocation['binding']['scope']!=before['scope'] or allocation['binding']['interface']!=before['interface']:
+        raise q.IntegrityError('Reservation rebind changed the frozen host owner')
+    for binding in (before,after):
+        permit=authority._permit(root,binding['authority'],config,new['target'],binding['call_id'],None,authority.host_secret(root))
+        if permit['request']!=binding['request'] or permit['decision']!=binding['decision']:
+            raise q.IntegrityError('Reservation rebind lost original authority receipt')
+
+
+class _RecoveryAdmission:
+    """One synchronous host operation, never serialized into Worker configuration."""
+    def __init__(self,root,job,seal,seal_sha,allocation,config,*,max_seconds,note,valid_seconds):
+        from . import budget, execution_authority as authority
+        self.root,self.job,self.seal,self.config=root,job,seal,config
+        self.allocation_ref=allocation;self.allocation=q._read(root,allocation)
+        self.call=self.allocation['call_id'];self.valid_seconds=valid_seconds
+        self.secret=authority.host_secret(root);self.started=False;self.base=None;self._collection=None
+        self.proof=dict(seal=q._ref(root,c.host_record(c.workspace(root,job['step']))/'result-identity.json'),
+                        allocation=allocation,pending_set=seal['pending_executions'])
+        stamp=budget.clock_stamp();limits=budget.snapshot(root,sample_stamp=stamp)
+        from . import native
+        available=budget.execution_available(root,job,limits,native.usage(root))
+        if (type(max_seconds) not in (int,float) or not math.isfinite(max_seconds) or max_seconds<=0
+                or not isinstance(note,str) or not note.strip()):
+            raise ValueError('Finite host operation seconds and explicit operator audit note required')
+        if available['tokens']<=0 or available['seconds']<=0:
+            raise ValueError('Current original shared scientific authorization is exhausted')
+        seconds=min(max_seconds,available['seconds'])
+        directory=root/'execution-authority/calls'/self.call/'recovery-operations'
+        number=len(list(directory.glob('*.json')))+1
+        self.operation=q._save(root,directory/f'{number:06d}.json',dict(version=1,allocation=allocation,
+            pending_set=seal['pending_executions'],source_seal=self.proof['seal'],boot_id=stamp['boot_id'],
+            started_boottime=stamp['at_boottime'],deadline_boottime=stamp['at_boottime']+seconds,
+            scientific_authorization=budget.authorization_revision(root),authorization_note=note))
+        self.receipt=q._read(root,self.operation)
+        self.seal_sha=seal_sha
+        from scidiscovery.plugin_runtime.collection import CollectionContext
+        monotonic=time.monotonic();current=budget.clock_stamp()
+        remaining=self.receipt['deadline_boottime']-current['at_boottime']
+        if current['boot_id']!=self.receipt['boot_id'] or remaining<=0:
+            raise ValueError('Finite recovery admission expired while its original was published')
+        end=monotonic+remaining
+        self.context=CollectionContext(end,end,file_timeout_seconds=remaining,idle_timeout_seconds=remaining,
+                                      stopped=lambda:self.expired())
+
+    def expired(self):
+        from . import budget
+        stamp=budget.clock_stamp()
+        return stamp['boot_id']!=self.receipt['boot_id'] or stamp['at_boottime']>=self.receipt['deadline_boottime']
+
+    def check(self):
+        from . import budget, native
+        stamp=budget.clock_stamp();q._read(self.root,self.operation)
+        if self.expired() or self.receipt['scientific_authorization']!=budget.authorization_revision(self.root):
+            raise ValueError('Current finite host recovery admission expired or ceiling changed')
+        limits=budget.snapshot(self.root,sample_stamp=stamp)
+        available=budget.execution_available(self.root,self.job,limits,native.usage(self.root))
+        if available['tokens']<=0 or available['seconds']<=0:
+            raise ValueError('Current original shared scientific authorization is exhausted')
+        return stamp,min(available['seconds'],self.receipt['deadline_boottime']-stamp['at_boottime'])
+
+    def job_remaining(self):
+        from . import budget,native
+        self.check()
+        return budget.execution_available(self.root,self.job,budget.snapshot(self.root),native.usage(self.root))['seconds']
+
+    def opportunity(self):
+        from . import breadth,search,execution_recovery
+        binding=self.allocation['binding'].get('mechanism_binding')
+        if binding is None:return
+        if self.started:return # The accepted opportunity was checked before resume_intent.
+        from . import history
+        sources=[]
+        for step in range(1,c.settings(self.root)['max_steps']+1):
+            if not (c.host_record(c.workspace(self.root,step))/'result-identity.json').exists():break
+            sources.append(history._source(self.root,step))
+        state=search.fold(self.root,sources,recovery_refs=execution_recovery.prefix(self.root,c.settings(self.root)['max_steps']+1))
+        current=search._breadth(self.root,state,c.settings(self.root)['search_policy'],None)
+        actual=breadth.admit(current,binding['mechanism_ref'],self.config['scope'],[])
+        if actual!=binding:raise ValueError('Original scientific opportunity is no longer eligible; no new opportunity was granted')
+
+    def request(self,admission,target):
+        from . import budget,execution_authority as authority
+        self.check();self.opportunity()
+        row=verify_pending_set(self.root,self.seal,self.allocation_ref,unprepared=True)
+        matches=[]
+        for ref in row['requests']:
+            value=q._read(self.root,ref)
+            if value['target']==target:matches.append(ref)
+        if len(matches)!=1:raise ValueError('Late execution requires one exact original authorization request')
+        ref=matches[0]
+        while (self.root/ref['path']).parent.joinpath('successor.json').exists():
+            successor=q._read(self.root,q._ref(self.root,(self.root/ref['path']).parent/'successor.json'))
+            if successor['previous']!=ref:raise q.IntegrityError('Request successor lost its original request')
+            next_ref=successor['successor'];value=q._read(self.root,next_ref)
+            if value.get('supersedes')!=ref:raise q.IntegrityError('Request successor changed its explicit parent')
+            ref=next_ref
+        value=q._read(self.root,ref)
+        current=authority.status(self.root,Path(ref['path']).parent.name,secret=self.secret)
+        grant=budget.execution_grant(self.root,operation_context=self.context)
+        if (current['state']!='expired' and value['policy']==admission.model_dump(mode='json')
+                and value['grant_revision']==grant['ref']):
+            return ref
+        if self.valid_seconds is None:
+            raise authority.AuthorityRequired(dict(status='authorization_renewal_required',call_id=self.call,
+                authorization_request=ref,review_url=authority.review_url(self.root,Path(ref['path']).parent.name,self.secret),
+                note='Supply explicit finite --request-valid-seconds to renew the immutable expired or changed-policy request; approving the old request cannot dispatch.'))
+        if type(self.valid_seconds) not in (int,float) or not math.isfinite(self.valid_seconds) or self.valid_seconds<=0:
+            raise ValueError('Explicit positive finite request validity required')
+        return authority.create_request(self.root,step=self.job['step'],native_intent=self.allocation['native_intent'],
+            call_id=self.call,subject=value['subject'],review_ref=value['review'],payload_alias=value.get('payload_alias'),
+            target=target,policy=admission.model_dump(mode='json'),resources=dict(admission.budget),grant_revision=grant['ref'],
+            expires_at=time.time()+self.valid_seconds,secret=self.secret,supersedes=ref,operation_context=self.context)
+
+    def begin(self,request,decision):
+        from . import execution_recovery
+        self.check()
+        if self.started:
+            if self.base['request']!=request or self.base['decision']!=decision:
+                raise q.IntegrityError('Recovery changed the original exact decision')
+            return
+        self.opportunity()
+        verify_pending_set(self.root,self.seal,self.allocation_ref,unprepared=True)
+        self.base=dict(source_step=self.job['step'],call_id=self.call,scope=self.config['scope'],seal_sha256=self.seal_sha,
+            pending_set=self.seal['pending_executions'],allocation=self.allocation_ref,request=request,decision=decision,admission=self.operation,
+            origin='sealed_unprepared')
+        execution_recovery.append(self.root,self.base,'resume_intent',context=self.context)
+        self.started=True
+
+    def collection(self,original):
+        self.check()
+        if self._collection is not None:
+            self._collection.remaining_seconds();return self._collection
+        runner=original['admission']['policy']['runner'];remaining=min(self.context.remaining_seconds(),runner['collection_total_seconds'])
+        from scidiscovery.plugin_runtime.collection import CollectionContext
+        end=time.monotonic()+remaining
+        from . import budget
+        stamp=budget.clock_stamp()
+        q._save(self.root,self.root/'execution-authority/calls'/self.call/'collection-recoveries'/Path(self.operation['path']).name,
+            dict(operation=self.operation,request=original['request'],target=original['target'],boot_id=stamp['boot_id'],
+                 deadline_boottime=stamp['at_boottime']+remaining))
+        self._collection=CollectionContext(end-min(2.,remaining*.1),end,
+            file_timeout_seconds=min(remaining,runner['collection_file_seconds']),
+            idle_timeout_seconds=min(remaining,runner['collection_idle_seconds']),stopped=self.expired)
+        return self._collection
+
+    def services(self):
+        from . import execution_authority as authority
+        from scidiscovery.operations.runtime_plugins import ExecutionHostServices
+        from .execution_inputs import NativeInputHost
+        return ExecutionHostServices(gate=lambda provider:lambda phase,**kw:authority._gate(self.config,provider,phase,recovery=self,**kw),
+            call_identity=lambda *_:self.call,implementation_inputs=NativeInputHost(self.config),operation_context=self.context)
+
+
+def resume(root,step,call_id,*,max_seconds,authorization_note,request_valid_seconds=None):
+    """Explicit host entry. Caller must hold the existing controller writer."""
+    from . import history,experiments as e,execution_recovery as recovery,budget,execution_authority as authority
+    from scidiscovery.operations.execution import execution_status
+    root=Path(root).resolve();job,_,seal,sha=history._source(root,step)
+    if job['role']!='W' or not e.ID.fullmatch(call_id):raise ValueError('Exact sealed W and original call required')
+    allocation=q._ref(root,root/'execution-authority/calls'/call_id/'allocation.json')
+    row=verify_pending_set(root,seal,allocation,require_complete=False)
+    original=q._read(root,allocation)
+    attempt=original['binding']['native_attempt']['number']
+    config=c.read(c.regular(execution.record(root,step,attempt)/'experiment-config.json'))
+    authority._host_context(config)
+    if original['binding']['interface']!=config['execution_interface'] or original['binding']['scope']!=config['scope']:
+        raise q.IntegrityError('Recovery implementation differs from original allocation')
+    operation=_RecoveryAdmission(root,job,seal,sha,allocation,config,max_seconds=max_seconds,note=authorization_note,valid_seconds=request_valid_seconds)
+    refs=recovery.prefix(root,c.settings(root)['max_steps']+1)
+    prior=recovery.call_view(root,[],refs).get((step,call_id))
+    if prior is not None and prior['phase'] in {'terminal','not_submitted'}:
+        return dict(status='execution_resume_recorded',call_id=call_id,note='Verified original terminal fact is already retained; no dispatch occurred.')
+    if budget.execution_blocked(root,include_managed=False,ignore_recovery=(step,call_id)):
+        raise ValueError('Another live or unknown original owner blocks host recovery')
+    records=e.Records(config);directory=records.directory(call_id)
+    budget.transition(root,'advance','execution_resume',operation_context=operation.context)
+    if prior is not None or row['disposition']!='unprepared':
+        if not (directory/'accepted.json').exists():
+            return dict(status='unknown',call_id=call_id,note='Preparation or recovery intent may have started; no fresh dispatch is permitted.')
+        adapter=e.load(config,host_services=operation.services())
+        if prior is None:
+            accepted=records.accepted(call_id)
+            permit=authority._permit(root,accepted['execution_authority'],config,accepted['execution_target'],call_id,None,operation.secret)
+            if permit['allocation']!=allocation or permit['payload_alias']!=original['binding']['payload_alias']:
+                raise q.IntegrityError('Original accepted authority escaped its sealed allocation')
+            operation.base=dict(source_step=step,call_id=call_id,scope=config['scope'],seal_sha256=sha,
+                pending_set=seal['pending_executions'],allocation=allocation,request=permit['request'],decision=permit['decision'],
+                admission=operation.operation,origin='sealed_preparation_unknown')
+    else:
+        with authority.writer(root,context=operation.context):verify_pending_set(root,seal,allocation,unprepared=True)
+        operation.check();operation.opportunity()
+        adapter=e.load(config,host_services=operation.services())
+        identity=original['binding']['payload_alias'];q._check(identity)
+        descriptor=e.LocalFileDescriptor(name=call_id,local_path=identity['path'],sha256=identity['sha256'],size_bytes=identity['size_bytes'],media_type='application/json')
+        try:
+            prepared=adapter.prepare(descriptor,preparation_profile='research_loop.v1',exchange_directory=records.root)
+        except authority.AuthorityRequired as error:
+            return error.feedback
+        operation.check()
+        metadata=adapter.acceptance_metadata(prepared,parent=None,new=False,change=None)
+        from . import replay_check
+        metadata['engineering_check']=replay_check.acceptance(config,adapter)
+        binding=original['binding'].get('mechanism_binding')
+        accepted=records.accept(prepared,metadata,config['execution_interface'],expected_calls=[p.name for p in records.calls()],
+            mechanism=binding['mechanism_ref'] if binding else None,recovery_admission=operation.check,operation_context=operation.context)
+        _publish(root,job,operation.base,adapter,query=False,context=operation.context)
+        adapter.dispatch_lease(accepted)
+        external,state=adapter.submit(prepared);records.bind_external(call_id,external,state)
+        prior=operation.base
+    # Reentry only queries original accepted/prepared identity. submit is never retried.
+    if records.external(call_id) is None and e.lifecycle_capabilities(adapter).lookup_submission:
+        operation.check()
+        original_prepared=e.LocalFileDescriptor.model_validate(records.accepted(call_id)['prepared'])
+        found=adapter.lookup_submission(original_prepared)
+        if found is not None:records.bind_external(call_id,*found)
+    if e.retirement(config,call_id) is None:
+        details=adapter.status_details(call_id)
+        if execution_status(details.get('state')) in {'known_success','known_failed'}:
+            e.record_observation(config,adapter,call_id,operation_context=operation.context)
+    if (prior is not None and prior.get('version')==2) or operation.base is not None:
+        _publish(root,job,operation.base or {key:prior[key] for key in ('source_step','call_id','scope','seal_sha256','pending_set','allocation','request','decision','admission','origin')},adapter,context=operation.context)
+    else:
+        return recovery.create(root,step)
+    return dict(status='execution_resume_recorded',call_id=call_id,note='Original execution facts appended; the sealed scientific conclusion is unchanged.')
+
+
+def _publish(root,job,base,adapter,*,query=True,context=None):
+    from . import history,execution_recovery as recovery,experiments as e
+    rows=[row for row in history.managed_calls(root,job,context=context) if row['call_id']==base['call_id']]
+    if len(rows)!=1:raise q.IntegrityError('Recovered original accepted record is unavailable')
+    row=rows[0];detail=adapter.status_details(base['call_id']) if query else None
+    state=detail.get('state') if detail else None
+    phase='terminal' if row['status'] in {'known_success','known_failed'} else 'not_submitted' if row['status']=='not_submitted' else 'status' if query else 'accepted'
+    path=root/'project/nodes'/f'{job["step"]:03d}'/'work/lineage/calls'/base['call_id']/'submission.json'
+    submission=q._ref(root,path) if path.exists() else None
+    current=recovery.call_view(root,[],recovery.prefix(root,c.settings(root)['max_steps']+1),originals=False).get((job['step'],base['call_id']))
+    if current is not None and all(current.get(key)==value for key,value in
+            dict(phase=phase,row=row,native_state=state,submission=submission).items()):return
+    proof=None
+    if detail is not None:
+        data=e.encoded(detail);path=root/'host-history/objects'/hashlib.sha256(data).hexdigest()
+        proof=q._save(root,path,detail)
+    recovery.append(root,base,phase,row=row,query=proof,native_state=state,
+                    submission=submission,context=context)
