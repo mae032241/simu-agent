@@ -32,7 +32,8 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
             portfolio_policy: dict | None = None, exploration_order_version: int | None = None,
             worker_fragment_policy: dict | None = None, role_budget_policy: dict | None = None,
             selection_policy: dict | None = None, role_profiles: dict | None = None,
-            experiment_mode: str | None = None, execution_config: dict | None = None) -> dict:
+            experiment_mode: str | None = None, execution_config: dict | None = None,
+            source_restrictions: list[dict] | None = None) -> dict:
     """Freeze an explicit goal and finite launch budgets in a fresh directory."""
     portfolio_limits = search.portfolio_policy(portfolio_policy) if portfolio_policy is not None else None
     if exploration_order_version is not None:
@@ -96,6 +97,9 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
                for path in (user_updates or [])]
     if any(not update.strip() for update in updates):
         raise ValueError('Global user updates must contain original user text')
+    from . import qualification
+    original_globals = [objective, *[Path(path) for path in (user_updates or [])]]
+    source_facts = qualification.source_configuration(public_root, source_restrictions, original_globals)
     observer = history.observer_config(history_observer) if history_observer is not None else None
     literal_guidance = (guidance.OPPORTUNITY if portfolio_limits is not None and portfolio_limits.get('version', 1) == 2
                         and role_guidance is guidance.DEFAULT else role_guidance)
@@ -200,6 +204,7 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
         settings['global_materials'].append(dict(source=source.relative_to(root).as_posix(),
             path='inputs/global/' + source.relative_to(globals_).as_posix(),
             sha256=contracts.digest(source)))
+    settings['source_provenance'] = qualification.freeze_sources(root, source_facts, original_globals, settings['global_materials'])
     contracts.write(root / "settings.json", settings)
     contracts.write(root / "settings-identity.json",
                     dict(sha256=contracts.digest(root / "settings.json")))

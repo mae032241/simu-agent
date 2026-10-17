@@ -3,6 +3,7 @@ from pydantic import ValidationError
 from ..schema.common import canonical_json
 from ..schema.tool_evidence import ToolEvidenceManifest
 from ...operation_contract import DiagnosticError, contract_diagnostic
+from ...operations.provenance_rules import dependency_sources
 
 
 class ReferenceProofError(DiagnosticError):
@@ -65,7 +66,7 @@ def material_snapshot(value, selected, records, accesses, attempts, recovery):
             continue
         metadata = record.get('metadata', {})
         if 'derived_from' in metadata:
-            pending.extend(metadata['derived_from'])
+            pending.extend(dependency_sources(metadata['derived_from'], inputs))
         elif record.get('source_ref') is not None:
             sources = [name for name, binding in bindings.items()
                 if binding['artifact_ref'] == record['source_ref']]
@@ -76,9 +77,9 @@ def material_snapshot(value, selected, records, accesses, attempts, recovery):
         elif metadata.get('origin') != 'public_web':
             # Historical receipts without explicit derivation retain frozen
             # inputs conservatively, never the unrelated later tool history.
-            pending.extend(inputs)
+            pending.extend(dependency_sources(None, inputs))
         if metadata.get('kind') == 'experiment_execution' and 'control_parents' not in record:
-            pending.extend(inputs)  # Legacy execution-parent disambiguation.
+            pending.extend(dependency_sources(None, inputs))  # Legacy execution-parent disambiguation.
         proof = metadata.get('calculation_proof')
         if proof is None:
             continue

@@ -409,6 +409,7 @@ def science_view(job, root=None):
     from . import engineering
     return {key: value for key, value in {
         'role': job['role'], 'question': question,
+        **(dict(source_restrictions=job['source_restrictions']) if 'source_restrictions' in job else {}),
         **(dict(engineering_repair=engineering.public(job['engineering_repair'])) if job.get('engineering_repair') else {}),
         **(dict(stage_continuation=dict(status='configured' if job.get('worker_fragment_policy') else 'unavailable',
             context=(job.get('worker_fragment_policy') or {}).get('context'),
@@ -712,6 +713,11 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
         else:
             write(catalogue_path, catalogue)
             catalogue_path.chmod(0o400)
+    # Retained legacy jobs keep their exact identity and remain unqualified.
+    if retained is None or 'source_provenance' in retained:
+        from . import qualification
+        job['source_provenance'] = qualification.bind_inputs(root, job)
+        job['source_restrictions'] = qualification.status(root, job)
     for path, value in ((root / 'jobs' / f'{step:03d}.json', job),
                         (work / 'science-task.json', science_view(job, root)),
                         (host_record(work) / 'science-result.schema.json', result_schema(role, protocol, 'selection' in job))):
@@ -760,6 +766,8 @@ def validate(work: Path):
     if seal.get('selected_inputs', []) != selected_inputs(work, payload, job):
         raise ValueError('Selected implementation receipts changed')
     _validate_inputs(root, work, job)
+    from . import qualification
+    qualification.validate_outputs(root, job, seal)
     from . import history
     history.validate_observation(root, job, seal)
     for ref in seal['materials']:
@@ -770,6 +778,10 @@ def validate(work: Path):
 
 
 def _validate_inputs(root, work, job):
+    from . import qualification
+    qualification.validate_inputs(root, job)
+    if 'source_provenance' in job and job.get('source_restrictions') != qualification.status(root, job):
+        raise ValueError('Frozen source restriction view changed')
     if job.get('experiment_mode')!=settings(root).get('experiment_mode'):
         raise ValueError('Frozen experiment mode differs from its original settings')
     selected=settings(root).get('execution_config')
@@ -916,14 +928,18 @@ def seal_result(root: Path, step: int):
     observations = history.capture(root, job, value, materials)
     _copy_bound(raw, work / 'conclusion.json', digest(raw))
     write(record / 'result.json', value)
-    write(record / 'result-identity.json', dict(sha256=digest(record / 'result.json'), raw_sha256=digest(raw),
+    seal = dict(sha256=digest(record / 'result.json'), raw_sha256=digest(raw),
           job_sha256=digest(job_path), materials=materials, entry_points=entry_points,
           scope='Exact bytes and direct lineage; not scientific qualification',
           **(dict(execution_ref=execution.reference(root, step)) if execution.reference(root, step) is not None else {}),
           **(dict(control_outcome=control) if control is not None else {}),
           **(dict(unresolved_links=unresolved) if job.get('handoff_protocol', 1) >= 7 else {}),
           **(dict(selected_inputs=selected) if selected else {}),
-          **(dict(observations=observations) if observations else {})))
+          **(dict(observations=observations) if observations else {}))
+    if 'source_provenance' in job:
+        from . import qualification
+        seal['source_provenance'] = qualification.seal_outputs(root, job, seal)
+    write(record / 'result-identity.json', seal)
     result = validate(work)
     history.refresh(root, step + 1) if job.get('purpose') is None else None
     return result
