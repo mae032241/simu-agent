@@ -156,16 +156,19 @@ class CommandTCADExecutorAdapter:
         preparation_profile: str,
         exchange_directory: Path,
         artifacts=None,
+        input_metadata=None,
+        open_input=None,
     ) -> LocalFileDescriptor:
         if preparation_profile != "tcad.execution-package.v2":
             raise ValueError("command adapter requires tcad.execution-package.v2")
         raw = Path(payload.local_path).read_bytes()
         self.validate_preparation_payload(raw, preparation_profile=preparation_profile)
         reviewed = validate_execution_package_json(raw)
-        if reviewed.resolved_inputs and artifacts is None:
-            raise ValueError("scientific inputs require the control Artifact service")
         inputs = (materialize_execution_inputs(reviewed, artifacts, exchange_directory,
-            self.execution_policy().runner.transfer_chunk_bytes) if artifacts is not None else {})
+            self.execution_policy().runner.transfer_chunk_bytes,
+            input_metadata=input_metadata, open_input=open_input)
+            if reviewed.resolved_inputs or artifacts is not None
+            or input_metadata is not None or open_input is not None else {})
         packaged = package_execution_package_json(
             raw,
             output_root=exchange_directory / "prepared",

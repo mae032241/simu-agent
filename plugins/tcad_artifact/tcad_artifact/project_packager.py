@@ -17,7 +17,7 @@ import tarfile
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Any, Literal, Mapping
+from typing import Annotated, Any, BinaryIO, Callable, ContextManager, Literal, Mapping
 
 from pydantic import ConfigDict, RootModel, Field, ValidationError, field_validator, model_validator
 from scidiscovery.artifact_agent.schema.common import canonical_json, canonical_sha256
@@ -1962,27 +1962,84 @@ def _file_identity(path: Path) -> tuple[str, int]:
     return digest.hexdigest(), size
 
 
-def materialize_execution_inputs(reviewed, artifacts, exchange_directory, chunk_bytes):
-    """Resolve SDevice/native inputs through exact CAS refs, never JSON/base64."""
+def materialize_execution_inputs(
+    reviewed: ExecutionPackage,
+    artifacts,
+    exchange_directory: Path,
+    chunk_bytes: int,
+    *,
+    input_metadata: Callable[[ResolvedProjectInput], tuple[int, str]] | None = None,
+    open_input: Callable[[ResolvedProjectInput], ContextManager[BinaryIO]] | None = None,
+) -> dict[str, Path]:
+    """Copy exact originals; the host owns frozen bindings, not source discovery."""
+    if type(chunk_bytes) is not int or chunk_bytes <= 0:
+        raise PackagerError("input transfer chunk must be a positive integer")
+    if (input_metadata is None) != (open_input is None):
+        raise PackagerError("input metadata and original opener must be supplied together")
+    if artifacts is not None:
+        if input_metadata is not None:
+            raise PackagerError("Artifact service and input callbacks cannot be combined")
+
+        def input_metadata(item):
+            envelope = artifacts.catalog(item.artifact_ref)
+            return envelope.size_bytes, envelope.media_type
+
+        def open_input(item):
+            return artifacts.open_original(item.artifact_ref)
+
     total = sum(len(item.content.encode("utf-8")) for item in reviewed.project.files)
     total += sum(item.size_bytes for item in reviewed.resolved_inputs)
     if total > reviewed.project.resource_limits.max_storage_bytes:
         raise PackagerError("declared inputs exceed task storage budget")
+    if not reviewed.resolved_inputs:
+        return {}
+    if input_metadata is None or open_input is None:
+        raise PackagerError("scientific inputs require exact original callbacks or Artifact service")
+    exchange_directory = Path(exchange_directory).absolute()
+    if exchange_directory.is_symlink() or not exchange_directory.is_dir():
+        raise PackagerError("execution exchange must be a regular directory")
+    exchange_root = exchange_directory.resolve(strict=True)
     directory = exchange_directory / "scientific-inputs"
+    if directory.is_symlink() or (directory.exists() and not directory.is_dir()):
+        raise PackagerError("scientific input directory must be a regular directory")
     directory.mkdir(exist_ok=True)
+    if directory.resolve(strict=True).parent != exchange_root:
+        raise PackagerError("scientific inputs are outside the execution exchange")
     inputs = {}
     for item in reviewed.resolved_inputs:
-        envelope = artifacts.catalog(item.artifact_ref)
-        if envelope.size_bytes != item.size_bytes or envelope.media_type != item.media_type:
-            raise PackagerError("resolved input metadata differs from exact CAS original")
+        size_bytes, media_type = input_metadata(item)
+        if (type(size_bytes) is not int or not isinstance(media_type, str)
+                or size_bytes != item.size_bytes or media_type != item.media_type):
+            raise PackagerError("resolved input metadata differs from exact original")
         target = directory / item.artifact_ref.sha256
-        if not target.exists():
-            with artifacts.open_original(item.artifact_ref) as source, target.open("xb") as output:
-                for block in iter(lambda: source.read(chunk_bytes), b""):
-                    output.write(block)
-                output.flush()
-                os.fsync(output.fileno())
+        if target.exists() or target.is_symlink():
+            if target.is_symlink() or not target.is_file():
+                raise PackagerError("execution input must be a regular file")
+            if (target.stat().st_size != item.size_bytes
+                    or _file_identity(target) != (item.artifact_ref.sha256, item.size_bytes)):
+                raise PackagerError("cached input differs from exact original")
             os.chmod(target, 0o440)
+        else:
+            created = False
+            try:
+                digest, actual_size = hashlib.sha256(), 0
+                with open_input(item) as source, target.open("xb") as output:
+                    created = True
+                    for block in iter(lambda: source.read(chunk_bytes), b""):
+                        actual_size += len(block)
+                        if actual_size > item.size_bytes:
+                            raise PackagerError("original exceeds its declared input size")
+                        digest.update(block)
+                        output.write(block)
+                    if actual_size != item.size_bytes or digest.hexdigest() != item.artifact_ref.sha256:
+                        raise PackagerError("input bytes differ from exact original")
+                    output.flush()
+                    os.fsync(output.fileno())
+                os.chmod(target, 0o440)
+            except BaseException:
+                if created:
+                    target.unlink()
+                raise
         inputs[item.semantic_name] = target
     return inputs
 
