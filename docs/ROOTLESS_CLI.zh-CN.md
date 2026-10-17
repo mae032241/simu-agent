@@ -1,7 +1,7 @@
 # 无 Root 的科研 CLI
 
 `scid-research` 直接启动新的 H/W/A/证据原生线程；控制程序执行科学角色选择的路由。
-不依赖 LoopX，不启动 Root 模型，不需要 MCP 管理页绑定。旧 daemon、UI、TCAD 权限接口尚未迁移。
+不依赖 LoopX，不启动 Root 模型，不需要 MCP 管理页绑定。已提供实例 UI、可选来源/正式审查与执行授权接缝；TCAD 非空输入和长时人工等待恢复尚未接通，旧 daemon 不迁入。当前迁移节点仅通过静态独审，未验证真实远端执行。
 
 ## 创建与运行
 
@@ -32,6 +32,25 @@ scid-research run --root /absolute/path/new-instance
 修改原配置文件不影响已准备实例；不传该选项时保留全局配置行为。未知角色、无效配置或原件绑定不一致在原生提交前拒绝，不自动换模型。
 rootless cov launcher 的 operator 配置应声明相同全局值与 `role_profiles`（可为等价的稀疏配置）；它核对冻结实例，再生成匹配的 CODEX_HOME 配置，拒绝不一致的 model/effort/tier 参数。
 这些记录证明请求参数一致，不代替服务端实际模型或计费观测。
+
+## 插件选择与实例管理（迁移中的能力）
+
+`prepare --execution-config /path/config.json` 显式选择已注册执行器，配置形状为 `{"executor":"plugin:binding","configuration":{...}}`。仅用于宿主配置的 `--experiment-mode local`；这里 local 表示配置归属，不表示只支持本机计算。不传时沿用默认本地执行器。公开配置不接受控制层 scope、预算、原件身份或凭据；能力和实现身份随实例冻结。
+
+实例页面复用同一控制状态：
+
+```sh
+scid-research serve-ui --root /absolute/path/instance \
+  --approval-secret-file /absolute/path/operator-owned.key
+```
+
+密钥由操作者提供，须为现有普通文件、权限0600且至少32字节。命令监听 loopback 并输出独立只读/管理链接，重启后旧浏览凭据失效。普通本地实例无需启用正式审查或执行审批，也能查看节点状态、请求暂停和继续。暂停只阻止下一节点；已接受工作继续完成。继续复用原实例写锁，服务只允许一个进行中的推进请求。页面当前展示状态元数据，不提供任意路径或完整私有会话读取。
+
+准备实例时可选 `--source-restrictions` 冻结来源声明、`--enable-formal-review` 启用精确对象独立审查。正式审查不等于执行授权。另启 `--enable-execution-authority` 与 `--execution-resource-policy` 才接资源准入：资源策略显式声明 `{"version":1,"allowance":{"wall_time_seconds":N,"max_storage_bytes":N}}`（N为正整数），执行器必须支持冻结的授权合同；不支持不能静默绕过。人工决定在同一实例页面作出，浏览权限本身不授执行额度。
+
+资源账复用原 control ledger，换候选/重试不重置消耗。`budget-amend --execution-wall-seconds N --execution-storage-bytes N --authorization-note ...` 仅修订有限资源上限，不代替精确调用的执行决定；不得和科学token/时间修订参数混用。未知调用不退款、不重发，已接受调用的查询/取消不因W结束而被当成新提交拒绝。
+
+这些代码接缝不证明新TCAD链已可生产使用。完整范围及未验收项以[迁移计划](plans/THIN_CAPABILITY_MIGRATION_20261016.zh-CN.md)和对应独审报告为准；不从旧实例静默升级或复制预算。当前不运行安装矩阵、真实模型/solver或HTTP验收。
 
 ## 受管本地实验
 
