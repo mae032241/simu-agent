@@ -136,6 +136,7 @@ def result_schema(role: str,protocol=CURRENT,comparison=False,*,formal_review=Fa
                 'finish ends scientific exploration without granting delivery or asserting global completion. '
                 'extract requests scientific evidence from E, never copying, packaging, path resolution or submission. '
                 'audit is optional: check audit_capability.available; a disabled request returns unavailable without execution. '
+                'formal_review, when enabled, is conditional: unchanged unavailable subject/identity receives finite author clarification, not a formal reviewer. A changed exact selection or newly verifiable identity may request it again. '
                 'During closeout use deliver, audit, finish or wait; other actions receive bounded clarification because exploration is closed.')
     if role=='W':
         from . import worker_delivery
@@ -422,7 +423,7 @@ def science_view(job, root=None):
     return {key: value for key, value in {
         'role': job['role'], 'question': question,
         **(dict(formal_review_capability=dict(enabled=True,
-            instruction='formal_review requests an independent assessment of the single implementation selected through the existing scientific selection. Control binds subject and identity; an unavailable response grants no qualification.'),
+            instruction='formal_review requests an independent assessment of the single implementation selected through the existing scientific selection. Check formal_review_feedback for the current restriction and ordinary alternatives. The schema retains formal_review for a changed exact subject or newly verifiable identity; unchanged failure consumes finite author clarification. Control binds subject and identity; an unavailable response grants no qualification.'),
             formal_review_feedback=formal_review.feedback(root,job))
            if job.get('formal_review_version')==1 else {}),
         **(dict(source_restrictions=job['source_restrictions']) if 'source_restrictions' in job else {}),

@@ -44,6 +44,10 @@ def public_request(root, job):
     request = job['author_correction']
     first = c.read(c.host_record(c.workspace(root, request['root']['step'])) / 'result-identity.json')
     diagnostics = first['control_outcome']['diagnostics']
+    if request['reason']=='formal_review_unavailable':
+        from . import formal_review
+        diagnostics=[dict(code=formal_review.unavailable(root,request['root']['step'])['failure']['reason'],
+            recovery='Choose another scientific action, a different exact subject, or supply missing verifiable identity evidence. No qualification was granted.')]
     if job.get('purpose') == 'closeout':
         from . import delivery
         original, payload, _, _ = history._source(root, request['root']['step'])
@@ -74,9 +78,17 @@ def validate_job(root, job):
             raise ValueError('Author correction original identity changed')
     source = c.read(root / 'jobs' / f'{request["source"]["step"]:03d}.json')
     original = source.get('author_correction')
-    if original is not None and (request['root'] != original['root'] or request['reason'] != original['reason']):
+    if request['reason']=='formal_review_unavailable' and job.get('purpose')!='closeout':
+        from . import formal_review
+        attempts=formal_review.unavailable_attempts(root,request['source']['step'])
+        if (request['root']['step']!=attempts[0]
+                or not any(ref['path']==f'inputs/parents/{request["source"]["step"]:03d}/conclusion.json'
+                           for ref in job['direct_refs'])):
+            raise ValueError('Unavailable review correction must retain its first exact failure and actual author')
+        return
+    if original is not None and original['reason']!='formal_review_unavailable' and (request['root'] != original['root'] or request['reason'] != original['reason']):
         raise ValueError('Author correction root cannot change across retries')
-    if original is None and request['root'] != request['source']:
+    if (original is None or original['reason']=='formal_review_unavailable') and request['root'] != request['source']:
         raise ValueError('Author correction root is not its first attempt')
     root_step = request['root']['step']
     root_job, root_payload, root_seal, _ = history._source(root, root_step)
@@ -119,6 +131,9 @@ def validate_job(root, job):
 
 
 def accepted(root, request, before_step):
+    if request['reason']=='formal_review_unavailable':
+        from . import formal_review
+        return max(0,len(formal_review.unavailable_attempts(root,request['root']['step'],before_step=before_step))-1)
     original = c.read(root / 'jobs' / f'{request["root"]["step"]:03d}.json')
     from . import budget
     begin = budget.closeout_state(root)['begin']
@@ -166,10 +181,22 @@ def effective_route(root, step, result, job, route):
     role, parents, instruction, evidence_return, current_h, current_w, correction_request = route
     request = None
     previous = job.get('author_correction')
+    # A legal scientific alternative releases this routing correction, not its
+    # immutable failure history. A later unchanged request finds the same root.
+    if previous is not None and previous['reason']=='formal_review_unavailable':
+        previous=None
     seal = c.read(c.host_record(c.workspace(root, step)) / 'result-identity.json')
     from . import decision
     decision_code = decision.reason(root, job, result)
-    if decision_code is not None:
+    if (evidence_return or {}).get('kind')=='formal_review_unavailable':
+        from . import formal_review
+        source=_source(root,step)
+        if previous is not None:
+            request=dict(previous,source=source)
+        else:
+            first=formal_review.unavailable_attempts(root,step)[0]
+            request=dict(root=_source(root,first),source=source,reason='formal_review_unavailable')
+    elif decision_code is not None:
         source = _source(root, step)
         request = dict(root=previous['root'] if previous else source, source=source,
                        reason=previous['reason'] if previous else decision_code)

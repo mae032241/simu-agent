@@ -491,6 +491,16 @@ def _run(root):
                 return _finish(root, settings, "paused", completed, last,
                     reason="User pause.request prevents further native launches", next_role=role)
             if author_correction is not None and role in {'H', 'A'} and semantic.accepted(root, author_correction, step) >= semantic.MAX_AUTHOR_CORRECTIONS:
+                if author_correction['reason']=='formal_review_unavailable':
+                    if settings.get('delivery_policy') is not None:
+                        return _start_closeout(root,completed,step,'formal_review_unavailable_correction_limit')
+                    from . import formal_review
+                    blocked=_finish(root,settings,'formal_review_blocked',completed,last,
+                        reason='formal_review_unavailable_correction_limit',next_role=role)
+                    blocked['formal_review_feedback']=formal_review.feedback(root,dict(evidence_return=evidence_return))
+                    blocked['recovery_conditions']=['A different exact subject or newly verifiable identity evidence is required for another formal-review request; unchanged replay does not grant more corrections.',
+                        'Existing operator closeout can retain an incomplete report; it grants no missing review or execution permission.']
+                    return blocked
                 return _finish(root, settings, 'semantic_correction_required', completed, last,
                     reason='semantic_correction_limit', next_role=role)
             if role=='W' and parents:
@@ -596,8 +606,6 @@ def _run(root):
                 return _start_closeout(root, completed, step + 1, share_stop)
             return _finish(root, settings, 'role_budget_stop', completed, last, reason=share_stop)
         if next_role is None:
-            if result.get('next_action')=='formal_review':
-                return _finish(root,settings,'wait',completed,last,reason='formal_review_unavailable')
             if settings.get('delivery_policy') is not None and result.get('next_action') in {'finish', 'deliver'}:
                 return _start_closeout(root, completed, step + 1, 'scientific_finish',
                     authorization_step=step if result['next_action'] == 'deliver' else None)

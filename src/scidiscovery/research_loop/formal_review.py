@@ -198,13 +198,34 @@ def request_route(root, job, payload, parents):
     record = c.host_record(c.workspace(root, job['step']))
     if reason is not None:
         failure_key={key:value[key] for key in ('contract','subject','authors','unresolved_selection','reason')}
-        previous = (job.get('evidence_return') or {}).get('unavailable')
-        repeat = previous is not None and q._read(root, previous)['failure_key'] == failure_key
         ref = q._save(root, record / 'formal-review-unavailable.json', dict(requester=requester, failure=value,failure_key=failure_key))
-        return (None if repeat else 'A', parents, 'Choose a scientific next action; formal review is unavailable: '+reason,
+        return ('A', sorted(set([*parents,job['step']])), 'Choose a scientific next action; formal review is unavailable: '+reason,
                 dict(kind='formal_review_unavailable', unavailable=ref))
     ref = q._save(root, record / 'formal-review-request.json', dict(requester=requester, **value))
     return 'A', sorted(set([*parents, subject['producer_step']])), value['question'], dict(kind='formal_review', request=ref)
+
+
+def unavailable(root, step):
+    """Read a host failure against its exact sealed requester, never a model label."""
+    path=c.host_record(c.workspace(root,step))/'formal-review-unavailable.json'
+    if not path.exists() and not path.is_symlink():
+        return None
+    value=c.read(c.regular(path))
+    seal_path=c.host_record(c.workspace(root,step))/'result-identity.json'
+    if (value['requester']!=dict(step=step,seal=q._ref(root,seal_path))
+            or value['failure_key']!={key:value['failure'][key] for key in
+                ('contract','subject','authors','unresolved_selection','reason')}
+            or value['failure']['reason'] is None):
+        raise q.IntegrityError('Unavailable review differs from its sealed requester')
+    return value
+
+
+def unavailable_attempts(root, step, *, before_step=None):
+    """Reuse failure originals across E/other routes, without another retry ledger."""
+    key=unavailable(root,step)['failure_key']
+    stop=before_step if before_step is not None else step+1
+    steps=sorted(int(path.parent.name) for path in (Path(root)/'native-evidence').glob('*/formal-review-unavailable.json'))
+    return [prior for prior in steps if prior<stop and unavailable(root,prior)['failure_key']==key]
 
 
 def bind_job(root, job):
@@ -242,7 +263,11 @@ def feedback(root, job):
     if back.get('kind')=='formal_review_unavailable':
         failure=q._read(root,back['unavailable'])['failure']
         return dict(status='unavailable',reason=failure['reason'],
-                    instruction='Choose another scientific action unless the subject or missing identity evidence changes; an unchanged unavailable request waits without another native launch.')
+                    alternative_examples=['finish','wait'] if job.get('purpose')=='closeout' else ['revise_h','extract','continue_w','finish','wait'],
+                    alternatives_scope='Examples only; each schema action retains its own capability, scientific-decision, budget and closeout checks.',
+                    formal_review=dict(available=False,scope='Unchanged subject and identity evidence',
+                        recovery='Select a different exact subject or supply the missing verifiable identity evidence.'),
+                    instruction='Choose another scientific action. formal_review remains a conditional schema choice for a changed subject or identity; rewording the same request consumes the existing finite author corrections and never dispatches an unavailable review.')
     if back.get('kind')=='formal_review_return':
         proof=q._read(root,back['review'])
         return dict(status=proof['status'],verdict=proof['verdict'],independence=proof['independence'],
