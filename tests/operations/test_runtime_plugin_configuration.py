@@ -452,6 +452,7 @@ def _managed_tcad_case(tmp_path, *, retirement=False):
 
 
 def test_managed_tcad_default_factory_blocks_before_any_backend_call(tmp_path, monkeypatch):
+    from scidiscovery.operations.execution import LocalFileDescriptor
     from scidiscovery.operations.runtime_plugins import RuntimePluginContext
     from scidiscovery.research_loop import experiments as e
     import tcad_artifact.managed_execution as managed
@@ -463,7 +464,16 @@ def test_managed_tcad_default_factory_blocks_before_any_backend_call(tmp_path, m
         tmp_path / 'config.json', e.encoded({key: value for key, value in config.items()
             if key != 'execution_interface'}), wrapper.records.root))
     actual = contribution.execution_adapters['tcad']
+    source = tmp_path / 'self-contained.json'
+    source.write_bytes(_execution_package())
+    identity = e.proof(source)
+    self_contained = LocalFileDescriptor(name='0002-default-blocked', local_path=str(source),
+        sha256=identity['sha256'], size_bytes=identity['size_bytes'], media_type='application/json')
     with pytest.raises(e.UnsupportedExecution, match='production blocked'):
+        actual.prepare(self_contained, preparation_profile='research_loop.v1', exchange_directory=actual.records.root)
+    assert backend.events == []
+    actual.gate = lambda *args, **kwargs: pytest.fail('Missing resolver reached authority gate')
+    with pytest.raises(e.UnsupportedExecution, match='Exact frozen TCAD input originals'):
         actual.prepare(payload, preparation_profile='research_loop.v1', exchange_directory=actual.records.root)
     assert backend.events == []
     assert actual.result_protocol is None

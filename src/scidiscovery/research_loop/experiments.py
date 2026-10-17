@@ -24,7 +24,8 @@ import uuid
 from scidiscovery.operations.execution import (AdapterCapability, ExecutionInterfaceRegistration,
     LifecycleCapabilities, LocalFileDescriptor, MANAGED_METHODS, lifecycle_capabilities, LOCAL_RESULT_PROTOCOL,
     PENDING_EXECUTION_STATES, execution_status)
-from scidiscovery.operations.runtime_plugins import RuntimePluginContext, RuntimePluginContribution
+from scidiscovery.operations.runtime_plugins import (RuntimePluginContext, RuntimePluginContribution,
+    HOST_EXECUTION_GATE_KEY, HOST_EXECUTION_GATE_SCHEMA, HOST_EXECUTION_GATE_CONTRACT)
 
 GROUP = 'scidiscovery.execution_interfaces'
 VERSION = 1
@@ -132,7 +133,7 @@ def registration(executor):
 
 
 HOST_CONFIGURATION_FIELDS = frozenset({'scope','record_dir','native_attempt','admission','breadth',
-    'engineering_repair','execution_interface','registered_implementation'})
+    'engineering_repair','execution_interface','registered_implementation', 'host_execution_authority', 'execution_host_services'})
 
 
 def operator_configuration(value):
@@ -203,13 +204,21 @@ def _adapter(config, path):
     selected = config['execution_interface']
     declared, binding = registration(selected['executor'])
     body = {key: value for key, value in config.items() if key != 'execution_interface'}
+    from . import execution_authority
+    services = execution_authority.host_services(config)
     contribution = declared.factory.build(RuntimePluginContext(declared.plugin_id, 'local_worker',
-        Path(path), encoded(body), Path(config['record_dir'])))
+        Path(path), encoded(body), Path(config['record_dir']), execution_host_services=services))
     if not isinstance(contribution, RuntimePluginContribution) or binding not in contribution.execution_adapters:
         raise UnsupportedExecution('Registered execution binding unavailable')
     adapter = contribution.execution_adapters[binding]
     if any(not callable(getattr(adapter,name,None)) for name in MANAGED_METHODS):
         raise UnsupportedExecution('Implementation does not provide the managed execution interface')
+    if services is not None:
+        gates=[item for item in adapter.capabilities() if item.key==HOST_EXECUTION_GATE_KEY]
+        if (len(gates)!=1 or gates[0].schema_id!=HOST_EXECUTION_GATE_SCHEMA
+                or gates[0].payload_schema_version!=1 or gates[0].kind!='execution_authority'
+                or gates[0].content!=encoded(dict(HOST_EXECUTION_GATE_CONTRACT))):
+            raise UnsupportedExecution('Registered implementation does not declare the trusted host execution gate')
     return declared, adapter, body
 
 
@@ -259,6 +268,9 @@ def freeze(config, executor, *, path=None):
     assets += [Path(item).resolve() for item in adapter.code_assets()]
     from . import replay_check
     assets.append(Path(replay_check.__file__).resolve())
+    if value.get('host_execution_authority') is not None:
+        from . import execution_authority
+        assets.extend(Path(item['path']) for item in execution_authority.implementation())
     result_protocol=getattr(adapter,'result_protocol',None)
     if result_protocol is not None and (not isinstance(result_protocol,str) or not 0<len(result_protocol.encode())<=160):
         raise ValueError('An execution result protocol requires an explicit bounded identifier')
@@ -307,6 +319,9 @@ def configure(root,step,executor,config,output):
     value=dict(config,**implementation,record_dir=str(c.workspace(root,step)/'work/lineage'),native_attempt=native_attempt,admission=admission,
         scope=stage_scope(root,job),breadth=(job.get('search') or {}).get('breadth'),
         **(dict(engineering_repair=dict(candidate_id=job['engineering_repair']['candidate_id'])) if job.get('engineering_repair') else {}))
+    if c.settings(root).get('execution_resource_policy') is not None and job['role'] == 'W':
+        from . import execution_authority
+        value['host_execution_authority'] = execution_authority.contract(root)
     value=freeze(value,executor,path=output)
     updates=[]
     # This is the same configuration already exposed to this Worker, without
@@ -335,6 +350,9 @@ def load(config, *, path=None):
     selected = config.get('execution_interface')
     if not isinstance(selected, dict) or type(selected.get('version')) is not int or selected['version'] != VERSION:
         raise UnsupportedExecution('Preserved execution configuration is read-only; prepare a new registered instance')
+    if config.get('host_execution_authority') is not None:
+        from . import execution_authority
+        execution_authority.host_services(config)
     if freeze({key: value for key, value in config.items() if key != 'execution_interface'}, selected['executor'], path=path) != config:
         raise IntegrityError('Frozen execution implementation or configuration changed')
     _, adapter, _ = _adapter(config, path or Path(config['record_dir']).parent / 'config.json')
@@ -726,7 +744,11 @@ def retire_original(config,adapter,call_id):
     if len(matches)!=1:raise UnsupportedExecution('Original retirement declaration is unavailable')
     contract=_retirement_contract(json.loads(matches[0].content),capability)
     existing=retirement(config,call_id)
-    if existing is not None:return dict(call_id=call_id,status='not_submitted',receipt=proof(Records(config).directory(call_id)/'submission-retirement.json'))
+    if existing is not None:
+        from . import execution_authority
+        accounting=execution_authority.reconcile_resources(config,adapter,call_id)
+        return dict(call_id=call_id,status='not_submitted',receipt=proof(Records(config).directory(call_id)/'submission-retirement.json'),
+                    **(dict(resource_accounting=accounting) if accounting is not None else {}))
     method=getattr(adapter,'retire_original',None)
     if not callable(method):raise UnsupportedExecution('Original retirement method is unavailable')
     records=Records(config);directory=records.directory(call_id)
@@ -745,7 +767,10 @@ def retire_original(config,adapter,call_id):
                 if json.loads(read(path))!=value:raise IntegrityError('Retirement publication changed')
             else:records.publish(call_id,'submission-retirement.json',value)
             retirement(config,call_id)
-            return dict(call_id=call_id,status='not_submitted',receipt=proof(path))
+            from . import execution_authority
+            accounting=execution_authority.reconcile_resources(config,adapter,call_id)
+            return dict(call_id=call_id,status='not_submitted',receipt=proof(path),
+                        **(dict(resource_accounting=accounting) if accounting is not None else {}))
     except BlockingIOError:
         return dict(call_id=call_id,status='unknown',note='Original submission or retirement still owns its call lease')
 
@@ -761,7 +786,10 @@ def record_observation(config, adapter, call_id, *, collected=None):
     path=directory/'execution-observation.json'
     if path.exists():
         value=json.loads(read(path));verify_observation(value,lambda item:Path(item['path']),
-            interface=config['execution_interface']);return value
+            interface=config['execution_interface'])
+        from . import execution_authority
+        execution_authority.reconcile_resources(config,adapter,call_id,observation=value)
+        return value
     accepted=records.accepted(call_id)
     if accepted['interface']!=config['execution_interface']:
         raise IntegrityError('Observation interface differs from accepted execution')
@@ -818,11 +846,15 @@ def record_observation(config, adapter, call_id, *, collected=None):
         if path.exists():
             if json.loads(read(path))!=value:raise IntegrityError('Frozen execution observation changed')
         else:write(path,value)
+    from . import execution_authority
+    execution_authority.reconcile_resources(config,adapter,call_id,observation=value)
     return value
 
 
 def dispatch_descriptor(config, payload, *, parent=None, new=False, change=None, mechanism=None, command_options=None):
+    from . import execution_authority
     try:return _dispatch_descriptor(config,payload,parent=parent,new=new,change=change,mechanism=mechanism,command_options=command_options)
+    except execution_authority.AuthorityRequired as error:return error.feedback
     except BlockingIOError:return dict(status='unknown',note='Original accepted execution still owns its lease')
     except ConcurrentExecution as error:return dict(status='unknown',note=str(error))
 
@@ -854,6 +886,9 @@ def _dispatch_descriptor(config, payload, *, parent=None, new=False, change=None
         if details.get('state')=='cancelled' and observed.get('native_state')!='cancelled':
             raise IntegrityError('Original cancellation has no bound native terminal observation')
     call_id = f'{len(before)+1:04d}-{uuid.uuid4().hex}'
+    if config.get('host_execution_authority') is not None:
+        from . import execution_authority
+        call_id=execution_authority.host_services(config).call_identity(payload,len(before)+1)
     descriptor = payload.model_copy(update={'name':call_id})
     prepared = adapter.prepare(descriptor, preparation_profile='research_loop.v1', exchange_directory=records.root)
     options = dict(command_options=command_options) if command_options is not None else {}

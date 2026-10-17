@@ -1,0 +1,164 @@
+"""Original ledger and public dispatch negatives; no solver/model qualification."""
+from concurrent.futures import ThreadPoolExecutor
+import importlib.metadata
+import json
+import os
+from pathlib import Path
+import sys
+
+import pytest
+
+from scidiscovery.operations.execution import AdapterCapability, ExecutionInterfaceRegistration
+from scidiscovery.operations.runtime_plugins import (RuntimePluginFactory, RuntimePluginContribution,
+    HOST_EXECUTION_GATE_KEY, HOST_EXECUTION_GATE_SCHEMA, HOST_EXECUTION_GATE_CONTRACT)
+from scidiscovery.research_loop import budget, contracts as c, controller, execution, experiments as e
+from scidiscovery.research_loop import execution_authority as authority, qualification as q
+from execution_fixtures import execution_registry, DifferentExternalIdentity
+from test_formal_review import LAUNCHER
+from test_history_handoff import finish
+
+
+class GateContractFixture(DifferentExternalIdentity):
+    """No policy success stub: reaching the provider is a failure in this case."""
+    def __init__(self, config, services):
+        super().__init__(config)
+        self.gate = services.gate(self.policy) if services is not None else None
+
+    def capabilities(self):
+        return (*super().capabilities(), AdapterCapability(HOST_EXECUTION_GATE_KEY, 'execution_authority',
+            HOST_EXECUTION_GATE_SCHEMA, 1, 'application/json', e.encoded(dict(HOST_EXECUTION_GATE_CONTRACT)),
+            dict(fixture='Actual factory injection; no policy or execution success supplied')))
+
+    def policy(self, raw):
+        raise AssertionError('An ended native must not reach any policy/backend provider')
+
+    def prepare(self, payload, **options):
+        assert self.gate is not None
+        self.gate('prepare', scope=self.config['scope'], call_id=payload.name, payload=payload, target={})
+        raise AssertionError('Ended native reached preparation')
+
+
+def resource_factory(context):
+    return RuntimePluginContribution(execution_adapters={'fixture': GateContractFixture(
+        json.loads(context.config_bytes), context.execution_host_services)})
+
+
+RESOURCE_REGISTRATION = ExecutionInterfaceRegistration('resource_fixture', '1', RuntimePluginFactory(resource_factory))
+
+
+@pytest.fixture
+def resource_registry(tmp_path, monkeypatch, execution_registry):
+    directory = tmp_path / 'resource-metadata/resource_fixture.dist-info'; directory.mkdir(parents=True)
+    (directory / 'METADATA').write_text('Metadata-Version: 2.1\nName: resource-fixture\nVersion: 0\n')
+    (directory / 'entry_points.txt').write_text('[scidiscovery.execution_interfaces]\nresource_fixture = test_execution_resources:RESOURCE_REGISTRATION\n')
+    monkeypatch.syspath_prepend(str(directory.parent))
+    monkeypatch.setenv('PYTHONPATH', os.pathsep.join([str(directory.parent), str(Path(__file__).parent),
+        os.environ.get('PYTHONPATH', '')]))
+
+
+def prepare(tmp_path, *, launcher=None, executor='resource_fixture:fixture', options=None):
+    public = tmp_path / 'public'; public.mkdir()
+    objective = public / 'objective.md'; objective.write_text('Retain exact scientific and execution authority boundaries.')
+    root = tmp_path / 'instance'
+    controller.prepare(root, objective, public, launcher or ['fixture'], max_tokens=4000, max_seconds=1000,
+        max_steps=7, model='fixture', reasoning_effort='high', search_policy=None, experiment_mode='local', node_budget_mode='hard',
+        execution_config=dict(executor=executor, configuration=options or {}),
+        formal_review_policy={'version': 1}, execution_authority_policy={'version': 1},
+        execution_resource_policy=dict(version=1, allowance=dict(wall_time_seconds=10, max_storage_bytes=100)),
+        source_restrictions=[dict(source=str(objective), sha256=c.digest(objective), restriction='clear')])
+    return root
+
+
+def test_resource_events_interleave_original_clock_and_compete_without_new_pool(tmp_path, monkeypatch, resource_registry, capsys):
+    root = prepare(tmp_path); now = [100.]
+    monkeypatch.setattr(budget.time, 'time', lambda: now[0])
+    monkeypatch.setattr(budget.time, 'clock_gettime', lambda _: now[0])
+    c.write(root / 'host-started.json', budget.clock_stamp())
+    with controller._writer(root):
+        budget.transition(root, 'advance', 'Original clock, not a resource grant')
+    now[0] = 102.
+    before = budget.snapshot(root, sample_stamp=budget.clock_stamp())
+    grant = budget.execution_grant(root)
+    request = q._save(root, root / 'host-runtime/accounting-fixture/request.json', dict(scope='ledger math only'))
+    decision = q._save(root, root / 'host-runtime/accounting-fixture/decision.json', dict(scope='opaque ref, not an execution grant'))
+    # Lower-level ledger competition only. No scientific approval/accepted native
+    # is asserted; the production gate is independently required before dispatch.
+    def reserve(index):
+        binding = dict(call_id=f'{index:04d}-' + str(index) * 32, scope={'fixture': 'same owner'},
+            native_attempt={'number': 0}, interface={'executor': 'resource_fixture:fixture'}, authority={'fixture': index})
+        try:
+            ref = budget.reserve_execution(root, binding=binding, request_ref=request, decision_ref=decision,
+                budget=dict(wall_time_seconds=6, max_storage_bytes=60), grant_revision=grant['ref'],
+                effective_allowance=dict(wall_time_seconds=10, max_storage_bytes=100))
+            return binding, ref
+        except ValueError:
+            return None
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        contenders = list(workers.map(reserve, (1, 2)))
+    assert sum(value is not None for value in contenders) == 1
+    binding, reservation = next(value for value in contenders if value is not None)
+    assert budget.reserve_execution(root, binding=binding, request_ref=request, decision_ref=decision,
+        budget=dict(wall_time_seconds=6, max_storage_bytes=60), grant_revision=grant['ref'],
+        effective_allowance=dict(wall_time_seconds=10, max_storage_bytes=100)) == reservation
+    after = budget.snapshot(root, sample_stamp=budget.clock_stamp())
+    assert {key: after[key] for key in ('advance_seconds', 'max_tokens', 'max_seconds', 'seconds_remaining')} == {
+        key: before[key] for key in ('advance_seconds', 'max_tokens', 'max_seconds', 'seconds_remaining')}
+    assert budget.execution_accounting(root)['remaining'] == dict(wall_time_seconds=4, max_storage_bytes=40)
+    with controller._writer(root):
+        budget.transition(root, 'waiting', 'Original managed waiting')
+    now[0] = 105.
+    from scidiscovery.research_loop.cli import main
+    assert main(['budget-amend', '--root', str(root), '--execution-wall-seconds', '20',
+        '--execution-storage-bytes', '200', '--authorization-note', 'Explicit operator ceiling only']) == 0
+    capsys.readouterr()
+    revised = budget.execution_grant(root)
+    assert revised['owner'] == grant['owner'] and revised['ref'] != grant['ref']
+    assert budget.execution_accounting(root)['remaining'] == dict(wall_time_seconds=14, max_storage_bytes=140)
+    with pytest.raises(ValueError, match='revision changed'):
+        budget.reserve_execution(root, binding=binding, request_ref=request, decision_ref=decision,
+            budget=dict(wall_time_seconds=6, max_storage_bytes=60), grant_revision=grant['ref'],
+            effective_allowance=dict(wall_time_seconds=20, max_storage_bytes=200))
+    unknown = q._save(root, root / 'host-runtime/accounting-fixture/lookup-none.json', dict(found=False, status='unknown'))
+    with pytest.raises((ValueError, KeyError)):
+        budget.release_execution(root, reservation=reservation, retirement=unknown)
+    with controller._writer(root):
+        budget.transition(root, 'paused', 'No new resource grant')
+    now[0] = 200.
+    assert budget.execution_grant(root)['ref'] == revised['ref']
+    assert budget.execution_accounting(root)['remaining'] == dict(wall_time_seconds=14, max_storage_bytes=140)
+    assert budget.snapshot(root)['advance_seconds'] == 2 and budget.snapshot(root)['waiting_seconds'] == 3
+    assert budget.authorization_revision(root) == q._ref(root, root / 'settings.json')
+
+
+def test_configure_rejects_old_factory_that_ignores_host_services(tmp_path, execution_registry):
+    root = prepare(tmp_path, executor='local_execution:command', options=dict(run_argv=[sys.executable]))
+    finish(root, 1, 'H', [], action='experiment')
+    job = c.build_job(root, 2, 'W', [1]); record = execution.record(root, 2)
+    c.write(record / 'native-intent.json', dict(task_sha256=c.digest(root / 'jobs/002.json')))
+    with pytest.raises(e.UnsupportedExecution, match='does not declare'):
+        e.configure(root, 2, 'local_execution:command', dict(run_argv=[sys.executable]),
+            c.workspace(root, 2) / 'work/experiment-config.json')
+    assert not list(root.glob('**/accepted.json'))
+
+
+@pytest.mark.process_e2e
+def test_public_run_rejects_sealed_w_config_before_provider_or_reservation(tmp_path, monkeypatch, resource_registry):
+    launcher = tmp_path / 'codex'; launcher.write_text('#!' + sys.executable + '\n' + LAUNCHER); launcher.chmod(0o700)
+    home = tmp_path / 'native'; home.mkdir(); monkeypatch.setenv('CODEX_HOME', str(home))
+    monkeypatch.delenv('REVIEW_REUSE_AUTHOR', raising=False); monkeypatch.delenv('REVIEW_MISSING_AUTHOR', raising=False)
+    root = prepare(tmp_path, launcher=[str(launcher)])
+    assert controller.run(root)['status'] == 'finish'
+    job = c.build_job(root, 6, 'W', [2, 5]); record = execution.record(root, 6)
+    c.write(record / 'native-intent.json', dict(task_sha256=c.digest(root / 'jobs/006.json')))
+    path = c.workspace(root, 6) / 'work/experiment-config.json'
+    config = e.configure(root, 6, 'resource_fixture:fixture', {}, path)
+    finish(root, 6, 'W', [2, 5])
+    assert job['execution_qualifications']  # Genuine thin sealed review, synthetic native identities.
+    subject = q._read(root, job['execution_qualifications'][0])['subject']
+    original = c.workspace(root, 6) / subject['material']['path']; identity = e.proof(original)
+    from scidiscovery.operations.execution import LocalFileDescriptor
+    payload = LocalFileDescriptor(name='ignored', local_path=str(original), sha256=identity['sha256'],
+        size_bytes=identity['size_bytes'], media_type='application/octet-stream')
+    with pytest.raises(ValueError, match='attempt has ended'):
+        e.dispatch_descriptor(config, payload)
+    assert not list(root.glob('**/accepted.json')) and not budget.execution_accounting(root)['reservations']

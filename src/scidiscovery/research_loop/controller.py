@@ -34,7 +34,8 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
             selection_policy: dict | None = None, role_profiles: dict | None = None,
             experiment_mode: str | None = None, execution_config: dict | None = None,
             source_restrictions: list[dict] | None = None, formal_review_policy: dict | None = None,
-            execution_authority_policy: dict | None = None) -> dict:
+            execution_authority_policy: dict | None = None,
+            execution_resource_policy: dict | None = None) -> dict:
     """Freeze an explicit goal and finite launch budgets in a fresh directory."""
     portfolio_limits = search.portfolio_policy(portfolio_policy) if portfolio_policy is not None else None
     if exploration_order_version is not None:
@@ -107,6 +108,9 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
     authority_policy=execution_authority.configuration(execution_authority_policy)
     if authority_policy is not None and review_policy is None:
         raise ValueError('Execution authority requires the explicit formal review contract')
+    resource_policy = budget.execution_resource_policy(execution_resource_policy)
+    if resource_policy is not None and (authority_policy is None or frozen_execution is None):
+        raise ValueError('Execution resources require explicit authority and registered host execution')
     observer = history.observer_config(history_observer) if history_observer is not None else None
     literal_guidance = (guidance.OPPORTUNITY if portfolio_limits is not None and portfolio_limits.get('version', 1) == 2
                         and role_guidance is guidance.DEFAULT else role_guidance)
@@ -163,6 +167,8 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
     settings['experiment_mode'] = experiment_mode
     if frozen_execution is not None:
         settings['execution_config']=frozen_execution
+    if resource_policy is not None:
+        settings['execution_resource_policy']=resource_policy
     if handoff_authority_version is not None:
         settings['handoff_authority_version'] = handoff_authority_version
     if decision_contract_version is not None:

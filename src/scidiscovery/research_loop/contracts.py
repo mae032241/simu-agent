@@ -426,7 +426,7 @@ def science_view(job, root=None):
             formal_review_feedback=formal_review.feedback(root,job))
            if job.get('formal_review_version')==1 else {}),
         **(dict(source_restrictions=job['source_restrictions']) if 'source_restrictions' in job else {}),
-        **(dict(execution_authority=dict(status='authority_only_production_gate_unavailable',
+        **(dict(execution_authority=dict(status='trusted_gate_required' if settings(Path(root)).get('execution_resource_policy') else 'authority_only_production_gate_unavailable',
             qualified_materials=[read(Path(root) / ref['path'])['subject']['material']['path']
                                  for ref in job.get('execution_qualifications', [])[:3]],
             qualified_materials_omitted_count=max(0, len(job.get('execution_qualifications', [])) - 3),

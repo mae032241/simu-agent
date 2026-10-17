@@ -42,7 +42,7 @@ class InstanceUI:
         self.root = Path(root).resolve()
         authority.contract(self.root)
         self.secret = security.read_secret_file(secret_file, label='approval receipt')
-        authority.bind_secret(self.root, self.secret)
+        authority.bind_secret(self.root, self.secret, source=secret_file)
         self.instance = c.settings(self.root)['goal_id']
         self.boot = uuid.uuid4().hex
         self.browser = BrowserAccessService(secret=self.secret, ui_session_id=self.boot)
@@ -199,10 +199,15 @@ def serve(root, *, secret_file, port=0):
 
     with _host_lock(root), ThreadingHTTPServer(('127.0.0.1', port), Handler) as server:
         ui.host = '127.0.0.1:' + str(server.server_port)
+        endpoint = dict(instance=ui.instance, boot=ui.boot, origin='http://' + ui.host)
+        endpoint['receipt_hmac'] = security.receipt_hmac(ui.secret, security.canonical(endpoint))
+        c.write(root / 'execution-authority/ui-endpoint.json', endpoint)
         print(json.dumps(dict(status='ui_listening', instance=ui.instance,
             management_url='http://' + ui.host + '/manage?token=' + ui.management_token), ensure_ascii=False), flush=True)
         try:
             server.serve_forever(poll_interval=.5)
         except KeyboardInterrupt:
             pass
+        finally:
+            (root / 'execution-authority/ui-endpoint.json').unlink(missing_ok=True)
     return dict(status='ui_stopped')

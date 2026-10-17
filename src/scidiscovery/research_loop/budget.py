@@ -37,8 +37,8 @@ def _duration(before, after, *, legacy_elapsed=False):
     return elapsed
 
 
-def _events(root, settings):
-    events, parent = [], None
+def _events(root, settings, *, resources=False):
+    events, parent, origins = [], None, {}
     identity = contracts.digest(root / 'settings.json')
     for seq, path in enumerate(sorted((root / 'control-ledger').glob('*.json')), 1):
         data = contracts.regular(path).read_bytes()
@@ -51,7 +51,8 @@ def _events(root, settings):
                 or type(event.get('at_boottime')) not in (int, float)
                 or not math.isfinite(event['at_boottime']) or event['at_boottime'] < 0
                 or not isinstance(event.get('boot_id'), str) or not event['boot_id']
-                or event.get('kind') not in {'clock', 'budget_amend', 'closeout_begin', 'action_intent', 'action_outcome'}):
+                or event.get('kind') not in {'clock', 'budget_amend', 'closeout_begin', 'action_intent', 'action_outcome',
+                    'resource_grant', 'resource_reserve', 'resource_bind', 'resource_settle', 'resource_release'}):
             raise ValueError('Control ledger identity, sequence or time changed')
         if events:
             _duration(events[-1], event, legacy_elapsed=settings.get('time_budget_basis', 'elapsed') == 'elapsed')
@@ -87,7 +88,297 @@ def _events(root, settings):
             raise ValueError('Invalid delivery action outcome')
         events.append(event)
         parent = hashlib.sha256(data).hexdigest()
-    return events, parent
+        origins[seq] = dict(path=path.relative_to(root).as_posix(), sha256=parent, size_bytes=len(data))
+    state = _resource_state(root, settings, events, origins)
+    return (events, parent, state) if resources else (events, parent)
+
+
+RESOURCE_DIMENSIONS = {'wall_time_seconds', 'max_storage_bytes'}
+
+
+def _resource_dimensions(value, *, partial=False, zero=False):
+    if (not isinstance(value, dict) or (not set(value).issubset(RESOURCE_DIMENSIONS) if partial
+            else set(value) != RESOURCE_DIMENSIONS)
+            or any(type(item) is not int or item < (0 if zero else 1) for item in value.values())):
+        raise ValueError('Explicit finite execution resource dimensions required')
+    return dict(value)
+
+
+def execution_resource_policy(value):
+    if value is None:
+        return None
+    if not isinstance(value, dict) or set(value) != {'version', 'allowance'} or type(value['version']) is not int or value['version'] != 1:
+        raise ValueError('Execution resources require explicit version 1 allowance')
+    return dict(version=1, allowance=_resource_dimensions(value['allowance']))
+
+
+def _resource_ref(root, event, origins=None):
+    if origins is not None:
+        return origins[event['seq']]
+    from . import qualification as q
+    return q._ref(root, root / 'control-ledger' / f'{event["seq"]:06d}.json')
+
+
+def _resource_owner(settings):
+    policy = execution_resource_policy(settings.get('execution_resource_policy'))
+    selected = settings.get('execution_config')
+    if policy is None or selected is None or settings.get('execution_authority_policy') is None:
+        raise ValueError('Explicit frozen execution resource owner is unavailable')
+    value = dict(instance=settings['goal_id'], executor=selected['executor'])
+    key = hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    return dict(key=key, **value)
+
+
+def _resource_state(root, settings, events, origins):
+    """Fold only ledger facts; never rehash every execution's large originals."""
+    grants, reservations = {}, {}
+    for event in events:
+        kind = event['kind']
+        if not kind.startswith('resource_'):
+            continue
+        owner = _resource_owner(settings)
+        if event.get('owner') != owner:
+            raise ValueError('Execution resource owner differs from the original instance')
+        if kind == 'resource_grant':
+            allowance = _resource_dimensions(event.get('allowance'))
+            previous = grants.get(owner['key'])
+            if (event.get('previous_grant') != (previous['ref'] if previous else None)
+                    or not isinstance(event.get('authorization_note'), str) or not event['authorization_note'].strip()
+                    or previous is None and allowance != settings['execution_resource_policy']['allowance']):
+                raise ValueError('Execution resource grant revision changed')
+            grants[owner['key']] = dict(ref=_resource_ref(root, event, origins), allowance=allowance)
+            continue
+        identity = event.get('reservation_id')
+        if not isinstance(identity, str) or len(identity) != 64:
+            raise ValueError('Execution reservation identity is unavailable')
+        if kind == 'resource_reserve':
+            request = _resource_dimensions(event.get('budget'))
+            ceiling = _resource_dimensions(event.get('effective_allowance'))
+            grant = grants.get(owner['key'])
+            binding = event.get('binding')
+            if (grant is None or event.get('grant_revision') != grant['ref'] or identity in reservations
+                    or not isinstance(binding, dict)
+                    or identity != hashlib.sha256(json.dumps(dict(owner=owner, binding=binding),
+                        sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+                    or any(ceiling[key] > grant['allowance'][key] for key in ceiling)):
+                raise ValueError('Execution reservation changed its grant or original binding')
+            remaining = dict(ceiling)
+            for prior in reservations.values():
+                if not prior['released']:
+                    for key, amount in {**prior['budget'], **prior['actual']}.items():
+                        remaining[key] -= amount
+            if any(request[key] > remaining[key] for key in request):
+                raise ValueError('Cumulative execution resources exceeded')
+            reservations[identity] = dict(ref=_resource_ref(root, event, origins), owner=owner,
+                binding=binding, budget=request, actual={}, bound=None, released=False, settled_observation=None)
+            continue
+        original = reservations.get(identity)
+        if original is None or event.get('reservation') != original['ref'] or original['released']:
+            raise ValueError('Execution resource event lost its original reservation')
+        if kind == 'resource_bind':
+            binding = event.get('accepted_binding')
+            if original['bound'] is not None or not isinstance(binding, dict) or set(binding) != {'accepted', 'prepared'}:
+                raise ValueError('Execution accepted resource binding changed')
+            original['bound'] = binding
+        elif kind == 'resource_settle':
+            actual = _resource_dimensions(event.get('actual'), partial=True, zero=True)
+            if original['bound'] is None or not isinstance(event.get('observation'), dict) or any(
+                    key in original['actual'] and original['actual'][key] != amount for key, amount in actual.items()):
+                raise ValueError('Execution resource settlement changed proven actual usage')
+            original['actual'].update(actual)
+            original['settled_observation'] = event['observation']
+        elif kind == 'resource_release':
+            if original['bound'] is None or original['actual'] or not isinstance(event.get('retirement'), dict):
+                raise ValueError('Execution resources have no permanent non-submission proof')
+            original['released'] = True
+    return grants, reservations
+
+
+def execution_grant(root):
+    """Seed exactly the operator's frozen ceiling in the existing ledger."""
+    root = Path(root).resolve(); settings = contracts.settings(root)
+    owner = _resource_owner(settings)
+    with _ledger_writer(root):
+        events, parent, (grants, _) = _events(root, settings, resources=True)
+        if owner['key'] not in grants:
+            event = _append(root, settings, events, parent, kind='resource_grant', owner=owner,
+                previous_grant=None, allowance=settings['execution_resource_policy']['allowance'],
+                authorization_note='Original explicit operator execution resource configuration')
+            return dict(owner=owner, ref=_resource_ref(root, event), allowance=event['allowance'])
+        return dict(owner=owner, **grants[owner['key']])
+
+
+def amend_execution_grant(root, *, allowance, authorization_note):
+    """Operator ceiling amendment, never an exact-call execution decision."""
+    allowance = _resource_dimensions(allowance)
+    if not isinstance(authorization_note, str) or not authorization_note.strip():
+        raise ValueError('Execution resource amendment requires an operator decision')
+    execution_grant(root)
+    root = Path(root).resolve(); settings = contracts.settings(root); owner = _resource_owner(settings)
+    with _ledger_writer(root):
+        events, parent, (grants, _) = _events(root, settings, resources=True)
+        previous = grants[owner['key']]
+        if previous['allowance'] == allowance:
+            return dict(owner=owner, **previous)
+        event = _append(root, settings, events, parent, kind='resource_grant', owner=owner,
+            previous_grant=previous['ref'], allowance=allowance, authorization_note=authorization_note)
+        return dict(owner=owner, ref=_resource_ref(root, event), allowance=allowance)
+
+
+def reserve_execution(root, *, binding, request_ref, decision_ref, budget, grant_revision, effective_allowance):
+    """Atomic reservation before prepare/upload; revisions never create a pool."""
+    from . import qualification as q
+    root = Path(root).resolve(); settings = contracts.settings(root); owner = _resource_owner(settings)
+    budget = _resource_dimensions(budget); effective_allowance = _resource_dimensions(effective_allowance)
+    binding = dict(binding, request=request_ref, decision=decision_ref)
+    identity = hashlib.sha256(json.dumps(dict(owner=owner, binding=binding), sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    q._read(root, request_ref); q._read(root, decision_ref)
+    with _ledger_writer(root):
+        events, parent, (grants, reservations) = _events(root, settings, resources=True)
+        grant = grants.get(owner['key'])
+        if grant is None or grant_revision != grant['ref']:
+            raise ValueError('Execution resource authorization revision changed')
+        if identity in reservations:
+            original = reservations[identity]
+            if original['budget'] != budget or original['released']:
+                raise ValueError('Original execution reservation cannot be replaced')
+            return original['ref']
+        if any(row['binding']['call_id'] == binding['call_id'] and row['binding']['scope'] == binding['scope']
+               for row in reservations.values()):
+            raise ValueError('Original call already owns another exact reservation')
+        remaining = {key: min(effective_allowance[key], grant['allowance'][key]) for key in budget}
+        for original in reservations.values():
+            if not original['released']:
+                for key, amount in {**original['budget'], **original['actual']}.items():
+                    remaining[key] -= amount
+        if any(budget[key] > remaining[key] for key in budget):
+            raise ValueError('Cumulative execution resources are insufficient')
+        event = _append(root, settings, events, parent, kind='resource_reserve', owner=owner,
+            reservation_id=identity, binding=binding, budget=budget, grant_revision=grant_revision,
+            effective_allowance={key: min(effective_allowance[key], grant['allowance'][key]) for key in budget})
+        return _resource_ref(root, event)
+
+
+def _reserved(state, reservation):
+    _, rows = state
+    matches = [(key, row) for key, row in rows.items() if row['ref'] == reservation]
+    if len(matches) != 1:
+        raise ValueError('Exact execution reservation is unavailable')
+    return matches[0]
+
+
+def bind_execution(root, *, reservation, accepted, prepared):
+    from . import qualification as q
+    root = Path(root).resolve(); settings = contracts.settings(root)
+    value = q._read(root, accepted)
+    original = dict(accepted=accepted, prepared=prepared)
+    with _ledger_writer(root):
+        events, parent, state = _events(root, settings, resources=True); identity, row = _reserved(state, reservation)
+        binding = row['binding']
+        if (row['released'] or value.get('call_id') != binding['call_id'] or value.get('scope') != binding['scope']
+                or value.get('native_attempt') != binding['native_attempt']
+                or value.get('interface') != binding['interface'] or value.get('execution_authority') != binding['authority']
+                or value.get('execution_reservation') != reservation
+                or value.get('prepared') != prepared):
+            raise ValueError('Accepted execution does not match its original reservation')
+        if row['bound'] is not None:
+            if row['bound'] != original:
+                raise ValueError('Original reservation already bound another preparation')
+            return row['ref']
+        q._check(dict(path=prepared['local_path'], sha256=prepared['sha256'], size_bytes=prepared['size_bytes']))
+        q._check(value['script'])
+        _append(root, settings, events, parent, kind='resource_bind', owner=row['owner'],
+            reservation_id=identity, reservation=reservation, accepted_binding=original)
+        return row['ref']
+
+
+def settle_execution(root, *, reservation, observation, consumed):
+    from . import experiments, qualification as q
+    root = Path(root).resolve(); settings = contracts.settings(root)
+    value = q._read(root, observation)
+    experiments.verify_observation(value, lambda item: Path(item['path']))
+    consumed = _resource_dimensions(consumed, partial=True, zero=True)
+    with _ledger_writer(root):
+        events, parent, state = _events(root, settings, resources=True); identity, row = _reserved(state, reservation)
+        bound = row['bound']
+        if (bound is None or row['released'] or value.get('call_id') != row['binding']['call_id']
+                or value.get('scope') != row['binding']['scope']
+                or q._identity(root / bound['accepted']['path']) != value.get('accepted')):
+            raise ValueError('Terminal observation does not bind the reserved execution')
+        if any(key in row['actual'] and row['actual'][key] != amount for key, amount in consumed.items()):
+            raise ValueError('Terminal resource usage conflicts with its original observation')
+        if row['settled_observation'] == observation and all(row['actual'].get(key) == amount for key, amount in consumed.items()):
+            return row['ref']
+        _append(root, settings, events, parent, kind='resource_settle', owner=row['owner'],
+            reservation_id=identity, reservation=reservation, observation=observation, actual=consumed)
+        return row['ref']
+
+
+def release_execution(root, *, reservation, retirement):
+    from . import experiments, qualification as q
+    root = Path(root).resolve(); settings = contracts.settings(root)
+    value = q._read(root, retirement)
+    verified = experiments.verify_retirement(value, lambda item: Path(item['path']))
+    with _ledger_writer(root):
+        events, parent, state = _events(root, settings, resources=True); identity, row = _reserved(state, reservation)
+        bound = row['bound']; binding = row['binding']
+        if (bound is None or row['actual'] or verified.get('call_id') != binding['call_id']
+                or verified.get('scope') != binding['scope'] or verified.get('authority') != binding['authority']
+                or verified.get('prepared') != bound['prepared']
+                or verified.get('accepted') != {**bound['accepted'], 'path': str(root / bound['accepted']['path'])}):
+            raise ValueError('Permanent retirement does not bind the original reserved preparation')
+        if row['released']:
+            return row['ref']
+        _append(root, settings, events, parent, kind='resource_release', owner=row['owner'],
+            reservation_id=identity, reservation=reservation, retirement=retirement)
+        return row['ref']
+
+
+def execution_accounting(root):
+    root = Path(root).resolve(); settings = contracts.settings(root); owner = _resource_owner(settings)
+    _, _, (grants, reservations) = _events(root, settings, resources=True)
+    grant = grants.get(owner['key'])
+    remaining = dict(grant['allowance']) if grant else dict(settings['execution_resource_policy']['allowance'])
+    for row in reservations.values():
+        if not row['released']:
+            for key, amount in {**row['budget'], **row['actual']}.items():
+                remaining[key] -= amount
+    return dict(owner=owner, grant=grant, remaining=remaining, reservations=list(reservations.values()))
+
+
+def execution_reservation(root, reservation):
+    root = Path(root).resolve(); settings = contracts.settings(root)
+    _, _, state = _events(root, settings, resources=True)
+    return _reserved(state, reservation)[1]
+
+
+def authorization_revision(root):
+    """Only explicit ceiling amendments revise authority; clocks never do."""
+    root = Path(root).resolve(); settings = contracts.settings(root)
+    events, _ = _events(root, settings)
+    changes = [event for event in events if event['kind'] == 'budget_amend']
+    if changes:
+        return _resource_ref(root, changes[-1])
+    from . import qualification as q
+    return q._ref(root, root / 'settings.json')
+
+
+def execution_available(root, job, limits, usage):
+    """Existing shared authorization minus its existing closeout floor; no grant."""
+    settings = contracts.settings(root)
+    if job.get('purpose') == 'closeout':
+        begin = closeout_state(root)['begin']
+        if begin is None:
+            raise ValueError('Closeout execution has no original boundary')
+        reserve = closeout_floor(settings, preparation_seconds=begin['preparation_seconds'])
+        if job.get('engineering_repair'):
+            author = settings['delivery_policy']['closeout_a']
+            reserve = dict(reserve, seconds=reserve['seconds'] + author['max_seconds'],
+                           tokens=reserve['tokens'] + author['max_observed_tokens'])
+    else:
+        reserve = delivery_reserve(settings) or dict(seconds=0, tokens=0)
+    return dict(seconds=max(0., limits['seconds_remaining'] - reserve['seconds']),
+                tokens=max(0, limits['max_tokens'] - usage['observed_tokens'] - reserve['tokens']))
 
 
 @contextmanager

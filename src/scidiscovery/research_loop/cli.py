@@ -67,7 +67,8 @@ def main(argv=None):
     prepare.add_argument('--public-root', type=Path, required=True)
     prepare.add_argument('--source-restrictions', type=Path, help='Operator source declarations JSON array: exact absolute source, sha256, restriction (clear/restricted); source restrictions only, not review or execution permission')
     prepare.add_argument('--enable-formal-review', action='store_true', help='Allow an explicit A formal_review request for one selected scientific object; requires complete real native participant identities and grants no execution permission')
-    prepare.add_argument('--enable-execution-authority', action='store_true', help='Freeze the optional execution request/decision contract; requires formal review and does not enable the pending production resource gate')
+    prepare.add_argument('--enable-execution-authority', action='store_true', help='Freeze the optional execution request/decision contract; requires formal review and grants no execution without explicit resources and the trusted gate')
+    prepare.add_argument('--execution-resource-policy', type=Path, help='Explicit version1 cumulative allowance JSON: wall_time_seconds/max_storage_bytes; no default grant')
     prepare.add_argument('--native-launcher-json', required=True, help='An argv JSON array, e.g. ["codex"]')
     prepare.add_argument('--history-observer-config', type=Path, help='Optional trusted host adapter/config JSON; frozen at preparation')
     prepare.add_argument('--experiment-mode', choices=['local', 'external'], help='Host-configured W execution (local) or launcher-owned execution (external); standard codex defaults to local, custom launchers to external')
@@ -107,6 +108,8 @@ def main(argv=None):
     amend.add_argument('--root', type=Path, required=True)
     amend.add_argument('--max-tokens', type=int)
     amend.add_argument('--max-seconds', type=float)
+    amend.add_argument('--execution-wall-seconds', type=int, help='Explicit cumulative execution ceiling; preserves prior reservations/usage and grants no exact-call permission')
+    amend.add_argument('--execution-storage-bytes', type=int, help='Explicit cumulative execution storage ceiling; must accompany --execution-wall-seconds')
     amend.add_argument('--authorization-note', required=True, help='Operator decision for the audit; this text is not authentication')
     closeout = commands.add_parser('closeout', help='Close exploration within the original remaining authorization')
     closeout.add_argument('--root', type=Path, required=True)
@@ -143,6 +146,7 @@ def main(argv=None):
                 source_restrictions=contracts.read(contracts.regular(args.source_restrictions)) if args.source_restrictions is not None else None,
                 formal_review_policy=dict(version=1) if args.enable_formal_review else None,
                 execution_authority_policy=dict(version=1) if args.enable_execution_authority else None,
+                execution_resource_policy=contracts.read(contracts.regular(args.execution_resource_policy)) if args.execution_resource_policy is not None else None,
                 candidate_audit_policy={'version':1} if args.enable_candidate_audit else None,
                 decision_contract_version=1 if args.decision_contract else None,
                 portfolio_policy=dict(review_after_cycles=args.portfolio_review_after_cycles) if args.portfolio_review_after_cycles is not None else None,
@@ -181,8 +185,19 @@ def main(argv=None):
         elif args.command == 'closeout':
             result = controller.closeout(root, export_only=args.export_only)
         elif args.command == 'budget-amend':
-            result = budget.amend(root, max_tokens=args.max_tokens, max_seconds=args.max_seconds,
-                                  authorization_note=args.authorization_note)
+            resource_change = args.execution_wall_seconds is not None or args.execution_storage_bytes is not None
+            if resource_change and (args.execution_wall_seconds is None or args.execution_storage_bytes is None):
+                raise ValueError('Execution resource amendment requires both explicit dimensions')
+            if resource_change and (args.max_tokens is not None or args.max_seconds is not None):
+                raise ValueError('Amend scientific or execution ceilings in one explicit operation at a time')
+            if resource_change:
+                grant = budget.amend_execution_grant(root, allowance=dict(wall_time_seconds=args.execution_wall_seconds,
+                    max_storage_bytes=args.execution_storage_bytes), authorization_note=args.authorization_note)
+                result = dict(status='budget_amended', execution_resources=grant,
+                              permission='Ceiling configuration only; no exact-call execution decision')
+            else:
+                result = budget.amend(root, max_tokens=args.max_tokens, max_seconds=args.max_seconds,
+                                      authorization_note=args.authorization_note)
         elif args.command == 'pause':
             contracts.read(root / 'settings.json')
             contracts.write(root / 'pause.request', dict(reason='user_pause_at_next_node'))

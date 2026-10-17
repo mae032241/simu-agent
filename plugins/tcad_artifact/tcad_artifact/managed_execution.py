@@ -12,7 +12,8 @@ from scidiscovery.operations.execution import (
     AdapterCapability, ExecutionInterfaceRegistration, LifecycleCapabilities,
     LocalFileDescriptor, execution_status,
 )
-from scidiscovery.operations.runtime_plugins import RuntimePluginContribution, RuntimePluginFactory
+from scidiscovery.operations.runtime_plugins import (RuntimePluginContribution, RuntimePluginFactory,
+    HOST_EXECUTION_GATE_KEY, HOST_EXECUTION_GATE_SCHEMA, HOST_EXECUTION_GATE_CONTRACT)
 from scidiscovery.plugin_runtime.collection import CollectionContext
 from scidiscovery.research_loop import experiments as e
 from scidiscovery.research_loop import contracts as c
@@ -144,7 +145,14 @@ class TCADManagedExecution:
             AdapterCapability(e.RETIREMENT_KEY, 'execution_recovery', e.RETIREMENT_SCHEMA, 1,
                 'application/json', e.encoded(dict(e.RETIREMENT_CONTRACT, backend_protocol={
                     'version': 1, 'submit': 'tcad_submit_retirable', 'retire': 'tcad_retire_submission'})),
-                dict(action='Retire the exact original submission; no refund or new execution grant')))
+                dict(action='Retire the exact original submission; no refund or new execution grant')),
+            AdapterCapability('execution_resource_usage', 'resource_usage', 'scidiscovery.execution-resource-usage.v1', 1,
+                'application/json', e.encoded(dict(version=1, dimensions=['wall_time_seconds', 'max_storage_bytes'],
+                    basis='retained_native_terminal_manifest')),
+                dict(action='Project known native resource facts; missing dimensions remain reserved')),
+            AdapterCapability(HOST_EXECUTION_GATE_KEY, 'execution_authority', HOST_EXECUTION_GATE_SCHEMA, 1,
+                'application/json', e.encoded(dict(HOST_EXECUTION_GATE_CONTRACT)),
+                dict(action='Requires the trusted host factory gate; JSON cannot enable execution')))
 
     def _check(self, phase, call, payload, *, prepared=None, prior=None):
         if self.gate is None:
@@ -174,10 +182,10 @@ class TCADManagedExecution:
             raise ValueError('Exact managed TCAD preparation context required')
         _verify_descriptor(payload)
         reviewed = validate_execution_package_json(Path(payload.local_path).read_bytes())
+        if reviewed.resolved_inputs and (self.input_metadata is None or self.open_input is None):
+            raise e.UnsupportedExecution('Exact frozen TCAD input originals are unavailable; no authority request or reservation created')
         # No capability/policy RPC or transport prepare is permitted before this gate.
         permit = self._check('prepare', payload.name, payload)
-        if reviewed.resolved_inputs and (self.input_metadata is None or self.open_input is None):
-            raise e.UnsupportedExecution('Exact frozen TCAD input originals are unavailable')
         stage = _directory(self._stage(payload.name))
         source = stage / 'package.json'
         c._copy_bound(Path(payload.local_path), source, payload.sha256)
@@ -190,6 +198,8 @@ class TCADManagedExecution:
             prepared=prepared.model_dump(mode='json'),
             target=self.target, authority=permit['receipt'],
             authorization=permit['authorization'].model_dump(mode='json'))
+        if permit.get('reservation') is not None:
+            binding['reservation'] = permit['reservation']
         e.write(stage / 'binding.json', binding)
         os.chmod(stage / 'binding.json', 0o440)
         return prepared
@@ -213,6 +223,7 @@ class TCADManagedExecution:
         value = self._preparation(payload)
         return dict(parent=dict(candidate_id=None), change_intent=None, tcad=value,
             execution_authority=value['authority'], execution_target=value['target'],
+            **(dict(execution_reservation=value['reservation']) if value.get('reservation') is not None else {}),
             submission_intent_path=str(self.records.root / 'calls' / payload.name / 'tcad-dispatch.json'))
 
     def _bound(self, call):
@@ -225,6 +236,7 @@ class TCADManagedExecution:
                 or (accepted['script'].get('sha256'), accepted['script'].get('size_bytes'))
                     != (descriptor.sha256, descriptor.size_bytes)
                 or accepted.get('execution_authority') != accepted.get('tcad', {}).get('authority')
+                or accepted.get('execution_reservation') != accepted.get('tcad', {}).get('reservation')
                 or accepted.get('execution_target') != self.target
                 or accepted.get('tcad') != self._preparation(descriptor)):
             raise e.IntegrityError('TCAD call differs from its original acceptance')
@@ -558,9 +570,19 @@ class TCADManagedExecution:
     def cancel(self, external):
         return self.cancel_original(self._external_call(external))
 
+    def resource_consumption(self, call):
+        """Trusted projection from the same verified native terminal originals."""
+        from .execution_control import _consumed_budget
+        completed = self._completed(call)
+        collected = json.loads(e.read(self.records.directory(call) / 'collected.json'))
+        outputs = tuple(LocalFileDescriptor.model_validate(item) for item in collected['outputs'])
+        manifest = self._inventory(outputs, completed['native_state'])
+        return _consumed_budget(manifest.model_dump(mode='json')) or {}
+
     @staticmethod
     def public_result(result):
-        return {key: result[key] for key in ('call_id', 'status', 'native_state', 'note') if key in result}
+        return {key: result[key] for key in ('call_id', 'status', 'native_state', 'note',
+            'authorization_request', 'review_url', 'resource_accounting') if key in result}
 
 
 def build_managed_runtime(context):
@@ -573,8 +595,12 @@ def build_managed_runtime(context):
     transport = TCADRuntimeConfig.model_validate_json(json.dumps({
         key: body[key] for key in TCADRuntimeConfig.model_fields if key in body}), strict=True)
     adapter = build_adapter(transport, state_root=context.state_root)
-    # P3 alone will wire a trusted gate and frozen originals. JSON cannot enable it.
-    return RuntimePluginContribution(execution_adapters={'tcad': TCADManagedExecution(body, adapter)})
+    services = getattr(context, 'execution_host_services', None)
+    gate = services.gate(lambda raw: adapter.execution_admission(raw,
+        preparation_profile='tcad.execution-package.v2')) if services is not None else None
+    # There is no JSON gate selector or fallback. Native input callbacks join only
+    # after their separate exact-original contract is implemented and reviewed.
+    return RuntimePluginContribution(execution_adapters={'tcad': TCADManagedExecution(body, adapter, gate=gate)})
 
 
 REGISTRATION = ExecutionInterfaceRegistration('tcad_execution', '1', RuntimePluginFactory(build_managed_runtime))

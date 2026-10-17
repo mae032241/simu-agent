@@ -7,6 +7,11 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Callable, Literal, Mapping
 
+HOST_EXECUTION_GATE_KEY = 'host_execution_gate'
+HOST_EXECUTION_GATE_SCHEMA = 'scidiscovery.host-execution-gate.v1'
+HOST_EXECUTION_GATE_CONTRACT = MappingProxyType(dict(version=1,
+    source='nonserialized_execution_host_services', admission='prepare_and_submit', resources='control_ledger'))
+
 
 @dataclass(frozen=True, slots=True)
 class ArchiveStorageSelection:
@@ -27,6 +32,17 @@ class ArchiveStorage:
 
 
 @dataclass(frozen=True, slots=True)
+class ExecutionHostServices:
+    """Core-created, nonserialized services for one verified native task.
+
+    A trusted factory supplies its policy provider; JSON cannot select a gate.
+    """
+
+    gate: Callable[[Callable[..., Any]], Callable[..., Mapping[str, Any]]]
+    call_identity: Callable[[Any, int], str]
+
+
+@dataclass(frozen=True, slots=True)
 class RuntimePluginContext:
     """Startup context for installed trusted control-runtime code."""
 
@@ -35,6 +51,7 @@ class RuntimePluginContext:
     config_path: Path
     config_bytes: bytes
     state_root: Path
+    execution_host_services: ExecutionHostServices | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +89,8 @@ class RuntimePluginFactory:
 
 __all__ = [
     "RuntimePluginContext",
+    "ExecutionHostServices",
+    "HOST_EXECUTION_GATE_KEY", "HOST_EXECUTION_GATE_SCHEMA", "HOST_EXECUTION_GATE_CONTRACT",
     "RuntimePluginContribution",
     "RuntimePluginFactory",
     "ArchiveStorage",
