@@ -239,7 +239,7 @@ def managed_calls(root, job, *, context=None):
         interface=_execution_interface(root,accepted)
         retired_path=directory/'submission-retirement.json'
         if retired_path.exists() or retired_path.is_symlink():
-            value=experiments.retirement(dict(record_dir=str(records.root),scope=scope,execution_interface=interface),directory.name)
+            value=experiments.retirement(dict(record_dir=str(records.root),scope=scope,execution_interface=interface,breadth=(job.get('search') or {}).get('breadth')),directory.name)
             originals=experiments.retirement_originals(value,accepted)
             row=dict(call_id=directory.name,scope=scope,mechanism_binding=binding,status='not_submitted',
                 result_protocol=generic_results.protocol(interface),accepted=_proof(root,accepted_path.relative_to(root).as_posix(),context=context),
