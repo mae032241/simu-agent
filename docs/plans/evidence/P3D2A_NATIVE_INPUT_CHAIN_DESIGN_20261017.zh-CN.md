@@ -1,6 +1,6 @@
 # P3d2-a：科学文件到精确 TCAD package 的最小接线
 
-状态：**设计独审 PASS，尚未实施。** [独立设计审查](P3D2A_NATIVE_INPUT_CHAIN_DESIGN_REVIEW_20261017.zh-CN.md)。P2d 已提交 `7effe2f`；P3d1 正由另一 owner 实施。本节点在其提交后串行接共享文件，不修改当前 gate/预算工作树。依据[主计划](../THIN_CAPABILITY_MIGRATION_20261016.zh-CN.md)、[已审 TCAD seam](../THIN_TCAD_MANAGED_SEAM_20261016.zh-CN.md)第 4 节及[P2/P3 拆分](../THIN_P2_P3_IMPLEMENTATION_SPLIT_20261017.zh-CN.md)。本文不授予生产资格。
+状态：**设计独审 PASS；隔离 schema/纯 compiler 前置实施中，公共链尚未接通/验收。** [独立设计审查](P3D2A_NATIVE_INPUT_CHAIN_DESIGN_REVIEW_20261017.zh-CN.md)。P2d 已提交 `7effe2f`；P3d1 正由另一 owner 实施。本节点在其提交后串行接共享文件，不修改当前 gate/预算工作树。依据[主计划](../THIN_CAPABILITY_MIGRATION_20261016.zh-CN.md)、[已审 TCAD seam](../THIN_TCAD_MANAGED_SEAM_20261016.zh-CN.md)第 4 节及[P2/P3 拆分](../THIN_P2_P3_IMPLEMENTATION_SPLIT_20261017.zh-CN.md)。本文不授予生产资格。
 
 ## 一条实际可达的链
 

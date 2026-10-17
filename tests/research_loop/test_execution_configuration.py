@@ -159,7 +159,7 @@ def test_prepare_does_not_build_an_adapter_or_fake_task(tmp_path,monkeypatch):
 
 @pytest.mark.parametrize('field',[
     'scope','record_dir','native_attempt','admission','breadth',
-    'engineering_repair','execution_interface','registered_implementation',
+    'engineering_repair','execution_interface','registered_implementation','frozen_execution_interface',
 ])
 def test_operator_configuration_rejects_host_identity_and_permissions(execution_registry,field):
     with pytest.raises(ValueError,match='host identity'):

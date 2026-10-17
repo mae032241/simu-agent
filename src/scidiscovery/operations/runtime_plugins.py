@@ -40,6 +40,7 @@ class ExecutionHostServices:
 
     gate: Callable[[Callable[..., Any]], Callable[..., Mapping[str, Any]]]
     call_identity: Callable[[Any, int], str]
+    implementation_inputs: Any | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +53,7 @@ class RuntimePluginContext:
     config_bytes: bytes
     state_root: Path
     execution_host_services: ExecutionHostServices | None = None
+    frozen_execution_interface: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)

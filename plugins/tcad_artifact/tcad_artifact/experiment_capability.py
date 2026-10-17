@@ -15,8 +15,9 @@ from scidiscovery.operations.spec import ComponentRef, ComponentSpec
 from scidiscovery.operations.tooling import WorkerToolDefinition
 from scidiscovery.operation_contract import DiagnosticError, ToolInputError, validation_diagnostics
 
-from .execution_control import SolverCapabilitySnapshot, PROCESS_LOG_PATH
-from .project_packager import (ScientificDeckImplementation, DeckProjectDraft, ResolvedProjectInput, ExecutionPackage)
+from .execution_control import SolverCapabilitySnapshot
+from .native_implementation import compile_execution_project
+from .project_packager import (ScientificDeckImplementation, ResolvedProjectInput, ExecutionPackage)
 
 
 class Implementation(ScientificDeckImplementation):
@@ -59,13 +60,7 @@ def prepare(request, context):
     if len(candidates) != 1:
         raise ToolInputError("implementation_method_ambiguous", "Choose exactly one advertised method matching the implementation solver.", path="$.method")
     capability = candidates[0]
-    values = authored.model_dump(mode="json")
-    values.update(tool_profile=capability.profile_id, capability_sha256=capability.capability_sha256,
-        collect_generated_outputs=True, expected_outputs=[{
-            "name": "process_log", "capture": "process_log", "relative_path": PROCESS_LOG_PATH,
-            "media_type": "text/plain", "max_bytes": authored.resource_limits.max_output_bytes,
-        }])
-    project = DeckProjectDraft.model_validate_json(canonical_json(values), strict=True)
+    project = compile_execution_project(authored, capability)
     slots = {slot.semantic_name: slot for slot in project.input_slots}
     if set(request.scientific_files) != set(slots):
         raise ToolInputError("implementation_sources_mismatch", "Provide one exact scientific-file reference for each implementation input slot.", path="$.scientific_files")

@@ -794,6 +794,8 @@ def validate(work: Path):
     if seal.get('selected_inputs', []) != selected_inputs(work, payload, job):
         raise ValueError('Selected implementation receipts changed')
     _validate_inputs(root, work, job)
+    from . import execution_inputs
+    execution_inputs.validate_seal(root, job, seal)
     from . import qualification
     qualification.validate_outputs(root, job, seal)
     from . import formal_review
@@ -970,6 +972,10 @@ def seal_result(root: Path, step: int):
           **(dict(unresolved_links=unresolved) if job.get('handoff_protocol', 1) >= 7 else {}),
           **(dict(selected_inputs=selected) if selected else {}),
           **(dict(observations=observations) if observations else {}))
+    from . import execution_inputs
+    compiled = execution_inputs.capture(root, job, materials)
+    if compiled:
+        seal['compiled_implementations'] = compiled
     if 'source_provenance' in job:
         from . import qualification
         seal['source_provenance'] = qualification.seal_outputs(root, job, seal)

@@ -36,7 +36,7 @@ def implementation():
     directory = Path(__file__).resolve().parent
     paths = [directory / name for name in ('execution_authority.py', 'instance_ui.py',
         'contracts.py', 'formal_review.py', 'qualification.py', 'execution.py', 'budget.py', 'experiments.py',
-        'runtime.py', 'native.py', 'search.py')]
+        'runtime.py', 'native.py', 'search.py', 'execution_inputs.py')]
     paths += [directory / 'instance_control.py']
     paths += [directory.parent / 'execution_security.py', directory.parent / 'browser_access.py',
               directory.parent / 'operations/provenance_rules.py', directory.parent / 'operations/runtime_plugins.py',
@@ -675,10 +675,11 @@ def host_services(config):
     """The only non-JSON factory injection, after exact host verification."""
     if config.get('host_execution_authority') is None:
         return None
-    _host_context(config)
     from scidiscovery.operations.runtime_plugins import ExecutionHostServices
+    from .execution_inputs import NativeInputHost
     return ExecutionHostServices(gate=lambda provider: lambda phase, **kwargs: _gate(config, provider, phase, **kwargs),
-                                 call_identity=lambda payload, ordinal: _allocate_call(config, payload, ordinal))
+                                 call_identity=lambda payload, ordinal: _allocate_call(config, payload, ordinal),
+                                 implementation_inputs=NativeInputHost(config))
 
 
 def reconcile_resources(config, adapter, call_id, *, observation=None):

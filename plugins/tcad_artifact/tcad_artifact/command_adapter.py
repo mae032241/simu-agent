@@ -93,7 +93,7 @@ class CommandTCADExecutorAdapter:
 
     @staticmethod
     def supports_preparation_profile(value: str) -> bool:
-        return value == "tcad.execution-package.v2"
+        return value in {"tcad.execution-package.v2", "tcad.execution-package.v3"}
 
     def capabilities(self) -> tuple[AdapterCapability, ...]:
         value = self._call("capabilities", {})
@@ -116,15 +116,15 @@ class CommandTCADExecutorAdapter:
 
     def execution_admission(self, raw: bytes, *, preparation_profile: str):
         self.validate_preparation_payload(raw, preparation_profile=preparation_profile)
-        return execution_admission(self.execution_policy(), validate_execution_package_json(raw))
+        return execution_admission(self.execution_policy(), validate_execution_package_json(raw, preparation_profile=preparation_profile))
 
     def validate_preparation_payload(
         self, raw: bytes, *, preparation_profile: str
     ) -> None:
-        if preparation_profile != "tcad.execution-package.v2":
+        if not self.supports_preparation_profile(preparation_profile):
             raise ValueError("command adapter requires tcad.execution-package.v2")
         try:
-            reviewed = validate_execution_package_json(raw)
+            reviewed = validate_execution_package_json(raw, preparation_profile=preparation_profile)
         except PackagerError as error:
             raise ValueError("TCAD execution package is invalid") from error
         self._require_active_capability(reviewed.capability)
@@ -160,11 +160,11 @@ class CommandTCADExecutorAdapter:
         input_metadata=None,
         open_input=None,
     ) -> LocalFileDescriptor:
-        if preparation_profile != "tcad.execution-package.v2":
+        if not self.supports_preparation_profile(preparation_profile):
             raise ValueError("command adapter requires tcad.execution-package.v2")
         raw = Path(payload.local_path).read_bytes()
         self.validate_preparation_payload(raw, preparation_profile=preparation_profile)
-        reviewed = validate_execution_package_json(raw)
+        reviewed = validate_execution_package_json(raw, preparation_profile=preparation_profile)
         inputs = (materialize_execution_inputs(reviewed, artifacts, exchange_directory,
             self.execution_policy().runner.transfer_chunk_bytes,
             input_metadata=input_metadata, open_input=open_input)
@@ -174,6 +174,7 @@ class CommandTCADExecutorAdapter:
             raw,
             output_root=exchange_directory / "prepared",
             input_payloads=inputs,
+            preparation_profile=preparation_profile,
         )
         value = self._call(
             "prepare",

@@ -18,7 +18,10 @@ from scidiscovery.plugin_runtime.collection import CollectionContext
 from scidiscovery.research_loop import experiments as e
 from scidiscovery.research_loop import contracts as c
 
-from .project_packager import ExecutionPackage, TCADRuntimeManifest, validate_execution_package_json
+from .project_packager import (ExecutionPackage, NativeExecutionPackage, NativeResolvedProjectInput,
+    TCADRuntimeManifest, validate_execution_package_json)
+from .native_implementation import TCADCompilationConfig, TCADImplementation, compile_native_implementation
+from .execution_control import SolverCapabilitySnapshot
 from .runtime_plugin import TCADRuntimeConfig, build_adapter
 
 
@@ -28,6 +31,14 @@ def _directory(path):
         raise e.IntegrityError('Exact TCAD original directory required')
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def _package_profile(raw):
+    value = json.loads(raw)
+    version = value.get('schema_version') if isinstance(value, dict) else None
+    if type(version) is not int or version not in {2, 3}:
+        raise ValueError('Explicit TCAD execution package version 2 or 3 required')
+    return 'tcad.execution-package.v' + str(version)
 
 
 def _proof(path, context=None):
@@ -107,11 +118,13 @@ class TCADManagedExecution:
     terminal_evidence_kind = 'adapter_result'
     result_protocol = None
 
-    def __init__(self, config, adapter, *, gate=None, input_metadata=None, open_input=None):
+    def __init__(self, config, adapter, *, gate=None, input_metadata=None, open_input=None, implementation_inputs=None):
         self.config, self.adapter = config, adapter
         self.records = e.Records(config)
         self.gate = gate
         self.input_metadata, self.open_input = input_metadata, open_input
+        self.implementation_inputs = implementation_inputs
+        self.compilation_capability = self.compilation_original = None
         self._lease = None
         transport = {key: config[key] for key in TCADRuntimeConfig.model_fields if key in config}
         self.transport = TCADRuntimeConfig.model_validate_json(json.dumps(transport), strict=True)
@@ -122,6 +135,12 @@ class TCADManagedExecution:
             nested = bundled_ssh_configuration(adapter.config)
             if nested is not None:
                 assets.append(str(nested))
+        if 'implementation_compilation' in config:
+            compilation = TCADCompilationConfig.model_validate_json(json.dumps(config['implementation_compilation']), strict=True)
+            self.compilation_original = _proof(compilation.capability_snapshot_path)
+            self.compilation_capability = SolverCapabilitySnapshot.model_validate_json(
+                Path(compilation.capability_snapshot_path).read_bytes(), strict=True)
+            assets.append(compilation.capability_snapshot_path)
         self.target = dict(transport=self.transport.model_dump(mode='json'),
                            configuration_files=[e.proof(path) for path in assets])
 
@@ -129,8 +148,11 @@ class TCADManagedExecution:
         root = Path(__file__).parent
         names = ('managed_execution.py', 'runtime_plugin.py', 'execution_adapter.py',
                  'command_adapter.py', 'project_packager.py', 'execution_policy.py',
-                 'execution_control.py', 'ssh_transport.py', 'transport_logs.py', 'remote_runner_py36.py')
-        return [str(root / name) for name in names] + [item['path'] for item in self.target['configuration_files']]
+                 'execution_control.py', 'ssh_transport.py', 'transport_logs.py', 'remote_runner_py36.py',
+                 'native_implementation.py')
+        from scidiscovery.research_loop import execution_inputs
+        return [str(root / name) for name in names] + [item['path'] for item in self.target['configuration_files']] + [
+            str(Path(execution_inputs.__file__).resolve()), str(Path(c.__file__).resolve())]
 
     @staticmethod
     def lifecycle_capabilities():
@@ -138,10 +160,18 @@ class TCADManagedExecution:
                                      collect=True, atomic_admission=True)
 
     def capabilities(self):
-        return (AdapterCapability('execution_package', 'execution', 'tcad.execution-package.v2', 2,
+        compilation = () if self.compilation_original is None else (AdapterCapability(
+            'implementation_authoring', 'implementation', 'tcad.native-implementation.v1', 1,
+            'application/schema+json', e.encoded(dict(implementation_schema=TCADImplementation.model_json_schema(),
+                capability=self.compilation_capability.model_dump(mode='json'))),
+            dict(action='Optional local compile; scientific slot names select exact bound input aliases; no execution permission')),)
+        return compilation + (AdapterCapability('execution_package', 'execution', 'tcad.execution-package.v2', 2,
             'application/schema+json', e.encoded(ExecutionPackage.model_json_schema(mode='validation')),
             dict(input='Exact TCAD execution package', result_protocol=None,
                  production='blocked_pending_trusted_gate' if self.gate is None else 'trusted_host_gate_required')),
+            AdapterCapability('native_execution_package', 'execution', 'tcad.execution-package.v3', 3,
+                'application/schema+json', e.encoded(NativeExecutionPackage.model_json_schema(mode='validation')),
+                dict(input='Exact sealed host-compiled native package; formal review and trusted gate required')),
             AdapterCapability(e.RETIREMENT_KEY, 'execution_recovery', e.RETIREMENT_SCHEMA, 1,
                 'application/json', e.encoded(dict(e.RETIREMENT_CONTRACT, backend_protocol={
                     'version': 1, 'submit': 'tcad_submit_retirable', 'retire': 'tcad_retire_submission'})),
@@ -153,6 +183,22 @@ class TCADManagedExecution:
             AdapterCapability(HOST_EXECUTION_GATE_KEY, 'execution_authority', HOST_EXECUTION_GATE_SCHEMA, 1,
                 'application/json', e.encoded(dict(HOST_EXECUTION_GATE_CONTRACT)),
                 dict(action='Requires the trusted host factory gate; JSON cannot enable execution')))
+
+    def compile_implementation(self, source, aliases, output):
+        if self.compilation_original is None or self.implementation_inputs is None:
+            raise e.UnsupportedExecution('Native compilation requires the explicit operator snapshot and trusted input host')
+        _verify_proof(self.compilation_original)
+        authored = TCADImplementation.model_validate_json(c.regular(Path(source).absolute()).read_bytes(), strict=True)
+        contract = next(item for item in e._public_capabilities(self) if item['key'] == 'implementation_authoring')
+
+        def build(raw, resolved):
+            author = TCADImplementation.model_validate_json(raw, strict=True)
+            inputs = tuple(NativeResolvedProjectInput.model_validate_json(e.encoded(row), strict=True) for row in resolved)
+            return compile_native_implementation(author, capability=self.compilation_capability, resolved_inputs=inputs)
+
+        return self.implementation_inputs.compile(source, output,
+            slots=[slot.model_dump(mode='json') for slot in authored.input_slots], aliases=aliases,
+            capability=self.compilation_original, contract=contract, builder=build)
 
     def _check(self, phase, call, payload, *, prepared=None, prior=None):
         if self.gate is None:
@@ -178,11 +224,18 @@ class TCADManagedExecution:
         return self.records.root / 'tcad-prepared' / call
 
     def prepare(self, payload, *, preparation_profile, exchange_directory):
+        self._original_interface()
         if preparation_profile != 'research_loop.v1' or Path(exchange_directory) != self.records.root:
             raise ValueError('Exact managed TCAD preparation context required')
         _verify_descriptor(payload)
-        reviewed = validate_execution_package_json(Path(payload.local_path).read_bytes())
-        if reviewed.resolved_inputs and (self.input_metadata is None or self.open_input is None):
+        raw = Path(payload.local_path).read_bytes(); profile = _package_profile(raw)
+        reviewed = validate_execution_package_json(raw, preparation_profile=profile)
+        metadata, opener = self.input_metadata, self.open_input
+        if isinstance(reviewed, NativeExecutionPackage):
+            if self.implementation_inputs is None:
+                raise e.UnsupportedExecution('Exact native compiler/input originals are unavailable')
+            metadata, opener = self.implementation_inputs.for_payload(payload, reviewed.resolved_inputs)
+        if reviewed.resolved_inputs and (metadata is None or opener is None):
             raise e.UnsupportedExecution('Exact frozen TCAD input originals are unavailable; no authority request or reservation created')
         # No capability/policy RPC or transport prepare is permitted before this gate.
         permit = self._check('prepare', payload.name, payload)
@@ -190,8 +243,8 @@ class TCADManagedExecution:
         source = stage / 'package.json'
         c._copy_bound(Path(payload.local_path), source, payload.sha256)
         original = payload.model_copy(update={'local_path': str(source)})
-        prepared = self.adapter.prepare(original, preparation_profile='tcad.execution-package.v2',
-            exchange_directory=stage, input_metadata=self.input_metadata, open_input=self.open_input)
+        prepared = self.adapter.prepare(original, preparation_profile=profile,
+            exchange_directory=stage, input_metadata=metadata, open_input=opener)
         prepared = prepared.model_copy(update={'name': payload.name})
         _verify_descriptor(prepared)
         binding = dict(payload=payload.model_dump(mode='json'), retained_payload=original.model_dump(mode='json'),
@@ -218,6 +271,7 @@ class TCADManagedExecution:
         return value
 
     def acceptance_metadata(self, payload, *, parent=None, new=False, change=None):
+        self._original_interface()
         if parent is not None or new or change is not None:
             raise e.UnsupportedExecution('TCAD opaque execution declares no candidate parent semantics')
         value = self._preparation(payload)
@@ -230,7 +284,7 @@ class TCADManagedExecution:
         accepted = self.records.accepted(call)
         descriptor = LocalFileDescriptor.model_validate(accepted['prepared'])
         if (accepted.get('native_attempt') != self.config.get('native_attempt')
-                or accepted.get('interface') != self.config.get('execution_interface')
+                or accepted.get('interface') != self._original_interface()
                 or descriptor.name != call
                 or accepted['script'].get('path') != str(self.records.directory(call) / 'source.py')
                 or (accepted['script'].get('sha256'), accepted['script'].get('size_bytes'))
@@ -242,6 +296,14 @@ class TCADManagedExecution:
             raise e.IntegrityError('TCAD call differs from its original acceptance')
         _verify_proof(accepted['script'])
         return accepted, descriptor
+
+    def _original_interface(self):
+        selected = self.config.get('execution_interface')
+        if (not isinstance(selected, dict) or type(selected.get('version')) is not int
+                or selected['version'] != e.VERSION or not isinstance(selected.get('code'), list)
+                or not selected['code']):
+            raise e.IntegrityError('TCAD acceptance requires the complete original host interface; discovery is insufficient')
+        return selected
 
     def dispatch_lease(self, accepted):
         original, descriptor = self._bound(accepted['call_id'])
@@ -589,18 +651,21 @@ def build_managed_runtime(context):
     if context.mode != 'local_worker':
         raise ValueError('TCAD managed registration requires the existing local_worker factory mode')
     body = json.loads(context.config_bytes)
-    allowed = set(TCADRuntimeConfig.model_fields) | e.HOST_CONFIGURATION_FIELDS | {'max_seconds'}
-    if not isinstance(body, dict) or set(body) - allowed:
+    allowed = set(TCADRuntimeConfig.model_fields) | e.HOST_CONFIGURATION_FIELDS | {'max_seconds', 'implementation_compilation'}
+    if not isinstance(body, dict) or set(body) - allowed or 'frozen_execution_interface' in body:
         raise ValueError('TCAD managed configuration contains undeclared settings')
     transport = TCADRuntimeConfig.model_validate_json(json.dumps({
         key: body[key] for key in TCADRuntimeConfig.model_fields if key in body}), strict=True)
     adapter = build_adapter(transport, state_root=context.state_root)
     services = getattr(context, 'execution_host_services', None)
     gate = services.gate(lambda raw: adapter.execution_admission(raw,
-        preparation_profile='tcad.execution-package.v2')) if services is not None else None
-    # There is no JSON gate selector or fallback. Native input callbacks join only
-    # after their separate exact-original contract is implemented and reviewed.
-    return RuntimePluginContribution(execution_adapters={'tcad': TCADManagedExecution(body, adapter, gate=gate)})
+        preparation_profile=_package_profile(raw))) if services is not None else None
+    # Gate and exact-input services are host objects; JSON cannot supply either.
+    selected = getattr(context, 'frozen_execution_interface', None)
+    if selected is not None:
+        body = dict(body, execution_interface=dict(selected))
+    return RuntimePluginContribution(execution_adapters={'tcad': TCADManagedExecution(body, adapter, gate=gate,
+        implementation_inputs=getattr(services, 'implementation_inputs', None))})
 
 
 REGISTRATION = ExecutionInterfaceRegistration('tcad_execution', '1', RuntimePluginFactory(build_managed_runtime))

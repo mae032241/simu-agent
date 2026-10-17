@@ -113,6 +113,47 @@ class ResolvedProjectInput(StrictModel):
     _safe_target = field_validator("target_relative_path")(_safe_relative_path)
 
 
+class NativeSealRef(StrictModel):
+    """An exact instance-relative original; the host must verify its bytes."""
+
+    path: str = Field(min_length=1, max_length=4096)
+    sha256: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
+    size_bytes: int = Field(ge=0)
+
+    _safe_path = field_validator("path")(_safe_relative_path)
+
+
+class NativeOriginalRef(StrictModel):
+    """One sealed native material, with no CAS or Artifact identity."""
+
+    instance_id: str = Field(min_length=1, max_length=256)
+    producer_step: int = Field(gt=0)
+    producer_seal: NativeSealRef
+    material_path: str = Field(min_length=1, max_length=4096)
+    sha256: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
+    size_bytes: int = Field(ge=0)
+
+    _safe_material_path = field_validator("material_path")(_safe_relative_path)
+
+
+class NativeResolvedProjectInput(StrictModel):
+    semantic_name: str = Field(
+        min_length=1, max_length=256, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+    )
+    target_relative_path: str = Field(min_length=1, max_length=1024)
+    original: NativeOriginalRef
+    media_type: str = Field(min_length=3, max_length=255)
+    size_bytes: int = Field(ge=0, le=2**50)
+
+    _safe_target = field_validator("target_relative_path")(_safe_relative_path)
+
+    @model_validator(mode="after")
+    def _original_size(self):
+        if self.size_bytes != self.original.size_bytes:
+            raise ValueError("native input size differs from its sealed original")
+        return self
+
+
 ProjectExpectedOutput = ExpectedOutput
 ProjectResourceLimits = ResourceLimits
 
@@ -899,42 +940,61 @@ class ExecutionPackage(StrictModel):
     )
     @model_validator(mode="after")
     def _package_identity(self) -> ExecutionPackage:
-        if self.project.solver_kind is None:
-            raise ValueError("execution package requires an explicit solver_kind")
-        if (
-            self.project.capability_sha256 != self.capability.capability_sha256
-            or self.review is not None and self.review.capability_sha256
-            not in {None, self.capability.capability_sha256}
-        ):
-            raise ValueError(
-                "execution package project or review capability digest differs"
-            )
-        if (
-            self.capability.profile_id != self.project.tool_profile
-            or self.capability.solver_kind != self.project.solver_kind
-        ):
-            raise ValueError("execution package capability differs from its project")
-        slots = {item.semantic_name: item for item in self.project.input_slots}
-        resolved = {item.semantic_name: item for item in self.resolved_inputs}
-        if len(resolved) != len(self.resolved_inputs) or set(resolved) != set(slots):
-            raise ValueError("execution package must resolve every project input slot")
-        for name, slot in slots.items():
-            item = resolved[name]
-            if (
-                item.target_relative_path != slot.target_relative_path
-                or item.media_type != slot.media_type
-            ):
-                raise ValueError("resolved project input differs from its declared slot")
-        return self
+        return _validate_package_identity(self)
 
 
-def validate_execution_package_eligibility(reviewed: ExecutionPackage) -> None:
+class NativeExecutionPackage(StrictModel):
+    """Host-compiled native inputs; formal qualification remains control-owned."""
+
+    schema_version: Annotated[int, Field(ge=3, le=3)] = 3
+    project: DeckProjectDraft
+    review: DeckReviewReport | None = None
+    capability: SolverCapabilitySnapshot
+    resolved_inputs: tuple[NativeResolvedProjectInput, ...] = Field(default=(), max_length=4096)
+
+    @model_validator(mode="after")
+    def _package_identity(self):
+        return _validate_package_identity(self)
+
+
+def _validate_package_identity(package):
+    """Share scientific/slot checks without converting native refs to Artifacts."""
+    if package.project.solver_kind is None:
+        raise ValueError("execution package requires an explicit solver_kind")
+    if (
+        package.project.capability_sha256 != package.capability.capability_sha256
+        or package.review is not None and package.review.capability_sha256
+        not in {None, package.capability.capability_sha256}
+    ):
+        raise ValueError("execution package project or review capability digest differs")
+    if (
+        package.capability.profile_id != package.project.tool_profile
+        or package.capability.solver_kind != package.project.solver_kind
+    ):
+        raise ValueError("execution package capability differs from its project")
+    slots = {item.semantic_name: item for item in package.project.input_slots}
+    resolved = {item.semantic_name: item for item in package.resolved_inputs}
+    if len(resolved) != len(package.resolved_inputs) or set(resolved) != set(slots):
+        raise ValueError("execution package must resolve every project input slot")
+    for name, slot in slots.items():
+        item = resolved[name]
+        if item.target_relative_path != slot.target_relative_path or item.media_type != slot.media_type:
+            raise ValueError("resolved project input differs from its declared slot")
+    return package
+
+
+def validate_execution_package_eligibility(reviewed: ExecutionPackage | NativeExecutionPackage) -> None:
     """Retain source/slot/capability integrity; review is an optional assessment.
 
     Formal review qualification is owned by its immutable control record. Merely
     embedding a passing report here cannot authorize execution.
     """
-    ExecutionPackage.model_validate_json(canonical_json(reviewed.model_dump(mode="json")), strict=True)
+    model = NativeExecutionPackage if isinstance(reviewed, NativeExecutionPackage) else ExecutionPackage
+    model.model_validate_json(canonical_json(reviewed.model_dump(mode="json")), strict=True)
+
+
+def _input_sha256(item: ResolvedProjectInput | NativeResolvedProjectInput) -> str:
+    return item.original.sha256 if isinstance(item, NativeResolvedProjectInput) else item.artifact_ref.sha256
 
 
 class RuntimeOutputRecord(StrictModel):
@@ -1130,7 +1190,7 @@ def package_deck_project(
     project: DeckProjectDraft,
     *,
     capability: SolverCapability | SolverCapabilitySnapshot,
-    resolved_inputs: tuple[ResolvedProjectInput, ...] = (),
+    resolved_inputs: tuple[ResolvedProjectInput | NativeResolvedProjectInput, ...] = (),
     input_payloads: Mapping[str, bytes | Path] | None = None,
     output_root: Path | str,
 ) -> PackagedTCADProject:
@@ -1175,8 +1235,8 @@ def package_deck_project(
             digest, size = hashlib.sha256(raw).hexdigest(), len(raw)
         else:
             raise PackagerError("execution input must be verified bytes or a staged file")
-        if size != item.size_bytes or digest != item.artifact_ref.sha256:
-            raise PackagerError("resolved execution input differs from its artifact ref")
+        if size != item.size_bytes or digest != _input_sha256(item):
+            raise PackagerError("resolved execution input differs from its exact original")
         binary_files[item.target_relative_path] = raw
     project_raw = _canonical(project.model_dump(mode="python"))
     project_sha256 = hashlib.sha256(project_raw).hexdigest()
@@ -1247,10 +1307,11 @@ def package_execution_package_json(
     *,
     input_payloads: Mapping[str, bytes | Path] | None = None,
     output_root: Path | str,
+    preparation_profile: str = 'tcad.execution-package.v2',
 ) -> PackagedTCADProject:
     """Validate one canonical execution package before preparing execution."""
 
-    reviewed = validate_execution_package_json(raw)
+    reviewed = validate_execution_package_json(raw, preparation_profile=preparation_profile)
     return package_deck_project(
         reviewed.project,
         capability=reviewed.capability,
@@ -1260,11 +1321,17 @@ def package_execution_package_json(
     )
 
 
-def validate_execution_package_json(raw: bytes) -> ExecutionPackage:
+def validate_execution_package_json(raw: bytes, *, preparation_profile: str = 'tcad.execution-package.v2') -> ExecutionPackage | NativeExecutionPackage:
     """Validate a canonical execution package without creating execution files."""
 
     try:
-        reviewed = ExecutionPackage.model_validate_json(raw, strict=True)
+        if preparation_profile == 'tcad.execution-package.v2':
+            model = ExecutionPackage
+        elif preparation_profile == 'tcad.execution-package.v3':
+            model = NativeExecutionPackage
+        else:
+            raise ValueError('Explicit TCAD execution package profile required')
+        reviewed = model.model_validate_json(raw, strict=True)
         validate_execution_package_eligibility(reviewed)
     except ValueError as error:
         raise PackagerError("execution package artifact is invalid") from error
@@ -1963,13 +2030,13 @@ def _file_identity(path: Path) -> tuple[str, int]:
 
 
 def materialize_execution_inputs(
-    reviewed: ExecutionPackage,
+    reviewed: ExecutionPackage | NativeExecutionPackage,
     artifacts,
     exchange_directory: Path,
     chunk_bytes: int,
     *,
-    input_metadata: Callable[[ResolvedProjectInput], tuple[int, str]] | None = None,
-    open_input: Callable[[ResolvedProjectInput], ContextManager[BinaryIO]] | None = None,
+    input_metadata: Callable[[ResolvedProjectInput | NativeResolvedProjectInput], tuple[int, str]] | None = None,
+    open_input: Callable[[ResolvedProjectInput | NativeResolvedProjectInput], ContextManager[BinaryIO]] | None = None,
 ) -> dict[str, Path]:
     """Copy exact originals; the host owns frozen bindings, not source discovery."""
     if type(chunk_bytes) is not int or chunk_bytes <= 0:
@@ -1979,6 +2046,8 @@ def materialize_execution_inputs(
     if artifacts is not None:
         if input_metadata is not None:
             raise PackagerError("Artifact service and input callbacks cannot be combined")
+        if isinstance(reviewed, NativeExecutionPackage):
+            raise PackagerError('Native originals require their exact host callbacks, not an Artifact service')
 
         def input_metadata(item):
             envelope = artifacts.catalog(item.artifact_ref)
@@ -2011,12 +2080,13 @@ def materialize_execution_inputs(
         if (type(size_bytes) is not int or not isinstance(media_type, str)
                 or size_bytes != item.size_bytes or media_type != item.media_type):
             raise PackagerError("resolved input metadata differs from exact original")
-        target = directory / item.artifact_ref.sha256
+        expected_sha256 = _input_sha256(item)
+        target = directory / expected_sha256
         if target.exists() or target.is_symlink():
             if target.is_symlink() or not target.is_file():
                 raise PackagerError("execution input must be a regular file")
             if (target.stat().st_size != item.size_bytes
-                    or _file_identity(target) != (item.artifact_ref.sha256, item.size_bytes)):
+                    or _file_identity(target) != (expected_sha256, item.size_bytes)):
                 raise PackagerError("cached input differs from exact original")
             os.chmod(target, 0o440)
         else:
@@ -2031,7 +2101,7 @@ def materialize_execution_inputs(
                             raise PackagerError("original exceeds its declared input size")
                         digest.update(block)
                         output.write(block)
-                    if actual_size != item.size_bytes or digest.hexdigest() != item.artifact_ref.sha256:
+                    if actual_size != item.size_bytes or digest.hexdigest() != expected_sha256:
                         raise PackagerError("input bytes differ from exact original")
                     output.flush()
                     os.fsync(output.fileno())
@@ -2125,6 +2195,10 @@ __all__ = [
     "DeckReviewFinding",
     "DeckReviewReport",
     "ExecutionPackage",
+    "NativeExecutionPackage",
+    "NativeOriginalRef",
+    "NativeResolvedProjectInput",
+    "NativeSealRef",
     "RuntimeAttestation",
     "RuntimeContractCheck",
     "RuntimeOutputRecord",

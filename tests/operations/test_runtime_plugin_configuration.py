@@ -413,6 +413,8 @@ def _managed_tcad_case(tmp_path, *, retirement=False):
     config = dict(transport='socket', socket_path=str(tmp_path / 'unused.socket'),
         scope=scope, record_dir=str(tmp_path / 'records'), native_attempt=dict(number=0),
         admission=dict(version=1, mode='hard'), execution_interface=dict(
+            # Trusted DI boundary only; this does not claim a real core freeze.
+            version=e.VERSION, code=[e.proof(Path(__file__).resolve())],
             observation_version=1, terminal_evidence='adapter_result', result_protocol=None))
     raw = canonical_json(_small_resolved_execution_package().model_dump(mode='json'))
     source = tmp_path / 'execution-package.json'
@@ -462,7 +464,8 @@ def test_managed_tcad_default_factory_blocks_before_any_backend_call(tmp_path, m
     monkeypatch.setattr(managed, 'build_adapter', lambda *args, **kwargs: backend)
     contribution = managed.build_managed_runtime(RuntimePluginContext('tcad_execution', 'local_worker',
         tmp_path / 'config.json', e.encoded({key: value for key, value in config.items()
-            if key != 'execution_interface'}), wrapper.records.root))
+            if key != 'execution_interface'}), wrapper.records.root,
+            frozen_execution_interface=config['execution_interface']))
     actual = contribution.execution_adapters['tcad']
     source = tmp_path / 'self-contained.json'
     source.write_bytes(_execution_package())
@@ -477,6 +480,10 @@ def test_managed_tcad_default_factory_blocks_before_any_backend_call(tmp_path, m
         actual.prepare(payload, preparation_profile='research_loop.v1', exchange_directory=actual.records.root)
     assert backend.events == []
     assert actual.result_protocol is None
+    actual.config['execution_interface'] = {'executor': 'tcad_execution:tcad'}
+    with pytest.raises(e.IntegrityError, match='complete original host interface'):
+        actual.prepare(self_contained, preparation_profile='research_loop.v1', exchange_directory=actual.records.root)
+    assert backend.events == []
     with pytest.raises(ValueError, match='undeclared'):
         managed.build_managed_runtime(RuntimePluginContext('tcad_execution', 'local_worker',
             tmp_path / 'config.json', e.encoded(dict(config, gate='allow')), wrapper.records.root))

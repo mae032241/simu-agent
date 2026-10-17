@@ -133,7 +133,8 @@ def registration(executor):
 
 
 HOST_CONFIGURATION_FIELDS = frozenset({'scope','record_dir','native_attempt','admission','breadth',
-    'engineering_repair','execution_interface','registered_implementation', 'host_execution_authority', 'execution_host_services'})
+    'engineering_repair','execution_interface','registered_implementation', 'host_execution_authority',
+    'execution_host_services', 'frozen_execution_interface'})
 
 
 def operator_configuration(value):
@@ -207,7 +208,8 @@ def _adapter(config, path):
     from . import execution_authority
     services = execution_authority.host_services(config)
     contribution = declared.factory.build(RuntimePluginContext(declared.plugin_id, 'local_worker',
-        Path(path), encoded(body), Path(config['record_dir']), execution_host_services=services))
+        Path(path), encoded(body), Path(config['record_dir']), execution_host_services=services,
+        frozen_execution_interface=selected))
     if not isinstance(contribution, RuntimePluginContribution) or binding not in contribution.execution_adapters:
         raise UnsupportedExecution('Registered execution binding unavailable')
     adapter = contribution.execution_adapters[binding]
@@ -959,6 +961,17 @@ def preserved_progress(config):
     return dict(calls=rows[-16:],counts=counts,omitted_count=max(0,len(rows)-16),coverage='preserved_originals_only')
 
 
+def compile_implementation(config, adapter, source, aliases, output):
+    """Optional registered authoring; this does not dispatch or grant execution."""
+    capabilities = [item for item in _public_capabilities(adapter) if item['key'] == 'implementation_authoring']
+    if (len(capabilities) != 1 or capabilities[0] not in config['execution_interface'].get('public_capabilities', [])
+            or not callable(getattr(adapter, 'compile_implementation', None))):
+        raise UnsupportedExecution('Selected implementation does not declare optional scientific compilation')
+    if not isinstance(aliases, dict) or any(not isinstance(key, str) or not isinstance(value, str) for key, value in aliases.items()):
+        raise ValueError('Scientific file choices must map slot names to exact bound input aliases')
+    return adapter.compile_implementation(source, aliases, output)
+
+
 def main(argv=None):
     # -m runs this file as __main__; registered factories import its canonical name.
     from . import feedback, experiments as common
@@ -971,6 +984,10 @@ def main(argv=None):
     run.add_argument('--change-intent');run.add_argument('--mechanism')
     run.add_argument('arguments',nargs=argparse.REMAINDER,help='Script arguments after --; passed as argv, never shell text')
     sub.add_parser('lineage-status')
+    compile_command = sub.add_parser('compile', help='Optional local compilation of scientific slots; grants no execution')
+    compile_command.add_argument('--implementation', type=Path, required=True)
+    compile_command.add_argument('--scientific-files', type=Path, required=True, help='JSON slot-name to listed scientific input alias map; {} for self-contained sources')
+    compile_command.add_argument('--output', type=Path, required=True, help='New package under this task artifacts/')
     capabilities=sub.add_parser('capabilities',help='Read compact declared public input contracts and lifecycle support')
     capabilities.add_argument('--start',type=int,default=0)
     describe=sub.add_parser('describe',help='Copy one complete declared public contract to an explicit new file')
@@ -986,7 +1003,7 @@ def main(argv=None):
         scope=config.get('scope',{})
         if args.command=='lineage-status' and (type(scope.get('handoff_protocol')) is not int or scope['handoff_protocol']!=protocol.CURRENT):
             print(json.dumps(preserved_progress(config),allow_nan=False));return 0
-        if args.command in {'run','lookup','collect','cancel','reconcile','retire'}:
+        if args.command in {'run','compile','lookup','collect','cancel','reconcile','retire'}:
             from .protocol import require_scope
             require_scope(config.get('scope'))
         adapter=load(config,path=args.config)
@@ -1020,6 +1037,9 @@ def main(argv=None):
                 with output.open('xb') as stream:
                     stream.write(encoded(expected) if args.metadata else item.content);stream.flush();os.fsync(stream.fileno())
                 result=dict(key=item.key,contract=proof(output),kind='public_metadata' if args.metadata else 'public_contract')
+            code=0
+        elif args.command=='compile':
+            result=compile_implementation(config,adapter,args.implementation,json.loads(read(args.scientific_files)),args.output)
             code=0
         elif args.command=='run':
             arguments=args.arguments[1:] if args.arguments[:1]==['--'] else args.arguments

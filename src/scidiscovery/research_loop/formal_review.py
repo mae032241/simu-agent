@@ -140,7 +140,20 @@ def authors(root, step, active=None, memo=None):
     if source is not None and q._read(root, source).get('missing_reason') is not None:
         complete = False  # No trusted authorship adapter for observed call inputs.
     if not job.get('formal_review'):
-        for selected in job.get('selected_inputs', []):
+        contributions = list(job.get('selected_inputs', []))
+        from . import execution_inputs
+        execution_inputs.validate_seal(root, job, seal)
+        for row in seal.get('compiled_implementations', []):
+            compiler = execution_inputs.verify_compilation(root, row['compiler'], material=row['material'])
+            originals = [item['original'] for item in compiler['inputs']]
+            if compiler.get('author_input') is not None:
+                originals.append(compiler['author_input'])
+            for original in originals:
+                origin_seal = q._read(root, original['producer_seal'])
+                contributions.append(dict(origin_step=original['producer_step'],
+                    origin_result_sha256=origin_seal['sha256'], material=execution_inputs.resolve_native_original(
+                        root, original, compiler_job=job)))
+        for selected in contributions:
             origin = selected['origin_step']
             origin_seal = c.read(c.regular(c.host_record(c.workspace(root, origin)) / 'result-identity.json'))
             if selected['material'] not in origin_seal['materials'] or selected['origin_result_sha256'] != origin_seal['sha256']:
