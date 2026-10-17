@@ -13,7 +13,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from scidiscovery.artifact_agent.execution_bridge import AdapterCapability
+from scidiscovery.operations.execution import AdapterCapability
 from scidiscovery.artifact_agent.schema.execution import LocalFileDescriptor
 
 from .transport_logs import preserve_log

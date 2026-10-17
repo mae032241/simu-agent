@@ -22,8 +22,6 @@ from scidiscovery.operations.runtime_plugins import (
 )
 from scidiscovery.operations.spec import CallableComponent
 
-from .debug_adapter import TCADDevelopmentDebugBridge
-from .local_debug_service import LocalTCADDebugService
 from .project_packager import ExecutionPackage, validate_execution_package_eligibility
 
 
@@ -93,6 +91,8 @@ def build_runtime(context: RuntimePluginContext) -> RuntimePluginContribution:
         return RuntimePluginContribution(execution_adapters={"tcad": adapter})
     if context.mode != "local_worker":
         raise ValueError("TCAD runtime mode is unsupported")
+    from .debug_adapter import TCADDevelopmentDebugBridge
+    from .local_debug_service import LocalTCADDebugService
     from .output_recovery import OutputInspectionService
     return RuntimePluginContribution(
         tool_services={

@@ -10,7 +10,7 @@ from pathlib import Path
 from scidiscovery.plugin_runtime.collection import CollectionContext, QUERY_SECONDS
 from typing import Any
 
-from scidiscovery.artifact_agent.execution_bridge import AdapterCapability
+from scidiscovery.operations.execution import AdapterCapability
 from scidiscovery.artifact_agent.schema.execution import LocalFileDescriptor
 
 from .execution_control import FileDescriptor, SolverCapabilitySnapshot, TCADJobSpec
