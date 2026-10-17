@@ -1,7 +1,7 @@
 # 无 Root 的科研 CLI
 
 `scid-research` 直接启动新的 H/W/A/证据原生线程；控制程序执行科学角色选择的路由。
-不依赖 LoopX，不启动 Root 模型，不需要 MCP 管理页绑定。已提供实例 UI、可选来源/正式审查与执行授权接缝；TCAD 非空输入和长时人工等待恢复尚未接通，旧 daemon 不迁入。当前迁移节点仅通过静态独审，未验证真实远端执行。
+不依赖 LoopX，不启动 Root 模型，不需要 MCP 管理页绑定。已提供实例 UI、可选来源/正式审查与执行授权接缝；TCAD 非空输入链已静态接通，长时人工等待恢复尚未完成，旧 daemon 不迁入。当前迁移节点仅通过静态独审，未验证真实远端执行。
 
 ## 创建与运行
 
@@ -50,7 +50,7 @@ scid-research serve-ui --root /absolute/path/instance \
 
 资源账复用原 control ledger，换候选/重试不重置消耗。`budget-amend --execution-wall-seconds N --execution-storage-bytes N --authorization-note ...` 仅修订有限资源上限，不代替精确调用的执行决定；不得和科学token/时间修订参数混用。未知调用不退款、不重发，已接受调用的查询/取消不因W结束而被当成新提交拒绝。
 
-这些代码接缝不证明新TCAD链已可生产使用。完整范围及未验收项以[迁移计划](plans/THIN_CAPABILITY_MIGRATION_20261016.zh-CN.md)和对应独审报告为准；不从旧实例静默升级或复制预算。当前不运行安装矩阵、真实模型/solver或HTTP验收。
+TCAD 的可选编译→精确封存→正式审查→后继执行非空输入已静态接通（4399149）；这些代码接缝不证明新TCAD链已可生产使用。完整范围及未验收项以[迁移计划](plans/THIN_CAPABILITY_MIGRATION_20261016.zh-CN.md)和对应独审报告为准；不从旧实例静默升级或复制预算。当前不运行安装矩阵、真实模型/solver或HTTP验收。
 
 ## 受管本地实验
 

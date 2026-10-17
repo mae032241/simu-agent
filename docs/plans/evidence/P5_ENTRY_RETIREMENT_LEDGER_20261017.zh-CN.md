@@ -10,7 +10,7 @@
 | RootToolFacade / RootMCPRouter | interfaces/mcp.py构造；interfaces/__init__.py重导出；旧cli progression、close及原件查询 | 薄CLI无Root，功能插件另经注册，不调用此facade | 当前无证据证明旧MCP消费者已退出，暂留；不得把它接回新链。 |
 | ApprovalUI / InstanceReadModel / TrajectoryStore | 旧cli serve-approval-ui直接构造，承载旧审批/实例档案 | 新instance_ui已独审提交a5c3fbe，只读状态/暂停继续/可选执行决定；未浏览器验收 | 新实例用新UI，旧档案与尚未迁移执行仍保留旧UI。两套身份不互换。 |
 | 旧InstanceArchive及SQL/CAS reader | 旧serve-approval-ui注入InstanceArchive及旧runtime maintenance | archive_io纯函数已共享；新只读包P4c1设计已审，未实现 | 暂留旧reader/export；不为删除旧代码伪造可写恢复。 |
-| 旧TCAD execution_bridge/runtime adapter | 旧完整experiment/remote授权和执行路径 | managed注册、原调用恢复、来源/正式review/资源gate已静态接入；非空input/迟批及真实solver资格未完 | 复用adapter与纯compiler，不删除仍承担远端生产授权的原入口。缺口完成后再逐消费者收缩。 |
+| 旧TCAD execution_bridge/runtime adapter | 旧完整experiment/remote授权和执行路径 | managed注册、原调用恢复、来源/正式review/资源gate及非空input(4399149)已静态接入；迟批及真实solver资格未完 | 复用adapter与纯compiler，不删除仍承担远端生产授权的原入口。缺口完成后再逐消费者收缩。 |
 | 旧安装环境与全套功能重跑 | 565a2e4已把pytest安装cohort从功能集合隔离；旧live环境池仍有消费者 | 新功能fixture不安装，显式安装组只测打包/发现，不递归功能测试 | 保留单一显式安装组；不重新引入矩阵、并行安装、源码/安装功能重复跑。旧live池后续按实际消费者退役。 |
 | 共享来源/授权/存储/transport规则 | 新薄层及旧入口均使用 | 已抽中立provenance/review/security/browser/archive原语 | 共享规则保留，不能按旧目录年龄删除。 |
 
