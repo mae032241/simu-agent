@@ -164,6 +164,19 @@ def _execution_interface(root, accepted):
 def managed_status(root, row):
     """One immutable terminal authority shared with Worker delivery and history."""
     from . import experiments
+    if row.get('retirement') is not None:
+        if any(row.get(key) is not None for key in ('completed','terminal','observation')) or 'execution' in row or row.get('outputs'):
+            raise ObserverIntegrityError('Non-submission cannot contain executed terminal evidence')
+        accepted=c.read(root/row['accepted']['snapshot'])
+        value=c.read(root/row['retirement']['snapshot'])
+        if value.get('accepted',{}).get('sha256')!=row['accepted']['sha256']:
+            raise ObserverIntegrityError('Retirement differs from the archived accepted call')
+        try:
+            experiments.verify_retirement(value,lambda item:root/'host-history/objects'/item['sha256'],
+                interface=_execution_interface(root,accepted))
+        except (ValueError,OSError,KeyError,TypeError) as error:
+            raise ObserverIntegrityError('Archived permanent retirement proof changed') from error
+        return 'not_submitted'
     if row.get('completed') is None:return 'unknown'
     accepted=c.read(root/row['accepted']['snapshot']);completed=c.read(root/row['completed']['snapshot'])
     interface=_execution_interface(root,accepted)
@@ -217,6 +230,16 @@ def managed_calls(root, job):
             extra=[observed[key] for key in ('accepted','completed','submission')]+observed['proofs']
             if 'native_terminal' in observed:extra.append(observed['native_terminal'])
         interface=_execution_interface(root,accepted)
+        retired_path=directory/'submission-retirement.json'
+        if retired_path.exists() or retired_path.is_symlink():
+            value=experiments.retirement(dict(record_dir=str(records.root),scope=scope,execution_interface=interface),directory.name)
+            originals=experiments.retirement_originals(value,accepted)
+            row=dict(call_id=directory.name,scope=scope,mechanism_binding=binding,status='not_submitted',
+                result_protocol=generic_results.protocol(interface),accepted=_proof(root,accepted_path.relative_to(root).as_posix()),
+                completed=None,terminal=None,retirement=_proof(root,retired_path.relative_to(root).as_posix()),
+                originals=[_managed_proof(root,item['path'],item) for item in originals])
+            row['status']=managed_status(root,row);result.append(row)
+            continue
         outputs=_managed_outputs(interface,value,observed)
         row=dict(call_id=directory.name,scope=scope,mechanism_binding=binding,status=state,
             result_protocol=generic_results.protocol(interface),
@@ -243,10 +266,13 @@ def validate_managed(root, job, rows):
     if not isinstance(rows,list):raise ObserverIntegrityError('Managed receipt list required')
     scope=stage_scope(root,job);seen=set()
     for row in rows:
-        if set(row)-{'observation','result_protocol'} not in ({'call_id','scope','mechanism_binding','status','accepted','completed','terminal'}, {'call_id','scope','mechanism_binding','status','accepted','completed','terminal','originals','outputs','execution'}) or row['call_id'] in seen or row['scope']!=scope:
+        shapes=({'call_id','scope','mechanism_binding','status','accepted','completed','terminal'},
+                {'call_id','scope','mechanism_binding','status','accepted','completed','terminal','originals','outputs','execution'},
+                {'call_id','scope','mechanism_binding','status','accepted','completed','terminal','retirement','originals'})
+        if set(row)-{'observation','result_protocol'} not in shapes or row['call_id'] in seen or row['scope']!=scope:
             raise ObserverIntegrityError('Managed receipt owner differs')
         seen.add(row['call_id'])
-        for key in ('accepted','completed','terminal','observation'):
+        for key in ('accepted','completed','terminal','observation','retirement'):
             proof=row.get(key)
             if proof is not None:
                 if proof.get('retention')!='archived':raise ObserverIntegrityError('Managed receipt original unavailable')
@@ -278,7 +304,14 @@ def validate_managed(root, job, rows):
             for proof,original in zip(row['outputs'],outputs):
                 if any(proof[key]!=original[key] for key in ('name','sha256','size_bytes')):
                     raise ObserverIntegrityError('Managed output changed')
-        if row['status'] not in {'known_success','known_failed','unknown'}:raise ObserverIntegrityError('Managed state differs')
+        if row.get('retirement') is not None:
+            value=c.read(root/row['retirement']['snapshot'])
+            from . import experiments
+            originals=experiments.retirement_originals(value,accepted)
+            if (len(row['originals'])!=len(originals) or any(any(item[key]!=original[key]
+                    for key in ('sha256','size_bytes')) for item,original in zip(row['originals'],originals))):
+                raise ObserverIntegrityError('Retirement native originals differ from the frozen receipt')
+        if row['status'] not in {'known_success','known_failed','not_submitted','unknown'}:raise ObserverIntegrityError('Managed state differs')
         if row['status']!=managed_status(root,row):
             raise ObserverIntegrityError('Managed state differs from verified execution observation')
 

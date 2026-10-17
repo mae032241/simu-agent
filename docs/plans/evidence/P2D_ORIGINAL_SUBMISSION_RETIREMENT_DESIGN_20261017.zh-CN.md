@@ -1,6 +1,6 @@
 # P2d 原调用永久未提交证明：实施候选
 
-状态：**待独审，未实施。** 日期：2026-10-17。基线 P2c `4f0a455`、P5 `3ac974d`。依据[主计划](../THIN_CAPABILITY_MIGRATION_20261016.zh-CN.md)、[已审 seam](../THIN_TCAD_MANAGED_SEAM_20261016.zh-CN.md)及[拆分设计](../THIN_P2_P3_IMPLEMENTATION_SPLIT_20261017.zh-CN.md)。本文补全 P2d 消费语义，不启用真实 TCAD；P3 gate、预算和来源接线仍分别由其 owner 实施。
+状态：**[设计独审 PASS](P2D_ORIGINAL_SUBMISSION_RETIREMENT_DESIGN_REVIEW_20261017.zh-CN.md)，实施冻结交代码独审。** 日期：2026-10-17。基线 P2c `4f0a455`、P5 `3ac974d`。依据[主计划](../THIN_CAPABILITY_MIGRATION_20261016.zh-CN.md)、[已审 seam](../THIN_TCAD_MANAGED_SEAM_20261016.zh-CN.md)及[拆分设计](../THIN_P2_P3_IMPLEMENTATION_SPLIT_20261017.zh-CN.md)。本文补全 P2d 消费语义，不启用真实 TCAD；P3 gate、预算和来源接线仍分别由其 owner 实施。
 
 ## 独立事实，不冒充已执行终态
 

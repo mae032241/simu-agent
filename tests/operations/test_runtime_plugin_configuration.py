@@ -326,6 +326,7 @@ class _ManagedTCADBackend:
     def __init__(self, root):
         self.root, self.events = root, []
         self.state, self.found, self.lost = 'accepted', None, False
+        self.fenced, self.retire_lost = False, False
 
     def prepare(self, payload, *, preparation_profile, exchange_directory, **callbacks):
         from tcad_artifact.project_packager import package_execution_package_json, validate_execution_package_json
@@ -348,6 +349,8 @@ class _ManagedTCADBackend:
 
     def submit(self, descriptor, *, authorization):
         self.events.append('submit')
+        if self.fenced:
+            raise RuntimeError('exact synthetic submission was fenced')
         self.prepared_sha256 = descriptor.sha256
         if self.lost:
             raise RuntimeError('synthetic lost response')
@@ -383,8 +386,22 @@ class _ManagedTCADBackend:
         self.state = 'cancelling'
         return self.state
 
+    def validate_submission_protocol(self):
+        self.events.append('protocol')
+        return dict(version=1, submit='tcad_submit_retirable', retire='tcad_retire_submission')
 
-def _managed_tcad_case(tmp_path):
+    def retire_submission_details(self, descriptor):
+        self.events.append('retire')
+        if self.found is not None:
+            assert descriptor.sha256 == self.prepared_sha256
+            return dict(found=True, run_id=self.found, state=self.state)
+        self.fenced = True
+        if self.retire_lost:
+            raise TimeoutError('synthetic fence acknowledgment lost')
+        return dict(found=False, retired=True, submission_sha256=descriptor.sha256)
+
+
+def _managed_tcad_case(tmp_path, *, retirement=False):
     from scidiscovery.artifact_agent.schema.execution import ExecutionAdmission, LocalFileDescriptor
     from scidiscovery.plugin_runtime.collection import CollectionContext
     from scidiscovery.research_loop import experiments as e
@@ -424,6 +441,8 @@ def _managed_tcad_case(tmp_path):
     wrapper = TCADManagedExecution(config, backend, gate=gate,
         input_metadata=lambda item: (item.size_bytes, item.media_type),
         open_input=lambda _: io.BytesIO(b'{}'))
+    if retirement:
+        config['execution_interface']['public_capabilities'] = e._public_capabilities(wrapper)
     prepared = wrapper.prepare(payload, preparation_profile='research_loop.v1',
         exchange_directory=wrapper.records.root)
     assert prepared.name == payload.name  # The native package's own name is not a second call.
@@ -565,4 +584,131 @@ def test_managed_tcad_collected_crash_window_revalidates_retained_facts(tmp_path
     retained.write_bytes(original)
     assert wrapper.result(payload.name)['status'] == 'known_success'
     assert backend.events == before  # Reentry consumes retained facts, without remote re-collection.
+
+
+def test_managed_tcad_permanent_retirement_seals_under_call_lease(tmp_path, monkeypatch):
+    from scidiscovery.research_loop import experiments as e
+    config, wrapper, backend, _, payload, prepared = _managed_tcad_case(tmp_path, retirement=True)
+    old = dict(config, execution_interface={key: value for key, value in config['execution_interface'].items()
+        if key != 'public_capabilities'})
+    with pytest.raises(e.UnsupportedExecution, match='capability is unavailable'):
+        e.retire_original(old, wrapper, payload.name)
+    publish = wrapper.records.publish
+
+    def publish_inside_original_lease(call, filename, value):
+        if filename == 'submission-retirement.json':
+            with pytest.raises(BlockingIOError):
+                wrapper.submit(prepared)
+        return publish(call, filename, value)
+
+    monkeypatch.setattr(wrapper.records, 'publish', publish_inside_original_lease)
+    reply = e.retire_original(config, wrapper, payload.name)
+    assert reply['status'] == 'not_submitted'
+    directory = wrapper.records.directory(payload.name)
+    assert not any((directory / name).exists() for name in (
+        'submission.json', 'completed.json', 'terminal.json', 'execution-observation.json'))
+    calls = list(backend.events)
+    assert e.retire_original(config, wrapper, payload.name) == reply
+    with pytest.raises(e.UnsupportedExecution, match='permanently retired'):
+        wrapper.submit(prepared)
+    assert backend.events == calls and 'submit' not in calls
+    monkeypatch.setattr(e, 'load', lambda _: wrapper)
+    assert e.progress(config)['counts']['not_submitted'] == 1
+    seen = []
+
+    def next_prepare(descriptor, **options):
+        seen.append(descriptor.name)
+        raise e.UnsupportedExecution('next call still requires its own gate')
+
+    monkeypatch.setattr(wrapper, 'prepare', next_prepare)
+    with pytest.raises(e.UnsupportedExecution, match='own gate'):
+        e.dispatch_descriptor(config, payload)
+    assert len(seen) == 1 and seen[0] != payload.name
+    assert len(wrapper.records.calls()) == 1  # Retiring does not refund scientific opportunities.
+
+
+def test_managed_tcad_lost_retirement_and_independent_identity_validation(tmp_path):
+    from scidiscovery.research_loop import experiments as e
+    config, wrapper, backend, _, payload, prepared = _managed_tcad_case(tmp_path, retirement=True)
+    accepted = (wrapper.records.directory(payload.name) / 'accepted.json').read_bytes()
+    backend.retire_lost = True
+    assert e.retire_original(config, wrapper, payload.name)['status'] == 'unknown'
+    with pytest.raises(e.UnsupportedExecution, match='without resubmission'):
+        wrapper.submit(prepared)
+    assert 'submit' not in backend.events
+    assert (wrapper.records.directory(payload.name) / 'accepted.json').read_bytes() == accepted
+    backend.retire_lost = False
+    e.retire_original(config, wrapper, payload.name)
+    value = e.retirement(config, payload.name)
+    wrong = tmp_path / 'wrong-protocol.json'; e.write(wrong, dict(version=0))
+    with pytest.raises(e.IntegrityError, match='backend protocol'):
+        e.verify_retirement(dict(value, protocol=e.proof(wrong)), lambda item: Path(item['path']))
+    original = Path(prepared.local_path).read_bytes()
+    Path(prepared.local_path).chmod(0o600)
+    Path(prepared.local_path).write_bytes(b'changed native prepared bytes')
+    with pytest.raises(e.IntegrityError, match='original changed'):
+        e.retirement(config, payload.name)
+    Path(prepared.local_path).write_bytes(original)
+    assert e.retirement(config, payload.name)['kind'] == 'permanent_not_submitted'
+
+
+def test_managed_tcad_retirement_found_job_never_becomes_non_submission(tmp_path):
+    from scidiscovery.research_loop import experiments as e
+    config, wrapper, backend, _, payload, prepared = _managed_tcad_case(tmp_path, retirement=True)
+    external, _ = wrapper.submit(prepared)  # Native reply exists before core external binding.
+    backend.state = 'queued'
+    reply = e.retire_original(config, wrapper, payload.name)
+    assert reply['status'] == 'cancelling' and wrapper.records.external(payload.name) == external
+    assert e.retirement(config, payload.name) is None
+    assert e.retire_original(config, wrapper, payload.name)['status'] == 'cancelling'
+    assert backend.events.count('cancel') == 1
+    backend.found = None  # A lost backend database cannot erase the original known job.
+    with pytest.raises(e.IntegrityError, match='contradicts'):
+        e.retire_original(config, wrapper, payload.name)
+    assert not (wrapper.records.directory(payload.name) / 'submission-retirement.json').exists()
+
+
+def test_retirement_archive_and_recovery_share_original_validator(tmp_path, monkeypatch):
+    from scidiscovery.research_loop import experiments as e, history, execution_recovery, protocol
+    config, wrapper, _, _, payload, _ = _managed_tcad_case(tmp_path, retirement=True)
+    e.retire_original(config, wrapper, payload.name)
+    value = e.retirement(config, payload.name)
+    accepted = wrapper.records.accepted(payload.name)
+    objects = tmp_path / 'host-history/objects'; objects.mkdir(parents=True)
+
+    def archive(original):
+        raw = Path(original['path']).read_bytes()
+        assert hashlib.sha256(raw).hexdigest() == original['sha256']
+        target = objects / original['sha256']; target.write_bytes(raw)
+        return dict(path=Path(original['path']).relative_to(tmp_path).as_posix(),
+            sha256=original['sha256'], size_bytes=original['size_bytes'], retention='archived',
+            snapshot=target.relative_to(tmp_path).as_posix())
+
+    directory = wrapper.records.directory(payload.name)
+    row = dict(call_id=payload.name, scope=config['scope'], mechanism_binding=None, status='not_submitted',
+        result_protocol=None, accepted=archive(value['accepted']), completed=None, terminal=None,
+        retirement=archive(e.proof(directory / 'submission-retirement.json')),
+        originals=[archive(item) for item in e.retirement_originals(value, accepted)])
+    # Only host scope/config discovery is injected; actual archived consumer/validator run unmodified.
+    monkeypatch.setattr(history, '_execution_interface', lambda root, bound: config['execution_interface'])
+    monkeypatch.setattr(protocol, 'stage_scope', lambda root, job: config['scope'])
+    assert history.managed_status(tmp_path, row) == 'not_submitted'
+    old = {key: item for key, item in row.items() if key not in {'retirement', 'originals'}}
+    old['status'] = 'unknown'
+    old_path = tmp_path / 'sealed-observation.json'; e.write(old_path, dict(managed_calls=[old]))
+    old_bytes = old_path.read_bytes()
+    job = dict(step=1, role='W')
+    seal = dict(observations=dict(path=old_path.name))
+    monkeypatch.setattr(history, '_source', lambda root, step: (job, {}, seal, '9' * 64))
+    recovery = dict(source_step=1, seal_sha256='9' * 64,
+        old_row_sha256=hashlib.sha256(e.encoded(old)).hexdigest(), row=row)
+    path = tmp_path / 'host-history/execution-recoveries/001' / (payload.name + '.json')
+    path.parent.mkdir(parents=True); e.write(path, recovery)
+    ref = dict(path=path.relative_to(tmp_path).as_posix(), sha256=e.proof(path)['sha256'])
+    resolved = execution_recovery.resolved(tmp_path, [ref])
+    assert resolved[(1, payload.name)]['status'] == 'not_submitted'
+    native = objects / value['response']['sha256']; native.write_bytes(b'changed response original')
+    with pytest.raises(history.ObserverIntegrityError):
+        execution_recovery.validate(tmp_path, [ref])
+    assert old_path.read_bytes() == old_bytes  # No old scientific seal or accepted count is rewritten.
 

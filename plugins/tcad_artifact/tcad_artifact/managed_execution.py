@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from contextlib import contextmanager
 from pathlib import Path
 
 from scidiscovery.artifact_agent.schema.execution import ExecutionAdmission
@@ -139,7 +140,11 @@ class TCADManagedExecution:
         return (AdapterCapability('execution_package', 'execution', 'tcad.execution-package.v2', 2,
             'application/schema+json', e.encoded(ExecutionPackage.model_json_schema(mode='validation')),
             dict(input='Exact TCAD execution package', result_protocol=None,
-                 production='blocked_pending_trusted_gate' if self.gate is None else 'trusted_host_gate_required')),)
+                 production='blocked_pending_trusted_gate' if self.gate is None else 'trusted_host_gate_required')),
+            AdapterCapability(e.RETIREMENT_KEY, 'execution_recovery', e.RETIREMENT_SCHEMA, 1,
+                'application/json', e.encoded(dict(e.RETIREMENT_CONTRACT, backend_protocol={
+                    'version': 1, 'submit': 'tcad_submit_retirable', 'retire': 'tcad_retire_submission'})),
+                dict(action='Retire the exact original submission; no refund or new execution grant')))
 
     def _check(self, phase, call, payload, *, prepared=None, prior=None):
         if self.gate is None:
@@ -205,7 +210,10 @@ class TCADManagedExecution:
     def acceptance_metadata(self, payload, *, parent=None, new=False, change=None):
         if parent is not None or new or change is not None:
             raise e.UnsupportedExecution('TCAD opaque execution declares no candidate parent semantics')
-        return dict(parent=dict(candidate_id=None), change_intent=None, tcad=self._preparation(payload))
+        value = self._preparation(payload)
+        return dict(parent=dict(candidate_id=None), change_intent=None, tcad=value,
+            execution_authority=value['authority'], execution_target=value['target'],
+            submission_intent_path=str(self.records.root / 'calls' / payload.name / 'tcad-dispatch.json'))
 
     def _bound(self, call):
         accepted = self.records.accepted(call)
@@ -216,6 +224,8 @@ class TCADManagedExecution:
                 or accepted['script'].get('path') != str(self.records.directory(call) / 'source.py')
                 or (accepted['script'].get('sha256'), accepted['script'].get('size_bytes'))
                     != (descriptor.sha256, descriptor.size_bytes)
+                or accepted.get('execution_authority') != accepted.get('tcad', {}).get('authority')
+                or accepted.get('execution_target') != self.target
                 or accepted.get('tcad') != self._preparation(descriptor)):
             raise e.IntegrityError('TCAD call differs from its original acceptance')
         _verify_proof(accepted['script'])
@@ -225,7 +235,8 @@ class TCADManagedExecution:
         original, descriptor = self._bound(accepted['call_id'])
         if original != accepted:
             raise e.IntegrityError('TCAD dispatch acceptance changed')
-        if not (self.records.directory(descriptor.name) / 'tcad-dispatch.json').exists():
+        directory = self.records.directory(descriptor.name)
+        if not (directory / 'tcad-dispatch.json').exists() and not (directory / 'retirement-native').exists():
             self._lease = (descriptor.name, descriptor.model_dump(mode='json'))
 
     def _binding(self, call, descriptor, external):
@@ -254,6 +265,12 @@ class TCADManagedExecution:
         return found
 
     def submit(self, submission):
+        with self.records.lease('tcad-submission-' + submission.name + '.lock'):
+            if e.retirement(self.config, submission.name) is not None:
+                raise e.UnsupportedExecution('Original TCAD submission was permanently retired')
+            return self._submit(submission)
+
+    def _submit(self, submission):
         accepted, descriptor = self._bound(submission.name)
         if submission != descriptor:
             raise e.IntegrityError('TCAD submission differs from accepted preparation')
@@ -262,6 +279,7 @@ class TCADManagedExecution:
             return found
         directory = self.records.directory(descriptor.name)
         if ((directory / 'tcad-dispatch.json').exists()
+                or (directory / 'retirement-native').exists()
                 or self._lease != (descriptor.name, descriptor.model_dump(mode='json'))):
             raise e.UnsupportedExecution('TCAD original submission is unknown; lookup without resubmission')
         value = accepted['tcad']
@@ -279,6 +297,57 @@ class TCADManagedExecution:
             raise e.UnsupportedExecution('TCAD submission response is unknown; preserve the original call') from error
         self._binding(descriptor.name, descriptor, external)
         return external, state
+
+    def _retirement_packet(self, call, kind, value):
+        raw = e.encoded(value)
+        directory = _directory(self.records.directory(call) / 'retirement-native')
+        path = directory / (kind + '-' + hashlib.sha256(raw).hexdigest() + '.json')
+        _write_original(path, value)
+        return e.proof(path)
+
+    @contextmanager
+    def retire_original(self, call):
+        # Core publishes its common receipt inside this context, under this lease.
+        with self.records.lease('tcad-submission-' + call + '.lock'):
+            existing = e.retirement(self.config, call)
+            if existing is not None:
+                yield dict(existing, status='not_submitted')
+                return
+            accepted, prepared = self._bound(call)
+            value = accepted['tcad']
+            directory = self.records.directory(call)
+            request = dict(call_id=call, scope=accepted['scope'], accepted=e.proof(directory / 'accepted.json'),
+                prepared=prepared.model_dump(mode='json'), authority=value['authority'], target=self.target)
+            try:
+                self._check('retire', call, LocalFileDescriptor.model_validate(value['payload']),
+                    prepared=prepared, prior=value['authority'])
+                self._lease = None
+                request_proof = self._retirement_packet(call, 'request', request)
+                protocol = self.adapter.validate_submission_protocol()
+                protocol_proof = self._retirement_packet(call, 'protocol', protocol)
+                response = self.adapter.retire_submission_details(prepared)
+            except (e.UnsupportedExecution, OSError, RuntimeError):
+                yield dict(call_id=call, status='unknown', note='Original retirement is unconfirmed; preserve its reservation')
+                return
+            response_proof = self._retirement_packet(call, 'response', response)
+            if response.get('found') is True:
+                external = response['run_id']
+                self._binding(call, prepared, external)
+                self.records.bind_external(call, external, response['state'])
+                state = self.cancel_original(call)
+                yield dict(call_id=call, status=state, external_run_id=external,
+                    note='Original job found; use its native terminal evidence, not a non-submission proof')
+                return
+            if (response.get('found') is not False or response.get('retired') is not True
+                    or response.get('submission_sha256') != prepared.sha256):
+                raise e.IntegrityError('TCAD retirement did not permanently fence the original submission')
+            if self.records.external(call) is not None or any((directory / name).exists()
+                    for name in ('completed.json', 'terminal.json', 'execution-observation.json')):
+                raise e.IntegrityError('TCAD non-submission contradicts an original job or terminal fact')
+            intent = directory / 'tcad-dispatch.json'
+            yield dict(call_id=call, status='not_submitted', request=request_proof,
+                response=response_proof, protocol=protocol_proof,
+                dispatch_intent=e.proof(intent) if intent.exists() else None)
 
     def _query(self, call):
         _, descriptor = self._bound(call)
@@ -303,6 +372,8 @@ class TCADManagedExecution:
         return dict(details, call_id=call, external_run_id=external)
 
     def status_details(self, call):
+        if e.retirement(self.config, call) is not None:
+            return dict(state='unknown', call_id=call, submission_disposition='not_submitted')
         path = self.records.directory(call) / 'completed.json'
         if path.exists():
             value = self._completed(call)
@@ -420,6 +491,8 @@ class TCADManagedExecution:
 
     def result(self, call):
         directory = self.records.directory(call)
+        if e.retirement(self.config, call) is not None:
+            return dict(call_id=call, status='not_submitted', note='Permanent original non-submission; no scientific result')
         if (directory / 'completed.json').exists():
             return self._completed(call)
         unknown = dict(call_id=call, status='unknown', note='Original TCAD terminal evidence is not verified')
@@ -473,7 +546,7 @@ class TCADManagedExecution:
     def cancel_original(self, call):
         accepted, prepared = self._bound(call)
         details = self.status_details(call)
-        if execution_status(details.get('state')) in {'known_success', 'known_failed'}:
+        if details.get('state') == 'cancelling' or execution_status(details.get('state')) in {'known_success', 'known_failed'}:
             return details['state']
         if details.get('state') == 'unknown':
             return 'unknown'

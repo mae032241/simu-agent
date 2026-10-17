@@ -36,6 +36,10 @@ MAX_CALLS = 128
 MAX_INPUT_FILES = 128
 MAX_INPUT_BYTES = 64 * 1024 * 1024
 ID = re.compile(r'[A-Za-z0-9._-]{1,128}\Z')
+RETIREMENT_KEY = 'original_submission_retirement'
+RETIREMENT_SCHEMA = 'scidiscovery.permanent-submission-retirement.v1'
+RETIREMENT_CONTRACT = dict(version=1, identity='original_prepared_sha256',
+    absent='permanent_not_submitted', invocation='context_manager', refunds=False)
 
 
 class IntegrityError(ValueError):
@@ -365,11 +369,16 @@ def original_configuration(config,call_id):
 def original_adapter(config,call_id,capability):
     """Both the current permission and the original interface must allow an action."""
     current=load(config)
-    if not getattr(lifecycle_capabilities(current),capability):
+    def allowed(settings,adapter):
+        if capability=='retire':
+            _retirement_capability(settings['execution_interface'])
+            return callable(getattr(adapter,'retire_original',None))
+        return getattr(lifecycle_capabilities(adapter),capability)
+    if not allowed(config,current):
         raise UnsupportedExecution('Requested original execution operation unavailable')
     original=original_configuration(config,call_id)
     adapter=current if original is config else load(original)
-    if not getattr(lifecycle_capabilities(adapter),capability):
+    if not allowed(original,adapter):
         raise UnsupportedExecution('Original execution operation unavailable')
     return original,adapter
 
@@ -470,7 +479,7 @@ class Records:
     def publish(self, call_id, filename, value):
         from .protocol import require_scope
         require_scope(self.config['scope'])
-        if filename not in {'process.json', 'terminal.json', 'completed.json','submission.json','collected.json'}:
+        if filename not in {'process.json', 'terminal.json', 'completed.json','submission.json','collected.json','submission-retirement.json'}:
             raise ValueError('Unknown execution receipt')
         directory = self.directory(call_id)
         accepted = json.loads(read(directory / 'accepted.json'))
@@ -611,6 +620,136 @@ def verify_observation(value, original, *, interface=None):
     return value['status']
 
 
+def _retirement_capability(interface):
+    rows=[row for row in interface.get('public_capabilities',[]) if row.get('key')==RETIREMENT_KEY]
+    if (len(rows)!=1 or rows[0].get('schema_id')!=RETIREMENT_SCHEMA
+            or type(rows[0].get('payload_schema_version')) is not int or rows[0]['payload_schema_version']!=1
+            or rows[0].get('kind')!='execution_recovery' or rows[0].get('media_type')!='application/json'):
+        raise UnsupportedExecution('Original permanent retirement capability is unavailable')
+    return rows[0]
+
+
+def _retirement_contract(contract,capability):
+    if (not isinstance(contract,dict) or set(contract)!=set(RETIREMENT_CONTRACT)|{'backend_protocol'}
+            or encoded({key:contract.get(key) for key in RETIREMENT_CONTRACT})!=encoded(RETIREMENT_CONTRACT)
+            or not isinstance(contract.get('backend_protocol'),dict) or not contract['backend_protocol']):
+        raise IntegrityError('Permanent retirement capability contract changed')
+    raw=encoded(contract)
+    if capability.get('sha256')!=hashlib.sha256(raw).hexdigest() or capability.get('size_bytes')!=len(raw):
+        raise IntegrityError('Permanent retirement capability bytes differ from the frozen interface')
+    return contract
+
+
+def verify_retirement(value, original, *, interface=None):
+    """Verify an independent never-submitted fact, without a backend or budget IO."""
+    def bound(item):
+        data=original(item)
+        if isinstance(data,Path):
+            if data.resolve()!=data:raise IntegrityError('Retirement original path changed')
+            actual=proof(data)
+            if any(actual[key]!=item[key] for key in ('sha256','size_bytes')):
+                raise IntegrityError('Retirement original changed')
+            data=data.read_bytes()
+        if hashlib.sha256(data).hexdigest()!=item['sha256'] or len(data)!=item['size_bytes']:
+            raise IntegrityError('Retirement original changed')
+        return data
+    def decoded(item):return json.loads(bound(item))
+    if (not isinstance(value,dict) or type(value.get('version')) is not int or value['version']!=1
+            or value.get('kind')!='permanent_not_submitted'):
+        raise IntegrityError('Permanent retirement contract is unavailable')
+    accepted=decoded(value['accepted'])
+    selected=accepted.get('interface')
+    if (value.get('interface')!=selected or interface is not None and selected!=interface
+            or value.get('capability')!=_retirement_capability(selected)
+            or any(value.get(key)!=accepted.get(key) for key in ('call_id','scope','native_attempt','mechanism_binding'))
+            or value.get('prepared')!=accepted.get('prepared')
+            or value.get('authority')!=accepted.get('execution_authority')):
+        raise IntegrityError('Retirement differs from the original accepted call')
+    contract=_retirement_contract(value['contract'],value['capability'])
+    prepared=value['prepared']
+    if (accepted['script'].get('path')!=str(Path(value['accepted']['path']).parent/'source.py')
+            or prepared.get('name')!=value['call_id']
+            or (accepted['script'].get('sha256'),accepted['script'].get('size_bytes'))!=(prepared['sha256'],prepared['size_bytes'])):
+        raise IntegrityError('Retirement prepared copy differs from its original descriptor')
+    bound(accepted['script'])
+    bound(dict(path=prepared['local_path'],sha256=prepared['sha256'],size_bytes=prepared['size_bytes']))
+    decoded(value['authority'])
+    request=decoded(value['request']);response=decoded(value['response']);protocol=decoded(value['protocol'])
+    if encoded(protocol)!=encoded(contract['backend_protocol']):
+        raise IntegrityError('Retirement backend protocol differs from its frozen permanent contract')
+    if (request.get('call_id')!=value['call_id'] or request.get('scope')!=value['scope']
+            or request.get('accepted')!=value['accepted'] or request.get('prepared')!=value['prepared']
+            or request.get('authority')!=value['authority'] or request.get('target')!=accepted.get('execution_target')
+            or response.get('found') is not False or response.get('retired') is not True
+            or response.get('submission_sha256')!=value['prepared']['sha256']):
+        raise IntegrityError('Backend retirement does not prove the exact original was never submitted')
+    dispatch=value.get('dispatch_intent')
+    if dispatch is not None:
+        intent=decoded(dispatch)
+        if (dispatch.get('path')!=accepted.get('submission_intent_path')
+                or intent.get('call_id')!=value['call_id'] or intent.get('scope')!=value['scope']
+                or intent.get('prepared')!=value['prepared'] or intent.get('authority')!=value['authority']):
+            raise IntegrityError('Retirement changed the original dispatch intent')
+    return dict(call_id=value['call_id'],scope=value['scope'],prepared=value['prepared'],
+                accepted=value['accepted'],authority=value['authority'])
+
+
+def retirement_originals(value,accepted):
+    prepared=value['prepared']
+    result=[value[key] for key in ('accepted','authority','request','response','protocol')]
+    result.extend([accepted['script'],dict(path=prepared['local_path'],sha256=prepared['sha256'],size_bytes=prepared['size_bytes'])])
+    if value.get('dispatch_intent') is not None:result.append(value['dispatch_intent'])
+    return result
+
+
+def retirement(config,call_id):
+    records=Records(config);directory=records.directory(call_id)
+    path=directory/'submission-retirement.json'
+    if not path.exists() and not path.is_symlink():return None
+    value=json.loads(read(path));accepted=records.accepted(call_id)
+    if (value.get('accepted')!=proof(directory/'accepted.json') or value.get('prepared')!=accepted['prepared']
+            or records.external(call_id) is not None
+            or any((directory/name).exists() or (directory/name).is_symlink()
+                   for name in ('completed.json','terminal.json','execution-observation.json'))):
+        raise IntegrityError('Permanent non-submission contradicts the original call')
+    dispatch=Path(accepted['submission_intent_path'])
+    if (dispatch.parent!=directory or dispatch.resolve()!=dispatch
+            or value.get('dispatch_intent')!=(proof(dispatch) if dispatch.exists() else None)):
+        raise IntegrityError('Retired call dispatch identity changed')
+    verify_retirement(value,lambda item:Path(item['path']),interface=config['execution_interface'])
+    return value
+
+
+def retire_original(config,adapter,call_id):
+    capability=_retirement_capability(config['execution_interface'])
+    matches=[item for item in adapter.capabilities() if item.key==RETIREMENT_KEY]
+    if len(matches)!=1:raise UnsupportedExecution('Original retirement declaration is unavailable')
+    contract=_retirement_contract(json.loads(matches[0].content),capability)
+    existing=retirement(config,call_id)
+    if existing is not None:return dict(call_id=call_id,status='not_submitted',receipt=proof(Records(config).directory(call_id)/'submission-retirement.json'))
+    method=getattr(adapter,'retire_original',None)
+    if not callable(method):raise UnsupportedExecution('Original retirement method is unavailable')
+    records=Records(config);directory=records.directory(call_id)
+    try:
+        with method(call_id) as evidence:
+            if evidence.get('status')!='not_submitted':return evidence
+            accepted=records.accepted(call_id)
+            value=dict(version=1,kind='permanent_not_submitted',call_id=call_id,scope=accepted['scope'],
+                native_attempt=accepted.get('native_attempt'),mechanism_binding=accepted.get('mechanism_binding'),
+                interface=accepted['interface'],accepted=proof(directory/'accepted.json'),prepared=accepted['prepared'],
+                authority=accepted['execution_authority'],capability=_retirement_capability(accepted['interface']),contract=contract,
+                **{key:evidence[key] for key in ('request','response','protocol','dispatch_intent')})
+            verify_retirement(value,lambda item:Path(item['path']),interface=config['execution_interface'])
+            path=directory/'submission-retirement.json'
+            if path.exists():
+                if json.loads(read(path))!=value:raise IntegrityError('Retirement publication changed')
+            else:records.publish(call_id,'submission-retirement.json',value)
+            retirement(config,call_id)
+            return dict(call_id=call_id,status='not_submitted',receipt=proof(path))
+    except BlockingIOError:
+        return dict(call_id=call_id,status='unknown',note='Original submission or retirement still owns its call lease')
+
+
 def record_observation(config, adapter, call_id, *, collected=None):
     """Freeze one backend-verified terminal projection while executing its protocol.
 
@@ -701,6 +840,7 @@ def _dispatch_descriptor(config, payload, *, parent=None, new=False, change=None
     records = Records(config)
     before=records.calls()
     for path in before:
+        if retirement(original_configuration(config,path.name),path.name) is not None:continue
         original,prior=original_adapter(config,path.name,'query')
         details=prior.status_details(path.name)
         state=execution_status(details.get('state'))
@@ -743,8 +883,12 @@ def progress(config):
     if not lifecycle_capabilities(adapter).query:
         raise UnsupportedExecution('Execution query unavailable')
     rows = []
-    counts = dict.fromkeys(('accepted', 'submitted', 'queued', 'running', 'cancelling', 'known_success', 'known_failed', 'unknown'), 0)
+    counts = dict.fromkeys(('accepted', 'submitted', 'queued', 'running', 'cancelling', 'known_success', 'known_failed', 'not_submitted', 'unknown'), 0)
     for path in Records(config).calls():
+        if retirement(original_configuration(config,path.name),path.name) is not None:
+            counts['not_submitted']+=1
+            rows.append(dict(call_id=path.name,status='not_submitted',candidate_id=None))
+            continue
         binding=None
         try:
             _,prior=original_adapter(config,path.name,'query')
@@ -797,7 +941,7 @@ def main(argv=None):
     describe=sub.add_parser('describe',help='Copy one complete declared public contract to an explicit new file')
     describe.add_argument('--key',required=True);describe.add_argument('--output',type=Path,required=True)
     describe.add_argument('--metadata',action='store_true',help='Copy complete public contract metadata instead of its content')
-    for name in ('query','lookup','collect','cancel','reconcile'):
+    for name in ('query','lookup','collect','cancel','reconcile','retire'):
         item=sub.add_parser(name,**(dict(help='Freeze the same original terminal facts using query and declared collection; never submit a new execution.') if name=='reconcile' else {}))
         item.add_argument('--call-id',required=True)
     args=parser.parse_args(argv)
@@ -807,7 +951,7 @@ def main(argv=None):
         scope=config.get('scope',{})
         if args.command=='lineage-status' and (type(scope.get('handoff_protocol')) is not int or scope['handoff_protocol']!=protocol.CURRENT):
             print(json.dumps(preserved_progress(config),allow_nan=False));return 0
-        if args.command in {'run','lookup','collect','cancel','reconcile'}:
+        if args.command in {'run','lookup','collect','cancel','reconcile','retire'}:
             from .protocol import require_scope
             require_scope(config.get('scope'))
         adapter=load(config,path=args.config)
@@ -850,6 +994,10 @@ def main(argv=None):
             result=adapter.public_result(result)
             code={'known_success':0,'known_failed':1}.get(result['status'],2)
         elif args.command=='lineage-status':result=progress(config);code=0
+        elif args.command=='retire':
+            config,adapter=original_adapter(config,args.call_id,'retire')
+            result=retire_original(config,adapter,args.call_id)
+            code=0 if result.get('status')=='not_submitted' else 2
         else:
             capability='lookup_submission' if args.command=='lookup' else 'query' if args.command in {'query','reconcile'} else args.command
             if not getattr(lifecycle_capabilities(adapter),capability):

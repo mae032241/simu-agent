@@ -379,6 +379,28 @@ def bind(root, step, role, protocol, *, source_cutoff=None, extra_steps=(), sele
     experiments=[];recovery_materials=[]
     for record in records:
         for call in (record.get('observation') or {}).get('managed_calls',[]):
+            if call.get('retirement') is not None:
+                original=c.read(Path(root)/call['retirement']['snapshot'])
+                prefix=f'inputs/recovered/{record["step"]:03d}/{call["call_id"]}'
+                retained=[(call['retirement'],'retirement.json')]
+                native=[original[key] for key in ('request','response','protocol')]
+                if original.get('dispatch_intent') is not None:native.append(original['dispatch_intent'])
+                for number,proof in enumerate(native,1):
+                    matches=[item for item in call['originals'] if Path(root)/item['path']==Path(proof['path'])
+                             and item['sha256']==proof['sha256'] and item['size_bytes']==proof['size_bytes']]
+                    if len(matches)!=1:raise ValueError('Retirement native original is unavailable')
+                    retained.append((matches[0],f'originals/{number:03d}'))
+                for item,name in retained:
+                    limits=c.settings(root)
+                    if c.output_quota_exceeded(limits,(row['size_bytes'] for row in [*recovery_materials,item])):
+                        raise ValueError('Retirement proof materials exceed the original input bound')
+                    target=f'{prefix}/{name}'
+                    c._copy_bound(Path(root)/item['snapshot'],c.workspace(root,step)/target,item['sha256'])
+                    recovery_materials.append(dict(path=target,sha256=item['sha256'],size_bytes=item['size_bytes']))
+                experiments.append(dict(step=record['step'],call_id=call['call_id'],execution_status='not_submitted',
+                    retirement_proof=f'{prefix}/retirement.json',native_originals=[f'{prefix}/{name}' for _,name in retained[1:]],
+                    limitation='Permanent non-submission of the original call only; no scientific verdict, candidate or new execution allowance.'))
+                continue
             if 'execution' not in call:continue
             details=call.get('execution') or {};result=details.get('result') or {}
             outputs=[dict(path=f'inputs/parents/{record["step"]:03d}/artifacts/experiments/{call["call_id"]}/artifacts/{item["name"]}',

@@ -112,6 +112,7 @@ class CommandTCADExecutorAdapter:
         value = self._call("submission_protocol", {})
         if value != {"version": 1, "submit": "tcad_submit_retirable", "retire": "tcad_retire_submission"}:
             raise RuntimeError("TCAD submission protocol is incompatible; upgrade the runner before submitting.")
+        return value
 
     def execution_admission(self, raw: bytes, *, preparation_profile: str):
         self.validate_preparation_payload(raw, preparation_profile=preparation_profile)
@@ -251,11 +252,15 @@ class CommandTCADExecutorAdapter:
         return str(self.status_details(external_run_id)["state"])
 
     def retire_submission(self, submission: LocalFileDescriptor) -> tuple[str, str] | None:
+        value = self.retire_submission_details(submission)
+        return (str(value["run_id"]), str(value["state"])) if value["found"] else None
+
+    def retire_submission_details(self, submission: LocalFileDescriptor) -> dict:
         value = self._call("retire_submission", {"submission": _without_schema(submission)})
         if value.get("found") is True:
-            return str(value["run_id"]), str(value["state"])
+            return value
         if value.get("found") is False and value.get("retired") is True and value.get("submission_sha256") == submission.sha256:
-            return None
+            return value
         raise RuntimeError("TCAD transport did not confirm exact submission retirement")
 
     def status_details(self, external_run_id: str) -> dict[str, Any]:

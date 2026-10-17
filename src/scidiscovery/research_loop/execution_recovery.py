@@ -38,7 +38,7 @@ def validate(root,refs):
         row=value['row']
         if (row['accepted']!=matches[0]['accepted'] or row['scope']!=matches[0]['scope']
                 or row.get('mechanism_binding')!=matches[0].get('mechanism_binding')
-                or row['status'] not in {'known_success','known_failed'}):
+                or row['status'] not in {'known_success','known_failed','not_submitted'}):
             raise history.ObserverIntegrityError('Execution recovery changed original reservation')
         history.validate_managed(root,job,[row]);values.append(value)
     return values
@@ -61,7 +61,8 @@ def create(root,step):
         from . import managed_wait
         _,config=managed_wait._config(root,job,accepted)
         directory=e.Records(config).directory(row['call_id'])
-        if not (directory/'execution-observation.json').exists():
+        retired=e.retirement(config,row['call_id'])
+        if retired is None and not (directory/'execution-observation.json').exists():
             if not config['execution_interface']['capabilities']['query']:
                 unresolved.append(row['call_id']);continue
             if e.record_observation(config,e.load(config),row['call_id']) is None:
@@ -72,7 +73,7 @@ def create(root,step):
         c.write(path,value);path.chmod(0o400)
         ref=dict(path=path.relative_to(root).as_posix(),sha256=c.digest(path));validate(root,[ref]);created.append(ref)
     return dict(status='execution_recovered' if created and not unresolved else 'execution_recovery_pending',
-        recovered=len(created),unresolved=len(unresolved),qualification='Terminal evidence only; old scientific conclusions and reservation counts are unchanged.')
+        recovered=len(created),unresolved=len(unresolved),qualification='Original execution or permanent non-submission facts only; old scientific conclusions and reservation counts are unchanged.')
 
 
 def project_records(root,records,refs):
