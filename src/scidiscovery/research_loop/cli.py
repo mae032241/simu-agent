@@ -91,8 +91,13 @@ def main(argv=None):
     inspect.add_argument('--after', type=int, default=0, help='Exact prior entry index; default starts at the first entry')
     inspect.add_argument('--limit', type=int, default=20, help='Returned page size; all package bytes are still verified')
     inspect.add_argument('--section', choices=['manifest', 'dependencies'], default='manifest')
+    restore = commands.add_parser('archive-restore-material', help='Restore one missing ordinary sealed file to its original instance; never restore control/call state or continue research')
+    restore.add_argument('--root', type=Path, required=True)
+    restore.add_argument('--package', type=Path, required=True)
+    restore.add_argument('--step', type=int, required=True)
+    restore.add_argument('--index', type=int, required=True, help='Exact member index from the sealed scientific materials page')
     args = parser.parse_args(argv)
-    root = (args.root.expanduser().absolute() if args.command == 'archive-export' else
+    root = (args.root.expanduser().absolute() if args.command in {'archive-export', 'archive-restore-material'} else
             args.root.expanduser().resolve()) if args.command != 'archive-inspect' else None
     try:
         if args.command not in {'prepare','status','archive-inspect'}:
@@ -150,6 +155,9 @@ def main(argv=None):
         elif args.command == 'archive-inspect':
             from .instance_archive import archive_inspect
             result = archive_inspect(args.package, after=args.after, limit=args.limit, section=args.section)
+        elif args.command == 'archive-restore-material':
+            from .instance_archive import archive_restore_material
+            result = archive_restore_material(root, args.package, step=args.step, index=args.index)
         elif args.command == 'execution-recover':
             result=controller.execution_recover(root,args.step)
         elif args.command == 'execution-resume':
@@ -187,7 +195,7 @@ def main(argv=None):
         print(json.dumps(dict(status='error',error=str(error),**(dict(code=error.code) if isinstance(error,UnsupportedProtocol) else {})), ensure_ascii=False))
         return 1
     print(json.dumps(result, ensure_ascii=False))
-    return 0 if result.get('status') in {None, 'preserved_read_only', 'prepared', 'finish', 'wait', 'paused', 'pause_requested', 'budget_amended', 'delivery_confirmed', 'execution_recovered', 'execution_resume_recorded', 'exported_unsubmitted', 'ui_stopped', 'archive_exported', 'archive_inspected'} else 2
+    return 0 if result.get('status') in {None, 'preserved_read_only', 'prepared', 'finish', 'wait', 'paused', 'pause_requested', 'budget_amended', 'delivery_confirmed', 'execution_recovered', 'execution_resume_recorded', 'exported_unsubmitted', 'ui_stopped', 'archive_exported', 'archive_inspected', 'material_restored', 'material_already_present'} else 2
 
 
 if __name__ == '__main__':

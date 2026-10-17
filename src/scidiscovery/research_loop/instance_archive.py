@@ -440,3 +440,100 @@ def archive_inspect(package, *, after=0, limit=20, section='manifest'):
     return dict(status='archive_inspected', instance_id=metadata['instance_id'], restorable=False,
         section=section, entries=selected, next_after=last if last is not None and last < total else None,
         total_entries=total, **counts, external_dependencies=metadata['dependencies'], limitations=LIMITATIONS)
+
+
+def archive_restore_material(root, package, *, step, index):
+    """Restore one missing ordinary sealed file, never control or call originals."""
+    from . import contracts as c, instance_science as science
+    from .protocol import require_current
+    root = files.check_path(Path(root).expanduser().absolute())
+    package = files.check_path(Path(package).expanduser().absolute())
+    if root.resolve() != root or package.resolve() != package:
+        raise files.ArchiveError('Restore paths must be canonical originals')
+    if root == package or root.is_relative_to(package) or package.is_relative_to(root):
+        raise files.ArchiveError('Archive package must be separate from its original instance')
+    settings = require_current(root)
+    with ExitStack() as locks:
+        _owner_locks(locks, root)
+        _quiescent(root)
+        _, seal, raw, raw_proof = science._sealed(root, step)
+        with science.Original(raw, raw_proof):
+            pass
+        if type(index) is not int or not 1 <= index <= len(seal['materials']):
+            raise files.ArchiveError('Exact sealed material index required')
+        material = seal['materials'][index - 1]
+        name = science._label(material, step)
+        if sum(row['path'] == material['path'] for row in seal['materials']) != 1:
+            raise files.ArchiveError('Sealed material name is ambiguous')
+        source = Path(material['source'])
+        if not source.is_absolute():
+            raise files.ArchiveError('Sealed material source must be its absolute original path')
+        files.check_path(source)
+        work = c.workspace(root, step)
+        nested = re.fullmatch(r'(?:experiments/[^/]+/)+(?:artifacts/.+|conclusion\.(?:json|md))', name)
+        if (not source.is_absolute() or source.resolve() != source or not source.is_relative_to(root)
+                or not (source == work / 'artifacts' / name or nested and source == work / name)):
+            raise files.ArchiveError('Only ordinary sealed artifacts or nested experiment files can be restored; call and control originals are excluded')
+        metadata_path = package / 'archive.json'
+        metadata_before = files.hash_file(metadata_path)
+        archive_inspect(package, limit=1)
+        metadata = _read(package / 'archive.json')
+        if files.hash_file(metadata_path) != metadata_before:
+            raise files.ArchiveError('Archive metadata changed during inspection')
+        if metadata['instance_id'] != settings['goal_id'] or metadata['settings_sha256'] != c.digest(root / 'settings.json'):
+            raise files.ArchiveError('Archive belongs to another original instance')
+        manifest = package / 'manifest.jsonl'
+        before = files.hash_file(manifest)
+        if any(before[key] != metadata['manifest'][key] for key in ('sha256', 'size_bytes')):
+            raise files.ArchiveError('Archive manifest changed after inspection')
+        wanted = source.relative_to(root).as_posix()
+        seal_path = c.host_record(work) / 'result-identity.json'
+        sealed = seal_path.relative_to(root).as_posix()
+        selected = producer = None
+        with manifest.open('rb') as stream:
+            for line in stream:
+                row = json.loads(line)
+                if row['path'] == wanted:
+                    selected = row
+                if row['path'] == sealed:
+                    producer = row
+        if files.hash_file(manifest) != before:
+            raise files.ArchiveError('Archive manifest changed during material selection')
+        if (producer is None or producer['kind'] != 'file'
+                or producer['sha256'] != c.digest(seal_path) or producer['size_bytes'] != seal_path.stat().st_size):
+            raise files.ArchiveError('Archive does not contain this exact current producer seal')
+        if (selected is None or selected['kind'] != 'file'
+                or any(selected[key] != material[key] for key in ('sha256', 'size_bytes'))):
+            raise files.ArchiveError('Archive does not contain this exact sealed material')
+
+        def existing():
+            if not source.exists() and not source.is_symlink():
+                return False
+            actual = files.hash_file(source)
+            if any(actual[key] != material[key] for key in ('sha256', 'size_bytes')):
+                raise files.ArchiveError('Existing original differs from the sealed material; never overwritten')
+            return True
+
+        result = dict(step=step, index=index, name=name,
+            permission='File bytes only; no scientific qualification, execution permission or automatic continuation')
+        if existing():
+            return dict(status='material_already_present', **result)
+        temporary_root = files.check_path(root / 'host-runtime')
+        temporary_root.mkdir(exist_ok=True)
+        stage = Path(tempfile.mkdtemp(prefix='material-restore-', dir=temporary_root))
+        try:
+            staged = stage / 'original'
+            files.copy_verified(package / selected['blob'], staged, selected)
+            files.check_path(source)
+            source.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                os.link(staged, source, follow_symlinks=False)
+            except FileExistsError:
+                if existing():
+                    return dict(status='material_already_present', **result)
+                raise
+            files.fsync_directory(source.parent)
+            existing()
+            return dict(status='material_restored', **result)
+        finally:
+            shutil.rmtree(stage)

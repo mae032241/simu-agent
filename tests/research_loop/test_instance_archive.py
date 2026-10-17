@@ -1,4 +1,4 @@
-"""Small original/package negatives; no model, HTTP, backend or writable restore."""
+"""Small package and original-material checks; no model, HTTP or backend."""
 import json
 
 import pytest
@@ -137,3 +137,120 @@ def test_inspect_rejects_traversal_duplicate_blob_changes_and_symlinks(tmp_path)
     blob.unlink(); outside = tmp_path / 'outside'; outside.write_bytes(raw); blob.symlink_to(outside)
     with pytest.raises(archive.files.ArchiveError, match='symbolic links'):
         archive.archive_inspect(package)
+
+
+def sealed_scene(tmp_path, monkeypatch):
+    from test_history_handoff import finish
+    root, archival_bytes = scene(tmp_path)
+    # The older archive-only fixture includes arbitrary bytes, not node outputs.
+    # Scientific outputs use the real workspace owner, without another /work/.
+    work = c.workspace(root, 1)
+    material = work / 'artifacts/writer.lock'
+    material.parent.mkdir(parents=True); material.write_bytes(archival_bytes.read_bytes())
+    nested = work / 'experiments/bounded/artifacts/nested.txt'
+    nested.parent.mkdir(parents=True); nested.write_bytes(b'Exact nested scientific bytes.\n')
+    original_seal = c.seal_result
+
+    def cleaned_seal(root, step):
+        # Synthetic native transport only; the actual seal/archive/restore paths run.
+        record = c.host_record(c.workspace(root, step))
+        outcome = c.read(record / 'native-outcome.json')
+        c.write(record / 'native-outcome.json', dict(outcome, cleanup='observed_group_cleaned'))
+        return original_seal(root, step)
+
+    monkeypatch.setattr(c, 'seal_result', cleaned_seal)
+    finish(root, 1, 'H', [], action='experiment')
+    package = tmp_path / 'archive'
+    archive.archive_export(root, package)
+    return root, package, material, nested
+
+
+def test_restore_exact_missing_scientific_files_keeps_current_control_and_budget(tmp_path, monkeypatch, capsys):
+    from scidiscovery.research_loop import budget, instance_science as science
+    root, package, material, nested = sealed_scene(tmp_path, monkeypatch)
+    # This real newer event must survive use of the older archive unchanged.
+    budget.amend(root, max_tokens=1100, authorization_note='Explicit newer operator ceiling; not restored from archive')
+    expected = {path: path.read_bytes() for path in (material, nested)}
+    control = {path.relative_to(root): path.read_bytes() for path in root.rglob('*')
+        if path.is_file() and path not in expected}
+    for path in expected:
+        path.unlink()
+    def forbidden(*args, **kwargs):
+        pytest.fail('Material restoration must not sample current budget or automatically continue research')
+    monkeypatch.setattr(budget, 'snapshot', forbidden)
+    monkeypatch.setattr(controller, '_run', forbidden)
+    members = science.materials(root, 1)['items']
+    for path, raw in expected.items():
+        member = next(row for row in members if row['name'] == ('writer.lock' if path == material else 'experiments/bounded/artifacts/nested.txt'))
+        args = ['archive-restore-material', '--root', str(root), '--package', str(package),
+                '--step', '1', '--index', str(member['index'])]
+        assert cli.main(args) == 0
+        assert json.loads(capsys.readouterr().out)['status'] == 'material_restored'
+        original, _ = science.artifact(root, 1, member['index'])
+        with original:
+            assert original.stream.read() == raw
+        assert cli.main(args) == 0
+        assert json.loads(capsys.readouterr().out)['status'] == 'material_already_present'
+    assert {path.relative_to(root): path.read_bytes() for path in root.rglob('*')
+        if path.is_file() and path not in expected} == control
+    assert not list((root / 'host-runtime').glob('material-restore-*'))
+
+
+def test_restore_rejects_conflicts_wrong_seal_and_control_targets(tmp_path, monkeypatch):
+    from scidiscovery.research_loop import instance_science as science
+    root, package, material, _ = sealed_scene(tmp_path, monkeypatch)
+    index = next(row['index'] for row in science.materials(root, 1)['items'] if row['name'] == 'writer.lock')
+    original = material.read_bytes()
+    material.chmod(0o600)  # Deliberate fixture corruption, not production permission changes.
+    material.write_bytes(b'Current different original must survive.')
+    with pytest.raises(archive.files.ArchiveError, match='never overwritten'):
+        archive.archive_restore_material(root, package, step=1, index=index)
+    assert material.read_bytes() == b'Current different original must survive.'
+    material.unlink()
+    outside = tmp_path / 'outside'; outside.write_bytes(original); material.symlink_to(outside)
+    with pytest.raises(archive.files.ArchiveError, match='symbolic links'):
+        archive.archive_restore_material(root, package, step=1, index=index)
+    assert outside.read_bytes() == original
+    material.unlink()
+    seal_path = c.host_record(c.workspace(root, 1)) / 'result-identity.json'
+    sealed = seal_path.read_bytes(); mode = seal_path.stat().st_mode & 0o777; value = c.read(seal_path)
+    c.write(seal_path, dict(value, scope='A different producer seal is not the archived producer'))
+    with pytest.raises(archive.files.ArchiveError, match='exact current producer seal'):
+        archive.archive_restore_material(root, package, step=1, index=index)
+    seal_path.chmod(0o600); seal_path.write_bytes(sealed); seal_path.chmod(mode)
+    changed = c.read(seal_path)
+    changed['materials'][index-1]['source'] = str(root / 'settings.json')
+    c.write(seal_path, changed)
+    with pytest.raises(archive.files.ArchiveError, match='call and control originals are excluded'):
+        archive.archive_restore_material(root, package, step=1, index=index)
+    seal_path.chmod(0o600); seal_path.write_bytes(sealed); seal_path.chmod(mode)
+    with pytest.raises(archive.files.ArchiveError, match='index'):
+        archive.archive_restore_material(root, package, step=1, index=0)
+    assert not material.exists()
+
+
+def test_restore_refuses_active_unknown_and_competing_originals(tmp_path, monkeypatch):
+    from scidiscovery.research_loop import instance_science as science
+    root, package, material, _ = sealed_scene(tmp_path, monkeypatch)
+    index = next(row['index'] for row in science.materials(root, 1)['items'] if row['name'] == 'writer.lock')
+    material.unlink()
+    with controller._writer(root):
+        with pytest.raises(RuntimeError, match='running controller'):
+            archive.archive_restore_material(root, package, step=1, index=index)
+    outcome_path = c.host_record(c.workspace(root, 1)) / 'native-outcome.json'
+    outcome = outcome_path.read_bytes()
+    c.write(outcome_path, dict(c.read(outcome_path), cleanup='cleanup_unknown'))
+    with pytest.raises(archive.files.ArchiveError, match='cleanup is unconfirmed'):
+        archive.archive_restore_material(root, package, step=1, index=index)
+    assert not material.exists()
+    outcome_path.write_bytes(outcome)
+    link = archive.os.link
+    def competing_file(source, destination, **kwargs):
+        if destination == material:
+            material.write_bytes(b'A competing original, never overwritten.')
+        return link(source, destination, **kwargs)
+    monkeypatch.setattr(archive.os, 'link', competing_file)
+    with pytest.raises(archive.files.ArchiveError, match='never overwritten'):
+        archive.archive_restore_material(root, package, step=1, index=index)
+    assert material.read_bytes() == b'A competing original, never overwritten.'
+    assert not list((root / 'host-runtime').glob('material-restore-*'))

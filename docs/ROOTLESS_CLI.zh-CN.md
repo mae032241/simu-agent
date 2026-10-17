@@ -58,6 +58,8 @@ TCAD 的可选编译→精确封存→正式审查→后继执行非空输入已
 
 `archive-export --root ... --output ...` 仅在可证明静止时导出到新的只读目录包；不会取消活动作业或创建可推进副本。`archive-inspect --package ... --after N --limit N` 检查包并分页展示清单，也可用 `--section dependencies` 查看范围缺口；每页仍验证全包，不应当作廉价轮询。原件流式保留，`native-homes` 与审批密钥/私有定位文件按范围排除，缺外部依赖明确标注。这两个入口不提供可写恢复资格。
 
+`archive-restore-material --root ... --package ... --step N --index N` 只把一个缺失的普通封存成果恢复到原实例的原位置；index 取该节点科学资料页的封存成员序号。须保留当前 settings、job/科学原文/result/seal、ledger、审批与调用证据，且所有原 owner 静止；包须包含同一当前 producer seal 与精确路径/hash/大小的成果。仅支持普通 artifacts 和 nested experiment 成果，已有相同字节幂等，不同文件或链接拒绝；不修 call/control/managed 证据，不新建实例、不覆盖旧消费、不自动继续或续权，也不替代后续预算/资格准入。完整灾备、跨路径/宿主可推进恢复仍未实现；跨 boot 补回字节也不解除原 clock 或 unknown 限制。
+
 上述恢复及归档代码分别见 `9405b03`、`799036e`，仅完成独立静态审查，真实迟批、并发、掉电、跨 boot 和远端执行未验证。
 
 ## 受管本地实验
