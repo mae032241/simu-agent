@@ -1,6 +1,6 @@
 # 薄控制层：授权边界、正式审查与工程检查修复计划
 
-状态：原计划已通过[独立设计审查](evidence/THIN_AUTHORITY_REVIEW_REMEDIATION_REVIEW_20261017.zh-CN.md)。根据用户后续要求，A1强隔离部署暂缓，本轮限定可信Worker软边界，A2/A4并行开始，A3接续A2。实施基线 `dev@1f1d407`；各节点的完成状态以独审和实际测试记录为准，不运行真实模型/远端作业或修改系统权限。
+状态：A0/A1软边界说明已独审提交 `a6ca5a5`，强隔离暂缓；A4 `0a49e06`、A2 `804f7a7`、A3 `70226ed` 均已独审及定向测试通过。A5有限验收汇总见[记录](evidence/A5_AUTHORITY_REMEDIATION_ACCEPTANCE_20261017.zh-CN.md)，已通过最终独立核对。原设计审查仍保留[历史范围](evidence/THIN_AUTHORITY_REVIEW_REMEDIATION_REVIEW_20261017.zh-CN.md)。本轮未运行真实模型/远端作业或修改系统权限。
 
 ## 1. 范围与事实
 
