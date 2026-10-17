@@ -1,6 +1,6 @@
 # P2/P3 最小实施拆分候选
 
-状态：**拆分设计独审通过，未实施。** [独立审查](evidence/THIN_P2_P3_SPLIT_DESIGN_REVIEW_20261017.zh-CN.md)。 本文只细分[主迁移计划](THIN_CAPABILITY_MIGRATION_20261016.zh-CN.md)的 P2/P3 文件责任和负控，不新增功能范围或执行授权。先完成 R0/P1 提交，再按独审后的节点开始 P2a；当前不编码、不运行动态检查。
+状态：**拆分设计独审通过；P2a(c925873)、P2b(f365776)、P3a(da87484)已独审提交，P2c/P3b推进中。** [独立审查](evidence/THIN_P2_P3_SPLIT_DESIGN_REVIEW_20261017.zh-CN.md)。 本文只细分[主迁移计划](THIN_CAPABILITY_MIGRATION_20261016.zh-CN.md)的 P2/P3 文件责任和负控，不新增功能范围或执行授权。R0/P1已先行提交，动态检查仍未运行；以下最小负控为设计与静态审查依据，不是动态通过证明。
 
 接口与资格边界继续由 [TCAD managed seam](THIN_TCAD_MANAGED_SEAM_20261016.zh-CN.md)及其[设计独审](evidence/THIN_TCAD_MANAGED_SEAM_REVIEW_20261016.zh-CN.md)负责。已核对独审对应 `a1d37aa` 的设计 SHA-256 为 `8ddda0d0873300f7e85500185133d2e3c99385346ad3af692dc8e45c21e6b42e`；当前 seam 仅更新末尾容量补修的证据与独立审查边界，接口/P3 规则未变。本文不批准容量补修、R0 修改或真实生产执行。
 

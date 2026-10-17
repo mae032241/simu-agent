@@ -1,6 +1,6 @@
 # P2b 精确原件窄回调实施记录
 
-日期：2026-10-17。基于 P2a `c925873`；静态冻结时 HEAD 为 `da87484`（同期 P3a 提交）。依据[主计划](../THIN_CAPABILITY_MIGRATION_20261016.zh-CN.md)、[已审 TCAD seam](../THIN_TCAD_MANAGED_SEAM_20261016.zh-CN.md)和[已审拆分](../THIN_P2_P3_IMPLEMENTATION_SPLIT_20261017.zh-CN.md)的 P2b 节点。窄接口先经独审认可后实施；代码冻结待独审、未提交，动态未验收。
+日期：2026-10-17。基于 P2a `c925873`；静态冻结时 HEAD 为 `da87484`（同期 P3a 提交）。依据[主计划](../THIN_CAPABILITY_MIGRATION_20261016.zh-CN.md)、[已审 TCAD seam](../THIN_TCAD_MANAGED_SEAM_20261016.zh-CN.md)和[已审拆分](../THIN_P2_P3_IMPLEMENTATION_SPLIT_20261017.zh-CN.md)的 P2b 节点。窄接口先经独审认可后实施；最终冻结已获[独立静态审查 PASS](P2B_EXACT_ORIGINAL_RESOLVER_REVIEW_20261017.zh-CN.md)，已提交 `f365776`，动态未验收。
 
 ## 精确责任和接口
 
