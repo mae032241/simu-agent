@@ -13,7 +13,7 @@ def outcome(root,job,payload):
     from .protocol import CURRENT
     if type(job.get('handoff_protocol')) is not int or job['handoff_protocol']!=CURRENT:
         raise ValueError('Current scientific interpretation required')
-    enabled=c.settings(root).get('search_policy') is not None
+    enabled=c.settings(root).get('search_policy') is not None and not job.get('formal_review')
     interpretation=search.interpret(root,job,payload) if enabled else dict(focus=None,allocation=None,diagnostics=[])
     diagnostics=interpretation['diagnostics']
     selection=[];c.selected_inputs(c.workspace(root,job['step']),payload,job,selection)

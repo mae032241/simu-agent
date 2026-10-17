@@ -67,7 +67,7 @@ def reason(root, step, job, result, role, correction_request=None):
         return None
     if _required(root, step, job, result, role, correction_request):
         return None
-    if job['role'] == role:
+    if job['role'] == role and not (job.get('formal_review') or result.get('next_action')=='formal_review'):
         return 'role_repeat_without_evidence'
     from . import budget
     # Project one frozen node target of the proposed role (soft: min(node budget, thinking target)).

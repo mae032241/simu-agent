@@ -31,7 +31,7 @@ def resolve_intent(state, job, payload, *, assessed=None):
     if declared is not None and declared['label' if role=='H' else 'mechanism_ref'] is None and declared['action']!='screen':
         diagnostics.append(dict(code='science_focus_required',subject=declared['action']))
     repair=declared is not None and declared['action']=='repair'
-    if role=='A' and action not in {'audit','extract','wait'} and assessed is not None:
+    if role=='A' and action not in {'audit','formal_review','extract','wait'} and assessed is not None:
         identity=assessed['identity']
         if identity not in seen:
             allocation=assessed.get('allocation')
@@ -59,7 +59,7 @@ def resolve_intent(state, job, payload, *, assessed=None):
             focus=dict(mechanism_ref=selected,action=declared['action'])
         if focus is not None:
             allocation=next((item for item in remaining if item['mechanism_ref']==selected),None)
-    elif role not in {'H','A'} or action in {'audit','extract','wait'}:
+    elif role not in {'H','A'} or action in {'audit','formal_review','extract','wait'}:
         focus=copy.deepcopy(state.get('focus'))
         allocation=copy.deepcopy(state['order'].get('allocation'))
     return dict(focus=focus,allocation=allocation,unfinished_plan=remaining,seen_w=seen,diagnostics=diagnostics)

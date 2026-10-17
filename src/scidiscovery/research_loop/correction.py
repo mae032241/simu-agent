@@ -56,7 +56,7 @@ def _proofs(root, job, assessment):
 
 
 def validate_payload(root, job, payload):
-    if job.get('purpose') == 'closeout':
+    if job.get('purpose') in {'closeout','formal_review'}:
         return
     if job.get('handoff_protocol', 1) >= 6 and job['role'] == 'A':
         _proofs(root, job, payload.get('progress_assessment'))
@@ -159,11 +159,11 @@ def project(root, before_step=None):
             for review in reviews.values():
                 if review is not None and review['trigger']['trigger_id'] == request['trigger_id']:
                     review['response_h'] = step
-        if (job['role'] != 'A' or job.get('purpose') == 'closeout' or job.get('handoff_protocol', 1) < 6
+        if (job['role'] != 'A' or job.get('purpose') in {'closeout','formal_review'} or job.get('handoff_protocol', 1) < 6
                 or job.get('author_correction') is not None
                 or seal.get('control_outcome', {}).get('decision_status') == 'unresolved'
                 or seal.get('control_outcome', {}).get('portfolio_status') == 'unresolved'
-                or payload['next_action'] in {'extract', 'wait', 'audit'}):
+                or payload['next_action'] in {'extract', 'wait', 'audit','formal_review'}):
             continue
         seal_digest = c.digest(record / 'result-identity.json')
         eligible.append(dict(step=step, seal_sha256=seal_digest))

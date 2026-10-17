@@ -48,7 +48,7 @@ def validate_task(root, step):
     job = c.read(c.regular(root / 'jobs' / f'{step:03d}.json'))
     c._validate_inputs(root, c.workspace(root, step), job)
     schema = c.read(c.regular(execution.origin(root, step) / 'science-result.schema.json', limit=None))
-    expected = c.result_schema(job['role'], job.get('handoff_protocol', 1), 'selection' in job)
+    expected = c.result_schema(job['role'], job.get('handoff_protocol', 1), 'selection' in job,**c.response_options(job))
     if schema != expected:
         # The previous same-protocol schema included this framework storage cap.
         # Accept only that exact prior shape; retain the frozen schema bytes.
@@ -58,7 +58,15 @@ def validate_task(root, step):
             raise ValueError('Original native output schema changed')
     return job
 
-def session(root, step, record):
+def validate_session_header(line, thread, workspace):
+    event = json.loads(line)
+    if (not isinstance(event,dict) or not isinstance(event.get('payload'),dict)
+            or event.get('type') != 'session_meta' or event.get('payload', {}).get('id') != thread
+            or event['payload'].get('cwd') != str(workspace)):
+        raise ValueError('Native session identity or workspace changed')
+
+
+def session(root, step, record, *, home=None, session_path=None, identity_proof=False):
     outcome = c.read(c.regular(record / 'native-outcome.json'))
     thread = outcome.get('thread_id')
     try:
@@ -71,23 +79,26 @@ def session(root, step, record):
             event = json.loads(line)
             if event.get('type') == 'thread.started':
                 if event.get('thread_id') != thread:raise ValueError('Native thread identity changed')
+                thread_event_sha256=hashlib.sha256(line).hexdigest()
                 found = True
                 break
     if not found:raise ResumeUnavailable('worker_resume_thread_unavailable')
     number = execution.records(root, step).index(record)
-    home = execution.home(root, step, number)
+    home = Path(home) if home is not None else execution.home(root, step, number)
     if home.resolve() != home:raise ValueError('Original native home changed')
     matches = []
-    for path in (home / 'sessions').rglob('*.jsonl'):
-        if path.resolve() != path:raise ValueError('Native session original changed')
+    paths = [Path(session_path)] if session_path is not None else (home / 'sessions').rglob('*.jsonl')
+    for path in paths:
+        if path.resolve() != path or not path.is_relative_to(home / 'sessions'):
+            raise ValueError('Native session original changed')
         with c.regular(path).open('rb') as stream:line = stream.readline()
         event = json.loads(line)
         if event.get('type') == 'session_meta' and event.get('payload', {}).get('id') == thread:
-            if event['payload'].get('cwd') != str(c.workspace(root, step)):
-                raise ValueError('Native session workspace changed')
+            validate_session_header(line, thread, c.workspace(root, step))
             matches.append(dict(path=str(path), header_sha256=hashlib.sha256(line).hexdigest()))
     if len(matches) != 1:raise ResumeUnavailable('worker_resume_session_unavailable')
-    return dict(thread_id=thread, home=str(home), workspace=str(c.workspace(root, step)), **matches[0])
+    return dict(thread_id=thread, home=str(home), workspace=str(c.workspace(root, step)),
+                **(dict(thread_event_sha256=thread_event_sha256) if identity_proof else {}), **matches[0])
 
 
 
@@ -181,7 +192,7 @@ def output_request(root, step, record, *, source_attempt=None, verify_task=True)
         if c.digest(c.regular(raw, limit=None)) != outcome.get('raw_sha256'):
             raise ValueError('Original final output changed before repair')
         try:
-            science=c.science_payload(raw, job['role'], job.get('handoff_protocol', 1), 'selection' in job)
+            science=c.science_payload(raw, job['role'], job.get('handoff_protocol', 1), 'selection' in job,**c.response_options(job))
             if job['role']=='W':
                 from . import worker_delivery
                 worker_delivery.require_delivery(root,job,science,record)

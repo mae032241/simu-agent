@@ -43,7 +43,7 @@ def _completed(job, payload, sources):
 
 
 def assess(root, job, payload, *, focus=None):
-    if c.settings(root).get('decision_contract_version')!=1 or job['role'] != 'A' or job.get('purpose') == 'closeout':
+    if c.settings(root).get('decision_contract_version')!=1 or job['role'] != 'A' or job.get('purpose') in {'closeout','formal_review'}:
         return []
     if payload['next_action'] not in ACTIONS:
         return []  # Necessary audit, pause and delivery choices are independent.
@@ -59,7 +59,7 @@ def assess(root, job, payload, *, focus=None):
         sources[ref['step']] = source
     for original, prior, seal, _ in sources.values():
         control = seal.get('control_outcome', {})
-        if (original['role'] != 'A' or original.get('purpose') == 'closeout'
+        if (original['role'] != 'A' or original.get('purpose') in {'closeout','formal_review'}
                 or prior.get('next_action') not in ACTIONS
                 or control.get('decision_status') != 'applied'
                 or control.get('search_status') == 'unresolved'

@@ -135,6 +135,7 @@ def read_adapter(config, request):
 
 
 def _managed_config(job,root=None):
+    if job.get('formal_review'):return None
     configured = ((job.get('search') or {}).get('breadth') or 'experiment_mode' in job and
         (job['experiment_mode']=='local' and job['role']=='W'
          or root is not None and (execution.record(root,job['step'])/'experiment-config.json').exists()))
@@ -403,6 +404,7 @@ def _capture(root, job, payload, materials):
 
 def capture(root, job, payload, materials):
     """Optional adapter failures never discard original science."""
+    if job.get('formal_review'):return None
     from .protocol import require_current
     require_current(root,job)
     config = c.settings(root).get('history_observer')
@@ -677,6 +679,9 @@ def validate_recommendation(job, payload):
 
 
 def validate_observation(root, job, seal):
+    if job.get('formal_review'):
+        if seal.get('observations') is not None:raise ValueError('Formal review has an ordinary observer snapshot')
+        return
     receipt = seal.get('observations')
     config = c.settings(root).get('history_observer') or _managed_config(job,root)
     if config is None:

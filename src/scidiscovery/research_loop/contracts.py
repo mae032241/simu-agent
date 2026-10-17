@@ -105,24 +105,32 @@ def output_quota_exceeded(policy, sizes):
     return total_limit is not None and total>total_limit
 
 
-def actions(role,protocol=CURRENT,*,audit_enabled=True):
+def actions(role,protocol=CURRENT,*,audit_enabled=True,review_enabled=False):
     from .protocol import _current
     _current(protocol,'Scientific result schema')
-    return (*ACTIONS[role],'audit') if role=='A' and audit_enabled else ACTIONS.get(role,())
+    choices = (*ACTIONS[role],'audit') if role=='A' and audit_enabled else ACTIONS.get(role,())
+    return (*choices, 'formal_review') if role=='A' and review_enabled else choices
 
 
-def result_schema(role: str,protocol=CURRENT,comparison=False):
+def response_options(job):
+    return dict(formal_review=bool(job.get('formal_review')), review_enabled=job.get('formal_review_version')==1)
+
+
+def result_schema(role: str,protocol=CURRENT,comparison=False,*,formal_review=False,review_enabled=False):
     """comparison: only a closeout A bound to a frozen control shortlist (job['selection'])."""
     from .protocol import _current
     _current(protocol,'Scientific result schema')
     if role not in ROLE_INSTRUCTIONS:raise ValueError('Unknown scientific role')
+    if formal_review:
+        from . import formal_review as review
+        return review.schema()
     properties=dict(summary=dict(type='string',minLength=1),scientific_result=dict(type='string',minLength=1),
         limitations=dict(type='array',items=dict(type='string')),
         implementation_selection=dict(type=['array','null'],
             items=dict(type='string',minLength=1,maxLength=80),
             description='Null retains the selected implementation; [] clears it; listed scientific object IDs replace it. No paths, hashes or handoff markers.'))
     if role in ACTIONS:
-        properties.update(next_action=dict(type='string',enum=list(actions(role))),route_reason=dict(type='string',minLength=1))
+        properties.update(next_action=dict(type='string',enum=list(actions(role,review_enabled=review_enabled))),route_reason=dict(type='string',minLength=1))
         if role == 'A':
             properties['next_action']['description'] = ('deliver explicitly authorizes adapter delivery of candidate_recommendation; '
                 'finish ends scientific exploration without granting delivery or asserting global completion. '
@@ -149,7 +157,7 @@ def result_schema(role: str,protocol=CURRENT,comparison=False):
     return dict(type='object',properties=properties,required=list(properties),additionalProperties=False)
 
 
-def science_payload(path: Path, role: str, protocol=CURRENT, comparison=False):
+def science_payload(path: Path, role: str, protocol=CURRENT, comparison=False,*,formal_review=False,review_enabled=False):
     import jsonschema
     from .output_repair import OutputRepairRequired
     original = regular(path)
@@ -158,19 +166,20 @@ def science_payload(path: Path, role: str, protocol=CURRENT, comparison=False):
     except (json.JSONDecodeError, UnicodeDecodeError) as error:
         raise OutputRepairRequired('invalid_json', 'Return one valid JSON object matching final_response; completed experiments remain retained.') from error
     try:
-        jsonschema.validate(value, result_schema(role, protocol, comparison))
+        jsonschema.validate(value, result_schema(role, protocol, comparison,formal_review=formal_review,review_enabled=review_enabled))
     except jsonschema.ValidationError as error:
         location = '.'.join(map(str, error.absolute_path))[:128] or 'final response'
         raise OutputRepairRequired('invalid_fields', 'Correct required fields and types in ' + location + ' using final_response; do not repeat experiments.') from error
     if any(not value[key].strip() for key in ('summary', 'scientific_result')) or (
-            role in ACTIONS and not value['route_reason'].strip()):
+            not formal_review and role in ACTIONS and not value['route_reason'].strip()):
         raise OutputRepairRequired('empty_content', 'Return nonempty scientific content and routing reasons for the already completed task.')
     return value
 
 
 def envelope(job, payload):
     return {**payload, 'role': job['role'], 'direct_refs': job['direct_refs'],
-            'next_action': payload.get('next_action', ''), 'route_reason': payload.get('route_reason', '')}
+            'next_action': 'formal_review_return' if job.get('formal_review') else payload.get('next_action', ''),
+            'route_reason': job['instruction'] if job.get('formal_review') else payload.get('route_reason', '')}
 
 
 def _whole_limitations(values, *, byte_limit=1024):
@@ -312,7 +321,7 @@ def _decision_context(root, job):
     if ref is None:
         return None
     source_job = read(regular(root / 'jobs' / f'{previous:03d}.json'))
-    source = science_payload(_execution_raw(root, previous), source_job['role'], source_job.get('handoff_protocol', 1), 'selection' in source_job)
+    source = science_payload(_execution_raw(root, previous), source_job['role'], source_job.get('handoff_protocol', 1), 'selection' in source_job,**response_options(source_job))
     action = 'continue_w' if job['role'] == 'W' else 'revise_h'
     if (source_job['role'] != 'A' or source.get('next_action') != action
             or job['instruction'] != source.get('route_reason')):
@@ -354,6 +363,9 @@ def _role_lineage(job):
 
 
 def science_view(job, root=None):
+    from . import formal_review
+    if job.get('formal_review'):
+        return formal_review.public(root,job)
     protocol = job.get('handoff_protocol', 1)
     context = job.get('decision_context')
     question = job['instruction']
@@ -409,6 +421,10 @@ def science_view(job, root=None):
     from . import engineering
     return {key: value for key, value in {
         'role': job['role'], 'question': question,
+        **(dict(formal_review_capability=dict(enabled=True,
+            instruction='formal_review requests an independent assessment of the single implementation selected through the existing scientific selection. Control binds subject and identity; an unavailable response grants no qualification.'),
+            formal_review_feedback=formal_review.feedback(root,job))
+           if job.get('formal_review_version')==1 else {}),
         **(dict(source_restrictions=job['source_restrictions']) if 'source_restrictions' in job else {}),
         **(dict(engineering_repair=engineering.public(job['engineering_repair'])) if job.get('engineering_repair') else {}),
         **(dict(stage_continuation=dict(status='configured' if job.get('worker_fragment_policy') else 'unavailable',
@@ -454,7 +470,7 @@ def science_view(job, root=None):
         **(dict(decision_request='For scientific continuation, declare the decision, question and result that would change it. '
                 'Exact completed requests without new bound evidence require clarification; this is not a scientific value judgment.')
            if protocol >= 10 and job['role'] == 'A' else {}),
-        'final_response': list(result_schema(job['role'], job.get('handoff_protocol', 1), 'selection' in job)['properties']),
+        'final_response': list(result_schema(job['role'], job.get('handoff_protocol', 1), 'selection' in job,**response_options(job))['properties']),
         **(dict(experiment_execution=('Host-configured registered W execution is available; only calls through the provided experiment command are recorded. Native scratch shell remains available.'
             if job['experiment_mode'] == 'local' else 'External launcher owns experiment configuration; native shell commands are not automatically recorded.'))
             if 'experiment_mode' in job else {}),
@@ -623,6 +639,10 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
                instruction=instruction, direct_refs=refs, direct_materials=materials, direct_entry_points=entry_points, global_materials=globals_,
                evidence_return=evidence_return, **(dict(selected_inputs=selected) if selected else {}),
                **(dict(handoff_protocol=protocol) if protocol >= 2 else {}))
+    if policy.get('formal_review_policy') is not None:
+        from . import formal_review
+        job['formal_review_version']=1
+        formal_review.bind_job(root,job)
     from . import profiles
     if policy.get('role_profiles') is not None:
         job['native_profile'] = profiles.selected(policy, role)
@@ -687,7 +707,7 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
         job['history']['view']['implementation_options'] = [dict(id=row['id'], label=row['label'].encode()[:80].decode('utf-8',errors='ignore')) for row in options[:2]]
         job['history']['view']['implementation_options_omitted_count'] = max(0,len(options)-2)
         lineage.bounded_brief(job['history']['view'])
-    if purpose is None and engineering_repair is None and protocol >= 5 and policy.get('search_policy') is not None:
+    if purpose is None and not job.get('formal_review') and engineering_repair is None and protocol >= 5 and policy.get('search_policy') is not None:
         from . import search
         job['search'] = search.bind(root, step, role, protocol, state=state, unified=projection_version == 1)
     if retained is not None:
@@ -720,7 +740,7 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
         job['source_restrictions'] = qualification.status(root, job)
     for path, value in ((root / 'jobs' / f'{step:03d}.json', job),
                         (work / 'science-task.json', science_view(job, root)),
-                        (host_record(work) / 'science-result.schema.json', result_schema(role, protocol, 'selection' in job))):
+                        (host_record(work) / 'science-result.schema.json', result_schema(role, protocol, 'selection' in job,**response_options(job)))):
         if path.exists():
             if read(regular(path)) != value:
                 raise ValueError('Frozen scientific task changed')
@@ -747,7 +767,7 @@ def validate(work: Path):
             or seal['raw_sha256'] != digest(conclusion) or outcome.get('raw_sha256') != seal['raw_sha256']
             or read(regular(work / 'science-task.json')) != science_view(job, root)):
         raise ValueError('Scientific node identity changed')
-    payload = science_payload(raw, job['role'], job.get('handoff_protocol', 1), 'selection' in job)
+    payload = science_payload(raw, job['role'], job.get('handoff_protocol', 1), 'selection' in job,**response_options(job))
     if seal.get('control_outcome') is not None:
         from . import semantic
         if seal['control_outcome'] != semantic.outcome(root, job, payload):
@@ -768,6 +788,8 @@ def validate(work: Path):
     _validate_inputs(root, work, job)
     from . import qualification
     qualification.validate_outputs(root, job, seal)
+    from . import formal_review
+    formal_review.validate_seal(root,job,payload,seal)
     from . import history
     history.validate_observation(root, job, seal)
     for ref in seal['materials']:
@@ -778,6 +800,8 @@ def validate(work: Path):
 
 
 def _validate_inputs(root, work, job):
+    from . import formal_review
+    formal_review.validate_job(root,job)
     from . import qualification
     qualification.validate_inputs(root, job)
     if 'source_provenance' in job and job.get('source_restrictions') != qualification.status(root, job):
@@ -803,7 +827,7 @@ def _validate_inputs(root, work, job):
     if job['global_materials'] != global_materials(root):
         raise ValueError('Bound global context changed')
     policy = settings(root)
-    if job.get('purpose') is not None:
+    if job.get('purpose') == 'closeout':
         from . import budget, delivery
         begin = budget.closeout_state(root)['begin']
         if (job['purpose'] != 'closeout' or job['role'] not in {'A','W'} or job['role']=='W' and job.get('engineering_repair') is None or begin is None
@@ -878,7 +902,7 @@ def seal_result(root: Path, step: int):
     if (record / 'result-identity.json').exists():
         result = validate(work)
         from . import history
-        history.refresh(root, step + 1) if job.get('purpose') is None else None
+        history.refresh(root, step + 1) if job.get('purpose') != 'closeout' else None
         return result
     from . import execution
     native_record = execution.record(root, step)
@@ -901,7 +925,7 @@ def seal_result(root: Path, step: int):
     raw = regular(raw_path)
     if outcome.get('raw_sha256') != digest(raw):
         raise ValueError('Terminal scientific output is unverified or changed')
-    value = envelope(job, science_payload(raw, job['role'], job.get('handoff_protocol', 1), 'selection' in job))
+    value = envelope(job, science_payload(raw, job['role'], job.get('handoff_protocol', 1), 'selection' in job,**response_options(job)))
     if job['role']=='W':
         from . import managed_wait
         managed_wait.before_seal(root,job,native_record)
@@ -939,9 +963,14 @@ def seal_result(root: Path, step: int):
     if 'source_provenance' in job:
         from . import qualification
         seal['source_provenance'] = qualification.seal_outputs(root, job, seal)
+    if job.get('formal_review_version')==1:
+        from . import formal_review
+        seal['native_authorship']=formal_review.capture_participants(root,job)
+        if job.get('formal_review'):
+            seal['formal_review']=formal_review.seal_review(root,job,value,seal)
     write(record / 'result-identity.json', seal)
     result = validate(work)
-    history.refresh(root, step + 1) if job.get('purpose') is None else None
+    history.refresh(root, step + 1) if job.get('purpose') != 'closeout' else None
     return result
 
 

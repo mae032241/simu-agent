@@ -191,7 +191,7 @@ def _apply_science(root,job,payload,state,diagnostics):
 def interpret(root,job,payload,*,state=None):
     """One prospective interpretation; callers do not publish its mutations."""
     state=copy.deepcopy(project(root,job['step']) if state is None else state)
-    if job.get('purpose')=='closeout' or job.get('engineering_repair'):
+    if job.get('purpose') in {'closeout','formal_review'} or job.get('engineering_repair'):
         return dict(state=state,focus=None,allocation=None,diagnostics=[])
     diagnostics=[]
     try:_apply_science(root,job,payload,state,diagnostics)
@@ -215,7 +215,7 @@ def apply_source(root,job,payload,seal,state):
             or len(reported)<len(diagnostics) and not receipt['omitted_count']
             or receipt['resolved_focus']!=result['focus'] or receipt['resolved_allocation']!=result['allocation']):
         raise ValueError('Scientific intent differs from its sealed interpretation')
-    if job.get('purpose')=='closeout' or job.get('engineering_repair'):return
+    if job.get('purpose') in {'closeout','formal_review'} or job.get('engineering_repair'):return
     if all(receipt.get(key)!='unresolved' for key in ('search_status','selection_status','decision_status','portfolio_status')):
         state.clear();state.update(result['state'])
     else:
@@ -413,11 +413,11 @@ def _portfolio_update(root, job, payload, seal, state, seal_sha=None):
                 branches=list(dict.fromkeys(row['mechanism_binding']['mechanism_ref'] for row in observation.get('managed_calls',[]) if row.get('mechanism_binding') is not None))
             portfolio['pending_w']=dict(step=job['step'],identity=identity,branch=focus['mechanism_ref'],branches=branches)
         return
-    if job['role'] != 'A' or job.get('purpose') == 'closeout':
+    if job['role'] != 'A' or job.get('purpose') in {'closeout','formal_review'}:
         return
     control = seal.get('control_outcome', {})
     valid = all(control.get(key) != 'unresolved' for key in ('search_status', 'selection_status', 'decision_status', 'portfolio_status'))
-    ordinary = not job.get('author_correction') and payload.get('next_action') not in {'audit', 'extract', 'wait'}
+    ordinary = not job.get('author_correction') and payload.get('next_action') not in {'audit', 'formal_review', 'extract', 'wait'}
     pending = portfolio['pending_w']
     original_cycle = ordinary
     if job.get('author_correction') and pending:
@@ -425,7 +425,7 @@ def _portfolio_update(root, job, payload, seal, state, seal_sha=None):
         original_cycle = (original['role'] == 'A' and any(ref['path'] == f'inputs/parents/{pending["step"]:03d}/conclusion.json' for ref in original['direct_refs']))
     focus=state['focus']
     repairing=focus and focus['action']=='repair' and pending and focus['mechanism_ref'] in (pending.get('branches') or [pending['branch']])
-    if valid and original_cycle and not repairing and payload.get('next_action') not in {'audit', 'extract', 'wait'} and pending and any(ref['path'] == f'inputs/parents/{pending["step"]:03d}/conclusion.json' for ref in job['direct_refs']):
+    if valid and original_cycle and not repairing and payload.get('next_action') not in {'audit', 'formal_review', 'extract', 'wait'} and pending and any(ref['path'] == f'inputs/parents/{pending["step"]:03d}/conclusion.json' for ref in job['direct_refs']):
         if pending['identity'] not in portfolio['seen_w']:
             _portfolio_cycle(portfolio, mechanisms, pending['branch'],pending.get('branches'))
             portfolio['seen_w'].add(pending['identity'])

@@ -200,8 +200,9 @@ class WorkerConnections:
         return owners
 
     def _require_independent(self, connection, status, session, thread):
+        from ...operations.review_rules import independence
         owners = self.review_authors(connection, self.runs.compiled_operation(status), status.inputs, status.instance_id)
-        if (session, thread) in owners:
+        if independence(owners, {(session, thread)}) == 'overlap':
             raise RunStateConflict("Independent review requires a different Agent from every participating author.")
 
     def helper_request(self, run_id, request):

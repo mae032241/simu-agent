@@ -1,16 +1,16 @@
 """Optional independent assessment of a sealed experiment or implementation."""
 from pydantic import BaseModel, ConfigDict, Field
-from typing import Literal
 
 from .general_science_agent_operations import _input
 from .operation_declaration import schema_resource, scientific_agent_operation, semantic_contract
 from .operations.spec import CallableComponent, ComponentRef, ComponentSpec, OutputPortSpec, SemanticRuleSpec
 from .artifact_agent.schema.validation import ReviewedTestConclusion
+from .operations.review_rules import ReviewVerdict, REVIEW_INSTRUCTION
 
 
 class ExperimentReview(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-    verdict: Literal["pass", "revise", "blocked", "inconclusive"]
+    verdict: ReviewVerdict
     summary: str = Field(min_length=1, max_length=8192)
     findings: tuple[str, ...] = Field(default=(), max_length=32)
     limitations: tuple[str, ...] = Field(default=(), max_length=32)
@@ -35,7 +35,7 @@ does not authorize work, renew budgets or require a review to unlock dispatch.
 """
 SCHEMA = schema_resource(ExperimentReview, "scidiscovery.experiment-review.v1")
 CONTRACT = semantic_contract(SemanticRuleSpec("experiment.review",
-    "Assess only the exact supplied scientific subject and requested claims. Findings may question the science; unrequested templates and fixed diagnostic sequences are not pass conditions."))
+    REVIEW_INSTRUCTION))
 VALIDATOR = CallableComponent("validator", lambda raw: ExperimentReview.model_validate_json(raw, strict=True))
 COMPONENTS = (
     ComponentSpec("experiment_review_prompt", "resource", __name__ + ":PROMPT"),

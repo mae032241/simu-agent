@@ -164,6 +164,9 @@ def run_native(root: Path, step: int, attempt=0):
             '-c', f'service_tier={json.dumps(profile["service_tier"])}',
             '--sandbox', 'workspace-write', '-C', str(work), '-']
     role_instruction = job.get('native_role_instruction', ROLE_INSTRUCTIONS[job['role']])
+    if job.get('formal_review'):
+        from . import formal_review
+        role_instruction=formal_review.public(root,job)['review']['instruction']
     # Raw Codex is supported as a local soft-isolation entry. Existing qualified
     # launchers retain their own exact argv/config protocol and MCP settings.
     if len(settings['native_launcher_argv']) == 1 and Path(args[0]).name == 'codex':
@@ -232,11 +235,19 @@ def run_native(root: Path, step: int, attempt=0):
               'separate route_reason. The controller dispatches the next role; functional tools retain their permissions.\n'
               + json.dumps(dict(
                   next_action_options=actions(job['role'], job.get('handoff_protocol', 1),
-                      audit_enabled=settings.get('candidate_audit_policy') == {'version': 1}),
+                      audit_enabled=settings.get('candidate_audit_policy') == {'version': 1},
+                      review_enabled=job.get('formal_review_version')==1),
                   shared_seconds_remaining=max(0, int(limits['seconds_remaining'])),
                   shared_observed_tokens_remaining=max(0, limits['max_tokens']-budget['observed_tokens']),
                   metering='Native usage may be delayed; this is not a guaranteed billing cap.',
                   **(dict(node_budget=intent['budget_slice']['limits']) if intent.get('budget_slice') else {})), ensure_ascii=False))
+    if job.get('formal_review'):
+        prompt=(role_instruction+'\nRead science-task.json, its exact reviewed material and global inputs. '
+            'Do not edit the subject. Return only the four scientific verdict/findings fields in final_response; '
+            'the host binds subject, participants, qualification and return route. A pass grants no execution permission. '
+            'No IDs, hashes, manifests or mechanical receipts are your work. '
+            +json.dumps(dict(shared_seconds_remaining=max(0,int(limits['seconds_remaining'])),
+                shared_observed_tokens_remaining=max(0,limits['max_tokens']-budget['observed_tokens'])),ensure_ascii=False))
     if control_budget.node_mode(root)=='soft':
         prompt += ('\nNode and search limits are soft targets, not renewed grants. Between bounded actions read work/budget-status.json when available. '
                    'Near/reached targets or delivery reserve: preserve useful results and return your scientific JSON promptly. '
@@ -477,6 +488,10 @@ def run_native(root: Path, step: int, attempt=0):
         write(record / 'usage-observation.json', observation)
     outcome = dict(returncode=process.returncode if process else None,
           stop_reason=stop, usage=usage(root), thread_id=thread_id, cleanup=cleanup,
+          **(dict(native_identity=dict(home=str(meter_home), path=str(live_meter.path) if live_meter.path is not None else None,
+              participant_scope='codex_exec_single_agent_v1' if len(settings['native_launcher_argv'])==1
+              and Path(args[0]).name=='codex' and 'features.multi_agent=false' in args else 'unsupported'))
+             if settings.get('formal_review_policy') is not None else {}),
           metering=live_meter.snapshot() if process is None else observation,
           limitation='Observed token metadata only; running requests and reporting delay are unmeasured.')
     if attempt and intent.get('context_mode') != 'new_context' and thread_id != intent['session']['thread_id']:

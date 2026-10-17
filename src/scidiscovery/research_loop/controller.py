@@ -33,7 +33,7 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
             worker_fragment_policy: dict | None = None, role_budget_policy: dict | None = None,
             selection_policy: dict | None = None, role_profiles: dict | None = None,
             experiment_mode: str | None = None, execution_config: dict | None = None,
-            source_restrictions: list[dict] | None = None) -> dict:
+            source_restrictions: list[dict] | None = None, formal_review_policy: dict | None = None) -> dict:
     """Freeze an explicit goal and finite launch budgets in a fresh directory."""
     portfolio_limits = search.portfolio_policy(portfolio_policy) if portfolio_policy is not None else None
     if exploration_order_version is not None:
@@ -100,6 +100,8 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
     from . import qualification
     original_globals = [objective, *[Path(path) for path in (user_updates or [])]]
     source_facts = qualification.source_configuration(public_root, source_restrictions, original_globals)
+    from . import formal_review
+    review_policy=formal_review.configuration(formal_review_policy)
     observer = history.observer_config(history_observer) if history_observer is not None else None
     literal_guidance = (guidance.OPPORTUNITY if portfolio_limits is not None and portfolio_limits.get('version', 1) == 2
                         and role_guidance is guidance.DEFAULT else role_guidance)
@@ -205,6 +207,8 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
             path='inputs/global/' + source.relative_to(globals_).as_posix(),
             sha256=contracts.digest(source)))
     settings['source_provenance'] = qualification.freeze_sources(root, source_facts, original_globals, settings['global_materials'])
+    if review_policy is not None:
+        settings['formal_review_policy']=formal_review.freeze_contract(root)
     contracts.write(root / "settings.json", settings)
     contracts.write(root / "settings-identity.json",
                     dict(sha256=contracts.digest(root / "settings.json")))
@@ -316,6 +320,12 @@ def _check_job(root, settings, step, role, parents, instruction, evidence_return
 
 def _route(root, step, role, result, job, current_h, current_w):
     instruction = result.get("route_reason", "")
+    if role=='A' and (job.get('formal_review') or result.get('next_action')=='formal_review'):
+        from . import formal_review
+        parents=_parents(current_h,current_w,step)
+        route=(formal_review.return_route(root,job,parents) if job.get('formal_review') else
+               formal_review.request_route(root,job,result,parents))
+        return (*route,current_h,current_w)
     if role == "H":
         current_h = step
         action = result["next_action"]
@@ -573,6 +583,8 @@ def _run(root):
                 return _start_closeout(root, completed, step + 1, share_stop)
             return _finish(root, settings, 'role_budget_stop', completed, last, reason=share_stop)
         if next_role is None:
+            if result.get('next_action')=='formal_review':
+                return _finish(root,settings,'wait',completed,last,reason='formal_review_unavailable')
             if settings.get('delivery_policy') is not None and result.get('next_action') in {'finish', 'deliver'}:
                 return _start_closeout(root, completed, step + 1, 'scientific_finish',
                     authorization_step=step if result['next_action'] == 'deliver' else None)
