@@ -403,6 +403,26 @@
       "cleanup_complete": true,
       "memory_stop_triggers": [],
       "log": ".trial/p_migration_validation_20261017/r0/batch-001/pytest.log"
+    },
+    {
+      "batch_group": "r0_dependencies_retest",
+      "targets": [
+        "tests/research_loop/test_early_replay.py"
+      ],
+      "lane": "process",
+      "summary": "5 passed in 3.81s",
+      "returncode": 0,
+      "elapsed_seconds": 4.057,
+      "tree_rss_high_water_bytes": 155430912,
+      "stop_reason": "exited",
+      "cleanup_complete": true,
+      "memory_stop_triggers": [],
+      "log": ".trial/p_migration_validation_20261017/r0_dependencies_retest/batch-001/pytest.log"
     }
-  ]
+  ],
+  "final_selected_result": {
+    "unique_passed": 164,
+    "remaining_failed": 0,
+    "scope": "Selected migration tests only; initial failures retained above."
+  }
 }

@@ -2,7 +2,13 @@
 
 基线 `8e29d07`，另包含本轮迟批恢复修复及两处测试断言修正。用户本轮明确要求执行各环节测试并管理内存，故此前仅静态的限制在本轮按下述有限范围解除。没有运行全量测试或真实模型/远端 solver。独立修复审查见 [审查记录](P_MIGRATION_RUNTIME_FIX_REVIEW_20261017.zh-CN.md)。
 
-## 结果
+## R0 依赖补齐后的追加验收
+
+用户在 base 手动安装并确认 pandas 3.0.6、cloudpickle 3.1.2 后，仅重跑原 R0 5 项。命令使用同一资源配置与 process lane，output 为 `.trial/p_migration_validation_20261017/r0_dependencies_retest`。结果 **5 passed in 3.81s**；监控总耗时 4.057s，峰值进程树 RSS 155430912 bytes（148.2 MiB），无 memory trigger，cleanup_complete=true。没有修改代码、重跑其他已通过用例或再次安装环境。
+
+本轮所选用例的最终去重结果更新为 **164 项通过、0 项剩余失败**。初次159通过/R0失败的记录在下方和机器JSON保留，不能累加重跑为新用例。用户报告的 base `tcad-sentaurus` 缺 `scidiscovery` 依赖警告未修复；本次源码测试成功不意味着 base 的 pip check 已干净。真实模型、solver、浏览器、跨主机可写恢复等资格仍未覆盖。
+
+## 初次结果
 
 按所选用例最终结果去重：**159 项通过，R0 的 5 项失败尚未验证通过**。这是分环节定向验收，不是整个仓库全量通过。
 
@@ -45,4 +51,4 @@ python scripts/run_tests.py --config .trial/p_migration_validation_20261017/reso
 
 ## 尚未验证
 
-R0 的真实隔离回放；真实 Codex 身份/续接/模型科研能力；真实 TCAD/SSH/solver/远端重启；浏览器及真实 HTTP 跨进程流程；TCAD 安装依赖解析；跨主机可写归档恢复（设计仍未实现）；其余旧生产入口退役。这里的模拟 backend/native transport 通过不能替代上述资格。历史 static-only 报告按当时证据保留，本报告增补有限动态事实，不宣称 P1–P5 整体完结。
+真实 Codex 身份/续接/模型科研能力；真实 TCAD/SSH/solver/远端重启；浏览器及真实 HTTP 跨进程流程；TCAD 安装依赖解析；跨主机可写归档恢复（设计仍未实现）；其余旧生产入口退役。这里的模拟 backend/native transport 通过不能替代上述资格。历史 static-only 报告按当时证据保留，本报告增补有限动态事实，不宣称 P1–P5 整体完结。
