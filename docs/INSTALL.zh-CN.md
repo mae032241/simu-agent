@@ -40,8 +40,8 @@ sudo SCID_DEPLOY_MODE=legacy SCID_PYTHON="$(command -v python3)" \
 
 保留旧数据和现有服务，不静默转换或删除。旧 UI 和多数 `scid` 管理命令会打开
 runtime，不能冒称只读出口；离线 `active-bundle-verify` 仍可用，active bundle
-export 只覆盖选定科学 Artifact，不是整个 SQL/控制状态迁移。独立旧档案读取/导出
-及停写接缝属于下一迁移节点。
+export 只覆盖选定科学 Artifact，不是整个 SQL/控制状态迁移。独立旧档案读取/导出与历史迁移
+仅在实际需要时作为后置可选工作，不是薄层部署的前置。
 
 ## 1. 支持环境
 

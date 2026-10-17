@@ -48,7 +48,8 @@ Legacy data and installed services are preserved, not silently converted or remo
 The old UI and most administrative `scid` commands open the runtime and are not a
 read-only replacement. Offline `active-bundle-verify` remains available; active bundle
 export covers selected scientific Artifacts, not a whole SQL/control-state migration.
-A dedicated legacy read/export cutoff is a separate migration node.
+A dedicated legacy read/export cutoff is optional work for an actual historical
+migration need, not a prerequisite for thin deployment.
 
 ## 1. Supported Environment
 
