@@ -11,6 +11,9 @@ from typing import get_args
 from ..operations import review_rules
 from . import contracts as c, execution, qualification as q
 
+QUESTION = ('Assess the exact supplied artifact against the original objective and constraints. '
+            'Identify supported claims, counterevidence, missing evidence and limitations; no favorable verdict is presumed.')
+
 
 def schema():
     fields = dict(verdict=dict(type='string', enum=list(get_args(review_rules.ReviewVerdict))),
@@ -26,12 +29,13 @@ def configuration(value):
 
 
 def _contract():
-    files = [Path(__file__), Path(review_rules.__file__), Path(c.__file__).with_name('native.py'),
+    files = [Path(__file__), Path(c.__file__), Path(review_rules.__file__), Path(c.__file__).with_name('native.py'),
              Path(c.__file__).with_name('continuation.py')]
     return dict(version=1, instruction=review_rules.REVIEW_INSTRUCTION,
         scope='Review only the exact supplied material and scientific question. Do not edit the subject. '
               'Use revise, blocked or inconclusive for unsupported claims. Review grants no execution permission.',
         schema=schema(), authors_contract='native_participants_and_selected_implementations_v1',
+        default_inputs='exact_subject_and_global_objective_constraints_v1',
         implementation=[q._identity(path.resolve()) for path in files])
 
 
@@ -192,7 +196,7 @@ def request_route(root, job, payload, parents):
     reason = ('formal_review_subject_missing_or_ambiguous' if subject is None else
               'subject_authorship_unsupported' if not identity['complete'] else
               'reviewer_identity_unsupported' if len(launcher)!=1 or Path(launcher[0]).name!='codex' else None)
-    value = dict(contract=current, question=payload['route_reason'], subject=subject,
+    value = dict(contract=current, question=QUESTION, requester_rationale=payload['route_reason'], subject=subject,
                  authors=identity, unresolved_selection=selected if subject is None else None, reason=reason)
     requester = dict(step=job['step'], seal=q._ref(root, seal_path))
     record = c.host_record(c.workspace(root, job['step']))
@@ -202,7 +206,22 @@ def request_route(root, job, payload, parents):
         return ('A', sorted(set([*parents,job['step']])), 'Choose a scientific next action; formal review is unavailable: '+reason,
                 dict(kind='formal_review_unavailable', unavailable=ref))
     ref = q._save(root, record / 'formal-review-request.json', dict(requester=requester, **value))
-    return 'A', sorted(set([*parents, subject['producer_step']])), value['question'], dict(kind='formal_review', request=ref)
+    return 'A', [subject['producer_step']], value['question'], dict(kind='formal_review', request=ref)
+
+
+def input_binding(root, reference):
+    """Exact material and producer metadata, without mounting authored conclusions."""
+    request = q._read(root, reference)
+    subject = request['subject']; seal = q._read(root, subject['producer_seal'])
+    if (request['contract'] != contract(root) or request['question'] != QUESTION
+            or subject['producer_seal'] != q._ref(root, c.host_record(c.workspace(root,subject['producer_step']))/'result-identity.json')
+            or subject['material'] not in seal['materials']):
+        raise q.IntegrityError('Formal review inputs differ from the exact requested subject')
+    selected = dict(label='Exact reviewed artifact', origin_step=subject['producer_step'],
+        origin_result_sha256=seal['sha256'], material=subject['material'])
+    return dict(materials=[subject['material']], selected=[selected],
+        history=dict(nodes=[dict(step=subject['producer_step'], seal_sha256=subject['producer_seal']['sha256'])],
+                     files=[], candidate_ids=[], view={}))
 
 
 def unavailable(root, step):
@@ -237,6 +256,8 @@ def bind_job(root, job):
     request = q._read(root, back['request'])
     if request['contract'] != contract(root) or request['requester']['step'] >= job['step']:
         raise q.IntegrityError('Formal review request contract or requester changed')
+    if request['requester']['seal'] != q._ref(root,c.host_record(c.workspace(root,request['requester']['step']))/'result-identity.json'):
+        raise q.IntegrityError('Formal review requester differs from its exact original node')
     q._read(root, request['requester']['seal'])
     q._read(root, request['subject']['producer_seal'])
     job.update(purpose='formal_review', formal_review=back['request'])
@@ -249,11 +270,17 @@ def validate_job(root, job):
         bind_job(root,expected)
         if (expected.get('formal_review')!=job.get('formal_review') or job.get('purpose')!='formal_review'):
             raise q.IntegrityError('Formal review task differs from its frozen request')
-        request=q._read(root,job['formal_review'])
-        subject=request['subject']
-        if job['instruction']!=request['question'] or subject['material'] not in job['direct_materials'] or not any(
-                ref['path']==f'inputs/parents/{request["requester"]["step"]:03d}/conclusion.json' for ref in job['direct_refs']):
-            raise q.IntegrityError('Formal review task omitted its exact subject or requester')
+        binding=input_binding(root,job['formal_review'])
+        if (job['instruction']!=QUESTION or job['goal_text']!=c.settings(root)['objective']
+                or job['global_materials']!=c.global_materials(root) or job['direct_refs']
+                or job['direct_materials']!=binding['materials'] or job.get('selected_inputs')!=binding['selected']
+                or job['direct_entry_points'] or job['history']!=binding['history']
+                or job.get('implementation_options')!=[] or job.get('implementation_options_omitted_count')!=0):
+            raise q.IntegrityError('Formal review task differs from its exact subject and neutral input boundary')
+        work=c.workspace(root,job['step'])
+        if ((work/'inputs/history').exists() or (work/'inputs/history').is_symlink()
+                or any((work/'inputs/parents').glob('*/conclusion.json'))):
+            raise q.IntegrityError('Formal review retained default historical or requester conclusions')
     if job.get('formal_review_version')==1 and contract(root) is None:
         raise q.IntegrityError('Formal review task lost its operator contract')
 
@@ -280,7 +307,9 @@ def public(root, job):
     material = request['subject']['material']
     return dict(role='A', question=request['question'],
         review=dict(subject=material['path'], instruction=_contract()['instruction'],
-                    scope=_contract()['scope']),
+                    scope=_contract()['scope'],
+                    claims='Test claims in the exact artifact against the original global objective and constraints; absent claims or evidence remain unknown.',
+                    requester_context='Requester rationale and conclusions are not default inputs. Host audit originals remain retained; any on-demand file reads are not completely observed. This is not blinded review or access isolation.'),
         global_inputs=[row['path'] for row in job['global_materials']],
         final_response=list(schema()['properties']), outputs='artifacts/')
 

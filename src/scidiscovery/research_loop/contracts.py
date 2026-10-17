@@ -614,6 +614,12 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
     protocol=CURRENT
     authority_version=projection_version=selection_protocol=1
     audit_projection_version=1 if policy.get('candidate_audit_policy') else 0
+    review_binding=None
+    if (evidence_return or {}).get('kind')=='formal_review':
+        from . import formal_review
+        if role!='A':raise ValueError('Formal review requires its native A node')
+        review_binding=formal_review.input_binding(root,evidence_return['request'])
+        audit_projection_version=0
     work = workspace(root, step)
     work.mkdir(parents=True, exist_ok=True)
     (work / 'work').mkdir(exist_ok=True)
@@ -622,7 +628,9 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
     for item in globals_:
         _copy_bound(root / item['source'], work / item['path'], item['sha256'])
     refs, materials, entry_points, selected = [], [], [], []
-    for parent in parents:
+    if review_binding is not None:
+        materials=review_binding['materials'];selected=review_binding['selected']
+    for parent in ([] if review_binding is not None else parents):
         source_work = workspace(root, parent)
         validate(source_work)
         # Pass the author's science, not the controller envelope and its parent
@@ -704,13 +712,13 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
             mark = shortlist.marker(root,step)
             if mark is not None:
                 job['selection'] = mark
-    previous = read(host_record(workspace(root, step - 1)) / 'result-identity.json') if step - 1 in parents else {}
+    previous = read(host_record(workspace(root, step - 1)) / 'result-identity.json') if step - 1 in parents and review_binding is None else {}
     job['input_selection_status'] = previous.get('control_outcome', {}).get('selection_status', 'applied')
     job['control_diagnostics'] = previous.get('control_outcome', {}).get('diagnostics', [])
     if role=='W':job['worker_fragment_policy']=policy.get('worker_fragment_policy')
     if author_correction is not None:
         job['author_correction'] = author_correction
-    if protocol >= 9 and role == 'A' and step - 1 in parents:
+    if protocol >= 9 and role == 'A' and step - 1 in parents and review_binding is None:
         from . import candidate_audit
         receipt = candidate_audit.receipt_ref(root, step - 1)
         if receipt is not None:
@@ -719,12 +727,15 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
     from . import history
     extra_steps = [parent for parent in parents if source_cutoff is not None and parent > source_cutoff]
     from . import lineage
-    job['history'],state=lineage.bind(root,step,role,protocol,source_cutoff=source_cutoff,extra_steps=extra_steps,selection_protocol=selection_protocol,
-        audit_projection_version=audit_projection_version,adjacent_audit=job.get('candidate_audit'))
-    options = [item for parent in parents for item in history.implementation_options(root, parent)]
+    if review_binding is not None:
+        job['history']=review_binding['history'];options=[]
+    else:
+        job['history'],state=lineage.bind(root,step,role,protocol,source_cutoff=source_cutoff,extra_steps=extra_steps,selection_protocol=selection_protocol,
+            audit_projection_version=audit_projection_version,adjacent_audit=job.get('candidate_audit'))
+        options = [item for parent in parents for item in history.implementation_options(root, parent)]
     job['implementation_options'] = options[:16]
     job['implementation_options_omitted_count'] = max(0, len(options) - 16)
-    if projection_version == 1:
+    if projection_version == 1 and review_binding is None:
         job['history']['view']['implementation_options'] = [dict(id=row['id'], label=row['label'].encode()[:80].decode('utf-8',errors='ignore')) for row in options[:2]]
         job['history']['view']['implementation_options_omitted_count'] = max(0,len(options)-2)
         lineage.bounded_brief(job['history']['view'])
@@ -894,7 +905,9 @@ def _validate_inputs(root, work, job):
         raise ValueError('Combined input materials exceed the frozen handoff bound')
     expected = []
     previous = f'inputs/parents/{job["step"] - 1:03d}/conclusion.json'
-    if any(ref['path'] == previous for ref in job['direct_refs']):
+    if job.get('formal_review'):
+        expected=formal_review.input_binding(root,job['formal_review'])['selected']
+    elif any(ref['path'] == previous for ref in job['direct_refs']):
         expected = read(regular(host_record(workspace(root, job['step'] - 1)) /
                                 'result-identity.json')).get('selected_inputs', [])
     if job.get('selected_inputs', []) != expected:

@@ -243,6 +243,8 @@ def run_native(root: Path, step: int, attempt=0):
                   **(dict(node_budget=intent['budget_slice']['limits']) if intent.get('budget_slice') else {})), ensure_ascii=False))
     if job.get('formal_review'):
         prompt=(role_instruction+'\nRead science-task.json, its exact reviewed material and global inputs. '
+            'Assess the evidence before requester explanations; no favorable verdict is presumed. '
+            'Requester conclusions and full historical arguments are not default inputs. On-demand file reading is not completely observed; this is not blinded review or access isolation. '
             'Do not edit the subject. Return only the four scientific verdict/findings fields in final_response; '
             'the host binds subject, participants, qualification and return route. A pass grants no execution permission. '
             'No IDs, hashes, manifests or mechanical receipts are your work. '

@@ -319,6 +319,10 @@ def _check_job(root, settings, step, role, parents, instruction, evidence_return
     expected_refs = [dict(path=f"inputs/parents/{parent:03d}/conclusion.json",
         sha256=contracts.digest(execution.raw(root, parent)))
         for parent in parents]
+    if (evidence_return or {}).get('kind')=='formal_review':
+        from . import formal_review
+        formal_review.validate_job(root,job)
+        expected_refs=[]
     if (job.get("step") != step or job.get("role") != role
             or job.get("goal_text") != settings["objective"]
             or job.get("public_root") != settings["public_root"]

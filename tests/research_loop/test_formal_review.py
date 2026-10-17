@@ -12,7 +12,8 @@ from test_history_handoff import finish
 # It never calls a model, backend or solver. Its identities are synthetic.
 LAUNCHER = '''import json,os,pathlib,sys,uuid
 work=pathlib.Path(os.environ['THIN_HWA_WORKSPACE']);step=int(work.name)
-task=json.loads((work/'science-task.json').read_text());sys.stdin.read()
+task=json.loads((work/'science-task.json').read_text());prompt=sys.stdin.read()
+anchor='REQUESTER_INSISTS_PASS_WITHOUT_COUNTEREVIDENCE'
 thread=str(uuid.uuid5(uuid.NAMESPACE_URL,'formal-native-'+str(2 if step==4 and os.environ.get('REVIEW_REUSE_AUTHOR') else step)))
 home=pathlib.Path(os.environ['CODEX_HOME']);sessions=home/'sessions';sessions.mkdir(parents=True,exist_ok=True)
 if not (step==2 and os.environ.get('REVIEW_MISSING_AUTHOR')):
@@ -20,7 +21,12 @@ if not (step==2 and os.environ.get('REVIEW_MISSING_AUTHOR')):
 print(json.dumps({'type':'thread.started','thread_id':thread}),flush=True)
 if 'review' in task:
  assert 'history' not in task and 'parents' not in task
+ assert anchor not in json.dumps(task) and anchor not in prompt
+ assert not (work/'inputs/history').exists()
+ assert not list((work/'inputs/parents').glob('*/conclusion.json'))
+ assert all(anchor.encode() not in path.read_bytes() for path in (work/'inputs').rglob('*') if path.is_file())
  assert (work/task['review']['subject']).read_text()=='a scientific implementation'
+ assert all((work/path).is_file() for path in task['global_inputs'])
  value=dict(verdict='pass',summary='Exact fixture review',scientific_result='No fixture defect observed.',limitations=['Synthetic native transport only.'])
 else:
  value=dict(summary='Fixture science',scientific_result='A bounded finding.',limitations=['No real science.'],implementation_selection=None)
@@ -34,6 +40,7 @@ else:
   request=step==3 or bool(os.environ.get('REVIEW_MISSING_AUTHOR')) and (step<5 or mode!='finish')
   value.update(next_action='extract' if step==4 and mode=='extract' else 'formal_review' if request else 'finish',route_reason='Assess the selected implementation '+str(step),candidate_recommendation=None,search_review=None,progress_assessment=None,decision_request=None,portfolio_review=None)
   if request:value['implementation_selection']=['W002-I001']
+  if step==3:value.update(summary=anchor,scientific_result=anchor,route_reason=anchor)
   if step==5 and not os.environ.get('REVIEW_MISSING_AUTHOR'):assert task['formal_review_feedback']['status']==('not_qualified' if os.environ.get('REVIEW_REUSE_AUTHOR') else 'passed')
 args=sys.argv[1:];pathlib.Path(args[args.index('--output-last-message')+1]).write_text(json.dumps(value))
 print(json.dumps({'type':'turn.completed','usage':{'input_tokens':10,'cached_input_tokens':0,'output_tokens':5}}),flush=True)
@@ -79,6 +86,11 @@ def test_real_native_route_freezes_exact_review_and_uses_actual_home(tmp_path,mo
     assert result['status']=='finish' and result['completed_steps']==5
     job=c.read(root/'jobs/004.json');record=c.host_record(c.workspace(root,4))
     assert job['role']=='A' and job['purpose']=='formal_review'
+    request=c.read(root/job['formal_review']['path'])
+    assert request['requester_rationale']=='REQUESTER_INSISTS_PASS_WITHOUT_COUNTEREVIDENCE'
+    assert request['question']==job['instruction']==review.QUESTION
+    assert job['direct_refs']==[] and len(job['direct_materials'])==1
+    assert job['selected_inputs'][0]['origin_step']==2
     assert set(c.read(record/'science-output.json'))=={'verdict','summary','scientific_result','limitations'}
     seal=c.read(record/'result-identity.json');proof=c.read(root/seal['formal_review']['path'])
     assert proof['status']=='passed' and proof['independence']=='independent'
@@ -201,6 +213,58 @@ def test_ordinary_a_and_pass_text_do_not_gain_formal_qualification(tmp_path):
     assert 'formal_review' not in c.read(record/'result-identity.json')
     assert 'formal_review' not in c.result_schema('A')['properties']['next_action']['enum']
     assert set(review.schema()['properties'])=={'verdict','summary','scientific_result','limitations'}
+    ordinary=c.build_job(root,3,'A',[2],instruction='Ordinary scientific continuation')
+    assert ordinary['direct_refs'][0]['path']=='inputs/parents/002/conclusion.json'
+    assert 'pass: independent and ready to execute' in (c.workspace(root,3)/ordinary['direct_refs'][0]['path']).read_text()
+
+
+def test_review_default_packet_keeps_exact_source_without_requester_arguments(tmp_path,monkeypatch):
+    from scidiscovery.research_loop import qualification as q
+    root=prepare(tmp_path,['codex'])
+    finish(root,1,'H',[],action='experiment')
+    finish(root,2,'W',[1],files={'model.txt':'exact scientific claim','other.txt':'unselected material'})
+    anchor='REQUESTER_FAVORS_PASS_AND_DISMISSES_ALL_LIMITATIONS'
+    requester,_,record=finish(root,3,'A',[1,2],action='formal_review',selection=['W002-I001'],text=anchor,summary=anchor)
+    monkeypatch.setattr(review,'authors',lambda *args:dict(complete=True,participants=[['fixture','author']]))
+    route=review.request_route(root,requester,c.validate(c.workspace(root,3)),[1,2,3])
+    assert route[1]==[2] and route[2]==review.QUESTION
+    job=c.build_job(root,4,'A',route[1],instruction=route[2],evidence_return=route[3])
+    work=c.workspace(root,4);c._validate_inputs(root,work,job)
+    assert job['direct_refs']==[] and len(job['direct_materials'])==1
+    assert job['history']['files']==[] and job['history']['view']=={}
+    assert not (work/'inputs/history').exists() and not (work/'inputs/parents/003').exists()
+    assert all(anchor.encode() not in path.read_bytes() for path in (work/'inputs').rglob('*') if path.is_file())
+    assert anchor in c.read(record/'science-output.json')['scientific_result']
+    source=q._read(root,job['source_provenance'])
+    assert [edge['step'] for edge in source['edges'] if edge['kind']=='producer']==[2]
+    assert not any(edge['kind']=='unknown' for edge in source['edges'])
+    changed=dict(job,selected_inputs=[dict(job['selected_inputs'][0],origin_step=1)])
+    with pytest.raises(ValueError,match='neutral input boundary'):
+        c._validate_inputs(root,work,changed)
+
+
+def test_review_subject_from_requester_keeps_artifact_but_not_its_conclusion(tmp_path):
+    from scidiscovery.research_loop import qualification as q
+    root=prepare(tmp_path,['codex'])
+    finish(root,1,'H',[],action='analyze')
+    anchor='REQUESTER_SELF_ASSESSMENT_MUST_NOT_BE_DEFAULT_CONTEXT'
+    _,_,record=finish(root,2,'A',[1],text=anchor,files={'subject.txt':'the exact subject','unrelated.txt':anchor})
+    seal=q._ref(root,record/'result-identity.json')
+    material=next(item for item in c.read(record/'result-identity.json')['materials'] if item['path'].endswith('/subject.txt'))
+    # A host-bound exact request fixture, not an independence/production qualification.
+    reference=q._save(root,record/'formal-review-request.json',dict(contract=review.contract(root),question=review.QUESTION,
+        requester_rationale=anchor,requester=dict(step=2,seal=seal),
+        subject=dict(producer_step=2,producer_seal=seal,material=material),
+        authors=dict(complete=False,participants=[]),unresolved_selection=None,reason=None))
+    back=dict(kind='formal_review',request=reference)
+    job=c.build_job(root,3,'A',[2],instruction=review.QUESTION,evidence_return=back)
+    work=c.workspace(root,3);c._validate_inputs(root,work,job)
+    assert job['direct_materials']==[material] and job['direct_refs']==[]
+    assert (work/material['path']).read_text()=='the exact subject'
+    assert not (work/'inputs/parents/002/conclusion.json').exists()
+    assert not (work/'inputs/parents/002/artifacts/unrelated.txt').exists()
+    assert not (work/'inputs/history').exists()
+    assert controller._check_job(root,c.settings(root),3,'A',[2],review.QUESTION,back)==job
 
 
 def test_unavailable_review_preserves_existing_nonreview_author_correction(tmp_path):
