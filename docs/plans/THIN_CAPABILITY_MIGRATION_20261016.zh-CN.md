@@ -6,7 +6,7 @@
 
 [本轮验收账](evidence/P_FINAL_INCREMENTAL_ACCEPTANCE_20261017.zh-CN.md)记录两次来源用例失败及修复、资源原件、恢复边界。**浏览器验收尚未完成**：Chrome 短目录修复后启动，但被本轮 RSS 止损终止；没有扩大内存限额。真实模型/远端 solver、真实掉电及跨宿主恢复不在本轮资格内。因此源码实施范围已收口，不宣称 P1–P5 全部生产验收通过。
 
-main 的本地提交和未提交改动已完成[独立核对的选择性评估](evidence/MAIN_THIN_INTEGRATION_ASSESSMENT_20261017.zh-CN.md)：算法修复可单独移植，UI 展示适配薄层，不整包引回 SQL/Root/MCP。原 main 工作区未改动；远端拉取失败，未称远端最新。
+main 的本地提交和未提交改动已完成[独立核对的选择性评估](evidence/MAIN_THIN_INTEGRATION_ASSESSMENT_20261017.zh-CN.md)：算法修复可单独移植，UI 展示适配薄层，不整包引回 SQL/Root/MCP。原 main 工作区未改动。后续整合轮已成功拉取远端：`github/main=e27352a` 是 dev 祖先，无远端待合提交；本地 main 后续提交/WIP 的选择性移植见[整合账](evidence/MAIN_SELECTIVE_INTEGRATION_20261017.zh-CN.md)，不表示整个本地 main 已合并。
 
 以下状态段保留各次实施的历史截面，当前状态以上述增量验收账为准。
 

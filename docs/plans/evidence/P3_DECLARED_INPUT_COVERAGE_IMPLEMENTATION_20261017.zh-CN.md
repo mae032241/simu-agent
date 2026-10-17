@@ -47,3 +47,30 @@ P2 budget/maintenance、P4 owner/archive/CLI 与 UI/browser 作者文件不在�
 
 尚未动态验收：真实 observer 集成、真实 TCAD/SSH/solver、实际 native 作者与全权限外读范围。
 本节点不补未知来源 clear、不增加授权或预算，也不实现 checkpoint 恢复。
+
+## root 唯一串行验收追加
+
+下列均由 root 运行，作者只读日志/资源记录，未自行运行。原失败日志保留。
+
+| 证据目录（`.trial/p_finish_20261017/` 下） | pytest 结果/耗时 | supervisor 秒 | 树 RSS 峰值 B |
+| --- | --- | --- | --- |
+| `sources/batch-001` | 1 fail、3 pass / 16.90s | 17.108 | 85,745,664 |
+| `opaque_retry/batch-001` | 1 fail / 3.82s | 4.021 | 84,447,232 |
+| `opaque_generic_fix/batch-001` | 1 pass / 5.80s | 5.988 | 84,434,944 |
+| `lease_and_local/batch-001` | 2 pass / 2.10s | 2.274 | 70,680,576 |
+
+四批 `cleanup_complete=true`、`memory_stop_triggers=[]`，无安装/模型/solver。
+最后一批只有 Local 正向属于本 P3；另一条独立进程 owner lease 属 P4，不重复计。
+P3 共 **5 unique 目标最终通过**：opaque、observer、V3、Local 负向及 Local 正向；
+opaque 共三次执行（第一次 fixture 错、第二次真实生产缺陷、第三次通过），
+不把首轮或静态 PASS 改写为全程通过。
+
+第一次：fixture 假定没有 compiler 的 seal 也必有 `compiled_implementations` 键，
+而原生产仅在非空时发布。两处改为 opaque 严格 absent，V3 保留 len=1，不改生产。
+第二次：新 exact validator 错用 Local 专属 accepted 顶层 `config_sha256`，TCAD 无该字段。
+修为 mandatory 通用 `accepted.interface.config_sha256`，按原 `_adapter`/`freeze` 的同一
+body 编码核对；不补假 Local 字段。原 case 明确顶层 absent、通用 hash 匹配及篡改拒绝。
+这也是初次静态实施/独审遗漏的跨 adapter 假设，真实定向执行才暴露。
+
+最终通过只覆盖这些可信 DI/source/process 路径；不提升为真实 TCAD、observer 部署、
+native 身份、SSH/许可证或任意外读封闭验收。P2/P4 source 与浏览器结果属各自原账。

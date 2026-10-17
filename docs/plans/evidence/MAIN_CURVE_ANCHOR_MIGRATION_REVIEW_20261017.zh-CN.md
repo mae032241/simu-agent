@@ -20,3 +20,7 @@
 新增6个用例分别证伪断段被尾frame吞掉、单分量只从一个anchor长、straight guide干扰夺取弯曲真实路径、半像素/水平镜像偏列、互斥分支借锚与真实等支撑歧义、加权单点坐标超支撑。前五个含水平镜像，oracle来自固定绘图坐标或加frame前raster；不是把生产实现的另一遍输出当真值。新模块只导Pillow、pytest与公开trace接口，不依赖旧服务/安装fixture。
 
 实际锚数量增多会增加生长次数；当前没有大图/密集候选时间或RSS实证，不应由小图通过承诺这些上界。完整CSV/normalizer/curve-score消费、真实论文图legend身份与科学结论均不在本节点资格。无需安装矩阵或全量回归；若首批出现共享轨迹问题，再按具体失败选原邻接/镜像负控。动态结果由root执行后追加，当前未记为通过。
+
+## root定向动态结果复核
+
+已只读核 `.trial/main_curve_20261017/batch-001/{pytest.log,resource.json}`：6个新增目标一次 **6 passed / 0.48s**，监督 **1.054s**，树RSS峰值 **68,874,240 bytes**，退出0、cleanup_complete=true、memory_stop_triggers=[]、received_signals=[]，无地址空间硬限制。root已提交 `6fa5f9b`；评审者未运行测试。有限像素回归通过，不扩大上述大图、真实论文或科学资格。
