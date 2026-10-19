@@ -46,6 +46,29 @@ that cannot enter strict JSON receive local diagnostics while other valid result
 and artifact-bound candidates survive. Original `result.json` bytes remain unchanged;
 compact previews and omitted-field diagnostics refer back to that retained file.
 
+With H search commitments, `prepare --candidate-extra-slots N` freezes the W
+nomination allowance (default 2). W's scientific `candidate_nominations` response
+declares one representative or an explained gap for every unwaived mechanism,
+including deferred and screened, plus at most N distinct extra alternatives.
+Each representative names the actual H mechanism reference, exact registered
+candidate and scientific reason; sharing one model across mechanisms needs an
+explicit reason for each. Current-call originals use `{call_id, artifact}`;
+historical candidates use their existing scientific references. Control checks
+identity, declaration coverage, duplicate extras and the allowance, without
+inferring mechanism membership from a call, ranking or judging scientific truth.
+No usable model is an explicit gap and does not prohibit partial or final results.
+Only A's explicit waived disposition with a scientific negative or infeasibility
+reason exempts a mechanism; relative underperformance alone calls for deferral.
+
+The latest sealed W nominations supply the default comparison preview and a
+complete paginated nomination index with reasons and source conclusions. The
+retained candidate pool, experiments and exact materials remain in their existing
+paginated indexes and delivery catalogue, without a nomination count limit.
+A may inspect and select any registered model using the existing recommendation
+and selection explanation; this neither changes the sealed W declaration nor
+requires another experiment or registration. Tasks without H search commitments
+do not invent mechanism coverage.
+
 Scientific commitment and disposition lists have no fixed four-item or 128-mechanism
 capacity. The configured initial-call opportunities, exact extra-call grants,
 accepted-call consumption, finite execution budgets and unknown-call reconciliation
@@ -278,8 +301,11 @@ checks whether its remaining budget can start the next action. This mode reserve
 no shared tokens, time or steps for protected FINAL and does not prepay the next
 node token target: positive reported token balance permits ordinary token admission,
 subject to the original finite time, step, integrity and execution gates. All H/W/A/E
-node token targets are soft: reaching a target requests a bounded conclusion and
-A review before new W experiments, without killing the original node. Author
+node token targets and W stage targets are advisory: reaching a target requests a
+bounded conclusion without rejecting new managed experiments or forcing A review.
+Missing or stale budget advice does not grant allowance or deny execution;
+exact identity checks and independent execution authorization still apply.
+Shared budget checks for new nodes remain unchanged. Author
 closeout token permits are also soft targets; their finite time limits remain
 enforced. Actual usage remains accounted without creating a new shared allowance.
 Protocol 23 accepts only soft node settings. Older protocols remain read-only;

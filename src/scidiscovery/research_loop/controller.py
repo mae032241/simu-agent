@@ -35,8 +35,11 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
             experiment_mode: str | None = None, execution_config: dict | None = None,
             source_restrictions: list[dict] | None = None, formal_review_policy: dict | None = None,
             execution_authority_policy: dict | None = None,
-            execution_resource_policy: dict | None = None) -> dict:
+            execution_resource_policy: dict | None = None,
+            candidate_extra_slots: int = 2) -> dict:
     """Freeze an explicit goal and finite launch budgets in a fresh directory."""
+    from . import candidate_nominations
+    nomination_limits=candidate_nominations.configuration(candidate_extra_slots)
     portfolio_limits = search.portfolio_policy(portfolio_policy) if portfolio_policy is not None else None
     if exploration_order_version is not None:
         raise ValueError('Author priority-table strategy is retired; current science declares intent directly')
@@ -204,6 +207,7 @@ def prepare(root: Path, objective: Path, public_root: Path, launcher: list[str],
         settings['history_observer'] = observer
     if search_limits is not None:
         settings['search_policy'] = search_limits
+        settings['candidate_nomination_policy'] = nomination_limits
     if correction_limits is not None:
         settings['correction_policy'] = correction_limits
     root.mkdir(parents=True)

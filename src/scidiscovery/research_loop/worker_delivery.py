@@ -187,7 +187,6 @@ def require_delivery(root,job,science,record):
 def authorize_exit(root,job,record,reason):
     """Freeze a host exception from original policy/receipts, never a Worker hint."""
     from . import budget,continuation,experiments,native
-    from .protocol import stage_scope
     paths=execution.records(root,job['step']);number=paths.index(record)
     value=dict(reason=reason,job_sha256=c.digest(root/'jobs'/f'{job["step"]:03d}.json'),
         source_attempt=number,outcome_sha256=c.digest(c.regular(record/'native-outcome.json')))
@@ -203,11 +202,14 @@ def authorize_exit(root,job,record,reason):
         except continuation.ResumeUnavailable as error:
             if str(error)==reason:return dict(value,kind='session',native_jsonl=_original(root,record/'native.jsonl'))
     admission=budget.review_configuration(root,job)
-    config=dict(admission=admission,scope=stage_scope(root,job),
-        native_attempt=dict(number=number,execution_key=execution.identity(root,job['step'],number)))
-    review=experiments.review_status(config)
-    if review['requested'] and review['reason']==reason:
-        return dict(value,kind='host_review',review=_original(root,Path(admission['directory'])/'review.json'),sample=budget.clock_stamp())
+    if admission['mode']=='soft':
+        sample=budget.clock_stamp()
+        original=_original(root,Path(admission['directory'])/'review.json')
+        review=experiments._review_observation(c.read(root/original['snapshot']),sample)
+        if review['requested'] and review['enforced'] and review['reason']==reason:
+            accepted=dict(value,kind='host_review',review=original,sample=sample)
+            validate_exit(root,job,record,accepted)
+            return accepted
     if reason in {'worker_resume_node_exhausted','worker_resume_budget_unavailable'}:
         try:budget.accept_continuation(root,job,paths[:number+1])
         except budget.NodeBudgetUnavailable as error:
@@ -245,6 +247,7 @@ def validate_exit(root,job,record,value):
             if str(error)!=reason:raise history.ObserverIntegrityError('Worker unavailable session diagnosis changed') from error
         else:raise history.ObserverIntegrityError('Original session was available; incomplete delivery cannot bypass correction')
     elif kind=='host_review':
+        from . import experiments
         proof=value['review'];history._validate_proof(root,proof)
         expected=(budget._review_directory(root,job)/'review.json').relative_to(root).as_posix()
         if proof.get('path')!=expected or proof.get('retention')!='archived':raise history.ObserverIntegrityError('Worker exit did not use protected host review')
@@ -253,9 +256,9 @@ def validate_exit(root,job,record,value):
         if (review['scope']!=stage_scope(root,job) or review['stage_anchor']!=c.digest(root/'jobs'/f'{job["step"]:03d}.json')
                 or review['native_attempt']!=dict(number=number,execution_key=execution.identity(root,job['step'],number))
                 or sample['boot_id']!=review['boot_id']):raise history.ObserverIntegrityError('Worker host review scope changed')
-        actual=(review['reason'] if review['pending'] else 'review_deadline_reached' if sample['at_boottime']>=review['deadline_boottime']
-            else 'host_review_observation_expired' if sample['at_boottime']>=review['valid_until_boottime'] else None)
-        if actual!=reason:raise history.ObserverIntegrityError('Worker host review did not request this exit')
+        actual=experiments._review_observation(review,sample)
+        if not actual['requested'] or not actual['enforced'] or actual['reason']!=reason:
+            raise history.ObserverIntegrityError('Worker host review did not require this exit')
     elif kind=='budget':
         paths=execution.records(root,job['step'])[:number+1]
         tokens,seconds=budget._attempt_consumption(root,job,paths)

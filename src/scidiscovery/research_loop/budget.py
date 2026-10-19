@@ -2135,7 +2135,9 @@ def publish_review(root,job,intent,limits,meter,*,observed):
         grant=intent.get('budget_slice',{}).get('shared_limits',dict(max_tokens=settings['max_tokens'],max_seconds=settings['max_seconds']))
         available_tokens=min(limits['max_tokens'],grant['max_tokens'])-shared.get('accounted_tokens', shared['observed_tokens'])-reserve['tokens']
         available_seconds=min(limits['seconds_remaining'],max(0.,grant['max_seconds']-limits['consumed_seconds']))-reserve['seconds']
-        remaining=min(available_seconds,max(0.,targets['max_seconds']-duration)) if targets else available_seconds
+        # Soft stage targets advise the Worker; only the original shared window
+        # bounds admission and optional managed execution time reservations.
+        remaining=available_seconds
         reason=('shared_usage_unknown' if any(step!=job['step'] for step in shared.get('blocking_unknown_steps', shared['unknown_steps'])) else
             'reserve_reached' if available_seconds<=0 or available_tokens<=0 else
             'target_time_reached' if targets and duration>=targets['max_seconds'] else

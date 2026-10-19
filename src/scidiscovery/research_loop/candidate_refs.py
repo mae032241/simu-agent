@@ -66,6 +66,14 @@ def public_science_fields(value, mapping):
     result=dict(value)
     chosen=result.get('candidate_recommendation')
     if isinstance(chosen,str):result['candidate_recommendation']=mapping.get(chosen,chosen)
+    nominations=result.get('candidate_nominations')
+    if isinstance(nominations,dict):
+        nominations=copy.deepcopy(nominations)
+        for field in ('representatives','extras'):
+            for row in nominations.get(field,[]) if isinstance(nominations.get(field),list) else []:
+                if isinstance(row,dict) and isinstance(row.get('candidate'),str):
+                    row['candidate']=mapping.get(row['candidate'],row['candidate'])
+        result['candidate_nominations']=nominations
     selected=result.get('implementation_selection')
     if isinstance(selected,list):
         result['implementation_selection']=[mapping.get(item,item) if isinstance(item,str) else item for item in selected]
@@ -100,6 +108,9 @@ def control_payload(job, payload, *, root=None):
         try:return resolve_reference(root,job,identity)
         except ValueError:return identity  # Unused scientific advice cannot veto its original.
     value=copy.deepcopy(payload)
+    if job['role']=='W' and 'candidate_nominations' in value:
+        from . import candidate_nominations
+        value['candidate_nominations']=candidate_nominations.resolve(root,job,value['candidate_nominations'])
     if 'candidate_recommendation' in value:value['candidate_recommendation']=resolve(value['candidate_recommendation'])
     if root is not None and isinstance(value.get('candidate_recommendation'),str) and re.fullmatch(r'[HWAE]\d{3,}-I\d{3,}',value['candidate_recommendation']):
         from . import history

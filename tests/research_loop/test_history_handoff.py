@@ -26,7 +26,7 @@ def selection_explanation(criteria='Compare the declared fixture observations wi
         changes=None,evidence=None,accepted_tradeoffs=None))
 
 
-def finish(root, step, role, parents, text='A bounded scientific finding', action='wait', files=None, summary='A contribution', limitations=None, recommendation=None, search_choice=None, progress=None, selection=None, mechanism_findings=None):
+def finish(root, step, role, parents, text='A bounded scientific finding', action='wait', files=None, summary='A contribution', limitations=None, recommendation=None, search_choice=None, progress=None, selection=None, mechanism_findings=None, candidate_nominations=None, preserve_native_intent=False):
     path = root / 'jobs' / f'{step:03d}.json'
     previous = contracts.read(path) if path.exists() else {}
     job = contracts.build_job(root, step, role, parents, previous.get('instruction', ''),
@@ -43,7 +43,12 @@ def finish(root, step, role, parents, text='A bounded scientific finding', actio
         payload['search_plan' if role == 'H' else 'search_review'] = search_choice
     if job.get('handoff_protocol', 1) >= 6 and role == 'A':
         payload['progress_assessment'] = progress
-    if role=='W':payload.update(stage_intent='review',mechanism_findings=mechanism_findings)
+    if role=='W':
+        if candidate_nominations is None and job.get('candidate_nomination_mechanisms'):
+            candidate_nominations=dict(representatives=[],extras=[],gaps=[dict(mechanism_ref=row['mechanism_ref'],
+                reason='Fixture declares no scientific candidate suitability; the retained pool remains available to A.')
+                for row in job['candidate_nomination_mechanisms'] if row['status']!='waived'])
+        payload.update(stage_intent='review',mechanism_findings=mechanism_findings,candidate_nominations=candidate_nominations)
     if role=='A':payload.update(decision_request=None,portfolio_review=None)
     if role in {'H', 'A'}:
         payload.update(next_action=action, route_reason='Exact scientific question')
@@ -51,7 +56,11 @@ def finish(root, step, role, parents, text='A bounded scientific finding', actio
         path = work / 'artifacts' / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(contents)
-    contracts.write(record / 'native-intent.json', dict(task_sha256=contracts.digest(root / 'jobs' / f'{step:03d}.json')))
+    task_sha256=contracts.digest(root / 'jobs' / f'{step:03d}.json')
+    if preserve_native_intent:
+        assert contracts.read(contracts.regular(record/'native-intent.json'))['task_sha256']==task_sha256
+    else:
+        contracts.write(record / 'native-intent.json', dict(task_sha256=task_sha256))
     contracts.write(record / 'science-output.json', payload)
     contracts.write(record / 'usage.json', dict(input_tokens=7, cached_input_tokens=2, output_tokens=3))
     contracts.write(record / 'native-outcome.json', dict(returncode=0, stop_reason=None,

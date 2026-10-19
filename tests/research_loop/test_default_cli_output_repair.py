@@ -7,7 +7,8 @@ import sys
 
 import pytest
 
-from scidiscovery.research_loop import contracts as c, continuation, execution
+from scidiscovery.research_loop import contracts as c, continuation, execution, experiment_client
+from execution_fixtures import execution_registry
 from scidiscovery.research_loop import search as search_contract, worker_delivery
 
 pytestmark=pytest.mark.process_e2e
@@ -34,18 +35,52 @@ else:
  assert (work/'work/completed-observation').read_text()=='one retained observation'
 payload=dict(summary='Deterministic CLI transport',scientific_result='No scientific qualification is asserted.',
  limitations=['Only native communication is simulated.'],implementation_selection=None)
+nomination=config['fault'].startswith('nomination-')
 if role=='H':
  payload.update(next_action='analyze',route_reason='Review retained evidence',search_plan=None)
- if config['fault']=='incomplete_w':
+ if config['fault']=='incomplete_w' or nomination:
   payload.update(next_action='experiment',search_plan=dict(scope='One declared fixture mechanism',
    commitments=[dict(label='Fixture mechanism',minimal_test='Read a bounded observation',existing_ref=None)],
    focus=dict(label=None,action='screen')))
-elif role=='W':payload.update(stage_intent='review',mechanism_findings=None)
+elif role=='W':
+ payload.update(stage_intent='review',mechanism_findings=None)
+ task=json.loads((work/'science-task.json').read_text())
+ mechanisms=task.get('candidate_nomination_mechanisms',[])
+ if config['fault']=='incomplete_w':
+  payload['candidate_nominations']=dict(representatives=[],extras=[],gaps=[dict(mechanism_ref=row['mechanism_ref'],
+   reason='This fixture supplies no scientific model suitability claim.') for row in mechanisms if row['status']!='waived'])
+ if nomination:
+  locator_file=work/'work/retained-candidate-locator.json'
+  if not resume:
+   import subprocess
+   directory=work/'experiments/retained';directory.mkdir(parents=True)
+   artifacts=['artifacts/model-'+str(i)+'.bin' for i in range(4)]
+   declared=dict(version=1,metrics=[],outputs=[dict(path=path) for path in artifacts],candidates=[dict(artifact=path) for path in artifacts])
+   script=directory/'run.py'
+   script.write_text('from pathlib import Path\nfor i,path in enumerate('+repr(artifacts)+'): Path(path).write_text("original model "+str(i))\nPath("artifacts/result.json").write_text('+repr(json.dumps(declared))+')\n')
+   outcome=subprocess.run([sys.executable,'-m','scidiscovery.research_loop.experiments',
+    '--config',str(work/'work/experiment-config.json'),'run','--experiment-dir',str(directory),
+    '--script',str(script),'--mechanism','Fixture mechanism'],capture_output=True,text=True)
+   assert outcome.returncode==0,(outcome.stdout,outcome.stderr)
+   result=json.loads(outcome.stdout);assert result['status']=='known_success'
+   locator_file.write_text(json.dumps(dict(call_id=result['call_id'],artifact=artifacts[0])))
+  locator=json.loads(locator_file.read_text())
+  payload['mechanism_findings']=[dict(mechanism='Fixture mechanism',basis='observed',finding='One retained fixture observation; target suitability remains for A.')]
+  value=dict(representatives=[dict(mechanism_ref=mechanisms[0]['mechanism_ref'],candidate=locator,reason='A retained model for this scientific mechanism.')],extras=[],gaps=[])
+  if resume:
+   assert locator_file.is_file() and 'do not rerun or resubmit experiments' in prompt
+   payload['candidate_nominations']=value
+  elif config['fault']=='nomination-extra':
+   value['extras']=[dict(candidate=dict(call_id=locator['call_id'],artifact='artifacts/model-'+str(i)+'.bin'),reason='Distinct scientific alternative.') for i in (1,2,3)]
+   payload['candidate_nominations']=value
+  elif config['fault']=='nomination-locator':
+   value['representatives'][0]['candidate']=dict(call_id='unregistered-call',artifact=locator['artifact'])
+   payload['candidate_nominations']=value
 else:
  assert role=='A'
  payload.update(next_action='finish',route_reason='The measured scientific objective remains unresolved.',
   candidate_recommendation='declared-fixture-choice',search_review=None,progress_assessment=None,decision_request=None)
- if (resume and config['fault']!='repeat') or config['fault']=='incomplete_w':
+ if (resume and config['fault']!='repeat') or config['fault']=='incomplete_w' or nomination:
   payload['selection_explanation']=dict(criteria='Retain the declared bounded fixture observation.',
    criteria_change=dict(status='unchanged',prior_criteria=None,changes=None,evidence=None,accepted_tradeoffs=None))
  if config['fault']=='incomplete_w':
@@ -54,7 +89,7 @@ else:
   payload['search_review']=dict(dispositions=[dict(mechanism_ref=mechanisms['mechanisms'][0]['mechanism_ref'],
    status='pending',reason='The W contribution lacks the requested scientific findings.')],next_focus=None)
 pathlib.Path(args[args.index('--output-last-message')+1]).write_text(json.dumps(payload))
-if config['fault']!='unknown' or role=='H':
+if (config['fault']!='unknown' and config['fault']!='nomination-unknown') or role=='H':
  print(json.dumps(dict(type='turn.completed',usage=dict(input_tokens=10,cached_input_tokens=3,output_tokens=4))),flush=True)
 raise SystemExit(7 if config['fault']=='failed' and role=='A' else 0)
 '''
@@ -68,7 +103,7 @@ def cli(root,*arguments,env):
     return json.loads(completed.stdout)
 
 
-def prepare_cli(tmp_path,*,fault='missing',custom=False,explicit_false=False,final=False):
+def prepare_cli(tmp_path,*,fault='missing',custom=False,explicit_false=False,final=False,fragment=False):
     public=tmp_path/'public';public.mkdir();objective=public/'objective.md';objective.write_text('Retain scientific uncertainty.')
     home=tmp_path/'inherited-home';home.mkdir()
     configuration='[sandbox_workspace_write]\nnetwork_access=true\nexclude_tmpdir_env_var=true\n'
@@ -80,8 +115,8 @@ def prepare_cli(tmp_path,*,fault='missing',custom=False,explicit_false=False,fin
     source=str(Path(__file__).resolve().parents[2]/'src')
     env['PYTHONPATH']=source+os.pathsep+env.get('PYTHONPATH','')
     root=tmp_path/'instance';search=tmp_path/'search.json'
-    c.write(search,dict(search_contract.DEFAULT_POLICY,initial_calls=1) if fault=='incomplete_w' else None)
-    launcher=[sys.executable,str(program)] if custom else [str(binary/'codex') if explicit_false else 'codex']
+    c.write(search,dict(search_contract.DEFAULT_POLICY,initial_calls=1) if fault=='incomplete_w' or fault.startswith('nomination-') else None)
+    launcher=[sys.executable,str(program)] if custom else [str(binary/'codex') if explicit_false or fragment else 'codex']
     arguments=['prepare','--objective',str(objective),'--public-root',str(public),
         '--native-launcher-json',json.dumps(launcher),
         '--max-tokens','1' if final else '1000','--max-seconds','60','--max-steps','1' if final else '6',
@@ -90,6 +125,11 @@ def prepare_cli(tmp_path,*,fault='missing',custom=False,explicit_false=False,fin
         policy=tmp_path/'resume.json';c.write(policy,dict(max_attempts=2,protocol='codex_exec_resume',usage_scope='turn',output_repair=False))
         nodes=tmp_path/'nodes.json';c.write(nodes,{role:dict(max_observed_tokens=1000,max_seconds=60) for role in 'HWAE'})
         arguments+=['--worker-resume-policy',str(policy),'--node-budget-policy',str(nodes)]
+    if fragment:
+        policy=tmp_path/'resume.json';c.write(policy,dict(max_attempts=2,protocol='codex_exec_resume',usage_scope='turn',
+            output_repair=True,output_only=True,native_home=str(home)))
+        nodes=tmp_path/'nodes.json';c.write(nodes,{role:dict(max_observed_tokens=1000,max_seconds=60) for role in 'HWAE'})
+        arguments+=['--worker-resume-policy',str(policy),'--node-budget-policy',str(nodes),'--worker-context','same_session']
     prepared=cli(root,*arguments,env=env)
     assert prepared['status']=='prepared',prepared
     return root,home,env
@@ -180,6 +220,49 @@ def test_default_cli_incomplete_w_retains_partial_exit_and_reaches_a(tmp_path):
     forged=dict(exit,reason='worker_resume_unsupported')
     with pytest.raises(ValueError,match='original unsupported policy'):
         worker_delivery.validate_exit(root,job,record,forged)
+
+
+@pytest.mark.parametrize('fault',['nomination-missing','nomination-extra','nomination-locator'])
+@pytest.mark.parametrize('fragment',[False,True])
+def test_w_nomination_structure_repairs_in_same_output_only_task_without_repeating_experiment(tmp_path,execution_registry,fault,fragment):
+    root,home,env=prepare_cli(tmp_path,fault=fault,fragment=fragment)
+    assert c.settings(root)['resume_policy']['output_only'] is True
+    result=cli(root,'run',env=env)
+    assert result['status']=='finish',result
+    chain=execution.records(root,2);assert len(chain)==2
+    origin,current=chain;intent=c.read(current/'native-intent.json')
+    assert intent['output_repair']['code']=='candidate_nominations_incomplete' and 'work_repair' not in intent
+    assert intent['task_sha256']==c.read(origin/'native-intent.json')['task_sha256']
+    assert intent['session']['home']==str(home) and intent['output_repair']['source_attempt']==0
+    assert (c.workspace(root,2)/'work/launches').read_text()=='exec\nresume\n'
+    original=c.read(origin/'science-output.json')
+    if fault=='nomination-missing':assert 'candidate_nominations' not in original
+    elif fault=='nomination-extra':assert len(original['candidate_nominations']['extras'])==3
+    else:assert original['candidate_nominations']['representatives'][0]['candidate']['call_id']=='unregistered-call'
+    calls=experiment_client.record_directory(root,2)/'calls'
+    assert len(list(calls.iterdir()))==1
+    science=c.validate(c.workspace(root,2))
+    assert science['candidate_nominations']['representatives'][0]['candidate'].startswith('local-')
+    assert c.read(root/'jobs/003.json')['role']=='A' and not (root/'jobs/004.json').exists()
+    continuation.validate_repair(root,2,intent)
+    assert continuation.output_request(root,2,origin,source_attempt=0,verify_task=False)==intent['output_repair']
+    frozen={path:path.read_bytes() for path in [origin/'science-output.json',root/'jobs/002.json',*calls.rglob('accepted.json'),*calls.rglob('completed.json')]}
+    assert cli(root,'run',env=env)['status']=='finish'
+    assert len(list(calls.iterdir()))==1 and all(path.read_bytes()==data for path,data in frozen.items())
+
+
+def test_unknown_w_nomination_output_never_authorizes_repair_or_replays_original_experiment(tmp_path,execution_registry):
+    root,_,env=prepare_cli(tmp_path,fault='nomination-unknown')
+    result=cli(root,'run',env=env)
+    assert result['status']!='finish'
+    origin=execution.origin(root,2);calls=experiment_client.record_directory(root,2)/'calls'
+    assert len(execution.records(root,2))==1 and len(list(calls.iterdir()))==1
+    assert (c.workspace(root,2)/'work/launches').read_text()=='exec\n'
+    with pytest.raises(ValueError,match='known completed original turn'):
+        continuation.output_request(root,2,origin,verify_task=False)
+    cli(root,'run',env=env)
+    assert len(execution.records(root,2))==1 and len(list(calls.iterdir()))==1
+    assert not (origin/'result-identity.json').exists() and not (root/'jobs/003.json').exists()
 
 
 @pytest.mark.parametrize('native_home',['relative-home','~/.codex'])

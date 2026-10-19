@@ -143,15 +143,16 @@ def seal_or_repair(root, step):
                     return c.seal_result(root, step)
                 science = c.science_payload(record / 'science-output.json', 'W', job.get('handoff_protocol', 1))
                 review = fragment_review(root, job)
+                review_required = review['requested'] and review['enforced']
                 from . import worker_delivery
                 delivery=worker_delivery.assessment(root,job,science,record)
                 if delivery['status']=='partial':
                     checkpoint.end_stage(root,job,record,delivery['reason'])
                     return c.seal_result(root,step)
-                if delivery['status']=='incomplete' and review['requested']:
+                if delivery['status']=='incomplete' and review_required:
                     return _work_exit(root,job,record,review['reason'])
                 if science['stage_intent']!='continue':worker_delivery.require_delivery(root,job,science,record)
-                if checkpoint.disposition(science, review_requested=review['requested']) == 'continue':
+                if checkpoint.disposition(science, review_requested=review_required) == 'continue':
                     try:
                         fragment_start(root, step)
                     except budget.NodeBudgetUnavailable as error:
@@ -167,7 +168,7 @@ def seal_or_repair(root, step):
                         checkpoint.end_stage(root, job, record, error.review_reason)
                         return c.seal_result(root, step)
                     return dict(fragment_continuation=True)
-                checkpoint.end_stage(root, job, record, review['reason'] if review['requested'] else 'worker_requested')
+                checkpoint.end_stage(root, job, record, review['reason'] if review_required else 'worker_requested')
         return c.seal_result(root, step)
     except WorkRepairRequired:
         job=c.read(c.regular(root/'jobs'/f'{step:03d}.json'));record=execution.record(root,step)
@@ -199,11 +200,14 @@ def output_request(root, step, record, *, source_attempt=None, verify_task=True)
             raise ValueError('Original final output changed before repair')
         try:
             science=c.science_payload(raw, job['role'], job.get('handoff_protocol', 1), 'selection' in job,**c.response_options(job))
+            from . import candidate_refs
+            science=candidate_refs.control_payload(job,science,root=root)
             from . import formal_review
             formal_review.validate_choice(root,job,science)
             if job['role']=='W':
-                from . import worker_delivery
+                from . import worker_delivery, candidate_nominations
                 worker_delivery.require_delivery(root,job,science,record)
+                candidate_nominations.require(root,job,science)
         except OutputRepairRequired as failure:
             error = failure
         else:
@@ -332,7 +336,7 @@ def fragment_start(root, step):
         raise ResumeUnavailable('worker_fragment_not_continuing')
     _eligible_original(root, step, paths, successful=True, wait_runner=True)
     review = fragment_review(root, job)
-    if review['requested']:
+    if review['requested'] and review['enforced']:
         error = ResumeUnavailable('worker_fragment_review_requested')
         error.review_reason = review['reason']
         raise error
@@ -383,9 +387,12 @@ def start(root, step):
                 if outcome.get('output_status') == 'missing':
                     raise OutputRepairRequired('missing_output', 'Return the missing scientific summary without rerunning completed work.')
                 job=c.read(root/'jobs'/f'{step:03d}.json')
-                science=c.science_payload(last/'science-output.json','W',job.get('handoff_protocol',1))
-                from . import worker_delivery
-                if science['stage_intent']!='continue' or (last/'stage-end.json').exists():worker_delivery.require_delivery(root,job,science,last)
+                science=c.science_payload(last/'science-output.json','W',job.get('handoff_protocol',1),**c.response_options(job))
+                from . import candidate_refs, worker_delivery, candidate_nominations
+                science=candidate_refs.control_payload(job,science,root=root)
+                if science['stage_intent']!='continue' or (last/'stage-end.json').exists():
+                    worker_delivery.require_delivery(root,job,science,last)
+                    candidate_nominations.require(root,job,science)
                 return native.wait_native(root,step)
             return c.seal_result(root, step)
         except WorkRepairRequired:

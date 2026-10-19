@@ -123,6 +123,7 @@ def test_w_token_crossing_requests_review_without_stopping_original_node(tmp_pat
     config = dict(admission=admission, scope=projection['scope'], native_attempt=projection['native_attempt'])
     assert experiments.review_status(config)['reason'] == 'target_tokens_reached'
     assert experiments.review_status(config)['requested'] is True
+    assert experiments.review_status(config)['enforced'] is False
     assert budget.stop_node(root, job, intent, budget.snapshot(root), meter) is None
 
 

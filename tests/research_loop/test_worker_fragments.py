@@ -308,18 +308,17 @@ def test_normal_fragments_do_not_spend_finite_failure_repair_attempts(internal_f
     assert len(list((root / 'jobs').glob('*.json'))) == 3
 
 
-def test_host_investment_boundary_seals_science_without_starting_next_fragment(internal_fragment_instance):
+def test_soft_target_allows_original_stage_to_continue_fragments(internal_fragment_instance):
     root = internal_fragment_instance(cap=14)
     assert controller.run(root)['status'] == 'finish'
-    assert len(execution.records(root, 2)) == 1
-    assert c.read(execution.raw(root, 2))['stage_intent'] == 'continue'
+    assert len(execution.records(root, 2)) == 2
+    assert c.read(execution.raw(root, 2))['stage_intent'] == 'review'
     assert c.validate(c.workspace(root, 2))['role'] == 'W'
-    record = execution.origin(root, 2)
+    record = execution.record(root, 2)
     ended = checkpoint.stage_end(root, c.read(root / 'jobs/002.json'), record)
-    assert ended['reason'] == 'target_tokens_reached'
-    seal = c.read(record / 'result-identity.json')
-    assert seal['execution_ref']['chain'][0]['stage-end.json'] == c.digest(record / 'stage-end.json')
-    assert 'target_tokens_reached' in c.read(root / 'jobs/003.json')['instruction']
+    assert ended['reason'] == 'worker_requested'
+    seal = c.read(execution.origin(root, 2) / 'result-identity.json')
+    assert seal['execution_ref']['chain'][1]['stage-end.json'] == c.digest(record / 'stage-end.json')
 
 
 def test_review_rechecked_after_original_writer_stops(internal_fragment_instance, monkeypatch):
@@ -328,12 +327,12 @@ def test_review_rechecked_after_original_writer_stops(internal_fragment_instance
 
     def crosses_boundary(*args, **kwargs):
         eligible(*args, **kwargs)
-        monkeypatch.setattr(continuation, 'fragment_review', lambda *unused: dict(requested=True, reason='target_time_reached'))
+        monkeypatch.setattr(continuation, 'fragment_review', lambda *unused: dict(requested=True, reason='reserve_reached', enforced=True))
 
     monkeypatch.setattr(continuation, '_eligible_original', crosses_boundary)
     assert controller.run(root)['status'] == 'finish'
     assert len(execution.records(root, 2)) == 1
-    assert checkpoint.stage_end(root, c.read(root / 'jobs/002.json'), execution.origin(root, 2))['reason'] == 'target_time_reached'
+    assert checkpoint.stage_end(root, c.read(root / 'jobs/002.json'), execution.origin(root, 2))['reason'] == 'reserve_reached'
     assert c.read(execution.raw(root, 2))['stage_intent'] == 'continue'
 
 

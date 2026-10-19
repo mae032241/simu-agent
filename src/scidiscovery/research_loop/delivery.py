@@ -418,15 +418,16 @@ def freeze_sources(root, source_nodes, *, candidate_id=None):
         **(dict(capabilities=sorted(set(declared))) if declared else {}))
 
 
-def public_sources(refs, audits=()):
+def public_sources(refs, audits=(), *, nominated_ids=None):
     facts = {}
     for audit in audits:
         facts[audit['candidate_id']] = {key:audit[key] for key in ('qualification', 'artifact_binding', 'scope')}
+    preview=refs['items'] if nominated_ids is None else [row for row in refs['items'] if row['candidate_id'] in nominated_ids]
     rows = [dict(candidate_id=row['candidate_id'],
                          availability='available' if row['status'] in {'audit_pending', 'available'} else row['status'],
                          **(dict(reason=row['reason']) if 'reason' in row else {}),
                          audit=facts.get(row['candidate_id'], dict(qualification='not_observed')))
-                         for row in refs['items'][:16]]
+                         for row in preview[:16]]
     result = dict(items=[], omitted_count=refs['omitted_count'] + len(refs['items']),
                   qualification='Availability is not qualification. Read bound candidate audit receipts for exact artifact scope; public audit does not establish target performance.')
     if refs.get('catalogue'):

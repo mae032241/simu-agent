@@ -33,6 +33,7 @@ def main(argv=None):
     prepare.add_argument('--node-budget-mode', choices=['soft'], default='soft', help='All H/W/A/E node token targets are soft; shared admission and finite execution limits remain enforced')
     prepare.add_argument('--role-budget-policy', type=Path, help='Frozen W/H+A token shares and H/A node target JSON (null disables); disabled unless explicitly configured')
     prepare.add_argument('--selection-policy', type=Path, help='Frozen explicit closeout comparison contract JSON ({"version":2}); disabled unless explicitly configured')
+    prepare.add_argument('--candidate-extra-slots', type=int, default=2, help='Freeze W nomination extras beyond one representative per unwaived H mechanism (default: 2); never caps the retained candidate pool or chooses a model')
     prepare.add_argument('--portfolio-review-after-cycles', type=int, help='Freeze an optional reminder interval in unserved completed W+A cycles; the full mechanism portfolio is always visible and reminders never gate scientific results')
     prepare.add_argument('--decision-contract', action='store_true', help='Freeze protocol10 scientific A decision requests and exact repeat admission')
     prepare.add_argument('--enable-candidate-audit', action='store_true', help='Opt into protocol9 A audit requests; requires an isolated delivery adapter')
@@ -202,6 +203,7 @@ def main(argv=None):
                     if args.role_budget_policy is not None else None,
                 selection_policy=contracts.read(contracts.regular(args.selection_policy, limit=4096))
                     if args.selection_policy is not None else None,
+                candidate_extra_slots=args.candidate_extra_slots,
                 resume_policy=resume_policy,
                 history_observer=contracts.read(contracts.regular(args.history_observer_config, limit=64_000))
                     if args.history_observer_config is not None else None)

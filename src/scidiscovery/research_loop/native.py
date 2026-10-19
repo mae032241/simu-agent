@@ -429,7 +429,30 @@ def run_native(root: Path, step: int, attempt=0):
             'it does not assert that delivery or the scientific objective succeeded.\n')
     # Append after every branch that replaces the assignment, including formal
     # review and the bounded successor author turn.
+    if job['role']=='W' and job.get('candidate_nomination_mechanisms'):
+        prompt += ('\nReturn candidate_nominations as your complete scientific comparison preview: one representative '
+            'or an explained gap for every unwaived H mechanism, including deferred and screened. '
+            'Use each actual H mechanism_ref. Choose each model and explain its applicability yourself; a call binding '
+            'does not classify its models. A model may explicitly represent multiple mechanisms when each reason '
+            'explains that coverage. Use historical candidate references or {call_id,artifact} for one exact '
+            'candidate in a current retained result.candidates declaration. Preserve the full candidate pool and '
+            'original experiment materials independently. Add at most '+str(job['candidate_nomination_policy']['extra_slots'])+
+            ' distinct extras beyond the representatives; do not truncate the retained pool to this preview size. '
+            'No available model means an explicit scientific gap, never a fabricated candidate. '
+            'Explain an unavailable or unsuitable old representative; temporary relative low score alone is '
+            'insufficient to discard a mechanism. Only an explicit A waived disposition with its scientific '
+            'negative or infeasibility reason removes mechanism coverage. Missing evidence and deferral retain it.\n')
     if job['role']=='A' and not job.get('formal_review'):
+        if job.get('history',{}).get('candidate_nomination_ids') is not None:
+            prompt += ('\nStart candidate comparison with the W scientific nominations and their reasons/gaps in '
+                'lineage.indexes.nominations. They are a limited comparison preview, not a ranked or exhaustive '
+                'candidate pool. Read lineage.indexes.candidates and next_page plus original experiment materials '
+                'as needed. You may select any registered candidate, including an alternative outside the preview, '
+                'using the existing candidate_recommendation and selection_explanation. Do not request another '
+                'experiment or registration merely to bring in a retained model, and do not rewrite W nominations. '
+                'Keep deferred and screened mechanisms in the comparison; only your explicit waived disposition '
+                'with a scientific negative or infeasibility reason exempts mechanism coverage. Temporary relative '
+                'low score alone is insufficient; preserve gaps and original limitations.\n')
         prompt += ('\nAny explicit candidate_recommendation requires selection_explanation: give criteria and '
             'criteria_change.status as unchanged or revised. For revised criteria, name prior_criteria, changes, '
             'evidence with locators explaining why, and accepted_tradeoffs. For unchanged criteria, use null '

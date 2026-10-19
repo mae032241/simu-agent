@@ -18,9 +18,13 @@ def scene(tmp_path):
 
 def output(root,rows,*,intent='review'):
     record=execution.record(root,2)
+    job=c.read(root/'jobs/002.json')
+    gaps=[dict(mechanism_ref=row['mechanism_ref'],reason='Fixture has no scientific candidate suitability judgment; retained originals remain available.')
+        for row in job.get('candidate_nomination_mechanisms',[]) if row['status']!='waived']
     payload=dict(summary='Independent shallow comparison',scientific_result='These observations retain scientific limitations.',
         limitations=['Mechanical completion alone does not establish screening'],implementation_selection=None,
-        mechanism_findings=rows,stage_intent=intent)
+        mechanism_findings=rows,stage_intent=intent,
+        candidate_nominations=dict(representatives=[],extras=[],gaps=gaps) if gaps else None)
     c.write(record/'science-output.json',payload)
     c.write(record/'usage.json',dict(input_tokens=7,cached_input_tokens=2,output_tokens=3))
     c.write(record/'native-outcome.json',dict(returncode=0,stop_reason=None,usage=native.usage(root),

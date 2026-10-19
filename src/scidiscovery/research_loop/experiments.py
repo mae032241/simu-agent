@@ -81,6 +81,17 @@ def _configuration_effect(function):
     return guarded
 
 
+def _review_observation(value, stamp):
+    """Interpret the same live or archived host observation without new grants."""
+    reason=('host_review_observation_unavailable' if value is None else
+        'review_deadline_reached' if stamp['at_boottime']>=value['deadline_boottime'] else
+        'host_review_observation_expired' if stamp['at_boottime']>=value['valid_until_boottime'] else
+        value['reason'] if value['pending'] else None)
+    return dict(requested=bool(reason),reason=reason,
+        enforced=reason not in {'target_tokens_reached','target_time_reached',
+            'host_review_observation_expired','host_review_observation_unavailable'},inflight_usage_unknown=True)
+
+
 def review_status(config):
     """Read host facts; a missing lease or deadline never becomes a new grant."""
     admission=config.get('admission')
@@ -91,7 +102,10 @@ def review_status(config):
     from . import budget
     stamp=budget.clock_stamp()
     try:
-        value=json.loads(read(Path(admission['directory'])/'review.json',16_000))
+        path=Path(admission['directory'])/'review.json'
+        if path.resolve()!=path:raise IntegrityError('Host review path changed')
+        path.lstat()  # Missing advice is distinct from a damaged existing original.
+        value=json.loads(read(path,16_000))
         if (value['scope']!=config['scope'] or value['stage_anchor']!=admission['stage_anchor']
                 or value['native_attempt']!=config['native_attempt'] or value['boot_id']!=stamp['boot_id']):
             raise IntegrityError('Host review facts differ from the frozen stage or native attempt')
@@ -99,13 +113,11 @@ def review_status(config):
         if (type(deadline) not in (int,float) or not 0<deadline<float('inf')
                 or type(lease) not in (int,float) or not 0<lease<float('inf')):
             raise IntegrityError('Host review facts have no finite original deadline')
-        reason=(value['reason'] if value['pending'] else 'review_deadline_reached' if stamp['at_boottime']>=deadline
-            else 'host_review_observation_expired' if stamp['at_boottime']>=lease else None)
+        return _review_observation(value,stamp)
     except FileNotFoundError:
-        reason='host_review_observation_unavailable'
+        return _review_observation(None,stamp)
     except (KeyError,TypeError) as exc:
         raise IntegrityError('Host review facts are malformed') from exc
-    return dict(requested=bool(reason),reason=reason,enforced=True,inflight_usage_unknown=True)
 
 
 def review_feedback(config):
@@ -744,7 +756,7 @@ class Records:
                 with self.lease('accept.lock',context=operation_context):
                     if recovery_admission is None:
                         review=review_status(self.config)
-                        if review['requested']:raise ReviewRequired(review['reason'])
+                        if review['requested'] and review['enforced']:raise ReviewRequired(review['reason'])
                     else:
                         recovery_admission()
                     from . import breadth

@@ -524,7 +524,7 @@ def _remaining(root, config, allocation=None):
     if reason:
         raise ValueError('Original native authorization has expired: ' + reason)
     state = e.review_status(config)
-    if state['requested']:
+    if state['requested'] and state['enforced']:
         raise ValueError('Original task admission is unavailable: ' + str(state['reason']))
     seconds = available['seconds']
     if budget.node_mode(root) == 'hard':
@@ -566,9 +566,6 @@ def _allocate_call(config, payload, ordinal, mechanism=None):
             _remaining(root, config, original)
         else:
             stamp, seconds = _remaining(root, config)
-            if config['admission']['mode'] == 'soft':
-                projection = c.read(c.regular(Path(config['admission']['directory']) / 'review.json'))
-                seconds = min(seconds, projection['deadline_boottime'] - stamp['at_boottime'])
             if seconds <= 0:
                 raise ValueError('Original native deadline has expired')
             q._save(root, path, dict(version=1, call_id=call, binding=body, native_intent=intent,

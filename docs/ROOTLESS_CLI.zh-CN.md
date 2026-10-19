@@ -143,6 +143,20 @@ scid-experiment --config work/experiment-config.json run \
 坏指标或成果声明只诊断相关条目；坏 artifact 只阻该候选登记，不清空其他有效指标或成果。无法写入严格 JSON 的说明（例如嵌套数字指数溢出）只在投影中省略相关字段并链接原 `result.json`，原始字节仍保留。摘要超长时给预览和原件引用。
 指标名不赋予目标含义，同口径比较不代替 A 的科学判断；A 的推荐可为 null，null 不授权交付。
 
+启用 H search 时，`prepare --candidate-extra-slots N` 明确冻结 W 分类提名的额外名额，默认 2。
+W 在科学返回的 `candidate_nominations` 填写 `representatives`、`extras`、`gaps`：
+代表项为 `{mechanism_ref,candidate,reason}`，额外项为 `{candidate,reason}`，缺口项为
+`{mechanism_ref,reason}`。`candidate` 使用历史科学引用，或当前原调用的 `{call_id,artifact}`。
+每个未 waived 的机制（含 deferred、screened）须有一个代表或明确缺口；同模型代表多个
+机制须逐项说明科学含义。额外备选不得与代表或其他额外项重复，至多 N 项。
+五个机制各有不同代表且额外名额为 2 时，可提名七个模型；框架不固定总数为五，
+不按分数排序或自动截断。无成功适用模型应写缺口，仍可交回 partial 或最终结果。
+暂时相对低分不足以取消机制，只有 A 明确 waived 并给科学否定或不可行理由才免覆盖。
+默认视图及 `lineage.indexes.nominations` 展示最近封存 W 的分类提名；长理由链接原结论。
+完整候选池仍在 `lineage.indexes.candidates` 通过 `next_page` 读取，所有已登记原件继续可选。
+A 可直接选择预览外的已有模型，并按原 `selection_explanation` 说明，不用重跑实验、
+新增登记步骤或覆写 W 原结论。无 search 承诺的任务不强迫填写机制。
+
 执行状态与结果状态分别显示：退出码0只表示命令成功；结果文件缺失为 `missing`，JSON或协议基础形状无法解析为 `invalid`，采集失败为 `unavailable`。个别条目或说明不可用时，其余声明仍为 `available` 并带局部 `diagnostics`。
 原件、cleanup或外部结果未知时保留 `unknown`，不得重发以代替查明原调用。
 完整执行、结果、观察和封存记录不受紧凑视图的字节或累计项数上限约束；公开摘要和分页视图仍有界，明确标记省略并保留原件入口。视图超限不会使封存失败或丢失候选、调用与成果的权威关联。
@@ -328,7 +342,7 @@ JSON 必须恰有 `H/W/A/E` 四个对象，每个对象恰有正整数 `max_obse
 
 H/W/A/E 单节点 token 目标统一为软上限，W 的 token/time 目标分别取该策略与原 search policy 的较小值。
 启动前核对共享余额与原节点锚点，不预付整个节点 token 额度。运行中的节点达到 input+output
-目标时提示收口，W 新实验须先交 A review，原节点可以完成并封存原结果；cached input 已包含
+目标时提示收口；节点和 W 阶段目标不拒绝新的受管实验、不强迫转 A review，原节点可以完成并封存原结果；cached input 已包含
 在 input 内，不重复累加。实际消费完整记账，不增加或退还共享额度。单次真实执行、FINAL A
 和 author closeout 的有限时长、清理及权限限制仍有效。
 
@@ -348,12 +362,13 @@ author closeout 使用本次已验证 permit 的 token 软目标与有限时间�
 以其明确的静态 token 软目标和有限时间为准。提示只能在文件可见且被读取时生效，不是授权、计量原件或科学证据。
 每次请求已报告的全部 input 都计入用量，cached input 已包含在 input 中；未知计量保留覆盖未知，不补造零用量。
 运行中请求及报告滞后仍未计量，当前接口没有逐模型请求前的预算准入。
+预算提示缺失或陈旧不授予新额度，也不成为执行拒绝；原身份校验与独立执行授权仍适用。
 提示不能替代运行时边界或证明实际 token 节省。
 
 新建实例冻结 `final_a_completion_policy={"version":1}`。普通 state 只检查剩余额度能否启动
 下一动作；该模式不再为 protected FINAL 预扣共享 token、时间或步数，也不要求启动前余额容纳
 整个节点 token 目标。provider 已报告 token 余额为正即可通过普通 token 启动检查，原有限时间、
-步数、完整性与真实执行边界继续检查。soft 节点 token 目标达线只请求 review、停止接受新受管调用，
+步数、完整性与真实执行边界继续检查。soft 节点和 W 阶段目标达线只提示收口，不停止接受新受管调用或强迫转 A，
 不杀原节点；H/W/A/E 及 author closeout 均无单节点 token 阈值强杀。不能启动便在现有控制账本持久进入
 `FINAL`（`closeout_begin` 的 `final` 模式）。
 FINAL 只有一次精确原始 A：基于已有已接受 W 给结论、明确选择，并在
@@ -424,7 +439,7 @@ A 可在新协议最终科学 JSON 可选填写 `candidate_recommendation`（已
 旧协议实例（包括 hard 或未记录模式）仅保留只读原件，不能按协议 23 继续运行，也不自动迁移。soft 提示不能保证在途节点及时返回；真实执行的有限时间与权限边界仍有效。
 
 适配器是独立的领域接口。核心冻结其代码、启动器、输入原件及读取范围，不解释领域台账。
-收口先冻结完整候选目录，`science-task.json` 给出目录文件；16 项紧凑摘要有省略计数，完整目录保留全部精确候选 ID 和来源节点，不按紧凑摘要容量截断。控制层仅为 A 明确选择的操作解析并冻结原件；候选目录本身不启动 smoke、审计或自动排除候选。可用性与审计资格分别展示；精确原件的审计结果、工件匹配和适用范围沿历史传递，不额外制造未知泄漏待办。A 选择不等于审计通过。原生 `exp submit` 保留公共命令，但只使用 run 声明的路径，不解析历史跨节点原件；受管 wrapper 的 submit/help 会提示历史交付使用 A `deliver`，不会阻断或改写命令。
+收口先冻结完整候选目录，`science-task.json` 给出目录文件；启用分类提名时默认只预览 W 提名并注明其余数量，完整目录保留全部精确候选 ID 和来源节点，不按紧凑摘要容量截断。控制层仅为 A 明确选择的操作解析并冻结原件；候选目录本身不启动 smoke、审计或自动排除候选。可用性与审计资格分别展示；精确原件的审计结果、工件匹配和适用范围沿历史传递，不额外制造未知泄漏待办。A 选择不等于审计通过。原生 `exp submit` 保留公共命令，但只使用 run 声明的路径，不解析历史跨节点原件；受管 wrapper 的 submit/help 会提示历史交付使用 A `deliver`，不会阻断或改写命令。
 旧预算内收口可复用普通 A 已封存的 `deliver` 直接进入控制交付，不经过 E；无选择策略时可保持 H/W/A 三节点。当前 FINAL 策略则保留独立的一次最终 A。显式 `selection_policy` 版本 2 仅含 `{"version":2}`，冻结全部候选事实目录，再由精确 closeout A 负责比较。真实 audit/deliver 的 `candidate_recommendation` 必须命名目录中的精确可用候选（或绑定到同一已登记成果的实现引用）；普通科学建议的坏引用保留原文并诊断，不能成为执行选择。`candidate_comparison` 是可选科学说明，不以 `keep`、非空 `rationale`、`key_risk` 或 `evidence_steps` 格式决定提交准入；A 在 `scientific_result` 说明选择与证据。null 不授权交付。旧 `shortlist_k`、`evaluation_key`、`smoke_seconds` 配置拒绝接受。交付策略要求的公开审计必须完整通过才能更新实际提交；失败、跳过或未知不能冒充审计通过。未提供可选 audit/smoke 能力保持中性，不绕过已冻结的必需审计策略。旧预算内收口 A 用 `deliver` 授权适配器交付，用 `audit` 请求资格，用 `finish` 拒绝交付，用 `wait` 暂停。`extract / continue_w / revise_h` 的原话保留并触发最多两次作者补正，不会静默转换成交付授权，不会据此重新开放收口探索；当前协议只为 A 明确选定的已绑定工程故障允许一次精确 W repair；旧冻结协议保持原件并拒绝按新协议运行。A 必须逐项对照原目标和授权范围，区分直接测量、推断与假设、目标指标与代理及敏感性检查；按同一目标准则解释相关候选、冲突证据、不确定性和缺失输入。预算耗尽、finish、审计资格与交付均不证明未测量的目标已经完成。正常审计往返及提交前完整审计明确拒绝后的改选只消耗原总预算，不消耗错误补正次数。完整审计拒绝的同一候选工件不能再次提交；工程故障、未运行和未分类回执不冒充科学拒绝。未知操作绝不改选或重放。
 未知提交始终只核对同一原操作，绝不重复提交；旧预算内模式仍要求原余额足够，当前 FINAL 的一次同操作确认不受共享余额否决。
 A 明确填写 `candidate_recommendation` 时，普通与最终 A 都须提供 `selection_explanation`。

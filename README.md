@@ -65,7 +65,7 @@ cases. External execution remains owned by its declared launcher.
 Execution requires its own frozen configuration and authorization. Research
 budgets, independent review and user statements do not grant execution permission.
 
-All H/W/A/E node token budgets are soft targets: reaching a target requests a bounded conclusion and A review before new W experiments, while the original node can finish. Actual input plus output is fully accounted; no whole-node token allocation is prepaid. Current protocol 23 accepts only soft node settings; older instances remain read-only without rewriting their frozen settings. Finite execution time, permissions and cleanup limits remain enforced.
+All H/W/A/E node token budgets and W stage targets are advisory: reaching a target requests a bounded conclusion without rejecting new managed experiments or forcing A review. Actual input plus output is fully accounted; no whole-node token allocation is prepaid. Current protocol 23 accepts only soft node settings; older instances remain read-only without rewriting their frozen settings. Shared budget checks for new nodes, finite execution time, permissions and cleanup limits remain enforced.
 
 New instances freeze a final-A completion policy with one A per FINAL cycle: insufficient, zero or
 exceeded shared token, time or step budgets do not deny the final A's admission,

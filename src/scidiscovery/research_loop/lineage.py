@@ -281,6 +281,13 @@ def bounded_brief(value):
         value['mechanisms']['overview'].pop();value['mechanisms']['overview_omitted_count']+=1
     while size()>history.MAX_BRIEF_BYTES and value['candidates'].get('candidate_facts'):
         value['candidates']['candidate_facts'].pop();value['candidates']['candidate_facts_omitted_count']+=1
+    nominations=value['candidates'].get('nominations')
+    if size()>history.MAX_BRIEF_BYTES and nominations and 'representatives' in nominations:
+        # Never silently truncate a scientific coverage declaration. The full
+        # preview remains paginated; this navigation view points to all of it.
+        value['candidates']['nominations']={key:nominations[key] for key in
+            ('source_step','index','distinct_candidate_count','scope')}
+        value['candidates']['nominations']['preview_in_index']=True
     while size()>history.MAX_BRIEF_BYTES and value.get('implementation_options'):
         value['implementation_options'].pop();value['implementation_options_omitted_count']+=1
     if size()>history.MAX_BRIEF_BYTES:
@@ -296,6 +303,9 @@ def bounded_brief(value):
                 candidate_facts=[],candidate_facts_omitted_count=original.get('candidate_facts_omitted_count',0)+len(original.get('candidate_facts',[])),
                 selection_protocol=original.get('selection_protocol',0),public_audits=[],
                 audits_omitted_count=original.get('audits_omitted_count',0)+len(original.get('public_audits',[]))))
+        if nominations:
+            value['candidates']['nominations']=dict(source_step=nominations['source_step'],index=nominations['index'],
+                distinct_candidate_count=nominations['distinct_candidate_count'],preview_in_index=True)
     return value
 
 
@@ -535,7 +545,23 @@ def bind(root, step, role, protocol, *, source_cutoff=None, extra_steps=(), sele
         candidates_view.update(adapter_audits=audit_rows[:2], adapter_audits_omitted_count=max(0, len(audit_rows)-2),
             leakage_assessment='Unknown unless explicitly reported; adapter status does not establish leakage or target suitability.')
         bounded_brief(view)
+    nomination_ids=None
+    if state is not None and c.settings(root).get('candidate_nomination_policy') is not None:
+        from . import candidate_nominations
+        nominated=candidate_nominations.project(records,state)
+        nomination_pages=paged(candidate_nominations.page_rows(nominated),16,'nominations',
+            'inputs/history/nominations','sealed-W-scientific-nominations')
+        nomination_index=nomination_pages[0] if nomination_pages else None
+        indexes['nominations']=nomination_index
+        view['candidates']['nominations']=candidate_nominations.preview(nominated,nomination_index)
+        nomination_ids=list(dict.fromkeys(row['candidate'] for row in [*nominated['representatives'],*nominated['extras']]))
+        # The default comparison preview is W's declaration, not the first pool
+        # members in observation order. Every pool member stays in the index.
+        view['candidates']['candidate_facts']=[]
+        view['candidates']['candidate_facts_omitted_count']=len(candidate_rows)
+        bounded_brief(view)
     return dict(**(dict(execution_recoveries=projection['recovery_refs'],execution_recovery_materials=recovery_materials) if projection['recovery_refs'] else {}),**(dict(audit_projection_version=1, audit_receipts=audit_refs, adjacent_audit=adjacent_audit) if audit_projection_version == 1 else {}), nodes=[dict(step=row['step'],seal_sha256=row['seal_sha256']) for row in records],files=files,
                 candidate_ids=[row['id'] for row in candidate_rows],
+                **(dict(candidate_nomination_ids=nomination_ids) if nomination_ids is not None else {}),
                 **(dict(candidate_references=references) if worker_view_version==1 else {}),
                 view=bounded_brief(candidate_refs.public_fields(view,references))),state

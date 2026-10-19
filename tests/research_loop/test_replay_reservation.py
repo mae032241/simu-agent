@@ -81,3 +81,21 @@ def test_operator_reserve_rejects_boolean_negative_and_nonfinite_values(tmp_path
     for reserve in (True, -1, float('inf'), float('nan')):
         with pytest.raises(ValueError, match='finite nonnegative'):
             cov_experiments.CovExecution(configuration(tmp_path, reserve))
+
+
+@pytest.mark.parametrize('enforced', [False, True])
+def test_soft_target_advice_keeps_original_replay_window(tmp_path, monkeypatch, enforced):
+    monkeypatch.setattr(replay_check.budget, 'clock_stamp', lambda:dict(boot_id='boot', at_boottime=100.))
+    config=configuration(tmp_path)
+    review=tmp_path/'review';review.mkdir()
+    (review/'review.json').write_text(json.dumps(dict(deadline_boottime=150.)))
+    config['admission']=dict(version=1,mode='soft',directory=str(review))
+    monkeypatch.setattr(e,'review_status',lambda config:dict(requested=True,enforced=enforced))
+    bound=replay_check.acceptance(config,cov_experiments.CovExecution(config))
+    if enforced:
+        assert bound['time_allocation']['status']=='unavailable'
+        assert replay_check._deadline(config,bound) is None
+    else:
+        assert bound['time_allocation']['status']=='reserved'
+        assert bound['deadline_boottime']==165.
+        assert bound['time_allocation']['experiment_deadline_boottime']==153.

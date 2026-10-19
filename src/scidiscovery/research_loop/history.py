@@ -197,7 +197,12 @@ def _execution_interface(root, accepted):
     """The host-frozen interface chooses authority, never worker-written markers."""
     attempt=accepted.get('native_attempt') or {}
     number=attempt.get('number',0)
-    path=execution.record(root,accepted['scope']['step'],number)/'experiment-config.json'
+    # Interface identity participates in validating a terminal repair itself.
+    # Reading result eligibility here would re-enter that same repair chain.
+    intents=list(execution.accepted_intents(root,accepted['scope']['step']))
+    if type(number) is not int or not 0<=number<len(intents):
+        raise ObserverIntegrityError('Managed host execution attempt is not accepted')
+    path=intents[number][0]/'experiment-config.json'
     if not path.exists():raise ObserverIntegrityError('Managed host execution configuration missing')
     config=c.read(c.regular(path))
     if config.get('scope')!=accepted['scope'] or config.get('execution_interface')!=accepted.get('interface'):
@@ -860,6 +865,9 @@ def records_from_sources(root, sources, *, write_cache=True):
                    recommendation=payload.get('candidate_recommendation') if job['role'] == 'A' and payload.get('next_action') != 'audit'
                        and payload.get('candidate_recommendation') in job.get('history',{}).get('candidate_ids',[]) else None,
                    observation=observation)
+        if job['role']=='W' and job.get('candidate_nomination_mechanisms'):
+            declared=c.scientific_field(job,payload,'candidate_nominations')
+            if declared is not None:row['candidate_nominations']=declared
         if job.get('handoff_protocol', 1) >= 9 and payload.get('next_action') == 'audit':
             row['audit_request'] = True
         # Replacing a disposable projection repairs deletion/corruption; originals

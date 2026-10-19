@@ -188,6 +188,7 @@ def response_fields(job, policy):
     if job['role']=='W':
         from . import worker_delivery
         if worker_delivery.applicable(job):fields.append('mechanism_findings')
+        if job.get('candidate_nomination_mechanisms'):fields.append('candidate_nominations')
     return fields
 
 
@@ -233,8 +234,9 @@ def result_schema(role: str,protocol=CURRENT,comparison=False,*,formal_review=Fa
             'Return the final conclusion and explicit unsubmitted reason because candidate originals or delivery permission are unavailable.')
         properties['scientific_result']['description'] = 'Give your final evidence-based conclusion, exact selection or missing input, and explain unmet objectives. Never claim a host submission result; control supplies its actual receipt.'
     if role=='W':
-        from . import worker_delivery
+        from . import worker_delivery, candidate_nominations
         properties['mechanism_findings']=worker_delivery.schema()
+        properties['candidate_nominations']=candidate_nominations.schema()
         properties['stage_intent']=dict(type='string',enum=['continue','review','decision'],
         description='Continue the same scientific stage, report completed work for review, or request an A scientific decision with partial work. This does not grant budget or execution. Control may end the stage at a review or shared boundary.')
     if role in {'H','A'}:
@@ -252,7 +254,7 @@ def result_schema(role: str,protocol=CURRENT,comparison=False,*,formal_review=Fa
             from . import shortlist
             properties['candidate_comparison']=shortlist.schema()
     if auxiliary_fields is not None:
-        for field in ('mechanism_findings','search_plan','search_review','progress_assessment',
+        for field in ('mechanism_findings','candidate_nominations','search_plan','search_review','progress_assessment',
                 'decision_request','candidate_comparison'):
             if field not in auxiliary_fields:properties.pop(field,None)
     return dict(type='object',properties=properties,required=list(properties),additionalProperties=False)
@@ -591,7 +593,8 @@ def science_view(job, root=None):
         from . import delivery
         closeout = dict(source_cutoff=job['source_cutoff'],
             selection='Choose a frozen candidate ID for delivery; null means no decision, not retention. Report scientific reasoning and limitations.',
-            sources=delivery.public_sources(job['delivery_sources'], job['history']['view']['candidates'].get('adapter_audits', [])),
+            sources=delivery.public_sources(job['delivery_sources'], job['history']['view']['candidates'].get('adapter_audits', []),
+                nominated_ids=job['history'].get('candidate_nomination_ids')),
             actions=('Select an existing candidate and authorize its original host submission. Give the final conclusion and unmet objectives; control supplies the actual submission receipt. No further scientific work.' if job.get('final_only') else
                 'deliver authorizes delivery; audit obtains qualification; finish declines delivery; wait pauses. No new H/W/E work during closeout.'))
         if job['delivery_sources'].get('catalogue'):
@@ -640,6 +643,9 @@ def science_view(job, root=None):
             context=(job.get('worker_fragment_policy') or {}).get('context'),
             permission='Configured context is not permission: control verifies original terminal, cleanup, usage, session and remaining shared authorization before accepting another fragment.',
             intent='review reports completed assigned work; decision sends a scientific obstacle to A as partial; continue requests another fragment only when configured; otherwise control ends the stage with an explicit unavailable reason.')) if job['role']=='W' else {}),
+        **(dict(candidate_nomination_policy=job['candidate_nomination_policy'],
+            candidate_nomination_mechanisms=job['candidate_nomination_mechanisms'])
+           if job.get('candidate_nomination_mechanisms') else {}),
         **(dict(decision_context=context) if context is not None else {}),
         **(dict(role_instruction=job['native_role_instruction']) if job.get('native_role_instruction') and not job.get('role_guidance') else {}),
         **(dict(role_guidance=job['role_guidance']) if job.get('role_guidance') else {}),
@@ -1018,6 +1024,10 @@ def build_job(root: Path, step: int, role: str, parents: list[int], instruction=
     if purpose is None and not job.get('formal_review') and final_report is None and engineering_repair is None and protocol >= 5 and policy.get('search_policy') is not None:
         from . import search
         job['search'] = search.bind(root, step, role, protocol, state=state, unified=projection_version == 1)
+    if role=='W' and job.get('search') is not None and policy.get('candidate_nomination_policy') is not None:
+        job['candidate_nomination_policy']=policy['candidate_nomination_policy']
+        job['candidate_nomination_mechanisms']=[dict(mechanism_ref=ref,status=item['status'])
+            for ref,item in state['mechanisms'].items()]
     if retained is None or 'scientific_response_fields' in retained:
         job['scientific_response_fields']=response_fields(job,policy)
     if retained is not None:
@@ -1181,6 +1191,8 @@ def _validate_inputs(root, work, job):
         raise ValueError('Frozen execution selection differs from its original settings')
     if job['role']=='W' and job.get('worker_fragment_policy')!=settings(root).get('worker_fragment_policy'):
         raise ValueError('Frozen W continuation configuration differs from its original settings')
+    if job.get('candidate_nomination_policy') is not None and job['candidate_nomination_policy']!=settings(root).get('candidate_nomination_policy'):
+        raise ValueError('Frozen candidate nomination configuration changed')
     if job.get('audit_projection_version') == 1:
         if (job['history'].get('audit_projection_version') != 1
                 or job['history'].get('adjacent_audit') != job.get('candidate_audit')):
@@ -1355,6 +1367,8 @@ def seal_result(root: Path, step: int):
                 checkpoint.capture(root,job,native_record)
             else:checkpoint.validate(root,job,native_record)
         worker_delivery.require_delivery(root,job,value,native_record)
+        from . import candidate_nominations
+        candidate_nominations.require(root,job,value)
     control = None
     from . import semantic
     control = semantic.outcome(root, job, value)

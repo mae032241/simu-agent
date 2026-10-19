@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path
 import time
 
 from scidiscovery.operations.execution import AdapterCapability
@@ -69,10 +68,9 @@ def _call_deadline(config, bound, stamp):
         return None
     mode = config.get('admission', {}).get('mode')
     if mode == 'soft':
-        if e.review_status(config)['requested']:
+        review_status = e.review_status(config)
+        if review_status['requested'] and review_status['enforced']:
             return None
-        review = json.loads(e.read(Path(config['admission']['directory']) / 'review.json'))
-        deadline = min(deadline, review['deadline_boottime'])
     elif mode != 'hard':
         return None
     return deadline
