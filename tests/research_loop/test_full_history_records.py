@@ -9,7 +9,7 @@ from execution_fixtures import execution_registry
 from test_lineage import scene as cov_scene
 from test_history_handoff import finish
 from test_worker_fragments import fragment, science
-from scidiscovery.research_loop import checkpoint, contracts as c, controller, cov_lineage as cov, execution, history, lineage
+from scidiscovery.research_loop import checkpoint, contracts as c, controller, cov_lineage as cov, execution, history, lineage, selection
 
 
 def test_twenty_five_real_calls_keep_large_snapshot_contexts_and_restart_bindings(tmp_path,execution_registry):
@@ -116,12 +116,28 @@ def test_new_default_has_no_storage_cap_and_explicit_quota_is_still_enforced(tmp
     else:assert c.collect_materials(root,1)[0]['size_bytes']==100001
 
 
-def test_full_candidate_accumulation_is_not_a_compact_count_limit():
+def test_full_candidate_accumulation_is_not_a_compact_count_limit(fragment):
     rows=[dict(id=f'candidate-{n}',label='row',implementation=None,evaluation_key='one-public-version',metric=float(n),direction='min',status='ok',evidence=[]) for n in range(4100)]
     records=[dict(step=1,role='W',observation=dict(candidates=rows,current_candidate=None,actual_submission=None,coverage=dict(status='complete',note='Fixture')),recommendation=None)]
     view=lineage.candidate_view(records)
-    assert len(view['candidate_index'])==4100 and len(view['recent_candidates'])==16
+    expected=[row['id'] for row in rows]
+    assert [row['id'] for row in view['candidate_index']]==expected
+    assert [row['id'] for row in view['candidate_facts']]==expected[:16]
     assert view['candidates_omitted_count']==4084
+    compact=selection.project(selection.public_inputs(records))
+    assert len(selection._bytes(compact))<=history.MAX_BRIEF_BYTES
+    assert 0<len(compact['candidate_facts'])<=16
+    assert [row['id'] for row in compact['candidate_facts']]==expected[:len(compact['candidate_facts'])]
+    assert len(compact['candidate_facts'])+compact['candidate_facts_omitted_count']==4100
+    root,_,_=fragment;work=c.workspace(root,1)
+    _,paged,files=history.page_writer(work)
+    pages=paged(view['candidate_index'],16,'candidates','inputs/history/complete-candidates')
+    restored=[];page=pages[0]
+    while page:
+        value=c.read(work/page);restored.extend(value['candidates']);page=value['next_page']
+    assert [row['id'] for row in restored]==expected
+    assert restored==view['candidate_index']
+    assert all(row['size_bytes']<=history.MAX_PAGE_BYTES for row in files)
 
 
 def test_complete_implementation_selection_is_not_capped_at_sixteen(tmp_path):

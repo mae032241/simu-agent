@@ -59,6 +59,10 @@ class UnsupportedExecution(ValueError):
     pass
 
 
+class CommandOptionsError(ValueError):
+    """Unsupported caller options rejected before preparation or admission."""
+
+
 class ReviewRequired(ValueError):
     pass
 
@@ -158,7 +162,7 @@ def registration(executor):
 
 HOST_CONFIGURATION_FIELDS = frozenset({'scope','record_dir','native_attempt','admission','breadth',
     'engineering_repair','execution_interface','registered_implementation', 'host_execution_authority',
-    'execution_host_services', 'frozen_execution_interface'})
+    'execution_host_services', 'frozen_execution_interface', 'worker_view_version', 'host_launch_implementation'})
 
 
 def operator_configuration(value):
@@ -267,6 +271,204 @@ def _public_capabilities(adapter):
     return result
 
 
+def _worker_capabilities(adapter):
+    """Producer-owned science contracts, separate from frozen host metadata."""
+    method = getattr(adapter, 'worker_capabilities', None)
+    items = tuple(method() if callable(method) else adapter.capabilities())
+    return tuple(item for item in items if item.key not in {
+        HOST_EXECUTION_GATE_KEY, RETIREMENT_KEY, INPUT_SOURCES_KEY})
+
+
+def _capability_view(item):
+    return dict(key=item.key, kind=item.kind, schema_id=item.schema_id,
+        payload_schema_version=item.payload_schema_version, media_type=item.media_type,
+        public_summary=dict(item.public_summary))
+
+
+def _status_view(value):
+    """Status metadata is a control object; scientific metrics retain their names."""
+    result = {key: value[key] for key in ('state', 'call_id', 'candidate_id', 'evaluation_key',
+        'metric', 'direction', 'wall_seconds', 'parent_candidate', 'returncode', 'result',
+        'submission_disposition') if key in value}
+    if isinstance(result.get('result'),dict):result['result']=_scientific_result(result['result'])
+    return result
+
+
+def _scientific_result(value):
+    # These fields belong to the declared local scientific-result protocol.
+    # Metric names and author-owned output labels are preserved verbatim.
+    result = {key:value[key] for key in ('status','metrics','outputs','candidate','diagnostic',
+        'metrics_omitted_count','outputs_omitted_count','diagnostics','details_ref',
+        'candidate_preview','candidate_details_ref','diagnostics_omitted_count') if key in value}
+    # The optional-result parser emits fixed field diagnostics, never exception
+    # text or control objects. Preserve that bounded explanation at every view.
+    if value.get('status') == 'invalid' and value.get('diagnostic') in {'result_json_invalid','result_io'} and isinstance(value.get('detail'),str):
+        result['detail'] = value['detail'].encode('utf-8')[:512].decode('utf-8',errors='ignore')
+    return result
+
+
+def _accounting_view(value):
+    return {key:value[key] for key in ('state','call_id','actual','retained_dimensions') if key in value}
+
+
+def _run_view(value):
+    result={key:value[key] for key in ('call_id','status','native_state','note','returncode','wall_seconds',
+        'result','candidate_id','run_id','parent','change_intent','model','evaluation_key','metric',
+        'val_score','val_acc','error','engineering_check','review_url','resource_accounting') if key in value}
+    if isinstance(result.get('result'),dict):result['result']=_scientific_result(result['result'])
+    if isinstance(result.get('parent'),dict):
+        result['parent']={key:result['parent'][key] for key in ('status','candidate_id','source') if key in result['parent']}
+    if isinstance(value.get('authorization_request'),dict):
+        result['authorization_request']=dict(status='execution_decision_required')
+    if isinstance(result.get('resource_accounting'),dict):result['resource_accounting']=_accounting_view(result['resource_accounting'])
+    return result
+
+
+def _diagnostic(error, fallback):
+    text=str(error)
+    # Exception strings are host diagnostics, never scientific source/data.
+    return fallback if re.search(r'[0-9a-fA-F]{64}',text) else text[:1024]
+
+
+def _candidate_view(config, value):
+    """Only typed candidate choices use the host's exact readable reference map."""
+    if instance_owner.configuration_root(config) is None:return value
+    from . import candidate_refs, contracts as c,experiment_client
+    root=experiment_client.root_for_configuration(config)
+    job=c.read(c.regular(root/'jobs'/f'{config["scope"]["step"]:03d}.json'))
+    def row(item):
+        result=dict(item)
+        for key in ('candidate_id','parent_candidate'):
+            if key in result:result[key]=candidate_refs.public_reference(root,job,result[key])
+        if isinstance(result.get('parent'),dict):
+            result['parent']=dict(result['parent'])
+            if 'candidate_id' in result['parent']:
+                result['parent']['candidate_id']=candidate_refs.public_reference(root,job,result['parent']['candidate_id'])
+        return result
+    result=row(value)
+    if isinstance(result.get('calls'),list):result['calls']=[row(item) for item in result['calls']]
+    return result
+
+
+def _scientific_projection_directory(config):
+    from . import contracts as c,experiment_client
+    root=experiment_client.root_for_configuration(config,allow_standalone=True)
+    record_directory=Path(config['record_dir'])
+    if root is None:
+        parts=record_directory.parts
+        if ('host-runtime' in parts or any(parts[index:index+2]==('project','nodes') for index in range(len(parts)-1))
+                or not record_directory.is_absolute() or record_directory.resolve()!=record_directory
+                or not record_directory.is_dir()):
+            raise IntegrityError('Scientific projection has no canonical standalone host directory')
+        projection_directory=record_directory.parent/'scientific-output-views'
+    else:
+        task=c.digest(c.regular(root/'jobs'/f'{config["scope"]["step"]:03d}.json'))
+        if config['scope'].get('job_sha256')!=task:
+            raise IntegrityError('Scientific projection differs from its exact original task')
+        projection_directory=root/'host-runtime/experiment-control'/task/'scientific-output-views'
+    if projection_directory.resolve()!=projection_directory or projection_directory.is_relative_to(record_directory):
+        raise IntegrityError('Scientific projection must remain outside original managed calls')
+    projection_directory.mkdir(parents=True,exist_ok=True,mode=0o700)
+    if not projection_directory.is_dir():raise IntegrityError('Scientific projection directory is unavailable')
+    return projection_directory
+
+
+def scientific_outputs(config, observation, *, adapter=None, include_logs=False):
+    """Producer-owned science files from an already verified full observation."""
+    descriptors=tuple(LocalFileDescriptor.model_validate(item['descriptor']).model_copy(update={'local_path':item['path']})
+        for item in observation['outputs'])
+    if adapter is None:
+        declared,_=registration(config['execution_interface']['executor'])
+        method=declared.scientific_outputs
+    else:method=getattr(adapter,'scientific_outputs',None)
+    if callable(method):
+        selected=tuple(method(descriptors,projection_directory=_scientific_projection_directory(config)))
+    elif config['execution_interface'].get('result_protocol')==LOCAL_RESULT_PROTOCOL:
+        def original(reference):
+            actual=proof(reference['path'])
+            if any(actual[key]!=reference[key] for key in ('sha256','size_bytes')):
+                raise IntegrityError('Scientific output completion original changed')
+            return json.loads(read(Path(reference['path'])))
+        completed=original(observation['completed'])
+        if any(completed.get(key)!=observation.get(key) for key in ('call_id','scope','mechanism_binding','status')):
+            raise IntegrityError('Scientific outputs differ from their exact completed call')
+        def collected(source):
+            matches=[descriptor for item,descriptor in zip(observation['outputs'],descriptors)
+                if item['source']==source and descriptor.sha256==source['sha256']
+                and descriptor.size_bytes==source['size_bytes']]
+            if len(matches)!=1:raise IntegrityError('Scientific output has no exact collected original')
+            return matches[0]
+        selected=[collected({key:output[key] for key in ('path','sha256','size_bytes')}).model_copy(
+            update={'name':output['name']}) for output in completed.get('outputs',[])]
+        if include_logs:
+            accepted=original(observation['accepted'])
+            if any(accepted.get(key)!=observation.get(key) for key in ('call_id','scope','mechanism_binding')):
+                raise IntegrityError('Scientific logs differ from their exact accepted call')
+            directory=Path(config['record_dir'])/'calls'/observation['call_id']
+            replacements={str(directory):f'[retained execution {observation["call_id"]}]',
+                str(Path(config['record_dir'])):'[retained executions]',
+                accepted['script']['path']:accepted['prepared']['local_path']}
+            if 'entry' in accepted:
+                replacements[str(directory/'inputs')]=accepted['experiment_directory']
+                for item in accepted['snapshot_files']:
+                    replacements[str(directory/'inputs'/item['name'])]=item['path']
+                replacements[str(directory/'outputs')]=str(Path(accepted['experiment_directory'])/'artifacts')
+            target_directory=_scientific_projection_directory(config)/'local-logs'/observation['call_id']
+            if target_directory.resolve()!=target_directory:
+                raise IntegrityError('Scientific log projection changed its host namespace')
+            target_directory.mkdir(parents=True,exist_ok=True,mode=0o700)
+            log_name='execution-logs';suffix=1
+            while any(item.name in {log_name+'/stdout.txt',log_name+'/stderr.txt'} for item in selected):
+                suffix+=1;log_name=f'execution-logs-{suffix}'
+            for stream in ('stdout','stderr'):
+                matches=[item for item in completed['proofs'] if item['path']==str(directory/(stream+'.raw'))]
+                if len(matches)!=1:raise IntegrityError('Scientific log has no exact retained transport original')
+                descriptor=collected(matches[0]);raw=Path(descriptor.local_path).read_bytes()
+                if hashlib.sha256(raw).hexdigest()!=descriptor.sha256 or len(raw)!=descriptor.size_bytes:
+                    raise IntegrityError('Scientific log original changed')
+                rendered=raw
+                for source,destination in sorted(replacements.items(),key=lambda row:len(row[0]),reverse=True):
+                    rendered=rendered.replace(os.fsencode(source),os.fsencode(destination))
+                target=target_directory/(stream+'.txt')
+                if target.is_symlink():raise IntegrityError('Scientific log projection must be an original file')
+                if target.exists():
+                    if target.read_bytes()!=rendered:raise IntegrityError('Scientific log projection changed')
+                else:
+                    with target.open('xb') as output:output.write(rendered)
+                    target.chmod(0o400)
+                item=proof(target)
+                selected.append(LocalFileDescriptor(name=log_name+'/'+stream+'.txt',local_path=str(target),
+                    sha256=item['sha256'],size_bytes=item['size_bytes'],media_type='text/plain'))
+        selected=tuple(selected)
+    else:selected=descriptors
+    names=set()
+    for descriptor in selected:
+        if not isinstance(descriptor,LocalFileDescriptor):raise IntegrityError('Scientific output descriptor is malformed')
+        name=Path(descriptor.name)
+        if (name.is_absolute() or '..' in name.parts or not name.parts or name.as_posix()!=descriptor.name
+                or '\\' in descriptor.name or descriptor.name in names):
+            raise IntegrityError('Scientific output requires distinct canonical names')
+        names.add(descriptor.name)
+        item=proof(descriptor.local_path)
+        if item['sha256']!=descriptor.sha256 or item['size_bytes']!=descriptor.size_bytes:
+            raise IntegrityError('Scientific output original changed')
+    return selected
+
+
+def _collected_view(config, call_id, observation, adapter):
+    """Give retained scientific outputs stable names without object-store addresses."""
+    from . import contracts as c,experiment_client
+    root=experiment_client.root_for_configuration(config)
+    work=c.workspace(root,config['scope']['step'])
+    result = []
+    for descriptor in scientific_outputs(config,observation,adapter=adapter,include_logs=True):
+        target = work / 'work/retained-experiments' / call_id / 'outputs' / descriptor.name
+        c._copy_bound(Path(descriptor.local_path), target, descriptor.sha256)
+        result.append(dict(name=descriptor.name, path=str(target), media_type=descriptor.media_type,
+            size_bytes=descriptor.size_bytes, retention='retained_original'))
+    return dict(status='collected', call_id=call_id, outputs=result)
+
+
 def freeze(config, executor, *, path=None):
     """Host preparation only: freeze selected factory, code, configuration and flags."""
     from .protocol import require_scope
@@ -295,6 +497,10 @@ def freeze(config, executor, *, path=None):
     from . import replay_check
     assets.append(Path(replay_check.__file__).resolve())
     assets.append(Path(instance_owner.__file__).resolve())
+    if value.get('worker_view_version') == 1:
+        from . import experiment_client,worker_execution_bridge
+        assets.extend(Path(item.__file__).resolve() for item in (experiment_client,worker_execution_bridge))
+        assets.extend(Path(item['path']) for item in value.get('host_launch_implementation',[]))
     if any(getattr(item,'key',None)==INPUT_SOURCES_KEY for item in adapter.capabilities()):
         from . import execution_inputs, qualification
         assets.extend([Path(execution_inputs.__file__).resolve(), Path(qualification.__file__).resolve()])
@@ -311,8 +517,7 @@ def freeze(config, executor, *, path=None):
         config_sha256=hashlib.sha256(encoded(body)).hexdigest(),
         capabilities=asdict(lifecycle_capabilities(adapter)),
         code=[proof(item) for item in dict.fromkeys(assets)])
-    if ('registered_implementation' in value
-            or any(getattr(item,'key',None)==INPUT_SOURCES_KEY for item in adapter.capabilities())):
+    if 'registered_implementation' in value or adapter.capabilities():
         value['execution_interface']['public_capabilities']=_public_capabilities(adapter)
     return value
 
@@ -348,18 +553,33 @@ def configure(root,step,executor,config,output):
         implementation=dict(registered_implementation=selected['implementation'])
     admission=budget.review_configuration(root,job)
     from .protocol import stage_scope
-    value=dict(config,**implementation,record_dir=str(c.workspace(root,step)/'work/lineage'),native_attempt=native_attempt,admission=admission,
+    from . import experiment_client
+    value=dict(config,**implementation,record_dir=str(experiment_client.record_directory(root,step)),native_attempt=native_attempt,admission=admission,
         scope=stage_scope(root,job),breadth=(job.get('search') or {}).get('breadth'),
         **(dict(engineering_repair=dict(candidate_id=job['engineering_repair']['candidate_id'])) if job.get('engineering_repair') else {}))
+    client = None
+    if job.get('worker_view_version') == 1:
+        from . import experiment_client
+        value['worker_view_version'] = 1
+        value['host_launch_implementation']=[proof(Path(argument).absolute())
+            for argument in c.settings(root)['native_launcher_argv'] if Path(argument).suffix=='.py']
+        if Path(output).absolute().parent==c.workspace(root,step)/'work':
+            if experiment_client.location(output) != (root, step):
+                raise IntegrityError('Execution client differs from its canonical task workspace')
+            client = experiment_client.stub(job, native_attempt['number'])
+            if Path(output).exists():
+                old=c.read(c.regular(Path(output)))
+                if (not isinstance(old,dict) or set(old)!=set(client)
+                        or old.get('step')!=step or old.get('worker_view_version')!=1):
+                    raise IntegrityError('Frozen execution client changed')
     if c.settings(root).get('execution_resource_policy') is not None and job['role'] == 'W':
         from . import execution_authority
         value['host_execution_authority'] = execution_authority.contract(root)
     value=freeze(value,executor,path=output)
     updates=[]
-    # This is the same configuration already exposed to this Worker, without
-    # native/session evidence. The existing control mount is read-only in-shell.
+    # Complete originals remain in the existing host-control namespace.
     projection=root/'host-runtime/experiment-control'/value['scope']['job_sha256']/'interfaces'/f'{native_attempt["number"]:03d}.json'
-    for path in (Path(output),record/'experiment-config.json',projection):
+    for path in ((record/'experiment-config.json',projection) if client is not None else (Path(output),record/'experiment-config.json',projection)):
         if path.exists():
             old=c.read(c.regular(path))
             if old==value:continue
@@ -369,6 +589,11 @@ def configure(root,step,executor,config,output):
     # Validate every immutable conflict before replacing the current pointer.
     for path in updates:
         c.write(path,value);path.chmod(0o400)
+    if client is not None:
+        output=Path(output)
+        c.write(experiment_client.binding_path(root,job,output),
+            dict(client=client,configuration=proof(record/'experiment-config.json')))
+        c.write(output,client);output.chmod(0o400)
     return value
 
 
@@ -403,11 +628,8 @@ def original_configuration(config,call_id):
             or not isinstance(attempt.get('execution_key'),str)
             or not re.fullmatch('[0-9a-f]{64}',attempt['execution_key'])):
         raise IntegrityError('Original execution native attempt is unavailable')
-    directory=Path(config['record_dir'])
-    if len(directory.parents)<5:raise IntegrityError('Original execution namespace is unavailable')
-    root=directory.parents[4]
-    if directory!=root/'project/nodes'/f'{config["scope"]["step"]:03d}'/'work/lineage':
-        raise IntegrityError('Original execution namespace differs from its stage')
+    from . import experiment_client
+    root=experiment_client.root_for_configuration(config)
     path=root/'host-runtime/experiment-control'/config['scope']['job_sha256']/'interfaces'/f'{attempt["number"]:03d}.json'
     original=json.loads(read(path))
     if (original.get('scope')!=config['scope'] or original.get('record_dir')!=config['record_dir']
@@ -613,7 +835,8 @@ class Records:
 @_configuration_effect
 def dispatch(config, script, *, parent=None, new=False, change=None, mechanism=None, command_options=None):
     """Convenience input path; neutral callers may provide a descriptor directly."""
-    source=Path(script).resolve();item=proof(source)
+    from . import experiment_client
+    source=experiment_client.payload_path(config,Path(script).absolute());item=proof(source)
     payload=LocalFileDescriptor(name='input',local_path=str(source),sha256=item['sha256'],
         size_bytes=item['size_bytes'],media_type='application/octet-stream')
     return dispatch_descriptor(config,payload,parent=parent,new=new,change=change,mechanism=mechanism,command_options=command_options)
@@ -919,6 +1142,13 @@ def _dispatch_descriptor(config, payload, *, parent=None, new=False, change=None
     if repair is not None and (parent!=repair['candidate_id'] or new or not change or Records(config).calls()):
         raise ValueError('Engineering repair allows one exact parent candidate call with a declared change')
     adapter = load(config)
+    if command_options is not None:
+        signature = inspect.signature(adapter.acceptance_metadata)
+        signature.bind(payload, parent=parent, new=new, change=change)
+        try:
+            signature.bind(payload, parent=parent, new=new, change=change, command_options=command_options)
+        except TypeError as error:
+            raise CommandOptionsError('Selected executor does not support --experiment-dir or script arguments; read its public capabilities and use the declared invocation') from error
     capabilities = lifecycle_capabilities(adapter)
     if not capabilities.atomic_admission:
         raise UnsupportedExecution('Implementation does not support managed admission')
@@ -1012,7 +1242,7 @@ def progress(config):
             evaluation_key=details.get('evaluation_key'), metric=details.get('metric'), direction=details.get('direction'),
             wall_seconds=details.get('wall_seconds'), parent_candidate=details.get('parent_candidate'),
             **(dict(native_state='cancelled') if details.get('state')=='cancelled' else {}),
-            **(dict(returncode=details['returncode'],result=details['result']) if details.get('result') is not None else {})))
+            **(dict(returncode=details['returncode'],result=_scientific_result(details['result'])) if details.get('result') is not None else {})))
     return dict(version=1, calls=rows[-16:], counts=counts, omitted_count=max(0, len(rows)-16),
         coverage='partial' if counts['unknown'] else 'complete', observed_at=time.time())
 
@@ -1039,20 +1269,56 @@ def compile_implementation(config, adapter, source, aliases, output):
         raise UnsupportedExecution('Selected implementation does not declare optional scientific compilation')
     if not isinstance(aliases, dict) or any(not isinstance(key, str) or not isinstance(value, str) for key, value in aliases.items()):
         raise ValueError('Scientific file choices must map slot names to exact bound input aliases')
-    return adapter.compile_implementation(source, aliases, output)
+    if config.get('worker_view_version')!=1:return adapter.compile_implementation(source, aliases, output)
+    from . import contracts as c,experiment_client
+    root=experiment_client.root_for_configuration(config);work=c.workspace(root,config['scope']['step'])
+    output=Path(output).absolute()
+    if output.resolve()!=output or not output.is_relative_to(work/'artifacts') or output.exists():
+        raise ValueError('Choose a new scientific implementation output under this task artifacts')
+    private=Path(config['record_dir']).parent/'implementations'
+    private.mkdir(parents=True,exist_ok=True)
+    entries=list(private.iterdir())
+    if any(path.resolve()!=path or not path.is_dir() or re.fullmatch(r'I[0-9]{3,}',path.name) is None for path in entries):
+        raise IntegrityError('Compiled implementation namespace changed')
+    reference=f'I{len(entries)+1:03d}';directory=private/reference;directory.mkdir()
+    package=directory/'package.json'
+    result=adapter.compile_implementation(source,aliases,package)
+    if result.get('status')!='compiled' or Path(result.get('path',''))!=package:
+        raise IntegrityError('Compiler did not retain the exact private implementation')
+    original=proof(package)
+    client=dict(worker_implementation_version=1,implementation_ref=reference)
+    c.write(directory/'client.json',dict(client=client,public_path=str(output),package=original))
+    c.write(output,client);output.chmod(0o400)
+    return dict(status='compiled',path=str(output.relative_to(work)),qualification=result.get('qualification'))
 
 
-def main(argv=None):
-    # -m runs this file as __main__; registered factories import its canonical name.
-    from . import feedback, experiments as common
-    parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--config',type=Path,required=True)
+class CallerError(ValueError):
+    """A rejected public invocation, before an accepted execution exists."""
+    def __init__(self,note,*,error='invalid_arguments'):
+        super().__init__(note);self.error=error
+
+
+class _CallerArgumentParser(argparse.ArgumentParser):
+    def error(self,message):
+        # argparse may embed user paths/values in message; expose declared usage
+        # only, never control paths or a checksum provided as an invalid value.
+        raise CallerError(f'Check required options with {self.prog} --help. Use the assigned task science files.')
+
+
+def caller_feedback(error):
+    return dict(status='caller_error',accepted=False,error=error.error,note=str(error))
+
+
+def _cli_parser(*,configuration=True):
+    parser=_CallerArgumentParser(prog='exp',description=__doc__)
+    if configuration:parser.add_argument('--config',type=Path,required=True)
     sub=parser.add_subparsers(dest='command',required=True)
     run=sub.add_parser('run');payload=run.add_mutually_exclusive_group(required=True)
     payload.add_argument('--script',type=Path);payload.add_argument('--payload',type=Path)
-    run.add_argument('--experiment-dir',type=Path,help='Snapshot only this explicit experiment directory, excluding artifacts/; execute its script copy and collect artifacts/')
+    run.add_argument('--experiment-dir',type=Path,help='When declared by the selected executor, snapshot this directory excluding artifacts/; unavailable for Cov single-source execution')
     choice=run.add_mutually_exclusive_group();choice.add_argument('--parent-plan');choice.add_argument('--new-plan',action='store_true')
     run.add_argument('--change-intent');run.add_argument('--mechanism')
-    run.add_argument('arguments',nargs=argparse.REMAINDER,help='Script arguments after --; passed as argv, never shell text')
+    run.add_argument('arguments',nargs=argparse.REMAINDER,help='When declared by the selected executor, script arguments after --; passed as argv, never shell text')
     sub.add_parser('lineage-status')
     compile_command = sub.add_parser('compile', help='Optional local compilation of scientific slots; grants no execution')
     compile_command.add_argument('--implementation', type=Path, required=True)
@@ -1066,10 +1332,39 @@ def main(argv=None):
     for name in ('query','lookup','collect','cancel','reconcile','retire'):
         item=sub.add_parser(name,**(dict(help='Freeze the same original terminal facts using query and declared collection; never submit a new execution.') if name=='reconcile' else {}))
         item.add_argument('--call-id',required=True)
-    args=parser.parse_args(argv)
+    return parser,sub
+
+
+def cli_help(command=None):
+    parser,commands=_cli_parser(configuration=False)
+    if command is not None:
+        if command not in commands.choices:raise CallerError('Choose an existing command with exp help.')
+        parser=commands.choices[command]
+    return dict(status='help',usage=parser.format_help(),
+        note='Write ordinary science files, then use the declared command. Control retains originals; never repeat an unknown call.')
+
+
+def main(argv=None):
+    # -m runs this file as __main__; registered factories import its canonical name.
+    from . import feedback, experiments as common
+    parser,_=_cli_parser()
+    try:args=parser.parse_args(argv)
+    except CallerError as error:
+        print(json.dumps(caller_feedback(error),allow_nan=False));return 2
+    args.config=args.config.absolute()
+    try:args.config.lstat()
+    except FileNotFoundError:
+        result=caller_feedback(CallerError('Configuration client is missing. From the assigned task use --config work/experiment-config.json or exp help; do not recreate control configuration.',error='config_not_found'))
+        print(json.dumps(result,allow_nan=False));return 2
+    except OSError:
+        print(json.dumps(dict(status='integrity_error',note='Configuration client cannot be read; preserve its original and report the unavailable input.'),allow_nan=False));return 3
     owner_lease = ExitStack()
     try:
-        config=json.loads(read(args.config));feedback_config=config
+        config=json.loads(read(args.config.absolute()))
+        if isinstance(config,dict) and 'worker_view_version' in config and 'scope' not in config:
+            from . import experiment_client
+            config=experiment_client.resolve(args.config,config)
+        feedback_config=config
         from . import protocol
         scope=config.get('scope',{})
         if args.command=='lineage-status' and (type(scope.get('handoff_protocol')) is not int or scope['handoff_protocol']!=protocol.CURRENT):
@@ -1080,9 +1375,11 @@ def main(argv=None):
             require_scope(config.get('scope'))
         adapter=load(config,path=args.config)
         if args.command in {'capabilities','describe'}:
-            declared=_public_capabilities(adapter)
+            frozen_declared=_public_capabilities(adapter)
             frozen=config['execution_interface'].get('public_capabilities')
-            if frozen is not None and declared!=frozen:raise IntegrityError('Frozen public execution contract changed')
+            if frozen is not None and frozen_declared!=frozen:raise IntegrityError('Frozen public execution contract changed')
+            worker_contracts=_worker_capabilities(adapter)
+            declared=[_capability_view(item) for item in worker_contracts]
             if args.command=='capabilities':
                 if not 0<=args.start<=len(declared):raise ValueError('Exact capability continuation position required')
                 result=dict(executor=config['execution_interface']['executor'],lifecycle=config['execution_interface']['capabilities'],contracts=[])
@@ -1090,7 +1387,7 @@ def main(argv=None):
                     compact=dict(item)
                     if len(encoded(compact))>8000:compact['public_summary']=dict(view_status='details_omitted')
                     if len(encoded(compact))>8000:
-                        compact={key:item[key] for key in ('key','sha256','size_bytes','payload_schema_version')}
+                        compact={key:item[key] for key in ('key','kind','schema_id','media_type','payload_schema_version')}
                         compact['metadata_view_status']='details_omitted; describe --metadata'
                     if len(encoded(dict(result,contracts=[*result['contracts'],compact])))>14_000:break
                     result['contracts'].append(compact)
@@ -1099,31 +1396,43 @@ def main(argv=None):
                     next_start=position if position<len(declared) else None)
                 result['read_contract']='describe --key <key> --output <new scratch file>; add --metadata for full public metadata'
             else:
-                items=[item for item in adapter.capabilities() if item.key==args.key]
+                items=[item for item in worker_contracts if item.key==args.key]
                 if len(items)!=1:raise UnsupportedExecution('Exact declared public capability key unavailable')
                 item=items[0];expected=next(row for row in declared if row['key']==args.key)
-                if hashlib.sha256(item.content).hexdigest()!=expected['sha256'] or len(item.content)!=expected['size_bytes']:
+                # Recheck the producer's public bytes without changing the frozen
+                # complete host-capability equality above.
+                if items != [row for row in _worker_capabilities(adapter) if row.key==args.key]:
                     raise IntegrityError('Public execution contract changed while reading')
                 output=args.output.absolute()
                 if output.resolve()!=output or not output.parent.is_dir():raise IntegrityError('Exact new public contract output path required')
                 with output.open('xb') as stream:
                     stream.write(encoded(expected) if args.metadata else item.content);stream.flush();os.fsync(stream.fileno())
-                result=dict(key=item.key,contract=proof(output),kind='public_metadata' if args.metadata else 'public_contract')
+                result=dict(key=item.key,contract=dict(path=str(output),size_bytes=output.stat().st_size),kind='public_metadata' if args.metadata else 'public_contract')
             code=0
         elif args.command=='compile':
             result=compile_implementation(config,adapter,args.implementation,json.loads(read(args.scientific_files)),args.output)
+            result={key:result[key] for key in ('status','path','qualification') if key in result}
             code=0
         elif args.command=='run':
             arguments=args.arguments[1:] if args.arguments[:1]==['--'] else args.arguments
             options=dict(arguments=arguments,experiment_directory=str(args.experiment_dir.absolute()) if args.experiment_dir else None)
-            result=dispatch(config,args.script or args.payload,parent=args.parent_plan,new=args.new_plan,change=args.change_intent,mechanism=args.mechanism,
+            parent=args.parent_plan
+            if parent is not None and instance_owner.configuration_root(config) is not None:
+                from . import candidate_refs,contracts as c
+                root=instance_owner.configuration_root(config)
+                job=c.read(c.regular(root/'jobs'/f'{config["scope"]["step"]:03d}.json'))
+                parent=candidate_refs.resolve_reference(root,job,parent)
+            result=dispatch(config,args.script or args.payload,parent=parent,new=args.new_plan,change=args.change_intent,mechanism=args.mechanism,
                 command_options=options if arguments or args.experiment_dir else None)
             result=adapter.public_result(result)
+            result=_run_view(result)
             code={'known_success':0,'known_failed':1}.get(result['status'],2)
         elif args.command=='lineage-status':result=progress(config);code=0
         elif args.command=='retire':
             config,adapter=original_adapter(config,args.call_id,'retire')
             result=retire_original(config,adapter,args.call_id)
+            result={key:result[key] for key in ('call_id','status','note','resource_accounting') if key in result}
+            if isinstance(result.get('resource_accounting'),dict):result['resource_accounting']=_accounting_view(result['resource_accounting'])
             code=0 if result.get('status')=='not_submitted' else 2
         else:
             capability='lookup_submission' if args.command=='lookup' else 'query' if args.command in {'query','reconcile'} else args.command
@@ -1152,22 +1461,32 @@ def main(argv=None):
                 descriptors=adapter.collect_original(args.call_id)
                 result=dict(status='collected',outputs=[item.model_dump(mode='json') for item in descriptors])
             else:result=dict(status=adapter.cancel_original(args.call_id))
-            if args.command=='collect':record_observation(config,adapter,args.call_id,collected=descriptors)
+            if args.command=='collect':
+                observed=record_observation(config,adapter,args.call_id,collected=descriptors)
+                if observed is None:raise IntegrityError('Collected execution has no verified terminal observation')
+                if instance_owner.configuration_root(config) is not None:
+                    result=_collected_view(config,args.call_id,observed,adapter)
             elif args.command in {'query','lookup'} and execution_status(result.get('state')) in {'known_success','known_failed'}:
                 if (Records(config).directory(args.call_id)/'execution-observation.json').exists():
                     record_observation(config,adapter,args.call_id)
+            if args.command in {'query','lookup'}:result=_status_view(result)
             code=2 if args.command=='reconcile' and result['status'] not in {'known_success','known_failed'} else 0
+        result=_candidate_view(config,result)
         call_id = result.get('call_id', getattr(args, 'call_id', None))
         if call_id is not None:
             from . import replay_check
             result['engineering_check'] = replay_check.public(config, call_id)
-        result['feedback']=dict(version=1,budget=feedback.budget_hint(Path(feedback_config['record_dir']).parent.parent),
+        from . import experiment_client,contracts as c
+        root=experiment_client.root_for_configuration(feedback_config,allow_standalone=True)
+        work=c.workspace(root,feedback_config['scope']['step']) if root is not None else Path(feedback_config['record_dir']).parent.parent
+        result['feedback']=dict(version=1,budget=feedback.budget_hint(work),
             review=review_feedback(feedback_config),
             qualification='Execution metadata does not establish scientific or candidate qualification.')
-    except ReviewRequired as error:result=dict(status='review_required',reason=str(error),accepted=False);code=2
-    except (IntegrityError,common.IntegrityError,feedback.history.ObserverIntegrityError) as error:result=dict(status='integrity_error',note=str(error));code=3
+    except ReviewRequired as error:result=dict(status='review_required',reason=_diagnostic(error,'Original execution review required'),accepted=False);code=2
+    except (IntegrityError,common.IntegrityError,feedback.history.ObserverIntegrityError) as error:result=dict(status='integrity_error',note=_diagnostic(error,'Execution original integrity check failed'));code=3
     except OSError:result=dict(status='integrity_error',note='Execution original cannot be read');code=3
-    except ValueError as error:result=dict(status='unavailable' if isinstance(error,(UnsupportedExecution,common.UnsupportedExecution)) else 'unresolved',note=str(error));code=2
+    except (CommandOptionsError,common.CommandOptionsError) as error:result=dict(status='known_not_started',accepted=False,error='caller_error',note=_diagnostic(error,'Requested command options are unavailable'));code=2
+    except ValueError as error:result=dict(status='unavailable' if isinstance(error,(UnsupportedExecution,common.UnsupportedExecution)) else 'unresolved',note=_diagnostic(error,'Execution request could not be resolved'));code=2
     finally:owner_lease.close()
     # CLI is a compact model view; the complete collection is already durable.
     if isinstance(result.get('outputs'),list):

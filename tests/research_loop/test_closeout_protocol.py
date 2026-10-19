@@ -165,7 +165,7 @@ def test_known_audit_failure_can_reselect_within_same_budget(tmp_path):
     assert len(budget.closeout_state(root)['actions'])==3
 
 
-@pytest.mark.parametrize('mode',['soft','hard'])
+@pytest.mark.parametrize('mode',['soft'])
 def test_known_closeout_abort_resumes_exact_session(tmp_path,mode):
     root=scene(tmp_path,[dict(action='deliver',candidate='run-1',crash=True)],max_tokens=3500,node_budget_mode=mode)
     settings=(root/'settings.json').read_bytes()
@@ -182,7 +182,7 @@ def test_known_closeout_abort_resumes_exact_session(tmp_path,mode):
     assert not any(c.read(path)['kind']=='budget_amend' for path in (root/'control-ledger').glob('*.json'))
 
 
-@pytest.mark.parametrize('mode',['soft','hard'])
+@pytest.mark.parametrize('mode',['soft'])
 def test_closeout_resume_retains_original_node_allowance_and_delivery_floor(tmp_path,monkeypatch,mode):
     from scidiscovery.research_loop import execution
     root=scene(tmp_path,[dict(action='deliver',candidate='run-1',crash=True)],node_budget_mode=mode)
@@ -200,14 +200,15 @@ def test_closeout_resume_retains_original_node_allowance_and_delivery_floor(tmp_
         for delta in (-1,0,1):
             current_limits.update(limits);current_meter.update(meter);current_steps[0]=used
             if boundary=='tokens':
-                needed=0 if mode=='soft' else policy['max_observed_tokens']-tokens
+                needed=0
                 current_meter['observed_tokens']=limits['max_tokens']-(needed+floor['tokens']+delta)
+                current_meter['accounted_tokens']=current_meter['observed_tokens']
             elif boundary=='seconds':
-                needed=0 if mode=='soft' else policy['max_seconds']-seconds
+                needed=0
                 current_limits['seconds_remaining']=needed+floor['seconds']+delta
             else:
                 current_steps[0]=settings['max_steps']-(1+floor['steps']+delta)
-            blocked=delta<0 or mode=='soft' and boundary!='steps' and delta==0
+            blocked=delta<0 or boundary!='steps' and delta==0
             if blocked:
                 with pytest.raises(budget.NodeBudgetUnavailable,match='worker_resume_budget_unavailable'):
                     budget.accept_continuation(root,job,paths)
@@ -216,16 +217,7 @@ def test_closeout_resume_retains_original_node_allowance_and_delivery_floor(tmp_
                 assert anchor['previous_tokens']==tokens and anchor['previous_seconds']==seconds
                 assert anchor['limits']==policy and anchor['shared_limits']=={key:limits[key] for key in ('max_tokens','max_seconds')}
     current_limits.update(limits);current_meter.update(meter);current_steps[0]=used
-    if mode=='hard':
-        current_meter['observed_tokens']=limits['max_tokens']-(policy['max_observed_tokens']-tokens+floor['tokens'])
-        anchor=budget.accept_continuation(root,job,paths)
-        record=paths[0]/'continuations/001'
-        c.write(record/'native-intent.json',dict(task_sha256=c.digest(root/'jobs/003.json'),attempt=1,budget_slice=anchor,
-            previous=execution.proof(paths[0]),root_intent_sha256=c.digest(paths[0]/'native-intent.json')))
-        assert budget.node_admission(root,job,ignore_step=3,intent=c.read(record/'native-intent.json')) is None
-        assert not (record/'native-process.json').exists()
-    else:
-        assert not (paths[0]/'continuations').exists()
+    assert not (paths[0]/'continuations').exists()
 
 
 def test_late_candidate_is_locatable_and_resolved_without_historical_pack(tmp_path):
@@ -375,10 +367,13 @@ def test_ordinary_delivery_audit_failure_reselects_without_e_or_repeated_origina
     assert c.read(root/'runs/submitted.json')['run_id']==2
 
 
-def test_budget_shortage_keeps_pending_closeout_distinct_from_operator_export(tmp_path):
+def test_legacy_budget_shortage_keeps_pending_closeout_distinct_from_operator_export(tmp_path):
     # The frozen reserve fits at prepare. The two retained scientific nodes use
     # twenty tokens, so a new full A plus the external floor no longer fits.
     root=scene(tmp_path,[dict(action='deliver',candidate='run-1')],max_tokens=1100)
+    settings=c.settings(root);settings.pop('final_a_completion_policy')
+    c.write(root/'settings.json',settings)
+    c.write(root/'settings-identity.json',dict(sha256=c.digest(root/'settings.json')))
     result=command(root)
     assert result['status']=='closeout_budget_unavailable',result
     begin=budget.closeout_state(root)['begin']

@@ -82,8 +82,8 @@ def _events(root, settings, *, resources=False):
                 or type(event.get('at_boottime')) not in (int, float)
                 or not math.isfinite(event['at_boottime']) or event['at_boottime'] < 0
                 or not isinstance(event.get('boot_id'), str) or not event['boot_id']
-                or event.get('kind') not in {'clock', 'budget_amend', 'closeout_begin', 'action_intent', 'action_outcome',
-                    'resource_grant', 'resource_reserve', 'resource_rebind', 'resource_bind', 'resource_settle', 'resource_release'}):
+                or event.get('kind') not in {'clock', 'budget_amend', 'closeout_begin', 'closeout_resume', 'action_intent', 'action_outcome',
+                    'native_usage_reserve', 'final_a_return', 'resource_grant', 'resource_reserve', 'resource_rebind', 'resource_bind', 'resource_settle', 'resource_release'}):
             raise ValueError('Control ledger identity, sequence or time changed')
         if 'reanchor' in event:
             _verify_reanchor(root, settings, event, events)
@@ -98,6 +98,19 @@ def _events(root, settings, *, resources=False):
                     raise ValueError('Invalid audited budget ceilings')
             if not isinstance(event.get('authorization_note'), str) or not event['authorization_note'].strip():
                 raise ValueError('Budget amendment has no operator decision')
+            if 'before_max_steps' in event or 'after_max_steps' in event:
+                if any(type(event.get(key)) is not int or event[key] <= 0
+                       for key in ('before_max_steps', 'after_max_steps')):
+                    raise ValueError('Invalid audited step ceilings')
+                if event.get('max_steps_delta') != event['after_max_steps'] - event['before_max_steps']:
+                    raise ValueError('Audited step amendment delta changed')
+            if 'authorization_statement' in event and (not isinstance(event['authorization_statement'], str)
+                    or not event['authorization_statement'].strip()):
+                raise ValueError('Budget amendment has no original operator statement')
+        if event['kind'] == 'native_usage_reserve':
+            _validate_usage_reserve(root, event)
+        if event['kind'] == 'final_a_return':
+            _validate_final_a_event(root, settings, event, events)
         if event['kind'] == 'clock' and event.get('phase') not in {'advance', 'paused', 'waiting'}:
             raise ValueError('Unknown control clock phase')
         if event['kind'] == 'closeout_begin':
@@ -105,10 +118,14 @@ def _events(root, settings, *, resources=False):
                     or type(event.get('first_step')) is not int or event['first_step'] <= event['source_cutoff']
                     or type(event.get('preparation_seconds')) not in (int, float)
                     or not math.isfinite(event['preparation_seconds']) or event['preparation_seconds'] < 0
-                    or not isinstance(event.get('stop_reason'), str) or event.get('mode') not in {'model', 'export_only'}):
+                    or not isinstance(event.get('stop_reason'), str) or event.get('mode') not in {'model', 'export_only', 'final'}):
                 raise ValueError('Invalid immutable closeout boundary')
+            if event.get('resume_cursor') is not None:
+                _validate_cursor(root,event['resume_cursor'],event['source_cutoff']+1,events)
             if 'authorization_step' in event and (type(event['authorization_step']) is not int or event['authorization_step'] != event['source_cutoff']):
                 raise ValueError('Direct delivery authorization must bind its exact scientific boundary')
+        if event['kind'] == 'closeout_resume':
+            _validate_resume_event(root, event, events)
         if event['kind'] == 'action_intent':
             if (event.get('action_kind') not in {'submit', 'confirm'} or not isinstance(event.get('action_id'), str)
                     or not isinstance(event.get('operation_id'), str) or not isinstance(event.get('decision'), dict)
@@ -116,6 +133,10 @@ def _events(root, settings, *, resources=False):
                     or not 0 < event['max_seconds'] < float('inf')
                     or type(event.get('advance_seconds')) not in (int, float) or not math.isfinite(event['advance_seconds']) or event['advance_seconds'] < 0):
                 raise ValueError('Invalid bounded delivery action intent')
+            if _active_final(events) is not None and 'final_return' not in event:
+                raise ValueError('Final delivery lost its reserved authorization')
+            if 'final_return' in event:
+                _validate_final_a_action(root, event, events)
         if event['kind'] == 'action_outcome' and (not isinstance(event.get('action_id'), str)
                 or not isinstance(event.get('result'), dict) or event['result'].get('status') not in {'confirmed', 'failed', 'unknown', 'rejected', 'engineering_error', 'unclassified'}):
             raise ValueError('Invalid delivery action outcome')
@@ -440,14 +461,14 @@ def execution_available(root, job, limits, usage):
         if begin is None:
             raise ValueError('Closeout execution has no original boundary')
         reserve = closeout_floor(settings, preparation_seconds=begin['preparation_seconds'])
-        if job.get('engineering_repair'):
+        if job.get('engineering_repair') and _final_a_policy(settings) is None:
             author = settings['delivery_policy']['closeout_a']
             reserve = dict(reserve, seconds=reserve['seconds'] + author['max_seconds'],
                            tokens=reserve['tokens'] + author['max_observed_tokens'])
     else:
         reserve = delivery_reserve(settings) or dict(seconds=0, tokens=0)
     return dict(seconds=max(0., limits['seconds_remaining'] - reserve['seconds']),
-                tokens=max(0, limits['max_tokens'] - usage['observed_tokens'] - reserve['tokens']))
+                tokens=max(0, limits['max_tokens'] - usage.get('accounted_tokens', usage['observed_tokens']) - reserve['tokens']))
 
 
 @contextmanager
@@ -516,6 +537,23 @@ def reanchor_paused_checkpoint(root, checkpoint_ref, transfer_ref):
         return dict(status='clock_reanchored', seq=event['seq'])
 
 
+def _ceiling_limits(settings, events):
+    """Fold verified immutable amendments without sampling current consumption."""
+    limits = dict(max_tokens=settings['max_tokens'], max_seconds=settings['max_seconds'])
+    max_steps = historical_steps = settings['max_steps']
+    for event in events:
+        if event['kind'] == 'budget_amend':
+            if event.get('before') != limits:
+                raise ValueError('Budget amendment predecessor changed')
+            limits = event['after']
+            if 'before_max_steps' in event:
+                if event['before_max_steps'] != max_steps:
+                    raise ValueError('Budget step amendment predecessor changed')
+                max_steps = event['after_max_steps']
+                historical_steps = max(historical_steps, max_steps)
+    return limits, max_steps, historical_steps
+
+
 def snapshot(root, settings=None, *, sample_stamp=None):
     original = contracts.settings(root)
     if settings is not None and settings != original:
@@ -527,12 +565,7 @@ def snapshot(root, settings=None, *, sample_stamp=None):
     def interval(before, after):
         return _duration(before, after, legacy_elapsed=basis == 'elapsed')
     events, _ = _events(root, settings)
-    limits = dict(max_tokens=settings['max_tokens'], max_seconds=settings['max_seconds'])
-    for event in events:
-        if event['kind'] == 'budget_amend':
-            if event.get('before') != limits:
-                raise ValueError('Budget amendment predecessor changed')
-            limits = event['after']
+    limits, max_steps, _ = _ceiling_limits(settings, events)
     now = clock_stamp() if sample_stamp is None else sample_stamp
     started = root / 'host-started.json'
     start = contracts.read(started) if started.exists() else None
@@ -579,7 +612,7 @@ def snapshot(root, settings=None, *, sample_stamp=None):
     if basis == 'elapsed' and start is not None:
         elapsed = _duration(dict(at_unix=start['at_unix']), now)
     consumed = advance + waiting if basis == 'active' else elapsed
-    return dict(**limits, time_budget_basis=basis, advance_seconds=advance, waiting_seconds=waiting,
+    return dict(**limits, max_steps=max_steps, original_max_steps=settings['max_steps'], time_budget_basis=basis, advance_seconds=advance, waiting_seconds=waiting,
                 paused_seconds=paused, unclassified_seconds=unclassified, elapsed_seconds=elapsed, consumed_seconds=consumed,
                 seconds_remaining=max(0., limits['max_seconds'] - consumed), clock_phase=phase,
                 ledger_events=len(events), historical_time='unknown_before_ledger' if basis == 'elapsed' else
@@ -608,7 +641,7 @@ def transition(root, phase, reason, *, operation_context=None):
             _append(root, settings, events, parent, kind='clock', phase=phase, reason=reason)
 
 
-def execution_blocked(root, *, ignore_operation=None, include_managed=True, ignore_recovery=None):
+def execution_blocked(root, *, ignore_operation=None, include_managed=True, ignore_recovery=None, ignore_unstarted_action=None):
     """Unknown or live originals prohibit inactive time and amendments."""
     from . import runtime, execution
     settings = contracts.settings(root)
@@ -623,14 +656,14 @@ def execution_blocked(root, *, ignore_operation=None, include_managed=True, igno
     from . import candidate_audit
     if candidate_audit.blocked(root):
         return True
-    if settings.get('selection_policy'):
-        from . import shortlist
-        if shortlist.blocked(root):
-            return True
     state = closeout_state(root)
     if state['begin'] is not None and state['begin']['stop_reason'] == 'delivery_cleanup_unknown':
         return True  # A read-only resolver can still leave unknown local work.
     for action in state['actions']:
+        if ignore_unstarted_action == action['intent']['action_id']:
+            from . import startup_recovery
+            startup_recovery.unstarted_action(root,action['intent'])
+            continue
         outcome = action['outcome']
         if outcome is not None and not outcome['result']['cleanup_confirmed']:
             return True
@@ -655,7 +688,7 @@ def execution_blocked(root, *, ignore_operation=None, include_managed=True, igno
                     return True
     if any(op != ignore_operation for op in state['unresolved_operations']):
         return True
-    for step in range(1, settings['max_steps'] + 1):
+    for step in range(1, historical_step_limit(root) + 1):
         record = execution.record(root, step)
         if not (record / 'native-intent.json').exists():
             continue
@@ -707,19 +740,149 @@ def inactive(root, reason):
         transition(root, 'waiting' if managed_wait.pending(root) else 'paused', reason)
 
 
-def amend(root, *, max_tokens=None, max_seconds=None, authorization_note):
+def effective_max_steps(root):
+    """Read the audited step ceiling without sampling current time or usage."""
+    root = Path(root)
+    settings = contracts.settings(root)
+    events, _ = _events(root, settings)
+    return _ceiling_limits(settings, events)[1]
+
+
+def historical_step_limit(root):
+    """Read original granted or consumed steps, never a new grant.
+
+    A lower current ceiling cannot hide original consumption or accepted work.
+    Only future effects use effective_max_steps; historical validators retain
+    every prepared original, including the exceptional final A, and its checks.
+    """
+    root = Path(root)
+    settings = contracts.settings(root)
+    events, _ = _events(root, settings)
+    return max(_ceiling_limits(settings, events)[2],
+               max((int(path.stem) for path in (root / 'jobs').glob('*.json')), default=0))
+
+
+step_limit = effective_max_steps
+
+
+def _validate_usage_reserve(root, event):
+    if (type(event.get('step')) is not int or event['step'] <= 0
+            or type(event.get('attempt')) is not int or event['attempt'] < 0
+            or type(event.get('tokens')) is not int or event['tokens'] <= 0
+            or event.get('scope') != 'author_closeout_and_successor_review_delivery'
+            or event.get('accounting_basis') != 'operator_contingency_not_actual_usage_upper_bound'
+            or any(not isinstance(event.get(key), str) or not event[key].strip()
+                   for key in ('authorization_note', 'authorization_statement', 'record'))
+            or not isinstance(event.get('originals'), dict)
+            or set(event['originals']) != {'job', 'intent', 'outcome', 'usage', 'observation', 'stream', 'session'}):
+        raise ValueError('Invalid operator unknown-usage contingency')
+    record = root / event['record']
+    if (Path(event['record']).is_absolute() or record.resolve() != record
+            or not record.is_relative_to(root)):
+        raise ValueError('Unknown-usage contingency changed its original record')
+    expected = dict(job=root / 'jobs' / f'{event["step"]:03d}.json',
+                    intent=record / 'native-intent.json', outcome=record / 'native-outcome.json',
+                    usage=record / 'usage.json', observation=record / 'usage-observation.json',
+                    stream=record / 'native.jsonl')
+    for name, ref in event['originals'].items():
+        if (not isinstance(ref, dict) or set(ref) != {'path', 'sha256', 'size_bytes'}
+                or not isinstance(ref['path'], str) or Path(ref['path']).is_absolute()):
+            raise ValueError('Unknown-usage contingency has an invalid original reference')
+        path = root / ref['path']
+        if (not path.is_relative_to(root) or path.resolve() != path
+                or type(ref['size_bytes']) is not int or ref['size_bytes'] < 0
+                or not isinstance(ref['sha256'],str) or len(ref['sha256']) != 64
+                or any(char not in '0123456789abcdef' for char in ref['sha256'])):
+            raise ValueError('Unknown-usage contingency original changed')
+        if name in expected and path != expected[name]:
+            raise ValueError('Unknown-usage contingency lost its exact native record')
+    intent = contracts.read(expected['intent'])
+    original = contracts.host_record(contracts.workspace(root, event['step']))
+    expected_record = original if event['attempt'] == 0 else original / 'continuations' / f'{event["attempt"]:03d}'
+    if record != expected_record or intent.get('attempt', 0) != event['attempt']:
+        raise ValueError('Unknown-usage contingency changed its exact native attempt')
+    if (contracts.digest(expected['job']) != event['originals']['job']['sha256']
+            or contracts.digest(expected['intent']) != event['originals']['intent']['sha256']
+            or intent.get('task_sha256') != event['originals']['job']['sha256']):
+        raise ValueError('Unknown-usage contingency declared native identity changed')
+
+
+def require_usage_reserve_eligibility(root, event):
+    """Verify original unknown-usage facts separately from the signed charge."""
+    from . import qualification as q
+    _validate_usage_reserve(root,event)
+    for ref in event['originals'].values():
+        if q._ref(root,root/ref['path']) != ref:
+            raise ValueError('Unknown-usage contingency original changed')
+    expected = {name:root/ref['path'] for name,ref in event['originals'].items()}
+    intent = contracts.read(expected['intent'])
+    outcome = contracts.read(expected['outcome'])
+    observation = contracts.read(expected['observation'])
+    if (outcome.get('cleanup') != 'observed_group_cleaned' or type(outcome.get('returncode')) is not int
+            or outcome.get('metering', observation).get('coverage') != 'unknown'
+            or contracts.read(expected['intent']).get('task_sha256') != contracts.digest(expected['job'])):
+        raise ValueError('Unknown-usage contingency has no exact cleaned unknown original')
+    session_path = root / event['originals']['session']['path']
+    home = Path(intent.get('native_home', intent.get('session', {}).get('home', str(root / 'native-homes' / f'{event["step"]:03d}'))))
+    base = root / 'native-homes' / f'{event["step"]:03d}'
+    if (home.resolve() != home or home != base and (home.parent != base or not home.name.startswith('context-')
+            or not home.name[8:].isdigit()) or not session_path.is_relative_to(home / 'sessions')):
+        raise ValueError('Unknown-usage session is outside its original native home')
+    with session_path.open() as stream:
+        meta = json.loads(stream.readline())
+    thread = outcome.get('thread_id')
+    if (not isinstance(thread, str) or not thread or meta.get('type') != 'session_meta'
+            or meta.get('payload', {}).get('id') != thread or observation.get('thread_id') != thread
+            or meta.get('payload', {}).get('cwd') != str(contracts.workspace(root, event['step']))
+            or observation.get('tokens') != contracts.read(expected['usage'])):
+        raise ValueError('Unknown-usage contingency changed its exact session or observed counter')
+
+
+def usage_accounting(root, meter):
+    """Retain reported consumption and unknown coverage without estimated fees."""
+    root = Path(root).resolve()
+    events, _ = _events(root, contracts.settings(root))
+    reserves = [event for event in events if event['kind'] == 'native_usage_reserve']
+    for event in reserves:require_usage_reserve_eligibility(root,event)
+    records = set()
+    for event in reserves:
+        if event['record'] in records:
+            raise ValueError('Unknown native usage was charged more than once')
+        records.add(event['record'])
+    from . import startup_recovery
+    reconciled = []
+    for permit in (root/'host-recovery/native-startup').glob('[0-9]*.json'):
+        if not permit.stem.isdigit():continue
+        value = startup_recovery.reconciled_original(root,int(permit.stem))
+        reconciled.append(dict(step=value['step'],attempt=0,record=str(Path(value['originals']['intent']['path']).parent.relative_to(root)),
+            provider_model_tokens=0,reconciliation_sha256=value['reconciliation']['sha256']))
+    # Historical reserve declarations remain immutable and validated above.
+    # Missing billing coverage neither invents usage nor grants replay;
+    # unresolved execution is checked through its own retained facts.
+    return dict(reserved_tokens=0, accounted_tokens=meter['observed_tokens'],
+        reserved_unknown_steps=[], blocking_unknown_steps=[], accounting_basis='observed_lower_bound',
+        **(dict(reconciled_not_submitted_attempts=reconciled) if reconciled else {}))
+
+
+def amend(root, *, max_tokens=None, max_seconds=None, max_steps=None, authorization_note, authorization_statement=None):
     """Operator entry only. A note records a decision; it authenticates nobody."""
     from .protocol import require_current
     require_current(root)
     from .controller import _writer
     if not isinstance(authorization_note, str) or not authorization_note.strip():
         raise ValueError('An explicit operator authorization note is required')
-    if max_tokens is None and max_seconds is None:
-        raise ValueError('Specify a revised token or seconds ceiling')
+    if max_tokens is None and max_seconds is None and max_steps is None:
+        raise ValueError('Specify a revised token, seconds or step ceiling')
     if max_tokens is not None and (type(max_tokens) is not int or max_tokens <= 0):
         raise ValueError('max_tokens must be a positive integer')
     if max_seconds is not None and (type(max_seconds) not in (int, float) or not 0 < max_seconds < float('inf')):
         raise ValueError('max_seconds must be positive and finite')
+    if max_steps is not None and (type(max_steps) is not int or max_steps <= 0):
+        raise ValueError('max_steps must be a positive integer')
+    if max_steps is not None and authorization_statement is None:
+        raise ValueError('A step ceiling amendment requires the original operator statement')
+    if authorization_statement is not None and (not isinstance(authorization_statement, str) or not authorization_statement.strip()):
+        raise ValueError('The original operator statement must be nonempty')
     with _writer(root):
         if execution_blocked(root):
             raise RuntimeError('Budget amendment requires no running or unknown original execution')
@@ -731,9 +894,12 @@ def amend(root, *, max_tokens=None, max_seconds=None, authorization_note):
             after = dict(before, **({} if max_tokens is None else dict(max_tokens=max_tokens)),
                          **({} if max_seconds is None else dict(max_seconds=max_seconds)))
             event = _append(root, settings, events, parent, kind='budget_amend', before=before,
-                            after=after, authorization_note=authorization_note.strip())
+                            after=after, authorization_note=authorization_note.strip(),
+                            **(dict(before_max_steps=value['max_steps'], after_max_steps=max_steps, max_steps_delta=max_steps-value['max_steps']) if max_steps is not None else {}),
+                            **(dict(authorization_statement=authorization_statement.strip()) if authorization_statement is not None else {}))
         return dict(status='budget_amended', amendment_seq=event['seq'], before=before, after=after,
-                    consumption='retained', authorization='operator_declaration_not_authentication')
+                    consumption='retained', authorization='operator_declaration_not_authentication',
+                    **(dict(before_max_steps=value['max_steps'], after_max_steps=max_steps, max_steps_delta=max_steps-value['max_steps']) if max_steps is not None else {}))
 
 class NodeBudgetUnavailable(ValueError):
     """An unaccepted node cannot fit its remaining authorized allocation."""
@@ -743,9 +909,9 @@ class NodeBudgetUnavailable(ValueError):
 
 
 def node_mode(root):
-    mode = contracts.settings(root).get('node_budget_mode', 'hard')
-    if mode not in ('soft', 'hard'):
-        raise ValueError('Frozen node budget mode changed')
+    mode = contracts.settings(root).get('node_budget_mode')
+    if mode != 'soft':
+        raise ValueError('Preserved hard or missing node budget mode is read-only; prepare a new soft instance')
     return mode
 
 
@@ -766,6 +932,10 @@ def node_limits(root, job):
     settings = contracts.settings(root)
     policy = settings.get('node_budget_policy')
     if policy is None:
+        if job.get('final_only') and job.get('role') == 'A':
+            if job.get('purpose') == 'closeout' and settings.get('delivery_policy') is not None:
+                return dict(settings['delivery_policy']['closeout_a'])
+            return dict(max_observed_tokens=settings['max_tokens'], max_seconds=settings['max_seconds'])
         return None
     limits = node_policy(policy)[job['role']]
     if job.get('purpose') == 'closeout' and job['role']=='A':
@@ -782,6 +952,521 @@ def node_limits(root, job):
     return limits
 
 
+def _final_a_policy(settings):
+    value = settings.get('final_a_completion_policy')
+    if value is not None and (not isinstance(value, dict) or set(value) != {'version'}
+            or type(value['version']) is not int or value['version'] != 1):
+        raise ValueError('Frozen final A completion policy changed')
+    return value
+
+
+def protected_final_report(settings):
+    """The frozen completion policy protects one explicitly configured final A."""
+    policy = settings.get('delivery_policy')
+    if (_final_a_policy(settings) is None or settings.get('node_budget_policy') is None
+            or policy is not None and policy['adapter'] is not None):
+        return False
+    return True
+
+
+def _final_a_reserve(settings, job, events):
+    if settings.get('delivery_policy') is None:
+        return dict(tokens=0, seconds=0., steps=0)
+    preparation = 0.
+    if job.get('purpose') == 'closeout':
+        begin = next((row for row in reversed(events) if row['kind'] == 'closeout_begin'), None)
+        if (begin is None or begin['mode'] not in {'model', 'final'} or job.get('source_cutoff') != begin['source_cutoff']
+                or job['step'] < begin['first_step']):
+            raise ValueError('Final A has no original model closeout boundary')
+        preparation = begin['preparation_seconds']
+    return closeout_floor(settings, preparation_seconds=preparation)
+
+
+def stopped_report_original(root, step):
+    """Bind a cleaned stopped native task; its scientific output stays unqualified."""
+    job_path = Path(root) / 'jobs' / f'{step:03d}.json'
+    record = contracts.host_record(contracts.workspace(root, step))
+    names = ['native-intent.json', 'native-outcome.json', 'usage-observation.json'] if (record / 'native-intent.json').exists() else []
+    if (record / 'usage.json').exists():
+        names.append('usage.json')
+    value = dict(step=step, job_sha256=contracts.digest(contracts.regular(job_path)),
+                 records={name: contracts.digest(contracts.regular(record / name)) for name in names})
+    _validate_stopped_report(root, value)
+    return value
+
+
+def _validate_stopped_report(root, value):
+    if (not isinstance(value, dict) or set(value) != {'step', 'job_sha256', 'records'}
+            or type(value['step']) is not int or value['step'] <= 0 or not isinstance(value['records'], dict)
+            or set(value['records']) not in (set(), {'native-intent.json', 'native-outcome.json', 'usage-observation.json'},
+                    {'native-intent.json', 'native-outcome.json', 'usage-observation.json', 'usage.json'})):
+        raise ValueError('Final report requires the exact stopped original')
+    path = Path(root) / 'jobs' / f'{value["step"]:03d}.json'
+    job = contracts.read(contracts.regular(path))
+    record = contracts.host_record(contracts.workspace(root, value['step']))
+    if (contracts.digest(path) != value['job_sha256']
+            or (record / 'result-identity.json').exists() or (record / 'continuations').exists()
+            or any(contracts.digest(contracts.regular(record / name)) != proof for name, proof in value['records'].items())):
+        raise ValueError('Stopped report original identity changed')
+    if not value['records']:
+        from . import experiment_client, qualification
+        qualification.validate_inputs(root, job)
+        managed = experiment_client.record_directory(root, value['step'])
+        if (any(path.name not in {'science-result.schema.json', 'input-provenance.json'} for path in record.iterdir())
+                or managed.exists() and any(managed.iterdir())):
+            raise ValueError('Unstarted report predecessor has native or managed execution records')
+        return value
+    intent = contracts.read(record / 'native-intent.json')
+    outcome = contracts.read(record / 'native-outcome.json')
+    if (intent.get('task_sha256') != value['job_sha256'] or 'attempt' in intent
+            or type(outcome.get('returncode')) is not int or outcome.get('cleanup') != 'observed_group_cleaned'
+            or outcome.get('stop_reason') not in {'closeout_protected_token_limit', 'closeout_protected_time_limit',
+                'token_limit', 'wall_limit', 'node_slice_token_limit', 'node_slice_time_limit'}):
+        raise ValueError('Final report cannot summarize a live or unknown-effect original')
+    return value
+
+
+def validate_final_report_inputs(root, job, *, events=None):
+    value = job.get('final_report')
+    if value is None:
+        return None
+    settings = contracts.settings(root)
+    delivery = settings.get('delivery_policy')
+    if events is None:
+        events, _ = _events(root, settings)
+    begin = _final_boundary(events, job)
+    final = begin is not None
+    if (not (protected_final_report(settings) or final)
+            or job['role'] != 'A' or job.get('purpose') is not None or job.get('formal_review') is not None
+            or not final and delivery is not None and delivery['adapter'] is not None
+            or not isinstance(value, dict) or set(value) != {'source_cutoff', 'stopped_original'}
+            or type(value['source_cutoff']) is not int or not 0 <= value['source_cutoff'] < job['step']):
+        raise ValueError('Invalid final report input boundary')
+    stopped = value['stopped_original']
+    if stopped is not None:
+        _validate_stopped_report(root, stopped)
+    if final:
+        if value['source_cutoff'] != begin['source_cutoff'] or stopped != begin.get('stopped_original'):
+            raise ValueError('Final report changed its durable input boundary')
+        for ref in job.get('direct_refs', []):
+            number = int(Path(ref['path']).parts[2])
+            if number > value['source_cutoff']:
+                prior = contracts.read(Path(root) / 'jobs' / f'{number:03d}.json')
+                if (prior.get('purpose') != 'closeout' or prior.get('source_cutoff') != value['source_cutoff']
+                        or not (contracts.host_record(contracts.workspace(root,number))/'result-identity.json').exists()):
+                    raise ValueError('Final report cannot include unaccepted scientific originals')
+    elif stopped is not None:
+        if stopped['step'] != value['source_cutoff'] + 1 or job['step'] != stopped['step'] + 1:
+            raise ValueError('Final report can omit only its exact stopped predecessor')
+    elif value['source_cutoff'] != job['step'] - 1:
+        raise ValueError('Final report cannot omit unrelated scientific originals')
+    if not final and any(int(Path(ref['path']).parts[2]) > value['source_cutoff'] for ref in job.get('direct_refs', [])):
+        raise ValueError('Stopped pending output is not a scientific parent')
+    return value
+
+
+def final_a_usage_unknown(accepted, usage, *, ignore_step=None):
+    if accepted is not None and accepted.get('version') == 2 and accepted.get('basis') == 'final_state':
+        # The exact durable FINAL grant permits its one original completion;
+        # billing uncertainty remains charged and never grants another turn.
+        return False
+    allowed = {ignore_step} if ignore_step is not None else set()
+    if accepted is not None and accepted['selection'].get('stopped_original') is not None:
+        stopped = accepted['selection']['stopped_original']
+        if stopped is not None:
+            allowed.add(stopped['step'])
+    return any(step not in allowed for step in usage.get('blocking_unknown_steps', usage['unknown_steps']))
+
+
+def _final_a_basis(root, settings, job, policy, shared, selection, reserve):
+    if (job.get('role') != 'A' or job.get('formal_review') is not None
+            or job.get('purpose') not in (None, 'closeout')):
+        return None
+    remaining_tokens = shared['max_tokens'] - selection['accounted_tokens']
+    remaining_steps = selection['max_steps'] - selection['used_steps']
+    blocked_role = selection['blocked_role']
+    if blocked_role is not None:
+        delivery = settings.get('delivery_policy')
+        if not protected_final_report(settings) or job.get('purpose') is not None or delivery is not None and delivery['adapter'] is not None:
+            return None
+        return 'protected_final_report'
+    if job.get('purpose') is None:
+        return ('last_authorized_node' if remaining_steps <= reserve['steps']
+                or remaining_tokens < policy['max_observed_tokens'] + reserve['tokens']
+                or selection['seconds_remaining'] < policy['max_seconds'] + reserve['seconds'] else None)
+    predecessor = Path(root) / 'jobs' / f'{job["step"]-1:03d}.json'
+    if predecessor.exists():
+        prior = contracts.read(contracts.regular(predecessor))
+        if (prior['role'] == 'W' and prior.get('purpose') in (None, 'closeout') and prior.get('engineering_repair')
+                and not (contracts.host_record(contracts.workspace(root, prior['step'])) / 'native-intent.json').exists()):
+            return 'last_closeout_allocation'
+    worker = node_policy(settings['node_budget_policy'])['W']
+    next_tokens = max(2 * policy['max_observed_tokens'], worker['max_observed_tokens'] + policy['max_observed_tokens']) if settings.get('node_budget_mode', 'hard') == 'hard' else 2 * policy['max_observed_tokens']
+    next_seconds = max(2 * policy['max_seconds'], worker['max_seconds'] + policy['max_seconds']) if settings.get('node_budget_mode', 'hard') == 'hard' else 2 * policy['max_seconds']
+    # The frozen completion policy authorizes one original final A even when
+    # shared accounting has already crossed its ceilings. Per-call time remains
+    # finite; this is not a new allocation or permission for follow-up science.
+    if (remaining_tokens < next_tokens + reserve['tokens']
+            or selection['seconds_remaining'] < next_seconds + reserve['seconds']
+            or remaining_steps < 1 + reserve['steps']):
+        return 'last_closeout_allocation'
+    return None
+
+
+def _active_final(events):
+    phase = next((row for row in reversed(events) if row['kind'] in {'closeout_begin','closeout_resume'}), None)
+    return phase if phase is not None and phase['kind'] == 'closeout_begin' and phase['mode'] == 'final' else None
+
+
+def _final_boundary(events, job):
+    return next((row for row in reversed(events) if row['kind'] == 'closeout_begin' and row['mode'] == 'final'
+        and job.get('role') == 'A' and job.get('formal_review') is None and job.get('final_only')
+        and job['step'] == row['first_step']), None)
+
+
+def normal_resume(root, before_step=None, *, events=None):
+    if events is None:
+        events, _ = _events(root, contracts.settings(root))
+    return next((row for row in reversed(events) if row['kind'] == 'closeout_resume'
+        and (before_step is None or row['first_step'] <= before_step)), None)
+
+
+def _event_ref(root, event):
+    return dict(seq=event['seq'], sha256=contracts.digest(Path(root)/'control-ledger'/f'{event["seq"]:06d}.json'))
+
+
+def _validate_cursor(root, cursor, before_step, events):
+    fields = {'role','parents','instruction','evidence_return','correction_request','author_correction','source_refs'}
+    if (not isinstance(cursor,dict) or set(cursor) != fields or cursor['role'] not in ('H','W','A','E')
+            or not isinstance(cursor['instruction'],str) or not isinstance(cursor['parents'],list)
+            or not isinstance(cursor['source_refs'],list)):
+        raise ValueError('Final resume requires its exact pending scientific route')
+    steps = []
+    for ref in cursor['source_refs']:
+        number = ref.get('step')
+        if (set(ref) != {'step','seal_sha256'} or type(number) is not int or number <= 0
+                or not isinstance(ref['seal_sha256'],str) or len(ref['seal_sha256']) != 64
+                or any(char not in '0123456789abcdef' for char in ref['seal_sha256'])
+                or contracts.read(Path(root)/'jobs'/f'{number:03d}.json').get('final_only')):
+            raise ValueError('Final resume source differs from declared normal science')
+        steps.append(number)
+    resumed = normal_resume(root,before_step,events=events)
+    if resumed is None:
+        expected,first = [],1
+    else:
+        prior = next(row for row in events if row['seq'] == resumed['source_final']['seq'])
+        expected = [ref['step'] for ref in prior['resume_cursor']['source_refs']]
+        first = resumed['first_step']
+    expected += [number for number in range(first,before_step)
+        if (Path(root)/'jobs'/f'{number:03d}.json').exists()
+        and not contracts.read(Path(root)/'jobs'/f'{number:03d}.json').get('final_only')]
+    if (steps != sorted(set(steps)) or any(number not in steps for number in cursor['parents']) or steps != expected):
+        raise ValueError('Final resume parents are outside its exact declared sequence')
+
+
+def require_cursor_eligibility(root, cursor, before_step, events):
+    """Check accepted seals at the routing boundary, never during grant replay."""
+    _validate_cursor(root,cursor,before_step,events)
+    if cursor['source_refs'] != _normal_source_refs(root,before_step,events):
+        raise ValueError('Final resume source differs from accepted normal science')
+    for ref in cursor['source_refs']:
+        contracts.validate(contracts.workspace(root,ref['step']))
+
+
+def _threshold_raised(events, after_seq):
+    latest = next((row for row in reversed(events) if row['kind'] == 'budget_amend' and row['seq'] > after_seq), None)
+    return latest is not None and (any(latest['after'][key] > latest['before'][key] for key in ('max_tokens','max_seconds'))
+        or latest.get('after_max_steps',0) > latest.get('before_max_steps',0))
+
+
+def _validate_resume_event(root, event, previous):
+    begin = _active_final(previous)
+    if (begin is None or begin.get('resume_cursor') is None
+            or event.get('source_final') != _event_ref(root,begin)
+            or type(event.get('first_step')) is not int or event['first_step'] <= begin['first_step']
+            or not _threshold_raised(previous,begin['seq'])):
+        raise ValueError('Normal resume requires an explicit raised threshold and exact final cursor')
+    _validate_cursor(root,begin['resume_cursor'],begin['source_cutoff']+1,previous)
+
+
+def resume_final(root, begin, first_step):
+    """Publish normal routing only; admission and quiescence are checked by run."""
+    settings = contracts.settings(root)
+    with _ledger_writer(root):
+        events,parent = _events(root,settings)
+        value = dict(kind='closeout_resume', source_final=_event_ref(root,begin), first_step=first_step)
+        # Validate before publication, preserving the original final cycle.
+        probe = dict(value,seq=len(events)+1)
+        _validate_resume_event(root,probe,events)
+        require_cursor_eligibility(root,begin['resume_cursor'],begin['source_cutoff']+1,events)
+        return _append(root,settings,events,parent,**value)
+
+
+def resume_cursor(root, resume, *, events=None):
+    if events is None:
+        events,_ = _events(root,contracts.settings(root))
+    if not any(row['kind'] == 'closeout_resume' and row == resume for row in events):
+        raise ValueError('Normal resume must be the exact immutable journal event')
+    begin = next(row for row in events if row['seq'] == resume['source_final']['seq'])
+    if resume['source_final'] != _event_ref(root,begin):
+        raise ValueError('Normal resume changed its final source')
+    return begin['resume_cursor']
+
+
+def _normal_source_refs(root, before_step, events):
+    resumed = normal_resume(root,before_step,events=events)
+    if resumed is None:
+        refs,first = [],1
+    else:
+        prior = next(row for row in events if row['seq'] == resumed['source_final']['seq'])
+        refs = list(prior['resume_cursor']['source_refs'])
+        first = resumed['first_step']
+    for number in range(first,before_step):
+        path = Path(root)/'jobs'/f'{number:03d}.json'
+        seal = contracts.host_record(contracts.workspace(root,number))/'result-identity.json'
+        if path.exists() and seal.exists() and not contracts.read(path).get('final_only'):
+            refs.append(dict(step=number,seal_sha256=contracts.digest(contracts.regular(seal))))
+    return refs
+
+
+def scientific_steps(root, before_step, *, resume=None):
+    """Only a journal-bound resume may omit preserved non-scientific originals."""
+    events,_ = _events(root,contracts.settings(root))
+    resumed = normal_resume(root,before_step,events=events)
+    if resume is not None and resume != resumed:
+        raise ValueError('Scientific history requires its exact original resume event')
+    if resumed is None:
+        return list(range(1,before_step))
+    resume_cursor(root,resumed,events=events)
+    return [ref['step'] for ref in _normal_source_refs(root,before_step,events)]
+
+
+def final_a_admission(root, job, *, final_report=None):
+    """Final eligibility comes only from the persisted phase, never its balance."""
+    settings = contracts.settings(root)
+    if _final_a_policy(settings) is None:
+        return None
+    events, _ = _events(root, settings)
+    boundary = _final_boundary(events, job)
+    active = _active_final(events)
+    return 'final_state' if boundary is not None and active is not None and boundary['seq'] == active['seq'] else None
+
+
+def _validate_final_a_event(root, settings, event, previous):
+    """Replay only the original admission facts; never sample live budget here."""
+    fields = {'seq', 'parent_sha256', 'settings_sha256', 'at_unix', 'at_boottime', 'boot_id',
+              'kind', 'version', 'step', 'attempt', 'basis', 'anchor', 'selection', 'reserve'}
+    if (_final_a_policy(settings) is None or (event.get('version') == 1 and settings.get('node_budget_policy') is None) or set(event) != fields
+            or type(event['version']) is not int or event['version'] not in (1, 2)
+            or type(event['step']) is not int or event['step'] <= 0
+            or type(event['attempt']) is not int or event['attempt'] != 0
+            or any(row['kind'] == 'final_a_return' and (event['version'] == 1 or row['step'] == event['step']) for row in previous)):
+        raise ValueError('Invalid or reused final A return authorization')
+    job_path = Path(root) / 'jobs' / f'{event["step"]:03d}.json'
+    job = contracts.read(contracts.regular(job_path))
+    anchor, selection, reserve = event['anchor'], event['selection'], event['reserve']
+    ceilings, max_steps, _ = _ceiling_limits(settings, previous)
+    if (not isinstance(anchor, dict) or set(anchor) != {'task_sha256', 'role', 'boot_id', 'advance_seconds', 'limits', 'shared_limits'}
+            or anchor['task_sha256'] != contracts.digest(job_path) or anchor['role'] != 'A'
+            or anchor['boot_id'] != event['boot_id']
+            or type(anchor['advance_seconds']) not in (int, float) or not math.isfinite(anchor['advance_seconds'])
+            or anchor['advance_seconds'] < 0 or not isinstance(anchor['limits'], dict) or anchor['limits'] != node_limits(root, job)
+            or anchor['shared_limits'] != ceilings
+            or not isinstance(selection, dict) or set(selection) != {'max_steps', 'used_steps', 'accounted_tokens', 'seconds_remaining', 'blocked_role', 'stopped_original'}
+            or selection['blocked_role'] not in (None, 'H', 'W', 'A', 'E')
+            or type(selection['max_steps']) is not int or selection['max_steps'] != max_steps
+            or type(selection['used_steps']) is not int or not job['step'] <= selection['used_steps']
+            or type(selection['accounted_tokens']) is not int or selection['accounted_tokens'] < 0
+            or type(selection['seconds_remaining']) not in (int, float)
+            or not math.isfinite(selection['seconds_remaining']) or not 0 <= selection['seconds_remaining'] <= ceilings['max_seconds']
+            or reserve != _final_a_reserve(settings, job, previous)
+            or (event['version'] == 1 and (event['basis'] != _final_a_basis(root, settings, job, anchor['limits'], ceilings, selection, reserve)
+                or event['basis'] not in {'last_authorized_node', 'last_closeout_allocation', 'protected_final_report'}))
+            or (event['version'] == 2 and (event['basis'] != 'final_state' or _final_boundary(previous, job) is None
+                or _active_final(previous) != _final_boundary(previous,job)))):
+        raise ValueError('Final A return differs from its exact original admission')
+    report = job.get('final_report')
+    if report is not None and (not isinstance(report,dict) or set(report) != {'source_cutoff','stopped_original'}
+            or type(report['source_cutoff']) is not int or not 0 <= report['source_cutoff'] < job['step']):
+        raise ValueError('Final A return changed its declared report boundary')
+    boundary = _final_boundary(previous, job) if event['version'] == 2 else None
+    expected_stopped = boundary.get('stopped_original') if boundary is not None else report['stopped_original'] if report else None
+    if (selection['stopped_original'] != expected_stopped
+            or (event['version'] == 1 and (event['basis'] == 'protected_final_report') != (report is not None))):
+        raise ValueError('Final A return changed its exact report input boundary')
+
+
+def final_a_return(root, job, intent, *, events=None):
+    """Validate a private final-return reference for this original attempt only."""
+    settings = contracts.settings(root)
+    _final_a_policy(settings)
+    if events is None:
+        events, _ = _events(root, settings)
+    marker = (intent.get('budget_slice') or {}).get('final_return')
+    accepted = next((row for row in events if row['kind'] == 'final_a_return'
+        and (row['seq'] == marker.get('seq') if isinstance(marker,dict) else row['step'] == job['step'])), None)
+    if marker is None:
+        if accepted is not None and accepted['step'] == job['step']:
+            raise ValueError('Final A return reference is missing from its original intent')
+        return None
+    startup = intent.get('continuation_kind') == 'startup_successor'
+    if startup:
+        from . import startup_recovery
+        startup_recovery.validate_intent(root,job,intent)
+    if (accepted is None or _final_a_policy(settings) is None or ('attempt' in intent and not startup)
+            or intent.get('continuation_kind') is not None and not startup or intent.get('step') != job['step']
+            or job['role'] != 'A' or job.get('formal_review') is not None
+            or intent.get('task_sha256') != accepted['anchor']['task_sha256']
+            or accepted['step'] != job['step']
+            or not isinstance(marker, dict) or set(marker) != {'seq', 'sha256'}
+            or type(marker['seq']) is not int or marker['seq'] != accepted['seq']
+            or marker['sha256'] != contracts.digest(Path(root) / 'control-ledger' / f'{accepted["seq"]:06d}.json')
+            or intent['budget_slice'] != dict(accepted['anchor'], final_return=marker)):
+        raise ValueError('Final A return reference or original attempt changed')
+    return accepted
+
+
+def final_a_barrier(root, *, before_step=None):
+    """Only the active FINAL cycle bars normal science; historical v1 stays frozen."""
+    events,_ = _events(root,contracts.settings(root))
+    active = _active_final(events)
+    return next((row for row in reversed(events) if row['kind'] == 'final_a_return'
+        and (row['version'] == 1 or active is not None and row['step'] == active['first_step'])
+        and (before_step is None or row['step'] < before_step)), None)
+
+
+def _accept_final_a(root, job, anchor, limits, *, final_report=None):
+    settings = contracts.settings(root)
+    if _final_a_policy(settings) is None:
+        return anchor
+    with _ledger_writer(root):
+        events, parent = _events(root, settings)
+        active = _active_final(events)
+        accepted = next((row for row in events if row['kind'] == 'final_a_return'
+            and (row['version'] == 1 or active is not None and row['step'] == active['first_step'])), None)
+        if accepted is not None:
+            if accepted['step'] != job['step'] or accepted['anchor']['task_sha256'] != anchor['task_sha256']:
+                raise NodeBudgetUnavailable('final_a_return_consumed')
+        else:
+            from . import native
+            meter = native.usage(root)
+            selection = dict(max_steps=limits['max_steps'], used_steps=used_steps(root),
+                accounted_tokens=meter.get('accounted_tokens', meter['observed_tokens']),
+                seconds_remaining=limits['seconds_remaining'], blocked_role=final_report['blocked_role'] if final_report else None,
+                stopped_original=(_final_boundary(events, job) or {}).get('stopped_original'))
+            reserve = _final_a_reserve(settings, job, events)
+            basis = 'final_state' if _final_boundary(events, job) is not None else None
+            if basis is None:
+                if final_report is not None:
+                    raise NodeBudgetUnavailable('final_a_report_admission_unavailable')
+                return anchor
+            fields = dict(kind='final_a_return', version=2, step=job['step'], attempt=0,
+                          basis=basis, anchor=anchor, selection=selection, reserve=reserve)
+            # Publish once before the intent. A crash before intent publication
+            # can only reuse this same exact acceptance, never select a new A.
+            accepted = _append(root, settings, events, parent, **fields)
+        marker = dict(seq=accepted['seq'], sha256=contracts.digest(Path(root) / 'control-ledger' / f'{accepted["seq"]:06d}.json'))
+        return dict(accepted['anchor'], final_return=marker)
+
+
+def final_a_receipt(accepted, intent, meter, shared):
+    """An explicit overrun receipt, never an amendment or a refunded meter."""
+    observed = None if meter is None else meter['input_tokens'] + meter['output_tokens']
+    accounted = shared.get('accounted_tokens', shared['observed_tokens'])
+    ceiling = accepted['anchor']['shared_limits']['max_tokens']
+    target = accepted['anchor']['limits']['max_observed_tokens']
+    receipt = dict(final_return=intent['budget_slice']['final_return'], scope='original_final_a_only',
+        final_overrun=dict(original_shared_max_tokens=ceiling, original_local_target_tokens=target,
+            accounted_shared_tokens=accounted, observed_node_tokens=observed,
+            shared_tokens_over_ceiling=max(0, accounted-ceiling),
+            local_tokens_over_target=None if observed is None else max(0, observed-target)),
+        accounting='All actual usage retained; original ceilings unchanged; no further scientific dispatch.')
+    if meter is None or accepted['step'] in shared.get('unknown_steps', []):
+        receipt['final_overrun']['usage_coverage'] = 'unknown'
+    return receipt
+
+
+def native_completion_known(outcome):
+    """Execution completion is independent of token-accounting coverage."""
+    return (type(outcome.get('returncode')) is int and outcome['returncode'] == 0
+            and not outcome.get('stop_reason') and outcome.get('cleanup') == 'observed_group_cleaned'
+            and (outcome.get('metering') or {}).get('source') == 'turn.completed')
+
+
+def validate_final_a_receipt(root, job, intent, outcome, meter=None):
+    accepted = final_a_return(root, job, intent)
+    if accepted is not None and meter is None:
+        record = contracts.host_record(contracts.workspace(root, job['step']))
+        if intent.get('continuation_kind') == 'startup_successor':record = record/'continuations/001'
+        if (record / 'usage.json').exists():
+            meter = contracts.read(contracts.regular(record / 'usage.json'))
+    expected = final_a_receipt(accepted, intent, meter, outcome['usage']) if accepted is not None else None
+    if outcome.get('final_a_completion') != expected:
+        raise ValueError('Final A completion or overrun receipt changed')
+    if accepted is not None and outcome.get('returncode') == 0 and not outcome.get('stop_reason'):
+        from .native_usage import tokens
+        observation = outcome.get('metering') or {}
+        if (not native_completion_known(outcome)
+                or meter is not None and (tokens(meter) != meter or observation.get('tokens') != meter)
+                or observation.get('coverage') == 'terminal' and meter is None):
+            raise ValueError('Final A completion lacks a known terminal execution or cleanup')
+    return accepted
+
+
+def _validate_final_a_action(root, event, previous):
+    marker = event['final_return']
+    accepted = next((row for row in previous if row['kind'] == 'final_a_return' and row['seq'] == marker.get('seq')), None)
+    actions = [row for row in previous if row['kind'] == 'action_intent' and row.get('final_return') == marker]
+    policy = contracts.settings(root).get('delivery_policy')
+    if (accepted is None or not isinstance(marker, dict) or set(marker) != {'seq', 'sha256'}
+            or type(marker['seq']) is not int or marker['seq'] != accepted['seq']
+            or marker['sha256'] != contracts.digest(Path(root) / 'control-ledger' / f'{accepted["seq"]:06d}.json')
+            or accepted['version'] == 2 and (_active_final(previous) is None or _active_final(previous)['first_step'] != accepted['step'])
+            or accepted['version'] == 1 and accepted['reserve']['steps'] < 2 or policy is None
+            or event['max_seconds'] != policy['submit_seconds' if event['action_kind'] == 'submit' else 'confirm_seconds']
+            or event['decision'].get('step') != accepted['step']
+            or event['binding'].get('decision') != event['decision']
+            or event['binding'].get('operation_id') != event['operation_id']
+            or event['action_kind'] != ('submit' if not actions else 'confirm')):
+        raise ValueError('Final delivery exceeds its exact bounded operation')
+    # Authorization replay checks the immutable declared object references,
+    # never execution results, scientific qualification or current admission.
+    decision = event['decision']
+    if (set(decision) != {'step','job_sha256','raw_sha256','seal_sha256'}
+            or decision['job_sha256'] != accepted['anchor']['task_sha256']
+            or any(not isinstance(decision[key],str) or len(decision[key]) != 64
+                or any(char not in '0123456789abcdef' for char in decision[key])
+                for key in ('job_sha256','raw_sha256','seal_sha256'))
+            or actions and any(event[key] != actions[0][key] for key in ('operation_id','decision','binding'))):
+        raise ValueError('Final delivery changed its authorized object references')
+
+
+def final_a_delivery(root, decision, binding):
+    """Read the reserved delivery scope without traversing scientific results."""
+    accepted = final_a_barrier(root)
+    if accepted is None or decision.get('step') != accepted['step']:
+        return None
+    step = accepted['step']
+    job = contracts.read(contracts.regular(Path(root)/'jobs'/f'{step:03d}.json'))
+    intent = contracts.read(contracts.regular(contracts.host_record(contracts.workspace(root,step))/'native-intent.json'))
+    final_a_return(root,job,intent)
+    if (decision.get('job_sha256') != accepted['anchor']['task_sha256'] or binding.get('decision') != decision):
+        raise ValueError('Final delivery changed its declared object scope')
+    return intent['budget_slice']['final_return']
+
+
+def require_final_a_delivery_eligibility(root, decision, binding):
+    """Verify the sealed choice before accepting a new host delivery action."""
+    marker = final_a_delivery(root,decision,binding)
+    if marker is None:return None
+    step = decision['step']
+    job = contracts.read(contracts.regular(Path(root)/'jobs'/f'{step:03d}.json'))
+    result = contracts.validate(contracts.workspace(root,step))
+    from . import delivery
+    if binding != delivery.binding(root,job,result):
+        raise ValueError('Final delivery must retain its exact original binding')
+    return marker
+
 
 def _attempt_consumption(root, job, paths):
     """Derive cumulative consumption from exact completed native facts."""
@@ -791,17 +1476,35 @@ def _attempt_consumption(root, job, paths):
     for number, path in enumerate(paths):
         intent = contracts.read(contracts.regular(path / 'native-intent.json'))
         anchor = intent.get('budget_slice', {})
-        meter = contracts.read(contracts.regular(path / 'usage.json'))
-        report = contracts.read(contracts.regular(path / 'native-outcome.json')).get('budget_slice', {})
-        if (native._usage_event(dict(type='turn.completed', usage=meter)) != meter
+        original = contracts.read(contracts.regular(path / 'native-outcome.json'))
+        from . import startup_recovery
+        startup_original = not (path/'usage.json').exists() and number == 0 and startup_recovery.path(root,job['step']).exists()
+        if startup_original:
+            startup_recovery.reconciled_original(root,job['step'])
+            duration = original['budget_slice']['advance_seconds']
+            if duration < seconds:raise ValueError('Reconciled startup time cannot be refunded')
+            seconds = duration
+            continue
+        meter = contracts.read(contracts.regular(path / 'usage.json')) if (path/'usage.json').exists() else None
+        if meter is None and not native_completion_known(dict(original,stop_reason=None)):
+            raise ValueError('Missing billing has no known original completion')
+        # An absent meter contributes no reported tokens to the lower bound;
+        # retain its absence and unknown coverage, never publish a zero meter.
+        reported = meter or dict(input_tokens=0,cached_input_tokens=0,output_tokens=0)
+        startup = intent.get('continuation_kind') == 'startup_successor'
+        if startup:
+            from . import startup_recovery
+            startup_recovery.validate_intent(root,job,intent)
+        report = original.get('budget_slice', {})
+        if (meter is not None and native._usage_event(dict(type='turn.completed', usage=meter)) != meter
                 or intent.get('task_sha256') != contracts.digest(root / 'jobs' / f'{job["step"]:03d}.json')
                 or anchor.get('limits') != policy or anchor.get('role') != job['role']
-                or anchor.get('previous_tokens', 0) != tokens or anchor.get('previous_seconds', 0.) != seconds
-                or not report.get('usage_observed') or report.get('limits') != policy
+                or not startup and (anchor.get('previous_tokens', 0) != tokens or anchor.get('previous_seconds', 0.) != seconds)
+                or bool(report.get('usage_observed')) != (meter is not None) or report.get('limits') != policy
                 or report.get('role') != job['role'] or report.get('dispatches') != number + 1
-                or any(report.get(key) != meter[key] for key in ('input_tokens', 'cached_input_tokens', 'output_tokens'))):
+                or any(report.get(key) != reported[key] for key in ('input_tokens', 'cached_input_tokens', 'output_tokens'))):
             raise ValueError('Original node usage report or identity changed')
-        tokens += meter['input_tokens'] + meter['output_tokens']
+        tokens += reported['input_tokens'] + reported['output_tokens']
         duration = report.get('advance_seconds')
         if (type(duration) not in (int, float) or not math.isfinite(duration) or duration < seconds
                 or report.get('observed_tokens') != tokens):
@@ -811,9 +1514,10 @@ def _attempt_consumption(root, job, paths):
 
 def _node_duration(root, job, intent, limits):
     anchor = intent.get('budget_slice')
+    final = final_a_return(root, job, intent) if (anchor or {}).get('final_return') is not None else None
     if (not isinstance(anchor, dict) or anchor.get('task_sha256') != contracts.digest(root / 'jobs' / f'{job["step"]:03d}.json')
             or anchor.get('role') != job['role'] or anchor.get('limits') != node_limits(root, job)
-            or anchor.get('shared_limits') != {key: limits[key] for key in ('max_tokens', 'max_seconds')}
+            or final is None and anchor.get('shared_limits') != {key: limits[key] for key in ('max_tokens', 'max_seconds')}
             or anchor.get('boot_id') != clock_stamp()['boot_id']
             or type(anchor.get('advance_seconds')) not in (int, float)
             or not math.isfinite(anchor['advance_seconds']) or anchor['advance_seconds'] < 0):
@@ -822,7 +1526,7 @@ def _node_duration(root, job, intent, limits):
     prior_tokens = anchor.get('previous_tokens', 0)
     if type(prior_tokens) is not int or prior_tokens < 0:
         raise ValueError('Invalid original node token consumption')
-    if intent.get('attempt') is not None:
+    if intent.get('attempt') is not None and intent.get('continuation_kind') != 'startup_successor':
         from . import execution
         number = intent['attempt']
         paths = execution.records(root, job['step'])
@@ -841,66 +1545,113 @@ def _node_duration(root, job, intent, limits):
     return duration
 
 
-def node_admission(root, job, *, ignore_step=None, intent=None):
+def node_admission(root, job, *, ignore_step=None, intent=None, final_report=None, normal_resume_check=False):
+    if final_report is not None and (not isinstance(final_report, dict) or set(final_report) != {'blocked_role'}
+            or final_report['blocked_role'] not in ('H', 'W', 'A', 'E')):
+        raise ValueError('Final report requires its exact blocked role')
     policy = node_limits(root, job)
+    barrier = final_a_barrier(root)
+    if not normal_resume_check and barrier is not None and barrier['step'] != job['step']:
+        return 'final_a_return_consumed'
+    begin = closeout_state(root)['begin']
+    if not normal_resume_check and begin is not None and begin['mode'] == 'final' and (job.get('role') != 'A' or job['step'] != begin['first_step']):
+        return 'final_a_return_consumed'
+    if job.get('final_only') and (begin is None or begin['mode'] != 'final' or job['step'] != begin['first_step']):
+        return 'final_cycle_closed'
+    from . import native
+    meter = native.usage(root)
+    if meter.get('reserved_unknown_steps') and job['role'] in {'H', 'W'}:
+        if intent is None or intent.get('continuation_kind') != 'author_closeout':
+            return 'operator_closeout_only'
+        from . import author_closeout
+        author_closeout.validate_intent(root, job, intent)
     if policy is None:
         return None
-    from . import native
+    limits, meter = snapshot(root), native.usage(root)
+    accepted = final_a_return(root, job, intent) if intent is not None else None
+    report = validate_final_report_inputs(root, job) if job.get('final_report') is not None else None
+    if final_a_admission(root, job) is not None:
+        unknown_scope = dict(version=2, basis='final_state', step=job['step'])
+    elif report is not None:
+        unknown_scope = dict(basis='protected_final_report', selection=dict(stopped_original=report['stopped_original']))
+    else:
+        unknown_scope = accepted
+        if intent is None and begin is not None and begin['mode'] == 'final':
+            unknown_scope = dict(selection=dict(stopped_original=begin.get('stopped_original')))
+    if final_a_usage_unknown(unknown_scope, meter, ignore_step=ignore_step):
+        return 'usage_unknown'
+    if intent is not None:
+        if accepted is not None:
+            _node_duration(root, job, intent, limits)
+            return None
+    if intent is None and final_a_admission(root, job, final_report=final_report) is not None:
+        return None
     if contracts.settings(root).get('resume_policy') is not None:
         additional = 0 if (root / 'jobs' / f'{job["step"]:03d}.json').exists() else 1
-        if used_steps(root) + additional > contracts.settings(root)['max_steps']:
+        if used_steps(root) + additional > step_limit(root):
             return 'step_limit'
-    limits, meter = snapshot(root), native.usage(root)
-    if any(step != ignore_step for step in meter['unknown_steps']):
-        return 'usage_unknown'
     duration = _node_duration(root, job, intent, limits) if intent is not None else 0.
     soft = node_mode(root) == 'soft'
     if (limits['seconds_remaining'] <= 0 if soft else
             limits['seconds_remaining'] < max(0., policy['max_seconds'] - duration)):
         return 'node_budget_unavailable_seconds'
-    needed_tokens = max(0, policy['max_observed_tokens'] - (intent.get('budget_slice', {}).get('previous_tokens', 0) if intent else 0))
-    if (limits['max_tokens'] - meter['observed_tokens'] <= 0 if soft else
-            limits['max_tokens'] - meter['observed_tokens'] < needed_tokens):
+    actual_only = _final_a_policy(contracts.settings(root)) is not None
+    needed_tokens = 0 if actual_only else max(0, policy['max_observed_tokens'] - (intent.get('budget_slice', {}).get('previous_tokens', 0) if intent else 0))
+    if final_report is None and (limits['max_tokens'] - meter.get('accounted_tokens', meter['observed_tokens']) <= 0 if soft or actual_only else
+            limits['max_tokens'] - meter.get('accounted_tokens', meter['observed_tokens']) < needed_tokens):
         return 'node_budget_unavailable_tokens'
     if job.get('purpose') == 'closeout':
         settings = contracts.settings(root)
         delivery = settings['delivery_policy']
         begin = closeout_state(root)['begin']
-        if begin is None or begin['mode'] != 'model' or begin['source_cutoff'] != job['source_cutoff']:
+        if begin is None or begin['mode'] not in {'model', 'final'} or begin['source_cutoff'] != job['source_cutoff']:
             raise ValueError('Closeout node has no exact model boundary')
         external = delivery['adapter'] is not None
         floor = closeout_floor(settings, preparation_seconds=begin['preparation_seconds'])
-        if job.get('engineering_repair'):
+        if job.get('engineering_repair') and _final_a_policy(settings) is None:
             floor=dict(tokens=floor['tokens']+delivery['closeout_a']['max_observed_tokens'],seconds=floor['seconds']+delivery['closeout_a']['max_seconds'],steps=floor['steps']+1)
         additional = 0 if (root / 'jobs' / f'{job["step"]:03d}.json').exists() else 1
         seconds_unavailable = (limits['seconds_remaining'] <= floor['seconds'] if soft else
             limits['seconds_remaining'] < max(0., policy['max_seconds'] - duration) + floor['seconds'])
-        tokens_unavailable = (limits['max_tokens'] - meter['observed_tokens'] <= floor['tokens'] if soft else
-            limits['max_tokens'] - meter['observed_tokens'] < needed_tokens + floor['tokens'])
+        tokens_unavailable = (limits['max_tokens'] - meter.get('accounted_tokens', meter['observed_tokens']) <= floor['tokens'] if soft or actual_only else
+            limits['max_tokens'] - meter.get('accounted_tokens', meter['observed_tokens']) < needed_tokens + floor['tokens'])
         if (seconds_unavailable or tokens_unavailable
-                or settings['max_steps'] - used_steps(root) < additional + floor['steps']):
+                or step_limit(root) - used_steps(root) < additional + floor['steps']):
             return 'closeout_budget_unavailable'
         return None
     return exploration_admission(root, job, ignore_step=ignore_step, intent=intent)
 
 
-def accept_node(root, job):
+def accept_node(root, job, *, final_report=None):
     from .protocol import require_current
     require_current(root,job)
     policy = node_limits(root, job)
     if policy is None:
         return None
-    reason = node_admission(root, job)
+    accepted = final_a_barrier(root)
+    if accepted is not None and accepted['step'] == job['step']:
+        if accepted['anchor']['task_sha256'] != contracts.digest(Path(root) / 'jobs' / f'{job["step"]:03d}.json'):
+            raise ValueError('Final A return cannot bind a replacement task')
+        marker = dict(seq=accepted['seq'], sha256=contracts.digest(Path(root) / 'control-ledger' / f'{accepted["seq"]:06d}.json'))
+        return dict(accepted['anchor'], final_return=marker)
+    if job.get('final_report') is not None and final_report is None and final_a_admission(root, job) is None:
+        raise NodeBudgetUnavailable('final_a_report_requires_control_admission')
+    reason = node_admission(root, job, final_report=final_report)
     if reason:
         raise NodeBudgetUnavailable(reason)
     limits, stamp = snapshot(root), clock_stamp()
-    return dict(task_sha256=contracts.digest(root / 'jobs' / f'{job["step"]:03d}.json'), role=job['role'],
+    anchor = dict(task_sha256=contracts.digest(root / 'jobs' / f'{job["step"]:03d}.json'), role=job['role'],
                 boot_id=stamp['boot_id'], advance_seconds=limits['advance_seconds'], limits=policy,
                 shared_limits={key: limits[key] for key in ('max_tokens', 'max_seconds')})
+    return _accept_final_a(root, job, anchor, limits, final_report=final_report)
 
 
 def stop_node(root, job, intent, limits, meter):
     policy = node_limits(root, job)
+    if (intent.get('budget_slice') or {}).get('final_return') is not None:
+        final_a_return(root, job, intent)
+        duration = _node_duration(root, job, intent, limits)
+        return 'node_slice_time_limit' if duration >= policy['max_seconds'] else None
     if policy is None:
         return None
     duration = _node_duration(root, job, intent, limits)
@@ -924,6 +1675,8 @@ def node_report(root, job, intent, meter):
 def accept_continuation(root, job, paths):
     from .protocol import require_current
     require_current(root,job)
+    if final_a_barrier(root) is not None:
+        raise NodeBudgetUnavailable('final_a_return_consumed')
     from . import native
     tokens, seconds = _attempt_consumption(root, job, paths)
     policy = node_limits(root, job)
@@ -935,16 +1688,18 @@ def accept_continuation(root, job, paths):
     soft = node_mode(root) == 'soft'
     reserve = (closeout_floor(settings, preparation_seconds=closeout_state(root)['begin']['preparation_seconds'])
         if job.get('purpose') == 'closeout' else delivery_reserve(settings)) or dict(tokens=0, seconds=0, steps=0)
-    if job.get('purpose') == 'closeout' and job.get('engineering_repair'):
+    if job.get('purpose') == 'closeout' and job.get('engineering_repair') and _final_a_policy(settings) is None:
         author = settings['delivery_policy']['closeout_a']
         reserve = dict(tokens=reserve['tokens'] + author['max_observed_tokens'],
                        seconds=reserve['seconds'] + author['max_seconds'], steps=reserve['steps'] + 1)
-    needed_tokens = 0 if soft else max(0, policy['max_observed_tokens'] - tokens)
+    actual_only = _final_a_policy(settings) is not None
+    needed_tokens = 0 if soft or actual_only else max(0, policy['max_observed_tokens'] - tokens)
     needed_seconds = 0. if soft else max(0., policy['max_seconds'] - seconds)
-    if (meter['unknown_steps'] or limits['max_tokens'] - meter['observed_tokens'] < needed_tokens + reserve['tokens']
+    if (meter.get('blocking_unknown_steps', meter['unknown_steps']) or limits['max_tokens'] - meter.get('accounted_tokens', meter['observed_tokens']) < needed_tokens + reserve['tokens']
             or limits['seconds_remaining'] < needed_seconds + reserve['seconds']
-            or node_mode(root)=='soft' and (limits['max_tokens'] - meter['observed_tokens'] <= reserve['tokens'] or limits['seconds_remaining'] <= reserve['seconds'])
-            or contracts.settings(root)['max_steps'] - used_steps(root) < 1 + reserve['steps']):
+            or (soft or actual_only) and limits['max_tokens'] - meter.get('accounted_tokens', meter['observed_tokens']) <= reserve['tokens']
+            or soft and limits['seconds_remaining'] <= reserve['seconds']
+            or step_limit(root) - used_steps(root) < 1 + reserve['steps']):
         raise NodeBudgetUnavailable('worker_resume_budget_unavailable')
     return dict(task_sha256=contracts.digest(root / 'jobs' / f'{job["step"]:03d}.json'), role=job['role'],
                 boot_id=clock_stamp()['boot_id'], advance_seconds=limits['advance_seconds'], limits=policy,
@@ -955,12 +1710,15 @@ def accept_continuation(root, job, paths):
 def closeout_state(root):
     """Only immutable control facts; no second balance or mutable mode file."""
     events, _ = _events(root, contracts.settings(root))
-    begin, actions, operations = None, {}, {}
+    begin, resumed, actions, operations = None, None, {}, {}
     for event in events:
         if event['kind'] == 'closeout_begin':
-            if begin is not None:
-                raise ValueError('Closeout boundary cannot be published twice')
+            if begin is not None and (begin['mode'] != 'model' or event['mode'] != 'final'
+                    or event['source_cutoff'] != begin['source_cutoff'] or event['first_step'] < begin['first_step']):
+                raise ValueError('Closeout may only advance once from model to final')
             begin = event
+        elif event['kind'] == 'closeout_resume':
+            begin, resumed = None, event
         elif event['kind'] == 'action_intent':
             if begin is None or event['action_id'] in actions:
                 raise ValueError('Delivery intent requires a unique closeout action')
@@ -989,10 +1747,15 @@ def closeout_state(root):
         if any(row['intent']['seq'] > confirmed and (row['outcome'] is None
                or row['outcome']['result']['status'] == 'unknown') for row in sequence):
             unresolved.append(op)
-    return dict(begin=begin, actions=rows, unresolved_operations=unresolved)
+    return dict(begin=begin, resume=resumed, actions=rows, unresolved_operations=unresolved)
 
 
 def delivery_reserve(settings):
+    if _final_a_policy(settings) is not None:
+        # The durable FINAL grant owns its one completion and finite delivery
+        # windows independently of shared tokens, time and steps. Ordinary work
+        # uses reported shared usage without estimating missing billing.
+        return dict(tokens=0, seconds=0., steps=0)
     policy = settings.get('delivery_policy')
     if policy is None:
         return None
@@ -1006,6 +1769,8 @@ def delivery_reserve(settings):
 
 def closeout_floor(settings, *, preparation_seconds=0.):
     """After exploration: retain execution allowance, not another whole A target."""
+    if _final_a_policy(settings) is not None:
+        return dict(tokens=0, seconds=0., steps=0)
     policy = settings['delivery_policy']
     external = policy['adapter'] is not None
     return dict(tokens=policy['inflight_tokens'],
@@ -1017,13 +1782,11 @@ def closeout_floor(settings, *, preparation_seconds=0.):
 def used_steps(root):
     from . import execution
     prepared = [int(path.stem) for path in (root / 'jobs').glob('*.json')]
-    continuations = sum(len(execution.records(root, step)) - 1 for step in prepared)
+    continuations = sum(1 for step in prepared for record,_ in execution.accepted_intents(root,step)
+        if record != execution.origin(root,step))
     from . import candidate_audit
     from . import audit_recovery
-    audits = sum(1 for _ in candidate_audit.facts(root)) + sum(1 for _ in audit_recovery.facts(root))
-    if contracts.settings(root).get('selection_policy'):
-        from . import shortlist
-        audits += shortlist.calls(root)  # Control screening calls are bounded external actions too.
+    audits = sum(1 for _ in candidate_audit.intents(root)) + sum(1 for _ in audit_recovery.intents(root))
     return max(prepared, default=0) + continuations + len(closeout_state(root)['actions']) + audits
 
 
@@ -1035,24 +1798,26 @@ def exploration_admission(root, job, *, ignore_step=None, intent=None):
     from . import native
     limits, meter = snapshot(root), native.usage(root)
     node = node_limits(root, job)
-    if any(step != ignore_step for step in meter['unknown_steps']):
+    if any(step != ignore_step for step in meter.get('blocking_unknown_steps', meter['unknown_steps'])):
         return 'usage_unknown'
     soft = node_mode(root) == 'soft'
-    needed_tokens = 0 if soft else max(0, node['max_observed_tokens'] - (intent.get('budget_slice', {}).get('previous_tokens', 0) if intent else 0))
-    if (limits['max_tokens'] - meter['observed_tokens'] <= reserve['tokens'] if soft else
-            limits['max_tokens'] - meter['observed_tokens'] < needed_tokens + reserve['tokens']):
+    actual_only = _final_a_policy(settings) is not None
+    needed_tokens = 0 if soft or actual_only or node is None else max(0, node['max_observed_tokens'] - (intent.get('budget_slice', {}).get('previous_tokens', 0) if intent else 0))
+    if (limits['max_tokens'] - meter.get('accounted_tokens', meter['observed_tokens']) <= reserve['tokens'] if soft or actual_only else
+            limits['max_tokens'] - meter.get('accounted_tokens', meter['observed_tokens']) < needed_tokens + reserve['tokens']):
         return 'closeout_reserve_tokens'
-    duration = _node_duration(root, job, intent, limits) if intent is not None else 0.
+    duration = _node_duration(root, job, intent, limits) if intent is not None and node is not None else 0.
+    needed_seconds = max(0., node['max_seconds'] - duration) if node is not None else 0.
     if (limits['seconds_remaining'] <= reserve['seconds'] if soft else
-            limits['seconds_remaining'] < max(0., node['max_seconds'] - duration) + reserve['seconds']):
+            limits['seconds_remaining'] < needed_seconds + reserve['seconds']):
         return 'closeout_reserve_seconds'
     additional = 0 if (root / 'jobs' / f'{job["step"]:03d}.json').exists() else 1
-    if settings['max_steps'] - used_steps(root) < additional + reserve['steps']:
+    if step_limit(root) - used_steps(root) < additional + reserve['steps']:
         return 'closeout_reserve_steps'
     return None
 
 
-def begin_closeout(root, cutoff, first_step, reason, *, export_only=False, delivery_sources=None, preparation_seconds=0., authorization_step=None):
+def begin_closeout(root, cutoff, first_step, reason, *, export_only=False, delivery_sources=None, preparation_seconds=0., authorization_step=None, final_only=False, stopped_original=None, resume_cursor=None):
     from .protocol import require_current
     require_current(root)
     settings = contracts.settings(root)
@@ -1060,11 +1825,16 @@ def begin_closeout(root, cutoff, first_step, reason, *, export_only=False, deliv
         events, parent = _events(root, settings)
         existing = closeout_state(root)['begin']
         if existing is not None:
-            return existing
+            if not final_only or existing['mode'] != 'model':
+                return existing
+            cutoff = existing['source_cutoff']
+        if resume_cursor is not None:
+            require_cursor_eligibility(root,resume_cursor,cutoff+1,events)
         return _append(root, settings, events, parent, kind='closeout_begin', source_cutoff=cutoff,
-                       first_step=first_step, stop_reason=reason, mode='export_only' if export_only else 'model',
+                       first_step=first_step, stop_reason=reason, mode='final' if final_only else 'export_only' if export_only else 'model',
                        delivery_sources=delivery_sources, preparation_seconds=preparation_seconds,
-                       **(dict(authorization_step=authorization_step) if authorization_step is not None else {}))
+                       **(dict(authorization_step=authorization_step) if authorization_step is not None else {}),
+                       **(dict(stopped_original=stopped_original,resume_cursor=resume_cursor) if final_only else {}))
 
 
 def accept_action(root, kind, operation_id, decision, binding, max_seconds):
@@ -1073,23 +1843,44 @@ def accept_action(root, kind, operation_id, decision, binding, max_seconds):
     settings = contracts.settings(root)
     begin = closeout_state(root)['begin']
     if (settings.get('delivery_policy') is None or settings['delivery_policy']['adapter'] is None
-            or begin is None or begin['mode'] != 'model'):
+            or begin is None or begin['mode'] not in {'model', 'final'}):
         raise ValueError('External delivery requires its frozen model closeout authorization')
     if kind not in {'submit', 'confirm'} or execution_blocked(root, ignore_operation=operation_id if kind == 'confirm' else None):
         raise RuntimeError('Delivery action is blocked by an original unresolved execution')
     from . import native
     meter = native.usage(root)
     limits = snapshot(root)
-    if meter['unknown_steps'] or meter['observed_tokens'] >= limits['max_tokens']:
+    final_return = require_final_a_delivery_eligibility(root, decision, binding)
+    barrier = final_a_barrier(root)
+    if barrier is not None and final_return is None:
+        raise NodeBudgetUnavailable('final_a_return_consumed')
+    # The final exception covers shared billing, not unresolved execution:
+    # the original-effect gate above and the sealed-choice gate still apply.
+    if final_return is None and (meter.get('blocking_unknown_steps', meter['unknown_steps'])
+            or meter.get('accounted_tokens', meter['observed_tokens']) >= limits['max_tokens']):
         raise NodeBudgetUnavailable('closeout_budget_unavailable')
-    if limits['seconds_remaining'] < max_seconds or used_steps(root) >= settings['max_steps']:
+    if final_return is None and (limits['seconds_remaining'] < max_seconds or used_steps(root) >= step_limit(root)):
         raise NodeBudgetUnavailable('closeout_budget_unavailable')
     with _ledger_writer(root):
         events, parent = _events(root, settings)
         action_id = f'action-{len(events) + 1:06d}'
+        if final_return is not None:
+            actions = [row for row in events if row['kind'] == 'action_intent' and row.get('final_return') == final_return]
+            if (barrier['version'] == 1 and barrier['reserve']['steps'] < 2
+                    or kind != ('submit' if not actions else 'confirm')):
+                raise NodeBudgetUnavailable('final_a_delivery_reserve_exhausted')
+            confirmed_ids = {row['action_id'] for row in actions if row['action_kind'] == 'confirm'}
+            if any(row['kind'] == 'action_outcome' and row['action_id'] in confirmed_ids
+                   and row['result']['status'] == 'confirmed' for row in events):
+                raise NodeBudgetUnavailable('final_a_delivery_already_confirmed')
+            if max_seconds != settings['delivery_policy']['submit_seconds' if kind == 'submit' else 'confirm_seconds']:
+                raise ValueError('Final delivery requires its frozen per-call window')
+            _validate_final_a_action(root, dict(final_return=final_return, action_kind=kind,
+                operation_id=operation_id, decision=decision, binding=binding, max_seconds=max_seconds), events)
         return _append(root, settings, events, parent, kind='action_intent', action_id=action_id,
                        action_kind=kind, operation_id=operation_id, decision=decision, binding=binding,
-                       max_seconds=max_seconds, advance_seconds=limits['advance_seconds'])
+                       max_seconds=max_seconds, advance_seconds=limits['advance_seconds'],
+                       **(dict(final_return=final_return) if final_return is not None else {}))
 
 
 def action_outcome(root, intent, result):
@@ -1103,13 +1894,20 @@ def action_outcome(root, intent, result):
 
 
 def exploration_stop(root, job, limits):
-    reserve = delivery_reserve(contracts.settings(root))
-    if reserve is None or job.get('purpose') == 'closeout' or node_mode(root)=='soft':
+    if node_mode(root) == 'soft':
+        return None
+    settings = contracts.settings(root)
+    reserve = delivery_reserve(settings)
+    delivery = settings.get('delivery_policy')
+    if _final_a_policy(settings) is not None:
+        return None
+    if reserve is None or job.get('purpose') == 'closeout':
         return None
     from . import native
     if limits['seconds_remaining'] <= reserve['seconds']:
         return 'closeout_protected_time_limit'
-    if limits['max_tokens'] - native.usage(root)['observed_tokens'] <= reserve['tokens']:
+    meter = native.usage(root)
+    if limits['max_tokens'] - meter.get('accounted_tokens', meter['observed_tokens']) <= reserve['tokens']:
         return 'closeout_protected_token_limit'
     return None
 
@@ -1141,13 +1939,12 @@ def action_process(root, intent, phase, identity):
     contracts.write(path, dict(action_id=intent['action_id'], operation_id=intent['operation_id'], phase=phase, identity=identity))
 
 
-def write_node_hint(root, job, intent, limits, meter, *, observed):
+def write_node_hint(root, job, intent, limits, meter, *, observed, author_limits=None):
     """Optional replaceable advice; never read as a grant, meter or evidence."""
     from .protocol import require_current
     require_current(root,job)
-    if node_mode(root)!='soft':
-        return
-    publish_review(root,job,intent,limits,meter,observed=observed)
+    mode=node_mode(root)
+    if mode=='soft':publish_review(root,job,intent,limits,meter,observed=observed)
     targets=node_limits(root,job)
     duration=_node_duration(root,job,intent,limits) if targets else None
     if targets is None and job['role']=='W' and job.get('search'):
@@ -1156,25 +1953,69 @@ def write_node_hint(root, job, intent, limits, meter, *, observed):
         targets=dict(max_observed_tokens=job['search']['limits']['max_w_observed_tokens'],max_seconds=job['search']['limits']['max_w_seconds'])
         duration=limits['advance_seconds']-intent['search_slice']['advance_seconds']
     prior=intent.get('budget_slice',{}).get('previous_tokens',0)
-    consumed=prior+meter['input_tokens']+meter['output_tokens'] if observed else None
+    known=prior+meter['input_tokens']+meter['output_tokens']
+    consumed=known if observed else None
+    node_targets=targets
+    node_tokens=max(0,targets['max_observed_tokens']-known) if targets else None
+    node_seconds=max(0.,targets['max_seconds']-duration) if targets else None
+    author=intent.get('continuation_kind')=='author_closeout'
+    final_return=final_a_return(root,job,intent) if (intent.get('budget_slice') or {}).get('final_return') is not None else None
+    boundary='node_slice' if targets else 'shared_only'
+    if author:
+        # The caller already verified this exact permit before native launch.
+        # A reused W job's original cap is not this author attempt's allowance.
+        targets=author_limits
+        boundary='author_permit' if targets is not None else 'unavailable'
+        duration=(duration-intent['budget_slice'].get('previous_seconds',0.)) if duration is not None else None
+        consumed=meter['input_tokens']+meter['output_tokens'] if observed else None
     settings = contracts.settings(root)
     closeout = job.get('purpose') == 'closeout'
     reserve = (closeout_floor(settings, preparation_seconds=closeout_state(root)['begin']['preparation_seconds'])
         if closeout else delivery_reserve(settings)) or dict(tokens=0,seconds=0,steps=0)
+    if final_return is not None:
+        reserve=final_return['reserve']
+        boundary='final_a_return'
     from . import native
     shared=native.usage(root)
-    remaining=limits['max_tokens']-shared['observed_tokens']
-    state=('reached' if targets and ((consumed is not None and consumed>=targets['max_observed_tokens']) or duration>=targets['max_seconds'])
-           else 'near' if targets and ((consumed is not None and consumed>=.8*targets['max_observed_tokens']) or duration>=.8*targets['max_seconds']) else 'within')
-    hint=dict(scope='advice_only_not_authorization_or_scientific_evidence',updated_at_unix=time.time(),mode='soft',
+    remaining=limits['max_tokens']-shared.get('accounted_tokens', shared['observed_tokens'])
+    available_tokens=max(0,remaining-reserve['tokens'])
+    available_seconds=max(0.,limits['seconds_remaining']-reserve['seconds'])
+    if mode=='hard' and node_tokens is not None and final_return is None:
+        available_tokens=min(available_tokens,node_tokens)
+        available_seconds=min(available_seconds,node_seconds)
+    if author:
+        if targets is None or duration is None:
+            available_tokens=available_seconds=None
+        else:
+            available_seconds=min(available_seconds,max(0.,targets['max_seconds']-duration))
+    state=('reached' if targets and ((consumed is not None and consumed>=targets['max_observed_tokens']) or duration is not None and duration>=targets['max_seconds'])
+           else 'near' if targets and ((consumed is not None and consumed>=.8*targets['max_observed_tokens']) or duration is not None and duration>=.8*targets['max_seconds']) else 'within')
+    if mode=='hard' and node_targets:
+        if node_tokens==0 or node_seconds==0:state='reached'
+        elif state=='within' and (node_tokens<=.2*node_targets['max_observed_tokens'] or node_seconds<=.2*node_targets['max_seconds']):state='near'
+    hint=dict(scope='advice_only_not_authorization_or_scientific_evidence',updated_at_unix=time.time(),mode=mode,
         target_state=state,targets=targets,active_seconds=duration,observed_tokens_lower_bound=consumed,
         metering='observed_lower_bound' if observed else 'inflight_unknown',
+        input_accounting='input_includes_cached_input_once; observed_total=input+output',
+        inflight_usage_unknown=True,reporting_delay_unmeasured=True,per_request_admission='unavailable',
+        final_response_allowance='not_guaranteed',current_work_boundary=boundary,
+        target_kind='unavailable' if targets is None else 'soft_target',
+        unknown_usage=not observed or bool(shared.get('unknown_steps')),
+        shared_remaining_basis='configured_ceiling_minus_reported_usage',
         shared_observed_tokens_remaining_upper_bound=max(0,remaining),shared_active_seconds_remaining=limits['seconds_remaining'],
         reserve_state='reached' if remaining<=reserve['tokens'] or limits['seconds_remaining']<=reserve['seconds'] else 'within',
         reserve_scope='external_closeout_floor' if closeout else 'minimal_closeout_reserve',
-        current_work_observed_tokens_remaining_upper_bound=max(0,remaining-reserve['tokens']),
-        current_work_active_seconds_available=max(0.,limits['seconds_remaining']-reserve['seconds']),
-        instruction='Near/reached targets or reserve: finish bounded actions and return your scientific JSON. Unknown usage is not zero. Shared hard limits still apply.')
+        current_work_observed_tokens_remaining_upper_bound=available_tokens,
+        current_work_active_seconds_available=available_seconds,
+        instruction='Near/reached limits, targets or reserve: finish bounded actions and return your scientific JSON. Unknown usage is not zero; upper bounds are not grants or request/billing caps. Shared hard limits still apply.')
+    if author:
+        hint['instruction'] = ('The author token target is soft: finish this original scientific response at the target. '
+            'The verified author permit finite time limit remains enforced. No new experiment is authorized; all actual usage is retained.')
+    if final_return is not None:
+        hint.update(target_kind='final_a_token_target', final_response_allowance='original_final_a_token_overrun_authorized',
+            current_work_observed_tokens_remaining_upper_bound=None,
+            current_work_active_seconds_available=node_seconds,
+            instruction='Complete this same final scientific return and explain completed work, unfinished work and any evidence gap. Token targets and reference ceilings do not terminate this original return; all actual usage is retained. The original finite call duration, resources and transport boundaries remain enforced; shared time and step exhaustion do not revoke this completion. No further scientific turn is authorized.')
     data=(json.dumps(hint,ensure_ascii=False,indent=2,allow_nan=False)+'\n').encode()
     if len(data)>4096:raise ValueError('Budget advice exceeds byte bound')
     directory=contracts.workspace(root,job['step'])/'work'
@@ -1262,10 +2103,10 @@ def publish_review(root,job,intent,limits,meter,*,observed):
         shared=native.usage(root)
         # The original grant remains the ceiling for this accepted stage.
         grant=intent.get('budget_slice',{}).get('shared_limits',dict(max_tokens=settings['max_tokens'],max_seconds=settings['max_seconds']))
-        available_tokens=min(limits['max_tokens'],grant['max_tokens'])-shared['observed_tokens']-reserve['tokens']
+        available_tokens=min(limits['max_tokens'],grant['max_tokens'])-shared.get('accounted_tokens', shared['observed_tokens'])-reserve['tokens']
         available_seconds=min(limits['seconds_remaining'],max(0.,grant['max_seconds']-limits['consumed_seconds']))-reserve['seconds']
         remaining=min(available_seconds,max(0.,targets['max_seconds']-duration)) if targets else available_seconds
-        reason=('shared_usage_unknown' if any(step!=job['step'] for step in shared['unknown_steps']) else
+        reason=('shared_usage_unknown' if any(step!=job['step'] for step in shared.get('blocking_unknown_steps', shared['unknown_steps'])) else
             'reserve_reached' if available_seconds<=0 or available_tokens<=0 else
             'target_time_reached' if targets and duration>=targets['max_seconds'] else
             'target_tokens_reached' if targets and consumed>=targets['max_observed_tokens'] else None)

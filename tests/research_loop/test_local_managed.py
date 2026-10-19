@@ -8,7 +8,7 @@ import sys
 import pytest
 
 from execution_fixtures import execution_registry
-from scidiscovery.research_loop import contracts as c, controller, experiments as e, history, native
+from scidiscovery.research_loop import contracts as c, controller, experiments as e, history, native, experiment_client
 from scidiscovery.research_loop.local_experiments import LocalExecution
 from scidiscovery.research_loop.protocol import CURRENT
 
@@ -63,7 +63,7 @@ def test_r1_snapshot_argv_facts_and_original_lookup(local,monkeypatch):
 @pytest.mark.process_e2e
 @pytest.mark.parametrize('content,status',[(None,'missing'),('invalid','invalid'),
     ('{"version":1,"metrics":[{"name":"x","value":NaN}],"outputs":[]}','invalid'),
-    ('{"version":1,"metrics":[],"outputs":[{"path":"../escape","label":"bad"}]}','invalid')])
+    ('{"version":1,"metrics":[],"outputs":[{"path":"../escape","label":"bad"}]}','available')])
 def test_r2_bad_or_missing_result_preserves_process_success(local,content,status):
     root,script,config,_=local
     script.write_text('import pathlib\n'+('pathlib.Path("artifacts/result.json").write_text('+repr(content)+')\n'
@@ -71,6 +71,9 @@ def test_r2_bad_or_missing_result_preserves_process_success(local,content,status
     result=e.dispatch(config,script,command_options=dict(experiment_directory=str(root),arguments=[]))
     assert result['status']=='known_success' and result['returncode']==0
     assert result['result']['status']==status and result['result']['metrics']==[]
+    if content is not None and '../escape' in content:
+        assert result['result']['outputs']==[]
+        assert result['result']['diagnostics']==[dict(field='outputs[0]',code='output_original_mapping_invalid')]
     if content is not None:
         assert any(item['name']=='result.json' for item in result['outputs'])
     else:
@@ -151,7 +154,7 @@ def test_r1_r2_real_native_hwa_without_search_archives_results_for_a_and_export(
     launcher=tmp_path/'native.py';launcher.write_text(NATIVE)
     root=tmp_path/'instance'
     controller.prepare(root,objective,public,[sys.executable,str(launcher)],max_tokens=1000,max_seconds=60,max_steps=5,
-        model='fake',reasoning_effort='high',search_policy=None,experiment_mode='local',node_budget_mode='hard')
+        model='fake',reasoning_effort='high',search_policy=None,experiment_mode='local',node_budget_mode='soft')
     result=controller.run(root)
     assert result['status']=='finish',result
     work=c.workspace(root,2);seal=c.read(c.host_record(work)/'result-identity.json')
@@ -171,12 +174,13 @@ def test_r1_r2_real_native_hwa_without_search_archives_results_for_a_and_export(
 
 @pytest.mark.process_e2e
 @pytest.mark.parametrize('direction',[[],{}])
-def test_r2_unhashable_json_direction_is_invalid_not_lost_completion(local,direction):
+def test_r2_structured_scientific_direction_preserves_completion(local,direction):
     root,script,config,_=local
     value=dict(version=1,metrics=[dict(name='x',value=1,direction=direction)],outputs=[])
     script.write_text('import pathlib\npathlib.Path("artifacts/result.json").write_text('+repr(json.dumps(value))+')\n')
     result=e.dispatch(config,script,command_options=dict(experiment_directory=str(root),arguments=[]))
-    assert result['status']=='known_success' and result['result']['status']=='invalid'
+    assert result['status']=='known_success' and result['result']['status']=='available'
+    assert result['result']['metrics']==value['metrics']
     assert any(item['name']=='result.json' for item in result['outputs'])
 
 
@@ -215,11 +219,15 @@ payload=dict(summary=role+' bounded observation',scientific_result='Cancelled pr
 if role=='H':payload.update(next_action='experiment',route_reason='Bounded process experiment',search_plan=None)
 if role=='W':
  exp=work/'experiments/long';exp.mkdir(parents=True)
- (exp/'run.py').write_text('import os,pathlib,time\\npathlib.Path("artifacts/started").write_text(str(os.getpid()))\\ntime.sleep(60)\\n')
+ (exp/'run.py').write_text('import os,pathlib,time\\npathlib.Path("artifacts/started").write_text(str(os.getpid()))\\npathlib.Path(os.environ["THIN_HWA_WORKSPACE"],"work","local-started").write_text(str(os.getpid()))\\ntime.sleep(60)\\n')
  driver=subprocess.Popen([sys.executable,'-m','scidiscovery.research_loop.experiments','--config',str(work/'work/experiment-config.json'),'run','--experiment-dir',str(exp),'--script',str(exp/'run.py')],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
  deadline=time.monotonic()+10
- while not list((work/'work/lineage/calls').glob('*/inputs/artifacts/started')):
-  assert time.monotonic()<deadline
+ while not (work/'work/local-started').exists():
+  if driver.poll() is not None:
+   out,err=driver.communicate()
+   (work/'work/local-driver.stdout').write_bytes(out);(work/'work/local-driver.stderr').write_bytes(err)
+   raise AssertionError((driver.returncode,out.decode(errors='replace'),err.decode(errors='replace')))
+  assert time.monotonic()<deadline,'Local execution did not publish its test-only ready marker'
   time.sleep(.02)
  if os.environ.get('LOCAL_STOP_CASE')=='driver':
   os.kill(driver.pid,signal.SIGKILL);driver.wait()
@@ -237,27 +245,64 @@ def long_instance(tmp_path,monkeypatch,case):
     public=tmp_path/'public';public.mkdir();objective=public/'goal.md';objective.write_text('Bounded local process cleanup')
     launcher=tmp_path/'native.py';launcher.write_text(LONG_NATIVE)
     root=tmp_path/'instance'
-    policy={role:dict(max_seconds=4 if role=='W' and case=='budget' else 15,max_observed_tokens=100) for role in ('H','W','A','E')}
+    policy={role:dict(max_seconds=15,max_observed_tokens=100) for role in ('H','W','A','E')}
     controller.prepare(root,objective,public,[sys.executable,str(launcher)],max_tokens=1000,max_seconds=45,max_steps=2,
-        model='fake',reasoning_effort='high',search_policy=None,experiment_mode='local',node_budget_mode='hard',node_budget_policy=policy)
+        model='fake',reasoning_effort='high',search_policy=None,experiment_mode='local',node_budget_mode='soft',node_budget_policy=policy)
     return root
 
 
+def retain_local_process_diagnostics(root,label):
+    directory=Path(os.environ.get('SCID_TEST_LOG_DIR',str(root.parent/'diagnostics')))/label
+    for step in (1,2):
+        record=c.host_record(c.workspace(root,step))
+        for name in ('native-intent.json','native-outcome.json','runner-process.json','native-process.json',
+                     'usage.json','native.stderr','runner.stderr','native.jsonl','runner-cleanup.json'):
+            source=record/name
+            if source.is_file():
+                target=directory/f'{step:03d}'/name;target.parent.mkdir(parents=True,exist_ok=True)
+                target.write_bytes(source.read_bytes())
+    sources=list((c.workspace(root,2)/'work').glob('local-driver.*'))
+    sources.extend((c.workspace(root,2)/'work').glob('lost-identity.json'))
+    for source in sources:
+        target=directory/source.name;target.parent.mkdir(parents=True,exist_ok=True);target.write_bytes(source.read_bytes())
+    if (root/'jobs/002.json').exists():
+        for call in (experiment_client.record_directory(root,2)/'calls').glob('*'):
+            for name in ('accepted.json','process.json','terminal.json','completed.json'):
+                source=call/name
+                if source.is_file():
+                    target=directory/'managed-calls'/call.name/name;target.parent.mkdir(parents=True,exist_ok=True)
+                    target.write_bytes(source.read_bytes())
+
+
 @pytest.mark.process_e2e
-@pytest.mark.parametrize('case',['driver','budget'])
-def test_r1_native_owner_cleans_detached_local_group_after_driver_kill_or_budget(tmp_path,execution_registry,monkeypatch,case):
-    from scidiscovery.research_loop import runtime
-    root=long_instance(tmp_path,monkeypatch,case)
-    result=controller.run(root)
-    assert result['status']==('native_stopped' if case=='budget' else 'bounded_steps_exhausted'),result
-    directory=next((c.workspace(root,2)/'work/lineage/calls').iterdir())
+def test_r1_native_owner_cleans_detached_local_group_after_driver_kill(tmp_path,execution_registry,monkeypatch):
+    from scidiscovery.research_loop import budget,runtime
+    from test_history_handoff import finish
+    root=long_instance(tmp_path,monkeypatch,'driver')
+    finish(root,1,'H',[],action='experiment')
+    c.write(root/'host-started.json',budget.clock_stamp())
+    budget.transition(root,'advance','Real local Worker cleanup fixture')
+    c.build_job(root,2,'W',[1])
+    try:result=native.execute_native(root,2)
+    finally:retain_local_process_diagnostics(root,'local-driver-cleanup')
+    record=c.host_record(c.workspace(root,2));outcome=c.read(record/'native-outcome.json')
+    assert result['stage_intent']=='review'
+    assert outcome['raw_sha256']==c.digest(record/'science-output.json')
+    assert outcome['returncode']==0 and outcome['stop_reason'] is None
+    assert outcome['cleanup']=='observed_group_cleaned'
+    directory=next((experiment_client.record_directory(root,2)/'calls').iterdir())
     identity=c.read(directory/'process.json')
     assert not runtime.process_matches(identity,identity['task_sha256'])
     assert not (directory/'completed.json').exists()
     assert len(list(directory.parent.iterdir()))==1
-    before=c.digest(directory/'accepted.json')
-    controller.run(root)
-    assert c.digest(directory/'accepted.json')==before and len(list(directory.parent.iterdir()))==1
+    originals={p:p.read_bytes() for p in (directory/'accepted.json',directory/'process.json',
+        record/'native-intent.json',record/'native-outcome.json',record/'science-output.json')}
+    with monkeypatch.context() as repeated:
+        repeated.setattr(runtime,'start',lambda *a,**kw:pytest.fail('Collect this same original without a new native process'))
+        repeated.setattr(e,'dispatch',lambda *a,**kw:pytest.fail('Collect this same original without resubmitting its experiment'))
+        assert native.wait_native(root,2)==result
+    assert all(p.read_bytes()==raw for p,raw in originals.items())
+    assert len(list(directory.parent.iterdir()))==1 and not (root/'jobs/003.json').exists()
 
 
 @pytest.mark.process_e2e
@@ -270,7 +315,8 @@ def test_r1_watchdog_signals_only_exact_local_group_after_runner_kill(tmp_path,e
     try:
         until=time.monotonic()+15
         while time.monotonic()<until:
-            matches=list((c.workspace(root,2)/'work/lineage/calls').glob('*/inputs/artifacts/started'))
+            matches=(list((experiment_client.record_directory(root,2)/'calls').glob('*/inputs/artifacts/started'))
+                     if (root/'jobs/002.json').exists() else [])
             if matches:directory=matches[0].parents[2];break
             time.sleep(.05)
         assert directory is not None
@@ -293,24 +339,26 @@ def test_r1_watchdog_signals_only_exact_local_group_after_runner_kill(tmp_path,e
 def test_r1_lost_local_process_original_keeps_budget_cleanup_blocked(tmp_path,execution_registry,monkeypatch):
     import signal
     from scidiscovery.research_loop import budget,runtime
-    root=long_instance(tmp_path,monkeypatch,'budget')
+    root=long_instance(tmp_path,monkeypatch,'driver')
     launcher=tmp_path/'native.py'
-    text=launcher.read_text().replace("if os.environ.get('LOCAL_STOP_CASE')=='driver':",'''original=next((work/'work/lineage/calls').glob('*/process.json'))
+    text=launcher.read_text().replace("if os.environ.get('LOCAL_STOP_CASE')=='driver':",'''from scidiscovery.research_loop.experiment_client import record_directory
+ original=next((record_directory(work.parents[2],int(work.name))/'calls').glob('*/process.json'))
  (work/'work/lost-identity.json').write_bytes(original.read_bytes());original.unlink()
  if os.environ.get('LOCAL_STOP_CASE')=='driver':''')
     launcher.write_text(text)
     identity=None
     try:
         result=controller.run(root)
+        retain_local_process_diagnostics(root,'local-lost-identity')
         record=c.host_record(c.workspace(root,2))
         identity=c.read(c.workspace(root,2)/'work/lost-identity.json')
         assert result['status']=='native_stopped',result
         assert c.read(record/'native-outcome.json')['stop_reason']=='cleanup_unknown'
         assert budget.execution_blocked(root)
-        accepted=list((c.workspace(root,2)/'work/lineage/calls').glob('*/accepted.json'))
+        accepted=list((experiment_client.record_directory(root,2)/'calls').glob('*/accepted.json'))
         assert len(accepted)==1
         controller.run(root)
-        assert list((c.workspace(root,2)/'work/lineage/calls').glob('*/accepted.json'))==accepted
+        assert list((experiment_client.record_directory(root,2)/'calls').glob('*/accepted.json'))==accepted
     finally:
         # The deliberately destroyed owner original cannot authorize production cleanup.
         # This test retains its exact identity separately solely to clean the negative fixture.

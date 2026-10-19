@@ -5,17 +5,17 @@ import json
 import os
 from pathlib import Path
 
-from . import contracts as c, history, execution
+from . import budget, contracts as c, history, execution
 from .output_repair import WorkRepairRequired
 
 FACT_NAME = 'work-evidence.json'
 
 
 def schema():
-    return dict(type=['array','null'],maxItems=128,items=dict(type='object',additionalProperties=False,
-        properties=dict(mechanism=dict(type='string',minLength=1,maxLength=80),
+    return dict(type=['array','null'],items=dict(type='object',additionalProperties=False,
+        properties=dict(mechanism=dict(type='string'),
             basis=dict(type='string',enum=['observed','blocked']),
-            finding=dict(type='string',minLength=1,maxLength=1024)),required=['mechanism','basis','finding']),
+            finding=dict(type='string')),required=['mechanism','basis','finding']),
         description='For a screen task, give your own scientific finding and limitations for each assigned mechanism. '
             'observed uses exact available observations; blocked states a concrete scientific obstacle and goes to A as partial. '
             'Names are scientific labels or listed mechanism refs. Do not write hashes, call IDs, paths or counts. Local tasks may use null.')
@@ -151,7 +151,9 @@ def assessment(root,job,science,record):
     facts=validate(root,job,record)
     expected={row['mechanism_ref'] for row in job['search']['coverage_obligation']}
     mechanisms=job['search']['breadth']['mechanisms'];known={row['mechanism_ref'] for row in facts['evidence']}
-    findings=science.get('mechanism_findings') or [];seen=set();missing=[];blocked=[]
+    declared=c.scientific_field(job,science,'mechanism_findings')
+    unresolved=science.get('mechanism_findings') is not None and declared is None
+    findings=declared or [];seen=set();missing=[];blocked=[]
     for row in findings:
         matches=[item['mechanism_ref'] for item in mechanisms if row['mechanism'] in (item['mechanism_ref'],item['label'])]
         if len(matches)!=1 or matches[0] not in expected or matches[0] in seen or not row['finding'].strip():
@@ -161,7 +163,8 @@ def assessment(root,job,science,record):
         elif ref not in known:missing.append(ref)
     missing=sorted(set(missing)|(expected-seen))
     reason=('work_evidence_capacity' if facts['capacity'] else 'original_execution_unknown' if facts['unknown'] or facts['prior_unknown']
-        else 'worker_decision' if science.get('stage_intent')=='decision' else 'scientific_blocked' if blocked else None)
+        else 'scientific_findings_unresolved' if unresolved else 'worker_decision' if science.get('stage_intent')=='decision'
+        else 'scientific_blocked' if blocked else None)
     return dict(status='partial' if reason else 'incomplete' if missing else 'complete',missing=missing,blocked=blocked,reason=reason,
         facts_sha256=c.digest(c.regular(record/FACT_NAME)))
 
@@ -262,12 +265,14 @@ def validate_exit(root,job,record,value):
             # and policy are checked above. Later amendments never rewrite it.
             shared=value['shared'];meter=value['meter'];soft=budget.node_mode(root)=='soft'
             reserve=budget.delivery_reserve(c.settings(root)) or dict(tokens=0,seconds=0,steps=0)
-            needed_tokens=0 if soft else max(0,value['limits']['max_observed_tokens']-tokens)
+            actual_only=c.settings(root).get('final_a_completion_policy') is not None
+            needed_tokens=0 if soft or actual_only else max(0,value['limits']['max_observed_tokens']-tokens)
             needed_seconds=0. if soft else max(0.,value['limits']['max_seconds']-seconds)
-            if not (meter['unknown_steps'] or shared['max_tokens']-meter['observed_tokens']<needed_tokens+reserve['tokens']
+            if not (meter.get('blocking_unknown_steps', meter['unknown_steps']) or shared['max_tokens']-meter.get('accounted_tokens', meter['observed_tokens'])<needed_tokens+reserve['tokens']
                     or shared['seconds_remaining']<needed_seconds+reserve['seconds']
-                    or soft and (shared['max_tokens']-meter['observed_tokens']<=reserve['tokens'] or shared['seconds_remaining']<=reserve['seconds'])
-                    or c.settings(root)['max_steps']-shared.get('used_steps',budget.used_steps(root))<1+reserve['steps']):
+                    or (soft or actual_only) and shared['max_tokens']-meter.get('accounted_tokens', meter['observed_tokens'])<=reserve['tokens']
+                    or soft and shared['seconds_remaining']<=reserve['seconds']
+                    or budget.effective_max_steps(root)-shared.get('used_steps',budget.used_steps(root))<1+reserve['steps']):
                 raise history.ObserverIntegrityError('Worker shared budget did not require exit')
         else:raise history.ObserverIntegrityError('Unknown Worker budget exception')
     else:raise history.ObserverIntegrityError('Worker exit lacks original host exception facts')

@@ -92,7 +92,7 @@ def _deadline(config, bound):
     return deadline if deadline > stamp['at_boottime'] else None
 
 
-def _preview(directory, accepted):
+def _preview(directory, accepted, *, scientific=False):
     bound = accepted.get('engineering_check')
     if bound is None:
         return dict(status='not_run', note='original_call_has_no_bound_engineering_check')
@@ -113,11 +113,27 @@ def _preview(directory, accepted):
                     or intent['completed_sha256'] != e.proof(directory / 'completed.json')['sha256']):
                 raise e.IntegrityError('Engineering feedback differs from its original call')
             original = value['result']
-            result.update({key: original[key] for key in ('status', 'note', 'samples', 'stage', 'cleanup_confirmed', 'completion') if key in original})
+            if scientific:
+                result.update(status=original['status'],note='isolated_replay_'+original['status'],
+                    cleanup_confirmed=original['cleanup_confirmed'])
+                if 'stage' in original:
+                    result['stage']=original['stage'] if original['stage'] in {'harness','source_import','sample_train','sample_predict'} else 'unknown'
+                if isinstance(original.get('samples'),dict):
+                    result['samples']={key:original['samples'][key] for key in
+                        ('train_rows','validation_rows','available_train_rows','available_validation_rows')
+                        if key in original['samples'] and (original['samples'][key] is None or type(original['samples'][key]) is int)}
+                    result['samples']['selection']='first rows in frozen CSV order'
+                if 'completion' in original:result['completion']='Bounded replay did not produce a verified result.'
+            else:
+                result.update({key: original[key] for key in ('status', 'note', 'samples', 'stage', 'cleanup_confirmed', 'completion') if key in original})
             if 'diagnostic' in original:
-                raw = str(original['diagnostic']).encode()
-                result['diagnostic'] = raw[:1024].decode(errors='ignore')
-                result['diagnostic_omitted_bytes'] = original.get('diagnostic_omitted_bytes', 0) + max(0, len(raw) - 1024)
+                if scientific:
+                    result['diagnostic']=dict(present=True,code='isolated_replay_diagnostic',
+                        limitation='The isolated sample did not establish compatibility; inspect the scientific implementation and declared dependencies. Exact process diagnostics remain in private originals.')
+                else:
+                    raw = str(original['diagnostic']).encode()
+                    result['diagnostic'] = raw[:1024].decode(errors='ignore')
+                    result['diagnostic_omitted_bytes'] = original.get('diagnostic_omitted_bytes', 0) + max(0, len(raw) - 1024)
     return result
 
 
@@ -125,7 +141,7 @@ def public(config, call_id):
     """A bounded read-only view; query never starts a replay."""
     try:
         records = e.Records(config)
-        return _preview(records.directory(call_id), records.accepted(call_id))
+        return _preview(records.directory(call_id), records.accepted(call_id),scientific=config.get('worker_view_version')==1)
     except (OSError, ValueError, KeyError, TypeError):
         return dict(status='unknown', note='engineering_feedback_original_unavailable')
 

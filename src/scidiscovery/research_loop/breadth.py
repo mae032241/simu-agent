@@ -1,8 +1,6 @@
 """Frozen registered-call opportunities; these are never scientific verdicts."""
 from __future__ import annotations
 
-MAX_MECHANISMS = 128
-
 
 class OpportunityRequired(ValueError):
     code = 'scientific_opportunity_required'
@@ -16,8 +14,8 @@ def validate(value):
             or type(value['prior_unknown']) is not bool):
         raise ValueError('Exact frozen scientific opportunity configuration required')
     rows = value['mechanisms']
-    if not isinstance(rows,list) or not 1 <= len(rows) <= MAX_MECHANISMS:
-        raise ValueError('Scientific opportunity combination exceeds capacity')
+    if not isinstance(rows,list) or not rows:
+        raise ValueError('Scientific opportunity combination requires mechanisms')
     refs = set()
     for row in rows:
         if (not isinstance(row,dict) or set(row) != {'mechanism_ref','label','source_h','source_h_sha256','minimal_test','status'}

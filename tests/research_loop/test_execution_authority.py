@@ -130,3 +130,70 @@ def test_exact_review_to_ui_receipt_rejects_forgery_and_never_dispatches(tmp_pat
     original.chmod(0o600); c.write(original, modified)
     with pytest.raises(ValueError, match='host receipt'):
         authority.decision(root, request_id, secret=ui.secret)
+
+
+def declared_request(tmp_path):
+    """Permission documents only; these declarations claim no scientific qualification."""
+    root,secret_file=prepare(tmp_path)
+    secret=secret_file.read_bytes();authority.bind_secret(root,secret)
+    material=dict(path='artifacts/subject.py',source=str(tmp_path/'missing-scientific-original.py'),
+        sha256='a'*64,size_bytes=17)
+    review_ref=dict(path='qualification/reviews/declared.json',sha256='b'*64,size_bytes=31)
+    job=dict(step=2,role='W',direct_materials=[material],selected_inputs=[],execution_qualifications=[review_ref])
+    job_ref=q._save(root,root/'jobs/002.json',job)
+    native_ref=q._save(root,root/'native-evidence/002/native-intent.json',dict(step=2,task_sha256=job_ref['sha256']))
+    subject=dict(producer_step=1,producer_seal=dict(path='native-evidence/001/result-identity.json',sha256='c'*64,size_bytes=19),material=material)
+    grant=q._save(root,root/'host-runtime/permission-fixture-grant.json',dict(scope='Declared permission owner only'))
+    arguments=dict(step=2,native_intent=native_ref,call_id='0001-'+'d'*32,subject=subject,review_ref=review_ref,
+        target=dict(configuration_files=[]),policy=dict(outcome='require_human_approval'),
+        resources=dict(wall_time_seconds=10,max_storage_bytes=1000),grant_revision=grant,
+        expires_at=time.time()+60,secret=secret)
+    return root,secret,arguments
+
+
+def test_permission_issue_read_decide_and_revoke_do_not_read_results_or_admission(tmp_path,monkeypatch):
+    from scidiscovery.research_loop import budget,execution,native
+    root,secret,arguments=declared_request(tmp_path)
+    def forbidden(*args,**kwargs):pytest.fail('Permission path entered result, qualification or admission validation')
+    for module,name in ((c,'_validate_inputs'),(execution,'records'),(authority.review,'require_review'),
+            (q,'execution_payload'),(q,'output_status'),(q,'status'),(budget,'snapshot'),(native,'usage')):
+        monkeypatch.setattr(module,name,forbidden)
+    ref=authority.create_request(root,**arguments);request_id=Path(ref['path']).parent.name
+    value,_=authority.request(root,request_id)
+    payload={key:arguments['subject']['material']['source' if key=='path' else key] for key in ('path','sha256','size_bytes')}
+    expected=dict(version=1,kind='execution_authorization',instance=c.settings(root)['goal_id'],contract=authority.contract(root),
+        job=q._ref(root,root/'jobs/002.json'),native_intent=arguments['native_intent'],call_id=arguments['call_id'],
+        subject=arguments['subject'],review=arguments['review_ref'],payload=payload,target=arguments['target'],
+        policy=arguments['policy'],resources=arguments['resources'],grant_revision=arguments['grant_revision'],
+        expires_at=arguments['expires_at'],options=list(authority.OPTIONS),scope=authority.SCOPE)
+    assert {key:item for key,item in value.items() if key!='nonce_hash'}==expected
+    assert request_id==hashlib.sha256(security.canonical(expected)).hexdigest()
+    tokens=authority.form_tokens(root,request_id,secret=secret,boot='fixture-boot',browser_token='fixture-browser')
+    authority.record_decision(root,request_id,secret=secret,boot='fixture-boot',browser_token='fixture-browser',
+        **tokens,selected_option=authority.OPTIONS[0],rationale='Permission only; scientific eligibility remains separate')
+    assert authority.status(root,request_id,secret=secret)['state']=='decided'
+    authority.revoke(root,request_id,secret=secret,reason='Revoke without consulting unavailable scientific originals')
+    assert authority.status(root,request_id,secret=secret)['state']=='revoked'
+    assert not list(root.glob('**/accepted.json')) and not list(root.glob('**/submission.json'))
+
+
+def test_permission_renewal_reuses_declared_payload_without_result_resolution(tmp_path,monkeypatch):
+    root,secret,arguments=declared_request(tmp_path)
+    payload=dict(path=str(tmp_path/'private-compiled-package.py'),sha256='e'*64,size_bytes=53)
+    first=authority.create_request(root,**arguments,payload_binding=payload)
+    monkeypatch.setattr(q,'execution_payload',lambda *args:pytest.fail('Renewal resolved scientific outputs'))
+    renewed=authority.create_request(root,**dict(arguments,expires_at=arguments['expires_at']+10),supersedes=first)
+    new,_=authority.request(root,Path(renewed['path']).parent.name)
+    assert new['payload']==payload and new['supersedes']==first
+    assert authority.request_successor(root,first)==renewed
+
+
+@pytest.mark.parametrize('changed',['native_requester','review_reference','payload_alias'])
+def test_permission_rejects_changed_declared_identity_without_science(tmp_path,changed):
+    root,secret,arguments=declared_request(tmp_path)
+    ref=authority.create_request(root,**arguments)
+    value,_=authority.request(root,Path(ref['path']).parent.name)
+    if changed=='native_requester':value['native_intent']=dict(value['native_intent'],path='native-evidence/003/native-intent.json')
+    elif changed=='review_reference':value['review']=dict(value['review'],sha256='f'*64)
+    else:value['payload_alias']=dict(value['payload'],path=str(tmp_path/'unbound-copy.py'))
+    with pytest.raises(ValueError):authority._validate_binding(root,value)

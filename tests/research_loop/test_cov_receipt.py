@@ -73,6 +73,52 @@ def test_public_profile_rejects_unqualified_flags_before_execution(tmp_path,monk
     assert not list(tmp_path.glob('receipt*'))
 
 
+@pytest.mark.parametrize('flags',[[],['-I'],['-B','-I']])
+def test_public_receipt_profile_keeps_exact_legacy_and_bytecode_free_shapes(tmp_path,monkeypatch,flags):
+    cli=tmp_path/'exp_cli.py';cli.write_text(CLI)
+    runner=tmp_path/'runner.py';runner.write_text(RUNNER);monkeypatch.setenv('EXP_RUNNER',str(runner))
+    result=cov_receipt.profile([sys.executable,*flags,str(cli)],'public_runner_main')
+    assert result['backend']==cov_receipt.original(cli)
+    assert result['runner']==cov_receipt.runner_profile(runner)
+
+
+@pytest.mark.parametrize('flags',[['-B'],['-I','-B'],['-B','-I','-u']])
+def test_public_receipt_profile_does_not_expand_arbitrary_interpreter_options(tmp_path,monkeypatch,flags):
+    cli=tmp_path/'exp_cli.py';cli.write_text(CLI)
+    runner=tmp_path/'runner.py';runner.write_text(RUNNER);monkeypatch.setenv('EXP_RUNNER',str(runner))
+    with pytest.raises(ValueError,match='additional interpreter or CLI flags'):
+        cov_receipt.profile([sys.executable,*flags,str(cli)],'public_runner_main')
+
+
+def test_host_receipt_child_imports_writable_inputs_without_bytecode(tmp_path,execution_registry,monkeypatch):
+    inputs=tmp_path/'inputs';inputs.mkdir()
+    cli=inputs/'exp_cli.py';cli.write_text(CLI)
+    runner=inputs/'runner.py';runner.write_text(RUNNER)
+    (inputs/'scientific_dependency.py').write_text('VALUE="inert engineering input"\n')
+    flags=tmp_path/'child-flags.json';source=inputs/'candidate.py'
+    source.write_text('import json,os,sys\nfrom pathlib import Path\nimport scientific_dependency\n'
+        'Path(os.environ["SCID_FIXTURE_FLAGS"]).write_text(json.dumps(dict(isolated=bool(sys.flags.isolated),dont_write_bytecode=sys.dont_write_bytecode,dependency=scientific_dependency.VALUE)))\n')
+    before={path.relative_to(inputs):path.read_bytes() for path in inputs.rglob('*') if path.is_file()}
+    assert inputs.stat().st_mode & 0o200
+    runs=tmp_path/'runs';monkeypatch.setenv('EXP_RUN_DIR',str(runs));monkeypatch.setenv('EXP_RUNNER',str(runner))
+    monkeypatch.setenv('SCID_FIXTURE_FLAGS',str(flags));monkeypatch.delenv('PYTHONDONTWRITEBYTECODE',raising=False)
+    value=dict(contract_version=2,feedback_version=1,record_dir=str(tmp_path/'lineage'),runs_root=str(runs),
+        run_argv=[sys.executable,'-B','-I',str(cli)],receipt_channel='public_runner_main',
+        admission=dict(version=1,mode='hard'),scope=dict(handoff_protocol=CURRENT,step=2,role='W',
+            job_sha256='a'*64,execution_key='b'*64,mechanism_ref='h001.m1'),parents=[],evaluation_key='fixture',
+        engineering_check_reserve_seconds=0)
+    config=experiments.freeze(value,'cov_execution:experiment',path=tmp_path/'config.json')
+    result=experiments.dispatch(config,source,new=True)
+    assert result['status']=='known_success'
+    observed=json.loads(flags.read_text())
+    assert observed==dict(isolated=True,dont_write_bytecode=True,dependency='inert engineering input')
+    after={path.relative_to(inputs):path.read_bytes() for path in inputs.rglob('*') if path.is_file()}
+    assert before==after and not list(inputs.rglob('__pycache__'))
+    accepted=experiments.Records(config).accepted(result['call_id'])
+    assert experiments.load(config).command(accepted)[1:3]==['-B','-I']
+
+
+
 @pytest.mark.parametrize('name',['receipt.json','source.py','row.json'])
 def test_known_cov_original_tamper_is_integrity_error_without_reexecution(wrapper,name):
     source=wrapper.script('original')

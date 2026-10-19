@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from scidiscovery.research_loop import checkpoint, contracts as c, controller, continuation, execution, native, runtime
+from scidiscovery.research_loop import checkpoint, contracts as c, controller, continuation, execution, experiment_client, native, runtime
 from scidiscovery.research_loop.output_repair import OutputRepairRequired
 from execution_fixtures import execution_registry
 
@@ -195,20 +195,6 @@ def test_host_review_overrides_continuation_without_rewriting_science():
         checkpoint.disposition(dict(stage_intent='finish'))
 
 
-# Explicit internal schema fixture. Production protocol13 remains unchanged;
-# U3 freezes the complete current schema before exposing fragment preparation.
-SCHEMA_FIXTURE = '''from scidiscovery.research_loop import contracts as c
-original = c.result_schema
-def result_schema(role, protocol=1, comparison=False):
-    value = original(role, protocol, comparison)
-    if role == 'W' and 'stage_intent' not in value['properties']:
-        value['properties']['stage_intent'] = {'type':'string','enum':['continue','review']}
-        value['required'].append('stage_intent')
-    return value
-c.result_schema = result_schema
-'''
-
-
 FRAGMENT_FAKE = r'''import json,os,pathlib,sys
 from scidiscovery.research_loop import experiments as e
 from scidiscovery.research_loop import contracts as c
@@ -265,20 +251,10 @@ pathlib.Path(args[args.index('--output-last-message')+1]).write_text(json.dumps(
 
 @pytest.fixture
 def internal_fragment_instance(tmp_path, monkeypatch, execution_registry):
-    discovery = tmp_path / 'schema-fixture'
-    discovery.mkdir()
-    (discovery / 'sitecustomize.py').write_text(SCHEMA_FIXTURE)
-    # Native runners are real child processes. They load the same explicit
-    # fixture contract, never a partial production protocol14 implementation.
-    monkeypatch.setenv('PYTHONPATH', str(discovery) + os.pathsep + str(Path(c.__file__).parents[2])
+    # Real child processes use CURRENT directly, preserving execution discovery
+    # metadata without an obsolete schema override in this process or theirs.
+    monkeypatch.setenv('PYTHONPATH', str(Path(c.__file__).resolve().parents[2])
                        + os.pathsep + os.environ.get('PYTHONPATH', ''))
-    namespace = {'__name__': 'internal_scientific_schema_fixture'}
-    exec(SCHEMA_FIXTURE, namespace)
-    original = namespace['original']
-    # exec updated the shared contracts module; restore that exact entry after
-    # the fixture so unrelated protocol13 tests retain their frozen contract.
-    c.result_schema = original
-    monkeypatch.setattr(c, 'result_schema', namespace['result_schema'])
     public = tmp_path / 'public-fragments'
     public.mkdir()
     goal = public / 'goal.md'
@@ -311,7 +287,7 @@ def test_internal_runner_two_fragments_keep_one_w_stage_and_original_call(intern
     configs = [c.read(path / 'experiment-config.json') for path in chain]
     assert configs[0]['scope'] == configs[1]['scope']
     assert configs[0]['scope']['execution_key'] == c.digest(root / 'jobs/002.json')
-    calls = list((c.workspace(root, 2) / 'work/lineage/calls').iterdir())
+    calls = list((experiment_client.record_directory(root,2) / 'calls').iterdir())
     assert len(calls) == 1
     first = checkpoint.validate(root, jobs[1], chain[0])
     assert (root / first['materials'][0]['original']['snapshot']).read_text() == 'first fragment result'
@@ -368,7 +344,7 @@ def test_missing_science_repairs_output_without_replaying_original_call(internal
     chain = execution.records(root, 2)
     assert len(chain) == 2 and checkpoint.validate(root, c.read(root / 'jobs/002.json'), chain[0])['science']['status'] == 'missing'
     assert c.read(chain[1] / 'native-intent.json')['continuation_kind'] == 'repair'
-    assert len(list((c.workspace(root, 2) / 'work/lineage/calls').iterdir())) == 1
+    assert len(list((experiment_client.record_directory(root,2) / 'calls').iterdir())) == 1
 
 
 def test_unknown_native_usage_keeps_checkpoint_and_does_not_rotate_or_replay(internal_fragment_instance, monkeypatch):
@@ -395,5 +371,5 @@ def test_known_failure_resumes_exact_thread_without_new_managed_work(internal_fr
         time.sleep(.02)
     assert continuation.start(root, 2)['role'] == 'W'
     assert controller.run(root)['status'] == 'finish'
-    assert len(list((c.workspace(root, 2) / 'work/lineage/calls').iterdir())) == 1
+    assert len(list((experiment_client.record_directory(root,2) / 'calls').iterdir())) == 1
     assert native.usage(root)['observed_tokens'] == 56

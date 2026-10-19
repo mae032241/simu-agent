@@ -36,7 +36,7 @@ def case(tmp_path,options,observer=None):
             'print(json.dumps(dict(candidates=[],current_candidate=None,actual_submission=None,coverage=dict(status="complete",note="No domain claims"))))\n'))
         extra['history_observer']=dict(adapter=str(adapter),config={})
     controller.prepare(root,goal,public,['never-launched'],max_tokens=10000,max_seconds=120,max_steps=10,
-        model='no-model',reasoning_effort='high',node_budget_mode='hard',experiment_mode='external',**extra)
+        model='no-model',reasoning_effort='high',node_budget_mode='soft',experiment_mode='external',**extra)
     finish(root,1,'H',[],action='experiment',search_choice=dict(scope='Two synthetic mechanisms',commitments=[
         dict(label=label,minimal_test='Read the exact backend observation',existing_ref=None) for label in ('P','Q')],
         focus=dict(label=None,action='screen')))

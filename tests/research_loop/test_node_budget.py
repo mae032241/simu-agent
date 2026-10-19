@@ -11,6 +11,7 @@ import pytest
 
 from scidiscovery.research_loop import budget, contracts as c, controller, native, runtime, search
 from scidiscovery.research_loop.cli import status
+from scidiscovery.research_loop.protocol import CURRENT
 from test_history_handoff import finish
 
 
@@ -30,7 +31,13 @@ with (work/'work/launches.txt').open('a') as stream:stream.write('launch\\n')
 payload={'summary':'A bounded finding','scientific_result':'Original fixture observation','limitations':['No scientific effectiveness claim']}
 if 'implementation_selection' in task['final_response']:payload['implementation_selection']=None
 if role=='H':payload.update(next_action='wait',route_reason='No further work required',search_plan=None)
-if role=='A':payload.update(next_action='finish',route_reason='A bounded conclusion',candidate_recommendation=None,search_review=None,progress_assessment=None)
+if role=='W':
+ assigned=task.get('lineage',{}).get('mechanisms',{})
+ payload.update(stage_intent='review',mechanism_findings=[dict(mechanism=row['label'],basis='blocked',
+  finding='This transport fixture performs no scientific experiment or managed observation.')
+  for row in assigned['overview']] if assigned.get('task_action')=='screen' else None)
+if role=='A':payload.update(next_action='finish',route_reason='A bounded conclusion',candidate_recommendation=None,
+ search_review=None,progress_assessment=None,decision_request=None,portfolio_review=None)
 mode=config['mode']
 if mode!='no_usage':
  print(json.dumps({'type':'turn.completed','usage':{'input_tokens':config['input'],'cached_input_tokens':config['cached'],'output_tokens':config['output']}}),flush=True)
@@ -55,7 +62,7 @@ def instance(tmp_path, *, limits=None, mode='normal', max_tokens=100_000,
     root = tmp_path / 'instance'
     controller.prepare(root, objective, public, [sys.executable, str(launcher)],
                        max_tokens=max_tokens, max_seconds=max_seconds, max_steps=6,
-                       model='fixture-no-model', reasoning_effort='high', node_budget_mode='hard',
+                       model='fixture-no-model', reasoning_effort='high', node_budget_mode='soft',
                        search_policy=search_policy, node_budget_policy=limits)
     return root
 
@@ -108,53 +115,8 @@ def test_valid_policy_is_explicit_and_does_not_mutate_caller():
     assert value == before
 
 
-@pytest.mark.parametrize('role', ROLES)
-@pytest.mark.parametrize('mode', ['time', 'tokens'])
-def test_each_role_real_process_stops_without_seal_handoff_or_replay(tmp_path, role, mode):
-    limits = policy(tokens=100, seconds=1.5 if mode == 'time' else 10)
-    observed = (20_000, 19_999, 3) if mode == 'tokens' else (7, 2, 3)
-    root = instance(tmp_path, limits=limits, mode=mode, observed=observed)
-    step = target(root, role)
-    result = controller.run(root)
-    assert result['status'] == 'native_stopped', result
-    work = c.workspace(root, step)
-    record = c.host_record(work)
-    outcome = c.read(record / 'native-outcome.json')
-    assert outcome['stop_reason'] == f'node_slice_{"time" if mode == "time" else "token"}_limit'
-    assert not (record / 'result-identity.json').exists()
-    assert not (root / 'jobs' / f'{step + 1:03d}.json').exists()
-    intent = c.read(record / 'native-intent.json')
-    assert 'budget_slice' in intent and 'search_slice' not in intent
-    assert (work / 'work/launches.txt').read_text() == 'launch\n'
-    meter = c.read(record / 'usage.json')
-    report = budget.node_report(root, c.read(root / 'jobs' / f'{step:03d}.json'), intent, meter)
-    assert report['dispatches'] == 1
-    assert report['observed_tokens'] == observed[0] + observed[2]
-    if mode == 'tokens':
-        # One delayed completion may greatly exceed the configured threshold.
-        assert report['observed_tokens'] > 100
-        assert report['observed_tokens'] != sum(observed)
-    preserved = {path: path.read_bytes() for path in
-                 (record / 'native-intent.json', record / 'native-outcome.json', record / 'usage.json')}
-    assert controller.run(root)['status'] == 'native_outcome_unsealed'
-    assert all(path.read_bytes() == raw for path, raw in preserved.items())
-    assert (work / 'work/launches.txt').read_text() == 'launch\n'
-    row = status(root)['nodes'][step - 1]
-    assert row['role'] == role
-    assert row['stop_reason'] == outcome['stop_reason']
 
 
-def test_no_completed_usage_stays_unknown_after_real_time_stop(tmp_path):
-    root = instance(tmp_path, limits=policy(seconds=1.5), mode='no_usage')
-    result = controller.run(root)
-    assert result['status'] == 'native_stopped', result
-    record = c.host_record(c.workspace(root, 1))
-    assert c.read(record / 'native-outcome.json')['stop_reason'] == 'node_slice_time_limit'
-    assert not (record / 'usage.json').exists()
-    assert c.read(record / 'native-outcome.json')['budget_slice']['usage_observed'] is False
-    assert native.usage(root)['unknown_steps'] == [1]
-    assert not (record / 'result-identity.json').exists()
-    assert controller.run(root)['status'] == 'native_outcome_unsealed'
 
 
 def test_cached_input_is_not_a_second_charge_in_actual_native_guard(tmp_path):
@@ -189,7 +151,8 @@ def test_original_slice_excludes_explicit_pause_but_does_not_reset(tmp_path, mon
     assert budget.node_report(root, job, intent, meter)['advance_seconds'] == 5
     assert budget.stop_node(root, job, intent, budget.snapshot(root), meter) is None
     now[0] += 5
-    assert budget.stop_node(root, job, intent, budget.snapshot(root), meter) == 'node_slice_time_limit'
+    assert budget.stop_node(root, job, intent, budget.snapshot(root), meter) is None
+    assert budget.node_report(root, job, intent, meter)['advance_seconds'] == 10
     assert intent == original
 
 
@@ -207,15 +170,15 @@ def test_changed_accepted_identity_cannot_refund_or_launch(tmp_path, field):
 
 
 @pytest.mark.parametrize('node_tokens,search_tokens', [(50, 100), (100, 50)])
-def test_new_w_uses_smaller_search_or_node_cap_with_one_anchor(tmp_path, node_tokens, search_tokens):
+def test_new_w_uses_smaller_search_or_node_target_with_one_anchor(tmp_path, node_tokens, search_tokens):
     search_limits = dict(search.DEFAULT_POLICY, max_w_observed_tokens=search_tokens)
-    root = instance(tmp_path, limits=policy(tokens=node_tokens), mode='tokens',
+    root = instance(tmp_path, limits=policy(tokens=node_tokens),
                     observed=(70, 69, 5), search_policy=search_limits)
     target(root, 'W', with_search=True)
     result = controller.run(root)
-    assert result['status'] == 'native_stopped', result
+    assert result['status'] == 'finish', result
     record = c.host_record(c.workspace(root, 2))
-    assert c.read(record / 'native-outcome.json')['stop_reason'] == 'node_slice_token_limit'
+    assert c.read(record / 'native-outcome.json')['stop_reason'] is None
     intent = c.read(record / 'native-intent.json')
     assert 'budget_slice' in intent and 'search_slice' not in intent
     outcome = c.read(record / 'native-outcome.json')
@@ -223,9 +186,8 @@ def test_new_w_uses_smaller_search_or_node_cap_with_one_anchor(tmp_path, node_to
     assert outcome['search_slice']['dispatches'] == 1
     assert outcome['search_slice']['observed_tokens'] == 75
     assert outcome['budget_slice']['observed_tokens'] == 75
-    # A failed W contributes execution cost, never a fabricated scientific seal.
-    with pytest.raises(ValueError, match='original regular file'):
-        search.project(root, 3)
+    assert c.validate(c.workspace(root, 2))['stage_intent'] == 'review'
+    assert search.project(root, 3)['accepted_slices'][0]['meter']['observed_tokens'] == 75
 
 
 def test_successful_w_statistics_reuse_same_budget_anchor(tmp_path):
@@ -240,18 +202,29 @@ def test_successful_w_statistics_reuse_same_budget_anchor(tmp_path):
     record = c.host_record(c.workspace(root, 2))
     intent = c.read(record / 'native-intent.json')
     assert 'budget_slice' in intent and 'search_slice' not in intent
+    delivery = c.read(record / 'result-identity.json')['control_outcome']['worker_delivery']
+    assert delivery['status'] == 'partial' and delivery['reason'] == 'scientific_blocked'
+    assert c.read(record / 'work-evidence.json')['evidence'] == []
+    assert search.project(root, 4)['mechanisms']['h001.m1']['status'] == 'pending'
 
 
 @pytest.mark.parametrize('dimension', ['tokens', 'seconds'])
-def test_controller_refuses_node_whose_full_cap_cannot_fit(tmp_path, dimension):
+def test_controller_uses_actual_tokens_and_retains_finite_time_window(tmp_path, dimension):
     root = instance(tmp_path, limits=policy(tokens=100, seconds=10),
                     max_tokens=99 if dimension == 'tokens' else 1000,
                     max_seconds=9 if dimension == 'seconds' else 120)
     result = controller.run(root)
-    assert result['status'] == f'node_budget_unavailable_{dimension}', result
     record = c.host_record(c.workspace(root, 1))
-    assert not (record / 'native-intent.json').exists()
-    assert not (c.workspace(root, 1) / 'work/launches.txt').exists()
+    if dimension=='tokens':
+        assert result['status']=='wait',result
+        assert c.read(root/'jobs/001.json')['role']=='H'
+        assert (record/'native-intent.json').exists()
+        assert native.usage(root)['observed_tokens']==10
+    else:
+        assert result['status']=='wait',result
+        assert c.read(root/'jobs/001.json')['role']=='H'
+        assert not c.read(root/'jobs/001.json').get('final_only')
+        assert native.usage(root)['observed_tokens']==10
 
 
 def test_amend_rejects_original_n6_intent_without_terminal_outcome(tmp_path):
@@ -305,12 +278,14 @@ def test_actual_popen_rechecks_late_budget_before_native_submission(tmp_path, mo
     record = c.host_record(c.workspace(root, 1))
     c.write(record / 'native-intent.json', dict(step=1, task_sha256=c.digest(root / 'jobs/001.json'),
                                               budget_slice=budget.accept_node(root, job)))
-    now[0] = 155.  # The original intent is retained, but only five shared seconds remain.
+    now[0] = 160.  # The original intent is retained; no shared active time remains.
     monkeypatch.setattr(native.subprocess, 'Popen', lambda *a, **kw: pytest.fail('Late budget must block native Popen'))
     native.run_native(root, 1)
     outcome = c.read(record / 'native-outcome.json')
     assert outcome['native_started'] is False
-    assert outcome['stop_reason'] in {'node_budget_unavailable_seconds', 'node_slice_time_limit'}
+    assert c.settings(root)['final_a_completion_policy']==dict(version=1)
+    assert budget.delivery_reserve(c.settings(root))==dict(tokens=0,seconds=0.,steps=0)
+    assert outcome['stop_reason'] == 'wall_limit'
     assert not (record / 'native-process.json').exists()
     assert not (record / 'science-output.json').exists()
 
@@ -361,23 +336,23 @@ def test_controller_restart_rejoins_same_slice_and_counts_one_dispatch(tmp_path)
 
 
 @pytest.mark.parametrize('legacy_w_guard', [False, True])
-def test_absent_node_policy_keeps_protocol8_and_original_w_transport(tmp_path, legacy_w_guard):
+def test_absent_node_policy_keeps_current_protocol_and_original_w_transport(tmp_path, legacy_w_guard):
     search_limits = dict(search.DEFAULT_POLICY, max_w_observed_tokens=50) if legacy_w_guard else None
-    root = instance(tmp_path, limits=None, mode='tokens' if legacy_w_guard else 'normal',
+    root = instance(tmp_path, limits=None, mode='normal',
                     search_policy=search_limits, observed=(70, 69, 5) if legacy_w_guard else (7, 2, 3))
     assert 'node_budget_policy' not in c.settings(root)
     if legacy_w_guard:
         target(root, 'W', with_search=True)
     result = controller.run(root)
     if legacy_w_guard:
-        assert result['status'] == 'native_stopped', result
+        assert result['status'] == 'finish', result
         record = c.host_record(c.workspace(root, 2))
-        assert c.read(record / 'native-outcome.json')['stop_reason'] == 'w_slice_token_limit'
+        assert c.read(record / 'native-outcome.json')['stop_reason'] is None
         assert 'search_slice' in c.read(record / 'native-intent.json')
     else:
         assert result['status'] == 'wait' and result['completed_steps'] == 1, result
         record = c.host_record(c.workspace(root, 1))
-        assert c.read(root / 'jobs/001.json')['handoff_protocol'] == 8
+        assert c.read(root / 'jobs/001.json')['handoff_protocol'] == CURRENT
         assert c.validate(c.workspace(root, 1))['summary'] == 'A bounded finding'
     assert 'budget_slice' not in c.read(record / 'native-intent.json')
     assert all('budget_slice' not in row for row in status(root)['nodes'])
@@ -393,7 +368,7 @@ def test_budget_changes_during_job_build_refuse_acceptance_without_claiming_reta
     def build(*args, **kwargs):
         job = original(*args, **kwargs)
         built.append(job)
-        now[0] += 55  # Initial admission passed; the full node no longer fits.
+        now[0] += 60  # Initial admission passed; no shared active time remains.
         return job
     monkeypatch.setattr(c, 'build_job', build)
     monkeypatch.setattr(native.subprocess, 'Popen', lambda *a, **kw: pytest.fail('No node was accepted'))
@@ -406,5 +381,12 @@ def test_budget_changes_during_job_build_refuse_acceptance_without_claiming_reta
     assert not (record / 'native-process.json').exists()
     assert not (record / 'science-output.json').exists()
     prepared = (root / 'jobs/001.json').read_bytes()
-    assert controller.run(root)['status'] == 'node_budget_unavailable_seconds'
+    assert c.settings(root)['final_a_completion_policy'] == dict(version=1)
+    assert budget.protected_final_report(c.settings(root))
+    assert c.read(root / 'jobs/001.json')['role'] == 'H'
+    assert controller.run(root)['status'] == 'retained_job_conflict'
     assert len(built) == 1 and (root / 'jobs/001.json').read_bytes() == prepared
+    assert not (record / 'native-intent.json').exists()
+    assert not (record / 'native-process.json').exists()
+    assert not (record / 'science-output.json').exists()
+    assert budget.final_a_barrier(root) is None

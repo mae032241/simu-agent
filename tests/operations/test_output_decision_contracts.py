@@ -12,9 +12,12 @@ from scidiscovery.operations.invoke import operation_primary_output
 from scidiscovery.artifact_agent.schema.common import canonical_json
 
 
+PRODUCTION_PLUGINS = (CORE_PLUGIN, GENERAL, CURVE, TCAD, FIGURE)
+
+
 @pytest.fixture(scope='module')
 def catalog():
-    return compile_catalog((CORE_PLUGIN, GENERAL, CURVE, TCAD, FIGURE))
+    return compile_catalog(PRODUCTION_PLUGINS)
 
 
 def _schema_path(root, path):
@@ -35,10 +38,13 @@ def _schema_path(root, path):
         current = current['properties'][token]
 
 
-def test_all_twelve_production_agent_decision_paths_exist_in_primary_schema(catalog):
+def test_all_production_agent_decision_paths_exist_in_primary_schema(catalog):
     agents = [catalog.operation(key) for key in catalog.operation_ids()
               if catalog.operation(key).spec.executor.kind == 'agent']
-    assert len(agents) == 12
+    expected = {operation.operation_id for plugin in PRODUCTION_PLUGINS
+                for operation in plugin.operations if operation.executor.kind == 'agent'}
+    assert expected
+    assert {operation.spec.operation_id for operation in agents} == expected
     problems = []
     for operation in agents:
         schema = operation.output_contracts[operation_primary_output(operation).name]

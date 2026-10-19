@@ -21,6 +21,8 @@ def descriptor(directory, *, python=sys.executable):
     module = str(Path(__file__).resolve())
     return dict(adapter=module, launcher_argv=[python, module, '--isolate'],
         config=dict(python=python), target=dict(directory=str(directory)), capabilities=[],
+        effect_scope='Copy and confirm already retained declared files in a local directory only. '
+                     'Does not train, run task-native submission or perform a scientific audit.',
         inputs=[dict(label='runtime-python', path=python)], source_roots=[str(directory)])
 
 

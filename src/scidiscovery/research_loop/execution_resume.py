@@ -8,7 +8,7 @@ import hashlib
 import math
 import time
 
-from . import contracts as c, execution, qualification as q
+from . import budget, contracts as c, execution, qualification as q, experiment_client
 
 
 def capture_pending(root, job):
@@ -37,7 +37,7 @@ def _capture_pending(root, job):
     with authority.writer(root,blocking=False):
         allocations = []; complete = True
         job_ref=q._ref(root,root/'jobs'/f'{job["step"]:03d}.json')
-        records=c.workspace(root,job['step'])/'work/lineage/calls'
+        records=experiment_client.record_directory(root,job['step'])/'calls'
         namespace=sorted(item.name for item in records.iterdir()) if records.exists() else []
         if records.resolve()!=records:complete=False
         calls=[]
@@ -170,7 +170,7 @@ def verify_pending_set(root, seal, allocation_ref=None, *, unprepared=False, req
         allocation = q._read(root, allocation_ref)
         prepare = root / allocation_ref['path']; call = allocation['call_id']
         if ((prepare.parent / 'prepare-intent.json').exists()
-                or (c.workspace(root, job['step']) / 'work/lineage/calls' / call).exists()):
+                or (experiment_client.record_directory(root, job['step']) / 'calls' / call).exists()):
             raise q.IntegrityError('New call artifacts contradict the sealed unprepared evidence')
     return row
 
@@ -269,10 +269,10 @@ class _RecoveryAdmission:
         if self.started:return # The accepted opportunity was checked before resume_intent.
         from . import history
         sources=[]
-        for step in range(1,c.settings(self.root)['max_steps']+1):
+        for step in range(1,budget.historical_step_limit(self.root)+1):
             if not (c.host_record(c.workspace(self.root,step))/'result-identity.json').exists():break
             sources.append(history._source(self.root,step))
-        state=search.fold(self.root,sources,recovery_refs=execution_recovery.prefix(self.root,c.settings(self.root)['max_steps']+1))
+        state=search.fold(self.root,sources,recovery_refs=execution_recovery.prefix(self.root,budget.historical_step_limit(self.root)+1))
         current=search._breadth(self.root,state,c.settings(self.root)['search_policy'],None)
         actual=breadth.admit(current,binding['mechanism_ref'],self.config['scope'],[])
         if actual!=binding:raise ValueError('Original scientific opportunity is no longer eligible; no new opportunity was granted')
@@ -428,7 +428,7 @@ def maintain(root, step, call_id, *, action, max_seconds, authorization_note):
     if action not in {'query', 'collect', 'cancel'} or not e.ID.fullmatch(call_id):
         raise ValueError('Exact original call and supported maintenance action required')
     with instance_owner.lease(root):
-        directory = c.workspace(root, step) / 'work/lineage/calls' / call_id
+        directory = experiment_client.record_directory(root, step) / 'calls' / call_id
         if directory.resolve() != directory:
             raise e.IntegrityError('Original maintenance call namespace changed')
         if not (directory / 'accepted.json').exists():
@@ -489,7 +489,7 @@ def resume(root,step,call_id,*,max_seconds,authorization_note,request_valid_seco
     if original['binding']['interface']!=config['execution_interface'] or original['binding']['scope']!=config['scope']:
         raise q.IntegrityError('Recovery implementation differs from original allocation')
     operation=_RecoveryAdmission(root,job,seal,sha,allocation,config,max_seconds=max_seconds,note=authorization_note,valid_seconds=request_valid_seconds)
-    refs=recovery.prefix(root,c.settings(root)['max_steps']+1)
+    refs=recovery.prefix(root,budget.historical_step_limit(root)+1)
     prior=recovery.call_view(root,[],refs).get((step,call_id))
     if prior is not None and prior['phase'] in {'terminal','not_submitted'}:
         return dict(status='execution_resume_recorded',call_id=call_id,note='Verified original terminal fact is already retained; no dispatch occurred.')
@@ -559,9 +559,9 @@ def _publish(root,job,base,adapter,*,query=True,context=None):
     row=rows[0];detail=adapter.status_details(base['call_id']) if query else None
     state=detail.get('state') if detail else None
     phase='terminal' if row['status'] in {'known_success','known_failed'} else 'not_submitted' if row['status']=='not_submitted' else 'status' if query else 'accepted'
-    path=root/'project/nodes'/f'{job["step"]:03d}'/'work/lineage/calls'/base['call_id']/'submission.json'
+    path=experiment_client.record_directory(root,job['step'])/'calls'/base['call_id']/'submission.json'
     submission=q._ref(root,path) if path.exists() else None
-    current=recovery.call_view(root,[],recovery.prefix(root,c.settings(root)['max_steps']+1),originals=False).get((job['step'],base['call_id']))
+    current=recovery.call_view(root,[],recovery.prefix(root,budget.historical_step_limit(root)+1),originals=False).get((job['step'],base['call_id']))
     if current is not None and all(current.get(key)==value for key,value in
             dict(phase=phase,row=row,native_state=state,submission=submission).items()):return
     proof=None

@@ -1,4 +1,4 @@
-"""Soft scientific targets retain native work; shared hard guards remain real."""
+"""Soft scientific targets retain native work; finite author guards remain independently enforced."""
 import json
 from pathlib import Path
 import sys
@@ -28,19 +28,25 @@ if config['mode']=='known_failure' and 'resume' not in args:sys.exit(7)
 time.sleep(config['sleep'])
 payload=dict(summary='Original bounded finding',scientific_result='Soft target did not destroy the accepted work',limitations=['Fake process, not scientific efficacy'],implementation_selection=None)
 if role=='H':payload.update(search_plan=None,next_action='experiment' if config['mode']=='reserve' else 'wait',route_reason='Bounded contribution')
-if role=='A':payload.update(search_review=None,candidate_recommendation=None,progress_assessment=None,next_action='finish',route_reason='Independent conclusion')
+if role=='W':
+ job=json.loads(pathlib.Path(os.environ['THIN_HWA_JOB_MANIFEST']).read_text())
+ assigned=(job.get('search') or {}).get('coverage_obligation',[])
+ payload.update(stage_intent='review',mechanism_findings=[dict(mechanism=item['mechanism_ref'],basis='blocked',
+  finding='This timing fixture has no managed observations; the scientific comparison remains blocked.') for item in assigned] if assigned else None)
+if role=='A':payload.update(search_review=None,candidate_recommendation=None,progress_assessment=None,decision_request=None,portfolio_review=None,next_action='finish',route_reason='Independent conclusion')
 pathlib.Path(args[args.index('--output-last-message')+1]).write_text(json.dumps(payload))
 '''
 
 
-def scene(tmp_path, *, mode='normal', tokens=10, seconds=.05, total_tokens=1000, total_seconds=30, resume=False, delivery=None, search_policy=None, sleep=.15):
+def scene(tmp_path, *, mode='normal', tokens=10, seconds=.05, total_tokens=1000, total_seconds=30, resume=False, delivery=None, search_policy=None, sleep=.15, node_budget_mode='soft'):
     public=tmp_path/'public';public.mkdir();objective=public/'objective';objective.write_text('Complete useful scientific work within the total authorization.')
     launcher=tmp_path/'native.py';launcher.write_text(FAKE)
     c.write(launcher.with_suffix('.json'),dict(mode=mode,resume=resume,sleep=sleep))
     root=tmp_path/'instance'
     controller.prepare(root,objective,public,[sys.executable,str(launcher)],max_tokens=total_tokens,max_seconds=total_seconds,max_steps=12,
         model='fake',reasoning_effort='high',search_policy=search_policy,
-        node_budget_policy={role:dict(max_observed_tokens=tokens,max_seconds=seconds) for role in 'HWAE'},delivery_policy=delivery,
+        node_budget_mode=node_budget_mode,
+        node_budget_policy=None if tokens is None else {role:dict(max_observed_tokens=tokens,max_seconds=seconds) for role in 'HWAE'},delivery_policy=delivery,
         resume_policy=dict(max_attempts=2,protocol='codex_exec_resume',usage_scope='turn') if resume else None)
     return root
 
@@ -64,7 +70,9 @@ def test_each_role_can_cross_targets_and_seal_its_original_conclusion(tmp_path,r
     assert c.validate(c.workspace(root,step))['summary']=='Original bounded finding'
     hint=c.read(c.workspace(root,step)/'work/budget-status.json')
     assert hint['mode']=='soft' and hint['scope']=='advice_only_not_authorization_or_scientific_evidence'
-    assert 'budget-status.json' in (c.workspace(root,step)/'work/prompt.txt').read_text()
+    prompt=(c.workspace(root,step)/'work/prompt.txt').read_text()
+    assert 'budget-status.json' in prompt and 'Budget mode: soft' in prompt
+    assert 'no per-request budget admission' in prompt and 'Unknown usage is not zero' in prompt
 
 
 def test_soft_w_old_search_threshold_does_not_kill_but_identity_still_does(tmp_path):
@@ -77,9 +85,17 @@ def test_soft_w_old_search_threshold_does_not_kill_but_identity_still_does(tmp_p
     with pytest.raises(ValueError):budget.stop_node(root,job,intent,budget.snapshot(root),dict(input_tokens=15,output_tokens=0))
 
 
-def test_soft_reserve_cannot_kill_current_node_but_blocks_next_admission(tmp_path):
+def test_legacy_soft_reserve_cannot_kill_current_node_but_blocks_next_admission(tmp_path):
     delivery=dict(closeout_a=dict(max_observed_tokens=10,max_seconds=1),inflight_tokens=0,cleanup_seconds=0,submit_seconds=0,confirm_seconds=0,adapter=None)
     root=scene(tmp_path,mode='reserve',tokens=10,total_tokens=25,delivery=delivery)
+    # This original soft contract predates final-report protection. Keep its
+    # frozen behavior explicit; new-policy live reserve/report has its own real
+    # controller integration coverage in test_final_a_completion.py.
+    settings=c.read(root/'settings.json');settings.pop('final_a_completion_policy')
+    c.write(root/'settings.json',settings)
+    c.write(root/'settings-identity.json',dict(sha256=c.digest(root/'settings.json')))
+    assert 'final_a_completion_policy' not in c.settings(root)
+    assert not list((root/'control-ledger').glob('*.json')) and not list((root/'jobs').glob('*.json'))
     result=controller.run(root)
     assert result['status']=='exported_unsubmitted'
     begin=budget.closeout_state(root)['begin']
@@ -91,15 +107,6 @@ def test_soft_reserve_cannot_kill_current_node_but_blocks_next_admission(tmp_pat
     assert budget.node_admission(root,dict(step=2,role='W'))=='closeout_reserve_tokens'
 
 
-@pytest.mark.parametrize('boundary',['time','tokens'])
-def test_shared_hard_stop_ignores_forged_advice(tmp_path,boundary):
-    root=scene(tmp_path,mode='forge_hint',tokens=5,seconds=.02,total_tokens=12 if boundary=='tokens' else 1000,
-               total_seconds=2 if boundary=='time' else 30,sleep=3)
-    c.build_job(root,1,'H',[]);start_clock(root,'shared hard boundary')
-    with pytest.raises((RuntimeError,ValueError)):native.execute_native(root,1)
-    outcome=c.read(execution.record(root,1)/'native-outcome.json')
-    assert outcome['stop_reason']==('token_limit' if boundary=='tokens' else 'wall_limit')
-    assert not (execution.origin(root,1)/'result-identity.json').exists()
 
 
 def test_known_failure_above_soft_target_resumes_same_node_without_refund(tmp_path):
@@ -130,14 +137,3 @@ def test_hint_symlink_does_not_write_outside_workspace(tmp_path):
     c.write(execution.record(root,1)/'native-intent.json',intent)
     budget.write_node_hint(root,job,intent,budget.snapshot(root),dict(input_tokens=0,output_tokens=0),observed=False)
     assert outside.read_text()=='Original outside file' and path.is_symlink()
-
-
-def test_settings_without_mode_preserve_the_legacy_hard_contract(tmp_path):
-    root=scene(tmp_path)
-    settings=c.read(root/'settings.json');settings.pop('node_budget_mode')
-    c.write(root/'settings.json',settings);c.write(root/'settings-identity.json',dict(sha256=c.digest(root/'settings.json')))
-    originals={p:p.read_bytes() for p in (root/'settings.json',root/'settings-identity.json')}
-    assert budget.node_mode(root)=='hard'
-    assert controller.run(root)['status']=='native_stopped'
-    assert c.read(execution.record(root,1)/'native-outcome.json')['stop_reason'] in {'node_slice_token_limit','node_slice_time_limit'}
-    assert all(p.read_bytes()==value for p,value in originals.items())

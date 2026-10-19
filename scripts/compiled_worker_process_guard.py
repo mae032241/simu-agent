@@ -59,7 +59,7 @@ def _process_table() -> dict[int, _ProcessRecord]:
     return table
 
 
-def _descendant_rss_kib(owned: set[ProcessIdentity]) -> tuple[set[ProcessIdentity], int]:
+def _descendant_rss_kib(owned: set[ProcessIdentity], *, diagnostic: dict | None = None) -> tuple[set[ProcessIdentity], int]:
     table = _process_table()
     children: dict[int, list[int]] = {}
     for pid, record in table.items():
@@ -84,8 +84,17 @@ def _descendant_rss_kib(owned: set[ProcessIdentity]) -> tuple[set[ProcessIdentit
             continue
         descendants.add(pid)
         pending.extend(children.get(pid, ()))
-    return ({table[pid].identity for pid in descendants},
-            sum(table[pid].resident_kib for pid in descendants))
+    total = sum(table[pid].resident_kib for pid in descendants)
+    if diagnostic is not None:
+        ordered = sorted((table[pid] for pid in descendants), key=lambda item: (-item.resident_kib, item.identity.pid))
+        diagnostic.clear()
+        diagnostic.update(sampled_at_unix=time.time(), observed_tree_rss_kib=total,
+            process_count=len(ordered), omitted_count=max(0, len(ordered)-16),
+            processes=[dict(pid=item.identity.pid, boot_id=item.identity.boot_id, start_ticks=item.identity.start_ticks,
+                parent_pid=item.parent_pid, resident_kib=item.resident_kib, process_group=item.process_group,
+                session=item.session) for item in ordered[:16]],
+            limitation='One /proc table pass of identity-bound observed descendants; sampled RSS is not a hard quota or inferred scientific call membership.')
+    return ({table[pid].identity for pid in descendants}, total)
 
 
 def _poll_process(process: subprocess.Popen, observed: set[ProcessIdentity]) -> int | None:

@@ -8,7 +8,7 @@ from __future__ import annotations
 import math
 import re
 
-from . import contracts as c
+from . import budget, contracts as c
 
 AUDIT_STATUSES = {'audited', 'rejected', 'engineering_error', 'unclassified', 'unknown'}
 WORKER_CODES = {'implementation_source_missing', 'audit_dependency_missing', 'audit_training_error', 'audit_prediction_error',
@@ -17,11 +17,13 @@ CONTROL_CODES = {'audit_source_missing', 'audit_harness_unavailable', 'audit_pro
                  'audit_transport_timeout', 'audit_output_capacity', 'audit_process_unavailable'}
 
 
-def facts(root):
+def intents(root):
+    """Accepted retry declarations; outcome integrity is a separate result check."""
     for path in sorted((root / 'host-delivery/audit-recovery').glob('*/intent.json')):
         intent = c.read(c.regular(path))
         if (intent.get('settings_sha256') != c.digest(root / 'settings.json')
-                or intent.get('operation_id') != path.parent.name or intent.get('attempt') != 1
+                or intent.get('operation_id') != path.parent.name
+                or type(intent.get('attempt')) is not int or intent['attempt'] != 1
                 or intent.get('reason') not in WORKER_CODES | CONTROL_CODES
                 or not re.fullmatch('[0-9a-f]{64}',path.parent.name)
                 or type(intent.get('max_seconds')) not in (int,float) or not math.isfinite(intent['max_seconds'])
@@ -29,6 +31,12 @@ def facts(root):
                 or type(intent.get('advance_seconds')) not in (int,float) or not math.isfinite(intent['advance_seconds'])
                 or intent['advance_seconds']<0):
             raise ValueError('Audit engineering recovery identity changed')
+        yield intent
+
+
+def facts(root):
+    for intent in intents(root):
+        path = root/'host-delivery/audit-recovery'/intent['operation_id']/'intent.json'
         outcome = path.with_name('outcome.json')
         value = c.read(c.regular(outcome)) if outcome.exists() else None
         if value is not None:
@@ -101,8 +109,8 @@ def run(root, spec, source, request, seconds, *, on_process=None, author_require
     if author_required:reserved_seconds+=policy['closeout_a']['max_seconds']+policy['submit_seconds']
     remaining=min(policy['submit_seconds'],limits['seconds_remaining']-reserved_seconds)
     reserved_steps=3 if author_required else 1
-    if (remaining <= 0 or meter['unknown_steps'] or meter['observed_tokens'] >= limits['max_tokens']
-            or budget.used_steps(root)+1+reserved_steps > c.settings(root)['max_steps']):
+    if (remaining <= 0 or meter.get('blocking_unknown_steps', meter['unknown_steps']) or meter.get('accounted_tokens', meter['observed_tokens']) >= limits['max_tokens']
+            or budget.used_steps(root)+1+reserved_steps > budget.effective_max_steps(root)):
         return result, request, deadline
     intent = dict(settings_sha256=c.digest(root/'settings.json'), operation_id=request['operation_id'], attempt=1,
         candidate_id=request['candidate_id'], artifact_sha256=request['artifact_sha256'],

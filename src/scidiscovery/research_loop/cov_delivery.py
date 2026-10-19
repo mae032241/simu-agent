@@ -250,7 +250,7 @@ def _replay(request):
         EXP_TRAIN='/inputs/harness/train.csv', EXP_VAL='/inputs/harness/val.csv',
         EXP_META='/inputs/harness/meta.json', EXP_RUNNER='/inputs/harness/runner.py')
     with Path('/scratch/replay.stdout').open('wb') as out, Path('/scratch/replay.stderr').open('wb') as err:
-        process = subprocess.run([request['config']['python'], '-I', '-c', REPLAY],
+        process = subprocess.run([request['config']['python'], '-B', '-I', '-c', REPLAY],
             env=env, cwd='/scratch', stdout=out, stderr=err)
     try:
         value = json.loads(_exact('/scratch/replay.json').read_text())
@@ -265,7 +265,7 @@ def _replay(request):
 
 def _smoke(request):
     with Path('/scratch/smoke.stdout').open('wb') as out, Path('/scratch/smoke.stderr').open('wb') as err:
-        subprocess.run([request['config']['python'], '-I', '-c', SMOKE], env=dict(os.environ), cwd='/scratch', stdout=out, stderr=err)
+        subprocess.run([request['config']['python'], '-B', '-I', '-c', SMOKE], env=dict(os.environ), cwd='/scratch', stdout=out, stderr=err)
     try:
         value = json.loads(_exact('/scratch/smoke.json').read_text())
     except (OSError, ValueError):
@@ -372,7 +372,7 @@ def leaf(request):
                    EXP_TRAIN='/inputs/harness/train.csv', EXP_VAL='/inputs/harness/val.csv',
                    EXP_META='/inputs/harness/meta.json', EXP_RUNNER='/inputs/harness/runner.py')
         with Path('/scratch/audit.stdout').open('wb') as out, Path('/scratch/audit.stderr').open('wb') as err:
-            result = subprocess.run([request['config']['python'], '-I', '/inputs/harness/exp_cli.py',
+            result = subprocess.run([request['config']['python'], '-B', '-I', '/inputs/harness/exp_cli.py',
                                      'submit', '--run-id', str(run_id)], env=env, stdout=out, stderr=err)
         proof = scratch / 'submitted.json'
         if result.returncode:
@@ -472,7 +472,7 @@ def isolate(request, adapter):
             args += ['--bind' if phase == 'promote' else '--ro-bind', str(path), '/target/' + key]
     args += ['--setenv', 'PATH', os.defpath, '--setenv', 'LANG', 'C.UTF-8',
              '--setenv', 'OPENBLAS_NUM_THREADS', '1', '--setenv', 'OMP_NUM_THREADS', '1',
-             '--chdir', '/scratch', '--', str(python), '-I', '/delivery.py', '--leaf']
+             '--chdir', '/scratch', '--', str(python), '-B', '-I', '/delivery.py', '--leaf']
     # Preserve stdin for the leaf; no host secrets, control root or network mounts.
     os.execv(bwrap, args)
 

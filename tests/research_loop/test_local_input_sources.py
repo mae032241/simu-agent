@@ -21,7 +21,7 @@ def local_scene(tmp_path, monkeypatch, execution_registry):
     root=tmp_path/'instance'
     options=dict(run_argv=[sys.executable],max_seconds=5)
     controller.prepare(root,goal,public,[str(launcher)],max_tokens=4000,max_seconds=120,max_steps=5,
-        model='fixture',reasoning_effort='high',search_policy=None,experiment_mode='local',node_budget_mode='hard',
+        model='fixture',reasoning_effort='high',search_policy=None,experiment_mode='local',node_budget_mode='soft',
         execution_config=dict(executor='local_execution:command',configuration=options),
         formal_review_policy={'version':1},source_restrictions=[dict(source=str(goal),sha256=c.digest(goal),restriction='clear')])
     original_seal=c.seal_result

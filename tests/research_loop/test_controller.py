@@ -491,7 +491,9 @@ def test_changed_global_context_cannot_be_sealed(real_node, target):
     path = n.root / target
     path.chmod(0o600)
     path.write_text('A silently replaced constraint')
-    with pytest.raises(ValueError, match='global context'):
+    message=('The global context read by this role changed'
+        if target=='project/nodes/001/inputs/global/updates/001.md' else 'Bound global original changed')
+    with pytest.raises(ValueError, match='^'+message+'$'):
         n.contracts.seal_result(n.root, 1)
     assert not (n.record / 'result-identity.json').exists()
 
@@ -544,6 +546,7 @@ def test_ineligible_native_work_cannot_use_sealing_recovery(real_node, monkeypat
         outcome['stop_reason'] = 'wall_limit'
     elif change == 'usage_unknown':
         outcome['usage']['unknown_steps'] = [1]
+        outcome['usage']['blocking_unknown_steps'] = [1]
     else:
         n.contracts.write(n.record / 'science-output.json', {'summary': 'Incomplete'})
         outcome['raw_sha256'] = n.contracts.digest(n.record / 'science-output.json')

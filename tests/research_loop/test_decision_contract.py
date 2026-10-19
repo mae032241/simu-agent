@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from scidiscovery.research_loop import cli, contracts as c, controller, correction, decision, native, semantic
+from scidiscovery.research_loop import contracts as c, controller, correction, decision, native, protocol, semantic
 from test_history_handoff import finish
 
 REQUEST = dict(decision='candidate', question='Should the candidate be retained under the declared target condition?',
@@ -24,8 +24,14 @@ def prepare(tmp_path, *, enabled=True, correction_enabled=False):
     plan = dict(scope='Target discrimination', commitments=[dict(label='M',minimal_test='Required control',existing_ref=None)],
                 focus=dict(label='M',action='screen')) if correction_enabled else None
     finish(root, 1, 'H', [], action='experiment', search_choice=plan)
-    c.build_job(root, 2, 'W', [1], instruction='Exact scientific question')
-    finish(root, 2, 'W', [1], text='Negative controlled result; target uncertainty remains.')
+    job = c.build_job(root, 2, 'W', [1], instruction='Exact scientific question')
+    findings = [dict(mechanism=row['mechanism_ref'], basis='blocked',
+                     finding='Fixture has no solver observations for this assigned mechanism; target uncertainty remains.')
+                for row in (job.get('search') or {}).get('coverage_obligation', [])]
+    text = ('No experiment observations were produced; target uncertainty remains.' if findings
+            else 'Negative controlled result; target uncertainty remains.')
+    finish(root, 2, 'W', [1], text=text,
+           mechanism_findings=findings or None)
     return root
 
 
@@ -37,9 +43,8 @@ def author(root, step, parents, request, *, action='continue_w', review=None):
     payload = dict(summary='Global decision with limitations', scientific_result='Explain the scientific decision and remaining gap.',
                    limitations=['No target conclusion from the proxy alone'], implementation_selection=None,
                    search_review=review, progress_assessment=dict(verdict='no_progress'),
-                   candidate_recommendation=None, next_action=action, route_reason='Exact scientific question')
-    if job['handoff_protocol'] >= 10:
-        payload['decision_request'] = request
+                   candidate_recommendation=None, next_action=action, route_reason='Exact scientific question',
+                   decision_request=request, portfolio_review=None)
     c.write(record / 'native-intent.json', dict(task_sha256=c.digest(root / 'jobs' / f'{step:03d}.json')))
     c.write(record / 'science-output.json', payload)
     c.write(record / 'usage.json', dict(input_tokens=7, cached_input_tokens=2, output_tokens=3))
@@ -74,7 +79,7 @@ def test_missing_scientific_declaration_preserves_raw_and_returns_to_a(tmp_path,
 
 def test_exact_completed_request_without_new_original_is_rejected_but_negative_new_result_is_allowed(tmp_path):
     root = prepare(tmp_path)
-    original, _ = author(root, 3, [1, 2], REQUEST)
+    original, original_payload = author(root, 3, [1, 2], REQUEST)
     prior_raw = c.read(c.host_record(c.workspace(root, 2)) / 'science-output.json')['scientific_result']
     next_worker(root, text=prior_raw)  # Same original raw bytes at a second node are not fresh evidence.
     job, payload = author(root, 5, [1, 4], copy.deepcopy(REQUEST))
@@ -87,7 +92,9 @@ def test_exact_completed_request_without_new_original_is_rejected_but_negative_n
     job2, payload2 = author(root2, 5, [1, 4], REQUEST)
     assert decision.reason(root2, job2, payload2) is None
     assert c.read(c.host_record(c.workspace(root2, 5)) / 'result-identity.json')['control_outcome']['decision_status'] == 'applied'
-    assert decision._key(original, {'decision_request': REQUEST, 'next_action': 'continue_w', 'candidate_recommendation': None})[-2] is None
+    focus = c.read(c.host_record(c.workspace(root, 3)) / 'result-identity.json')['control_outcome']['resolved_focus']
+    assert focus is None  # This instance has no search policy or resolved mechanism.
+    assert decision._key(original, original_payload, focus)[-2] is None
 
 
 @pytest.mark.parametrize('action', ['audit', 'finish', 'wait'])
@@ -107,13 +114,25 @@ def test_no_completed_dependency_does_not_consume_request_and_changed_prose_is_n
                                {4: (job, payload, {}, '')}) is False
     changed = copy.deepcopy(payload)
     changed['decision_request']['question'] += ' Is there another explanation?'
-    assert decision._key(job, changed) != decision._key(job, payload)
+    focus = c.read(c.host_record(c.workspace(root, 4)) / 'result-identity.json')['control_outcome']['resolved_focus']
+    assert focus is None  # Both requests assess the same absence of search focus.
+    assert decision._key(job, changed, focus) != decision._key(job, payload, focus)
 
 
 def test_real_controller_clarification_is_bounded_and_not_counted_as_progress(tmp_path, monkeypatch):
     root = prepare(tmp_path, correction_enabled=True)
+    record = c.host_record(c.workspace(root, 2))
+    delivery = c.read(record / 'result-identity.json')['control_outcome']['worker_delivery']
+    assert delivery['status'] == 'partial' and delivery['reason'] == 'scientific_blocked'
+    assert c.read(record / 'work-evidence.json')['evidence'] == []
     review = dict(dispositions=[], next_focus=dict(mechanism_ref='h001.m1', action='screen'))
+    # Partial W delivery supplies the exact question retained by the A job.
+    route = controller._route(root, 2, 'W', c.validate(c.workspace(root, 2)),
+                              c.read(root / 'jobs/002.json'), 1, None)
+    assert route[0] == 'A' and route[1] == [1, 2]
+    c.build_job(root, 3, 'A', route[1], instruction=route[2])
     author(root, 3, [1, 2], None, review=review)
+    controller._check_job(root, c.settings(root), 3, 'A', route[1], route[2], route[3])
     assert correction.project(root)['eligible'] == []
     accepted = []
     def respond(root, step):
@@ -124,7 +143,7 @@ def test_real_controller_clarification_is_bounded_and_not_counted_as_progress(tm
         author(root, step, parents, None, review=review)
     monkeypatch.setattr(native, 'execute_native', respond)
     result = controller.run(root)
-    assert result['status'] == 'semantic_correction_required' and result['reason'] == 'semantic_correction_limit'
+    assert result['status'] == 'semantic_correction_required' and result['reason'] == 'semantic_correction_limit', result
     assert accepted == [4, 5] and result['completed_steps'] == 5
     assert correction.project(root)['eligible'] == []
     before = [(root / 'jobs' / f'{step:03d}.json').read_bytes() for step in (3, 4, 5)]
@@ -133,7 +152,7 @@ def test_real_controller_clarification_is_bounded_and_not_counted_as_progress(tm
     assert before == [(root / 'jobs' / f'{step:03d}.json').read_bytes() for step in (3, 4, 5)]
 
 
-def test_recursive_strict_schema_and_old_settings_future_tasks_stay_frozen(tmp_path):
+def test_recursive_strict_schema_and_current_tasks_stay_frozen_without_decision_contract(tmp_path):
     def check(value):
         if isinstance(value, dict):
             if 'properties' in value:
@@ -141,13 +160,36 @@ def test_recursive_strict_schema_and_old_settings_future_tasks_stay_frozen(tmp_p
             for child in value.values():check(child)
         elif isinstance(value, list):
             for child in value:check(child)
-    check(c.result_schema('A', 10))
-    assert 'decision_request' not in c.result_schema('A', 9)['properties']
+    check(c.result_schema('A'))
+    assert 'decision_request' in c.result_schema('A')['properties']
     root = prepare(tmp_path, enabled=False)
     job, _ = author(root, 3, [1, 2], None, action='wait')
     originals = {path:path.read_bytes() for path in (root/'settings.json', root/'jobs/003.json',
                  c.workspace(root,3)/'science-task.json', c.host_record(c.workspace(root,3))/'result-identity.json')}
-    assert job['handoff_protocol'] == 8 and 'decision_contract_version' not in c.settings(root)
+    assert job['handoff_protocol'] == protocol.CURRENT and 'decision_contract_version' not in c.settings(root)
     assert c.build_job(root, 3, 'A', [1, 2]) == job
     assert all(path.read_bytes() == raw for path,raw in originals.items())
-    assert c.build_job(root, 4, 'H', [3])['handoff_protocol'] == 8
+    assert c.build_job(root, 4, 'H', [3])['handoff_protocol'] == protocol.CURRENT
+    assert all(path.read_bytes() == raw for path,raw in originals.items())
+
+
+@pytest.mark.parametrize('retired', [8, 9, 10])
+def test_retired_schemas_and_task_writes_reject_without_changing_originals(tmp_path, retired):
+    with pytest.raises(protocol.UnsupportedProtocol, match='Scientific result schema'):
+        c.result_schema('A', retired)
+    # Preserved archive bytes are fixtures, not an invocation of a retired writer.
+    root = tmp_path / 'archive'
+    c.write(root / 'settings.json', dict(handoff_protocol=retired))
+    c.write(root / 'settings-identity.json', dict(sha256=c.digest(root / 'settings.json')))
+    job = dict(step=3, role='A', handoff_protocol=retired)
+    c.write(root / 'jobs/003.json', job)
+    c.write(c.workspace(root, 3) / 'science-task.json', dict(preserved_task='Original scientific limitations'))
+    c.write(c.host_record(c.workspace(root, 3)) / 'result-identity.json', dict(preserved_seal='Original identity'))
+    def snapshot():
+        return {path.relative_to(root): (path.lstat().st_mode, path.read_bytes() if path.is_file() else None)
+                for path in [root, *root.rglob('*')]}
+    before = snapshot()
+    for step, role, parents in [(3, 'A', [1, 2]), (4, 'H', [3])]:
+        with pytest.raises(protocol.UnsupportedProtocol, match='Instance'):
+            c.build_job(root, step, role, parents)
+        assert snapshot() == before

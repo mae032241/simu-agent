@@ -9,6 +9,7 @@ import pytest
 
 from execution_fixtures import execution_registry
 from scidiscovery.research_loop import audit_recovery, budget, candidate_audit, contracts as c, cov_delivery, delivery, engineering
+from scidiscovery.research_loop.experiment_client import record_directory
 from test_cov_delivery_lineage import managed_scene
 from test_cov_lineage import BACKEND
 from test_delivery import FAKE_HARNESS, prepare_fixture, closeout_decision, accepted
@@ -118,7 +119,7 @@ def test_exact_worker_repair_creates_new_candidate_and_requires_new_authorizatio
     assert [job['role'] for job in jobs]==['H','W','A','W','A']
     assert jobs[3]['engineering_repair']['candidate_id']=='run-1'
     assert jobs[3].get('purpose')==(None if ordinary else 'closeout')
-    assert len(list((c.workspace(root,4)/'work/lineage/calls').iterdir()))==1
+    assert len(list((record_directory(root,4)/'calls').iterdir()))==1
     assert result['last_confirmed']['candidate_id']=='run-3'
     assert (root/'submission/model.pkl').read_bytes()!=rest[-1]
     assert all((root/f'native-evidence/{n:03d}/result-identity.json').read_bytes()==value for n,value in seals.items())
@@ -168,7 +169,7 @@ def test_default_search_routes_exact_repair_with_no_active_scientific_focus(tmp_
     altered=deepcopy(repair);altered['search']={}
     with pytest.raises(ValueError,match='new scientific search scope'):
         engineering.validate_job(root,altered)
-    assert len(list((c.workspace(root,6)/'work/lineage/calls').iterdir()))==1
+    assert len(list((record_directory(root,6)/'calls').iterdir()))==1
     assert not list(audit_recovery.facts(root))
     assert all(path.read_bytes()==value for path,value in originals.items())
     steps=budget.used_steps(root)
@@ -229,8 +230,28 @@ def test_control_rebuilds_exact_archives_without_model_copy_or_new_science(tmp_p
 
 
 @pytest.mark.parametrize('ordinary',[False,True])
-def test_insufficient_original_budget_stops_before_new_worker(tmp_path,ordinary):
-    root,_=repair_scene(tmp_path,ordinary=ordinary,max_tokens=3000)
+def test_insufficient_original_budget_stops_before_new_worker(tmp_path,monkeypatch,ordinary):
+    from scidiscovery.research_loop import native,controller
+    # Three sealed fixture turns consume 10 each. At this exact boundary all
+    # remaining tokens belong to the subsequent A and execution floor; soft W
+    # targets do not require their full 2000-token target, only positive balance.
+    # Freeze the historical policy before the fixture creates any ledger facts.
+    prepare=controller.prepare
+    def legacy_prepare(*args,**kwargs):
+        value=prepare(*args,**kwargs)
+        root=Path(args[0])
+        assert not list((root/'control-ledger').glob('*.json'))
+        value.pop('final_a_completion_policy')
+        c.write(root/'settings.json',value)
+        c.write(root/'settings-identity.json',dict(sha256=c.digest(root/'settings.json')))
+        return value
+    with monkeypatch.context() as patch:
+        patch.setattr(controller,'prepare',legacy_prepare)
+        root,_=repair_scene(tmp_path,ordinary=ordinary,max_tokens=1130)
+    settings=c.settings(root);meter=native.usage(root)
+    reserved=settings['delivery_policy']['closeout_a']['max_observed_tokens']+budget.closeout_floor(settings)['tokens']
+    assert budget.node_mode(root)=='soft'
+    assert budget.snapshot(root)['max_tokens']-meter['accounted_tokens']==reserved
     result=cli(root)
     assert result['status']=='engineering_repair_budget_unavailable',result
     assert len(list((root/'jobs').glob('*.json')))==3
@@ -273,96 +294,29 @@ def test_accepted_control_recovery_without_outcome_is_never_replayed(tmp_path,mo
     assert not (root/'submission/model.pkl').exists()
 
 
-@pytest.mark.parametrize('author_action', ['deliver', 'audit'])
-def test_only_author_selected_screen_fault_reaches_exact_worker_then_author(tmp_path,monkeypatch,author_action):
-    from scidiscovery.research_loop import controller,native,shortlist
-    from test_candidate_audit import _seal_existing
-    from test_control_selection import scene
-    harness=FAKE_HARNESS.replace("mode=meta['mode']","mode='skip' if row['run_id']==2 else 'ok'").replace(
+def test_unselected_candidate_fault_cannot_launch_screen_repair(tmp_path,monkeypatch):
+    from scidiscovery.research_loop import controller
+    from test_control_selection import scene,closeout_author
+    harness=FAKE_HARNESS.replace("mode=meta['mode']","mode='skip'").replace(
         "else 'audit skipped'","else 'audit failed during training: ModuleNotFoundError: No module named fixture_helper'")
     root=scene(tmp_path,harness=harness)
-    calls=[]
-    phases=[]
-    leaf=delivery.leaf_phase
-    def counted(root,source,operation,phase,*args,**kwargs):
-        phases.append((phase,source['candidate_id']))
-        return leaf(root,source,operation,phase,*args,**kwargs)
-    monkeypatch.setattr(delivery,'leaf_phase',counted)
-    def complete(root,step):
-        job=c.read(root/'jobs'/f'{step:03d}.json');calls.append(job['role'])
-        task=c.read(c.workspace(root,step)/'science-task.json')
-        payload=dict(summary='Bounded repair assessment',scientific_result='A scientific change would be needed; no new model is asserted.',
-            limitations=['No replacement candidate was produced'],implementation_selection=None)
-        if job['role']=='W':
-            assert task['engineering_repair']['candidate_id']=='run-2'
-            failure=job['engineering_repair']['failure']
-            assert failure==dict(path='host-delivery/selection/audit-01.outcome.json',sha256=c.digest(root/failure['path']))
-            assert job['engineering_repair']['decision_step']==4 and job['engineering_repair']['source']['step']==2
-            payload.update(stage_intent='decision',mechanism_findings=None)
-        elif step==4:
-            comparison=task['closeout']['comparison']
-            assert comparison['default']['candidate_id']=='run-3'
-            table=dict(rows=[dict(candidate_id=row['candidate_id'],key_risk='Known implementation fault' if row['candidate_id']=='run-2' else 'Public proxy only',
-                decision='keep' if row['candidate_id']=='run-2' else 'replace') for row in comparison['rows']],
-                override=dict(default_candidate='run-3',chosen_candidate='run-2',reason='Explicitly request exact implementation repair',evidence_steps=[2]))
-            payload.update(next_action=author_action,route_reason='Choose the exact fault for repair',candidate_recommendation='run-2',
-                candidate_comparison=table if author_action=='deliver' else None,search_review=None,progress_assessment=None)
-        else:
-            assert task['closeout']['comparison']['default']['candidate_id']=='run-3'
-            payload.update(next_action='finish',route_reason='Decline delivery after the repair evidence',candidate_recommendation=None,
-                candidate_comparison=None,search_review=None,progress_assessment=None)
-        _seal_existing(root,step,payload)
-    monkeypatch.setattr(native,'execute_native',complete)
+    monkeypatch.setattr(delivery,'leaf_phase',lambda *args,**kwargs:pytest.fail('No domain call before explicit candidate choice'))
+    calls=closeout_author(monkeypatch,lambda task:dict(next_action='finish',candidate_recommendation=None,candidate_comparison=None))
     result=controller.closeout(root)
     assert result['status']=='exported_unsubmitted',result
-    assert calls==['A','W','A']
-    assert phases.count(('audit','run-2'))==1 and phases.count(('smoke','run-2'))==1
-    assert not list((root/'native-evidence/004').glob('candidate-audit/*.json'))
-    assert (root/'host-delivery/selection/shortlist.json').exists()
-    assert (root/'host-delivery/selection/repairs/005/screen.json').exists()
-    mark=shortlist.marker(root)
-    rows=shortlist.public_table(root,mark)['rows']
-    assert next(row for row in rows if row['candidate_id']=='run-2')['audit']=='not_run'
-    assert not (root/'submission/model.pkl').exists()
-    assert controller.run(root)['status']==cli(root,'status')['closeout']['status']==cli(root)['status']==result['status'] and calls==['A','W','A']
-    # The newer repaired generation must never replace the old A's exact selected fault.
-    original_mark=c.read(root/'jobs/004.json')['selection']
-    assert original_mark!=shortlist.marker(root)
-    assert engineering.request(root,4)['failure']['path']=='host-delivery/selection/audit-01.outcome.json'
-    assert next(row for row in c.read(root/'host-delivery/selection/repairs/005/screen.json')['rows'] if row['candidate_id']=='run-2')['smoke']==dict(
-        status='unavailable',note='original_implementation_requires_repair')
-    before=list(phases)
-    intent_path=root/'host-delivery/selection/audit-01.intent.json'
-    original=intent_path.read_bytes()
-    for field,value in [('candidate_id','run-3'),('operation_id','0'*64)]:
-        intent=c.read(intent_path);intent[field]=value
-        intent_path.chmod(0o600);c.write(intent_path,intent);intent_path.chmod(0o400)
-        with pytest.raises(ValueError,match='Selected screen repair diagnosis changed'):
-            engineering.request(root,4)
-        intent_path.chmod(0o600);intent_path.write_bytes(original);intent_path.chmod(0o400)
-    from copy import deepcopy
-    selected=delivery.selected_sources
-    def different_artifact(*args,**kwargs):
-        refs=deepcopy(selected(*args,**kwargs))
-        for row in refs['items']:
-            if row['candidate_id']=='run-2' and row['status']=='audit_pending':row['objects']['artifact']=row['objects']['source.py']
-        return refs
-    with monkeypatch.context() as patch:
-        patch.setattr(delivery,'selected_sources',different_artifact)
-        with pytest.raises(ValueError,match='Selected screen repair diagnosis changed'):
-            engineering.request(root,4)
-    assert phases==before and engineering.request(root,4)['failure']['path']=='host-delivery/selection/audit-01.outcome.json'
+    assert [task['role'] for _,task in calls]==['A']
+    assert not list((root/'host-delivery/selection').rglob('*.intent.json'))
+    assert not (root/'jobs/005.json').exists() and not (root/'submission/model.pkl').exists()
 
 
-@pytest.mark.parametrize('mode',['soft','hard'])
+@pytest.mark.parametrize('mode',['soft'])
 def test_known_unsealed_repair_worker_resumes_exact_session_without_rewriting_seals(tmp_path,monkeypatch,mode):
     from scidiscovery.research_loop import controller
     prepare=controller.prepare
     def node_mode(*args,**kwargs):
         return prepare(*args,**dict(kwargs,node_budget_mode=mode))
     monkeypatch.setattr(controller,'prepare',node_mode)
-    # Hard exploration must first fit W's full 2000 plus the 3100 delivery reserve.
-    root,_=repair_scene(tmp_path,crash=True,max_tokens=5500 if mode=='hard' else 3500)
+    root,_=repair_scene(tmp_path,crash=True,max_tokens=3500)
     result=cli(root)
     assert result['status']=='closeout_native_unsealed',result
     original=(root/'jobs/004.json').read_bytes()
@@ -372,10 +326,13 @@ def test_known_unsealed_repair_worker_resumes_exact_session_without_rewriting_se
     tokens,_=budget._attempt_consumption(root,job,paths)
     settings=c.settings(root);limits=budget.snapshot(root);meter=native.usage(root)
     floor=budget.closeout_floor(settings,preparation_seconds=budget.closeout_state(root)['begin']['preparation_seconds'])
-    needed=0 if mode=='soft' else budget.node_limits(root,job)['max_observed_tokens']-tokens
+    needed=0
     remaining=needed+floor['tokens']+settings['delivery_policy']['closeout_a']['max_observed_tokens']-1
     with monkeypatch.context() as patch:
-        patch.setattr(native,'usage',lambda root:dict(meter,observed_tokens=limits['max_tokens']-remaining))
+        observed=limits['max_tokens']-remaining
+        assert observed-meter['output_tokens']>=meter['cached_input_tokens']
+        patch.setattr(native,'usage',lambda root:dict(meter,input_tokens=observed-meter['output_tokens'],
+            observed_tokens=observed,accounted_tokens=observed+meter.get('reserved_tokens',0)))
         with pytest.raises(budget.NodeBudgetUnavailable,match='worker_resume_budget_unavailable'):
             budget.accept_continuation(root,job,paths)
     assert len(execution.records(root,4))==1  # A future author is still reserved; no attempt accepted.
@@ -425,28 +382,56 @@ def test_completed_rejection_requires_the_exact_audited_artifact(tmp_path,damage
 
 
 @pytest.mark.parametrize('cause',['unclassified','control_environment'])
-def test_selection_early_stop_and_status_share_typed_receipts(tmp_path,cause):
+def test_catalogue_does_not_interpret_faults_of_unselected_candidates(tmp_path,monkeypatch,cause):
     from scidiscovery.research_loop import controller
-    from test_control_selection import scene
+    from test_control_selection import scene,closeout_author
     note='audit skipped' if cause=='unclassified' else 'could not import runner.score: missing control module'
     harness=FAKE_HARNESS.replace("mode=meta['mode']","mode='skip'").replace("else 'audit skipped'",'else '+repr(note))
     root=scene(tmp_path,harness=harness)
+    monkeypatch.setattr(delivery,'leaf_phase',lambda *args,**kwargs:pytest.fail('Catalogue cannot invoke an unselected audit'))
+    closeout_author(monkeypatch,lambda task:dict(next_action='finish',candidate_recommendation=None,candidate_comparison=None))
     result=controller.closeout(root)
-    expected='selection_audit_unclassified' if cause=='unclassified' else 'selection_audit_engineering_error'
-    assert result['status']==expected,result
-    assert cli(root,'status')['closeout']['status']==expected
-    assert cli(root)['status']==expected
-    assert len(list((root/'jobs').glob('*.json')))==3 and not (root/'submission/model.pkl').exists()
+    assert result['status']=='exported_unsubmitted',result
+    assert cli(root,'status')['closeout']['status']==cli(root)['status']==result['status']
+    assert len(list((root/'jobs').glob('*.json')))==4 and not (root/'submission/model.pkl').exists()
 
 
-def test_original_input_capacity_blocks_preparation_and_status_without_a_worker(tmp_path):
-    root,_=repair_scene(tmp_path,output_capacity=64)
-    result=cli(root)
-    assert result['status']=='engineering_repair_input_capacity',result
-    assert len(list((root/'jobs').glob('*.json')))==3
+def test_original_managed_output_capacity_blocks_initial_seal_before_repair(tmp_path,monkeypatch):
+    import test_cov_delivery_lineage as managed
+    original_finish=managed.finish
+    scientific_output=('candidate,public_validation,limitation\n'
+        'run-1,0.5,synthetic observation with unresolved target applicability\n'
+        'run-2,0.5,synthetic observation with unresolved target applicability\n')
+    def with_scientific_output(root,step,role,parents,**kwargs):
+        if step==2 and role=='W':
+            kwargs['files']=dict(kwargs.get('files',{}),**{'comparison.csv':scientific_output})
+        return original_finish(root,step,role,parents,**kwargs)
+    monkeypatch.setattr(managed,'finish',with_scientific_output)
+    # Private execution receipts are control records. An actual scientific
+    # artifact must exceed the quota before any A audit or repair is admitted.
+    with pytest.raises(ValueError,match='exceeds item byte budget'):
+        repair_scene(tmp_path,output_capacity=64)
+    root=tmp_path/'instance';work=c.workspace(root,2)
+    policy=c.settings(root)
+    assert policy['max_output_item_bytes']==policy['max_output_total_bytes']==64
+    assert [c.read(p)['role'] for p in sorted((root/'jobs').glob('*.json'))]==['H','W']
+    assert (root/'native-evidence/001/result-identity.json').is_file()
+    assert not (root/'native-evidence/002/result-identity.json').exists()
+    calls=record_directory(root,2)/'calls'
+    observations=[c.read(p) for p in calls.glob('*/execution-observation.json')]
+    assert len(observations)==2
+    outputs=[item for observation in observations for item in observation['outputs']]
+    artifact=work/'artifacts/comparison.csv'
+    assert artifact.read_text()==scientific_output and artifact.stat().st_size>64
+    assert all(Path(item['path']).stat().st_size==item['size_bytes'] and c.digest(Path(item['path']))==item['sha256'] for item in outputs)
+    originals={p:c.digest(p) for p in calls.rglob('*') if p.is_file()}
+    artifact_digest=c.digest(artifact)
+    with pytest.raises(ValueError,match='exceeds item byte budget'):
+        c.collect_materials(root,2)
+    assert originals=={p:c.digest(p) for p in calls.rglob('*') if p.is_file()}
+    assert c.digest(artifact)==artifact_digest
     assert not (root/'native-evidence/004/native-intent.json').exists()
-    assert cli(root,'status')['closeout']['status']==result['status']
-    assert cli(root)['status']==result['status']
+    assert not (root/'submission/model.pkl').exists()
 
 
 def test_repaired_closeout_author_can_audit_then_deliver_and_resume(tmp_path):

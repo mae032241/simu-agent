@@ -18,7 +18,7 @@ import re
 import time
 
 from scidiscovery import execution_security as security
-from . import contracts as c, qualification as q, formal_review as review, execution
+from . import contracts as c, qualification as q, formal_review as review, execution, experiment_client
 
 ID = re.compile(r'[0-9a-f]{64}\Z')
 OPTIONS = tuple(security.execution_approval_option_id(key)
@@ -185,50 +185,76 @@ def _directory(root, request_id):
 
 
 def _validate_binding(root, value):
-    if value['contract'] != contract(root) or value['instance'] != c.settings(root)['goal_id']:
+    """Replay the declared permission identity, without result or admission checks."""
+    if (value['contract'] != contract(root) or value['instance'] != c.settings(root)['goal_id']
+            or value.get('version') != 1 or value.get('kind') != 'execution_authorization'
+            or value.get('options') != list(OPTIONS) or value.get('scope') != SCOPE):
         raise q.IntegrityError('Execution request contract or instance changed')
     job = q._read(root, value['job'])
     if value['job'] != q._ref(root, Path(root) / 'jobs' / f'{job["step"]:03d}.json'):
         raise q.IntegrityError('Execution requester is not an exact task original')
-    c._validate_inputs(root, c.workspace(Path(root), job['step']), job)
     if job['role'] != 'W':
         raise ValueError('Execution requester must be an exact W task')
-    intents = [q._ref(root, row / 'native-intent.json') for row in execution.records(root, job['step'])
-               if (row / 'native-intent.json').exists()]
-    if (value['native_intent'] not in intents
-            or q._read(root, value['native_intent']).get('task_sha256') != value['job']['sha256']):
+    base = Path('native-evidence')/f'{job["step"]:03d}'
+    intent_path = Path(value['native_intent']['path'])
+    continuation = intent_path.parent
+    if (intent_path != base/'native-intent.json' and not (
+            intent_path.name == 'native-intent.json' and continuation.parent == base/'continuations'
+            and continuation.name.isdigit() and int(continuation.name) > 0
+            and continuation.name == f'{int(continuation.name):03d}')):
+        raise q.IntegrityError('Execution native intent names another requester')
+    if q._read(root,value['native_intent']).get('task_sha256') != value['job']['sha256']:
         raise q.IntegrityError('Execution native intent does not bind the exact requester')
     if value['review'] not in job.get('execution_qualifications', []):
         raise ValueError('Execution request has no directly bound formal qualification')
     subject = value['subject']
-    if q._read(root, value['review'])['subject'] != subject:
-        raise q.IntegrityError('Execution review names another subject')
-    review.require_review(root, subject, value['review'])
-    if (q.output_status(root, subject['producer_step'], subject['material'])['restriction'] != 'clear'
-            or q.status(root, job)['restriction'] != 'clear'):
-        raise ValueError('Execution sources are restricted or unknown')
-    # Exact source path, not a same-content workspace substitute.
-    if value['payload'] != q._identity(subject['material']['source']):
-        raise q.IntegrityError('Execution payload is not its exact reviewed original')
-    alias = value.get('payload_alias', value['payload'])
-    allowed = {str(Path(subject['material']['source'])), str(c.workspace(root, job['step']) / subject['material']['path'])}
-    if (alias['path'] not in allowed or alias != q._identity(alias['path'])
-            or any(alias[key] != value['payload'][key] for key in ('sha256', 'size_bytes'))):
-        raise q.IntegrityError('Execution payload alias is not an explicitly bound read copy')
     if subject['material'] not in [*job['direct_materials'], *[
             row['material'] for row in job.get('selected_inputs', [])]]:
         raise ValueError('Execution subject is not a frozen requester input')
-    for item in value['target'].get('configuration_files', []):
-        q._check(item)
-    q._read(root, value['grant_revision'])
+    payload = value['payload']
+    alias = value.get('payload_alias',payload)
+    allowed = {payload['path'],str(Path(subject['material']['source'])),
+        str(c.workspace(root,job['step'])/subject['material']['path'])}
+    if (alias['path'] not in allowed
+            or any(alias[key] != payload[key] for key in ('sha256','size_bytes'))):
+        raise q.IntegrityError('Execution payload alias is not an explicitly bound read copy')
+    q._read(root,value['grant_revision'])
+
+
+def require_request_eligibility(root, value):
+    """Check real inputs, native lineage and scientific qualification before dispatch."""
+    job = q._read(root,value['job'])
+    c._validate_inputs(root,c.workspace(Path(root),job['step']),job)
+    intents = [q._ref(root,row/'native-intent.json') for row in execution.records(root,job['step'])
+        if (row/'native-intent.json').exists()]
+    if (value['native_intent'] not in intents
+            or q._read(root,value['native_intent']).get('task_sha256') != value['job']['sha256']):
+        raise q.IntegrityError('Execution native intent does not bind the exact requester')
+    subject = value['subject']
+    if q._read(root,value['review'])['subject'] != subject:
+        raise q.IntegrityError('Execution review names another subject')
+    review.require_review(root,subject,value['review'])
+    if (q.output_status(root,subject['producer_step'],subject['material'])['restriction'] != 'clear'
+            or q.status(root,job)['restriction'] != 'clear'):
+        raise ValueError('Execution sources are restricted or unknown')
+    expected_payload = q.execution_payload(root,subject['material'])
+    if value['payload'] != expected_payload:
+        raise q.IntegrityError('Execution payload is not its exact reviewed original')
+    alias = value.get('payload_alias',value['payload'])
+    if alias != q._identity(alias['path']):
+        raise q.IntegrityError('Execution payload alias is not an explicitly bound read copy')
+    for item in value['target'].get('configuration_files',[]):q._check(item)
+
 
 
 def create_request(root, *, step, native_intent, call_id, subject, review_ref,
-                   target, policy, resources, grant_revision, expires_at, secret, payload_alias=None, supersedes=None, operation_context=None):
+                   target, policy, resources, grant_revision, expires_at, secret, payload_alias=None, supersedes=None, operation_context=None, payload_binding=None):
     """Trusted host seam for P3d; there is deliberately no JSON/CLI writer.
 
     This only freezes an authorization request. It performs no prepare, resource
-    reservation or dispatch. A later gate must validate the actual policy provider,
+    reservation or dispatch. payload_binding declares a separately resolved private
+    package when it differs from the subject material; renewal retains the old declaration.
+    A later gate must validate the actual policy provider,
     exact call/attempt and resource grant owner before consuming any decision.
     """
     root = Path(root).resolve()
@@ -242,16 +268,20 @@ def create_request(root, *, step, native_intent, call_id, subject, review_ref,
     if not isinstance(policy, dict) or policy.get('outcome') not in {'policy', 'require_human_approval', 'deny'}:
         raise ValueError('Trusted policy admission required')
     job_path = root / 'jobs' / f'{step:03d}.json'
+    previous = q._read(root,supersedes) if supersedes is not None else None
+    if payload_binding is None:
+        payload_binding = (previous['payload'] if previous is not None else
+            {key:subject['material']['source' if key == 'path' else key] for key in ('path','sha256','size_bytes')})
     value = dict(version=1, kind='execution_authorization', instance=c.settings(root)['goal_id'],
         contract=contract(root), job=q._ref(root, job_path), native_intent=native_intent,
         call_id=call_id, subject=subject, review=review_ref,
-        payload=q._identity(subject['material']['source']), target=target, policy=policy,
+        payload=payload_binding, target=target, policy=policy,
         resources=resources, grant_revision=grant_revision, expires_at=expires_at,
         options=list(OPTIONS), scope=SCOPE)
     if payload_alias is not None:
         value['payload_alias'] = payload_alias
     if supersedes is not None:
-        old=q._read(root,supersedes)
+        old=previous
         for key in ('job','native_intent','call_id','subject','review','payload','payload_alias','target','resources'):
             if old.get(key)!=value.get(key):raise q.IntegrityError('Renewal changed the original execution subject')
         value['supersedes']=supersedes
@@ -419,15 +449,10 @@ class AuthorityRequired(ValueError):
 
 def _host_context(config):
     """Resolve only the existing canonical host projection and accepted task."""
-    directory = Path(config['record_dir'])
-    if len(directory.parents) < 5:
-        raise q.IntegrityError('Trusted execution record namespace is unavailable')
-    root = directory.parents[4]
+    root = experiment_client.root_for_configuration(config)
     step = config['scope']['step']; job = c.read(c.regular(root / 'jobs' / f'{step:03d}.json'))
     from .protocol import stage_scope
-    if (Path(config['record_dir']) != root / 'project/nodes' / f'{step:03d}' / 'work/lineage'
-            or Path(config['record_dir']).resolve() != Path(config['record_dir'])
-            or job['role'] != 'W' or config['scope'] != stage_scope(root, job)
+    if (job['role'] != 'W' or config['scope'] != stage_scope(root, job)
             or config.get('host_execution_authority') != contract(root)
             or c.settings(root).get('execution_resource_policy') is None):
         raise q.IntegrityError('Trusted execution services have no exact host task')
@@ -459,7 +484,10 @@ def _selected_subject(root, job, payload):
     found = []
     for ref in job.get('execution_qualifications', []):
         subject = q._read(root, ref)['subject']; material = subject['material']
-        if alias['path'] in {material['source'], str(c.workspace(root, job['step']) / material['path'])}:
+        original=q.execution_payload(root,material)
+        if alias['path'] in {original['path'],material['source'], str(c.workspace(root, job['step']) / material['path'])}:
+            if any(alias[key]!=original[key] for key in ('sha256','size_bytes')):
+                raise q.IntegrityError('Execution payload differs from its exact reviewed implementation')
             found.append((subject, ref))
     if len(found) != 1:
         raise ValueError('Select one exact frozen material with an explicit independent review; work files and same hashes do not qualify')
@@ -489,8 +517,8 @@ def _remaining(root, config, allocation=None):
     intent = c.read(c.regular(record / 'native-intent.json'))
     usage = native.usage(root)
     available = budget.execution_available(root, job, limits, usage)
-    if any(item != step for item in usage['unknown_steps']) or available['tokens'] <= 0:
-        raise ValueError('Original shared token authorization is exhausted or unknown')
+    if available['tokens'] <= 0:
+        raise ValueError('Original shared token authorization is exhausted')
     meter = c.read(c.regular(record / 'usage.json')) if (record / 'usage.json').exists() else dict(input_tokens=0, output_tokens=0)
     reason = budget.stop_node(root, job, intent, limits, meter) or search.stop_reason(root, job, intent, limits, meter)
     if reason:
@@ -639,9 +667,10 @@ def _accepted_input_subject(root, job, accepted, secret):
             if not hmac.compare_digest(signed.get('receipt_hmac', ''), security.receipt_hmac(secret, security.canonical(signed_body))):
                 raise q.IntegrityError('Managed source host signature changed')
     seal = q._read(root, subject['producer_seal']); material = subject['material']
+    original=q.execution_payload(root,material)
     if (subject['producer_seal'] != q._ref(root, c.host_record(c.workspace(root, subject['producer_step'])) / 'result-identity.json')
-            or material not in seal['materials'] or request_value['payload'] != q._identity(material['source'])
-            or alias['path'] not in {material['source'], str(c.workspace(root, job['step']) / material['path'])}
+            or material not in seal['materials'] or request_value['payload'] != original
+            or alias['path'] not in {original['path'],material['source'], str(c.workspace(root, job['step']) / material['path'])}
             or alias != q._identity(alias['path'])
             or any(alias[key] != request_value['payload'][key] for key in ('sha256','size_bytes'))):
         raise q.IntegrityError('Managed source payload or exact producer changed')
@@ -727,6 +756,10 @@ def _gate(config, provider, phase, *, scope, call_id, payload, target, prepared=
     if (allocation['binding']['subject'] != subject or allocation['binding']['review'] != review_ref
             or allocation['binding']['payload_alias'] != alias):
         raise q.IntegrityError('Execution allocation changed its selected input')
+    eligibility = dict(job=q._ref(root,root/'jobs'/f'{job["step"]:03d}.json'),native_intent=intent,
+        subject=subject,review=review_ref,payload=q.execution_payload(root,subject['material']),
+        payload_alias=alias,target=target)
+    require_request_eligibility(root,eligibility)
     remaining()
     # Only now may the installed trusted factory provider query active capability/policy.
     admission = provider(c.regular(Path(payload.local_path)).read_bytes())
@@ -752,8 +785,16 @@ def _gate(config, provider, phase, *, scope, call_id, payload, target, prepared=
         request_ref = recovery.request(admission,target) if recovery is not None else create_request(root, step=job['step'], native_intent=intent, call_id=call_id,
             subject=subject, review_ref=review_ref, payload_alias=alias, target=target,
             policy=admission.model_dump(mode='json'), resources=dict(admission.budget),
-            grant_revision=grant['ref'], expires_at=allocation['expires_at'], secret=secret)
+            grant_revision=grant['ref'], expires_at=allocation['expires_at'], secret=secret,
+            payload_binding=eligibility['payload'])
     request_id = Path(request_ref['path']).parent.name
+    requested,actual_ref = request(root,request_id)
+    if (actual_ref != request_ref or requested['call_id'] != call_id
+            or any(requested[key] != eligibility[key] for key in ('job','native_intent','subject','review','payload','target'))
+            or requested.get('payload_alias',requested['payload']) != eligibility['payload_alias']
+            or requested['policy'] != admission.model_dump(mode='json')
+            or requested['resources'] != dict(admission.budget) or requested['grant_revision'] != grant['ref']):
+        raise q.IntegrityError('Execution request differs from the eligible dispatch scope')
     if admission.outcome == 'policy':
         record_policy_decision(root, request_id, secret=secret,operation_context=recovery.context if recovery is not None else None)
     current = status(root, request_id, secret=secret)
@@ -821,7 +862,7 @@ def reconcile_resources(config, adapter, call_id, *, observation=None, operation
     """
     if config.get('host_execution_authority') is None:
         return None
-    root = Path(config['record_dir']).parents[4]
+    root = experiment_client.root_for_configuration(config)
     try:
         from . import budget, experiments as e
         root, _, _ = _host_context(config)

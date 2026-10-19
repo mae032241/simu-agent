@@ -1,6 +1,7 @@
 """Exact review through existing native nodes; scripted transport is not Codex qualification."""
 import sys
 
+import jsonschema
 import pytest
 
 from scidiscovery.operations.review_rules import independence
@@ -20,6 +21,13 @@ if not (step==2 and os.environ.get('REVIEW_MISSING_AUTHOR')):
  (sessions/(thread+'.jsonl')).write_text(json.dumps({'type':'session_meta','payload':{'id':thread,'cwd':str(work)}})+'\\n')
 print(json.dumps({'type':'thread.started','thread_id':thread}),flush=True)
 if 'review' in task:
+ instruction=task['review']['instruction']
+ assert instruction in prompt
+ for concept in ('exact requested claims','original objective','authorized scope','locatable sources','experiment conditions',
+                 'measurements','inferences','assumptions','target metrics','proxies','sensitivity',
+                 'conflicting evidence','uncertainty','missing inputs','favorable verdict'):
+  assert concept in instruction,concept
+ assert 'scientific_judgment' not in task and 'candidate_recommendation' not in task['final_response']
  assert 'history' not in task and 'parents' not in task
  assert anchor not in json.dumps(task) and anchor not in prompt
  assert not (work/'inputs/history').exists()
@@ -77,6 +85,20 @@ def test_independence_needs_every_verified_participant():
     assert independence({('engine','author')},{('engine','reviewer')})=='independent'
     assert independence({('engine','author')},{('engine','reviewer'),('engine','author')})=='overlap'
     assert independence(set(),{('engine','reviewer')},authors_complete=False)=='unknown'
+
+
+def test_formal_review_scientific_prose_has_no_minimum_length_and_keeps_verdict_contract():
+    schema = review.schema()
+    value = dict(verdict='inconclusive',summary='',scientific_result='',limitations=[])
+    jsonschema.validate(value,schema)
+    for field in ('summary','scientific_result'):
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate({**value,field:None},schema)
+        missing = {key:item for key,item in value.items() if key != field}
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(missing,schema)
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({**value,'verdict':'looks good'},schema)
 
 
 @pytest.mark.process_e2e

@@ -195,7 +195,8 @@ def run_one(command, environment, limits, output, lock_fd):
                                 result["stop_reason"] = "log_limit"
                                 break
                 while True:
-                    descendants, rss = _descendant_rss_kib(observed)
+                    stop_sample = {}
+                    descendants, rss = _descendant_rss_kib(observed, diagnostic=stop_sample)
                     observed.update(descendants)
                     result["observed_tree_rss_high_water_bytes"] = max(result["observed_tree_rss_high_water_bytes"], rss * 1024)
                     current = memory()
@@ -205,9 +206,11 @@ def run_one(command, environment, limits, output, lock_fd):
                         save()
                         next_heartbeat = time.monotonic() + heartbeat_interval
                     if result["memory_stop_triggers"]:
+                        result["memory_stop_sample"] = stop_sample
                         result["stop_reason"] = "system_memory_stop"
                         break
                     if result["observed_tree_rss_high_water_bytes"] > limits["observed_tree_rss_stop_bytes"]:
+                        result["memory_stop_sample"] = stop_sample
                         result["stop_reason"] = "observed_tree_rss_limit"
                         break
                     if time.monotonic() - started >= limits["timeout_seconds"]:

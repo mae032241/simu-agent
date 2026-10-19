@@ -25,13 +25,13 @@ def main(argv=None):
     prepare.add_argument('--history-observer-config', type=Path, help='Optional trusted host adapter/config JSON; frozen at preparation')
     prepare.add_argument('--experiment-mode', choices=['local', 'external'], help='Host-configured W execution (local) or launcher-owned execution (external); standard codex defaults to local, custom launchers to external')
     prepare.add_argument('--execution-config',type=Path,help='Public executor/configuration JSON for registered host-configured execution; no credentials or host identity fields; conflicts with external mode')
-    prepare.add_argument('--search-policy', type=Path, help='Frozen W time/token targets (hard in hard mode) and hard requested-repair count')
+    prepare.add_argument('--search-policy', type=Path, help='Frozen W time/token targets, hard requested-repair count and optional positive initial_calls per mechanism')
     prepare.add_argument('--correction-policy', type=Path, help='Explicitly enable N4 with review_after/pause_after JSON thresholds (defaults 3/2)')
-    prepare.add_argument('--node-budget-policy', type=Path, help='Explicit H/W/A/E time/token targets; hard ceilings only with --node-budget-mode hard; no delivery guarantee')
-    prepare.add_argument('--node-budget-mode', choices=['soft','hard'], default='soft', help='Scientific node targets are soft by default; shared authorization stays hard')
+    prepare.add_argument('--node-budget-policy', type=Path, help='Explicit H/W/A/E soft time/token targets; no delivery guarantee')
+    prepare.add_argument('--node-budget-mode', choices=['soft'], default='soft', help='All H/W/A/E node token targets are soft; shared admission and finite execution limits remain enforced')
     prepare.add_argument('--role-budget-policy', type=Path, help='Frozen W/H+A token shares and H/A node target JSON (null disables); disabled unless explicitly configured')
-    prepare.add_argument('--selection-policy', type=Path, help='Frozen closeout shortlist size and smoke ceiling JSON (null disables); disabled unless explicitly configured')
-    prepare.add_argument('--portfolio-review-after-cycles', type=int, help='Enable version2/protocol12 opportunity-cost review after this many unserved W+A cycles; recommended 3')
+    prepare.add_argument('--selection-policy', type=Path, help='Frozen explicit closeout comparison contract JSON ({"version":2}); disabled unless explicitly configured')
+    prepare.add_argument('--portfolio-review-after-cycles', type=int, help='Freeze an optional reminder interval in unserved completed W+A cycles; the full mechanism portfolio is always visible and reminders never gate scientific results')
     prepare.add_argument('--decision-contract', action='store_true', help='Freeze protocol10 scientific A decision requests and exact repeat admission')
     prepare.add_argument('--enable-candidate-audit', action='store_true', help='Opt into protocol9 A audit requests; requires an isolated delivery adapter')
     prepare.add_argument('--delivery-policy', type=Path, help='Explicit frozen closeout reserve and isolated delivery adapter JSON')
@@ -60,9 +60,45 @@ def main(argv=None):
     amend.add_argument('--root', type=Path, required=True)
     amend.add_argument('--max-tokens', type=int)
     amend.add_argument('--max-seconds', type=float)
+    amend.add_argument('--max-steps', type=int, help='Explicit finite cumulative control-step ceiling; preserves consumed continuations/actions')
+    amend.add_argument('--authorization-statement', help='Original operator statement authorizing this revision')
     amend.add_argument('--execution-wall-seconds', type=int, help='Explicit cumulative execution ceiling; preserves prior reservations/usage and grants no exact-call permission')
     amend.add_argument('--execution-storage-bytes', type=int, help='Explicit cumulative execution storage ceiling; must accompany --execution-wall-seconds')
     amend.add_argument('--authorization-note', required=True, help='Operator decision for the audit; this text is not authentication')
+    startup = commands.add_parser('native-startup-successor', help='Explicitly authorize the sole first model submission after exact independent startup non-submission reconciliation')
+    startup.add_argument('--root',type=Path,required=True)
+    startup.add_argument('--step',type=int,required=True)
+    startup.add_argument('--reconciliation',type=Path,required=True)
+    startup.add_argument('--reconciliation-sha256',required=True)
+    startup.add_argument('--original-runtime-root',type=Path,required=True)
+    startup.add_argument('--native-home',type=Path,required=True)
+    startup.add_argument('--authorization-statement',required=True)
+    collector = commands.add_parser('native-startup-collect', help='Collect an existing sealed final A and its exact proven unstarted delivery; never launch native work')
+    collector.add_argument('--root',type=Path,required=True)
+    collector.add_argument('--step',type=int,required=True)
+    collector.add_argument('--reconciliation',type=Path,required=True)
+    collector.add_argument('--reconciliation-sha256',required=True)
+    collector.add_argument('--authorization-statement',required=True)
+    author = commands.add_parser('worker-closeout', help='Explicit finite fresh-context author closeout using the exact retained W work')
+    author.add_argument('--root', type=Path, required=True)
+    author.add_argument('--step', type=int, required=True)
+    author.add_argument('--max-tokens', type=int, required=True)
+    author.add_argument('--max-seconds', type=float, required=True)
+    author.add_argument('--authorization-note', required=True)
+    author.add_argument('--successor', action='store_true', help='Explicitly authorize the single second author-only turn; never automatic retry')
+    author.add_argument('--retained-implementation', type=Path, help='Exact retained old implementation manifest for this author permit')
+    author.add_argument('--retained-implementation-sha256', help='Explicit original manifest digest')
+    author.add_argument('--authorization-statement', help='Original operator statement authorizing this one successor')
+    accept = commands.add_parser('worker-output-accept', help='Explicitly accept exact already returned author2 bytes; never another native turn')
+    accept.add_argument('--root', type=Path, required=True)
+    accept.add_argument('--step', type=int, required=True)
+    accept.add_argument('--attempt', type=int, choices=[2], required=True)
+    accept.add_argument('--pending-sha256', required=True)
+    accept.add_argument('--session', type=Path, required=True)
+    accept.add_argument('--retained-implementation', type=Path, required=True)
+    accept.add_argument('--retained-implementation-sha256', required=True)
+    accept.add_argument('--authorization-note', required=True)
+    accept.add_argument('--authorization-statement', required=True)
     closeout = commands.add_parser('closeout', help='Close exploration within the original remaining authorization')
     closeout.add_argument('--root', type=Path, required=True)
     closeout.add_argument('--export-only', action='store_true', help='Export existing verified results without sealing, launching science or delivering')
@@ -182,6 +218,25 @@ def main(argv=None):
         elif args.command == 'execution-resume':
             result=controller.execution_resume(root,args.step,args.call_id,max_seconds=args.max_seconds,
                 authorization_note=args.authorization_note,request_valid_seconds=args.request_valid_seconds,maintenance=args.maintenance)
+        elif args.command == 'native-startup-collect':
+            from . import startup_recovery
+            result = startup_recovery.collect_delivery(root,args.step,reconciliation=args.reconciliation,
+                reconciliation_sha256=args.reconciliation_sha256,authorization_statement=args.authorization_statement)
+        elif args.command == 'native-startup-successor':
+            from . import startup_recovery
+            result = startup_recovery.start(root,args.step,reconciliation=args.reconciliation,
+                reconciliation_sha256=args.reconciliation_sha256,original_runtime_root=args.original_runtime_root,
+                native_home=args.native_home,authorization_statement=args.authorization_statement)
+        elif args.command == 'worker-closeout':
+            result = controller.worker_closeout(root, args.step, max_tokens=args.max_tokens, max_seconds=args.max_seconds,
+                authorization_note=args.authorization_note,successor=args.successor,
+                retained_implementation=args.retained_implementation,retained_implementation_sha256=args.retained_implementation_sha256,
+                authorization_statement=args.authorization_statement)
+        elif args.command == 'worker-output-accept':
+            result=controller.worker_output_accept(root,args.step,attempt=args.attempt,pending_sha256=args.pending_sha256,
+                session=args.session,retained_implementation=args.retained_implementation,
+                retained_implementation_sha256=args.retained_implementation_sha256,
+                authorization_note=args.authorization_note,authorization_statement=args.authorization_statement)
         elif args.command == 'worker-resume':
             result = controller.worker_resume(root, args.step)
         elif args.command == 'status':
@@ -192,7 +247,7 @@ def main(argv=None):
             resource_change = args.execution_wall_seconds is not None or args.execution_storage_bytes is not None
             if resource_change and (args.execution_wall_seconds is None or args.execution_storage_bytes is None):
                 raise ValueError('Execution resource amendment requires both explicit dimensions')
-            if resource_change and (args.max_tokens is not None or args.max_seconds is not None):
+            if resource_change and (args.max_tokens is not None or args.max_seconds is not None or args.max_steps is not None or args.authorization_statement is not None):
                 raise ValueError('Amend scientific or execution ceilings in one explicit operation at a time')
             if resource_change:
                 grant = budget.amend_execution_grant(root, allowance=dict(wall_time_seconds=args.execution_wall_seconds,
@@ -200,8 +255,8 @@ def main(argv=None):
                 result = dict(status='budget_amended', execution_resources=grant,
                               permission='Ceiling configuration only; no exact-call execution decision')
             else:
-                result = budget.amend(root, max_tokens=args.max_tokens, max_seconds=args.max_seconds,
-                                      authorization_note=args.authorization_note)
+                result = budget.amend(root, max_tokens=args.max_tokens, max_seconds=args.max_seconds, max_steps=args.max_steps,
+                                      authorization_note=args.authorization_note, authorization_statement=args.authorization_statement)
         elif args.command == 'pause':
             result = request_pause(root)
         elif args.command == 'continue':
@@ -214,7 +269,7 @@ def main(argv=None):
         print(json.dumps(dict(status='error',error=str(error),**(dict(code=error.code) if isinstance(error,UnsupportedProtocol) else {})), ensure_ascii=False))
         return 1
     print(json.dumps(result, ensure_ascii=False))
-    return 0 if result.get('status') in {None, 'preserved_read_only', 'prepared', 'finish', 'wait', 'paused', 'pause_requested', 'budget_amended', 'delivery_confirmed', 'execution_recovered', 'execution_resume_recorded', 'exported_unsubmitted', 'ui_stopped', 'archive_exported', 'archive_inspected', 'material_restored', 'material_already_present','checkpoint_enrolled','checkpoint_exported','checkpoint_restored','checkpoint_restore_already_completed','execution_maintained'} else 2
+    return 0 if result.get('status') in {None, 'preserved_read_only', 'prepared', 'finish', 'final_a_completed', 'wait', 'paused', 'pause_requested', 'budget_amended', 'delivery_confirmed', 'execution_recovered', 'execution_resume_recorded', 'exported_unsubmitted', 'ui_stopped', 'archive_exported', 'archive_inspected', 'material_restored', 'material_already_present','checkpoint_enrolled','checkpoint_exported','checkpoint_restored','checkpoint_restore_already_completed','execution_maintained'} else 2
 
 
 if __name__ == '__main__':

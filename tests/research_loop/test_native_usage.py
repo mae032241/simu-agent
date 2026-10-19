@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from scidiscovery.research_loop.native_usage import SessionUsage, READ_BYTES
+from scidiscovery.research_loop.native_usage import SessionUsage, READ_BYTES, LINE_BYTES
 
 THREAD = '01a13eb3-81b8-74e2-97f7-84e8f170ab5d'
 FIXTURES = Path(__file__).parent / 'fixtures/native_usage'
@@ -83,11 +83,16 @@ def test_missing_partial_regressed_and_replaced_logs_keep_unknown_and_high_water
 
 def test_reader_is_bounded_and_skips_oversized_conversation_lines(tmp_path):
     home, work, path = session(tmp_path, b'x' * (READ_BYTES * 2) + b'\n' + counter())
+    with path.open('rb') as stream:
+        header_bytes = len(stream.readline(LINE_BYTES + 1))
+    assert header_bytes <= LINE_BYTES
     reader = SessionUsage(home, work)
     reader.bind_thread(THREAD)
     reader.poll()
-    assert reader.offset <= READ_BYTES + 200
-    assert len(reader.pending) <= 65536
+    # Discovery validates a separately bounded header before polling its body.
+    # The actual workspace path can make that header longer than 200 bytes.
+    assert reader.offset - header_bytes == READ_BYTES
+    assert len(reader.pending) <= LINE_BYTES
     assert reader.poll()['coverage'] == 'unknown'
     assert reader.poll()['tokens']['input_tokens'] == 100
 

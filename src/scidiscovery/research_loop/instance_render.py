@@ -51,23 +51,19 @@ def result(step, job, payload, seal):
     comparison=comparison if isinstance(comparison,dict) else {}
     body+='<section><h2>Scientific finding</h2>'+excerpt(payload.get('summary','Not provided'),512)
     body+=excerpt(payload.get('scientific_result',payload.get('summary','Not provided')),4096)+'</section>'
-    body+='<div class="cards"><section><h2>Best available observations</h2><p class="note">Frozen at this node’s input boundary; later evidence is not included. Proxy groups are not a target optimum or scientific acceptance.</p>'
-    groups=comparison.get('proxy_highest') or []
-    for group in groups:
-        body+='<article><h3>'+escape(group.get('evaluation_key','Unknown evaluation'))+'</h3>'
-        body+='<p class="metric">'+escape(group.get('metric','Unknown'))+'</p><p>Direction: '+escape(group.get('direction','unknown'))+'</p>'
-        ids=group.get('candidate_ids')
-        body+=('<p>Equal best: '+escape(', '.join(ids))+'</p>' if isinstance(ids,list) and ids else
-            '<p class="gap">Candidate bindings are unavailable in this frozen summary.</p>')
-        if group.get('ties_omitted_count'):
-            body+='<p class="gap">'+str(group['ties_omitted_count'])+' additional tied candidates omitted in the frozen summary.</p>'
-        if group.get('evaluation_key_truncated'):
+    body+='<div class="cards"><section><h2>Candidate observations</h2><p class="note">Frozen at this node’s input boundary in source order; later evidence is not included. Metrics alone do not establish scientific acceptance.</p>'
+    facts=comparison.get('candidate_facts') or []
+    for fact in facts:
+        body+='<article><h3>'+escape(fact.get('id','Unknown candidate'))+'</h3>'
+        body+='<p>Evaluation: '+escape(fact.get('evaluation_key','Unknown evaluation'))+'</p>'
+        body+='<p class="metric">'+escape(fact.get('metric','Unknown'))+'</p><p>Direction: '+escape(fact.get('direction','unknown'))+'</p>'
+        if fact.get('evaluation_key_truncated'):
             body+='<p class="gap">Evaluation key is shortened in the original frozen summary.</p>'
         body+='</article>'
-    if not groups:
-        body+='<p class="gap">No ranked group is available in this frozen summary; this does not establish that no candidates exist.</p>'
-    if comparison.get('proxy_groups_omitted_count'):
-        body+='<p class="gap">'+str(comparison['proxy_groups_omitted_count'])+' comparison groups omitted in the frozen summary.</p>'
+    if not facts:
+        body+='<p class="gap">No candidate facts are displayed in this frozen summary; this does not establish that no candidates exist.</p>'
+    if comparison.get('candidate_facts_omitted_count'):
+        body+='<p class="gap">'+str(comparison['candidate_facts_omitted_count'])+' candidate facts omitted in the frozen summary. Read the complete original conclusions.</p>'
     body+='<p>Observation coverage: '+escape(comparison.get('coverage','unknown'))+'</p></section>'
     body+='<section><h2>Scientific recommendation</h2>'
     ordinary_a=job['role']=='A' and not job.get('formal_review') and payload.get('next_action')!='audit'
@@ -80,7 +76,7 @@ def result(step, job, payload, seal):
     previous=comparison.get('a_recommended')
     if previous:
         body+='<details><summary>Earlier A recommendation at the input boundary</summary><p>A'+escape(previous['author_step'])+': '+escape(previous['candidate_id'])+'</p></details>'
-    body+='<p class="note">An authored recommendation is separate from observed ranking, delivery and formal review. This display grants no execution permission.</p></section></div>'
+    body+='<p class="note">An authored recommendation is separate from observed metrics, delivery and formal review. This display grants no execution permission.</p></section></div>'
     body+='<details><summary>Limitations and remaining question</summary>'
     limits=payload.get('limitations') or []
     for value in limits[:6]:body+=excerpt(value,1200)
@@ -88,8 +84,8 @@ def result(step, job, payload, seal):
     if not limits:body+='<p>No limitations were supplied in this scientific original.</p>'
     if payload.get('remaining_question') is not None:body+='<h3>Remaining question</h3>'+excerpt(payload['remaining_question'],2048)
     body+='</details>'
-    fields=('scope','coverage','candidate_count','latest_a_step','target_best','view_status',
-        'proxy_groups_omitted_count','unranked_omitted_count','audits_omitted_count',
+    fields=('scope','coverage','candidate_count','latest_a_step','view_status',
+        'candidate_facts_omitted_count','audits_omitted_count',
         'failed_candidate_count','unknown_candidate_count','candidate_alerts','candidate_alerts_omitted_count',
         'public_audits','limitation')
     public={key:comparison[key] for key in fields if key in comparison}

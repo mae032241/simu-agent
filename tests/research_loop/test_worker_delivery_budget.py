@@ -1,4 +1,4 @@
-"""A continuing shallow task retains incomplete work at its original hard cap."""
+"""A continuing shallow task retains incomplete work at its original soft target."""
 import sys
 
 from scidiscovery.research_loop import (contracts as c, controller, budget, native,
@@ -8,18 +8,18 @@ from test_breadth_science import h, worker, run, findings
 from test_worker_delivery import output, stopped_native, tree
 
 
-def test_incomplete_continue_at_original_hard_cap_seals_partial_without_wait_loop(tmp_path,execution_registry,monkeypatch):
+def test_incomplete_continue_at_original_soft_target_seals_partial_without_wait_loop(tmp_path,execution_registry,monkeypatch):
     public=tmp_path/'public';public.mkdir()
     objective=public/'goal.md';objective.write_text('Compare the original mechanisms within finite investment.')
     root=tmp_path/'instance'
     controller.prepare(root,objective,public,[sys.executable],model='no-model',reasoning_effort='high',
-        max_tokens=100000,max_seconds=600,max_steps=16,search_policy=search.DEFAULT_POLICY,node_budget_mode='hard',
+        max_tokens=100000,max_seconds=600,max_steps=16,search_policy=search.DEFAULT_POLICY,node_budget_mode='soft',
         node_budget_policy={role:dict(max_observed_tokens=10 if role=='W' else 100,max_seconds=60)
                             for role in ('H','W','A','E')},
         resume_policy=dict(max_attempts=1,protocol='codex_exec_resume',usage_scope='turn',output_repair=False),
         worker_fragment_policy=dict(context='new_context'))
     c.write(root/'host-started.json',budget.clock_stamp())
-    budget.transition(root,'advance','Known zero-model host start for original hard-cap probe')
+    budget.transition(root,'advance','Known zero-model host start for original soft-target probe')
     h(root,labels=('P','Q'))
     job=c.build_job(root,2,'W',[1])
     anchor=budget.accept_node(root,job)
@@ -40,10 +40,10 @@ def test_incomplete_continue_at_original_hard_cap_seals_partial_without_wait_loo
     checkpoint.capture(root,job,record)
     continuation.seal_or_repair(root,2)
     receipt=c.read(record/'result-identity.json')['control_outcome']['worker_delivery']
-    assert receipt['status']=='partial' and receipt['reason']=='worker_resume_node_exhausted'
+    assert receipt['status']=='partial' and receipt['reason']=='target_tokens_reached'
     ending=checkpoint.stage_end(root,job,record)
-    assert ending['work_exit']['kind']=='budget'
-    assert ending['work_exit']['consumption']['tokens']==10
+    assert ending['work_exit']['kind']=='host_review'
+    assert c.read(root/ending['work_exit']['review']['snapshot'])['observed_tokens_lower_bound']==10
     assert len(execution.records(root,2))==1 and len(experiments.Records(config).calls())==1
     before=tree(root)
     continuation.seal_or_repair(root,2)

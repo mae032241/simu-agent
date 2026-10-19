@@ -34,7 +34,7 @@ def allowed_actions(view, *, request=None, source_status='unknown'):
         requested_audit_target=cid if request and request['action']=='audit' else None,
         audit_request_is_final_recommendation=False,next_step=next_step,
         unverified_resubmit_allowed=False,scientific_continuation_allowed=True,
-        observed_proxy_groups=len(view.get('proxy_highest',[])),coverage=view.get('coverage','unknown'))
+        observed_candidate_facts=len(view.get('candidate_facts',[])),coverage=view.get('coverage','unknown'))
 
 
 def export_public(manifest):

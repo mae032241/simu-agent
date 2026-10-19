@@ -32,7 +32,7 @@ print(json.dumps(dict(type='turn.completed',usage=dict(input_tokens=7,cached_inp
 '''
 
 
-def real_chain(tmp_path, *, max_steps=5, launcher_text=FAKE_NATIVE):
+def real_chain(tmp_path, *, max_steps=5, launcher_text=FAKE_NATIVE, pause_after_worker=False):
     if shutil.which('bwrap') is None:
         pytest.skip('Real provider namespace required')
     public = tmp_path / 'public';(public / 'harness').mkdir(parents=True)
@@ -47,6 +47,7 @@ def real_chain(tmp_path, *, max_steps=5, launcher_text=FAKE_NATIVE):
             path.write_text('Fixture public data only\n')
     c.write(tmp_path / 'hidden.json', dict(secret='Must never be visible to provider'))
     objective = public / 'objective.md';objective.write_text('Choose an exact candidate and deliver; scientific completion remains unasserted.')
+    if pause_after_worker:launcher_text+="\nif role=='W':(root/'pause.request').touch()\n"
     launcher = tmp_path / 'native.py';launcher.write_text(launcher_text)
     nodes = {role:dict(max_observed_tokens=2000,max_seconds=60) for role in ('H','W','A','E')}
     controller.prepare(root,objective,public,[sys.executable,str(launcher)],max_tokens=100_000,max_seconds=300,max_steps=max_steps,
@@ -57,10 +58,30 @@ def real_chain(tmp_path, *, max_steps=5, launcher_text=FAKE_NATIVE):
     return root
 
 
+def native_diagnostics(root):
+    names={'native.stderr','runner.stderr','native-outcome.json'}
+    paths=sorted(path for path in (root/'native-evidence').rglob('*') if path.is_file() and path.name in names)
+    details={}
+    for path in paths[:12]:
+        if path.name=='native-outcome.json':
+            outcome=c.read(path)
+            value={key:outcome[key] for key in ('returncode','stop_reason','native_started','cleanup_confirmed','error','note') if key in outcome}
+        else:
+            value=path.read_bytes()[-4096:].decode(errors='replace')
+        if value:details[path.relative_to(root).as_posix()]=value
+    print(json.dumps(details,ensure_ascii=False,indent=2))
+    return 'Bounded native diagnostics are in captured stdout'
+
+
 def test_actual_fake_h_w_closeout_a_submit_confirm_and_no_replay(tmp_path):
-    root = real_chain(tmp_path)
-    result = controller.run(root)
-    assert result['status']=='delivery_confirmed',result
+    root = real_chain(tmp_path,pause_after_worker=True)
+    paused=controller.run(root)
+    assert paused['status']=='paused' and paused['completed_steps']==2,(paused,native_diagnostics(root))
+    assert all((c.host_record(c.workspace(root,step))/'result-identity.json').is_file() for step in (1,2))
+    assert not (root/'jobs/003.json').exists()
+    (root/'pause.request').unlink()
+    result = controller.closeout(root)
+    assert result['status']=='delivery_confirmed',(result,native_diagnostics(root))
     assert result['last_step']==3 and result['source_cutoff']==2
     assert result['completed_scientific_nodes']==3 and result['used_steps']==5
     assert result['goal_completion']=='not_asserted' and 'unmet_goal' not in result
@@ -73,14 +94,21 @@ def test_actual_fake_h_w_closeout_a_submit_confirm_and_no_replay(tmp_path):
     assert [row['intent']['action_kind'] for row in facts['actions']]==['submit','confirm']
     assert not facts['unresolved_operations'] and not budget.execution_blocked(root)
     original={str(p):p.read_bytes() for p in (root/'native-evidence').rglob('*') if p.is_file()}
-    assert controller.run(root)['status']=='delivery_confirmed'
+    result=controller.run(root)
+    assert result['status']=='delivery_confirmed',(result,native_diagnostics(root))
     assert all(Path(path).read_bytes()==data for path,data in original.items())
     assert len(budget.closeout_state(root)['actions'])==2
 
 
 def test_export_only_existing_model_closeout_never_executes(tmp_path,monkeypatch):
-    root=real_chain(tmp_path)
-    assert controller.run(root)['status']=='delivery_confirmed'
+    root=real_chain(tmp_path,pause_after_worker=True)
+    paused=controller.run(root)
+    assert paused['status']=='paused' and paused['completed_steps']==2,(paused,native_diagnostics(root))
+    assert all((c.host_record(c.workspace(root,step))/'result-identity.json').is_file() for step in (1,2))
+    assert not (root/'jobs/003.json').exists()
+    (root/'pause.request').unlink()
+    result=controller.closeout(root)
+    assert result['status']=='delivery_confirmed',(result,native_diagnostics(root))
     monkeypatch.setattr(native,'execute_native',lambda *a:pytest.fail('Export must never launch science'))
     monkeypatch.setattr(delivery,'invoke',lambda *a,**k:pytest.fail('Export must never invoke an external action'))
     before=len(budget.closeout_state(root)['actions'])

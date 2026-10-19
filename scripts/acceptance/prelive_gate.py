@@ -3,8 +3,8 @@
 Re-prepares a fresh scratch scene from the exact frozen settings of a real run
 (read-only source), rebinding only paths and code identities, and drives the
 actual controller, rootless launcher/bwrap namespace, registered cov calls,
-candidate audit, closeout control shortlist/smoke/audit and isolated delivery leaf to
-a confirmed delivery of the control default.
+candidate audit, a side-effect-free candidate catalogue and isolated delivery leaf to
+a confirmed delivery of the fixture author's explicit choice.
 Run with the candidate interpreter, e.g. ``venv/bin/python -I prelive_gate.py``.
 """
 from __future__ import annotations
@@ -92,13 +92,13 @@ else:
  if closeout is not None and audit:
   assert audit['status']=='audited' and audit['qualification']=='passed',audit
  if table is not None:
-  default=table['default']['candidate_id']
+  chosen=audit['candidate_id'] if audit else ids()[-1]
   rows=[dict(candidate_id=row['candidate_id'],key_risk='Public validation only; fake transport, no target evidence.',
-   decision='keep' if row['candidate_id']==default else 'replace') for row in table['rows']]
-  # Audit the control default, then explicitly authorize its delivery with null.
-  payload.update(none,next_action='deliver' if audit else 'audit',candidate_recommendation=None if audit else default,
-   candidate_comparison=dict(rows=rows,override=None) if audit else None,
-   route_reason='Keep the control default after its receipt' if audit else 'Audit the control default before delivery')
+   decision='keep' if row['candidate_id']==chosen else 'replace') for row in table['rows']]
+  # The fixture author explicitly names a candidate before qualification and delivery.
+  payload.update(none,next_action='deliver' if audit else 'audit',candidate_recommendation=chosen,
+   candidate_comparison=dict(rows=rows,rationale='The fixture author retains this exact observed candidate.',evidence_steps=[2]) if audit else None,
+   route_reason='Deliver the explicitly chosen candidate after its receipt' if audit else 'Audit the explicitly chosen candidate before delivery')
  elif closeout is not None:
   available=[row['candidate_id'] for row in closeout['sources']['items'] if row['availability']=='available']
   latest=max(available,key=lambda value:int(value.split('-')[1]))
@@ -247,12 +247,13 @@ def _chain(root):
 
 def _checks(root, chain, result):
     from scidiscovery.research_loop import candidate_audit, contracts as c, execution, native, cli
+    from scidiscovery.research_loop.experiment_client import record_directory
     checks = {}
     checks['delivery_confirmed'] = result.get('status') == 'delivery_confirmed'
     checks['chain_shape'] = [(row['role'], row['purpose'], row.get('route')) for row in chain] == CHAIN
     if not checks['chain_shape']:return checks
     screen, improve = chain[1]['step'], chain[4]['step']
-    calls = [c.read(path) for path in sorted((c.workspace(root, screen) / 'work/lineage/calls').glob('*/accepted.json'))]
+    calls = [c.read(path) for path in sorted((record_directory(root, screen) / 'calls').glob('*/accepted.json'))]
     checks['screen_registered_calls_two_mechanisms'] = (len(calls) == 2 and
         sorted(row['mechanism_binding']['mechanism_ref'] for row in calls) == ['h001.m1', 'h001.m2'])
     checks['breadth_admission_rejected_repeat'] = (c.workspace(root, screen) / 'work/breadth-rejection.json').is_file()
@@ -268,15 +269,18 @@ def _checks(root, chain, result):
     confirmed = result.get('last_confirmed') or {}
     screen = c.read(root / 'host-delivery/selection/screen.json') if (root / 'host-delivery/selection/screen.json').is_file() else None
     if c.settings(root).get('selection_policy') is not None:
-        default = (screen or {}).get('default', {}).get('candidate_id')
-        checks['delivered_closeout_choice'] = confirmed.get('candidate_id') == default == chain[6]['candidate'] and chain[7]['candidate'] is None
+        chosen = chain[7]['candidate']
         rows = (screen or {}).get('rows', [])
-        checks['selection_shortlist_frozen'] = bool(rows) and default is not None and any('a_recommended' in row['reasons'] for row in rows)
-        checks['selection_smoke_ok_with_leaf_output'] = bool(rows) and all(row['smoke']['status'] == 'ok' and c.read(
-            root / 'host-delivery/selection' / (row['smoke']['receipt'] + '.outcome.json'))['leaf_output'] for row in rows)
-        checks['selection_default_audited'] = any(row['candidate_id'] == default and row['audit']['status'] == 'passed' for row in rows)
+        checks['delivered_closeout_choice'] = confirmed.get('candidate_id') == chosen == chain[6]['candidate']
+        checks['selection_catalogue_frozen'] = bool(rows) and 'default' not in screen
+        checks['selection_catalogue_no_domain_calls'] = not list((root / 'host-delivery/selection').rglob('*.intent.json'))
         final = c.read(execution.raw(root, chain[7]['step'])).get('candidate_comparison') or {}
-        checks['selection_comparison_sealed'] = [row['candidate_id'] for row in final.get('rows', [])] == [row['candidate_id'] for row in rows]
+        compared = final.get('rows', [])
+        known = {row['candidate_id'] for row in rows}
+        checks['selection_comparison_sealed'] = (bool(final.get('rationale')) and bool(final.get('evidence_steps'))
+            and all(row['candidate_id'] in known for row in compared)
+            and len({row['candidate_id'] for row in compared}) == len(compared)
+            and [row['candidate_id'] for row in compared if row['decision'] == 'keep'] == [chosen])
     else:
         checks['selection_disabled_preserved'] = screen is None
         checks['delivered_closeout_choice'] = confirmed.get('candidate_id') == chain[6]['candidate'] == chain[7]['candidate']
@@ -285,7 +289,7 @@ def _checks(root, chain, result):
     checks['usage_known'] = native.usage(root)['unknown_steps'] == []
     leaf = root / 'host-delivery/leaf-output'
     phases = {path.name.split('-')[1] for path in leaf.glob('*.json')} if leaf.is_dir() else set()
-    checks['leaf_output_preserved'] = ({'resolve', 'audit', 'promote', 'confirm'} | ({'smoke'} if screen else set())) <= phases
+    checks['leaf_output_preserved'] = {'resolve', 'audit', 'promote', 'confirm'} <= phases
     checks['audit_receipts_reference_leaf_output'] = all(row and row.get('leaf_output') for row in receipts)
     checks['leaf_output_not_in_workspaces'] = not any(b'leaf-output' in path.read_bytes()
         for path in (root / 'project/nodes').rglob('*') if path.is_file() and not path.is_symlink() and path.stat().st_size < 1 << 20)

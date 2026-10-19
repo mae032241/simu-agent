@@ -1,5 +1,6 @@
 """Real bwrap/main/registered-cov path with two fake native turns, zero models."""
 import hashlib
+import importlib.metadata
 import json
 import os
 from pathlib import Path
@@ -17,6 +18,18 @@ from test_cov_lineage import BACKEND
 FAKE_NATIVE=r'''import json,os,pathlib,subprocess,sys
 args=sys.argv[1:];sys.stdin.read()
 work=pathlib.Path(args[args.index('-C')+1]);home=pathlib.Path(os.environ['CODEX_HOME'])
+root=work.parents[2]
+assert (root/'jobs'/(work.name+'.json')).is_file()
+assert (root/'settings-identity.json').is_file()
+assert {p.name for p in (root/'jobs').glob('*.json')}=={work.name+'.json'}
+assert not (root/'settings.json').exists()
+assert not (root/'control-ledger').exists()
+assert not (root.parent/'private-owner-state').exists()
+for original in (root/'jobs'/(work.name+'.json'),root/'settings-identity.json'):
+ try:
+  with original.open('ab'):pass
+ except OSError:pass
+ else:raise AssertionError('Shared owner metadata must stay read-only')
 task=json.loads((work/'science-task.json').read_text());role=task['role']
 search_enabled=bool(task.get('lineage',{}).get('mechanisms',{}).get('authorized_count'))
 output=pathlib.Path(args[args.index('--output-last-message')+1]);later=output.parent.parent.name=='continuations'
@@ -27,9 +40,28 @@ print(json.dumps(dict(type='thread.started',thread_id=thread)),flush=True)
 session=home/'sessions/current.jsonl';session.parent.mkdir(parents=True,exist_ok=True)
 session.write_text(json.dumps(dict(type='session_meta',payload=dict(id=thread,cwd=str(work))))+'\n')
 if role=='W':
+ capabilities=subprocess.run([str(work/'bin/exp'),'capabilities'],capture_output=True,text=True)
+ assert capabilities.returncode==0,(capabilities.stdout,capabilities.stderr)
+ assert any(item['key']=='cov_single_source' for item in json.loads(capabilities.stdout)['contracts'])
+ contract=work/'work'/('cov-contract-later.json' if later else 'cov-contract-first.json')
+ described=subprocess.run([str(work/'bin/exp'),'describe','--key','cov_single_source','--output',str(contract)],capture_output=True,text=True)
+ assert described.returncode==0,(described.stdout,described.stderr)
+ assert json.loads(contract.read_text())['experiment_directory'] is False
+ status=subprocess.run([str(work/'bin/exp'),'lineage-status'],capture_output=True,text=True)
+ assert status.returncode==0,(status.stdout,status.stderr)
  if not later:
   p=work/'payload.json';p.write_text('{}')
   cmd=[str(work/'bin/exp'),'run','--script',str(p),'--new-plan']
+  rejected_options=[]
+  for options in (['--experiment-dir',str(work)],['--','--seed','7']):
+   rejected=subprocess.run(cmd+options,capture_output=True,text=True)
+   assert rejected.returncode==2,(rejected.stdout,rejected.stderr)
+   rejection=json.loads(rejected.stdout)
+   assert rejection['status']=='known_not_started' and rejection['accepted'] is False,rejection
+   assert 'call_id' not in rejection
+   assert not list((work/'work/lineage/calls').glob('*/accepted.json'))
+   rejected_options.append(rejection)
+  (work/'work/rejected-caller-options.json').write_text(json.dumps(rejected_options))
   result=subprocess.run(cmd+(['--mechanism','P'] if search_enabled else []),capture_output=True,text=True)
   assert result.returncode==0,(result.stdout,result.stderr)
   reply=json.loads(result.stdout);assert reply['status']=='known_success'
@@ -65,9 +97,13 @@ output.write_text(json.dumps(payload))
 
 def prepare_namespace(tmp_path,*,search_enabled=False,fake_source=FAKE_NATIVE,context='new_context',repair=False):
     if shutil.which('bwrap') is None:pytest.skip('Actual namespace unavailable')
-    installed=subprocess.run([sys.executable,'-I','-c',f'from scidiscovery.research_loop.protocol import CURRENT;assert CURRENT=={CURRENT}'],capture_output=True,text=True)
-    if installed.returncode:pytest.skip(f'Real installed CURRENT{CURRENT} interpreter required for isolated launcher')
+    isolated=subprocess.run([sys.executable,'-I','-c',
+        f'from pathlib import Path;from scidiscovery.research_loop.protocol import CURRENT;assert CURRENT=={CURRENT};'
+        f'from scidiscovery.research_loop import contracts;assert Path(contracts.__file__).resolve()==Path({str(Path(c.__file__).resolve())!r})'],
+        capture_output=True,text=True)
+    if isolated.returncode:pytest.skip(f'Exact current CURRENT{CURRENT} package must be importable with -I; use an explicit source bridge or matching installed interpreter')
     repo=Path(__file__).resolve().parents[2];launcher=repo/'scripts/acceptance/rootless_cov_launcher.py'
+    (tmp_path/'private-owner-state').write_text('Host-only owner-state canary; no credentials.')
     public=tmp_path/'public';harness=public/'environment/harness';harness.mkdir(parents=True)
     (public/'instruction.md').write_text('Two synthetic native contexts; zero model requests.')
     (public/'task.toml').write_text('fixture=true\n');(public/'environment/Dockerfile').write_text('FROM fixture\n')
@@ -78,10 +114,20 @@ def prepare_namespace(tmp_path,*,search_enabled=False,fake_source=FAKE_NATIVE,co
         public_files_sha256={p.relative_to(public).as_posix():c.digest(p) for p in public.rglob('*') if p.is_file()}))
     fake=tmp_path/'fake-codex';fake.write_text('#!'+sys.executable+'\n'+fake_source);fake.chmod(0o555)
     root=tmp_path/'instance';config=tmp_path/'launcher.json';python=str(Path(sys.executable).absolute());codehost=Path('/usr/bin/true').resolve()
+    # Preserve this interpreter's explicit -I source bridge, including its
+    # selected metadata and dependency sites. This is source-entry transport
+    # coverage, not installed-wheel qualification; never mount the checkout.
+    source_root=Path(c.__file__).resolve().parents[2]
+    metadata_root=Path(importlib.metadata.distribution('scidiscovery').locate_file('')).resolve()
+    dependency_sites=[str(Path(path).resolve()) for path in sys.path
+        if Path(path).name in ('site-packages','dist-packages') and Path(path).is_dir()]
+    runtime_paths=list(dict.fromkeys([sys.base_prefix,str(Path(python).parent.parent),
+        str(source_root),str(metadata_root),*dependency_sites]))
+    assert str(repo) not in runtime_paths
     c.write(config,dict(scene_root=str(root),public_root=str(public),public_manifest=str(manifest),
         runs_dir=str(root/'runs'),submission_dir=str(root/'submission'),native=str(fake),native_sha256=c.digest(fake),
         code_mode_host=dict(path=str(codehost),sha256=c.digest(codehost)),task_python=python,scid_python=python,
-        runtime_paths=list(dict.fromkeys([sys.base_prefix,str(Path(python).parent.parent)])),
+        runtime_paths=runtime_paths,
         model='no-model',reasoning_effort='high',profile='namespace-no-model',cov_receipt_channel='backend_file'))
     controller.prepare(root,public/'instruction.md',public,[python,str(launcher),'--config',str(config),'--'],
         max_tokens=100000,max_seconds=120,max_steps=8,model='no-model',reasoning_effort='high',search_policy=search.DEFAULT_POLICY if search_enabled else None,
@@ -117,6 +163,7 @@ def test_actual_launcher_two_new_contexts_keep_original_registered_call(tmp_path
     assert first['scope']==second['scope'] and first['native_attempt']!=second['native_attempt']
     work=c.workspace(root,step)
     assert len(list((work/'work/lineage/calls').glob('*/accepted.json')))==(2 if search_enabled else 1)
+    assert len(c.read(work/'work/rejected-caller-options.json'))==2
     assert c.read(work/'work/second-context-query.json')['state']=='succeeded'
     assert len(list((root/'jobs').glob('*.json')))==step
     assert c.validate(work)['stage_intent']=='review'

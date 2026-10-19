@@ -6,8 +6,8 @@ ACTIONS = {'continue_w': 'W', 'revise_h': 'H', 'extract': 'E'}
 
 def schema():
     fields = dict(decision=dict(type='string', enum=['candidate', 'mechanism', 'compliance']),
-                  question=dict(type='string', maxLength=1024),
-                  change_criterion=dict(type='string', maxLength=1024))
+                  question=dict(type='string'),
+                  change_criterion=dict(type='string'))
     return dict(type=['object', 'null'], properties=fields, required=list(fields), additionalProperties=False,
         description='For continue_w, revise_h or extract, state the scientific decision, concrete question '
                     'and what result would change that decision. Null is allowed for audit, wait or finish. '
@@ -15,7 +15,7 @@ def schema():
 
 
 def _key(job, payload, focus):
-    request = payload['decision_request']
+    request = c.scientific_field(job,payload,'decision_request')
     mechanism = focus.get('mechanism_ref') if focus else None
     candidate = payload.get('candidate_recommendation') if request['decision'] == 'candidate' else None
     return (payload['next_action'], request['decision'], request['question'].strip(),
@@ -47,7 +47,7 @@ def assess(root, job, payload, *, focus=None):
         return []
     if payload['next_action'] not in ACTIONS:
         return []  # Necessary audit, pause and delivery choices are independent.
-    request = payload.get('decision_request')
+    request = c.scientific_field(job,payload,'decision_request')
     if request is None or any(not request[key].strip() for key in ('question', 'change_criterion')):
         return [dict(code='a_decision_request_missing', subject=payload['next_action'])]
     key, basis = _key(job, payload, focus), _basis(root, job)
@@ -75,7 +75,4 @@ def reason(root, job, payload):
     from . import search
     interpretation=search.interpret(root,job,payload) if c.settings(root).get('search_policy') else None
     diagnostics = assess(root, job, payload,focus=interpretation['focus'] if interpretation else None)
-    if not diagnostics:
-        from . import search
-        diagnostics = search.portfolio_assess(root, job, payload)
     return diagnostics[0]['code'] if diagnostics else None

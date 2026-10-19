@@ -17,7 +17,7 @@ import uuid
 
 from scidiscovery.browser_access import BrowserAccessService, access_cookie, cookie_name
 from scidiscovery import execution_security as security
-from . import contracts as c, execution, execution_authority as authority, instance_control as control
+from . import budget, contracts as c, execution, execution_authority as authority, instance_control as control
 from . import instance_science as science
 from . import instance_render as render
 
@@ -123,6 +123,9 @@ class InstanceUI:
                 'clock_phase', 'advance_seconds', 'waiting_seconds')},
             observed_tokens=usage['observed_tokens'], tokens_remaining_from_observed_usage=max(0, limits['max_tokens'] - usage['observed_tokens']),
             unknown_usage_nodes=len(usage['unknown_steps']),
+            reserved_tokens=usage.get('reserved_tokens', 0),
+            accounted_tokens=usage.get('accounted_tokens', usage['observed_tokens']),
+            blocking_unknown_usage_nodes=len(usage.get('blocking_unknown_steps', usage['unknown_steps'])),
             correction_trigger=(view['correction'].get('current_pause') or {}).get('trigger_id'))
         with self.control_lock:
             summary['last_control_request'] = self.control_result
@@ -161,7 +164,7 @@ class InstanceUI:
         return 200,self._page('Sealed scientific deliverables',body),{}
 
     def _results_page(self, after):
-        maximum=c.settings(self.root)['max_steps']
+        maximum=budget.historical_step_limit(self.root)
         steps=sorted(int(path.stem) for path in (self.root/'jobs').glob('*.json')
             if path.stem.isascii() and path.stem.isdecimal() and path.stem==f'{int(path.stem):03d}'
             and after<int(path.stem)<=maximum)

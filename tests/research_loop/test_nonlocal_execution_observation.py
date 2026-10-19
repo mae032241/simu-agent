@@ -10,8 +10,8 @@ import pytest
 
 from execution_fixtures import execution_registry, remote_registry
 from test_history_handoff import finish
-from scidiscovery.research_loop import (contracts as c, controller, execution, experiments as e,
-    history, native, search, worker_delivery)
+from scidiscovery.research_loop import (checkpoint, contracts as c, controller, execution, experiments as e,
+    history, native, qualification as q, search, worker_delivery)
 
 
 def case(tmp_path, monkeypatch, outcome='known_success', executor='remote_execution:fixture', extra=None, resume=False):
@@ -19,7 +19,7 @@ def case(tmp_path, monkeypatch, outcome='known_success', executor='remote_execut
     objective.write_text('Synthetic execution contract; scientific adequacy remains for A.')
     root=tmp_path/'instance'
     controller.prepare(root,objective,public,[sys.executable] if resume else ['never-launched'],max_tokens=10000,max_seconds=120,max_steps=10,
-        model='no-model',reasoning_effort='high',node_budget_mode='hard',experiment_mode='external',
+        model='no-model',reasoning_effort='high',node_budget_mode='soft',experiment_mode='external',
         **(dict(resume_policy=dict(max_attempts=2,protocol='codex_exec_resume',usage_scope='turn'),
             node_budget_policy={role:dict(max_observed_tokens=1000,max_seconds=30) for role in 'HWAE'}) if resume else {}))
     finish(root,1,'H',[],action='experiment',search_choice=dict(scope='Two explicit synthetic mechanisms',
@@ -67,12 +67,47 @@ def test_remote_cli_terminal_collect_history_worker_a_and_successor_admission(tm
     facts=c.read(root/seal['observations']['path'])
     assert [row['status'] for row in facts['managed_calls']]==[outcome,outcome]
     assert seal['control_outcome']['worker_delivery']['status']=='complete'
+    # Identical bytes from distinct calls retain both scientific identities.
+    expected_names={f'experiments/{result["call_id"]}/artifacts/original' for result in results}
+    saved=checkpoint.validate(root,job,record)
+    assert len(saved['materials'])==len(expected_names)==2
+    assert {row['name'] for row in saved['materials']}==expected_names
+    outputs={f'experiments/{call["call_id"]}/artifacts/original':call['outputs'][0]
+        for call in facts['managed_calls']}
+    assert len({output['sha256'] for output in outputs.values()})==1
+    for row in saved['materials']:
+        output=outputs[row['name']]
+        assert row['original']['retention']=='archived'
+        assert all(row['original'][key]==output[key] for key in ('snapshot','sha256','size_bytes'))
+        assert (root/row['original']['snapshot']).read_bytes()==b'opaque remote package; never interpreted as local Python'
+    preview=checkpoint.brief(root,job,record)
+    assert {row['name'] for row in preview['direct_files']}==expected_names and preview['omitted_files']==0
+    assert all(set(row)=={'name','name_truncated','retention'} and not row['name_truncated']
+        and row['retention']=='archived' for row in preview['direct_files'])
+    assert 'host-history' not in json.dumps(preview) and '/objects/' not in json.dumps(preview)
+    assert str(root) not in json.dumps(preview)
+    assert all(output['sha256'] not in json.dumps(preview) for output in outputs.values())
     for row in facts['managed_calls']:
         assert row['terminal'] is None and row['observation']['retention']=='archived'
         assert len(row['outputs'])==1 and row['outputs'][0]['retention']=='archived'
         assert (root/row['outputs'][0]['snapshot']).read_bytes().startswith(b'opaque remote package')
         assert all(item['retention']=='archived' for item in row['originals'])
     a_job=c.build_job(root,3,'A',[1,2]);a_record=execution.record(root,3)
+    materials=a_job['direct_materials']
+    assert len(materials)==2 and materials[0]['source']==materials[1]['source']
+    assert materials[0]['path']!=materials[1]['path']
+    assert not any(edge['kind']=='unknown' for edge in q._inputs(root,a_job)['edges'])
+    unchanged_job=copy.deepcopy(a_job)
+    before_negative={path:path.read_bytes() for path in root.rglob('*') if path.is_file()}
+    for key,value in (('sha256','0'*64),('size_bytes',materials[0]['size_bytes']+1),
+                      ('path',materials[0]['path']+'/forged')):
+        forged=copy.deepcopy(a_job)
+        forged['direct_materials'][0][key]=value
+        assert forged['direct_materials'][0]['source']==materials[0]['source']
+        with pytest.raises(q.IntegrityError,match='Bound material differs from its exact producer original'):
+            q._inputs(root,forged)
+    assert a_job==unchanged_job
+    assert before_negative=={path:path.read_bytes() for path in root.rglob('*') if path.is_file()}
     page=a_job['history']['view']['indexes']['experiments'];mounted=[]
     while page:
         index=c.read(c.workspace(root,3)/page)

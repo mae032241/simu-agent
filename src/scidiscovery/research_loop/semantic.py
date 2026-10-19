@@ -15,24 +15,23 @@ def outcome(root,job,payload):
         raise ValueError('Current scientific interpretation required')
     from . import formal_review
     formal_review.validate_choice(root,job,payload)
-    enabled=c.settings(root).get('search_policy') is not None and not job.get('formal_review')
+    enabled=c.settings(root).get('search_policy') is not None and not job.get('formal_review') and not job.get('final_report')
     interpretation=search.interpret(root,job,payload) if enabled else dict(focus=None,allocation=None,diagnostics=[])
     diagnostics=interpretation['diagnostics']
     selection=[];c.selected_inputs(c.workspace(root,job['step']),payload,job,selection)
     from . import decision
     requests=decision.assess(root,job,payload,focus=interpretation['focus'])
-    portfolio=search.portfolio_assess(root,job,payload,interpretation=interpretation,
-        decision_diagnostics=requests,selection_diagnostics=selection)
     delivery=None
     if job['role']=='W':
         from . import worker_delivery
         delivery=worker_delivery.require_delivery(root,job,payload,execution.record(root,job['step']))
-    rows=[*diagnostics,*selection,*requests,*portfolio]
+    rows=[*diagnostics,*selection,*requests,*history.validate_recommendation(job,payload)]
+    rows.extend(row for row in c.scientific_diagnostics(job,payload) if row not in rows)
     return dict(**(dict(stage_end_reason='continuation_unavailable') if job['role']=='W' and payload.get('stage_intent')=='continue' and not job.get('worker_fragment_policy') else {}),
         **(dict(worker_delivery=delivery) if delivery is not None else {}),
         binding_protocol=CURRENT,resolved_focus=interpretation['focus'],resolved_allocation=interpretation['allocation'],
         search_status='unresolved' if diagnostics else 'applied',selection_status='unresolved' if selection else 'applied',
-        decision_status='unresolved' if requests else 'applied',portfolio_status='unresolved' if portfolio else 'applied',
+        decision_status='unresolved' if requests else 'applied',
         diagnostics=rows[:MAX_DIAGNOSTICS],omitted_count=max(0,len(rows)-MAX_DIAGNOSTICS))
 
 
@@ -198,11 +197,8 @@ def effective_route(root, step, result, job, route):
         request = dict(root=previous['root'] if previous else source, source=source,
                        reason=previous['reason'] if previous else decision_code)
         role, parents = 'A', list(dict.fromkeys([*parents, step]))
-        instruction = (('Give a short scientific global portfolio tradeoff; you may retain the same branch. '
-                        'Do not repeat counts, mechanism tables or original references. '
-                        if decision_code == 'a_portfolio_review_required' else
-                        'Clarify the scientific decision, concrete question and result that would change it. ')
-                       + 'The original science is retained; no dependent research is authorized: ' + decision_code + '.')
+        instruction = ('Clarify the scientific decision, concrete question and result that would change it. '
+                       'The original science is retained; no dependent research is authorized: ' + decision_code + '.')
         evidence_return, correction_request = None, None
     elif role == 'W':
         from . import engineering

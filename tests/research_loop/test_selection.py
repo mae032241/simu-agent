@@ -21,14 +21,14 @@ def test_frozen_public_selection_cases(case):
     expected = case['expected']
     assert data == case['input']
     assert len(selection._bytes(result)) <= 4096
-    if 'proxy_group_winners' in expected:
-        groups = {f"{row['evaluation_key']}/{row['direction']}": row['candidate_ids'] for row in result['proxy_highest']}
-        assert groups == expected['proxy_group_winners']
-    if 'proxy_group_count' in expected:
-        assert len(result['proxy_highest']) == expected['proxy_group_count']
+    expected_ids=list(dict.fromkeys(item['id'] for row in sorted(data['records'],key=lambda row:row['step']) for item in row['candidates']))
+    assert [row['id'] for row in result['candidate_facts']]==expected_ids[:len(result['candidate_facts'])]
+    assert len(result['candidate_facts'])+result['candidate_facts_omitted_count']==len(expected_ids)
     if 'audit_states' in expected:
-        assert {row['candidate_id']: row['status'] for row in result['public_audits']} == expected['audit_states']
-    for field in ('target_best', 'historical_a_recommendation', 'latest_a_step', 'coverage', 'scope', 'unranked_ids'):
+        audits={row['candidate_id']:row['status'] for row in result['public_audits']}
+        assert {cid:audits.get(cid,'unknown') for cid in expected['audit_states']}==expected['audit_states']
+        assert set(audits)=={row['candidate_id'] for row in data.get('audits',[])}
+    for field in ('historical_a_recommendation', 'latest_a_step', 'coverage', 'scope'):
         if field in expected:
             assert result[field] == expected[field]
     for field in ('a_recommended', 'current_candidate', 'observed_actual_submission'):
@@ -50,18 +50,28 @@ def record(candidates, step=2):
                 current_candidate=None, actual_submission=None)
 
 
-def test_ties_and_exact_evaluation_groups():
+def test_ties_versions_and_missing_metrics_stay_visible_in_observed_order():
     result = selection.project([record([candidate('P'), candidate('Q'), candidate('R', key='public-v2'),
-                                       candidate('S', 0, direction='min')])])
-    assert result['proxy_highest'][0]['candidate_ids'] == ['P', 'Q']
-    assert len(result['proxy_highest']) == 3
-    assert result['target_best'] is None
+                                       candidate('S', 0, direction='min'), candidate('unscored', None)])])
+    assert [row['id'] for row in result['candidate_facts']] == ['P','Q','R','S','unscored']
+    assert result['candidate_facts_omitted_count']==0
+    assert 'target_best' not in result
 
 
-@pytest.mark.parametrize('changes', [{'metric': float('nan')}, {'metric': True}, {'metric': 10**1000}, {'hidden_reward': .5}])
+@pytest.mark.parametrize('changes', [{'metric': float('nan')}, {'hidden_reward': .5}])
 def test_invalid_public_candidate_facts(changes):
     with pytest.raises(ValueError):
         selection.project([record([dict(candidate('P'), **changes)])])
+
+
+def test_missing_and_free_scientific_metadata_do_not_gate_candidate_catalogue():
+    rows=[dict(id='unmeasured',status='ok'),dict(candidate('free'),label={'text':'unbounded'},
+        evaluation_key={'conditions':['A','B']},direction='maximize after feasibility',metric=None)]
+    result=selection.project([record(rows)])
+    assert [row['id'] for row in result['candidate_facts']]==['unmeasured','free']
+    assert result['candidate_facts'][0]['metric'] is None
+    assert result['candidate_facts'][1]['direction']==rows[1]['direction']
+    assert selection.shortlist([record(rows)])['members'][0]['metric'] is None
 
 
 def test_conflicting_immutable_candidate_identity_rejected():
@@ -91,17 +101,16 @@ def test_byte_bound_omissions_and_exact_comparison_before_display_clipping():
     rows = [candidate(f'候选{i:03}', key='评估' * 300 + str(i)) for i in range(100)]
     result = selection.project([record(rows)])
     assert len(selection._bytes(result)) <= 4096
-    assert len(result['proxy_highest']) + result['proxy_groups_omitted_count'] == 100
-    assert len(result['public_audits']) + result['audits_omitted_count'] == 100
-    assert all(row['evaluation_key_truncated'] for row in result['proxy_highest'])
-    assert result['target_best'] is None
+    assert len(result['candidate_facts']) + result['candidate_facts_omitted_count'] == 100
+    assert result['public_audits']==[] and result['audits_omitted_count']==0
+    assert all(row['evaluation_key'] == rows[index]['evaluation_key'] for index,row in enumerate(result['candidate_facts']))
+    assert 'target_best' not in result
 
 
 def test_audit_does_not_inherit_parent_or_status_ok():
     result = selection.project([record([candidate('P'), candidate('Q')])], audits=[
         dict(candidate_id='P', status='completed', artifact_bound=True, leakage_flag=False)])
-    assert result['public_audits'] == [dict(candidate_id='P', status='public_audit_passed'),
-                                       dict(candidate_id='Q', status='unknown')]
+    assert result['public_audits'] == [dict(candidate_id='P', status='public_audit_passed')]
     assert result['delivery']['state'] == 'unknown'
 
 
@@ -141,7 +150,7 @@ def test_single_brief_marker_uses_one_current_recommendation_authority():
     assert new['candidates']['historical_a_recommendation']['candidate_id'] == 'P'
     assert new['candidates']['current_candidate']['candidate_id'] == 'Q'
     assert new['candidates']['delivery']['state'] == 'unknown'
-    assert new['candidates']['target_best'] is None
+    assert 'target_best' not in new['candidates']
     assert 'selection' not in new  # replace the one candidate slice, never append a second packet
     assert len(selection._bytes(new)) <= 4096
 
@@ -152,7 +161,7 @@ def test_optional_projection_unavailable_does_not_publish_hidden_values():
     records[0]['observation']['candidates'][0]['hidden_score'] = .999
     new = lineage.brief(records, None, graph, candidates, indexes, selection_protocol=1)
     assert new['candidates']['scope'] == 'unavailable'
-    assert new['candidates']['target_best'] is None
+    assert 'target_best' not in new['candidates']
     assert 'hidden_score' not in json.dumps(new)
     assert '.999' not in json.dumps(new)
     assert new['indexes'] == indexes
@@ -169,8 +178,8 @@ def test_entire_single_brief_remains_bounded_after_selection_preview():
     new = lineage.brief(records, None, graph, candidates, indexes, selection_protocol=1)
     assert len(selection._bytes(new)) <= 4096
     view = new['candidates']
-    assert len(view['proxy_highest']) + view['proxy_groups_omitted_count'] == 100
-    assert len(view['public_audits']) + view['audits_omitted_count'] == 100
+    assert len(view['candidate_facts']) + view['candidate_facts_omitted_count'] == 100
+    assert view['public_audits']==[] and view['audits_omitted_count']==0
 
 
 def test_mixed_step_types_are_optional_projection_value_errors():
@@ -178,7 +187,7 @@ def test_mixed_step_types_are_optional_projection_value_errors():
         selection.project([record([candidate('P')]), record([], step='4')])
 
 
-@pytest.mark.parametrize('field', ['coverage', 'direction', 'status'])
+@pytest.mark.parametrize('field', ['coverage', 'status'])
 def test_enum_list_is_optional_projection_value_error(field):
     row = record([candidate('P')])
     if field == 'coverage':
@@ -187,6 +196,14 @@ def test_enum_list_is_optional_projection_value_error(field):
         row['candidates'][0][field] = []
     with pytest.raises(ValueError):
         selection.project([row])
+
+
+def test_direction_scientific_json_is_preserved_without_becoming_execution_status():
+    row=record([candidate('P',direction=[])])
+    result=selection.project([row])
+    assert result['candidate_facts'][0]['direction']==[]
+    assert result['candidate_facts'][0]['status']=='ok'
+    assert selection.shortlist([row])['members'][0]['direction']==[]
 
 
 def test_audit_request_preserves_prior_choice_and_observed_facts():
@@ -199,7 +216,7 @@ def test_audit_request_preserves_prior_choice_and_observed_facts():
     assert result['latest_a_step'] == 3
     assert result['candidate_count'] == 2
     assert result['observed_actual_submission']['candidate_id'] == 'Q'
-    assert result['proxy_highest'][0]['candidate_ids'] == ['Q']
+    assert [row['id'] for row in result['candidate_facts']] == ['P','Q']
     # A later scientific null remains a real choice to clear the recommendation.
     later = dict(record([], step=5), role='A')
     assert selection.project([original, choice, audit, later])['a_recommended'] is None

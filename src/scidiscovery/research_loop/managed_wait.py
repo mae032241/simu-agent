@@ -3,7 +3,7 @@ from pathlib import Path
 import time
 
 from scidiscovery.operations.execution import PENDING_EXECUTION_STATES, execution_status
-from . import budget, contracts as c, execution, experiments as e, checkpoint
+from . import budget, contracts as c, execution, experiments as e, checkpoint, experiment_client
 
 POLL_SECONDS = 1.
 NAME = 'execution-wait.json'
@@ -54,13 +54,14 @@ def before_seal(root,job,record):
     outcome=c.read(c.regular(record/'native-outcome.json'))
     raw=record/'science-output.json'
     if outcome.get('output_status')=='missing' or not raw.is_file() or raw.is_symlink():return
-    if (type(outcome.get('returncode')) is not int or outcome.get('returncode')!=0 or outcome.get('stop_reason') or outcome.get('usage',{}).get('unknown_steps')!=[]
+    if (type(outcome.get('returncode')) is not int or outcome.get('returncode')!=0 or outcome.get('stop_reason')
+            or outcome.get('usage',{}).get('unknown_steps') and not budget.native_completion_known(outcome)
             or outcome.get('raw_sha256')!=c.digest(c.regular(record/'science-output.json'))):return
     if (record/NAME).exists():
         validate(root,job,record)
         raise ExecutionWaiting()
     root=Path(root)
-    records=e.Records(dict(record_dir=str(c.workspace(root,job['step'])/'work/lineage')))
+    records=e.Records(dict(record_dir=str(experiment_client.record_directory(root,job['step']))))
     calls=[]
     for directory in records.calls():
         accepted=c.read(c.regular(directory/'accepted.json'))
@@ -140,12 +141,30 @@ def wait_and_wake(root,step):
 
 
 def wake_packet(root,job,intent):
-    """Mount exact retained originals for the original W, with bounded navigation."""
+    """Present verified scientific results to the original W, with bounded navigation."""
     rows=[];work=c.workspace(root,job['step'])
     for number,proof in enumerate(intent['execution_wake']['observations'],1):
         observed=c.read(Path(proof['path']));directory=Path(proof['path']).parent
         completed=c.read(Path(observed['completed']['path']))
         prefix=f'work/execution-results/{number:03d}'
+        if type(job.get('worker_view_version')) is int and job['worker_view_version'] == 1:
+            if e.proof(proof['path']) != proof:
+                raise e.IntegrityError('Execution wake observation original changed')
+            accepted=c.read(c.regular(Path(observed['accepted']['path'])))
+            _,config=_config(root,job,accepted)
+            e.verify_observation(observed,lambda item:Path(item['path']),interface=config['execution_interface'])
+            result={key:completed[key] for key in ('status','native_state','returncode','wall_seconds',
+                'evaluation_key','metric','val_score','val_acc') if key in completed}
+            if isinstance(completed.get('result'),dict):result['result']=e._scientific_result(completed['result'])
+            c.write(work/prefix/'result.json',result)
+            outputs=[]
+            for item in e.scientific_outputs(config,observed):
+                target=prefix+'/outputs/'+item.name
+                c._copy_bound(Path(item.local_path),work/target,item.sha256)
+                outputs.append(dict(name=item.name,path=target))
+            rows.append(dict(status=observed['status'],result=prefix+'/result.json',outputs=outputs,
+                **(dict(native_state=observed['native_state']) if 'native_state' in observed else {})))
+            continue
         c._copy_bound(Path(observed['completed']['path']),work/prefix/'result.json',observed['completed']['sha256'])
         outputs=[]
         for item in observed['outputs']:

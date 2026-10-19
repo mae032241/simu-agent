@@ -132,7 +132,7 @@ def seal_or_repair(root, step):
             saved = checkpoint.validate(root, job, record)
             outcome = c.read(c.regular(record / 'native-outcome.json'))
             if (outcome.get('returncode') == 0 and not outcome.get('stop_reason')
-                    and not outcome['usage']['unknown_steps']):
+                    and (not outcome['usage']['unknown_steps'] or budget.native_completion_known(outcome))):
                 if saved['science']['status'] != 'present':
                     # c.seal_result provides the bound output diagnosis/repair.
                     return c.seal_result(root, step)
@@ -181,7 +181,8 @@ def output_request(root, step, record, *, source_attempt=None, verify_task=True)
     job = validate_task(root, step) if verify_task else c.read(c.regular(root / 'jobs' / f'{step:03d}.json'))
     outcome = c.read(c.regular(record / 'native-outcome.json'))
     if (type(outcome.get('returncode')) is not int or outcome['returncode'] != 0
-            or outcome.get('stop_reason') or outcome['usage']['unknown_steps']):
+            or outcome.get('stop_reason')
+            or outcome['usage']['unknown_steps'] and not budget.native_completion_known(outcome)):
         raise ValueError('Output repair requires a known completed original turn')
     raw = record / 'science-output.json'
     if outcome.get('output_status') == 'missing':
@@ -243,7 +244,7 @@ def validate_fragment_chain(root, step, chain):
         science = c.science_payload(prior / 'science-output.json', 'W', job.get('handoff_protocol', 1))
         if (saved['science']['status'] != 'present' or science.get('stage_intent') != 'continue'
                 or original.get('returncode') != 0 or original.get('stop_reason')
-                or original['usage']['unknown_steps']):
+                or original['usage']['unknown_steps'] and not budget.native_completion_known(original)):
             raise ValueError('Fragment continuation has no qualified original continuing turn')
         mode = intent.get('context_mode')
         if mode != checkpoint.policy(c.settings(root)['worker_fragment_policy'])['context']:
@@ -270,9 +271,11 @@ def _eligible_original(root, step, paths, *, successful=False, wait_runner=False
     if (type(outcome.get('returncode')) is not int or outcome['returncode'] == 0 and not successful
             or outcome.get('stop_reason') or outcome.get('cleanup') != 'observed_group_cleaned'):
         raise ResumeUnavailable('worker_resume_terminal_ineligible')
-    meter = c.read(c.regular(last / 'usage.json'))
-    if native._usage_event(dict(type='turn.completed', usage=meter)) != meter:
+    meter = c.read(c.regular(last / 'usage.json')) if (last/'usage.json').exists() else None
+    if meter is not None and native._usage_event(dict(type='turn.completed', usage=meter)) != meter:
         raise ResumeUnavailable('worker_resume_usage_unknown')
+    if meter is None and not budget.native_completion_known(outcome):
+        raise ResumeUnavailable('worker_resume_terminal_ineligible')
     binding = execution.identity(root, step, len(paths) - 1)
     for name in ('runner-process.json', 'native-process.json'):
         if c.digest(c.regular(last / name)) != outcome.get('execution_processes', {}).get(name):
@@ -288,7 +291,7 @@ def _eligible_original(root, step, paths, *, successful=False, wait_runner=False
                 time.sleep(.05)
         if runtime.process_matches(identity, binding):
             raise ResumeUnavailable('worker_resume_original_running')
-    if budgeted and (not isinstance(outcome.get('budget_slice'), dict) or not outcome['budget_slice'].get('usage_observed')):
+    if budgeted and not isinstance(outcome.get('budget_slice'), dict):
         raise ResumeUnavailable('worker_resume_usage_unknown')
 
 
@@ -311,7 +314,7 @@ def fragment_start(root, step):
     if correction.gate(root, step - 1) is not None:
         raise ResumeUnavailable('worker_resume_correction_paused')
     settings = c.settings(root)
-    for later in range(step + 1, settings['max_steps'] + 1):
+    for later in range(step + 1, budget.historical_step_limit(root) + 1):
         if (execution.origin(root, later) / 'native-intent.json').exists():
             raise ResumeUnavailable('worker_resume_successor_present')
     paths = execution.records(root, step)
@@ -395,7 +398,7 @@ def start(root, step):
     repairs = sum(c.read(path / 'native-intent.json').get('continuation_kind', 'repair') != 'fragment' for path in paths[1:])
     if repairs >= limits['max_attempts']:raise ResumeUnavailable('worker_resume_limit')
     settings = c.settings(root)
-    for later in range(step + 1, settings['max_steps'] + 1):
+    for later in range(step + 1, budget.historical_step_limit(root) + 1):
         if (execution.origin(root, later) / 'native-intent.json').exists():
             raise ResumeUnavailable('worker_resume_successor_present')
     original_intent = c.read(c.regular(paths[0] / 'native-intent.json'))
@@ -449,7 +452,7 @@ def wake_start(root,step,observations):
         raise ResumeUnavailable('worker_resume_paused_or_closeout')
     from . import correction
     if correction.gate(root,step-1) is not None:raise ResumeUnavailable('worker_resume_correction_paused')
-    if any((execution.origin(root,later)/'native-intent.json').exists() for later in range(step+1,c.settings(root)['max_steps']+1)):
+    if any((execution.origin(root,later)/'native-intent.json').exists() for later in range(step+1,budget.historical_step_limit(root)+1)):
         raise ResumeUnavailable('worker_resume_successor_present')
     attempts=sum(c.read(path/'native-intent.json').get('continuation_kind','repair')!='fragment' for path in paths[1:])
     if attempts>=limits['max_attempts']:raise ResumeUnavailable('worker_resume_limit')

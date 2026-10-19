@@ -6,7 +6,7 @@ from pathlib import Path, PurePosixPath
 import stat
 
 from scidiscovery import archive_io
-from . import contracts as c, execution
+from . import budget, contracts as c, execution
 
 
 class Original:
@@ -86,7 +86,7 @@ def _sealed(root, step):
     root = Path(root).resolve()
     try:
         settings = c.settings(root)
-        if type(step) is not int or not 1 <= step <= settings['max_steps']:
+        if type(step) is not int or not 1 <= step <= budget.historical_step_limit(root):
             raise ValueError('Exact sealed scientific node required')
         record = execution.origin(root, step)
         seal = _json(record/'result-identity.json')

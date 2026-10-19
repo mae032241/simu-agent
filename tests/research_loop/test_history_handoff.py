@@ -8,8 +8,7 @@ from scidiscovery.research_loop import contracts, controller, native
 
 
 @pytest.fixture
-def scene(tmp_path, monkeypatch):
-    monkeypatch.setattr(contracts, 'HANDOFF_PROTOCOL', 6)  # Legacy marker semantics are intentionally unchanged.
+def scene(tmp_path):
     public = tmp_path / 'public'
     public.mkdir()
     objective = public / 'objective.md'
@@ -77,11 +76,11 @@ def test_real_scientific_route_reuses_only_selected_file_without_ancestry(scene,
             assert not (work / Path(REUSED).parent / 'unused.txt').exists()
             assert [ref['path'] for ref in job['direct_refs']] == ['inputs/parents/004/conclusion.json']
             view = contracts.read(work / 'science-task.json')
-            assert view['reused_implementations'] == [dict(label='retained implementation', path=REUSED)]
+            assert view['reused_implementations'] == [dict(label='W002-I001', path=REUSED)]
             assert 'sha256' not in json.dumps(view) and 'origin_result' not in json.dumps(view)
         # build_job is idempotent for an identical request; use the actual route.
         parents = [int(Path(ref['path']).parts[2]) for ref in job['direct_refs']]
-        finish(root, step, role, parents, text, action, files)
+        finish(root, step, role, parents, text, action, files, selection=['W002-I001'] if step == 4 else [] if step == 5 else None)
     monkeypatch.setattr(native, 'execute_native', execute)
     result = controller.run(scene)
     assert result['status'] == 'finish' and result['completed_steps'] == 6, result
@@ -91,9 +90,9 @@ def test_real_scientific_route_reuses_only_selected_file_without_ancestry(scene,
     assert controller.run(scene)['status'] == 'finish'
 
 
-def test_every_hop_requires_new_scientific_intent_and_deduplicates(scene):
+def test_structured_selection_inherits_and_deduplicates_without_ancestry(scene):
     source(scene)
-    finish(scene, 3, 'A', [2], text=MARKED + ' ' + MARKED)
+    finish(scene, 3, 'A', [2], text=MARKED + ' ' + MARKED, selection=['W002-I001', 'W002-I001'])
     job, work, _ = finish(scene, 4, 'H', [3], text=MARKED)
     assert len(job['selected_inputs']) == 1 and (work / REUSED).is_file()
     successor = contracts.build_job(scene, 5, 'W', [4])
@@ -108,11 +107,14 @@ def test_every_hop_requires_new_scientific_intent_and_deduplicates(scene):
     'inputs/parents/002/artifacts/%2e%2e/candidate.py',
     '/etc/passwd', 'https://example.org/code.py', REUSED + '?latest=1',
 ])
-def test_marked_unbound_or_ambiguous_paths_cannot_seal(scene, target):
+def test_old_marker_paths_do_not_select_or_grant_input_authority(scene, target):
     source(scene)
-    with pytest.raises(ValueError, match='exact already bound input'):
-        finish(scene, 3, 'A', [2], text=f'[implementation]({target}#reuse-implementation)')
-    assert not (contracts.host_record(contracts.workspace(scene, 3)) / 'result-identity.json').exists()
+    _, work, record = finish(scene, 3, 'A', [2], text=f'[implementation]({target}#reuse-implementation)')
+    seal = contracts.read(record / 'result-identity.json')
+    assert not seal.get('selected_inputs') and not seal['entry_points']
+    assert contracts.validate(work)['scientific_result'] == f'[implementation]({target}#reuse-implementation)'
+    successor = contracts.build_job(scene, 4, 'H', [3])
+    assert not successor['direct_materials'] and not successor.get('selected_inputs')
 
 
 def test_ordinary_citation_does_not_forward_old_inputs(scene):
@@ -125,7 +127,7 @@ def test_ordinary_citation_does_not_forward_old_inputs(scene):
 @pytest.mark.parametrize('changed', ['original', 'read_copy', 'receipt'])
 def test_changed_bound_reuse_is_rejected(scene, changed):
     source(scene)
-    _, work, record = finish(scene, 3, 'A', [2], text=MARKED)
+    _, work, record = finish(scene, 3, 'A', [2], text=MARKED, selection=['W002-I001'])
     if changed == 'receipt':
         seal = contracts.read(record / 'result-identity.json')
         seal['selected_inputs'][0]['label'] = 'Changed hidden selection'
@@ -138,16 +140,17 @@ def test_changed_bound_reuse_is_rejected(scene, changed):
         contracts.build_job(scene, 4, 'H', [3])
 
 
-def test_selected_input_bound_counts_unique_files(scene):
+def test_structured_selection_counts_all_unique_files_beyond_one_page(scene):
     source(scene, {f'file{i}.py': 'x' for i in range(17)})
-    text = ' '.join(f'[code{i}](inputs/parents/002/artifacts/file{i}.py#reuse-implementation)' for i in range(17))
-    with pytest.raises(ValueError, match='handoff bound'):
-        finish(scene, 3, 'A', [2], text=text)
+    finish(scene, 3, 'A', [2], selection=[f'W002-I{index:03d}' for index in range(1, 18)])
+    job = contracts.build_job(scene, 4, 'H', [3])
+    assert len(job['selected_inputs']) == len(job['direct_materials']) == 17
+    assert sum(row['size_bytes'] for row in job['direct_materials']) == 17
 
 
 def test_selected_copy_cannot_follow_destination_directory_link(scene, tmp_path):
     source(scene)
-    finish(scene, 3, 'A', [2], text=MARKED)
+    finish(scene, 3, 'A', [2], text=MARKED, selection=['W002-I001'])
     work = contracts.workspace(scene, 4)
     work.mkdir()
     outside = tmp_path / 'outside'
@@ -170,31 +173,25 @@ def test_final_input_bound_includes_new_outputs_and_selected_old_files(scene):
 
 def test_final_input_bound_deduplicates_direct_and_reused_original(scene):
     source(scene, {'candidate.py': 'x' * 64})
-    finish(scene, 3, 'A', [2], text=MARKED)
+    finish(scene, 3, 'A', [2], text=MARKED, selection=['W002-I001'])
     job = contracts.build_job(scene, 4, 'H', [2, 3])
     assert len(job['direct_materials']) == 1
     assert job['direct_materials'][0]['size_bytes'] == 64
 
 
-def test_legacy_seal_and_prepared_job_keep_original_packets_on_resume(scene):
-    # Simulate a job written before this protocol without editing any sealed byte.
+def test_current_prepared_packets_are_idempotent_and_old_write_schema_is_rejected(scene):
+    from scidiscovery.research_loop.protocol import CURRENT, UnsupportedProtocol
     job = contracts.build_job(scene, 1, 'H', [])
-    job.pop('handoff_protocol')
-    job.pop('history', None)
-    contracts.write(scene / 'jobs/001.json', job)
-    contracts.write(contracts.workspace(scene, 1) / 'science-task.json', contracts.science_view(job))
-    contracts.write(contracts.host_record(contracts.workspace(scene, 1)) / 'science-result.schema.json', contracts.result_schema('H', 1))
     finish(scene, 1, 'H', [], action='experiment')
     original = {path: path.read_bytes() for path in (
         scene / 'jobs/001.json', contracts.workspace(scene, 1) / 'science-task.json',
         contracts.host_record(contracts.workspace(scene, 1)) / 'result-identity.json')}
-    contracts.validate(contracts.workspace(scene, 1))
+    assert job['handoff_protocol'] == CURRENT
+    with pytest.raises(UnsupportedProtocol):
+        contracts.result_schema('H', 1)
     assert contracts.build_job(scene, 1, 'H', []) == job
-    next_job = contracts.build_job(scene, 2, 'W', [1])
-    assert next_job['handoff_protocol'] == contracts.HANDOFF_PROTOCOL
-    assert 'implementation_reuse' in contracts.science_view(next_job)
-    assert 'implementation_reuse' not in contracts.science_view(job)
     assert all(path.read_bytes() == contents for path, contents in original.items())
+    contracts.validate(contracts.workspace(scene, 1))
 
 
 @pytest.mark.parametrize('origin', ['foreign', 'future'])
@@ -202,7 +199,8 @@ def test_selected_original_requires_same_instance_and_preceding_node(scene, orig
     source(scene)
     job = contracts.build_job(scene, 3, 'A', [2])
     row = next(row for row in job['direct_materials'] if row['path'] == REUSED)
+    job['selected_inputs'] = [dict(label='W002-I001', material=row)]
     row['source'] = (str(scene.parent / 'foreign/project/nodes/002/artifacts/candidate.py')
                      if origin == 'foreign' else str(contracts.workspace(scene, 4) / 'artifacts/candidate.py'))
     with pytest.raises(ValueError, match='original instance node|exact preceding node'):
-        contracts.selected_inputs(contracts.workspace(scene, 3), {'scientific_result': MARKED}, job)
+        contracts.selected_inputs(contracts.workspace(scene, 3), {'scientific_result': MARKED, 'implementation_selection': None}, job)

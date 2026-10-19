@@ -6,7 +6,7 @@ is compatibility information, never permission or scientific qualification.
 from pathlib import Path
 
 
-CURRENT = 18
+CURRENT = 23
 
 
 class UnsupportedProtocol(ValueError):
@@ -61,12 +61,28 @@ def require_current(root, job=None):
 
 
 def stage_scope(root,job):
-    """One host-derived scientific owner, shared by all native attempts and adapters."""
-    from . import contracts as c,execution
-    require_current(root,job)
+    """Read the stable identity of an exact retained current scientific job.
+
+    This is not effect permission: host writers still use require_current and
+    the owner lease. Restricted adapters can compare their host-frozen scope
+    without reading private settings or traversing the native attempt policy.
+    """
+    from . import contracts as c
+    if not isinstance(job,dict):raise UnsupportedProtocol('Scientific job')
+    _current(job.get('handoff_protocol'),'Scientific job')
+    if (type(job.get('step')) is not int or job['step']<=0
+            or job.get('role') not in {'H','W','A','E'}):
+        raise ValueError('An exact frozen scientific job is required')
+    root=Path(root).absolute();path=root/'jobs'/f'{job["step"]:03d}.json'
+    if root.resolve()!=root or path.resolve()!=path:
+        raise ValueError('Scientific job requires its canonical original path')
+    if c.read(c.regular(path))!=job:
+        raise ValueError('Scientific job differs from its frozen original')
+    digest=c.digest(path)
+    # Attempt zero's execution identity is the original job hash, including when
+    # later native attempts exist. Scope identity must not load their policies.
     return dict(step=job['step'],role=job['role'],handoff_protocol=job['handoff_protocol'],
-        job_sha256=c.digest(Path(root)/'jobs'/f'{job["step"]:03d}.json'),
-        execution_key=execution.identity(Path(root),job['step'],0),
+        job_sha256=digest,execution_key=digest,
         mechanism_ref=(None if (job.get('search') or {}).get('breadth') is not None
             else ((job.get('search') or {}).get('focus') or {}).get('mechanism_ref')))
 

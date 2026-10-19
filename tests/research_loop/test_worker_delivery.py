@@ -72,6 +72,25 @@ def test_missing_blank_and_duplicate_scientific_findings_need_same_worker(tmp_pa
     assert len(execution.records(root,2))==1
 
 
+@pytest.mark.parametrize('rows',['Scientific narrative instead of a table',{'finding':'Partial explanation'},
+    [dict(mechanism='P',basis='scientific uncertainty',finding='No classified claim')]])
+def test_unparseable_explicit_findings_retain_science_and_go_to_a_without_screening_or_rework(tmp_path,execution_registry,rows):
+    root,job,config=scene(tmp_path);run(root,config,'P');run(root,config,'Q')
+    record,payload=output(root,rows);original=(record/'science-output.json').read_bytes()
+    c.seal_result(root,2)
+    seal=c.read(record/'result-identity.json');receipt=seal['control_outcome']['worker_delivery']
+    assert receipt['status']=='partial' and receipt['reason']=='scientific_findings_unresolved'
+    assert dict(code='scientific_field_unresolved',subject='mechanism_findings') in seal['control_outcome']['diagnostics']
+    assert (record/'science-output.json').read_bytes()==original
+    assert c.validate(c.workspace(root,2))['mechanism_findings']==rows
+    route=controller._route(root,2,'W',c.validate(c.workspace(root,2)),job,1,None)
+    assert route[0]=='A' and 'scientific_findings_unresolved' in route[2]
+    from scidiscovery.research_loop import search
+    assert {row['status'] for row in search.project(root,3)['mechanisms'].values()}=={'pending'}
+    assert search._screen_refs(root,job,seal,search.project(root,3))==set()
+    assert len(execution.records(root,2))==1 and len(experiments_calls(config))==2
+
+
 @pytest.mark.parametrize('intent,rows,reason',[
     ('review',findings('P',blocked=('Q',)),'scientific_blocked'),
     ('decision',findings('P'),'worker_decision'),
@@ -106,10 +125,12 @@ def test_unknown_native_and_invalid_json_keep_original_unsealed(tmp_path,executi
     root,job,config=scene(tmp_path);run(root,config,'P')
     record,_=output(root,findings('P',blocked=('Q',)))
     outcome=c.read(record/'native-outcome.json');outcome['usage']['unknown_steps']=[2]
+    outcome['usage']['blocking_unknown_steps']=[2]
     c.write(record/'native-outcome.json',outcome)
     with pytest.raises(ValueError):c.seal_result(root,2)
     assert not (record/'result-identity.json').exists() and not (record/worker_delivery.FACT_NAME).exists()
     outcome['usage']['unknown_steps']=[]
+    outcome['usage']['blocking_unknown_steps']=[]
     (record/'science-output.json').write_text('not JSON')
     outcome['raw_sha256']=c.digest(record/'science-output.json');c.write(record/'native-outcome.json',outcome)
     with pytest.raises(OutputRepairRequired) as caught:c.seal_result(root,2)

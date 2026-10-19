@@ -168,7 +168,7 @@ print(json.dumps(dict(type='turn.completed',usage=dict(input_tokens=7,output_tok
     assert configs.count('model_reasoning_effort="medium"')==1
     assert configs.count('service_tier='+json.dumps(tier))==1
     assert ('--output-schema' in args)==(kind=='raw_codex')
-    assert ('mcp_servers.scidiscovery.enabled=false' in configs)==(kind=='raw_codex')
+    assert not any(config.startswith('mcp_servers.') for config in configs)
 
 
 def test_launcher_rejects_configuration_mismatch_before_writes(launcher,accepted):

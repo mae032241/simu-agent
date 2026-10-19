@@ -83,7 +83,7 @@ def instance(tmp_path, *, cap=100, attempts=2, max_tokens=1000, steps=6, search_
     launcher=tmp_path/'native.py';launcher.write_text(fake)
     root=tmp_path/'instance'
     controller.prepare(root,objective,public,[sys.executable,str(launcher)],max_tokens=max_tokens,
-        max_seconds=120,max_steps=steps,model='no-model',reasoning_effort='high', node_budget_mode='hard',search_policy=search_policy,delivery_policy=delivery_policy,
+        max_seconds=120,max_steps=steps,model='no-model',reasoning_effort='high', node_budget_mode='soft',search_policy=search_policy,delivery_policy=delivery_policy,
         node_budget_policy={role:dict(max_observed_tokens=cap,max_seconds=20) for role in 'HWAE'},
         resume_policy=dict(max_attempts=attempts,protocol='codex_exec_resume',usage_scope='turn',
                            **(dict(output_repair=True) if output_repair else {})) if with_policy else None)
@@ -194,7 +194,7 @@ def test_output_repair_does_not_replenish_insufficient_shared_budget(tmp_path,mo
         patch.setattr(continuation,'seal_or_repair',c.seal_result)
         with pytest.raises(OutputRepairRequired):native.execute_native(root,1)
     wait_runner(root)
-    budget.amend(root,max_tokens=20,authorization_note='Explicit fixture reduction after known first completion')
+    budget.amend(root,max_tokens=native.usage(root)['accounted_tokens'],authorization_note='Explicit fixture reduction to actual consumed usage')
     with pytest.raises(budget.NodeBudgetUnavailable):continuation.seal_or_repair(root,1)
     assert len(execution.records(root,1))==1 and native.usage(root)['observed_tokens']==14
     assert (c.workspace(root,1)/'work/launches').read_text()=='exec\n'
@@ -335,28 +335,42 @@ def test_missing_meter_is_unknown_not_billing_delay(tmp_path):
     assert native.usage(root)['unknown_steps']==[1]
 
 
-def test_shared_amendment_does_not_expand_original_node_cap(tmp_path):
+def test_shared_amendment_does_not_change_original_soft_target(tmp_path):
     root=instance(tmp_path,cap=30);first=fail(root)
     before={p:p.read_bytes() for p in first.iterdir() if p.is_file()}
     budget.amend(root,max_tokens=5000,max_seconds=500,authorization_note='Explicit shared ceiling only')
-    # Original 14 + continuation 22 exceeds the original 30-token node cap.
-    with pytest.raises(ValueError):controller.worker_resume(root,1)
+    # Original 14 + continuation 22 exceeds the original 30-token soft target.
+    assert controller.worker_resume(root,1)['status']=='wait'
     outcome=c.read(first/'continuations/001/native-outcome.json')
-    assert outcome['stop_reason']=='node_slice_token_limit'
+    assert outcome['stop_reason'] is None
     assert outcome['budget_slice']['observed_tokens']==36
     assert outcome['budget_slice']['limits']['max_observed_tokens']==30
     assert all(p.read_bytes()==raw for p,raw in before.items())
-    assert controller.worker_resume(root,1)['reason']=='worker_resume_terminal_ineligible'
-    assert not (first/'result-identity.json').exists()
+    assert (first/'result-identity.json').exists()
 
 
-def test_resume_budget_denial_restores_inactive_clock_and_keeps_attempt_unaccepted(tmp_path):
+def test_resume_budget_denial_restores_inactive_clock_and_keeps_attempt_unaccepted(tmp_path,monkeypatch):
     root=instance(tmp_path);first=fail(root)
-    budget.amend(root,max_tokens=99,authorization_note='Reduced explicit shared budget')
-    result=controller.worker_resume(root,1)
-    assert result['reason']=='worker_resume_budget_unavailable'
+    outcome=c.read(first/'native-outcome.json')
+    assert outcome['returncode']==7 and outcome['stop_reason'] is None
+    assert outcome['cleanup']=='observed_group_cleaned'
+    originals={p:p.read_bytes() for p in first.iterdir() if p.is_file()}
+    budget.amend(root,max_tokens=native.usage(root)['accounted_tokens'],authorization_note='Reduced explicit shared budget to actual consumed usage')
+    accept=budget.accept_continuation;refused=[]
+    def observed_accept(*args,**kwargs):
+        try:return accept(*args,**kwargs)
+        except budget.NodeBudgetUnavailable as error:
+            refused.append(error.reason)
+            raise
+    with monkeypatch.context() as patch:
+        patch.setattr(budget,'accept_continuation',observed_accept)
+        result=controller.worker_resume(root,1)
+    assert refused==['worker_resume_budget_unavailable']
+    # The public controller collects the retained nonzero original after refusal.
+    assert result['status']=='native_outcome_unsealed',result
     assert budget.snapshot(root)['clock_phase']=='paused'
     assert not (first/'continuations/001/native-intent.json').exists()
+    assert all(p.read_bytes()==raw for p,raw in originals.items())
     budget.amend(root,max_tokens=200,authorization_note='Explicit capacity restoration')
     assert controller.worker_resume(root,1)['status']=='wait'
     assert native.usage(root)['observed_tokens']==36
@@ -407,25 +421,45 @@ def test_real_w_continuation_seals_a_and_reuses_successful_science(tmp_path):
     assert budget.used_steps(root)==4 and native.usage(root)['observed_tokens']==68
 
 
-def test_continuation_consumes_execution_slot_and_blocks_fresh_successor(tmp_path):
+def test_continuation_cannot_exceed_consumed_shared_step_budget(tmp_path,monkeypatch):
     from test_history_handoff import finish
-    root=instance(tmp_path,steps=3)
+    root=instance(tmp_path,steps=2)
     finish(root,1,'H',[],action='experiment')
-    fail(root,2)
-    result=controller.worker_resume(root,2)
-    assert result['status']=='step_limit'
-    assert (execution.origin(root,2)/'result-identity.json').exists()
-    assert not (root/'jobs/003.json').exists()
-    assert budget.used_steps(root)==3
+    first=fail(root,2)
+    saved={p:p.read_bytes() for p in first.iterdir() if p.is_file()}
+    settings=(root/'settings.json').read_bytes()
+    job=(root/'jobs/002.json').read_bytes()
+    outcome=c.read(first/'native-outcome.json')
+    assert outcome['returncode']==7 and outcome['budget_slice']['dispatches']==1
+    assert outcome['budget_slice']['observed_tokens']==14
+    assert outcome['budget_slice']['limits']==dict(max_observed_tokens=100,max_seconds=20)
+    assert budget.protected_final_report(c.settings(root))
+    assert budget.delivery_reserve(c.settings(root))==dict(tokens=0,seconds=0.,steps=0)
+    accept=budget.accept_continuation;refused=[]
+    def observed_accept(*args,**kwargs):
+        try:return accept(*args,**kwargs)
+        except budget.NodeBudgetUnavailable as error:
+            refused.append(error.reason)
+            raise
+    monkeypatch.setattr(budget,'accept_continuation',observed_accept)
+    # H and the failed original W consumed both authorized slots.
+    # A continuation requires another slot and cannot be accepted here.
+    for attempt in range(2):
+        result=controller.worker_resume(root,2)
+        assert refused==['worker_resume_budget_unavailable']*(attempt+1)
+        assert result['status']=='native_outcome_unsealed',result
+        assert controller.run(root)['status']=='native_outcome_unsealed'
+        assert len(execution.records(root,2))==1 and not (first/'continuations/001').exists()
+        assert not (first/'result-identity.json').exists() and not (root/'jobs/003.json').exists()
+        assert (c.workspace(root,2)/'work/launches').read_text()=='exec\n'
+        assert (c.workspace(root,2)/'work/checkpoint').read_text()=='original checkpoint'
+        assert budget.used_steps(root)==2 and budget.effective_max_steps(root)==2
+        assert native.usage(root)['observed_tokens']==24 and budget.final_a_barrier(root) is None
+        assert budget.snapshot(root)['clock_phase']=='paused'
+        assert all(p.read_bytes()==raw for p,raw in saved.items())
+        assert (root/'settings.json').read_bytes()==settings and (root/'jobs/002.json').read_bytes()==job
 
 
-def test_delivery_reserve_is_not_spent_on_continuation(tmp_path):
-    policy=dict(closeout_a=dict(max_observed_tokens=10,max_seconds=1),inflight_tokens=0,cleanup_seconds=0,
-                submit_seconds=0,confirm_seconds=0,adapter=None)
-    root=instance(tmp_path,steps=4,delivery_policy=policy)
-    first=fail(root)
-    assert controller.worker_resume(root,1)['reason']=='worker_resume_budget_unavailable'
-    assert budget.used_steps(root)==1 and not (first/'continuations/001').exists()
 
 
 def test_two_explicit_continuations_never_auto_loop_or_refund_attempts(tmp_path):
@@ -544,7 +578,7 @@ def test_large_native_session_header_wrong_cwd_does_not_accept_resume(tmp_path):
     root=instance(tmp_path);first=fail(root);session_file=large_native_session_tree(root)
     value=json.loads(session_file.read_text());value['payload']['cwd']='/incorrect-workspace'
     session_file.write_text(json.dumps(value)+'\n')
-    with pytest.raises(ValueError,match='Native session workspace changed'):controller.worker_resume(root,1)
+    with pytest.raises(ValueError,match='^Native session identity or workspace changed$'):controller.worker_resume(root,1)
     assert not (first/'continuations/001/native-intent.json').exists()
     assert (c.workspace(root,1)/'work/launches').read_text()=='exec\n'
 

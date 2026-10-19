@@ -55,12 +55,10 @@ def candidates(root):
     return found
 
 
-def rank(pool,candidate,before=None):
-    rows=[row for row in pool.values() if before is None or row['step']<=before]
-    target=next((row for row in rows if row['id']==candidate),None)
-    if target is None:return dict(rank=None,of=len(rows),metric=None)
-    better=lambda row:row['metric']>target['metric'] if target['direction']=='max' else row['metric']<target['metric']
-    return dict(rank=1+sum(better(row) for row in rows),of=len(rows),metric=target['metric'])
+def candidate_fact(pool,candidate,before=None):
+    """The named candidate's observed facts, without comparing it to another."""
+    row=pool.get(candidate)
+    return dict(row) if row is not None and (before is None or row['step']<=before) else None
 
 
 def delivered(root):
@@ -135,38 +133,37 @@ def card(root):
         if job['role']=='A' and science.get('candidate_recommendation'):
             choice=science['candidate_recommendation']
             recommendations.append(dict(step=step,candidate=choice,closeout=job.get('purpose')=='closeout',
-                at_time=rank(pool,choice,before=step),final=rank(pool,choice)))
+                at_time=candidate_fact(pool,choice,before=step)))
     total=sum(row['tokens'] for row in roles.values()) or 1;authorized=settings.get('max_tokens') or 1
     for row in roles.values():
         row.update(share_of_observed=round(row['tokens']/total,3),share_of_authorized=round(row['tokens']/authorized,3),seconds=round(row['seconds'],1))
     thinking=sum(roles.get(key,{}).get('tokens',0) for key in ('H','A','A_closeout'))
     chosen,stop=delivered(root)
     submitted=[value['actual_submission']['candidate_id'] for _,value in sorted(observations.items()) if (value.get('actual_submission') or {}).get('candidate_id')]
-    best=sorted(pool.values(),key=lambda row:-row['metric'] if row['direction']=='max' else row['metric'])[:1]
     return dict(scope='public_read_only_behavior_card',instance=root.parent.name if root.name=='instance' else root.name,max_tokens=settings.get('max_tokens'),max_seconds=settings.get('max_seconds'),
         role_budget_policy=settings.get('role_budget_policy'),observed_tokens=total if roles else 0,
         roles=roles,thinking_share_of_observed=round(thinking/total,3),w_share_of_observed=round(roles.get('W',{}).get('tokens',0)/total,3),
         sequence=' '.join(f"{row['role'][0]}{row['step']:03d}" for row in nodes),
         w_stages=sum(row['role']=='W' for row in nodes),w_native_records=fragments,registered_experiments=registered,
-        completed_public_runs=len(pool),best_public=best[0] if best else None,soft_review_reasons=reviews,
+        completed_public_runs=len(pool),soft_review_reasons=reviews,
         a_recommendations=recommendations[:MAX_ROWS],a_recommendations_omitted=max(0,len(recommendations)-MAX_ROWS),
-        delivered=dict(candidate=chosen,closeout_reason=stop,rank=rank(pool,chosen) if chosen else None),
-        observed_submission_file=dict(candidate=submitted[-1],rank=rank(pool,submitted[-1]),scope='observed_file_not_delivery_confirmation') if submitted else None,
+        delivered=dict(candidate=chosen,closeout_reason=stop,facts=candidate_fact(pool,chosen)),
+        observed_submission_file=dict(candidate=submitted[-1],facts=candidate_fact(pool,submitted[-1]),scope='observed_file_not_delivery_confirmation') if submitted else None,
         default_policy_replay=replay([row for row in nodes if row['role']!='A_closeout'],jobs,settings,settings.get('role_budget_policy') or SHARE),
         nodes=nodes[:MAX_NODES],nodes_omitted=max(0,len(nodes)-MAX_NODES))
 
 
 def text(value):
     roles=', '.join(f"{key} {row['tokens']/1e6:.2f}M ({row['share_of_observed']:.0%})" for key,row in value['roles'].items())
-    recs='; '.join(f"{row['step']}:{row['candidate']} r{row['at_time']['rank']}/{row['at_time']['of']}" for row in value['a_recommendations'])
-    out=value['delivered'];rank_=out['rank'] or {}
+    recs='; '.join(f"{row['step']}:{row['candidate']} observed facts {row['at_time']}" for row in value['a_recommendations'])
+    out=value['delivered']
     return '\n'.join([f"{value['instance']}: {value['observed_tokens']/1e6:.2f}M observed of {value['max_tokens']/1e6:.1f}M; {roles}",
         f"sequence {value['sequence']}; W stages {value['w_stages']}, W native records {value['w_native_records']}, registered experiments {value['registered_experiments']}",
         f"soft reviews {value['soft_review_reasons']}; A recommendations {recs or 'none'}",
         f"frozen-share replay first refusal {(lambda row:row and (row['role']+str(row['step']).zfill(3)+' '+row['refused']))(value['default_policy_replay']['first_refusal']) or 'none'}; "
         f"H/A tokens from that node {value['default_policy_replay']['avoidable_after_first_refusal_tokens']/1e6:.2f}M",
-        f"delivered {out['candidate']} rank {rank_.get('rank')}/{rank_.get('of')} (closeout {out['closeout_reason']}); observed submission file "
-        +(f"{seen['candidate']} rank {seen['rank']['rank']}/{seen['rank']['of']}" if (seen:=value['observed_submission_file']) else 'none')])
+        f"delivered {out['candidate']} observed facts {out['facts']} (closeout {out['closeout_reason']}); observed submission file "
+        +(f"{seen['candidate']} observed facts {seen['facts']}" if (seen:=value['observed_submission_file']) else 'none')])
 
 
 def main():

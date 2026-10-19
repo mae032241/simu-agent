@@ -98,12 +98,10 @@ if role == 'A' and os.environ.get('SCID_GENERIC_DELIVERY') == '1':
         route_reason='Deliver exact retained reconstructions using the declared public stress MSE')
     comparison = task.get('closeout', {}).get('comparison')
     if comparison:
-        default = comparison['default']['candidate_id']
         payload['candidate_comparison'] = dict(rows=[dict(candidate_id=row['candidate_id'],
             key_risk='Public stress metric only; no hidden evaluation or scientific qualification.',
             decision='keep' if row['candidate_id'] == chosen else 'replace') for row in comparison['rows']],
-            override=None if chosen == default else dict(default_candidate=default, chosen_candidate=chosen,
-                reason='Use the explicitly declared stress metric', evidence_steps=[2]))
+            rationale='Use the explicitly declared stress metric', evidence_steps=[2])
 args = sys.argv[1:]
 Path(args[args.index('--output-last-message') + 1]).write_text(json.dumps(payload))
 print(json.dumps(dict(type='thread.started', thread_id='generic-inverse-fixture-' + role)), flush=True)

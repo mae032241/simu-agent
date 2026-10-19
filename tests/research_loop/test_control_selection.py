@@ -1,4 +1,4 @@
-"""Control closeout shortlist, adapter smoke and pre-registered default; zero models."""
+"""Explicit scientific candidate choice and side-effect-free catalogue; zero models."""
 import json
 from pathlib import Path
 import shutil
@@ -30,223 +30,6 @@ def rec(step, role, candidates=(), recommendation=None, audit=False):
                 candidates=list(candidates), current_candidate=None, actual_submission=None, **(dict(audit_request=True) if audit else {}))
 
 
-def members(value):
-    return [(row['candidate_id'], row['reasons']) for row in value['members']]
-
-
-def test_shortlist_ranks_one_exact_version_and_ties_prefer_later_observation():
-    records = [rec(1, 'H'), rec(2, 'W', [cand('run-1', .90), cand('run-2', .91), cand('run-3', .91), cand('run-4', .99, key='v0')]),
-               rec(3, 'A', recommendation='run-1')]
-    value = selection.shortlist(records, 2, evaluation_key='v1')
-    assert value['evaluation_key'] == 'v1' and value['ranked_count'] == 3 and value['latest_a_step'] == 3
-    # Equal public metric: the later observed run ranks first, never the earliest incumbent.
-    assert members(value) == [('run-3', ['top_k']), ('run-2', ['top_k']), ('run-1', ['a_recommended'])]
-    assert [row['rank'] for row in value['members']] == [1, 2, 3] and value['boundary_ties_omitted'] == 0
-    assert selection.shortlist(records, 1, evaluation_key='v1')['boundary_ties_omitted'] == 1
-
-
-def test_multiple_versions_have_no_ranked_default_even_when_one_has_more_candidates():
-    records = [rec(2, 'W', [cand('majority-1', .9), cand('majority-2', .8), cand('other', .99, key='v0')])]
-    value = selection.shortlist(records, 3)
-    assert value['evaluation_key'] is None and value['direction'] is None and value['ranked_count'] == 0
-    assert members(value) == [('other', ['evaluation_group_best']), ('majority-1', ['evaluation_group_best'])]
-    assert all(row['rank'] is None for row in value['members'])
-    assert selection.default_choice(value['members'], screened((row['candidate_id'], 'ok', 'passed') for row in value['members']))['candidate_id'] is None
-    # Exact selection of the minority version is authoritative; prefixes never match.
-    chosen = selection.shortlist(records, 3, evaluation_key='v0')
-    assert members(chosen) == [('other', ['top_k', 'unassessed_best'])] and chosen['ranked_count'] == 1
-    assert selection.shortlist(records, 3, evaluation_key='v')['members'] == []
-
-
-def test_ambiguous_group_members_are_bounded_and_report_omissions():
-    value = selection.shortlist([rec(2, 'W', [cand(f'run-{i}', i, key=f'v{i}') for i in range(12)]),
-                                 rec(3, 'A', recommendation='run-9')], 2)
-    assert len(value['members']) == 3 and value['evaluation_groups_omitted_count'] == 9
-    assert value['members'][-1]['candidate_id'] == 'run-9' and value['ranked_count'] == 0
-
-
-@pytest.mark.parametrize('evaluation_key', [None, 'v1'])
-@pytest.mark.parametrize('status', ['ok', 'failed'])
-def test_conflicting_directions_never_produce_a_default(evaluation_key, status):
-    records = [rec(2, 'W', [cand('max', .9), dict(cand('min', .8, status=status), direction='min')])]
-    value = selection.shortlist(records, 3, evaluation_key=evaluation_key)
-    assert value['ranked_count'] == 0 and value['direction'] is None
-    assert all(row['rank'] is None for row in value['members'])
-
-
-@pytest.mark.parametrize('key', ['', 1, 'x' * 2049])
-def test_selection_policy_and_projection_reject_invalid_evaluation_keys(key):
-    with pytest.raises(ValueError, match='exact public version'):
-        selection.shortlist([], 3, evaluation_key=key)
-    with pytest.raises(ValueError, match='exact public version'):
-        shortlist.policy(dict(shortlist.DEFAULT, evaluation_key=key))
-
-
-def test_candidates_after_the_last_a_assessment_enter_the_shortlist():
-    # rootless-u4-cov-20261014: A006 assessed through run-13; W007 then produced run-14..26.
-    early = [cand(f'run-{i}', .90 + i / 1000) for i in range(1, 6)]
-    records = [rec(2, 'W', early), rec(3, 'A', recommendation='run-2'), rec(4, 'W', [cand('run-6', .5), cand('run-7', .6)])]
-    value = selection.shortlist(records, 2)
-    assert members(value) == [('run-5', ['top_k']), ('run-4', ['top_k']), ('run-2', ['a_recommended']), ('run-7', ['unassessed_best'])]
-    assert value['unassessed_count'] == 2
-    # An audit request is an assessment boundary but not a recommendation.
-    value = selection.shortlist([*records, rec(5, 'A', audit=True)], 2)
-    assert value['a_recommended'] == 'run-2' and value['latest_a_step'] == 5 and value['unassessed_count'] == 0
-
-
-def test_non_public_or_changed_candidate_facts_are_rejected():
-    hidden = dict(cand('run-1', .9), hidden_score=1.0)
-    with pytest.raises(ValueError):
-        selection.shortlist([rec(2, 'W', [hidden])], 3)
-    with pytest.raises(ValueError):
-        selection.shortlist([rec(2, 'W', [cand('run-1', .9)]), rec(3, 'W', [cand('run-1', .8)])], 3)
-
-
-def screened(rows):
-    return {cid: dict(smoke=smoke, audit=audit) for cid, smoke, audit in rows}
-
-
-def test_default_excludes_failed_or_unknown_smoke_and_prefers_passed_audit():
-    value = selection.shortlist([rec(2, 'W', [cand('run-16', .9112), cand('run-40', .9102), cand('run-34', .90), cand('old', .99, key='v0')]),
-                                 rec(3, 'A', recommendation='old')], 3, evaluation_key='v1')
-    rows = value['members']
-    pick = lambda *statuses: selection.default_choice(rows, screened(statuses))
-    # rootless-task-unit-cov-20261014: public best run-16 cannot predict; it is never the default.
-    assert pick(('run-16', 'failed', 'not_run'), ('run-40', 'ok', 'passed'), ('run-34', 'ok', 'not_run'), ('old', 'ok', 'passed'))['candidate_id'] == 'run-40'
-    assert pick(('run-16', 'unknown', 'not_run'), ('run-40', 'unavailable', 'not_run'), ('run-34', 'ok', 'passed'), ('old', 'ok', 'passed')) == dict(
-        candidate_id='run-34', basis='audit_passed', rule=selection.DEFAULT_RULE)
-    assert pick(('run-16', 'ok', 'not_run'), ('run-40', 'ok', 'passed'), ('run-34', 'ok', 'not_run'), ('old', 'ok', 'passed'))['candidate_id'] == 'run-40'
-    fallback = pick(('run-16', 'ok', 'failed'), ('run-40', 'ok', 'not_run'), ('run-34', 'ok', 'unknown'), ('old', 'ok', 'passed'))
-    assert fallback['candidate_id'] == 'run-40' and fallback['basis'] == 'submit_audit_pending'
-    assert pick(('run-16', 'ok', 'unconfigured'), ('run-40', 'ok', 'unconfigured'), ('run-34', 'ok', 'unconfigured'), ('old', 'ok', 'unconfigured'))['basis'] == 'audit_unconfigured'
-    assert pick(('run-16', 'unavailable', 'not_run'), ('run-40', 'unavailable', 'not_run'), ('run-34', 'failed', 'not_run'), ('old', 'ok', 'passed')) == dict(
-        candidate_id=None, basis='none_qualified', rule=selection.DEFAULT_RULE)
-
-
-@pytest.mark.parametrize('smoke,audit,eligible', [
-    ('not_provided', 'passed', True), ('not_provided', 'not_run', True),
-    ('unavailable', 'passed', False), ('failed', 'passed', False), ('unknown', 'passed', False),
-    ('not_provided', 'engineering_failed', False), ('ok', 'engineering_failed', False),
-    ('not_provided', 'failed', False), ('ok', 'unknown', False),
-])
-def test_optional_smoke_never_disguises_an_unqualified_candidate(smoke, audit, eligible):
-    rows = selection.shortlist([rec(2, 'W', [cand('run-1', .9)])], 1)['members']
-    chosen = selection.default_choice(rows, screened([('run-1', smoke, audit)]))
-    assert chosen['candidate_id'] == ('run-1' if eligible else None)
-
-
-def _screen_files(root, default='run-2', ids=('run-1', 'run-2', 'run-3')):
-    directory = root / 'host-delivery/selection';directory.mkdir(parents=True)
-    c.write(directory / 'shortlist.json', dict(members=list(ids)))
-    c.write(directory / 'screen.json', dict(shortlist_sha256=c.digest(directory / 'shortlist.json'), receipts={},
-        rows=[dict(candidate_id=cid) for cid in ids], default=dict(candidate_id=default, basis='audit_passed')))
-    return dict(selection=shortlist.marker(root), history=dict(nodes=[dict(step=1), dict(step=2), dict(step=3)]))
-
-
-def table(keep, override=None, ids=('run-1', 'run-2', 'run-3'), risk='Public validation only'):
-    return dict(rows=[dict(candidate_id=cid, key_risk=risk, decision='keep' if cid == keep else 'replace') for cid in ids], override=override)
-
-
-@pytest.mark.parametrize('recommendation,comparison,expected', [
-    (None, table('run-2'), 'run-2'), ('run-2', table('run-2'), 'run-2'),
-    ('run-3', table('run-3', dict(default_candidate='run-2', chosen_candidate='run-3', reason='Smoke-ok and audited in W002', evidence_steps=[2])), 'run-3'),
-    ('run-9', table(None, dict(default_candidate='run-2', chosen_candidate='run-9', reason='Outside shortlist after audit', evidence_steps=[3])), 'run-9'),
-    (None, None, 'selection_comparison_missing'),
-    (None, table('run-2', ids=('run-2', 'run-1', 'run-3')), 'selection_comparison_asymmetric'),
-    (None, table('run-2', ids=('run-1', 'run-2')), 'selection_comparison_asymmetric'),
-    (None, table('run-2', risk=' '), 'selection_comparison_asymmetric'),
-    ('run-3', table('run-2'), 'selection_keep_mismatch'),
-    (None, table('run-2', dict(default_candidate='run-2', chosen_candidate='run-2', reason='x', evidence_steps=[2])), 'selection_override_unneeded'),
-    ('run-3', table('run-3'), 'selection_override_unbound'),
-    ('run-3', table('run-3', dict(default_candidate='run-1', chosen_candidate='run-3', reason='Wrong default', evidence_steps=[2])), 'selection_override_unbound'),
-    ('run-3', table('run-3', dict(default_candidate='run-2', chosen_candidate='run-3', reason='Unbound', evidence_steps=[9])), 'selection_override_unbound'),
-    ('run-3', table('run-3', dict(default_candidate='run-2', chosen_candidate='run-3', reason='  ', evidence_steps=[2])), 'selection_override_unbound'),
-])
-def test_comparison_table_is_symmetric_and_override_names_default_alternative_and_evidence(tmp_path, recommendation, comparison, expected):
-    root = tmp_path.resolve();job = _screen_files(root)
-    payload = dict(candidate_recommendation=recommendation, candidate_comparison=comparison)
-    if expected.startswith('selection_'):
-        with pytest.raises(delivery.DeliveryUnresolved, match=expected):shortlist.choice(root, job, payload)
-    else:
-        assert shortlist.choice(root, job, payload) == expected
-
-
-def test_no_default_requires_a_named_choice_and_tampered_screen_is_rejected(tmp_path):
-    root = tmp_path.resolve();job = _screen_files(root, default=None)
-    with pytest.raises(delivery.DeliveryUnresolved, match='delivery_no_decision'):
-        shortlist.choice(root, job, dict(candidate_recommendation=None, candidate_comparison=table(None)))
-    override = dict(default_candidate=None, chosen_candidate='run-1', reason='No qualified default; W002 evidence', evidence_steps=[2])
-    assert shortlist.choice(root, job, dict(candidate_recommendation='run-1', candidate_comparison=table('run-1', override))) == 'run-1'
-    path = root / 'host-delivery/selection/screen.json';path.write_text(path.read_text().replace('run-3', 'run-4'))
-    with pytest.raises(ValueError, match='screen changed'):
-        shortlist.choice(root, job, dict(candidate_recommendation=None, candidate_comparison=table(None)))
-
-
-def test_schema_adds_one_nullable_table_only_for_bound_closeout():
-    plain, bound = c.result_schema('A'), c.result_schema('A', comparison=True)
-    assert set(bound['properties']) - set(plain['properties']) == {'candidate_comparison'}
-    assert bound['required'] == list(bound['properties']) and 'candidate_comparison' not in c.result_schema('W', comparison=True)['properties']
-    row = bound['properties']['candidate_comparison']['properties']['rows']['items']
-    assert set(row['properties']) == {'candidate_id', 'key_risk', 'decision'} and row['properties']['decision']['enum'] == ['keep', 'replace']
-
-
-def _adapter(tmp_path):
-    adapter = tmp_path / 'adapter.py';adapter.write_text('raise AssertionError("Unexpected external action")\n')
-    return dict(adapter=str(adapter), launcher_argv=[sys.executable, str(adapter)], config={}, target={}, inputs=[], source_roots=[str(tmp_path)])
-
-
-@pytest.mark.parametrize('observer,audit,policy,expected', [
-    (True, True, shortlist.DEFAULT, None), (True, False, shortlist.DEFAULT, None), (False, True, shortlist.DEFAULT, None),
-    (True, True, None, None), (True, False, dict(shortlist.DEFAULT, shortlist_k=5), dict(shortlist.DEFAULT, shortlist_k=5)),
-    (True, True, dict(shortlist.DEFAULT, evaluation_key='v1'), dict(shortlist.DEFAULT, evaluation_key='v1')),
-    (False, True, dict(shortlist.DEFAULT), ValueError), (True, True, dict(shortlist.DEFAULT, shortlist_k=0), ValueError),
-    (True, True, dict(shortlist.DEFAULT, extra=1), ValueError), (True, True, dict(shortlist.DEFAULT, version=2), ValueError),
-])
-def test_prepare_selection_requires_explicit_policy_and_observer_adapter(tmp_path, observer, audit, policy, expected):
-    public = tmp_path / 'public';public.mkdir();objective = public / 'objective.md';objective.write_text('Bounded objective')
-    kwargs = dict(max_tokens=100_000, max_seconds=600, max_steps=12, model='no-model', reasoning_effort='high', search_policy=None,
-                  node_budget_policy={role: dict(max_observed_tokens=2000, max_seconds=60) for role in 'HWAE'},
-                  delivery_policy=delivery_policy(_adapter(tmp_path)), candidate_audit_policy={'version': 1} if audit else None,
-                  history_observer=dict(adapter=str(OBSERVER), config=dict(runs='runs', evaluation_key='v1')) if observer else None)
-    if policy is not shortlist.DEFAULT:
-        kwargs['selection_policy'] = policy
-    if expected is ValueError:
-        with pytest.raises(ValueError):controller.prepare(tmp_path / 'instance', objective, public, ['never'], **kwargs)
-        return
-    settings = controller.prepare(tmp_path / 'instance', objective, public, ['never'], **kwargs)
-    assert settings.get('selection_policy') == expected and settings['handoff_protocol'] == CURRENT
-
-
-def test_cli_prepare_selection_policy_override_and_null(tmp_path):
-    from scidiscovery.research_loop import cli
-    public = tmp_path / 'public';public.mkdir();objective = public / 'objective.md';objective.write_text('Bounded objective')
-    files = dict(node={role: dict(max_observed_tokens=2000, max_seconds=60) for role in 'HWAE'}, delivery=delivery_policy(_adapter(tmp_path)),
-                 observer=dict(adapter=str(OBSERVER), config=dict(runs='runs', evaluation_key='v1')), custom=dict(shortlist.DEFAULT, shortlist_k=2))
-    for name, value in files.items():c.write(tmp_path / (name + '.json'), value)
-    (tmp_path / 'off.json').write_text('null\n')
-    for name, extra, expected in (('d', [], None), ('c', ['--selection-policy', str(tmp_path / 'custom.json')], files['custom']),
-                                  ('o', ['--selection-policy', str(tmp_path / 'off.json')], None)):
-        assert cli.main(['prepare', '--root', str(tmp_path / name), '--objective', str(objective), '--public-root', str(public),
-            '--native-launcher-json', '["never"]', '--node-budget-policy', str(tmp_path / 'node.json'), '--enable-candidate-audit',
-            '--delivery-policy', str(tmp_path / 'delivery.json'), '--history-observer-config', str(tmp_path / 'observer.json'),
-            '--max-tokens', '1000000', '--max-seconds', '600', '--max-steps', '12', *extra]) == 0
-        assert c.settings(tmp_path / name).get('selection_policy') == expected
-
-
-@pytest.mark.parametrize('mode', ['hard', 'soft'])
-@pytest.mark.parametrize('seconds,tokens,expected', [(110, 2010, False), (111, 2010, True), (111, 2009, False)])
-def test_smoke_preserves_author_time_tokens_and_execution_floor(tmp_path, monkeypatch, mode, seconds, tokens, expected):
-    settings = dict(node_budget_mode=mode, max_steps=10, delivery_policy=dict(adapter={},
-        closeout_a=dict(max_seconds=60, max_observed_tokens=2000), inflight_tokens=10,
-        cleanup_seconds=10, submit_seconds=10, confirm_seconds=10))
-    monkeypatch.setattr(c, 'settings', lambda root: settings)
-    monkeypatch.setattr(budget, 'execution_blocked', lambda root: False)
-    monkeypatch.setattr(budget, 'used_steps', lambda root: 0)
-    monkeypatch.setattr(budget, 'snapshot', lambda root: dict(seconds_remaining=seconds, max_tokens=tokens + 100))
-    monkeypatch.setattr(native, 'usage', lambda root: dict(unknown_steps=[], observed_tokens=100))
-    assert shortlist._affordable(tmp_path, dict(first_step=1, preparation_seconds=0), 20) is expected
-
-
 def science_python():
     if shutil.which('bwrap') is None:pytest.skip('Actual isolated adapter namespace required')
     for python in (sys.executable, c.read(LAUNCHER)['task_python'] if LAUNCHER.is_file() else None):
@@ -255,7 +38,7 @@ def science_python():
     pytest.skip('Smoke needs an interpreter with numpy/pandas (the frozen task Python)')
 
 
-def scene(tmp_path, *, policy=shortlist.DEFAULT, metrics=(.9, .8, .7), launcher=None, author_action='finish', harness=None):
+def scene(tmp_path, *, policy={'version':2}, metrics=(.9, .8, .7), launcher=None, author_action='finish', harness=None):
     python = science_python()
     public, root = tmp_path / 'public', (tmp_path / 'instance').absolute()
     (public / 'harness').mkdir(parents=True)
@@ -286,7 +69,7 @@ def scene(tmp_path, *, policy=shortlist.DEFAULT, metrics=(.9, .8, .7), launcher=
     return root
 
 
-def closeout_author(monkeypatch, *attempts):
+def closeout_author(monkeypatch, *attempts, authorize_final=True,cleanup='observed_group_cleaned'):
     calls = []
     def complete(root, step):
         task = c.read(c.workspace(root, step) / 'science-task.json')
@@ -297,287 +80,169 @@ def closeout_author(monkeypatch, *attempts):
         payload.update(attempts[len(calls)](task))
         calls.append((step, task))
         record = c.host_record(c.workspace(root, step))
-        c.write(record / 'native-intent.json', dict(task_sha256=c.digest(root / 'jobs' / f'{step:03d}.json')))
+        job=c.read(root/'jobs'/f'{step:03d}.json')
+        intent=dict(step=step,task_sha256=c.digest(root/'jobs'/f'{step:03d}.json'))
+        if job.get('final_only') and authorize_final:intent['budget_slice']=budget.accept_node(root,job)
+        c.write(record/'native-intent.json',intent)
         c.write(record / 'science-output.json', payload)
-        c.write(record / 'usage.json', dict(input_tokens=7, cached_input_tokens=2, output_tokens=3))
-        c.write(record / 'native-outcome.json', dict(returncode=0, stop_reason=None, usage=native.usage(root), raw_sha256=c.digest(record / 'science-output.json')))
+        meter=dict(input_tokens=7,cached_input_tokens=2,output_tokens=3)
+        c.write(record/'usage.json',meter)
+        observation=dict(coverage='terminal',source='turn.completed',tokens=meter)
+        c.write(record/'usage-observation.json',observation)
+        usage=native.usage(root)
+        outcome=dict(returncode=0,stop_reason=None,cleanup=cleanup,usage=usage,raw_sha256=c.digest(record/'science-output.json'))
+        accepted=budget.final_a_return(root,job,intent)
+        if accepted is not None:
+            outcome.update(metering=observation,final_a_completion=budget.final_a_receipt(accepted,intent,meter,usage))
+        c.write(record/'native-outcome.json',outcome)
         c.seal_result(root, step)
     monkeypatch.setattr(native, 'execute_native', complete)
     return calls
 
 
-def keep_default(task):
-    rows = task['closeout']['comparison']['rows'];default = task['closeout']['comparison']['default']['candidate_id']
-    return dict(candidate_recommendation=None, candidate_comparison=dict(override=None, rows=[dict(candidate_id=row['candidate_id'],
-        key_risk='Public proxy only', decision='keep' if row['candidate_id'] == default else 'replace') for row in rows]))
+def table(keep, *, ids=('run-1', 'run-2', 'run-3'), rationale='W002 retained implementation fits the declared scope.', evidence_steps=(2,)):
+    return dict(rows=[dict(candidate_id=cid, key_risk='Public evidence only', decision='keep' if cid == keep else 'replace') for cid in ids],
+                rationale=rationale, evidence_steps=list(evidence_steps))
 
 
-def leaf_phases(root):
-    return sorted(path.name.split('-')[1] for path in (root / 'host-delivery/leaf-output').glob('*.json'))
+def choose(candidate, compared=None):
+    def author(task):
+        ids=(candidate,) if compared is None else compared
+        return dict(candidate_recommendation=candidate, candidate_comparison=table(candidate, ids=ids))
+    return author
 
 
-def test_closeout_smoke_excludes_unloadable_public_best_and_null_delivers_default(tmp_path, monkeypatch):
-    root = scene(tmp_path)
-    calls = closeout_author(monkeypatch, keep_default)
-    result = controller.closeout(root)
-    assert result['status'] == 'delivery_confirmed', result
-    screen = c.read(root / 'host-delivery/selection/screen.json')
-    assert [(row['candidate_id'], row['reasons'], row['smoke']['status'], row['audit']['status']) for row in screen['rows']] == [
-        ('run-1', ['top_k'], 'failed', 'not_run'), ('run-2', ['top_k'], 'ok', 'passed'), ('run-3', ['top_k', 'a_recommended'], 'ok', 'not_run')]
-    assert screen['rows'][0]['smoke']['note'] == 'smoke_artifact_load_failed' and screen['rows'][2]['audit']['note'] == 'below_audited_default'
-    assert screen['default'] == dict(candidate_id='run-2', basis='audit_passed', rule=selection.DEFAULT_RULE)
-    assert result['last_confirmed']['candidate_id'] == 'run-2' and result['control_selection']['default'] == 'run-2'
-    assert (root / 'submission/model.pkl').read_bytes() == (root / 'runs/model-2.pkl').read_bytes()
-    (step, task), = calls
-    view = task['closeout']['comparison']
-    assert [row['candidate_id'] for row in view['rows']] == ['run-1', 'run-2', 'run-3'] and view['default']['candidate_id'] == 'run-2'
-    assert set(view['rows'][0]) == {'candidate_id', 'public_metric', 'evaluation_version', 'comparable', 'rank', 'reasons', 'smoke', 'audit', 'audit_fault', 'default'}
-    assert 'candidate_comparison' in task['final_response'] and 'host-delivery' not in json.dumps(task) and 'hidden' not in json.dumps(view)
-    assert c.read(root / 'jobs' / f'{step:03d}.json')['selection'] == shortlist.marker(root)
-    assert 'candidate_comparison' in c.read(c.host_record(c.workspace(root, step)) / 'science-result.schema.json')['properties']
-    # Each control call is intent-before-outcome with host-only leaf output; counted as a bounded step.
-    for name in ('smoke-00', 'smoke-01', 'smoke-02', 'audit-01'):
-        outcome = c.read(root / 'host-delivery/selection' / (name + '.outcome.json'))
-        assert outcome['cleanup_confirmed'] and outcome['leaf_output']
-    assert shortlist.calls(root) == 4 and leaf_phases(root).count('smoke') == 3
-    used = budget.used_steps(root)
-    assert controller.closeout(root)['status'] == 'delivery_confirmed' and len(calls) == 1 and budget.used_steps(root) == used
+def test_candidate_catalogue_preserves_every_identity_and_metric_changes_cannot_reorder():
+    rows=[cand('tie-a', .9), cand('tie-b', .9), cand('unscored', None), cand('other-version', 900, key='v2'),
+          cand('failed', None, status='failed'), cand('unknown', None, status='unknown')]
+    records=[rec(2,'W',rows),rec(3,'A',recommendation='tie-b')]
+    original=selection.shortlist(records)
+    assert [row['candidate_id'] for row in original['members']]==[row['id'] for row in rows]
+    changed=[dict(row,metric=-1000 if row['metric'] is not None else None) for row in rows]
+    again=selection.shortlist([rec(2,'W',changed),rec(3,'A',recommendation='tie-b')])
+    assert [row['candidate_id'] for row in again['members']]==[row['id'] for row in rows]
+    assert all(not ({'rank','reasons','default'} & set(row)) for row in original['members'])
 
 
-def test_override_needs_symmetric_table_and_bound_reason_through_correction(tmp_path, monkeypatch):
-    root = scene(tmp_path)
-    rows = lambda keep, ids=('run-1', 'run-2', 'run-3'): [dict(candidate_id=cid, key_risk='Proxy only', decision='keep' if cid == keep else 'replace') for cid in ids]
-    asymmetric = lambda task: dict(candidate_recommendation='run-3', candidate_comparison=dict(rows=rows('run-3', ('run-3',)), override=None))
-    bound = lambda task: dict(candidate_recommendation='run-3', candidate_comparison=dict(rows=rows('run-3'),
-        override=dict(default_candidate='run-2', chosen_candidate='run-3', reason='W002 run-3 is the simpler retained design', evidence_steps=[2])))
-    calls = closeout_author(monkeypatch, asymmetric, bound)
-    result = controller.closeout(root)
-    assert result['status'] == 'delivery_confirmed' and result['last_confirmed']['candidate_id'] == 'run-3', result
-    assert [step for step, _ in calls] == [4, 5]
-    assert 'selection_comparison_asymmetric' in calls[1][1]['question']
-    assert c.read(root / 'jobs/005.json')['selection'] == c.read(root / 'jobs/004.json')['selection']
+@pytest.mark.parametrize('extra',[dict(shortlist_k=1),dict(evaluation_key='v1'),dict(smoke_seconds=20),dict(version=1)])
+def test_retired_selection_policy_fields_fail_closed(extra):
+    with pytest.raises(ValueError):shortlist.policy(dict(version=2,**{k:v for k,v in extra.items() if k!='version'}) if 'version' not in extra else extra)
+    assert shortlist.policy(dict(version=2))==dict(version=2)
 
 
-def without_smoke(monkeypatch):
-    original = delivery.freeze_sources
-    def undeclared(*args, **kwargs):
-        refs = original(*args, **kwargs);refs.pop('capabilities', None);return refs
-    monkeypatch.setattr(delivery, 'freeze_sources', undeclared)
+def test_non_public_or_changed_candidate_facts_are_rejected():
+    with pytest.raises(ValueError):selection.shortlist([rec(2,'W',[dict(cand('P',1),hidden_score=1)])])
+    with pytest.raises(ValueError):selection.shortlist([rec(2,'W',[cand('P',1)]),rec(3,'W',[cand('P',2)])])
 
 
-@pytest.mark.parametrize('missing_original', [False, True])
-def test_plugin_without_smoke_is_neutral_and_missing_original_still_excluded(tmp_path, monkeypatch, missing_original):
-    root = scene(tmp_path)
-    if missing_original:(root / 'runs/model-1.pkl').unlink()
-    without_smoke(monkeypatch)
-    calls = closeout_author(monkeypatch, keep_default)
-    result = controller.closeout(root)
-    screen = c.read(root / 'host-delivery/selection/screen.json')
-    assert screen['smoke_capability'] is False
-    assert {row['smoke']['status'] for row in screen['rows'][1:]} == {'not_provided'}
-    assert screen['rows'][0]['smoke'] == (dict(status='unavailable', note='candidate_original_unavailable') if missing_original
-        else dict(status='not_provided', note='plugin_smoke_not_provided'))
-    chosen = 'run-2' if missing_original else 'run-1'
-    assert screen['default']['candidate_id'] == chosen and screen['default']['basis'] == 'audit_passed'
-    assert next(row for row in screen['rows'] if row['candidate_id'] == chosen)['audit']['status'] == 'passed'
-    assert result['status'] == 'delivery_confirmed' and result['last_confirmed']['candidate_id'] == chosen
-    assert len(calls) == 1 and calls[0][1]['role'] == 'A'
-    assert shortlist.calls(root) == 1 and 'smoke' not in leaf_phases(root)
-    from scidiscovery.research_loop.cli import status
-    assert controller.run(root)['status'] == status(root)['closeout']['status'] == result['status']
+def test_schema_requires_authored_choice_without_default_or_override():
+    plain,bound=c.result_schema('A'),c.result_schema('A',comparison=True)
+    assert set(bound['properties'])-set(plain['properties'])=={'candidate_comparison'}
+    comparison=bound['properties']['candidate_comparison']
+    assert set(comparison['properties'])=={'rows','rationale','evidence_steps'}
+    assert bound['required']==list(bound['properties'])
+    assert 'candidate_comparison' not in c.result_schema('W',comparison=True)['properties']
+    assert 'default_candidate' not in json.dumps(bound) and 'override' not in json.dumps(bound)
 
 
-
-def test_uncertain_smoke_is_never_repeated_and_blocks_execution(tmp_path, monkeypatch):
-    root = scene(tmp_path)
-    def lost(*args, **kwargs):raise RuntimeError('Lost leaf process identity')
-    monkeypatch.setattr(delivery, 'leaf_phase', lost)
-    with pytest.raises(RuntimeError):controller.closeout(root)
-    assert shortlist.blocked(root) and budget.execution_blocked(root)
-    monkeypatch.setattr(delivery, 'leaf_phase', lambda *args, **kwargs: pytest.fail('Uncertain control call repeated'))
-    assert controller.closeout(root)['status'] == 'selection_smoke_unknown'
-    assert shortlist.calls(root) == 1 and not (root / 'jobs/004.json').exists()
-
-
-def test_old_or_disabled_instance_keeps_original_closeout_without_table(tmp_path, monkeypatch):
-    root = scene(tmp_path, policy=None)
-    calls = closeout_author(monkeypatch, lambda task: dict(candidate_recommendation='run-1'))
-    result = controller.closeout(root)
-    assert result['status'] == 'delivery_confirmed' and result['last_confirmed']['candidate_id'] == 'run-1'
-    assert 'comparison' not in calls[0][1]['closeout'] and 'candidate_comparison' not in calls[0][1]['final_response']
-    assert not (root / 'host-delivery/selection').exists() and 'control_selection' not in result
-    assert 'selection' not in c.read(root / 'jobs/004.json')
+@pytest.mark.parametrize('metrics',[(.9,.8,.7),(.1,.8,999)])
+def test_real_closeout_catalogue_does_not_run_or_choose_candidates(tmp_path,monkeypatch,metrics):
+    root=scene(tmp_path,metrics=metrics)
+    monkeypatch.setattr(delivery,'leaf_phase',lambda *a,**kw:pytest.fail('Catalogue cannot execute domain code'))
+    calls=closeout_author(monkeypatch,lambda task:dict(candidate_recommendation=None,candidate_comparison=None))
+    result=controller.closeout(root)
+    assert result['status']=='closeout_native_unsealed',result
+    assert len(calls)==1 and 'candidate_recommendation' in result['reason']
+    assert not list((root/'host-delivery/selection').rglob('*.intent.json')) and not (root/'submission/model.pkl').exists()
+    task=calls[0][1];view=task['closeout']['comparison']
+    assert [row['candidate_id'] for row in view['rows']]==['run-1','run-2','run-3']
+    assert not ({'default','rank'} & set(view))
+    assert all(not ({'default','rank','reasons','comparable'} & set(row)) for row in view['rows'])
+    assert 'host-delivery' not in json.dumps(task) and 'hidden' not in json.dumps(view)
+    assert c.read(root/'jobs'/f'{calls[0][0]:03d}.json')['selection']==shortlist.marker(root)
 
 
-def test_tampered_screen_receipt_invalidates_the_bound_closeout(tmp_path, monkeypatch):
-    root = scene(tmp_path)
-    closeout_author(monkeypatch, keep_default)
-    assert controller.closeout(root)['status'] == 'delivery_confirmed'
-    path = root / 'host-delivery/selection/smoke-00.outcome.json';path.chmod(0o600)
-    path.write_text(path.read_text().replace('"failed"', '"ok"'))
-    with pytest.raises(ValueError, match='Control selection receipts changed'):
-        c.validate(c.workspace(root, 4))
+@pytest.mark.parametrize('candidate,compared',[('run-2',None),('run-3',('run-3','run-2'))])
+def test_explicit_choice_delivers_its_exact_original_with_qualification(tmp_path,monkeypatch,candidate,compared):
+    root=scene(tmp_path)
+    calls=closeout_author(monkeypatch,choose(candidate,compared))
+    result=controller.closeout(root)
+    assert result['status']=='delivery_confirmed' and result['last_confirmed']['candidate_id']==candidate,result
+    assert (root/'submission/model.pkl').read_bytes()==(root/'runs'/f'model-{candidate.split("-")[1]}.pkl').read_bytes()
+    assert not list((root/'host-delivery/selection').rglob('*.intent.json')) and len(calls)==1
+    used=budget.used_steps(root)
+    assert controller.closeout(root)['status']=='delivery_confirmed' and budget.used_steps(root)==used and len(calls)==1
 
 
-def candidate_fault_harness(note, *, all_failed=False):
-    return FAKE_HARNESS.replace("mode=meta['mode']", "mode='skip'" if all_failed else "mode='skip' if row['run_id']==1 else 'ok'").replace(
-        "else 'audit skipped'", 'else ' + repr(note))
+def test_final_null_choice_cannot_authorize_execution_or_another_a(tmp_path,monkeypatch):
+    root=scene(tmp_path)
+    monkeypatch.setattr(delivery,'leaf_phase',lambda *a,**kw:pytest.fail('Invalid choice cannot execute'))
+    monkeypatch.setattr(delivery,'selected_sources',lambda *a,**kw:pytest.fail('Invalid choice cannot prepare originals'))
+    calls=closeout_author(monkeypatch,lambda task:dict(candidate_recommendation=None,candidate_comparison=table('run-2')))
+    result=controller.closeout(root)
+    assert result['status']=='closeout_native_unsealed',result
+    assert len(calls)==1 and 'candidate_recommendation' in result['reason']
+    assert not (root/'jobs/005.json').exists() and not (root/'submission/model.pkl').exists()
 
 
-@pytest.mark.parametrize('note', [
-    'audit failed during training: ModuleNotFoundError: No module named fixture_helper',
-    'script /inputs/source.py not found; audit skipped',
-])
-def test_cleaned_candidate_fault_continues_to_next_default_without_worker(tmp_path, monkeypatch, note):
-    from scidiscovery.research_loop.cli import status
-    root = scene(tmp_path, harness=candidate_fault_harness(note))
-    without_smoke(monkeypatch)
-    calls = closeout_author(monkeypatch, keep_default)
-    result = controller.closeout(root)
-    screen = c.read(root / 'host-delivery/selection/screen.json')
-    assert [row['audit']['status'] for row in screen['rows']] == ['engineering_failed', 'passed', 'not_run']
-    assert screen['rows'][0]['audit']['receipt'] == 'audit-00'
-    assert screen['receipts']['audit-00'] == c.digest(root / 'host-delivery/selection/audit-00.outcome.json')
-    assert screen['default']['candidate_id'] == result['last_confirmed']['candidate_id'] == 'run-2'
-    assert [task['role'] for _, task in calls] == ['A'] and shortlist.calls(root) == 2
-    assert status(root)['closeout']['status'] == controller.run(root)['status'] == result['status'] == 'delivery_confirmed'
+def test_unknown_candidate_preserves_author_but_cannot_prepare_or_deliver(tmp_path,monkeypatch):
+    root=scene(tmp_path)
+    monkeypatch.setattr(delivery,'leaf_phase',lambda *a,**kw:pytest.fail('Unknown candidate cannot execute'))
+    monkeypatch.setattr(delivery,'selected_sources',lambda *a,**kw:pytest.fail('Unknown candidate cannot prepare originals'))
+    calls=closeout_author(monkeypatch,lambda task:dict(candidate_recommendation='run-9',candidate_comparison=table(None)))
+    result=controller.closeout(root)
+    assert result['status']=='closeout_unresolved' and result['reason']=='selection_candidate_unavailable',result
+    assert len(calls)==1 and not (root/'jobs/005.json').exists()
+    assert (c.host_record(c.workspace(root,calls[0][0]))/'result-identity.json').exists()
+    assert not (root/'submission/model.pkl').exists()
 
 
-def test_all_candidate_engineering_faults_have_no_default_and_author_can_decline(tmp_path, monkeypatch):
-    from scidiscovery.research_loop.cli import status
-    root = scene(tmp_path, harness=candidate_fault_harness('audit failed during training: ValueError: bad shape', all_failed=True))
-    without_smoke(monkeypatch)
-    def decline(task):
-        comparison = task['closeout']['comparison']
-        assert comparison['default']['candidate_id'] is None
-        assert {row['audit'] for row in comparison['rows']} == {'engineering_failed'}
-        return dict(next_action='finish', candidate_recommendation=None, candidate_comparison=None)
-    calls = closeout_author(monkeypatch, decline)
-    result = controller.closeout(root)
-    assert result['status'] == 'exported_unsubmitted' and [task['role'] for _, task in calls] == ['A']
-    assert shortlist.calls(root) == 3 and not list((root / 'host-delivery/selection').glob('repairs/*'))
-    assert not (root / 'submission/model.pkl').exists()
-    assert status(root)['closeout']['status'] == controller.run(root)['status'] == result['status']
+def test_final_without_original_grant_returns_explicit_unsealed_result_and_never_delivers(tmp_path,monkeypatch):
+    root=scene(tmp_path)
+    monkeypatch.setattr(delivery,'leaf_phase',lambda *a,**kw:pytest.fail('Unaccepted final return cannot execute'))
+    calls=closeout_author(monkeypatch,choose('run-2'),authorize_final=False)
+    result=controller.closeout(root)
+    assert result['status']=='closeout_native_unsealed' and result['reason']=='final_return_not_authorized',result
+    assert len(calls)==1 and budget.final_a_barrier(root) is None
+    assert not (root/'jobs/005.json').exists() and not (root/'submission/model.pkl').exists()
 
 
-@pytest.mark.parametrize('interrupt_after', ['audit-00.outcome.json', 'audit-01.outcome.json'])
-def test_restart_reuses_each_candidate_outcome_without_replaying_screen(tmp_path, monkeypatch, interrupt_after):
-    from scidiscovery.research_loop.cli import status
-    root = scene(tmp_path, harness=candidate_fault_harness('audit failed during training: ValueError: bad shape'))
-    without_smoke(monkeypatch)
-    save, leaf = shortlist._save, delivery.leaf_phase
-    phases = []
-    def counted(root, source, operation, phase, *args, **kwargs):
-        phases.append((phase, source['candidate_id']))
-        return leaf(root, source, operation, phase, *args, **kwargs)
-    def interrupted(path, value):
-        save(path, value)
-        if path.name == interrupt_after:raise RuntimeError('Interrupted after sealed screen outcome')
-    monkeypatch.setattr(delivery, 'leaf_phase', counted)
-    monkeypatch.setattr(shortlist, '_save', interrupted)
-    with pytest.raises(RuntimeError, match='Interrupted after sealed screen outcome'):
-        controller.closeout(root)
-    assert not (root / 'host-delivery/selection/screen.json').exists()
-    assert not (root / 'jobs/004.json').exists() and shortlist.pending_status(root) is None
-    assert status(root)['closeout']['status'] == 'closeout_pending'
-    monkeypatch.setattr(shortlist, '_save', save)
-    closeout_author(monkeypatch, keep_default)
-    result = controller.run(root)
-    assert result['status'] == 'delivery_confirmed' and result['last_confirmed']['candidate_id'] == 'run-2'
-    assert phases == [('audit', 'run-1'), ('audit', 'run-2')]
-    directory = root / 'host-delivery/selection'
-    screen = c.read(directory / 'screen.json')
-    assert set(screen['receipts']) == {'audit-00', 'audit-01'}
-    for name, digest in screen['receipts'].items():
-        outcome = c.read(directory / (name + '.outcome.json'))
-        assert digest == c.digest(directory / (name + '.outcome.json'))
-        assert outcome['intent_sha256'] == c.digest(directory / (name + '.intent.json'))
-    assert status(root)['closeout']['status'] == controller.run(root)['status'] == result['status']
-    assert phases == [('audit', 'run-1'), ('audit', 'run-2')]
+def test_final_without_observed_cleanup_cannot_deliver_even_with_known_usage(tmp_path,monkeypatch):
+    root=scene(tmp_path)
+    monkeypatch.setattr(delivery,'leaf_phase',lambda *a,**kw:pytest.fail('Unknown writer cleanup cannot execute'))
+    calls=closeout_author(monkeypatch,choose('run-2'),cleanup='unknown')
+    result=controller.closeout(root)
+    assert result['status']=='closeout_native_unsealed' and 'cleanup' in result['reason'],result
+    assert len(calls)==1 and not (root/'submission/model.pkl').exists()
 
 
-@pytest.mark.parametrize('kind,result_status,cleaned,note,expected', [
-    ('smoke', 'unknown', True, 'smoke_public_harness_unavailable', 'selection_smoke_unknown'),
-    ('audit', 'unknown', True, 'audit_process_unverified', 'selection_audit_unknown'),
-    ('audit', 'unclassified', True, 'audit_receipt_invalid', 'selection_audit_unclassified'),
-    ('audit', 'engineering_error', False, 'audit_training_error', 'selection_audit_unknown'),
-    ('audit', 'engineering_error', True, 'audit_harness_unavailable', 'selection_audit_engineering_error'),
-])
-def test_unknown_unclassified_or_shared_faults_stop_without_advancing_or_replay(tmp_path, monkeypatch, kind, result_status, cleaned, note, expected):
-    from test_audit_engineering import cli
-    root = scene(tmp_path)
-    if kind == 'audit':without_smoke(monkeypatch)
-    phases = []
-    def fault(root, source, operation, phase, *args, **kwargs):
-        phases.append((phase, source['candidate_id']))
-        return dict(status=result_status, note=note, cleanup_confirmed=cleaned)
-    monkeypatch.setattr(delivery, 'leaf_phase', fault)
-    monkeypatch.setattr(native, 'execute_native', lambda *args: pytest.fail('Screen fault dispatched an author or repair'))
-    result = controller.closeout(root)
-    assert result['status'] == shortlist.pending_status(root) == expected
-    assert cli(root, 'status')['closeout']['status'] == cli(root)['status'] == expected
-    assert controller.run(root)['status'] == expected and phases == [(kind, 'run-1')]
-    assert shortlist.calls(root) == 1 and not (root / 'jobs/004.json').exists()
-    assert not (root / 'host-delivery/selection/screen.json').exists()
+@pytest.mark.parametrize('comparison',[None,table('run-2',ids=('run-2','run-2')),
+    table('run-2',ids=('unknown','run-2')),table('run-3'),table('run-2',rationale=' '),
+    table('run-2',evidence_steps=(99,))])
+def test_comparison_explanation_is_not_an_extra_delivery_qualification(tmp_path,monkeypatch,comparison):
+    root=scene(tmp_path)
+    calls=closeout_author(monkeypatch,lambda task:dict(candidate_recommendation='run-2',candidate_comparison=comparison))
+    result=controller.closeout(root)
+    assert result['status']=='delivery_confirmed' and result['last_confirmed']['candidate_id']=='run-2',result
+    assert len(calls)==1
 
 
-@pytest.mark.parametrize('code', ['audit_source_missing', 'audit_output_capacity'])
-@pytest.mark.parametrize('author_action', ['deliver', 'audit'])
-def test_author_selected_local_control_fault_stops_without_reaudit_or_worker(tmp_path, monkeypatch, code, author_action):
-    from test_audit_engineering import cli
-    root = scene(tmp_path)
-    without_smoke(monkeypatch)
-    leaf = delivery.leaf_phase
-    phases = []
-    def fault(root, source, operation, phase, *args, **kwargs):
-        phases.append((phase, source['candidate_id']))
-        if source['candidate_id'] == 'run-1':return dict(status='engineering_error', note=code, cleanup_confirmed=True)
-        return leaf(root, source, operation, phase, *args, **kwargs)
-    monkeypatch.setattr(delivery, 'leaf_phase', fault)
-    def choose_fault(task):
-        comparison = task['closeout']['comparison']
-        assert comparison['default']['candidate_id'] == 'run-2'
-        assert comparison['rows'][0]['audit_fault'] == code
-        value = dict(next_action=author_action, candidate_recommendation='run-1', candidate_comparison=None)
-        if author_action == 'deliver':
-            value['candidate_comparison'] = dict(rows=[dict(candidate_id=row['candidate_id'], key_risk='Candidate control fault' if row['candidate_id']=='run-1' else 'Proxy only',
-                decision='keep' if row['candidate_id']=='run-1' else 'replace') for row in comparison['rows']],
-                override=dict(default_candidate='run-2', chosen_candidate='run-1', reason='Explicitly choose this fault', evidence_steps=[2]))
-        return value
-    calls = closeout_author(monkeypatch, choose_fault)
-    result = controller.closeout(root)
-    assert result['status'] == 'closeout_preparation_unavailable'
-    assert [task['role'] for _, task in calls] == ['A'] and phases == [('audit', 'run-1'), ('audit', 'run-2')]
-    assert cli(root, 'status')['closeout']['status'] == cli(root)['status'] == controller.run(root)['status'] == result['status']
-    assert phases == [('audit', 'run-1'), ('audit', 'run-2')] and shortlist.calls(root) == 2
-    assert not (root / 'jobs/005.json').exists() and not (root / 'submission/model.pkl').exists()
+def test_tampered_bound_catalogue_is_rejected(tmp_path,monkeypatch):
+    root=scene(tmp_path)
+    calls=closeout_author(monkeypatch,choose('run-2'))
+    assert controller.closeout(root)['status']=='delivery_confirmed'
+    screen=root/'host-delivery/selection/screen.json';screen.chmod(0o600)
+    screen.write_text(screen.read_text().replace('run-3','run-9'))
+    with pytest.raises(ValueError,match='screen changed|catalogue changed'):
+        c.validate(c.workspace(root,calls[0][0]))
 
 
-def test_legacy_sealed_author_retains_original_screen_and_public_view_bytes(tmp_path, monkeypatch):
-    from legacy_selection_view import DEFAULT_RULE, public_table
-    from test_audit_engineering import cli
-    root = scene(tmp_path)
-    save = shortlist._save
-    def legacy_screen(path, value):
-        if path.name == 'screen.json':
-            value.pop('public_view_version')
-            value['default']['rule'] = DEFAULT_RULE
-        return save(path, value)
-    calls = closeout_author(monkeypatch, keep_default)
-    with monkeypatch.context() as patch:
-        patch.setattr(shortlist, '_save', legacy_screen)
-        patch.setattr(shortlist, 'public_table', public_table)
-        result = controller.closeout(root)
-    assert result['status'] == 'delivery_confirmed' and len(calls) == 1
-    step, task = calls[0]
-    assert not any('audit_fault' in row for row in task['closeout']['comparison']['rows'])
-    screen = root / 'host-delivery/selection/screen.json'
-    assert 'public_view_version' not in c.read(screen)
-    work = c.workspace(root, step)
-    originals = [screen, root / 'jobs' / f'{step:03d}.json', work / 'science-task.json',
-        c.host_record(work) / 'science-output.json', c.host_record(work) / 'result-identity.json']
-    snapshots = {path: path.read_bytes() for path in originals}
-    assert shortlist.public_table(root, c.read(root / 'jobs' / f'{step:03d}.json')['selection']) == task['closeout']['comparison']
-    assert c.validate(work)['next_action'] == 'deliver'
-    assert cli(root, 'status')['closeout']['status'] == cli(root)['status'] == controller.run(root)['status'] == result['status']
-    assert all(path.read_bytes() == data for path, data in snapshots.items())
+def test_protocol_18_is_read_only_and_cannot_be_migrated_to_current_selection(tmp_path,monkeypatch):
+    from scidiscovery.research_loop.protocol import UnsupportedProtocol
+    root=scene(tmp_path)
+    settings=c.read(root/'settings.json');settings['handoff_protocol']=18
+    c.write(root/'settings.json',settings);c.write(root/'settings-identity.json',dict(sha256=c.digest(root/'settings.json')))
+    before={p.relative_to(root):p.read_bytes() for p in root.rglob('*') if p.is_file()}
+    monkeypatch.setattr(native,'execute_native',lambda *a,**kw:pytest.fail('Retired protocol cannot run A'))
+    with pytest.raises(UnsupportedProtocol):controller.closeout(root)
+    assert before=={p.relative_to(root):p.read_bytes() for p in root.rglob('*') if p.is_file()}

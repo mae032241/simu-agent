@@ -1,11 +1,13 @@
 """Frozen W task units reach actual native turns without changing stage control."""
 import json
+import os
+from pathlib import Path
 import sys
 
 import pytest
 
 from scidiscovery.research_loop import (budget, contracts as c, controller,
-    execution, guidance, native, search)
+    execution, experiment_client, guidance, native, search)
 from execution_fixtures import execution_registry
 from test_breadth_science import a
 from test_history_handoff import finish
@@ -39,6 +41,10 @@ def transport():
 
 
 def prefix(tmp_path, action, monkeypatch, *, custom=False):
+    # The real child runs from its W workspace, outside pytest's source path.
+    # Retain the fixture's execution entry-point metadata after current src.
+    monkeypatch.setenv('PYTHONPATH', str(Path(c.__file__).resolve().parents[2])
+        + os.pathsep + os.environ.get('PYTHONPATH', ''))
     public = tmp_path/'public'; public.mkdir()
     objective = public/'goal.md'
     objective.write_text('Preserve required scientific checks; explore only the authorized H mechanism.')
@@ -63,7 +69,29 @@ def prefix(tmp_path, action, monkeypatch, *, custom=False):
     c.build_job(root,2,'W',[1])
     # Use the real runner to create the original budget anchor, terminal,
     # cleanup, usage and managed-call proofs before A assigns the next unit.
-    native.execute_native(root,2)
+    try:
+        native.execute_native(root,2)
+    except (RuntimeError, ValueError) as error:
+        # Preserve the original failure; fixture scratch is removed by the
+        # supervisor, so retain only bounded engineering diagnostics in pytest.
+        record = execution.record(root, 2)
+        outcome = c.read(record / 'native-outcome.json')
+        usage = outcome.get('usage', {})
+        calls = experiment_client.record_directory(root, 2) / 'calls'
+        facts = {key: outcome.get(key) for key in ('returncode', 'stop_reason', 'output_status')}
+        facts.update(unknown_steps=usage.get('unknown_steps'),
+            blocking_unknown_steps=usage.get('blocking_unknown_steps'),
+            managed_record_counts={name: len(list(calls.glob('*/' + name)))
+                for name in ('accepted.json', 'process.json', 'completed.json')})
+        stderr = record / 'native.stderr'
+        tail = b''
+        if stderr.exists():
+            with stderr.open('rb') as stream:
+                stream.seek(max(0, stderr.stat().st_size - 4096))
+                tail = stream.read(4096)
+        error.add_note('Prefix native facts: ' + json.dumps(facts, sort_keys=True))
+        error.add_note('Prefix native stderr (last <=4096 bytes): ' + tail.decode('utf-8', errors='replace'))
+        raise
     a(root,3,[1,2],focus='h001.m1',mode=action)
     return root
 
@@ -102,7 +130,7 @@ def test_actual_native_prompt_uses_explicit_frozen_work_unit(tmp_path,monkeypatc
         assert [c.read(path/'science-output.json')['stage_intent'] for path in chain] == ['continue','continue','review']
         assert [c.read(path/'native-intent.json')['budget_slice']['previous_tokens'] for path in chain[1:]] == [14,28]
         assert all(c.read(path/'native-intent.json')['continuation_kind']=='fragment' for path in chain[1:])
-        assert len(list((c.workspace(root,4)/'work/lineage/calls').iterdir())) == 1
+        assert len(list((experiment_client.record_directory(root,4)/'calls').iterdir())) == 1
         configs = [c.read(path/'experiment-config.json') for path in chain]
         assert all(config['scope']==configs[0]['scope'] for config in configs)
 

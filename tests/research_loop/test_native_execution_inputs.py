@@ -84,7 +84,7 @@ def chain(tmp_path, monkeypatch, request):
         implementation_compilation=dict(capability_snapshot_path=str(snapshot)))
     controller.prepare(root, objective, public, [str(launcher)], max_tokens=4000, max_seconds=1000,
         max_steps=12, model='fixture', reasoning_effort='high', search_policy=None, experiment_mode='local',
-        node_budget_mode='hard', execution_config=dict(executor='tcad_execution:tcad', configuration=options),
+        node_budget_mode='soft', execution_config=dict(executor='tcad_execution:tcad', configuration=options),
         formal_review_policy={'version': 1}, execution_authority_policy={'version': 1},
         execution_resource_policy=dict(version=1, allowance=dict(wall_time_seconds=100, max_storage_bytes=1000000)),
         source_restrictions=[] if getattr(request, 'param', None) == 'unknown_source' else [
@@ -172,7 +172,15 @@ def test_public_compile_exact_review_and_existing_run_keep_native_original(chain
     result = json.loads(capsys.readouterr().out)
     assert result['status'] == 'queued' and backend.prepared == [{'mesh': b'mesh'}] and backend.submits == 1
     accepted = e.Records(current).accepted(result['call_id'])
-    assert accepted['tcad']['payload']['local_path'] == str(output)
+    seal = c.read(c.host_record(c.workspace(root, 2)) / 'result-identity.json')
+    entry = next(row for row in seal['compiled_implementations'] if row['material']['source'] == str(output))
+    compiled = inputs.verify_compilation(root, entry['compiler'], material=entry['material'], client_binding=entry['client_binding'])
+    original = compiled['output']
+    assert original == e.proof(original['path'])
+    assert Path(original['path']).is_relative_to(root / 'host-runtime')
+    assert accepted['tcad']['payload']['local_path'] == original['path'] != str(output)
+    assert all(accepted['tcad']['payload'][key] == original[key] for key in ('sha256', 'size_bytes'))
+    assert c.read(output) == dict(worker_implementation_version=1, implementation_ref='I001')
     assert accepted['execution_reservation'] is not None
     assert e.main(['--config', str(active), 'run', '--payload', str(output)]) == 2
     assert json.loads(capsys.readouterr().out)['call_id'] == result['call_id'] and backend.submits == 1
@@ -255,6 +263,19 @@ def test_native_observation_new_subject_review_and_next_run_use_covered_inputs(c
     assert coverage['call_id'] == call and coverage['complete'] is True
     assert proof['additional_input_restriction'] == 'clear'
     rows = history.read_observation(root, job_before, seal)['managed_calls']
+    subject = coverage['binding']['subject']
+    producer = q._read(root, subject['producer_seal'])
+    entry = next(row for row in producer['compiled_implementations'] if row['material'] == subject['material'])
+    assert coverage['compiler_ref'] == entry['compiler']
+    assert coverage['client_binding'] == entry['client_binding']
+    for mutation in ('changed', 'omitted'):
+        altered = deepcopy(proof['managed_input_coverage'])
+        if mutation == 'changed':
+            altered[0]['client_binding']['sha256'] = 'c' * 64
+        else:
+            altered[0].pop('client_binding')
+        with pytest.raises(q.IntegrityError, match='no longer names its exact payload'):
+            history.validate_input_coverage(root, job_before, rows, altered)
     for state in ('unknown', 'not_submitted'):
         with pytest.raises(q.IntegrityError, match='no complete coverage'):
             history.validate_input_coverage(root, job_before, [dict(rows[0], status=state)], proof['managed_input_coverage'])
@@ -364,11 +385,16 @@ def test_same_hash_wrong_origin_and_changed_package_cannot_reuse_compiler_proof(
         inputs.resolve_native_original(root, dict(original, instance_id='another-instance'), compiler_job=job)
     output = c.workspace(root, 2) / 'artifacts/package.json'
     e.compile_implementation(config, e.load(config), author, c.read(aliases), output)
-    packet = c.read(output); packet['resolved_inputs'][0]['original'] = wrong
-    output.chmod(0o600); c.write(output, packet)
+    from scidiscovery.research_loop import experiment_client
+    before = output.read_bytes()
+    package = experiment_client.payload_path(config, output)
+    assert package != output and package.is_relative_to(root / 'host-runtime')
+    packet = c.read(package); packet['resolved_inputs'][0]['original'] = wrong
+    package.chmod(0o600); c.write(package, packet)
     with pytest.raises(ValueError):
         finish(root, 2, 'W', [1])
     assert not (c.host_record(c.workspace(root, 2)) / 'result-identity.json').exists()
+    assert output.read_bytes() == before
     assert not backend.policy_reads and not backend.prepared
 
 
@@ -384,6 +410,7 @@ def late_call(chain,capsys,monkeypatch):
     assert e.main(['--config',str(active),'run','--payload',str(output)])==2
     pending=json.loads(capsys.readouterr().out)
     assert pending['status']=='authorization_required' and backend.submits==0 and not backend.prepared
+    assert pending['authorization_request']==dict(status='execution_decision_required')
     call=pending['call_id'];original_seal=c.seal_result
 
     def cleaned(root,step):
@@ -400,8 +427,16 @@ def late_call(chain,capsys,monkeypatch):
     monkeypatch.setattr(runtime,'process_matches',lambda *args:False)
     finish(root,6,'W',[5])
     seal_path=c.host_record(c.workspace(root,6))/'result-identity.json'
-    assert c.read(root/c.read(seal_path)['pending_executions']['path'])['complete'] is True
-    return root,backend,config,call,pending['authorization_request'],seal_path.read_bytes()
+    pending_set=inputs.q._read(root,c.read(seal_path)['pending_executions'])
+    assert pending_set['complete'] is True
+    allocations=[row for row in pending_set['allocations'] if row['call_id']==call]
+    assert len(allocations)==1 and len(allocations[0]['requests'])==1
+    request=allocations[0]['requests'][0]
+    original,canonical=authority.request(root,Path(request['path']).parent.name)
+    assert canonical==request and original['call_id']==call
+    assert original['job']==inputs.q._ref(root,root/'jobs/006.json')
+    assert original['native_intent']==inputs.q._ref(root,c.host_record(c.workspace(root,6))/'native-intent.json')
+    return root,backend,config,call,request,seal_path.read_bytes()
 
 
 def _approve(root,ref):

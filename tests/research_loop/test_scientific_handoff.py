@@ -31,7 +31,7 @@ def correcting_scene(tmp_path):
 
 @pytest.fixture
 def registered_scene(tmp_path,execution_registry):
-    return prepare_scene(tmp_path,node_budget_mode='hard')
+    return prepare_scene(tmp_path,node_budget_mode='soft')
 
 
 def plan(action='screen', existing_ref=None):

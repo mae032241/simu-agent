@@ -29,25 +29,29 @@ def candidates(rows, *, diagnostics=None):
         if row['status'] != 'known_success' or declared.get('status') != 'available' or candidate is None:
             continue
         metrics=declared.get('metrics');outputs=row.get('outputs')
-        valid=(isinstance(candidate,dict) and set(candidate)=={'label','metric','artifact'}
-            and all(isinstance(candidate.get(key),str) and 0<len(candidate[key].encode())<=160 for key in ('label','metric'))
-            and isinstance(candidate.get('artifact'),str) and isinstance(metrics,list) and isinstance(outputs,list))
-        matching_metrics=[item for item in metrics if isinstance(item,dict) and item.get('name')==candidate['metric']] if valid else []
+        valid=(isinstance(candidate,dict) and isinstance(candidate.get('artifact'),str)
+            and isinstance(metrics,list) and isinstance(outputs,list))
         matching_outputs=[item for item in outputs if isinstance(item,dict) and isinstance(item.get('name'),str)
             and 'artifacts/'+item['name']==candidate['artifact']] if valid else []
+        declared_outputs=declared.get('outputs')
+        valid=(valid and isinstance(declared_outputs,list) and len(matching_outputs)==1
+            and sum(isinstance(item,dict) and item.get('path')==candidate['artifact'] for item in declared_outputs)==1)
+        if not valid:
+            if diagnostics is not None:diagnostics.append(dict(call_id=row['call_id'],code='declared_candidate_mapping_invalid'))
+            continue
+        matching_metrics=[item for item in metrics if isinstance(item,dict)
+            and isinstance(candidate.get('metric'),str) and item.get('name')==candidate['metric']]
         metric=matching_metrics[0] if len(matching_metrics)==1 else {}
         value=metric.get('value')
         try:finite=type(value) in (int,float) and math.isfinite(value)
         except OverflowError:finite=False
-        valid=(valid and len(matching_metrics)==len(matching_outputs)==1 and type(value) in (int,float)
-            and finite and metric.get('direction') in ('min','max')
-            and isinstance(metric.get('evaluation_key'),str) and 0<len(metric['evaluation_key'].encode())<=512)
-        if not valid:
-            if diagnostics is not None:diagnostics.append(dict(call_id=row['call_id'],code='declared_candidate_mapping_invalid'))
-            continue
+        if not finite:
+            metric={};value=None
+            if 'metric' in candidate and diagnostics is not None:
+                diagnostics.append(dict(call_id=row['call_id'],code='declared_candidate_metric_unknown'))
         artifact=matching_outputs[0]
-        result.append(dict(id=identity(row), label=candidate['label'], implementation=None,
-            evaluation_key=metric['evaluation_key'], metric=metric['value'], direction=metric['direction'], status='ok',
+        result.append(dict(id=identity(row), label=candidate.get('label'), implementation=None,
+            evaluation_key=metric.get('evaluation_key'), metric=value, direction=metric.get('direction'), status='ok',
             evidence=[row['completed'], artifact]))
     return result
 

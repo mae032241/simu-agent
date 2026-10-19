@@ -14,7 +14,48 @@ def proof(record):
         names.append('checkpoint.json')
     if (record / 'stage-end.json').exists():
         names.append('stage-end.json')
-    return {name: c.digest(c.regular(record / name)) for name in names}
+    if not (record/'usage.json').exists() and record.parent.name == 'native-evidence':
+        from . import startup_recovery
+        if startup_recovery.path(record.parents[1],int(record.name)).exists():
+            return startup_recovery.original_proof(record.parents[1],int(record.name))
+    return {name: c.digest(c.regular(record / name)) for name in names
+            if name != 'usage.json' or (record/name).exists()}
+
+
+def accepted_intents(root, step):
+    """Enumerate accepted identities without traversing their execution results."""
+    root = Path(root)
+    first = origin(root,step)
+    task = c.digest(c.regular(root/'jobs'/f'{step:03d}.json'))
+    previous = None
+    if (first/'native-intent.json').exists():
+        value = c.read(c.regular(first/'native-intent.json'))
+        if (value.get('task_sha256') != task or 'attempt' in value
+                or 'step' in value and (type(value['step']) is not int or value['step'] != step)):
+            raise ValueError('Original accepted native intent identity changed')
+        previous = first
+        yield first,value
+    directory = first/'continuations'
+    if not directory.exists():return
+    if directory.resolve() != directory:raise ValueError('Native continuation directory changed')
+    accepted = 0
+    for number,path in enumerate(sorted(directory.iterdir()),1):
+        if path.name != f'{number:03d}' or path.resolve() != path or not path.is_dir():
+            raise ValueError('Accepted native continuation namespace changed')
+        file = path/'native-intent.json'
+        if not file.exists():
+            if any(path.iterdir()):raise ValueError('Unaccepted continuation has unexpected execution facts')
+            continue
+        value = c.read(c.regular(file))
+        if (previous is None or number != accepted+1 or type(value.get('attempt')) is not int
+                or value['attempt'] != number or value.get('task_sha256') != task
+                or 'step' in value and (type(value['step']) is not int or value['step'] != step)
+                or value.get('root_intent_sha256') != c.digest(c.regular(first/'native-intent.json'))
+                or (value.get('previous') or {}).get('native-intent.json') != c.digest(c.regular(previous/'native-intent.json'))):
+            raise ValueError('Accepted native continuation identity changed')
+        accepted += 1
+        previous = path
+        yield path,value
 
 
 def records(root, step):
@@ -25,15 +66,41 @@ def records(root, step):
     if not directory.exists():return result
     if directory.resolve() != directory:raise ValueError('Native continuation directory changed')
     settings = c.settings(root)
-    repair_limit = settings.get('resume_policy', {}).get('max_attempts', 0)
+    repair_limit = (settings.get('resume_policy') or {}).get('max_attempts', 0)
     job = c.read(c.regular(root / 'jobs' / f'{step:03d}.json'))
     from . import checkpoint
     fragments = checkpoint.enabled(root, job)
-    limit = settings['max_steps'] - 1 if fragments else repair_limit
+    from . import budget
+    author_permit=root/'host-recovery/author-closeout'/f'{step:03d}.json'
+    limit = budget.historical_step_limit(root) - 1 if fragments else max(repair_limit,int(author_permit.exists()))
+    from . import author_closeout
+    successor=author_closeout.successor_path(root,step)
+    verified_authors=None
+    if successor.exists():
+        successor_ref=author_closeout._ref(root,successor)
+        value=c.read(author_closeout._check(root,successor_ref))
+        author_closeout.require_successor_eligibility(root,value)
+        original=c.read(author_closeout._check(root,value['original_permit']))
+        # One full validation per invocation; each intent still checks its exact
+        # accepted proof, job, compact facts and retained execution projection.
+        verified_authors={1:(value['original_permit'],original,original),2:(successor_ref,value,original)}
+        limit=max(limit,2)  # Only the exact operator-authorized author successor.
+    elif author_permit.exists():
+        original=c.read(c.regular(author_permit))
+        author_closeout.require_original_eligibility(root,original)
+        verified_authors={1:(author_closeout._ref(root,author_permit),original,original)}
+    from . import startup_recovery
+    startup = startup_recovery.path(root,step).exists()
+    if startup:
+        startup_recovery.reconciled_original(root,step)
+        limit=max(limit,1)
     repairs = 0
     task = c.digest(c.regular(root / 'jobs' / f'{step:03d}.json'))
-    if c.read(c.regular(first / 'native-intent.json')).get('task_sha256') != task:
+    original_intent = c.read(c.regular(first / 'native-intent.json'))
+    if original_intent.get('task_sha256') != task:
         raise ValueError('Original native task identity changed')
+    if (original_intent.get('budget_slice') or {}).get('final_return') is not None:
+        budget.final_a_return(root, job, original_intent)
     for number, path in enumerate(sorted(directory.iterdir()), 1):
         if path.name != f'{number:03d}' or path.resolve() != path or not path.is_dir() or number > limit:
             raise ValueError('Native continuation identity or sequence changed')
@@ -41,13 +108,25 @@ def records(root, step):
             if any(path.iterdir()):raise ValueError('Unaccepted continuation has unexpected execution facts')
             continue
         intent = c.read(c.regular(path / 'native-intent.json'))
+        if (original_intent.get('budget_slice') or {}).get('final_return') is not None and intent.get('continuation_kind') != 'startup_successor':
+            raise ValueError('Final A return cannot acquire another native attempt')
+        if (intent.get('budget_slice') or {}).get('final_return') is not None:
+            budget.final_a_return(root, job, intent)
         if (number != len(result) or intent.get('attempt') != number or intent.get('task_sha256') != task
                 or intent.get('previous') != proof(result[-1])
                 or intent.get('root_intent_sha256') != c.digest(c.regular(first / 'native-intent.json'))):
             raise ValueError('Native continuation chain changed')
         kind = intent.get('continuation_kind', 'repair')
-        if kind not in {'repair', 'fragment', 'execution_wake'} or kind == 'fragment' and not fragments:
+        if kind not in {'repair', 'fragment', 'execution_wake','author_closeout','startup_successor'} or kind == 'fragment' and not fragments:
             raise ValueError('Native continuation kind differs from its frozen policy')
+        if kind == 'startup_successor':
+            if not startup or number != 1:raise ValueError('Only one exact startup successor is authorized')
+            startup_recovery.validate_intent(root,job,intent)
+        if kind=='author_closeout':
+            if verified_authors is not None:
+                author_closeout.require_intent_eligibility(root,job,intent,verified=verified_authors[number])
+            else:
+                author_closeout.require_intent_eligibility(root,job,intent)
         if kind in {'repair','execution_wake'}:
             repairs += 1
             if repairs > repair_limit:
@@ -61,10 +140,14 @@ def records(root, step):
     return result
 
 
-def reference(root, step):
-    chain = records(root, step)
+def _reference(chain):
+    """Build a reference from this call's fully verified chain, not a cache."""
     if len(chain) == 1 and not (chain[0] / 'stage-end.json').exists():return None
     return dict(attempt=len(chain) - 1, chain=[proof(path) for path in chain])
+
+
+def reference(root, step):
+    return _reference(records(root, step))
 
 
 def record(root, step, attempt=None):
@@ -74,12 +157,16 @@ def record(root, step, attempt=None):
             raise ValueError('Unknown exact native attempt')
         return chain[attempt]
     seal = origin(root, step) / 'result-identity.json'
-    if seal.exists() and c.read(c.regular(seal)).get('execution_ref') != reference(root, step):
+    if seal.exists() and c.read(c.regular(seal)).get('execution_ref') != _reference(chain):
         raise ValueError('Sealed native execution reference changed')
     current = chain[-1]
     if len(chain) > 1 and (current / 'native-outcome.json').exists():
         outcome = c.read(c.regular(current / 'native-outcome.json'))
-        if outcome.get('returncode') == 0 and not outcome.get('stop_reason'):
+        accepted=None
+        if outcome.get('returncode') == 0 and outcome.get('stop_reason')=='author_closeout_token_limit':
+            from . import author_closeout
+            accepted=author_closeout.accepted_output(root,step,current,c.read(current/'native-intent.json'),outcome)
+        if outcome.get('returncode') == 0 and (not outcome.get('stop_reason') or accepted is not None):
             _terminal(root, step, chain, outcome)
     return current
 
@@ -126,6 +213,14 @@ def _terminal(root, step, chain, outcome):
     from . import continuation
     continuation.validate_repair_chain(root, step, chain)
     continuation.validate_fragment_chain(root, step, chain)
+    author_turn=False
     for number, path in enumerate(chain[1:],1):
         intent=c.read(path/'native-intent.json')
         if intent.get('continuation_kind')=='execution_wake':continuation.validate_wake(root,step,intent,chain[number-1])
+        if intent.get('continuation_kind')=='author_closeout':author_turn=True
+    if author_turn:
+        # records() already validated every author intent, permit, projection,
+        # call inventory and code digest in this very invocation. Check the one
+        # current final response once; no verdict survives this record() call.
+        science=c.science_payload(current/'science-output.json','W',c.settings(root)['handoff_protocol'])
+        if science.get('stage_intent')=='continue':raise ValueError('Author closeout cannot reopen exploration')

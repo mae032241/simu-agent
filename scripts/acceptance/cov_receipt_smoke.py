@@ -54,7 +54,7 @@ def main():
     job=c.build_job(root,2,'W',[1]);record=execution.record(root,2)
     c.write(record/'native-intent.json',dict(task_sha256=c.digest(root/'jobs/002.json')))
     config_path=root/'receipt-probe-config.json'
-    cov_lineage.configure(root,2,[args.task_python,'-I',str(harness/'exp_cli.py')],root/'runs',config_path)
+    cov_lineage.configure(root,2,[args.task_python,'-B','-I',str(harness/'exp_cli.py')],root/'runs',config_path)
     config=c.read(config_path);results=[]
     for index,label in enumerate(('P','Q'),1):
         source=c.workspace(root,2)/'work'/f'{label}.py';source.write_text(TRAIN.replace('ALPHA',str(index)))

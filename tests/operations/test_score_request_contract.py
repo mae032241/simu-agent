@@ -46,6 +46,7 @@ def test_supported_log_and_linear_metrics_have_independent_known_values(tmp_path
                    for space in ('linear', 'log10')])]
     parsed = AnalysisScoreInput.model_validate_json(canonical_json(dict(record_key='known', request=request)))
     context = SimpleNamespace(remaining_seconds=30,
+        input_names_for_port=lambda port: (),  # Ordinary scoring has no bound experiment plan.
         read_evidence=sources.__getitem__, finish_attempt=lambda **kwargs: None,
         workspace=tmp_path, accept_evidence=lambda **kwargs: {'alias': 'tool_evidence_001'})
     from scidiscovery.artifact_agent.operation_tool_context import OperationToolContext

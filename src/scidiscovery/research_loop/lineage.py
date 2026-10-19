@@ -102,7 +102,11 @@ def contexts(root, job, items, archive, previous=()):
 def build(root, before_step, *, sources=None, search_state=None):
     """Fold relations without rendering a default packet or updating authority."""
     sources=history.source_sequence(root,before_step) if sources is None else sources
-    state=search.project(root,before_step) if search_state is None else search_state
+    if search_state is None:
+        from . import execution_recovery
+        state=search.fold(root,sources,recovery_refs=execution_recovery.prefix(root,before_step))
+    else:
+        state=search_state
     nodes=[];candidates={};edges=[];calls=set();coverage='complete';available={}
     for job,payload,seal,_ in sources:
         step=job['step']
@@ -172,32 +176,24 @@ def candidate_view(records):
         if record['recommendation'] is not None:
             if record['recommendation'] not in candidates:
                 raise ValueError('A recommended an unknown candidate')
-    best = {}
-    for item in candidates.values():
-        if item['status'] != 'ok' or item['metric'] is None:
-            continue
-        key = (item['evaluation_key'], item['direction'])
-        if key not in best or (item['metric'] > best[key]['metric'] if item['direction'] == 'max' else item['metric'] < best[key]['metric']):
-            best[key] = item
     def public(item):
         return {key: item[key] for key in ('id', 'label', 'implementation', 'evaluation_key', 'metric', 'direction', 'status', 'observation_step', 'observation_h_scope', 'observation_summary', 'observation_conclusion', 'implementation_owner_step', 'implementation_conclusion', 'candidate_h_scope', 'parent_candidate', 'candidate_action')}
     def compact(item):
         view = public(item)
         for key, capacity in (('label', 160), ('evaluation_key', 192), ('observation_summary', 160)):
             text = view[key]
-            view[key] = text.encode()[:capacity].decode('utf-8', errors='ignore')
+            view[key] = text.encode()[:capacity].decode('utf-8', errors='ignore') if isinstance(text,str) else text
             view[key + '_truncated'] = view[key] != text
         if view['implementation'] is not None and len(view['implementation'].encode()) > 512:
             view['implementation'] = None
         view['details_in_index'] = True
         return view
     from . import selection
-    return dict(coverage=coverage, current_candidate=current, candidate_index=[public(row) for row in candidates.values()], proxy_highest=[compact(row) for row in list(best.values())[:8]],
-                proxy_groups_omitted_count=max(0, len(best) - 8),
+    return dict(coverage=coverage, current_candidate=current, candidate_index=[public(row) for row in candidates.values()],
                 **selection.recommendations(records), actual_submission=actual,
-                recent_candidates=[compact(row) for row in list(candidates.values())[-16:]],
+                candidate_facts=[compact(row) for row in list(candidates.values())[:16]],
                 candidates_omitted_count=max(0, len(candidates) - 16),
-                limitation='Highest means highest observed metric only; candidate models are not retained unless a sealed artifact or explicit archived snapshot exists. Proxy groups use the frozen adapter evaluation_key and direction; they do not establish target optimality. Read each original scientific conclusion for applicability and blind spots. Null slots mean unknown, not agreement.')
+                limitation='Candidate facts retain first-observation order without ranking. Models are retained only as sealed artifacts or explicit archived snapshots. Read the complete candidate index and each original scientific conclusion for applicability and blind spots. Null slots mean unknown, not agreement.')
 
 
 
@@ -235,19 +231,19 @@ def brief(records, state, graph, candidates, indexes, *, selection_protocol=0):
             note=_clip(candidates['coverage']['note'],96),note_truncated=len(candidates['coverage']['note'].encode())>96) if candidates['coverage'] else None),
             current=candidates['current_candidate'],a_recommended=candidates['a_recommended'],
             historical_a_recommendation=candidates.get('historical_a_recommendation'),actual=candidates['actual_submission'],
-            proxy_highest=[{k:item[k] for k in ('id','evaluation_key','metric','direction')} for item in candidates['proxy_highest'][:2]],
-            proxy_groups_omitted_count=candidates['proxy_groups_omitted_count']+max(0,len(candidates['proxy_highest'])-2)),
+            candidate_facts=[{k:item[k] for k in ('id','evaluation_key','metric','direction','status')} for item in candidates['candidate_facts'][:2]],
+            candidate_facts_omitted_count=len(candidates['candidate_index'])-min(2,len(candidates['candidate_facts']))),
         relationships=dict(count=len(graph['relations']),coverage=graph['coverage'],scope='Declared derivation and reuse; support remains unknown without original scientific intent.'),
         access='Read index/next_page and original conclusion pages as needed. Unselected historical attachments are not mounted. '
                'Implementation IDs select exact objects; null keeps current selected inputs, [] clears, lists replace. '
-               'Candidate recommendation, proxy highest and actual submission are independent; unknown/partial coverage is not a complete tree.')
+               'Candidate facts, authored recommendation and actual submission are independent; unknown/partial coverage is not a complete tree.')
     # Large user labels/focus are navigation excerpts, never a license to drop bounds.
     if value['mechanisms']['focus']:
         for key,text in list(value['mechanisms']['focus'].items()):
             if isinstance(text,str):value['mechanisms']['focus'][key]=_clip(text,80)
-    for row in value['candidates']['proxy_highest']:
-        row['evaluation_key']=_clip(row['evaluation_key'],192)
-        row['evaluation_key_truncated']=any(item['id']==row['id'] and item['evaluation_key']!=row['evaluation_key'] for item in candidates['proxy_highest'])
+    for row in value['candidates']['candidate_facts']:
+        if isinstance(row['evaluation_key'],str):row['evaluation_key']=_clip(row['evaluation_key'],192)
+        row['evaluation_key_truncated']=any(item['id']==row['id'] and item['evaluation_key']!=row['evaluation_key'] for item in candidates['candidate_facts'])
     if selection_protocol == 1:
         from . import selection
         try:
@@ -255,11 +251,10 @@ def brief(records, state, graph, candidates, indexes, *, selection_protocol=0):
         except ValueError:
             # Sources were verified before this optional projection. No broad
             # catch may cover source/hash/permission checks or scientific seals.
-            public = dict(scope='unavailable', target_best=None, candidate_count=len(candidates['candidate_index']),
+            public = dict(scope='unavailable', candidate_count=len(candidates['candidate_index']),
                 coverage='unknown', current_candidate=None, a_recommended=None, historical_a_recommendation=None,
                 observed_actual_submission=None, delivery=dict(state='unknown', current_confirmed=None, last_confirmed=None),
-                proxy_highest=[], proxy_groups_omitted_count=0,
-                unranked_ids=[], unranked_omitted_count=0, public_audits=[], audits_omitted_count=0,
+                candidate_facts=[], candidate_facts_omitted_count=len(candidates['candidate_index']), public_audits=[], audits_omitted_count=0,
                 limitation='Public selection overview unavailable; inspect existing candidate and original conclusion indexes.')
         value['candidates'] = dict(public, selection_protocol=1)
     elif selection_protocol != 0:
@@ -274,7 +269,7 @@ def bounded_brief(value):
     while size()>history.MAX_BRIEF_BYTES and value['recent']:
         value['recent'].pop(0);value['recent_omitted_count']+=1
     if value['candidates'].get('selection_protocol') == 1:
-        for field, omitted in (('public_audits','audits_omitted_count'), ('unranked_ids','unranked_omitted_count')):
+        for field, omitted in (('public_audits','audits_omitted_count'), ('candidate_facts','candidate_facts_omitted_count')):
             while size()>history.MAX_BRIEF_BYTES and value['candidates'].get(field):
                 value['candidates'][field].pop();value['candidates'][omitted]+=1
     while size()>history.MAX_BRIEF_BYTES and value['candidates'].get('adapter_audits'):
@@ -284,8 +279,8 @@ def bounded_brief(value):
         order['remaining'].pop();order['omitted_count']+=1
     while size()>history.MAX_BRIEF_BYTES and value['mechanisms'].get('overview'):
         value['mechanisms']['overview'].pop();value['mechanisms']['overview_omitted_count']+=1
-    while size()>history.MAX_BRIEF_BYTES and value['candidates']['proxy_highest']:
-        value['candidates']['proxy_highest'].pop();value['candidates']['proxy_groups_omitted_count']+=1
+    while size()>history.MAX_BRIEF_BYTES and value['candidates'].get('candidate_facts'):
+        value['candidates']['candidate_facts'].pop();value['candidates']['candidate_facts_omitted_count']+=1
     while size()>history.MAX_BRIEF_BYTES and value.get('implementation_options'):
         value['implementation_options'].pop();value['implementation_options_omitted_count']+=1
     if size()>history.MAX_BRIEF_BYTES:
@@ -298,7 +293,7 @@ def bounded_brief(value):
                 pending_count=value['mechanisms']['pending_count'],focus=None),
             candidates=dict(count=original.get('count',original.get('candidate_count',0)),coverage=None,
                 current=None,a_recommended=None,historical_a_recommendation=None,actual=None,
-                proxy_highest=[],proxy_groups_omitted_count=original.get('proxy_groups_omitted_count',0),
+                candidate_facts=[],candidate_facts_omitted_count=original.get('candidate_facts_omitted_count',0)+len(original.get('candidate_facts',[])),
                 selection_protocol=original.get('selection_protocol',0),public_audits=[],
                 audits_omitted_count=original.get('audits_omitted_count',0)+len(original.get('public_audits',[]))))
     return value
@@ -322,12 +317,35 @@ def public_relations(graph, sources):
 
 
 def bind(root, step, role, protocol, *, source_cutoff=None, extra_steps=(), selection_protocol=0,
-         audit_projection_version=0, adjacent_audit=None):
+         audit_projection_version=0, adjacent_audit=None, worker_view_version=0):
     from .protocol import require_current
     require_current(root)
     projection=project(root,step,source_cutoff=source_cutoff,extra_steps=extra_steps)
     records,state=projection['records'],projection['search_state']
     add,paged,files=history.page_writer(c.workspace(root,step))
+    from . import candidate_refs
+    references=candidate_refs.references(records) if worker_view_version==1 else {}
+    if references:
+        original_add,original_paged=add,paged
+        def add(path,value):return original_add(path,candidate_refs.public_fields(value,references))
+        def paged(rows,*args):return original_paged(candidate_refs.public_fields(rows,references),*args)
+        for record,source in zip(records,projection['sources']):
+            reported=candidate_refs.public_science_fields(source[1],references)
+            original_path=f'inputs/history/nodes/{record["step"]:03d}/scientific-original.json'
+            public=c.scientific_projection(reported,original_path)
+            if public!=reported:
+                raw=c.regular(c._execution_raw(root,record['step']))
+                destination=c.workspace(root,step)/original_path
+                c._copy_bound(raw,destination,source[2]['raw_sha256'])
+                files.append(dict(path=original_path,sha256=c.digest(destination),size_bytes=destination.stat().st_size,
+                    kind='scientific_original'))
+            text=json.dumps(public,ensure_ascii=False,allow_nan=False)
+            record['detail']=[dict(step=record['step'],role=record['role'],
+                source='node:%03d/scientific-output' % record['step'],part=index+1,
+                parts=(len(text)+history.TEXT_CHARS-1)//history.TEXT_CHARS,text=text[start:start+history.TEXT_CHARS])
+                for index,start in enumerate(range(0,len(text),history.TEXT_CHARS))]
+            record['view']['conclusion_pages']=[f'inputs/history/nodes/{record["step"]:03d}/{index+1:04d}.json'
+                for index in range(len(record['detail']))]
     implementation_ids={}
     for record,source in zip(records,projection['sources']):
         job,_,seal,_=source
@@ -359,15 +377,38 @@ def bind(root, step, role, protocol, *, source_cutoff=None, extra_steps=(), sele
                      minimal_test=_clip(item['minimal_test'],160),minimal_test_truncated=len(item['minimal_test'].encode())>160,
                      status=item['status'],original=f'inputs/history/nodes/{item["source_h"]:03d}/0001.json')
                 for ref,item in sorted(state['mechanisms'].items())] if state else []
+    for row in mechanisms:
+        disposition=state['mechanisms'][row['mechanism_ref']].get('disposition')
+        if disposition is not None:
+            reason=disposition['reason']
+            original=f'inputs/history/nodes/{disposition["source_a"]:03d}/scientific-original.json'
+            if not any(item['path']==original for item in files):
+                source=next(source for source in projection['sources'] if source[0]['step']==disposition['source_a'])
+                raw=c.regular(c._execution_raw(root,disposition['source_a']))
+                destination=c.workspace(root,step)/original
+                c._copy_bound(raw,destination,source[2]['raw_sha256'])
+                files.append(dict(path=original,sha256=c.digest(destination),size_bytes=destination.stat().st_size,
+                    kind='scientific_original'))
+            row['disposition']=dict(reason=_clip(reason,160),reason_truncated=len(reason.encode())>160,
+                original=original)
     if state and 'portfolio' in state:
+        initial_calls=c.settings(root)['search_policy'].get('initial_calls',1)
         for row in mechanisms:
-            row['completed_cycles_in_window'] = state['portfolio']['invested'].get(row['mechanism_ref'], 0)
-            row['deferred_cycles_in_window'] = state['portfolio']['deferred'].get(row['mechanism_ref'], 0)
+            ref=row['mechanism_ref']
+            row['accepted_calls']=state['opportunity_counts'].get(ref,0)
+            row['initial_calls']=initial_calls
+            row['initial_calls_remaining']=max(0,initial_calls-row['accepted_calls'])
+            row['execution_usage_unknown']=state['opportunity_unknown']
+            grant=state.get('extra_grant')
+            row['extra_calls_remaining']=(max(0,1-sum(count for (source_a,_),count in state['opportunity_grants'].items() if source_a==grant['source_a']))
+                if grant and grant['mechanism_ref']==ref else 0)
+            row['completed_cycles'] = state['portfolio']['invested'].get(row['mechanism_ref'], 0)
+            row['unserved_cycles'] = state['portfolio']['deferred'].get(row['mechanism_ref'], 0)
             if state and 'portfolio' in state:
                 pending = state['portfolio']['pending_w'] if role == 'A' else None
-                row['deferred_cycles_if_assessed'] = (row['deferred_cycles_in_window'] + 1
-                    if pending and row['mechanism_ref'] not in (pending.get('branches') or [pending['branch']]) and row['status'] in {'pending', 'deferred'}
-                    else 0 if pending and row['mechanism_ref'] in (pending.get('branches') or [pending['branch']]) else row['deferred_cycles_in_window'])
+                row['unserved_cycles_if_assessed'] = (row['unserved_cycles'] + 1
+                    if pending and row['mechanism_ref'] not in (pending.get('branches',[pending['branch']])) and row['status']!='waived'
+                    else 0 if pending and row['mechanism_ref'] in (pending.get('branches',[pending['branch']])) else row['unserved_cycles'])
     mechanism_pages=paged(mechanisms,16,'mechanisms','inputs/lineage/mechanisms','sealed-H-A-interpretation')
     order_rows = [dict(mechanism_ref=item['mechanism_ref'], label=_clip(state['mechanisms'][item['mechanism_ref']]['label'], 80),
                        original=f'inputs/history/nodes/{item["planned_step"]:03d}/0001.json')
@@ -377,6 +418,7 @@ def bind(root, step, role, protocol, *, source_cutoff=None, extra_steps=(), sele
     indexes=dict(nodes=nodes[0] if nodes else None,candidates=candidates[0] if candidates else None,
                  mechanisms=mechanism_pages[0] if mechanism_pages else None,relations=relations[0] if relations else None)
     experiments=[];recovery_materials=[]
+    source_jobs={job['step']:job for job,_,_,_ in projection['sources']}
     for record in records:
         resumes={row['call_id']:row for row in record.get('execution_resumes',[])}
         for resumed in resumes.values():
@@ -396,6 +438,8 @@ def bind(root, step, role, protocol, *, source_cutoff=None, extra_steps=(), sele
                     if len(matches)!=1:raise ValueError('Retirement native original is unavailable')
                     retained.append((matches[0],f'originals/{number:03d}'))
                 for item,name in retained:
+                    if worker_view_version == 1:
+                        continue  # Exact receipts remain in the private verified archive.
                     limits=c.settings(root)
                     if c.output_quota_exceeded(limits,(row['size_bytes'] for row in [*recovery_materials,item])):
                         raise ValueError('Retirement proof materials exceed the original input bound')
@@ -403,7 +447,8 @@ def bind(root, step, role, protocol, *, source_cutoff=None, extra_steps=(), sele
                     c._copy_bound(Path(root)/item['snapshot'],c.workspace(root,step)/target,item['sha256'])
                     recovery_materials.append(dict(path=target,sha256=item['sha256'],size_bytes=item['size_bytes']))
                 experiments.append(dict(step=record['step'],call_id=call['call_id'],execution_status='not_submitted',
-                    retirement_proof=f'{prefix}/retirement.json',native_originals=[f'{prefix}/{name}' for _,name in retained[1:]],
+                    **(dict(retirement_proof=f'{prefix}/retirement.json',native_originals=[f'{prefix}/{name}' for _,name in retained[1:]])
+                       if worker_view_version != 1 else {}),
                     limitation='Permanent non-submission of the original call only; no scientific verdict, candidate or new execution allowance.'))
                 continue
             if 'execution' not in call:
@@ -412,11 +457,13 @@ def bind(root, step, role, protocol, *, source_cutoff=None, extra_steps=(), sele
                     limitation='Original accepted execution is pending or unverified; preserve its identity and reservation.'))
                 continue
             details=call.get('execution') or {};result=details.get('result') or {}
+            scientific_outputs=(history.scientific_outputs(root,source_jobs[record['step']],call)
+                if worker_view_version==1 else call.get('outputs',[]))
             outputs=[dict(path=f'inputs/parents/{record["step"]:03d}/artifacts/experiments/{call["call_id"]}/artifacts/{item["name"]}',
                           historical=f'history/nodes/{record["step"]:03d}/artifacts/experiments/{call["call_id"]}/artifacts/{item["name"]}',
-                          retention=item['retention']) for item in call.get('outputs',[])]
+                          retention=item['retention']) for item in scientific_outputs]
             if call['call_id'] in record.get('recovered_calls',[]):
-                for output,item in zip(outputs,call.get('outputs',[])):
+                for output,item in zip(outputs,scientific_outputs):
                     output['path']=f'inputs/recovered/{record["step"]:03d}/{call["call_id"]}/{item["name"]}'
                     output['historical']=output['path']
                     limits=c.settings(root)
@@ -430,6 +477,8 @@ def bind(root, step, role, protocol, *, source_cutoff=None, extra_steps=(), sele
                 for number,proof in enumerate(observed['proofs'],1):
                     matches=[item for item in call['originals'] if Path(root)/item['path']==Path(proof['path']) and item['sha256']==proof['sha256']]
                     if len(matches)!=1 or matches[0]['retention']!='archived':raise ValueError('Recovered native original is unavailable')
+                    if worker_view_version == 1:
+                        continue  # Do not publish host control proofs as scientific inputs.
                     item=matches[0];target=f'inputs/recovered/{record["step"]:03d}/{call["call_id"]}/originals/{number:03d}'
                     limits=c.settings(root)
                     if c.output_quota_exceeded(limits,(row['size_bytes'] for row in [*recovery_materials,item])):
@@ -446,6 +495,8 @@ def bind(root, step, role, protocol, *, source_cutoff=None, extra_steps=(), sele
                 metrics=metrics[:8],metrics_omitted_count=max(0,len(metrics)-8),
                 outputs=outputs[:8],outputs_omitted_count=max(0,len(outputs)-8),
                 **(dict(native_originals_index=native_pages[0],recovery_note='Appended original terminal facts; the prior sealed scientific conclusion is unchanged.') if native_pages else {}),
+                **(dict(recovery_note='Retained terminal observations; the prior sealed scientific conclusion is unchanged. Exact control receipts remain private.')
+                   if worker_view_version == 1 and call['call_id'] in record.get('recovered_calls',[]) else {}),
                 limitation='Declared metrics and retained files; candidate ranking, scientific validity and external submission are not established. Direct-parent paths are mounted only for bound parents; use historical handles for other nodes.'))
     experiment_pages=paged(experiments,2,'experiments','inputs/history/experiments','managed-local-observations')
     if experiment_pages:indexes['experiments']=experiment_pages[0]
@@ -462,14 +513,11 @@ def bind(root, step, role, protocol, *, source_cutoff=None, extra_steps=(), sele
         raise ValueError('Unsupported frozen audit projection')
     view=brief(records,state,projection['graph'],overview,indexes,selection_protocol=selection_protocol)
     if state and 'portfolio' in state:
-        threshold = c.settings(root)['portfolio_policy']['review_after_cycles']
-        ordered = sorted(mechanisms, key=lambda row: (
-            0 if row['status'] in {'pending', 'deferred'} and row.get('deferred_cycles_if_assessed', row['deferred_cycles_in_window']) >= threshold else
-            1 if row['status'] in {'pending', 'deferred'} else 2,
-            -row.get('deferred_cycles_if_assessed', row['deferred_cycles_in_window']), row['mechanism_ref']))
-        view['mechanisms'].update(overview=ordered[:4], overview_omitted_count=max(0, len(ordered)-4),
+        threshold = (c.settings(root).get('portfolio_policy') or {}).get('review_after_cycles')
+        # Stable identity order is navigation, never scientific ranking.
+        view['mechanisms'].update(overview=mechanisms[:4], overview_omitted_count=max(0,len(mechanisms)-4),
                                   index=indexes['mechanisms'],
-                                  portfolio=search.portfolio_view(state, threshold, prospective=role == 'A', version=2))
+                                  portfolio=search.portfolio_view(state,threshold,prospective=role=='A'))
     if state:
         view['mechanisms']['unfinished_plan']=dict(remaining=order_rows[:4],remaining_count=len(order_rows),
             omitted_count=max(0,len(order_rows)-4),index=order_pages[0] if order_pages else None,
@@ -488,4 +536,6 @@ def bind(root, step, role, protocol, *, source_cutoff=None, extra_steps=(), sele
             leakage_assessment='Unknown unless explicitly reported; adapter status does not establish leakage or target suitability.')
         bounded_brief(view)
     return dict(**(dict(execution_recoveries=projection['recovery_refs'],execution_recovery_materials=recovery_materials) if projection['recovery_refs'] else {}),**(dict(audit_projection_version=1, audit_receipts=audit_refs, adjacent_audit=adjacent_audit) if audit_projection_version == 1 else {}), nodes=[dict(step=row['step'],seal_sha256=row['seal_sha256']) for row in records],files=files,
-                candidate_ids=[row['id'] for row in candidate_rows],view=view),state
+                candidate_ids=[row['id'] for row in candidate_rows],
+                **(dict(candidate_references=references) if worker_view_version==1 else {}),
+                view=candidate_refs.public_fields(view,references)),state

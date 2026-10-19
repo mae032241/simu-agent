@@ -42,7 +42,8 @@ def test_full_candidate_history_exceeds_input_caps_but_view_is_small():
     view=selection.project(records)
     assert view['candidate_count']==6000
     assert len(selection._bytes(view))<=selection.MAX_BRIEF_BYTES
-    assert view['proxy_highest'][0]['candidate_ids']==['c5999']
+    assert [row['id'] for row in view['candidate_facts']]==[f'c{i}' for i in range(len(view['candidate_facts']))]
+    assert len(view['candidate_facts'])+view['candidate_facts_omitted_count']==6000
 
 
 def test_selection_omission_preserves_downstream_shape(monkeypatch):
@@ -55,6 +56,6 @@ def test_selection_omission_preserves_downstream_shape(monkeypatch):
         current_candidate=dict(candidate_id=candidate),actual_submission=dict(candidate_id=candidate,artifact_retention='unknown')) for i in (1,2)]
     view=selection.project(rows)
     assert view['view_status']=='details_omitted'
-    assert view['audits_omitted_count']==1 and view['public_audits']==[]
+    assert view['audits_omitted_count']==0 and view['public_audits']==[]
     brief=dict(node_count=0,recent=[],candidates=dict(view,selection_protocol=1),mechanisms={})
-    assert lineage.bounded_brief(brief)['candidates']['proxy_highest']==[]
+    assert lineage.bounded_brief(brief)['candidates']['candidate_facts']==[]

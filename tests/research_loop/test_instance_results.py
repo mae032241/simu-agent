@@ -23,15 +23,14 @@ def test_result_cards_preserve_exact_ties_and_do_not_replace_empty_a_recommendat
         current_candidate=None,actual_submission=None),dict(step=2,role='A',recommendation='candidate-a',
         coverage=None,candidates=[],current_candidate=None,actual_submission=None)]
     comparison=selection.project(facts)
-    # These are existing frozen omissions, not another UI ranking calculation.
-    comparison['proxy_highest'][0]['ties_omitted_count']=2
-    comparison['proxy_groups_omitted_count']=3
+    # Render the frozen facts and mechanical omissions without deriving a choice.
+    comparison['candidate_facts_omitted_count']=3
     job=dict(role='A',history=dict(view=dict(candidates=comparison)),execution_config=dict(private_host_token='DO-NOT-RENDER'))
     payload=dict(summary='Exact <script>finding</script>',scientific_result='The observed proxy remains inconclusive.',
         candidate_recommendation=None,limitations=['Bounded evidence.'],next_action='finish')
     page=render.result(3,job,payload,dict(materials=[])).decode()
-    assert str(metric) in page and 'candidate-a, candidate-b' in page
-    assert '2 additional tied candidates omitted' in page and '3 comparison groups omitted' in page
+    assert str(metric) in page and 'candidate-a' in page and 'candidate-b' in page
+    assert '3 candidate facts omitted' in page
     assert 'unknown_candidate_count' in page and 'candidate-unknown' in page
     assert 'input boundary' in page and 'later evidence is not included' in page
     assert 'This sealed A makes no candidate recommendation' in page
@@ -44,7 +43,7 @@ def test_result_cards_preserve_exact_ties_and_do_not_replace_empty_a_recommendat
     formal=render.result(4,dict(job,formal_review=True),dict(payload,verdict='pass'),dict(materials=[])).decode()
     assert 'not an ordinary A recommendation' in formal
     empty=render.result(5,dict(role='W'),payload,dict(materials=[])).decode()
-    assert 'No ranked group is available' in empty and 'Observation coverage: unknown' in empty
+    assert 'No candidate facts are displayed' in empty and 'Observation coverage: unknown' in empty
 
 
 def test_result_routes_are_read_only_exact_and_independent_of_live_clock(tmp_path,monkeypatch):

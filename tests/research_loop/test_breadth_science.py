@@ -6,7 +6,7 @@ import sys
 import pytest
 
 from scidiscovery.research_loop import (breadth, contracts as c, controller,
-    cov_lineage, execution, experiments, history, lineage, native, search)
+    cov_lineage, execution, experiment_client, experiments, history, lineage, native, search)
 from execution_fixtures import execution_registry
 from test_cov_lineage import BACKEND
 from test_history_handoff import finish
@@ -19,7 +19,7 @@ def prepare(tmp_path, *, cov=False, initial_calls=1, portfolio=False):
     observer=dict(adapter=str(Path(cov_lineage.__file__).resolve()),contract_version=2,
         config=dict(runs='runs',calls='project/nodes',evaluation_key='fixture-public-v1')) if cov else None
     controller.prepare(root,objective,public,['never-call-a-model'],max_tokens=100000,max_seconds=600,max_steps=16,
-        model='no-model',reasoning_effort='high',node_budget_mode='hard',
+        model='no-model',reasoning_effort='high',node_budget_mode='soft',
         search_policy=dict(search.DEFAULT_POLICY,initial_calls=initial_calls),history_observer=observer,
         portfolio_policy=dict(review_after_cycles=3) if portfolio else None)
     return root
@@ -45,7 +45,14 @@ def worker(root, tmp_path, step, parents, *, cov=False):
     return job,c.read(output)
 
 
-def run(root, config, label, *, failed=False):
+def run(root, config, label, *, failed=False, client_path=None):
+    if 'scope' not in config:
+        if client_path is None:
+            raise ValueError('Scientific execution client requires its exact configured path')
+        owner,_=experiment_client.location(client_path)
+        if owner!=Path(root).absolute():
+            raise ValueError('Scientific execution client belongs to another instance')
+        config=experiment_client.resolve(client_path,config)
     work=c.workspace(root,config['scope']['step'])/'work'
     index=len(experiments.Records(config).calls())
     source=work/f'{label}-{index}.payload'
@@ -67,7 +74,7 @@ def a(root,step,parents,*,focus=None,dispositions=(),action='continue_w',mode='s
         search_review=dict(dispositions=list(dispositions),next_focus=dict(mechanism_ref=focus,action=mode) if action=='continue_w' else None),
         next_action=action,route_reason='Resolve the mechanism comparison under the original constraints',
         decision_request=dict(decision='mechanism',question='Can the failed discriminating measurement be repaired?' if mode=='repair' else 'Which mechanism should receive the next independent comparison?',
-            change_criterion='A trustworthy discriminating measurement would change the mechanism choice') if action=='continue_w' else None)
+            change_criterion='A trustworthy discriminating measurement would change the mechanism choice') if action in {'continue_w','revise_h'} else None)
     c.write(record/'native-intent.json',dict(task_sha256=c.digest(root/'jobs'/f'{step:03d}.json')))
     c.write(record/'science-output.json',payload)
     c.write(record/'usage.json',dict(input_tokens=7,cached_input_tokens=2,output_tokens=3))
@@ -103,6 +110,17 @@ def test_multi_mechanism_cov_originals_bind_candidates_and_a_screens_exactly(tmp
     before={path:path.read_bytes() for path in root.rglob('*') if path.is_file()}
     assert lineage.build(root,4)['candidates'][q['candidate_id']]['mechanism_ref']=='h001.m2'
     assert before=={path:path.read_bytes() for path in root.rglob('*') if path.is_file()}
+
+
+def test_large_h_combination_binds_complete_registered_w_scope(tmp_path, execution_registry):
+    root = prepare(tmp_path)
+    h(root, labels=tuple(f'Mechanism {index}' for index in range(1, 130)))
+    job, config = worker(root, tmp_path, 2, [1])
+    expected = [f'h001.m{index}' for index in range(1, 130)]
+    assert [row['mechanism_ref'] for row in job['search']['breadth']['mechanisms']] == expected
+    assert config['breadth'] == job['search']['breadth']
+    assert [row['mechanism_ref'] for row in job['search']['coverage_obligation']] == expected
+    assert len((json.dumps(c.science_view(job, root)['lineage'], ensure_ascii=False, indent=2) + '\n').encode()) <= 4096
 
 
 def test_generic_cross_w_once_a_grant_and_same_ref_revision_do_not_refund(tmp_path,execution_registry):

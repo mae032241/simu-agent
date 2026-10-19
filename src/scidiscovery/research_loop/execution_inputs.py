@@ -5,8 +5,9 @@ from contextlib import contextmanager
 import hashlib
 import json
 from pathlib import Path
+import re
 
-from . import contracts as c, qualification as q, execution
+from . import contracts as c, qualification as q, execution, experiment_client
 
 SOURCE_SCHEMA = 'scidiscovery.declared-input-sources.v1'
 SOURCE_CONTRACT = dict(version=1, coverage='all_adapter_declared_inputs_and_contributors',
@@ -176,7 +177,137 @@ def _directory(root, step):
     return c.host_record(c.workspace(root, step)) / 'compiled-implementations'
 
 
-def verify_compilation(root, ref, *, material=None):
+def _private_compile_output(root, job, config, output):
+    directory = experiment_client.record_directory(root, job['step'])
+    return (type(config.get('worker_view_version')) is int and config['worker_view_version'] == 1
+        and config.get('record_dir') == str(directory)
+        and output.parent.parent == directory.parent / 'implementations'
+        and re.fullmatch(r'I[0-9]{3,}', output.parent.name) is not None and output.name == 'package.json')
+
+
+def _implementation_client(material):
+    if material['size_bytes'] > 4096:
+        return None
+    raw = c.regular(Path(material['source'])).read_bytes()
+    try:
+        value = json.loads(raw)
+    except (ValueError, UnicodeError):
+        return None
+    if not isinstance(value, dict) or 'worker_implementation_version' not in value:
+        return None
+    if (set(value) != {'worker_implementation_version', 'implementation_ref'}
+            or type(value['worker_implementation_version']) is not int or value['worker_implementation_version'] != 1
+            or not isinstance(value['implementation_ref'], str)
+            or re.fullmatch(r'I[0-9]{3,}', value['implementation_ref']) is None):
+        raise q.IntegrityError('Native implementation client is malformed')
+    return value
+
+
+def _legacy_authorization(root, job, compiler_ref, original_material, permit_ref, attempt, *, require_intent):
+    from . import author_closeout
+    if 'worker_view_version' in job or type(attempt) is not int or attempt not in {1, 2}:
+        raise q.IntegrityError('Legacy compiler clients require an explicit new author context')
+    expected = (root / 'host-recovery/author-closeout' / f'{job["step"]:03d}.json'
+                if attempt == 1 else author_closeout.successor_path(root, job['step']))
+    if permit_ref != q._ref(root, expected):
+        raise q.IntegrityError('Legacy compiler client changed its exact author authorization')
+    permit = q._read(root, permit_ref)
+    if attempt == 1:
+        author_closeout.validate(root, permit)
+        original = permit
+    else:
+        author_closeout.validate_successor(root, permit)
+        original = q._read(root, permit['original_permit'])
+    compiler_path = author_closeout._declared_ref(root,compiler_ref)
+    if (compiler_path.name != 'compiler.json' or compiler_path.parent.parent != _directory(root,job['step'])
+            or original['step'] != job['step'] or q._read(root,original['job']) != job):
+        raise q.IntegrityError('Legacy compiler client differs from the authorized original task')
+    if require_intent:
+        path = root / 'native-evidence' / f'{job["step"]:03d}' / 'continuations' / f'{attempt:03d}' / 'native-intent.json'
+        intent = c.read(c.regular(path))
+        if (type(intent.get('attempt')) is not int or intent['attempt'] != attempt
+                or intent.get('task_sha256') != original['job']['sha256']
+                or intent.get('author_closeout') != permit_ref or intent.get('continuation_kind') != 'author_closeout'
+                or intent.get('context_mode') != 'new_context'
+                or type(intent.get('worker_view_version')) is not int or intent['worker_view_version'] != 1):
+            raise q.IntegrityError('Legacy compiler client has no exact accepted author context')
+    return original
+
+
+def _legacy_author_eligibility(root, job, compiler_ref, original_material, permit_ref, attempt, *, require_intent):
+    """Verify scientific compiler provenance independently of author permission."""
+    original = _legacy_authorization(root,job,compiler_ref,original_material,permit_ref,attempt,require_intent=require_intent)
+    compiler = verify_compilation(root,compiler_ref,material=original_material)
+    if compiler['job'] != original['job'] or compiler['native_intent'] != original['original_intent']:
+        raise q.IntegrityError('Legacy compiler client differs from the authorized original task')
+    return compiler
+
+
+def verify_legacy_author_client(root, job, binding_ref, *, require_intent=True):
+    """Verify a new client separately from an unchanged legacy package and permit."""
+    root = Path(root).resolve()
+    binding = q._read(root, binding_ref)
+    if not isinstance(binding, dict) or set(binding) != {'client', 'public_path', 'package', 'legacy_authorization'}:
+        raise q.IntegrityError('Legacy author client binding is malformed')
+    grant = binding['legacy_authorization']
+    if not isinstance(grant, dict) or set(grant) != {'permit', 'compiler', 'material', 'attempt'}:
+        raise q.IntegrityError('Legacy author client authorization is malformed')
+    compiler = _legacy_author_eligibility(root, job, grant['compiler'], grant['material'], grant['permit'], grant['attempt'],
+                                     require_intent=require_intent)
+    expected_binding = root / grant['compiler']['path']
+    expected_binding = expected_binding.parent / f'author-client-{grant["attempt"]:03d}.json'
+    compilers = sorted(_directory(root, job['step']).glob('*/compiler.json'))
+    if (root / grant['compiler']['path']) not in compilers or binding_ref != q._ref(root, expected_binding):
+        raise q.IntegrityError('Legacy author client changed its original compiler namespace')
+    reference = f'I{compilers.index(root / grant["compiler"]["path"]) + 1:03d}'
+    source = c.workspace(root, job['step']) / 'artifacts/scientific-implementations' / (reference + '.json')
+    expected_client = dict(worker_implementation_version=1, implementation_ref=reference)
+    identity = q._identity(source)
+    if (binding['public_path'] != str(source) or binding['package'] != compiler['output']
+            or not isinstance(binding['client'], dict)
+            or type(binding['client'].get('worker_implementation_version')) is not int
+            or binding['client'] != expected_client or _implementation_client(dict(identity, source=str(source))) != expected_client):
+        raise q.IntegrityError('Legacy author client differs from its actual scientific file and original package')
+    return binding, compiler
+
+
+def create_legacy_author_client(root, job, compiler_ref, original_material, permit_ref, attempt, public_path):
+    """Trusted new-author publication; never rewrite an old package or task marker."""
+    root = Path(root).resolve()
+    _legacy_authorization(root,job,compiler_ref,original_material,permit_ref,attempt,require_intent=False)
+    from . import author_closeout
+    permit = q._read(root,permit_ref)
+    if attempt == 1:author_closeout.require_original_eligibility(root,permit)
+    else:author_closeout.require_successor_eligibility(root,permit)
+    compiler = _legacy_author_eligibility(root, job, compiler_ref, original_material, permit_ref, attempt, require_intent=False)
+    paths = sorted(_directory(root, job['step']).glob('*/compiler.json'))
+    compiler_path = root / compiler_ref['path']
+    if compiler_path not in paths:
+        raise q.IntegrityError('Legacy author client has no original compiler owner')
+    reference = f'I{paths.index(compiler_path) + 1:03d}'
+    expected = c.workspace(root, job['step']) / 'artifacts/scientific-implementations' / (reference + '.json')
+    public_path = Path(public_path).absolute()
+    if public_path != expected or public_path.resolve() != public_path:
+        raise q.IntegrityError('Legacy author client requires its actual new scientific path')
+    client = dict(worker_implementation_version=1, implementation_ref=reference)
+    binding_path = compiler_path.parent / f'author-client-{attempt:03d}.json'
+    if (not binding_path.exists()
+            and (c.host_record(c.workspace(root, job['step'])) / 'result-identity.json').exists()):
+        raise q.IntegrityError('Legacy author clients cannot change an already sealed original')
+    if public_path.exists():
+        if c.read(c.regular(public_path)) != client:
+            raise q.IntegrityError('Legacy author client cannot replace another scientific original')
+    else:
+        c.write(public_path, client)
+        public_path.chmod(0o400)
+    binding = dict(client=client, public_path=str(public_path), package=compiler['output'],
+        legacy_authorization=dict(permit=permit_ref, compiler=compiler_ref, material=original_material, attempt=attempt))
+    proof = q._save(root, binding_path, binding)
+    verify_legacy_author_client(root, job, proof, require_intent=False)
+    return proof
+
+
+def verify_compilation(root, ref, *, material=None, client_binding=None):
     """Shared seal/review/run validator; it never recompiles reviewed bytes."""
     root = Path(root).resolve(); value = q._read(root, ref)
     if value.get('version') != 1 or type(value.get('version')) is not int:
@@ -187,9 +318,17 @@ def verify_compilation(root, ref, *, material=None):
         raise q.IntegrityError('Compiler original has no exact W owner')
     config = q._read(root, value['configuration'])
     attempt = config['native_attempt']['number']
+    if type(attempt) is not int or not 0 <= attempt < 10000:
+        raise q.IntegrityError('Compiler native attempt is malformed')
+    # Validate the frozen original directly. Re-entering records() here would
+    # recursively validate this same author's scientific context. Launch/seal
+    # callers independently validate the complete accepted execution chain.
+    native_record = execution.origin(root, step)
+    if attempt:
+        native_record = native_record / 'continuations' / f'{attempt:03d}'
     expected = root / 'host-runtime/experiment-control' / config['scope']['job_sha256'] / 'interfaces' / f'{attempt:03d}.json'
     if (value['configuration'] != q._ref(root, expected)
-            or value['native_intent'] != q._ref(root, execution.record(root, step, attempt) / 'native-intent.json')
+            or value['native_intent'] != q._ref(root, native_record / 'native-intent.json')
             or q._read(root, value['native_intent'])['task_sha256'] != value['job']['sha256']
             or config['scope']['step'] != step or config['scope']['job_sha256'] != value['job']['sha256']):
         raise q.IntegrityError('Compiler native task/configuration original changed')
@@ -230,9 +369,35 @@ def verify_compilation(root, ref, *, material=None):
                 or not isinstance(item['media_type'], str)):
             raise q.IntegrityError('Compiler input alias/metadata changed')
     q._check(value['output'])
-    if material is not None and value['output'] != dict(path=material['source'],
-            sha256=material['sha256'], size_bytes=material['size_bytes']):
-        raise q.IntegrityError('Compiler output is not the exact sealed material')
+    private_output = type(job.get('worker_view_version')) is int and job['worker_view_version'] == 1
+    if private_output:
+        output = Path(value['output']['path'])
+        if not _private_compile_output(root, job, config, output) or output.resolve() != output:
+            raise q.IntegrityError('Compiler output escaped its exact host namespace')
+    if material is not None:
+        if private_output:
+            path = Path(value['output']['path']).parent / 'client.json'
+            if client_binding is None or client_binding != q._ref(root, path):
+                raise q.IntegrityError('Compiler client binding is not its sealed original')
+            binding = q._read(root, client_binding)
+            expected = dict(worker_implementation_version=1, implementation_ref=path.parent.name)
+            source = Path(material['source'])
+            if (not isinstance(binding, dict) or set(binding) != {'client', 'public_path', 'package'}
+                    or not isinstance(binding['client'], dict)
+                    or type(binding['client'].get('worker_implementation_version')) is not int
+                    or binding['client'] != expected or binding['package'] != value['output']
+                    or binding['public_path'] != str(source) or not source.is_relative_to(c.workspace(root, step) / 'artifacts')
+                    or _implementation_client(material) != expected):
+                raise q.IntegrityError('Compiler client differs from its exact scientific material and private package')
+            q._check(dict(path=str(source), sha256=material['sha256'], size_bytes=material['size_bytes']))
+        elif client_binding is not None:
+            binding, _ = verify_legacy_author_client(root, job, client_binding)
+            if (binding['legacy_authorization']['compiler'] != ref or binding['public_path'] != material['source']
+                    or _implementation_client(material) != binding['client']):
+                raise q.IntegrityError('Legacy compiler client is not the exact sealed scientific material')
+            q._check(dict(path=material['source'], sha256=material['sha256'], size_bytes=material['size_bytes']))
+        elif value['output'] != dict(path=material['source'], sha256=material['sha256'], size_bytes=material['size_bytes']):
+            raise q.IntegrityError('Compiler output is not the exact sealed material')
     return value
 
 
@@ -241,14 +406,52 @@ def capture(root, job, materials):
     root = Path(root).resolve(); result = []; seen = set()
     for path in sorted(_directory(root, job['step']).glob('*/compiler.json')):
         ref = q._ref(root, path); value = q._read(root, ref)
-        matches = [row for row in materials if row['source'] == value['output']['path']]
+        client_binding = None
+        if type(job.get('worker_view_version')) is int and job['worker_view_version'] == 1:
+            client_path = Path(value['output']['path']).parent / 'client.json'
+            if not client_path.exists():
+                continue  # An unpublished compiler result is not a delivered material.
+            client_binding = q._ref(root, client_path)
+            client = q._read(root, client_binding)
+            source = client.get('public_path')
+        else:
+            source = value['output']['path']
+            clients = sorted(path.parent.glob('author-client-*.json'))
+            matching = [item for item in clients if c.read(c.regular(item)).get('public_path') in {row['source'] for row in materials}]
+            if matching:
+                client_binding = q._ref(root, matching[-1])
+                client, _ = verify_legacy_author_client(root, job, client_binding)
+                source = client['public_path']
+                if any(row['source'] == value['output']['path'] for row in materials):
+                    raise q.IntegrityError('Legacy machine package must remain separate from its new scientific client')
+        matches = [row for row in materials if row['source'] == source]
         if not matches:
             continue
         if len(matches) != 1 or matches[0]['source'] in seen:
             raise q.IntegrityError('Compiled material has ambiguous provenance')
-        verify_compilation(root, ref, material=matches[0]); seen.add(matches[0]['source'])
-        result.append(dict(material=matches[0], compiler=ref))
+        verify_compilation(root, ref, material=matches[0], client_binding=client_binding); seen.add(matches[0]['source'])
+        result.append(dict(material=matches[0], compiler=ref,
+            **(dict(client_binding=client_binding) if client_binding is not None else {})))
+    if any(row['source'] not in seen and _implementation_client(row) is not None for row in materials):
+        raise q.IntegrityError('Native implementation client has no exact sealed compiler provenance')
     return result
+
+
+def compiled_payload(root, material):
+    """Resolve a sealed science client to its separately bound private package."""
+    if _implementation_client(material) is None:
+        identity = q._identity(material['source'])
+        if identity != dict(path=material['source'], sha256=material['sha256'], size_bytes=material['size_bytes']):
+            raise q.IntegrityError('Execution material differs from its exact source')
+        return identity
+    original = _producer(Path(root).resolve(), material)
+    seal = q._read(root, original['producer_seal'])
+    found = [row for row in seal.get('compiled_implementations', []) if row['material'] == material]
+    if len(found) != 1:
+        raise q.IntegrityError('Native implementation client needs its exact sealed compiler provenance')
+    value = verify_compilation(root, found[0]['compiler'], material=material,
+                               client_binding=found[0].get('client_binding'))
+    return value['output']
 
 
 def validate_seal(root, job, seal):
@@ -268,7 +471,8 @@ def execution_input_coverage(root, job, subject):
     found = [row for row in seal.get('compiled_implementations', []) if row['material'] == subject['material']]
     if len(found) != 1:
         return None
-    compiler = verify_compilation(root, found[0]['compiler'], material=subject['material'])
+    compiler = verify_compilation(root, found[0]['compiler'], material=subject['material'],
+                                  client_binding=found[0].get('client_binding'))
     compiler_job = q._read(root, compiler['job'])
 
     def covers(owner, originals):
@@ -328,13 +532,13 @@ def _local_authoring(work, directory):
 def local_input_sources(config, interface, payload, metadata):
     """Called by the actual adapter before acceptance; no scientific inference."""
     from . import experiments as e
-    record = Path(config['record_dir'])
     if (not isinstance(interface, dict) or interface.get('version') != e.VERSION
-            or not interface.get('code') or len(record.parents) < 5 or 'entry' not in metadata):
+            or not interface.get('code') or 'entry' not in metadata):
         return None
-    root = record.parents[4]; step = config['scope']['step']; work = c.workspace(root, step)
-    if record != work / 'work/lineage' or not (root / 'jobs' / f'{step:03d}.json').is_file():
+    root = experiment_client.root_for_configuration(config, allow_standalone=True)
+    if root is None:
         return None  # Standalone commands have no current scientific-task owner.
+    step = config['scope']['step']; work = c.workspace(root, step)
     job = c.read(c.regular(root / 'jobs' / f'{step:03d}.json'))
     attempt = config.get('native_attempt') or {}
     if type(attempt.get('number')) is not int:
@@ -391,7 +595,7 @@ def validate_local_input_sources(root, job, accepted):
     for asset in accepted['interface']['code']:
         q._check(asset)
     directory = Path(accepted['experiment_directory']); authoring = _local_authoring(work, directory)
-    snapshot = work / 'work/lineage/calls' / accepted['call_id']
+    snapshot = experiment_client.record_directory(root, job['step']) / 'calls' / accepted['call_id']
     if (accepted.get('cwd') != str(snapshot / 'inputs')
             or Path(accepted['source_script']) != directory / accepted['entry']
             or accepted['script']['path'] != str(snapshot / 'source.py')
@@ -441,10 +645,16 @@ class NativeInputHost:
         from . import execution_authority as authority
         authority._remaining(self.root, self.config)
         work = c.workspace(self.root, self.job['step']); source = Path(source).absolute(); output = Path(output).absolute()
+        private_output = type(self.job.get('worker_view_version')) is int and self.job['worker_view_version'] == 1
+        if private_output:
+            output_allowed = _private_compile_output(self.root, self.job, self.config, output)
+        else:
+            output_allowed = output.is_relative_to(work / 'artifacts')
         if (source.resolve() != source or not source.is_relative_to(work)
-                or output.resolve() != output or not output.is_relative_to(work / 'artifacts')
+                or output.resolve() != output or not output_allowed
                 or any(parent.is_symlink() for parent in output.parents)):
-            raise ValueError('Compile source/output must be original files in this task and artifacts')
+            raise ValueError('Compile source/output must be original files in this task and its host-owned output namespace'
+                             if private_output else 'Compile source/output must be original files in this task and artifacts')
         authored = c.regular(source).read_bytes(); source_identity = q._identity(source)
         if (len(authored), hashlib.sha256(authored).hexdigest()) != (source_identity['size_bytes'], source_identity['sha256']):
             raise q.IntegrityError('Compiler author changed between reading and identity capture')
@@ -502,7 +712,7 @@ class NativeInputHost:
             capability_source=capability, capability=snapshot, inputs=inputs, output=q._identity(output))
         proof = q._save(self.root, directory / 'compiler.json', value)
         verify_compilation(self.root, proof)
-        return dict(status='compiled', path=str(output.relative_to(work)),
+        return dict(status='compiled', path=str(output) if private_output else str(output.relative_to(work)),
                     qualification='Unreviewed compiled material; no execution permission')
 
     def for_payload(self, payload, resolved_inputs):
@@ -512,7 +722,8 @@ class NativeInputHost:
         found = [row for row in seal.get('compiled_implementations', []) if row['material'] == subject['material']]
         if len(found) != 1:
             raise ValueError('Native package needs its exact sealed compiler provenance')
-        value = verify_compilation(self.root, found[0]['compiler'], material=subject['material'])
+        value = verify_compilation(self.root, found[0]['compiler'], material=subject['material'],
+                                   client_binding=found[0].get('client_binding'))
         compiler_job = q._read(self.root, value['job'])
         expected = [{key: row[key] for key in row if key != 'alias'} for row in value['inputs']]
         if json.dumps([item.model_dump(mode='json') for item in resolved_inputs], sort_keys=True) != json.dumps(expected, sort_keys=True):

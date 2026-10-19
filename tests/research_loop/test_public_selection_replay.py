@@ -55,7 +55,7 @@ def test_masked_inputs_are_noninterfering_and_unbound_audit_not_qualified(tmp_pa
     mutated['groups']['fixture']['public_conditions']['hidden_test_conditions']='secret'
     assert replay.export_public(mutated)==public
     result=replay.replay(public)['fixture'];view=result['view']
-    assert view['target_best'] is None and view['public_audits'][0]['status']=='unknown'
+    assert 'target_best' not in view and view['public_audits']==[]
     assert result['historical_audits'][0]['recorded_audit']=='recorded_unbound'
     assert result['choice_generated'] is False and result['reward_generated'] is False
     assert result['probes'][0]['advice']['audit_required'] is True

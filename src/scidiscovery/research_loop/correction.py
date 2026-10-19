@@ -1,7 +1,7 @@
 """Sealed A assessments and immutable correction/ack facts, without a scheduler."""
 from __future__ import annotations
 
-from . import execution
+from . import budget, execution
 
 import hashlib
 import json
@@ -31,8 +31,9 @@ def _proofs(root, job, assessment):
     if assessment is None:
         return set()
     if (not isinstance(assessment, dict) or set(assessment) != {'verdict'}
+            or not isinstance(assessment['verdict'],str)
             or assessment['verdict'] not in {'progress', 'no_progress', 'unknown'}):
-        raise ValueError('Progress assessment fields are invalid')
+        return set()  # Unparseable scientific advice is not progress evidence.
     if assessment['verdict'] != 'progress':
         return set()
     sources = history.direct_sources(root, job)
@@ -58,8 +59,8 @@ def _proofs(root, job, assessment):
 def validate_payload(root, job, payload):
     if job.get('purpose') in {'closeout','formal_review'}:
         return
-    if job.get('handoff_protocol', 1) >= 6 and job['role'] == 'A':
-        _proofs(root, job, payload.get('progress_assessment'))
+    if job.get('handoff_protocol', 1) >= 6 and job['role'] == 'A' and c.settings(root).get('correction_policy') is not None:
+        _proofs(root, job, c.scientific_field(job,payload,'progress_assessment'))
 
 
 def _records(root):
@@ -137,7 +138,7 @@ def project(root, before_step=None):
     reviews = dict(no_progress=None, unknown=None)
     used, eligible, triggers = set(), [], []
     pause = permit = None
-    before_step = before_step or settings['max_steps'] + 1
+    before_step = before_step or budget.historical_step_limit(root) + 1
     for step in range(1, before_step):
         record = c.host_record(c.workspace(root, step))
         if not (record / 'result-identity.json').exists():
@@ -147,10 +148,10 @@ def project(root, before_step=None):
         intent = c.read(c.regular(execution.record(root, step) / 'native-intent.json'))
         if (intent.get('task_sha256') != c.digest(root / 'jobs' / f'{step:03d}.json')
                 or type(outcome.get('returncode')) is not int or outcome['returncode'] != 0
-                or outcome.get('stop_reason') or outcome.get('usage', {}).get('unknown_steps') != []
+                or outcome.get('stop_reason') or outcome.get('usage', {}).get('blocking_unknown_steps', outcome.get('usage', {}).get('unknown_steps')) != []
                 or outcome.get('raw_sha256') != seal['raw_sha256']):
             raise ValueError('Correction replay requires verified original terminal nodes')
-        if c.read(record / 'result.json') != c.envelope(job, payload):
+        if c.read(record / 'result.json') != c.result_projection(job, payload):
             raise ValueError('Correction result differs from original scientific fields')
         request = job.get('correction_request')
         if (job['role'] == 'H' and request is not None
@@ -178,7 +179,7 @@ def project(root, before_step=None):
                 # A result arriving after an already published pause cannot
                 # automatically erase it. Original facts still remain sealed.
                 sticky = pause['trigger_id'] in published
-        assessment = payload.get('progress_assessment')
+        assessment = c.scientific_field(job,payload,'progress_assessment')
         proof = _proofs(root, job, assessment)
         verdict = (assessment or {}).get('verdict', 'unknown')
         if verdict == 'progress' and not proof - used:

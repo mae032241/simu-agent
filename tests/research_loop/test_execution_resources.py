@@ -61,7 +61,7 @@ def prepare(tmp_path, *, launcher=None, executor='resource_fixture:fixture', opt
     objective = public / 'objective.md'; objective.write_text('Retain exact scientific and execution authority boundaries.')
     root = tmp_path / 'instance'
     controller.prepare(root, objective, public, launcher or ['fixture'], max_tokens=4000, max_seconds=1000,
-        max_steps=7, model='fixture', reasoning_effort='high', search_policy=None, experiment_mode='local', node_budget_mode='hard',
+        max_steps=7, model='fixture', reasoning_effort='high', search_policy=None, experiment_mode='local', node_budget_mode='soft',
         execution_config=dict(executor=executor, configuration=options or {}),
         formal_review_policy={'version': 1}, execution_authority_policy={'version': 1},
         execution_resource_policy=dict(version=1, allowance=dict(wall_time_seconds=10, max_storage_bytes=100)),
@@ -162,3 +162,113 @@ def test_public_run_rejects_sealed_w_config_before_provider_or_reservation(tmp_p
     with pytest.raises(ValueError, match='attempt has ended'):
         e.dispatch_descriptor(config, payload)
     assert not list(root.glob('**/accepted.json')) and not budget.execution_accounting(root)['reservations']
+
+
+@pytest.mark.parametrize('phase',['prepare','submit'])
+@pytest.mark.parametrize('boundary',['eligibility','admission'])
+def test_dispatch_checks_eligibility_and_admission_before_provider_or_reservation(tmp_path,monkeypatch,phase,boundary):
+    """Gate-order negative control only; no backend or scientific success is mocked."""
+    from test_execution_authority import declared_request
+    from scidiscovery.operations.execution import LocalFileDescriptor
+    root,secret,arguments=declared_request(tmp_path)
+    request_ref=authority.create_request(root,**arguments)
+    request_id=Path(request_ref['path']).parent.name
+    job=q._read(root,q._ref(root,root/'jobs/002.json'))
+    intent=arguments['native_intent'];subject=arguments['subject'];review_ref=arguments['review_ref']
+    alias={key:subject['material']['source' if key=='path' else key] for key in ('path','sha256','size_bytes')}
+    payload=LocalFileDescriptor(name=arguments['call_id'],local_path=alias['path'],sha256=alias['sha256'],
+        size_bytes=alias['size_bytes'],media_type='application/octet-stream')
+    config=dict(scope=dict(step=2,job_sha256=q._ref(root,root/'jobs/002.json')['sha256']),
+        native_attempt=dict(number=0),execution_interface=dict(executor='fixture-declaration-only'))
+    allocation=dict(call_id=arguments['call_id'],native_intent=intent,
+        binding=dict(scope=config['scope'],native_attempt=config['native_attempt'],interface=config['execution_interface'],
+            subject=subject,review=review_ref,payload_alias=alias))
+    q._save(root,root/'execution-authority/calls'/arguments['call_id']/'allocation.json',allocation)
+    (root/'execution-authority/host-key-source.json').touch()
+    monkeypatch.setattr(authority,'_host_context',lambda config_:(root,job,intent))
+    monkeypatch.setattr(authority,'host_secret',lambda root_:secret)
+    monkeypatch.setattr(authority,'_selected_subject',lambda *args:(subject,review_ref,alias))
+    monkeypatch.setattr(q,'execution_payload',lambda *args:alias)
+    original_permit=dict(request=request_ref)
+    if phase=='submit':monkeypatch.setattr(authority,'_permit',lambda *args:original_permit)
+    def forbidden(*args,**kwargs):pytest.fail('Denied dispatch reached provider, reservation or execution binding')
+    monkeypatch.setattr(budget,'execution_grant',forbidden)
+    monkeypatch.setattr(budget,'reserve_execution',forbidden)
+    monkeypatch.setattr(budget,'bind_execution',forbidden)
+    if boundary=='eligibility':
+        def missing(*args,**kwargs):raise ValueError('Scientific originals unavailable')
+        monkeypatch.setattr(c,'_validate_inputs',missing)
+        monkeypatch.setattr(authority,'_remaining',forbidden)
+        message='Scientific originals unavailable'
+    else:
+        # Isolate admission after its separately checked eligibility boundary.
+        monkeypatch.setattr(authority,'require_request_eligibility',lambda *args:None)
+        def unavailable(*args,**kwargs):raise ValueError('Current dispatch admission unavailable')
+        monkeypatch.setattr(authority,'_remaining',unavailable)
+        message='Current dispatch admission unavailable'
+    with pytest.raises(ValueError,match=message):
+        authority._gate(config,forbidden,phase,scope=config['scope'],call_id=arguments['call_id'],
+            payload=payload,target=arguments['target'],prior_receipt={'fixture':'prior permission'} if phase=='submit' else None)
+    assert authority.status(root,request_id,secret=secret)['state']=='pending'
+    assert not list(root.glob('**/prepare-intent.json'))
+    assert not list(root.glob('**/accepted.json')) and not list(root.glob('**/submission.json'))
+
+
+@pytest.mark.parametrize('phase',['prepare','submit'])
+def test_gate_rejects_actual_request_for_another_payload_before_decision_or_effect(tmp_path,monkeypatch,phase):
+    """A real hashed request cannot borrow eligibility checked for another payload."""
+    import hashlib
+    from test_execution_authority import declared_request
+    from scidiscovery import execution_security as security
+    from scidiscovery.artifact_agent.schema.execution import ExecutionAdmission
+    from scidiscovery.operations.execution import LocalFileDescriptor
+    root,secret,arguments=declared_request(tmp_path)
+    job=q._read(root,q._ref(root,root/'jobs/002.json'))
+    subject=arguments['subject'];review_ref=arguments['review_ref'];intent=arguments['native_intent']
+    alias={key:subject['material']['source' if key=='path' else key] for key in ('path','sha256','size_bytes')}
+    Path(alias['path']).write_text('Gate-order transport fixture; no scientific qualification')
+    policy={};owner_key='e'*64
+    admission=ExecutionAdmission(outcome='policy',policy=policy,
+        policy_digest=hashlib.sha256(security.canonical(policy)).hexdigest(),budget=arguments['resources'],
+        allowance=arguments['resources'],outside_allowance='deny',budget_key=owner_key,
+        reason='Scope-binding negative control; no backend or scientific qualification is supplied')
+    wrong=dict(alias,path=str(tmp_path/'another-private-package.py'),sha256='f'*64,size_bytes=53)
+    request_ref=authority.create_request(root,**dict(arguments,policy=admission.model_dump(mode='json')),payload_binding=wrong)
+    request_id=Path(request_ref['path']).parent.name
+    assert authority.request(root,request_id)[0]['payload']==wrong
+    payload=LocalFileDescriptor(name=arguments['call_id'],local_path=alias['path'],sha256=alias['sha256'],
+        size_bytes=alias['size_bytes'],media_type='application/octet-stream')
+    config=dict(scope=dict(step=2,job_sha256=q._ref(root,root/'jobs/002.json')['sha256']),
+        native_attempt=dict(number=0),execution_interface=dict(executor='fixture-declaration-only'))
+    allocation=dict(call_id=arguments['call_id'],native_intent=intent,
+        binding=dict(scope=config['scope'],native_attempt=config['native_attempt'],interface=config['execution_interface'],
+            subject=subject,review=review_ref,payload_alias=alias))
+    q._save(root,root/'execution-authority/calls'/arguments['call_id']/'allocation.json',allocation)
+    (root/'execution-authority/host-key-source.json').touch()
+    monkeypatch.setattr(authority,'_host_context',lambda config_:(root,job,intent))
+    monkeypatch.setattr(authority,'host_secret',lambda root_:secret)
+    monkeypatch.setattr(authority,'_selected_subject',lambda *args:(subject,review_ref,alias))
+    monkeypatch.setattr(q,'execution_payload',lambda *args:alias)
+    checked=[]
+    monkeypatch.setattr(authority,'require_request_eligibility',lambda root_,value:checked.append(value))
+    grant=dict(owner=dict(key=owner_key),ref=arguments['grant_revision'])
+    monkeypatch.setattr(budget,'execution_grant',lambda *args,**kwargs:grant)
+    original=dict(request=request_ref,admission=admission.model_dump(mode='json'),grant_revision=grant['ref'])
+    monkeypatch.setattr(authority,'_permit',lambda *args:original)
+    def forbidden(*args,**kwargs):pytest.fail('Mismatched request reached decision, resource reservation or backend binding')
+    monkeypatch.setattr(authority,'record_policy_decision',forbidden)
+    monkeypatch.setattr(budget,'reserve_execution',forbidden)
+    monkeypatch.setattr(budget,'bind_execution',forbidden)
+    class Recovery:
+        context=None
+        def check(self):return budget.clock_stamp(),100.
+        def job_remaining(self):return 100.
+        def request(self,*args):return request_ref
+    with pytest.raises(ValueError,match='eligible dispatch scope'):
+        authority._gate(config,lambda raw:admission,phase,scope=config['scope'],call_id=arguments['call_id'],
+            payload=payload,target=arguments['target'],prior_receipt={'fixture':'prior permission'} if phase=='submit' else None,
+            recovery=Recovery())
+    assert checked and checked[0]['payload']==alias
+    assert authority.status(root,request_id,secret=secret)['state']=='pending'
+    assert not list(root.glob('**/decision.json')) and not list(root.glob('**/prepare-intent.json'))
+    assert not list(root.glob('**/accepted.json')) and not list(root.glob('**/submission.json'))

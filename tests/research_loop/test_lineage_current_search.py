@@ -17,7 +17,7 @@ def test_sealed_current_h_configures_registered_cov_and_final_a(tmp_path,executi
     public=tmp_path/'public';public.mkdir();objective=public/'objective.md';objective.write_text('Bounded current scientific composition')
     root=tmp_path/'instance'
     controller.prepare(root,objective,public,['never-call-a-model'],max_tokens=100000,max_seconds=120,max_steps=8,
-        model='no-model',reasoning_effort='high',search_policy=search.DEFAULT_POLICY,node_budget_mode='hard',
+        model='no-model',reasoning_effort='high',search_policy=search.DEFAULT_POLICY,node_budget_mode='soft',
         history_observer=dict(adapter=str(Path(cov_lineage.__file__).resolve()),contract_version=2,
             config=dict(runs='runs',calls='project/nodes',evaluation_key='covshift-public-val-v1')))
     plan=dict(scope='One original mechanism',commitments=[dict(label='P',minimal_test='One bounded experiment',existing_ref=None)],focus=dict(label=None,action='screen'))

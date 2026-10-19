@@ -9,12 +9,12 @@ import sys
 import pytest
 
 from execution_fixtures import execution_registry
-from scidiscovery.research_loop import budget, contracts as c, controller, delivery, generic_delivery
+from scidiscovery.research_loop import budget, contracts as c, controller, delivery, experiment_client, generic_delivery
 
 FIXTURE = Path(__file__).parents[1] / 'fixtures/generic_inverse'
 
 
-def generic_case(tmp_path, monkeypatch, deliver=True, max_steps=5, observer=None):
+def generic_case(tmp_path, monkeypatch, deliver=True, max_steps=5, observer=None, native_source=None):
     public = tmp_path / 'public'
     public.mkdir()
     for filename in ('run.py', 'objective.md'):
@@ -32,7 +32,7 @@ def generic_case(tmp_path, monkeypatch, deliver=True, max_steps=5, observer=None
     launcher = tmp_path / 'bin/codex'
     launcher.parent.mkdir()
     launcher.write_text('#!' + sys.executable + (' -I' if isolated else '') + '\n' +
-                        (FIXTURE / 'native.py').read_text())
+                        ((FIXTURE / 'native.py').read_text() if native_source is None else native_source))
     launcher.chmod(0o555)
     disabled_search = tmp_path / 'search.json'
     disabled_search.write_text('null')
@@ -46,7 +46,7 @@ def generic_case(tmp_path, monkeypatch, deliver=True, max_steps=5, observer=None
             inflight_tokens=20, cleanup_seconds=5, submit_seconds=10, confirm_seconds=5,
             adapter=generic_delivery.descriptor(target)),
             node={role: dict(max_observed_tokens=150, max_seconds=15) for role in 'HWAE'},
-            selection=dict(version=1, shortlist_k=2, smoke_seconds=1))
+            selection=dict(version=2))
         for name, value in files.items():
             c.write(tmp_path / (name + '.json'), value)
         options = ['--delivery-policy', tmp_path / 'delivery.json', '--node-budget-policy', tmp_path / 'node.json',
@@ -76,15 +76,30 @@ def generic_case(tmp_path, monkeypatch, deliver=True, max_steps=5, observer=None
 
 @pytest.mark.parametrize('deliver', [False, True], ids=['export', 'directory-delivery'])
 def test_generic_inverse_default_local_cli_handoff_and_export(tmp_path, execution_registry, monkeypatch, deliver):
-    root, target, cli, public = generic_case(tmp_path, monkeypatch, deliver)
+    # Delivery needs a separate, catalogue-bound A plus submit and confirm.
+    root, target, cli, public = generic_case(tmp_path, monkeypatch, deliver, max_steps=6 if deliver else 5)
     finished = cli('run', '--root', root)
     assert finished['status'] == ('delivery_confirmed' if deliver else 'finish'), finished
     roles = [c.read(p)['role'] for p in sorted((root / 'jobs').glob('*.json'))]
-    assert roles[:3] == ['H', 'W', 'A'] and all(role == 'A' for role in roles[3:])
+    assert roles == (['H', 'W', 'A', 'A'] if deliver else ['H', 'W', 'A'])
+    for step in (2, 3):
+        task = c.read(c.workspace(root, step) / 'science-task.json')
+        assert task['configured_delivery']['configured'] is deliver
+        assert task['configured_delivery'] == c.read(root / 'jobs' / f'{step:03d}.json')['configured_delivery']
+        assert 'original task' in task['delivery_requirements']
+        if deliver:
+            assert 'local directory only' in task['configured_delivery']['effect_scope']
+            assert 'task-native submission' in task['configured_delivery']['effect_scope']
     work = c.workspace(root, 2)
-    config = c.read(work / 'work/experiment-config.json')
+    client_path = work / 'work/experiment-config.json'
+    client = c.read(client_path)
+    assert client == dict(worker_view_version=1, step=2, attempt=0)
+    config = experiment_client.resolve(client_path, client)
     assert config['execution_interface']['executor'] == 'local_execution:command'
     assert config['max_seconds'] <= 60
+    calls_directory = experiment_client.record_directory(root, 2) / 'calls'
+    assert Path(config['record_dir']) == calls_directory.parent
+    assert not calls_directory.is_relative_to(work)
     record = c.host_record(work)
     seal = c.read(record / 'result-identity.json')
     observation = c.read(root / seal['observations']['path'])
@@ -111,14 +126,14 @@ def test_generic_inverse_default_local_cli_handoff_and_export(tmp_path, executio
     for call in calls:
         assert call['mechanism_binding'] is None
         assert all(item['retention'] == 'archived' for item in [*call['originals'], *call['outputs']])
-        directory = work / 'work/lineage/calls' / call['call_id']
+        directory = calls_directory / call['call_id']
         accepted = c.read(directory / 'accepted.json')
         assert (directory / 'inputs/dataset.json').read_bytes() == (public / 'dataset.json').read_bytes()
         assert (directory / 'inputs/run.py').read_bytes() == (FIXTURE / 'run.py').read_bytes()
         assert (Path(accepted['experiment_directory']) / 'dataset.json').read_text().startswith('source deliberately changed')
         evidence.append(dict(call_id=call['call_id'], status=call['status'], accepted=call['accepted'],
                              result=call['execution']['result'], originals=call['originals'], outputs=call['outputs']))
-    before = {str(p): c.digest(p) for p in (work / 'work/lineage/calls').rglob('*') if p.is_file()}
+    before = {str(p): c.digest(p) for p in calls_directory.rglob('*') if p.is_file()}
     repeated = cli('run', '--root', root)
     assert repeated['status'] == finished['status']
     if deliver:assert repeated['last_confirmed'] == finished['last_confirmed']
@@ -131,13 +146,31 @@ def test_generic_inverse_default_local_cli_handoff_and_export(tmp_path, executio
         assert [row['intent']['action_kind'] for row in actions] == ['submit', 'confirm']
         assert all(row['outcome']['result']['note'] == 'exact_local_directory_delivery_confirmed' for row in actions)
         screen = c.read(root / 'host-delivery/selection/screen.json')
-        assert len(screen['rows']) == 2 and not screen['smoke_capability'] and not screen['audit_configured']
-        assert all(row['smoke']['status'] == 'not_provided' and row['audit']['status'] == 'unconfigured' for row in screen['rows'])
+        assert len(screen['rows']) == 2 and 'default' not in screen
+        assert all(row['smoke']['status'] == row['audit']['status'] == 'not_run' for row in screen['rows'])
+        assert not list((root / 'host-delivery/selection').rglob('*.intent.json'))
         operation = exported['last_confirmed']['operation_id']
         bundle = target / operation
         manifest = c.read(bundle / 'manifest.json')
         chosen = min(observation['candidates'], key=lambda candidate: candidate['metric'])
         assert manifest['candidate_id'] == chosen['id']
+        original_author = c.validate(c.workspace(root, 3))
+        closeout_job = c.read(root / 'jobs/004.json')
+        assert closeout_job['purpose'] == 'closeout' and closeout_job['source_cutoff'] == 3
+        assert closeout_job['selection']['version'] == 2
+        closeout_author = c.validate(c.workspace(root, 4))
+        assert 'scientific qualification' in closeout_author['scientific_result'] or any(
+            'qualification' in text or 'audit' in text for text in closeout_author['limitations'])
+        assert original_author['next_action'] == closeout_author['next_action'] == 'deliver'
+        assert original_author['candidate_recommendation'] == closeout_author['candidate_recommendation'] == chosen['id']
+        comparison_choice = closeout_author['candidate_comparison']
+        assert comparison_choice['rationale'].strip() and comparison_choice['evidence_steps'] == [2]
+        from scidiscovery.research_loop import candidate_refs
+        chosen_reference = candidate_refs.public_reference(root, closeout_job, chosen['id'])
+        assert [row['candidate_id'] for row in comparison_choice['rows'] if row['decision'] == 'keep'] == [chosen_reference]
+        assert candidate_refs.resolve_reference(root, closeout_job, chosen_reference) == chosen['id']
+        assert comparison_choice == c.read(c.host_record(c.workspace(root, 4)) / 'science-output.json')['candidate_comparison']
+        assert c.settings(root)['max_steps'] == budget.effective_max_steps(root) == budget.used_steps(root) == 6
         assert (bundle / 'artifact').read_bytes() == (root / chosen['evidence'][1]['snapshot']).read_bytes()
         previous = {str(p): c.digest(p) for p in target.rglob('*') if p.is_file()}
         assert cli('closeout', '--root', root)['status'] == 'delivery_confirmed'
@@ -155,7 +188,7 @@ def test_generic_inverse_default_local_cli_handoff_and_export(tmp_path, executio
                 assert (replay / 'artifacts' / name.removeprefix('outputs/')).read_bytes() == (bundle / name).read_bytes()
     else:
         assert not list((root / 'host-delivery').glob('**/*.intent.json'))
-    assert before == {str(p): c.digest(p) for p in (work / 'work/lineage/calls').rglob('*') if p.is_file()}
+    assert before == {str(p): c.digest(p) for p in calls_directory.rglob('*') if p.is_file()}
     # Rebuild only from archived originals after export, not the changed Worker inputs.
     reproduced = []
     for call in calls:
@@ -196,6 +229,71 @@ def test_generic_inverse_default_local_cli_handoff_and_export(tmp_path, executio
     (tmp_path / 'acceptance-evidence.json').write_text(json.dumps(report, indent=2) + '\n')
 
 
+def test_generic_directory_delivery_preserves_final_author_without_optional_comparison(tmp_path, execution_registry, monkeypatch):
+    native_source = (FIXTURE / 'native.py').read_text()
+    comparison_start = native_source.index('    if comparison:\n')
+    comparison_end = native_source.index('\nargs = sys.argv[1:]', comparison_start)
+    # Omit only the optional explanation before preparation freezes this native
+    # fixture. Its explicit candidate choice and deliver action stay unchanged.
+    native_source = native_source[:comparison_start] + native_source[comparison_end:]
+    root, target, cli, _ = generic_case(tmp_path, monkeypatch, max_steps=5, native_source=native_source)
+    settings = (root / 'settings.json').read_bytes()
+    finished = cli('run', '--root', root)
+    assert finished['status'] == 'delivery_confirmed' and finished['goal_completion'] == 'not_asserted', finished
+    jobs = sorted((root / 'jobs').glob('*.json'))
+    assert [c.read(path)['role'] for path in jobs] == ['H', 'W', 'A', 'A']
+    job_originals = {path: path.read_bytes() for path in jobs}
+    grant = budget.final_a_barrier(root)
+    assert grant['step'] == 4 and grant['basis'] == 'final_state'
+    final_step = grant['step']
+    job = c.read(root / 'jobs' / f'{final_step:03d}.json')
+    assert job['final_only'] and job['purpose'] == 'closeout' and job['source_cutoff'] == 3
+    author = c.validate(c.workspace(root, final_step))
+    assert author['next_action'] == 'deliver' and author['candidate_recommendation'] is not None
+    assert 'candidate_comparison' not in author
+    record = c.host_record(c.workspace(root, final_step))
+    assert c.read(record / 'native-outcome.json')['final_a_completion']['scope'] == 'original_final_a_only'
+    original_names = ('science-output.json', 'result.json', 'result-identity.json',
+                      'native-intent.json', 'native-outcome.json', 'usage.json')
+    originals = {name: (record / name).read_bytes() for name in original_names}
+    raw = c.read(record / 'science-output.json')
+    assert 'candidate_comparison' not in raw
+    from scidiscovery.research_loop import candidate_refs
+    assert candidate_refs.resolve_reference(root, job, raw['candidate_recommendation']) == author['candidate_recommendation']
+    worker_seal = c.read(c.host_record(c.workspace(root, 2)) / 'result-identity.json')
+    observation = c.read(root / worker_seal['observations']['path'])
+    chosen, = [row for row in observation['candidates'] if row['id'] == author['candidate_recommendation']]
+    actions = budget.closeout_state(root)['actions']
+    assert [row['intent']['action_kind'] for row in actions] == ['submit', 'confirm']
+    assert all(row['outcome']['result']['note'] == 'exact_local_directory_delivery_confirmed' for row in actions)
+    marker = c.read(record / 'native-intent.json')['budget_slice']['final_return']
+    assert all(row['intent']['final_return'] == marker and row['intent']['decision']['step'] == final_step for row in actions)
+    operation = finished['last_confirmed']['operation_id']
+    bundle = target / operation
+    manifest = c.read(bundle / 'manifest.json')
+    assert manifest['operation_id'] == operation and manifest['candidate_id'] == chosen['id']
+    assert c.digest(bundle / 'artifact') == manifest['artifact_sha256'] == chosen['evidence'][1]['sha256']
+    assert (bundle / 'artifact').read_bytes() == (root / chosen['evidence'][1]['snapshot']).read_bytes()
+    assert all(c.digest(bundle / name) == digest for name, digest in manifest['objects'].items())
+    delivered = {path: path.read_bytes() for path in target.rglob('*') if path.is_file()}
+    from scidiscovery.research_loop import native
+    observed_tokens = native.usage(root)['observed_tokens']
+    used_steps = budget.used_steps(root)
+    assert budget.effective_max_steps(root) == 5
+    for command in ('run', 'closeout'):
+        repeated = cli(command, '--root', root)
+        assert repeated['status'] == 'delivery_confirmed' and repeated['goal_completion'] == 'not_asserted', repeated
+        assert repeated['last_confirmed'] == finished['last_confirmed']
+        assert not (root / 'jobs' / f'{final_step+1:03d}.json').exists() and budget.closeout_state(root)['actions'] == actions
+        assert job_originals == {path: path.read_bytes() for path in (root / 'jobs').glob('*.json')}
+        assert delivered == {path: path.read_bytes() for path in target.rglob('*') if path.is_file()}
+        assert budget.used_steps(root) == used_steps and budget.effective_max_steps(root) == 5
+        assert native.usage(root)['observed_tokens'] == observed_tokens
+        assert budget.final_a_barrier(root) == grant and (root / 'settings.json').read_bytes() == settings
+        assert originals == {name: (record / name).read_bytes() for name in original_names}
+        assert c.validate(c.workspace(root, final_step)) == author
+
+
 @pytest.mark.parametrize('fault', ['promotion-response-lost', 'confirmation-response-lost', 'pending-target-conflict'])
 def test_generic_directory_delivery_recovers_by_confirmation_without_resubmission(tmp_path, execution_registry, monkeypatch, fault):
     root, target, _, _ = generic_case(tmp_path, monkeypatch, max_steps=10)
@@ -223,19 +321,24 @@ def test_generic_directory_delivery_recovers_by_confirmation_without_resubmissio
     promoted = fault != 'pending-target-conflict'
     assert (target / operation / 'manifest.json').exists() == promoted
     assert all(row['outcome']['result']['status'] != 'rejected' for row in actions)
+    jobs = {path: path.read_bytes() for path in (root / 'jobs').glob('*.json')}
+    claim = budget.final_a_barrier(root)
     resumed = controller.closeout(root)
     assert resumed['status'] == ('delivery_confirmed' if promoted else 'delivery_unknown'), resumed
     assert calls.count('promote') == 1
+    assert calls.count('confirm') == (2 if fault == 'confirmation-response-lost' else 1)
     assert [row['intent']['action_kind'] for row in budget.closeout_state(root)['actions']].count('submit') == 1
     before = list(calls)
     repeated = controller.closeout(root)
     assert repeated['status'] == resumed['status'] and calls.count('promote') == 1
+    assert {path: path.read_bytes() for path in (root / 'jobs').glob('*.json')} == jobs
+    assert budget.final_a_barrier(root) == claim
     if promoted:
         assert calls == before  # A completed confirmation is reused, without another leaf call.
 
 
-@pytest.mark.parametrize('declaration', [None, 'explicit', 'missing-metric', 'missing-direction', 'missing-output', 'unhashable'])
-def test_generic_candidate_requires_explicit_scientific_metric_and_retained_artifact(tmp_path, declaration):
+@pytest.mark.parametrize('declaration', [None, 'explicit', 'missing-metric', 'missing-direction', 'missing-evaluation', 'artifact-only', 'missing-output', 'unhashable'])
+def test_generic_candidate_requires_exact_retained_artifact_without_scientific_ranking(tmp_path, declaration):
     from scidiscovery.research_loop.local_experiments import LocalExecution
     from scidiscovery.research_loop import generic_results
     value = dict(version=1, metrics=[dict(name='quality', value=1, evaluation_key='public/v1', direction='max'),
@@ -245,24 +348,31 @@ def test_generic_candidate_requires_explicit_scientific_metric_and_retained_arti
         value['candidate'] = dict(label='Explicit method', metric='quality', artifact='artifacts/product.bin')
         if declaration == 'missing-metric':value['candidate']['metric'] = 'unstated'
         if declaration == 'missing-direction':value['metrics'][0].pop('direction')
+        if declaration == 'missing-evaluation':value['metrics'][0].pop('evaluation_key')
+        if declaration == 'artifact-only':value['candidate'] = dict(artifact='artifacts/product.bin')
         if declaration == 'missing-output':value['candidate']['artifact'] = 'artifacts/unstated.bin'
         if declaration == 'unhashable':value['candidate']['metric'] = []
     c.write(tmp_path / 'result.json', value)
     result = LocalExecution.read_result(tmp_path, [dict(name='product.bin')])
-    if declaration in {None, 'explicit'}:
-        assert result['status'] == 'available'
-        row = dict(call_id='call-1', scope=dict(step=2, goal='original'), status='known_success',result_protocol='scidiscovery.local-result.v1',
-            completed=dict(retention='archived'), execution=dict(result=result), outputs=[dict(name='product.bin')])
-        candidates = generic_results.candidates([row])
-        if declaration is None:assert candidates == []  # Two metrics do not silently select one.
-        else:
-            assert len(candidates) == 1 and candidates[0]['metric'] == 1 and candidates[0]['direction'] == 'max'
-            assert candidates[0]['evaluation_key'] == 'public/v1'
-            assert generic_results.identity(row) == candidates[0]['id']
-            assert generic_results.identity(dict(row, scope=dict(step=2, goal='other'))) != candidates[0]['id']
-            assert generic_results.candidates([dict(row, status='known_failed')]) == []
+    assert result['status'] == 'available'
+    assert result['metrics']==value['metrics'] and result['outputs']==value['outputs']
+    row = dict(call_id='call-1', scope=dict(step=2, goal='original'), status='known_success',result_protocol='scidiscovery.local-result.v1',
+        completed=dict(retention='archived'), execution=dict(result=result), outputs=[dict(name='product.bin')])
+    candidates = generic_results.candidates([row])
+    if declaration in {None,'missing-output'}:
+        assert candidates == []
     else:
-        assert result['status'] == 'invalid'
+        candidate=candidates[0]
+        assert len(candidates)==1
+        if declaration in {'missing-metric','artifact-only','unhashable'}:
+            assert candidate['metric'] is candidate['direction'] is candidate['evaluation_key'] is None
+        else:
+            assert candidate['metric']==1
+            assert candidate['direction']==(None if declaration=='missing-direction' else 'max')
+            assert candidate['evaluation_key']==(None if declaration=='missing-evaluation' else 'public/v1')
+        assert generic_results.identity(row) == candidate['id']
+        assert generic_results.identity(dict(row, scope=dict(step=2, goal='other'))) != candidate['id']
+        assert generic_results.candidates([dict(row, status='known_failed')]) == []
 
 
 def test_generic_adapter_missing_required_audit_is_rejected_before_instance_creation(tmp_path):

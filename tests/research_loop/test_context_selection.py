@@ -41,7 +41,17 @@ def test_role_material_priority_preserves_constraints_caveats_and_opportunities(
     original=copy.deepcopy(job)
     view=c.science_view(job,root)
     assert job==original and view==c.read(c.workspace(root,5)/'science-task.json')
-    assert view['question']=='Exact question about the target constraint.'
+    question='Exact question about the target constraint.'
+    assert job['instruction']==question
+    if role=='W':
+        work_unit=('Screen the assigned H combination with cheap discriminating observations and your own findings or concrete obstacles. '
+            'Preserve declared checks. A completed call alone is not scientific screening; '
+            'report the combination when its assigned coverage is ready for A.')
+        assert job['scientific_work_unit']==work_unit
+        assert view['question']==question+'\nWork unit: '+work_unit
+    else:
+        assert 'scientific_work_unit' not in job
+        assert view['question']==question
     assert view['parents'][0]['role']==first
     assert (c.workspace(root,5)/view['global']['objective']).read_text().startswith('Keep the original target constraint')
     h=next(row for row in view['parents'] if row['role']=='H')
@@ -54,10 +64,16 @@ def test_role_material_priority_preserves_constraints_caveats_and_opportunities(
     candidates=view['lineage']['candidates']
     assert candidates['failed_candidate_count']==candidates['unknown_candidate_count']==1
     assert {row['candidate_id'] for row in candidates['candidate_alerts']}=={'negative','unresolved'}
-    assert candidates['target_best'] is None and candidates['coverage']=='partial'
+    assert 'target_best' not in candidates and candidates['coverage']=='partial'
     assert candidates['a_recommended']['candidate_id']=='P'
-    assert bool(candidates['proxy_highest'])==(role=='A')
-    assert candidates['proxy_groups_omitted_count']==(0 if role=='A' else 1)
+    ids=['P','negative','unresolved']
+    assert [row['id'] for row in candidates['candidate_facts']]==ids[:len(candidates['candidate_facts'])]
+    assert len(candidates['candidate_facts'])+candidates['candidate_facts_omitted_count']==len(ids)
+    page=view['lineage']['indexes']['candidates'];originals=[]
+    while page:
+        index=c.read(c.workspace(root,5)/page)
+        originals.extend(index['candidates']);page=index['next_page']
+    assert [row['id'] for row in originals]==ids
     assert 'experiments' not in view
     assert len((json.dumps(view,ensure_ascii=False,indent=2)+'\n').encode())<12000
     assert 'BODY-CROWD '*2000 not in json.dumps(view)
@@ -93,7 +109,7 @@ def test_selection_preserves_late_failed_unknown_and_relevant_audit():
     assert {row['candidate_id']:row['status'] for row in result['candidate_alerts']}=={'negative':'failed','unknown':'unknown'}
     assert result['failed_candidate_count']==result['unknown_candidate_count']==1
     assert result['candidate_alerts_omitted_count']==0
-    assert result['target_best'] is None and result['delivery']['state']=='unknown'
+    assert 'target_best' not in result and result['delivery']['state']=='unknown'
     assert result['a_recommended']['candidate_id']=='candidate-19'
     assert len(selection._bytes(result))<=4096
 

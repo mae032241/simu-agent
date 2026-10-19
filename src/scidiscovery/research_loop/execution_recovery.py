@@ -3,7 +3,7 @@ import copy
 import hashlib
 from pathlib import Path
 
-from . import contracts as c, execution, experiments as e, history
+from . import budget, contracts as c, execution, experiments as e, history, experiment_client
 
 DIRECTORY = 'host-history/execution-recoveries'
 
@@ -134,7 +134,7 @@ def _validate_event(root,ref,value,chains,*,originals=True,sources=None,pending=
                     or authority['native_attempt']!=selected['native_attempt'] or authority['interface']!=selected['interface']
                     or authority['payload_alias']!=selected['payload_alias'] or accepted['execution_target']!=request['target']
                     or authority['target']!=request['target'] or prepared['name']!=call
-                    or accepted['script']['path']!=str(Path(root)/f'project/nodes/{step:03d}/work/lineage/calls'/call/'source.py')
+                    or accepted['script']['path']!=str(experiment_client.record_directory(root,step)/'calls'/call/'source.py')
                     or (accepted['script']['sha256'],accepted['script']['size_bytes'])!=(prepared['sha256'],prepared['size_bytes'])
                     or e.proof(accepted['script']['path'],context=context)!=accepted['script']
                     or e.proof(prepared['local_path'],context=context)!=dict(path=prepared['local_path'],sha256=prepared['sha256'],size_bytes=prepared['size_bytes'])):
@@ -152,7 +152,7 @@ def _validate_event(root,ref,value,chains,*,originals=True,sources=None,pending=
 
 def append(root,base,phase,*,row=None,query=None,native_state=None,submission=None,context=None):
     """Only actual fact changes append; caller owns the controller writer."""
-    root=Path(root);refs=prefix(root,c.settings(root)['max_steps']+1)
+    root=Path(root);refs=prefix(root,budget.historical_step_limit(root)+1)
     values=validate(root,refs,originals=False)
     chain=[value for value in values if value.get('version')==2 and
            (value['source_step'],value['call_id'])==(base['source_step'],base['call_id'])]
@@ -224,7 +224,7 @@ def _current_pending_sources(root):
 
 def pending(root,*,unknown_only=False,ignore=None):
     from scidiscovery.operations.execution import PENDING_EXECUTION_STATES
-    refs=prefix(root,c.settings(root)['max_steps']+1)
+    refs=prefix(root,budget.historical_step_limit(root)+1)
     for key,value in call_view(root,_current_pending_sources(root),refs,originals=False).items():
         if key==ignore:continue
         row=value.get('row')

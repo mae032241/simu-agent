@@ -13,11 +13,16 @@ from . import contracts as c, execution, qualification as q
 
 QUESTION = ('Assess the exact supplied artifact against the original objective and constraints. '
             'Identify supported claims, counterevidence, missing evidence and limitations; no favorable verdict is presumed.')
+REVIEW_EVIDENCE_GUIDANCE = (
+    'Assess the exact requested claims within the original objective and authorized scope. '
+    'Tie key findings to locatable sources or observations and their experiment conditions; distinguish measurements, inferences and assumptions. '
+    'Separate target metrics from proxies and sensitivity checks, limiting generalization to supported conditions. '
+    'Address conflicting evidence, uncertainty and missing inputs without inventing evidence or presuming a favorable verdict.')
 
 
 def schema():
     fields = dict(verdict=dict(type='string', enum=list(get_args(review_rules.ReviewVerdict))),
-        summary=dict(type='string', minLength=1), scientific_result=dict(type='string', minLength=1),
+        summary=dict(type='string'), scientific_result=dict(type='string'),
         limitations=dict(type='array', items=dict(type='string')))
     return dict(type='object', properties=fields, required=list(fields), additionalProperties=False)
 
@@ -31,7 +36,7 @@ def configuration(value):
 def _contract():
     files = [Path(__file__), Path(c.__file__), Path(review_rules.__file__), Path(c.__file__).with_name('native.py'),
              Path(c.__file__).with_name('continuation.py')]
-    return dict(version=1, instruction=review_rules.REVIEW_INSTRUCTION,
+    return dict(version=1, instruction=review_rules.REVIEW_INSTRUCTION+' '+REVIEW_EVIDENCE_GUIDANCE,
         scope='Review only the exact supplied material and scientific question. Do not edit the subject. '
               'Use revise, blocked or inconclusive for unsupported claims. Review grants no execution permission.',
         schema=schema(), authors_contract='native_participants_and_selected_implementations_v1',
@@ -48,8 +53,11 @@ def contract(root):
     policy = c.settings(root).get('formal_review_policy')
     if policy is None:
         return None
-    if q._read(root, policy['contract']) != _contract():
-        raise q.IntegrityError('Current formal review contract differs from its frozen original')
+    current = _contract()
+    if q._read(root, policy['contract']) != current:
+        from . import startup_recovery
+        if not startup_recovery.review_contract(root,policy,current):
+            raise q.IntegrityError('Current formal review contract differs from its frozen original')
     return policy['contract']
 
 
@@ -156,7 +164,8 @@ def authors(root, step, active=None, memo=None):
         execution_inputs.validate_seal(root, job, seal)
         originals = []
         for row in seal.get('compiled_implementations', []):
-            compiler = execution_inputs.verify_compilation(root, row['compiler'], material=row['material'])
+            compiler = execution_inputs.verify_compilation(root, row['compiler'], material=row['material'],
+                client_binding=row.get('client_binding'))
             originals.extend(item['original'] for item in compiler['inputs'])
             if compiler.get('author_input') is not None:
                 originals.append(compiler['author_input'])
@@ -248,7 +257,24 @@ def input_binding(root, reference):
         raise q.IntegrityError('Formal review inputs differ from the exact requested subject')
     selected = dict(label='Exact reviewed artifact', origin_step=subject['producer_step'],
         origin_result_sha256=seal['sha256'], material=subject['material'])
-    return dict(materials=[subject['material']], selected=[selected],
+    materials=[subject['material']];scientific=[];steps=[]
+    compiled=[row for row in seal.get('compiled_implementations',[]) if row['material']==subject['material']]
+    if compiled and compiled[0].get('client_binding') is not None:
+        if len(compiled)!=1:raise q.IntegrityError('Reviewed compiler subject is ambiguous')
+        from . import execution_inputs
+        compiler=execution_inputs.verify_compilation(root,compiled[0]['compiler'],material=subject['material'],
+            client_binding=compiled[0]['client_binding'])
+        author=compiler['author']
+        scientific=[dict(source=str(Path(root)/author['path']),path='inputs/review/scientific-implementation.json',
+            sha256=author['sha256'],size_bytes=author['size_bytes'])]
+        materials.extend(scientific)
+        owner=q._read(root,compiler['job'])
+        for item in compiler['inputs']:
+            material=execution_inputs.resolve_native_original(root,item['original'],compiler_job=owner)
+            if material not in materials:materials.append(material)
+            steps.append(item['original']['producer_step'])
+    return dict(materials=materials, selected=[selected],
+        **(dict(compiler_scientific_materials=scientific,scientific_source_steps=sorted(set(steps))) if scientific else {}),
         history=dict(nodes=[dict(step=subject['producer_step'], seal_sha256=subject['producer_seal']['sha256'])],
                      files=[], candidate_ids=[], view={}))
 
@@ -392,8 +418,14 @@ def feedback(root, job):
 def public(root, job):
     request = q._read(root, job['formal_review'])
     material = request['subject']['material']
+    binding=input_binding(root,job['formal_review'])
+    scientific=binding.get('compiler_scientific_materials',[])
     return dict(role='A', question=request['question'],
         review=dict(subject=material['path'], instruction=_contract()['instruction'],
+                    **(dict(scientific_implementation=scientific[0]['path'],
+                        scientific_inputs=[item['path'] for item in binding['materials']
+                            if item!=material and item not in scientific],
+                        implementation_relation='The readable implementation and scientific inputs are exact compiler originals for this selected subject; control retains and verifies the native package privately.') if scientific else {}),
                     scope=_contract()['scope'],
                     claims='Test claims in the exact artifact against the original global objective and constraints; absent claims or evidence remain unknown.',
                     requester_context='Requester rationale and conclusions are not default inputs. Host audit originals remain retained; any on-demand file reads are not completely observed. This is not blinded review or access isolation.'),

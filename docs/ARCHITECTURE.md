@@ -27,7 +27,154 @@ H owns hypotheses and mechanisms; W owns bounded experimental design, implementa
 and observations; A owns contribution, evidence gaps, direction and delivery selection;
 E owns requested evidence work. Control owns immutable bindings, budgets, qualification,
 authorization and mechanical publication. It does not manufacture science or ask models
-to compute hashes and references.
+to perform extra hash calculation, comparison, verification or prepare hash inventories.
+Workers write ordinary scientific files; control computes and verifies their exact
+bindings automatically and retains the mechanical records privately on the host.
+
+Local result metrics retain distinct nonempty names and explicit finite numeric
+values. `unit`, `evaluation_key`, `direction` and labels are optional scientific
+descriptions: control imposes no optimization enum or scientific text-length limit.
+An explicitly declared candidate requires one exact declared retained artifact;
+an absent or unresolved metric stays unknown, without selecting another metric or
+inferring a direction. Invalid individual metric/output declarations and metadata
+that cannot enter strict JSON receive local diagnostics while other valid results
+and artifact-bound candidates survive. Original `result.json` bytes remain unchanged;
+compact previews and omitted-field diagnostics refer back to that retained file.
+
+Scientific commitment and disposition lists have no fixed four-item or 128-mechanism
+capacity. The configured initial-call opportunities, exact extra-call grants,
+accepted-call consumption, finite execution budgets and unknown-call reconciliation
+still govern execution. Paginated indexes retain all mechanisms and their original
+scientific text; the compact navigation view remains bounded.
+
+`screened` means A assessed the exact W evidence, without excluding that mechanism
+from later improvement. `deferred` preserves an unresolved route for later work;
+`waived` is A's explicit scientific exclusion. A must explain each exclusion with
+evidence supporting a negative or infeasibility judgment against the original goal
+and constraints. Temporary relative underperformance or missing evidence supports
+deferral rather than scientific rejection. H compares plausible mechanisms before
+concentrating and explains any single-mechanism scope; parameter trial counts alone
+do not establish evidence across mechanisms. Control does not grade these reasons.
+
+Mechanism indexes retain the adopted A disposition reason as a bounded preview and
+link the complete original scientific JSON, outside navigation page size limits.
+Same-status restatements and omissions preserve the adopted reason and its source;
+an H revision clears the current disposition while retaining its historical original.
+Relevant unexcluded routes remain available through the complete index, including
+screened routes. Every search instance shows the complete portfolio to H/A by default,
+including actual accepted-call counts, initial and extra opportunities remaining,
+completed independent W→A investments and unserved completed cycles. These are
+observed activity, not scientific coverage, value rankings or per-mechanism resource
+costs. Stable identity order is navigation; local improve/repair/validate work does
+not erase the global view. Explanations and H revisions do not reset investment.
+All unexcluded routes, including screened, accrue unserved cycles; only waived routes
+are excluded. `search_policy.initial_calls` configures initial registered-call
+opportunities. The optional portfolio interval requests a reminder only: no
+portfolio_review form, forced route switch, result-sealing or FINAL completion gate.
+A explains comparisons, concentration, postponement and exclusion in its existing
+scientific result and route reasons; control does not judge their sufficiency.
+
+Budget choices use current ordinary-work availability and the runtime
+`work/budget-status.json`. With protected FINAL, provider-reported consumption
+determines the token balance; missing billing remains unknown without an estimated
+charge or an old closeout reserve. Unresolved execution still requires exact-call
+reconciliation. Older bounded-closeout instances retain their frozen reserves. Call
+opportunities do not reserve resources or guarantee coverage. Bound expensive calls
+with the existing execution configuration and W stage targets; no automatic breadth
+share, minimum mechanism count or new execution permission is introduced.
+
+H revises only changed commitments; omitted commitments and their adopted A
+reasons remain. Repair binds the stable mechanism to one exact direct W observation,
+or to an exact original accepted input selected through `implementation_selection`.
+Multiple possible observations require an explicit exact selection; equal output
+bytes, labels and recency cannot select the source. Deduplicated archive paths
+cannot prove logical input identity; such outputs cannot disambiguate a repair.
+The old W, call, accepted and
+terminal originals keep their own H seal; the current H/A authorization is frozen
+separately. Known process success can still require scientific repair. Unknown
+execution, missing or changed originals, ambiguity and exhausted repair allowance
+remain barriers, reported in the author's control outcome before a dependent W.
+No old screening qualification, spent opportunity or budget is transferred or
+refunded. Within unchanged H scope, A may use `continue_w` and an explicit local
+focus to request the next finite W stage after review. Prior stage usage remains
+consumed; H revision changes scientific commitments and cannot reset budgets.
+
+Each task freezes the auxiliary fields its configured consumers actually use.
+Unconsumed auxiliary fields are absent from the required native response contract;
+extra scientific content remains in the sealed original. An enabled optional field
+with an unreadable shape supplies a local diagnostic and no inferred progress or
+scope. Explicitly malformed W findings go to A as partial evidence without a
+scientific screening proof; missing or valid-but-incomplete findings retain the
+existing mechanism-coverage checks. Actual action, final-only routing, input
+selection, independent qualification and execution permission remain explicit.
+For input selection, null retains, `[]` clears and a valid list replaces the exact
+bound objects; an unresolved list is never partially applied or silently inherited.
+A registered candidate and its exact sealed implementation may share a readable
+choice reference when their call/output/material bindings match. Equal bytes from
+another source do not merge identities, and an arbitrary implementation does not
+become a candidate.
+
+New jobs freeze a public `configured_delivery` description from the configured
+adapter's optional `effect_scope` (nonempty public text, without a fixed length cap).
+Undeclared custom scope is `unknown`; control does not infer effects from launcher
+names. The built-in directory adapter only copies and confirms already retained
+declared files; it does not train or perform task-native submission or scientific
+audit. This description grants neither permission nor qualification. W preserves
+the original task's necessary deliverables and native receipts in existing declared
+outputs before temporary work disappears. A compares those results and the actual
+adapter scope with the task requirements, reports gaps, and may deliver the best
+existing partial result, including in FINAL. Coverage adds no completion gate.
+
+`exp` is a thin submission and wait helper using one ordinary
+`submit.json`/response slot. For local-mode W scientific views, the existing native
+host services that slot for the native attempt's lifetime and writes responses
+automatically. External mode leaves service ownership with its declared launcher.
+Neither path adds an agent, daemon, UDS or FIFO.
+
+The default local command backend resolves the selected Codex installation's native
+binary and uses its sandbox with a restricted scientific subprocess file view. The
+accepted directory snapshot is read-only at its original scientific path, with a
+separate writable `artifacts/`; a source-only call maps its sealed script back to
+its scientific source path. The backend receives runtime files, the scientific
+workspace and a task-native permission configuration, without native authentication,
+provider configuration, control originals or the submission slot. The native Worker
+and backend honor the same supported legacy `workspace-write` declaration, including
+declared network access and temporary-directory exclusions, interpreted equivalently
+for their respective working directories, `TMPDIR` values and namespaces. The
+native Worker retains `--sandbox workspace-write` and the captured legacy
+configuration overrides; only the backend sandbox uses an internal permission
+profile that expresses the same declaration in its namespace. This requires Linux,
+`bwrap` and a resolvable native Codex binary.
+Named/default permissions, selected configuration profiles, managed policies,
+additional writable roots and custom launchers whose backend permissions cannot be
+faithfully projected yield explicit unsupported managed launches; ordinary native
+permissions are not replaced to make them run. The internal permission profile adds
+no operator setting. These file views do not establish hostile same-user process
+isolation or a blanket guarantee for generic native execution.
+
+Control retains exact binding indexes, full receipts and per-file omission inventories;
+default scientific views expose human references, observations and limitations. New
+views are labelled projections, while source, user originals and scientific prose
+retain their exact content. The standalone operator exporter
+`scripts/acceptance/worker_evidence_view.py` verifies an explicitly pinned original
+index and all indexed bytes, then creates separate `control/` and `science/` trees.
+Only `science/index.json` is the reader entry point; omitted materials appear as a
+small category summary with `details_ref` and `when_to_open`. When a candidate or
+experiment's material coverage matters, the reader can follow those references to
+bounded pages of human material names, categories, scope and reasons. These pages
+are separate from ordinary evidence entries; the full mechanical inventory remains
+in control. The reader decides how the missing materials affect its assessment.
+The complete default omission metadata block is at most 8 KiB of encoded JSON;
+multiple inventories continue through `omissions_next`. Detail pages have at most
+12 items and 16 KiB of final JSON bytes, including navigation and escaped text.
+Long scientific strings retain a string preview with sibling `*_truncated` and
+`*_details_ref` fields. Their linked `{text, next}` pages reconstruct the full text
+by concatenating decoded `text` values; the last page has no `next`. Short strings
+keep their original shape. These limits apply to omissions, not the whole index.
+Missing-material detail is availability metadata, not the omitted original;
+`not_available_in_this_view` records when no original or safe read path was supplied.
+The operator supplies only `science/` to the Worker, retaining the output parent
+and `control/` outside that default scientific workspace.
 
 ## Implementation owners
 
@@ -40,6 +187,7 @@ All listed files are in `src/scidiscovery/research_loop/` unless stated otherwis
 | Scientific contracts and originals | `contracts.py`, `semantic.py`, `instance_science.py` |
 | Candidates and delivery | `selection.py`, `delivery.py`, `worker_delivery.py` |
 | Execution and original-call recovery | `experiments.py`, `managed_wait.py`, `local_experiments.py`; domain adapters |
+| Local W submission lifetime and scientific subprocess view | `native.py`, `worker_execution_bridge.py`, `native_execution.py` |
 | Provenance, independent review, approval | `qualification.py`, `formal_review.py`, `execution_inputs.py`, `execution_authority.py` |
 | Budget and execution resources | Original control ledger in `budget.py` |
 | Instance UI | `instance_ui.py`, `instance_render.py`; no second state authority |
@@ -55,6 +203,17 @@ Operation ABI is defined by `operations/spec.py` (currently 26); see the [plugin
 
 ## Invariants
 
+- Scientific authors own candidate comparison and selection. Control preserves all
+  observed candidates in first-observation order, including ties and missing metrics.
+  Compact previews report mechanical omissions and link complete originals; they do
+  not prune the delivery catalogue. Policy version 2 is exactly `{"version":2}`;
+  the catalogue starts no domain calls. A delivery names an exact member and
+  explains its choice in `scientific_result`. `candidate_comparison` is optional
+  scientific explanation; its rows, `keep`, rationale and evidence-step formatting
+  do not grant or gate delivery. Actual audit and delivery actions still require
+  an exact available candidate, qualification and execution permission. Null
+  does not authorize delivery. Protocol 23 rejects earlier frozen protocols without
+  migrating their original bytes.
 - One advancing writer per instance; read views neither call models nor own scientific/budget state.
 - Exact immutable originals, configuration and calls; revisions inherit no prior qualification or approval.
 - Unknown provenance stays unknown. Formal review excludes all known subject authors/participants;
@@ -64,6 +223,75 @@ Operation ABI is defined by `operations/spec.py` (currently 26); see the [plugin
 - Reconcile uncertain external submissions by original identity; no replay, refund, budget reset or new owner.
 - Escape author text and read exact sealed attachment members; HTML/SVG remain downloads.
 - Workers and same-user host processes are trusted. This is a soft boundary, not hostile-process isolation.
+
+Authorization reads check immutable declarations, identity, exact subjects, scope,
+and declared expiry or revocation state; they do not traverse execution outcomes or
+replay scientific results. At effect entry points, control explicitly checks
+scientific qualification and original integrity separately from current budget,
+pause, and live or unknown execution admission. Damaged or missing results do not
+erase accepted intents or consumption, or prevent viewing or revoking permission;
+they block new effects or leave affected terminal and metering facts unverified.
+Collecting or cancelling an already accepted call retains its original authority
+and identity; it grants no new submission and never resubmits the original. These
+operations remain bounded by the original call or an explicit finite maintenance window.
+
+Ordinary A assignments require an assessment of each original objective and authorized
+scope requirement. Key claims cite locatable observations and experiment conditions,
+distinguishing measurement, inference and assumption. A separates target metrics from
+proxies and sensitivity checks, compares relevant alternatives by the same goal
+criteria, and explains conflict, uncertainty and missing inputs. Workflow completion,
+audit qualification, exhausted budgets, `finish` and delivery do not establish an
+unmeasured goal; A reports unmet objectives when stopping.
+
+New `prepare` freezes `final_a_completion_policy` version 1. Each ordinary state
+checks whether its remaining budget can start the next action. This mode reserves
+no shared tokens, time or steps for protected FINAL and does not prepay the next
+node token target: positive reported token balance permits ordinary token admission,
+subject to the original finite time, step, integrity and execution gates. All H/W/A/E
+node token targets are soft: reaching a target requests a bounded conclusion and
+A review before new W experiments, without killing the original node. Author
+closeout token permits are also soft targets; their finite time limits remain
+enforced. Actual usage remains accounted without creating a new shared allowance.
+Protocol 23 accepts only soft node settings. Older protocols remain read-only;
+frozen hard settings are never silently changed to soft. A denied start
+advances the existing control journal to durable `FINAL` (`closeout_begin` mode
+`final`); it never reclassifies an ordinary A as final from the remaining balance.
+FINAL authorizes one exact original A through `final_a_return`, using accepted W
+evidence and preserving missing inputs. Insufficient, zero or exceeded shared
+token, time or step budgets cannot veto this A or its original authorized host
+submission and same-operation confirmation. The A gives its conclusion, explicit
+candidate selection and unmet objectives; the host supplies the actual submission
+receipt. No new scientific work, dedicated audit or correction loop follows within that FINAL cycle.
+Missing W, candidate originals or delivery permission produce an explicit
+unsubmitted result, with the final A still reporting its evidence limitations.
+Without an optional node policy, the original frozen global token/time settings
+supply the final call's advisory token target and finite duration. Shared ceilings
+stay unchanged. An explicit later threshold increase may reopen the saved pending normal route when its admission is affordable and all original effects are known and quiescent. `budget-amend` records the increase; the next run resumes with a new monotone physical step ID. Prior final A outputs, submissions and all consumption remain immutable; a later budget denial starts a new FINAL cycle with its own single A. A decrease or insufficient increase cannot reopen or repeat the final A. Operator closeout without a pending normal route remains terminal. Older frozen instances without this policy retain prior behavior.
+
+Actual provider-reported usage, cached input, consumed time and steps
+remain accounted; unknown billing remains explicitly unknown without an estimated charge; original ceilings stay unchanged, and `final_overrun` records
+token excess separately. A uses the existing `summary`, `scientific_result` and
+`limitations` to explain completed work, unfinished work and evidence-supported
+gaps. Ordinary earlier A, formal review and W author continuation receive no such
+exception. During a FINAL cycle, no new scientific, review, correction or retry attempt is dispatched.
+
+For that exact final A, native completion and billing coverage are separate facts.
+A verified `turn.completed` event, zero process exit, confirmed original-group cleanup
+and intact scientific output can support sealing even when usage is missing or
+cannot be reconciled with live counters. Known observed lower bounds and unknown
+billing remain recorded; no zero meter or complete billing coverage is invented.
+This billing exception also covers its own explicitly authorized submit and
+same-operation confirm. A missing terminal event, nonzero exit, unknown cleanup or
+unreconciled external effect retains the original unresolved boundary and grants
+no replacement A or replay.
+
+Only that original decision's finite `submit` and same-operation `confirm` may
+follow. Each native A call, cleanup and delivery action retains its configured
+finite duration even after the shared time ceiling is exceeded. Qualification,
+authorization, exact-original checks, RSS and cancellation still apply. Unknown
+external submissions require original-call reconciliation and are never resubmitted.
+Native execution has no per-request admission hook; this policy does not guarantee
+a report or successful delivery after process, cleanup or transport failure.
 
 ## Declared sources and review
 
@@ -96,8 +324,8 @@ Read views and UI render the same sealed scientific bytes without rewriting them
 
 Managed local experiments, candidate delivery, UI, declared provenance, execution gates,
 original-call maintenance and same-host original-path cold checkpoints are implemented.
-`/results?after=N` lists sealed nodes; `/results/<step>` shows an exact result. Rankings
-are frozen at that node's input boundary, not a current global ranking.
+`/results?after=N` lists sealed nodes; `/results/<step>` shows an exact result.
+Observed candidate facts and authored choices are frozen at that node's input boundary.
 Ordinary read-only archives grant no advancing restore permission. Cross-host recovery,
 lost anchors and arbitrary native external reads remain outside support.
 Source/HTTP/synthetic-process checks do not qualify real browsers, native Codex continuation,

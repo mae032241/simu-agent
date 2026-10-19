@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from scidiscovery.research_loop import budget, contracts as c, controller, native
+from scidiscovery.research_loop.experiment_client import record_directory
 from test_audit_engineering import cli, repair_scene
 from execution_fixtures import execution_registry
 
@@ -13,17 +14,16 @@ def balances(monkeypatch,*,mode='soft',tokens=952486,seconds=717.075,steps=4,unk
         delivery_policy=dict(closeout_a=dict(max_observed_tokens=150000,max_seconds=120),inflight_tokens=200000,
             cleanup_seconds=60,submit_seconds=45,confirm_seconds=15,adapter={}))
     monkeypatch.setattr(c,'settings',lambda root:settings)
-    monkeypatch.setattr(budget,'snapshot',lambda root:dict(max_tokens=2000000,seconds_remaining=seconds))
+    monkeypatch.setattr(budget,'snapshot',lambda root:dict(max_tokens=2000000,seconds_remaining=seconds,max_steps=20))
     monkeypatch.setattr(native,'usage',lambda root:dict(observed_tokens=2000000-tokens,unknown_steps=[3] if unknown else []))
-    monkeypatch.setattr(budget,'used_steps',lambda root:20-steps)
+    monkeypatch.setattr(budget,'effective_max_steps',lambda root:settings['max_steps'])
+    monkeypatch.setattr(budget,'used_steps',lambda root:settings['max_steps']-steps)
     monkeypatch.setattr(budget,'execution_blocked',lambda root:blocked)
 
 
 def test_actual_remaining_balance_allows_soft_repair_not_full_target_reservation(monkeypatch):
     balances(monkeypatch)
     assert controller._repair_funds(Path('/unused'))
-    balances(monkeypatch,mode='hard')
-    assert not controller._repair_funds(Path('/unused'))
 
 
 @pytest.mark.parametrize('tokens,seconds,steps,expected',[
@@ -39,17 +39,13 @@ def test_soft_reserve_requires_positive_worker_balance_and_all_followup_steps(mo
     assert controller._repair_funds(Path('/unused')) is expected
 
 
-@pytest.mark.parametrize('mode',['soft','hard'])
+@pytest.mark.parametrize('mode',['soft'])
 @pytest.mark.parametrize('fault',['unknown','blocked'])
 def test_uncertain_usage_or_external_action_never_becomes_repair_funds(monkeypatch,mode,fault):
     balances(monkeypatch,mode=mode,tokens=2000000,seconds=1200,**{fault:True})
     assert not controller._repair_funds(Path('/unused'))
 
 
-@pytest.mark.parametrize('tokens,seconds,expected',[(1000000,720,True),(999999,720,False),(1000000,719.999,False)])
-def test_hard_keeps_full_worker_author_floor_contract(monkeypatch,tokens,seconds,expected):
-    balances(monkeypatch,mode='hard',tokens=tokens,seconds=seconds)
-    assert controller._repair_funds(Path('/unused')) is expected
 
 
 @pytest.mark.parametrize('ordinary',[False,True])
@@ -74,6 +70,16 @@ def test_soft_repair_reaches_delivery_through_both_entries_and_continuation(tmp_
     assert repair.get('purpose')==(None if ordinary else 'closeout')
     assert repair['engineering_repair']['candidate_id']=='run-1'
     assert all(p.read_bytes()==data for p,data in original.items())
-    assert len(list((c.workspace(root,4)/'work/lineage/calls').iterdir()))==1
+    work=c.workspace(root,4)
+    assert repair['worker_view_version']==1
+    calls=record_directory(root,4)/'calls'
+    assert calls.is_relative_to(root/'host-runtime/experiment-control') and not calls.is_relative_to(work)
+    originals=list(calls.iterdir())
+    assert len(originals)==1
+    accepted=c.read(originals[0]/'accepted.json')
+    assert accepted['scope']['step']==4 and accepted['scope']['role']=='W'
+    assert c.read(originals[0]/'completed.json')['status']=='known_success'
+    assert not (work/'work/lineage/calls').exists()
+    assert set(c.read(work/'work/experiment-config.json'))=={'worker_view_version','step','attempt'}
     assert c.settings(root)['max_tokens']==1000000 and c.settings(root)['max_seconds']==720
     assert not any(c.read(p)['kind']=='budget_amend' for p in (root/'control-ledger').glob('*.json'))

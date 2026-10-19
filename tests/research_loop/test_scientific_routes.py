@@ -35,8 +35,11 @@ def observe(root,step,*labels):
     path=c.workspace(root,step)/'work/experiment-config.json'
     experiments.configure(root,step,'local_execution:command',dict(run_argv=[sys.executable]),path)
     config=c.read(path)
+    original=copy.deepcopy(config)
+    assert set(config)=={'worker_view_version','step','attempt'}
     for label in labels:
-        assert run(root,config,label)['status']=='known_success'
+        assert run(root,config,label,client_path=path)['status']=='known_success'
+    assert config==original and c.read(path)==original
 
 
 def seal(root,step,role,parents,*,action='wait',choice=None,question='What target observation would change this choice?',evidence_return=None,stage_intent='review',mechanism_findings=None):

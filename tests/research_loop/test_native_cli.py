@@ -40,6 +40,14 @@ if role == 'W':
     payload.update(stage_intent='review',mechanism_findings=[{'mechanism':'Fixture mechanism',
       'basis':'blocked','finding':'No managed scientific observation in this transport fixture.'}])
 if role == 'A':
+    judgment=job['scientific_judgment']
+    assert judgment in prompt
+    for concept in ('original objective', 'authorized scope', 'locatable observations', 'experiment conditions',
+                    'measurements', 'inferences', 'assumptions', 'target metrics', 'proxies', 'sensitivity',
+                    'same goal criteria', 'conflicting evidence', 'uncertainty', 'missing inputs',
+                    'exact candidate', 'scientific rationale', 'budget exhaustion', 'unmet objectives'):
+        assert concept in judgment, concept
+    assert 'candidate ranking or default' in judgment and 'no mechanical proof or hash work' in judgment
     payload['candidate_recommendation'] = None
     payload['progress_assessment'] = None
     payload['decision_request'] = None
@@ -70,13 +78,87 @@ def test_real_native_process_completes_without_root_or_loopx(instance):
     assert result['completed_steps'] == 3
     assert contracts.read(Path(result['scientific_output_path']))['scientific_result'].startswith('Evidence')
     assert result['usage'] == dict(input_tokens=300, cached_input_tokens=240, output_tokens=15,
-                                    observed_tokens=315, unknown_steps=[])
+                                    observed_tokens=315, unknown_steps=[], accounted_tokens=315,
+                                      accounting_basis='observed_lower_bound', blocking_unknown_steps=[],
+                                      reserved_tokens=0, reserved_unknown_steps=[])
     assert [node['role'] for node in status(instance)['nodes']] == ['H', 'W', 'A']
     assert not (instance / 'registry.json').exists()
     for step in range(1, 4):
         work = contracts.workspace(instance, step)
         assert contracts.validate(work)['role'] == ('H', 'W', 'A')[step-1]
     assert controller.run(instance) == result
+
+
+@pytest.mark.parametrize('view_version,role,mode', [
+    pytest.param(1, 'W', 'local', id='public-worker'),
+    pytest.param(0, 'W', 'local', id='explicit-legacy-worker'),
+    pytest.param(None, 'W', 'local', id='retained-legacy-worker'),
+    pytest.param(1, 'W', 'external', id='external-worker'),
+    pytest.param(1, 'H', 'local', id='hypothesis'),
+    pytest.param(1, 'A', 'local', id='assessment'),
+])
+def test_native_stdin_uses_the_execution_entrypoint_for_its_scientific_view(tmp_path, view_version, role, mode):
+    """Capture real stdin without submitting an experiment or sealing a verdict."""
+    from scidiscovery.research_loop.worker_execution_bridge import SUBMISSION_DIRECTORY
+
+    public = tmp_path / 'public'
+    public.mkdir()
+    objective = public / 'objective.md'
+    objective.write_text('Compare the supplied scientific observations.')
+    launcher = tmp_path / 'capture-native.py'
+    launcher.write_text('''import json,os,pathlib,sys
+args=sys.argv[1:]
+work=pathlib.Path(os.environ['THIN_HWA_WORKSPACE'])
+(work/'work/native-prompt.txt').write_text(sys.stdin.read())
+pathlib.Path(args[args.index('--output-last-message')+1]).write_text(json.dumps({'fixture':'transport only'}))
+print(json.dumps({'type':'turn.completed','usage':{'input_tokens':7,'cached_input_tokens':2,'output_tokens':3}}),flush=True)
+''')
+    root = tmp_path / 'instance'
+    controller.prepare(root, objective, public, [sys.executable, str(launcher)],
+        max_tokens=10000, max_seconds=60, max_steps=4,
+        model='fixture-no-model', reasoning_effort='high', search_policy=None,
+        experiment_mode=mode, node_budget_mode='soft')
+    job = contracts.build_job(root, 1, role, [])
+    work = contracts.workspace(root, 1)
+    if view_version != 1:
+        # Preserve the original absence/zero marker semantics of retained jobs.
+        job.pop('worker_view_version')
+        if view_version is not None:job['worker_view_version'] = view_version
+        job.pop('direct_originals')
+        job['history'].pop('candidate_references')
+        contracts.write(root / 'jobs/001.json', job)
+        contracts.write(work / 'science-task.json', contracts.science_view(job, root))
+    intent = dict(task_sha256=contracts.digest(root / 'jobs/001.json'),
+        **native.profiles.binding(contracts.settings(root), job))
+    anchor = native.control_budget.accept_node(root, job)
+    if anchor is not None:intent['budget_slice'] = anchor
+    contracts.write(execution.origin(root, 1) / 'native-intent.json', intent)
+
+    outcome = native.run_native(root, 1)
+
+    assert outcome['returncode'] == 0 and outcome['stop_reason'] is None
+    prompt = (work / 'work/native-prompt.txt').read_text()
+    if role != 'W' or mode != 'local':
+        assert 'Managed registered experiments:' not in prompt
+        assert 'Managed local experiments:' not in prompt
+        assert 'scidiscovery.research_loop.worker_execution_bridge' not in prompt
+        assert 'scidiscovery.research_loop.experiments' not in prompt
+        return
+    registered, _ = json.JSONDecoder().raw_decode(prompt.split('Managed registered experiments: ', 1)[1])
+    local, _ = json.JSONDecoder().raw_decode(prompt.split('Managed local experiments: run ', 1)[1])
+    if view_version == 1:
+        command = [sys.executable, '-m', 'scidiscovery.research_loop.worker_execution_bridge',
+            '--submission-directory', SUBMISSION_DIRECTORY]
+        assert contracts.read(work / 'work/experiment-config.json') == dict(worker_view_version=1, step=1, attempt=0)
+        for private in ('--config', 'work/experiment-config.json', 'host-runtime', '/jobs/', 'experiment_client'):
+            assert private not in prompt
+    else:
+        command = [sys.executable, '-m', 'scidiscovery.research_loop.experiments',
+            '--config', 'work/experiment-config.json']
+        assert 'scidiscovery.research_loop.worker_execution_bridge' not in prompt
+    assert registered['command'] == command
+    assert local == [*command, 'run', '--experiment-dir', 'experiments/<name>',
+        '--script', 'experiments/<name>/run.py', '--', '<script args>']
 
 
 @pytest.mark.parametrize('reconnect', [False, True])
@@ -138,7 +220,9 @@ c.write=held_write
         assert result['completed_steps'] == 3
         assert observed, 'Control must observe the still-live original writer before sealing'
         assert result['usage'] == dict(input_tokens=300, cached_input_tokens=240, output_tokens=15,
-                                      observed_tokens=315, unknown_steps=[])
+                                      observed_tokens=315, unknown_steps=[], accounted_tokens=315,
+                                      accounting_basis='observed_lower_bound', blocking_unknown_steps=[],
+                                      reserved_tokens=0, reserved_unknown_steps=[])
         assert len(list(instance.rglob('native-intent.json'))) == 3
         assert len(list(instance.rglob('usage.json'))) == 3
         assert not (record / 'continuations').exists()
@@ -243,6 +327,65 @@ def test_native_meter_rejects_impossible_caching():
         input_tokens=5, cached_input_tokens=6, output_tokens=1))) is None
 
 
+@pytest.mark.parametrize('role',list('HWAE'))
+def test_terminal_wait_seals_only_after_the_exact_original_runner_exits(tmp_path,monkeypatch,role):
+    from scidiscovery.research_loop import checkpoint,continuation
+    root=tmp_path/'instance';record=root/'native-evidence/001'
+    contracts.write(root/'jobs/001.json',dict(role=role))
+    runner=dict(pid=12345,task_sha256='original-call')
+    contracts.write(record/'runner-process.json',runner)
+    before={path:path.read_bytes() for path in root.rglob('*') if path.is_file()}
+    events=[];alive=iter([True,False])
+    monkeypatch.setattr(execution,'record',lambda *a:record)
+    monkeypatch.setattr(execution,'origin',lambda *a:record)
+    monkeypatch.setattr(execution,'identity',lambda *a:'original-call')
+    monkeypatch.setattr(runtime,'node_state',lambda *a:'terminal')
+    monkeypatch.setattr(checkpoint,'enabled',lambda *a:False)
+    def process_matches(receipt,binding):
+        assert receipt==runner and binding=='original-call'
+        state=next(alive);events.append(('runner',state));return state
+    monkeypatch.setattr(runtime,'process_matches',process_matches)
+    monkeypatch.setattr(native.time,'sleep',lambda seconds:events.append(('wait',seconds)))
+    monkeypatch.setattr(runtime,'start',lambda *a,**kw:pytest.fail('Waiting cannot submit another runner'))
+    def seal(root_arg,step):
+        assert root_arg==root and step==1
+        assert events==[('runner',True),('wait',.1),('runner',False)]
+        events.append(('seal',role));return dict(role=role,original_retained=True)
+    monkeypatch.setattr(continuation,'seal_or_repair',seal)
+    assert native.wait_native(root,1)==dict(role=role,original_retained=True)
+    assert events[-1]==('seal',role)
+    assert {path:path.read_bytes() for path in root.rglob('*') if path.is_file()}==before
+
+
+@pytest.mark.parametrize('state',['unknown','terminal'])
+def test_wait_preserves_unknown_or_failed_original_without_resubmission(tmp_path,monkeypatch,state):
+    from scidiscovery.research_loop import checkpoint,continuation
+    root=tmp_path/'instance';record=root/'native-evidence/001'
+    contracts.write(root/'jobs/001.json',dict(role='H'))
+    contracts.write(record/'runner-process.json',dict(pid=12345,task_sha256='original-call'))
+    contracts.write(record/'native-intent.json',dict(task_sha256=contracts.digest(root/'jobs/001.json')))
+    if state=='terminal':contracts.write(record/'native-outcome.json',dict(returncode=7,stop_reason=None))
+    before={path:path.read_bytes() for path in root.rglob('*') if path.is_file()}
+    monkeypatch.setattr(execution,'record',lambda *a:record)
+    monkeypatch.setattr(execution,'origin',lambda *a:record)
+    monkeypatch.setattr(execution,'identity',lambda *a:'original-call')
+    monkeypatch.setattr(runtime,'node_state',lambda *a:state)
+    monkeypatch.setattr(runtime,'process_matches',lambda *a:False)
+    monkeypatch.setattr(checkpoint,'enabled',lambda *a:False)
+    clock=iter([0,6])
+    monkeypatch.setattr(native.time,'monotonic',lambda:next(clock))
+    monkeypatch.setattr(native.time,'sleep',lambda *a:pytest.fail('No live owner or startup allowance remains'))
+    monkeypatch.setattr(runtime,'start',lambda *a,**kw:pytest.fail('Unknown or failed originals cannot be replayed'))
+    seals=[]
+    def refuse_failed_original(*args):
+        seals.append(args);raise RuntimeError('Original failed execution retained')
+    monkeypatch.setattr(continuation,'seal_or_repair',refuse_failed_original)
+    with pytest.raises(RuntimeError,match='unknown; preserved without replay|Original failed execution retained'):
+        native.wait_native(root,1)
+    assert len(seals)==(1 if state=='terminal' else 0)
+    assert {path:path.read_bytes() for path in root.rglob('*') if path.is_file()}==before
+
+
 def test_actual_native_launch_rechecks_frozen_settings(instance, monkeypatch):
     contracts.build_job(instance, 1, 'H', [])
     policy = contracts.read(instance / 'settings.json')
@@ -317,58 +460,41 @@ with session.open('a') as log:
 
 
 @pytest.mark.process_e2e
-def test_terminal_usage_cannot_reduce_live_observation(instance):
+@pytest.mark.parametrize('stream', ['billing_mismatch', 'known_then_unreported'])
+def test_terminal_billing_keeps_lower_bound_and_completed_scientific_original(instance, stream):
     settings = contracts.read(instance / 'settings.json')
     script = Path(settings['native_launcher_argv'][1])
     original = "print(json.dumps({'type':'thread.started','thread_id':'native-'+role}),flush=True)"
-    script.write_text(script.read_text().replace(original, '''thread='native-'+role
+    live_input = 100 if stream == 'known_then_unreported' else 150
+    source = script.read_text().replace(original, '''thread='native-'+role
 home=pathlib.Path(os.environ['THIN_HWA_NATIVE_HOME'])
 session=home/'sessions'/('rollout-'+thread+'.jsonl')
 session.parent.mkdir(parents=True,exist_ok=True)
-session.write_text(json.dumps({'type':'session_meta','payload':{'id':thread,'cwd':str(work)}})+'\\n'+json.dumps({'type':'event_msg','payload':{'type':'token_count','info':{'total_token_usage':{'input_tokens':150,'cached_input_tokens':80,'output_tokens':5}}}})+'\\n')
-print(json.dumps({'type':'thread.started','thread_id':thread}),flush=True)'''))
-    result = controller.run(instance)
-    assert result['status'] == 'native_stopped', result
+session.write_text(json.dumps({'type':'session_meta','payload':{'id':thread,'cwd':str(work)}})+'\\n'+json.dumps({'type':'event_msg','payload':{'type':'token_count','info':{'total_token_usage':{'input_tokens':LIVE_INPUT,'cached_input_tokens':80,'output_tokens':5}}}})+'\\n')
+print(json.dumps({'type':'thread.started','thread_id':thread}),flush=True)'''.replace('LIVE_INPUT', str(live_input)))
+    if stream == 'known_then_unreported':
+        source += "\nprint(json.dumps({'type':'turn.completed'}),flush=True)\n"
+    script.write_text(source)
+    contracts.build_job(instance, 1, 'H', [])
+    result = native.execute_native(instance, 1)
+    assert result['role'] == 'H' and result['summary'] == 'H bounded finding'
     record = contracts.host_record(contracts.workspace(instance, 1))
     outcome = contracts.read(record / 'native-outcome.json')
-    assert outcome['stop_reason'] == 'native_usage_unreconciled'
-    assert outcome['metering']['reason'] == 'terminal_usage_below_live_observation'
-    assert contracts.read(record / 'usage.json')['input_tokens'] == 150
+    assert outcome['returncode'] == 0 and outcome['stop_reason'] is None
+    assert outcome['cleanup'] == 'observed_group_cleaned'
+    assert outcome['metering']['coverage'] == 'unknown' and outcome['metering']['source'] == 'turn.completed'
+    assert outcome['metering']['reason'] == ('terminal_usage_unreported' if stream == 'known_then_unreported'
+        else 'terminal_usage_below_live_observation')
+    assert contracts.read(record / 'usage.json')['input_tokens'] == live_input
     assert outcome['usage']['unknown_steps'] == [1]
+    assert native.usage(instance)['observed_tokens'] == live_input + 5
+    assert contracts.validate(contracts.workspace(instance, 1)) == result
+    originals = {path: path.read_bytes() for path in record.iterdir() if path.is_file()}
+    assert native.wait_native(instance, 1) == result
+    assert all(path.read_bytes() == raw for path, raw in originals.items())
+    assert not (instance / 'jobs/002.json').exists() and not (record / 'continuations').exists()
 
 
-@pytest.mark.process_e2e
-def test_live_tokens_reach_shared_limit_before_turn_completion(tmp_path):
-    import time
-    public = tmp_path / 'public'
-    public.mkdir()
-    objective = public / 'objective.txt'
-    objective.write_text('No model; verify a running token observation stops execution.')
-    launcher = tmp_path / 'native.py'
-    launcher.write_text('''import json,os,pathlib,sys,time
-sys.stdin.read()
-work=pathlib.Path(os.environ['THIN_HWA_WORKSPACE'])
-home=pathlib.Path(os.environ['THIN_HWA_NATIVE_HOME'])
-thread='live-limit-thread'
-session=home/'sessions'/('rollout-'+thread+'.jsonl')
-session.parent.mkdir(parents=True,exist_ok=True)
-session.write_text(json.dumps({'type':'session_meta','payload':{'id':thread,'cwd':str(work)}})+'\\n'+json.dumps({'type':'event_msg','payload':{'type':'token_count','info':{'total_token_usage':{'input_tokens':100,'cached_input_tokens':80,'output_tokens':5}}}})+'\\n')
-print(json.dumps({'type':'thread.started','thread_id':thread}),flush=True)
-time.sleep(20)
-''')
-    root = tmp_path / 'instance'
-    controller.prepare(root, objective, public, [sys.executable, str(launcher)],
-        max_tokens=50, max_seconds=60, max_steps=6, model='no-model', reasoning_effort='high')
-    started = time.monotonic()
-    result = controller.run(root)
-    assert time.monotonic() - started < 5
-    assert result['status'] == 'native_stopped', result
-    record = contracts.host_record(contracts.workspace(root, 1))
-    outcome = contracts.read(record / 'native-outcome.json')
-    assert outcome['stop_reason'] == 'token_limit'
-    assert outcome['usage']['observed_tokens'] == 105
-    assert outcome['usage']['unknown_steps'] == [1]
-    assert outcome['metering']['reason'] == 'terminal_usage_unreported'
 
 
 @pytest.mark.process_e2e
@@ -404,7 +530,9 @@ session=home/'sessions'/('rollout-'+thread+'.jsonl')
 session.parent.mkdir(parents=True,exist_ok=True)
 session.write_text(json.dumps({'type':'session_meta','payload':{'id':thread,'cwd':str(work)}})+'\\n'+json.dumps({'type':'event_msg','payload':{'type':'token_count','info':{'total_token_usage':{'input_tokens':100,'cached_input_tokens':80,'output_tokens':5}}}})+'\\n')
 print(json.dumps({'type':'thread.started','thread_id':thread}),flush=True)
-time.sleep(20)
+payload=dict(summary='Original native home retained',scientific_result='Transport fixture only',limitations=['No scientific claim'],implementation_selection=None,search_plan=None,next_action='wait',route_reason='Fixture complete')
+pathlib.Path(sys.argv[sys.argv.index('--output-last-message')+1]).write_text(json.dumps(payload))
+print(json.dumps(dict(type='turn.completed',usage=dict(input_tokens=100,cached_input_tokens=80,output_tokens=5))),flush=True)
 ''')
     launcher.chmod(0o755)
     root = tmp_path / 'instance'
@@ -413,10 +541,10 @@ time.sleep(20)
     started = time.monotonic()
     result = controller.run(root)
     assert time.monotonic() - started < 5
-    assert result['status'] == 'native_stopped', result
+    assert result['status'] == 'wait', result
     work = contracts.workspace(root, 1)
     outcome = contracts.read(contracts.host_record(work) / 'native-outcome.json')
-    assert outcome['stop_reason'] == 'token_limit'
+    assert outcome['stop_reason'] is None
     assert outcome['usage']['observed_tokens'] == 105
     assert contracts.read(work / 'work/native-env.json') == dict(
         codex_home=str(actual_home) if explicit_home else None, home=str(user_home))

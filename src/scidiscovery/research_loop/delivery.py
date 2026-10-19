@@ -68,8 +68,11 @@ def policy(value):
         return {**value, 'closeout_a': dict(a)}
     if value['submit_seconds'] <= 0 or value['confirm_seconds'] <= 0:
         raise ValueError('An adapter requires positive submit and confirm ceilings')
-    if not isinstance(adapter, dict) or set(adapter)-{'capabilities'} != {'adapter', 'launcher_argv', 'config', 'target', 'inputs', 'source_roots'}:
+    if not isinstance(adapter, dict) or set(adapter)-{'capabilities', 'effect_scope'} != {'adapter', 'launcher_argv', 'config', 'target', 'inputs', 'source_roots'}:
         raise ValueError('Adapter requires exact code, launcher, scoped inputs, configuration and target')
+    if 'effect_scope' in adapter and (not isinstance(adapter['effect_scope'], str)
+            or not adapter['effect_scope'].strip()):
+        raise ValueError('Adapter effect_scope must be nonempty public text')
     if 'capabilities' in adapter and (not isinstance(adapter['capabilities'],list)
             or any(not isinstance(name,str) or name not in CAPABILITIES for name in adapter['capabilities'])
             or len(adapter['capabilities']) != len(set(adapter['capabilities']))):
@@ -110,7 +113,15 @@ def policy(value):
                   launcher_files=launcher_files, config=adapter['config'], target=adapter['target'],
                   inputs=frozen_inputs, source_roots=list(roots))
     if 'capabilities' in adapter:frozen['capabilities']=list(adapter['capabilities'])
+    if 'effect_scope' in adapter:frozen['effect_scope']=adapter['effect_scope']
     return {**value, 'closeout_a': dict(a), 'adapter': frozen}
+
+
+def public_configuration(value):
+    """Describe configured effects without exposing private adapter bindings."""
+    adapter = (value or {}).get('adapter')
+    return dict(configured=adapter is not None,
+        effect_scope=adapter.get('effect_scope', 'unknown') if adapter is not None else 'No delivery adapter is configured.')
 
 
 def _label(label):
@@ -232,7 +243,9 @@ def freeze_sources(root, source_nodes, *, candidate_id=None):
     root = Path(root).resolve()
     spec = _adapter(root)
     remaining = budget.snapshot(root)['seconds_remaining']
-    allowance = min(SOURCE_SECONDS, remaining, c.settings(root)['delivery_policy']['cleanup_seconds'])
+    allowance = min(SOURCE_SECONDS, c.settings(root)['delivery_policy']['cleanup_seconds'])
+    if budget.final_a_barrier(root) is None and (budget.closeout_state(root)['begin'] or {}).get('mode') != 'final':
+        allowance = min(allowance, remaining)
     if allowance <= 0:
         raise DeliveryUnresolved('delivery_source_preparation_unavailable')
     deadline = time.clock_gettime(time.CLOCK_BOOTTIME) + allowance
@@ -456,6 +469,9 @@ def validate_sources(root, refs):
 def _choice(root, job, result):
     if result.get('next_action') != 'deliver':
         raise DeliveryUnresolved('delivery_authorization_required')
+    chosen=result.get('candidate_recommendation')
+    if chosen is not None and (not isinstance(chosen,str) or chosen not in job.get('history',{}).get('candidate_ids',[])):
+        raise DeliveryUnresolved('selection_candidate_unavailable')
     from . import shortlist
     if c.settings(root).get('selection_policy') is not None:
         expected = shortlist.marker(root,job['step'])
@@ -485,6 +501,11 @@ def prepare_binding(root, job, result):
 
 
 def binding(root, job, result):
+    from . import candidate_refs
+    # Public callers may supply the unmodified scientific return; c.validate
+    # supplies the already resolved host envelope. Normalize only public refs.
+    if job.get('worker_view_version')==1:
+        result=candidate_refs.control_payload(job,result,root=root)
     begin = budget.closeout_state(root)['begin']
     ordinary = begin is not None and begin.get('authorization_step') == job['step']
     if job['role'] != 'A' or not (job.get('purpose') == 'closeout' or ordinary):
@@ -710,7 +731,7 @@ def leaf_phase(root, source, operation_id, phase, seconds, *, on_process=None):
 
 
 @owner_effect
-def invoke(root, intent, max_seconds, *, on_process=None, audit_only=False):
+def invoke(root, intent, max_seconds, *, on_process=None, audit_only=False, collection=None):
     """Caller already durably accepted this action; recovered submits never call here."""
     from .protocol import require_current
     require_current(root)
@@ -728,9 +749,17 @@ def invoke(root, intent, max_seconds, *, on_process=None, audit_only=False):
         raise ValueError('Delivery action was not durably accepted in the control ledger')
     if stored['outcome'] is not None:
         return stored['outcome']['result']
-    used = budget.snapshot(root)['advance_seconds'] - intent['advance_seconds']
+    anchor = intent['advance_seconds']
+    if collection is not None:
+        from . import startup_recovery
+        if collection != startup_recovery.collection_dispatch(root,intent):
+            raise ValueError('First delivery dispatch differs from its exact collector intent')
+        anchor = collection['advance_seconds']
+    used = budget.snapshot(root)['advance_seconds'] - anchor
     if used < 0:raise ValueError('Delivery action time moved backwards')
-    max_seconds = min(max_seconds, intent['max_seconds'] - used, budget.snapshot(root)['seconds_remaining'])
+    max_seconds = min(max_seconds, intent['max_seconds'] - used)
+    if intent.get('final_return') is None:
+        max_seconds = min(max_seconds, budget.snapshot(root)['seconds_remaining'])
     if max_seconds <= 0:return _result(intent['binding'], 'unknown', 'action_time_limit')
     deadline = time.clock_gettime(time.CLOCK_BOOTTIME) + max_seconds
     spec = _adapter(root)

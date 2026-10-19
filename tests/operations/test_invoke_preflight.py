@@ -212,13 +212,18 @@ def test_declared_input_checker_gets_exact_bounded_sources_before_run_creation(m
 
 def test_input_checker_reference_is_compiled_and_default_digest_is_compatible() -> None:
     import json
-    from scidiscovery.operations.spec import ComponentRef, InputValidationSpec, canonical_json
+    from scidiscovery.operations.spec import ComponentRef, InputValidationSpec, canonical_digest, canonical_json
 
     original = PLUGIN.operations[0]
     legacy = original.model_dump(mode="python", by_alias=True)
     legacy.pop("input_validation")
+    legacy.pop("artifact_capture")
     assert canonical_json(original) == canonical_json(legacy)
-    assert json.loads(canonical_json(original))["input_admission"] is None
+    assert canonical_digest(original) == canonical_digest(legacy)
+    projection = json.loads(canonical_json(original))
+    assert "input_validation" not in projection
+    assert "artifact_capture" not in projection
+    assert projection["input_admission"] is None
     declaration = InputValidationSpec(ComponentRef("nonempty_validator"), "fixture.input_binding", "Check exact bound input content.")
     revised = original.model_copy(update={"input_validation": declaration})
     plugin = PLUGIN.model_copy(update={"operations": (revised, *PLUGIN.operations[1:])})

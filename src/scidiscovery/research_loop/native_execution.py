@@ -1,0 +1,255 @@
+"""The default native attempt's scientific subprocess namespace.
+
+This only supplies argv/cwd to LocalExecution. Acceptance, clocks, process
+identity, cleanup and collection remain with the existing execution owner.
+"""
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+import shutil
+import sys
+import tomllib
+
+PERMISSION_PROFILE = 'scid-local-attempt'
+
+
+def _toml(value):
+    if isinstance(value, str):return json.dumps(value)
+    if type(value) is bool:return str(value).lower()
+    if isinstance(value, list):return '['+', '.join(_toml(item) for item in value)+']'
+    if isinstance(value, dict):
+        return '{'+', '.join(json.dumps(key)+' = '+_toml(item) for key,item in value.items())+'}'
+    raise ValueError('Unsupported native permission configuration value')
+
+
+def _merge(target, source):
+    for key,value in source.items():
+        if isinstance(value,dict) and isinstance(target.get(key),dict):_merge(target[key],value)
+        else:target[key]=value
+
+
+def _permissions(home, work):
+    """Capture relevant existing legacy declarations, then override both users.
+
+    Named/managed policies need their original effective permission state;
+    guessing their translation to legacy workspace-write would widen access.
+    """
+    from .experiments import UnsupportedExecution
+    value={}
+    candidates=[Path('/etc/codex/config.toml'),home/'config.toml']
+    originals=[]
+    from . import experiments as e
+    def layer(path):
+        if path.exists():
+            original=e.proof(path);data=tomllib.loads(e.read(path).decode())
+            if e.proof(path)!=original:raise e.IntegrityError('Native permissions changed during capture')
+            originals.append(original);_merge(value,data)
+    for path in dict.fromkeys(candidates):layer(path)
+    # Codex loads trusted project layers only from its project root to cwd.
+    # A user's unrelated ~/.codex above that root is not another project layer.
+    ancestors=(work,*work.parents)
+    markers=value.get('project_root_markers',['.git'])
+    if (not isinstance(markers,list) or not markers
+            or any(not isinstance(item,str) or not item or '/' in item for item in markers)):
+        raise UnsupportedExecution('Native project-root declarations cannot be resolved')
+    boundary=next((index for index,parent in enumerate(ancestors)
+        if any((parent/marker).exists() for marker in markers)),0)
+    projects=value.get('projects',{})
+    trust=next((projects[str(parent)].get('trust_level') for parent in ancestors
+        if isinstance(projects.get(str(parent)),dict)),None)
+    if trust=='trusted':
+        for parent in reversed(ancestors[:boundary+1]):layer(parent/'.codex/config.toml')
+    if (value.get('default_permissions') is not None or value.get('permissions')
+            or value.get('profile') is not None
+            or value.get('network') or value.get('features',{}).get('network_proxy') is True
+            or Path('/etc/codex/managed_config.toml').exists()
+            or Path('/etc/codex/requirements.toml').exists()):
+        raise UnsupportedExecution('This native permission policy requires its original effective sandbox state; managed local launch is unsupported')
+    declared=value.get('sandbox_workspace_write',{})
+    if not isinstance(declared,dict):raise UnsupportedExecution('Native workspace permission declaration is unavailable')
+    policy=dict(writable_roots=[],network_access=False,exclude_tmpdir_env_var=False,exclude_slash_tmp=False)
+    if set(declared)-set(policy):
+        raise UnsupportedExecution('This native workspace policy has no supported scientific projection')
+    policy.update(declared)
+    if policy['writable_roots']:
+        raise UnsupportedExecution('Additional native writable roots have no declared scientific namespace mapping')
+    if any(type(policy[key]) is not bool for key in ('network_access','exclude_tmpdir_env_var','exclude_slash_tmp')):
+        raise UnsupportedExecution('Native workspace permission declaration is invalid')
+    _toml(policy)
+    return policy, originals
+
+
+def _profile(policy, workspace, tmpdir, *, virtual=False):
+    # Extending the native built-in retains its protected workspace metadata.
+    # Exclusion removes an additional temporary write grant, never a write
+    # already supplied by the workspace or the other temporary root.
+    workspace=Path(workspace)
+    temporary=Path(tmpdir) if tmpdir else None
+    if temporary is not None:
+        if not temporary.is_absolute():temporary=workspace/temporary
+        if not virtual:temporary=temporary.resolve()
+    slash_tmp=Path('/tmp') if virtual else Path('/tmp').resolve()
+    writable=[workspace]
+    if not policy['exclude_slash_tmp']:writable.append(slash_tmp)
+    if not policy['exclude_tmpdir_env_var'] and temporary is not None:writable.append(temporary)
+    filesystem={}
+    for excluded,name,path in ((policy['exclude_tmpdir_env_var'],':tmpdir',temporary),
+            (policy['exclude_slash_tmp'],':slash_tmp',slash_tmp)):
+        if excluded and path is not None and not any(path.is_relative_to(root) for root in writable):
+            filesystem[name]='read'
+    return dict(extends=':workspace',filesystem=filesystem,network=dict(enabled=policy['network_access']))
+
+
+def _native_program(launcher):
+    """Resolve the selected installation, including the official npm wrapper.
+
+    A running Codex session's temporary arg0 aliases are deliberately irrelevant
+    to an ordinary CLI process. An ELF entry, or the selected npm package's own
+    installed optional binary, owns the same sandbox implementation.
+    """
+    from .experiments import UnsupportedExecution
+    entry=shutil.which(launcher[0])
+    if entry is None:raise UnsupportedExecution('The selected native program is unavailable')
+    entry=Path(entry).resolve(strict=True)
+    candidates=[entry]
+    platform={'x86_64':('x64','x86_64-unknown-linux-musl'),
+              'aarch64':('arm64','aarch64-unknown-linux-musl')}.get(os.uname().machine)
+    if sys.platform=='linux' and platform and entry.name=='codex.js' and entry.parent.name=='bin':
+        architecture,target=platform;package=entry.parent.parent
+        vendor=Path('vendor')/target/'bin/codex'
+        candidates.extend((package/'node_modules/@openai'/('codex-linux-'+architecture)/vendor,
+            package.parent/('codex-linux-'+architecture)/vendor,package/vendor))
+    for path in candidates:
+        try:
+            native=path.resolve(strict=True)
+            with native.open('rb') as stream:magic=stream.read(4)
+            if sys.platform=='linux' and magic==b'\x7fELF':return native
+        except OSError:continue
+    raise UnsupportedExecution('The selected native installation has no supported scientific sandbox binary')
+
+
+def prepare(root, step, record, work, home, args, *, standard, resume_position=None):
+    """Freeze one host-only attempt; unsupported launchers still support reads."""
+    from . import contracts as c, execution, experiments as e
+    snapshot=record/'native-execution-permissions.json'
+    value=dict(version=1,task_sha256=c.digest(root/'jobs'/f'{step:03d}.json'),
+        native_attempt=dict(number=len(execution.records(root,step))-1,execution_key=execution.identity(root,step)),
+        intent=e.proof(record/'native-intent.json'),implementation=e.proof(Path(__file__).resolve()),
+        native_argv=list(args),home=str(home),workspace=str(work))
+    native_args=list(args)
+    try:
+        if not standard:
+            raise e.UnsupportedExecution('This custom native launcher has no declared scientific subprocess sandbox; managed local launch is unsupported')
+        policy, originals=_permissions(home,work)
+        helper=_native_program(args[:1])
+        bwrap=shutil.which('bwrap')
+        if bwrap is None:raise e.UnsupportedExecution('The native scientific namespace wrapper is unavailable')
+        value.update(policy=policy,permission_sources=originals,native=e.proof(helper),bwrap=e.proof(Path(bwrap).resolve()),
+            python=str(Path(sys.executable).absolute()),runtime_roots=list(dict.fromkeys((sys.base_prefix,sys.prefix))))
+        backend=record/'scientific-native-home';backend.mkdir(mode=0o700)
+        tmpdir=os.environ.get('TMPDIR')
+        projection=_profile(policy,work,tmpdir)
+        # A node workspace and every accepted cwd below it cannot cover either
+        # top-level virtual temporary root; recheck the actual cwd at launch.
+        backend_projection=_profile(policy,work,'/task-tmp',virtual=True)
+        value['permission_environment']=dict(TMPDIR=tmpdir)
+        value['permission_profile']=dict(name=PERMISSION_PROFILE,configuration=projection)
+        value['backend_permission_profile']=dict(name=PERMISSION_PROFILE,configuration=backend_projection)
+        content='default_permissions='+json.dumps(PERMISSION_PROFILE)+'\npermissions='+_toml({PERMISSION_PROFILE:backend_projection})+'\n'
+        (backend/'config.toml').write_text(content);(backend/'config.toml').chmod(0o400)
+        value['backend_configuration']=e.proof(backend/'config.toml')
+        # Exec retains its supported legacy flags. Only the sandbox subcommand
+        # accepts -P; it receives the equivalent declaration in its namespace.
+        index=native_args.index('--sandbox')
+        if native_args[index+1]!='workspace-write':raise e.IntegrityError('Original native workspace policy changed')
+        if resume_position is not None and (type(resume_position) is not int
+                or not 2<=resume_position<len(native_args) or native_args[resume_position]!='resume'):
+            raise e.IntegrityError('Original native resume command position changed')
+        position=resume_position if resume_position is not None else len(native_args)-1
+        native_args[position:position]=['-c','sandbox_workspace_write='+_toml(policy)]
+        value['applied_native_argv']=list(native_args)
+    except e.UnsupportedExecution as error:
+        value['unsupported']=str(error)
+    with snapshot.open('x') as stream:
+        json.dump(value,stream,ensure_ascii=False,allow_nan=False);stream.flush();os.fsync(stream.fileno())
+    snapshot.chmod(0o400)
+    original=e.proof(snapshot)
+
+    def launch(config,accepted,command,cwd):
+        if e.proof(snapshot)!=original or c.read(c.regular(snapshot))!=value:
+            raise e.IntegrityError('Original native permissions changed')
+        if (e.proof(record/'native-intent.json')!=value['intent']
+                or e.proof(Path(__file__).resolve())!=value['implementation']
+                or accepted.get('native_attempt')!=value['native_attempt']
+                or accepted.get('scope')!=config['scope']
+                or config['scope']['job_sha256']!=value['task_sha256']):
+            raise e.IntegrityError('Scientific launch differs from its original native attempt')
+        if 'unsupported' in value:raise e.UnsupportedExecution(value['unsupported'])
+        for key in ('native','bwrap','backend_configuration'):
+            if e.proof(value[key]['path'])!=value[key]:
+                raise e.IntegrityError('Original native sandbox implementation changed')
+        return _launch(value,config,accepted,command,cwd)
+    return native_args,launch
+
+
+def _launch(value,config,accepted,command,cwd):
+    from . import experiments as e
+    if config['execution_interface']['executor']!='local_execution:command':
+        raise e.UnsupportedExecution('Selected executor has no default scientific subprocess namespace')
+    directory=e.Records(config).directory(accepted['call_id'])
+    work=Path(value['workspace']);source=Path(accepted['source_script'])
+    if source.resolve()!=source or not source.is_relative_to(work):
+        raise e.UnsupportedExecution('Scientific source is outside its assigned workspace')
+    command=list(command);bindings=[]
+    if 'entry' in accepted:
+        target=Path(accepted['experiment_directory'])
+        if target.resolve()!=target or not target.is_relative_to(work):
+            raise e.UnsupportedExecution('Scientific experiment is outside its assigned workspace')
+        bindings=[('--ro-bind',directory/'inputs',target),
+            ('--bind',directory/'inputs/artifacts',target/'artifacts')]
+        command[accepted['script_index']]=str(target/accepted['entry']);cwd=str(target)
+    else:
+        bindings=[('--ro-bind',directory/'source.py',source)]
+        command[accepted['script_index']]=str(source);cwd=cwd or str(work)
+    if Path(cwd).resolve()!=Path(cwd) or not Path(cwd).is_relative_to(work):
+        raise e.UnsupportedExecution('Scientific working directory is outside its assigned workspace')
+    if _profile(value['policy'],Path(cwd),'/task-tmp',virtual=True)!=value['backend_permission_profile']['configuration']:
+        raise e.IntegrityError('Accepted scientific cwd differs from its native permission projection')
+    backend=Path('/task-native')
+    wrapped=[value['bwrap']['path'],'--unshare-user','--unshare-pid','--unshare-ipc','--unshare-uts',
+        '--die-with-parent','--new-session','--clearenv','--proc','/proc','--dev','/dev','--tmpfs','/tmp']
+    runtime_roots=[Path(path) for path in ('/usr','/bin','/lib','/lib64')]
+    for path in ('/usr','/bin','/lib','/lib64','/etc/resolv.conf','/etc/hosts','/etc/ssl/certs'):
+        if Path(path).exists():wrapped.extend(['--ro-bind',path,path])
+    if command[0]==value['python']:
+        for path in value['runtime_roots']:
+            if not Path(path).is_relative_to('/usr'):
+                if (Path(path) in (Path('/'),Path.home()) or Path(value['home']).is_relative_to(path)
+                        or directory.is_relative_to(path)):
+                    raise e.UnsupportedExecution('Python runtime overlaps private native control')
+                wrapped.extend(['--ro-bind',path,path])
+                runtime_roots.append(Path(path))
+    # Runtime binaries outside the system trees are exact read-only files;
+    # neither their user's home nor the control source tree is mounted.
+    for path in dict.fromkeys((value['native']['path'],str(Path(command[0]).absolute()))):
+        if not any(Path(path).is_relative_to(base) for base in runtime_roots):
+            wrapped.extend(['--ro-bind',path,path])
+    wrapped.extend(['--bind',str(work),str(work),
+        '--ro-bind',value['backend_configuration']['path'],str(backend/'config.toml'),
+        '--tmpfs',str(work/'work/experiment'),'--tmpfs','/task-tmp','--chdir',cwd])
+    # Codex protects these metadata directories even when they were absent at
+    # preparation. Supply them in the host workspace before inner sandboxing.
+    metadata_root=directory/'inputs' if 'entry' in accepted else Path(cwd)
+    for name in ('.git','.agents','.codex','.aws'):
+        path=metadata_root/name
+        if not path.exists():path.mkdir(mode=0o700)
+    for mode,source_path,target in bindings:wrapped.extend([mode,str(source_path),str(target)])
+    environment=dict(PATH='/usr/bin:/bin',HOME='/task-tmp',CODEX_HOME=str(backend),
+        TMPDIR='/task-tmp',XDG_RUNTIME_DIR='/task-tmp',LANG='C.UTF-8',PYTHONDONTWRITEBYTECODE='1')
+    for key,content in environment.items():wrapped.extend(['--setenv',key,content])
+    bootstrap='umask 077; chmod 700 /task-tmp; exec "$@"'
+    scientific=['/bin/sh','-c',bootstrap,'scid-scientific-sandbox',value['native']['path'],
+        'sandbox','-P',PERMISSION_PROFILE,'-C',cwd,'--',*command]
+    return wrapped+scientific,None,None

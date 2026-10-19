@@ -14,7 +14,7 @@ def status(root: Path, *, after=0, limit=None, live_feedback=True):
     if type(after) is not int or after < 0 or (limit is not None and (type(limit) is not int or limit <= 0)):
         raise ValueError('Exact positive node page and continuation required')
     nodes = []
-    stop = settings['max_steps'] + 1 if limit is None else min(settings['max_steps'] + 1, after + limit + 1)
+    stop = budget.historical_step_limit(root) + 1 if limit is None else min(budget.historical_step_limit(root) + 1, after + limit + 1)
     for step in range(after + 1, stop):
         job_path = root / 'jobs' / f'{step:03d}.json'
         if not job_path.exists():
@@ -57,7 +57,7 @@ def status(root: Path, *, after=0, limit=None, live_feedback=True):
     page = {}
     if limit is not None:
         last = nodes[-1]['step'] if nodes else after
-        more = last < settings['max_steps'] and (root / 'jobs' / f'{last + 1:03d}.json').exists()
+        more = last < budget.historical_step_limit(root) and (root / 'jobs' / f'{last + 1:03d}.json').exists()
         page = dict(after=after, next_after=last if more else None)
     closeout = budget.closeout_state(root)
     from . import delivery

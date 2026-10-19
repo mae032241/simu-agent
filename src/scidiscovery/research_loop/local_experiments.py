@@ -19,6 +19,27 @@ from . import experiments as e
 
 MAX_SCAN_ENTRIES = 1024
 
+# Published by describe; this is the existing optional result format, not a
+# domain evaluation or a grant to execute anything.
+RESULT_SCHEMA = dict(type='object',
+    required=['version','metrics','outputs'], properties=dict(
+        version=dict(type='integer',enum=[1]),
+        metrics=dict(type='array',items=dict(type='object',
+            required=['name','value'],properties=dict(
+                name=dict(type='string',minLength=1,description='Unique declared metric name.'),
+                value=dict(type='number',description='Explicit finite observed value.'),
+                unit=dict(description='Optional author-owned scientific description.'),
+                evaluation_key=dict(description='Optional author-owned evaluation description.'),
+                direction=dict(description='Optional author-owned scientific description; no direction is inferred.')))),
+        outputs=dict(type='array',items=dict(type='object',
+            required=['path'],properties=dict(
+                path=dict(type='string',description='artifacts/<retained output>, relative to the experiment root.'),
+                label=dict(description='Optional author-owned output label.')))),
+        candidate=dict(type='object',required=['artifact'],properties=dict(
+                label=dict(description='Optional author-owned candidate label.'),
+                metric=dict(description='Optional exact declared metric name; absent or unresolved means unknown measurement.'),
+                artifact=dict(type='string',description='Exactly one declared outputs.path.')))))
+
 
 class LocalExecution:
     terminal_evidence_kind = 'local_process'
@@ -45,7 +66,9 @@ class LocalExecution:
 
     @staticmethod
     def capabilities():
-        content=e.encoded(dict(kind='local_command',domain_metrics=False))
+        content=e.encoded(dict(kind='local_command',domain_metrics=False,
+            optional_result=dict(protocol=e.LOCAL_RESULT_PROTOCOL,path='artifacts/result.json',schema=RESULT_SCHEMA,
+                constraints='Metric names and output paths must be unique. Outputs must be retained originals. Scientific descriptions are optional and preserved without scientific interpretation. An explicit candidate requires its exact retained artifact; missing measurements stay unknown. Invalid individual declarations are diagnosed without discarding other observations. Execution success alone is not scientific success.')))
         return (AdapterCapability('local_command','execution','scidiscovery.local-command.v1',1,
             'application/json',content,dict(kind='local_command')),
             AdapterCapability(e.INPUT_SOURCES_KEY,'source_provenance',e.INPUT_SOURCES_SCHEMA,1,
@@ -195,6 +218,8 @@ class LocalExecution:
         deadline=self._execution_deadline(accepted)
         with (directory/'stdout.raw').open('xb') as out,(directory/'stderr.raw').open('xb') as err:
             command=self.command(accepted)
+            from . import worker_execution_bridge
+            command,cwd,finish=worker_execution_bridge.local_process_launch(self.config,accepted,command,cwd)
             if deadline is not None and time.monotonic()>=deadline:
                 raise TimeoutError('Original reserved experiment deadline reached before launch')
             process=subprocess.Popen(command,cwd=cwd,stdout=subprocess.PIPE,
@@ -223,6 +248,7 @@ class LocalExecution:
             cleanup=runtime.cleanup_owned_group(identity)=='observed_group_cleaned'
             returncode=process.returncode
             process.stdout.close();process.stderr.close()
+        if finish is not None:finish(returncode,cleanup,transport_complete)
         self.records.publish(call_id,'terminal.json',dict(returncode=returncode,cleanup_confirmed=cleanup,
             transport_complete=transport_complete,wall_seconds=time.monotonic()-started))
         self.records.publish(call_id,'completed.json',self.completion(directory,accepted,returncode,cleanup,transport_complete))
@@ -260,44 +286,64 @@ class LocalExecution:
     def read_result(directory,outputs):
         path=directory/'result.json'
         if not path.exists():return dict(status='missing',metrics=[],outputs=[])
+        detail='result.json must contain strict JSON'
         try:
-            value=json.loads(e.read(path))
-            if (not isinstance(value,dict) or set(value)-{'candidate'}!={'version','metrics','outputs'}
-                    or type(value['version']) is not int or value['version']!=1
-                    or not isinstance(value['metrics'],list)
-                    or not isinstance(value['outputs'],list)):
+            def nonfinite(_):raise ValueError('Nonfinite JSON value')
+            value=json.loads(e.read(path),parse_constant=nonfinite)
+            detail='result requires version=1 and metrics and outputs arrays'
+            if (not isinstance(value,dict) or type(value.get('version')) is not int or value['version']!=1
+                    or not isinstance(value.get('metrics'),list) or not isinstance(value.get('outputs'),list)):
                 raise ValueError('Expected version 1 metrics and outputs')
-            seen=set()
+            diagnostics=[];metrics=[];name_counts={}
+            def serializable_fields(item,field):
+                # Decoding can overflow JSON exponents. Keep exact source bytes,
+                # but omit only fields the strict completion record cannot store.
+                projected={}
+                for key,part in item.items():
+                    try:e.encoded({key:part})
+                    except (ValueError,OverflowError,RecursionError):
+                        diagnostics.append(dict(field=field,code='scientific_description_projection_unavailable',details_ref='result.json'))
+                    else:projected[key]=part
+                return projected
             for metric in value['metrics']:
-                if (not isinstance(metric,dict) or set(metric)-{'name','value','unit','evaluation_key','direction'}
-                        or not {'name','value'}<=set(metric) or not isinstance(metric['name'],str) or not 0<len(metric['name'].encode())<=160
-                        or metric['name'] in seen or type(metric['value']) not in (int,float) or not math.isfinite(metric['value'])
-                        or metric.get('direction') is not None and (not isinstance(metric['direction'],str) or metric['direction'] not in ('min','max'))
-                        or any(metric.get(key) is not None and (not isinstance(metric[key],str) or not 0<len(metric[key].encode())<=512)
-                            for key in ('unit','evaluation_key'))):
-                    raise ValueError('Metrics require distinct names and explicit finite values')
-                seen.add(metric['name'])
+                if isinstance(metric,dict) and isinstance(metric.get('name'),str):
+                    name_counts[metric['name']]=name_counts.get(metric['name'],0)+1
+            for index,metric in enumerate(value['metrics']):
+                valid=(isinstance(metric,dict) and isinstance(metric.get('name'),str) and bool(metric['name'])
+                    and name_counts[metric['name']]==1 and type(metric.get('value')) in (int,float))
+                try:valid=valid and math.isfinite(metric['value'])
+                except OverflowError:valid=False
+                if valid:
+                    try:e.encoded(dict(name=metric['name'],value=metric['value']))
+                    except (ValueError,OverflowError,RecursionError):valid=False
+                if not valid:
+                    diagnostics.append(dict(field=f'metrics[{index}]',code='metric_name_or_finite_value_invalid'))
+                    continue
+                metrics.append(serializable_fields(metric,f'metrics[{index}]'))
             names={'artifacts/'+item['name'] for item in outputs}
-            seen=set()
-            for item in value['outputs']:
-                if (not isinstance(item,dict) or set(item)!={'path','label'} or not isinstance(item['path'],str)
-                        or item['path'] not in names or item['path'] in seen
-                        or not isinstance(item['label'],str) or not 0<len(item['label'].encode())<=160):
-                    raise ValueError('Result outputs require unique retained artifacts paths and labels')
-                seen.add(item['path'])
+            retained=[];seen=set()
+            for index,item in enumerate(value['outputs']):
+                if (not isinstance(item,dict) or not isinstance(item.get('path'),str)
+                        or item['path'] not in names or item['path'] in seen):
+                    diagnostics.append(dict(field=f'outputs[{index}]',code='output_original_mapping_invalid'))
+                    continue
+                seen.add(item['path']);retained.append(serializable_fields(item,f'outputs[{index}]'))
+            result=dict(status='available',metrics=metrics,outputs=retained)
             if 'candidate' in value:
                 candidate=value['candidate']
-                if (not isinstance(candidate,dict) or set(candidate)!={'label','metric','artifact'}
-                        or not isinstance(candidate['label'],str) or not 0<len(candidate['label'].encode())<=160
-                        or not isinstance(candidate['metric'],str) or not isinstance(candidate['artifact'],str)
-                        or candidate['metric'] not in {item['name'] for item in value['metrics']
-                            if item.get('evaluation_key') and item.get('direction')}
-                        or candidate['artifact'] not in {item['path'] for item in value['outputs']}):
-                    raise ValueError('Candidate requires an explicit comparable metric and declared artifact')
-            return dict(status='available',metrics=value['metrics'],outputs=value['outputs'],
-                **(dict(candidate=value['candidate']) if 'candidate' in value else {}))
+                if (not isinstance(candidate,dict) or not isinstance(candidate.get('artifact'),str)
+                        or candidate['artifact'] not in seen):
+                    diagnostics.append(dict(field='candidate.artifact',code='candidate_original_mapping_invalid'))
+                else:
+                    result['candidate']=serializable_fields(candidate,'candidate')
+                    if ('metric' in candidate and not any(isinstance(candidate['metric'],str)
+                            and item['name']==candidate['metric'] for item in metrics)):
+                        diagnostics.append(dict(field='candidate.metric',code='candidate_metric_mapping_unknown'))
+            if diagnostics:result['diagnostics']=diagnostics
+            return result
         except (OSError,ValueError,OverflowError,RecursionError) as error:
-            return dict(status='invalid',metrics=[],outputs=[],diagnostic='result_io' if isinstance(error,OSError) else 'result_json_invalid')
+            return dict(status='invalid',metrics=[],outputs=[],diagnostic='result_io' if isinstance(error,OSError) else 'result_json_invalid',
+                detail='result.json original could not be read' if isinstance(error,OSError) else detail)
 
     def result(self,call_id):
         directory=self.records.directory(call_id)
@@ -360,14 +406,34 @@ class LocalExecution:
     def public_result(result):
         view={key:result[key] for key in ('call_id','status','note','returncode','wall_seconds') if key in result}
         if 'result' in result:
-            original=result['result'];compact={key:value for key,value in original.items() if key not in {'metrics','outputs'}}
+            original=result['result'];compact={key:value for key,value in original.items() if key not in {'metrics','outputs','diagnostics'}}
+            # These are display projections. Exact declarations remain in the
+            # retained result.json, independent of the response-size allowance.
+            def preview(value):return e.encoded(value)[:1024].decode('utf-8',errors='ignore')
+            if len(e.encoded(compact))>8_000 and 'candidate' in compact:
+                compact['candidate_preview']=preview(compact.pop('candidate'))
+                compact['candidate_details_ref']='result.json'
+            diagnostics=original.get('diagnostics',[])
+            if diagnostics:
+                compact['diagnostics']=[]
+                for row in diagnostics:
+                    if len(e.encoded(dict(compact,diagnostics=[*compact['diagnostics'],row])))>8_000:break
+                    compact['diagnostics'].append(row)
+                if len(compact['diagnostics'])<len(diagnostics):
+                    compact['diagnostics_omitted_count']=len(diagnostics)-len(compact['diagnostics'])
+                    compact['details_ref']='result.json'
             for name in ('metrics','outputs'):
                 compact[name]=[];rows=original.get(name,[])
                 for row in rows:
-                    trial=dict(compact,**{name:[*compact[name],row]})
-                    if len(e.encoded(trial))>16_000:break
-                    compact[name].append(row)
-                if len(compact[name])<len(rows):compact[name+'_omitted_count']=len(rows)-len(compact[name])
+                    projected=row
+                    if len(e.encoded(row))>8_000:
+                        projected=dict(preview=preview(row),details_ref='result.json')
+                    trial=dict(compact,**{name:[*compact[name],projected]})
+                    if len(e.encoded(trial))>15_000:break
+                    compact[name].append(projected)
+                if len(compact[name])<len(rows):
+                    compact[name+'_omitted_count']=len(rows)-len(compact[name])
+                    compact['details_ref']='result.json'
             view['result']=compact
         return view
 

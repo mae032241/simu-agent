@@ -31,7 +31,7 @@ def test_native_exp_warning_preserves_public_command_and_exit_status(launcher,tm
     wrapper.chmod(0o755)
     result=subprocess.run([str(wrapper),action,'--run-id','13'],text=True,capture_output=True)
     assert result.returncode==7
-    assert result.stdout.splitlines()==['-I','/opt/exp/exp_cli.py',action,'--run-id','13']
+    assert result.stdout.splitlines()==['-B','-I','/opt/exp/exp_cli.py',action,'--run-id','13']
     if action=='status':
         assert result.stderr==''
     else:

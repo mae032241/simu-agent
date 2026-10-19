@@ -44,7 +44,12 @@ if role=='W':
   assert 'original managed execution has finished' in prompt
   packet=json.loads((work/'work/execution-results.json').read_text())
   assert len(packet['executions'])==1
-  assert any(json.loads((work/path).read_text()).get('native_payload')=='retained-native-terminal-only' for path in packet['executions'][0]['native_originals'])
+  row=packet['executions'][0]
+  assert not {'native_originals','original'} & row.keys()
+  result=json.loads((work/row['result']).read_text())
+  assert result['status']==row['status']
+  assert not {'proofs','scope','accepted','submission','sha256','config_sha256'} & result.keys()
+  assert not (work/row['result']).parent.joinpath('originals').exists()
   for item in packet['executions'][0]['outputs']:assert (work/item['path']).read_bytes()==b'opaque original job package'
   (work/'work/consumed-result').write_text(packet['executions'][0]['status'])
   if 'native_state' in packet['executions'][0]:(work/'work/consumed-native-state').write_text(packet['executions'][0]['native_state'])
@@ -61,7 +66,7 @@ def instance(tmp_path,options,*,fragment=False,resume=True,seconds=120,node_seco
     launcher=tmp_path/'launcher.py';launcher.write_text(LAUNCHER)
     root=tmp_path/'instance'
     controller.prepare(root,goal,public,[sys.executable,str(launcher)],max_tokens=1000,max_seconds=seconds,max_steps=7,
-        model='no-model',reasoning_effort='high',node_budget_mode='hard',experiment_mode='external',
+        model='no-model',reasoning_effort='high',node_budget_mode='soft',experiment_mode='external',
         node_budget_policy={role:dict(max_observed_tokens=200,max_seconds=node_seconds) for role in 'HWAE'},
         resume_policy=dict(max_attempts=2,protocol='codex_exec_resume',usage_scope='turn') if resume else None,
         worker_fragment_policy=dict(context='same_session') if fragment else None)
@@ -124,6 +129,13 @@ def test_one_run_waits_without_llm_then_automatically_wakes_same_session_and_sea
     chain=execution.records(root,2);assert len(chain)==2
     intent=c.read(chain[-1]/'native-intent.json')
     assert intent['continuation_kind']=='execution_wake' and intent['session']['thread_id']=='11111111-2222-4333-8444-555555555555'
+    for proof in intent['execution_wake']['observations']:
+        assert e.proof(proof['path'])==proof
+        observed=c.read(Path(proof['path']))
+        accepted=c.read(Path(observed['accepted']['path']))
+        e.verify_observation(observed,lambda item:Path(item['path']),interface=accepted['interface'])
+        assert any(c.read(Path(item['path'])).get('native_payload')=='retained-native-terminal-only'
+            for item in observed['proofs'])
     seal=c.read(chain[0]/'result-identity.json');fact=c.read(root/seal['observations']['path'])
     assert fact['managed_calls'][-1]['status']==outcome and observed['calls']==(2 if multicall else 1)
     if terminal_state=='cancelled':

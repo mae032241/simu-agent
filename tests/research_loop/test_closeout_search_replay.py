@@ -18,7 +18,7 @@ def scene(tmp_path,*,begin_closeout=True):
     import sys
     root=tmp_path/'instance'
     controller.prepare(root,objective,public,['never-call-a-model'],max_tokens=100000,max_seconds=600,max_steps=12,
-        model='no-model',reasoning_effort='high',search_policy=search.DEFAULT_POLICY,node_budget_mode='hard',
+        model='no-model',reasoning_effort='high',search_policy=search.DEFAULT_POLICY,node_budget_mode='soft',
         portfolio_policy=dict(review_after_cycles=3),
         node_budget_policy={role:dict(max_observed_tokens=2000,max_seconds=60) for role in 'HWAE'},
         delivery_policy=dict(closeout_a=dict(max_observed_tokens=1000,max_seconds=30),inflight_tokens=100,
@@ -45,7 +45,7 @@ def closeout(root,refs,step,parents,action='audit'):
     record=execution.record(root,step)
     payload=dict(summary='A retained closeout decision',scientific_result='Uncertainty remains; no further exploration is authorized.',
         limitations=['No candidate is available in this fixture'],implementation_selection=None,candidate_recommendation=None,
-        progress_assessment=None,search_review=None,decision_request=None,portfolio_review=None,
+        progress_assessment=None,search_review=None,decision_request=None,
         next_action=action,route_reason='Use only the frozen closeout inputs')
     c.write(record/'native-intent.json',dict(task_sha256=c.digest(root/'jobs'/f'{step:03d}.json')))
     c.write(record/'science-output.json',payload)
@@ -64,6 +64,8 @@ def test_closeout_audit_then_followup_a_replays_null_receipts_and_preserves_expl
     root,refs,baseline=scene(tmp_path)
     job,payload,seal=closeout(root,refs,3,[1,2])
     receipt=seal['control_outcome']
+    assert 'portfolio_review' not in payload and 'portfolio_review' not in job['scientific_response_fields']
+    assert 'portfolio_status' not in receipt
     assert receipt['resolved_focus'] is None and receipt['resolved_allocation'] is None
     assert receipt['search_status']=='applied' and receipt['diagnostics']==[]
     assert search.project(root,4)==baseline
@@ -78,7 +80,7 @@ def test_closeout_audit_then_followup_a_replays_null_receipts_and_preserves_expl
     assert tree(root)==before
 
 
-@pytest.mark.parametrize('unresolved',['selection_status','decision_status','portfolio_status'])
+@pytest.mark.parametrize('unresolved',['selection_status','decision_status'])
 def test_closeout_other_unresolved_status_never_clears_original_search_state(tmp_path,unresolved):
     root,refs,baseline=scene(tmp_path)
     job,payload,seal=closeout(root,refs,3,[1,2])

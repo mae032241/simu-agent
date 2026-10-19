@@ -82,6 +82,21 @@ def _config(path):
     if 'engineering_repair' in value:keys.add('engineering_repair')
     if 'receipt_channel' in value:keys.add('receipt_channel')
     if 'engineering_check_reserve_seconds' in value:keys.add('engineering_check_reserve_seconds')
+    if 'worker_view_version' in value:
+        if type(value['worker_view_version']) is not int or value['worker_view_version']!=1:
+            raise ValueError('Explicit scientific worker view version required')
+        keys.add('worker_view_version')
+    if 'host_launch_implementation' in value:
+        from . import experiments
+        implementations=value['host_launch_implementation']
+        if (not isinstance(implementations,list) or any(not isinstance(item,dict)
+                or set(item)!={'path','sha256','size_bytes'} or not isinstance(item['path'],str)
+                or not Path(item['path']).is_absolute() or not isinstance(item['sha256'],str)
+                or len(item['sha256'])!=64 or any(char not in '0123456789abcdef' for char in item['sha256'])
+                or type(item['size_bytes']) is not int or item['size_bytes']<0
+                or experiments.proof(item['path'])!=item for item in implementations)):
+            raise ValueError('Frozen host launcher implementation changed')
+        keys.add('host_launch_implementation')
     if set(value) != keys or value['contract_version'] != 2 or value['feedback_version'] != 1:
         raise ValueError('Explicit wrapper contract2 configuration required')
     from . import replay_check
@@ -239,9 +254,10 @@ def progress(request):
     """Only current accepted call metadata; no models, source bodies or raw logs."""
     root, config, scope = Path(request['root']), request['config'], request['scope']
     calls = Path(config['calls'])
-    if calls.is_absolute() or '..' in calls.parts or (root / calls).resolve() != root / calls:
+    if calls != Path('project/nodes') or calls.is_absolute() or '..' in calls.parts or (root / calls).resolve() != root / calls:
         raise IntegrityError('Live observation escaped its configured original')
-    return _progress(dict(record_dir=str(root / calls / f'{request["step"]:03d}/work/lineage'),
+    from scidiscovery.research_loop import experiment_client
+    return _progress(dict(record_dir=str(experiment_client.record_directory(root, request['step'])),
                           evaluation_key=config['evaluation_key']), scope)
 
 
@@ -317,9 +333,15 @@ def observe(request):
     for key in ('runs','calls'):
         path = Path(config[key])
         if path.is_absolute() or '..' in path.parts or (root/path).resolve() != root/path:raise IntegrityError('Observer escaped original instance')
+    if Path(config['calls']) != Path('project/nodes'):
+        raise IntegrityError('Observer requires the original scientific task namespace')
     rows = _rows(root/config['runs']/'results.jsonl');known=set(request.get('known_candidates',[]))
     contexts=[];models={}
-    for directory in sorted((root/config['calls']).glob('*/work/lineage/calls/*')):
+    from scidiscovery.research_loop import experiment_client
+    directories = [directory for node in sorted((root/config['calls']).glob('*'))
+        if node.name.isdecimal()
+        for directory in sorted((experiment_client.record_directory(root, int(node.name)) / 'calls').glob('*'))]
+    for directory in directories:
         result = _completed(directory)
         accepted=json.loads(_read(directory/'accepted.json'))
         if result is not None:
@@ -369,7 +391,7 @@ def configure(root, step, run_argv, runs_root, output, *, receipt_channel='publi
     require_current(root)
     from . import contracts as _contracts
     require_current(root,_contracts.read(_contracts.regular(Path(root)/'jobs'/f'{step:03d}.json')))
-    from scidiscovery.research_loop import contracts as c, execution, lineage
+    from scidiscovery.research_loop import contracts as c, execution, lineage, experiment_client
     root=Path(root).resolve();job=c.read(c.regular(root/'jobs'/f'{step:03d}.json'))
     c._validate_inputs(root,c.workspace(root,step),job)
     record=execution.record(root,step)
@@ -386,7 +408,7 @@ def configure(root, step, run_argv, runs_root, output, *, receipt_channel='publi
             parents.append(dict(name=candidate,candidate_id=candidate,model=dict(path=str(path),sha256=model['sha256'],size_bytes=model['size_bytes']),
                                 binding=_binding(context,completion)))
     from scidiscovery.research_loop.protocol import stage_scope
-    value=dict(contract_version=2,feedback_version=1,record_dir=str(c.workspace(root,step)/'work/lineage'),runs_root=str(runs_root),run_argv=run_argv,
+    value=dict(contract_version=2,feedback_version=1,record_dir=str(experiment_client.record_directory(root,step)),runs_root=str(runs_root),run_argv=run_argv,
         scope=stage_scope(root,job),receipt_channel=receipt_channel,
         parents=parents,evaluation_key='covshift-public-val-v1')
     from . import replay_check
@@ -452,7 +474,11 @@ def main(argv=None):
     try:
         if args.command=='run' and 'scope' in result:
             result=public_feedback(config,result,include_model=True)
-        if 'config' in locals():result['feedback'] = dict(version=1, budget=feedback.budget_hint(Path(config['record_dir']).parent.parent),
+        if 'config' in locals():
+            from . import contracts as c, experiment_client
+            root = experiment_client.root_for_configuration(config, allow_standalone=True)
+            work = Path(config['record_dir']).parent.parent if root is None else c.workspace(root, config['scope']['step'])
+            result['feedback'] = dict(version=1, budget=feedback.budget_hint(work),
             qualification='Progress metadata does not establish source/model integrity or audit qualification.',
             notification='Available only at a tool return or explicit query; no mid-turn message channel.')
     except (IntegrityError, feedback.history.ObserverIntegrityError) as error:result=dict(status='integrity_error',note=str(error));code=3

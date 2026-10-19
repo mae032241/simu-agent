@@ -6,13 +6,60 @@ from pathlib import Path
 import pytest
 
 from scidiscovery.research_loop import budget, cli, contracts as c, controller, correction, native
-from test_history_handoff import finish
-from test_search import focus, plan
+from scidiscovery.research_loop.protocol import CURRENT, UnsupportedProtocol
+
+
+def plan(existing_ref=None):
+    return dict(scope="Original scientific H scope",
+        commitments=[dict(label="Mechanism", minimal_test="A bounded discriminating measurement", existing_ref=existing_ref)],
+        focus=dict(label="Mechanism", action="screen"))
+
+
+def focus(action="screen"):
+    return dict(mechanism_ref="h001.m1", action=action)
+
+
+def finish(root, step, role, parents, text="A bounded scientific finding", action="wait", search_choice=None, progress=None):
+    """Current fixture author; blocked W findings never manufacture observations."""
+    path = root / "jobs" / f"{step:03d}.json"
+    previous = c.read(path) if path.exists() else {}
+    job = c.build_job(root, step, role, parents, previous.get("instruction", ""),
+        previous.get("evidence_return"), previous.get("correction_request"), previous.get("author_correction"))
+    work = c.workspace(root, step);record = c.host_record(work)
+    payload = dict(summary="A contribution", scientific_result=text, limitations=["Fixture only"], implementation_selection=None)
+    if role == "W":
+        labels = {row["mechanism_ref"]: row["label"] for row in job["search"]["breadth"]["mechanisms"]}
+        payload.update(stage_intent="review", mechanism_findings=[dict(
+            mechanism=labels[row["mechanism_ref"]], basis="blocked",
+            finding="No experiments are executed in this fixture; the mechanism has no observations.")
+            for row in job["search"]["coverage_obligation"]])
+    if role == "H":
+        payload["search_plan"] = search_choice
+    if role == "A":
+        request = (dict(decision="mechanism", question=f"What scientific question follows the final stage at step {step - 1}?",
+            change_criterion="An independently authored final stage changes this mechanism assessment.")
+            if action in {"continue_w", "revise_h", "extract"} else None)
+        payload.update(candidate_recommendation=None, search_review=search_choice,
+            progress_assessment=progress, decision_request=request, portfolio_review=None)
+    if role in {"H", "A"}:
+        payload.update(next_action=action, route_reason="Exact scientific question")
+    c.write(record / "native-intent.json", dict(task_sha256=c.digest(path)))
+    c.write(record / "science-output.json", payload)
+    c.write(record / "usage.json", dict(input_tokens=7, cached_input_tokens=2, output_tokens=3))
+    c.write(record / "native-outcome.json", dict(returncode=0, stop_reason=None,
+        usage=native.usage(root), raw_sha256=c.digest(record / "science-output.json")))
+    c.seal_result(root, step)
+    return job, work, record
+
+
+def assert_progress_source(root, assessed_step, source_step):
+    job = c.read(root / "jobs" / f"{assessed_step:03d}.json")
+    assert correction._proofs(root, job, {"verdict": "progress"}) == {
+        c.digest(c.host_record(c.workspace(root, source_step)) / "science-output.json")}
 
 
 @pytest.fixture
 def scene(tmp_path, monkeypatch):
-    monkeypatch.setattr(c, 'HANDOFF_PROTOCOL', 6)  # Published correction evidence remains byte compatible.
     public = tmp_path / 'public';public.mkdir()
     objective = public / 'objective.md';objective.write_text('Explain the global unresolved mechanism.')
     root = tmp_path / 'instance'
@@ -34,11 +81,11 @@ def worker(monkeypatch, decisions=None, actions=None, texts=None):
         choice, assessment = None, None
         action = actions.get(step, 'experiment' if role == 'H' else 'continue_w' if role == 'A' else 'wait')
         if role == 'H':
-            known = job['search']['view']['commitments']
+            known = job['search']['unfinished_plan']
             choice = plan(existing_ref=known[0]['mechanism_ref'] if known else None)
         elif role == 'A':
             choice = dict(dispositions=[], next_focus=focus(action='screen'))
-            assessment = decisions.get(step, dict(verdict='no_progress', evidence=[]))
+            assessment = decisions.get(step, dict(verdict='no_progress'))
         finish(root, step, role, parents, text=texts.get(step, f'Original {role} scientific observation {step}'),
                action=action, search_choice=choice, progress=assessment)
 
@@ -57,6 +104,11 @@ def test_three_a_force_h_then_two_a_pause_and_replay_is_exact(scene, monkeypatch
     trigger = published_pause(scene)
     assert calls == [(1, 'H'), (2, 'W'), (3, 'A'), (4, 'W'), (5, 'A'), (6, 'W'),
                      (7, 'A'), (8, 'H'), (9, 'W'), (10, 'A'), (11, 'W'), (12, 'A')]
+    w2 = c.host_record(c.workspace(scene, 2))
+    delivery = c.read(w2 / 'result-identity.json')['control_outcome']['worker_delivery']
+    assert delivery['status'] == 'partial'
+    assert delivery['reason'] == 'scientific_blocked'
+    assert c.read(w2 / 'work-evidence.json')['evidence'] == []
     a7 = c.host_record(c.workspace(scene, 7)) / 'science-output.json'
     original = a7.read_bytes()
     assert c.read(a7)['next_action'] == 'continue_w'
@@ -81,7 +133,7 @@ def test_unknown_uses_own_three_two_gate_not_no_progress(scene, monkeypatch):
 
 
 def test_unknown_preserves_no_progress_and_finish_preserves_scientific_route(scene, monkeypatch):
-    calls = worker(monkeypatch, {5: dict(verdict='unknown', evidence=[])}, {9: 'finish'})
+    calls = worker(monkeypatch, {5: dict(verdict='unknown')}, {9: 'finish'})
     assert controller.run(scene)['status'] == 'finish'
     state = correction.project(scene)
     assert state['counters'] == dict(no_progress=3, unknown=0)
@@ -90,36 +142,44 @@ def test_unknown_preserves_no_progress_and_finish_preserves_scientific_route(sce
 
 
 def test_bound_negative_progress_after_h_resolves_first_stage(scene, monkeypatch):
-    worker(monkeypatch, {10: dict(verdict='progress', evidence=['inputs/parents/009/conclusion.json'])},
+    worker(monkeypatch, {10: dict(verdict='progress')},
            {12: 'finish'})
     assert controller.run(scene)['status'] == 'finish'
     state = correction.project(scene)
     assert state['counters'] == dict(no_progress=1, unknown=0)
     assert len(state['triggers']) == 1 and state['current_pause'] is None
+    assert_progress_source(scene, 10, 9)
     # Historical routing stays H even after later progress resolves the issue.
     assert c.read(scene / 'jobs/008.json')['role'] == 'H'
     assert controller.run(scene)['status'] == 'finish'
 
 
-def test_parent_and_history_pages_share_one_proof_credit(scene, monkeypatch):
-    worker(monkeypatch, {
-        3: dict(verdict='progress', evidence=['inputs/parents/002/conclusion.json']),
-        5: dict(verdict='progress', evidence=['inputs/history/nodes/002/0001.json']),
-    }, {7: 'finish'})
-    assert controller.run(scene)['status'] == 'finish'
-    assert correction.project(scene)['counters'] == dict(no_progress=1, unknown=0)
-    # Repeated proof at A5 was unknown, then known no_progress ends that streak.
-    assert correction.project(scene, 6)['counters'] == dict(no_progress=0, unknown=1)
+def test_progress_without_eligible_final_stage_is_unknown(scene):
+    # A verdict cannot turn H wait prose into a newly observed final stage.
+    finish(scene, 1, 'H', [], action='wait', search_choice=plan())
+    finish(scene, 2, 'A', [1], action='finish', progress=dict(verdict='progress'))
+    job = c.read(scene / 'jobs/002.json')
+    assert correction._proofs(scene, job, dict(verdict='progress')) == set()
+    assert correction.project(scene)['counters'] == dict(no_progress=0, unknown=1)
 
 
-@pytest.mark.parametrize('path', ['artifacts/new-observation.json', 'work/proof.json',
+@pytest.mark.parametrize('path', ['inputs/parents/002/conclusion.json',
+                                 'inputs/history/nodes/002/0001.json',
+                                 'artifacts/new-observation.json', 'work/proof.json',
                                  'inputs/parents/003/conclusion.json', '../../foreign/conclusion.json'])
-def test_current_a_or_unbound_evidence_cannot_seal_as_progress(scene, monkeypatch, path):
-    worker(monkeypatch, {3: dict(verdict='progress', evidence=[path])})
-    result = controller.run(scene)
-    assert result['status'] == 'seal_pending'
-    assert not (c.host_record(c.workspace(scene, 3)) / 'result-identity.json').exists()
+def test_retired_authored_evidence_paths_cannot_seal_as_progress(scene, monkeypatch, path):
+    finish(scene,1,'H',[],action='experiment',search_choice=plan())
+    finish(scene,2,'W',[1])
+    finish(scene,3,'A',[1,2],action='finish',progress=dict(verdict='progress',evidence=[path]))
+    record = c.host_record(c.workspace(scene, 3))
+    assert c.read(record / 'science-output.json')['progress_assessment'] == dict(verdict='progress', evidence=[path])
+    assert c.read(record / 'native-outcome.json')['raw_sha256'] == c.digest(record / 'science-output.json')
+    seal=c.read(record/'result-identity.json')
+    assert dict(code='scientific_field_unresolved',subject='progress_assessment') in seal['control_outcome']['diagnostics']
+    assert correction.project(scene)['counters']==dict(no_progress=0,unknown=1)
     assert not (scene / 'jobs/004.json').exists()
+    assert 'evidence' not in c.result_schema('A')['properties']['progress_assessment']['properties']
+    assert correction._proofs(scene,c.read(scene/'jobs/003.json'),dict(verdict='progress',evidence=[path]))==set()
 
 
 def test_h_e_h_response_and_a_e_a_do_not_count_deferred_nodes(scene, monkeypatch):
@@ -252,9 +312,13 @@ def test_late_sealed_progress_cannot_remove_published_pause(scene, monkeypatch):
     trigger = published_pause(scene)
     c.build_job(scene, 13, 'W', [8, 11, 12], instruction='Exact scientific question')
     finish(scene, 13, 'W', [8, 11, 12], text='New late original evidence')
-    finish(scene, 14, 'A', [8, 13], action='continue_w',
+    route = controller._route(scene, 13, 'W', c.validate(c.workspace(scene, 13)),
+                              c.read(scene / 'jobs/013.json'), 8, 11)
+    assert route[0] == 'A' and route[2]  # Partial W delivery has a bound review instruction.
+    c.build_job(scene, 14, route[0], route[1], route[2], route[3])
+    finish(scene, 14, 'A', route[1], action='continue_w',
            search_choice=dict(dispositions=[], next_focus=focus(action='screen')),
-           progress=dict(verdict='progress', evidence=['inputs/parents/013/conclusion.json']))
+           progress=dict(verdict='progress'))
     record = c.host_record(c.workspace(scene, 14))
     (record / 'result-identity.json').unlink()
     intent = (record / 'native-intent.json').read_bytes()
@@ -268,7 +332,7 @@ def test_late_sealed_progress_cannot_remove_published_pause(scene, monkeypatch):
 
 
 def test_ack_progress_spends_permit_and_resolves_without_changing_old_h_job(scene, monkeypatch):
-    calls = worker(monkeypatch, {14: dict(verdict='progress', evidence=['inputs/parents/013/conclusion.json'])},
+    calls = worker(monkeypatch, {14: dict(verdict='progress')},
                    {16: 'finish'})
     trigger = published_pause(scene)
     original = (scene / 'jobs/008.json').read_bytes()
@@ -284,7 +348,7 @@ def test_ack_progress_spends_permit_and_resolves_without_changing_old_h_job(scen
 
 
 def test_ack_unknown_spends_cycle_but_does_not_resolve_prior_no_progress_pause(scene, monkeypatch):
-    calls = worker(monkeypatch, {14: dict(verdict='unknown', evidence=[])})
+    calls = worker(monkeypatch, {14: dict(verdict='unknown')})
     trigger = published_pause(scene)
     with controller._writer(scene):
         correction.acknowledge(scene, trigger, 'Only one cycle authorized')
@@ -299,8 +363,8 @@ def test_ack_unknown_spends_cycle_but_does_not_resolve_prior_no_progress_pause(s
 
 @pytest.mark.parametrize('verdict', ['progress', 'no_progress'])
 def test_unknown_pause_ack_known_judgment_ends_unknown_issue(scene, monkeypatch, verdict):
-    decisions = {step: dict(verdict='unknown', evidence=[]) for step in (3, 5, 7, 10, 12)}
-    decisions[14] = dict(verdict=verdict, evidence=['inputs/parents/013/conclusion.json'] if verdict == 'progress' else [])
+    decisions = {step: dict(verdict='unknown') for step in (3, 5, 7, 10, 12)}
+    decisions[14] = dict(verdict=verdict)
     calls = worker(monkeypatch, decisions, {14: 'finish'})
     trigger = published_pause(scene)
     assert correction.project(scene)['current_pause']['reason'] == 'assessment_gap'
@@ -315,10 +379,12 @@ def test_unknown_pause_ack_known_judgment_ends_unknown_issue(scene, monkeypatch,
 
 def test_identical_raw_bytes_at_different_nodes_receive_only_one_credit(scene, monkeypatch):
     worker(monkeypatch, {
-        3: dict(verdict='progress', evidence=['inputs/parents/002/conclusion.json']),
-        5: dict(verdict='progress', evidence=['inputs/parents/004/conclusion.json']),
+        3: dict(verdict='progress'),
+        5: dict(verdict='progress'),
     }, {5: 'finish'}, {2: 'Same original science bytes', 4: 'Same original science bytes'})
     assert controller.run(scene)['status'] == 'finish'
+    assert_progress_source(scene, 3, 2)
+    assert_progress_source(scene, 5, 4)
     assert c.digest(c.host_record(c.workspace(scene, 2)) / 'science-output.json') == c.digest(
         c.host_record(c.workspace(scene, 4)) / 'science-output.json')
     assert correction.project(scene)['counters'] == dict(no_progress=0, unknown=1)
@@ -349,10 +415,17 @@ def test_newly_published_pause_remains_gate_after_already_accepted_late_progress
     # Simulate controller crash before publication of its second trigger;
     # original accepted work is already available when it recovers all seals.
     (scene / 'correction-ledger/000002.json').unlink()
+    route = controller._route(scene, 12, 'A', c.validate(c.workspace(scene, 12)),
+                              c.read(scene / 'jobs/012.json'), 8, 11)
+    c.build_job(scene, 13, route[0], route[1], route[2], route[3])
     finish(scene, 13, 'W', [8, 11, 12], text='New late sealed observation')
-    finish(scene, 14, 'A', [8, 13], action='continue_w',
+    route = controller._route(scene, 13, 'W', c.validate(c.workspace(scene, 13)),
+                              c.read(scene / 'jobs/013.json'), 8, 11)
+    assert route[0] == 'A' and route[2]  # Partial W delivery has a bound review instruction.
+    c.build_job(scene, 14, route[0], route[1], route[2], route[3])
+    finish(scene, 14, 'A', route[1], action='continue_w',
            search_choice=dict(dispositions=[], next_focus=focus(action='screen')),
-           progress=dict(verdict='progress', evidence=['inputs/parents/013/conclusion.json']))
+           progress=dict(verdict='progress'))
     assert correction.project(scene)['current_pause'] is None  # Not yet published.
     with controller._writer(scene):
         stopped = correction.gate(scene, 14)
@@ -366,10 +439,17 @@ def test_first_pause_published_in_cutoff_order_with_late_accepted_assessment(sce
     worker(monkeypatch)
     published_pause(scene)
     (scene / 'correction-ledger/000002.json').unlink()
+    route = controller._route(scene, 12, 'A', c.validate(c.workspace(scene, 12)),
+                              c.read(scene / 'jobs/012.json'), 8, 11)
+    c.build_job(scene, 13, route[0], route[1], route[2], route[3])
     finish(scene, 13, 'W', [8, 11, 12], text='Accepted late experiment')
-    finish(scene, 14, 'A', [8, 13], action='continue_w',
+    route = controller._route(scene, 13, 'W', c.validate(c.workspace(scene, 13)),
+                              c.read(scene / 'jobs/013.json'), 8, 11)
+    assert route[0] == 'A' and route[2]  # Partial W delivery has a bound review instruction.
+    c.build_job(scene, 14, route[0], route[1], route[2], route[3])
+    finish(scene, 14, 'A', route[1], action='continue_w',
            search_choice=dict(dispositions=[], next_focus=focus(action='screen')),
-           progress=dict(verdict=verdict, evidence=[]))
+           progress=dict(verdict=verdict))
     with controller._writer(scene):
         stopped = correction.gate(scene, 14)
     assert stopped['step'] == 12 and stopped['published']
@@ -439,19 +519,20 @@ def test_cross_instance_fact_copy_and_progress_source_tamper_rejected(scene, mon
         correction.project(scene)
 
 
-def test_protocol5_original_job_schema_and_seal_stay_unchanged(scene, monkeypatch):
-    monkeypatch.setattr(c, 'HANDOFF_PROTOCOL', 5)
+def test_current_original_job_schema_and_seal_stay_unchanged(scene):
     finish(scene, 1, 'H', [], action='analyze', search_choice=plan())
     c.build_job(scene, 2, 'A', [1])
     work = c.workspace(scene, 2);record = c.host_record(work)
-    monkeypatch.setattr(c, 'HANDOFF_PROTOCOL', 7)
-    finish(scene, 2, 'A', [1], action='finish')
+    finish(scene, 2, 'A', [1], action='finish', progress=dict(verdict='progress'))
     paths = [scene / 'jobs/002.json', work / 'science-task.json', record / 'science-result.schema.json',
              record / 'science-output.json', record / 'result-identity.json']
     original = {path: path.read_bytes() for path in paths}
+    assert c.read(scene / 'jobs/002.json')['handoff_protocol'] == CURRENT
     c.build_job(scene, 2, 'A', [1]);c.validate(work)
     assert all(path.read_bytes() == data for path, data in original.items())
-    assert correction.project(scene)['eligible'] == []
+    assert_progress_source(scene, 2, 1)
+    assert [row['step'] for row in correction.project(scene)['eligible']] == [2]
+    assert correction.project(scene)['counters'] == dict(no_progress=0, unknown=0)
 
 
 def test_seal_marker_does_not_make_unknown_native_outcome_countable(scene, monkeypatch):
@@ -463,7 +544,10 @@ def test_seal_marker_does_not_make_unknown_native_outcome_countable(scene, monke
         correction.project(scene)
 
 
-@pytest.mark.parametrize('protocol', [1, 2, 3, 4, 5])
-def test_legacy_a_schema_has_no_progress_field(protocol):
-    assert 'progress_assessment' not in c.result_schema('A', protocol)['properties']
-    assert 'progress_assessment' in c.result_schema('A', 6)['required']
+@pytest.mark.parametrize('protocol', [1, 2, 3, 4, 5, 6, 7])
+def test_legacy_a_write_schema_is_rejected_without_mutation(scene, protocol):
+    original = {path: path.read_bytes() for path in scene.rglob('*') if path.is_file()}
+    with pytest.raises(UnsupportedProtocol):
+        c.result_schema('A', protocol)
+    assert {path: path.read_bytes() for path in scene.rglob('*') if path.is_file()} == original
+    assert 'progress_assessment' in c.result_schema('A')['required']

@@ -118,7 +118,7 @@ def capture(root, job, record):
     for row in direct:
         source = Path(row['source'])
         snapshot = history._proof(root, source.relative_to(root).as_posix())
-        materials.append(dict(name=source.relative_to(work).as_posix(), original=snapshot))
+        materials.append(dict(name=c.material_name(work,row), original=snapshot))
     value = dict(version=VERSION, binding=binding, originals=originals,
                  missing_native_originals=missing, science=science, materials=materials,
                  material_status=material_status, material_diagnostic=material_diagnostic,

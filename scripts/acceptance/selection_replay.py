@@ -1,4 +1,4 @@
-"""Read-only replay of the control closeout shortlist/default over one finished instance.
+"""Read-only replay of observed candidate facts and qualification receipts over one finished instance.
 
 Public facts only: sealed jobs, A outputs, observer snapshots and A-requested public
 audit receipts. Never reads reward/official/hidden files and never writes the
@@ -15,7 +15,7 @@ from pathlib import Path
 import shutil
 import subprocess
 
-from scidiscovery.research_loop import cov_delivery, selection, shortlist
+from scidiscovery.research_loop import cov_delivery, selection
 
 HIDDEN = ('official', 'hidden', 'private_score', 'reward')
 FIELDS = ('id', 'label', 'evaluation_key', 'metric', 'direction', 'status')
@@ -102,7 +102,7 @@ def smoke(root, launcher, member, model, work):
         if Path(path).exists():command += ['--ro-bind', path, path]
     command += ['--ro-bind', str(stage / 'inputs'), '/inputs', '--bind', str(stage / 'scratch'), '/scratch',
                 '--setenv', 'PATH', '/usr/bin:/bin', '--setenv', 'OPENBLAS_NUM_THREADS', '1', '--chdir', '/scratch',
-                '--', str(python), '-I', '-c', cov_delivery.SMOKE]
+                '--', str(python), '-B', '-I', '-c', cov_delivery.SMOKE]
     run = subprocess.run(command, capture_output=True, timeout=120)
     value = read(stage / 'scratch/smoke.json') or {}
     status, note = cov_delivery.smoke_status(value)
@@ -110,28 +110,24 @@ def smoke(root, launcher, member, model, work):
     return status, note + (': ' + tail[0][:160] if tail else '')
 
 
-def replay(instance, *, k=shortlist.DEFAULT['shortlist_k'], work=None, launcher=None):
+def replay(instance, *, work=None, launcher=None):
     root = Path(instance).absolute() / 'instance'
     cutoff, steps = prefix(root)
     rows, contexts = records(root, steps)
-    value = selection.shortlist(rows, k)
+    value = selection.shortlist(rows)
     audits = receipts(root, steps)
-    statuses, table = {}, []
+    table = []
     for member in value['members']:
         cid = member['candidate_id'];model = contexts.get(cid)
         status, note = smoke(root, launcher, cid, model, work) if work is not None else ('not_replayed', 'smoke_not_requested')
         prior = [state for state, digest in audits.get(cid, []) if model and digest == model['sha256']]
         audit = 'failed' if 'failed' in prior else 'passed' if prior else 'not_run'
-        statuses[cid] = dict(smoke=status, audit=audit)
-        table.append(dict(candidate_id=cid, metric=member['metric'], rank=member['rank'], reasons=member['reasons'],
+        table.append(dict(candidate_id=cid, metric=member['metric'], evaluation_key=member['evaluation_key'], direction=member['direction'],
                           first_step=member['first_step'], smoke=status, smoke_note=note, audit=audit))
-    default = selection.default_choice(value['members'], statuses) if work is not None else None
     a_rec = value['a_recommended']
     return dict(instance=Path(instance).name, source_cutoff=cutoff, prefix_steps=[f'{role}{step:03d}' for step, role in steps],
-                evaluation_key=value['evaluation_key'], ranked_count=value['ranked_count'], latest_a_step=value['latest_a_step'],
-                a_recommended=a_rec, a_recommended_rank=next((row['rank'] for row in value['members'] if row['candidate_id'] == a_rec), None),
-                unassessed_count=value['unassessed_count'], boundary_ties_omitted=value['boundary_ties_omitted'],
-                shortlist=table, default=default, scope='Public replay; audits only from existing A-requested receipts; no target or reward claim.')
+                candidate_count=value['candidate_count'], latest_a_step=value['latest_a_step'],
+                a_recommended=a_rec, candidates=table, scope='Public replay; audits only from existing A-requested receipts; no target or reward claim.')
 
 
 def main():

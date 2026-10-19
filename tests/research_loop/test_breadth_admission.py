@@ -1,11 +1,11 @@
-"""Shared registered-call opportunities through real local/cov subprocesses."""
+"""Shared registered-call opportunities through real local subprocesses."""
 import copy
 import json
 from pathlib import Path
 
 import pytest
 
-from scidiscovery.research_loop import experiments as e
+from scidiscovery.research_loop import breadth, experiments as e
 from test_registered_experiments import managed
 from execution_fixtures import execution_registry
 
@@ -73,29 +73,66 @@ def test_first_branch_second_call_waits_for_another_branch_then_shared_search_co
     assert all('screened' not in item for item in originals(lane))
 
 
-def test_failed_call_changed_script_and_repair_attempt_do_not_reset_opportunity(lane):
+def test_large_combination_preserves_initial_opportunities_and_exact_extra_call_quota():
+    value = combination()
+    value['mechanisms'] = [dict(value['mechanisms'][0], mechanism_ref=f'h001.m{index}', label=f'Mechanism {index}')
+        for index in range(1, 130)]
+    value['baseline'] = [dict(mechanism_ref=row['mechanism_ref'], accepted_count=0) for row in value['mechanisms']]
+    value['initial_calls'] = 2
+    scope = dict(job_sha256='a' * 64)
+    accepted = []
+    for _ in range(2):
+        binding = breadth.admit(value, 'h001.m129', scope, accepted)
+        assert breadth.check_binding(value, binding, scope) == binding
+        accepted.append(dict(mechanism_binding=binding))
+    with pytest.raises(breadth.OpportunityRequired, match='initial call opportunities'):
+        breadth.admit(value, 'h001.m129', scope, accepted)
+    assert breadth.admit(value, 'h001.m1', scope, accepted)['grant'] is None
+    value['grant'] = dict(mechanism_ref='h001.m129', source_a=3, source_a_sha256='d' * 64, extra_calls=1, used_calls=0)
+    binding = breadth.admit(value, 'h001.m129', scope, accepted)
+    assert binding['grant'] == dict(source_a=3, source_a_sha256='d' * 64)
+    accepted.append(dict(mechanism_binding=binding))
+    with pytest.raises(breadth.OpportunityRequired, match='initial call opportunities'):
+        breadth.admit(value, 'h001.m129', scope, accepted)
+    value['prior_unknown'] = True
+    with pytest.raises(breadth.OpportunityRequired, match='original unknown execution'):
+        breadth.admit(value, 'h001.m1', scope, accepted)
+
+
+def test_failed_call_changed_script_and_forged_native_attempt_do_not_reset_opportunity(lane):
     first=run(lane,'failed-P',failed=True,expected=1)
     assert first['status']=='known_failed'
     original=copy.deepcopy(originals(lane)[0])
     rejected(lane,lane.source('different-script-P'))
+    original_config=lane.config.read_bytes()
     configure(lane,combination(),native_attempt=dict(number=1,execution_key='e'*64))
-    rejected(lane,lane.source('repair-P'))
+    before=tree(lane.records)
+    invalid=lane.cli('run','--script',lane.source('unbound-repair-P'),'--mechanism','P','--new-plan',expected=3)
+    assert invalid['status']=='integrity_error' and invalid['note']=='Original execution native attempt is unavailable'
+    assert tree(lane.records)==before
+    # A standalone fixture cannot invent a repair's native originals. Restoring
+    # the exact original configuration must still retain its consumed opportunity.
+    lane.config.write_bytes(original_config)
+    rejected(lane,lane.source('restored-original-P'))
     assert originals(lane)==[original]
     assert len(list(lane.records.glob('calls/*/process.json')))==1
     assert run(lane,'Q-after-failed-P','Q')['status']=='known_success'
 
 
-def test_real_unknown_transport_cannot_be_replayed_under_any_mechanism(lane):
-    source=lane.source('uncertain-P')
-    if lane.kind=='cov':source.write_text(json.dumps(dict(mode='missing_receipt')))
-    else:source.write_text(source.read_text().replace('print("ordinary public output")',f'print("x"*{e.MAX_BYTES+1})'))
-    result=lane.cli('run','--script',source,'--mechanism','P','--new-plan',expected=2)
-    assert result['status']=='unknown'
+def test_lost_terminal_originals_cannot_be_replayed_under_any_mechanism(lane):
+    result=run(lane,'completed-P')
+    assert result['status']=='known_success'
+    directory=lane.records/'calls'/result['call_id']
+    # Inject loss of the actual call's terminal originals; retained acceptance
+    # and process evidence must not authorize another command under P or Q.
+    (directory/'terminal.json').unlink()
+    (directory/'completed.json').unlink()
+    before=tree(lane.records)
     assert lane.cli('query','--call-id',result['call_id'])['state']=='unknown'
     assert lane.cli('collect','--call-id',result['call_id'],expected=2)['status']=='unavailable'
+    assert tree(lane.records)==before
     for mechanism in ('P','Q'):
         retry=lane.source('retry-'+mechanism)
-        before=tree(lane.records)
         reply=lane.cli('run','--script',retry,'--mechanism',mechanism,'--new-plan',expected=2)
         assert reply['status']=='unknown' and tree(lane.records)==before
     assert len(originals(lane))==len(list(lane.records.glob('calls/*/process.json')))==1
@@ -132,8 +169,7 @@ def test_scientific_label_must_resolve_exactly_before_accept_or_process(lane,kin
     assert reply['status']=='unresolved' and 'exact authorized H mechanism' in reply['note']
     assert originals(lane)==[] and not list(lane.records.glob('calls/*/process.json'))
     assert not list(lane.records.glob('.prepared-*'))
-    if lane.kind=='cov':assert not (lane.root/'runs/backend-calls.jsonl').exists()
-    else:assert not list(lane.records.rglob('starts.log'))
+    assert not list(lane.records.rglob('starts.log'))
 
 
 def test_completed_receipt_cannot_change_exact_a_authorization(lane):

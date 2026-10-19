@@ -11,7 +11,7 @@ import pytest
 
 from scidiscovery.artifact_agent.schema.execution import ExecutionAdmission, LocalFileDescriptor
 from scidiscovery.artifact_agent.schema.common import canonical_json
-from scidiscovery.research_loop import (contracts as c, controller, execution,
+from scidiscovery.research_loop import (contracts as c, controller, execution, experiment_client,
     experiments as e, history, search, worker_delivery)
 from scidiscovery.research_loop.output_repair import WorkRepairRequired
 from scidiscovery.research_loop.protocol import stage_scope
@@ -29,7 +29,7 @@ def test_retired_screen_call_seals_partial_and_cannot_be_reused_as_observed(tmp_
     job=c.build_job(root,2,'W',[1]);record=execution.record(root,2)
     c.write(record/'native-intent.json',dict(task_sha256=c.digest(root/'jobs/002.json')))
     config=dict(transport='socket',socket_path=str(tmp_path/'unused.socket'),scope=stage_scope(root,job),
-        record_dir=str(c.workspace(root,2)/'work/lineage'),breadth=job['search']['breadth'],
+        record_dir=str(experiment_client.record_directory(root,2)),breadth=job['search']['breadth'],
         native_attempt=dict(number=0,execution_key=execution.identity(root,2)),admission=dict(version=1,mode='hard'),
         execution_interface=dict(version=e.VERSION,code=[e.proof(Path(__file__).resolve())],
             observation_version=1,terminal_evidence='adapter_result',result_protocol=None))

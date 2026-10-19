@@ -62,11 +62,14 @@ def _excluded(root, parts):
     if (len(parts) == 4 and parts[:2] == ('host-runtime', 'experiment-control')
             and re.fullmatch('[0-9a-f]{64}', parts[2]) and parts[3] == 'accept.lock'):
         return 'managed_admission_lease'
-    if (len(parts) == 6 and parts[0:2] == ('project', 'nodes') and parts[2].isdecimal()
-            and parts[3:5] == ('work', 'lineage')):
-        name = parts[5]
+    legacy_records = (len(parts) == 6 and parts[0:2] == ('project', 'nodes')
+        and parts[2].isdecimal() and parts[3:5] == ('work', 'lineage'))
+    host_records = (len(parts) == 5 and parts[:2] == ('host-runtime', 'experiment-control')
+        and re.fullmatch('[0-9a-f]{64}', parts[2]) and parts[3] == 'records')
+    if legacy_records or host_records:
+        name = parts[-1]
         if name in CALL_LOCKS or any(name.startswith(prefix) and name.endswith('.lock')
-                and (root.joinpath(*parts[:5]) / 'calls' / name[len(prefix):-5] / 'accepted.json').is_file()
+                and (root.joinpath(*parts[:-1]) / 'calls' / name[len(prefix):-5] / 'accepted.json').is_file()
                 for prefix in CALL_LEASES):
             return 'managed_records_lease'
     return None
@@ -127,6 +130,14 @@ def _managed_roots(root):
             if not path.is_dir() or not node.name.isdecimal():
                 raise files.ArchiveError('Unknown managed records namespace')
             yield path
+    from . import contracts as c, experiment_client
+    expected = {experiment_client.record_directory(root, c.read(c.regular(job))['step'])
+        for job in (root / 'jobs').glob('*.json')}
+    for path in sorted((root / 'host-runtime/experiment-control').glob('*/records')):
+        files.check_path(path)
+        if not path.is_dir() or path not in expected:
+            raise files.ArchiveError('Unknown managed records namespace')
+        yield path
 
 
 def _owner_locks(stack, root):
@@ -165,7 +176,7 @@ def _dead(identity, binding):
 
 def _quiescent(root):
     """Only retained original facts; no plugin factory, query, snapshot or grant."""
-    from . import budget, contracts as c, experiments as e
+    from . import budget, contracts as c, experiments as e, experiment_client
     for name in ('runner-process.json', 'native-process.json', 'watchdog-process.json'):
         for path in (root / 'native-evidence').glob('*/**/' + name):
             if not path.with_name('native-intent.json').exists():
@@ -220,7 +231,7 @@ def _quiescent(root):
     for path in (root / 'execution-authority/calls').glob('*/prepare-intent.json'):
         allocation = _read(path.with_name('allocation.json'))
         step = allocation['binding']['scope']['step']
-        if not (root / f'project/nodes/{step:03d}/work/lineage/calls' / allocation['call_id'] / 'accepted.json').exists():
+        if not (experiment_client.record_directory(root, step) / 'calls' / allocation['call_id'] / 'accepted.json').exists():
             raise files.ArchiveError('Pre-accept preparation cannot be proved inactive')
     state = budget.closeout_state(root)  # Pure retained-ledger fold, no lock or current clock.
     if (state['unresolved_operations'] or state['begin'] is not None
@@ -246,7 +257,8 @@ def _quiescent(root):
     process_paths = list((root / 'host-delivery/action-processes').glob('*.json'))
     process_paths += list((root / 'host-delivery/audit-recovery').glob('*/process.json'))
     process_paths += list((root / 'native-evidence').glob('*/candidate-audit/process.json'))
-    process_paths += list((root / 'project/nodes').glob('*/work/lineage/calls/*/engineering-check.process.json'))
+    for records in _managed_roots(root):
+        process_paths += list((records / 'calls').glob('*/engineering-check.process.json'))
     for path in process_paths:
         identity = _read(path)['identity']
         _dead(identity, identity.get('task_sha256'))

@@ -1,7 +1,7 @@
 """Frozen role token shares derived from sealed meters; routing only, no new balance.
 
-Optional H/A thinking is refused once its sealed exploration usage plus one
-frozen node target of the proposed role would cross the frozen share, or when
+Optional H/A thinking is refused once its reported exploration usage reaches
+the frozen share, or when
 the same role repeats without new sealed W/E evidence or an audit receipt.
 Required reviews stay legal: A after W, A after an audit receipt, control
 correction review and closeout.
@@ -69,15 +69,10 @@ def reason(root, step, job, result, role, correction_request=None):
         return None
     if job['role'] == role and not (job.get('formal_review') or result.get('next_action')=='formal_review'):
         return 'role_repeat_without_evidence'
-    from . import budget
-    # Project one frozen node target of the proposed role (soft: min(node budget, thinking target)).
     meter, total = usage(root, step), c.settings(root)['max_tokens']
-    target = budget.node_limits(root, dict(step=step + 1, role=role))['max_observed_tokens']
-    if meter['unknown_steps']:
-        return 'role_share_usage_unknown'
-    if meter['thinking'] + target > limits['max_thinking_share'] * total:
+    if meter['thinking'] >= limits['max_thinking_share'] * total:
         return 'role_share_thinking_reached'
-    if meter['thinking'] + meter['E'] + target > (1 - limits['min_w_share']) * total:
+    if meter['thinking'] + meter['E'] >= (1 - limits['min_w_share']) * total:
         return 'role_share_w_floor_reached'
     return None
 

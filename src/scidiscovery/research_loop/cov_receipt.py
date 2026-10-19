@@ -61,7 +61,8 @@ def profile(argv,channel):
     if channel!='public_runner_main':raise ValueError('Explicit independent cov receipt channel required')
     sources=[Path(arg) for arg in argv[1:] if arg.endswith('.py') and Path(arg).is_file()]
     if len(sources)!=1:raise ValueError('Public receipt profile requires one exact CLI source')
-    if argv not in ([argv[0],str(sources[0])],[argv[0],'-I',str(sources[0])]):
+    if argv not in ([argv[0],str(sources[0])],[argv[0],'-I',str(sources[0])],
+            [argv[0],'-B','-I',str(sources[0])]):
         raise ValueError('Public receipt profile does not qualify additional interpreter or CLI flags')
     backend=original(sources[0]);tree=ast.parse(sources[0].read_bytes(),filename=str(sources[0]))
     cmd=[node for node in tree.body if isinstance(node,ast.FunctionDef) and node.name=='cmd_run']
@@ -112,7 +113,44 @@ def _runner(accepted,directory):
     module.main()
 
 
+def science_runner(path):
+    """Trusted row capture with scientific inputs only; host adds identities.
+
+    The launcher verifies the frozen runner and source before entering this
+    namespace. No accepted call, authority, or checksum is supplied here.
+    """
+    path=Path(path)
+    if path.resolve()!=path or not path.is_file() or path.stat().st_size>16_000:
+        raise ValueError('Exact bounded scientific invocation required')
+    invocation=json.loads(path.read_bytes())
+    if (not isinstance(invocation,dict) or set(invocation)!={'runner','source','output_line','output'}
+            or type(invocation['output_line']) is not int or invocation['output_line']<=0):
+        raise ValueError('Scientific runner invocation is malformed')
+    spec=importlib.util.spec_from_file_location('_scid_public_cov_runner',invocation['runner'])
+    module=importlib.util.module_from_spec(spec);sys.modules[spec.name]=module
+    spec.loader.exec_module(module)
+    owner=module.main.__code__;published=False
+    def receipt_print(*args,**kwargs):
+        nonlocal published
+        frame=sys._getframe(1)
+        if frame.f_code is owner and frame.f_globals is module.__dict__ and frame.f_lineno==invocation['output_line']:
+            if published:raise ValueError('Public runner repeated its scientific result output')
+            row=frame.f_locals.get('rec')
+            if not isinstance(row,dict):raise ValueError('Public runner has no actual result row')
+            data=encoded(row)
+            if len(data)>MAX_BYTES:raise ValueError('Public runner result exceeds its declared bound')
+            with Path(invocation['output']).open('xb') as stream:
+                stream.write(data);stream.flush();os.fsync(stream.fileno())
+            published=True
+        builtins.print(*args,**kwargs)
+    module.print=receipt_print
+    sys.argv=[invocation['runner'],invocation['source']]
+    sys.path.insert(0,str(Path(invocation['runner']).parent))
+    module.main()
+
+
 def main():
+    if len(sys.argv)==3 and sys.argv[1]=='--science-runner':return science_runner(sys.argv[2])
     if len(sys.argv)!=2:raise ValueError('One exact accepted call original is required')
     path=Path(sys.argv[1]);directory=path.parent
     proof=original(path);accepted=json.loads(path.read_bytes())

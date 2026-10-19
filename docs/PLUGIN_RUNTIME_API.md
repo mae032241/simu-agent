@@ -10,6 +10,15 @@ The old Run/SQL service stack, runtime loader and standalone collection helpers 
 deleted. Retained callbacks consume injected capabilities; their declarations do
 not install an Operation-tool host in the current thin loop.
 
+Thin-loop candidate observations are public facts in first-observation order, including
+ties and missing metrics. Plugins supply facts and exact qualification receipts; the
+scientific author supplies an explicit candidate identity and explains its choice
+in `scientific_result`. An optional comparison table carries scientific explanation;
+its row, `keep`, rationale and evidence-step formatting do not gate submission.
+Selection policy version 2 is exactly `{"version":2}` and performs no automatic
+smoke or audit. Actual audit/delivery requires an exact available registered object;
+declared qualification, execution permissions and budgets still apply.
+
 ## Declaration and injected callback contracts
 
 These are retained library contracts for callers that supply a trusted host and
@@ -174,6 +183,43 @@ The callback returns validator data, not additional Worker fields or file bytes.
 are shared protocol/value types owned by `operations.execution`. Use that module directly; an adapter consumer owns admission, collection and
 recovery rather than relying on a shared bridge service.
 
+Worker-facing instructions request ordinary scientific files and add no hash
+calculation, comparison, verification or hash inventories; the consuming control
+performs that bookkeeping automatically and keeps its exact bindings host-private.
+`exp` acts as a thin submit/wait helper over a single ordinary
+`submit.json`/response slot. Local-mode W scientific views are serviced automatically
+by the existing native host for that attempt's lifetime; external mode retains the
+declared launcher's service ownership. No agent, daemon, UDS or FIFO is added.
+The default local command backend maps accepted input snapshots read-only at their
+scientific paths and gives `artifacts/` separate write access. Its task-native
+permission configuration excludes native authentication and provider settings;
+control originals and the submission slot are absent from the subprocess view.
+Network access follows the same supported native permission projection as the
+Worker. A launcher or policy that cannot be faithfully projected returns an
+explicit unsupported managed launch. Supported prerequisites and permission cases
+are defined in the [CLI guide](ROOTLESS_CLI.zh-CN.md); these file views do not provide
+a general native physical-isolation or hostile same-user process guarantee.
+
+The built-in local result protocol requires distinct nonempty metric names and
+finite numeric values for usable measurements. `unit`, `evaluation_key`, `direction`
+and labels are optional author-owned JSON descriptions, without an optimization enum
+or scientific text-length limit. An explicit candidate needs an exact declared
+retained artifact; absent or unresolved measurements remain null without an inferred
+metric or direction. Invalid individual declarations receive local diagnostics.
+Unserializable metadata is omitted only from the mechanical projection, with a
+reference to unchanged retained `result.json` bytes; other valid results and the
+artifact-bound candidate remain available. Compact previews do not cap originals.
+These local declarations do not replace a domain plugin's inputs for actual
+calculations or its frozen execution contract.
+
+Configured consumers determine the task's frozen auxiliary response fields.
+Unconsumed scientific annotations remain in the original. Malformed configured
+optional fields receive diagnostics instead of invented progress or scope. Actual action selection,
+exact input bindings, scientific qualification and execution authorization retain
+their own checks. Scientific mechanism/disposition lists have no fixed four-item or
+128-mechanism capacity; configured call opportunities and finite execution resources
+continue to govern admission, including reconciliation of unknown original calls.
+
 An adapter implements `capabilities() -> tuple[AdapterCapability, ...]`,
 `prepare(payload: LocalFileDescriptor, *, preparation_profile: str,
 exchange_directory: Path) -> LocalFileDescriptor`, `submit(submission) ->
@@ -203,6 +249,21 @@ remote protocol support. The transport's `submission_protocol` maps to
 `public_summary: Mapping[str, object]`. Keys must be unique in a nonempty capability
 set. The consuming contract owns content limits; port/schema declarations own
 payload validation and version identity.
+
+An adapter may supply `worker_capabilities() -> tuple[AdapterCapability, ...]` for
+producer-owned scientific discovery and schema reads. Control still freezes and
+validates the complete `capabilities()` set; the Worker view does not change that
+identity. TCAD exposes implementation authoring and scientific solver facts through
+this view. Its V2/V3 execution-package schemas and solver-snapshot binding digests
+remain host validation contracts. The consumer omits control-only capabilities and
+mechanical proof metadata from Worker discovery and description responses.
+An optional `ExecutionInterfaceRegistration.scientific_outputs` callback projects
+verified retained output descriptors without building a runtime or querying a
+backend. Its signature is `(descriptors, *, projection_directory: Path)`; control
+derives this private cache directory from the exact host configuration outside
+the immutable managed-call tree. TCAD keeps the complete native manifest private and supplies typed
+execution facts alongside unchanged scientific output bytes. Original manifest and
+output verification still precede publication.
 
 TCAD adapter consumers may use the following optional hooks:
 `supports_preparation_profile(profile)`,

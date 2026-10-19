@@ -161,8 +161,15 @@ def test_completed_cannot_change_identity_or_outcome_while_preserving_proofs(tmp
     path=Path(config['record_dir'])/'calls'/result['call_id']/'completed.json'
     completed=json.loads(path.read_text());completed[field]=value
     path.write_bytes(cov._bytes(completed))
+    originals={item:item.read_bytes() for item in (Path(config['record_dir'])/'calls').rglob('*') if item.is_file()}
     with pytest.raises(cov.IntegrityError):cov.status(config)
-    with pytest.raises(history.ObserverIntegrityError):finish(root,2,'W',[1])
+    # The already-existing observation receipt rejects changed completed bytes
+    # before the optional domain/history observer is reached.
+    with pytest.raises(experiments.IntegrityError,match='^Execution observation original changed$'):
+        finish(root,2,'W',[1])
+    assert all(item.read_bytes()==data for item,data in originals.items())
+    assert not (execution.origin(root,2)/'result-identity.json').exists()
+    assert not (root/'jobs/003.json').exists()
 
 
 def test_completed_model_cannot_be_rebound_to_another_successful_call(tmp_path):
@@ -174,8 +181,15 @@ def test_completed_model_cannot_be_rebound_to_another_successful_call(tmp_path):
     completed=json.loads(path.read_text());completed['model']=second['model']
     # Even adding the other valid proof cannot turn it into this call's artifact.
     completed['proofs'].append(second['model']);path.write_bytes(cov._bytes(completed))
+    originals={item:item.read_bytes() for item in (Path(config['record_dir'])/'calls').rglob('*') if item.is_file()}
     with pytest.raises(cov.IntegrityError):cov.status(config)
-    with pytest.raises(history.ObserverIntegrityError):finish(root,2,'W',[1])
+    # The already-existing observation receipt rejects changed completed bytes
+    # before the optional domain/history observer is reached.
+    with pytest.raises(experiments.IntegrityError,match='^Execution observation original changed$'):
+        finish(root,2,'W',[1])
+    assert all(item.read_bytes()==data for item,data in originals.items())
+    assert not (execution.origin(root,2)/'result-identity.json').exists()
+    assert not (root/'jobs/003.json').exists()
 
 
 @pytest.mark.parametrize('version', [1,2])

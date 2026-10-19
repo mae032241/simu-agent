@@ -48,18 +48,26 @@ def budget_hint(work):
         return unavailable
     fields = ('updated_at_unix', 'shared_observed_tokens_remaining_upper_bound', 'shared_active_seconds_remaining',
               'current_work_observed_tokens_remaining_upper_bound', 'current_work_active_seconds_available')
-    if any(not _finite(value.get(key)) or value[key] < 0 for key in fields):
+    final = (value.get('current_work_boundary') == 'final_a_return'
+             and value.get('final_response_allowance') == 'original_final_a_token_overrun_authorized'
+             and value.get('target_kind') == 'final_a_token_target')
+    if any(not (final and key == fields[3] and key in value and value[key] is None)
+           and (not _finite(value.get(key)) or value[key] < 0) for key in fields):
         return unavailable
     target, reserve = value.get('target_state'), value.get('reserve_state')
     if not isinstance(target, str) or not isinstance(reserve, str) or target not in {'within', 'near', 'reached'} or reserve not in {'within', 'reached'}:
         return unavailable
     reason = 'reserve_reached' if reserve == 'reached' else 'target_' + target if target != 'within' else None
-    return dict(status='observed_advice', observed_at=value['updated_at_unix'], inflight_usage_unknown=True,
+    result = dict(status='observed_advice', observed_at=value['updated_at_unix'], inflight_usage_unknown=True,
         shared_observed_tokens_remaining_upper_bound=value[fields[1]], shared_active_seconds_remaining=value[fields[2]],
         current_work_observed_tokens_remaining_upper_bound=value[fields[3]], current_work_active_seconds_available=value[fields[4]],
         target_state=target, reserve_state=reserve,
         review_request=dict(requested=bool(reason), reason=reason, enforced=False),
         scope='Last host observation only; in-flight usage and current balance are unknown. Not execution authorization.')
+    if final:
+        result.update(current_work_boundary=value['current_work_boundary'],
+                      final_response_allowance=value['final_response_allowance'], target_kind=value['target_kind'])
+    return result
 
 
 def live(root, job):
@@ -119,6 +127,8 @@ def live(root, job):
                 or not _finite(value['observed_at'])):
             raise ValueError('Progress observation is not bounded')
         names = {'accepted', 'running', 'known_success', 'known_failed', 'unknown'}
+        if registered:
+            names |= {'submitted', 'queued', 'cancelling', 'not_submitted'}
         counts = value['counts']
         if not isinstance(counts, dict) or set(counts) != names or any(type(n) is not int or n < 0 for n in counts.values()):
             raise ValueError('Progress counts require exact observed states')
@@ -126,11 +136,21 @@ def live(root, job):
             raise ValueError('Progress omissions do not reconcile')
         ids = set()
         allowed = {'call_id', 'status', 'candidate_id', 'evaluation_key', 'metric', 'direction', 'wall_seconds', 'parent_candidate'}
+        shapes = (allowed, allowed | {'mechanism_ref'})
+        if registered:
+            shapes += tuple(fields | {'returncode', 'result'} for fields in shapes)
+            shapes += tuple(fields | {'native_state'} for fields in shapes)
         for row in value['calls']:
-            if (not isinstance(row, dict) or set(row) not in (allowed,allowed|{'mechanism_ref'},allowed|{'returncode','result'},allowed|{'mechanism_ref','returncode','result'}) or row['status'] not in names
+            retired = (registered and isinstance(row, dict) and set(row) == {'call_id', 'status', 'candidate_id'}
+                and row['status'] == 'not_submitted' and row['candidate_id'] is None)
+            if (not isinstance(row, dict) or (not retired and (set(row) not in shapes or row['status'] == 'not_submitted')) or row['status'] not in names
                     or not isinstance(row['call_id'], str) or not 0 < len(row['call_id']) <= 128 or row['call_id'] in ids):
                 raise ValueError('Progress call identities are not unique')
             ids.add(row['call_id'])
+            if retired:
+                continue
+            if 'native_state' in row and (row['native_state'] != 'cancelled' or row['status'] != 'known_failed'):
+                raise ValueError('Registered cancellation observation is malformed')
             if 'result' in row and (not registered or row['returncode'] is not None and type(row['returncode']) is not int
                     or not isinstance(row['result'],dict)):
                 raise ValueError('Registered result observation is malformed')

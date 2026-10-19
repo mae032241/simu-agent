@@ -7,6 +7,7 @@ can continue the exact original native thread.
 from __future__ import annotations
 
 import json
+from contextlib import ExitStack
 import os
 from pathlib import Path
 import selectors
@@ -27,7 +28,7 @@ def usage(root: Path):
     totals = dict(input_tokens=0, cached_input_tokens=0, output_tokens=0)
     unknown = []
     settings = frozen_settings(root)
-    for step in range(1, settings['max_steps'] + 1):
+    for step in range(1, control_budget.historical_step_limit(root) + 1):
         for record in execution.records(root, step):
             if not (record / 'native-intent.json').exists():continue
             meter = record / 'usage.json'
@@ -44,7 +45,9 @@ def usage(root: Path):
             if metadata is not None and metadata.get('coverage') == 'unknown' and step not in unknown:
                 unknown.append(step)
             for key in totals:totals[key] += value[key]
-    return dict(**totals, observed_tokens=totals['input_tokens'] + totals['output_tokens'], unknown_steps=unknown)
+    result=dict(**totals, observed_tokens=totals['input_tokens'] + totals['output_tokens'], unknown_steps=unknown)
+    result.update(control_budget.usage_accounting(root,result))
+    return result
 
 
 def _usage_event(event):
@@ -60,7 +63,7 @@ def _usage_event(event):
     return dict(input_tokens=value['input_tokens'], cached_input_tokens=cached, output_tokens=value['output_tokens'])
 
 
-def execute_native(root: Path, step: int):
+def execute_native(root: Path, step: int, *, final_report=None):
     """Submit once, then wait for the same durable local runner."""
     from .protocol import require_current
     require_current(root)
@@ -72,7 +75,9 @@ def execute_native(root: Path, step: int):
     job_path = root / "jobs" / f"{step:03d}.json"
     job = read(job_path)
     profile_binding = profiles.binding(settings, job)
-    node_anchor = control_budget.accept_node(root, job)
+    node_anchor = control_budget.accept_node(root, job, final_report=final_report)
+    if step > control_budget.effective_max_steps(root) and not (node_anchor or {}).get('final_return'):
+        raise control_budget.NodeBudgetUnavailable('step_limit')
     if node_anchor is not None and job['role'] == 'W' and search.launch_reason(root, job):
         raise ValueError('W dispatch violates its frozen search authorization')
     anchor = search.accept(root, job) if node_anchor is None else None
@@ -101,14 +106,14 @@ def wait_native(root: Path, step: int):
             from . import continuation, worker_delivery
             job = read(root / 'jobs' / f'{step:03d}.json')
             fragments = checkpoint.enabled(root, job)
-            if state == 'terminal' and job['role']=='W':
+            if state == 'terminal':
                 # Outcome publication precedes the runner's final writes. Wait
-                # for this exact owner before capturing a delivery checkpoint.
+                # for this exact owner before sealing or returning control.
                 runner = record / 'runner-process.json'
                 if runner.exists() and runtime.process_matches(read(runner), execution.identity(root, step)):
                     time.sleep(.1)
                     continue
-                if fragments and not (record/'checkpoint.json').exists():
+                if job['role']=='W' and fragments and not (record/'checkpoint.json').exists():
                     raise continuation.ResumeUnavailable('worker_fragment_checkpoint_unavailable')
             try:result = continuation.seal_or_repair(root, step)
             except managed_wait.ExecutionWaiting:
@@ -119,7 +124,11 @@ def wait_native(root: Path, step: int):
                 continue
             return result
         if state != "running":
-            if not (record / "runner-process.json").exists() and time.monotonic() < startup_until:
+            if state == 'unknown' and time.monotonic() < startup_until:
+                # A probe can race original receipt publication. Re-probe only
+                # this accepted execution in the existing startup window; a
+                # second file read cannot turn the earlier unknown into proof
+                # of a bad identity. Waiting never permits another submission.
                 time.sleep(.05)
                 continue
             raise RuntimeError("Original native execution is unknown; preserved without replay")
@@ -138,6 +147,12 @@ def run_native(root: Path, step: int, attempt=0):
     record = execution.record(root, step, attempt)
     record.mkdir(parents=True, exist_ok=True)
     intent = read(record / 'native-intent.json')
+    final_return = control_budget.final_a_return(root, job, intent)
+    startup = None
+    if intent.get('continuation_kind') == 'startup_successor':
+        from . import startup_recovery
+        startup = startup_recovery.validate_intent(root,job,intent)
+        startup_recovery.require_eligibility(root,step,startup)
     if intent.get('task_sha256') != digest(job_path):
         raise ValueError('Native execution task changed')
     profile = profiles.validate_intent(settings, job, intent)
@@ -163,15 +178,20 @@ def run_native(root: Path, step: int, attempt=0):
             '--model', profile['model'], '-c', f'model_reasoning_effort={json.dumps(profile["reasoning_effort"])}',
             '-c', f'service_tier={json.dumps(profile["service_tier"])}',
             '--sandbox', 'workspace-write', '-C', str(work), '-']
+    standard_native = len(settings['native_launcher_argv']) == 1 and Path(args[0]).name == 'codex'
+    resume_position = None
     role_instruction = job.get('native_role_instruction', ROLE_INSTRUCTIONS[job['role']])
+    if job['role']=='A' and not job.get('formal_review'):
+        from .contracts import AUTHOR_EVIDENCE_GUIDANCE
+        role_instruction += '\n' + AUTHOR_EVIDENCE_GUIDANCE
     if job.get('formal_review'):
         from . import formal_review
         role_instruction=formal_review.public(root,job)['review']['instruction']
     # Raw Codex is supported as a local soft-isolation entry. Existing qualified
     # launchers retain their own exact argv/config protocol and MCP settings.
-    if len(settings['native_launcher_argv']) == 1 and Path(args[0]).name == 'codex':
+    if standard_native:
         args[-1:-1] = ['--skip-git-repo-check', '--output-schema', str(execution.origin(root, step) / 'science-result.schema.json'),
-                       '-c', 'project_doc_max_bytes=0', '-c', 'mcp_servers.scidiscovery.enabled=false',
+                       '-c', 'project_doc_max_bytes=0',
                        '-c', 'features.multi_agent=false', '-c', 'features.fast_mode=false',
                        '-c', 'approval_policy="never"',
                        '-c', 'developer_instructions=' + json.dumps(role_instruction)]
@@ -199,6 +219,7 @@ def run_native(root: Path, step: int, attempt=0):
         global_args = ['-C', str(work), '--sandbox', 'workspace-write']
         for config in configs:global_args.extend(['-c', config])
         if '--skip-git-repo-check' in args:global_args.append('--skip-git-repo-check')
+        resume_position = len(settings['native_launcher_argv']) + 1 + len(global_args)
         args = [*settings['native_launcher_argv'], 'exec', *global_args, 'resume', '--json', '--model', profile['model'], '--output-schema',
                 str(execution.origin(root, step) / 'science-result.schema.json'),
                 '--output-last-message', str(pending), session['thread_id'], '-']
@@ -228,17 +249,19 @@ def run_native(root: Path, step: int, attempt=0):
               + 'The controller collects deliverables, records paths and hashes, validates and seals your final response. '
               'Do not build attachment indexes, manifests, provenance inventories, hash lists, packaging scripts, '
               'or schema validators. Do not duplicate final responses in files or copy every model for handoff. '
-              'Historical cross-node delivery uses A next_action=deliver and the controller adapter; native exp submit '
+              'Read configured_delivery and any delivery_requirements in science-task.json. The effect scope is a configured '
+              'capability description, not execution permission, scientific qualification or a promise to complete missing work. '
+              'Historical cross-node delivery uses A next_action=deliver within that adapter scope; native exp submit '
               'uses declared run paths and does not resolve archived historical originals. '
               'Scientific checks required by the task remain your work. Return the small scientific JSON described '
               'by final_response, directly as your final answer. Routing, when needed, uses next_action with a '
               'separate route_reason. The controller dispatches the next role; functional tools retain their permissions.\n'
               + json.dumps(dict(
-                  next_action_options=actions(job['role'], job.get('handoff_protocol', 1),
+                  next_action_options=read(execution.origin(root,step) / 'science-result.schema.json')['properties']['next_action']['enum'] if job.get('final_only') else actions(job['role'], job.get('handoff_protocol', 1),
                       audit_enabled=settings.get('candidate_audit_policy') == {'version': 1},
                       review_enabled=job.get('formal_review_version')==1),
                   shared_seconds_remaining=max(0, int(limits['seconds_remaining'])),
-                  shared_observed_tokens_remaining=max(0, limits['max_tokens']-budget['observed_tokens']),
+                  shared_observed_tokens_remaining=max(0, limits['max_tokens']-budget.get('accounted_tokens',budget['observed_tokens'])),
                   metering='Native usage may be delayed; this is not a guaranteed billing cap.',
                   **(dict(node_budget=intent['budget_slice']['limits']) if intent.get('budget_slice') else {})), ensure_ascii=False))
     if job.get('formal_review'):
@@ -249,15 +272,18 @@ def run_native(root: Path, step: int, attempt=0):
             'the host binds subject, participants, qualification and return route. A pass grants no execution permission. '
             'No IDs, hashes, manifests or mechanical receipts are your work. '
             +json.dumps(dict(shared_seconds_remaining=max(0,int(limits['seconds_remaining'])),
-                shared_observed_tokens_remaining=max(0,limits['max_tokens']-budget['observed_tokens'])),ensure_ascii=False))
-    if control_budget.node_mode(root)=='soft':
-        prompt += ('\nNode and search limits are soft targets, not renewed grants. Between bounded actions read work/budget-status.json when available. '
-                   'Near/reached targets or delivery reserve: preserve useful results and return your scientific JSON promptly. '
-                   'This file is advisory and usage can be unknown; shared hard limits still apply. \n')
+                shared_observed_tokens_remaining=max(0,limits['max_tokens']-budget.get('accounted_tokens',budget['observed_tokens']))),ensure_ascii=False))
     if experiment_config is not None:
         selected=experiment_config['execution_interface']
+        if job.get('worker_view_version') == 1:
+            from .worker_execution_bridge import SUBMISSION_DIRECTORY
+            managed_command=[sys.executable,'-m','scidiscovery.research_loop.worker_execution_bridge',
+                '--submission-directory',SUBMISSION_DIRECTORY]
+        else:
+            managed_command=[sys.executable,'-m','scidiscovery.research_loop.experiments',
+                '--config','work/experiment-config.json']
         prompt += ('\nManaged registered experiments: '+json.dumps(dict(
-            command=[sys.executable,'-m','scidiscovery.research_loop.experiments','--config','work/experiment-config.json'],
+            command=managed_command,
             actions=['capabilities','describe --key <key> --output <new scratch file>','run --payload <original>','lineage-status'],
             lifecycle=selected['capabilities'],result_protocol=selected['result_protocol']),ensure_ascii=False)
             +'. First read capabilities and the relevant complete public input contract with describe; do not invent an opaque payload format. '
@@ -265,13 +291,15 @@ def run_native(root: Path, step: int, attempt=0):
             'Use only declared lifecycle operations on original call IDs. Unavailable optional capabilities are unsupported, never a passing verdict. '
             'Native shell remains available for scratch; only managed calls are recorded. Never repeat an unknown submission.\n')
     if experiment_config is not None and experiment_config['execution_interface']['executor']=='local_execution:command':
-        prompt += ('\nManaged local experiments: run '+json.dumps([sys.executable,'-m','scidiscovery.research_loop.experiments',
-            '--config','work/experiment-config.json','run','--experiment-dir','experiments/<name>','--script','experiments/<name>/run.py','--','<script args>'])
+        prompt += ('\nManaged local experiments: run '+json.dumps([*managed_command,
+            'run','--experiment-dir','experiments/<name>','--script','experiments/<name>/run.py','--','<script args>'])
             +'. Use real paths/arguments. Only the chosen directory is snapshotted, excluding its artifacts/. '
             'The copied script runs with that snapshot as cwd and writes artifacts/; original directories are unchanged. '
             'Control retains exit/time/logs/inputs/outputs. Optional artifacts/result.json is version 1 JSON with metrics '
             '(name,value; optional unit,evaluation_key,direction) and outputs (path relative to the experiment root, label). '
-            'Optional candidate (label,metric,artifact) names one declared metric with explicit evaluation_key/direction and one declared output path; control assigns its identity and delivers its retained inputs/results after A chooses it. '
+            'unit, evaluation_key and direction retain your scientific explanation; control does not classify or infer their meaning. Read describe for the complete optional result contract and field diagnostics. '
+            'An optional candidate names one exact declared artifact output; label and a metric reference are optional. A missing or unresolved metric does not discard a retained candidate. Control assigns its identity and delivers its retained inputs/results only after A explicitly chooses it. '
+            'Preserve the actual task-required deliverables, including needed evaluated objects and native receipts, in these declared outputs before temporary files disappear. The adapter cannot reconstruct missing results from source code or metrics. '
             'Use finite metric values; control does not infer metric meaning, candidate ranking or qualification. '
             'Do not write hashes or identities. Native shell remains available for scratch. Query lineage-status for original calls; never repeat an unknown call.\n')
     if job['role'] == 'W':
@@ -284,7 +312,7 @@ def run_native(root: Path, step: int, attempt=0):
                    'unresolved questions and scientific next intent. stage_intent=continue requests more work in the assigned task; '
                    'review reports its completed scientific delivery, while decision requests A with partial work. The host can require review at the original investment boundary. '
                    'The host creates checkpoints and counts attempts; do not write mechanical checkpoint or budget fields.\n')
-    if attempt:
+    if attempt and startup is None:
         remaining = dict(observed_tokens=max(0, intent['budget_slice']['limits']['max_observed_tokens'] - intent['budget_slice']['previous_tokens']),
                          active_seconds=max(0., intent['budget_slice']['limits']['max_seconds'] - control_budget._node_duration(root, job, intent, limits)))
         if control_budget.node_mode(root)=='soft':
@@ -325,13 +353,99 @@ def run_native(root: Path, step: int, attempt=0):
         prompt += ('\nRead work/science-resume.json for the bounded prior fragment preview. Continue within the original scientific scope; '
                    'the host retains exact execution and candidate identities. Return current understanding, remaining questions '
                    'and stage_intent (continue this mechanism or review by A). Do not write checkpoint IDs, counters or file manifests.\n')
+    author_limits=None
+    if intent.get('continuation_kind')=='author_closeout':
+        from . import author_closeout
+        permit=author_closeout.require_intent_eligibility(root,job,intent)
+        author_limits=dict(max_observed_tokens=permit['max_tokens'],max_seconds=permit['max_seconds'])
+        scientific_facts=intent.get('worker_view_version') == 1
+        facts_name='author-closeout-science.json' if scientific_facts else 'author-closeout-facts.json'
+        prompt=('This is one fresh, explicitly authorized author-closeout turn for the original stopped W. '
+            f'Read work/{facts_name}, retained source/results and your existing scientific draft artifacts. '
+            'Interpret only the completed original experiments and return your own final scientific JSON. '
+            'No new experiment, training, submission, model refinement or replay is authorized. '
+            'Managed tools and original execution destinations are read-only. Do not query a backend or collect into old records. '
+            'Use existing facts directly; put only necessary scientific deliverables in artifacts/. '
+            'Choose stage_intent=review or decision, never continue. The controller will hand your conclusion to A. '
+            'Assess the exact original objective against the retained evidence yourself; state which requirements are supported, '
+            'unsupported or unresolved and report actual limitations. '
+            f'This author turn has a soft target of {permit["max_tokens"]} observed tokens and a finite limit of {permit["max_seconds"]} active seconds. Finish your original scientific response when the token target is reached.\n'
+            +prompt)
+        if attempt==2:
+            # This explicitly authorized successor needs preserved facts, not the
+            # normal experiment/engineering workflow or a broad directory dump.
+            prompt=(role_instruction+'\nThis is the single explicitly authorized second author-only closeout for the exact original W. '
+                +(f'First read work/{facts_name}, then science-task.json and the exact objective. '
+                  if scientific_facts else f'First read {facts_name} beside the designated final-output file, then science-task.json and the exact objective. ')
+                +('The scientific view includes every retained terminal call, available results and limitations. Control retains original machine receipts privately. '
+                  if scientific_facts else 'The compact index includes every retained call and points to complete originals. ')
+                +'Read particular source/results or draft artifacts only as scientifically needed. '
+                'Do not dump the directory tree, full observation logs, all source files or repeated reports into context. '
+                'This reduces transport overhead; it does not restrict consideration of failures, counterevidence or scientific uncertainty. '
+                'No new experiment, training, refinement, submission, replay, backend query or collection into old records is authorized. '
+                'Original calls/models and prior native attempts are read-only; write necessary scientific deliverables only in artifacts/. '
+                'Interpret the completed experiments yourself and return the final scientific JSON described in science-task.json. '
+                'Choose stage_intent=review or decision, never continue. The controller will give your own conclusion to A. '
+                'Assess the exact original objective against the retained evidence yourself; state which requirements are supported, '
+                'unsupported or unresolved and report actual limitations. '
+                'Do not write mechanical inventories, source/model hashes, private control metadata or duplicate final responses. '
+                f'This turn has a soft target of {permit["max_tokens"]} cumulative observed input plus output tokens (cached input included) and a finite limit of {permit["max_seconds"]} active seconds. Finish your original scientific response when the token target is reached. '
+                'Each model request counts its entire input again; prioritize a bounded reading pass and your final scientific response.\n')
+    mode=control_budget.node_mode(root)
+    if (final_return is None and job.get('purpose') is None and not job.get('formal_review')
+            and intent.get('continuation_kind')!='author_closeout'):
+        # Ordinary execution_available reads frozen reserve configuration only;
+        # reuse these observations without reentering current-node admission.
+        available=control_budget.execution_available(root,job,limits,budget)
+        prompt += ('\nOrdinary exploration budget advice: '+json.dumps(dict(
+            observed_tokens_remaining_upper_bound=available['tokens'],active_seconds_available=available['seconds'],
+            basis='shared_authorization_minus_existing_final_or_closeout_reserve',
+            observed_usage_is_lower_bound=True,unknown_usage=bool(budget.get('unknown_steps')),
+            inflight_usage_unknown=True),ensure_ascii=False)+'\n')
+    prompt += ('\nBudget mode: '+mode+'. '+('Node/search limits are soft targets, not renewed grants. ' if mode=='soft' else
+        'Node/search observed limits remain enforced. ')+
+        'Between bounded actions read work/budget-status.json when available; some read-only author views do not expose dynamic updates. '
+        'This small advisory is not a grant, execution permission or scientific evidence. '
+        'Each model request counts its entire input again; cached input is already included in input, counted once. '
+        'Unknown usage is not zero. In-flight requests and reporting delay are unmeasured; current-work remaining values are upper bounds. '
+        'There is no per-request budget admission or guaranteed final-response allowance. '
+        'Near limits, targets or the existing delivery reserve, finish bounded actions and return your own scientific JSON promptly, '
+        'preserving necessary evidence, uncertainty and limitations. '
+        + ('The original finite call duration and resource boundaries still apply; the exact final completion exception follows.\n' if final_return is not None else
+           'Shared quotas are checked before the next node; finish this accepted node and report all usage, including overage. Original execution and resource limits still apply.\n' if mode=='soft' else
+           'Shared hard limits still apply.\n'))
+    if final_return is not None:
+        prompt += ('\nThis is your final scientific return; no further scientific role or correction turn will be dispatched. '
+            'Complete and submit your own final scientific JSON in this same execution. In summary, scientific_result and limitations, '
+            'explain what you completed, what remains unfinished, the evidence-supported gap to the objective (if any), and why. '
+            'Do not assume success or invent a gap. Reuse the available evidence; do not start new experiments or request another role. '
+            'For this exact final return only, local token figures are targets; token usage exceeding the local or shared '
+            'reference ceiling will be recorded in full and will not terminate this return. Shared time and step exhaustion do not revoke this return. Original per-call time, resources and '
+            'execution permissions remain finite and enforced. Prioritize completing the response. '
+            'An external deliver choice still requires the configured adapter and the original qualification and authorization; '
+            'it does not assert that delivery or the scientific objective succeeded.\n')
+    # Append after every branch that replaces the assignment, including formal
+    # review and the bounded successor author turn.
+    prompt += ('\nDo not independently compute, compare, or revalidate file/evidence hashes or checksums, '
+        'generate hash inventories, or perform redundant mechanical integrity checks. '
+        'Control automatically owns integrity verification; use scientific names/references and verified tool results. '
+        'If a tool reports an integrity failure, retain and report it for control repair; '
+        'do not run your own checksum verification or alter bindings. '
+        'These restrictions cover extra mechanical integrity work, not hash algorithms required by the scientific task itself. '
+        'Any helper receiving this assignment must follow the same restrictions.\n')
     home = execution.home(root, step, attempt)
     home.mkdir(parents=True, exist_ok=True)
     env = {**os.environ, 'THIN_HWA_ROLE': job['role'], 'THIN_HWA_WORKSPACE': str(work),
            'THIN_HWA_NATIVE_HOME': str(home), 'THIN_HWA_JOB_MANIFEST': str(job_path)}
     if settings.get('resume_policy') is not None:env['CODEX_HOME'] = str(home)
+    if startup is not None:
+        env['CODEX_HOME'] = startup['native_home']
+        args[0] = startup['native_program']['path']
+        prompt += ('\nThis is the only final A model submission for this exact scientific task. Give your final evidence-based conclusion and unmet objectives. '
+            'Select an existing candidate with deliver for original host submission, or finish with the explicit reason submission is unsupported. '
+            'No wait, new scientific role, dedicated audit, experiment or correction turn is authorized. The host supplies the actual submission receipt.\n')
     meter_home = home
-    if settings.get('resume_policy') is None and len(settings['native_launcher_argv']) == 1 and Path(args[0]).name == 'codex':
+    if settings.get('resume_policy') is None and standard_native:
         # Raw Codex keeps its inherited credentials/configuration and writes its
         # rollout into that same actual home, not the stage's launcher namespace.
         meter_home = Path(env['CODEX_HOME']) if env.get('CODEX_HOME') else Path.home() / '.codex'
@@ -345,19 +459,22 @@ def run_native(root: Path, step: int, attempt=0):
     meter = dict(input_tokens=0, cached_input_tokens=0, output_tokens=0)
     observed = False
     terminal_observed = False
+    terminal_usage_observed = False
+    terminal_usage_missing = False
     terminal_meter = dict(meter)
     live_meter = SessionUsage(meter_home, work, session=intent.get('session') if attempt and intent.get('context_mode') != 'new_context' else None)
     cleanup = None
     thread_id = None
+    scientific_lifetime = ExitStack()
     try:
         with (record / 'native.jsonl').open('wb') as log, (record / 'native.stderr').open('wb') as err:
             # Submission happens here, after runner/watchdog startup. Recheck
             # all shared limits; this fresh intent alone is not missing usage.
             latest = usage(root)
             limits = control_budget.snapshot(root, settings)
-            stop = ('wall_limit' if limits['seconds_remaining'] <= 0 else
-                    'usage_unknown' if any(item != step for item in latest['unknown_steps']) else
-                    'token_limit' if latest['observed_tokens'] >= limits['max_tokens'] else None)
+            stop = ('wall_limit' if final_return is None and limits['seconds_remaining'] <= 0 else
+                    'usage_unknown' if control_budget.final_a_usage_unknown(final_return, latest, ignore_step=step) else
+                    'token_limit' if final_return is None and latest.get('accounted_tokens',latest['observed_tokens']) >= limits['max_tokens'] else None)
             stop = stop or control_budget.node_admission(root, job, ignore_step=step, intent=intent)
             stop = stop or control_budget.stop_node(root, job, intent, limits, meter)
             stop = stop or search.stop_reason(root, job, search_intent, limits, meter)
@@ -369,9 +486,18 @@ def run_native(root: Path, step: int, attempt=0):
                 return
             if settings.get('resume_policy') is not None:
                 continuation.validate_task(root, step)
-            control_budget.write_node_hint(root,job,intent,limits,meter,observed=observed)
+            control_budget.write_node_hint(root,job,intent,limits,meter,observed=observed,author_limits=author_limits)
             next_hint=time.monotonic()+5
             hint_dirty=False
+            if experiment_config is not None and job.get('worker_view_version') == 1:
+                from . import native_execution, worker_execution_bridge
+                actual_home=Path(env.get('CODEX_HOME',str(Path.home()/'.codex')))
+                if not actual_home.is_absolute():actual_home=work/actual_home
+                args,launch=native_execution.prepare(root,step,record,work,actual_home.resolve(),args,
+                    standard=standard_native,resume_position=resume_position)
+                scientific_lifetime.enter_context(worker_execution_bridge.serve(
+                    work/worker_execution_bridge.SUBMISSION_DIRECTORY,work/'work/experiment-config.json',work,
+                    launch=launch))
             process = subprocess.Popen(args, cwd=work, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                        stderr=err, env=env, start_new_session=True)
             process_id = runtime.process_identity(process.pid, execution.identity(root, step, attempt))
@@ -402,14 +528,18 @@ def run_native(root: Path, step: int, attempt=0):
                             if event.get('type') == 'thread.started':
                                 thread_id = event.get('thread_id')
                                 live_meter.bind_thread(thread_id)
+                            if event.get('type') == 'turn.completed':
+                                terminal_observed = True
                             current = _usage_event(event)
                             if current is not None:
                                 # exec turn.completed usage belongs to this turn.
                                 for key in terminal_meter:
                                     terminal_meter[key] += current[key]
-                                terminal_observed = True
+                                terminal_usage_observed = True
                                 observed = True
                                 hint_dirty=True
+                            elif event.get('type') == 'turn.completed':
+                                terminal_usage_missing = True
                     observation = live_meter.poll()
                     projected = {key: max(terminal_meter[key], observation['tokens'][key]) for key in meter}
                     if projected != meter:
@@ -422,15 +552,21 @@ def run_native(root: Path, step: int, attempt=0):
                     # Pause is a next-node barrier. Accepted work can finish and
                     # seal; it must not become an unknown submission on resume.
                     limits = control_budget.snapshot(root, settings)
-                    if limits['seconds_remaining'] <= 0:
+                    if final_return is None and control_budget.node_mode(root) == 'hard' and limits['seconds_remaining'] <= 0:
                         stop = 'wall_limit'
-                    elif usage(root)['observed_tokens'] >= limits['max_tokens']:
-                        stop = 'token_limit'
-                    stop = stop or control_budget.exploration_stop(root, job, limits)
+                    else:
+                        shared=usage(root)
+                        if final_return is None and control_budget.node_mode(root) == 'hard' and shared.get('accounted_tokens',shared['observed_tokens'])>=limits['max_tokens']:stop='token_limit'
+                    if final_return is None:
+                        stop = stop or control_budget.exploration_stop(root, job, limits)
                     stop = stop or control_budget.stop_node(root, job, intent, limits, meter)
+                    if intent.get('continuation_kind')=='author_closeout':
+                        elapsed=control_budget._node_duration(root,job,intent,limits)-intent['budget_slice']['previous_seconds']
+                        if elapsed>=permit['max_seconds']:
+                            stop=stop or 'author_closeout_wall_limit'
                     stop = stop or search.stop_reason(root, job, search_intent, limits, meter)
                     if stop or hint_dirty or time.monotonic()>=next_hint:
-                        control_budget.write_node_hint(root,job,intent,limits,meter,observed=observed)
+                        control_budget.write_node_hint(root,job,intent,limits,meter,observed=observed,author_limits=author_limits)
                         next_hint=time.monotonic()+5
                         hint_dirty=False
                     if stop:
@@ -439,6 +575,7 @@ def run_native(root: Path, step: int, attempt=0):
         error = exc
         stop = 'native_error_unknown'
     finally:
+        scientific_lifetime.close()
         if process is not None:
             try:
                 if process_id is not None and runtime.process_matches(process_id, process_id['task_sha256']):
@@ -473,10 +610,11 @@ def run_native(root: Path, step: int, attempt=0):
         observation.update(live_coverage=observation['coverage'], live_reason=observation['reason'],
                            live_tokens=dict(observation['tokens']))
         if terminal_observed:
+            observation['source'] = 'turn.completed'
+        if terminal_usage_observed and not terminal_usage_missing:
             mismatch = any(terminal_meter[key] < meter[key] for key in meter)
             if mismatch or live_meter.fault:
                 observation.update(coverage='unknown', reason=live_meter.fault or 'terminal_usage_below_live_observation')
-                stop = stop or 'native_usage_unreconciled'
             else:
                 observation.update(coverage='terminal', reason=None, source='turn.completed',
                                    reconciliation=('matched' if observation['tokens'] == terminal_meter else 'terminal_covers_live')
@@ -496,9 +634,11 @@ def run_native(root: Path, step: int, attempt=0):
              if settings.get('formal_review_policy') is not None else {}),
           metering=live_meter.snapshot() if process is None else observation,
           limitation='Observed token metadata only; running requests and reporting delay are unmeasured.')
+    if final_return is not None:
+        outcome['final_a_completion'] = control_budget.final_a_receipt(final_return, intent, meter if observed else None, outcome['usage'])
     if attempt and intent.get('context_mode') != 'new_context' and thread_id != intent['session']['thread_id']:
         stop = outcome['stop_reason'] = 'native_thread_changed'
-    if settings.get('resume_policy') is not None and process is not None:
+    if (settings.get('resume_policy') is not None or intent.get('continuation_kind') in {'author_closeout','startup_successor'}) and process is not None:
         outcome['execution_processes'] = {name: digest(record / name) for name in ('runner-process.json', 'native-process.json')}
     if intent.get('budget_slice') is not None:
         try:

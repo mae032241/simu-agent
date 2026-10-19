@@ -51,9 +51,11 @@ def test_fake_closeout_author_uses_current_delivery_contract(tmp_path,comparison
         for cid in ('run-1','run-2')],omitted_count=0)
     closeout=dict(sources=sources)
     if comparison:
-        closeout['comparison']=dict(default=dict(candidate_id='run-1'),
-            rows=[dict(candidate_id=cid) for cid in ('run-1','run-2')])
-    task=dict(role='A',closeout=closeout)
+        closeout['comparison']=dict(rows=[dict(candidate_id=cid) for cid in ('run-1','run-2')])
+    candidate_page='inputs/history/candidates/0001.json'
+    c.write(work/candidate_page,dict(candidates=[dict(id=cid,label=cid,metric=.5,direction='max',
+        evaluation_key='fixture-public',status='ok') for cid in ('run-1','run-2')],next_page=None,omitted_count=0))
+    task=dict(role='A',closeout=closeout,lineage=dict(indexes=dict(candidates=candidate_page)))
     if audit_status is not None:
         task['candidate_audit']=dict(candidate_id='run-1',status=audit_status,
             qualification='passed' if audit_status=='audited' else 'unknown')
@@ -70,10 +72,11 @@ def test_fake_closeout_author_uses_current_delivery_contract(tmp_path,comparison
     assert result.returncode==0,result.stderr
     payload=c.science_payload(output,'A',CURRENT,comparison)
     assert payload['next_action']==('deliver' if audit_status=='audited' else 'audit')
-    assert payload['candidate_recommendation']==(None if comparison and audit_status else
-        'run-1' if comparison or audit_status else 'run-2')
+    assert payload['candidate_recommendation']==('run-1' if audit_status else 'run-2')
     if comparison and audit_status:
         assert [row['candidate_id'] for row in payload['candidate_comparison']['rows'] if row['decision']=='keep']==['run-1']
+        assert payload['candidate_comparison']['rationale'].strip()
+        assert payload['candidate_comparison']['evidence_steps']==[2]
 
 
 def test_latest_frozen_settings_drive_full_chain_to_confirmed_delivery(tmp_path):

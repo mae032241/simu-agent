@@ -23,7 +23,13 @@ class CovExecution(LocalExecution):
             cov_delivery.__file__,delivery.__file__]
 
     def capabilities(self):
-        original = super().capabilities()
+        original = tuple(item for item in super().capabilities() if item.key != e.INPUT_SOURCES_KEY)
+        command = dict(version=1, invocation='run --script <single source file>',
+            accepted_source='exact source.py snapshot', experiment_directory=False, script_arguments=False,
+            dependencies='Declared public harness inputs and installed runtime only; sibling modules and arbitrary local dependencies are not snapshotted.',
+            candidate_options=['--parent-plan', '--new-plan', '--change-intent', '--mechanism'])
+        original = (*original, AdapterCapability('cov_single_source', 'execution', 'scidiscovery.cov-single-source.v1', 1,
+            'application/json', e.encoded(command), command))
         if self.config.get('receipt_channel') != 'public_runner_main':
             return original
         from . import replay_check
@@ -198,7 +204,7 @@ class CovExecution(LocalExecution):
             raise e.IntegrityError('Original cov execution source changed')
         # The task interpreter retains its scientific libraries and permissions.
         # Only cov's stdout/receipt separation changes; generic execution is shared.
-        return [self.config['run_argv'][0],'-I',str(Path(cov_receipt.__file__).resolve()),
+        return [self.config['run_argv'][0],'-B','-I',str(Path(cov_receipt.__file__).resolve()),
             str(self.records.directory(accepted['call_id'])/'accepted.json')]
 
     def result(self,call_id):

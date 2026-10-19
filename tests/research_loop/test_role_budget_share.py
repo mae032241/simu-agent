@@ -73,12 +73,11 @@ def test_prepare_freezes_default_only_with_node_targets_and_validates(tmp_path):
 
 
 def test_soft_thinking_node_target_is_a_hint_target_not_a_new_ceiling(tmp_path):
-    soft, hard = scene(tmp_path / 's'), scene(tmp_path / 'h', mode='hard')
-    for root in (soft, hard):seal(root, 1, 'H', [], action='experiment', plan=PLAN)
+    soft = scene(tmp_path / 's')
+    seal(soft, 1, 'H', [], action='experiment', plan=PLAN)
     h = dict(step=2, role='H');a = dict(step=2, role='A');w = dict(step=2, role='W')
     assert budget.node_limits(soft, h)['max_observed_tokens'] == budget.node_limits(soft, a)['max_observed_tokens'] == 250_000
     assert budget.node_limits(soft, w)['max_observed_tokens'] == 500_000
-    assert budget.node_limits(hard, h)['max_observed_tokens'] == 500_000  # Hard mode never gains a hidden kill.
 
 
 def test_usage_counts_only_the_sealed_prefix_by_role(tmp_path):
@@ -95,11 +94,11 @@ def test_share_and_repeat_reasons_spare_required_review(tmp_path):
     h, hp = seal(root, 1, 'H', [], action='experiment', plan=PLAN, tokens=100_000)
     w, wp = seal(root, 2, 'W', [1], findings=FINDINGS, tokens=500_000)
     a, ap = seal(root, 3, 'A', [1, 2], action='revise_h', tokens=3_100_000)
-    assert role_share.reason(root, 3, a, ap, 'H') is None  # 3.2M + 250k <= 3.5M.
+    assert role_share.reason(root, 3, a, ap, 'H') is None  # Actual thinking usage is 3.2M, below 3.5M.
     assert role_share.reason(root, 3, a, ap, 'A') == 'role_repeat_without_evidence'
     assert role_share.reason(root, 3, a, ap, 'H', correction_request=dict(trigger_id='x')) is None
     assert role_share.reason(root, 3, a, ap, 'W') is None
-    a4, ap4 = seal(root, 4, 'H', [1, 2, 3], action='analyze', tokens=200_000)
+    a4, ap4 = seal(root, 4, 'H', [1, 2, 3], action='analyze', tokens=300_000)
     assert role_share.reason(root, 4, a4, ap4, 'A') == 'role_share_thinking_reached'
     assert role_share.reason(root, 2, w, wp, 'A') is None  # A after new W evidence is required review.
 
@@ -107,8 +106,16 @@ def test_share_and_repeat_reasons_spare_required_review(tmp_path):
 def test_w_floor_counts_extraction_against_non_w_usage(tmp_path):
     root = scene(tmp_path, policy=dict(role_share.DEFAULT, min_w_share=.6, max_thinking_share=.4))
     seal(root, 1, 'H', [], action='extract', plan=PLAN, tokens=1_000_000)
-    e, ep = seal(root, 2, 'E', [1], tokens=2_900_000)
+    e, ep = seal(root, 2, 'E', [1], tokens=3_000_000)
     assert role_share.reason(root, 2, e, ep, 'H') == 'role_share_w_floor_reached'
+
+
+def test_optional_role_share_uses_actual_usage_without_prepaying_target_or_unknown(tmp_path,monkeypatch):
+    root=scene(tmp_path)
+    monkeypatch.setattr(role_share,'usage',lambda *args:dict(thinking=3_400_000,E=0,unknown_steps=[1]))
+    assert role_share.reason(root,1,dict(role='A'),{},'H') is None
+    monkeypatch.setattr(role_share,'usage',lambda *args:dict(thinking=3_500_000,E=0,unknown_steps=[1]))
+    assert role_share.reason(root,1,dict(role='A'),{},'H')=='role_share_thinking_reached'
 
 
 def test_old_instance_without_policy_keeps_original_routes(tmp_path):
@@ -124,10 +131,14 @@ def test_old_instance_without_policy_keeps_original_routes(tmp_path):
 
 def test_budget_refusal_never_substitutes_a_w_task(tmp_path, monkeypatch):
     root = scene(tmp_path)
+    # Historical role-share stop contract, before protected final completion.
+    settings = c.settings(root);settings.pop('final_a_completion_policy')
+    c.write(root/'settings.json', settings)
+    c.write(root/'settings-identity.json', dict(sha256=c.digest(root/'settings.json')))
     launched = drive(monkeypatch, {
         1: dict(action='experiment', plan=PLAN, tokens=100_000),
         2: dict(findings=FINDINGS, tokens=500_000),
-        3: dict(action='revise_h', tokens=3_300_000)})
+        3: dict(action='revise_h', tokens=3_400_000)})
     result = controller.run(root)
     assert result['status'] == 'role_budget_stop'
     assert result['reason'] == 'role_share_thinking_reached'
@@ -141,7 +152,9 @@ def test_budget_refusal_never_substitutes_a_w_task(tmp_path, monkeypatch):
 def test_controller_preserves_required_author_correction(tmp_path, monkeypatch):
     root = scene(tmp_path)
     repair = dict(PLAN, focus=dict(label='Q', action='repair'))
-    corrected = dict(PLAN, commitments=[dict(item, existing_ref=f'h001.m{n}') for n, item in enumerate(PLAN['commitments'], 1)])
+    # The unresolved first repair commits no mechanisms. Correct the request
+    # with fresh declarations rather than references to an uncommitted H.
+    corrected = PLAN
     launched = drive(monkeypatch, {
         1: dict(action='experiment', plan=repair, tokens=3_400_000),
         2: dict(action='experiment', plan=corrected, tokens=100_000),
@@ -151,8 +164,9 @@ def test_controller_preserves_required_author_correction(tmp_path, monkeypatch):
     assert result['status'] == 'finish', result
     assert launched == [(1, 'H'), (2, 'H'), (3, 'W'), (4, 'A')]
     job = c.read(root / 'jobs/002.json')
-    assert job['author_correction']['reason'] == 'search_repair_source_unavailable'
+    assert job['author_correction']['reason'] == 'search_repair_source_not_direct'
     assert 'role_budget' not in job
+    assert {row['source_h'] for row in c.read(root/'jobs/003.json')['search']['breadth']['mechanisms']}=={2}
 
 
 def test_required_corrections_keep_the_original_retry_cap(tmp_path, monkeypatch):
@@ -173,26 +187,34 @@ def test_required_corrections_keep_the_original_retry_cap(tmp_path, monkeypatch)
 
 def test_no_valid_w_stops_without_dispatching_thinking(tmp_path, monkeypatch):
     root = scene(tmp_path)
+    # Historical role-share stop contract, before protected final completion.
+    settings = c.settings(root);settings.pop('final_a_completion_policy')
+    c.write(root/'settings.json', settings)
+    c.write(root/'settings-identity.json', dict(sha256=c.digest(root/'settings.json')))
     waived = dict(dispositions=[dict(mechanism_ref=ref, status='waived', reason='Fixture closes this branch') for ref in ('h001.m1', 'h001.m2')],
                   next_focus=None)
     launched = drive(monkeypatch, {1: dict(action='experiment', plan=PLAN, tokens=100_000), 2: dict(findings=FINDINGS, tokens=500_000),
-        3: dict(action='revise_h', review=waived, tokens=3_300_000)})
+        3: dict(action='revise_h', review=waived, tokens=3_400_000)})
     result = controller.run(root)
     assert result['status'] == 'role_budget_stop' and result['reason'] == 'role_share_thinking_reached'
     assert launched == [(1, 'H'), (2, 'W'), (3, 'A')] and not (root / 'jobs/004.json').exists()
 
 
-def test_no_valid_w_with_delivery_enters_existing_closeout(tmp_path, monkeypatch):
+def test_no_valid_w_with_delivery_enters_durable_final(tmp_path, monkeypatch):
     delivery = dict(closeout_a=dict(max_observed_tokens=1000, max_seconds=30), inflight_tokens=100, cleanup_seconds=5,
                     submit_seconds=0, confirm_seconds=0, adapter=None)
     root = scene(tmp_path, delivery=delivery)
     waived = dict(dispositions=[dict(mechanism_ref=ref, status='waived', reason='Fixture closes this branch') for ref in ('h001.m1', 'h001.m2')],
                   next_focus=None)
-    drive(monkeypatch, {1: dict(action='experiment', plan=PLAN, tokens=100_000), 2: dict(findings=FINDINGS, tokens=500_000),
-        3: dict(action='revise_h', review=waived, tokens=3_300_000)})
+    launched=drive(monkeypatch, {1: dict(action='experiment', plan=PLAN, tokens=100_000), 2: dict(findings=FINDINGS, tokens=500_000),
+        3: dict(action='revise_h', review=waived, tokens=3_400_000)})
     calls = []
-    monkeypatch.setattr(controller, '_start_closeout', lambda root, cutoff, first, reason, **_: calls.append((cutoff, first, reason)) or dict(status='closeout'))
-    assert controller.run(root)['status'] == 'closeout' and calls == [(3, 4, 'role_share_thinking_reached')]
+    monkeypatch.setattr(controller, '_run_final', lambda root, begin: calls.append(begin) or dict(status='final_report'))
+    assert controller.run(root)['status'] == 'final_report'
+    begin=budget.closeout_state(root)['begin']
+    assert calls==[begin] and begin['mode']=='final' and begin['source_cutoff']==3 and begin['first_step']==4
+    assert begin['stop_reason']=='role_share_thinking_reached'
+    assert launched==[(1,'H'),(2,'W'),(3,'A')] and not (root/'jobs/004.json').exists()
 
 
 def test_audit_receipt_review_remains_legal(tmp_path, monkeypatch):
@@ -226,7 +248,10 @@ def test_behavior_card_is_read_only_public_and_replays_the_frozen_share(tmp_path
     assert value['roles']['A']['tokens'] == 3_300_000 and value['sequence'] == 'H001 W002 A003 H004'
     assert value['registered_experiments'] == 3 and value['w_stages'] == 1 and value['completed_public_runs'] == 3
     pool = module.candidates(root)
-    assert module.rank(pool, 'run-2', before=2) == dict(rank=2, of=3, metric=.7) and module.rank(pool, 'run-2', before=1)['rank'] is None
+    assert module.candidate_fact(pool,'run-2',before=2)==dict(id='run-2',metric=.7,direction='max',key='public-val',step=2)
+    assert module.candidate_fact(pool,'run-2',before=1) is None
+    assert 'best_public' not in value and 'rank' not in value['delivered']
+    assert 'rank' not in module.text(value)
     assert value['default_policy_replay']['first_refusal'] == dict(step=4, role='H', dispatch='optional',
         thinking_before=3_400_000, refused='role_share_thinking_reached')
     c.write(root / 'host-history/observations/003.json', dict(candidates=[dict(runs[0], official_reward=1.0)]))

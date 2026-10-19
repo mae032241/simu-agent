@@ -1,4 +1,5 @@
-"""Scientific scope and real local W resource guards; no model calls."""
+"""Current scientific scope and real local W resource guards; no model calls."""
+import copy
 import json
 import os
 from pathlib import Path
@@ -7,247 +8,326 @@ import sys
 
 import pytest
 
-from scidiscovery.research_loop import budget, contracts as c, controller, correction, native, search
+from scidiscovery.research_loop import budget, contracts as c, controller, execution, experiments, native, protocol, search
+from execution_fixtures import execution_registry
 from test_history_handoff import finish
+from test_breadth_science import worker as configure_worker, run as run_command, findings
 
 
 def plan(label='Mechanism', existing_ref=None, action='screen', other=False):
     rows = [dict(label=label, minimal_test='A bounded discriminating measurement', existing_ref=existing_ref)]
     if other:
         rows.append(dict(label='Unexplored mechanism', minimal_test='Independent negative control', existing_ref=None))
-    return dict(scope='Original scientific H scope', commitments=rows,
-                focus=dict(label=label, action=action, repair_source=None))
+    return dict(scope='Original scientific H scope', commitments=rows, focus=dict(label=label, action=action))
 
 
-def focus(ref='h001.m1', action='improve', source=None):
-    return dict(mechanism_ref=ref, action=action, repair_source=source)
+def focus(ref='h001.m1', action='improve'):
+    return dict(mechanism_ref=ref, action=action)
 
 
-def review(ref='h001.m1', status='screened', evidence='inputs/parents/002/conclusion.json', next_focus=None):
+def review(ref='h001.m1', status='screened', next_focus=None):
     return dict(dispositions=[dict(mechanism_ref=ref, status=status,
-                                  reason='Scientific judgment includes negative and limited results', evidence=[evidence])], next_focus=next_focus)
+        reason='Scientific judgment includes negative and limited results')], next_focus=next_focus)
 
 
 @pytest.fixture
-def scene(tmp_path, monkeypatch):
-    monkeypatch.setattr(c, 'HANDOFF_PROTOCOL', 6)  # Preserve coverage of published path-based contracts.
+def scene(tmp_path, execution_registry):
     public = tmp_path / 'public';public.mkdir()
     objective = public / 'objective.md';objective.write_text('Resolve mechanisms without assuming proxy optimality.')
     root = tmp_path / 'instance'
     controller.prepare(root, objective, public, ['fake'], max_tokens=10_000_000,
-        max_seconds=3600, max_steps=24, model='fake', reasoning_effort='high', node_budget_mode='hard')
+        max_seconds=3600, max_steps=24, model='fake', reasoning_effort='high', node_budget_mode='soft')
     return root
+
+
+def worker(root, step, parents, *, observed=None):
+    """Actual registered local commands precede any observed W finding."""
+    path = root / 'jobs' / f'{step:03d}.json'
+    if path.exists():
+        job = c.read(path)
+        assert job['role'] == 'W' and [int(row['path'].split('/')[2]) for row in job['direct_refs']] == parents
+        c.write(execution.record(root, step) / 'native-intent.json', dict(task_sha256=c.digest(path)))
+        output = root.parent / f'config-{step}.json'
+        experiments.configure(root, step, 'local_execution:command', dict(run_argv=[sys.executable]), output)
+        config = c.read(output)
+    else:
+        job, config = configure_worker(root, root.parent, step, parents)
+    mechanisms = config['breadth']['mechanisms']
+    if observed is None:
+        observed = [job['search']['focus']['mechanism_ref']]
+    selected = [row for row in mechanisms if row['mechanism_ref'] in observed or row['label'] in observed]
+    assert len(selected) == len(observed)
+    for row in selected:
+        result = run_command(root, config, row['mechanism_ref'])
+        assert result['status'] == 'known_success'
+    selected_refs = {row['mechanism_ref'] for row in selected}
+    assigned = {row['mechanism_ref'] for row in job['search']['coverage_obligation']}
+    screen = job['search']['focus']['action'] == 'screen'
+    if screen:
+        assert selected_refs <= assigned
+    return finish(root, step, 'W', parents, files={'candidate.py': 'def predict(): return 1\n'},
+        mechanism_findings=findings(*selected_refs, blocked=sorted(assigned - selected_refs)) if screen else None)
+
+
+def assess(root, step, parents, *, action='continue_w', search_choice=None):
+    """Local current A fixture; the widely imported finish helper stays unchanged."""
+    path = root / 'jobs' / f'{step:03d}.json'
+    job = c.read(path) if path.exists() else c.build_job(root, step, 'A', parents)
+    assert job['role'] == 'A' and [int(row['path'].split('/')[2]) for row in job['direct_refs']] == parents
+    record = execution.record(root, step)
+    payload = dict(summary='Fixture assessment', scientific_result='Assess retained observations with their scientific limits.',
+        limitations=['Mechanical fixture; no scientific effectiveness qualification'], implementation_selection=None,
+        candidate_recommendation=None, progress_assessment=None, portfolio_review=None, search_review=search_choice,
+        next_action=action, route_reason='An explicit scientific question determines the next fixture contribution',
+        decision_request=dict(decision='mechanism', question=f'Which declared mechanism should receive contribution {step}?',
+            change_criterion='A new trustworthy discriminating observation would change the mechanism choice')
+            if action in {'continue_w', 'revise_h'} else None)
+    c.write(record / 'native-intent.json', dict(task_sha256=c.digest(root / 'jobs' / f'{step:03d}.json')))
+    c.write(record / 'science-output.json', payload)
+    c.write(record / 'usage.json', dict(input_tokens=7, cached_input_tokens=2, output_tokens=3))
+    c.write(record / 'native-outcome.json', dict(returncode=0, stop_reason=None, usage=native.usage(root),
+        raw_sha256=c.digest(record / 'science-output.json')))
+    c.seal_result(root, step)
+    return job, c.workspace(root, step), record
 
 
 def start(root, other=False):
     finish(root, 1, 'H', [], action='experiment', search_choice=plan(other=other))
-    return finish(root, 2, 'W', [1], files={'candidate.py': 'def predict(): return 1\n'})
+    return worker(root, 2, [1])
+
+
+def control(root, step):
+    return c.read(execution.record(root, step) / 'result-identity.json')['control_outcome']
 
 
 def test_normal_scientific_screen_then_improve_has_small_views(scene):
     start(scene)
-    finish(scene, 3, 'A', [1, 2], action='continue_w', search_choice=review(next_focus=focus()))
+    assess(scene, 3, [1, 2], search_choice=review(next_focus=focus()))
     job = c.build_job(scene, 4, 'W', [1, 2, 3])
     assert search.launch_reason(scene, job) is None
     assert job['search']['focus']['action'] == 'improve'
-    assert job['search']['view']['accepted_w_slices'] == 1
-    assert job['search']['view']['recent_w'][0]['candidate_coverage'] == 'unknown'
-    assert len(json.dumps(job['history']['view'], ensure_ascii=False).encode()) <= 4096
-    assert len(json.dumps(job['search']['view'], ensure_ascii=False, indent=2).encode()) <= search.MAX_VIEW_BYTES
-    without = dict(job);without.pop('search')
-    added = len(json.dumps(c.science_view(job), ensure_ascii=False, indent=2).encode()) - len(json.dumps(c.science_view(without), ensure_ascii=False, indent=2).encode())
-    assert added <= 4608  # Contains pretty-print nesting overhead; schema is not in the packet.
-    finish(scene, 4, 'W', [1, 2, 3])
-    finish(scene, 5, 'A', [1, 4], action='finish')
-    assert len(search.project(scene, 6)['accepted_slices']) == 2  # Candidates do not create dispatches.
+    state = search.project(scene, 4)
+    assert len(state['accepted_slices']) == 1
+    assert state['accepted_slices'][0]['candidate_coverage'] == 'partial'
+    assert state['accepted_slices'][0]['observed_new_candidates'] == 0
+    packet = c.science_view(job, scene)
+    assert 'search' not in packet and 'lineage' in packet
+    assert len((json.dumps(packet['lineage'], ensure_ascii=False, indent=2) + '\n').encode()) <= 4096
+    worker(scene, 4, [1, 2, 3])
+    assess(scene, 5, [1, 4], action='finish')
+    assert len(search.project(scene, 6)['accepted_slices']) == 2
 
 
 def test_pending_old_ref_survives_h_omission_and_rename(scene):
     start(scene, other=True)
-    finish(scene, 3, 'A', [1, 2], action='revise_h', search_choice=review())
+    assess(scene, 3, [1, 2], action='revise_h', search_choice=review())
     finish(scene, 4, 'H', [1, 2, 3], action='experiment', search_choice=plan('Renamed', 'h001.m1', 'improve'))
     job = c.build_job(scene, 5, 'W', [4])
-    assert search.launch_reason(scene, job) == 'search_commitments_pending'
     state = search.project(scene, 5)
     assert state['mechanisms']['h001.m2']['status'] == 'pending'
+    assert state['mechanisms']['h001.m1']['label'] == 'Renamed'
+    assert state['mechanisms']['h001.m1']['original_h'] == 1
     assert len(state['mechanisms']) == 2
+    # An explicit authorized deepen is legal; initial-call fairness is separate.
+    assert search.launch_reason(scene, job) is None
+    assert job['search']['focus'] == focus(action='improve')
 
 
 def test_h_reauthorizes_exact_pending_ref_for_screen(scene):
     start(scene, other=True)
-    finish(scene, 3, 'A', [1, 2], action='revise_h', search_choice=review())
+    assess(scene, 3, [1, 2], action='revise_h', search_choice=review())
     finish(scene, 4, 'H', [1, 2, 3], action='experiment', search_choice=plan('Renamed pending', 'h001.m2'))
     job = c.build_job(scene, 5, 'W', [4])
     assert job['search']['focus']['mechanism_ref'] == 'h001.m2'
+    assert search.project(scene, 5)['mechanisms']['h001.m2']['source_h'] == 4
     assert search.launch_reason(scene, job) is None
 
 
-def test_negative_or_infeasible_bound_evidence_can_waive_without_new_w(scene):
-    finish(scene, 1, 'H', [], action='analyze', search_choice=plan())
-    finish(scene, 2, 'A', [1], action='continue_w', search_choice=review(status='waived',
-        evidence='inputs/parents/001/conclusion.json', next_focus=focus()))
+def test_negative_or_infeasible_judgment_can_waive_without_new_w(scene):
+    finish(scene, 1, 'H', [], action='analyze', search_choice=plan(other=True))
+    assess(scene, 2, [1], search_choice=review('h001.m2', status='waived', next_focus=focus(action='screen')))
     job = c.build_job(scene, 3, 'W', [1, 2])
+    assert search.project(scene, 3)['mechanisms']['h001.m2']['status'] == 'waived'
     assert search.launch_reason(scene, job) is None
+    assert not list(scene.glob('project/nodes/*/work/lineage/calls/*/accepted.json'))
 
 
-def test_screened_requires_same_mechanism_screen_evidence(scene):
+def test_disposition_sources_follow_only_adopted_status_changes(scene):
+    finish(scene, 1, 'H', [], action='analyze', search_choice=plan(other=True))
+    choices = dict(dispositions=[
+        dict(mechanism_ref='h001.m1', status='deferred', reason='The discriminating input is unavailable.'),
+        # Control retains this weak scientific judgment; it does not grade reasons.
+        dict(mechanism_ref='h001.m2', status='waived', reason='Its current proxy score is lower.')], next_focus=None)
+    assess(scene, 2, [1], action='finish', search_choice=choices)
+    original = (execution.record(scene, 2) / 'science-output.json').read_bytes()
+    adopted = copy.deepcopy(search.project(scene, 3)['mechanisms'])
+    for item in choices['dispositions']:
+        assert adopted[item['mechanism_ref']]['disposition'] == dict(reason=item['reason'], source_a=2)
+    restated = copy.deepcopy(choices)
+    for item in restated['dispositions']:
+        item['reason'] = 'A later restatement must not replace the adopted reason.'
+    assess(scene, 3, [1, 2], action='finish', search_choice=restated)
+    assert search.project(scene, 4)['mechanisms'] == adopted
+    # One valid change cannot leak out of an interpretation with an unresolved
+    # screened claim for the unexecuted second mechanism.
+    rejected = dict(dispositions=[dict(mechanism_ref='h001.m1', status='pending', reason='Reopen'),
+        dict(mechanism_ref='h001.m2', status='screened', reason='No supporting W exists')], next_focus=None)
+    assess(scene, 4, [1, 3], action='finish', search_choice=rejected)
+    assert control(scene, 4)['search_status'] == 'unresolved'
+    assert search.project(scene, 5)['mechanisms'] == adopted
+    assess(scene, 5, [1, 4], action='finish', search_choice=dict(dispositions=[], next_focus=None))
+    assert search.project(scene, 6)['mechanisms'] == adopted
+    assert (execution.record(scene, 2) / 'science-output.json').read_bytes() == original
+
+
+def test_h_revision_clears_current_disposition_without_refunding_calls(scene):
     start(scene, other=True)
-    with pytest.raises(ValueError, match='same-mechanism'):
-        finish(scene, 3, 'A', [1, 2], action='continue_w', search_choice=review('h001.m2', next_focus=focus()))
-    assert not (c.host_record(c.workspace(scene, 3)) / 'result-identity.json').exists()
+    assess(scene, 3, [1, 2], action='revise_h', search_choice=review(status='deferred'))
+    before = search.project(scene, 4)
+    assert before['mechanisms']['h001.m1']['disposition']['source_a'] == 3
+    original = (execution.record(scene, 3) / 'science-output.json').read_bytes()
+    finish(scene, 4, 'H', [1, 2, 3], action='experiment',
+        search_choice=plan('Revised mechanism', 'h001.m1', 'improve'))
+    after = search.project(scene, 5)
+    assert after['mechanisms']['h001.m1']['status'] == 'pending'
+    assert 'disposition' not in after['mechanisms']['h001.m1']
+    assert after['opportunity_counts'] == before['opportunity_counts'] == {'h001.m1': 1}
+    job = c.build_job(scene, 5, 'W', [4])
+    assert search.launch_reason(scene, job) is None
+    assert job['search']['focus'] == focus(action='improve')
+    assert (execution.record(scene, 3) / 'science-output.json').read_bytes() == original
 
 
-def test_screened_carries_from_bound_a_history_while_screening_new_mechanism(scene):
+def test_screened_requires_same_mechanism_terminal_observation(scene):
     start(scene, other=True)
-    finish(scene, 3, 'A', [1, 2], action='continue_w',
-           search_choice=review(next_focus=focus('h001.m2', 'screen')))
-    finish(scene, 4, 'W', [1, 2, 3])
-    choice = review(evidence='inputs/history/nodes/003/0001.json')
-    choice['dispositions'].extend(review('h001.m2', evidence='inputs/parents/004/conclusion.json')['dispositions'])
-    finish(scene, 5, 'A', [1, 4], action='finish', search_choice=choice)
-    state = search.project(scene, 6)
-    assert {ref: row['status'] for ref, row in state['mechanisms'].items()} == {
+    assess(scene, 3, [1, 2], search_choice=review('h001.m2', next_focus=focus()))
+    assert control(scene, 3)['search_status'] == 'unresolved'
+    assert any(row['code'] == 'screen_source_unavailable' for row in control(scene, 3)['diagnostics'])
+    state = search.project(scene, 4)
+    assert state['mechanisms']['h001.m2']['status'] == 'pending'
+    assert c.validate(c.workspace(scene, 3))['search_review']['dispositions'][0]['mechanism_ref'] == 'h001.m2'
+
+
+def test_screened_state_carries_while_screening_another_mechanism(scene):
+    start(scene, other=True)
+    assess(scene, 3, [1, 2], search_choice=review(next_focus=focus('h001.m2', 'screen')))
+    worker(scene, 4, [1, 2, 3], observed=['h001.m2'])
+    choice = review();choice['dispositions'] += review('h001.m2')['dispositions']
+    assess(scene, 5, [1, 4], action='finish', search_choice=choice)
+    assert {ref: row['status'] for ref, row in search.project(scene, 6)['mechanisms'].items()} == {
         'h001.m1': 'screened', 'h001.m2': 'screened'}
-    job = c.read(scene / 'jobs/005.json')
-    assert job['direct_materials'] == []  # Historical A evidence does not inherit W2 attachments.
     assert c.validate(c.workspace(scene, 5))['next_action'] == 'finish'
+    assert not c.read(scene / 'jobs/005.json').get('selected_inputs')
+    assert (c.workspace(scene, 5) / 'inputs/parents/004/artifacts/candidate.py').is_file()
+    assert not (c.workspace(scene, 5) / 'inputs/parents/002/artifacts/candidate.py').exists()
 
 
 @pytest.mark.parametrize('restate', [True, False])
 def test_a_reports_only_changes_and_restatements_do_not_replace_originals(scene, restate):
     choice = plan(other=True)
-    choice['commitments'].extend([dict(label=label, minimal_test='Bounded screen', existing_ref=None)
-                                  for label in ('Heavy tail', 'Supervised regression')])
+    choice['commitments'] += [dict(label=label, minimal_test='Bounded screen', existing_ref=None)
+        for label in ('Heavy tail', 'Supervised regression')]
     finish(scene, 1, 'H', [], action='experiment', search_choice=choice)
-    finish(scene, 2, 'W', [1])
-    finish(scene, 3, 'A', [1, 2], action='continue_w', search_choice=review(next_focus=focus('h001.m2', 'screen')))
-    finish(scene, 4, 'W', [1, 2, 3])
-    finish(scene, 5, 'A', [1, 4], action='continue_w',
-           search_choice=review('h001.m2', evidence='inputs/parents/004/conclusion.json', next_focus=focus('h001.m4', 'screen')))
-    finish(scene, 6, 'W', [1, 4, 5])
-    original = (c.host_record(c.workspace(scene, 3)) / 'science-output.json').read_bytes()
-    choice = review('h001.m4', evidence='inputs/parents/006/conclusion.json', next_focus=focus('h001.m3', 'screen'))
+    worker(scene, 2, [1])
+    assess(scene, 3, [1, 2], search_choice=review(next_focus=focus('h001.m2', 'screen')))
+    worker(scene, 4, [1, 2, 3], observed=['h001.m2'])
+    assess(scene, 5, [1, 4], search_choice=review('h001.m2', next_focus=focus('h001.m4', 'screen')))
+    worker(scene, 6, [1, 4, 5], observed=['h001.m4'])
+    original = (execution.record(scene, 3) / 'science-output.json').read_bytes()
+    choice = review('h001.m4', next_focus=focus('h001.m3', 'screen'))
     if restate:
-        choice['dispositions'] += review(evidence='inputs/history/pages/0001.json')['dispositions']
-        choice['dispositions'] += review('h001.m2', evidence='inputs/history/nodes/005/0001.json')['dispositions']
-        choice['dispositions'] += review('h001.m3', status='pending', evidence='inputs/history/pages/0001.json')['dispositions']
-    finish(scene, 7, 'A', [1, 6], action='continue_w', search_choice=choice)
+        choice['dispositions'] += review()['dispositions'] + review('h001.m2')['dispositions']
+        choice['dispositions'] += review('h001.m3', status='pending')['dispositions']
+    assess(scene, 7, [1, 6], search_choice=choice)
     state = search.project(scene, 8)
     assert [state['mechanisms'][f'h001.m{i}']['status'] for i in range(1, 5)] == ['screened', 'screened', 'pending', 'screened']
     assert state['focus'] == focus('h001.m3', 'screen')
-    assert (c.host_record(c.workspace(scene, 3)) / 'science-output.json').read_bytes() == original
-    job = c.read(scene / 'jobs/007.json')
-    assert c.read(c.host_record(c.workspace(scene, 7)) / 'science-output.json')['search_review'] == choice
-    with pytest.raises(ValueError, match='bound original'):
-        correction.validate_payload(scene, job, dict(progress_assessment=dict(
-            verdict='progress', evidence=['inputs/history/pages/0001.json'])))
+    assert (execution.record(scene, 3) / 'science-output.json').read_bytes() == original
+    assert c.read(execution.record(scene, 7) / 'science-output.json')['search_review'] == choice
 
 
 @pytest.mark.parametrize('forged_view', [False, True])
-def test_first_screened_cannot_use_a_only_evidence_or_forged_view(scene, forged_view):
+def test_first_screened_cannot_use_a_only_claim_or_forged_view(scene, forged_view):
     finish(scene, 1, 'H', [], action='analyze', search_choice=plan())
-    finish(scene, 2, 'A', [1], action='continue_w',
-           search_choice=dict(dispositions=[], next_focus=focus(action='screen')))
-    finish(scene, 3, 'W', [1, 2])
+    assess(scene, 2, [1], search_choice=dict(dispositions=[], next_focus=focus(action='screen')))
+    worker(scene, 3, [1, 2], observed=[])
     job = c.build_job(scene, 4, 'A', [1, 3])
     if forged_view:
-        job['search']['view']['commitments'][0]['status'] = 'screened'
-    with pytest.raises(ValueError, match='same-mechanism'):
-        search.validate_payload(scene, job,
-            dict(search_review=review(evidence='inputs/history/nodes/002/0001.json')))
+        job = copy.deepcopy(job)
+        job['history']['view']['mechanisms']['pending_count'] = 0
+    diagnostics = search.assess_payload(scene, job, dict(next_action='finish', route_reason='Fixture assessment', search_review=review()))
+    assert any(row['code'] == 'screen_source_unavailable' for row in diagnostics)
     assert search.project(scene, 4)['mechanisms']['h001.m1']['status'] == 'pending'
-    assert not (c.host_record(c.workspace(scene, 4)) / 'result-identity.json').exists()
+    assert not (execution.record(scene, 4) / 'result-identity.json').exists()
 
 
-def test_first_screened_requires_screen_not_improve_w_evidence(scene):
+def test_improve_action_with_real_same_mechanism_finding_can_be_screened(scene):
     finish(scene, 1, 'H', [], action='analyze', search_choice=plan())
-    finish(scene, 2, 'A', [1], action='continue_w',
-           search_choice=review(status='waived', evidence='inputs/parents/001/conclusion.json', next_focus=focus()))
-    finish(scene, 3, 'W', [1, 2])
+    assess(scene, 2, [1], search_choice=review(status='deferred', next_focus=focus()))
+    worker(scene, 3, [1, 2])
     assert c.read(scene / 'jobs/003.json')['search']['focus']['action'] == 'improve'
-    with pytest.raises(ValueError, match='same-mechanism'):
-        finish(scene, 4, 'A', [1, 3], action='finish',
-               search_choice=review(evidence='inputs/parents/003/conclusion.json'))
-    assert not (c.host_record(c.workspace(scene, 4)) / 'result-identity.json').exists()
+    assess(scene, 4, [1, 3], action='finish', search_choice=review())
+    assert search.project(scene, 5)['mechanisms']['h001.m1']['status'] == 'screened'
 
 
-@pytest.mark.parametrize('invalid', ['empty', 'tampered_history'])
-def test_restatement_is_noop_but_changes_and_frozen_history_still_validate(scene, invalid):
+@pytest.mark.parametrize('tampered_history', [False, True])
+def test_restatement_is_noop_but_frozen_history_still_validates(scene, tampered_history):
     start(scene)
-    finish(scene, 3, 'A', [1, 2], action='continue_w', search_choice=review(next_focus=focus()))
-    finish(scene, 4, 'W', [1, 2, 3])
+    assess(scene, 3, [1, 2], search_choice=review(next_focus=focus()))
+    worker(scene, 4, [1, 2, 3], observed=[])
     job = c.build_job(scene, 5, 'A', [1, 4])
-    choice = review(evidence='inputs/history/nodes/003/0001.json')
-    if invalid == 'empty':
-        choice['dispositions'][0]['evidence'] = []
-        search.validate_payload(scene, job, dict(search_review=choice))
-        choice['dispositions'][0]['status'] = 'waived'
-        with pytest.raises(ValueError, match='original evidence'):
-            search.validate_payload(scene, job, dict(search_review=choice))
-    else:
-        page = c.workspace(scene, 5) / 'inputs/history/nodes/003/0001.json'
+    if tampered_history:
+        page = c.workspace(scene, 5) / job['history']['files'][0]['path']
         page.chmod(0o600);page.write_text('{}')
         with pytest.raises(ValueError, match='history page changed'):
             c._validate_inputs(scene, c.workspace(scene, 5), job)
-        choice['dispositions'][0]['status'] = 'waived'
-        with pytest.raises(ValueError, match='exactly bound'):
-            search.validate_payload(scene, job, dict(search_review=choice))
-    assert not (c.host_record(c.workspace(scene, 5)) / 'result-identity.json').exists()
+    else:
+        # Repeating an already adopted status does not create another W proof.
+        assert search.assess_payload(scene, job, dict(next_action='finish', route_reason='Restate', search_review=review())) == []
+    assert not (execution.record(scene, 5) / 'result-identity.json').exists()
 
 
-def test_protocol6_task_schema_and_view_survive_protocol7_upgrade(scene, monkeypatch):
-    monkeypatch.setattr(c, 'HANDOFF_PROTOCOL', 6)
+@pytest.mark.parametrize('old_protocol', [6, 7, 19])
+def test_retired_write_schema_is_rejected_without_changing_current_packets(scene, old_protocol):
     start(scene)
-    finish(scene, 3, 'A', [1, 2], action='continue_w', search_choice=review(next_focus=focus()))
-    paths = [scene / 'jobs/003.json', c.workspace(scene, 3) / 'science-task.json',
-             c.host_record(c.workspace(scene, 3)) / 'science-result.schema.json']
+    assess(scene, 3, [1, 2], search_choice=review(next_focus=focus()))
+    paths = [scene / 'jobs/003.json', c.workspace(scene, 3) / 'science-task.json', execution.record(scene, 3) / 'science-result.schema.json']
     originals = [path.read_bytes() for path in paths]
-    monkeypatch.setattr(c, 'HANDOFF_PROTOCOL', 7)
-    retained = c.build_job(scene, 3, 'A', [1, 2])
-    assert retained['handoff_protocol'] == 6
+    with pytest.raises(protocol.UnsupportedProtocol):
+        c.result_schema('A', old_protocol)
+    assert c.build_job(scene, 3, 'A', [1, 2])['handoff_protocol'] == protocol.CURRENT
     assert [path.read_bytes() for path in paths] == originals
     c.validate(c.workspace(scene, 3))
-    new = c.build_job(scene, 4, 'W', [1, 2, 3])
-    assert new['handoff_protocol'] == 7
-    assert 'only changed dispositions' in new['search']['view']['instructions']
-    assert 'only this round' in c.result_schema('A', 7)['properties']['search_review']['description']
-    assert 'only this round' not in c.result_schema('A', 6)['properties']['search_review']['description']
 
 
-def test_reopened_pending_rejects_old_a_only_screened_claim(scene):
+def test_reopened_pending_cannot_be_screened_by_a_claim_without_new_w_observation(scene):
     start(scene)
-    finish(scene, 3, 'A', [1, 2], action='continue_w', search_choice=review(next_focus=focus()))
-    finish(scene, 4, 'W', [1, 2, 3])
-    finish(scene, 5, 'A', [1, 4], action='continue_w',
-           search_choice=dict(dispositions=[dict(mechanism_ref='h001.m1', status='pending',
-               reason='Reopened scientific question', evidence=[])], next_focus=focus(action='screen')))
-    finish(scene, 6, 'W', [1, 4, 5])
+    assess(scene, 3, [1, 2], search_choice=review(next_focus=focus()))
+    worker(scene, 4, [1, 2, 3])
+    assess(scene, 5, [1, 4], search_choice=review(status='pending', next_focus=focus(action='screen')))
+    worker(scene, 6, [1, 4, 5], observed=[])
     assert search.project(scene, 7)['mechanisms']['h001.m1']['status'] == 'pending'
-    with pytest.raises(ValueError, match='same-mechanism'):
-        finish(scene, 7, 'A', [1, 6], action='finish',
-               search_choice=review(evidence='inputs/history/nodes/003/0001.json'))
-    assert not (c.host_record(c.workspace(scene, 7)) / 'result-identity.json').exists()
+    assess(scene, 7, [1, 6], action='finish', search_choice=review())
+    assert control(scene, 7)['search_status'] == 'unresolved'
+    assert search.project(scene, 8)['mechanisms']['h001.m1']['status'] == 'pending'
 
 
-def test_null_review_clears_focus_and_does_not_force_recommendation(scene):
+def test_null_review_stops_w_intent_without_forcing_recommendation(scene):
     start(scene)
-    finish(scene, 3, 'A', [1, 2], action='continue_w')
+    assess(scene, 3, [1, 2])
     job = c.build_job(scene, 4, 'W', [1, 2, 3])
-    assert search.launch_reason(scene, job) == 'search_focus_required'
-    assert c.read(c.host_record(c.workspace(scene, 3)) / 'science-output.json')['candidate_recommendation'] is None
+    assert search.launch_reason(scene, job) == 'science_task_action_required'
+    assert c.read(execution.record(scene, 3) / 'science-output.json')['candidate_recommendation'] is None
 
 
 def test_exact_requested_repair_chain_is_bounded_and_restart_deduplicated(scene):
     start(scene)
     for a_step, w_step, source_step in [(3, 4, 2), (5, 6, 4)]:
-        finish(scene, a_step, 'A', [1, source_step], action='continue_w',
-            search_choice=dict(dispositions=[], next_focus=focus(action='repair', source=f'inputs/parents/{source_step:03d}/conclusion.json')))
-        job = c.build_job(scene, w_step, 'W', [1, source_step, a_step])
+        assess(scene, a_step, [1, source_step], search_choice=dict(dispositions=[], next_focus=focus(action='repair')))
+        job, _, _ = worker(scene, w_step, [1, source_step, a_step])
         assert job['search']['repair_root'] == 2
         assert search.launch_reason(scene, job) is None
-        finish(scene, w_step, 'W', [1, source_step, a_step], files={'renamed.py': str(w_step)})
-    finish(scene, 7, 'A', [1, 6], action='continue_w',
-        search_choice=dict(dispositions=[], next_focus=focus(action='repair', source='inputs/parents/006/conclusion.json')))
+    assess(scene, 7, [1, 6], search_choice=dict(dispositions=[], next_focus=focus(action='repair')))
     job = c.build_job(scene, 8, 'W', [1, 6, 7])
     assert search.launch_reason(scene, job) == 'search_repair_limit'
     assert search.project(scene, 8)['repairs'] == {2: 2}
@@ -255,11 +335,11 @@ def test_exact_requested_repair_chain_is_bounded_and_restart_deduplicated(scene)
     assert search.project(scene, 8)['mechanisms']['h001.m1']['status'] == 'pending'
 
 
-@pytest.mark.parametrize('evidence', ['../../foreign/conclusion.json', 'inputs/history/pages/0001.json'])
-def test_evidence_must_be_an_exact_bound_original(scene, evidence):
-    start(scene)
-    with pytest.raises(ValueError, match='bound original'):
-        finish(scene, 3, 'A', [1, 2], action='continue_w', search_choice=review(evidence=evidence))
+def test_current_dispositions_and_repair_requests_do_not_accept_authored_paths():
+    schema = c.result_schema('A', protocol.CURRENT)
+    review_schema = schema['properties']['search_review']['properties']
+    assert set(review_schema['dispositions']['items']['properties']) == {'mechanism_ref', 'status', 'reason'}
+    assert set(review_schema['next_focus']['properties']) == {'mechanism_ref', 'action'}
 
 
 def test_same_boot_slice_anchor_paused_time_and_cached_tokens(scene, monkeypatch):
@@ -280,46 +360,36 @@ def test_same_boot_slice_anchor_paused_time_and_cached_tokens(scene, monkeypatch
     assert search.stop_reason(scene, job, intent, budget.snapshot(scene), meter) is None
     assert search.report(scene, job, intent, meter)['advance_seconds'] == 3
     meter['output_tokens'] = 1_000_000
-    assert search.stop_reason(scene, job, intent, budget.snapshot(scene), meter) == 'w_slice_token_limit'
+    assert search.stop_reason(scene, job, intent, budget.snapshot(scene), meter) is None
     now[0] += 900
-    assert search.stop_reason(scene, job, intent, budget.snapshot(scene), meter) == 'w_slice_time_limit'
+    assert search.stop_reason(scene, job, intent, budget.snapshot(scene), meter) is None
     assert intent['search_slice'] == anchor
 
 
 FAKE_NATIVE = '''import json,os,pathlib,sys,time
 args=sys.argv[1:];sys.stdin.read()
 work=pathlib.Path(os.environ['THIN_HWA_WORKSPACE']);role=os.environ['THIN_HWA_ROLE']
-job=json.loads((work/'science-task.json').read_text())
+job=json.loads((work/'science-task.json').read_text());step=int(work.name)
 mode=os.environ.get('N3_FIXTURE_MODE','normal')
-step=int(work.name)
-payload={'summary':'Scientific fixture result','scientific_result':'Negative and bounded evidence','limitations':['No scientific effectiveness qualification']}
+payload=dict(summary='Scientific fixture result',scientific_result='Blocked mechanical fixture; no scientific effectiveness claim.',limitations=['No model or scientific qualification'],implementation_selection=None)
 if role=='H':
- payload.update(next_action='experiment',route_reason='Screen the declared mechanism',search_plan={'scope':'Bounded H scope','commitments':[{'label':'Mechanism','minimal_test':'Discriminating measurement','existing_ref':None}],'focus':{'label':'Mechanism','action':'screen','repair_source':None}})
+ payload.update(next_action='experiment',route_reason='Test the declared route',search_plan=dict(scope='Bounded H scope',commitments=[dict(label='Mechanism',minimal_test='Discriminating measurement',existing_ref=None)],focus=dict(label='Mechanism',action='screen')))
+elif role=='W':
+ payload.update(stage_intent='review',mechanism_findings=[dict(mechanism='Mechanism',basis='blocked',finding='This transport fixture runs no managed scientific observation.')])
 elif role=='A':
- payload['progress_assessment']=None
- if 'search' not in job and not job.get('lineage',{}).get('mechanisms',{}).get('count'):
-  payload.update(next_action='finish',route_reason='Legacy policy remains unchanged',candidate_recommendation=None,search_review=None)
- else:
-  if 'search' in job:ref=job['search']['commitments'][0]['mechanism_ref']
-  else:ref=json.loads((work/job['lineage']['indexes']['mechanisms']).read_text())['mechanisms'][0]['mechanism_ref']
-  payload.update(next_action='continue_w' if step==3 else 'finish',route_reason='Evidence warrants this scientific route',candidate_recommendation=None,search_review={'dispositions':[{'mechanism_ref':ref,'status':'screened','reason':'Bounded negative result counts as screening','evidence':['inputs/parents/002/conclusion.json']}] if step==3 else [],'next_focus':{'mechanism_ref':ref,'action':'improve','repair_source':None} if step==3 else None})
-if 'implementation_selection' in job['final_response']:
- payload['implementation_selection']=None
- if payload.get('search_plan'):
-  payload['search_plan']['focus'].pop('repair_source',None)
- if payload.get('search_review'):
-  for item in payload['search_review']['dispositions']:item.pop('evidence',None)
-  if payload['search_review']['next_focus']:payload['search_review']['next_focus'].pop('repair_source',None)
-(work/'artifacts'/'observation.txt').write_text('Original observed candidate evidence')
+ active=bool(job.get('lineage',{}).get('mechanisms',{}).get('count'))
+ again=active and step==3
+ payload.update(next_action='continue_w' if again else 'finish',route_reason='Ask a distinct followup without claiming completed screening',candidate_recommendation=None,progress_assessment=None,portfolio_review=None,
+  search_review=dict(dispositions=[dict(mechanism_ref='h001.m1',status='deferred',reason='Blocked fixture is not screened')],next_focus=dict(mechanism_ref='h001.m1',action='improve')) if again else None,
+  decision_request=dict(decision='mechanism',question='Can a followup resolve the declared obstacle?',change_criterion='A trustworthy discriminating observation would change the mechanism choice') if again else None)
+(work/'artifacts/observation.txt').write_text('Retained mechanical fixture limitation')
 if role=='W':
- (work/'work'/'launches.txt').write_text('one accepted native process')
- if mode=='time':
-  time.sleep(10)
+ (work/'work/launches.txt').write_text('one accepted native process')
+ if mode=='time':time.sleep(10)
  if mode=='tokens':
-  print(json.dumps({'type':'turn.completed','usage':{'input_tokens':101,'cached_input_tokens':100,'output_tokens':1}}),flush=True)
-  time.sleep(10)
-output=pathlib.Path(args[args.index('--output-last-message')+1]);output.write_text(json.dumps(payload))
-print(json.dumps({'type':'turn.completed','usage':{'input_tokens':7,'cached_input_tokens':2,'output_tokens':3}}),flush=True)
+  print(json.dumps(dict(type='turn.completed',usage=dict(input_tokens=101,cached_input_tokens=100,output_tokens=1))),flush=True);time.sleep(10)
+pathlib.Path(args[args.index('--output-last-message')+1]).write_text(json.dumps(payload))
+print(json.dumps(dict(type='turn.completed',usage=dict(input_tokens=7,cached_input_tokens=2,output_tokens=3))),flush=True)
 '''
 
 
@@ -329,12 +399,11 @@ def process_instance(tmp_path, mode='normal'):
     launcher = tmp_path / 'native.py';launcher.write_text(FAKE_NATIVE)
     root = tmp_path / 'instance'
     limits = dict(search.DEFAULT_POLICY)
-    if mode == 'time':
-        limits['max_w_seconds'] = 1.5
-    if mode == 'tokens':
-        limits['max_w_observed_tokens'] = 100
+    if mode == 'time':limits['max_w_seconds'] = 1.5
+    if mode == 'tokens':limits['max_w_observed_tokens'] = 100
     controller.prepare(root, objective, public, [sys.executable, str(launcher)], max_tokens=100_000,
-        max_seconds=60, max_steps=6, model='fixture', reasoning_effort='high', node_budget_mode='hard', search_policy=None if mode == 'legacy' else limits)
+        max_seconds=60, max_steps=6, model='fixture', reasoning_effort='high', node_budget_mode='soft',
+        search_policy=None if mode == 'disabled' else limits)
     return root
 
 
@@ -348,66 +417,68 @@ def test_real_native_five_roles_complete_short_steps_without_root(tmp_path):
     assert controller.run(root) == result
 
 
-@pytest.mark.parametrize('mode', ['time', 'tokens'])
-def test_real_hard_slice_keeps_original_failure_without_a_or_replay(tmp_path, monkeypatch, mode):
-    root = process_instance(tmp_path, mode)
-    monkeypatch.setenv('N3_FIXTURE_MODE', mode)
-    result = controller.run(root)
-    assert result['status'] == 'native_stopped', result
-    record = c.host_record(c.workspace(root, 2))
-    outcome = c.read(record / 'native-outcome.json')
-    assert outcome['stop_reason'] == f'w_slice_{"time" if mode == "time" else "token"}_limit'
-    assert (c.workspace(root, 2) / 'artifacts/observation.txt').is_file()
-    assert not (record / 'result-identity.json').exists()
-    assert not (root / 'jobs/003.json').exists()
-    original = {p: p.read_bytes() for p in [record / 'native-intent.json', record / 'native-outcome.json']}
-    assert controller.run(root)['status'] == 'native_outcome_unsealed'
-    assert all(p.read_bytes() == data for p, data in original.items())
 
 
 def test_utf8_long_scientific_commitments_keep_default_view_bounded(scene):
     value = plan()
-    value['commitments'] = [dict(label='机制' + str(i) + '文' * 30, minimal_test='科学' * 400, existing_ref=None) for i in range(4)]
+    value['scope'] = '原始科学问题与适用条件' * 200
+    value['commitments'] = [dict(label='机制' + str(i) + '文' * 90, minimal_test='科学' * 900, existing_ref=None) for i in range(6)]
     value['focus']['label'] = value['commitments'][0]['label']
     finish(scene, 1, 'H', [], action='experiment', search_choice=value)
+    assert c.validate(c.workspace(scene, 1))['search_plan'] == value
     job = c.build_job(scene, 2, 'W', [1])
-    assert len(json.dumps(job['search']['view'], ensure_ascii=False, indent=2).encode()) <= 4096
-    assert len(json.dumps(job['history']['view'], ensure_ascii=False).encode()) <= 4096
+    packet = c.science_view(job, scene)
+    assert len((json.dumps(packet['lineage'], ensure_ascii=False, indent=2) + '\n').encode()) <= 4096
+    assert len((json.dumps(job['history']['view'], ensure_ascii=False, indent=2) + '\n').encode()) <= 4096
+    assert packet['lineage']['mechanisms']['count'] == 6
+    assert (c.workspace(scene, 2) / packet['lineage']['indexes']['mechanisms']).is_file()
 
 
-def test_missing_h_plan_preserves_science_and_stops_new_w_dispatch(scene, monkeypatch):
-    monkeypatch.setattr(native, 'execute_native', lambda root, step:
-        finish(root, step, 'H', [], action='experiment'))
-    result = controller.run(scene)
-    assert result['status'] == 'search_pending'
-    assert result['reason'] == 'search_focus_required'
-    assert result['completed_steps'] == 1
-    assert not (c.host_record(c.workspace(scene, 2)) / 'native-intent.json').exists()
+def test_a_can_seal_more_than_four_scientific_dispositions_with_full_reasons(scene):
+    value = plan()
+    value['commitments'] = [dict(label=f'Mechanism {index}', minimal_test='Independent comparison', existing_ref=None)
+        for index in range(6)]
+    value['focus']['label'] = value['commitments'][0]['label']
+    finish(scene, 1, 'H', [], action='analyze', search_choice=value)
+    choice = dict(dispositions=[dict(mechanism_ref=f'h001.m{index}', status='deferred',
+        reason='保留尚未测量的机制及其科学限制' * 200) for index in range(1, 7)], next_focus=None)
+    assess(scene, 2, [1], action='finish', search_choice=choice)
+    assert c.validate(c.workspace(scene, 2))['search_review'] == choice
+    state = search.project(scene, 3)
+    assert len(state['mechanisms']) == 6
+    assert {row['status'] for row in state['mechanisms'].values()} == {'deferred'}
+
+
+def test_missing_h_plan_preserves_science_and_stops_w_admission(scene):
+    finish(scene, 1, 'H', [], action='experiment')
+    job = c.build_job(scene, 2, 'W', [1])
+    assert control(scene, 1)['search_status'] == 'unresolved'
+    assert search.launch_reason(scene, job) == 'science_task_action_required'
+    with pytest.raises(ValueError, match='frozen search authorization'):
+        search.accept(scene, job)
+    assert c.validate(c.workspace(scene, 1))['search_plan'] is None
+    assert not (execution.record(scene, 2) / 'native-intent.json').exists()
 
 
 def test_e_route_keeps_requester_and_mechanism_identity(scene, monkeypatch):
     def execute(root, step):
         job = c.read(root / 'jobs' / f'{step:03d}.json')
         parents = [int(Path(row['path']).parts[2]) for row in job['direct_refs']]
-        if step == 1:
-            finish(root, step, 'H', parents, action='extract', search_choice=plan())
+        if step == 1:finish(root, step, 'H', parents, action='extract', search_choice=plan())
         elif step == 2:
             assert job['evidence_return'] == dict(role='H', step=1)
             finish(root, step, 'E', parents)
-        elif step == 3:
-            finish(root, step, 'H', parents, action='experiment', search_choice=plan(existing_ref='h001.m1'))
-        elif step == 4:
-            finish(root, step, 'W', parents)
-        else:
-            finish(root, step, 'A', parents, action='finish', search_choice=review(evidence='inputs/parents/004/conclusion.json'))
+        elif step == 3:finish(root, step, 'H', parents, action='experiment', search_choice=plan(existing_ref='h001.m1'))
+        elif step == 4:worker(root, step, parents)
+        else:assess(root, step, parents, action='finish', search_choice=review())
     monkeypatch.setattr(native, 'execute_native', execute)
     result = controller.run(scene)
     assert result['status'] == 'finish', result
     assert len(search.project(scene, 6)['mechanisms']) == 1
 
 
-def test_old_settings_without_policy_complete_without_search_gates(tmp_path):
-    root = process_instance(tmp_path, 'legacy')
+def test_current_settings_without_policy_complete_without_search_gates(tmp_path):
+    root = process_instance(tmp_path, 'disabled')
     assert 'search_policy' not in c.settings(root)
     result = controller.run(root)
     assert result['status'] == 'finish', result

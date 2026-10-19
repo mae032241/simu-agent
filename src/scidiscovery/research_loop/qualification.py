@@ -32,6 +32,12 @@ def _identity(path):
     return dict(path=str(path), sha256=c.digest(path), size_bytes=path.stat().st_size)
 
 
+def execution_payload(root, material):
+    """Exact native bytes for an unchanged sealed scientific subject."""
+    from . import execution_inputs
+    return execution_inputs.compiled_payload(root,material)
+
+
 def _check(identity):
     if _identity(identity['path']) != identity:
         raise IntegrityError('Source original identity changed')
@@ -134,13 +140,18 @@ def _inputs(root, job):
     edges.extend(dict(kind='declaration', declaration=index) for index, row in enumerate(sources['declarations'])
                  if row['origin'] not in global_origins)
     steps = {int(Path(ref['path']).parts[2]) for ref in job['direct_refs']}
-    for ref in job['direct_refs']:
+    for ref in job.get('direct_originals',job['direct_refs']):
         step = int(Path(ref['path']).parts[2])
         seal = c.read(c.regular(c.host_record(c.workspace(root, step)) / 'result-identity.json'))
         if ref['sha256'] != seal['raw_sha256']:
             raise IntegrityError('Direct source does not name its exact producer original')
     steps.update(row['origin_step'] for row in job.get('selected_inputs', []))
     steps.update(row['step'] for row in job.get('delivery_sources', {}).get('source_nodes', []))
+    review_binding=None
+    if job.get('formal_review'):
+        from . import formal_review
+        review_binding=formal_review.input_binding(root,job['formal_review'])
+        steps.update(review_binding.get('scientific_source_steps',[]))
     repair = job.get('engineering_repair')
     if repair is not None:
         steps.add(repair['source']['step'])
@@ -150,13 +161,22 @@ def _inputs(root, job):
         edges.append(_producer(root, step))
     # A copied material needs membership in an exact bound producer seal. Equal
     # bytes from another path do not establish that membership or its origin.
-    seals = [c.read(root / edge['seal']['path']) for edge in edges if edge['kind'] == 'producer']
+    seals = [(edge['step'], c.read(root / edge['seal']['path'])) for edge in edges if edge['kind'] == 'producer']
     for material in job['direct_materials']:
-        matches = [seal for seal in seals if material in seal['materials']]
-        same_origin = [row for seal in seals for row in seal['materials'] if row['source'] == material['source']]
-        if any(row != material for row in same_origin):
-            raise IntegrityError('Bound material differs from its exact producer original')
+        matches = [(step, seal) for step, seal in seals if material in seal['materials']]
+        same_origin = [(step, row) for step, seal in seals for row in seal['materials'] if row['source'] == material['source']]
+        for step, row in same_origin:
+            if row == material:continue
+            if (len(matches) != 1 or row['path'] == material['path']
+                    or Path(material['source']) != root / 'host-history/objects' / material['sha256']):
+                raise IntegrityError('Bound material differs from its exact producer original')
+            # Shared archive bytes do not merge the logical material identities
+            # or their producers. Verify each alias against its bound owner.
+            c.material_name(c.workspace(root, matches[0][0]), material)
+            c.material_name(c.workspace(root, step), row)
         if len(matches) != 1:
+            if review_binding is not None and material in review_binding.get('compiler_scientific_materials',[]):
+                continue  # Exact compiler author snapshot, verified by input_binding.
             edges.append(dict(kind='unknown', reason='missing_or_ambiguous_material_origin', material=material))
     return dict(version=1, step=job['step'], edges=edges, scope=SCOPE)
 

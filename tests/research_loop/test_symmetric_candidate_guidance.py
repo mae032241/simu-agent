@@ -1,9 +1,13 @@
 """New frozen guidance is delivered without changing execution or legacy tasks."""
 import copy
+import io
+import json
+import os
+from pathlib import Path
 
 import pytest
 
-from scidiscovery.research_loop import contracts as c, controller, guidance, selection
+from scidiscovery.research_loop import budget, contracts as c, controller, execution, guidance, native, runtime, selection
 from test_history_handoff import finish
 from execution_fixtures import execution_registry
 from test_breadth_science import prepare as managed_prepare, h, worker, run, a, findings
@@ -45,6 +49,9 @@ def test_actual_prepared_worker_and_a_views_deliver_symmetric_choice_and_adaptiv
     expected=guidance.OPPORTUNITY if opportunity and supplied is guidance.DEFAULT else supplied
     assert c.settings(root)['role_guidance']==expected
     assert sum(len(text.encode()) for text in expected.values())<=guidance.MAX_BYTES==2560
+    assert 'Compare plausible mechanisms before concentrating' in expected['H']
+    assert 'justify a single-mechanism scope' in expected['H']
+    assert 'unexcluded mechanisms' in expected['H']
     text=worker_view['role_guidance']
     assert text==expected['W']
     assert 'improve allows observation-driven candidate adjustment and continued local search' in text
@@ -79,6 +86,75 @@ def test_no_guidance_fallback_and_custom_frozen_text_preserve_their_actual_assig
             assert 'role_guidance' not in view
             assert view['role_instruction']==guidance.OPPORTUNITY[role]
             assert job['native_role_instruction']==guidance.OPPORTUNITY[role]
+
+
+@pytest.mark.parametrize('custom', [False, True])
+def test_a_breadth_judgment_reaches_actual_native_prompt_with_custom_guidance(tmp_path, monkeypatch, custom):
+    public = tmp_path / 'public'; public.mkdir()
+    objective = public / 'goal.md'; objective.write_text('Compare plausible mechanisms under the original goal.')
+    root = tmp_path / 'instance'
+    advice = {role: 'Custom scientific instruction for ' + role for role in 'HWAE'} if custom else guidance.DEFAULT
+    nodes = {role: dict(max_observed_tokens=10000, max_seconds=120) for role in 'HWAE'}
+    controller.prepare(root, objective, public, ['captured-native'], max_tokens=100000,
+        max_seconds=600, max_steps=4, model='fixture-no-model', reasoning_effort='high',
+        search_policy=None, role_guidance=advice, node_budget_policy=nodes, node_budget_mode='soft')
+    job = c.build_job(root, 1, 'A', [])
+    work = c.workspace(root, 1)
+    task = c.read(work / 'science-task.json')
+    judgment = task['scientific_judgment']
+    for concept in ('before concentrating', 'single-mechanism scope', 'parameter trials',
+            'unexcluded routes, including screened', 'full mechanism index', 'original A reasons',
+            'observed investment and unresolved discriminating questions',
+            'Explain concentration, postponement and exclusion in scientific_result or route_reason',
+            'work/budget-status.json', 'retain declared finite call and stage limits',
+            'Call and cycle counts are not scientific coverage or resource costs',
+            'evidence-supported scientific negative or infeasibility reason',
+            'Temporary relative underperformance', 'deferral rather than scientific rejection'):
+        assert concept in judgment
+    record = execution.origin(root, 1)
+    c.write(record / 'native-intent.json', dict(task_sha256=c.digest(root / 'jobs/001.json'),
+        budget_slice=dict(task_sha256=c.digest(root / 'jobs/001.json'), role='A',
+            boot_id=budget.clock_stamp()['boot_id'], advance_seconds=0., limits=nodes['A'],
+            shared_limits=dict(max_tokens=100000, max_seconds=600), previous_tokens=0, previous_seconds=0.)))
+    c.write(record / 'runner-process.json', dict(fixture='prompt capture only'))
+    prompts = []
+
+    class CaptureInput(io.BytesIO):
+        def write(self, data):
+            prompts.append(data.decode())
+            return super().write(data)
+
+    class CaptureProcess:
+        pid = 999999999
+        returncode = 0
+
+        def __init__(self, args, **kwargs):
+            self.stdin = CaptureInput()
+            read_fd, write_fd = os.pipe()
+            self.stdout = os.fdopen(read_fd, 'rb')
+            try:
+                os.write(write_fd, (json.dumps(dict(type='turn.completed', usage=dict(
+                    input_tokens=7, cached_input_tokens=2, output_tokens=3))) + '\n').encode())
+            finally:
+                os.close(write_fd)
+            c.write(Path(args[args.index('--output-last-message') + 1]), dict(fixture='transport only'))
+
+        def poll(self):
+            return self.returncode
+
+        def wait(self, timeout=None):
+            return self.returncode
+
+    monkeypatch.setattr(native.subprocess, 'Popen', CaptureProcess)
+    monkeypatch.setattr(runtime, 'process_identity', lambda pid, binding: dict(task_sha256=binding))
+    monkeypatch.setattr(runtime, 'process_matches', lambda *args: False)
+    monkeypatch.setattr(runtime, 'cleanup_owned_group', lambda *args: 'observed_group_cleaned')
+    outcome = native.run_native(root, 1)
+    assert outcome['returncode'] == 0 and outcome['stop_reason'] is None
+    assert len(prompts) == 1 and judgment in prompts[0]
+    assert prompts[0].startswith(job['native_role_instruction'])
+    assert task['role_guidance'] == advice['A']
+    assert not (record / 'result-identity.json').exists()  # No scientific verdict was sealed.
 
 
 def test_previously_frozen_native_literal_is_not_rewritten_by_new_defaults(tmp_path,monkeypatch):
@@ -121,5 +197,5 @@ def test_recommendation_does_not_require_proxy_lead_or_proven_target_optimality(
     original=copy.deepcopy(records)
     view=selection.project(records)
     assert view['a_recommended']['candidate_id']==recommended
-    assert view['target_best'] is None and records==original
-    assert view['proxy_highest'][0]['candidate_ids']==['old']
+    assert 'target_best' not in view and records==original
+    assert [row['id'] for row in view['candidate_facts']]==['old','new']

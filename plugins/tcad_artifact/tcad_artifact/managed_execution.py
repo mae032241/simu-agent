@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -188,6 +189,24 @@ class TCADManagedExecution:
             AdapterCapability(HOST_EXECUTION_GATE_KEY, 'execution_authority', HOST_EXECUTION_GATE_SCHEMA, 1,
                 'application/json', e.encoded(dict(HOST_EXECUTION_GATE_CONTRACT)),
                 dict(action='Requires the trusted host factory gate; JSON cannot enable execution')))
+
+    def worker_capabilities(self):
+        """Scientific authoring contracts; complete package schemas stay host-side."""
+        result = []
+        for capability in self.capabilities():
+            if capability.key in {'execution_package', 'native_execution_package'}:
+                continue
+            if capability.key == 'implementation_authoring':
+                snapshot = self.compilation_capability.model_dump(mode='json')
+                content = e.encoded(dict(implementation_schema=TCADImplementation.model_json_schema(),
+                    capability={key: snapshot[key] for key in (
+                        'schema_version', 'profile_id', 'solver_kind', 'launch_name',
+                        'public_arguments', 'public_release_label')}))
+                capability = AdapterCapability(capability.key, capability.kind, capability.schema_id,
+                    capability.payload_schema_version, capability.media_type, content,
+                    capability.public_summary)
+            result.append(capability)
+        return tuple(result)
 
     def compile_implementation(self, source, aliases, output):
         if self.compilation_original is None or self.implementation_inputs is None:
@@ -669,6 +688,86 @@ class TCADManagedExecution:
         return tuple(LocalFileDescriptor.model_validate(item)
                      for item in json.loads(e.read(self.records.directory(call) / 'collected.json'))['outputs'])
 
+    @staticmethod
+    def scientific_outputs(descriptors, *, projection_directory):
+        """Project the verified producer manifest; solver data remain exact originals."""
+        manifests = [item for item in descriptors if item.name == 'tcad_manifest']
+        if len(manifests) != 1:
+            raise e.IntegrityError('Scientific TCAD outputs require one native manifest')
+        manifest = TCADRuntimeManifest.model_validate_json(
+            Path(manifests[0].local_path).read_bytes(), strict=True)
+        TCADManagedExecution._inventory(descriptors, manifest.terminal_state)
+        records = {item.name: item for item in manifest.outputs}
+        result = []
+        scientific_paths, path_bindings, path_references = [], [], {}
+        withheld = 0
+        for descriptor in descriptors:
+            if descriptor.name == 'tcad_manifest':
+                continue
+            record = records.get(descriptor.name)
+            if record is not None and record.output_class == 'transport_derived':
+                withheld += 1
+                continue
+            if re.fullmatch(r'generated_[0-9a-f]{64}', descriptor.name):
+                descriptor = descriptor.model_copy(update={
+                    'name': f'tcad_output_{len(result) + 1:03d}' + Path(record.relative_path).suffix})
+            if record is not None:
+                relative = Path(record.relative_path)
+                if (relative.is_absolute() or relative.as_posix() != record.relative_path
+                        or any(part in {'', '.', '..'} for part in record.relative_path.split('/'))
+                        or '\\' in record.relative_path or '\x00' in record.relative_path):
+                    raise e.IntegrityError('Scientific TCAD output requires a canonical relative scientific path')
+
+                def readable_identity(match):
+                    identity = match.group(0)
+                    if identity not in path_references:
+                        path_references[identity] = f'reference-{len(path_references) + 1:03d}'
+                    return path_references[identity]
+
+                display = '/'.join(re.sub(r'[0-9a-fA-F]{64}', readable_identity, part) for part in relative.parts)
+                row = dict(name=descriptor.name, scientific_path=display,
+                    path_view='exact_relative_path' if display == record.relative_path else 'display_projection')
+                scientific_paths.append(row)
+                path_bindings.append(dict(row, original_name=record.name, original_path=record.relative_path))
+            result.append(descriptor)
+
+        def error_code(message):
+            exact = {'wall_time_exceeded', 'total_storage_exceeded', 'cancelled_before_launch', 'cancelled_by_request'}
+            if message in exact:
+                return message
+            for prefix, code in (
+                    ('required output missing:', 'required_output_missing'),
+                    ('output exceeds declared bound', 'output_bound_exceeded'),
+                    ('total output exceeds job limit', 'total_output_bound_exceeded'),
+                    ('solver produced no generated output files', 'generated_output_missing'),
+                    ('generated output', 'generated_output_collection_error')):
+                if message.startswith(prefix):
+                    return code
+            return 'native_execution_error' if message else None
+
+        facts = dict(view='tcad.scientific-execution-facts.v2', terminal_state=manifest.terminal_state,
+            exit_code=manifest.exit_code, solver_exit_code=manifest.solver_exit_code,
+            error_present=bool(manifest.error), error_code=error_code(manifest.error),
+            collection_error_count=len(manifest.collection_errors),
+            collection_error_codes=[error_code(item) for item in manifest.collection_errors],
+            withheld_control_output_count=withheld, outputs=scientific_paths)
+        projection_directory = Path(projection_directory)
+        if (not projection_directory.is_absolute() or projection_directory.resolve() != projection_directory
+                or not projection_directory.is_dir()):
+            raise e.IntegrityError('Scientific TCAD projection requires its explicit canonical host directory')
+        directory = _directory(projection_directory / 'tcad/v2' / manifests[0].sha256)
+        path = directory / 'tcad_execution_facts.json'
+        if path.resolve() != path or path.is_symlink():
+            raise e.IntegrityError('Scientific TCAD facts changed their host namespace')
+        _write_original(path, facts)
+        _write_original(directory / 'private-scientific-path-bindings.json',
+            dict(manifest_sha256=manifests[0].sha256, outputs=path_bindings))
+        path.chmod(0o440)
+        original = _proof(path)
+        result.append(LocalFileDescriptor(name='tcad_execution_facts.json', local_path=str(path),
+            sha256=original['sha256'], size_bytes=original['size_bytes'], media_type='application/json'))
+        return tuple(result)
+
     def collect(self, external):
         return self.collect_original(self._external_call(external))
 
@@ -725,4 +824,5 @@ def build_managed_runtime(context):
         operation_context=getattr(services, 'operation_context', None))})
 
 
-REGISTRATION = ExecutionInterfaceRegistration('tcad_execution', '1', RuntimePluginFactory(build_managed_runtime))
+REGISTRATION = ExecutionInterfaceRegistration('tcad_execution', '1', RuntimePluginFactory(build_managed_runtime),
+    scientific_outputs=TCADManagedExecution.scientific_outputs)

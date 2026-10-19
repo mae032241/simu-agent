@@ -19,7 +19,7 @@ def cold(tmp_path, monkeypatch):
     public=tmp_path/'public';public.mkdir();objective=public/'objective.md';objective.write_text('Preserve a complete sealed scientific instance.')
     root=tmp_path/'instance'
     controller.prepare(root,objective,public,[sys.executable],max_tokens=2000,max_seconds=60,max_steps=4,
-        model='fixture',reasoning_effort='high',search_policy=None,experiment_mode='external',node_budget_mode='hard')
+        model='fixture',reasoning_effort='high',search_policy=None,experiment_mode='external',node_budget_mode='soft')
     seal=c.seal_result
     def cleaned(root,step):
         path=c.host_record(c.workspace(root,step))/'native-outcome.json'

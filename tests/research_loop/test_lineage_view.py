@@ -111,7 +111,7 @@ def test_thousand_node_multibyte_brief_bounds_every_lineage_domain():
     candidates=dict(candidate_index=[dict(id=f'candidate-{i}') for i in range(4096)],coverage=dict(status='partial',note='尚未确认'*64),
         current_candidate=dict(candidate_id='candidate-1',observed_at=999),a_recommended=dict(candidate_id='candidate-2',author_step=999),
         actual_submission=dict(candidate_id='candidate-3',observed_at=998,retention='unknown'),
-        proxy_highest=[dict(id=f'candidate-{i}',evaluation_key='公开评估'*128,metric=.5,direction='max') for i in range(8)],proxy_groups_omitted_count=20)
+        candidate_facts=[dict(id=f'candidate-{i}',evaluation_key='公开评估'*128,metric=.5,direction='max',status='ok') for i in range(8)],candidate_facts_omitted_count=20)
     state=dict(focus=dict(mechanism_ref='h001.m1',action='screen',repair_source=None),mechanisms={f'h001.m{i}':dict(status='pending') for i in range(1000)})
     value=lineage.brief(records,state,dict(relations=[{}]*1000,coverage='partial'),candidates,
         dict(nodes='inputs/history/pages/0001.json',candidates='inputs/history/candidates/0001.json',mechanisms='inputs/lineage/mechanisms/0001.json',relations='inputs/lineage/relations/0001.json'))

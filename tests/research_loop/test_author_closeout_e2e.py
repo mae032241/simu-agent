@@ -1,0 +1,192 @@
+"""Real rootless fake-native closeout and audits; no model requests or training."""
+import importlib.metadata
+import json
+from pathlib import Path
+import subprocess
+import sys
+
+import pytest
+
+from execution_fixtures import execution_registry
+from scidiscovery.research_loop import budget,candidate_audit,contracts as c,controller,cov_lineage,execution,native
+from scidiscovery.research_loop.protocol import CURRENT
+from scidiscovery.research_loop.experiment_client import record_directory,resolve
+from test_cov_delivery_lineage import managed_scene
+
+
+FAKE=r'''import json,os,pathlib,subprocess,sys
+args=sys.argv[1:];sys.stdin.read();work=pathlib.Path(args[args.index('-C')+1])
+task=json.loads((work/'science-task.json').read_text());home=pathlib.Path(os.environ['CODEX_HOME'])
+thread='99999999-2222-4333-8444-555555555555'
+session=home/'sessions/current.jsonl';session.parent.mkdir(parents=True,exist_ok=True)
+session.write_text(json.dumps(dict(type='session_meta',payload=dict(id=thread,cwd=str(work))))+'\n')
+print(json.dumps(dict(type='thread.started',thread_id=thread)),flush=True)
+denied=subprocess.run(['exp','run','--script','never.py'],capture_output=True,text=True)
+assert denied.returncode==2 and json.loads(denied.stdout)['accepted'] is False,(denied.stdout,denied.stderr)
+payload=dict(summary='Synthetic author interpretation',scientific_result='Transport fixture only, no scientific efficacy claim.',
+ limitations=['Fake native; historical metering remains unknown.'],implementation_selection=None)
+if task['role']=='W':
+ projection=work.parents[2]/'native-evidence'/work.name/'experiment-config.json'
+ assert not projection.exists(), 'Private execution projection exposed to science view'
+ for mutate in (lambda:projection.write_text('{}'),lambda:projection.chmod(0o600),lambda:projection.unlink()):
+  try:mutate()
+  except OSError:pass
+  else:raise AssertionError('Retained execution projection writable')
+ facts=json.loads((work/'work/author-closeout-science.json').read_text());assert len(facts['calls'])==2
+ assert not (work/'work/author-closeout-facts.json').exists()
+ assert 'source_sha256' not in json.dumps(facts) and 'model_sha256' not in json.dumps(facts)
+ payload.update(stage_intent='review',mechanism_findings=None)
+ (work/'artifacts/author.md').write_text('Independent synthetic author final contribution; no new experiment.')
+ if MODE=='unknown':raise SystemExit(7)
+ if MODE=='wall':
+  import time
+  print(json.dumps(dict(type='turn.completed',usage=dict(input_tokens=7,cached_input_tokens=2,output_tokens=3))),flush=True)
+  time.sleep(30)
+else:
+ assert task['role']=='A'
+ step=int(work.name);choice='run-1'
+ payload.update(next_action='deliver',candidate_recommendation=choice,
+  route_reason='Synthetic audit or delivery authorization',search_review=None,progress_assessment=None,
+  decision_request=None,portfolio_review=None)
+pathlib.Path(args[args.index('--output-last-message')+1]).write_text(json.dumps(payload))
+print(json.dumps(dict(type='turn.completed',usage=dict(input_tokens=100 if MODE=='over' and task['role']=='W' else 7,cached_input_tokens=2,output_tokens=3))),flush=True)
+'''
+
+
+
+def assert_original_delivery(root):
+    actions=budget.closeout_state(root)['actions']
+    assert [row['intent']['action_kind'] for row in actions]==['submit','confirm']
+    assert all(row['outcome']['result']['status']=='confirmed' for row in actions)
+    assert actions[0]['intent']['binding']['source'].get('audit_required',True)
+    assert len({row['intent']['operation_id'] for row in actions})==1
+    for row,phase in ((actions[0],'audit'),(actions[0],'promote'),(actions[1],'confirm')):
+        intent=row['intent']
+        process=c.read(root/'host-delivery/action-processes'/(intent['action_id']+'-'+phase+'.json'))
+        assert (process['action_id'],process['operation_id'],process['phase'])==(intent['action_id'],intent['operation_id'],phase)
+        assert process['identity']['task_sha256']==intent['operation_id']
+    assert list(candidate_audit.facts(root))==[]  # FINAL uses the original host audit, without another scientific A.
+    assert c.read(root/'jobs/003.json')['final_only'] and not (root/'jobs/004.json').exists()
+    assert c.read(root/'runs/submitted.json')['run_id']==1
+
+
+def scene(tmp_path,monkeypatch,mode):
+    probe=subprocess.run([sys.executable,'-I','-c',f'from pathlib import Path;from scidiscovery.research_loop import contracts as c;from scidiscovery.research_loop.protocol import CURRENT;assert CURRENT=={CURRENT};assert Path(c.__file__).resolve()==Path({str(Path("src/scidiscovery/research_loop/contracts.py").resolve())!r})'],capture_output=True,text=True)
+    if probe.returncode:pytest.skip('Exact source bridge or current installed interpreter required for real rootless entry')
+    repo=Path(__file__).resolve().parents[2];config=tmp_path/'launcher.json'
+    launcher=[sys.executable,str(repo/'scripts/acceptance/rootless_cov_launcher.py'),'--config',str(config),'--']
+    fake=tmp_path/'fake-codex';fake.write_text('#!'+sys.executable+'\nMODE='+repr(mode)+'\n'+FAKE);fake.chmod(0o555)
+    original_prepare=controller.prepare
+    def prepare(*args,**kwargs):
+        kwargs.update(max_steps=5,node_budget_mode='soft')
+        return original_prepare(*args,**kwargs)
+    monkeypatch.setattr(controller,'prepare',prepare)
+    import test_cov_delivery_lineage as managed
+    old_finish=managed.finish
+    def unfinished(root,step,role,parents,*args,**kwargs):
+        if step!=2:return old_finish(root,step,role,parents,*args,**kwargs)
+        # managed_scene needs a descriptor slot; no scientific W output is made.
+        c.write(execution.origin(root,2)/'result-identity.json',dict(fixture='unsealed W slot'))
+    monkeypatch.setattr(managed,'finish',unfinished)
+    root,*_=managed_scene(tmp_path,launcher=launcher,audit=True)
+    origin=execution.origin(root,2);(origin/'result-identity.json').unlink()
+    meter=dict(input_tokens=17,cached_input_tokens=2,output_tokens=3)
+    observation=dict(coverage='unknown',reason='terminal_usage_unreported',thread_id='old-fixture-thread',tokens=meter)
+    c.write(origin/'usage.json',meter);c.write(origin/'usage-observation.json',observation)
+    (origin/'native.jsonl').write_text('{"type":"thread.started"}\n')
+    policy=c.settings(root)['node_budget_policy']['W']
+    report=dict(role='W',advance_seconds=1.,**meter,observed_tokens=20,dispatches=1,limits=policy,usage_observed=True)
+    c.write(origin/'native-outcome.json',dict(returncode=-15,stop_reason='token_limit',cleanup='observed_group_cleaned',
+        metering=observation,thread_id='old-fixture-thread',budget_slice=report,usage=dict(unknown_steps=[2])))
+    receipt=dict(pid=999999999,start_ticks=1,pgid=999999999,sid=999999999,ppid=1,
+        boot_id=budget.clock_stamp()['boot_id'],task_sha256=c.digest(root/'jobs/002.json'))
+    for name in ('runner-process.json','native-process.json'):c.write(origin/name,receipt)
+    session=root/'native-homes/002/sessions/old.jsonl';session.parent.mkdir(parents=True)
+    session.write_text(json.dumps(dict(type='session_meta',payload=dict(id='old-fixture-thread',cwd=str(c.workspace(root,2)))))+'\n')
+    public=tmp_path/'public-eight';harness=public/'environment/harness';harness.mkdir(parents=True)
+    for name in ('exp_cli.py','runner.py','train.csv','val.csv','meta.json'):
+        (harness/name).write_bytes((tmp_path/'public/harness'/name).read_bytes())
+    (public/'instruction.md').write_text('Synthetic retained-call author closeout.')
+    (public/'task.toml').write_text('fixture=true\n');(public/'environment/Dockerfile').write_text('FROM fixture\n')
+    manifest=tmp_path/'public-manifest.json'
+    c.write(manifest,dict(task_revision='d78f5eb52ad754c5ee9154741af73130a85a65b8',
+        public_files_sha256={p.relative_to(public).as_posix():c.digest(p) for p in public.rglob('*') if p.is_file()}))
+    python=str(Path(sys.executable).absolute());metadata=Path(importlib.metadata.distribution('scidiscovery').locate_file('')).resolve()
+    sites=[str(Path(p).resolve()) for p in sys.path if Path(p).name in ('site-packages','dist-packages') and Path(p).is_dir()]
+    runtime_paths=list(dict.fromkeys([sys.base_prefix,str(Path(python).parent.parent),str(Path(c.__file__).resolve().parents[2]),str(metadata),*sites]))
+    codehost=Path('/usr/bin/true').resolve()
+    c.write(config,dict(scene_root=str(root),public_root=str(public),public_manifest=str(manifest),
+        runs_dir=str(root/'runs'),submission_dir=str(root/'submission'),native=str(fake),native_sha256=c.digest(fake),
+        code_mode_host=dict(path=str(codehost),sha256=c.digest(codehost)),task_python=python,scid_python=python,
+        runtime_paths=runtime_paths,model='fixture',reasoning_effort='high',profile='closeout-no-model',cov_receipt_channel='backend_file'))
+    projection=origin/'experiment-config.json';original=projection.read_bytes();frozen=c.read(projection)
+    configured=c.workspace(root,2)/'work/lineage-config.json'
+    cov_lineage.configure(root,2,frozen['run_argv'],Path(frozen['runs_root']),configured,
+        receipt_channel=frozen['receipt_channel'],
+        engineering_check_reserve_seconds=frozen.get('engineering_check_reserve_seconds',0))
+    assert resolve(configured,c.read(configured))==frozen
+    assert projection.read_bytes()==original
+    budget.amend(root,max_tokens=200000,max_steps=24,authorization_note='Finite synthetic recovery.',authorization_statement='Finish the retained task.')
+    return root,origin
+
+
+@pytest.mark.parametrize('mode',['success','unknown','over','wall'])
+def test_fresh_author_closeout_seals_and_audits_or_preserves_failed_attempt(tmp_path,monkeypatch,execution_registry,mode):
+    root,origin=scene(tmp_path,monkeypatch,mode)
+    old=(origin/'native-outcome.json').read_bytes();settings=(root/'settings.json').read_bytes()
+    calls=record_directory(root,2)/'calls'
+    originals={p:p.read_bytes() for p in calls.rglob('*') if p.is_file()}
+    if mode in {'success','over'}:
+        target_tokens=5 if mode=='over' else 1000
+        result=controller.worker_closeout(root,2,max_tokens=target_tokens,max_seconds=20,authorization_note='One fresh author-only interpretation, no experiment retry.')
+        if result['status']!='delivery_confirmed':
+            diagnostics={str(p.relative_to(root)):p.read_text(errors='replace')[-16384:]
+                for p in (root/'native-evidence/003').glob('*')
+                if p.is_file() and p.name in ('native.stderr','runner.stderr','native.jsonl','native-outcome.json')}
+            pytest.fail(json.dumps(dict(result=result,diagnostics=diagnostics),ensure_ascii=False,indent=2))
+        assert c.validate(c.workspace(root,2))['stage_intent']=='review'
+        outcome=c.read(origin/'continuations/001/native-outcome.json')
+        assert outcome['returncode']==0 and outcome['stop_reason'] is None
+        if mode=='over':
+            assert c.read(origin/'continuations/001/usage.json')['input_tokens']==100
+            assert c.read(root/'host-recovery/author-closeout/002.json')['max_tokens']==5
+        assert_original_delivery(root)
+        assert len(execution.records(root,2))==2 and not (origin/'continuations/002').exists()
+        intents={p:p.read_bytes() for p in origin.rglob('native-intent.json')}
+        from scidiscovery.research_loop import runtime,delivery
+        with monkeypatch.context() as repeat:
+            repeat.setattr(runtime,'start',lambda *a,**kw:pytest.fail('Confirmed closeout cannot dispatch another native attempt'))
+            repeat.setattr(delivery,'invoke',lambda *a,**kw:pytest.fail('Confirmed closeout cannot repeat host submission'))
+            assert controller.worker_closeout(root,2,max_tokens=target_tokens,max_seconds=20,authorization_note='One fresh author-only interpretation, no experiment retry.')['status']=='delivery_confirmed'
+        assert all(p.read_bytes()==raw for p,raw in intents.items())
+        assert budget.used_steps(root)>5 and budget.effective_max_steps(root)==24
+        assert c.settings(root).get('resume_policy') is None
+        assert native.usage(root)['unknown_steps']==[2]
+        assert native.usage(root)['blocking_unknown_steps']==[]
+        projection=origin/'continuations/001/experiment-config.json'
+        assert projection.read_bytes()==(origin/'experiment-config.json').read_bytes()
+        seal=c.read(origin/'result-identity.json')
+        observed=c.read(root/seal['observations']['path'])
+        assert len(observed['managed_calls'])==2
+        assert {row['id'] for row in observed['candidates']}=={'run-1','run-2'}
+        assert len(observed['contexts'])==2 and all(row['status']=='known_success' for row in observed['contexts'])
+        projection.chmod(0o600);projection.write_bytes(b'{}\n')
+        from scidiscovery.research_loop import author_closeout
+        with pytest.raises(ValueError,match='retained execution projection changed'):
+            author_closeout.require_intent_eligibility(root,c.read(root/'jobs/002.json'),c.read(origin/'continuations/001/native-intent.json'))
+        projection.write_bytes((origin/'experiment-config.json').read_bytes());projection.chmod(0o400)
+    else:
+        with pytest.raises((ValueError,RuntimeError)):
+            controller.worker_closeout(root,2,max_tokens=1000,max_seconds=3 if mode=='wall' else 20,authorization_note='One finite negative-control author attempt.')
+        assert not (origin/'result-identity.json').exists()
+        assert not (root/'jobs/003.json').exists()
+        if mode=='unknown':
+            assert native.usage(root)['unknown_steps']==[2]
+            assert native.usage(root)['blocking_unknown_steps']==[]
+        if mode=='wall':
+            outcome=c.read(origin/'continuations/001/native-outcome.json')
+            assert outcome['stop_reason']=='author_closeout_wall_limit'
+            assert outcome['cleanup']=='observed_group_cleaned'
+    assert len(execution.records(root,2))==2
+    assert (origin/'native-outcome.json').read_bytes()==old and (root/'settings.json').read_bytes()==settings
+    assert originals=={p:p.read_bytes() for p in calls.rglob('*') if p.is_file()}

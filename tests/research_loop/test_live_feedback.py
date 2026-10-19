@@ -63,7 +63,7 @@ def test_running_call_is_visible_before_w_or_call_finishes_and_queries_are_reado
 
 
 @pytest.mark.parametrize('name', ['accepted.json', 'completed.json', 'process.json'])
-def test_torn_metadata_is_unknown_not_success_and_never_reconciled(wrapper, name):
+def test_torn_metadata_never_proves_success_or_reconciles_originals(wrapper, name):
     result = wrapper.run('initial', 'success', '--new-plan')
     directory = wrapper.directory(result)
     if name in {'accepted.json', 'process.json'}:
@@ -72,10 +72,19 @@ def test_torn_metadata_is_unknown_not_success_and_never_reconciled(wrapper, name
     path.chmod(0o600)
     path.write_text('{')
     before = {p: p.read_bytes() for p in directory.iterdir() if p.is_file()}
-    value = wrapper.cli('lineage-status')
-    assert value['calls'][0]['status'] == 'unknown' and value['counts']['known_success'] == 0
-    assert value['coverage'] == 'partial' and value['calls'][0]['candidate_id'] is None
-    assert before == {p: p.read_bytes() for p in before}
+    if name == 'accepted.json':
+        # Without a readable accepted binding, CURRENT cannot resolve even the
+        # call's original configuration; it supplies no per-call observation.
+        value = wrapper.cli('lineage-status', expected=2)
+        assert value['status'] == 'unresolved'
+        assert not {'calls', 'counts', 'coverage', 'candidate_id'} & value.keys()
+        assert value['feedback']['budget']['inflight_usage_unknown'] is True
+    else:
+        value = wrapper.cli('lineage-status')
+        assert value['calls'][0]['status'] == 'unknown' and value['counts']['known_success'] == 0
+        assert value['coverage'] == 'partial' and value['calls'][0]['candidate_id'] is None
+    assert before == {p: p.read_bytes() for p in directory.iterdir() if p.is_file()}
+    assert [p.name for p in directory.parent.iterdir()] == [directory.name]
 
 
 def test_pid_mismatch_without_completion_is_unknown_not_running(wrapper):
@@ -254,7 +263,7 @@ def test_tool_malformed_live_metadata_is_bounded_integrity_error(wrapper, name, 
 
 
 @pytest.mark.parametrize('name', ['accepted.json', 'completed.json', 'process.json'])
-def test_tool_torn_utf8_live_metadata_stays_unknown(wrapper, name):
+def test_tool_torn_utf8_live_metadata_is_unresolved_or_unknown(wrapper, name):
     result = wrapper.run('public-candidate', 'success', '--new-plan')
     directory = wrapper.directory(result)
     if name != 'completed.json':
@@ -262,9 +271,17 @@ def test_tool_torn_utf8_live_metadata_stays_unknown(wrapper, name):
     path = directory / name
     path.write_bytes(b'\xff')
     before = {p: p.read_bytes() for p in directory.iterdir() if p.is_file()}
-    value = wrapper.cli('lineage-status')
-    assert value['counts']['unknown'] == 1 and value['calls'][0]['candidate_id'] is None
-    assert before == {p: p.read_bytes() for p in before}
+    if name == 'accepted.json':
+        value = wrapper.cli('lineage-status', expected=2)
+        assert value['status'] == 'unresolved'
+        assert not {'calls', 'counts', 'coverage', 'candidate_id'} & value.keys()
+        assert value['feedback']['budget']['inflight_usage_unknown'] is True
+    else:
+        value = wrapper.cli('lineage-status')
+        assert value['counts']['unknown'] == 1 and value['counts']['known_success'] == 0
+        assert value['coverage'] == 'partial' and value['calls'][0]['candidate_id'] is None
+    assert before == {p: p.read_bytes() for p in directory.iterdir() if p.is_file()}
+    assert [p.name for p in directory.parent.iterdir()] == [directory.name]
 
 
 @pytest.mark.parametrize('intent', [[], None, 1, 'invalid'])

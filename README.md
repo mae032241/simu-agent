@@ -8,6 +8,16 @@ sealed scientific results and recovery of known calls. Scientific Workers own mo
 choices and conclusions; deterministic control owns identities, input bindings,
 qualification checks, budgets and execution permissions.
 
+Candidate metrics, audit receipts and availability are evidence for the scientific
+author. Control preserves observed order and every candidate; A explicitly names
+its delivery choice and explains it with bound evidence. Control supplies no
+scientific ranking or default choice.
+
+Local candidates require an exact retained artifact; measurements and scientific
+metadata may be absent. Optional descriptions and comparison tables do not grant
+or gate delivery. Invalid individual declarations retain their originals and
+receive local diagnostics; previews link full retained content.
+
 This is an engineering prototype. A successful command or solver run supports only
 the claims established by its exact inputs, experiment and validation contract.
 
@@ -45,8 +55,35 @@ To start research, prepare a new instance with an objective file, public inputs,
 an explicit native launcher and finite token, time and step ceilings. Then run
 and inspect that exact instance. The [CLI guide](docs/ROOTLESS_CLI.zh-CN.md)
 contains commands, policy examples, result retrieval and recovery rules.
+A single `codex` launcher defaults to local experiments: the native host handles
+ordinary-file submissions during W and returns responses automatically. Managed
+local commands require a supported native permission projection; see the
+[CLI guide](docs/ROOTLESS_CLI.zh-CN.md) for prerequisites and explicit unsupported
+cases. External execution remains owned by its declared launcher.
 Execution requires its own frozen configuration and authorization. Research
 budgets, independent review and user statements do not grant execution permission.
+
+All H/W/A/E node token budgets are soft targets: reaching a target requests a bounded conclusion and A review before new W experiments, while the original node can finish. Actual input plus output is fully accounted; no whole-node token allocation is prepaid. Current protocol 23 accepts only soft node settings; older instances remain read-only without rewriting their frozen settings. Finite execution time, permissions and cleanup limits remain enforced.
+
+New instances freeze a final-A completion policy with one A per FINAL cycle: insufficient, zero or
+exceeded shared token, time or step budgets do not deny the final A's admission,
+completion or its own authorized delivery. Missing or unreconciled billing alone
+also cannot block its verified terminal return or that delivery: unknown usage stays
+unknown and is never replaced with a zero meter. A completed native event, zero exit
+and confirmed cleanup remain required. Observed usage remains accounted without
+raising the shared ceilings; original finite per-call time, permissions and other
+execution limits still apply. After an explicit threshold increase, the next run may resume the saved pending normal route when its full admission is affordable and original effects are known and quiescent. New physical IDs preserve prior final outputs, submissions and all consumption; a later budget denial begins another FINAL cycle. See the [architecture](docs/ARCHITECTURE.md).
+
+Workers write ordinary scientific files and use the thin experiment submission and
+wait interface. Their instructions add no hash calculation, comparison, verification
+or hash inventories. Control performs those checks automatically and retains
+the mechanical bindings privately on the host.
+
+The operator evidence exporter keeps default omission metadata within 8 KiB and
+links to complete scientific details in pages of at most 16 KiB. This limit applies
+to omissions, not the entire evidence index. Details describe missing materials;
+`not_available_in_this_view` does not provide the omitted originals. See the
+[architecture](docs/ARCHITECTURE.md) for the reading entry points.
 
 ## Documentation and development
 
@@ -67,6 +104,9 @@ usage and behavior are defined by the code and current reference documents.
 ## Boundaries
 
 Workers and same-user host processes are trusted: control provides a soft boundary.
+The default managed local subprocess and an explicit science launcher provide
+their declared file views; generic native execution has no blanket physical-isolation
+guarantee. Network access follows the selected frozen native permissions.
 Browser behavior, real native continuation, TCAD solvers and power-loss recovery
 need evidence for the exact candidate and environment. Source tests do not establish
 that qualification. Full cross-host disaster recovery is outside current support.

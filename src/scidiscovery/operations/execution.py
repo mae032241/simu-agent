@@ -44,12 +44,18 @@ class LifecycleCapabilities:
             raise ValueError('Lifecycle capabilities require explicit boolean declarations')
 
 
+class ScientificOutputProjection(Protocol):
+    def __call__(self, descriptors: tuple[LocalFileDescriptor, ...], *,
+                 projection_directory: Path) -> tuple[LocalFileDescriptor, ...]: ...
+
+
 @dataclass(frozen=True)
 class ExecutionInterfaceRegistration:
     """CLI discovery of the existing runtime factory contract; no daemon startup."""
     plugin_id: str
     version: str
     factory: RuntimePluginFactory
+    scientific_outputs: ScientificOutputProjection | None = None
 
 
 class ExecutionAdapter(Protocol):

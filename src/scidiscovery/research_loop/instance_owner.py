@@ -126,18 +126,15 @@ def effect(function):
 
 def configuration_root(config):
     """Only the original host task namespace, never a guessed ancestor."""
-    path = Path(config['record_dir'])
-    if path.parts[-5:-3] != ('project', 'nodes') or path.parts[-2:] != ('work', 'lineage'):
+    from . import contracts as c, experiment_client
+    root = experiment_client.root_for_configuration(config, allow_standalone=True)
+    if root is None:
         return None
-    if not path.parts[-3].isdecimal() or path.resolve() != path:
-        raise files.ArchiveError('Managed execution owner namespace changed')
-    root = path.parents[4]
-    from . import contracts as c
-    job_path = root / 'jobs' / (path.parts[-3] + '.json')
+    scope = config['scope']
+    job_path = root / 'jobs' / f'{scope["step"]:03d}.json'
     job = c.read(c.regular(job_path))
-    scope = config.get('scope') or {}
-    if (job['step'] != int(path.parts[-3]) or scope.get('step') != job['step']
-            or scope.get('role') != job['role'] or scope.get('job_sha256') != c.digest(job_path)):
+    if (scope.get('step') != job['step'] or scope.get('role') != job['role']
+            or scope.get('job_sha256') != c.digest(job_path)):
         raise files.ArchiveError('Managed execution owner lost its original job')
     return root
 

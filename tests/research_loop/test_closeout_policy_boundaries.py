@@ -59,31 +59,31 @@ work=pathlib.Path(os.environ['THIN_HWA_WORKSPACE'])
 root=pathlib.Path(os.environ['THIN_HWA_JOB_MANIFEST']).parents[1]
 task=json.loads((work/'science-task.json').read_text())
 assert not (root/'submission/model.pkl').exists()
-table=task['closeout']['comparison'];default=table['default']['candidate_id']
-assert default=='run-2' and len(table['rows'])==3
-chosen='run-3' if OVERRIDE else default
+table=task['closeout']['comparison']
+assert 'default' not in table and len(table['rows'])==3
+chosen='run-3' if ALTERNATIVE else 'run-2'
 comparison=dict(rows=[dict(candidate_id=r['candidate_id'],key_risk='Fixture public evidence only',decision='keep' if r['candidate_id']==chosen else 'replace') for r in table['rows']],
- override=dict(default_candidate=default,chosen_candidate=chosen,reason='Original W observation supports the explicit alternative',evidence_steps=[2]) if OVERRIDE else None)
+ rationale='Original W observation supports the explicit choice',evidence_steps=[2])
 payload=dict(summary='Compare frozen policy screen',scientific_result='Bounded public choice; target performance remains unknown.',limitations=['Fixture only'],
  implementation_selection=None,search_review=None,progress_assessment=None,decision_request=None,portfolio_review=None,
- next_action='deliver',route_reason='Explicit choice after policy screening',candidate_recommendation=chosen if OVERRIDE else None,candidate_comparison=comparison)
+ next_action='deliver',route_reason='Explicit choice after policy screening',candidate_recommendation=chosen,candidate_comparison=comparison)
 pathlib.Path(args[args.index('--output-last-message')+1]).write_text(json.dumps(payload))
 print(json.dumps(dict(type='turn.completed',usage=dict(input_tokens=7,cached_input_tokens=2,output_tokens=3))),flush=True)
 '''
 
 
-@pytest.mark.parametrize('override',[False,True])
-def test_ordinary_deliver_with_selection_policy_cannot_bypass_frozen_comparison(tmp_path,override):
-    launcher=tmp_path/'author.py';launcher.write_text('OVERRIDE='+repr(override)+'\n'+AUTHOR)
+@pytest.mark.parametrize('alternative',[False,True])
+def test_ordinary_deliver_with_selection_policy_cannot_bypass_frozen_comparison(tmp_path,alternative):
+    launcher=tmp_path/'author.py';launcher.write_text('ALTERNATIVE='+repr(alternative)+'\n'+AUTHOR)
     root=selection_scene(tmp_path,launcher=[sys.executable,str(launcher)],author_action='deliver')
     result=command(root,'run')
     assert result['status']=='delivery_confirmed',result
-    assert result['last_confirmed']['candidate_id']==('run-3' if override else 'run-2')
+    assert result['last_confirmed']['candidate_id']==('run-3' if alternative else 'run-2')
     jobs=[c.read(p) for p in sorted((root/'jobs').glob('*.json'))]
     assert [j['role'] for j in jobs]==['H','W','A','A']
     assert jobs[2].get('purpose') is None and jobs[3]['purpose']=='closeout'
     assert jobs[3]['selection']==shortlist.marker(root) and jobs[3].get('author_correction') is None
-    assert shortlist.calls(root)==4 and len(budget.closeout_state(root)['actions'])==2
+    assert not list((root/'host-delivery/selection').rglob('*.intent.json')) and len(budget.closeout_state(root)['actions'])==2
     assert c.read(c.workspace(root,3)/'science-task.json')['delivery_selection']
     assert command(root,'run')['status']=='delivery_confirmed'
     assert len(list((root/'jobs').glob('*.json')))==4
@@ -94,4 +94,4 @@ def test_ordinary_deliver_without_selection_policy_keeps_direct_three_node_path(
     root=selection_scene(tmp_path,policy=None,launcher=[sys.executable,str(launcher)],author_action='deliver')
     result=command(root,'run')
     assert result['status']=='delivery_confirmed' and result['last_confirmed']['candidate_id']=='run-3',result
-    assert len(list((root/'jobs').glob('*.json')))==3 and shortlist.calls(root)==0
+    assert len(list((root/'jobs').glob('*.json')))==3 and not list((root/'host-delivery/selection').rglob('*.intent.json'))

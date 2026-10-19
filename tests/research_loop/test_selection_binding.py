@@ -33,22 +33,39 @@ def test_new_job_freezes_selection_and_null_a_is_not_an_old_recommendation(tmp_p
     later=c.build_job(root,6,'H',[5]);view=c.science_view(later,root)['lineage']['candidates']
     assert view['selection_protocol']==1 and view['a_recommended'] is None
     assert view['historical_a_recommendation']['candidate_id']=='P'
-    assert view['target_best'] is None and view['delivery']['state']=='unknown'
+    assert 'target_best' not in view and view['delivery']['state']=='unknown'
     assert 'role_guidance' not in c.result_schema('A',job['handoff_protocol'])['properties']
     assert sum(len(text.encode()) for text in c.settings(root)['role_guidance'].values())<=guidance.MAX_BYTES
 
 
-def test_old_t2_t3_job_marker_and_literal_do_not_follow_current_defaults(tmp_path,monkeypatch):
+def test_current_selection_literal_stays_frozen_when_future_default_changes(tmp_path,monkeypatch):
     old_advice={**guidance.DEFAULT,'A':'Previously frozen scientific advice, unchanged by new rules.'}
     root=prepare(tmp_path,selection_protocol=None,advice=old_advice)
     finish(root,1,'H',[]);finish(root,2,'W',[1]);job,work,record=finish(root,3,'A',[2],recommendation='P')
-    assert 'selection_protocol' not in job and 'selection_protocol' not in c.settings(root)
+    # A null compatibility argument still freezes the current settings/job marker.
+    assert c.settings(root)['selection_protocol']==job['selection_protocol']==1
     assert job['role_guidance']==old_advice['A']
     originals={p:p.read_bytes() for p in (root/'settings.json',root/'jobs/003.json',work/'science-task.json',record/'science-output.json',record/'result-identity.json')}
     monkeypatch.setitem(guidance.DEFAULT,'A','Changed future default')
-    c.build_job(root,3,'A',[2]);c.validate(work)
-    assert 'selection_protocol' not in c.science_view(job,root)['lineage']['candidates']
+    assert c.build_job(root,3,'A',[2])==job
+    c.validate(work)
+    assert c.science_view(job,root)['lineage']['candidates']['selection_protocol']==1
     assert all(p.read_bytes()==data for p,data in originals.items())
+
+
+def test_marker_absent_unaccepted_selection_packet_is_refused_without_writes(tmp_path,monkeypatch):
+    root=prepare(tmp_path)
+    finish(root,1,'H',[]);finish(root,2,'W',[1])
+    job=c.build_job(root,3,'A',[2]);work=c.workspace(root,3);record=c.host_record(work)
+    # Retain a malformed unaccepted archive packet, never an old write mode.
+    job.pop('selection_protocol');c.write(root/'jobs/003.json',job)
+    originals={p:p.read_bytes() for p in (root/'settings.json',root/'jobs/003.json',work/'science-task.json',record/'science-result.schema.json')}
+    monkeypatch.setitem(guidance.DEFAULT,'A','Changed future default')
+    with pytest.raises(ValueError,match='^Frozen scientific task changed$'):
+        c.build_job(root,3,'A',[2])
+    assert all(p.read_bytes()==data for p,data in originals.items())
+    assert not (record/'native-intent.json').exists() and not (record/'result-identity.json').exists()
+    assert not (root/'jobs/004.json').exists()
 
 
 @pytest.mark.parametrize('bad',[True,0,2,'1'])

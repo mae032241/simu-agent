@@ -11,7 +11,7 @@ from execution_fixtures import execution_registry
 from test_registered_experiments import managed
 from test_soft_node_budget import scene, start_clock
 from test_history_handoff import finish
-from scidiscovery.research_loop import budget, contracts as c, execution, experiments
+from scidiscovery.research_loop import budget, contracts as c, execution, experiments, native
 
 
 def soft(managed):
@@ -187,12 +187,17 @@ def test_publisher_ignores_stale_arguments_and_recomputes_nonsticky_original_fac
     projection=Path(admission['directory'])/'review.json'
     previous_meter=execution.record(root,1)/'usage.json'
     original_bytes=previous_meter.read_bytes()
-    previous_meter.unlink()  # Original metering temporarily unavailable, never a zero grant.
+    previous_meter.unlink()  # Unknown billing coverage is retained; it does not request review.
     budget.publish_review(root,job,intent,old_limits,old_meter,observed=False)
-    assert c.read(projection)['reason']=='shared_usage_unknown'
+    value=c.read(projection)
+    usage=native.usage(root)
+    assert 1 in usage['unknown_steps'] and 1 not in usage['blocking_unknown_steps']
+    assert value['reason'] is None and value['pending'] is False
+    assert value['observed_tokens_lower_bound']==0 and value['inflight_usage_unknown'] is True
     previous_meter.write_bytes(original_bytes)
     budget.publish_review(root,job,intent,old_limits,old_meter,observed=False)
-    assert c.read(projection)['pending'] is False
+    value=c.read(projection)
+    assert value['reason'] is None and value['pending'] is False
     c.write(record/'usage.json',dict(input_tokens=2,cached_input_tokens=0,output_tokens=0))
     budget.publish_review(root,job,intent,old_limits,old_meter,observed=False)
     value=c.read(projection)

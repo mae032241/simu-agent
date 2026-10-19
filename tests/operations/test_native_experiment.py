@@ -9,7 +9,8 @@ from scidiscovery.builtin_plugin import CORE_PLUGIN
 from scidiscovery.general_science_plugin import PLUGIN as SCIENCE_PLUGIN
 from scidiscovery.operations.catalog import compile_installed_catalog
 from scidiscovery.general_science_experiment_task import validate_completion
-from scidiscovery.operations.input_validation import ValidationSources
+from scidiscovery.operations.input_validation import InputBindingDescriptor, ValidationSources
+from scidiscovery.artifact_agent.schema.refs import ArtifactRef
 from scidiscovery.operation_contract import SemanticRuleViolation
 
 
@@ -65,7 +66,33 @@ def _chain_sources():
     return records, bodies, report
 
 
-@pytest.mark.parametrize("damage", (None, "wrong_version", "orphan", "running", "failed", "remote_running", "remote_failed", "missing_result", "fake_receipt", "ordinary_file"))
+def _validated_sources(records, bodies, *, missing_original=None):
+    """Bind real fixture bytes to their original published attachment receipts."""
+    raw = {name: json.dumps(body).encode() for name, body in bodies.items()}
+    raw.update(remote_impl=b'{"fixture":"remote implementation"}', code=b"print('fixture')\n",
+               log=b"fixture execution completed\n", result=b'{"fixture_result":true}')
+    refs = {name: ArtifactRef(artifact_id="art_" + name, sha256=hashlib.sha256(data).hexdigest(),
+        kind="scientific_attachment" if name in {"code", "log", "result"} else "experiment_stage",
+        schema_id="scidiscovery.fixture-native-chain.v1")
+        for name, data in raw.items()}
+    descriptors = {}
+    for item in records:
+        alias = item["alias"]
+        if alias not in refs:
+            continue  # Unadopted exploration is deliberately not a completed chain.
+        item["artifact_ref"] = refs[alias].model_dump(mode="json")
+        item["source_refs"] = {name: ref.model_dump(mode="json") for name, ref in refs.items()}
+        attachment = item["metadata"]["kind"] == "scientific_attachment"
+        item["output_port"] = "attachments" if attachment else "stage"
+        descriptors[alias] = InputBindingDescriptor(source_name=alias, port_name="evidence",
+            artifact_ref=refs[alias], media_type="application/octet-stream" if attachment else "application/json",
+            size_bytes=len(raw[alias]), sha256=refs[alias].sha256)
+    originals = {item["alias"]: item for item in records if item["alias"] != missing_original}
+    return ValidationSources(raw, descriptors, tool_snapshot=json.dumps({"records": records}).encode(),
+        sealed_material_resolver=originals.get)
+
+
+@pytest.mark.parametrize("damage", (None, "wrong_version", "orphan", "running", "failed", "remote_running", "remote_failed", "missing_result", "fake_receipt", "ordinary_file", "missing_original", "unknown_provenance"))
 def test_mixed_execution_checks_each_adopted_chain(damage):
     records, bodies, report = _chain_sources()
     native = next(r for r in records if r["alias"] == "native_exec")
@@ -85,8 +112,9 @@ def test_mixed_execution_checks_each_adopted_chain(damage):
         records[1]["tool_name"] = "worker_publish_files"
     elif damage == "ordinary_file":
         records[4]["tool_name"] = "worker_experiment_stage"
-    sources = ValidationSources({name: json.dumps(body).encode() for name, body in bodies.items()}, {},
-        tool_snapshot=json.dumps({"records": records}).encode())
+    elif damage == "unknown_provenance":
+        records[3]["metadata"]["provenance_status"] = "unknown"
+    sources = _validated_sources(records, bodies, missing_original="code" if damage == "missing_original" else None)
     if damage is None:
         validate_completion(report, sources, {})
     else:
@@ -97,8 +125,7 @@ def test_mixed_execution_checks_each_adopted_chain(damage):
 def test_unadopted_exploration_does_not_require_a_chain():
     records, bodies, report = _chain_sources()
     records.append({"alias": "debug_exploration", "metadata": {"kind": "experiment_stage", "stage": "execution"}})
-    sources = ValidationSources({name: json.dumps(body).encode() for name, body in bodies.items()}, {},
-        tool_snapshot=json.dumps({"records": records}).encode())
+    sources = _validated_sources(records, bodies)
     validate_completion(report, sources, {})
 
 

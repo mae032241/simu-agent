@@ -121,8 +121,7 @@ def test_adapter_nonleaking_note_is_not_a_leakage_fact(tmp_path, monkeypatch):
     job = next_review(root)
     row = job['history']['view']['candidates']['adapter_audits'][0]
     assert row['qualification']=='passed' and 'leakage_flag' not in row and 'note' not in row
-    assert 'target_best' in job['history']['view']['candidates']
-    assert job['history']['view']['candidates']['target_best'] is None
+    assert 'target_best' not in job['history']['view']['candidates']
     assert not (root / 'runs/submitted.json').exists()
     assert not list((root / 'submission').iterdir())
 

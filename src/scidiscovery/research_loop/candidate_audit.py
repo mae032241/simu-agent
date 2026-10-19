@@ -51,22 +51,37 @@ def _validate_request(root, intent):
             or intent['action_id'] != intent['operation_id']
             or intent['max_seconds'] != c.settings(root)['delivery_policy']['submit_seconds']
             or type(intent['advance_seconds']) not in (int, float)
-            or not math.isfinite(intent['advance_seconds']) or intent['advance_seconds'] < 0
-            or intent['advance_seconds'] > budget.snapshot(root)['advance_seconds']):
+            or not math.isfinite(intent['advance_seconds']) or intent['advance_seconds'] < 0):
         raise ValueError('Candidate audit accepted budget or identity changed')
-    if decision != _decision(root, decision['step']):
+    if (set(decision) != {'step','job_sha256','raw_sha256','seal_sha256'}
+            or type(decision['step']) is not int or decision['step'] <= 0
+            or any(not isinstance(decision[key],str) or len(decision[key]) != 64
+                or any(char not in '0123456789abcdef' for char in decision[key])
+                for key in ('job_sha256','raw_sha256','seal_sha256'))):
+        raise ValueError('Candidate audit declared author identity changed')
+    job = c.read(c.regular(root/'jobs'/f'{decision["step"]:03d}.json'))
+    if (job['role'] != 'A' or job['handoff_protocol'] < 9
+            or c.digest(root/'jobs'/f'{decision["step"]:03d}.json') != decision['job_sha256']):
+        raise ValueError('Candidate audit declared requester changed')
+
+
+def require_eligibility(root, intent):
+    """Validate the scientific decision separately from its durable permission."""
+    decision = intent['decision']
+    if decision != _decision(root,decision['step']):
         raise ValueError('Candidate audit scientific author changed')
-    job = c.read(root / 'jobs' / f'{decision["step"]:03d}.json')
-    raw = c.science_payload(execution.raw(root, decision['step']), 'A', job['handoff_protocol'], 'selection' in job)
+    job = c.read(c.regular(root/'jobs'/f'{decision["step"]:03d}.json'))
+    raw = c.validate(c.workspace(root,decision['step']))
     if job.get('purpose') is not None:
         from . import engineering
-        begin = budget.closeout_state(root)['begin']
-        if (job['purpose'] != 'closeout' or begin is None or job['source_cutoff'] != begin['source_cutoff']
+        marker = job['closeout_begin']
+        file = root/'control-ledger'/f'{marker["seq"]:06d}.json'
+        begin = c.read(c.regular(file))
+        if (job['purpose'] != 'closeout' or job['source_cutoff'] != begin['source_cutoff']
                 or job['step'] < begin['first_step'] or job['delivery_sources'] != engineering.sources(root,job['step'])
-                or job['closeout_begin'] != dict(seq=begin['seq'], sha256=c.digest(root / 'control-ledger' / f'{begin["seq"]:06d}.json'))):
+                or marker['sha256'] != c.digest(file)):
             raise ValueError('Candidate audit closeout boundary changed')
-    if (job['role'] != 'A' or job['handoff_protocol'] < 9
-            or raw['next_action'] != 'audit' or raw['candidate_recommendation'] != intent['candidate_id']):
+    if raw['next_action'] != 'audit' or raw['candidate_recommendation'] != intent['candidate_id']:
         raise ValueError('Candidate audit differs from the original scientific request')
 
 
@@ -75,9 +90,6 @@ def validate_intent(root, intent):
     path = _directory(root, intent['decision']['step']) / 'intent.json'
     if c.read(c.regular(path)) != {key: value for key, value in intent.items() if key != 'binding'}:
         raise ValueError('Candidate audit accepted identity changed')
-    dispatch = path.with_name('dispatch.json')
-    if dispatch.exists() and c.read(c.regular(dispatch)) != _dispatch_binding(root,intent):
-        raise ValueError('Candidate audit dispatch identity changed')
 
 
 def _dispatch_binding(root,intent):
@@ -86,8 +98,10 @@ def _dispatch_binding(root,intent):
         sources_sha256=c.digest(c.regular(directory/'sources.json')),binding_sha256=c.digest(c.regular(directory/'binding.json')))
 
 
+@c.verified_digests()
 def _validate_objects(root, intent, binding, refs):
     _validate_request(root, intent)
+    require_eligibility(root,intent)
     delivery.validate_sources(root, refs)
     rows = [row for row in refs['items'] if row['candidate_id'] == intent['candidate_id']]
     if (len(rows) != 1 or rows[0] != binding['source'] or binding['decision'] != intent['decision']
@@ -96,6 +110,7 @@ def _validate_objects(root, intent, binding, refs):
         raise ValueError('Candidate audit no longer binds its selected original')
 
 
+@c.verified_digests()
 def validate_binding(root, intent):
     validate_intent(root, intent)
     directory = _directory(root, intent['decision']['step'])
@@ -104,8 +119,12 @@ def validate_binding(root, intent):
         raise ValueError('Candidate audit object binding changed')
     refs = c.read(c.regular(directory / 'sources.json'))
     _validate_objects(root,intent,binding,refs)
+    dispatch = directory/'dispatch.json'
+    if dispatch.exists() and c.read(c.regular(dispatch)) != _dispatch_binding(root,intent):
+        raise ValueError('Candidate audit dispatch identity changed')
 
 
+@c.verified_digests()
 def _outcome(root, step):
     directory = _directory(root, step)
     path = directory / 'outcome.json'
@@ -115,6 +134,8 @@ def _outcome(root, step):
     if value['decision'] != _decision(root, step):
         raise ValueError('Candidate audit receipt scientific source changed')
     raw = c.read(execution.raw(root, step))
+    from . import candidate_refs
+    raw=candidate_refs.control_payload(c.read(root/'jobs'/f'{step:03d}.json'),raw,root=root)
     if (type(value['accepted']) is not bool or value['accepted'] != (directory / 'intent.json').exists()
             or value['candidate_id'] != raw.get('candidate_recommendation')
             or raw.get('next_action') != 'audit'
@@ -158,15 +179,20 @@ def _outcome(root, step):
     return value
 
 
+def intents(root):
+    """Enumerate accepted declarations without reading execution results."""
+    for path in sorted((root/'jobs').glob('*.json')):
+        file = _directory(root,int(path.stem))/'intent.json'
+        if file.exists():
+            intent = c.read(c.regular(file))
+            validate_intent(root,intent)
+            yield intent
+
+
 def facts(root):
-    """No mutable current pointer; budgets derive accepted actions and unknowns."""
-    for path in sorted((root / 'jobs').glob('*.json')):
-        step = int(path.stem)
-        directory = _directory(root, step)
-        if (directory / 'intent.json').exists():
-            intent = c.read(c.regular(directory / 'intent.json'))
-            validate_intent(root, intent)
-            yield intent, _outcome(root, step)
+    """Result facts remain separate from accepted intent accounting."""
+    for intent in intents(root):
+        yield intent,_outcome(root,intent['decision']['step'])
 
 
 def blocked(root):
@@ -181,6 +207,7 @@ def receipt_ref(root, step):
     return dict(step=step, path=path.relative_to(root).as_posix(), sha256=c.digest(path))
 
 
+@c.verified_digests()
 def public_receipt(root, ref):
     expected = receipt_ref(root, ref['step'])
     if expected != ref:
@@ -299,19 +326,20 @@ def execute(root, job, payload):
         reserve['tokens'] += policy['closeout_a']['max_observed_tokens']
         reserve['seconds'] += policy['closeout_a']['max_seconds']
         reserve['steps'] += 1  # One actual follow-up A, plus the external actions.
-    if meter['unknown_steps']:
+    if meter.get('blocking_unknown_steps',meter['unknown_steps']):
         return 'candidate_audit_usage_unknown'
     seconds_unavailable = (limits['seconds_remaining'] <= policy['submit_seconds'] + reserve['seconds'] if soft_closeout else
         limits['seconds_remaining'] < policy['submit_seconds'] + reserve['seconds'])
-    tokens_unavailable = (limits['max_tokens'] - meter['observed_tokens'] <= reserve['tokens'] if soft_closeout else
-        limits['max_tokens'] - meter['observed_tokens'] < reserve['tokens'])
+    tokens_unavailable = (limits['max_tokens'] - meter.get('accounted_tokens',meter['observed_tokens']) <= reserve['tokens'] if soft_closeout else
+        limits['max_tokens'] - meter.get('accounted_tokens',meter['observed_tokens']) < reserve['tokens'])
     if (seconds_unavailable or tokens_unavailable
-            or budget.used_steps(root) + 1 + reserve['steps'] > c.settings(root)['max_steps']):
+            or budget.used_steps(root) + 1 + reserve['steps'] > budget.effective_max_steps(root)):
         return finish('unavailable', 'candidate_audit_reserve_unavailable')
     operation = _operation(root, decision, chosen)
     intent = dict(action_id=operation, action_kind='audit', operation_id=operation, decision=decision,
                   candidate_id=chosen, max_seconds=policy['submit_seconds'], advance_seconds=budget.snapshot(root)['advance_seconds'])
     _validate_request(root,intent)
+    require_eligibility(root,intent)
     budget.transition(root, 'advance', 'candidate_audit')
     intent['advance_seconds']=budget.snapshot(root)['advance_seconds']
     _save(directory / 'intent.json', intent)
