@@ -1,4 +1,5 @@
 """Incremental scientific choices and bounded author correction; no models."""
+from test_history_handoff import selection_explanation
 import json
 import sys
 
@@ -60,6 +61,7 @@ def finish(root, step, role, parents, text='A bounded scientific finding', actio
         target = work / 'artifacts' / name
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(contents)
+    if isinstance(payload.get('candidate_recommendation'),str):payload['selection_explanation']=selection_explanation()
     c.write(record / 'science-output.json', payload)
     c.write(record / 'usage.json', dict(input_tokens=7, cached_input_tokens=2, output_tokens=3))
     c.write(record / 'native-outcome.json', dict(returncode=0, stop_reason=None,
@@ -429,6 +431,7 @@ def test_invalid_selection_gets_h_correction_before_experiment_and_never_uses_ol
 def terminal_payload(root, step, payload):
     record = c.host_record(c.workspace(root, step))
     c.write(record / 'native-intent.json', dict(task_sha256=c.digest(root / 'jobs' / f'{step:03d}.json')))
+    if isinstance(payload.get('candidate_recommendation'),str):payload['selection_explanation']=selection_explanation()
     c.write(record / 'science-output.json', payload)
     c.write(record / 'usage.json', dict(input_tokens=7, cached_input_tokens=2, output_tokens=3))
     c.write(record / 'native-outcome.json', dict(returncode=0, stop_reason=None,

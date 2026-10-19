@@ -5,13 +5,14 @@ import pytest
 
 from scidiscovery.research_loop import candidate_refs, contracts as c, continuation, native
 from scidiscovery.research_loop.output_repair import OutputRepairRequired
-from test_history_handoff import finish, scene, source
+from test_history_handoff import finish, scene, source, selection_explanation
 
 
 def response(candidate=None, implementations=None):
     return dict(summary='Bounded comparison',scientific_result='Existing observations remain limited.',limitations=[],
         implementation_selection=implementations,next_action='continue_w',route_reason='Continue within the declared scope',
-        candidate_recommendation=candidate,search_review=None,progress_assessment=None,decision_request=None,portfolio_review=None)
+        candidate_recommendation=candidate,selection_explanation=selection_explanation() if candidate is not None else None,
+        search_review=None,progress_assessment=None,decision_request=None,portfolio_review=None)
 
 
 def candidate_job(count):

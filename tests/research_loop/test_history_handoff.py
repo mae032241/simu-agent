@@ -21,6 +21,11 @@ def scene(tmp_path):
     return root
 
 
+def selection_explanation(criteria='Compare the declared fixture observations within their stated limitations.'):
+    return dict(criteria=criteria,criteria_change=dict(status='unchanged',prior_criteria=None,
+        changes=None,evidence=None,accepted_tradeoffs=None))
+
+
 def finish(root, step, role, parents, text='A bounded scientific finding', action='wait', files=None, summary='A contribution', limitations=None, recommendation=None, search_choice=None, progress=None, selection=None, mechanism_findings=None):
     path = root / 'jobs' / f'{step:03d}.json'
     previous = contracts.read(path) if path.exists() else {}
@@ -33,6 +38,7 @@ def finish(root, step, role, parents, text='A bounded scientific finding', actio
         payload['implementation_selection'] = selection
     if (role == 'A' and job.get('handoff_protocol', 1) >= 4) or recommendation is not None:
         payload['candidate_recommendation'] = recommendation
+        payload['selection_explanation'] = selection_explanation() if recommendation is not None else None
     if job.get('handoff_protocol', 1) >= 5 and role in {'H', 'A'}:
         payload['search_plan' if role == 'H' else 'search_review'] = search_choice
     if job.get('handoff_protocol', 1) >= 6 and role == 'A':

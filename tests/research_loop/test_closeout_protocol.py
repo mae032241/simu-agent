@@ -42,6 +42,7 @@ payload=dict(summary='A bounded choice',scientific_result='Exact public evidence
  limitations=item.get('limitations',['Transport fixture; target performance unasserted']),implementation_selection=None,search_review=None,
  progress_assessment=None,decision_request=None,portfolio_review=None,
  next_action=item['action'],candidate_recommendation=item.get('candidate'),route_reason='Scientific selection within original authorization')
+if isinstance(payload.get('candidate_recommendation'),str):payload['selection_explanation']=dict(criteria='Compare the declared public fixture evidence and retain its stated limitations.',criteria_change=dict(status='unchanged',prior_criteria=None,changes=None,evidence=None,accepted_tradeoffs=None))
 pathlib.Path(args[args.index('--output-last-message')+1]).write_text(json.dumps(payload))
 print(json.dumps(dict(type='turn.completed',usage=dict(input_tokens=7,cached_input_tokens=2,output_tokens=3))),flush=True)
 '''

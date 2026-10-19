@@ -7,8 +7,9 @@ from . import contracts as c
 from . import experiments as e
 
 
-def identity(row):
-    return 'local-' + hashlib.sha256(e.encoded(dict(scope=row['scope'], call_id=row['call_id']))).hexdigest()
+def identity(row, candidate):
+    return 'local-' + hashlib.sha256(e.encoded(dict(scope=row['scope'], call_id=row['call_id'],
+        artifact=candidate['artifact']))).hexdigest()
 
 
 def protocol(interface):
@@ -19,51 +20,63 @@ def protocol(interface):
     return None
 
 
+def declarations(row):
+    result=row.get('execution',{}).get('result') or {}
+    members=result.get('candidates',[]) if isinstance(result,dict) else []
+    return members if isinstance(members,list) else []
+
+
 def candidates(rows, *, diagnostics=None):
     result = []
     for row in rows:
         if row.get('result_protocol')!=e.LOCAL_RESULT_PROTOCOL:continue
         declared = row.get('execution', {}).get('result') or {}
         if not isinstance(declared,dict):continue
-        candidate = declared.get('candidate')
-        if row['status'] != 'known_success' or declared.get('status') != 'available' or candidate is None:
-            continue
-        metrics=declared.get('metrics');outputs=row.get('outputs')
-        valid=(isinstance(candidate,dict) and isinstance(candidate.get('artifact'),str)
-            and isinstance(metrics,list) and isinstance(outputs,list))
-        matching_outputs=[item for item in outputs if isinstance(item,dict) and isinstance(item.get('name'),str)
-            and 'artifacts/'+item['name']==candidate['artifact']] if valid else []
-        declared_outputs=declared.get('outputs')
-        valid=(valid and isinstance(declared_outputs,list) and len(matching_outputs)==1
-            and sum(isinstance(item,dict) and item.get('path')==candidate['artifact'] for item in declared_outputs)==1)
-        if not valid:
+        declarations = declared.get('candidates', [])
+        if row['status'] != 'known_success' or declared.get('status') != 'available':continue
+        if not isinstance(declarations,list):
             if diagnostics is not None:diagnostics.append(dict(call_id=row['call_id'],code='declared_candidate_mapping_invalid'))
             continue
-        matching_metrics=[item for item in metrics if isinstance(item,dict)
-            and isinstance(candidate.get('metric'),str) and item.get('name')==candidate['metric']]
-        metric=matching_metrics[0] if len(matching_metrics)==1 else {}
-        value=metric.get('value')
-        try:finite=type(value) in (int,float) and math.isfinite(value)
-        except OverflowError:finite=False
-        if not finite:
-            metric={};value=None
-            if 'metric' in candidate and diagnostics is not None:
-                diagnostics.append(dict(call_id=row['call_id'],code='declared_candidate_metric_unknown'))
-        artifact=matching_outputs[0]
-        result.append(dict(id=identity(row), label=candidate.get('label'), implementation=None,
-            evaluation_key=metric.get('evaluation_key'), metric=value, direction=metric.get('direction'), status='ok',
-            evidence=[row['completed'], artifact]))
+        for candidate in declarations:
+            metrics=declared.get('metrics');outputs=row.get('outputs')
+            valid=(isinstance(candidate,dict) and isinstance(candidate.get('artifact'),str)
+                and isinstance(metrics,list) and isinstance(outputs,list))
+            matching_outputs=[item for item in outputs if isinstance(item,dict) and isinstance(item.get('name'),str)
+                and 'artifacts/'+item['name']==candidate['artifact']] if valid else []
+            declared_outputs=declared.get('outputs')
+            valid=(valid and isinstance(declared_outputs,list) and len(matching_outputs)==1
+                and sum(isinstance(item,dict) and item.get('path')==candidate['artifact'] for item in declared_outputs)==1
+                and sum(isinstance(item,dict) and item.get('artifact')==candidate['artifact'] for item in declarations)==1)
+            if not valid:
+                if diagnostics is not None:diagnostics.append(dict(call_id=row['call_id'],code='declared_candidate_mapping_invalid'))
+                continue
+            matching_metrics=[item for item in metrics if isinstance(item,dict)
+                and isinstance(candidate.get('metric'),str) and item.get('name')==candidate['metric']]
+            metric=matching_metrics[0] if len(matching_metrics)==1 else {}
+            value=metric.get('value')
+            try:finite=type(value) in (int,float) and math.isfinite(value)
+            except OverflowError:finite=False
+            if not finite:
+                metric={};value=None
+                if 'metric' in candidate and diagnostics is not None:
+                    diagnostics.append(dict(call_id=row['call_id'],code='declared_candidate_metric_unknown'))
+            artifact=matching_outputs[0]
+            result.append(dict(id=identity(row, candidate), label=candidate.get('label'), implementation=None,
+                evaluation_key=metric.get('evaluation_key'), metric=value, direction=metric.get('direction'), status='ok',
+                evidence=[row['completed'], artifact]))
     return result
 
 
 def sources(root, fact, candidate_id):
     """Resolve only a declared local candidate, from its exact sealed call archive."""
-    matches = [row for row in fact.get('managed_calls', []) if identity(row) == candidate_id]
+    matches = [(row, item) for row in fact.get('managed_calls', [])
+        for item in declarations(row)
+        if isinstance(item,dict) and isinstance(item.get('artifact'),str) and identity(row,item)==candidate_id]
     if not matches:
         return None
     if len(matches) != 1:
         raise ValueError('Managed candidate identity is ambiguous')
-    row = matches[0]
+    row, declaration = matches[0]
     if 'result_protocol' not in row:
         from . import history
         accepted=c.read(root/row['accepted']['snapshot'])
@@ -88,7 +101,9 @@ def sources(root, fact, candidate_id):
         objects['inputs/' + item['name']] = proof(matches[0])
     for item in row['outputs']:
         objects['outputs/' + item['name']] = proof(item)
-    declaration = completed['result']['candidate']
+    completed_declarations=completed['result']['candidates']
+    if sum(item==declaration for item in completed_declarations)!=1:
+        raise ValueError('Managed candidate differs from completed result')
     objects['artifact'] = objects['outputs/' + declaration['artifact'].removeprefix('artifacts/')]
     return dict(candidate_id=candidate_id, status='audit_pending',
         ledger=proof(row['completed']), objects=objects,

@@ -193,7 +193,8 @@ def authorize_exit(root,job,record,reason):
         source_attempt=number,outcome_sha256=c.digest(c.regular(record/'native-outcome.json')))
     policy=c.settings(root).get('resume_policy')
     repairs=sum(c.read(path/'native-intent.json').get('continuation_kind','repair')=='repair' for path in paths[1:number+1])
-    if reason=='worker_resume_unsupported' and policy is None:
+    if (reason=='worker_resume_unsupported' and policy is None
+            or reason=='worker_resume_output_only' and policy is not None and policy.get('output_only') is True):
         return dict(value,kind='resume_policy',settings_sha256=c.digest(root/'settings.json'))
     if reason=='worker_resume_limit' and policy is not None and repairs>=policy['max_attempts']:
         return dict(value,kind='repair_cap',max_attempts=policy['max_attempts'])
@@ -226,7 +227,9 @@ def validate_exit(root,job,record,value):
         raise history.ObserverIntegrityError('Worker exit differs from original attempt')
     policy=c.settings(root).get('resume_policy');kind=value.get('kind');reason=value['reason']
     if kind=='resume_policy':
-        if policy is not None or reason!='worker_resume_unsupported' or value.get('settings_sha256')!=c.digest(root/'settings.json'):
+        unsupported=reason=='worker_resume_unsupported' and policy is None
+        output_only=reason=='worker_resume_output_only' and policy is not None and policy.get('output_only') is True
+        if not (unsupported or output_only) or value.get('settings_sha256')!=c.digest(root/'settings.json'):
             raise history.ObserverIntegrityError('Worker exit has no original unsupported policy')
     elif kind=='repair_cap':
         paths=execution.records(root,job['step'])[:number+1]

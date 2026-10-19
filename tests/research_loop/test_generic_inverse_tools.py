@@ -345,13 +345,13 @@ def test_generic_candidate_requires_exact_retained_artifact_without_scientific_r
         dict(name='cost', value=2, evaluation_key='cost/v1', direction='min')],
         outputs=[dict(path='artifacts/product.bin', label='Declared product')])
     if declaration is not None:
-        value['candidate'] = dict(label='Explicit method', metric='quality', artifact='artifacts/product.bin')
-        if declaration == 'missing-metric':value['candidate']['metric'] = 'unstated'
+        value['candidates'] = [dict(label='Explicit method', metric='quality', artifact='artifacts/product.bin')]
+        if declaration == 'missing-metric':value['candidates'][0]['metric'] = 'unstated'
         if declaration == 'missing-direction':value['metrics'][0].pop('direction')
         if declaration == 'missing-evaluation':value['metrics'][0].pop('evaluation_key')
-        if declaration == 'artifact-only':value['candidate'] = dict(artifact='artifacts/product.bin')
-        if declaration == 'missing-output':value['candidate']['artifact'] = 'artifacts/unstated.bin'
-        if declaration == 'unhashable':value['candidate']['metric'] = []
+        if declaration == 'artifact-only':value['candidates'] = [dict(artifact='artifacts/product.bin')]
+        if declaration == 'missing-output':value['candidates'][0]['artifact'] = 'artifacts/unstated.bin'
+        if declaration == 'unhashable':value['candidates'][0]['metric'] = []
     c.write(tmp_path / 'result.json', value)
     result = LocalExecution.read_result(tmp_path, [dict(name='product.bin')])
     assert result['status'] == 'available'
@@ -370,9 +370,86 @@ def test_generic_candidate_requires_exact_retained_artifact_without_scientific_r
             assert candidate['metric']==1
             assert candidate['direction']==(None if declaration=='missing-direction' else 'max')
             assert candidate['evaluation_key']==(None if declaration=='missing-evaluation' else 'public/v1')
-        assert generic_results.identity(row) == candidate['id']
-        assert generic_results.identity(dict(row, scope=dict(step=2, goal='other'))) != candidate['id']
+        assert generic_results.identity(row, value['candidates'][0]) == candidate['id']
+        assert generic_results.identity(dict(row, scope=dict(step=2, goal='other')), value['candidates'][0]) != candidate['id']
         assert generic_results.candidates([dict(row, status='known_failed')]) == []
+
+
+@pytest.mark.process_e2e
+def test_one_call_exposes_both_candidates_and_delivers_the_second_original(tmp_path,execution_registry,monkeypatch):
+    native_source = r'''import json,os,subprocess,sys
+from pathlib import Path
+work=Path(os.environ['THIN_HWA_WORKSPACE']);role=os.environ['THIN_HWA_ROLE']
+assert sys.stdin.read()
+task=json.loads((work/'science-task.json').read_text())
+payload=dict(summary='Explicit retained alternatives',scientific_result='Synthetic protocol evidence only.',
+    limitations=['No scientific qualification.'],implementation_selection=None)
+if role=='H':payload.update(next_action='experiment',route_reason='Retain two alternatives',search_plan=None)
+if role=='W':
+    experiment=work/'experiments/alternatives';experiment.mkdir(parents=True)
+    declaration=dict(version=1,metrics=[dict(name='first',value=10),dict(name='second',value=20)],
+        outputs=[dict(path='artifacts/z-first.bin'),dict(path='artifacts/a-second.bin')],
+        candidates=[dict(artifact='artifacts/z-first.bin',label='first',metric='first'),
+            dict(artifact='artifacts/a-second.bin',label='second',metric='second')])
+    script=experiment/'run.py'
+    script.write_text('from pathlib import Path\n'
+        'Path("artifacts/z-first.bin").write_bytes(b"first original")\n'
+        'Path("artifacts/a-second.bin").write_bytes(b"second original")\n'
+        'Path("artifacts/result.json").write_text('+repr(json.dumps(declaration))+')\n')
+    reply=subprocess.run([sys.executable,'-m','scidiscovery.research_loop.experiments',
+        '--config',str(work/'work/experiment-config.json'),'run','--experiment-dir',str(experiment),
+        '--script',str(script)],capture_output=True,text=True)
+    assert reply.returncode==0,(reply.stdout,reply.stderr)
+    assert json.loads(reply.stdout)['status']=='known_success'
+    payload.update(stage_intent='review',mechanism_findings=None)
+if role=='A':
+    rows=[];page=task['lineage']['indexes']['candidates']
+    while page:
+        value=json.loads((work/page).read_text());rows.extend(value['candidates']);page=value['next_page']
+    assert [row['label'] for row in rows]==['first','second'],rows
+    assert len({row['id'] for row in rows})==2
+    selected=rows[1]['id']
+    assert selected.endswith('/artifacts/a-second.bin')
+    (work/'work/seen-candidates.json').write_text(json.dumps(rows))
+    payload.update(next_action='deliver',candidate_recommendation=selected,
+        selection_explanation=dict(criteria='Select the declared second alternative to verify exact original binding.',
+            criteria_change=dict(status='unchanged',prior_criteria=None,changes=None,evidence=None,accepted_tradeoffs=None)),
+        route_reason='Explicitly choose the second declared alternative despite its larger measurement.',
+        search_review=None,progress_assessment=None,decision_request=None,portfolio_review=None)
+args=sys.argv[1:]
+Path(args[args.index('--output-last-message')+1]).write_text(json.dumps(payload))
+print(json.dumps(dict(type='thread.started',thread_id='multiple-candidates-'+role)),flush=True)
+print(json.dumps(dict(type='turn.completed',usage=dict(input_tokens=10,cached_input_tokens=0,output_tokens=5))),flush=True)
+'''
+    root,target,cli,_=generic_case(tmp_path,monkeypatch,max_steps=6,native_source=native_source)
+    finished=cli('run','--root',root)
+    assert finished['status']=='delivery_confirmed',finished
+    seal=c.read(c.host_record(c.workspace(root,2))/'result-identity.json')
+    fact=c.read(root/seal['observations']['path'])
+    assert len(fact['managed_calls'])==1 and [row['label'] for row in fact['candidates']]==['first','second']
+    selected=fact['candidates'][1]
+    assert finished['last_confirmed']['candidate_id']==selected['id']
+    bundle=target/finished['last_confirmed']['operation_id']
+    assert (bundle/'artifact').read_bytes()==b'second original'
+    manifest=c.read(bundle/'manifest.json')
+    assert manifest['result']['candidate']['artifact']=='artifacts/a-second.bin'
+    assert manifest['artifact_sha256']==selected['evidence'][1]['sha256']
+    from scidiscovery.research_loop import candidate_refs,generic_results,history
+    for step in (3,4):
+        job=c.read(root/'jobs'/f'{step:03d}.json')
+        rows=c.read(c.workspace(root,step)/'work/seen-candidates.json')
+        assert [row['label'] for row in rows]==['first','second']
+        assert c.validate(c.workspace(root,step))['candidate_recommendation']==selected['id']
+        aliases=[row for row in history.candidate_materials(root,job) if row['candidate_id']==selected['id']]
+        assert len(aliases)==1 and aliases[0]['material']['path'].endswith('/artifacts/a-second.bin')
+        assert candidate_refs.control_payload(job,dict(candidate_recommendation=aliases[0]['implementation_id']),root=root)['candidate_recommendation']==selected['id']
+        assert history.validate_recommendation(job,dict(candidate_recommendation='unlisted-model'))
+        with pytest.raises(ValueError,match='outside this frozen'):
+            candidate_refs.resolve_reference(root,job,'W002-C001/artifacts/undeclared.bin')
+    assert generic_results.sources(root,fact,'unlisted-model') is None
+    changed=dict(fact,candidates=[dict(row,label='changed') if row['id']==selected['id'] else row for row in fact['candidates']])
+    with pytest.raises(ValueError,match='differs from declared sealed result'):
+        generic_results.sources(root,changed,selected['id'])
 
 
 def test_generic_adapter_missing_required_audit_is_rejected_before_instance_creation(tmp_path):

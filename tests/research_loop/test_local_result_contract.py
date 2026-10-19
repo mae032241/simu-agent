@@ -13,7 +13,7 @@ from test_local_managed import execution_registry, local
 def declaration(direction='max'):
     return dict(version=1, metrics=[dict(name='score',value=.5,evaluation_key='declared-observation-v1',direction=direction)],
         outputs=[dict(path='artifacts/model.bin',label='Retained evaluated object')],
-        candidate=dict(label='Author choice',metric='score',artifact='artifacts/model.bin'))
+        candidates=[dict(label='Author choice',metric='score',artifact='artifacts/model.bin')])
 
 
 def observed(result):
@@ -31,7 +31,7 @@ def test_describe_exposes_optional_scientific_descriptions_without_direction_def
     assert 'enum' not in direction and 'default' not in direction
     for description in ('min','maximize','target is zero',None,dict(target=0)):
         jsonschema.validate(declaration(description),schema)
-    value=declaration();value['candidate']={'artifact':'artifacts/model.bin'}
+    value=declaration();value['candidates']=[{'artifact':'artifacts/model.bin'}]
     jsonschema.validate(value,schema)
     assert public['domain_metrics'] is False
 
@@ -44,7 +44,7 @@ def test_result_preserves_scientific_direction_value_and_raw(tmp_path, direction
     result = LocalExecution.read_result(tmp_path, [dict(name='model.bin')])
     assert result['status'] == 'available'
     assert result['metrics'] == value['metrics']
-    assert result['candidate'] == value['candidate']
+    assert result['candidates'] == value['candidates']
     candidate=generic_results.candidates([observed(result)])[0]
     assert candidate['direction']==direction and candidate['metric']==.5
     assert path.read_bytes() == original
@@ -55,8 +55,8 @@ def test_invalid_single_declaration_preserves_other_observations_and_raw(tmp_pat
     value = copy.deepcopy(declaration())
     value['metrics'].append(dict(name='other',value=7))
     if field == 'value':value['metrics'][0]['value'] = 'unmeasured'
-    elif field == 'artifact':value['candidate']['artifact'] = 'artifacts/unretained.bin'
-    else:value['candidate']['metric'] = ['unresolved']
+    elif field == 'artifact':value['candidates'][0]['artifact'] = 'artifacts/unretained.bin'
+    else:value['candidates'][0]['metric'] = ['unresolved']
     path = tmp_path/'result.json';path.write_text(json.dumps(value))
     original = path.read_bytes()
     result = LocalExecution.read_result(tmp_path, [dict(name='model.bin')])
@@ -72,7 +72,7 @@ def test_invalid_single_declaration_preserves_other_observations_and_raw(tmp_pat
 
 
 def test_artifact_candidate_needs_no_metric_and_never_chooses_first_measurement(tmp_path):
-    value=declaration();value['candidate']={'artifact':'artifacts/model.bin'}
+    value=declaration();value['candidates']=[{'artifact':'artifacts/model.bin'}]
     value['metrics'].append(dict(name='another',value=100,direction='min'))
     (tmp_path/'result.json').write_text(json.dumps(value))
     result=LocalExecution.read_result(tmp_path,[dict(name='model.bin')])
@@ -82,11 +82,56 @@ def test_artifact_candidate_needs_no_metric_and_never_chooses_first_measurement(
     assert result['metrics']==value['metrics']
 
 
+def test_candidate_members_keep_identity_and_public_reference_when_list_order_changes(tmp_path):
+    from scidiscovery.research_loop import candidate_refs
+    value=declaration()
+    value['outputs'].append(dict(path='artifacts/alternative.bin'))
+    value['candidates'].append(dict(artifact='artifacts/alternative.bin'))
+    projected=[];references=[]
+    for members in (value['candidates'],list(reversed(value['candidates']))):
+        (tmp_path/'result.json').write_text(json.dumps(dict(value,candidates=members)))
+        result=LocalExecution.read_result(tmp_path,[dict(name='model.bin'),dict(name='alternative.bin')])
+        row=dict(observed(result),outputs=[dict(name='model.bin'),dict(name='alternative.bin')])
+        rows=generic_results.candidates([row])
+        assert len(rows)==2 and len({item['id'] for item in rows})==2
+        projected.append({item['evidence'][1]['name']:item['id'] for item in rows})
+        references.append(candidate_refs.references([dict(role='W',step=2,
+            observation=dict(candidates=rows,managed_calls=[row]))]))
+    assert projected[0]==projected[1] and references[0]==references[1]
+    assert set(references[0].values())=={'W002-C001/artifacts/model.bin','W002-C001/artifacts/alternative.bin'}
+
+
+@pytest.mark.parametrize('fault',['duplicate-member','duplicate-output','undeclared-output','invalid-list','invalid-member'])
+def test_invalid_candidate_bindings_preserve_valid_members_and_measurements(tmp_path,fault):
+    value=declaration()
+    value['outputs'].append(dict(path='artifacts/neighbor.bin'))
+    neighbor=dict(artifact='artifacts/neighbor.bin')
+    if fault=='duplicate-member':value['candidates'].append(dict(value['candidates'][0]))
+    elif fault=='duplicate-output':value['outputs'].append(dict(value['outputs'][0]))
+    elif fault=='undeclared-output':value['candidates'][0]['artifact']='artifacts/unlisted.bin'
+    elif fault=='invalid-member':value['candidates'][0]=None
+    if fault=='invalid-list':value['candidates']={}
+    else:value['candidates'].append(neighbor)
+    (tmp_path/'result.json').write_text(json.dumps(value))
+    result=LocalExecution.read_result(tmp_path,[dict(name='model.bin'),dict(name='neighbor.bin'),dict(name='unlisted.bin')])
+    assert result['status']=='available' and result['metrics']==value['metrics'] and result['diagnostics']
+    assert result['candidates']==([] if fault=='invalid-list' else [neighbor])
+
+
+@pytest.mark.parametrize('declaration',[{},dict(candidates=[]),dict(candidate=dict(artifact='artifacts/model.bin'))])
+def test_only_explicit_list_members_register_candidates(tmp_path,declaration):
+    value=dict(version=1,metrics=[dict(name='observation',value=1)],outputs=[dict(path='artifacts/model.bin')],**declaration)
+    (tmp_path/'result.json').write_text(json.dumps(value))
+    result=LocalExecution.read_result(tmp_path,[dict(name='model.bin')])
+    assert result['status']=='available' and result['outputs']==value['outputs']
+    assert generic_results.candidates([observed(result)])==[]
+
+
 def test_long_scientific_text_is_retained_with_bounded_public_preview(tmp_path):
     text='科学说明'*5000
     value=declaration(dict(target=text));metric=value['metrics'][0]
     metric.update(name=text,unit=text,evaluation_key=text)
-    value['candidate'].update(label=text,metric=text)
+    value['candidates'][0].update(label=text,metric=text)
     value['outputs'][0]['label']=text
     path=tmp_path/'result.json';path.write_text(json.dumps(value));original=path.read_bytes()
     result=LocalExecution.read_result(tmp_path,[dict(name='model.bin')])
@@ -95,7 +140,7 @@ def test_long_scientific_text_is_retained_with_bounded_public_preview(tmp_path):
     assert candidate['label']==text and candidate['evaluation_key']==text
     public=LocalExecution.public_result(dict(call_id='call-1',status='known_success',result=result))
     assert len(e.encoded(public['result']))<=16_000
-    assert public['result']['candidate_details_ref']=='result.json'
+    assert public['result']['candidates'][0]['details_ref']=='result.json'
     assert all(row['details_ref']=='result.json' for row in public['result']['metrics']+public['result']['outputs'])
     assert e._run_view(public)['result']==public['result']
     assert path.read_bytes()==original
@@ -117,13 +162,13 @@ def test_bad_metric_or_output_does_not_discard_valid_neighbors(tmp_path):
     ('metric','extra'),('output','label'),('output','extra'),('candidate','label'),('candidate','extra')])
 def test_nonfinite_nested_description_is_locally_omitted_with_original_reference(tmp_path,section,key):
     value=declaration();value['metrics'].append(dict(name='neighbor',value=7))
-    target={'metric':value['metrics'][0],'output':value['outputs'][0],'candidate':value['candidate']}[section]
+    target={'metric':value['metrics'][0],'output':value['outputs'][0],'candidate':value['candidates'][0]}[section]
     target[key]={'nested':[{'target':'EXPONENT_OUT_OF_RANGE'}]}
     content=json.dumps(value).replace('"EXPONENT_OUT_OF_RANGE"','1e999')
     path=tmp_path/'result.json';path.write_text(content);original=path.read_bytes()
     result=LocalExecution.read_result(tmp_path,[dict(name='model.bin')])
     assert result['status']=='available' and dict(name='neighbor',value=7) in result['metrics']
-    projected={'metric':result['metrics'][0],'output':result['outputs'][0],'candidate':result['candidate']}[section]
+    projected={'metric':result['metrics'][0],'output':result['outputs'][0],'candidate':result['candidates'][0]}[section]
     assert key not in projected
     assert any(row['code']=='scientific_description_projection_unavailable' and row['details_ref']=='result.json'
         for row in result['diagnostics'])
@@ -152,8 +197,8 @@ def test_nonfinite_descriptions_preserve_real_completion_publish_and_original(lo
     value['metrics'][0]['direction']={'target':'EXPONENT_OUT_OF_RANGE'}
     value['metrics'][0]['extra']={'nested':['EXPONENT_OUT_OF_RANGE']}
     value['outputs'][0]['label']={'target':'EXPONENT_OUT_OF_RANGE'}
-    value['candidate']['label']={'target':'EXPONENT_OUT_OF_RANGE'}
-    value['candidate']['extra']={'nested':['EXPONENT_OUT_OF_RANGE']}
+    value['candidates'][0]['label']={'target':'EXPONENT_OUT_OF_RANGE'}
+    value['candidates'][0]['extra']={'nested':['EXPONENT_OUT_OF_RANGE']}
     content=json.dumps(value).replace('"EXPONENT_OUT_OF_RANGE"','1e999')
     script.write_text('import pathlib\npathlib.Path("artifacts/model.bin").write_bytes(b"original")\n'
         'pathlib.Path("artifacts/result.json").write_text('+repr(content)+')\n')
@@ -200,6 +245,6 @@ def test_actual_run_query_and_progress_preserve_freeform_direction(local, capsys
     progress = json.loads(capsys.readouterr().out)
     for result in (run['result'],query['result'],progress['calls'][0]['result']):
         assert result['status']=='available' and result['metrics']==value['metrics']
-        assert result['candidate']==value['candidate']
+        assert result['candidates']==value['candidates']
     assert original.read_bytes() == retained
     assert len(e.Records(config).calls()) == 1

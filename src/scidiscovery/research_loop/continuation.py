@@ -15,11 +15,16 @@ class ResumeUnavailable(ValueError):
 
 
 def policy(value, launcher):
-    if (not isinstance(value, dict) or set(value) not in ({'max_attempts', 'protocol', 'usage_scope'},
-            {'max_attempts', 'protocol', 'usage_scope', 'output_repair'})
+    required={'max_attempts','protocol','usage_scope'}
+    if (not isinstance(value, dict) or not required <= set(value)
+            or set(value)-required-{'output_repair','output_only','native_home'}
             or type(value['max_attempts']) is not int or not 1 <= value['max_attempts'] <= 2
             or value['protocol'] != 'codex_exec_resume' or value['usage_scope'] != 'turn'
-            or ('output_repair' in value and type(value['output_repair']) is not bool)):
+            or ('output_repair' in value and type(value['output_repair']) is not bool)
+            or ('output_only' in value and (type(value['output_only']) is not bool
+                or value['output_only'] and not value.get('output_repair',False)))
+            or ('native_home' in value and (not value.get('output_only') or not isinstance(value['native_home'],str)
+                or not Path(value['native_home']).is_absolute() or Path(value['native_home']).resolve()!=Path(value['native_home'])))):
         raise ValueError('Resume requires explicit finite attempts and qualified turn-scoped launcher protocol')
     if not launcher or not Path(launcher[0]).is_absolute() or not Path(launcher[0]).is_file():
         raise ValueError('Resume requires an exact frozen executable, never PATH selection')
@@ -214,6 +219,8 @@ def validate_repair(root, step, intent, *, prior_record=None, verify_task=True):
     request = intent.get('work_repair') or intent.get('output_repair')
     if request is None:
         return
+    if (c.settings(root).get('resume_policy') or {}).get('output_only') and intent.get('work_repair') is not None:
+        raise ValueError('Output-only policy does not authorize scientific work repair')
     if intent.get('work_repair') is None and not validate_launcher(root).get('output_repair', False):
         raise ValueError('Output repair is not authorized by the frozen policy')
     prior = prior_record if prior_record is not None else execution.records(root, step)[intent['attempt'] - 1]
@@ -302,7 +309,7 @@ def fragment_start(root, step):
     from . import contracts as _contracts
     require_current(root,_contracts.read(_contracts.regular(Path(root)/'jobs'/f'{step:03d}.json')))
     root = Path(root)
-    validate_launcher(root)
+    if validate_launcher(root).get('output_only'):raise ResumeUnavailable('worker_resume_output_only')
     job = validate_task(root, step)
     if not checkpoint.enabled(root, job):
         raise ResumeUnavailable('worker_fragments_unavailable')
@@ -390,7 +397,10 @@ def start(root, step):
             repair = output_request(root, step, last)
     closeout = budget.closeout_state(root)['begin']
     job = c.read(c.regular(root / 'jobs' / f'{step:03d}.json'))
-    if (root / 'pause.request').exists() or (closeout is not None and job.get('purpose') != 'closeout'):
+    if limits.get('output_only') and (repair is None or work_repair):
+        raise ResumeUnavailable('worker_resume_output_only')
+    final_repair = repair is not None and not work_repair and budget.final_a_barrier(root) is not None and budget.final_a_barrier(root)['step']==step
+    if (root / 'pause.request').exists() or (closeout is not None and job.get('purpose') != 'closeout' and not final_repair):
         raise ResumeUnavailable('worker_resume_paused_or_closeout')
     from . import correction
     if correction.gate(root, step - 1) is not None:
@@ -412,7 +422,7 @@ def start(root, step):
     profiles.validate_intent(settings, job, original_intent)
     number = len(paths)
     budget.transition(root, 'advance', 'explicit_worker_continuation')
-    anchor = budget.accept_continuation(root, job, paths)
+    anchor = budget.accept_continuation(root, job, paths, output_repair=repair if not work_repair else None)
     record = execution.origin(root, step) / 'continuations' / f'{number:03d}'
     record.mkdir(parents=True, exist_ok=True)
     intent = dict(step=step, attempt=number, continuation_kind='repair', **profile_binding, task_sha256=c.digest(root / 'jobs' / f'{step:03d}.json'),
@@ -447,6 +457,7 @@ def wake_start(root,step,observations):
     """Resume one successful suspended native turn, sharing original finite authorization."""
     from . import managed_wait, experiments
     limits=validate_launcher(root);job=validate_task(root,step);paths=execution.records(root,step);last=paths[-1]
+    if limits.get('output_only'):raise ResumeUnavailable('worker_resume_output_only')
     if (execution.origin(root,step)/'result-identity.json').exists():raise ResumeUnavailable('execution_wake_stage_already_sealed')
     if (root/'pause.request').exists() or budget.closeout_state(root)['begin'] is not None:
         raise ResumeUnavailable('worker_resume_paused_or_closeout')

@@ -43,10 +43,10 @@ class Remote:
         value = dict(status=self.config.get('terminal_status','known_success'), proofs=[e.proof(directory / 'backend-terminal.json')], note='Synthetic backend terminal',**native)
         private = self.config.get('private')
         if private == 'native':
-            value['result'] = dict(status='available', metrics=[], candidate=dict(native_model_id='opaque-model-1'))
+            value['result'] = dict(status='available', metrics=[], candidates=[dict(native_model_id='opaque-model-1')])
         elif private == 'local-like':
             value['result'] = dict(status='available', metrics=[dict(name='quality', value=1.0, evaluation_key='backend/public', direction='max')],
-                candidate=dict(label='native-model', metric='quality', artifact='artifacts/model.bin'),
+                candidates=[dict(label='native-model', metric='quality', artifact='artifacts/model.bin')],
                 outputs=[dict(path='artifacts/model.bin', label='Backend native output')])
         self.records.publish(call, 'completed.json', value)
     def result(self, call):

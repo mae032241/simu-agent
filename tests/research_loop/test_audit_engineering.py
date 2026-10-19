@@ -72,6 +72,7 @@ else:
  assert not (root/'submission/model.pkl').exists()
  payload.update(next_action='deliver',candidate_recommendation='run-3',route_reason='Authorize only the new repaired candidate',
   search_review=None,progress_assessment=None,decision_request=None,portfolio_review=None)
+if isinstance(payload.get('candidate_recommendation'),str):payload['selection_explanation']=dict(criteria='Compare the declared public fixture evidence and retain its stated limitations.',criteria_change=dict(status='unchanged',prior_criteria=None,changes=None,evidence=None,accepted_tradeoffs=None))
 pathlib.Path(args[args.index('--output-last-message')+1]).write_text(json.dumps(payload))
 print(json.dumps(dict(type='turn.completed',usage=dict(input_tokens=7,cached_input_tokens=2,output_tokens=3))),flush=True)
 '''

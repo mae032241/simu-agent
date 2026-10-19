@@ -203,9 +203,16 @@ a general native physical-isolation or hostile same-user process guarantee.
 The built-in local result protocol requires distinct nonempty metric names and
 finite numeric values for usable measurements. `unit`, `evaluation_key`, `direction`
 and labels are optional author-owned JSON descriptions, without an optimization enum
-or scientific text-length limit. An explicit candidate needs an exact declared
-retained artifact; absent or unresolved measurements remain null without an inferred
-metric or direction. Invalid individual declarations receive local diagnostics.
+or scientific text-length limit. The optional `candidates` array in version 1
+`artifacts/result.json` explicitly lists all retained models available to A. Each
+member needs a distinct artifact path uniquely bound to one declared retained output.
+Identity includes the original scope, call and artifact path, independent of list
+order; public references name that call and member, such as
+`W002-C001/artifacts/model.bin`. A sees the complete catalogue and can choose any
+member for exact delivery. Control supplies no sorting, default, or inference from
+other outputs. An empty or absent list supplies no candidate; the old single
+`candidate` field is not interpreted. Absent or unresolved measurements remain null
+without an inferred metric or direction. Invalid individual declarations receive local diagnostics.
 Unserializable metadata is omitted only from the mechanical projection, with a
 reference to unchanged retained `result.json` bytes; other valid results and the
 artifact-bound candidate remain available. Compact previews do not cap originals.

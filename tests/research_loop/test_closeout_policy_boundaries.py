@@ -67,6 +67,7 @@ comparison=dict(rows=[dict(candidate_id=r['candidate_id'],key_risk='Fixture publ
 payload=dict(summary='Compare frozen policy screen',scientific_result='Bounded public choice; target performance remains unknown.',limitations=['Fixture only'],
  implementation_selection=None,search_review=None,progress_assessment=None,decision_request=None,portfolio_review=None,
  next_action='deliver',route_reason='Explicit choice after policy screening',candidate_recommendation=chosen,candidate_comparison=comparison)
+if isinstance(payload.get('candidate_recommendation'),str):payload['selection_explanation']=dict(criteria='Compare the declared public fixture evidence and retain its stated limitations.',criteria_change=dict(status='unchanged',prior_criteria=None,changes=None,evidence=None,accepted_tradeoffs=None))
 pathlib.Path(args[args.index('--output-last-message')+1]).write_text(json.dumps(payload))
 print(json.dumps(dict(type='turn.completed',usage=dict(input_tokens=7,cached_input_tokens=2,output_tokens=3))),flush=True)
 '''

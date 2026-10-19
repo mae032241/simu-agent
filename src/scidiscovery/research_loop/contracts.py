@@ -40,6 +40,7 @@ AUTHOR_EVIDENCE_GUIDANCE = (
     'For each waived mechanism, give an evidence-supported scientific negative or infeasibility reason tied to the original goal and constraints. '
     'Temporary relative underperformance or missing evidence calls for deferral rather than scientific rejection; explain concentration and remaining alternatives in the existing scientific result and disposition reasons. '
     'Scientific choice and conclusions belong to A; control supplies no candidate ranking or default. Explicit delivery requires your exact candidate and scientific rationale. '
+    'When recommending a candidate, fill selection_explanation with the comparison criteria and an explicit unchanged/revised declaration against prior H/W design and report conditions, thresholds and fallback rules. Relaxing a predeclared condition or fallback is revised, even if a report already adopted it. If revised, acknowledge the prior criteria, what changed, locatable evidence explaining why, and accepted tradeoffs. A first selection may honestly state that no prior criteria were declared. '
     'Completed workflow, audit qualification, budget exhaustion, finish and delivery do not establish an unmeasured goal. State unmet objectives when stopping; no mechanical proof or hash work is required.')
 ROLE_INSTRUCTIONS = {
     'H': 'Own the scientific direction toward the original global goal. Propose or revise mechanisms, '
@@ -190,6 +191,20 @@ def response_fields(job, policy):
     return fields
 
 
+def selection_explanation_schema():
+    """Require an accountable declaration, never a machine scientific verdict."""
+    text=dict(type='string',pattern=r'\S')
+    variants=[]
+    for status in ('unchanged','revised'):
+        fields=dict(status=dict(type='string',enum=[status]))
+        fields.update({field:dict(text) if status=='revised' else dict(type='null')
+            for field in ('prior_criteria','changes','evidence','accepted_tradeoffs')})
+        variants.append(dict(type='object',properties=fields,required=list(fields),additionalProperties=False))
+    properties=dict(criteria=text,criteria_change=dict(anyOf=variants))
+    return dict(type=['object','null'],properties=properties,required=list(properties),additionalProperties=False,
+        description='Required for an explicit candidate recommendation, including final A. Compare adopted criteria with prior H/W design/report conditions, thresholds and fallback rules. Relaxing any such rule is revised even if the report already adopted it. Revised requires prior criteria, changes, locatable evidence explaining why, and accepted tradeoffs. Unchanged uses null change details. Control checks completeness, not scientific sufficiency or truth.')
+
+
 def result_schema(role: str,protocol=CURRENT,comparison=False,*,formal_review=False,review_enabled=False,final_only=False,final_delivery=False,auxiliary_fields=None):
     """comparison: only a closeout A bound to a frozen candidate catalogue (job['selection'])."""
     from .protocol import _current
@@ -230,6 +245,7 @@ def result_schema(role: str,protocol=CURRENT,comparison=False,*,formal_review=Fa
         properties.update(candidate_recommendation=dict(type=['string','null'],
                 description='Choose an exact candidate reference from the frozen candidate index, or its listed implementation reference when both identify that same registered object. Null supplies no recommendation. No default or host selection. Explain scientific rationale and evidence in scientific_result.'),
             progress_assessment=correction.schema(),decision_request=decision.schema())
+        properties['selection_explanation']=selection_explanation_schema()
         if final_only and final_delivery:
             properties['candidate_recommendation'].update(type='string',minLength=1)
         if comparison:
@@ -273,6 +289,13 @@ def science_payload(path: Path, role: str, protocol=CURRENT, comparison=False,*,
             final_only=final_only,final_delivery=final_delivery,auxiliary_fields=auxiliary_fields)
         projection={key:item for key,item in value.items() if key in schema['properties']} if isinstance(value,dict) and not formal_review else value
         if isinstance(projection,dict) and not formal_review:
+            if role=='A':
+                explanation=projection.get('selection_explanation')
+                rule=schema['properties']['selection_explanation']
+                if (isinstance(projection.get('candidate_recommendation'),str) and explanation is None
+                        or not jsonschema.Draft202012Validator(rule).is_valid(explanation)):
+                    raise OutputRepairRequired('selection_explanation_incomplete',
+                        'Fill selection_explanation: state criteria and unchanged/revised status; revised requires prior_criteria, changes, evidence with locators explaining why, and accepted_tradeoffs. Keep the same A task and completed evidence; do not repeat experiments.')
             for field,rule in schema['properties'].items():
                 if isinstance(rule.get('type'),list) and 'null' in rule['type']:
                     if not jsonschema.Draft202012Validator(rule).is_valid(projection.get(field)):projection[field]=None

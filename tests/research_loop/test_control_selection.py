@@ -1,4 +1,5 @@
 """Explicit scientific candidate choice and side-effect-free catalogue; zero models."""
+from test_history_handoff import selection_explanation
 import json
 from pathlib import Path
 import shutil
@@ -78,6 +79,7 @@ def closeout_author(monkeypatch, *attempts, authorize_final=True,cleanup='observ
                        progress_assessment=None, decision_request=None, portfolio_review=None, next_action='deliver',
                        route_reason='Bounded delivery decision')
         payload.update(attempts[len(calls)](task))
+        if isinstance(payload.get('candidate_recommendation'),str):payload['selection_explanation']=selection_explanation()
         calls.append((step, task))
         record = c.host_record(c.workspace(root, step))
         job=c.read(root/'jobs'/f'{step:03d}.json')

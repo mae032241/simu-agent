@@ -108,8 +108,11 @@ def records(root, step):
             if any(path.iterdir()):raise ValueError('Unaccepted continuation has unexpected execution facts')
             continue
         intent = c.read(c.regular(path / 'native-intent.json'))
-        if (original_intent.get('budget_slice') or {}).get('final_return') is not None and intent.get('continuation_kind') != 'startup_successor':
+        output_repair=intent.get('continuation_kind')=='repair' and isinstance(intent.get('output_repair'),dict) and 'work_repair' not in intent
+        if (original_intent.get('budget_slice') or {}).get('final_return') is not None and intent.get('continuation_kind') != 'startup_successor' and not output_repair:
             raise ValueError('Final A return cannot acquire another native attempt')
+        if output_repair and (original_intent.get('budget_slice') or {}).get('final_return') is not None and (intent.get('budget_slice') or {}).get('final_return') != original_intent['budget_slice']['final_return']:
+            raise ValueError('Final A output repair must retain its original completion authorization')
         if (intent.get('budget_slice') or {}).get('final_return') is not None:
             budget.final_a_return(root, job, intent)
         if (number != len(result) or intent.get('attempt') != number or intent.get('task_sha256') != task
@@ -117,6 +120,9 @@ def records(root, step):
                 or intent.get('root_intent_sha256') != c.digest(c.regular(first / 'native-intent.json'))):
             raise ValueError('Native continuation chain changed')
         kind = intent.get('continuation_kind', 'repair')
+        if ((settings.get('resume_policy') or {}).get('output_only') and kind in {'repair','fragment','execution_wake'}
+                and not output_repair):
+            raise ValueError('Output-only policy cannot authorize scientific continuation')
         if kind not in {'repair', 'fragment', 'execution_wake','author_closeout','startup_successor'} or kind == 'fragment' and not fragments:
             raise ValueError('Native continuation kind differs from its frozen policy')
         if kind == 'startup_successor':
@@ -186,8 +192,10 @@ def home(root, step, attempt=0):
     current = record(root, step, attempt)
     intent = c.read(c.regular(current / 'native-intent.json'))
     base = root / 'native-homes' / f'{step:03d}'
-    selected = Path(intent.get('native_home', intent.get('session', {}).get('home', str(base))))
-    if (selected.resolve() != selected or selected != base and
+    policy=c.settings(root).get('resume_policy') or {}
+    inherited=Path(policy['native_home']) if policy.get('output_only') and policy.get('native_home') else None
+    selected = Path(intent.get('native_home', intent.get('session', {}).get('home', str(inherited or base))))
+    if (selected.resolve() != selected or selected != base and selected != inherited and
             (selected.parent != base or not selected.name.startswith('context-')
              or not selected.name[8:].isdigit())):
         raise ValueError('Native home differs from its exact stage namespace')

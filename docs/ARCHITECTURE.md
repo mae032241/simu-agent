@@ -34,9 +34,14 @@ bindings automatically and retains the mechanical records privately on the host.
 Local result metrics retain distinct nonempty names and explicit finite numeric
 values. `unit`, `evaluation_key`, `direction` and labels are optional scientific
 descriptions: control imposes no optimization enum or scientific text-length limit.
-An explicitly declared candidate requires one exact declared retained artifact;
-an absent or unresolved metric stays unknown, without selecting another metric or
-inferring a direction. Invalid individual metric/output declarations and metadata
+The optional version 1 result `candidates` array declares all retained models
+available to A, each bound to a distinct exact declared retained artifact. Candidate
+identity includes its original scope, call and artifact path; reordering the list
+preserves identity. The complete catalogue lets A choose any member for exact
+delivery, with no control ranking, default or inference from other outputs. An
+empty or absent list creates no candidate; the old single `candidate` field is not
+interpreted. An absent or unresolved metric stays unknown, without selecting another
+metric or inferring a direction. Invalid individual metric/output declarations and metadata
 that cannot enter strict JSON receive local diagnostics while other valid results
 and artifact-bound candidates survive. Original `result.json` bytes remain unchanged;
 compact previews and omitted-field diagnostics refer back to that retained file.
@@ -243,6 +248,31 @@ criteria, and explains conflict, uncertainty and missing inputs. Workflow comple
 audit qualification, exhausted budgets, `finish` and delivery do not establish an
 unmeasured goal; A reports unmet objectives when stopping.
 
+An explicit A `candidate_recommendation`, including FINAL, requires
+`selection_explanation`: the adopted `criteria` and `criteria_change.status`
+(`unchanged` or `revised`). A revision names `prior_criteria`, `changes`, locatable
+`evidence` explaining why, and `accepted_tradeoffs`; unchanged details are null.
+A compares against prior H/W design and report conditions, thresholds and fallback
+rules; relaxing any is a revision even if the report already adopted it.
+A first selection may state that no prior criteria were declared. Planning with
+no candidate recommendation may use null. Control checks declaration completeness,
+not scientific truth, sufficiency or candidate ranking. Missing details return to
+the same A through the frozen output-repair policy before sealing. FINAL repairs
+retain one task, session and final-return authorization, cumulative consumption,
+finite attempt limits and original call duration; depleted shared balances do not
+revoke that completion or its original authorized delivery. They authorize no new
+experiment, scientific node or retry of unknown execution.
+
+Standard single-command `codex` CLI preparation freezes up to two output-only
+repairs by default, binding the original native home privately so configuration,
+authentication and permissions remain unchanged. It freezes the absolute invoked
+launcher and its target without replacing invocation symlinks. If no node policy
+was supplied, per-role soft targets reference the original global ceilings; they
+allocate nothing. Explicit policies override this default, including disabling
+repair; custom launchers and direct controller API calls remain explicit. This
+default never authorizes failed-task, work-repair, fragment or execution-wake
+continuations.
+
 New `prepare` freezes `final_a_completion_policy` version 1. Each ordinary state
 checks whether its remaining budget can start the next action. This mode reserves
 no shared tokens, time or steps for protected FINAL and does not prepay the next
@@ -261,7 +291,7 @@ evidence and preserving missing inputs. Insufficient, zero or exceeded shared
 token, time or step budgets cannot veto this A or its original authorized host
 submission and same-operation confirmation. The A gives its conclusion, explicit
 candidate selection and unmet objectives; the host supplies the actual submission
-receipt. No new scientific work, dedicated audit or correction loop follows within that FINAL cycle.
+receipt. No new scientific work, dedicated audit or correction node follows within that FINAL cycle.
 Missing W, candidate originals or delivery permission produce an explicit
 unsubmitted result, with the final A still reporting its evidence limitations.
 Without an optional node policy, the original frozen global token/time settings
@@ -273,7 +303,10 @@ remain accounted; unknown billing remains explicitly unknown without an estimate
 token excess separately. A uses the existing `summary`, `scientific_result` and
 `limitations` to explain completed work, unfinished work and evidence-supported
 gaps. Ordinary earlier A, formal review and W author continuation receive no such
-exception. During a FINAL cycle, no new scientific, review, correction or retry attempt is dispatched.
+exception. During a FINAL cycle, no new scientific, review or correction node is
+dispatched. The frozen output-repair policy may only resume the same final A task
+to complete its response, preserving its original authorization, cumulative usage,
+finite attempt limit and call duration; it grants no retry of unknown execution.
 
 For that exact final A, native completion and billing coverage are separate facts.
 A verified `turn.completed` event, zero process exit, confirmed original-group cleanup

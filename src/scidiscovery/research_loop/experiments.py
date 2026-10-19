@@ -297,9 +297,9 @@ def _status_view(value):
 def _scientific_result(value):
     # These fields belong to the declared local scientific-result protocol.
     # Metric names and author-owned output labels are preserved verbatim.
-    result = {key:value[key] for key in ('status','metrics','outputs','candidate','diagnostic',
+    result = {key:value[key] for key in ('status','metrics','outputs','candidates','diagnostic',
         'metrics_omitted_count','outputs_omitted_count','diagnostics','details_ref',
-        'candidate_preview','candidate_details_ref','diagnostics_omitted_count') if key in value}
+        'candidates_omitted_count','diagnostics_omitted_count') if key in value}
     # The optional-result parser emits fixed field diagnostics, never exception
     # text or control objects. Preserve that bounded explanation at every view.
     if value.get('status') == 'invalid' and value.get('diagnostic') in {'result_json_invalid','result_io'} and isinstance(value.get('detail'),str):

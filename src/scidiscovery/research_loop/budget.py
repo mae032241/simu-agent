@@ -1297,7 +1297,7 @@ def _validate_final_a_event(root, settings, event, previous):
 
 
 def final_a_return(root, job, intent, *, events=None):
-    """Validate a private final-return reference for this original attempt only."""
+    """Validate one final A identity, including its bounded output-only repairs."""
     settings = contracts.settings(root)
     _final_a_policy(settings)
     if events is None:
@@ -1310,18 +1310,37 @@ def final_a_return(root, job, intent, *, events=None):
             raise ValueError('Final A return reference is missing from its original intent')
         return None
     startup = intent.get('continuation_kind') == 'startup_successor'
+    repair = intent.get('continuation_kind') == 'repair' and isinstance(intent.get('output_repair'),dict) and 'work_repair' not in intent
     if startup:
         from . import startup_recovery
         startup_recovery.validate_intent(root,job,intent)
-    if (accepted is None or _final_a_policy(settings) is None or ('attempt' in intent and not startup)
-            or intent.get('continuation_kind') is not None and not startup or intent.get('step') != job['step']
+    expected_anchor = dict(accepted['anchor'], final_return=marker) if accepted is not None else None
+    if repair and accepted is not None:
+        number=intent.get('attempt')
+        limits=settings.get('resume_policy') or {}
+        if (type(number) is not int or not 1 <= number <= limits.get('max_attempts',0)
+                or not limits.get('output_repair',False)):
+            raise ValueError('Final A return has no bounded output repair authorization')
+        from . import continuation, execution
+        first=execution.origin(root,job['step'])
+        prior=first if number==1 else first/'continuations'/f'{number-1:03d}'
+        if (intent.get('root_intent_sha256')!=contracts.digest(contracts.regular(first/'native-intent.json'))
+                or intent.get('previous')!=execution.proof(prior)):
+            raise ValueError('Final A return output repair changed its exact source')
+        continuation.validate_repair(root,job['step'],intent,prior_record=prior,verify_task=False)
+        # Validate cumulative consumption in _node_duration; retain the original
+        # ceilings, task and final-return marker while advancing this call's clock.
+        expected_anchor.update({key:intent['budget_slice'].get(key) for key in
+            ('advance_seconds','previous_tokens','previous_seconds')})
+    if (accepted is None or _final_a_policy(settings) is None or ('attempt' in intent and not (startup or repair))
+            or intent.get('continuation_kind') is not None and not (startup or repair) or intent.get('step') != job['step']
             or job['role'] != 'A' or job.get('formal_review') is not None
             or intent.get('task_sha256') != accepted['anchor']['task_sha256']
             or accepted['step'] != job['step']
             or not isinstance(marker, dict) or set(marker) != {'seq', 'sha256'}
             or type(marker['seq']) is not int or marker['seq'] != accepted['seq']
             or marker['sha256'] != contracts.digest(Path(root) / 'control-ledger' / f'{accepted["seq"]:06d}.json')
-            or intent['budget_slice'] != dict(accepted['anchor'], final_return=marker)):
+            or intent['budget_slice'] != expected_anchor):
         raise ValueError('Final A return reference or original attempt changed')
     return accepted
 
@@ -1371,7 +1390,7 @@ def _accept_final_a(root, job, anchor, limits, *, final_report=None):
 
 def final_a_receipt(accepted, intent, meter, shared):
     """An explicit overrun receipt, never an amendment or a refunded meter."""
-    observed = None if meter is None else meter['input_tokens'] + meter['output_tokens']
+    observed = None if meter is None else meter['input_tokens'] + meter['output_tokens'] + intent['budget_slice'].get('previous_tokens',0)
     accounted = shared.get('accounted_tokens', shared['observed_tokens'])
     ceiling = accepted['anchor']['shared_limits']['max_tokens']
     target = accepted['anchor']['limits']['max_observed_tokens']
@@ -1397,7 +1416,7 @@ def validate_final_a_receipt(root, job, intent, outcome, meter=None):
     accepted = final_a_return(root, job, intent)
     if accepted is not None and meter is None:
         record = contracts.host_record(contracts.workspace(root, job['step']))
-        if intent.get('continuation_kind') == 'startup_successor':record = record/'continuations/001'
+        if intent.get('attempt') is not None:record = record/'continuations'/f'{intent["attempt"]:03d}'
         if (record / 'usage.json').exists():
             meter = contracts.read(contracts.regular(record / 'usage.json'))
     expected = final_a_receipt(accepted, intent, meter, outcome['usage']) if accepted is not None else None
@@ -1672,15 +1691,26 @@ def node_report(root, job, intent, meter):
                 limits=intent['budget_slice']['limits'])
 
 
-def accept_continuation(root, job, paths):
+def accept_continuation(root, job, paths, *, output_repair=None):
     from .protocol import require_current
     require_current(root,job)
-    if final_a_barrier(root) is not None:
-        raise NodeBudgetUnavailable('final_a_return_consumed')
+    final=final_a_barrier(root)
+    if final is not None:
+        from . import continuation
+        if (output_repair is None or final['step']!=job['step'] or
+                output_repair!=continuation.output_request(root,job['step'],paths[-1])):
+            raise NodeBudgetUnavailable('final_a_return_consumed')
     from . import native
     tokens, seconds = _attempt_consumption(root, job, paths)
     policy = node_limits(root, job)
     limits, meter = snapshot(root), native.usage(root)
+    if final is not None:
+        original=contracts.read(contracts.regular(paths[0]/'native-intent.json'))
+        final_a_return(root,job,original)
+        if seconds >= policy['max_seconds']:
+            raise NodeBudgetUnavailable('worker_resume_node_exhausted')
+        return dict(original['budget_slice'],advance_seconds=limits['advance_seconds'],
+            previous_tokens=tokens,previous_seconds=seconds)
     if (type(seconds) not in (int, float) or not math.isfinite(seconds) or seconds < 0
             or node_mode(root)=='hard' and (tokens >= policy['max_observed_tokens'] or seconds >= policy['max_seconds'])):
         raise NodeBudgetUnavailable('worker_resume_node_exhausted')

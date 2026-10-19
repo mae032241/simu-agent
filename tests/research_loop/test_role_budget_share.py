@@ -1,4 +1,5 @@
 """Frozen role token shares route optional thinking by control; no model calls."""
+from test_history_handoff import selection_explanation
 import sys
 
 import pytest
@@ -38,6 +39,7 @@ def seal(root, step, role, parents, *, action='wait', tokens=10, plan=None, revi
     if role == 'W':payload.update(stage_intent='review', mechanism_findings=findings)
     if role in {'H', 'A'}:payload.update(next_action=action, route_reason='Exact scientific question')
     c.write(record / 'native-intent.json', dict(task_sha256=c.digest(path)))
+    if isinstance(payload.get('candidate_recommendation'),str):payload['selection_explanation']=selection_explanation()
     c.write(record / 'science-output.json', payload)
     c.write(record / 'usage.json', dict(input_tokens=tokens - 1, cached_input_tokens=0, output_tokens=1))
     c.write(record / 'native-outcome.json', dict(returncode=0, stop_reason=None, usage=native.usage(root),

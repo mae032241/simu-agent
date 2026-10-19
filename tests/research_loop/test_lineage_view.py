@@ -1,10 +1,12 @@
 """Single bounded default view, original pages, and retired write rejection."""
 import json
 from pathlib import Path
+import sys
 
 import pytest
 
 from scidiscovery.research_loop import contracts as c, controller, execution, history, lineage, protocol as current_protocol
+from execution_fixtures import execution_registry
 from test_history_handoff import finish
 
 
@@ -120,6 +122,37 @@ def test_thousand_node_multibyte_brief_bounds_every_lineage_domain():
     assert value['candidates']['a_recommended']['candidate_id']=='candidate-2'
     assert value['candidates']['actual']['candidate_id']=='candidate-3'
     assert value['recent_omitted_count']==1000-len(value['recent'])
+
+
+@pytest.mark.process_e2e
+def test_long_candidate_member_references_bound_brief_and_keep_complete_catalogue(tmp_path,execution_registry):
+    from scidiscovery.research_loop import experiments
+    root=scene(tmp_path);finish(root,1,'H',[],action='experiment')
+    c.build_job(root,2,'W',[1])
+    c.write(execution.origin(root,2)/'native-intent.json',dict(task_sha256=c.digest(root/'jobs/002.json')))
+    config=experiments.configure(root,2,'local_execution:command',dict(run_argv=[sys.executable]),
+        c.workspace(root,2)/'work/experiment-config.json')
+    directory=c.workspace(root,2)/'experiments/alternatives';directory.mkdir(parents=True)
+    prefix='/'.join(f'p{index:02d}'+('x'*177) for index in range(9))
+    artifacts=[f'artifacts/{prefix}/{name}.bin' for name in ('first','second')]
+    declaration=dict(version=1,metrics=[],outputs=[dict(path=path) for path in artifacts],
+        candidates=[dict(artifact=path) for path in artifacts])
+    script=directory/'run.py'
+    script.write_text('from pathlib import Path\n'
+        'for path in '+repr(artifacts)+':\n'
+        '    original=Path(path);original.parent.mkdir(parents=True,exist_ok=True);original.write_text(path)\n'
+        'Path("artifacts/result.json").write_text('+repr(json.dumps(declaration))+')\n')
+    result=experiments.dispatch(config,script,command_options=dict(experiment_directory=str(directory)))
+    assert result['status']=='known_success'
+    finish(root,2,'W',[1])
+    job=c.build_job(root,3,'A',[2]);work=c.workspace(root,3)
+    view=c.read(work/'science-task.json')['lineage']
+    assert len(written(view))<=history.MAX_BRIEF_BYTES
+    assert view['candidates']['candidate_facts_omitted_count']>0
+    candidates=pages(work,view['indexes']['candidates'],'candidates')
+    assert len(candidates)==2
+    assert {row['id'] for row in candidates}==set(job['history']['candidate_references'].values())
+    assert all(any(row['id'].endswith('/'+path) for row in candidates) for path in artifacts)
 
 
 def test_known_failed_experiment_is_separate_from_original_scientific_conclusion(tmp_path):

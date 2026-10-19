@@ -301,7 +301,7 @@ def run_native(root: Path, step: int, attempt=0):
             'Control retains exit/time/logs/inputs/outputs. Optional artifacts/result.json is version 1 JSON with metrics '
             '(name,value; optional unit,evaluation_key,direction) and outputs (path relative to the experiment root, label). '
             'unit, evaluation_key and direction retain your scientific explanation; control does not classify or infer their meaning. Read describe for the complete optional result contract and field diagnostics. '
-            'An optional candidate names one exact declared artifact output; label and a metric reference are optional. A missing or unresolved metric does not discard a retained candidate. Control assigns its identity and delivers its retained inputs/results only after A explicitly chooses it. '
+            'An optional candidates array declares every retained model available for A to choose. Each member names one distinct exact declared artifact output; label and a metric reference are optional. A missing or unresolved metric does not discard a retained candidate. Control binds each identity to its original call and artifact, and delivers its retained inputs/results only after A explicitly chooses it. '
             'Preserve the actual task-required deliverables, including needed evaluated objects and native receipts, in these declared outputs before temporary files disappear. The adapter cannot reconstruct missing results from source code or metrics. '
             'Use finite metric values; control does not infer metric meaning, candidate ranking or qualification. '
             'Do not write hashes or identities. Native shell remains available for scratch. Query lineage-status for original calls; never repeat an unknown call.\n')
@@ -429,6 +429,16 @@ def run_native(root: Path, step: int, attempt=0):
             'it does not assert that delivery or the scientific objective succeeded.\n')
     # Append after every branch that replaces the assignment, including formal
     # review and the bounded successor author turn.
+    if job['role']=='A' and not job.get('formal_review'):
+        prompt += ('\nAny explicit candidate_recommendation requires selection_explanation: give criteria and '
+            'criteria_change.status as unchanged or revised. For revised criteria, name prior_criteria, changes, '
+            'evidence with locators explaining why, and accepted_tradeoffs. For unchanged criteria, use null '
+            'for those change details. Compare with prior H/W design and report comparison conditions, thresholds '
+            'and fallback rules: relaxing any such rule is revised even if a report already adopted it. '
+            'If no prior criteria exist, say so honestly. No candidate choice requires '
+            'no invented comparison: selection_explanation may be null. Control checks declaration completeness '
+            'and returns missing details to this same A for output repair; it does not judge scientific truth '
+            'or sufficiency, rank candidates or choose a default. This applies to the final A return too.\n')
     prompt += ('\nDo not independently compute, compare, or revalidate file/evidence hashes or checksums, '
         'generate hash inventories, or perform redundant mechanical integrity checks. '
         'Control automatically owns integrity verification; use scientific names/references and verified tool results. '

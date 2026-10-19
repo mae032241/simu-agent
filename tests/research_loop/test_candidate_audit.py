@@ -210,6 +210,8 @@ def _seal_existing(root,step,payload):
         payload={'decision_request':None,'portfolio_review':None,**payload}
     record=c.host_record(c.workspace(root,step))
     c.write(record/'native-intent.json',dict(task_sha256=c.digest(root/'jobs'/f'{step:03d}.json')))
+    from test_history_handoff import selection_explanation
+    if isinstance(payload.get('candidate_recommendation'),str):payload['selection_explanation']=selection_explanation()
     c.write(record/'science-output.json',payload)
     c.write(record/'usage.json',dict(input_tokens=7,cached_input_tokens=2,output_tokens=3))
     c.write(record/'native-outcome.json',dict(returncode=0,stop_reason=None,usage=native.usage(root),

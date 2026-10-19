@@ -95,6 +95,8 @@ if role == 'A' and os.environ.get('SCID_GENERIC_DELIVERY') == '1':
     assert len(candidates) == 2
     chosen = min(candidates, key=lambda candidate: candidate['metric'])['id']
     payload.update(next_action='deliver', candidate_recommendation=chosen,
+        selection_explanation=dict(criteria='Compare the declared public target stress MSE.',
+            criteria_change=dict(status='unchanged',prior_criteria=None,changes=None,evidence=None,accepted_tradeoffs=None)),
         route_reason='Deliver exact retained reconstructions using the declared public stress MSE')
     comparison = task.get('closeout', {}).get('comparison')
     if comparison:

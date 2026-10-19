@@ -7,7 +7,7 @@ import copy
 import re
 
 _MACHINE_CANDIDATE=re.compile(r'local-[0-9a-f]{64}\Z')
-_REFERENCE=re.compile(r'[HWAE]\d{3,}-C\d{3,}\Z')
+_REFERENCE=re.compile(r'[HWAE]\d{3,}-C\d{3,}(?:/artifacts/.+)?\Z')
 _SLOTS={'id','candidate_id','candidate_ids','parent_candidate','original_candidate',
     'recommendation','candidate_recommendation','subject'}
 
@@ -19,13 +19,17 @@ def references(records):
         observed=record.get('observation') or {}
         calls={row['call_id']:number for number,row in enumerate(observed.get('managed_calls',[]),1)}
         from . import generic_results
-        canonical={generic_results.identity(row):calls[row['call_id']] for row in observed.get('managed_calls',[])}
+        canonical={generic_results.identity(row,item):(calls[row['call_id']],item['artifact'])
+            for row in observed.get('managed_calls',[])
+            for item in generic_results.declarations(row)
+            if isinstance(item,dict) and isinstance(item.get('artifact'),str)}
         for candidate in observed.get('candidates',[]):
             identity=candidate['id']
             if not _MACHINE_CANDIDATE.fullmatch(identity):continue
             if identity in result:continue  # Re-observation retains its original reference.
             if identity not in canonical:raise ValueError('Candidate reference lacks its exact original call')
-            ref=f'{record["role"]}{record["step"]:03d}-C{canonical[identity]:03d}'
+            call_number,artifact=canonical[identity]
+            ref=f'{record["role"]}{record["step"]:03d}-C{call_number:03d}/{artifact}'
             if identity in result and result[identity]!=ref or ref in owners and owners[ref]!=identity:
                 raise ValueError('Candidate reference is ambiguous')
             result[identity]=ref;owners[ref]=identity

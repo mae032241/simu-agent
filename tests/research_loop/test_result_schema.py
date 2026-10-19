@@ -3,7 +3,7 @@ import pytest
 
 from scidiscovery.research_loop import contracts as c, protocol
 from scidiscovery.research_loop.output_repair import OutputRepairRequired
-from test_history_handoff import finish, scene, source
+from test_history_handoff import finish, scene, source, selection_explanation
 
 
 def tree(root):
@@ -40,6 +40,7 @@ def test_current_a_scientific_recommendation_can_be_null_or_candidate(tmp_path, 
                    next_action='wait', route_reason='More evidence needed', candidate_recommendation=recommendation,
                    search_review=None, progress_assessment=None, implementation_selection=None,
                    decision_request=None, portfolio_review=None)
+    payload['selection_explanation']=selection_explanation() if recommendation is not None else None
     c.write(raw, payload)
     assert c.science_payload(raw, 'A', c.HANDOFF_PROTOCOL) == payload
     payload.pop('candidate_recommendation')

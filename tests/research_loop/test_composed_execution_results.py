@@ -80,7 +80,7 @@ def test_opaque_private_remote_results_seal_and_read_without_candidate_inference
     assert fact['managed_calls'][0]['status']=='known_success' and fact['candidates']==[]
     assert not fact.get('candidate_diagnostics')
     completed=c.read(root/fact['managed_calls'][0]['completed']['snapshot'])
-    if private:assert completed['result']['candidate']
+    if private:assert completed['result']['candidates']
     assert len(calls)==1 and len(calls[0]['outputs'])==1
 
 

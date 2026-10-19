@@ -168,7 +168,8 @@ def test_final_receipt_does_not_convert_unknown_usage_into_terminal_evidence(ori
     meter, outcome = complete(root, job, intent, unknown=True)
     assert budget.validate_final_a_receipt(root, job, intent, outcome, meter)['step'] == 2
     assert native.usage(root)['unknown_steps'] == [2]
-    assert native.usage(root)['blocking_unknown_steps'] == [2]
+    # Billing coverage is retained; unresolved execution blocks sealing below.
+    assert native.usage(root)['blocking_unknown_steps'] == []
     assert native.usage(root)['accounted_tokens'] == 1220
     with pytest.raises(ValueError, match='Terminal scientific output'):
         c.seal_result(root, 2)
@@ -192,7 +193,7 @@ def test_known_final_execution_seals_with_unknown_billing_without_another_grant(
     assert c.seal_result(root, 2)['next_action'] == 'finish'
     assert c.validate(c.workspace(root, 2))['next_action'] == 'finish'
     assert native.usage(root)['unknown_steps'] == [2]
-    assert native.usage(root)['blocking_unknown_steps'] == [2]
+    assert native.usage(root)['blocking_unknown_steps'] == []
     assert outcome['final_a_completion']['final_overrun']['usage_coverage'] == 'unknown'
     if missing_meter:
         assert not (record / 'usage.json').exists()

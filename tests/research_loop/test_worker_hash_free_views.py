@@ -41,7 +41,7 @@ def local_candidate(tmp_path):
         'pathlib.Path("artifacts/result.json").write_text(json.dumps(dict(version=1,metrics=['
         'dict(name="sha256 science metric",value=3,direction="max",evaluation_key="measurement.v1")],'
         'outputs=[dict(path="artifacts/observation.txt",label="observation")],'
-        'candidate=dict(label="Measured candidate",metric="sha256 science metric",artifact="artifacts/observation.txt"))))\n')
+        'candidates=[dict(label="Measured candidate",metric="sha256 science metric",artifact="artifacts/observation.txt")])))\n')
     reply=experiments.dispatch(config,script,command_options=dict(experiment_directory=str(directory)))
     assert reply['status']=='known_success'
     return root,config,reply['call_id']
@@ -175,7 +175,7 @@ def test_real_candidate_reference_roundtrip_keeps_private_canonical_and_public_p
     author=c.build_job(root,3,'A',[2]);mapping=candidate_refs.for_job(author)
     assert len(mapping)==1
     canonical,reference=next(iter(mapping.items()))
-    assert canonical.startswith('local-') and re.fullmatch(r'W002-C\d{3}',reference)
+    assert canonical.startswith('local-') and re.fullmatch(r'W002-C\d{3}/artifacts/observation\.txt',reference)
     page=c.read(c.workspace(root,3)/author['history']['view']['indexes']['candidates'])
     assert page['candidates'][0]['id']==reference
     assert_no_control_identity(c.read(c.workspace(root,3)/'science-task.json'))

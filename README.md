@@ -13,8 +13,10 @@ author. Control preserves observed order and every candidate; A explicitly names
 its delivery choice and explains it with bound evidence. Control supplies no
 scientific ranking or default choice.
 
-Local candidates require an exact retained artifact; measurements and scientific
-metadata may be absent. Optional descriptions and comparison tables do not grant
+Local result `candidates` lists every retained model available to A; each member
+requires a distinct exact retained artifact. Identity follows the original call and
+artifact path, independently of list order. Measurements and scientific metadata may
+be absent. Optional descriptions and comparison tables do not grant
 or gate delivery. Invalid individual declarations retain their originals and
 receive local diagnostics; previews link full retained content.
 
@@ -73,6 +75,18 @@ unknown and is never replaced with a zero meter. A completed native event, zero 
 and confirmed cleanup remain required. Observed usage remains accounted without
 raising the shared ceilings; original finite per-call time, permissions and other
 execution limits still apply. After an explicit threshold increase, the next run may resume the saved pending normal route when its full admission is affordable and original effects are known and quiescent. New physical IDs preserve prior final outputs, submissions and all consumption; a later budget denial begins another FINAL cycle. See the [architecture](docs/ARCHITECTURE.md).
+
+A candidate choice requires `selection_explanation`: its comparison criteria and
+whether they changed. Revised criteria explicitly acknowledge the prior rule,
+changes, locatable evidence explaining why, and accepted tradeoffs. Missing details
+use the frozen same-session output repair, including FINAL with its original
+completion protection and cumulative usage. Control checks completeness; A owns
+scientific sufficiency. Planning without a candidate choice needs no explanation.
+Standard `codex` CLI preparation defaults to at most two output-only repairs in
+the original native home, preserving configuration, permissions and authentication.
+Explicit policies take precedence; custom launchers and direct controller API
+calls require an explicit repair policy. This default grants no failed-task or
+scientific-work continuation.
 
 Workers write ordinary scientific files and use the thin experiment submission and
 wait interface. Their instructions add no hash calculation, comparison, verification

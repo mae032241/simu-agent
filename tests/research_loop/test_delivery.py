@@ -1,4 +1,5 @@
 """Exact pre-A snapshots and isolated delivery, deterministic zero-model processes."""
+from test_history_handoff import selection_explanation
 import copy
 import hashlib
 import json
@@ -137,6 +138,7 @@ def closeout_decision(root, refs, recommendation='run-1'):
                    search_review=None, decision_request=None, portfolio_review=None,
                    next_action='deliver', route_reason='An explicit bounded delivery decision')
     c.write(record / 'native-intent.json', dict(task_sha256=c.digest(root / 'jobs/003.json')))
+    if isinstance(payload.get('candidate_recommendation'),str):payload['selection_explanation']=selection_explanation()
     c.write(record / 'science-output.json', payload)
     c.write(record / 'usage.json', dict(input_tokens=7, cached_input_tokens=2, output_tokens=3))
     c.write(record / 'native-outcome.json', dict(returncode=0, stop_reason=None, usage=native.usage(root),

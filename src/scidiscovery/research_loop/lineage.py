@@ -538,4 +538,4 @@ def bind(root, step, role, protocol, *, source_cutoff=None, extra_steps=(), sele
     return dict(**(dict(execution_recoveries=projection['recovery_refs'],execution_recovery_materials=recovery_materials) if projection['recovery_refs'] else {}),**(dict(audit_projection_version=1, audit_receipts=audit_refs, adjacent_audit=adjacent_audit) if audit_projection_version == 1 else {}), nodes=[dict(step=row['step'],seal_sha256=row['seal_sha256']) for row in records],files=files,
                 candidate_ids=[row['id'] for row in candidate_rows],
                 **(dict(candidate_references=references) if worker_view_version==1 else {}),
-                view=candidate_refs.public_fields(view,references)),state
+                view=bounded_brief(candidate_refs.public_fields(view,references))),state

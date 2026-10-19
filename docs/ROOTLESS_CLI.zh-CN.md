@@ -137,9 +137,9 @@ scid-experiment --config work/experiment-config.json run \
 `metrics` 的可用条目要求不同的非空名称和明确有限数值；`unit`、`evaluation_key`、`direction` 及 `label` 是可选科学说明，可省略或为 null，也可保留其他可序列化 JSON 说明。控制不强制 `min/max`、科学文本长度或优化含义。
 `outputs` 声明本次已保留的 `artifacts/` 相对路径，科学标签可缺失；完整指标和成果清单不设框架固定项数上限。科学代码只写结果，不填哈希、原件ID或审计结论。
 控制保留原 JSON 和成果，自动采集指标，在后继角色的 `lineage.indexes.experiments` 提供分页入口，并按现有成果机制交接文件。
-结果可另声明可选候选，例如 `"candidate":{"artifact":"artifacts/comparison.csv"}`，也可附 `label` 和精确指标名 `metric`。
-`artifact` 必须唯一对应已声明并保留的成果；控制由原 scope 和 call 生成稳定候选身份，纳入 A 选择及交付流程。指标缺失、拼写无法关联或值不可用时，候选仍保留，指标及其比较说明为 unknown/null，不猜取首项、方向或零分。
-多个指标而未声明候选时只记录测量；只有冻结接口明确声明本地结果协议时才解析候选字段，其他 adapter 的私有结果保持原件。
+结果可另声明可选候选列表，例如 `"candidates":[{"artifact":"artifacts/comparison.csv"},{"artifact":"artifacts/model.bin","label":"保留模型","metric":"loss"}]`；每项可附 `label` 和精确指标名 `metric`，且须在 `outputs` 中明确声明各自成果。一次调用保留的可选模型由 W 全部显式列出，空列表或省略列表只记录测量，不产生候选。
+各项 `artifact` 不得重复，且必须唯一对应已声明并保留的成果；控制由原 scope、call 和已声明 artifact 路径生成稳定候选身份，重排列表不改变身份。A 通过 `W002-C001/artifacts/model.bin` 一类原调用与成员引用看到完整列表，可显式选择任意成员及其精确原件交付；控制不排序、不默认选首项，也不从其他 outputs 推断模型。指标缺失、拼写无法关联或值不可用时，候选仍保留，指标及其比较说明为 unknown/null，不猜取首项、方向或零分。
+未声明的旧单值 `candidate` 字段不登记候选；当前 version 1 合同仅使用 `candidates` 列表，不迁移旧格式。多个指标而未声明候选时只记录测量；只有冻结接口明确声明本地结果协议时才解析候选字段，其他 adapter 的私有结果保持原件。
 坏指标或成果声明只诊断相关条目；坏 artifact 只阻该候选登记，不清空其他有效指标或成果。无法写入严格 JSON 的说明（例如嵌套数字指数溢出）只在投影中省略相关字段并链接原 `result.json`，原始字节仍保留。摘要超长时给预览和原件引用。
 指标名不赋予目标含义，同口径比较不代替 A 的科学判断；A 的推荐可为 null，null 不授权交付。
 
@@ -427,6 +427,18 @@ A 可在新协议最终科学 JSON 可选填写 `candidate_recommendation`（已
 收口先冻结完整候选目录，`science-task.json` 给出目录文件；16 项紧凑摘要有省略计数，完整目录保留全部精确候选 ID 和来源节点，不按紧凑摘要容量截断。控制层仅为 A 明确选择的操作解析并冻结原件；候选目录本身不启动 smoke、审计或自动排除候选。可用性与审计资格分别展示；精确原件的审计结果、工件匹配和适用范围沿历史传递，不额外制造未知泄漏待办。A 选择不等于审计通过。原生 `exp submit` 保留公共命令，但只使用 run 声明的路径，不解析历史跨节点原件；受管 wrapper 的 submit/help 会提示历史交付使用 A `deliver`，不会阻断或改写命令。
 旧预算内收口可复用普通 A 已封存的 `deliver` 直接进入控制交付，不经过 E；无选择策略时可保持 H/W/A 三节点。当前 FINAL 策略则保留独立的一次最终 A。显式 `selection_policy` 版本 2 仅含 `{"version":2}`，冻结全部候选事实目录，再由精确 closeout A 负责比较。真实 audit/deliver 的 `candidate_recommendation` 必须命名目录中的精确可用候选（或绑定到同一已登记成果的实现引用）；普通科学建议的坏引用保留原文并诊断，不能成为执行选择。`candidate_comparison` 是可选科学说明，不以 `keep`、非空 `rationale`、`key_risk` 或 `evidence_steps` 格式决定提交准入；A 在 `scientific_result` 说明选择与证据。null 不授权交付。旧 `shortlist_k`、`evaluation_key`、`smoke_seconds` 配置拒绝接受。交付策略要求的公开审计必须完整通过才能更新实际提交；失败、跳过或未知不能冒充审计通过。未提供可选 audit/smoke 能力保持中性，不绕过已冻结的必需审计策略。旧预算内收口 A 用 `deliver` 授权适配器交付，用 `audit` 请求资格，用 `finish` 拒绝交付，用 `wait` 暂停。`extract / continue_w / revise_h` 的原话保留并触发最多两次作者补正，不会静默转换成交付授权，不会据此重新开放收口探索；当前协议只为 A 明确选定的已绑定工程故障允许一次精确 W repair；旧冻结协议保持原件并拒绝按新协议运行。A 必须逐项对照原目标和授权范围，区分直接测量、推断与假设、目标指标与代理及敏感性检查；按同一目标准则解释相关候选、冲突证据、不确定性和缺失输入。预算耗尽、finish、审计资格与交付均不证明未测量的目标已经完成。正常审计往返及提交前完整审计明确拒绝后的改选只消耗原总预算，不消耗错误补正次数。完整审计拒绝的同一候选工件不能再次提交；工程故障、未运行和未分类回执不冒充科学拒绝。未知操作绝不改选或重放。
 未知提交始终只核对同一原操作，绝不重复提交；旧预算内模式仍要求原余额足够，当前 FINAL 的一次同操作确认不受共享余额否决。
+A 明确填写 `candidate_recommendation` 时，普通与最终 A 都须提供 `selection_explanation`。
+`criteria` 写明当前比较准则，`criteria_change.status` 明确为 `unchanged` 或 `revised`。
+修订时 `prior_criteria` 承接原设计/报告准则，`changes` 声明改了什么，`evidence`
+给出可定位的证据与修订理由，`accepted_tradeoffs` 声明接受的代价；未修订时这些详情为 null。
+A 须对照此前 H/W 设计与报告的比较条件、门槛和回退规则；放宽任一条件即应标记为
+`revised`，不能因当前报告已经换用新规则就称为 `unchanged`。
+首次选择没有前序准则可如实声明；没有候选推荐的规划 A 可填写 null。
+框架只检查声明是否完整，不能以非空文字证明科学充分性或真伪，也不自动排序、决定默认候选。
+缺项在封存前通过已冻结的 `resume_policy.output_repair` 退回同一 A 补填，不另开 A 或重做实验。
+FINAL 补填继续绑定同一最终返回授权、session 与累计用量，保留原有限次数及单次时长；
+共享余额不足不撤销其完成与原授权提交，未知执行不会因此自动重试。
+
 `adapter: null` 时 `submit_seconds` 和 `confirm_seconds` 必须为零，不授权外部交付；当前 FINAL 仍由一次 A 给最终结论与未提交原因，旧预算内模式只作本地导出。
 
 ```bash
@@ -469,8 +481,18 @@ scid-research closeout --root /绝对路径/实例 --export-only
 
 ## 可选的 Worker 原线程续接
 
-新 `prepare` 可同时传 `--node-budget-policy /绝对路径/node.json` 和
-`--worker-resume-policy /绝对路径/resume.json`，后者无默认值，格式为：
+标准单命令 `codex` 的 CLI `prepare` 在未传 `--worker-resume-policy` 且未请求
+`--worker-context` 时，冻结最多两次同任务、同 session 的仅输出补填：
+`output_repair: true`、`output_only: true`。它只补已确认完成的返回，不授权失败任务续跑、
+`WorkRepairRequired` 科学修复、实验重做、W fragment 或执行唤醒。
+launcher 的绝对调用路径及其指向的原文件被冻结，保留符号链接调用语义。
+原 `CODEX_HOME`（未设置时为 `~/.codex`）仅在宿主私有策略中绑定，配置、认证和权限来源不变，
+不复制凭据；没有节点预算文件时，各角色软目标引用原全局 token/时间上限，不预扣或增加共享额度。
+自定义 launcher 没有默认补填授权；直接 controller API 仍须显式策略。
+
+显式策略文件优先，包括 `output_repair: false` 或 JSON null 关闭默认补填。
+若需要已知失败后的普通 Worker 原线程续接，新 `prepare` 须同时传
+`--node-budget-policy /绝对路径/node.json` 和 `--worker-resume-policy /绝对路径/resume.json`，格式为：
 
 ```json
 {"max_attempts":2,"protocol":"codex_exec_resume","usage_scope":"turn"}

@@ -27,6 +27,7 @@ if role=='W':
 if role=='A':
  task=json.loads((work/'science-task.json').read_text());assert task['closeout']['source_cutoff']==2
  payload.update(next_action='deliver',route_reason='A decides delivery within declared limits',candidate_recommendation='run-1',progress_assessment=None,search_review=None,decision_request=None,portfolio_review=None)
+if isinstance(payload.get('candidate_recommendation'),str):payload['selection_explanation']=dict(criteria='Compare the declared public fixture evidence and retain its stated limitations.',criteria_change=dict(status='unchanged',prior_criteria=None,changes=None,evidence=None,accepted_tradeoffs=None))
 pathlib.Path(args[args.index('--output-last-message')+1]).write_text(json.dumps(payload))
 print(json.dumps(dict(type='turn.completed',usage=dict(input_tokens=7,cached_input_tokens=2,output_tokens=3))),flush=True)
 '''

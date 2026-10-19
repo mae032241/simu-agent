@@ -4,6 +4,8 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import os
+import shutil
 
 from . import budget, contracts, controller, search
 from .instance_control import status, request_pause, continue_instance
@@ -36,7 +38,7 @@ def main(argv=None):
     prepare.add_argument('--enable-candidate-audit', action='store_true', help='Opt into protocol9 A audit requests; requires an isolated delivery adapter')
     prepare.add_argument('--delivery-policy', type=Path, help='Explicit frozen closeout reserve and isolated delivery adapter JSON')
     prepare.add_argument('--worker-context',choices=['same_session','new_context'],help='Qualified W fragments within the same stage; requires explicit resume policy and node budgets')
-    prepare.add_argument('--worker-resume-policy', type=Path, help='Explicit qualified same-thread finite continuation policy JSON')
+    prepare.add_argument('--worker-resume-policy', type=Path, help='Explicit qualified finite continuation policy JSON; omitted standard codex uses at most two output-only repairs in its original home; custom launchers have no default')
     prepare.add_argument('--max-output-item-bytes', type=int, help='Optional explicit per-file storage quota; default has no storage size cap')
     prepare.add_argument('--max-output-total-bytes', type=int, help='Optional explicit total deliverable storage quota; default has no storage size cap')
     prepare.add_argument('--max-tokens', type=int, required=True)
@@ -155,8 +157,27 @@ def main(argv=None):
                 role_profiles = contracts.read(contracts.regular(args.role_profiles, limit=4096))
                 if not isinstance(role_profiles, dict):
                     raise ValueError('Role profiles file must contain a JSON object')
+            launcher=json.loads(args.native_launcher_json)
+            resume_policy=contracts.read(contracts.regular(args.worker_resume_policy,limit=4096)) if args.worker_resume_policy is not None else None
+            node_policy=contracts.read(contracts.regular(args.node_budget_policy,limit=4096)) if args.node_budget_policy is not None else None
+            if (args.worker_resume_policy is None and args.worker_context is None
+                    and isinstance(launcher,list) and len(launcher)==1 and isinstance(launcher[0],str)
+                    and Path(launcher[0]).name=='codex'):
+                invoked=shutil.which(launcher[0])
+                if invoked is None:raise ValueError('The selected standard native launcher is unavailable')
+                # Preserve invocation symlinks; policy() freezes their exact target.
+                launcher=[str(Path(invoked).absolute())]
+                native_home=Path(os.environ.get('CODEX_HOME',str(Path.home()/'.codex')))
+                if not native_home.is_absolute():raise ValueError('Frozen native output repair requires an absolute inherited CODEX_HOME')
+                native_home=native_home.resolve()
+                resume_policy=dict(max_attempts=2,protocol='codex_exec_resume',usage_scope='turn',
+                    output_repair=True,output_only=True,native_home=str(native_home))
+                if node_policy is None:
+                    # Reference each node to the original global ceilings. These
+                    # soft targets allocate nothing and never raise shared limits.
+                    node_policy={role:dict(max_observed_tokens=args.max_tokens,max_seconds=args.max_seconds) for role in 'HWAE'}
             settings = controller.prepare(root, args.objective, args.public_root,
-                json.loads(args.native_launcher_json), max_tokens=args.max_tokens, max_seconds=args.max_seconds,
+                launcher, max_tokens=args.max_tokens, max_seconds=args.max_seconds,
                 max_steps=args.max_steps, max_output_item_bytes=args.max_output_item_bytes, max_output_total_bytes=args.max_output_total_bytes, model=args.model, reasoning_effort=args.reasoning_effort, node_budget_mode=args.node_budget_mode,
                 service_tier=args.service_tier, user_updates=args.user_update,
                 role_profiles=role_profiles,
@@ -173,8 +194,7 @@ def main(argv=None):
                     if args.search_policy is not None else search.DEFAULT_POLICY,
                 correction_policy=contracts.read(contracts.regular(args.correction_policy, limit=4096))
                     if args.correction_policy is not None else None,
-                node_budget_policy=contracts.read(contracts.regular(args.node_budget_policy, limit=4096))
-                    if args.node_budget_policy is not None else None,
+                node_budget_policy=node_policy,
                 delivery_policy=contracts.read(contracts.regular(args.delivery_policy, limit=64_000))
                     if args.delivery_policy is not None else None,
                 worker_fragment_policy=dict(context=args.worker_context) if args.worker_context else None,
@@ -182,8 +202,7 @@ def main(argv=None):
                     if args.role_budget_policy is not None else None,
                 selection_policy=contracts.read(contracts.regular(args.selection_policy, limit=4096))
                     if args.selection_policy is not None else None,
-                resume_policy=contracts.read(contracts.regular(args.worker_resume_policy, limit=4096))
-                    if args.worker_resume_policy is not None else None,
+                resume_policy=resume_policy,
                 history_observer=contracts.read(contracts.regular(args.history_observer_config, limit=64_000))
                     if args.history_observer_config is not None else None)
             result = dict(status='prepared', instance=str(root), goal_id=settings['goal_id'])

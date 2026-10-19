@@ -761,10 +761,12 @@ def candidate_materials(root, job):
             if candidate.get('implementation') is not None:
                 material=resolve(root,candidate['implementation'],receipts)
             else:
-                calls=[call for call in observation.get('managed_calls',[]) if generic_results.identity(call)==candidate['id']]
-                if len(calls)!=1:continue
-                call=calls[0];declared=(call.get('execution',{}).get('result') or {}).get('candidate')
-                if not isinstance(declared,dict) or not isinstance(declared.get('artifact'),str):continue
+                members=[(call,item) for call in observation.get('managed_calls',[])
+                    for item in generic_results.declarations(call)
+                    if isinstance(item,dict) and isinstance(item.get('artifact'),str)
+                    and generic_results.identity(call,item)==candidate['id']]
+                if len(members)!=1:continue
+                call,declared=members[0]
                 outputs=[item for item in call.get('outputs',[]) if 'artifacts/'+item['name']==declared['artifact']]
                 if len(outputs)!=1:continue
                 output=outputs[0]

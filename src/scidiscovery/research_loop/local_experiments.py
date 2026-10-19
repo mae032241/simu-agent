@@ -35,10 +35,10 @@ RESULT_SCHEMA = dict(type='object',
             required=['path'],properties=dict(
                 path=dict(type='string',description='artifacts/<retained output>, relative to the experiment root.'),
                 label=dict(description='Optional author-owned output label.')))),
-        candidate=dict(type='object',required=['artifact'],properties=dict(
+        candidates=dict(type='array',items=dict(type='object',required=['artifact'],properties=dict(
                 label=dict(description='Optional author-owned candidate label.'),
                 metric=dict(description='Optional exact declared metric name; absent or unresolved means unknown measurement.'),
-                artifact=dict(type='string',description='Exactly one declared outputs.path.')))))
+                artifact=dict(type='string',description='Exactly one declared outputs.path; unique within candidates.'))))))
 
 
 class LocalExecution:
@@ -68,7 +68,7 @@ class LocalExecution:
     def capabilities():
         content=e.encoded(dict(kind='local_command',domain_metrics=False,
             optional_result=dict(protocol=e.LOCAL_RESULT_PROTOCOL,path='artifacts/result.json',schema=RESULT_SCHEMA,
-                constraints='Metric names and output paths must be unique. Outputs must be retained originals. Scientific descriptions are optional and preserved without scientific interpretation. An explicit candidate requires its exact retained artifact; missing measurements stay unknown. Invalid individual declarations are diagnosed without discarding other observations. Execution success alone is not scientific success.')))
+                constraints='Metric names, output paths and candidate artifact paths must be unique. Outputs must be retained originals. Scientific descriptions are optional and preserved without scientific interpretation. The optional candidates array declares every retained model available to A; each member requires its exact retained artifact. Missing measurements stay unknown. Invalid individual declarations are diagnosed without discarding other observations. Execution success alone is not scientific success.')))
         return (AdapterCapability('local_command','execution','scidiscovery.local-command.v1',1,
             'application/json',content,dict(kind='local_command')),
             AdapterCapability(e.INPUT_SOURCES_KEY,'source_provenance',e.INPUT_SOURCES_SCHEMA,1,
@@ -322,23 +322,31 @@ class LocalExecution:
                 metrics.append(serializable_fields(metric,f'metrics[{index}]'))
             names={'artifacts/'+item['name'] for item in outputs}
             retained=[];seen=set()
+            output_paths=[item.get('path') for item in value['outputs'] if isinstance(item,dict) and isinstance(item.get('path'),str)]
             for index,item in enumerate(value['outputs']):
                 if (not isinstance(item,dict) or not isinstance(item.get('path'),str)
-                        or item['path'] not in names or item['path'] in seen):
+                        or item['path'] not in names or output_paths.count(item['path'])!=1):
                     diagnostics.append(dict(field=f'outputs[{index}]',code='output_original_mapping_invalid'))
                     continue
                 seen.add(item['path']);retained.append(serializable_fields(item,f'outputs[{index}]'))
             result=dict(status='available',metrics=metrics,outputs=retained)
-            if 'candidate' in value:
-                candidate=value['candidate']
+            if 'candidates' in value:
+                result['candidates']=[]
+                declared=value['candidates']
+                if not isinstance(declared,list):
+                    diagnostics.append(dict(field='candidates',code='candidate_list_invalid'))
+                    declared=[]
+                artifacts=[item.get('artifact') for item in declared if isinstance(item,dict) and isinstance(item.get('artifact'),str)]
+            else:declared=[];artifacts=[]
+            for index,candidate in enumerate(declared):
                 if (not isinstance(candidate,dict) or not isinstance(candidate.get('artifact'),str)
-                        or candidate['artifact'] not in seen):
-                    diagnostics.append(dict(field='candidate.artifact',code='candidate_original_mapping_invalid'))
+                        or candidate['artifact'] not in seen or artifacts.count(candidate['artifact'])!=1):
+                    diagnostics.append(dict(field=f'candidates[{index}].artifact',code='candidate_original_mapping_invalid'))
                 else:
-                    result['candidate']=serializable_fields(candidate,'candidate')
+                    result['candidates'].append(serializable_fields(candidate,f'candidates[{index}]'))
                     if ('metric' in candidate and not any(isinstance(candidate['metric'],str)
                             and item['name']==candidate['metric'] for item in metrics)):
-                        diagnostics.append(dict(field='candidate.metric',code='candidate_metric_mapping_unknown'))
+                        diagnostics.append(dict(field=f'candidates[{index}].metric',code='candidate_metric_mapping_unknown'))
             if diagnostics:result['diagnostics']=diagnostics
             return result
         except (OSError,ValueError,OverflowError,RecursionError) as error:
@@ -406,13 +414,10 @@ class LocalExecution:
     def public_result(result):
         view={key:result[key] for key in ('call_id','status','note','returncode','wall_seconds') if key in result}
         if 'result' in result:
-            original=result['result'];compact={key:value for key,value in original.items() if key not in {'metrics','outputs','diagnostics'}}
+            original=result['result'];compact={key:value for key,value in original.items() if key not in {'metrics','outputs','candidates','diagnostics'}}
             # These are display projections. Exact declarations remain in the
             # retained result.json, independent of the response-size allowance.
             def preview(value):return e.encoded(value)[:1024].decode('utf-8',errors='ignore')
-            if len(e.encoded(compact))>8_000 and 'candidate' in compact:
-                compact['candidate_preview']=preview(compact.pop('candidate'))
-                compact['candidate_details_ref']='result.json'
             diagnostics=original.get('diagnostics',[])
             if diagnostics:
                 compact['diagnostics']=[]
@@ -422,7 +427,7 @@ class LocalExecution:
                 if len(compact['diagnostics'])<len(diagnostics):
                     compact['diagnostics_omitted_count']=len(diagnostics)-len(compact['diagnostics'])
                     compact['details_ref']='result.json'
-            for name in ('metrics','outputs'):
+            for name in ('candidates','metrics','outputs'):
                 compact[name]=[];rows=original.get(name,[])
                 for row in rows:
                     projected=row
